@@ -1,0 +1,29 @@
+[package]
+name = "octofhir-search"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "Search parameter parsing and execution for OctoFHIR server"
+
+[dependencies]
+# Local dependencies
+octofhir-core = { path = "../octofhir-core" }
+octofhir-db = { path = "../octofhir-db" }
+
+# Workspace dependencies
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+url = { workspace = true }
+indexmap = { workspace = true }
+regex = { workspace = true }
+time = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+tokio-test = { workspace = true }

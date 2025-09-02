@@ -1,0 +1,5 @@
+# Clippy configuration for OctoFHIR Server
+max-trait-bounds = 3
+max-struct-bools = 3
+too-many-lines-threshold = 150
+avoid-breaking-exported-api = false

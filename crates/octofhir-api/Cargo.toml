@@ -1,0 +1,7 @@
+[package]
+name = "octofhir-api"
+version = "0.1.0"
+edition = "2021"
+description = "API types for OctoFHIR server"
+
+[dependencies]
