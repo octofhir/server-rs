@@ -1,1 +1,41 @@
-.idea
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Rust
+/target/
+Cargo.lock
+**/*.rs.bk
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Logs
+*.log
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Config overrides
+config/local.toml
+
+# Test artifacts
+/tmp/
+/test-results/
+
+# Coverage reports
+/coverage/
+/lcov.info
+
+# Documentation build
+/docs/build/

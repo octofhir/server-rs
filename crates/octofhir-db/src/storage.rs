@@ -1,5 +1,6 @@
 use crate::transaction::{Transaction, TransactionManager, TransactionOperation, TransactionOperationResult, TransactionStats};
 use crate::query::{QueryFilter, QueryResult, SearchQuery};
+use crate::factory::StorageOptions;
 use octofhir_core::{CoreError, Result, ResourceType, ResourceEnvelope};
 use papaya::HashMap as PapayaHashMap;
 use std::sync::Arc;
@@ -17,6 +18,8 @@ pub struct InMemoryStorage {
     data: Arc<PapayaHashMap<StorageKey, ResourceEnvelope>>,
     // Transaction statistics
     transaction_stats: Arc<RwLock<TransactionStats>>,
+    // Storage configuration options (soft hints for in-memory backend)
+    options: StorageOptions,
 }
 
 impl InMemoryStorage {
@@ -24,6 +27,15 @@ impl InMemoryStorage {
         Self {
             data: Arc::new(PapayaHashMap::new()),
             transaction_stats: Arc::new(RwLock::new(TransactionStats::new())),
+            options: StorageOptions::default(),
+        }
+    }
+
+    pub fn with_options(options: StorageOptions) -> Self {
+        Self {
+            data: Arc::new(PapayaHashMap::new()),
+            transaction_stats: Arc::new(RwLock::new(TransactionStats::new())),
+            options,
         }
     }
 

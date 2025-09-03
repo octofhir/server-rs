@@ -16,3 +16,9 @@ async-trait = { workspace = true }
 
 [dev-dependencies]
 fastrand = "2.0"
+divan = "0.1"
+dashmap = { workspace = true }
+
+[[bench]]
+name = "storage_maps"
+harness = false
