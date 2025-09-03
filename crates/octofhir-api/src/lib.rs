@@ -606,6 +606,30 @@ mod bundle_generation_tests {
         assert!(rels.get("next").is_none());
         assert!(rels.get("previous").is_none());
     }
+
+    #[test]
+    fn query_suffix_is_preserved_in_links() {
+        let b = bundle_from_search(25, vec![make_pat("1")], "http://example.org", "Patient", 0, 10, Some("name=John&identifier=urn%3Asys%7C123"));
+        let rels: std::collections::HashMap<_, _> = b.link.iter().map(|l| (l.relation.clone(), l.url.clone())).collect();
+        for key in ["self","first","last","next"].iter() {
+            if let Some(u) = rels.get(*key) {
+                assert!(u.contains("name=John"), "{} missing name param: {}", key, u);
+                assert!(u.contains("identifier=urn%3Asys%7C123"), "{} missing identifier param: {}", key, u);
+            }
+        }
+    }
+
+    #[test]
+    fn single_page_has_no_next_or_prev_and_last_offset_zero() {
+        let total = 7usize;
+        let count = 10usize; // single page since total <= count
+        let b = bundle_from_search(total, vec![make_pat("1"), make_pat("2")], "http://example.org", "Patient", 0, count, Some("name=Jane"));
+        let rels: std::collections::HashMap<_, _> = b.link.iter().map(|l| (l.relation.clone(), l.url.clone())).collect();
+        assert!(rels.get("previous").is_none());
+        assert!(rels.get("next").is_none());
+        assert!(rels.get("last").unwrap().contains("_offset=0"));
+        assert!(rels.get("self").unwrap().contains("name=Jane"));
+    }
 }
 
 
