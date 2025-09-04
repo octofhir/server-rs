@@ -1,0 +1,38 @@
+---
+title: Getting Started
+head: []
+---
+
+Prerequisites:
+
+- Rust (stable) and `cargo`
+- `just` (optional) for convenience
+
+Build and run:
+
+```bash
+just build
+just run
+# or
+cargo run --bin octofhir-server
+```
+
+Configuration:
+
+- Default config path: `octofhir.toml`
+- Override with `OCTOFHIR_CONFIG=/path/to/config.toml`
+- Example env override: `OCTOFHIR__SEARCH__DEFAULT_COUNT=9`
+
+First requests:
+
+```bash
+# CapabilityStatement
+curl -H 'Accept: application/fhir+json' localhost:8080/metadata
+
+# Create a Patient
+curl -s -H 'Accept: application/fhir+json' -H 'Content-Type: application/fhir+json' \
+  -d '{"resourceType":"Patient","active":true}' localhost:8080/Patient
+
+# Search Patients
+curl -H 'Accept: application/fhir+json' 'localhost:8080/Patient?name=Jo&_count=10'
+```

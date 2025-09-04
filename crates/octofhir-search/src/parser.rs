@@ -1,7 +1,7 @@
 use crate::parameters::{SearchModifier, SearchPrefix};
 use std::borrow::Cow;
-use url::form_urlencoded;
 use thiserror::Error;
+use url::form_urlencoded;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParsedValue {
@@ -41,7 +41,10 @@ impl SearchParameterParser {
                     continue;
                 }
                 let (prefix, remainder) = Self::extract_prefix(raw_val);
-                values.push(ParsedValue { prefix, raw: remainder.to_string() });
+                values.push(ParsedValue {
+                    prefix,
+                    raw: remainder.to_string(),
+                });
             }
             result.params.push(ParsedParam {
                 name: name.into_owned(),
@@ -89,7 +92,7 @@ impl SearchParameterParser {
                 return (Some(prefix), &value[2..]);
             }
         }
-        if value.len() >= 1 {
+        if !value.is_empty() {
             let p1 = &value[..1];
             if let Some(prefix) = SearchPrefix::parse(p1) {
                 return (Some(prefix), &value[1..]);
@@ -109,7 +112,12 @@ pub enum SearchValidationError {
 
 impl ParsedParameters {
     /// Validate parameters against a basic allow-list and constraints.
-    pub fn validate(&self, allowed_params: &[&str], allowed_sort_fields: &[&str], max_count: usize) -> Result<(), SearchValidationError> {
+    pub fn validate(
+        &self,
+        allowed_params: &[&str],
+        allowed_sort_fields: &[&str],
+        max_count: usize,
+    ) -> Result<(), SearchValidationError> {
         // Unknown params
         for p in &self.params {
             if !allowed_params.contains(&p.name.as_str()) {
@@ -120,10 +128,23 @@ impl ParsedParameters {
         if let Some(p) = self.params.iter().find(|p| p.name == "_count") {
             if let Some(v) = p.values.first() {
                 if let Ok(n) = v.raw.parse::<usize>() {
-                    if n == 0 { return Err(SearchValidationError::InvalidValue { param: "_count".to_string(), message: "must be >= 1".to_string() }); }
-                    if n > max_count { return Err(SearchValidationError::InvalidValue { param: "_count".to_string(), message: format!("exceeds maximum of {}", max_count) }); }
+                    if n == 0 {
+                        return Err(SearchValidationError::InvalidValue {
+                            param: "_count".to_string(),
+                            message: "must be >= 1".to_string(),
+                        });
+                    }
+                    if n > max_count {
+                        return Err(SearchValidationError::InvalidValue {
+                            param: "_count".to_string(),
+                            message: format!("exceeds maximum of {max_count}"),
+                        });
+                    }
                 } else {
-                    return Err(SearchValidationError::InvalidValue { param: "_count".to_string(), message: "must be a positive integer".to_string() });
+                    return Err(SearchValidationError::InvalidValue {
+                        param: "_count".to_string(),
+                        message: "must be a positive integer".to_string(),
+                    });
                 }
             }
         }
@@ -131,7 +152,10 @@ impl ParsedParameters {
         if let Some(p) = self.params.iter().find(|p| p.name == "_offset") {
             if let Some(v) = p.values.first() {
                 if v.raw.parse::<usize>().is_err() {
-                    return Err(SearchValidationError::InvalidValue { param: "_offset".to_string(), message: "must be a non-negative integer".to_string() });
+                    return Err(SearchValidationError::InvalidValue {
+                        param: "_offset".to_string(),
+                        message: "must be a non-negative integer".to_string(),
+                    });
                 }
             }
         }
@@ -139,12 +163,24 @@ impl ParsedParameters {
         if let Some(p) = self.params.iter().find(|p| p.name == "_sort") {
             if let Some(v) = p.values.first() {
                 let mut field = v.raw.as_str();
-                if let Some(stripped) = field.strip_prefix('-') { field = stripped; }
+                if let Some(stripped) = field.strip_prefix('-') {
+                    field = stripped;
+                }
                 if field.is_empty() || !allowed_sort_fields.contains(&field) {
-                    return Err(SearchValidationError::InvalidValue { param: "_sort".to_string(), message: format!("unsupported sort field '{}'; allowed: {}", field, allowed_sort_fields.join(", ")) });
+                    return Err(SearchValidationError::InvalidValue {
+                        param: "_sort".to_string(),
+                        message: format!(
+                            "unsupported sort field '{}'; allowed: {}",
+                            field,
+                            allowed_sort_fields.join(", ")
+                        ),
+                    });
                 }
             } else {
-                return Err(SearchValidationError::InvalidValue { param: "_sort".to_string(), message: "missing sort field value".to_string() });
+                return Err(SearchValidationError::InvalidValue {
+                    param: "_sort".to_string(),
+                    message: "missing sort field value".to_string(),
+                });
             }
         }
         Ok(())
@@ -173,14 +209,19 @@ impl ParsedParameters {
                     let mut end: Option<FhirDateTime> = None;
 
                     for v in &p.values {
-                        if v.raw.is_empty() { continue; }
+                        if v.raw.is_empty() {
+                            continue;
+                        }
                         if let Ok(dt) = v.raw.parse::<FhirDateTime>() {
                             match v.prefix {
                                 Some(SearchPrefix::Ge) => start = Some(dt),
                                 Some(SearchPrefix::Gt) => start = Some(dt), // TODO: strict greater-than
                                 Some(SearchPrefix::Le) => end = Some(dt),
-                                Some(SearchPrefix::Lt) => end = Some(dt),   // TODO: strict less-than
-                                Some(SearchPrefix::Eq) | None => { start = Some(dt.clone()); end = Some(dt); }
+                                Some(SearchPrefix::Lt) => end = Some(dt), // TODO: strict less-than
+                                Some(SearchPrefix::Eq) | None => {
+                                    start = Some(dt.clone());
+                                    end = Some(dt);
+                                }
                                 _ => { /* unsupported prefixes (sa, eb, ap) ignored for now */ }
                             }
                         }
@@ -203,7 +244,11 @@ impl ParsedParameters {
                             let second = parts.next();
                             let (system, value) = match second {
                                 Some(val) => {
-                                    let sys_opt = if first.is_empty() { None } else { Some(first.to_string()) };
+                                    let sys_opt = if first.is_empty() {
+                                        None
+                                    } else {
+                                        Some(first.to_string())
+                                    };
                                     (sys_opt, val.to_string())
                                 }
                                 None => (None, first.to_string()),
@@ -253,7 +298,9 @@ impl ParsedParameters {
         if let Some(p) = self.params.iter().find(|p| p.name == "_count") {
             if let Some(v) = p.values.first() {
                 if let Ok(n) = v.raw.parse::<usize>() {
-                    if n == 0 { return default_; }
+                    if n == 0 {
+                        return default_;
+                    }
                     return n.min(max);
                 }
             }
@@ -265,7 +312,9 @@ impl ParsedParameters {
     pub fn parse_offset(&self, default_: usize) -> usize {
         if let Some(p) = self.params.iter().find(|p| p.name == "_offset") {
             if let Some(v) = p.values.first() {
-                if let Ok(n) = v.raw.parse::<usize>() { return n; }
+                if let Ok(n) = v.raw.parse::<usize>() {
+                    return n;
+                }
             }
         }
         default_
@@ -286,13 +335,14 @@ mod tests {
                 assert_eq!(field, "_id");
                 assert_eq!(value, "abc123");
             }
-            other => panic!("unexpected filter: {:?}", other),
+            other => panic!("unexpected filter: {other:?}"),
         }
     }
 
     #[test]
     fn parses_last_updated_ge_to_date_range_start() {
-        let filters = SearchParameterParser::parse_query_to_filters("_lastUpdated=ge2020-01-01T00:00:00Z");
+        let filters =
+            SearchParameterParser::parse_query_to_filters("_lastUpdated=ge2020-01-01T00:00:00Z");
         assert_eq!(filters.len(), 1);
         match &filters[0] {
             QueryFilter::DateRange { field, start, end } => {
@@ -300,13 +350,14 @@ mod tests {
                 assert!(start.is_some());
                 assert!(end.is_none());
             }
-            other => panic!("unexpected filter: {:?}", other),
+            other => panic!("unexpected filter: {other:?}"),
         }
     }
 
     #[test]
     fn parses_last_updated_eq_to_date_range_start_and_end() {
-        let filters = SearchParameterParser::parse_query_to_filters("_lastUpdated=2020-01-01T00:00:00Z");
+        let filters =
+            SearchParameterParser::parse_query_to_filters("_lastUpdated=2020-01-01T00:00:00Z");
         assert_eq!(filters.len(), 1);
         match &filters[0] {
             QueryFilter::DateRange { field, start, end } => {
@@ -314,7 +365,7 @@ mod tests {
                 assert!(start.is_some());
                 assert!(end.is_some());
             }
-            other => panic!("unexpected filter: {:?}", other),
+            other => panic!("unexpected filter: {other:?}"),
         }
     }
 
@@ -323,12 +374,16 @@ mod tests {
         let filters = SearchParameterParser::parse_query_to_filters("identifier=http://sys|12345");
         assert_eq!(filters.len(), 1);
         match &filters[0] {
-            QueryFilter::Identifier { field, system, value } => {
+            QueryFilter::Identifier {
+                field,
+                system,
+                value,
+            } => {
                 assert_eq!(field, "identifier");
                 assert_eq!(system.as_deref(), Some("http://sys"));
                 assert_eq!(value, "12345");
             }
-            other => panic!("unexpected filter: {:?}", other),
+            other => panic!("unexpected filter: {other:?}"),
         }
     }
 
@@ -337,12 +392,16 @@ mod tests {
         let filters = SearchParameterParser::parse_query_to_filters("identifier=999");
         assert_eq!(filters.len(), 1);
         match &filters[0] {
-            QueryFilter::Identifier { field, system, value } => {
+            QueryFilter::Identifier {
+                field,
+                system,
+                value,
+            } => {
                 assert_eq!(field, "identifier");
                 assert!(system.is_none());
                 assert_eq!(value, "999");
             }
-            other => panic!("unexpected filter: {:?}", other),
+            other => panic!("unexpected filter: {other:?}"),
         }
     }
 
@@ -381,7 +440,7 @@ mod tests {
                 assert_eq!(field, "name");
                 assert_eq!(value, "John");
             }
-            other => panic!("unexpected filter: {:?}", other),
+            other => panic!("unexpected filter: {other:?}"),
         }
     }
 
@@ -394,11 +453,10 @@ mod tests {
                 assert_eq!(field, "name");
                 assert_eq!(value, "Doe");
             }
-            other => panic!("unexpected filter: {:?}", other),
+            other => panic!("unexpected filter: {other:?}"),
         }
     }
 }
-
 
 #[cfg(test)]
 mod tests_more {
@@ -415,7 +473,7 @@ mod tests_more {
                 assert_eq!(field, "_id");
                 assert_eq!(value, "a1");
             }
-            other => panic!("unexpected filter: {:?}", other),
+            other => panic!("unexpected filter: {other:?}"),
         }
     }
 
@@ -476,7 +534,7 @@ mod tests_more {
         assert_eq!(p.name, "subject");
         match &p.modifier {
             Some(SearchModifier::Type(t)) => assert_eq!(t, "Patient"),
-            other => panic!("expected Type modifier, got {:?}", other),
+            other => panic!("expected Type modifier, got {other:?}"),
         }
         assert_eq!(p.values.len(), 1);
         assert_eq!(p.values[0].raw, "123");
@@ -504,7 +562,7 @@ mod tests_more {
                 assert_eq!(field, "_id");
                 assert_eq!(value, "a");
             }
-            other => panic!("unexpected filter: {:?}", other),
+            other => panic!("unexpected filter: {other:?}"),
         }
     }
 
@@ -525,7 +583,7 @@ mod tests_more {
                 assert_eq!(field, "name");
                 assert_eq!(value, "John");
             }
-            other => panic!("unexpected filter: {:?}", other),
+            other => panic!("unexpected filter: {other:?}"),
         }
     }
 
@@ -568,10 +626,14 @@ mod tests_more {
     }
 }
 
-
 impl SearchParameterParser {
     /// Build a SearchQuery from a resource type and URL query string, applying _count defaults/limits.
-    pub fn build_search_query(resource_type: ResourceType, query: &str, default_count: usize, max_count: usize) -> SearchQuery {
+    pub fn build_search_query(
+        resource_type: ResourceType,
+        query: &str,
+        default_count: usize,
+        max_count: usize,
+    ) -> SearchQuery {
         let parsed = Self::parse_query(query);
         let filters = parsed.to_filters();
         let count = parsed.parse_count(default_count, max_count);
@@ -592,8 +654,12 @@ impl SearchParameterParser {
                 }
                 // Modifier form: _sort:desc=field or _sort:asc=field
                 if let Some(SearchModifier::Type(m)) = &p.modifier {
-                    if m.eq_ignore_ascii_case("desc") { ascending = false; }
-                    if m.eq_ignore_ascii_case("asc") { ascending = true; }
+                    if m.eq_ignore_ascii_case("desc") {
+                        ascending = false;
+                    }
+                    if m.eq_ignore_ascii_case("asc") {
+                        ascending = true;
+                    }
                 }
                 if !field.is_empty() {
                     q = q.with_sort(field.to_string(), ascending);
@@ -612,7 +678,8 @@ mod tests_query_builder {
 
     #[test]
     fn build_query_uses_default_and_filters() {
-        let q = SearchParameterParser::build_search_query(ResourceType::Patient, "_id=abc", 10, 100);
+        let q =
+            SearchParameterParser::build_search_query(ResourceType::Patient, "_id=abc", 10, 100);
         assert_eq!(q.resource_type, ResourceType::Patient);
         assert_eq!(q.count, 10);
         assert_eq!(q.offset, 0);
@@ -622,23 +689,28 @@ mod tests_query_builder {
                 assert_eq!(field, "_id");
                 assert_eq!(value, "abc");
             }
-            other => panic!("unexpected filter: {:?}", other),
+            other => panic!("unexpected filter: {other:?}"),
         }
     }
 
     #[test]
     fn build_query_clamps_count() {
-        let q = SearchParameterParser::build_search_query(ResourceType::Patient, "_count=250", 10, 100);
+        let q =
+            SearchParameterParser::build_search_query(ResourceType::Patient, "_count=250", 10, 100);
         assert_eq!(q.count, 100);
     }
 
     #[test]
     fn build_query_invalid_count_uses_default() {
-        let q = SearchParameterParser::build_search_query(ResourceType::Patient, "_count=zero", 10, 100);
+        let q = SearchParameterParser::build_search_query(
+            ResourceType::Patient,
+            "_count=zero",
+            10,
+            100,
+        );
         assert_eq!(q.count, 10);
     }
 }
-
 
 #[cfg(test)]
 mod tests_sort {
@@ -647,33 +719,44 @@ mod tests_sort {
 
     #[test]
     fn sort_default_asc_with_field_value() {
-        let q = SearchParameterParser::build_search_query(ResourceType::Patient, "_sort=_id", 10, 100);
+        let q =
+            SearchParameterParser::build_search_query(ResourceType::Patient, "_sort=_id", 10, 100);
         assert_eq!(q.sort_field.as_deref(), Some("_id"));
         assert!(q.sort_ascending);
     }
 
     #[test]
     fn sort_desc_with_hyphen() {
-        let q = SearchParameterParser::build_search_query(ResourceType::Patient, "_sort=-_id", 10, 100);
+        let q =
+            SearchParameterParser::build_search_query(ResourceType::Patient, "_sort=-_id", 10, 100);
         assert_eq!(q.sort_field.as_deref(), Some("_id"));
         assert!(!q.sort_ascending);
     }
 
     #[test]
     fn sort_desc_with_modifier_desc() {
-        let q = SearchParameterParser::build_search_query(ResourceType::Patient, "_sort:desc=_lastUpdated", 10, 100);
+        let q = SearchParameterParser::build_search_query(
+            ResourceType::Patient,
+            "_sort:desc=_lastUpdated",
+            10,
+            100,
+        );
         assert_eq!(q.sort_field.as_deref(), Some("_lastUpdated"));
         assert!(!q.sort_ascending);
     }
 
     #[test]
     fn sort_asc_with_modifier_asc() {
-        let q = SearchParameterParser::build_search_query(ResourceType::Patient, "_sort:asc=_lastUpdated", 10, 100);
+        let q = SearchParameterParser::build_search_query(
+            ResourceType::Patient,
+            "_sort:asc=_lastUpdated",
+            10,
+            100,
+        );
         assert_eq!(q.sort_field.as_deref(), Some("_lastUpdated"));
         assert!(q.sort_ascending);
     }
 }
-
 
 impl SearchParameterParser {
     /// Validate parameters and build a SearchQuery in one step.
@@ -687,7 +770,12 @@ impl SearchParameterParser {
     ) -> Result<SearchQuery, SearchValidationError> {
         let parsed = Self::parse_query(query);
         parsed.validate(allowed_params, allowed_sort_fields, max_count)?;
-        Ok(Self::build_search_query(resource_type, query, default_count, max_count))
+        Ok(Self::build_search_query(
+            resource_type,
+            query,
+            default_count,
+            max_count,
+        ))
     }
 }
 
@@ -708,7 +796,12 @@ mod tests_validation_and_offset {
 
     #[test]
     fn build_query_applies_offset() {
-        let q = SearchParameterParser::build_search_query(ResourceType::Patient, "_offset=20&_count=5", 10, 100);
+        let q = SearchParameterParser::build_search_query(
+            ResourceType::Patient,
+            "_offset=20&_count=5",
+            10,
+            100,
+        );
         assert_eq!(q.offset, 20);
         assert_eq!(q.count, 5);
     }
@@ -716,16 +809,39 @@ mod tests_validation_and_offset {
     #[test]
     fn validate_unknown_param_fails() {
         let parsed = SearchParameterParser::parse_query("foo=bar");
-        let allowed = ["_id","_lastUpdated","_count","_offset","_sort","identifier","name","family","given"]; 
-        let allowed_sort = ["_id","_lastUpdated"]; 
+        let allowed = [
+            "_id",
+            "_lastUpdated",
+            "_count",
+            "_offset",
+            "_sort",
+            "identifier",
+            "name",
+            "family",
+            "given",
+        ];
+        let allowed_sort = ["_id", "_lastUpdated"];
         let err = parsed.validate(&allowed, &allowed_sort, 100).unwrap_err();
-        match err { SearchValidationError::UnknownParameter(p) => assert_eq!(p, "foo"), other => panic!("unexpected: {:?}", other) }
+        match err {
+            SearchValidationError::UnknownParameter(p) => assert_eq!(p, "foo"),
+            other => panic!("unexpected: {other:?}"),
+        }
     }
 
     #[test]
     fn validate_count_and_sort_rules() {
-        let allowed = ["_id","_lastUpdated","_count","_offset","_sort","identifier","name","family","given"]; 
-        let allowed_sort = ["_id","_lastUpdated"]; 
+        let allowed = [
+            "_id",
+            "_lastUpdated",
+            "_count",
+            "_offset",
+            "_sort",
+            "identifier",
+            "name",
+            "family",
+            "given",
+        ];
+        let allowed_sort = ["_id", "_lastUpdated"];
         // invalid _count
         let p = SearchParameterParser::parse_query("_count=0");
         assert!(p.validate(&allowed, &allowed_sort, 100).is_err());

@@ -5,31 +5,31 @@ use thiserror::Error;
 pub enum CoreError {
     #[error("Invalid FHIR resource type: {0}")]
     InvalidResourceType(String),
-    
+
     #[error("Invalid FHIR ID: {0}")]
     InvalidId(String),
-    
+
     #[error("Invalid FHIR DateTime: {0}")]
     InvalidDateTime(String),
-    
+
     #[error("JSON serialization error: {0}")]
     JsonError(#[from] serde_json::Error),
-    
+
     #[error("Time parsing error: {0}")]
     TimeError(#[from] time::error::Parse),
-    
+
     #[error("UUID error: {0}")]
     UuidError(#[from] uuid::Error),
-    
+
     #[error("Resource not found: {resource_type}/{id}")]
     ResourceNotFound { resource_type: String, id: String },
-    
+
     #[error("Resource conflict: {resource_type}/{id} already exists")]
     ResourceConflict { resource_type: String, id: String },
-    
+
     #[error("Invalid resource data: {message}")]
     InvalidResource { message: String },
-    
+
     #[error("Configuration error: {0}")]
     Configuration(String),
 
@@ -176,7 +176,10 @@ mod tests {
     #[test]
     fn test_resource_conflict_error() {
         let err = CoreError::resource_conflict("Patient", "456");
-        assert_eq!(err.to_string(), "Resource conflict: Patient/456 already exists");
+        assert_eq!(
+            err.to_string(),
+            "Resource conflict: Patient/456 already exists"
+        );
         assert!(err.is_client_error());
         assert_eq!(err.category(), ErrorCategory::Conflict);
     }
@@ -184,9 +187,10 @@ mod tests {
     #[test]
     fn test_json_error_conversion() {
         let invalid_json = "{ invalid json }";
-        let json_err: serde_json::Error = serde_json::from_str::<serde_json::Value>(invalid_json).unwrap_err();
+        let json_err: serde_json::Error =
+            serde_json::from_str::<serde_json::Value>(invalid_json).unwrap_err();
         let core_err: CoreError = json_err.into();
-        
+
         assert!(matches!(core_err, CoreError::JsonError(_)));
         assert!(core_err.is_client_error());
         assert_eq!(core_err.category(), ErrorCategory::Serialization);
@@ -204,7 +208,7 @@ mod tests {
     fn test_url_error_conversion() {
         let url_err = url::Url::parse("not a url").unwrap_err();
         let core_err: CoreError = url_err.into();
-        
+
         assert!(matches!(core_err, CoreError::UrlError(_)));
         assert!(core_err.is_client_error());
         assert_eq!(core_err.category(), ErrorCategory::Validation);
@@ -223,7 +227,7 @@ mod tests {
     #[test]
     fn test_error_debug_format() {
         let err = CoreError::invalid_resource("Test message");
-        let debug_str = format!("{:?}", err);
+        let debug_str = format!("{err:?}");
         assert!(debug_str.contains("InvalidResource"));
         assert!(debug_str.contains("Test message"));
     }
@@ -238,12 +242,12 @@ mod tests {
 
         // Server errors
         assert!(CoreError::configuration("config error").is_server_error());
-        
+
         // Ensure mutual exclusivity
         let client_err = CoreError::invalid_id("test");
         assert!(client_err.is_client_error());
         assert!(!client_err.is_server_error());
-        
+
         let server_err = CoreError::configuration("test");
         assert!(server_err.is_server_error());
         assert!(!server_err.is_client_error());
@@ -254,11 +258,11 @@ mod tests {
         fn test_function() -> Result<String> {
             Ok("success".to_string())
         }
-        
+
         fn test_function_error() -> Result<String> {
             Err(CoreError::invalid_id("bad"))
         }
-        
+
         assert!(test_function().is_ok());
         assert!(test_function_error().is_err());
     }
@@ -267,7 +271,10 @@ mod tests {
     fn test_error_chains() {
         // Test that we can chain errors through the From trait using a parsing error
         let invalid_time_str = "25:61:61";
-        match time::Time::parse(invalid_time_str, &time::format_description::parse("[hour]:[minute]:[second]").unwrap()) {
+        match time::Time::parse(
+            invalid_time_str,
+            &time::format_description::parse("[hour]:[minute]:[second]").unwrap(),
+        ) {
             Err(time_err) => {
                 let core_err: CoreError = time_err.into();
                 assert!(matches!(core_err, CoreError::TimeError(_)));
@@ -310,7 +317,9 @@ mod tests {
         let validation_err = CoreError::invalid_id("test");
         let not_found_err = CoreError::resource_not_found("Patient", "123");
         let conflict_err = CoreError::resource_conflict("Patient", "456");
-        let serialization_err: CoreError = serde_json::from_str::<serde_json::Value>("invalid").unwrap_err().into();
+        let serialization_err: CoreError = serde_json::from_str::<serde_json::Value>("invalid")
+            .unwrap_err()
+            .into();
         let system_err: CoreError = uuid::Uuid::parse_str("invalid").unwrap_err().into();
         let config_err = CoreError::configuration("test");
 
@@ -326,12 +335,20 @@ mod tests {
     fn test_error_message_formats() {
         let resource_not_found = CoreError::resource_not_found("Patient", "abc-123");
         assert!(resource_not_found.to_string().contains("Patient/abc-123"));
-        
+
         let resource_conflict = CoreError::resource_conflict("Observation", "def-456");
-        assert!(resource_conflict.to_string().contains("Observation/def-456"));
-        
+        assert!(
+            resource_conflict
+                .to_string()
+                .contains("Observation/def-456")
+        );
+
         let invalid_resource = CoreError::invalid_resource("Missing required field 'id'");
-        assert!(invalid_resource.to_string().contains("Missing required field 'id'"));
+        assert!(
+            invalid_resource
+                .to_string()
+                .contains("Missing required field 'id'")
+        );
     }
 
     #[test]
@@ -344,7 +361,7 @@ mod tests {
     fn test_error_constructor_methods() {
         // Test all constructor methods work correctly
         let _ = CoreError::invalid_resource_type("Test");
-        let _ = CoreError::invalid_id("test-id");  
+        let _ = CoreError::invalid_id("test-id");
         let _ = CoreError::invalid_date_time("2023-13-45T25:61:61Z");
         let _ = CoreError::resource_not_found("Patient", "123");
         let _ = CoreError::resource_conflict("Patient", "456");

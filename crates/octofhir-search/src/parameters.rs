@@ -30,9 +30,9 @@ pub enum SearchModifier {
     Below,
     Above,
     Not,
-    Identifier, // for reference parameters
+    Identifier,   // for reference parameters
     Type(String), // e.g., subject:Patient
-    Missing,     // value should be boolean (handled during parsing)
+    Missing,      // value should be boolean (handled during parsing)
 }
 
 /// Prefixes for number/date search values
@@ -96,7 +96,11 @@ pub struct SearchParameterDefinition {
 
 impl SearchParameterDefinition {
     pub fn new<N: Into<String>>(name: N, kind: SearchParameterType) -> Self {
-        Self { name: name.into(), kind, description: None }
+        Self {
+            name: name.into(),
+            kind,
+            description: None,
+        }
     }
 
     pub fn with_description(mut self, desc: impl Into<String>) -> Self {
@@ -112,9 +116,11 @@ pub struct SearchParameters {
 }
 
 impl SearchParameters {
-    pub fn new() -> Self { Self { params: Vec::new() } }
+    pub fn new() -> Self {
+        Self { params: Vec::new() }
+    }
 
-    pub fn add(mut self, def: SearchParameterDefinition) -> Self {
+    pub fn with_param(mut self, def: SearchParameterDefinition) -> Self {
         self.params.push(def);
         self
     }

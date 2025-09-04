@@ -1,4 +1,4 @@
-use octofhir_core::{CoreError, Result, ResourceType, ResourceEnvelope};
+use octofhir_core::{CoreError, ResourceEnvelope, ResourceType, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use uuid::Uuid;
@@ -62,7 +62,11 @@ pub struct TransactionOperationResult {
 }
 
 impl TransactionOperationResult {
-    pub fn success(operation_id: Uuid, operation: TransactionOperation, result: Option<ResourceEnvelope>) -> Self {
+    pub fn success(
+        operation_id: Uuid,
+        operation: TransactionOperation,
+        result: Option<ResourceEnvelope>,
+    ) -> Self {
         Self {
             operation_id,
             operation,
@@ -120,7 +124,9 @@ impl Transaction {
 
     pub fn add_operation(&mut self, operation: TransactionOperation) -> Result<Uuid> {
         if self.state != TransactionState::Building {
-            return Err(CoreError::invalid_resource("Cannot add operations to non-building transaction".to_string()));
+            return Err(CoreError::invalid_resource(
+                "Cannot add operations to non-building transaction".to_string(),
+            ));
         }
 
         let operation_id = Uuid::new_v4();
@@ -128,12 +134,28 @@ impl Transaction {
         Ok(operation_id)
     }
 
-    pub fn create_resource(&mut self, resource_type: ResourceType, resource: ResourceEnvelope) -> Result<Uuid> {
-        self.add_operation(TransactionOperation::Create { resource_type, resource })
+    pub fn create_resource(
+        &mut self,
+        resource_type: ResourceType,
+        resource: ResourceEnvelope,
+    ) -> Result<Uuid> {
+        self.add_operation(TransactionOperation::Create {
+            resource_type,
+            resource,
+        })
     }
 
-    pub fn update_resource(&mut self, resource_type: ResourceType, id: String, resource: ResourceEnvelope) -> Result<Uuid> {
-        self.add_operation(TransactionOperation::Update { resource_type, id, resource })
+    pub fn update_resource(
+        &mut self,
+        resource_type: ResourceType,
+        id: String,
+        resource: ResourceEnvelope,
+    ) -> Result<Uuid> {
+        self.add_operation(TransactionOperation::Update {
+            resource_type,
+            id,
+            resource,
+        })
     }
 
     pub fn delete_resource(&mut self, resource_type: ResourceType, id: String) -> Result<Uuid> {
@@ -149,11 +171,17 @@ impl Transaction {
     }
 
     pub fn write_operation_count(&self) -> usize {
-        self.operations.iter().filter(|(_, op)| op.is_write_operation()).count()
+        self.operations
+            .iter()
+            .filter(|(_, op)| op.is_write_operation())
+            .count()
     }
 
     pub fn read_operation_count(&self) -> usize {
-        self.operations.iter().filter(|(_, op)| op.is_read_only()).count()
+        self.operations
+            .iter()
+            .filter(|(_, op)| op.is_read_only())
+            .count()
     }
 
     pub fn can_execute(&self) -> bool {
@@ -165,11 +193,17 @@ impl Transaction {
     }
 
     pub fn can_rollback(&self) -> bool {
-        matches!(self.state, TransactionState::Executing | TransactionState::Failed)
+        matches!(
+            self.state,
+            TransactionState::Executing | TransactionState::Failed
+        )
     }
 
     pub fn is_completed(&self) -> bool {
-        matches!(self.state, TransactionState::Committed | TransactionState::RolledBack)
+        matches!(
+            self.state,
+            TransactionState::Committed | TransactionState::RolledBack
+        )
     }
 
     pub fn mark_executing(&mut self) {
@@ -187,7 +221,10 @@ impl Transaction {
     }
 
     pub fn mark_rolled_back(&mut self) {
-        if matches!(self.state, TransactionState::Executing | TransactionState::Failed) {
+        if matches!(
+            self.state,
+            TransactionState::Executing | TransactionState::Failed
+        ) {
             self.state = TransactionState::RolledBack;
             self.completed_at = Some(octofhir_core::time::now_utc());
         }
@@ -224,7 +261,10 @@ impl Transaction {
     }
 
     pub fn get_failed_operations(&self) -> Vec<&TransactionOperationResult> {
-        self.results.iter().filter(|result| !result.success).collect()
+        self.results
+            .iter()
+            .filter(|result| !result.success)
+            .collect()
     }
 
     pub fn duration_ms(&self) -> Option<u64> {
@@ -290,7 +330,7 @@ impl TransactionStats {
 
     fn recalculate_averages(&mut self) {
         if self.total_transactions > 0 {
-            self.average_operations_per_transaction = 
+            self.average_operations_per_transaction =
                 self.total_operations as f64 / self.total_transactions as f64;
         }
     }
@@ -306,7 +346,8 @@ impl TransactionStats {
         if self.total_transactions == 0 {
             return 0.0;
         }
-        (self.rolled_back_transactions + self.failed_transactions) as f64 / self.total_transactions as f64
+        (self.rolled_back_transactions + self.failed_transactions) as f64
+            / self.total_transactions as f64
     }
 }
 
@@ -323,13 +364,13 @@ pub trait TransactionManager {
     async fn commit_transaction(&mut self, transaction: &mut Transaction) -> Result<()>;
     async fn rollback_transaction(&mut self, transaction: &mut Transaction) -> Result<()>;
     async fn abort_transaction(&mut self, transaction: &mut Transaction) -> Result<()>;
-    fn get_transaction_stats(&self) -> &TransactionStats;
+    fn get_transaction_stats(&self) -> TransactionStats;
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use octofhir_core::{ResourceType, ResourceEnvelope, ResourceStatus};
+    use octofhir_core::{ResourceEnvelope, ResourceStatus, ResourceType};
 
     fn create_test_resource(id: &str) -> ResourceEnvelope {
         ResourceEnvelope::new(id.to_string(), ResourceType::Patient)
@@ -353,10 +394,22 @@ mod tests {
         let mut tx = Transaction::new();
         let resource = create_test_resource("patient-123");
 
-        let create_id = tx.create_resource(ResourceType::Patient, resource.clone()).unwrap();
-        let update_id = tx.update_resource(ResourceType::Patient, "patient-456".to_string(), resource.clone()).unwrap();
-        let delete_id = tx.delete_resource(ResourceType::Patient, "patient-789".to_string()).unwrap();
-        let read_id = tx.read_resource(ResourceType::Patient, "patient-abc".to_string()).unwrap();
+        let create_id = tx
+            .create_resource(ResourceType::Patient, resource.clone())
+            .unwrap();
+        let update_id = tx
+            .update_resource(
+                ResourceType::Patient,
+                "patient-456".to_string(),
+                resource.clone(),
+            )
+            .unwrap();
+        let delete_id = tx
+            .delete_resource(ResourceType::Patient, "patient-789".to_string())
+            .unwrap();
+        let read_id = tx
+            .read_resource(ResourceType::Patient, "patient-abc".to_string())
+            .unwrap();
 
         assert_eq!(tx.operation_count(), 4);
         assert_eq!(tx.write_operation_count(), 3);
@@ -444,7 +497,8 @@ mod tests {
         assert!(!tx.is_completed());
 
         // Add an operation to allow execution
-        tx.create_resource(ResourceType::Patient, create_test_resource("test-123")).unwrap();
+        tx.create_resource(ResourceType::Patient, create_test_resource("test-123"))
+            .unwrap();
         assert!(tx.can_execute()); // Now transaction can execute
 
         tx.mark_executing();
@@ -467,7 +521,8 @@ mod tests {
     #[test]
     fn test_transaction_rollback_state() {
         let mut tx = Transaction::new();
-        tx.create_resource(ResourceType::Patient, create_test_resource("test-123")).unwrap();
+        tx.create_resource(ResourceType::Patient, create_test_resource("test-123"))
+            .unwrap();
         tx.mark_executing();
 
         tx.mark_rolled_back();
@@ -482,7 +537,8 @@ mod tests {
     #[test]
     fn test_transaction_failed_state() {
         let mut tx = Transaction::new();
-        tx.create_resource(ResourceType::Patient, create_test_resource("test-123")).unwrap();
+        tx.create_resource(ResourceType::Patient, create_test_resource("test-123"))
+            .unwrap();
         tx.mark_executing();
 
         tx.mark_failed();
@@ -494,7 +550,8 @@ mod tests {
     #[test]
     fn test_transaction_cannot_add_operations_after_building() {
         let mut tx = Transaction::new();
-        tx.create_resource(ResourceType::Patient, create_test_resource("test-123")).unwrap();
+        tx.create_resource(ResourceType::Patient, create_test_resource("test-123"))
+            .unwrap();
         tx.mark_executing();
 
         let result = tx.create_resource(ResourceType::Patient, create_test_resource("test-456"));
@@ -515,11 +572,8 @@ mod tests {
             operation.clone(),
             Some(create_test_resource("test-123")),
         );
-        let failure_result = TransactionOperationResult::failure(
-            op_id,
-            operation,
-            "Resource not found".to_string(),
-        );
+        let failure_result =
+            TransactionOperationResult::failure(op_id, operation, "Resource not found".to_string());
 
         tx.add_result(success_result);
         tx.add_result(failure_result);
@@ -538,7 +592,7 @@ mod tests {
         let key = "Patient/test-123".to_string();
 
         tx.add_rollback_snapshot(key.clone(), Some(resource.clone()));
-        
+
         let snapshot = tx.get_rollback_snapshot(&key);
         assert!(snapshot.is_some());
         assert_eq!(snapshot.unwrap().as_ref().unwrap().id, "test-123");
@@ -554,8 +608,9 @@ mod tests {
     #[test]
     fn test_transaction_duration() {
         let mut tx = Transaction::new();
-        tx.create_resource(ResourceType::Patient, create_test_resource("test-123")).unwrap();
-        
+        tx.create_resource(ResourceType::Patient, create_test_resource("test-123"))
+            .unwrap();
+
         assert!(tx.duration_ms().is_none());
 
         tx.mark_executing();
@@ -563,7 +618,7 @@ mod tests {
 
         std::thread::sleep(std::time::Duration::from_millis(10));
         tx.mark_committed();
-        
+
         let duration = tx.duration_ms();
         assert!(duration.is_some());
         assert!(duration.unwrap() >= 10);
@@ -572,14 +627,16 @@ mod tests {
     #[test]
     fn test_transaction_clear_operations() {
         let mut tx = Transaction::new();
-        tx.create_resource(ResourceType::Patient, create_test_resource("test-123")).unwrap();
+        tx.create_resource(ResourceType::Patient, create_test_resource("test-123"))
+            .unwrap();
         assert_eq!(tx.operation_count(), 1);
 
         tx.clear_operations();
         assert_eq!(tx.operation_count(), 0);
 
         // Should not clear after state change
-        tx.create_resource(ResourceType::Patient, create_test_resource("test-456")).unwrap();
+        tx.create_resource(ResourceType::Patient, create_test_resource("test-456"))
+            .unwrap();
         tx.mark_executing();
         tx.clear_operations();
         assert_eq!(tx.operation_count(), 1);
@@ -594,20 +651,14 @@ mod tests {
         };
         let resource = create_test_resource("test-123");
 
-        let success_result = TransactionOperationResult::success(
-            op_id,
-            operation.clone(),
-            Some(resource),
-        );
+        let success_result =
+            TransactionOperationResult::success(op_id, operation.clone(), Some(resource));
         assert!(success_result.success);
         assert!(success_result.result.is_some());
         assert!(success_result.error.is_none());
 
-        let failure_result = TransactionOperationResult::failure(
-            op_id,
-            operation,
-            "Error message".to_string(),
-        );
+        let failure_result =
+            TransactionOperationResult::failure(op_id, operation, "Error message".to_string());
         assert!(!failure_result.success);
         assert!(failure_result.result.is_none());
         assert_eq!(failure_result.error.as_ref().unwrap(), "Error message");
@@ -621,13 +672,19 @@ mod tests {
         assert_eq!(stats.failure_rate(), 0.0);
 
         let mut committed_tx = Transaction::new();
-        committed_tx.create_resource(ResourceType::Patient, create_test_resource("test-1")).unwrap();
-        committed_tx.create_resource(ResourceType::Patient, create_test_resource("test-2")).unwrap();
+        committed_tx
+            .create_resource(ResourceType::Patient, create_test_resource("test-1"))
+            .unwrap();
+        committed_tx
+            .create_resource(ResourceType::Patient, create_test_resource("test-2"))
+            .unwrap();
         committed_tx.mark_executing();
         committed_tx.mark_committed();
 
         let mut rolled_back_tx = Transaction::new();
-        rolled_back_tx.create_resource(ResourceType::Patient, create_test_resource("test-3")).unwrap();
+        rolled_back_tx
+            .create_resource(ResourceType::Patient, create_test_resource("test-3"))
+            .unwrap();
         rolled_back_tx.mark_executing();
         rolled_back_tx.mark_rolled_back();
 
@@ -661,20 +718,23 @@ mod tests {
     fn test_transaction_cannot_execute_empty() {
         let tx = Transaction::new();
         assert!(!tx.can_execute()); // No operations
-        
+
         let mut tx_with_ops = Transaction::new();
-        tx_with_ops.create_resource(ResourceType::Patient, create_test_resource("test-123")).unwrap();
+        tx_with_ops
+            .create_resource(ResourceType::Patient, create_test_resource("test-123"))
+            .unwrap();
         assert!(tx_with_ops.can_execute()); // Has operations
     }
 
     #[test]
     fn test_transaction_serialization() {
         let mut tx = Transaction::new();
-        tx.create_resource(ResourceType::Patient, create_test_resource("test-123")).unwrap();
-        
+        tx.create_resource(ResourceType::Patient, create_test_resource("test-123"))
+            .unwrap();
+
         let json = serde_json::to_string(&tx).unwrap();
         let deserialized: Transaction = serde_json::from_str(&json).unwrap();
-        
+
         assert_eq!(tx.id, deserialized.id);
         assert_eq!(tx.state, deserialized.state);
         assert_eq!(tx.operations.len(), deserialized.operations.len());
@@ -685,8 +745,11 @@ mod tests {
         let stats = TransactionStats::new();
         let json = serde_json::to_string(&stats).unwrap();
         let deserialized: TransactionStats = serde_json::from_str(&json).unwrap();
-        
+
         assert_eq!(stats.total_transactions, deserialized.total_transactions);
-        assert_eq!(stats.committed_transactions, deserialized.committed_transactions);
+        assert_eq!(
+            stats.committed_transactions,
+            deserialized.committed_transactions
+        );
     }
 }

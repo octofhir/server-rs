@@ -1,0 +1,9 @@
+/* Use dedicated dark logo; no color filter to preserve contrast */
+:root[data-theme='dark'] .sl-logo img {
+  filter: none !important;
+}
+
+/* Ensure icons display crisp */
+link[rel~="icon"] {
+  image-rendering: -webkit-optimize-contrast;
+}

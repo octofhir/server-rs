@@ -1,12 +1,12 @@
+use axum::response::IntoResponse;
 use axum::{
+    Json,
     body::Body,
     http::{HeaderName, HeaderValue, Request, StatusCode},
     middleware::Next,
     response::Response,
-    Json,
 };
-use axum::response::IntoResponse;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use uuid::Uuid;
 
 // Middleware that ensures each request has an X-Request-Id and mirrors it on the response
@@ -35,13 +35,20 @@ pub async fn request_id(mut req: Request<Body>, next: Next) -> Response {
 // and require one of them for POST/PUT Content-Type.
 pub async fn content_negotiation(req: Request<Body>, next: Next) -> Response {
     let accepts_hdr = req.headers().get("accept").and_then(|v| v.to_str().ok());
-    let accept_ok = accepts_hdr.map(|v| {
-        let v = v.to_ascii_lowercase();
-        v.contains("application/fhir+json") || v.contains("application/json") || v.contains("*/*")
-    }).unwrap_or(true); // if missing, treat as ok per HTTP defaults
+    let accept_ok = accepts_hdr
+        .map(|v| {
+            let v = v.to_ascii_lowercase();
+            v.contains("application/fhir+json")
+                || v.contains("application/json")
+                || v.contains("*/*")
+        })
+        .unwrap_or(true); // if missing, treat as ok per HTTP defaults
 
     if !accept_ok {
-        return error_response(StatusCode::UNSUPPORTED_MEDIA_TYPE, "Only JSON is supported (application/fhir+json or application/json) in Accept");
+        return error_response(
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            "Only JSON is supported (application/fhir+json or application/json) in Accept",
+        );
     }
 
     let method = req.method().clone();
@@ -53,11 +60,15 @@ pub async fn content_negotiation(req: Request<Body>, next: Next) -> Response {
             .get("content-type")
             .and_then(|v| v.to_str().ok())
             .map(|s| s.to_ascii_lowercase());
-        let content_ok = content_type.as_deref().map(|s| {
-            s.starts_with("application/fhir+json") || s.starts_with("application/json")
-        }).unwrap_or(false);
+        let content_ok = content_type
+            .as_deref()
+            .map(|s| s.starts_with("application/fhir+json") || s.starts_with("application/json"))
+            .unwrap_or(false);
         if !content_ok {
-            return error_response(StatusCode::UNSUPPORTED_MEDIA_TYPE, "Content-Type must be application/fhir+json or application/json");
+            return error_response(
+                StatusCode::UNSUPPORTED_MEDIA_TYPE,
+                "Content-Type must be application/fhir+json or application/json",
+            );
         }
     }
 

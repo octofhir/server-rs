@@ -1,26 +1,25 @@
 use serde::{Deserialize, Serialize};
 use std::{net::SocketAddr, time::Duration};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AppConfig {
-    #[serde(default)] pub server: ServerConfig,
-    #[serde(default)] pub storage: StorageConfig,
-    #[serde(default)] pub search: SearchSettings,
-    #[serde(default)] pub logging: LoggingConfig,
-    #[serde(default)] pub otel: OtelConfig,
+    #[serde(default)]
+    pub fhir: FhirSettings,
+    #[serde(default)]
+    pub server: ServerConfig,
+    #[serde(default)]
+    pub storage: StorageConfig,
+    #[serde(default)]
+    pub search: SearchSettings,
+    #[serde(default)]
+    pub logging: LoggingConfig,
+    #[serde(default)]
+    pub otel: OtelConfig,
+    #[serde(default)]
+    pub packages: PackagesConfig,
 }
 
-impl Default for AppConfig {
-    fn default() -> Self {
-        Self {
-            server: ServerConfig::default(),
-            storage: StorageConfig::default(),
-            search: SearchSettings::default(),
-            logging: LoggingConfig::default(),
-            otel: OtelConfig::default(),
-        }
-    }
-}
+// Default derived via field defaults
 
 impl AppConfig {
     pub fn validate(&self) -> Result<(), String> {
@@ -45,11 +44,17 @@ impl AppConfig {
         let lvl = self.logging.level.to_ascii_lowercase();
         let valid_levels = ["trace", "debug", "info", "warn", "error", "off"];
         if !valid_levels.contains(&lvl.as_str()) {
-            return Err(format!("logging.level must be one of {:?}", valid_levels));
+            return Err(format!("logging.level must be one of {valid_levels:?}"));
         }
         // OTEL validation
         if self.otel.enabled && self.otel.endpoint.as_deref().unwrap_or("").is_empty() {
             return Err("otel.enabled=true requires otel.endpoint".into());
+        }
+        // FHIR version validation
+        let v = self.fhir.version.to_ascii_uppercase();
+        let allowed = ["R4", "R4B", "R5", "R6", "4.0.1", "4.3.0", "5.0.0", "6.0.0"];
+        if !allowed.contains(&v.as_str()) {
+            return Err("fhir.version must be one of R4, R4B, R5, R6".into());
         }
         Ok(())
     }
@@ -64,24 +69,43 @@ impl AppConfig {
         SocketAddr::from((host, self.server.port))
     }
 
-    pub fn read_timeout(&self) -> Duration { Duration::from_millis(self.server.read_timeout_ms as u64) }
-    pub fn write_timeout(&self) -> Duration { Duration::from_millis(self.server.write_timeout_ms as u64) }
+    pub fn read_timeout(&self) -> Duration {
+        Duration::from_millis(self.server.read_timeout_ms as u64)
+    }
+    pub fn write_timeout(&self) -> Duration {
+        Duration::from_millis(self.server.write_timeout_ms as u64)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ServerConfig {
-    #[serde(default = "default_host")] pub host: String,
-    #[serde(default = "default_port")] pub port: u16,
-    #[serde(default = "default_read_timeout_ms")] pub read_timeout_ms: u32,
-    #[serde(default = "default_write_timeout_ms")] pub write_timeout_ms: u32,
-    #[serde(default = "default_body_limit")] pub body_limit_bytes: usize,
+    #[serde(default = "default_host")]
+    pub host: String,
+    #[serde(default = "default_port")]
+    pub port: u16,
+    #[serde(default = "default_read_timeout_ms")]
+    pub read_timeout_ms: u32,
+    #[serde(default = "default_write_timeout_ms")]
+    pub write_timeout_ms: u32,
+    #[serde(default = "default_body_limit")]
+    pub body_limit_bytes: usize,
 }
 
-fn default_host() -> String { "0.0.0.0".into() }
-fn default_port() -> u16 { 8080 }
-fn default_read_timeout_ms() -> u32 { 15_000 }
-fn default_write_timeout_ms() -> u32 { 15_000 }
-fn default_body_limit() -> usize { 1024 * 1024 }
+fn default_host() -> String {
+    "0.0.0.0".into()
+}
+fn default_port() -> u16 {
+    8080
+}
+fn default_read_timeout_ms() -> u32 {
+    15_000
+}
+fn default_write_timeout_ms() -> u32 {
+    15_000
+}
+fn default_body_limit() -> usize {
+    1024 * 1024
+}
 
 impl Default for ServerConfig {
     fn default() -> Self {
@@ -97,51 +121,125 @@ impl Default for ServerConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StorageConfig {
-    #[serde(default)] pub backend: StorageBackend,
-    #[serde(default)] pub memory_limit_bytes: Option<usize>,
-    #[serde(default)] pub preallocate_items: Option<usize>,
+    #[serde(default)]
+    pub backend: StorageBackend,
+    #[serde(default)]
+    pub memory_limit_bytes: Option<usize>,
+    #[serde(default)]
+    pub preallocate_items: Option<usize>,
 }
 
 impl Default for StorageConfig {
-    fn default() -> Self { Self { backend: StorageBackend::InMemoryPapaya, memory_limit_bytes: None, preallocate_items: None } }
+    fn default() -> Self {
+        Self {
+            backend: StorageBackend::InMemoryPapaya,
+            memory_limit_bytes: None,
+            preallocate_items: None,
+        }
+    }
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default)]
 #[serde(rename_all = "kebab-case")]
-pub enum StorageBackend { InMemoryPapaya }
-
-impl Default for StorageBackend { fn default() -> Self { StorageBackend::InMemoryPapaya } }
+pub enum StorageBackend { #[default] InMemoryPapaya }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchSettings {
-    #[serde(default = "default_search_default")] pub default_count: usize,
-    #[serde(default = "default_search_max")] pub max_count: usize,
+    #[serde(default = "default_search_default")]
+    pub default_count: usize,
+    #[serde(default = "default_search_max")]
+    pub max_count: usize,
 }
-fn default_search_default() -> usize { 10 }
-fn default_search_max() -> usize { 100 }
+fn default_search_default() -> usize {
+    10
+}
+fn default_search_max() -> usize {
+    100
+}
 impl Default for SearchSettings {
-    fn default() -> Self { Self { default_count: default_search_default(), max_count: default_search_max() } }
+    fn default() -> Self {
+        Self {
+            default_count: default_search_default(),
+            max_count: default_search_max(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LoggingConfig {
-    #[serde(default = "default_log_level")] pub level: String,
+    #[serde(default = "default_log_level")]
+    pub level: String,
 }
-fn default_log_level() -> String { "info".into() }
+fn default_log_level() -> String {
+    "info".into()
+}
 impl Default for LoggingConfig {
-    fn default() -> Self { Self { level: default_log_level() } }
+    fn default() -> Self {
+        Self {
+            level: default_log_level(),
+        }
+    }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct OtelConfig {
-    #[serde(default)] pub enabled: bool,
-    #[serde(default)] pub endpoint: Option<String>,
-    #[serde(default)] pub sample_ratio: Option<f64>,
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub endpoint: Option<String>,
+    #[serde(default)]
+    pub sample_ratio: Option<f64>,
     /// Optional deployment environment label, e.g., "dev", "staging", "prod"
-    #[serde(default)] pub environment: Option<String>,
+    #[serde(default)]
+    pub environment: Option<String>,
 }
-impl Default for OtelConfig {
-    fn default() -> Self { Self { enabled: false, endpoint: None, sample_ratio: None, environment: None } }
+// Default derived
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FhirSettings {
+    #[serde(default = "default_fhir_version")]
+    pub version: String,
+}
+fn default_fhir_version() -> String {
+    "R4".into()
+}
+impl Default for FhirSettings {
+    fn default() -> Self {
+        Self {
+            version: default_fhir_version(),
+        }
+    }
+}
+
+/// Canonical package configuration
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct PackagesConfig {
+    /// List of package specs to load. Shorthand examples:
+    /// - "hl7.fhir.r4b.core#4.3.0"
+    /// - "hl7.terminology#5.5.0"
+    ///   Optionally supports absolute/relative paths via table form in TOML.
+    ///   When specified as tables, fields: { id = "...", version = "...", path = "..." }
+    #[serde(default)]
+    pub load: Vec<PackageSpec>,
+    /// Optional directory where loaded packages will be stored.
+    /// If unset, canonical manager defaults are used (~/.fcm/packages).
+    #[serde(default)]
+    pub path: Option<String>,
+}
+
+// Default derived
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum PackageSpec {
+    /// Shorthand: "package_id#version" or just "package_id"
+    Simple(String),
+    /// Expanded form for clarity or filesystem path loading
+    Table {
+        id: Option<String>,
+        version: Option<String>,
+        path: Option<String>,
+    },
 }
 
 pub mod loader {
@@ -183,20 +281,30 @@ pub mod loader {
         Ok(merged)
     }
 
-    pub fn load_config_with_default_path<P: AsRef<Path>>(path: Option<P>) -> Result<AppConfig, String> {
-        let p = path.as_ref().map(|p| p.as_ref().to_string_lossy().to_string());
+    pub fn load_config_with_default_path<P: AsRef<Path>>(
+        path: Option<P>,
+    ) -> Result<AppConfig, String> {
+        let p = path
+            .as_ref()
+            .map(|p| p.as_ref().to_string_lossy().to_string());
         load_config(p.as_deref())
     }
 }
 
 pub mod shared {
     use super::AppConfig;
-    use std::sync::{Arc, RwLock, OnceLock};
+    use std::sync::{Arc, OnceLock, RwLock};
 
     static SHARED: OnceLock<Arc<RwLock<AppConfig>>> = OnceLock::new();
 
     pub fn set_shared(cfg: Arc<RwLock<AppConfig>>) {
-        let _ = SHARED.set(cfg);
+        if let Some(existing) = SHARED.get() {
+            if let (Ok(mut dst), Ok(src)) = (existing.write(), cfg.read()) {
+                *dst = src.clone();
+            }
+        } else {
+            let _ = SHARED.set(cfg);
+        }
     }
 
     pub fn get() -> Option<&'static Arc<RwLock<AppConfig>>> {
@@ -204,6 +312,6 @@ pub mod shared {
     }
 
     pub fn with_config<R>(f: impl FnOnce(&AppConfig) -> R) -> Option<R> {
-        get().and_then(|arc| arc.read().ok().map(|g| f(&*g)))
+        get().and_then(|arc| arc.read().ok().map(|g| f(&g)))
     }
 }

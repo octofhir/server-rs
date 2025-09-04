@@ -29,13 +29,20 @@ just test
 
 ## Configuration
 
-See `config/server.toml` for configuration options.
+See `octofhir.toml` for configuration options. Override the path via `OCTOFHIR_CONFIG`. Print an example with `just example-config`.
 
 ## Documentation
 
-- [Implementation Plan](./IMPLEMENTATION_PLAN.md)
-- [Microtasks Breakdown](./MICROTASKS.md)
+- Live docs (GitHub Pages): https://octofhir.github.io/server-rs/
+- Local docs (Astro + Starlight via pnpm):
+  - `just docs-dev` to run dev server in `docs/`
+  - `just docs-build` to build static site to `docs/dist`
+  - Requires `pnpm` (install from https://pnpm.io/installation)
+  
+- Additional:
+  - [Implementation Plan](./IMPLEMENTATION_PLAN.md)
+  - [Remaining Tasks](./remaining_tasks.md)
 
 ## Development
 
-This project uses a microtask-based development approach. See `MICROTASKS.md` for detailed task breakdown and progress tracking.
+This project uses a microtask-based development approach. See `tasks/` for detailed task breakdown and progress tracking.

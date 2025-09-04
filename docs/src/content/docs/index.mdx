@@ -1,0 +1,18 @@
+---
+title: Overview
+head: []
+---
+
+Welcome to the OctoFHIR Server (Rust) documentation.
+
+Motivation:
+
+- Build a practical, minimal FHIR server for development and integration testing.
+- Grow a small ecosystem of Rust libraries (core/search/db/api) usable independently.
+- Keep things async-first, Rust-first, and easy to extend.
+
+What you get in the MVP:
+
+- In-memory storage with CRUD and basic search for key resources (e.g., Patient, Observation).
+- JSON-only (`application/fhir+json` and `application/json`), CapabilityStatement at `/metadata`.
+- Config via `octofhir.toml` and env overrides; observability hooks; hot reload.

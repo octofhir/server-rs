@@ -1,0 +1,33 @@
+---
+title: API Reference
+head: []
+---
+
+Base URL: `http://localhost:8080`
+
+Formats:
+
+- Accepts: `application/fhir+json`, `application/json`
+- Produces: `application/fhir+json`
+
+Resources (MVP):
+
+- Patient, Observation
+
+Endpoints:
+
+- `GET /metadata` → CapabilityStatement
+- `POST /{resourceType}` → Create resource
+- `GET /{resourceType}/{id}` → Read resource
+- `PUT /{resourceType}/{id}` → Update resource
+- `DELETE /{resourceType}/{id}` → Delete resource
+- `GET /{resourceType}?…` → Search (returns Bundle of type `searchset`)
+
+Search parameters (subset supported):
+
+- Common: `_id` (token), `_lastUpdated` (date)
+- Patient: `name`, `family`, `given` (string), `identifier` (token)
+
+Errors:
+
+- Returns OperationOutcome with appropriate HTTP status (4xx/5xx)

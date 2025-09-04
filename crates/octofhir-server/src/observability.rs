@@ -1,18 +1,21 @@
 // Tracing and OpenTelemetry initialization (with reloadable log level)
-use std::sync::OnceLock;
-use tracing_subscriber::{fmt, EnvFilter, prelude::*, reload};
 use crate::config::OtelConfig;
+use std::sync::OnceLock;
+use tracing_subscriber::{EnvFilter, fmt, prelude::*, reload};
 
 use opentelemetry::KeyValue;
-use opentelemetry_sdk::{trace as sdktrace, Resource};
 use opentelemetry_otlp::{SpanExporter, WithExportConfig};
+use opentelemetry_sdk::{Resource, trace as sdktrace};
 use tracing_opentelemetry::OpenTelemetryLayer;
 
-static LOG_RELOAD_HANDLE: OnceLock<reload::Handle<EnvFilter, tracing_subscriber::Registry>> = OnceLock::new();
+static LOG_RELOAD_HANDLE: OnceLock<reload::Handle<EnvFilter, tracing_subscriber::Registry>> =
+    OnceLock::new();
 static OTEL_INSTALLED: OnceLock<()> = OnceLock::new();
 static OTEL_PROVIDER: OnceLock<sdktrace::SdkTracerProvider> = OnceLock::new();
 
-pub fn init_tracing() { init_tracing_with_level("info"); }
+pub fn init_tracing() {
+    init_tracing_with_level("info");
+}
 
 pub fn init_tracing_with_level(level: &str) {
     // Prefer RUST_LOG from env, otherwise use provided level string.
@@ -102,9 +105,7 @@ pub fn apply_otel_config(otel: &OtelConfig) {
     if OTEL_INSTALLED.set(()).is_ok() {
         // First-time installation: attach OTEL layer to subscriber
         let layer = OpenTelemetryLayer::new(tracer.clone());
-        let _ = tracing_subscriber::registry()
-            .with(layer)
-            .try_init();
+        let _ = tracing_subscriber::registry().with(layer).try_init();
     } else {
         // If already installed, we just replace the global provider below
     }
@@ -127,5 +128,5 @@ fn build_instance_id() -> String {
         .and_then(|s| s.into_string().ok())
         .unwrap_or_else(|| "unknown-host".to_string());
     let pid = std::process::id();
-    format!("{}-{}", host, pid)
+    format!("{host}-{pid}")
 }

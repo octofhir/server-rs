@@ -1,20 +1,15 @@
 use crate::{FhirDateTime, ResourceType};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use serde_json::Value;
+use std::collections::HashMap;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum ResourceStatus {
+    #[default]
     Active,
     Inactive,
     Draft,
     Unknown,
-}
-
-impl Default for ResourceStatus {
-    fn default() -> Self {
-        ResourceStatus::Active
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -189,10 +184,10 @@ mod tests {
     fn test_resource_meta_update_timestamp() {
         let mut meta = ResourceMeta::new();
         let original_timestamp = meta.last_updated.clone();
-        
+
         std::thread::sleep(std::time::Duration::from_millis(1));
         meta.update_timestamp();
-        
+
         assert!(meta.last_updated > original_timestamp);
     }
 
@@ -200,10 +195,10 @@ mod tests {
     fn test_resource_meta_serialization() {
         let meta = ResourceMeta::new().with_version_id("v1".to_string());
         let json = serde_json::to_value(&meta).unwrap();
-        
+
         assert!(json["lastUpdated"].is_string());
         assert_eq!(json["versionId"], "v1");
-        
+
         assert!(json.get("profile").is_none() || json["profile"].as_array().unwrap().is_empty());
     }
 
@@ -213,7 +208,7 @@ mod tests {
             "lastUpdated": "2023-05-15T14:30:00Z",
             "versionId": "v1"
         });
-        
+
         let meta: ResourceMeta = serde_json::from_value(json).unwrap();
         assert_eq!(meta.version_id, Some("v1".to_string()));
     }
@@ -221,7 +216,7 @@ mod tests {
     #[test]
     fn test_resource_envelope_new() {
         let envelope = ResourceEnvelope::new("patient-123".to_string(), ResourceType::Patient);
-        
+
         assert_eq!(envelope.id, "patient-123");
         assert_eq!(envelope.resource_type, ResourceType::Patient);
         assert_eq!(envelope.status, ResourceStatus::Active);
@@ -232,7 +227,7 @@ mod tests {
     fn test_resource_envelope_with_status() {
         let envelope = ResourceEnvelope::new("patient-123".to_string(), ResourceType::Patient)
             .with_status(ResourceStatus::Draft);
-        
+
         assert_eq!(envelope.status, ResourceStatus::Draft);
     }
 
@@ -241,7 +236,7 @@ mod tests {
         let meta = ResourceMeta::new().with_version_id("v2".to_string());
         let envelope = ResourceEnvelope::new("patient-123".to_string(), ResourceType::Patient)
             .with_meta(meta.clone());
-        
+
         assert_eq!(envelope.meta, meta);
     }
 
@@ -249,23 +244,23 @@ mod tests {
     fn test_resource_envelope_with_data() {
         let mut data = HashMap::new();
         data.insert("name".to_string(), json!("John Doe"));
-        
+
         let envelope = ResourceEnvelope::new("patient-123".to_string(), ResourceType::Patient)
             .with_data(data.clone());
-        
+
         assert_eq!(envelope.data, data);
     }
 
     #[test]
     fn test_resource_envelope_field_operations() {
         let mut envelope = ResourceEnvelope::new("patient-123".to_string(), ResourceType::Patient);
-        
+
         envelope.add_field("name".to_string(), json!("John Doe"));
         assert_eq!(envelope.get_field("name"), Some(&json!("John Doe")));
-        
+
         envelope.add_field("age".to_string(), json!(30));
         assert_eq!(envelope.get_field("age"), Some(&json!(30)));
-        
+
         let removed = envelope.remove_field("name");
         assert_eq!(removed, Some(json!("John Doe")));
         assert!(envelope.get_field("name").is_none());
@@ -275,20 +270,22 @@ mod tests {
     fn test_resource_envelope_update_meta() {
         let mut envelope = ResourceEnvelope::new("patient-123".to_string(), ResourceType::Patient);
         let original_timestamp = envelope.meta.last_updated.clone();
-        
+
         std::thread::sleep(std::time::Duration::from_millis(1));
         envelope.update_meta();
-        
+
         assert!(envelope.meta.last_updated > original_timestamp);
     }
 
     #[test]
     fn test_resource_envelope_is_active() {
-        let active_envelope = ResourceEnvelope::new("patient-123".to_string(), ResourceType::Patient);
+        let active_envelope =
+            ResourceEnvelope::new("patient-123".to_string(), ResourceType::Patient);
         assert!(active_envelope.is_active());
-        
-        let inactive_envelope = ResourceEnvelope::new("patient-456".to_string(), ResourceType::Patient)
-            .with_status(ResourceStatus::Inactive);
+
+        let inactive_envelope =
+            ResourceEnvelope::new("patient-456".to_string(), ResourceType::Patient)
+                .with_status(ResourceStatus::Inactive);
         assert!(!inactive_envelope.is_active());
     }
 
@@ -297,9 +294,9 @@ mod tests {
         let mut envelope = ResourceEnvelope::new("patient-123".to_string(), ResourceType::Patient);
         envelope.add_field("name".to_string(), json!("John Doe"));
         envelope.add_field("birthDate".to_string(), json!("1990-01-01"));
-        
+
         let json = serde_json::to_value(&envelope).unwrap();
-        
+
         assert_eq!(json["id"], "patient-123");
         assert_eq!(json["resourceType"], "Patient");
         assert_eq!(json["status"], "Active");
@@ -321,9 +318,9 @@ mod tests {
             "name": "Jane Doe",
             "gender": "female"
         });
-        
+
         let envelope: ResourceEnvelope = serde_json::from_value(json).unwrap();
-        
+
         assert_eq!(envelope.id, "patient-789");
         assert_eq!(envelope.resource_type, ResourceType::Patient);
         assert_eq!(envelope.status, ResourceStatus::Active);
@@ -336,10 +333,10 @@ mod tests {
     fn test_resource_envelope_roundtrip() {
         let original = ResourceEnvelope::new("test-123".to_string(), ResourceType::Organization)
             .with_status(ResourceStatus::Draft);
-        
+
         let json = serde_json::to_value(&original).unwrap();
         let deserialized: ResourceEnvelope = serde_json::from_value(json).unwrap();
-        
+
         assert_eq!(original.id, deserialized.id);
         assert_eq!(original.resource_type, deserialized.resource_type);
         assert_eq!(original.status, deserialized.status);
@@ -356,13 +353,13 @@ mod tests {
             tag: Vec::new(),
             source: None,
         };
-        
+
         let envelope1 = ResourceEnvelope::new("test-123".to_string(), ResourceType::Patient)
             .with_meta(meta.clone());
-        let envelope2 = ResourceEnvelope::new("test-123".to_string(), ResourceType::Patient)
-            .with_meta(meta);
+        let envelope2 =
+            ResourceEnvelope::new("test-123".to_string(), ResourceType::Patient).with_meta(meta);
         let envelope3 = ResourceEnvelope::new("test-456".to_string(), ResourceType::Patient);
-        
+
         assert_eq!(envelope1, envelope2);
         assert_ne!(envelope1, envelope3);
     }
@@ -370,8 +367,8 @@ mod tests {
     #[test]
     fn test_resource_envelope_debug() {
         let envelope = ResourceEnvelope::new("debug-test".to_string(), ResourceType::Observation);
-        let debug_str = format!("{:?}", envelope);
-        
+        let debug_str = format!("{envelope:?}");
+
         assert!(debug_str.contains("ResourceEnvelope"));
         assert!(debug_str.contains("debug-test"));
         assert!(debug_str.contains("Observation"));
@@ -381,7 +378,7 @@ mod tests {
     fn test_resource_envelope_empty_optional_fields() {
         let envelope = ResourceEnvelope::new("empty-test".to_string(), ResourceType::Patient);
         let json = serde_json::to_value(&envelope).unwrap();
-        
+
         assert!(json.get("profile").is_none() || json["profile"].as_array().unwrap().is_empty());
         assert!(json.get("security").is_none() || json["security"].as_array().unwrap().is_empty());
         assert!(json.get("tag").is_none() || json["tag"].as_array().unwrap().is_empty());
@@ -396,7 +393,7 @@ mod tests {
             ResourceStatus::Draft,
             ResourceStatus::Unknown,
         ];
-        
+
         for status in &statuses {
             let json = serde_json::to_string(status).unwrap();
             let deserialized: ResourceStatus = serde_json::from_str(&json).unwrap();
@@ -407,21 +404,27 @@ mod tests {
     #[test]
     fn test_resource_envelope_with_complex_data() {
         let mut envelope = ResourceEnvelope::new("complex-123".to_string(), ResourceType::Patient);
-        
-        envelope.add_field("name".to_string(), json!([{
-            "use": "official",
-            "given": ["John"],
-            "family": "Doe"
-        }]));
-        
-        envelope.add_field("address".to_string(), json!([{
-            "use": "home",
-            "line": ["123 Main St"],
-            "city": "Anytown",
-            "state": "CA",
-            "postalCode": "90210"
-        }]));
-        
+
+        envelope.add_field(
+            "name".to_string(),
+            json!([{
+                "use": "official",
+                "given": ["John"],
+                "family": "Doe"
+            }]),
+        );
+
+        envelope.add_field(
+            "address".to_string(),
+            json!([{
+                "use": "home",
+                "line": ["123 Main St"],
+                "city": "Anytown",
+                "state": "CA",
+                "postalCode": "90210"
+            }]),
+        );
+
         let name_array = envelope.get_field("name").unwrap().as_array().unwrap();
         assert_eq!(name_array.len(), 1);
         assert_eq!(name_array[0]["family"], "Doe");

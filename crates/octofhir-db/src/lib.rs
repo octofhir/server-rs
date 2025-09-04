@@ -1,12 +1,14 @@
+pub mod factory;
+pub mod query;
 pub mod storage;
 pub mod transaction;
-pub mod query;
-pub mod factory;
 
-pub use storage::{InMemoryStorage, StorageKey};
-pub use transaction::{
-    Transaction, TransactionOperation, TransactionOperationResult, 
-    TransactionState, TransactionStats, TransactionManager
+pub use factory::{
+    create_storage, DynStorage, Storage, StorageBackend, StorageConfig, StorageOptions,
 };
 pub use query::{QueryFilter, QueryResult, SearchQuery};
-pub use factory::{StorageBackend, StorageOptions, StorageConfig, Storage, DynStorage, create_storage};
+pub use storage::{InMemoryStorage, StorageKey};
+pub use transaction::{
+    Transaction, TransactionManager, TransactionOperation, TransactionOperationResult,
+    TransactionState, TransactionStats,
+};

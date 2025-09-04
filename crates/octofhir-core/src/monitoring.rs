@@ -1,4 +1,4 @@
-use crate::{ResourceType, FhirDateTime};
+use crate::{FhirDateTime, ResourceType};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::Duration;
@@ -167,18 +167,13 @@ impl Default for MemoryStats {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum HealthStatus {
     Healthy,
     Warning,
     Critical,
+    #[default]
     Unknown,
-}
-
-impl Default for HealthStatus {
-    fn default() -> Self {
-        HealthStatus::Unknown
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -282,18 +277,27 @@ impl SystemMetrics {
         }
     }
 
-    pub fn get_or_create_resource_stats(&mut self, resource_type: ResourceType) -> &mut ResourceStats {
+    pub fn get_or_create_resource_stats(
+        &mut self,
+        resource_type: ResourceType,
+    ) -> &mut ResourceStats {
         self.resource_stats
             .entry(resource_type.clone())
             .or_insert_with(|| ResourceStats::new(resource_type))
     }
 
     pub fn total_resources(&self) -> u64 {
-        self.resource_stats.values().map(|stats| stats.total_count).sum()
+        self.resource_stats
+            .values()
+            .map(|stats| stats.total_count)
+            .sum()
     }
 
     pub fn total_active_resources(&self) -> u64 {
-        self.resource_stats.values().map(|stats| stats.active_count).sum()
+        self.resource_stats
+            .values()
+            .map(|stats| stats.active_count)
+            .sum()
     }
 
     pub fn add_health_check(&mut self, name: impl Into<String>, check: HealthCheck) {
@@ -319,7 +323,10 @@ impl SystemMetrics {
             return HealthStatus::Critical;
         }
 
-        let has_warning = self.health_checks.values().any(|check| matches!(check.status, HealthStatus::Warning));
+        let has_warning = self
+            .health_checks
+            .values()
+            .any(|check| matches!(check.status, HealthStatus::Warning));
         if has_warning {
             return HealthStatus::Warning;
         }
@@ -397,7 +404,7 @@ mod tests {
     #[test]
     fn test_resource_stats_decrement_operations() {
         let mut stats = ResourceStats::new(ResourceType::Patient);
-        
+
         stats.increment_total();
         stats.increment_active();
         stats.increment_inactive();
@@ -423,7 +430,7 @@ mod tests {
     #[test]
     fn test_resource_stats_decrement_no_underflow() {
         let mut stats = ResourceStats::new(ResourceType::Patient);
-        
+
         stats.decrement_total();
         assert_eq!(stats.total_count, 0);
 
@@ -452,7 +459,7 @@ mod tests {
     fn test_memory_stats_update() {
         let mut stats = MemoryStats::new();
         stats.update(100, 1024);
-        
+
         assert_eq!(stats.resource_count, 100);
         assert_eq!(stats.estimated_bytes, 1024);
         assert_eq!(stats.average_resource_size, 10.24);
@@ -462,7 +469,7 @@ mod tests {
     fn test_memory_stats_add_resource() {
         let mut stats = MemoryStats::new();
         stats.add_resource(512);
-        
+
         assert_eq!(stats.resource_count, 1);
         assert_eq!(stats.estimated_bytes, 512);
         assert_eq!(stats.average_resource_size, 512.0);
@@ -478,7 +485,7 @@ mod tests {
         let mut stats = MemoryStats::new();
         stats.add_resource(512);
         stats.add_resource(256);
-        
+
         stats.remove_resource(256);
         assert_eq!(stats.resource_count, 1);
         assert_eq!(stats.estimated_bytes, 512);
@@ -494,7 +501,7 @@ mod tests {
     fn test_memory_stats_remove_resource_no_underflow() {
         let mut stats = MemoryStats::new();
         stats.remove_resource(100);
-        
+
         assert_eq!(stats.resource_count, 0);
         assert_eq!(stats.estimated_bytes, 0);
 
@@ -540,7 +547,7 @@ mod tests {
         let check = HealthCheck::healthy("OK")
             .with_detail("cpu_usage", json!(75.5))
             .with_detail("memory_usage", json!("512MB"));
-        
+
         assert_eq!(check.details.len(), 2);
         assert_eq!(check.details["cpu_usage"], json!(75.5));
         assert_eq!(check.details["memory_usage"], json!("512MB"));
@@ -569,28 +576,28 @@ mod tests {
     #[test]
     fn test_system_metrics_get_or_create_resource_stats() {
         let mut metrics = SystemMetrics::new();
-        
+
         let stats = metrics.get_or_create_resource_stats(ResourceType::Patient);
         assert_eq!(stats.resource_type, ResourceType::Patient);
-        
+
         let stats_again = metrics.get_or_create_resource_stats(ResourceType::Patient);
         assert_eq!(stats_again.resource_type, ResourceType::Patient);
-        
+
         assert_eq!(metrics.resource_stats.len(), 1);
     }
 
     #[test]
     fn test_system_metrics_totals() {
         let mut metrics = SystemMetrics::new();
-        
+
         let patient_stats = metrics.get_or_create_resource_stats(ResourceType::Patient);
         patient_stats.total_count = 10;
         patient_stats.active_count = 8;
-        
+
         let org_stats = metrics.get_or_create_resource_stats(ResourceType::Organization);
         org_stats.total_count = 5;
         org_stats.active_count = 4;
-        
+
         assert_eq!(metrics.total_resources(), 15);
         assert_eq!(metrics.total_active_resources(), 12);
     }
@@ -598,13 +605,13 @@ mod tests {
     #[test]
     fn test_system_metrics_health_checks() {
         let mut metrics = SystemMetrics::new();
-        
+
         metrics.add_health_check("database", HealthCheck::healthy("Connected"));
         metrics.add_health_check("memory", HealthCheck::warning("High usage"));
-        
+
         assert_eq!(metrics.health_checks.len(), 2);
         assert_eq!(metrics.overall_health_status(), HealthStatus::Warning);
-        
+
         let removed = metrics.remove_health_check("memory");
         assert!(removed.is_some());
         assert_eq!(metrics.overall_health_status(), HealthStatus::Healthy);
@@ -613,19 +620,19 @@ mod tests {
     #[test]
     fn test_system_metrics_overall_health_status() {
         let mut metrics = SystemMetrics::new();
-        
+
         // Empty checks should return Unknown
         assert_eq!(metrics.overall_health_status(), HealthStatus::Unknown);
-        
+
         // All healthy should return Healthy
         metrics.add_health_check("test1", HealthCheck::healthy("OK"));
         metrics.add_health_check("test2", HealthCheck::healthy("OK"));
         assert_eq!(metrics.overall_health_status(), HealthStatus::Healthy);
-        
+
         // Any warning should return Warning
         metrics.add_health_check("test3", HealthCheck::warning("Warning"));
         assert_eq!(metrics.overall_health_status(), HealthStatus::Warning);
-        
+
         // Any critical should return Critical
         metrics.add_health_check("test4", HealthCheck::critical("Error"));
         assert_eq!(metrics.overall_health_status(), HealthStatus::Critical);
@@ -635,7 +642,7 @@ mod tests {
     fn test_system_metrics_uptime() {
         let mut metrics = SystemMetrics::new();
         metrics.update_uptime(3600);
-        
+
         assert_eq!(metrics.uptime_seconds, 3600);
         assert_eq!(metrics.uptime_duration(), Duration::from_secs(3600));
     }
@@ -644,7 +651,7 @@ mod tests {
     fn test_resource_stats_serialization() {
         let stats = ResourceStats::new(ResourceType::Patient);
         let json = serde_json::to_value(&stats).unwrap();
-        
+
         assert_eq!(json["resourceType"], "Patient");
         assert_eq!(json["totalCount"], 0);
         assert_eq!(json["activeCount"], 0);
@@ -655,7 +662,7 @@ mod tests {
     fn test_memory_stats_serialization() {
         let stats = MemoryStats::new();
         let json = serde_json::to_value(&stats).unwrap();
-        
+
         assert_eq!(json["estimatedBytes"], 0);
         assert_eq!(json["resourceCount"], 0);
         assert_eq!(json["averageResourceSize"], 0.0);
@@ -664,10 +671,9 @@ mod tests {
 
     #[test]
     fn test_health_check_serialization() {
-        let check = HealthCheck::healthy("All good")
-            .with_detail("version", json!("1.0.0"));
+        let check = HealthCheck::healthy("All good").with_detail("version", json!("1.0.0"));
         let json = serde_json::to_value(&check).unwrap();
-        
+
         assert_eq!(json["status"], "Healthy");
         assert_eq!(json["message"], "All good");
         assert!(json["checkedAt"].is_string());
@@ -678,9 +684,9 @@ mod tests {
     fn test_system_metrics_serialization() {
         let mut metrics = SystemMetrics::new();
         metrics.add_health_check("test", HealthCheck::healthy("OK"));
-        
+
         let json = serde_json::to_value(&metrics).unwrap();
-        
+
         assert!(json["resourceStats"].is_object());
         assert!(json["memoryStats"].is_object());
         assert!(json["healthChecks"].is_object());

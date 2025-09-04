@@ -1,4 +1,4 @@
-use octofhir_server::{build_app, AppConfig};
+use octofhir_server::{AppConfig, build_app};
 use serde_json::Value;
 use tokio::task::JoinHandle;
 
@@ -20,7 +20,7 @@ async fn start_server() -> (String, tokio::sync::oneshot::Sender<()>, JoinHandle
             .await;
     });
 
-    (format!("http://{}", addr), tx, server)
+    (format!("http://{addr}"), tx, server)
 }
 
 #[tokio::test]
@@ -30,7 +30,7 @@ async fn server_endpoints_work() {
 
     // GET /
     let resp = client
-        .get(format!("{}/", base))
+        .get(format!("{base}/"))
         .header("accept", "application/fhir+json")
         .send()
         .await
@@ -42,7 +42,7 @@ async fn server_endpoints_work() {
 
     // GET /healthz
     let resp = client
-        .get(format!("{}/healthz", base))
+        .get(format!("{base}/healthz"))
         .header("accept", "application/fhir+json")
         .send()
         .await
@@ -53,7 +53,7 @@ async fn server_endpoints_work() {
 
     // GET /readyz
     let resp = client
-        .get(format!("{}/readyz", base))
+        .get(format!("{base}/readyz"))
         .header("accept", "application/fhir+json")
         .send()
         .await
@@ -64,7 +64,7 @@ async fn server_endpoints_work() {
 
     // GET /metadata
     let resp = client
-        .get(format!("{}/metadata", base))
+        .get(format!("{base}/metadata"))
         .header("accept", "application/fhir+json")
         .send()
         .await
@@ -75,12 +75,12 @@ async fn server_endpoints_work() {
 
     // GET /Patient (search placeholder)
     let resp = client
-        .get(format!("{}/Patient", base))
+        .get(format!("{base}/Patient"))
         .header("accept", "application/fhir+json")
         .send()
         .await
         .unwrap();
-    assert_eq!(resp.status(), reqwest::StatusCode::NOT_IMPLEMENTED);
+    assert!(resp.status().is_success());
 
     // shutdown
     let _ = shutdown_tx.send(());

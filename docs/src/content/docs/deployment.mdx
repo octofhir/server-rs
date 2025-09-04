@@ -1,0 +1,20 @@
+---
+title: Deployment
+head: []
+---
+
+CI:
+
+- GitHub Actions workflow runs format, clippy, and tests on PRs and `main`.
+
+Docs (GitHub Pages):
+
+- The docs are an Astro + Starlight site in `/docs`.
+- Build locally with `npm i && npm run build`.
+- Deployment workflow can publish to GitHub Pages under `server-rs` path.
+- Ensure repository Pages is configured to use GitHub Actions.
+
+Server runtime:
+
+- Configure `octofhir.toml` and environment variables.
+- Optional: set `OTEL_EXPORTER_OTLP_ENDPOINT` to export traces.

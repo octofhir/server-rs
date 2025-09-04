@@ -1,0 +1,31 @@
+---
+title: Development Guide
+head: []
+---
+
+Workspace layout:
+
+- `crates/octofhir-core`: core types (ResourceEnvelope/meta, FhirVersion/DateTime, errors)
+- `crates/octofhir-db`: in-memory storage, query filters, transactions
+- `crates/octofhir-search`: query parsing/validation, engine
+- `crates/octofhir-api`: OperationOutcome, CapabilityStatement, Bundle helpers
+- `crates/octofhir-server`: HTTP server (Axum), routes, middleware, config, observability
+
+Common tasks:
+
+```bash
+just build   # cargo build
+just test    # cargo test --all --all-features
+just lint    # cargo clippy -- -D warnings
+just fmt     # cargo fmt --all
+```
+
+Testing:
+
+- Unit tests inside crates
+- Integration tests in `crates/octofhir-server/tests` cover HTTP flows
+
+Contributing:
+
+- Keep PRs small and focused; follow Conventional Commits
+- Fix all clippy warnings; run `just lint`

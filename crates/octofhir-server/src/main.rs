@@ -1,11 +1,15 @@
-use std::{env, path::PathBuf, sync::{Arc, RwLock}};
+use std::{
+    env,
+    path::PathBuf,
+    sync::{Arc, RwLock},
+};
 
-use octofhir_server::{shutdown_tracing, ServerBuilder};
 use octofhir_server::config::{loader::load_config, shared};
+use octofhir_server::{ServerBuilder, shutdown_tracing};
 
 #[tokio::main]
 async fn main() {
-    // Initialize tracing early with default level so we can log during config load
+    // Initialize tracing early with the default level so we can log during a config load
     octofhir_server::observability::init_tracing();
 
     // Basic CLI: --config <path>
@@ -13,11 +17,17 @@ async fn main() {
     let mut config_path: Option<String> = None;
     while let Some(arg) = args.next() {
         if arg == "--config" {
-            if let Some(p) = args.next() { config_path = Some(p); }
+            if let Some(p) = args.next() {
+                config_path = Some(p);
+            }
         }
     }
     if config_path.is_none() {
-        if let Ok(p) = env::var("OCTOFHIR_CONFIG") { if !p.is_empty() { config_path = Some(p); } }
+        if let Ok(p) = env::var("OCTOFHIR_CONFIG") {
+            if !p.is_empty() {
+                config_path = Some(p);
+            }
+        }
     }
     // Default to root-level octofhir.toml when not provided
     if config_path.is_none() {
@@ -40,19 +50,31 @@ async fn main() {
     // Apply OTEL config (Phase 7 implements tracer initialization)
     octofhir_server::observability::apply_otel_config(&cfg.otel);
 
+    // Initialize the canonical registry from configuration (Phase 8) asynchronously
+    let registry = match octofhir_server::canonical::init_from_config_async(&cfg).await {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("canonical manager init failed: {e}");
+            std::process::exit(2);
+        }
+    };
+    if let Ok(guard) = registry.read() {
+        tracing::info!(fhir.version = %cfg.fhir.version, packages_loaded = %guard.list().len(), "canonical registry initialized");
+    }
+    octofhir_server::canonical::set_registry(registry);
+
     // Initialize shared config for hot-reload
     let shared_cfg = Arc::new(RwLock::new(cfg.clone()));
     shared::set_shared(shared_cfg.clone());
 
-    // Start config watcher if a path is provided
+    // Start the config watcher if a path is provided
+    let rt_handle = tokio::runtime::Handle::current();
     let _watcher_guard = config_path.as_ref().and_then(|p| {
         let path = PathBuf::from(p);
-        octofhir_server::config_watch::start_config_watcher(path, shared_cfg)
+        octofhir_server::config_watch::start_config_watcher(path, shared_cfg, rt_handle)
     });
 
-    let server = ServerBuilder::new()
-        .with_config(cfg)
-        .build();
+    let server = ServerBuilder::new().with_config(cfg).build();
 
     if let Err(err) = server.run().await {
         eprintln!("server error: {err}");

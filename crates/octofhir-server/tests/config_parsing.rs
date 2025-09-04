@@ -1,4 +1,4 @@
-use std::{fs, env};
+use std::{env, fs};
 
 use octofhir_server::config::loader::load_config;
 
@@ -28,6 +28,9 @@ level = "debug"
 
 [otel]
 enabled = false
+
+[packages]
+load = ["hl7.fhir.r4b.core#4.3.0", "hl7.terminology#5.5.0"]
 "#;
     fs::write(&path, toml_content).expect("write toml");
 
@@ -37,13 +40,18 @@ enabled = false
     assert_eq!(cfg.search.default_count, 5);
     assert_eq!(cfg.search.max_count, 10);
     assert_eq!(cfg.logging.level.to_ascii_lowercase(), "debug");
+    assert_eq!(cfg.packages.load.len(), 2);
 
     // 2) Env override should win over file
-    unsafe { env::set_var("OCTOFHIR__SEARCH__DEFAULT_COUNT", "9"); }
+    unsafe {
+        env::set_var("OCTOFHIR__SEARCH__DEFAULT_COUNT", "9");
+    }
     let cfg_env = load_config(path.to_str()).expect("should parse config with env overrides");
     assert_eq!(cfg_env.search.default_count, 9);
     // cleanup env var
-    unsafe { env::remove_var("OCTOFHIR__SEARCH__DEFAULT_COUNT"); }
+    unsafe {
+        env::remove_var("OCTOFHIR__SEARCH__DEFAULT_COUNT");
+    }
 
     // 3) Invalid config (default > max) should error
     let invalid_path = dir.path().join("invalid.toml");

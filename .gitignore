@@ -39,3 +39,5 @@ config/local.toml
 
 # Documentation build
 /docs/build/
+
+.fhir

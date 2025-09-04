@@ -3,7 +3,7 @@
 [server]
 # Network settings
 host = "0.0.0.0"
-port = 8080
+port = 8888
 # Timeouts in milliseconds
 read_timeout_ms = 15000
 write_timeout_ms = 15000
@@ -17,10 +17,22 @@ backend = "in-memory-papaya"
 memory_limit_bytes = 0 # 0 means unset
 preallocate_items = 0  # 0 means unset
 
+[fhir]
+# Supported: R4 (default), R4B, R5, R6
+version = "R4"
+
 [search]
 # Default and max page sizes
 default_count = 10
 max_count = 100
+
+[packages]
+# Base directory for canonical manager storage (packages/, index/, cache/ will be created here)
+path = ".fhir"
+# Load canonical packages by id#version (or path via table form in custom files)
+load = [
+  "hl7.fhir.r4.core#4.0.1"
+]
 
 [logging]
 # trace | debug | info | warn | error | off

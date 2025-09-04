@@ -1,16 +1,17 @@
-use crate::transaction::{Transaction, TransactionManager, TransactionOperation, TransactionOperationResult, TransactionStats};
-use crate::query::{QueryFilter, QueryResult, SearchQuery};
 use crate::factory::StorageOptions;
-use octofhir_core::{CoreError, Result, ResourceType, ResourceEnvelope};
+use crate::query::{QueryFilter, QueryResult, SearchQuery};
+use crate::transaction::{
+    Transaction, TransactionManager, TransactionOperation, TransactionOperationResult,
+    TransactionStats,
+};
+use octofhir_core::{CoreError, ResourceEnvelope, ResourceType, Result};
 use papaya::HashMap as PapayaHashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
 pub type StorageKey = String; // Format: "ResourceType/id"
 
-fn make_storage_key(resource_type: &ResourceType, id: &str) -> StorageKey {
-    format!("{}/{}", resource_type, id)
-}
+fn make_storage_key(resource_type: &ResourceType, id: &str) -> StorageKey { format!("{resource_type}/{id}") }
 
 #[derive(Debug)]
 pub struct InMemoryStorage {
@@ -19,7 +20,7 @@ pub struct InMemoryStorage {
     // Transaction statistics
     transaction_stats: Arc<RwLock<TransactionStats>>,
     // Storage configuration options (soft hints for in-memory backend)
-    options: StorageOptions,
+    _options: StorageOptions,
 }
 
 impl InMemoryStorage {
@@ -27,7 +28,7 @@ impl InMemoryStorage {
         Self {
             data: Arc::new(PapayaHashMap::new()),
             transaction_stats: Arc::new(RwLock::new(TransactionStats::new())),
-            options: StorageOptions::default(),
+            _options: StorageOptions::default(),
         }
     }
 
@@ -35,38 +36,57 @@ impl InMemoryStorage {
         Self {
             data: Arc::new(PapayaHashMap::new()),
             transaction_stats: Arc::new(RwLock::new(TransactionStats::new())),
-            options,
+            _options: options,
         }
     }
 
-    pub async fn get(&self, resource_type: &ResourceType, id: &str) -> Result<Option<ResourceEnvelope>> {
+    pub async fn get(
+        &self,
+        resource_type: &ResourceType,
+        id: &str,
+    ) -> Result<Option<ResourceEnvelope>> {
         let key = make_storage_key(resource_type, id);
         let guard = self.data.pin();
         Ok(guard.get(&key).cloned())
     }
 
-    pub async fn insert(&self, resource_type: &ResourceType, resource: ResourceEnvelope) -> Result<()> {
+    pub async fn insert(
+        &self,
+        resource_type: &ResourceType,
+        resource: ResourceEnvelope,
+    ) -> Result<()> {
         let key = make_storage_key(resource_type, &resource.id);
         let guard = self.data.pin();
-        
+
         // Check for conflicts
         if guard.get(&key).is_some() {
-            return Err(CoreError::resource_conflict(resource_type.to_string(), resource.id));
+            return Err(CoreError::resource_conflict(
+                resource_type.to_string(),
+                resource.id,
+            ));
         }
-        
+
         guard.insert(key, resource);
         Ok(())
     }
 
-    pub async fn update(&self, resource_type: &ResourceType, id: &str, resource: ResourceEnvelope) -> Result<ResourceEnvelope> {
+    pub async fn update(
+        &self,
+        resource_type: &ResourceType,
+        id: &str,
+        resource: ResourceEnvelope,
+    ) -> Result<ResourceEnvelope> {
         let key = make_storage_key(resource_type, id);
         let guard = self.data.pin();
-        
+
         // Check if resource exists
-        let old_resource = guard.get(&key)
-            .ok_or_else(|| CoreError::resource_not_found(resource_type.to_string(), id.to_string()))?
+        let old_resource = guard
+            .get(&key)
+            .ok_or_else(|| {
+                CoreError::resource_not_found(resource_type.to_string(), id.to_string())
+            })?
             .clone();
-        
+
         guard.insert(key, resource);
         Ok(old_resource)
     }
@@ -74,8 +94,9 @@ impl InMemoryStorage {
     pub async fn delete(&self, resource_type: &ResourceType, id: &str) -> Result<ResourceEnvelope> {
         let key = make_storage_key(resource_type, id);
         let guard = self.data.pin();
-        
-        guard.remove(&key)
+
+        guard
+            .remove(&key)
             .ok_or_else(|| CoreError::resource_not_found(resource_type.to_string(), id.to_string()))
             .cloned()
     }
@@ -92,22 +113,23 @@ impl InMemoryStorage {
     }
 
     pub async fn count_by_type(&self, resource_type: &ResourceType) -> usize {
-        let prefix = format!("{}/", resource_type);
+        let prefix = format!("{resource_type}/");
         let guard = self.data.pin();
-        guard.iter().filter(|(key, _)| key.starts_with(&prefix)).count()
+        guard
+            .iter()
+            .filter(|(key, _)| key.starts_with(&prefix))
+            .count()
     }
 
     /// Search for resources matching the given query
     pub async fn search(&self, query: &SearchQuery) -> Result<QueryResult> {
         let prefix = format!("{}/", query.resource_type);
         let guard = self.data.pin();
-        
+
         // Collect all matching resources
         let mut matching_resources: Vec<ResourceEnvelope> = guard
             .iter()
-            .filter(|(key, resource)| {
-                key.starts_with(&prefix) && query.matches(resource)
-            })
+            .filter(|(key, resource)| key.starts_with(&prefix) && query.matches(resource))
             .map(|(_, resource)| resource.clone())
             .collect();
 
@@ -117,11 +139,12 @@ impl InMemoryStorage {
         }
 
         let total = matching_resources.len();
-        
+
         // Apply pagination
         let _end_idx = std::cmp::min(query.offset + query.count, total);
         let page_resources = if query.offset < total {
-            matching_resources.into_iter()
+            matching_resources
+                .into_iter()
                 .skip(query.offset)
                 .take(query.count)
                 .collect()
@@ -129,33 +152,59 @@ impl InMemoryStorage {
             Vec::new()
         };
 
-        Ok(QueryResult::new(total, page_resources, query.offset, query.count))
+        Ok(QueryResult::new(
+            total,
+            page_resources,
+            query.offset,
+            query.count,
+        ))
     }
 
     /// Search for resources by type with simple filters
-    pub async fn search_by_type(&self, resource_type: &ResourceType, filters: Vec<QueryFilter>, offset: usize, count: usize) -> Result<QueryResult> {
-        let query = SearchQuery::new(resource_type.clone())
-            .with_pagination(offset, count);
-        
-        let query = filters.into_iter().fold(query, |q, filter| q.with_filter(filter));
-        
+    pub async fn search_by_type(
+        &self,
+        resource_type: &ResourceType,
+        filters: Vec<QueryFilter>,
+        offset: usize,
+        count: usize,
+    ) -> Result<QueryResult> {
+        let query = SearchQuery::new(resource_type.clone()).with_pagination(offset, count);
+
+        let query = filters
+            .into_iter()
+            .fold(query, |q, filter| q.with_filter(filter));
+
         self.search(&query).await
     }
 
-    fn sort_resources(&self, resources: &mut Vec<ResourceEnvelope>, sort_field: &str, ascending: bool) {
+    fn sort_resources(
+        &self,
+        resources: &mut [ResourceEnvelope],
+        sort_field: &str,
+        ascending: bool,
+    ) {
         resources.sort_by(|a, b| {
             let comparison = match sort_field {
                 "_id" => a.id.cmp(&b.id),
                 "_lastUpdated" => a.meta.last_updated.cmp(&b.meta.last_updated),
-                "resourceType" => a.resource_type.to_string().cmp(&b.resource_type.to_string()),
+                "resourceType" => a
+                    .resource_type
+                    .to_string()
+                    .cmp(&b.resource_type.to_string()),
                 _ => {
                     // Compare field values from resource data
-                    let a_val = a.get_field(sort_field).and_then(|v| v.as_str()).unwrap_or("");
-                    let b_val = b.get_field(sort_field).and_then(|v| v.as_str()).unwrap_or("");
+                    let a_val = a
+                        .get_field(sort_field)
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    let b_val = b
+                        .get_field(sort_field)
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
                     a_val.cmp(b_val)
                 }
             };
-            
+
             if ascending {
                 comparison
             } else {
@@ -164,13 +213,23 @@ impl InMemoryStorage {
         });
     }
 
-    async fn execute_operation(&self, operation: &TransactionOperation) -> Result<Option<ResourceEnvelope>> {
+    async fn execute_operation(
+        &self,
+        operation: &TransactionOperation,
+    ) -> Result<Option<ResourceEnvelope>> {
         match operation {
-            TransactionOperation::Create { resource_type, resource } => {
+            TransactionOperation::Create {
+                resource_type,
+                resource,
+            } => {
                 self.insert(resource_type, resource.clone()).await?;
                 Ok(Some(resource.clone()))
             }
-            TransactionOperation::Update { resource_type, id, resource } => {
+            TransactionOperation::Update {
+                resource_type,
+                id,
+                resource,
+            } => {
                 let old_resource = self.update(resource_type, id, resource.clone()).await?;
                 Ok(Some(old_resource))
             }
@@ -178,20 +237,23 @@ impl InMemoryStorage {
                 let deleted_resource = self.delete(resource_type, id).await?;
                 Ok(Some(deleted_resource))
             }
-            TransactionOperation::Read { resource_type, id } => {
-                self.get(resource_type, id).await
-            }
+            TransactionOperation::Read { resource_type, id } => self.get(resource_type, id).await,
         }
     }
 
-    async fn capture_rollback_snapshot(&self, operation: &TransactionOperation) -> Result<Option<ResourceEnvelope>> {
+    async fn capture_rollback_snapshot(
+        &self,
+        operation: &TransactionOperation,
+    ) -> Result<Option<ResourceEnvelope>> {
         match operation {
             TransactionOperation::Create { .. } => {
                 // For create operations, rollback means delete, so no snapshot needed
                 Ok(None)
             }
-            TransactionOperation::Update { resource_type, id, .. } | 
-            TransactionOperation::Delete { resource_type, id } => {
+            TransactionOperation::Update {
+                resource_type, id, ..
+            }
+            | TransactionOperation::Delete { resource_type, id } => {
                 // For update/delete, we need the current state to rollback to
                 self.get(resource_type, id).await
             }
@@ -202,17 +264,39 @@ impl InMemoryStorage {
         }
     }
 
-    async fn rollback_operation(&self, operation: &TransactionOperation, snapshot: &Option<ResourceEnvelope>) -> Result<()> {
+    async fn rollback_operation(
+        &self,
+        operation: &TransactionOperation,
+        snapshot: &Option<ResourceEnvelope>,
+    ) -> Result<()> {
         match (operation, snapshot) {
-            (TransactionOperation::Create { resource_type, resource }, None) => {
+            (
+                TransactionOperation::Create {
+                    resource_type,
+                    resource,
+                },
+                None,
+            ) => {
                 // Rollback create by deleting the created resource
                 let _ = self.delete(resource_type, &resource.id).await?;
             }
-            (TransactionOperation::Update { resource_type, id, .. }, Some(original_resource)) => {
+            (
+                TransactionOperation::Update {
+                    resource_type, id, ..
+                },
+                Some(original_resource),
+            ) => {
                 // Rollback update by restoring the original resource
-                let _ = self.update(resource_type, id, original_resource.clone()).await?;
+                let _ = self
+                    .update(resource_type, id, original_resource.clone())
+                    .await?;
             }
-            (TransactionOperation::Update { resource_type, id, .. }, None) => {
+            (
+                TransactionOperation::Update {
+                    resource_type, id, ..
+                },
+                None,
+            ) => {
                 // If there was no original resource, delete the updated one
                 let _ = self.delete(resource_type, id).await?;
             }
@@ -225,7 +309,9 @@ impl InMemoryStorage {
             }
             _ => {
                 // Unexpected combinations - should not happen with proper snapshots
-                return Err(CoreError::invalid_resource("Invalid rollback state".to_string()));
+                return Err(CoreError::invalid_resource(
+                    "Invalid rollback state".to_string(),
+                ));
             }
         }
         Ok(())
@@ -246,7 +332,9 @@ impl TransactionManager for InMemoryStorage {
 
     async fn execute_transaction(&mut self, transaction: &mut Transaction) -> Result<()> {
         if !transaction.can_execute() {
-            return Err(CoreError::invalid_resource("Transaction cannot be executed".to_string()));
+            return Err(CoreError::invalid_resource(
+                "Transaction cannot be executed".to_string(),
+            ));
         }
 
         transaction.mark_executing();
@@ -258,11 +346,16 @@ impl TransactionManager for InMemoryStorage {
             if operation.is_write_operation() {
                 let snapshot = self.capture_rollback_snapshot(operation).await?;
                 let key = match operation {
-                    TransactionOperation::Create { resource_type, resource } => 
-                        make_storage_key(resource_type, &resource.id),
-                    TransactionOperation::Update { resource_type, id, .. } |
-                    TransactionOperation::Delete { resource_type, id } => 
-                        make_storage_key(resource_type, id),
+                    TransactionOperation::Create {
+                        resource_type,
+                        resource,
+                    } => make_storage_key(resource_type, &resource.id),
+                    TransactionOperation::Update {
+                        resource_type, id, ..
+                    }
+                    | TransactionOperation::Delete { resource_type, id } => {
+                        make_storage_key(resource_type, id)
+                    }
                     _ => continue,
                 };
                 transaction.add_rollback_snapshot(key, snapshot);
@@ -273,7 +366,9 @@ impl TransactionManager for InMemoryStorage {
         let mut has_failures = false;
         for (operation_id, operation) in transaction.operations.clone() {
             let result = match self.execute_operation(&operation).await {
-                Ok(resource) => TransactionOperationResult::success(operation_id, operation, resource),
+                Ok(resource) => {
+                    TransactionOperationResult::success(operation_id, operation, resource)
+                }
                 Err(error) => {
                     has_failures = true;
                     TransactionOperationResult::failure(operation_id, operation, error.to_string())
@@ -284,7 +379,9 @@ impl TransactionManager for InMemoryStorage {
 
         if has_failures {
             transaction.mark_failed();
-            return Err(CoreError::invalid_resource("Transaction execution failed".to_string()));
+            return Err(CoreError::invalid_resource(
+                "Transaction execution failed".to_string(),
+            ));
         }
 
         Ok(())
@@ -292,7 +389,9 @@ impl TransactionManager for InMemoryStorage {
 
     async fn commit_transaction(&mut self, transaction: &mut Transaction) -> Result<()> {
         if !transaction.can_commit() {
-            return Err(CoreError::invalid_resource("Transaction cannot be committed".to_string()));
+            return Err(CoreError::invalid_resource(
+                "Transaction cannot be committed".to_string(),
+            ));
         }
 
         // In our in-memory implementation, operations are already applied during execution
@@ -308,25 +407,32 @@ impl TransactionManager for InMemoryStorage {
 
     async fn rollback_transaction(&mut self, transaction: &mut Transaction) -> Result<()> {
         if !transaction.can_rollback() {
-            return Err(CoreError::invalid_resource("Transaction cannot be rolled back".to_string()));
+            return Err(CoreError::invalid_resource(
+                "Transaction cannot be rolled back".to_string(),
+            ));
         }
 
         // Rollback operations in reverse order
         for (operation_id, operation) in transaction.operations.iter().rev() {
             if operation.is_write_operation() {
                 let key = match operation {
-                    TransactionOperation::Create { resource_type, resource } => 
-                        make_storage_key(resource_type, &resource.id),
-                    TransactionOperation::Update { resource_type, id, .. } |
-                    TransactionOperation::Delete { resource_type, id } => 
-                        make_storage_key(resource_type, id),
+                    TransactionOperation::Create {
+                        resource_type,
+                        resource,
+                    } => make_storage_key(resource_type, &resource.id),
+                    TransactionOperation::Update {
+                        resource_type, id, ..
+                    }
+                    | TransactionOperation::Delete { resource_type, id } => {
+                        make_storage_key(resource_type, id)
+                    }
                     _ => continue,
                 };
 
                 if let Some(snapshot) = transaction.get_rollback_snapshot(&key) {
                     if let Err(error) = self.rollback_operation(operation, snapshot).await {
                         // Log rollback errors but continue with other operations
-                        eprintln!("Rollback error for operation {}: {}", operation_id, error);
+                        eprintln!("Rollback error for operation {operation_id}: {error}");
                     }
                 }
             }
@@ -343,8 +449,9 @@ impl TransactionManager for InMemoryStorage {
 
     async fn abort_transaction(&mut self, transaction: &mut Transaction) -> Result<()> {
         // Abort is like rollback but can be called even if not failed
-        if transaction.state == crate::transaction::TransactionState::Executing || 
-           transaction.state == crate::transaction::TransactionState::Failed {
+        if transaction.state == crate::transaction::TransactionState::Executing
+            || transaction.state == crate::transaction::TransactionState::Failed
+        {
             self.rollback_transaction(transaction).await
         } else {
             // If not executing, just mark as failed
@@ -353,24 +460,19 @@ impl TransactionManager for InMemoryStorage {
         }
     }
 
-    fn get_transaction_stats(&self) -> &TransactionStats {
-        // This is a temporary implementation that blocks
-        // In production, we'd want to restructure this to avoid blocking
-        let guard = self.transaction_stats.blocking_read();
-        unsafe {
-            std::mem::transmute(&*guard as *const TransactionStats)
-        }
+    fn get_transaction_stats(&self) -> TransactionStats {
+        // Clone stats under read lock to avoid lifetimes/unsafe
+        self.transaction_stats.blocking_read().clone()
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use octofhir_core::{ResourceType, ResourceStatus};
+    use octofhir_core::{ResourceStatus, ResourceType};
 
     fn create_test_resource(id: &str, resource_type: ResourceType) -> ResourceEnvelope {
-        ResourceEnvelope::new(id.to_string(), resource_type)
-            .with_status(ResourceStatus::Active)
+        ResourceEnvelope::new(id.to_string(), resource_type).with_status(ResourceStatus::Active)
     }
 
     #[tokio::test]
@@ -379,11 +481,17 @@ mod tests {
         let resource = create_test_resource("patient-123", ResourceType::Patient);
 
         // Test insert
-        storage.insert(&ResourceType::Patient, resource.clone()).await.unwrap();
+        storage
+            .insert(&ResourceType::Patient, resource.clone())
+            .await
+            .unwrap();
         assert_eq!(storage.count().await, 1);
 
         // Test get
-        let retrieved = storage.get(&ResourceType::Patient, "patient-123").await.unwrap();
+        let retrieved = storage
+            .get(&ResourceType::Patient, "patient-123")
+            .await
+            .unwrap();
         assert!(retrieved.is_some());
         assert_eq!(retrieved.unwrap().id, "patient-123");
 
@@ -394,14 +502,24 @@ mod tests {
         // Test update
         let mut updated_resource = resource.clone();
         updated_resource.status = ResourceStatus::Inactive;
-        let old_resource = storage.update(&ResourceType::Patient, "patient-123", updated_resource).await.unwrap();
+        let old_resource = storage
+            .update(&ResourceType::Patient, "patient-123", updated_resource)
+            .await
+            .unwrap();
         assert_eq!(old_resource.status, ResourceStatus::Active);
 
-        let current = storage.get(&ResourceType::Patient, "patient-123").await.unwrap().unwrap();
+        let current = storage
+            .get(&ResourceType::Patient, "patient-123")
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(current.status, ResourceStatus::Inactive);
 
         // Test delete
-        let deleted = storage.delete(&ResourceType::Patient, "patient-123").await.unwrap();
+        let deleted = storage
+            .delete(&ResourceType::Patient, "patient-123")
+            .await
+            .unwrap();
         assert_eq!(deleted.id, "patient-123");
         assert_eq!(storage.count().await, 0);
     }
@@ -412,35 +530,67 @@ mod tests {
         let resource = create_test_resource("patient-123", ResourceType::Patient);
 
         // Insert resource
-        storage.insert(&ResourceType::Patient, resource.clone()).await.unwrap();
+        storage
+            .insert(&ResourceType::Patient, resource.clone())
+            .await
+            .unwrap();
 
         // Test conflict on duplicate insert
         let conflict_result = storage.insert(&ResourceType::Patient, resource).await;
         assert!(conflict_result.is_err());
-        assert!(matches!(conflict_result.unwrap_err(), CoreError::ResourceConflict { .. }));
+        assert!(matches!(
+            conflict_result.unwrap_err(),
+            CoreError::ResourceConflict { .. }
+        ));
 
         // Test not found on update
-        let update_result = storage.update(
-            &ResourceType::Patient, 
-            "nonexistent", 
-            create_test_resource("nonexistent", ResourceType::Patient)
-        ).await;
+        let update_result = storage
+            .update(
+                &ResourceType::Patient,
+                "nonexistent",
+                create_test_resource("nonexistent", ResourceType::Patient),
+            )
+            .await;
         assert!(update_result.is_err());
-        assert!(matches!(update_result.unwrap_err(), CoreError::ResourceNotFound { .. }));
+        assert!(matches!(
+            update_result.unwrap_err(),
+            CoreError::ResourceNotFound { .. }
+        ));
 
         // Test not found on delete
         let delete_result = storage.delete(&ResourceType::Patient, "nonexistent").await;
         assert!(delete_result.is_err());
-        assert!(matches!(delete_result.unwrap_err(), CoreError::ResourceNotFound { .. }));
+        assert!(matches!(
+            delete_result.unwrap_err(),
+            CoreError::ResourceNotFound { .. }
+        ));
     }
 
     #[tokio::test]
     async fn test_storage_count_by_type() {
         let storage = InMemoryStorage::new();
-        
-        storage.insert(&ResourceType::Patient, create_test_resource("patient-1", ResourceType::Patient)).await.unwrap();
-        storage.insert(&ResourceType::Patient, create_test_resource("patient-2", ResourceType::Patient)).await.unwrap();
-        storage.insert(&ResourceType::Organization, create_test_resource("org-1", ResourceType::Organization)).await.unwrap();
+
+        storage
+            .insert(
+                &ResourceType::Patient,
+                create_test_resource("patient-1", ResourceType::Patient),
+            )
+            .await
+            .unwrap();
+        storage
+            .insert(
+                &ResourceType::Patient,
+                create_test_resource("patient-2", ResourceType::Patient),
+            )
+            .await
+            .unwrap();
+        storage
+            .insert(
+                &ResourceType::Organization,
+                create_test_resource("org-1", ResourceType::Organization),
+            )
+            .await
+            .unwrap();
 
         assert_eq!(storage.count().await, 3);
         assert_eq!(storage.count_by_type(&ResourceType::Patient).await, 2);
@@ -472,23 +622,35 @@ mod tests {
     #[tokio::test]
     async fn test_transaction_rollback() {
         let mut storage = InMemoryStorage::new();
-        
+
         // Pre-populate with a resource
         let original_resource = create_test_resource("patient-123", ResourceType::Patient);
-        storage.insert(&ResourceType::Patient, original_resource.clone()).await.unwrap();
+        storage
+            .insert(&ResourceType::Patient, original_resource.clone())
+            .await
+            .unwrap();
 
         let mut tx = storage.begin_transaction().await.unwrap();
 
         // Update the resource in the transaction
         let mut updated_resource = original_resource.clone();
         updated_resource.status = ResourceStatus::Inactive;
-        tx.update_resource(ResourceType::Patient, "patient-123".to_string(), updated_resource).unwrap();
+        tx.update_resource(
+            ResourceType::Patient,
+            "patient-123".to_string(),
+            updated_resource,
+        )
+        .unwrap();
 
         // Execute the transaction
         storage.execute_transaction(&mut tx).await.unwrap();
 
         // Verify the update was applied
-        let current = storage.get(&ResourceType::Patient, "patient-123").await.unwrap().unwrap();
+        let current = storage
+            .get(&ResourceType::Patient, "patient-123")
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(current.status, ResourceStatus::Inactive);
 
         // Rollback the transaction
@@ -496,7 +658,11 @@ mod tests {
         assert_eq!(tx.state, crate::transaction::TransactionState::RolledBack);
 
         // Verify the resource was rolled back to original state
-        let rolled_back = storage.get(&ResourceType::Patient, "patient-123").await.unwrap().unwrap();
+        let rolled_back = storage
+            .get(&ResourceType::Patient, "patient-123")
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(rolled_back.status, ResourceStatus::Active);
     }
 
@@ -523,13 +689,17 @@ mod tests {
     #[tokio::test]
     async fn test_transaction_rollback_delete() {
         let mut storage = InMemoryStorage::new();
-        
+
         // Pre-populate with a resource
         let resource = create_test_resource("patient-123", ResourceType::Patient);
-        storage.insert(&ResourceType::Patient, resource.clone()).await.unwrap();
+        storage
+            .insert(&ResourceType::Patient, resource.clone())
+            .await
+            .unwrap();
 
         let mut tx = storage.begin_transaction().await.unwrap();
-        tx.delete_resource(ResourceType::Patient, "patient-123".to_string()).unwrap();
+        tx.delete_resource(ResourceType::Patient, "patient-123".to_string())
+            .unwrap();
 
         // Execute the transaction
         storage.execute_transaction(&mut tx).await.unwrap();
@@ -540,33 +710,50 @@ mod tests {
 
         // Verify the resource was restored
         assert!(storage.exists(&ResourceType::Patient, "patient-123").await);
-        let restored = storage.get(&ResourceType::Patient, "patient-123").await.unwrap().unwrap();
+        let restored = storage
+            .get(&ResourceType::Patient, "patient-123")
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(restored.id, "patient-123");
     }
 
     #[tokio::test]
     async fn test_transaction_mixed_operations() {
         let mut storage = InMemoryStorage::new();
-        
+
         // Pre-populate
         let existing_resource = create_test_resource("patient-existing", ResourceType::Patient);
-        storage.insert(&ResourceType::Patient, existing_resource.clone()).await.unwrap();
+        storage
+            .insert(&ResourceType::Patient, existing_resource.clone())
+            .await
+            .unwrap();
 
         let mut tx = storage.begin_transaction().await.unwrap();
-        
+
         // Create a new resource
         let new_resource = create_test_resource("patient-new", ResourceType::Patient);
-        tx.create_resource(ResourceType::Patient, new_resource).unwrap();
-        
+        tx.create_resource(ResourceType::Patient, new_resource)
+            .unwrap();
+
         // Update existing resource
         let mut updated_resource = existing_resource.clone();
         updated_resource.status = ResourceStatus::Inactive;
-        tx.update_resource(ResourceType::Patient, "patient-existing".to_string(), updated_resource).unwrap();
-        
+        tx.update_resource(
+            ResourceType::Patient,
+            "patient-existing".to_string(),
+            updated_resource,
+        )
+        .unwrap();
+
         // Delete operation (we'll create another resource to delete)
         let to_delete = create_test_resource("patient-delete", ResourceType::Patient);
-        storage.insert(&ResourceType::Patient, to_delete).await.unwrap();
-        tx.delete_resource(ResourceType::Patient, "patient-delete".to_string()).unwrap();
+        storage
+            .insert(&ResourceType::Patient, to_delete)
+            .await
+            .unwrap();
+        tx.delete_resource(ResourceType::Patient, "patient-delete".to_string())
+            .unwrap();
 
         assert_eq!(tx.operation_count(), 3);
         assert_eq!(tx.write_operation_count(), 3);
@@ -576,10 +763,22 @@ mod tests {
 
         // Verify all operations were applied
         assert!(storage.exists(&ResourceType::Patient, "patient-new").await);
-        assert!(storage.exists(&ResourceType::Patient, "patient-existing").await);
-        assert!(!storage.exists(&ResourceType::Patient, "patient-delete").await);
+        assert!(
+            storage
+                .exists(&ResourceType::Patient, "patient-existing")
+                .await
+        );
+        assert!(
+            !storage
+                .exists(&ResourceType::Patient, "patient-delete")
+                .await
+        );
 
-        let updated = storage.get(&ResourceType::Patient, "patient-existing").await.unwrap().unwrap();
+        let updated = storage
+            .get(&ResourceType::Patient, "patient-existing")
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(updated.status, ResourceStatus::Inactive);
 
         // Now rollback
@@ -587,9 +786,17 @@ mod tests {
 
         // Verify rollback
         assert!(!storage.exists(&ResourceType::Patient, "patient-new").await); // Created resource removed
-        assert!(storage.exists(&ResourceType::Patient, "patient-delete").await); // Deleted resource restored
-        
-        let restored = storage.get(&ResourceType::Patient, "patient-existing").await.unwrap().unwrap();
+        assert!(
+            storage
+                .exists(&ResourceType::Patient, "patient-delete")
+                .await
+        ); // Deleted resource restored
+
+        let restored = storage
+            .get(&ResourceType::Patient, "patient-existing")
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(restored.status, ResourceStatus::Active); // Update rolled back
     }
 
@@ -619,10 +826,14 @@ mod tests {
 
         // Try to create a resource
         let resource = create_test_resource("patient-123", ResourceType::Patient);
-        tx.create_resource(ResourceType::Patient, resource.clone()).unwrap();
+        tx.create_resource(ResourceType::Patient, resource.clone())
+            .unwrap();
 
         // Pre-insert the same resource to cause a conflict
-        storage.insert(&ResourceType::Patient, resource).await.unwrap();
+        storage
+            .insert(&ResourceType::Patient, resource)
+            .await
+            .unwrap();
 
         // Execute should fail due to conflict
         let result = storage.execute_transaction(&mut tx).await;
@@ -653,11 +864,14 @@ mod tests {
     async fn test_storage_empty_id() {
         let storage = InMemoryStorage::new();
         let resource = create_test_resource("", ResourceType::Patient);
-        
+
         // Should handle empty ID
-        storage.insert(&ResourceType::Patient, resource.clone()).await.unwrap();
+        storage
+            .insert(&ResourceType::Patient, resource.clone())
+            .await
+            .unwrap();
         assert_eq!(storage.count().await, 1);
-        
+
         let retrieved = storage.get(&ResourceType::Patient, "").await.unwrap();
         assert!(retrieved.is_some());
         assert_eq!(retrieved.unwrap().id, "");
@@ -667,7 +881,7 @@ mod tests {
     async fn test_storage_special_characters_in_id() {
         let storage = InMemoryStorage::new();
         let special_ids = vec![
-            "patient/with/slashes", 
+            "patient/with/slashes",
             "patient-with-dashes",
             "patient_with_underscores",
             "patient.with.dots",
@@ -675,24 +889,30 @@ mod tests {
             "患者-unicode",
             "patient with spaces",
         ];
-        
+
         for id in special_ids {
             let resource = create_test_resource(id, ResourceType::Patient);
-            storage.insert(&ResourceType::Patient, resource.clone()).await.unwrap();
-            
+            storage
+                .insert(&ResourceType::Patient, resource.clone())
+                .await
+                .unwrap();
+
             let retrieved = storage.get(&ResourceType::Patient, id).await.unwrap();
             assert!(retrieved.is_some());
             assert_eq!(retrieved.unwrap().id, id);
-            
+
             // Test update with special ID
             let mut updated = resource.clone();
             updated.status = ResourceStatus::Inactive;
-            storage.update(&ResourceType::Patient, id, updated).await.unwrap();
-            
+            storage
+                .update(&ResourceType::Patient, id, updated)
+                .await
+                .unwrap();
+
             // Test delete with special ID
             storage.delete(&ResourceType::Patient, id).await.unwrap();
         }
-        
+
         assert_eq!(storage.count().await, 0);
     }
 
@@ -702,9 +922,12 @@ mod tests {
         // Test with very long ID (1000 characters)
         let long_id = "a".repeat(1000);
         let resource = create_test_resource(&long_id, ResourceType::Patient);
-        
-        storage.insert(&ResourceType::Patient, resource.clone()).await.unwrap();
-        
+
+        storage
+            .insert(&ResourceType::Patient, resource.clone())
+            .await
+            .unwrap();
+
         let retrieved = storage.get(&ResourceType::Patient, &long_id).await.unwrap();
         assert!(retrieved.is_some());
         assert_eq!(retrieved.unwrap().id.len(), 1000);
@@ -714,22 +937,31 @@ mod tests {
     async fn test_storage_multiple_resource_types_same_id() {
         let storage = InMemoryStorage::new();
         let same_id = "same-id-123";
-        
+
         // Create resources with same ID but different types
         let patient = create_test_resource(same_id, ResourceType::Patient);
         let org = create_test_resource(same_id, ResourceType::Organization);
         let practitioner = create_test_resource(same_id, ResourceType::Practitioner);
-        
-        storage.insert(&ResourceType::Patient, patient).await.unwrap();
-        storage.insert(&ResourceType::Organization, org).await.unwrap();
-        storage.insert(&ResourceType::Practitioner, practitioner).await.unwrap();
-        
+
+        storage
+            .insert(&ResourceType::Patient, patient)
+            .await
+            .unwrap();
+        storage
+            .insert(&ResourceType::Organization, org)
+            .await
+            .unwrap();
+        storage
+            .insert(&ResourceType::Practitioner, practitioner)
+            .await
+            .unwrap();
+
         // All should exist independently
         assert!(storage.exists(&ResourceType::Patient, same_id).await);
         assert!(storage.exists(&ResourceType::Organization, same_id).await);
         assert!(storage.exists(&ResourceType::Practitioner, same_id).await);
         assert_eq!(storage.count().await, 3);
-        
+
         // Count by type should work correctly
         assert_eq!(storage.count_by_type(&ResourceType::Patient).await, 1);
         assert_eq!(storage.count_by_type(&ResourceType::Organization).await, 1);
@@ -740,15 +972,20 @@ mod tests {
     async fn test_storage_update_nonexistent_with_empty_storage() {
         let storage = InMemoryStorage::new();
         assert_eq!(storage.count().await, 0);
-        
-        let result = storage.update(
-            &ResourceType::Patient, 
-            "nonexistent", 
-            create_test_resource("nonexistent", ResourceType::Patient)
-        ).await;
-        
+
+        let result = storage
+            .update(
+                &ResourceType::Patient,
+                "nonexistent",
+                create_test_resource("nonexistent", ResourceType::Patient),
+            )
+            .await;
+
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), CoreError::ResourceNotFound { .. }));
+        assert!(matches!(
+            result.unwrap_err(),
+            CoreError::ResourceNotFound { .. }
+        ));
         assert_eq!(storage.count().await, 0); // Storage should remain empty
     }
 
@@ -756,24 +993,36 @@ mod tests {
     async fn test_storage_delete_from_empty_storage() {
         let storage = InMemoryStorage::new();
         assert_eq!(storage.count().await, 0);
-        
+
         let result = storage.delete(&ResourceType::Patient, "nonexistent").await;
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), CoreError::ResourceNotFound { .. }));
+        assert!(matches!(
+            result.unwrap_err(),
+            CoreError::ResourceNotFound { .. }
+        ));
     }
 
     #[tokio::test]
     async fn test_storage_case_sensitive_ids() {
         let storage = InMemoryStorage::new();
-        
+
         let lower_case = create_test_resource("patient-123", ResourceType::Patient);
         let upper_case = create_test_resource("PATIENT-123", ResourceType::Patient);
         let mixed_case = create_test_resource("Patient-123", ResourceType::Patient);
-        
-        storage.insert(&ResourceType::Patient, lower_case).await.unwrap();
-        storage.insert(&ResourceType::Patient, upper_case).await.unwrap();
-        storage.insert(&ResourceType::Patient, mixed_case).await.unwrap();
-        
+
+        storage
+            .insert(&ResourceType::Patient, lower_case)
+            .await
+            .unwrap();
+        storage
+            .insert(&ResourceType::Patient, upper_case)
+            .await
+            .unwrap();
+        storage
+            .insert(&ResourceType::Patient, mixed_case)
+            .await
+            .unwrap();
+
         // All should be treated as different resources
         assert_eq!(storage.count().await, 3);
         assert!(storage.exists(&ResourceType::Patient, "patient-123").await);
@@ -786,18 +1035,21 @@ mod tests {
     async fn test_storage_whitespace_only_id() {
         let storage = InMemoryStorage::new();
         let whitespace_ids = vec![" ", "  ", "\t", "\n", "\r\n", " \t \n "];
-        
+
         for id in whitespace_ids {
             let resource = create_test_resource(id, ResourceType::Patient);
-            storage.insert(&ResourceType::Patient, resource.clone()).await.unwrap();
-            
+            storage
+                .insert(&ResourceType::Patient, resource.clone())
+                .await
+                .unwrap();
+
             let retrieved = storage.get(&ResourceType::Patient, id).await.unwrap();
             assert!(retrieved.is_some());
             assert_eq!(retrieved.unwrap().id, id);
-            
+
             storage.delete(&ResourceType::Patient, id).await.unwrap();
         }
-        
+
         assert_eq!(storage.count().await, 0);
     }
 
@@ -805,31 +1057,47 @@ mod tests {
     async fn test_storage_resource_data_integrity() {
         let storage = InMemoryStorage::new();
         let mut resource = create_test_resource("integrity-test", ResourceType::Patient);
-        
+
         // Add complex data to test deep cloning
-        resource.add_field("name".to_string(), serde_json::json!([{
-            "use": "official",
-            "given": ["John", "Middle"],
-            "family": "Doe"
-        }]));
-        resource.add_field("nested".to_string(), serde_json::json!({
-            "level1": {
-                "level2": {
-                    "value": "deep"
+        resource.add_field(
+            "name".to_string(),
+            serde_json::json!([{
+                "use": "official",
+                "given": ["John", "Middle"],
+                "family": "Doe"
+            }]),
+        );
+        resource.add_field(
+            "nested".to_string(),
+            serde_json::json!({
+                "level1": {
+                    "level2": {
+                        "value": "deep"
+                    }
                 }
-            }
-        }));
-        
-        storage.insert(&ResourceType::Patient, resource.clone()).await.unwrap();
-        
+            }),
+        );
+
+        storage
+            .insert(&ResourceType::Patient, resource.clone())
+            .await
+            .unwrap();
+
         // Modify original resource after insertion
         resource.add_field("modified".to_string(), serde_json::json!("after insertion"));
-        
+
         // Retrieved resource should not have the modification
-        let retrieved = storage.get(&ResourceType::Patient, "integrity-test").await.unwrap().unwrap();
+        let retrieved = storage
+            .get(&ResourceType::Patient, "integrity-test")
+            .await
+            .unwrap()
+            .unwrap();
         assert!(retrieved.get_field("modified").is_none());
         assert_eq!(retrieved.get_field("name").unwrap()[0]["family"], "Doe");
-        assert_eq!(retrieved.get_field("nested").unwrap()["level1"]["level2"]["value"], "deep");
+        assert_eq!(
+            retrieved.get_field("nested").unwrap()["level1"]["level2"]["value"],
+            "deep"
+        );
     }
 
     #[tokio::test]
@@ -837,10 +1105,10 @@ mod tests {
         // Test make_storage_key with edge cases
         let key1 = make_storage_key(&ResourceType::Patient, "");
         assert_eq!(key1, "Patient/");
-        
+
         let key2 = make_storage_key(&ResourceType::Organization, "id/with/slashes");
         assert_eq!(key2, "Organization/id/with/slashes");
-        
+
         let key3 = make_storage_key(&ResourceType::Practitioner, "id with spaces");
         assert_eq!(key3, "Practitioner/id with spaces");
     }
@@ -849,15 +1117,18 @@ mod tests {
     async fn test_concurrent_read_operations() {
         use std::sync::Arc;
         use tokio::task::JoinSet;
-        
+
         let storage = Arc::new(InMemoryStorage::new());
-        
+
         // Pre-populate with some resources
         for i in 0..10 {
-            let resource = create_test_resource(&format!("patient-{}", i), ResourceType::Patient);
-            storage.insert(&ResourceType::Patient, resource).await.unwrap();
+            let resource = create_test_resource(&format!("patient-{i}"), ResourceType::Patient);
+            storage
+                .insert(&ResourceType::Patient, resource)
+                .await
+                .unwrap();
         }
-        
+
         // Spawn multiple concurrent read operations
         let mut join_set = JoinSet::new();
         for i in 0..50 {
@@ -868,7 +1139,7 @@ mod tests {
                 result.unwrap().is_some()
             });
         }
-        
+
         // All reads should succeed and find resources for IDs 0-9
         let mut success_count = 0;
         while let Some(result) = join_set.join_next().await {
@@ -876,7 +1147,7 @@ mod tests {
                 success_count += 1;
             }
         }
-        
+
         assert_eq!(success_count, 50);
         assert_eq!(storage.count().await, 10);
     }
@@ -885,19 +1156,20 @@ mod tests {
     async fn test_concurrent_insert_operations() {
         use std::sync::Arc;
         use tokio::task::JoinSet;
-        
+
         let storage = Arc::new(InMemoryStorage::new());
         let mut join_set = JoinSet::new();
-        
+
         // Spawn concurrent insert operations
         for i in 0..20 {
             let storage_clone = Arc::clone(&storage);
             join_set.spawn(async move {
-                let resource = create_test_resource(&format!("concurrent-{}", i), ResourceType::Patient);
+                let resource =
+                    create_test_resource(&format!("concurrent-{i}"), ResourceType::Patient);
                 storage_clone.insert(&ResourceType::Patient, resource).await
             });
         }
-        
+
         // All inserts should succeed since they have unique IDs
         let mut success_count = 0;
         while let Some(result) = join_set.join_next().await {
@@ -905,7 +1177,7 @@ mod tests {
                 success_count += 1;
             }
         }
-        
+
         assert_eq!(success_count, 20);
         assert_eq!(storage.count().await, 20);
     }
@@ -914,10 +1186,10 @@ mod tests {
     async fn test_concurrent_conflicting_inserts() {
         use std::sync::Arc;
         use tokio::task::JoinSet;
-        
+
         let storage = Arc::new(InMemoryStorage::new());
         let mut join_set = JoinSet::new();
-        
+
         // Spawn concurrent insert operations with the same ID to test conflict handling
         for _ in 0..10 {
             let storage_clone = Arc::clone(&storage);
@@ -926,10 +1198,10 @@ mod tests {
                 storage_clone.insert(&ResourceType::Patient, resource).await
             });
         }
-        
+
         let mut success_count = 0;
         let mut conflict_count = 0;
-        
+
         while let Some(result) = join_set.join_next().await {
             match result.unwrap() {
                 Ok(_) => success_count += 1,
@@ -937,63 +1209,80 @@ mod tests {
                 Err(_) => panic!("Unexpected error type"),
             }
         }
-        
+
         // Only one insert should succeed, others should conflict
         assert_eq!(success_count, 1);
         assert_eq!(conflict_count, 9);
         assert_eq!(storage.count().await, 1);
-        assert!(storage.exists(&ResourceType::Patient, "conflict-test").await);
+        assert!(
+            storage
+                .exists(&ResourceType::Patient, "conflict-test")
+                .await
+        );
     }
 
     #[tokio::test]
     async fn test_concurrent_mixed_operations() {
         use std::sync::Arc;
         use tokio::task::JoinSet;
-        
+
         let storage = Arc::new(InMemoryStorage::new());
-        
+
         // Pre-populate with some resources
         for i in 0..5 {
-            let resource = create_test_resource(&format!("mixed-{}", i), ResourceType::Patient);
-            storage.insert(&ResourceType::Patient, resource).await.unwrap();
+            let resource = create_test_resource(&format!("mixed-{i}"), ResourceType::Patient);
+            storage
+                .insert(&ResourceType::Patient, resource)
+                .await
+                .unwrap();
         }
-        
+
         let mut join_set = JoinSet::new();
-        
+
         // Concurrent reads
         for i in 0..10 {
             let storage_clone = Arc::clone(&storage);
             join_set.spawn(async move {
                 let id = format!("mixed-{}", i % 5);
-                storage_clone.get(&ResourceType::Patient, &id).await.unwrap().is_some()
+                storage_clone
+                    .get(&ResourceType::Patient, &id)
+                    .await
+                    .unwrap()
+                    .is_some()
             });
         }
-        
+
         // Concurrent updates
         for i in 0..5 {
             let storage_clone = Arc::clone(&storage);
             join_set.spawn(async move {
-                let id = format!("mixed-{}", i);
+                let id = format!("mixed-{i}");
                 let mut resource = create_test_resource(&id, ResourceType::Patient);
                 resource.status = ResourceStatus::Inactive;
-                storage_clone.update(&ResourceType::Patient, &id, resource).await.is_ok()
+                storage_clone
+                    .update(&ResourceType::Patient, &id, resource)
+                    .await
+                    .is_ok()
             });
         }
-        
+
         // Concurrent new inserts
         for i in 5..10 {
             let storage_clone = Arc::clone(&storage);
             join_set.spawn(async move {
-                let resource = create_test_resource(&format!("mixed-{}", i), ResourceType::Patient);
-                storage_clone.insert(&ResourceType::Patient, resource).await.is_ok()
+                let resource = create_test_resource(&format!("mixed-{i}"), ResourceType::Patient);
+                storage_clone
+                    .insert(&ResourceType::Patient, resource)
+                    .await
+                    .is_ok()
             });
         }
-        
+
         let mut results = Vec::new();
         while let Some(result) = join_set.join_next().await {
             results.push(result.unwrap());
         }
-        
+
         // All operations should succeed
         assert!(results.iter().all(|&r| r));
         assert_eq!(storage.count().await, 10);
@@ -1003,19 +1292,25 @@ mod tests {
     async fn test_concurrent_count_operations() {
         use std::sync::Arc;
         use tokio::task::JoinSet;
-        
+
         let storage = Arc::new(InMemoryStorage::new());
-        
+
         // Pre-populate storage
         for i in 0..10 {
-            let patient = create_test_resource(&format!("patient-{}", i), ResourceType::Patient);
-            let org = create_test_resource(&format!("org-{}", i), ResourceType::Organization);
-            storage.insert(&ResourceType::Patient, patient).await.unwrap();
-            storage.insert(&ResourceType::Organization, org).await.unwrap();
+            let patient = create_test_resource(&format!("patient-{i}"), ResourceType::Patient);
+            let org = create_test_resource(&format!("org-{i}"), ResourceType::Organization);
+            storage
+                .insert(&ResourceType::Patient, patient)
+                .await
+                .unwrap();
+            storage
+                .insert(&ResourceType::Organization, org)
+                .await
+                .unwrap();
         }
-        
+
         let mut join_set = JoinSet::new();
-        
+
         // Concurrent count operations
         for _ in 0..20 {
             let storage_clone = Arc::clone(&storage);
@@ -1023,11 +1318,13 @@ mod tests {
                 (
                     storage_clone.count().await,
                     storage_clone.count_by_type(&ResourceType::Patient).await,
-                    storage_clone.count_by_type(&ResourceType::Organization).await,
+                    storage_clone
+                        .count_by_type(&ResourceType::Organization)
+                        .await,
                 )
             });
         }
-        
+
         // All count operations should return consistent results
         while let Some(result) = join_set.join_next().await {
             let (total, patient_count, org_count) = result.unwrap();
@@ -1040,40 +1337,52 @@ mod tests {
     // Advanced concurrency tests for task 2.5.2
     #[tokio::test]
     async fn test_high_volume_concurrent_operations() {
-        use std::sync::Arc;
         use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
         use tokio::task::JoinSet;
-        
+
         let storage = Arc::new(InMemoryStorage::new());
         let success_counter = Arc::new(AtomicUsize::new(0));
         let error_counter = Arc::new(AtomicUsize::new(0));
-        
+
         let mut join_set = JoinSet::new();
-        
+
         // Spawn 1000 concurrent operations
         for i in 0..1000 {
             let storage_clone = Arc::clone(&storage);
             let success_counter_clone = Arc::clone(&success_counter);
             let error_counter_clone = Arc::clone(&error_counter);
-            
+
             join_set.spawn(async move {
-                let resource_id = format!("high-volume-{}", i);
+            let resource_id = format!("high-volume-{i}");
                 let resource = create_test_resource(&resource_id, ResourceType::Patient);
-                
+
                 // Try to insert
-                match storage_clone.insert(&ResourceType::Patient, resource.clone()).await {
+                match storage_clone
+                    .insert(&ResourceType::Patient, resource.clone())
+                    .await
+                {
                     Ok(_) => {
                         success_counter_clone.fetch_add(1, Ordering::Relaxed);
-                        
+
                         // Try to read back
-                        if storage_clone.get(&ResourceType::Patient, &resource_id).await.unwrap().is_some() {
+                        if storage_clone
+                            .get(&ResourceType::Patient, &resource_id)
+                            .await
+                            .unwrap()
+                            .is_some()
+                        {
                             // Try to update
                             let mut updated = resource;
                             updated.status = ResourceStatus::Inactive;
-                            let _ = storage_clone.update(&ResourceType::Patient, &resource_id, updated).await;
-                            
+                            let _ = storage_clone
+                                .update(&ResourceType::Patient, &resource_id, updated)
+                                .await;
+
                             // Try to delete
-                            let _ = storage_clone.delete(&ResourceType::Patient, &resource_id).await;
+                            let _ = storage_clone
+                                .delete(&ResourceType::Patient, &resource_id)
+                                .await;
                         }
                     }
                     Err(_) => {
@@ -1082,14 +1391,14 @@ mod tests {
                 }
             });
         }
-        
+
         // Wait for all operations to complete
-        while let Some(_) = join_set.join_next().await {}
-        
+        while (join_set.join_next().await).is_some() {}
+
         // All operations should have succeeded (unique IDs)
         assert_eq!(success_counter.load(Ordering::Relaxed), 1000);
         assert_eq!(error_counter.load(Ordering::Relaxed), 0);
-        
+
         // Storage should be empty after all deletes
         assert_eq!(storage.count().await, 0);
     }
@@ -1098,40 +1407,51 @@ mod tests {
     async fn test_race_condition_update_delete() {
         use std::sync::Arc;
         use tokio::task::JoinSet;
-        
+
         let storage = Arc::new(InMemoryStorage::new());
-        
+
         // Insert a resource
         let resource = create_test_resource("race-test", ResourceType::Patient);
-        storage.insert(&ResourceType::Patient, resource.clone()).await.unwrap();
-        
+        storage
+            .insert(&ResourceType::Patient, resource.clone())
+            .await
+            .unwrap();
+
         let mut join_set = JoinSet::new();
-        
+
         // Spawn multiple concurrent updates and deletes on the same resource
         for i in 0..50 {
             let storage_clone = Arc::clone(&storage);
             let resource_clone = resource.clone();
-            
+
             if i % 2 == 0 {
                 // Even: try to update
                 join_set.spawn(async move {
                     let mut updated = resource_clone;
-                    updated.status = if i % 4 == 0 { ResourceStatus::Active } else { ResourceStatus::Inactive };
-                    storage_clone.update(&ResourceType::Patient, "race-test", updated).await
+                    updated.status = if i % 4 == 0 {
+                        ResourceStatus::Active
+                    } else {
+                        ResourceStatus::Inactive
+                    };
+                    storage_clone
+                        .update(&ResourceType::Patient, "race-test", updated)
+                        .await
                 });
             } else {
                 // Odd: try to delete
                 join_set.spawn(async move {
-                    storage_clone.delete(&ResourceType::Patient, "race-test").await
+                    storage_clone
+                        .delete(&ResourceType::Patient, "race-test")
+                        .await
                 });
             }
         }
-        
+
         let mut update_successes = 0;
         let mut update_not_found = 0;
         let mut delete_successes = 0;
         let mut delete_not_found = 0;
-        
+
         while let Some(result) = join_set.join_next().await {
             match result.unwrap() {
                 Ok(_) => {
@@ -1153,12 +1473,13 @@ mod tests {
                 Err(_) => panic!("Unexpected error"),
             }
         }
-        
+
         // Should have some operations succeed and some fail due to race conditions
         // The exact counts depend on timing, but we should have both successes and failures
-        println!("Update successes: {}, Update not found: {}, Delete successes: {}, Delete not found: {}", 
-                 update_successes, update_not_found, delete_successes, delete_not_found);
-        
+        println!(
+            "Update successes: {update_successes}, Update not found: {update_not_found}, Delete successes: {delete_successes}, Delete not found: {delete_not_found}"
+        );
+
         // At least one delete should have succeeded eventually
         assert!(delete_successes > 0 || !storage.exists(&ResourceType::Patient, "race-test").await);
     }
@@ -1166,66 +1487,72 @@ mod tests {
     #[tokio::test]
     async fn test_concurrent_transaction_operations() {
         use tokio::task::JoinSet;
-        
+
         // Note: This test demonstrates transaction isolation between different storage instances
         // since papaya doesn't support mutable shared access, each transaction needs its own storage
         let mut join_set = JoinSet::new();
-        
+
         // Spawn multiple concurrent transactions, each with its own storage
         for tx_id in 0..10 {
             join_set.spawn(async move {
                 let mut storage = InMemoryStorage::new();
                 let mut tx = storage.begin_transaction().await.unwrap();
-                
+
                 // Each transaction creates 5 resources
                 for i in 0..5 {
-                    let resource = create_test_resource(&format!("tx-{}-resource-{}", tx_id, i), ResourceType::Patient);
+                    let resource = create_test_resource(
+                        &format!("tx-{tx_id}-resource-{i}"),
+                        ResourceType::Patient,
+                    );
                     tx.create_resource(ResourceType::Patient, resource).unwrap();
                 }
-                
+
                 // Execute and commit
                 storage.execute_transaction(&mut tx).await.unwrap();
                 storage.commit_transaction(&mut tx).await.unwrap();
-                
+
                 // Verify resources were created
                 assert_eq!(storage.count().await, 5);
-                
+
                 tx_id
             });
         }
-        
+
         let mut completed_transactions = Vec::new();
         while let Some(result) = join_set.join_next().await {
             completed_transactions.push(result.unwrap());
         }
-        
+
         // All transactions should complete successfully
         assert_eq!(completed_transactions.len(), 10);
     }
 
     #[tokio::test]
     async fn test_stress_concurrent_mixed_workload() {
-        use std::sync::Arc;
         use std::sync::atomic::{AtomicUsize, Ordering};
-        use tokio::task::JoinSet;
+        use std::sync::Arc;
         use std::time::Duration;
-        
+        use tokio::task::JoinSet;
+
         let storage = Arc::new(InMemoryStorage::new());
         let operation_counter = Arc::new(AtomicUsize::new(0));
-        
+
         // Pre-populate with some data
         for i in 0..100 {
-            let resource = create_test_resource(&format!("stress-{}", i), ResourceType::Patient);
-            storage.insert(&ResourceType::Patient, resource).await.unwrap();
+            let resource = create_test_resource(&format!("stress-{i}"), ResourceType::Patient);
+            storage
+                .insert(&ResourceType::Patient, resource)
+                .await
+                .unwrap();
         }
-        
+
         let mut join_set = JoinSet::new();
-        
+
         // Heavy read workload
         for _ in 0..200 {
             let storage_clone = Arc::clone(&storage);
             let counter_clone = Arc::clone(&operation_counter);
-            
+
             join_set.spawn(async move {
                 for _ in 0..10 {
                     let id = format!("stress-{}", fastrand::usize(0..100));
@@ -1234,34 +1561,40 @@ mod tests {
                 }
             });
         }
-        
+
         // Medium write workload
         for i in 0..50 {
             let storage_clone = Arc::clone(&storage);
             let counter_clone = Arc::clone(&operation_counter);
-            
+
             join_set.spawn(async move {
-                let resource = create_test_resource(&format!("stress-new-{}", i), ResourceType::Organization);
-                let _ = storage_clone.insert(&ResourceType::Organization, resource).await;
+                let resource =
+                    create_test_resource(&format!("stress-new-{i}"), ResourceType::Organization);
+                let _ = storage_clone
+                    .insert(&ResourceType::Organization, resource)
+                    .await;
                 counter_clone.fetch_add(1, Ordering::Relaxed);
             });
         }
-        
+
         // Light update workload
         for _ in 0..25 {
             let storage_clone = Arc::clone(&storage);
             let counter_clone = Arc::clone(&operation_counter);
-            
+
             join_set.spawn(async move {
                 let id = format!("stress-{}", fastrand::usize(0..50));
-                if let Ok(Some(mut resource)) = storage_clone.get(&ResourceType::Patient, &id).await {
+                if let Ok(Some(mut resource)) = storage_clone.get(&ResourceType::Patient, &id).await
+                {
                     resource.status = ResourceStatus::Inactive;
-                    let _ = storage_clone.update(&ResourceType::Patient, &id, resource).await;
+                    let _ = storage_clone
+                        .update(&ResourceType::Patient, &id, resource)
+                        .await;
                 }
                 counter_clone.fetch_add(1, Ordering::Relaxed);
             });
         }
-        
+
         // Wait for all operations with timeout
         let start_time = std::time::Instant::now();
         loop {
@@ -1275,11 +1608,14 @@ mod tests {
                 }
             }
         }
-        
+
         let elapsed = start_time.elapsed();
-        println!("Stress test completed in {:?}", elapsed);
-        println!("Total operations: {}", operation_counter.load(Ordering::Relaxed));
-        
+        println!("Stress test completed in {elapsed:?}");
+        println!(
+            "Total operations: {}",
+            operation_counter.load(Ordering::Relaxed)
+        );
+
         // Should have completed many operations
         assert!(operation_counter.load(Ordering::Relaxed) > 2000);
         assert!(elapsed.as_secs() < 10); // Should complete within reasonable time
@@ -1289,17 +1625,20 @@ mod tests {
     async fn test_concurrent_exists_operations() {
         use std::sync::Arc;
         use tokio::task::JoinSet;
-        
+
         let storage = Arc::new(InMemoryStorage::new());
-        
+
         // Create some resources
         for i in 0..20 {
-            let resource = create_test_resource(&format!("exists-{}", i), ResourceType::Patient);
-            storage.insert(&ResourceType::Patient, resource).await.unwrap();
+            let resource = create_test_resource(&format!("exists-{i}"), ResourceType::Patient);
+            storage
+                .insert(&ResourceType::Patient, resource)
+                .await
+                .unwrap();
         }
-        
+
         let mut join_set = JoinSet::new();
-        
+
         // Concurrent exists operations while resources are being deleted
         for _ in 0..100 {
             let storage_clone = Arc::clone(&storage);
@@ -1308,22 +1647,22 @@ mod tests {
                 storage_clone.exists(&ResourceType::Patient, &id).await
             });
         }
-        
+
         // Concurrent deletes
         for i in 0..10 {
             let storage_clone = Arc::clone(&storage);
             join_set.spawn(async move {
-                let id = format!("exists-{}", i);
+                let id = format!("exists-{i}");
                 let _ = storage_clone.delete(&ResourceType::Patient, &id).await;
                 false // Just to match the return type
             });
         }
-        
+
         // All operations should complete without panic
         while let Some(result) = join_set.join_next().await {
             let _ = result.unwrap(); // exists() returns bool, delete returns different type
         }
-        
+
         // Some resources should still exist, some should be deleted
         let final_count = storage.count().await;
         assert!(final_count <= 20);
@@ -1332,54 +1671,58 @@ mod tests {
 
     #[tokio::test]
     async fn test_concurrent_storage_key_generation() {
-        use std::sync::Arc;
         use std::collections::HashSet;
-        use tokio::task::JoinSet;
+        use std::sync::Arc;
         use std::sync::Mutex;
-        
+        use tokio::task::JoinSet;
+
         let keys = Arc::new(Mutex::new(HashSet::new()));
         let mut join_set = JoinSet::new();
-        
+
         // Generate storage keys concurrently
         for i in 0..1000 {
             let keys_clone = Arc::clone(&keys);
-            
+
             join_set.spawn(async move {
-                let resource_types = vec![
+                let resource_types = [
                     ResourceType::Patient,
                     ResourceType::Organization,
                     ResourceType::Practitioner,
                 ];
-                
+
                 let resource_type = &resource_types[i % 3];
-                let id = format!("concurrent-key-{}", i);
+                let id = format!("concurrent-key-{i}");
                 let key = make_storage_key(resource_type, &id);
-                
+
                 {
                     let mut keys_guard = keys_clone.lock().unwrap();
                     keys_guard.insert(key.clone());
                 }
-                
+
                 key
             });
         }
-        
+
         let mut generated_keys = Vec::new();
         while let Some(result) = join_set.join_next().await {
             generated_keys.push(result.unwrap());
         }
-        
+
         // All keys should be unique
         assert_eq!(generated_keys.len(), 1000);
-        
+
         let unique_keys: HashSet<_> = generated_keys.into_iter().collect();
         assert_eq!(unique_keys.len(), 1000);
-        
+
         // Verify keys have the expected format
         let keys_guard = keys.lock().unwrap();
         for key in keys_guard.iter() {
             assert!(key.contains("/"));
-            assert!(key.starts_with("Patient/") || key.starts_with("Organization/") || key.starts_with("Practitioner/"));
+            assert!(
+                key.starts_with("Patient/")
+                    || key.starts_with("Organization/")
+                    || key.starts_with("Practitioner/")
+            );
         }
     }
 
@@ -1387,107 +1730,126 @@ mod tests {
     async fn test_concurrent_count_by_type_with_mutations() {
         use std::sync::Arc;
         use tokio::task::JoinSet;
-        
+
         let storage = Arc::new(InMemoryStorage::new());
         let mut join_set = JoinSet::new();
-        
+
         // Concurrent count operations
         for _ in 0..50 {
             let storage_clone = Arc::clone(&storage);
-            join_set.spawn(async move {
-                storage_clone.count_by_type(&ResourceType::Patient).await
-            });
+            join_set
+                .spawn(async move { storage_clone.count_by_type(&ResourceType::Patient).await });
         }
-        
+
         // Concurrent insertions
         for i in 0..25 {
             let storage_clone = Arc::clone(&storage);
             join_set.spawn(async move {
-                let resource = create_test_resource(&format!("count-mut-{}", i), ResourceType::Patient);
-                storage_clone.insert(&ResourceType::Patient, resource).await.map(|_| 0).unwrap_or(0)
+                let resource =
+                    create_test_resource(&format!("count-mut-{i}"), ResourceType::Patient);
+                storage_clone
+                    .insert(&ResourceType::Patient, resource)
+                    .await
+                    .map(|_| 0)
+                    .unwrap_or(0)
             });
         }
-        
+
         // Concurrent deletions (will fail for non-existent resources)
         for i in 0..10 {
             let storage_clone = Arc::clone(&storage);
             join_set.spawn(async move {
-                let _ = storage_clone.delete(&ResourceType::Patient, &format!("count-mut-{}", i)).await;
+                let _ = storage_clone
+                    .delete(&ResourceType::Patient, &format!("count-mut-{i}"))
+                    .await;
                 0usize
             });
         }
-        
+
         let mut counts = Vec::new();
         while let Some(result) = join_set.join_next().await {
             counts.push(result.unwrap());
         }
-        
+
         // Counts should be reasonable (between 0 and 25)
-        for count in &counts[0..50] { // First 50 are count operations
+        for count in &counts[0..50] {
+            // First 50 are count operations
             assert!(*count <= 25);
         }
-        
+
         // Final state should be consistent
         let final_count = storage.count().await;
         let final_patient_count = storage.count_by_type(&ResourceType::Patient).await;
-        
+
         assert_eq!(final_count, final_patient_count);
         assert!(final_patient_count <= 25);
     }
 
     // Search functionality tests for task 2.5.3
-    
-    fn create_test_patient_with_data(id: &str, name: &str, birth_date: &str, active: bool) -> ResourceEnvelope {
+
+    fn create_test_patient_with_data(
+        id: &str,
+        name: &str,
+        birth_date: &str,
+        active: bool,
+    ) -> ResourceEnvelope {
         let mut resource = create_test_resource(id, ResourceType::Patient);
-        resource.add_field("name".to_string(), serde_json::json!([{
-            "use": "official",
-            "family": name,
-            "given": ["Test"]
-        }]));
+        resource.add_field(
+            "name".to_string(),
+            serde_json::json!([{
+                "use": "official",
+                "family": name,
+                "given": ["Test"]
+            }]),
+        );
         resource.add_field("birthDate".to_string(), serde_json::json!(birth_date));
         resource.add_field("active".to_string(), serde_json::json!(active));
-        resource.add_field("identifier".to_string(), serde_json::json!([{
-            "system": "http://example.com/mrn",
-            "value": format!("MRN-{}", id)
-        }]));
+        resource.add_field(
+            "identifier".to_string(),
+            serde_json::json!([{
+                "system": "http://example.com/mrn",
+                "value": format!("MRN-{}", id)
+            }]),
+        );
         resource
     }
 
     #[tokio::test]
     async fn test_search_exact_filter() {
         use crate::query::{QueryFilter, SearchQuery};
-        
+
         let storage = InMemoryStorage::new();
-        
+
         // Create test data
         let patients = vec![
             create_test_patient_with_data("patient-1", "Smith", "1990-01-01", true),
             create_test_patient_with_data("patient-2", "Johnson", "1985-05-15", false),
             create_test_patient_with_data("patient-3", "Williams", "1992-12-30", true),
         ];
-        
+
         for patient in &patients {
-            storage.insert(&ResourceType::Patient, patient.clone()).await.unwrap();
+            storage
+                .insert(&ResourceType::Patient, patient.clone())
+                .await
+                .unwrap();
         }
-        
+
         // Test exact _id filter
-        let query = SearchQuery::new(ResourceType::Patient)
-            .with_filter(QueryFilter::Exact {
-                field: "_id".to_string(),
-                value: "patient-2".to_string(),
-            });
-        
+        let query = SearchQuery::new(ResourceType::Patient).with_filter(QueryFilter::Exact {
+            field: "_id".to_string(),
+            value: "patient-2".to_string(),
+        });
+
         let result = storage.search(&query).await.unwrap();
         assert_eq!(result.total, 1);
         assert_eq!(result.resources[0].id, "patient-2");
-        
+
         // Test exact field filter
-        let query = SearchQuery::new(ResourceType::Patient)
-            .with_filter(QueryFilter::Exact {
-                field: "birthDate".to_string(),
-                value: "1990-01-01".to_string(),
-            });
-        
+        let query = SearchQuery::new(ResourceType::Patient).with_filter(QueryFilter::Exact {
+            field: "birthDate".to_string(),
+            value: "1990-01-01".to_string(),
+        });
+
         let result = storage.search(&query).await.unwrap();
         assert_eq!(result.total, 1);
         assert_eq!(result.resources[0].id, "patient-1");
@@ -1496,37 +1858,41 @@ mod tests {
     #[tokio::test]
     async fn test_search_boolean_filter() {
         use crate::query::{QueryFilter, SearchQuery};
-        
+
         let storage = InMemoryStorage::new();
-        
+
         let patients = vec![
             create_test_patient_with_data("patient-1", "Smith", "1990-01-01", true),
             create_test_patient_with_data("patient-2", "Johnson", "1985-05-15", false),
             create_test_patient_with_data("patient-3", "Williams", "1992-12-30", true),
         ];
-        
+
         for patient in &patients {
-            storage.insert(&ResourceType::Patient, patient.clone()).await.unwrap();
+            storage
+                .insert(&ResourceType::Patient, patient.clone())
+                .await
+                .unwrap();
         }
-        
+
         // Test active = true
-        let query = SearchQuery::new(ResourceType::Patient)
-            .with_filter(QueryFilter::Boolean {
-                field: "active".to_string(),
-                value: true,
-            });
-        
+        let query = SearchQuery::new(ResourceType::Patient).with_filter(QueryFilter::Boolean {
+            field: "active".to_string(),
+            value: true,
+        });
+
         let result = storage.search(&query).await.unwrap();
         assert_eq!(result.total, 2);
-        assert!(result.resources.iter().all(|r| r.id == "patient-1" || r.id == "patient-3"));
-        
+        assert!(result
+            .resources
+            .iter()
+            .all(|r| r.id == "patient-1" || r.id == "patient-3"));
+
         // Test active = false
-        let query = SearchQuery::new(ResourceType::Patient)
-            .with_filter(QueryFilter::Boolean {
-                field: "active".to_string(),
-                value: false,
-            });
-        
+        let query = SearchQuery::new(ResourceType::Patient).with_filter(QueryFilter::Boolean {
+            field: "active".to_string(),
+            value: false,
+        });
+
         let result = storage.search(&query).await.unwrap();
         assert_eq!(result.total, 1);
         assert_eq!(result.resources[0].id, "patient-2");
@@ -1535,38 +1901,39 @@ mod tests {
     #[tokio::test]
     async fn test_search_contains_filter() {
         use crate::query::{QueryFilter, SearchQuery};
-        
+
         let storage = InMemoryStorage::new();
-        
+
         let patients = vec![
             create_test_patient_with_data("patient-1", "Smith", "1990-01-01", true),
             create_test_patient_with_data("patient-2", "Johnson", "1985-05-15", true),
             create_test_patient_with_data("patient-3", "Smithson", "1992-12-30", true),
         ];
-        
+
         for patient in &patients {
-            storage.insert(&ResourceType::Patient, patient.clone()).await.unwrap();
+            storage
+                .insert(&ResourceType::Patient, patient.clone())
+                .await
+                .unwrap();
         }
-        
+
         // Test contains "Smith"
-        let query = SearchQuery::new(ResourceType::Patient)
-            .with_filter(QueryFilter::Contains {
-                field: "name".to_string(),
-                value: "Smith".to_string(),
-            });
-        
+        let query = SearchQuery::new(ResourceType::Patient).with_filter(QueryFilter::Contains {
+            field: "name".to_string(),
+            value: "Smith".to_string(),
+        });
+
         let result = storage.search(&query).await.unwrap();
         assert_eq!(result.total, 2);
         assert!(result.resources.iter().any(|r| r.id == "patient-1"));
         assert!(result.resources.iter().any(|r| r.id == "patient-3"));
-        
+
         // Test contains "John"
-        let query = SearchQuery::new(ResourceType::Patient)
-            .with_filter(QueryFilter::Contains {
-                field: "name".to_string(),
-                value: "John".to_string(),
-            });
-        
+        let query = SearchQuery::new(ResourceType::Patient).with_filter(QueryFilter::Contains {
+            field: "name".to_string(),
+            value: "John".to_string(),
+        });
+
         let result = storage.search(&query).await.unwrap();
         assert_eq!(result.total, 1);
         assert_eq!(result.resources[0].id, "patient-2");
@@ -1575,38 +1942,39 @@ mod tests {
     #[tokio::test]
     async fn test_search_identifier_filter() {
         use crate::query::{QueryFilter, SearchQuery};
-        
+
         let storage = InMemoryStorage::new();
-        
+
         let patients = vec![
             create_test_patient_with_data("patient-1", "Smith", "1990-01-01", true),
             create_test_patient_with_data("patient-2", "Johnson", "1985-05-15", true),
         ];
-        
+
         for patient in &patients {
-            storage.insert(&ResourceType::Patient, patient.clone()).await.unwrap();
+            storage
+                .insert(&ResourceType::Patient, patient.clone())
+                .await
+                .unwrap();
         }
-        
+
         // Test identifier with system
-        let query = SearchQuery::new(ResourceType::Patient)
-            .with_filter(QueryFilter::Identifier {
-                field: "identifier".to_string(),
-                system: Some("http://example.com/mrn".to_string()),
-                value: "MRN-patient-1".to_string(),
-            });
-        
+        let query = SearchQuery::new(ResourceType::Patient).with_filter(QueryFilter::Identifier {
+            field: "identifier".to_string(),
+            system: Some("http://example.com/mrn".to_string()),
+            value: "MRN-patient-1".to_string(),
+        });
+
         let result = storage.search(&query).await.unwrap();
         assert_eq!(result.total, 1);
         assert_eq!(result.resources[0].id, "patient-1");
-        
+
         // Test identifier without system
-        let query = SearchQuery::new(ResourceType::Patient)
-            .with_filter(QueryFilter::Identifier {
-                field: "identifier".to_string(),
-                system: None,
-                value: "MRN-patient-2".to_string(),
-            });
-        
+        let query = SearchQuery::new(ResourceType::Patient).with_filter(QueryFilter::Identifier {
+            field: "identifier".to_string(),
+            system: None,
+            value: "MRN-patient-2".to_string(),
+        });
+
         let result = storage.search(&query).await.unwrap();
         assert_eq!(result.total, 1);
         assert_eq!(result.resources[0].id, "patient-2");
@@ -1614,58 +1982,57 @@ mod tests {
 
     #[tokio::test]
     async fn test_search_pagination() {
-        use crate::query::{QueryFilter, SearchQuery};
-        
+        use crate::query::SearchQuery;
+
         let storage = InMemoryStorage::new();
-        
+
         // Create 25 test patients
         for i in 1..=25 {
             let patient = create_test_patient_with_data(
-                &format!("patient-{:02}", i),
-                &format!("Patient{:02}", i),
+                &format!("patient-{i:02}"),
+                &format!("Patient{i:02}"),
                 "1990-01-01",
-                true
+                true,
             );
-            storage.insert(&ResourceType::Patient, patient).await.unwrap();
+            storage
+                .insert(&ResourceType::Patient, patient)
+                .await
+                .unwrap();
         }
-        
+
         // Test pagination - first page
-        let query = SearchQuery::new(ResourceType::Patient)
-            .with_pagination(0, 10);
-        
+        let query = SearchQuery::new(ResourceType::Patient).with_pagination(0, 10);
+
         let result = storage.search(&query).await.unwrap();
         assert_eq!(result.total, 25);
         assert_eq!(result.resources.len(), 10);
         assert_eq!(result.offset, 0);
         assert_eq!(result.count, 10);
         assert!(result.has_more);
-        
+
         // Test pagination - second page
-        let query = SearchQuery::new(ResourceType::Patient)
-            .with_pagination(10, 10);
-        
+        let query = SearchQuery::new(ResourceType::Patient).with_pagination(10, 10);
+
         let result = storage.search(&query).await.unwrap();
         assert_eq!(result.total, 25);
         assert_eq!(result.resources.len(), 10);
         assert_eq!(result.offset, 10);
         assert_eq!(result.count, 10);
         assert!(result.has_more);
-        
+
         // Test pagination - last page
-        let query = SearchQuery::new(ResourceType::Patient)
-            .with_pagination(20, 10);
-        
+        let query = SearchQuery::new(ResourceType::Patient).with_pagination(20, 10);
+
         let result = storage.search(&query).await.unwrap();
         assert_eq!(result.total, 25);
         assert_eq!(result.resources.len(), 5);
         assert_eq!(result.offset, 20);
         assert_eq!(result.count, 10);
         assert!(!result.has_more);
-        
+
         // Test pagination beyond range
-        let query = SearchQuery::new(ResourceType::Patient)
-            .with_pagination(30, 10);
-        
+        let query = SearchQuery::new(ResourceType::Patient).with_pagination(30, 10);
+
         let result = storage.search(&query).await.unwrap();
         assert_eq!(result.total, 25);
         assert_eq!(result.resources.len(), 0);
@@ -1676,20 +2043,23 @@ mod tests {
     #[tokio::test]
     async fn test_search_multiple_filters() {
         use crate::query::{QueryFilter, SearchQuery};
-        
+
         let storage = InMemoryStorage::new();
-        
+
         let patients = vec![
             create_test_patient_with_data("patient-1", "Smith", "1990-01-01", true),
             create_test_patient_with_data("patient-2", "Smith", "1985-05-15", false),
             create_test_patient_with_data("patient-3", "Johnson", "1990-01-01", true),
             create_test_patient_with_data("patient-4", "Smith", "1990-01-01", false),
         ];
-        
+
         for patient in &patients {
-            storage.insert(&ResourceType::Patient, patient.clone()).await.unwrap();
+            storage
+                .insert(&ResourceType::Patient, patient.clone())
+                .await
+                .unwrap();
         }
-        
+
         // Test multiple filters (name contains "Smith" AND active = true)
         let query = SearchQuery::new(ResourceType::Patient)
             .with_filter(QueryFilter::Contains {
@@ -1700,11 +2070,11 @@ mod tests {
                 field: "active".to_string(),
                 value: true,
             });
-        
+
         let result = storage.search(&query).await.unwrap();
         assert_eq!(result.total, 1);
         assert_eq!(result.resources[0].id, "patient-1");
-        
+
         // Test multiple filters (birth date AND active)
         let query = SearchQuery::new(ResourceType::Patient)
             .with_filter(QueryFilter::Exact {
@@ -1715,7 +2085,7 @@ mod tests {
                 field: "active".to_string(),
                 value: false,
             });
-        
+
         let result = storage.search(&query).await.unwrap();
         assert_eq!(result.total, 1);
         assert_eq!(result.resources[0].id, "patient-4");
@@ -1724,43 +2094,44 @@ mod tests {
     #[tokio::test]
     async fn test_search_sorting() {
         use crate::query::SearchQuery;
-        
+
         let storage = InMemoryStorage::new();
-        
+
         let patients = vec![
             create_test_patient_with_data("patient-3", "Charlie", "1992-12-30", true),
             create_test_patient_with_data("patient-1", "Alice", "1990-01-01", true),
             create_test_patient_with_data("patient-2", "Bob", "1985-05-15", true),
         ];
-        
+
         for patient in &patients {
-            storage.insert(&ResourceType::Patient, patient.clone()).await.unwrap();
+            storage
+                .insert(&ResourceType::Patient, patient.clone())
+                .await
+                .unwrap();
         }
-        
+
         // Test sort by _id ascending
-        let query = SearchQuery::new(ResourceType::Patient)
-            .with_sort("_id".to_string(), true);
-        
+        let query = SearchQuery::new(ResourceType::Patient).with_sort("_id".to_string(), true);
+
         let result = storage.search(&query).await.unwrap();
         assert_eq!(result.total, 3);
         assert_eq!(result.resources[0].id, "patient-1");
         assert_eq!(result.resources[1].id, "patient-2");
         assert_eq!(result.resources[2].id, "patient-3");
-        
+
         // Test sort by _id descending
-        let query = SearchQuery::new(ResourceType::Patient)
-            .with_sort("_id".to_string(), false);
-        
+        let query = SearchQuery::new(ResourceType::Patient).with_sort("_id".to_string(), false);
+
         let result = storage.search(&query).await.unwrap();
         assert_eq!(result.total, 3);
         assert_eq!(result.resources[0].id, "patient-3");
         assert_eq!(result.resources[1].id, "patient-2");
         assert_eq!(result.resources[2].id, "patient-1");
-        
+
         // Test sort by birth date
-        let query = SearchQuery::new(ResourceType::Patient)
-            .with_sort("birthDate".to_string(), true);
-        
+        let query =
+            SearchQuery::new(ResourceType::Patient).with_sort("birthDate".to_string(), true);
+
         let result = storage.search(&query).await.unwrap();
         assert_eq!(result.total, 3);
         assert_eq!(result.resources[0].id, "patient-2"); // 1985
@@ -1771,39 +2142,51 @@ mod tests {
     #[tokio::test]
     async fn test_search_by_type_helper() {
         use crate::query::QueryFilter;
-        
+
         let storage = InMemoryStorage::new();
-        
+
         let patients = vec![
             create_test_patient_with_data("patient-1", "Smith", "1990-01-01", true),
             create_test_patient_with_data("patient-2", "Johnson", "1985-05-15", false),
         ];
-        
+
         // Add some organizations too
         let org = create_test_resource("org-1", ResourceType::Organization);
-        
+
         for patient in &patients {
-            storage.insert(&ResourceType::Patient, patient.clone()).await.unwrap();
+            storage
+                .insert(&ResourceType::Patient, patient.clone())
+                .await
+                .unwrap();
         }
-        storage.insert(&ResourceType::Organization, org).await.unwrap();
-        
+        storage
+            .insert(&ResourceType::Organization, org)
+            .await
+            .unwrap();
+
         // Use the search_by_type helper
         let filters = vec![QueryFilter::Boolean {
             field: "active".to_string(),
             value: true,
         }];
-        
-        let result = storage.search_by_type(&ResourceType::Patient, filters, 0, 10).await.unwrap();
+
+        let result = storage
+            .search_by_type(&ResourceType::Patient, filters, 0, 10)
+            .await
+            .unwrap();
         assert_eq!(result.total, 1);
         assert_eq!(result.resources[0].id, "patient-1");
-        
+
         // Test empty result
         let filters = vec![QueryFilter::Exact {
             field: "_id".to_string(),
             value: "nonexistent".to_string(),
         }];
-        
-        let result = storage.search_by_type(&ResourceType::Patient, filters, 0, 10).await.unwrap();
+
+        let result = storage
+            .search_by_type(&ResourceType::Patient, filters, 0, 10)
+            .await
+            .unwrap();
         assert_eq!(result.total, 0);
         assert_eq!(result.resources.len(), 0);
     }
@@ -1812,71 +2195,86 @@ mod tests {
     async fn test_search_performance_large_dataset() {
         use crate::query::{QueryFilter, SearchQuery};
         use std::time::Instant;
-        
+
         let storage = InMemoryStorage::new();
-        
+
         // Create 1000 test patients
         for i in 1..=1000 {
             let patient = create_test_patient_with_data(
-                &format!("patient-{:04}", i),
-                &format!("Patient{:04}", i),
+                &format!("patient-{i:04}"),
+                &format!("Patient{i:04}"),
                 "1990-01-01",
-                i % 2 == 0 // Every other patient is active
+                i % 2 == 0, // Every other patient is active
             );
-            storage.insert(&ResourceType::Patient, patient).await.unwrap();
+            storage
+                .insert(&ResourceType::Patient, patient)
+                .await
+                .unwrap();
         }
-        
+
         // Test search performance
         let start = Instant::now();
-        
+
         let query = SearchQuery::new(ResourceType::Patient)
             .with_filter(QueryFilter::Boolean {
                 field: "active".to_string(),
                 value: true,
             })
             .with_pagination(0, 50);
-        
+
         let result = storage.search(&query).await.unwrap();
-        
+
         let duration = start.elapsed();
-        
+
         assert_eq!(result.total, 500); // Half are active
         assert_eq!(result.resources.len(), 50);
         assert!(result.has_more);
-        
+
         // Search should complete quickly (under 100ms for 1000 records)
-        assert!(duration.as_millis() < 100, "Search took too long: {:?}", duration);
-        
-        println!("Search of 1000 records took: {:?}", duration);
+        assert!(duration.as_millis() < 100, "Search took too long: {duration:?}");
+
+        println!("Search of 1000 records took: {duration:?}");
     }
 
     #[tokio::test]
     async fn test_search_resource_type_isolation() {
         use crate::query::SearchQuery;
-        
+
         let storage = InMemoryStorage::new();
-        
+
         // Create resources of different types with same ID
         let patient = create_test_resource("resource-1", ResourceType::Patient);
         let org = create_test_resource("resource-1", ResourceType::Organization);
         let practitioner = create_test_resource("resource-1", ResourceType::Practitioner);
-        
-        storage.insert(&ResourceType::Patient, patient).await.unwrap();
-        storage.insert(&ResourceType::Organization, org).await.unwrap();
-        storage.insert(&ResourceType::Practitioner, practitioner).await.unwrap();
-        
+
+        storage
+            .insert(&ResourceType::Patient, patient)
+            .await
+            .unwrap();
+        storage
+            .insert(&ResourceType::Organization, org)
+            .await
+            .unwrap();
+        storage
+            .insert(&ResourceType::Practitioner, practitioner)
+            .await
+            .unwrap();
+
         // Search for patients only
         let query = SearchQuery::new(ResourceType::Patient);
         let result = storage.search(&query).await.unwrap();
         assert_eq!(result.total, 1);
         assert_eq!(result.resources[0].resource_type, ResourceType::Patient);
-        
+
         // Search for organizations only
         let query = SearchQuery::new(ResourceType::Organization);
         let result = storage.search(&query).await.unwrap();
         assert_eq!(result.total, 1);
-        assert_eq!(result.resources[0].resource_type, ResourceType::Organization);
-        
+        assert_eq!(
+            result.resources[0].resource_type,
+            ResourceType::Organization
+        );
+
         // Search for a type that doesn't exist
         let query = SearchQuery::new(ResourceType::Observation);
         let result = storage.search(&query).await.unwrap();
@@ -1886,44 +2284,44 @@ mod tests {
     #[tokio::test]
     async fn test_search_edge_cases() {
         use crate::query::{QueryFilter, SearchQuery};
-        
+
         let storage = InMemoryStorage::new();
-        
+
         // Empty storage search
         let query = SearchQuery::new(ResourceType::Patient);
         let result = storage.search(&query).await.unwrap();
         assert_eq!(result.total, 0);
         assert_eq!(result.resources.len(), 0);
         assert!(!result.has_more);
-        
+
         // Add one resource
         let patient = create_test_patient_with_data("patient-1", "Smith", "1990-01-01", true);
-        storage.insert(&ResourceType::Patient, patient).await.unwrap();
-        
+        storage
+            .insert(&ResourceType::Patient, patient)
+            .await
+            .unwrap();
+
         // Search with filter that doesn't match
-        let query = SearchQuery::new(ResourceType::Patient)
-            .with_filter(QueryFilter::Exact {
-                field: "_id".to_string(),
-                value: "nonexistent".to_string(),
-            });
-        
+        let query = SearchQuery::new(ResourceType::Patient).with_filter(QueryFilter::Exact {
+            field: "_id".to_string(),
+            value: "nonexistent".to_string(),
+        });
+
         let result = storage.search(&query).await.unwrap();
         assert_eq!(result.total, 0);
-        
+
         // Search with filter for non-existent field
-        let query = SearchQuery::new(ResourceType::Patient)
-            .with_filter(QueryFilter::Exact {
-                field: "nonExistentField".to_string(),
-                value: "value".to_string(),
-            });
-        
+        let query = SearchQuery::new(ResourceType::Patient).with_filter(QueryFilter::Exact {
+            field: "nonExistentField".to_string(),
+            value: "value".to_string(),
+        });
+
         let result = storage.search(&query).await.unwrap();
         assert_eq!(result.total, 0);
-        
+
         // Search with very large pagination offset
-        let query = SearchQuery::new(ResourceType::Patient)
-            .with_pagination(1000, 10);
-        
+        let query = SearchQuery::new(ResourceType::Patient).with_pagination(1000, 10);
+
         let result = storage.search(&query).await.unwrap();
         assert_eq!(result.total, 1);
         assert_eq!(result.resources.len(), 0);

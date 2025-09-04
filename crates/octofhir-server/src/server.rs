@@ -1,13 +1,21 @@
 use std::net::SocketAddr;
 
-use axum::{
-    middleware,
-    routing::get,
-    Router,
-};
+use axum::{Router, middleware, routing::get};
 use tower_http::{compression::CompressionLayer, cors::CorsLayer, trace::TraceLayer};
 
 use crate::{config::AppConfig, handlers, middleware as app_middleware};
+use octofhir_db::{
+    DynStorage, StorageBackend as DbBackend, StorageConfig as DbStorageConfig,
+    StorageOptions as DbStorageOptions, create_storage,
+};
+use octofhir_search::SearchConfig as EngineSearchConfig;
+
+#[derive(Clone)]
+pub struct AppState {
+    pub storage: DynStorage,
+    pub search_cfg: EngineSearchConfig,
+    pub fhir_version: String,
+}
 
 pub struct OctofhirServer {
     addr: SocketAddr,
@@ -16,6 +24,32 @@ pub struct OctofhirServer {
 
 pub fn build_app(cfg: &AppConfig) -> Router {
     let body_limit = cfg.server.body_limit_bytes;
+
+    // Build storage from server config (in-memory backend)
+    let db_cfg = DbStorageConfig {
+        backend: match cfg.storage.backend {
+            crate::config::StorageBackend::InMemoryPapaya => DbBackend::InMemoryPapaya,
+        },
+        options: DbStorageOptions {
+            memory_limit_bytes: cfg.storage.memory_limit_bytes,
+            preallocate_items: cfg.storage.preallocate_items,
+        },
+    };
+    let storage = create_storage(&db_cfg);
+
+    // Build search engine config using counts from AppConfig
+    let search_cfg = EngineSearchConfig {
+        default_count: cfg.search.default_count,
+        max_count: cfg.search.max_count,
+        ..Default::default()
+    };
+
+    let state = AppState {
+        storage,
+        search_cfg,
+        fhir_version: cfg.fhir.version.clone(),
+    };
+
     Router::new()
         // Health and info endpoints
         .route("/", get(handlers::root))
@@ -65,23 +99,31 @@ pub fn build_app(cfg: &AppConfig) -> Router {
                         request_id = %req_id
                     )
                 })
-                .on_response(|res: &axum::http::Response<_>, latency: std::time::Duration, span: &tracing::Span| {
-                    // Record status on the span; access log emission is handled only for non-favicon paths via the span field presence
-                    span.record("http.status_code", &tracing::field::display(res.status().as_u16()));
-                    // Determine if this span is our real request span by checking that it has the http.method field recorded (noop span won't)
-                    // Unfortunately Span API doesn't expose field inspection, so we conservatively avoid extra logic and instead rely on make_span_with to avoid logging favicon.
-                    // Thus, only emit the access log if the span's metadata target matches our request span name.
-                    if let Some(meta) = span.metadata() {
-                        if meta.name() != "noop" {
-                            tracing::info!(
-                                http.status = %res.status().as_u16(),
-                                elapsed_ms = %latency.as_millis(),
-                                "request handled"
-                            );
+                .on_response(
+                    |res: &axum::http::Response<_>,
+                     latency: std::time::Duration,
+                     span: &tracing::Span| {
+                        // Record status on the span; access log emission is handled only for non-favicon paths via the span field presence
+                        span.record(
+                            "http.status_code",
+                            tracing::field::display(res.status().as_u16()),
+                        );
+                        // Determine if this span is our real request span by checking that it has the http.method field recorded (noop span won't)
+                        // Unfortunately Span API doesn't expose field inspection, so we conservatively avoid extra logic and instead rely on make_span_with to avoid logging favicon.
+                        // Thus, only emit the access log if the span's metadata target matches our request span name.
+                        if let Some(meta) = span.metadata() {
+                            if meta.name() != "noop" {
+                                tracing::info!(
+                                    http.status = %res.status().as_u16(),
+                                    elapsed_ms = %latency.as_millis(),
+                                    "request handled"
+                                );
+                            }
                         }
-                    }
-                })
+                    },
+                ),
         )
+        .with_state(state)
         .layer(axum::extract::DefaultBodyLimit::max(body_limit))
 }
 
@@ -118,6 +160,10 @@ impl ServerBuilder {
             app,
         }
     }
+}
+
+impl Default for ServerBuilder {
+    fn default() -> Self { Self::new() }
 }
 
 impl OctofhirServer {

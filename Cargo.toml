@@ -21,8 +21,8 @@ categories = ["web-programming", "science"]
 # Local dependencies
 octofhir-core = { path = "crates/octofhir-core" }
 octofhir-db = { path = "crates/octofhir-db" }
-octofhir-canonical-manager = { path = "../canonical-manager" }
-octofhir-fhir-model = { path = "../fhir-model-rs" }
+octofhir-canonical-manager = { version = "0.1.7" }
+octofhir-fhir-model = {version = "0.1.2"}
 
 # Test utilities
 filetime = "0.2"

@@ -1,17 +1,20 @@
+use crate::error::CoreError;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::str::FromStr;
-use crate::error::CoreError;
 
 /// FHIR version enumeration
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 pub enum FhirVersion {
     #[serde(rename = "4.1.0")]
     R4,
     #[serde(rename = "4.3.0")]
+    #[default]
     R4B,
     #[serde(rename = "5.0.0")]
     R5,
+    #[serde(rename = "6.0.0")]
+    R6,
 }
 
 impl fmt::Display for FhirVersion {
@@ -19,6 +22,7 @@ impl fmt::Display for FhirVersion {
         match self {
             FhirVersion::R4B => write!(f, "4.3.0"),
             FhirVersion::R5 => write!(f, "5.0.0"),
+            FhirVersion::R6 => write!(f, "6.0.0"),
             &FhirVersion::R4 => write!(f, "4.1.0"),
         }
     }
@@ -32,14 +36,11 @@ impl FromStr for FhirVersion {
             "4.1.0" | "R4" => Ok(FhirVersion::R4),
             "4.3.0" | "R4B" => Ok(FhirVersion::R4B),
             "5.0.0" | "R5" => Ok(FhirVersion::R5),
-            _ => Err(CoreError::invalid_resource_type(format!("Unknown FHIR version: {}", s))),
+            "6.0.0" | "R6" => Ok(FhirVersion::R6),
+            _ => Err(CoreError::invalid_resource_type(format!(
+                "Unknown FHIR version: {s}",
+            ))),
         }
-    }
-}
-
-impl Default for FhirVersion {
-    fn default() -> Self {
-        FhirVersion::R4B
     }
 }
 
@@ -91,7 +92,7 @@ impl fmt::Display for ResourceType {
             ResourceType::CodeSystem => write!(f, "CodeSystem"),
             ResourceType::SearchParameter => write!(f, "SearchParameter"),
             ResourceType::OperationOutcome => write!(f, "OperationOutcome"),
-            ResourceType::Custom(name) => write!(f, "{}", name),
+            ResourceType::Custom(name) => write!(f, "{name}"),
         }
     }
 }
@@ -135,9 +136,13 @@ impl FromStr for ResourceType {
 /// Validate if a string is a valid FHIR resource type name
 pub fn is_valid_resource_type_name(name: &str) -> bool {
     // FHIR resource type names must start with uppercase letter and contain only letters
-    !name.is_empty() && 
-    name.chars().next().map(|c| c.is_ascii_uppercase()).unwrap_or(false) &&
-    name.chars().all(|c| c.is_ascii_alphabetic())
+    !name.is_empty()
+        && name
+            .chars()
+            .next()
+            .map(|c| c.is_ascii_uppercase())
+            .unwrap_or(false)
+        && name.chars().all(|c| c.is_ascii_alphabetic())
 }
 
 #[cfg(test)]
@@ -156,7 +161,7 @@ mod tests {
         assert_eq!(FhirVersion::from_str("R4B").unwrap(), FhirVersion::R4B);
         assert_eq!(FhirVersion::from_str("5.0.0").unwrap(), FhirVersion::R5);
         assert_eq!(FhirVersion::from_str("R5").unwrap(), FhirVersion::R5);
-        
+
         assert!(FhirVersion::from_str("invalid").is_err());
         assert!(FhirVersion::from_str("4.0.0").is_err());
     }
@@ -171,7 +176,7 @@ mod tests {
         let version = FhirVersion::R4B;
         let json = serde_json::to_string(&version).unwrap();
         assert_eq!(json, "\"4.3.0\"");
-        
+
         let version = FhirVersion::R5;
         let json = serde_json::to_string(&version).unwrap();
         assert_eq!(json, "\"5.0.0\"");
@@ -181,20 +186,32 @@ mod tests {
     fn test_fhir_version_deserialization() {
         let version: FhirVersion = serde_json::from_str("\"4.3.0\"").unwrap();
         assert_eq!(version, FhirVersion::R4B);
-        
+
         let version: FhirVersion = serde_json::from_str("\"5.0.0\"").unwrap();
         assert_eq!(version, FhirVersion::R5);
     }
 
     #[test]
     fn test_resource_type_from_str() {
-        assert_eq!(ResourceType::from_str("Patient").unwrap(), ResourceType::Patient);
-        assert_eq!(ResourceType::from_str("Organization").unwrap(), ResourceType::Organization);
-        assert_eq!(ResourceType::from_str("CapabilityStatement").unwrap(), ResourceType::CapabilityStatement);
-        
+        assert_eq!(
+            ResourceType::from_str("Patient").unwrap(),
+            ResourceType::Patient
+        );
+        assert_eq!(
+            ResourceType::from_str("Organization").unwrap(),
+            ResourceType::Organization
+        );
+        assert_eq!(
+            ResourceType::from_str("CapabilityStatement").unwrap(),
+            ResourceType::CapabilityStatement
+        );
+
         // Test custom resource type
-        assert_eq!(ResourceType::from_str("CustomResource").unwrap(), ResourceType::Custom("CustomResource".to_string()));
-        
+        assert_eq!(
+            ResourceType::from_str("CustomResource").unwrap(),
+            ResourceType::Custom("CustomResource".to_string())
+        );
+
         // Test invalid cases
         assert!(ResourceType::from_str("invalidResource").is_err()); // doesn't start with uppercase
         assert!(ResourceType::from_str("Invalid123").is_err()); // contains numbers
@@ -205,7 +222,10 @@ mod tests {
     fn test_resource_type_display() {
         assert_eq!(ResourceType::Patient.to_string(), "Patient");
         assert_eq!(ResourceType::Organization.to_string(), "Organization");
-        assert_eq!(ResourceType::Custom("MyResource".to_string()).to_string(), "MyResource");
+        assert_eq!(
+            ResourceType::Custom("MyResource".to_string()).to_string(),
+            "MyResource"
+        );
     }
 
     #[test]
@@ -213,17 +233,17 @@ mod tests {
         let resource_type = ResourceType::Patient;
         let json = serde_json::to_string(&resource_type).unwrap();
         assert_eq!(json, "\"Patient\"");
-        
+
         let custom_type = ResourceType::Custom("TestResource".to_string());
         let json = serde_json::to_string(&custom_type).unwrap();
         assert_eq!(json, "\"TestResource\"");
     }
 
-    #[test] 
+    #[test]
     fn test_resource_type_deserialization() {
         let resource_type: ResourceType = serde_json::from_str("\"Patient\"").unwrap();
         assert_eq!(resource_type, ResourceType::Patient);
-        
+
         let resource_type: ResourceType = serde_json::from_str("\"Observation\"").unwrap();
         assert_eq!(resource_type, ResourceType::Observation);
     }
@@ -233,7 +253,7 @@ mod tests {
         assert!(is_valid_resource_type_name("Patient"));
         assert!(is_valid_resource_type_name("CustomResource"));
         assert!(is_valid_resource_type_name("A"));
-        
+
         assert!(!is_valid_resource_type_name("patient")); // lowercase start
         assert!(!is_valid_resource_type_name("123Patient")); // starts with number
         assert!(!is_valid_resource_type_name("Patient123")); // contains number
@@ -245,11 +265,11 @@ mod tests {
     fn test_resource_type_equality() {
         assert_eq!(ResourceType::Patient, ResourceType::Patient);
         assert_ne!(ResourceType::Patient, ResourceType::Organization);
-        
+
         let custom1 = ResourceType::Custom("Test".to_string());
         let custom2 = ResourceType::Custom("Test".to_string());
         let custom3 = ResourceType::Custom("Different".to_string());
-        
+
         assert_eq!(custom1, custom2);
         assert_ne!(custom1, custom3);
     }
@@ -257,11 +277,11 @@ mod tests {
     #[test]
     fn test_resource_type_hashing() {
         use std::collections::HashMap;
-        
+
         let mut map = HashMap::new();
         map.insert(ResourceType::Patient, "patient data");
         map.insert(ResourceType::Organization, "org data");
-        
+
         assert_eq!(map.get(&ResourceType::Patient), Some(&"patient data"));
         assert_eq!(map.get(&ResourceType::Organization), Some(&"org data"));
         assert_eq!(map.get(&ResourceType::Observation), None);
@@ -270,16 +290,30 @@ mod tests {
     #[test]
     fn test_all_standard_resource_types_parse() {
         let standard_types = [
-            "Patient", "Practitioner", "Organization", "Encounter", 
-            "Observation", "Condition", "DiagnosticReport", "Medication",
-            "MedicationRequest", "Procedure", "Specimen", "DocumentReference",
-            "Bundle", "CapabilityStatement", "StructureDefinition", "ValueSet",
-            "CodeSystem", "SearchParameter", "OperationOutcome"
+            "Patient",
+            "Practitioner",
+            "Organization",
+            "Encounter",
+            "Observation",
+            "Condition",
+            "DiagnosticReport",
+            "Medication",
+            "MedicationRequest",
+            "Procedure",
+            "Specimen",
+            "DocumentReference",
+            "Bundle",
+            "CapabilityStatement",
+            "StructureDefinition",
+            "ValueSet",
+            "CodeSystem",
+            "SearchParameter",
+            "OperationOutcome",
         ];
-        
+
         for type_name in &standard_types {
             let parsed = ResourceType::from_str(type_name);
-            assert!(parsed.is_ok(), "Failed to parse resource type: {}", type_name);
+            assert!(parsed.is_ok(), "Failed to parse resource type: {type_name}");
             assert_eq!(parsed.unwrap().to_string(), *type_name);
         }
     }
@@ -290,9 +324,9 @@ mod tests {
             ResourceType::Patient,
             ResourceType::Organization,
             ResourceType::CapabilityStatement,
-            ResourceType::Custom("TestResource".to_string())
+            ResourceType::Custom("TestResource".to_string()),
         ];
-        
+
         for resource_type in &types {
             let as_string = resource_type.to_string();
             let parsed_back = ResourceType::from_str(&as_string).unwrap();
@@ -316,7 +350,7 @@ mod tests {
             }
             _ => panic!("Expected InvalidResourceType error"),
         }
-        
+
         match FhirVersion::from_str("unknown") {
             Err(CoreError::InvalidResourceType(msg)) => {
                 assert!(msg.contains("unknown"));

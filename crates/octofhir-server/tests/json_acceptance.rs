@@ -1,4 +1,4 @@
-use octofhir_server::{build_app, AppConfig};
+use octofhir_server::{AppConfig, build_app};
 use serde_json::Value;
 use tokio::task::JoinHandle;
 
@@ -19,7 +19,7 @@ async fn start_server() -> (String, tokio::sync::oneshot::Sender<()>, JoinHandle
             .await;
     });
 
-    (format!("http://{}", addr), tx, server)
+    (format!("http://{addr}"), tx, server)
 }
 
 #[tokio::test]
@@ -28,7 +28,7 @@ async fn accepts_application_json_in_accept_header() {
     let client = reqwest::Client::new();
 
     let resp = client
-        .get(format!("{}/healthz", base))
+        .get(format!("{base}/healthz"))
         .header("accept", "application/json")
         .send()
         .await
@@ -49,7 +49,7 @@ async fn accepts_application_json_content_type_on_post() {
     let payload = serde_json::json!({"resourceType":"Patient"});
 
     let resp = client
-        .post(format!("{}/Patient", base))
+        .post(format!("{base}/Patient"))
         .header("accept", "application/json")
         .header("content-type", "application/json")
         .json(&payload)
@@ -57,8 +57,8 @@ async fn accepts_application_json_content_type_on_post() {
         .await
         .unwrap();
 
-    // Handler returns 501 Not Implemented, which means Content-Type was accepted by middleware
-    assert_eq!(resp.status(), reqwest::StatusCode::NOT_IMPLEMENTED);
+    // Handler should create the resource now that POST is implemented
+    assert_eq!(resp.status(), reqwest::StatusCode::CREATED);
 
     let _ = shutdown_tx.send(());
     let _ = handle.await;

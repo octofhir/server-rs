@@ -1,18 +1,20 @@
-use std::{fs, sync::{Arc, RwLock}, thread, time::Duration};
+use std::{
+    fs,
+    sync::{Arc, RwLock},
+    thread,
+    time::Duration,
+};
 
 use octofhir_server::config::loader;
 
-fn write_file(path: &std::path::Path, content: &str) {
-    fs::write(path, content).expect("write toml");
-    // Ensure mtime changes on some filesystems
-    #[cfg(unix)]
-    { let _ = filetime::set_file_mtime(path, filetime::FileTime::from_unix_time(0, 0)); }
-}
+// Unused helper removed
 
 #[test]
 fn file_watching_triggers_reload_and_updates_shared_config() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("octofhir.toml");
+    // Create a Tokio runtime for watcher to spawn tasks on
+    let rt = tokio::runtime::Runtime::new().unwrap();
 
     let base = r#"
 [server]
@@ -37,13 +39,18 @@ enabled = false
     let cfg = loader::load_config(path.to_str()).expect("load initial");
     let shared_cfg = Arc::new(RwLock::new(cfg.clone()));
 
-    let _guard = octofhir_server::config_watch::start_config_watcher(path.clone(), shared_cfg.clone());
+    let _guard = octofhir_server::config_watch::start_config_watcher(
+        path.clone(),
+        shared_cfg.clone(),
+        rt.handle().clone(),
+    );
 
     // Give watcher a brief moment to start
     thread::sleep(Duration::from_millis(300));
 
     // Modify the file to change logging level and search.default_count
-    let updated = base.replace("level = \"info\"", "level = \"debug\"")
+    let updated = base
+        .replace("level = \"info\"", "level = \"debug\"")
         .replace("default_count = 5", "default_count = 7");
     fs::write(&path, &updated).unwrap();
 
@@ -53,7 +60,7 @@ enabled = false
         thread::sleep(Duration::from_millis(100));
         if let Ok(guard) = shared_cfg.read() {
             let c = &*guard;
-            if c.logging.level.to_ascii_lowercase() == "debug" && c.search.default_count == 7 {
+            if c.logging.level.eq_ignore_ascii_case("debug") && c.search.default_count == 7 {
                 applied = true;
                 break;
             }
@@ -70,6 +77,8 @@ enabled = false
 fn invalid_reload_does_not_replace_shared_config() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("octofhir.toml");
+    // Create a Tokio runtime for watcher to spawn tasks on
+    let rt = tokio::runtime::Runtime::new().unwrap();
 
     let base = r#"
 [server]
@@ -90,10 +99,17 @@ level = "info"
     let cfg = loader::load_config(path.to_str()).expect("load initial");
     let shared_cfg = Arc::new(RwLock::new(cfg.clone()));
 
-    let _guard = octofhir_server::config_watch::start_config_watcher(path.clone(), shared_cfg.clone());
+    let _guard = octofhir_server::config_watch::start_config_watcher(
+        path.clone(),
+        shared_cfg.clone(),
+        rt.handle().clone(),
+    );
 
     // Write invalid config (default_count > max_count)
-    let invalid = base.replace("default_count = 5\nmax_count = 10", "default_count = 50\nmax_count = 10");
+    let invalid = base.replace(
+        "default_count = 5\nmax_count = 10",
+        "default_count = 50\nmax_count = 10",
+    );
     fs::write(&path, invalid).unwrap();
 
     // Wait for potential reload attempt

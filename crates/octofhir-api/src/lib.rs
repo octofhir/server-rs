@@ -1,4 +1,4 @@
-use axum::http::{header, HeaderValue, StatusCode, HeaderMap};
+use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -23,7 +23,11 @@ pub struct OperationOutcomeIssue {
 }
 
 impl OperationOutcome {
-    pub fn single(severity: &'static str, code: &'static str, diagnostics: impl Into<String>) -> Self {
+    pub fn single(
+        severity: &'static str,
+        code: &'static str,
+        diagnostics: impl Into<String>,
+    ) -> Self {
         Self {
             resource_type: "OperationOutcome",
             issue: vec![OperationOutcomeIssue {
@@ -55,13 +59,27 @@ pub enum ApiError {
 }
 
 impl ApiError {
-    pub fn bad_request(msg: impl Into<String>) -> Self { Self::BadRequest(msg.into()) }
-    pub fn unauthorized(msg: impl Into<String>) -> Self { Self::Unauthorized(msg.into()) }
-    pub fn forbidden(msg: impl Into<String>) -> Self { Self::Forbidden(msg.into()) }
-    pub fn not_found(msg: impl Into<String>) -> Self { Self::NotFound(msg.into()) }
-    pub fn conflict(msg: impl Into<String>) -> Self { Self::Conflict(msg.into()) }
-    pub fn unsupported_media_type(msg: impl Into<String>) -> Self { Self::UnsupportedMediaType(msg.into()) }
-    pub fn internal(msg: impl Into<String>) -> Self { Self::Internal(msg.into()) }
+    pub fn bad_request(msg: impl Into<String>) -> Self {
+        Self::BadRequest(msg.into())
+    }
+    pub fn unauthorized(msg: impl Into<String>) -> Self {
+        Self::Unauthorized(msg.into())
+    }
+    pub fn forbidden(msg: impl Into<String>) -> Self {
+        Self::Forbidden(msg.into())
+    }
+    pub fn not_found(msg: impl Into<String>) -> Self {
+        Self::NotFound(msg.into())
+    }
+    pub fn conflict(msg: impl Into<String>) -> Self {
+        Self::Conflict(msg.into())
+    }
+    pub fn unsupported_media_type(msg: impl Into<String>) -> Self {
+        Self::UnsupportedMediaType(msg.into())
+    }
+    pub fn internal(msg: impl Into<String>) -> Self {
+        Self::Internal(msg.into())
+    }
 
     pub fn status_code(&self) -> StatusCode {
         match self {
@@ -82,7 +100,9 @@ impl ApiError {
             ApiError::Forbidden(msg) => OperationOutcome::single("error", "forbidden", msg),
             ApiError::NotFound(msg) => OperationOutcome::single("error", "not-found", msg),
             ApiError::Conflict(msg) => OperationOutcome::single("error", "conflict", msg),
-            ApiError::UnsupportedMediaType(msg) => OperationOutcome::single("error", "not-supported", msg),
+            ApiError::UnsupportedMediaType(msg) => {
+                OperationOutcome::single("error", "not-supported", msg)
+            }
             ApiError::Internal(msg) => OperationOutcome::single("fatal", "exception", msg),
         }
     }
@@ -97,7 +117,8 @@ impl IntoResponse for ApiError {
             Ok(b) => b,
             Err(_) => {
                 // Fallback minimal body if serialization fails
-                let fallback = OperationOutcome::single("fatal", "exception", "Serialization failure");
+                let fallback =
+                    OperationOutcome::single("fatal", "exception", "Serialization failure");
                 serde_json::to_vec(&fallback).unwrap_or_else(|_| b"{}".to_vec())
             }
         };
@@ -110,11 +131,16 @@ impl IntoResponse for ApiError {
 
         builder
             .body(axum::body::Body::from(body))
-            .unwrap_or_else(|_| axum::http::Response::builder()
-                .status(StatusCode::INTERNAL_SERVER_ERROR)
-                .header(header::CONTENT_TYPE, HeaderValue::from_static("application/fhir+json"))
-                .body(axum::body::Body::from("{}"))
-                .expect("build fallback response"))
+            .unwrap_or_else(|_| {
+                axum::http::Response::builder()
+                    .status(StatusCode::INTERNAL_SERVER_ERROR)
+                    .header(
+                        header::CONTENT_TYPE,
+                        HeaderValue::from_static("application/fhir+json"),
+                    )
+                    .body(axum::body::Body::from("{}"))
+                    .expect("build fallback response")
+            })
     }
 }
 
@@ -128,7 +154,10 @@ mod tests {
         let resp = ApiError::bad_request("Invalid parameter").into_response();
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
         let content_type = resp.headers().get(header::CONTENT_TYPE).unwrap();
-        assert_eq!(content_type, &HeaderValue::from_static("application/fhir+json"));
+        assert_eq!(
+            content_type,
+            &HeaderValue::from_static("application/fhir+json")
+        );
     }
 
     #[test]
@@ -142,13 +171,29 @@ mod tests {
     #[test]
     fn api_error_variants_map_to_status_and_codes() {
         let cases: Vec<(ApiError, StatusCode, &str)> = vec![
-            (ApiError::bad_request("x"), StatusCode::BAD_REQUEST, "invalid"),
-            (ApiError::unauthorized("x"), StatusCode::UNAUTHORIZED, "unauthorized"),
+            (
+                ApiError::bad_request("x"),
+                StatusCode::BAD_REQUEST,
+                "invalid",
+            ),
+            (
+                ApiError::unauthorized("x"),
+                StatusCode::UNAUTHORIZED,
+                "unauthorized",
+            ),
             (ApiError::forbidden("x"), StatusCode::FORBIDDEN, "forbidden"),
             (ApiError::not_found("x"), StatusCode::NOT_FOUND, "not-found"),
             (ApiError::conflict("x"), StatusCode::CONFLICT, "conflict"),
-            (ApiError::unsupported_media_type("x"), StatusCode::UNSUPPORTED_MEDIA_TYPE, "not-supported"),
-            (ApiError::internal("x"), StatusCode::INTERNAL_SERVER_ERROR, "exception"),
+            (
+                ApiError::unsupported_media_type("x"),
+                StatusCode::UNSUPPORTED_MEDIA_TYPE,
+                "not-supported",
+            ),
+            (
+                ApiError::internal("x"),
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "exception",
+            ),
         ];
         for (err, status, code) in cases.into_iter() {
             assert_eq!(err.status_code(), status);
@@ -157,7 +202,6 @@ mod tests {
         }
     }
 }
-
 
 // -------------------------
 // API Response Wrapper (Task 3.4.1)
@@ -173,10 +217,16 @@ pub struct ApiResponse<T> {
 
 impl<T> ApiResponse<T> {
     pub fn new(value: T, status: StatusCode) -> Self {
-        Self { value, status, headers: Vec::new() }
+        Self {
+            value,
+            status,
+            headers: Vec::new(),
+        }
     }
 
-    pub fn ok(value: T) -> Self { Self::new(value, StatusCode::OK) }
+    pub fn ok(value: T) -> Self {
+        Self::new(value, StatusCode::OK)
+    }
 
     pub fn with_header(mut self, name: HeaderName, value: HeaderValue) -> Self {
         self.headers.push((name, value));
@@ -188,23 +238,35 @@ impl<T: Serialize> IntoResponse for ApiResponse<T> {
     fn into_response(self) -> Response {
         let body = match serde_json::to_vec(&self.value) {
             Ok(b) => b,
-            Err(_) => serde_json::to_vec(&OperationOutcome::single("fatal", "exception", "Serialization failure"))
-                .unwrap_or_else(|_| b"{}".to_vec()),
+            Err(_) => serde_json::to_vec(&OperationOutcome::single(
+                "fatal",
+                "exception",
+                "Serialization failure",
+            ))
+            .unwrap_or_else(|_| b"{}".to_vec()),
         };
         let mut builder = axum::http::Response::builder().status(self.status);
         // Always set FHIR JSON content type
-        builder = builder.header(header::CONTENT_TYPE, HeaderValue::from_static("application/fhir+json"));
+        builder = builder.header(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static("application/fhir+json"),
+        );
         // Add extra headers
         for (n, v) in self.headers.into_iter() {
             builder = builder.header(n, v);
         }
         builder
             .body(axum::body::Body::from(body))
-            .unwrap_or_else(|_| axum::http::Response::builder()
-                .status(StatusCode::INTERNAL_SERVER_ERROR)
-                .header(header::CONTENT_TYPE, HeaderValue::from_static("application/fhir+json"))
-                .body(axum::body::Body::from("{}"))
-                .expect("build fallback response"))
+            .unwrap_or_else(|_| {
+                axum::http::Response::builder()
+                    .status(StatusCode::INTERNAL_SERVER_ERROR)
+                    .header(
+                        header::CONTENT_TYPE,
+                        HeaderValue::from_static("application/fhir+json"),
+                    )
+                    .body(axum::body::Body::from("{}"))
+                    .expect("build fallback response")
+            })
     }
 }
 
@@ -219,7 +281,10 @@ mod response_tests {
         let resp = ApiResponse::ok(payload).into_response();
         assert_eq!(resp.status(), StatusCode::OK);
         let content_type = resp.headers().get(header::CONTENT_TYPE).unwrap();
-        assert_eq!(content_type, &HeaderValue::from_static("application/fhir+json"));
+        assert_eq!(
+            content_type,
+            &HeaderValue::from_static("application/fhir+json")
+        );
     }
 
     #[test]
@@ -238,14 +303,16 @@ mod response_tests {
         let cs = CapabilityStatement::minimal_json_server();
         let resp = ApiResponse::ok(cs.clone()).into_response();
         assert_eq!(resp.status(), StatusCode::OK);
-        assert_eq!(resp.headers().get(header::CONTENT_TYPE).unwrap(), &HeaderValue::from_static("application/fhir+json"));
+        assert_eq!(
+            resp.headers().get(header::CONTENT_TYPE).unwrap(),
+            &HeaderValue::from_static("application/fhir+json")
+        );
         // Validate that the CapabilityStatement would serialize to valid JSON
         let j = serde_json::to_value(&cs).expect("capability statement should serialize");
         assert_eq!(j["resourceType"], "CapabilityStatement");
         assert_eq!(j["format"][0], "application/fhir+json");
     }
 }
-
 
 // -------------------------
 // Content Negotiation (Task 3.4.3)
@@ -255,11 +322,12 @@ pub fn validate_accept(headers: &HeaderMap) -> Result<(), ApiError> {
     if let Some(accept) = headers.get(header::ACCEPT) {
         let val = accept.to_str().unwrap_or("").to_ascii_lowercase();
         // Quick allow list: application/fhir+json or application/json or */* (common)
-        let allowed = val.contains("application/fhir+json") || val.contains("application/json") || val.contains("*/*");
+        let allowed = val.contains("application/fhir+json")
+            || val.contains("application/json")
+            || val.contains("*/*");
         if !allowed {
             return Err(ApiError::unsupported_media_type(format!(
-                "Unsupported Accept: {}. Only application/fhir+json or application/json are supported.",
-                val
+                "Unsupported Accept: {val}. Only application/fhir+json or application/json are supported."
             )));
         }
     }
@@ -270,11 +338,11 @@ pub fn validate_accept(headers: &HeaderMap) -> Result<(), ApiError> {
 pub fn validate_content_type(headers: &HeaderMap) -> Result<(), ApiError> {
     if let Some(ct) = headers.get(header::CONTENT_TYPE) {
         let val = ct.to_str().unwrap_or("").to_ascii_lowercase();
-        let allowed = val.starts_with("application/fhir+json") || val.starts_with("application/json");
+        let allowed =
+            val.starts_with("application/fhir+json") || val.starts_with("application/json");
         if !allowed {
             return Err(ApiError::unsupported_media_type(format!(
-                "Unsupported Content-Type: {}. Only application/fhir+json or application/json are supported.",
-                val
+                "Unsupported Content-Type: {val}. Only application/fhir+json or application/json are supported."
             )));
         }
     }
@@ -288,7 +356,10 @@ mod content_negotiation_tests {
     #[test]
     fn accept_allows_fhir_json_and_json() {
         let mut headers = HeaderMap::new();
-        headers.insert(header::ACCEPT, HeaderValue::from_static("application/fhir+json"));
+        headers.insert(
+            header::ACCEPT,
+            HeaderValue::from_static("application/fhir+json"),
+        );
         assert!(validate_accept(&headers).is_ok());
         headers.insert(header::ACCEPT, HeaderValue::from_static("application/json"));
         assert!(validate_accept(&headers).is_ok());
@@ -304,7 +375,10 @@ mod content_negotiation_tests {
     #[test]
     fn accept_rejects_xml() {
         let mut headers = HeaderMap::new();
-        headers.insert(header::ACCEPT, HeaderValue::from_static("application/fhir+xml"));
+        headers.insert(
+            header::ACCEPT,
+            HeaderValue::from_static("application/fhir+xml"),
+        );
         let err = validate_accept(&headers).unwrap_err();
         assert_eq!(err.status_code(), StatusCode::UNSUPPORTED_MEDIA_TYPE);
     }
@@ -312,21 +386,29 @@ mod content_negotiation_tests {
     #[test]
     fn content_type_allows_json_variants() {
         let mut headers = HeaderMap::new();
-        headers.insert(header::CONTENT_TYPE, HeaderValue::from_static("application/fhir+json; charset=UTF-8"));
+        headers.insert(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static("application/fhir+json; charset=UTF-8"),
+        );
         assert!(validate_content_type(&headers).is_ok());
-        headers.insert(header::CONTENT_TYPE, HeaderValue::from_static("application/json"));
+        headers.insert(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static("application/json"),
+        );
         assert!(validate_content_type(&headers).is_ok());
     }
 
     #[test]
     fn content_type_rejects_xml() {
         let mut headers = HeaderMap::new();
-        headers.insert(header::CONTENT_TYPE, HeaderValue::from_static("application/fhir+xml"));
+        headers.insert(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static("application/fhir+xml"),
+        );
         let err = validate_content_type(&headers).unwrap_err();
         assert_eq!(err.status_code(), StatusCode::UNSUPPORTED_MEDIA_TYPE);
     }
 }
-
 
 // -------------------------
 // FHIR Bundle Types (Tasks 3.2.1, 3.2.2)
@@ -402,8 +484,14 @@ mod bundle_tests {
 
     #[test]
     fn serialize_searchset_bundle() {
-        let entry = BundleEntry { full_url: Some("http://example.org/Patient/1".into()), resource: Some(serde_json::json!({"resourceType":"Patient","id":"1"})) };
-        let link_self = BundleLink { relation: "self".into(), url: "http://example.org/Patient?_count=1".into() };
+        let entry = BundleEntry {
+            full_url: Some("http://example.org/Patient/1".into()),
+            resource: Some(serde_json::json!({"resourceType":"Patient","id":"1"})),
+        };
+        let link_self = BundleLink {
+            relation: "self".into(),
+            url: "http://example.org/Patient?_count=1".into(),
+        };
         let b = Bundle::searchset(1, vec![entry], vec![link_self]);
         let j = serde_json::to_value(&b).unwrap();
         assert_eq!(j["resourceType"], "Bundle");
@@ -459,8 +547,14 @@ mod caching_tests {
             .with_etag_weak("7")
             .with_last_modified_raw("Wed, 21 Oct 2015 07:28:00 GMT")
             .into_response();
-        assert_eq!(resp.headers().get(header::ETAG).unwrap(), &HeaderValue::from_static("W/\"7\""));
-        assert_eq!(resp.headers().get(header::LAST_MODIFIED).unwrap(), &HeaderValue::from_static("Wed, 21 Oct 2015 07:28:00 GMT"));
+        assert_eq!(
+            resp.headers().get(header::ETAG).unwrap(),
+            &HeaderValue::from_static("W/\"7\"")
+        );
+        assert_eq!(
+            resp.headers().get(header::LAST_MODIFIED).unwrap(),
+            &HeaderValue::from_static("Wed, 21 Oct 2015 07:28:00 GMT")
+        );
     }
 
     #[test]
@@ -478,11 +572,23 @@ mod caching_tests {
 fn join_url(base: &str, path: &str) -> String {
     let base = base.trim_end_matches('/');
     let path = path.trim_start_matches('/');
-    format!("{}/{}", base, path)
+    format!("{base}/{path}")
 }
 
-fn build_page_url(base_url: &str, resource_type: &str, offset: usize, count: usize, query_suffix: Option<&str>) -> String {
-    let mut url = format!("{}/{}?_count={}&_offset={}", base_url.trim_end_matches('/'), resource_type, count, offset);
+fn build_page_url(
+    base_url: &str,
+    resource_type: &str,
+    offset: usize,
+    count: usize,
+    query_suffix: Option<&str>,
+) -> String {
+    let mut url = format!(
+        "{}/{}?_count={}&_offset={}",
+        base_url.trim_end_matches('/'),
+        resource_type,
+        count,
+        offset
+    );
     if let Some(q) = query_suffix {
         if !q.is_empty() {
             // ensure starts with '&' or '?', we append as additional params
@@ -510,38 +616,60 @@ pub fn bundle_from_search(
 ) -> Bundle {
     let mut entries = Vec::with_capacity(resources_json.len());
     for res in resources_json.into_iter() {
-        let full_url = res.get("id").and_then(|v| v.as_str()).map(|id| {
-            join_url(base_url, &format!("{}/{}", resource_type, id))
+        let full_url = res
+            .get("id")
+            .and_then(|v| v.as_str())
+            .map(|id| join_url(base_url, &format!("{resource_type}/{id}")));
+        entries.push(BundleEntry {
+            full_url,
+            resource: Some(res),
         });
-        entries.push(BundleEntry { full_url, resource: Some(res) });
     }
 
     // compute links
     let mut links = Vec::new();
     // self
-    links.push(BundleLink { relation: "self".to_string(), url: build_page_url(base_url, resource_type, offset, count, query_suffix) });
+    links.push(BundleLink {
+        relation: "self".to_string(),
+        url: build_page_url(base_url, resource_type, offset, count, query_suffix),
+    });
 
     // first
-    links.push(BundleLink { relation: "first".to_string(), url: build_page_url(base_url, resource_type, 0, count, query_suffix) });
+    links.push(BundleLink {
+        relation: "first".to_string(),
+        url: build_page_url(base_url, resource_type, 0, count, query_suffix),
+    });
 
     // last
     if count > 0 && total > 0 {
         let last_offset = ((total - 1) / count) * count;
-        links.push(BundleLink { relation: "last".to_string(), url: build_page_url(base_url, resource_type, last_offset, count, query_suffix) });
+        links.push(BundleLink {
+            relation: "last".to_string(),
+            url: build_page_url(base_url, resource_type, last_offset, count, query_suffix),
+        });
     } else {
-        links.push(BundleLink { relation: "last".to_string(), url: build_page_url(base_url, resource_type, 0, count, query_suffix) });
+        links.push(BundleLink {
+            relation: "last".to_string(),
+            url: build_page_url(base_url, resource_type, 0, count, query_suffix),
+        });
     }
 
     // prev
     if offset > 0 {
-        let prev_offset = if offset >= count { offset - count } else { 0 };
-        links.push(BundleLink { relation: "previous".to_string(), url: build_page_url(base_url, resource_type, prev_offset, count, query_suffix) });
+        let prev_offset = offset.saturating_sub(count);
+        links.push(BundleLink {
+            relation: "previous".to_string(),
+            url: build_page_url(base_url, resource_type, prev_offset, count, query_suffix),
+        });
     }
 
     // next
     if count > 0 && offset + count < total {
         let next_offset = offset + count;
-        links.push(BundleLink { relation: "next".to_string(), url: build_page_url(base_url, resource_type, next_offset, count, query_suffix) });
+        links.push(BundleLink {
+            relation: "next".to_string(),
+            url: build_page_url(base_url, resource_type, next_offset, count, query_suffix),
+        });
     }
 
     Bundle::searchset(total as u64, entries, links)
@@ -561,13 +689,25 @@ mod bundle_generation_tests {
         let count = 10usize;
         let offset = 10usize;
         let resources = vec![make_pat("11"), make_pat("12")];
-        let b = bundle_from_search(total, resources, "http://example.org", "Patient", offset, count, Some("name=John"));
+        let b = bundle_from_search(
+            total,
+            resources,
+            "http://example.org",
+            "Patient",
+            offset,
+            count,
+            Some("name=John"),
+        );
         assert_eq!(b.resource_type, "Bundle");
         assert_eq!(b.bundle_type, "searchset");
         assert_eq!(b.total, Some(total as u64));
         assert_eq!(b.entry.len(), 2);
         // links
-        let mut rels: std::collections::HashMap<_, _> = b.link.iter().map(|l| (l.relation.clone(), l.url.clone())).collect();
+        let rels: std::collections::HashMap<_, _> = b
+            .link
+            .iter()
+            .map(|l| (l.relation.clone(), l.url.clone()))
+            .collect();
         assert!(rels.get("self").unwrap().contains("_offset=10"));
         assert!(rels.get("previous").unwrap().contains("_offset=0"));
         assert!(rels.get("next").unwrap().contains("_offset=20"));
@@ -580,18 +720,42 @@ mod bundle_generation_tests {
 
     #[test]
     fn first_page_has_no_prev() {
-        let b = bundle_from_search(25, vec![make_pat("1")], "http://example.org", "Patient", 0, 10, None);
-        let rels: std::collections::HashMap<_, _> = b.link.iter().map(|l| (l.relation.clone(), l.url.clone())).collect();
+        let b = bundle_from_search(
+            25,
+            vec![make_pat("1")],
+            "http://example.org",
+            "Patient",
+            0,
+            10,
+            None,
+        );
+        let rels: std::collections::HashMap<_, _> = b
+            .link
+            .iter()
+            .map(|l| (l.relation.clone(), l.url.clone()))
+            .collect();
         assert!(!rels.contains_key("previous"));
-        assert!(rels.get("next").is_some());
+        assert!(rels.contains_key("next"));
     }
 
     #[test]
     fn last_page_has_no_next() {
-        let b = bundle_from_search(25, vec![make_pat("21")], "http://example.org", "Patient", 20, 10, None);
-        let rels: std::collections::HashMap<_, _> = b.link.iter().map(|l| (l.relation.clone(), l.url.clone())).collect();
-        assert!(rels.get("next").is_none());
-        assert!(rels.get("previous").is_some());
+        let b = bundle_from_search(
+            25,
+            vec![make_pat("21")],
+            "http://example.org",
+            "Patient",
+            20,
+            10,
+            None,
+        );
+        let rels: std::collections::HashMap<_, _> = b
+            .link
+            .iter()
+            .map(|l| (l.relation.clone(), l.url.clone()))
+            .collect();
+        assert!(!rels.contains_key("next"));
+        assert!(rels.contains_key("previous"));
         assert!(rels.get("last").unwrap().contains("_offset=20"));
     }
 
@@ -599,22 +763,38 @@ mod bundle_generation_tests {
     fn empty_results_still_have_links() {
         let b = bundle_from_search(0, Vec::new(), "http://example.org", "Patient", 0, 10, None);
         assert_eq!(b.entry.len(), 0);
-        let rels: std::collections::HashMap<_, _> = b.link.iter().map(|l| (l.relation.clone(), l.url.clone())).collect();
-        assert!(rels.get("self").is_some());
-        assert!(rels.get("first").is_some());
-        assert!(rels.get("last").is_some());
-        assert!(rels.get("next").is_none());
-        assert!(rels.get("previous").is_none());
+        let rels: std::collections::HashMap<_, _> = b
+            .link
+            .iter()
+            .map(|l| (l.relation.clone(), l.url.clone()))
+            .collect();
+        assert!(rels.contains_key("self"));
+        assert!(rels.contains_key("first"));
+        assert!(rels.contains_key("last"));
+        assert!(!rels.contains_key("next"));
+        assert!(!rels.contains_key("previous"));
     }
 
     #[test]
     fn query_suffix_is_preserved_in_links() {
-        let b = bundle_from_search(25, vec![make_pat("1")], "http://example.org", "Patient", 0, 10, Some("name=John&identifier=urn%3Asys%7C123"));
-        let rels: std::collections::HashMap<_, _> = b.link.iter().map(|l| (l.relation.clone(), l.url.clone())).collect();
-        for key in ["self","first","last","next"].iter() {
+        let b = bundle_from_search(
+            25,
+            vec![make_pat("1")],
+            "http://example.org",
+            "Patient",
+            0,
+            10,
+            Some("name=John&identifier=urn%3Asys%7C123"),
+        );
+        let rels: std::collections::HashMap<_, _> = b
+            .link
+            .iter()
+            .map(|l| (l.relation.clone(), l.url.clone()))
+            .collect();
+        for key in ["self", "first", "last", "next"].iter() {
             if let Some(u) = rels.get(*key) {
-                assert!(u.contains("name=John"), "{} missing name param: {}", key, u);
-                assert!(u.contains("identifier=urn%3Asys%7C123"), "{} missing identifier param: {}", key, u);
+                assert!(u.contains("name=John"), "{key} missing name param: {u}");
+                assert!(u.contains("identifier=urn%3Asys%7C123"), "{key} missing identifier param: {u}");
             }
         }
     }
@@ -623,15 +803,26 @@ mod bundle_generation_tests {
     fn single_page_has_no_next_or_prev_and_last_offset_zero() {
         let total = 7usize;
         let count = 10usize; // single page since total <= count
-        let b = bundle_from_search(total, vec![make_pat("1"), make_pat("2")], "http://example.org", "Patient", 0, count, Some("name=Jane"));
-        let rels: std::collections::HashMap<_, _> = b.link.iter().map(|l| (l.relation.clone(), l.url.clone())).collect();
-        assert!(rels.get("previous").is_none());
-        assert!(rels.get("next").is_none());
+        let b = bundle_from_search(
+            total,
+            vec![make_pat("1"), make_pat("2")],
+            "http://example.org",
+            "Patient",
+            0,
+            count,
+            Some("name=Jane"),
+        );
+        let rels: std::collections::HashMap<_, _> = b
+            .link
+            .iter()
+            .map(|l| (l.relation.clone(), l.url.clone()))
+            .collect();
+        assert!(!rels.contains_key("previous"));
+        assert!(!rels.contains_key("next"));
         assert!(rels.get("last").unwrap().contains("_offset=0"));
         assert!(rels.get("self").unwrap().contains("name=Jane"));
     }
 }
-
 
 // -------------------------
 // CapabilityStatement Types (Task 3.3.1)
@@ -640,15 +831,15 @@ mod bundle_generation_tests {
 pub struct CapabilityStatement {
     #[serde(rename = "resourceType")]
     pub resource_type: &'static str, // always "CapabilityStatement"
-    #[serde(skip_serializing_if = "Option::is_none")] 
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub status: Option<String>, // e.g., "active"
-    #[serde(skip_serializing_if = "Option::is_none")] 
-    pub date: Option<String>,   // ISO 8601 date-time string
-    #[serde(skip_serializing_if = "Option::is_none")] 
-    pub kind: Option<String>,   // e.g., "instance" or "capability"
-    #[serde(rename = "fhirVersion")] 
-    pub fhir_version: String,   // e.g., "4.3.0" (R4B)
-    pub format: Vec<String>,    // e.g., ["application/fhir+json"]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub date: Option<String>, // ISO 8601 date-time string
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>, // e.g., "instance" or "capability"
+    #[serde(rename = "fhirVersion")]
+    pub fhir_version: String, // e.g., "4.3.0" (R4B)
+    pub format: Vec<String>, // e.g., ["application/fhir+json"]
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub rest: Vec<CapabilityStatementRest>,
 }
@@ -670,7 +861,7 @@ impl CapabilityStatement {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct CapabilityStatementRest {
     pub mode: String, // "server" or "client"
-    #[serde(skip_serializing_if = "Option::is_none")] 
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub resource: Option<Vec<CapabilityStatementRestResource>>,
 }
 
@@ -691,6 +882,14 @@ pub struct CapabilityStatementRestResource {
     pub interaction: Vec<ResourceInteraction>,
     #[serde(rename = "searchParam", skip_serializing_if = "Vec::is_empty", default)]
     pub search_param: Vec<SearchParam>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub profile: Option<String>,
+    #[serde(
+        rename = "supportedProfile",
+        skip_serializing_if = "Vec::is_empty",
+        default
+    )]
+    pub supported_profile: Vec<String>,
 }
 
 impl CapabilityStatementRestResource {
@@ -699,16 +898,33 @@ impl CapabilityStatementRestResource {
             type_: type_name.into(),
             interaction: Vec::new(),
             search_param: Vec::new(),
+            profile: None,
+            supported_profile: Vec::new(),
         }
     }
 
     pub fn with_interactions(mut self, codes: &[&str]) -> Self {
-        self.interaction = codes.iter().map(|c| ResourceInteraction { code: c.to_string() }).collect();
+        self.interaction = codes
+            .iter()
+            .map(|c| ResourceInteraction {
+                code: c.to_string(),
+            })
+            .collect();
         self
     }
 
     pub fn with_search_params(mut self, params: Vec<SearchParam>) -> Self {
         self.search_param = params;
+        self
+    }
+
+    pub fn with_profile(mut self, profile: Option<String>) -> Self {
+        self.profile = profile;
+        self
+    }
+
+    pub fn with_supported_profiles(mut self, profiles: Vec<String>) -> Self {
+        self.supported_profile = profiles;
         self
     }
 }
@@ -723,7 +939,7 @@ pub struct SearchParam {
     pub name: String,
     #[serde(rename = "type")]
     pub type_: String, // FHIR search parameter type, e.g., "token", "string"
-    #[serde(skip_serializing_if = "Option::is_none")] 
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub documentation: Option<String>,
 }
 
@@ -737,7 +953,11 @@ mod capability_statement_tests {
         // Add one resource capability (Patient with read + search)
         let res = CapabilityStatementRestResource::new("Patient")
             .with_interactions(&["read", "search-type"])
-            .with_search_params(vec![SearchParam { name: "_id".to_string(), type_: "token".to_string(), documentation: None }]);
+            .with_search_params(vec![SearchParam {
+                name: "_id".to_string(),
+                type_: "token".to_string(),
+                documentation: None,
+            }]);
         if let Some(ref mut resources) = cs.rest.get_mut(0).unwrap().resource {
             resources.push(res);
         }
@@ -746,12 +966,18 @@ mod capability_statement_tests {
         assert_eq!(j["resourceType"], "CapabilityStatement");
         assert_eq!(j["fhirVersion"], "4.3.0");
         // format contains application/fhir+json
-        assert!(j["format"].as_array().unwrap().iter().any(|v| v == "application/fhir+json"));
+        assert!(j["format"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|v| v == "application/fhir+json"));
         // rest[0].mode == server
         assert_eq!(j["rest"][0]["mode"], "server");
         // resource type and interactions
         assert_eq!(j["rest"][0]["resource"][0]["type"], "Patient");
-        let interactions = j["rest"][0]["resource"][0]["interaction"].as_array().unwrap();
+        let interactions = j["rest"][0]["resource"][0]["interaction"]
+            .as_array()
+            .unwrap();
         assert!(interactions.iter().any(|v| v["code"] == "read"));
         assert!(interactions.iter().any(|v| v["code"] == "search-type"));
         // searchParam exists with name _id
@@ -784,17 +1010,42 @@ impl CapabilityStatementBuilder {
         }
     }
 
-    pub fn status(mut self, status: impl Into<String>) -> Self { self.status = Some(status.into()); self }
-    pub fn kind(mut self, kind: impl Into<String>) -> Self { self.kind = Some(kind.into()); self }
-    pub fn date(mut self, date: impl Into<String>) -> Self { self.date = Some(date.into()); self }
-    pub fn fhir_version(mut self, version: impl Into<String>) -> Self { self.fhir_version = version.into(); self }
-    pub fn add_format(mut self, format: impl Into<String>) -> Self { self.formats.push(format.into()); self }
+    pub fn status(mut self, status: impl Into<String>) -> Self {
+        self.status = Some(status.into());
+        self
+    }
+    pub fn kind(mut self, kind: impl Into<String>) -> Self {
+        self.kind = Some(kind.into());
+        self
+    }
+    pub fn date(mut self, date: impl Into<String>) -> Self {
+        self.date = Some(date.into());
+        self
+    }
+    pub fn fhir_version(mut self, version: impl Into<String>) -> Self {
+        self.fhir_version = version.into();
+        self
+    }
+    pub fn add_format(mut self, format: impl Into<String>) -> Self {
+        self.formats.push(format.into());
+        self
+    }
 
-    pub fn add_resource(mut self, type_name: impl Into<String>, interactions: &[&str], search_params: Vec<SearchParam>) -> Self {
+    pub fn add_resource(
+        mut self,
+        type_name: impl Into<String>,
+        interactions: &[&str],
+        search_params: Vec<SearchParam>,
+    ) -> Self {
         let r = CapabilityStatementRestResource::new(type_name)
             .with_interactions(interactions)
             .with_search_params(search_params);
         self.resources.push(r);
+        self
+    }
+
+    pub fn add_resource_struct(mut self, resource: CapabilityStatementRestResource) -> Self {
+        self.resources.push(resource);
         self
     }
 
@@ -806,7 +1057,10 @@ impl CapabilityStatementBuilder {
             kind: self.kind,
             fhir_version: self.fhir_version,
             format: self.formats,
-            rest: vec![CapabilityStatementRest { mode: "server".to_string(), resource: Some(self.resources) }],
+            rest: vec![CapabilityStatementRest {
+                mode: "server".to_string(),
+                resource: Some(self.resources),
+            }],
         };
         // Ensure formats has at least application/fhir+json
         if cs.format.is_empty() {
@@ -829,14 +1083,26 @@ mod capability_statement_builder_tests {
                 "Patient",
                 &["read", "search-type"],
                 vec![
-                    SearchParam { name: "_id".to_string(), type_: "token".to_string(), documentation: Some("FHIR logical id".to_string()) },
-                    SearchParam { name: "name".to_string(), type_: "string".to_string(), documentation: None },
+                    SearchParam {
+                        name: "_id".to_string(),
+                        type_: "token".to_string(),
+                        documentation: Some("FHIR logical id".to_string()),
+                    },
+                    SearchParam {
+                        name: "name".to_string(),
+                        type_: "string".to_string(),
+                        documentation: None,
+                    },
                 ],
             )
             .add_resource(
                 "Observation",
                 &["read"],
-                vec![SearchParam { name: "code".to_string(), type_: "token".to_string(), documentation: None }],
+                vec![SearchParam {
+                    name: "code".to_string(),
+                    type_: "token".to_string(),
+                    documentation: None,
+                }],
             );
 
         let cs = builder.build();
@@ -850,7 +1116,10 @@ mod capability_statement_builder_tests {
         assert_eq!(resources.len(), 2);
         assert_eq!(resources[0].type_, "Patient");
         assert!(resources[0].interaction.iter().any(|i| i.code == "read"));
-        assert!(resources[0].interaction.iter().any(|i| i.code == "search-type"));
+        assert!(resources[0]
+            .interaction
+            .iter()
+            .any(|i| i.code == "search-type"));
         assert!(resources[0].search_param.iter().any(|p| p.name == "_id"));
         assert_eq!(resources[1].type_, "Observation");
         assert!(resources[1].interaction.iter().any(|i| i.code == "read"));
@@ -883,8 +1152,11 @@ mod search_param_docs_tests {
     #[test]
     fn common_params_include_documentation() {
         let params = common_search_params();
-        assert!(params.iter().any(|p| p.name == "_id" && p.documentation.as_deref() == Some("Logical id of the resource (Resource.id)")));
-        assert!(params.iter().any(|p| p.name == "_lastUpdated" && p.type_ == "date"));
+        assert!(params.iter().any(|p| p.name == "_id"
+            && p.documentation.as_deref() == Some("Logical id of the resource (Resource.id)")));
+        assert!(params
+            .iter()
+            .any(|p| p.name == "_lastUpdated" && p.type_ == "date"));
     }
 
     #[test]

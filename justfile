@@ -49,6 +49,13 @@ check:
 doc:
     cargo doc --no-deps --all-features
 
+# Docs: dev and build (Astro + Starlight)
+docs-dev:
+    cd docs && pnpm install && pnpm dev
+
+docs-build:
+    cd docs && pnpm install && pnpm build
+
 # Clean build artifacts
 clean:
     cargo clean
