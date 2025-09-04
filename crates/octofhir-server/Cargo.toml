@@ -42,6 +42,7 @@ opentelemetry = { workspace = true }
 opentelemetry-otlp = { workspace = true }
 tracing-opentelemetry = { workspace = true }
 opentelemetry_sdk = { workspace = true }
+hostname = { workspace = true }
 uuid = { workspace = true }
 url = { workspace = true }
 time = { workspace = true }

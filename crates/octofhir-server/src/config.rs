@@ -137,9 +137,11 @@ pub struct OtelConfig {
     #[serde(default)] pub enabled: bool,
     #[serde(default)] pub endpoint: Option<String>,
     #[serde(default)] pub sample_ratio: Option<f64>,
+    /// Optional deployment environment label, e.g., "dev", "staging", "prod"
+    #[serde(default)] pub environment: Option<String>,
 }
 impl Default for OtelConfig {
-    fn default() -> Self { Self { enabled: false, endpoint: None, sample_ratio: None } }
+    fn default() -> Self { Self { enabled: false, endpoint: None, sample_ratio: None, environment: None } }
 }
 
 pub mod loader {

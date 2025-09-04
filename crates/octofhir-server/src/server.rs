@@ -22,6 +22,8 @@ pub fn build_app(cfg: &AppConfig) -> Router {
         .route("/healthz", get(handlers::healthz))
         .route("/readyz", get(handlers::readyz))
         .route("/metadata", get(handlers::metadata))
+        // Browser favicon shortcut
+        .route("/favicon.ico", get(handlers::favicon))
         // CRUD and search placeholders
         .route(
             "/{resource_type}",
@@ -38,7 +40,48 @@ pub fn build_app(cfg: &AppConfig) -> Router {
         .layer(middleware::from_fn(app_middleware::content_negotiation))
         .layer(CorsLayer::permissive())
         .layer(CompressionLayer::new())
-        .layer(TraceLayer::new_for_http())
+        .layer(
+            TraceLayer::new_for_http()
+                .make_span_with(|req: &axum::http::Request<_>| {
+                    use tracing::field::Empty;
+                    // Skip creating a span for browser favicon requests to avoid noisy logs
+                    if req.uri().path() == "/favicon.ico" {
+                        return tracing::span!(tracing::Level::TRACE, "noop");
+                    }
+                    let method = req.method().clone();
+                    let uri = req.uri().clone();
+                    let req_id = req
+                        .extensions()
+                        .get::<axum::http::HeaderValue>()
+                        .and_then(|v| v.to_str().ok())
+                        .unwrap_or("")
+                        .to_string();
+                    tracing::info_span!(
+                        "http.request",
+                        http.method = %method,
+                        http.target = %uri,
+                        http.route = Empty,
+                        http.status_code = Empty,
+                        request_id = %req_id
+                    )
+                })
+                .on_response(|res: &axum::http::Response<_>, latency: std::time::Duration, span: &tracing::Span| {
+                    // Record status on the span; access log emission is handled only for non-favicon paths via the span field presence
+                    span.record("http.status_code", &tracing::field::display(res.status().as_u16()));
+                    // Determine if this span is our real request span by checking that it has the http.method field recorded (noop span won't)
+                    // Unfortunately Span API doesn't expose field inspection, so we conservatively avoid extra logic and instead rely on make_span_with to avoid logging favicon.
+                    // Thus, only emit the access log if the span's metadata target matches our request span name.
+                    if let Some(meta) = span.metadata() {
+                        if meta.name() != "noop" {
+                            tracing::info!(
+                                http.status = %res.status().as_u16(),
+                                elapsed_ms = %latency.as_millis(),
+                                "request handled"
+                            );
+                        }
+                    }
+                })
+        )
         .layer(axum::extract::DefaultBodyLimit::max(body_limit))
 }
 

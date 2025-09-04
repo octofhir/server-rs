@@ -61,6 +61,7 @@ opentelemetry = { version = "0.30", features = ["trace"] }
 opentelemetry-otlp = { version = "0.30", features = ["http-proto", "reqwest"] }
 tracing-opentelemetry = "0.31"
 opentelemetry_sdk = { version = "0.30", features = ["rt-tokio"] }
+hostname = "0.4"
 
 # Utilities
 futures-util = "0.3"

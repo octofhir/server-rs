@@ -1,6 +1,6 @@
 use axum::{
     extract::{Path, Query},
-    http::StatusCode,
+    http::{header, HeaderMap, StatusCode},
     response::IntoResponse,
     Json,
 };
@@ -48,20 +48,28 @@ pub async fn create_resource(
     Path(resource_type): Path<String>,
     Json(_payload): Json<Value>,
 ) -> impl IntoResponse {
+    let span = tracing::info_span!("fhir.create", resource_type = %resource_type);
+    let _g = span.enter();
+    let msg = format!("Create for resource type '{}' not yet implemented", resource_type);
+    tracing::error!(error.kind = "not-supported", message = %msg);
     let outcome = operation_outcome(
         "not-supported",
-        format!("Create for resource type '{}' not yet implemented", resource_type),
+        msg,
     );
     (StatusCode::NOT_IMPLEMENTED, Json(outcome))
 }
 
 pub async fn read_resource(Path((resource_type, id)): Path<(String, String)>) -> impl IntoResponse {
+    let span = tracing::info_span!("fhir.read", resource_type = %resource_type, id = %id);
+    let _g = span.enter();
+    let msg = format!(
+        "Read for resource type '{}' and id '{}' not yet implemented",
+        resource_type, id
+    );
+    tracing::error!(error.kind = "not-supported", message = %msg);
     let outcome = operation_outcome(
         "not-supported",
-        format!(
-            "Read for resource type '{}' and id '{}' not yet implemented",
-            resource_type, id
-        ),
+        msg,
     );
     (StatusCode::NOT_IMPLEMENTED, Json(outcome))
 }
@@ -70,17 +78,23 @@ pub async fn update_resource(
     Path((resource_type, id)): Path<(String, String)>,
     Json(_payload): Json<Value>,
 ) -> impl IntoResponse {
+    let span = tracing::info_span!("fhir.update", resource_type = %resource_type, id = %id);
+    let _g = span.enter();
+    let msg = format!(
+        "Update for resource type '{}' and id '{}' not yet implemented",
+        resource_type, id
+    );
+    tracing::error!(error.kind = "not-supported", message = %msg);
     let outcome = operation_outcome(
         "not-supported",
-        format!(
-            "Update for resource type '{}' and id '{}' not yet implemented",
-            resource_type, id
-        ),
+        msg,
     );
     (StatusCode::NOT_IMPLEMENTED, Json(outcome))
 }
 
 pub async fn delete_resource(Path((resource_type, id)): Path<(String, String)>) -> impl IntoResponse {
+    let span = tracing::info_span!("fhir.delete", resource_type = %resource_type, id = %id);
+    let _g = span.enter();
     let outcome = operation_outcome(
         "not-supported",
         format!(
@@ -95,6 +109,8 @@ pub async fn search_resource(
     Path(resource_type): Path<String>,
     Query(params): Query<HashMap<String, String>>,
 ) -> impl IntoResponse {
+    let span = tracing::info_span!("fhir.search", resource_type = %resource_type);
+    let _g = span.enter();
     // Read pagination settings from shared config (hot-reloadable)
     let (default_count, max_count) = crate::config::shared::with_config(|c| {
         (c.search.default_count, c.search.max_count)
@@ -115,6 +131,7 @@ pub async fn search_resource(
         "search pagination applied"
     );
 
+    tracing::info!(result.count = applied_count, params = ?params, "search request processed");
     let outcome = operation_outcome(
         "not-supported",
         format!(
@@ -136,4 +153,13 @@ fn operation_outcome(code: &str, diagnostics: String) -> Value {
             }
         ]
     })
+}
+
+// Special handler for browsers requesting /favicon.ico
+pub async fn favicon() -> impl IntoResponse {
+    // Minimal, fast response to avoid 404 noise in logs. Browsers accept 204 with no body.
+    // Also set a caching header to reduce repeated requests.
+    let mut headers = HeaderMap::new();
+    headers.insert(header::CACHE_CONTROL, header::HeaderValue::from_static("public, max-age=86400"));
+    (StatusCode::NO_CONTENT, headers)
 }

@@ -1,13 +1,18 @@
-// Basic tracing initialization with configurable and reloadable log level.
+// Tracing and OpenTelemetry initialization (with reloadable log level)
 use std::sync::OnceLock;
 use tracing_subscriber::{fmt, EnvFilter, prelude::*, reload};
 use crate::config::OtelConfig;
 
-static LOG_RELOAD_HANDLE: OnceLock<reload::Handle<EnvFilter, tracing_subscriber::Registry>> = OnceLock::new();
+use opentelemetry::KeyValue;
+use opentelemetry_sdk::{trace as sdktrace, Resource};
+use opentelemetry_otlp::{SpanExporter, WithExportConfig};
+use tracing_opentelemetry::OpenTelemetryLayer;
 
-pub fn init_tracing() {
-    init_tracing_with_level("info");
-}
+static LOG_RELOAD_HANDLE: OnceLock<reload::Handle<EnvFilter, tracing_subscriber::Registry>> = OnceLock::new();
+static OTEL_INSTALLED: OnceLock<()> = OnceLock::new();
+static OTEL_PROVIDER: OnceLock<sdktrace::SdkTracerProvider> = OnceLock::new();
+
+pub fn init_tracing() { init_tracing_with_level("info"); }
 
 pub fn init_tracing_with_level(level: &str) {
     // Prefer RUST_LOG from env, otherwise use provided level string.
@@ -34,20 +39,93 @@ pub fn apply_logging_level(level: &str) {
     }
 }
 
-/// Apply OTEL configuration change. Placeholder: logs intent; OTEL pipeline is implemented in Phase 7.
+/// Initialize or update OpenTelemetry pipeline based on configuration.
 pub fn apply_otel_config(otel: &OtelConfig) {
-    if otel.enabled {
-        let endpoint = otel.endpoint.as_deref().unwrap_or("");
-        if endpoint.is_empty() {
-            tracing::warn!("OTEL enabled but endpoint is empty; ignoring");
-        } else {
-            tracing::info!(endpoint, sample_ratio = ?otel.sample_ratio, "OTEL config applied (restart tracer pending in Phase 7)");
-        }
-    } else {
+    if !otel.enabled {
         tracing::info!("OTEL disabled");
+        return;
     }
+
+    let endpoint = otel.endpoint.as_deref().unwrap_or("");
+    if endpoint.is_empty() {
+        tracing::warn!("OTEL enabled but endpoint is empty; ignoring");
+        return;
+    }
+
+    // Build resource attributes
+    let service_name = env!("CARGO_PKG_NAME");
+    let service_version = env!("CARGO_PKG_VERSION");
+    let environment = otel.environment.as_deref().unwrap_or("development");
+    let instance_id = build_instance_id();
+
+    let resource = Resource::builder()
+        .with_attributes(vec![
+            KeyValue::new("service.name", service_name.to_string()),
+            KeyValue::new("service.version", service_version.to_string()),
+            KeyValue::new("deployment.environment", environment.to_string()),
+            KeyValue::new("service.instance.id", instance_id),
+            KeyValue::new("library.language", "rust"),
+        ])
+        .build();
+
+    // Sampler
+    let sampler = match otel.sample_ratio.unwrap_or(1.0) {
+        r if r <= 0.0 => sdktrace::Sampler::AlwaysOff,
+        r if (r - 1.0).abs() < f64::EPSILON => sdktrace::Sampler::AlwaysOn,
+        r => sdktrace::Sampler::TraceIdRatioBased(r),
+    };
+
+    // Build OTLP exporter over HTTP/proto
+    let exporter = SpanExporter::builder()
+        .with_http()
+        .with_endpoint(endpoint.to_string())
+        .build()
+        .map_err(|e| {
+            tracing::error!(error = %e, "failed to build OTLP exporter");
+            e
+        })
+        .ok();
+
+    // Tracer provider
+    let mut builder = sdktrace::SdkTracerProvider::builder()
+        .with_resource(resource)
+        .with_sampler(sampler);
+    if let Some(exp) = exporter {
+        builder = builder.with_batch_exporter(exp);
+    }
+    let tracer_provider = builder.build();
+
+    use opentelemetry::trace::TracerProvider as _;
+    let tracer = tracer_provider.tracer(service_name);
+
+    // Install global provider only once; subsequent calls will replace the layer
+    if OTEL_INSTALLED.set(()).is_ok() {
+        // First-time installation: attach OTEL layer to subscriber
+        let layer = OpenTelemetryLayer::new(tracer.clone());
+        let _ = tracing_subscriber::registry()
+            .with(layer)
+            .try_init();
+    } else {
+        // If already installed, we just replace the global provider below
+    }
+
+    // Set as global and keep a handle for shutdown
+    let _ = OTEL_PROVIDER.set(tracer_provider);
+
+    tracing::info!(endpoint, sample_ratio = ?otel.sample_ratio, environment, "OTEL configured");
 }
 
 pub fn shutdown_tracing() {
-    // No-op for now; add OTEL shutdown when enabled in Phase 7
+    if let Some(provider) = OTEL_PROVIDER.get() {
+        let _ = provider.shutdown();
+    }
+}
+
+fn build_instance_id() -> String {
+    let host = hostname::get()
+        .ok()
+        .and_then(|s| s.into_string().ok())
+        .unwrap_or_else(|| "unknown-host".to_string());
+    let pid = std::process::id();
+    format!("{}-{}", host, pid)
 }
