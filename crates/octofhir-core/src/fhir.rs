@@ -6,6 +6,8 @@ use crate::error::CoreError;
 /// FHIR version enumeration
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum FhirVersion {
+    #[serde(rename = "4.1.0")]
+    R4,
     #[serde(rename = "4.3.0")]
     R4B,
     #[serde(rename = "5.0.0")]
@@ -17,6 +19,7 @@ impl fmt::Display for FhirVersion {
         match self {
             FhirVersion::R4B => write!(f, "4.3.0"),
             FhirVersion::R5 => write!(f, "5.0.0"),
+            &FhirVersion::R4 => write!(f, "4.1.0"),
         }
     }
 }
@@ -26,6 +29,7 @@ impl FromStr for FhirVersion {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
+            "4.1.0" | "R4" => Ok(FhirVersion::R4),
             "4.3.0" | "R4B" => Ok(FhirVersion::R4B),
             "5.0.0" | "R5" => Ok(FhirVersion::R5),
             _ => Err(CoreError::invalid_resource_type(format!("Unknown FHIR version: {}", s))),

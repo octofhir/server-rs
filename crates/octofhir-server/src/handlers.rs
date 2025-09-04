@@ -37,7 +37,7 @@ pub async fn metadata() -> impl IntoResponse {
         "status": "draft",
         "kind": "instance",
         "software": { "name": "OctoFHIR Server", "version": env!("CARGO_PKG_VERSION") },
-        "format": ["application/fhir+json"],
+        "format": ["application/fhir+json", "application/json"],
     });
     (StatusCode::OK, Json(body))
 }
@@ -93,13 +93,33 @@ pub async fn delete_resource(Path((resource_type, id)): Path<(String, String)>) 
 
 pub async fn search_resource(
     Path(resource_type): Path<String>,
-    Query(_params): Query<HashMap<String, String>>,
+    Query(params): Query<HashMap<String, String>>,
 ) -> impl IntoResponse {
+    // Read pagination settings from shared config (hot-reloadable)
+    let (default_count, max_count) = crate::config::shared::with_config(|c| {
+        (c.search.default_count, c.search.max_count)
+    }).unwrap_or((10, 100));
+
+    let requested_count = params.get("_count").and_then(|v| v.parse::<usize>().ok());
+    let applied_count = match requested_count {
+        Some(v) if v > 0 => v.min(max_count),
+        _ => default_count,
+    };
+
+    tracing::info!(
+        resource_type = %resource_type,
+        requested_count = ?requested_count,
+        default_count = default_count,
+        max_count = max_count,
+        applied_count = applied_count,
+        "search pagination applied"
+    );
+
     let outcome = operation_outcome(
         "not-supported",
         format!(
-            "Search for resource type '{}' not yet implemented",
-            resource_type
+            "Search for resource type '{}' not yet implemented (applied _count={}; default={}; max={})",
+            resource_type, applied_count, default_count, max_count
         ),
     );
     (StatusCode::NOT_IMPLEMENTED, Json(outcome))

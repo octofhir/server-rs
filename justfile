@@ -3,7 +3,7 @@
 
 # Variables (override via environment)
 set export := true
-CONFIG := "config/server.toml"
+CONFIG := "octofhir.toml"
 RUST_LOG := "info"
 OTEL_EXPORTER_OTLP_ENDPOINT := "http://localhost:4318"
 
@@ -59,7 +59,7 @@ install-tools:
 
 # Print example server config
 example-config:
-    @cat config/server.toml
+    @cat octofhir.toml
 
 # Start local OTEL collector (requires Docker)
 otel-up:

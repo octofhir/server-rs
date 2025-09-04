@@ -7,14 +7,15 @@ use axum::{
 };
 use tower_http::{compression::CompressionLayer, cors::CorsLayer, trace::TraceLayer};
 
-use crate::{handlers, middleware as app_middleware};
+use crate::{config::AppConfig, handlers, middleware as app_middleware};
 
 pub struct OctofhirServer {
     addr: SocketAddr,
     app: Router,
 }
 
-pub fn build_app() -> Router {
+pub fn build_app(cfg: &AppConfig) -> Router {
+    let body_limit = cfg.server.body_limit_bytes;
     Router::new()
         // Health and info endpoints
         .route("/", get(handlers::root))
@@ -38,17 +39,20 @@ pub fn build_app() -> Router {
         .layer(CorsLayer::permissive())
         .layer(CompressionLayer::new())
         .layer(TraceLayer::new_for_http())
-        .layer(axum::extract::DefaultBodyLimit::max(1024 * 1024))
+        .layer(axum::extract::DefaultBodyLimit::max(body_limit))
 }
 
 pub struct ServerBuilder {
     addr: SocketAddr,
+    config: AppConfig,
 }
 
 impl ServerBuilder {
     pub fn new() -> Self {
+        let cfg = AppConfig::default();
         Self {
-            addr: SocketAddr::from(([0, 0, 0, 0], 8080)),
+            addr: cfg.addr(),
+            config: cfg,
         }
     }
 
@@ -57,8 +61,14 @@ impl ServerBuilder {
         self
     }
 
+    pub fn with_config(mut self, cfg: AppConfig) -> Self {
+        self.addr = cfg.addr();
+        self.config = cfg;
+        self
+    }
+
     pub fn build(self) -> OctofhirServer {
-        let app = build_app();
+        let app = build_app(&self.config);
 
         OctofhirServer {
             addr: self.addr,

@@ -1,9 +1,9 @@
-use octofhir_server::build_app;
+use octofhir_server::{build_app, AppConfig};
 use serde_json::Value;
 use tokio::task::JoinHandle;
 
 async fn start_server() -> (String, tokio::sync::oneshot::Sender<()>, JoinHandle<()>) {
-    let app = build_app();
+    let app = build_app(&AppConfig::default());
 
     // Bind to an ephemeral port
     let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))

@@ -1,0 +1,35 @@
+# OctoFHIR Server Configuration
+
+[server]
+# Network settings
+host = "0.0.0.0"
+port = 8080
+# Timeouts in milliseconds
+read_timeout_ms = 15000
+write_timeout_ms = 15000
+# Max request body size in bytes (1 MiB)
+body_limit_bytes = 1048576
+
+[storage]
+# Available backends: "in-memory-papaya"
+backend = "in-memory-papaya"
+# Optional soft memory limit hint (not enforced for in-memory backend)
+memory_limit_bytes = 0 # 0 means unset
+preallocate_items = 0  # 0 means unset
+
+[search]
+# Default and max page sizes
+default_count = 10
+max_count = 100
+
+[logging]
+# trace | debug | info | warn | error | off
+level = "info"
+
+[otel]
+# Enable OpenTelemetry tracing export
+enabled = false
+# Endpoint URL, e.g., "http://localhost:4318"
+endpoint = ""
+# Optional sampling ratio between 0.0 and 1.0
+sample_ratio = 0.0

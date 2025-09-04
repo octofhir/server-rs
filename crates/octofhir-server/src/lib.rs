@@ -3,6 +3,7 @@ pub mod handlers;
 pub mod middleware;
 pub mod observability;
 pub mod server;
+pub mod config_watch;
 
 pub use config::{AppConfig, OtelConfig, ServerConfig};
 pub use observability::{init_tracing, shutdown_tracing};

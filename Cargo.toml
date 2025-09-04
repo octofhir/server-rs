@@ -24,6 +24,9 @@ octofhir-db = { path = "crates/octofhir-db" }
 octofhir-canonical-manager = { path = "../canonical-manager" }
 octofhir-fhir-model = { path = "../fhir-model-rs" }
 
+# Test utilities
+filetime = "0.2"
+
 # Core dependencies
 tokio = { version = "1.0", features = ["full"] }
 serde = { version = "1.0", features = ["derive"] }
