@@ -10,10 +10,33 @@ use octofhir_core::{CoreError, ResourceType};
 use serde::Serialize;
 use serde_json::{Value, json};
 use std::collections::HashMap;
+use include_dir::{include_dir, Dir};
+use mime_guess::MimeGuess;
+use axum::response::Response;
 
 #[derive(Serialize)]
 pub struct HealthResponse<'a> {
     status: &'a str,
+}
+
+// New API response types for /api/* endpoints
+#[derive(Serialize)]
+pub struct ApiHealthResponse {
+    status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    details: Option<String>,
+}
+
+#[derive(Serialize)]
+pub struct BuildInfoResponse {
+    #[serde(rename = "serverVersion")]
+    server_version: String,
+    commit: String,
+    #[serde(rename = "commitTimestamp")]
+    commit_timestamp: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "uiVersion")]
+    ui_version: Option<String>,
 }
 
 pub async fn root() -> impl IntoResponse {
@@ -348,6 +371,113 @@ pub async fn favicon() -> impl IntoResponse {
     (StatusCode::NO_CONTENT, headers)
 }
 
+// ---- New API endpoints for UI ----
+
+/// GET /api/health - Enhanced health check with system status
+pub async fn api_health(State(state): State<crate::server::AppState>) -> impl IntoResponse {
+    let mut status = "ok".to_string();
+    let mut details: Option<String> = None;
+
+    // Check storage connectivity by trying to get a count
+    let _storage_count = state.storage.count().await;
+    // Storage is working if we reach here without panic
+
+    // Check canonical manager status
+    if let Some(manager) = crate::canonical::get_manager() {
+        match manager.storage().list_packages().await {
+            Err(e) => {
+                status = "degraded".to_string();
+                details = Some(format!("Canonical manager issue: {}", e));
+            }
+            Ok(packages) => {
+                if packages.is_empty() {
+                    // This could be degraded but might be normal for fresh installs
+                    tracing::debug!("No canonical packages loaded");
+                }
+            }
+        }
+    }
+
+    let response = ApiHealthResponse { status, details };
+    (StatusCode::OK, Json(response))
+}
+
+/// GET /api/build-info - Build and version information
+pub async fn api_build_info() -> impl IntoResponse {
+    let response = BuildInfoResponse {
+        server_version: env!("CARGO_PKG_VERSION").to_string(),
+        commit: option_env!("GIT_COMMIT").unwrap_or("unknown").to_string(),
+        commit_timestamp: option_env!("GIT_COMMIT_TIMESTAMP").unwrap_or("unknown").to_string(),
+        ui_version: Some("1.0.0".to_string()), // Will be updated when we build UI
+    };
+    (StatusCode::OK, Json(response))
+}
+
+/// GET /api/resource-types - List available FHIR resource types
+pub async fn api_resource_types() -> impl IntoResponse {
+    let mut resource_types = Vec::new();
+
+    // Try to get resource types from canonical manager
+    if let Some(manager) = crate::canonical::get_manager() {
+        let query = octofhir_canonical_manager::search::SearchQuery {
+            text: None,
+            resource_types: vec!["StructureDefinition".to_string()],
+            packages: vec![],
+            canonical_pattern: None,
+            version_constraints: vec![],
+            limit: Some(1000),
+            offset: Some(0),
+        };
+
+        match manager.search_engine().search(&query).await {
+            Ok(results) => {
+                for resource_match in results.resources {
+                    let content = &resource_match.resource.content;
+                    
+                    // Only include base resource types (not profiles)
+                    if let (Some(kind), Some(derivation), Some(resource_type)) = (
+                        content.get("kind").and_then(|v| v.as_str()),
+                        content.get("derivation").and_then(|v| v.as_str()),
+                        content.get("type").and_then(|v| v.as_str()),
+                    ) {
+                        if kind == "resource" && derivation == "specialization" {
+                            if !resource_types.contains(&resource_type.to_string()) {
+                                resource_types.push(resource_type.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::warn!("Failed to query canonical manager for resource types: {}", e);
+            }
+        }
+    }
+
+    // Fallback to common FHIR resource types if canonical manager fails
+    if resource_types.is_empty() {
+        resource_types = vec![
+            "Patient".to_string(),
+            "Practitioner".to_string(),
+            "Organization".to_string(),
+            "Observation".to_string(),
+            "DiagnosticReport".to_string(),
+            "Medication".to_string(),
+            "MedicationRequest".to_string(),
+            "Procedure".to_string(),
+            "Condition".to_string(),
+            "Encounter".to_string(),
+            "AllergyIntolerance".to_string(),
+            "Immunization".to_string(),
+        ];
+    }
+
+    // Sort alphabetically for consistency
+    resource_types.sort();
+
+    (StatusCode::OK, Json(resource_types))
+}
+
 // ---- Error mapping helpers ----
 fn map_core_error(e: CoreError) -> ApiError {
     match e {
@@ -363,4 +493,59 @@ fn map_core_error(e: CoreError) -> ApiError {
         )),
         other => ApiError::internal(other.to_string()),
     }
+}
+
+// ---- Embedded UI handlers ----
+static UI_DIR: Dir = include_dir!("$CARGO_MANIFEST_DIR/../../ui/dist");
+
+fn ui_index_response() -> Response {
+    if let Some(index) = UI_DIR.get_file("index.html") {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::CONTENT_TYPE,
+            header::HeaderValue::from_static("text/html; charset=utf-8"),
+        );
+        headers.insert(
+            header::CACHE_CONTROL,
+            header::HeaderValue::from_static("no-cache"),
+        );
+        (StatusCode::OK, headers, index.contents().to_vec()).into_response()
+    } else {
+        (StatusCode::NOT_FOUND, "UI not bundled").into_response()
+    }
+}
+
+pub async fn ui_index() -> Response {
+    ui_index_response()
+}
+
+pub async fn ui_static(Path(path): Path<String>) -> Response {
+    let rel = path.trim_start_matches('/');
+
+    // Serve index for empty or root path
+    if rel.is_empty() {
+        return ui_index_response();
+    }
+
+    // Try to serve a static file from embedded dir
+    if let Some(file) = UI_DIR.get_file(rel) {
+        let mime = MimeGuess::from_path(rel).first_or_octet_stream();
+        let mut headers = HeaderMap::new();
+        if let Ok(hv) = header::HeaderValue::from_str(mime.as_ref()) {
+            headers.insert(header::CONTENT_TYPE, hv);
+        }
+        // Cache immutable assets aggressively; Vite outputs hashed filenames
+        headers.insert(
+            header::CACHE_CONTROL,
+            header::HeaderValue::from_static("public, max-age=31536000, immutable"),
+        );
+        return (StatusCode::OK, headers, file.contents().to_vec()).into_response();
+    }
+
+    // SPA fallback to index.html for client-side routes (no extension)
+    if !rel.contains('.') {
+        return ui_index_response();
+    }
+
+    (StatusCode::NOT_FOUND, "Not Found").into_response()
 }

@@ -1,0 +1,117 @@
+/* ResourceCard Component Styles */
+.card {
+  cursor: pointer;
+  transition: all 0.2s ease;
+  border: 1px solid var(--mantine-color-gray-3);
+  margin-bottom: var(--mantine-spacing-xs);
+}
+
+.card:hover {
+  border-color: var(--mantine-color-blue-4);
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.card.selected {
+  border-color: var(--mantine-color-blue-6);
+  background: var(--mantine-color-blue-0);
+  box-shadow: 0 2px 8px rgba(37, 99, 235, 0.2);
+}
+
+.content {
+  flex: 1;
+  min-width: 0;
+}
+
+.title {
+  color: var(--mantine-color-text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+.resourceId {
+  font-family: var(--mantine-font-family-monospace);
+  font-size: var(--mantine-font-size-xs);
+  max-width: 80px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Dark mode styles */
+@media (prefers-color-scheme: dark) {
+  .card {
+    border-color: var(--mantine-color-gray-7);
+  }
+
+  .card:hover {
+    border-color: var(--mantine-color-blue-6);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  }
+
+  .card.selected {
+    border-color: var(--mantine-color-blue-5);
+    background: var(--mantine-color-blue-9);
+    box-shadow: 0 2px 8px rgba(59, 130, 246, 0.3);
+  }
+
+  .title {
+    color: var(--mantine-color-text);
+  }
+}
+
+/* Focus styles */
+.card:focus-visible {
+  outline: 2px solid var(--mantine-color-blue-6);
+  outline-offset: 2px;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .card {
+    padding: var(--mantine-spacing-xs);
+  }
+
+  .title {
+    font-size: var(--mantine-font-size-sm);
+  }
+
+  .resourceId {
+    max-width: 60px;
+  }
+}
+
+/* Animation for selection */
+.card.selected {
+  animation: select-glow 0.3s ease-out;
+}
+
+@keyframes select-glow {
+  0% {
+    box-shadow: 0 0 0 0 rgba(37, 99, 235, 0.4);
+  }
+  50% {
+    box-shadow: 0 0 0 8px rgba(37, 99, 235, 0.1);
+  }
+  100% {
+    box-shadow: 0 2px 8px rgba(37, 99, 235, 0.2);
+  }
+}
+
+/* Accessibility improvements */
+@media (prefers-reduced-motion: reduce) {
+  .card {
+    transition: none;
+    transform: none;
+  }
+
+  .card:hover {
+    transform: none;
+  }
+
+  .card.selected {
+    animation: none;
+  }
+}

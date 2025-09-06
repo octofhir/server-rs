@@ -20,7 +20,7 @@ run:
     OCTOFHIR_CONFIG={{CONFIG}} \
     RUST_LOG={{RUST_LOG}} \
     OTEL_EXPORTER_OTLP_ENDPOINT={{OTEL_EXPORTER_OTLP_ENDPOINT}} \
-    cargo run --bin octofhir-server
+    cd ui && pnpm run build && cd .. && cargo run --bin octofhir-server
 
 # Developer mode: auto-rebuild and run on changes (requires cargo-watch)
 dev:

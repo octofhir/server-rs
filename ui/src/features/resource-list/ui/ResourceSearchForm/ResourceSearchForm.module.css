@@ -1,0 +1,105 @@
+/* ResourceSearchForm Component Styles */
+.container {
+  padding: var(--mantine-spacing-sm);
+  border-bottom: 1px solid var(--mantine-color-gray-3);
+  background: var(--mantine-color-body);
+}
+
+.searchForm {
+  width: 100%;
+}
+
+.advancedFilters {
+  padding: var(--mantine-spacing-sm);
+  background: var(--mantine-color-gray-0);
+  border-radius: var(--mantine-radius-sm);
+  border: 1px solid var(--mantine-color-gray-2);
+  margin-top: var(--mantine-spacing-sm);
+}
+
+.customParameter {
+  padding-top: var(--mantine-spacing-sm);
+  border-top: 1px solid var(--mantine-color-gray-2);
+}
+
+.activeFilters {
+  margin-top: var(--mantine-spacing-sm);
+  padding: var(--mantine-spacing-xs);
+  background: var(--mantine-color-blue-0);
+  border-radius: var(--mantine-radius-sm);
+  border: 1px solid var(--mantine-color-blue-2);
+}
+
+.filterTag {
+  display: flex;
+  align-items: center;
+  gap: var(--mantine-spacing-xs);
+  padding: var(--mantine-spacing-xs);
+  background: var(--mantine-color-blue-1);
+  border-radius: var(--mantine-radius-sm);
+  border: 1px solid var(--mantine-color-blue-3);
+}
+
+/* Dark mode styles */
+@media (prefers-color-scheme: dark) {
+  .container {
+    border-bottom-color: var(--mantine-color-gray-7);
+  }
+
+  .advancedFilters {
+    background: var(--mantine-color-gray-9);
+    border-color: var(--mantine-color-gray-7);
+  }
+
+  .customParameter {
+    border-top-color: var(--mantine-color-gray-7);
+  }
+
+  .activeFilters {
+    background: var(--mantine-color-blue-9);
+    border-color: var(--mantine-color-blue-7);
+  }
+
+  .filterTag {
+    background: var(--mantine-color-blue-8);
+    border-color: var(--mantine-color-blue-6);
+  }
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .container {
+    padding: var(--mantine-spacing-xs);
+  }
+
+  .advancedFilters {
+    padding: var(--mantine-spacing-xs);
+  }
+}
+
+/* Animation for advanced filters */
+.advancedFilters {
+  animation: slide-down 0.2s ease-out;
+}
+
+@keyframes slide-down {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Filter tag hover effect */
+.filterTag:hover {
+  background: var(--mantine-color-blue-2);
+}
+
+@media (prefers-color-scheme: dark) {
+  .filterTag:hover {
+    background: var(--mantine-color-blue-7);
+  }
+}

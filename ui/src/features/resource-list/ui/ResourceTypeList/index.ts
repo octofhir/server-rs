@@ -1,0 +1,1 @@
+export { ResourceTypeList } from "./ResourceTypeList";

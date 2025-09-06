@@ -1,0 +1,202 @@
+/* ResourceTypeList Component Styles */
+.container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--mantine-color-body);
+  border-right: 1px solid var(--mantine-color-gray-3);
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--mantine-spacing-md);
+  border-bottom: 1px solid var(--mantine-color-gray-3);
+  background: var(--mantine-color-gray-0);
+}
+
+.headerActions {
+  display: flex;
+  align-items: center;
+  gap: var(--mantine-spacing-xs);
+}
+
+.searchContainer {
+  padding: var(--mantine-spacing-sm);
+  border-bottom: 1px solid var(--mantine-color-gray-2);
+}
+
+.listContainer {
+  flex: 1;
+  padding: var(--mantine-spacing-xs);
+}
+
+.loadingContainer,
+.errorContainer {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--mantine-spacing-sm);
+  padding: var(--mantine-spacing-xl);
+  flex: 1;
+}
+
+.emptyState {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--mantine-spacing-xl);
+  text-align: center;
+}
+
+.group {
+  margin-bottom: var(--mantine-spacing-sm);
+}
+
+.groupHeader {
+  padding: var(--mantine-spacing-xs) var(--mantine-spacing-sm);
+  background: var(--mantine-color-gray-1);
+  border-radius: var(--mantine-radius-sm);
+  margin-bottom: var(--mantine-spacing-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.resourceType {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--mantine-spacing-sm);
+  margin: 2px 0;
+  border-radius: var(--mantine-radius-sm);
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+  border: 1px solid transparent;
+}
+
+.resourceType:hover {
+  background: var(--mantine-color-gray-0);
+}
+
+.resourceType.selected {
+  background: var(--mantine-color-blue-0);
+  border-color: var(--mantine-color-blue-3);
+  color: var(--mantine-color-blue-7);
+}
+
+.resourceType.selected:hover {
+  background: var(--mantine-color-blue-1);
+}
+
+.errorBanner {
+  padding: var(--mantine-spacing-sm);
+  background: var(--mantine-color-red-0);
+  border-top: 1px solid var(--mantine-color-red-3);
+  text-align: center;
+}
+
+/* Dark mode styles */
+@media (prefers-color-scheme: dark) {
+  .container {
+    border-right-color: var(--mantine-color-gray-7);
+  }
+
+  .header {
+    background: var(--mantine-color-gray-9);
+    border-bottom-color: var(--mantine-color-gray-7);
+  }
+
+  .searchContainer {
+    border-bottom-color: var(--mantine-color-gray-7);
+  }
+
+  .groupHeader {
+    background: var(--mantine-color-gray-8);
+  }
+
+  .resourceType:hover {
+    background: var(--mantine-color-gray-8);
+  }
+
+  .resourceType.selected {
+    background: var(--mantine-color-blue-9);
+    border-color: var(--mantine-color-blue-7);
+    color: var(--mantine-color-blue-2);
+  }
+
+  .resourceType.selected:hover {
+    background: var(--mantine-color-blue-8);
+  }
+
+  .errorBanner {
+    background: var(--mantine-color-red-9);
+    border-top-color: var(--mantine-color-red-7);
+  }
+}
+
+/* Focus styles */
+.resourceType:focus-visible {
+  outline: 2px solid var(--mantine-color-blue-6);
+  outline-offset: 2px;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .header {
+    padding: var(--mantine-spacing-sm);
+  }
+
+  .searchContainer {
+    padding: var(--mantine-spacing-xs);
+  }
+
+  .resourceType {
+    padding: var(--mantine-spacing-xs) var(--mantine-spacing-sm);
+  }
+}
+
+/* Animation for loading states */
+.loadingContainer {
+  animation: fade-in 0.3s ease-in-out;
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Scrollbar styling */
+.listContainer::-webkit-scrollbar {
+  width: 6px;
+}
+
+.listContainer::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.listContainer::-webkit-scrollbar-thumb {
+  background: var(--mantine-color-gray-3);
+  border-radius: 3px;
+}
+
+.listContainer::-webkit-scrollbar-thumb:hover {
+  background: var(--mantine-color-gray-4);
+}
+
+@media (prefers-color-scheme: dark) {
+  .listContainer::-webkit-scrollbar-thumb {
+    background: var(--mantine-color-gray-7);
+  }
+
+  .listContainer::-webkit-scrollbar-thumb:hover {
+    background: var(--mantine-color-gray-6);
+  }
+}

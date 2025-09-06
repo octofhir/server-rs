@@ -1,0 +1,230 @@
+/* Command Palette Styles */
+.positioner {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 15vh;
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(4px);
+}
+
+.animator {
+  max-width: 600px;
+  width: 90vw;
+  background: var(--mantine-color-body);
+  border-radius: var(--mantine-radius-lg);
+  box-shadow:
+    0 20px 25px -5px rgba(0, 0, 0, 0.1),
+    0 10px 10px -5px rgba(0, 0, 0, 0.04),
+    0 0 0 1px rgba(0, 0, 0, 0.05);
+  overflow: hidden;
+  transform-origin: center top;
+  animation: kbar-fade-in 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes kbar-fade-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96) translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+.search {
+  display: flex;
+  align-items: center;
+  padding: var(--mantine-spacing-md);
+  border-bottom: 1px solid var(--mantine-color-gray-2);
+  background: var(--mantine-color-body);
+}
+
+.searchInput {
+  flex: 1;
+  background: transparent;
+  border: none;
+  outline: none;
+  font-size: var(--mantine-font-size-md);
+  color: var(--mantine-color-text);
+  font-family: var(--mantine-font-family);
+  padding: var(--mantine-spacing-xs) 0;
+}
+
+.searchInput::placeholder {
+  color: var(--mantine-color-placeholder);
+}
+
+.results {
+  max-height: 400px;
+  overflow-y: auto;
+  padding: var(--mantine-spacing-xs) 0;
+}
+
+.section {
+  padding: var(--mantine-spacing-sm) var(--mantine-spacing-md);
+  padding-bottom: var(--mantine-spacing-xs);
+  margin-top: var(--mantine-spacing-xs);
+}
+
+.section:first-child {
+  margin-top: 0;
+}
+
+.item {
+  display: flex;
+  align-items: center;
+  padding: var(--mantine-spacing-sm) var(--mantine-spacing-md);
+  cursor: pointer;
+  user-select: none;
+  transition: background-color 0.1s ease;
+  border-left: 3px solid transparent;
+}
+
+.item:hover {
+  background: var(--mantine-color-gray-0);
+}
+
+.item.active {
+  background: var(--mantine-color-blue-0);
+  border-left-color: var(--mantine-color-blue-6);
+}
+
+.icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  color: var(--mantine-color-gray-6);
+}
+
+.item.active .icon {
+  color: var(--mantine-color-blue-6);
+}
+
+/* Dark mode styles */
+@media (prefers-color-scheme: dark) {
+  .positioner {
+    background: rgba(0, 0, 0, 0.7);
+  }
+
+  .animator {
+    box-shadow:
+      0 20px 25px -5px rgba(0, 0, 0, 0.4),
+      0 10px 10px -5px rgba(0, 0, 0, 0.2),
+      0 0 0 1px rgba(255, 255, 255, 0.05);
+  }
+
+  .search {
+    border-bottom-color: var(--mantine-color-gray-7);
+  }
+
+  .item:hover {
+    background: var(--mantine-color-gray-9);
+  }
+
+  .item.active {
+    background: var(--mantine-color-blue-9);
+    border-left-color: var(--mantine-color-blue-4);
+  }
+
+  .icon {
+    color: var(--mantine-color-gray-5);
+  }
+
+  .item.active .icon {
+    color: var(--mantine-color-blue-4);
+  }
+}
+
+/* Custom scrollbar for results */
+.results::-webkit-scrollbar {
+  width: 6px;
+}
+
+.results::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.results::-webkit-scrollbar-thumb {
+  background: var(--mantine-color-gray-3);
+  border-radius: 3px;
+}
+
+.results::-webkit-scrollbar-thumb:hover {
+  background: var(--mantine-color-gray-4);
+}
+
+@media (prefers-color-scheme: dark) {
+  .results::-webkit-scrollbar-thumb {
+    background: var(--mantine-color-gray-7);
+  }
+
+  .results::-webkit-scrollbar-thumb:hover {
+    background: var(--mantine-color-gray-6);
+  }
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .positioner {
+    padding: var(--mantine-spacing-md);
+    padding-top: 10vh;
+    align-items: flex-start;
+  }
+
+  .animator {
+    width: 100%;
+    max-width: none;
+  }
+
+  .results {
+    max-height: 60vh;
+  }
+
+  .item {
+    padding: var(--mantine-spacing-md);
+  }
+}
+
+/* High contrast mode */
+@media (prefers-contrast: high) {
+  .animator {
+    border: 2px solid;
+  }
+
+  .item.active {
+    border-left-width: 4px;
+  }
+}
+
+/* Reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  .animator {
+    animation: none;
+  }
+
+  .item {
+    transition: none;
+  }
+}
+
+/* Focus management */
+.searchInput:focus {
+  outline: none;
+}
+
+/* No results state */
+.results:empty::after {
+  content: "No commands found";
+  display: block;
+  padding: var(--mantine-spacing-xl);
+  text-align: center;
+  color: var(--mantine-color-dimmed);
+  font-style: italic;
+}

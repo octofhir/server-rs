@@ -1,0 +1,162 @@
+/* CommitChip Component Styles */
+.container {
+  display: inline-flex;
+  align-items: center;
+}
+
+.chip {
+  cursor: pointer;
+  transition:
+    transform 0.1s ease,
+    box-shadow 0.1s ease;
+  user-select: none;
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--mantine-spacing-xs);
+}
+
+.chip:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.chip:active {
+  transform: translateY(0);
+}
+
+.text {
+  font-family: var(--mantine-font-family-monospace);
+  font-size: var(--mantine-font-size-xs);
+  font-weight: 500;
+  letter-spacing: 0.02em;
+}
+
+.copyButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 2px;
+  border-radius: var(--mantine-radius-xs);
+  color: currentColor;
+  opacity: 0.6;
+  transition:
+    opacity 0.2s ease,
+    background-color 0.2s ease;
+  margin-left: var(--mantine-spacing-xs);
+}
+
+.copyButton:hover {
+  opacity: 1;
+  background: rgba(0, 0, 0, 0.05);
+}
+
+.copyButton:active {
+  background: rgba(0, 0, 0, 0.1);
+}
+
+.tooltip {
+  max-width: 400px;
+}
+
+/* Dark mode adjustments */
+@media (prefers-color-scheme: dark) {
+  .chip:hover {
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+  }
+
+  .copyButton:hover {
+    background: rgba(255, 255, 255, 0.1);
+  }
+
+  .copyButton:active {
+    background: rgba(255, 255, 255, 0.15);
+  }
+}
+
+/* Focus indicators */
+.chip:focus-visible {
+  outline: 2px solid var(--mantine-color-blue-6);
+  outline-offset: 2px;
+}
+
+.copyButton:focus-visible {
+  outline: 2px solid var(--mantine-color-blue-6);
+  outline-offset: 1px;
+}
+
+/* High contrast mode */
+@media (prefers-contrast: high) {
+  .chip {
+    border: 1px solid currentColor;
+  }
+
+  .copyButton {
+    border: 1px solid currentColor;
+  }
+}
+
+/* Reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  .chip,
+  .copyButton {
+    transition: none;
+  }
+
+  .chip:hover {
+    transform: none;
+  }
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .text {
+    font-size: calc(var(--mantine-font-size-xs) - 1px);
+  }
+
+  .tooltip {
+    max-width: 300px;
+  }
+}
+
+@media (max-width: 480px) {
+  .copyButton {
+    display: none; /* Hide copy button on very small screens */
+  }
+}
+
+/* Animation for successful copy */
+@keyframes copy-success {
+  0% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.1);
+    background: var(--mantine-color-green-1);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+.copyButton.success {
+  animation: copy-success 0.3s ease;
+}
+
+/* Loading state improvements */
+.chip.loading {
+  opacity: 0.8;
+}
+
+/* Error state styling */
+.chip.error {
+  cursor: not-allowed;
+}
+
+.chip.error:hover {
+  transform: none;
+  box-shadow: none;
+}

@@ -1,0 +1,1 @@
+export { ResourceSearchForm } from "./ResourceSearchForm";

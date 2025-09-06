@@ -58,6 +58,14 @@ pub fn build_app(cfg: &AppConfig) -> Router {
         .route("/metadata", get(handlers::metadata))
         // Browser favicon shortcut
         .route("/favicon.ico", get(handlers::favicon))
+        // New API endpoints for UI
+        .route("/api/health", get(handlers::api_health))
+        .route("/api/build-info", get(handlers::api_build_info))
+        .route("/api/resource-types", get(handlers::api_resource_types))
+        
+        // Embedded UI under /ui
+        .route("/ui", get(handlers::ui_index))
+        .route("/ui/{*path}", get(handlers::ui_static))
         // CRUD and search placeholders
         .route(
             "/{resource_type}",

@@ -1,0 +1,31 @@
+/* Pagination Component Styles */
+.container {
+  padding: var(--mantine-spacing-sm);
+  border-top: 1px solid var(--mantine-color-gray-3);
+  background: var(--mantine-color-gray-0);
+}
+
+.pageInfo {
+  padding: 0 var(--mantine-spacing-sm);
+  white-space: nowrap;
+}
+
+/* Dark mode styles */
+@media (prefers-color-scheme: dark) {
+  .container {
+    border-top-color: var(--mantine-color-gray-7);
+    background: var(--mantine-color-gray-9);
+  }
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .container {
+    flex-direction: column;
+    gap: var(--mantine-spacing-sm);
+  }
+
+  .pageInfo {
+    text-align: center;
+  }
+}
