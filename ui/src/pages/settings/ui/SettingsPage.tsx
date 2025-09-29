@@ -70,10 +70,10 @@ export function SettingsPage() {
 
             <TextInput
               label="FHIR Base URL"
-              placeholder="http://localhost:8080"
+              placeholder="http://localhost:8888"
               value={apiBaseUrl}
               onChange={(e) => setApiBaseUrl(e.currentTarget.value)}
-              description="Base URL of your FHIR server (e.g., http://localhost:8080)"
+              description="Base URL of your FHIR server (e.g., http://localhost:8888)"
             />
 
             <NumberInput

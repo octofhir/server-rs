@@ -70,6 +70,9 @@ url = { version = "2.5", features = ["serde"] }
 indexmap = "2.0"
 async-trait = "0.1"
 
+# Database
+sqlx = { version = "0.8", features = ["runtime-tokio", "tls-rustls", "postgres", "json", "uuid", "time"] }
+
 # Development dependencies
 tokio-test = "0.4"
 tempfile = "3.0"

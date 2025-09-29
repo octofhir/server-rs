@@ -29,7 +29,7 @@ export const $colorScheme = createStore<"light" | "dark" | "auto">(
 );
 export const $themeInitialized = createStore(false);
 
-export const $apiBaseUrl = createStore("http://localhost:8080");
+export const $apiBaseUrl = createStore("http://localhost:8888");
 export const $apiTimeout = createStore(5000);
 export const $autoRefresh = createStore(false);
 export const $autoRefreshInterval = createStore(30000); // 30 seconds
