@@ -76,6 +76,25 @@ impl PostgresStorage {
     pub fn schema_manager(&self) -> &SchemaManager {
         &self.schema_manager
     }
+
+    /// Retrieves history across all resource types (system-level history).
+    ///
+    /// This is a PostgreSQL-specific extension that queries history
+    /// across all resource tables in the database.
+    ///
+    /// # Arguments
+    ///
+    /// * `params` - History query parameters (since, at, count, offset)
+    ///
+    /// # Returns
+    ///
+    /// Returns a `HistoryResult` containing entries from all resource types.
+    pub async fn system_history(
+        &self,
+        params: &HistoryParams,
+    ) -> Result<HistoryResult, StorageError> {
+        queries::get_system_history(&self.pool, &self.schema_manager, params).await
+    }
 }
 
 #[async_trait]

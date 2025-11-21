@@ -10,4 +10,4 @@ pub mod search;
 pub use crud::{create, delete, read, update, vread};
 
 // Re-export history operations
-pub use history::get_history;
+pub use history::{get_history, get_system_history};
