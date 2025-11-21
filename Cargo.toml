@@ -66,6 +66,13 @@ tracing-opentelemetry = "0.31"
 opentelemetry_sdk = { version = "0.30", features = ["rt-tokio"] }
 hostname = "0.4"
 
+# JSON Patch (RFC 6902)
+json-patch = "4"
+
+# FHIRPath evaluation engine
+octofhir-fhirpath = "0.4"
+octofhir-fhirschema = { version = "0.3.4"}
+
 # Utilities
 futures-util = "0.3"
 regex = "1"

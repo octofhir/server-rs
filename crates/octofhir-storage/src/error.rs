@@ -61,6 +61,15 @@ pub enum StorageError {
         /// Description of the internal error.
         message: String,
     },
+
+    /// The resource has been deleted (soft delete - returns 410 Gone).
+    #[error("Resource deleted: {resource_type}/{id}")]
+    Deleted {
+        /// The type of resource that was deleted.
+        resource_type: String,
+        /// The ID of the resource that was deleted.
+        id: String,
+    },
 }
 
 impl StorageError {
@@ -123,10 +132,25 @@ impl StorageError {
         }
     }
 
+    /// Creates a new `Deleted` error (for soft-deleted resources).
+    #[must_use]
+    pub fn deleted(resource_type: impl Into<String>, id: impl Into<String>) -> Self {
+        Self::Deleted {
+            resource_type: resource_type.into(),
+            id: id.into(),
+        }
+    }
+
     /// Returns `true` if this is a not found error.
     #[must_use]
     pub fn is_not_found(&self) -> bool {
         matches!(self, Self::NotFound { .. })
+    }
+
+    /// Returns `true` if this is a deleted error (soft delete).
+    #[must_use]
+    pub fn is_deleted(&self) -> bool {
+        matches!(self, Self::Deleted { .. })
     }
 
     /// Returns `true` if this is a version conflict error.
@@ -152,6 +176,7 @@ impl StorageError {
             Self::TransactionError { .. } => ErrorCategory::Transaction,
             Self::ConnectionError { .. } => ErrorCategory::Infrastructure,
             Self::Internal { .. } => ErrorCategory::Internal,
+            Self::Deleted { .. } => ErrorCategory::Deleted,
         }
     }
 }
@@ -171,6 +196,8 @@ pub enum ErrorCategory {
     Infrastructure,
     /// Internal error.
     Internal,
+    /// Resource has been deleted (soft delete - 410 Gone).
+    Deleted,
 }
 
 impl fmt::Display for ErrorCategory {
@@ -182,6 +209,7 @@ impl fmt::Display for ErrorCategory {
             Self::Transaction => write!(f, "transaction"),
             Self::Infrastructure => write!(f, "infrastructure"),
             Self::Internal => write!(f, "internal"),
+            Self::Deleted => write!(f, "deleted"),
         }
     }
 }

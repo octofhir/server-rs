@@ -27,6 +27,9 @@ pub enum CoreError {
     #[error("Resource conflict: {resource_type}/{id} already exists")]
     ResourceConflict { resource_type: String, id: String },
 
+    #[error("Resource deleted: {resource_type}/{id}")]
+    ResourceDeleted { resource_type: String, id: String },
+
     #[error("Invalid resource data: {message}")]
     InvalidResource { message: String },
 
@@ -72,6 +75,14 @@ impl CoreError {
         }
     }
 
+    /// Create a new ResourceDeleted error (for soft-deleted resources - 410 Gone)
+    pub fn resource_deleted(resource_type: impl Into<String>, id: impl Into<String>) -> Self {
+        Self::ResourceDeleted {
+            resource_type: resource_type.into(),
+            id: id.into(),
+        }
+    }
+
     /// Create a new InvalidResource error
     pub fn invalid_resource(message: impl Into<String>) -> Self {
         Self::InvalidResource {
@@ -94,6 +105,7 @@ impl CoreError {
                 | Self::InvalidResource { .. }
                 | Self::ResourceNotFound { .. }
                 | Self::ResourceConflict { .. }
+                | Self::ResourceDeleted { .. }
                 | Self::JsonError(_)
                 | Self::UrlError(_)
         )
@@ -115,6 +127,7 @@ impl CoreError {
             }
             Self::ResourceNotFound { .. } => ErrorCategory::NotFound,
             Self::ResourceConflict { .. } => ErrorCategory::Conflict,
+            Self::ResourceDeleted { .. } => ErrorCategory::Deleted,
             Self::InvalidResource { .. } => ErrorCategory::Validation,
             Self::JsonError(_) => ErrorCategory::Serialization,
             Self::TimeError(_) | Self::UuidError(_) => ErrorCategory::System,
@@ -131,6 +144,7 @@ pub enum ErrorCategory {
     Validation,
     NotFound,
     Conflict,
+    Deleted,
     Serialization,
     System,
     Configuration,
@@ -142,6 +156,7 @@ impl std::fmt::Display for ErrorCategory {
             Self::Validation => write!(f, "validation"),
             Self::NotFound => write!(f, "not_found"),
             Self::Conflict => write!(f, "conflict"),
+            Self::Deleted => write!(f, "deleted"),
             Self::Serialization => write!(f, "serialization"),
             Self::System => write!(f, "system"),
             Self::Configuration => write!(f, "configuration"),

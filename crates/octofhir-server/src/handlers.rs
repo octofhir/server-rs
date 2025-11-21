@@ -1,4 +1,6 @@
 use crate::mapping::{IdPolicy, envelope_from_json, json_from_envelope};
+use crate::patch::{apply_fhirpath_patch, apply_json_patch};
+use axum::body::Bytes;
 use axum::response::Response;
 use axum::{
     Json,
@@ -973,6 +975,441 @@ pub async fn delete_resource(
     }
 }
 
+/// DELETE /[type]?[search params] - Conditional delete based on search criteria
+pub async fn conditional_delete_resource(
+    State(state): State<crate::server::AppState>,
+    Path(resource_type): Path<String>,
+    RawQuery(raw): RawQuery,
+) -> Result<impl IntoResponse, ApiError> {
+    let span = tracing::info_span!("fhir.conditional_delete", resource_type = %resource_type);
+    let _g = span.enter();
+
+    // Validate resource type
+    let rt = match resource_type.parse::<ResourceType>() {
+        Ok(rt) => rt,
+        Err(_) => {
+            return Err(ApiError::bad_request(format!(
+                "Unknown resourceType '{resource_type}'"
+            )));
+        }
+    };
+
+    // Conditional delete requires search parameters
+    let raw_q = raw.unwrap_or_default();
+    if raw_q.is_empty() {
+        return Err(ApiError::bad_request(
+            "Conditional delete requires search parameters",
+        ));
+    }
+
+    // Search for matching resources
+    let cfg = &state.search_cfg;
+    let search_result =
+        octofhir_search::SearchEngine::execute(&state.storage, rt.clone(), &raw_q, cfg).await;
+
+    match search_result {
+        Ok(result) => match result.resources.len() {
+            0 => {
+                // No match - return 204 No Content (idempotent)
+                Ok(StatusCode::NO_CONTENT)
+            }
+            1 => {
+                // One match - delete that resource
+                let resource_to_delete = &result.resources[0];
+                match state.storage.delete(&rt, &resource_to_delete.id).await {
+                    Ok(_) => Ok(StatusCode::NO_CONTENT),
+                    Err(e) => Err(map_core_error(e)),
+                }
+            }
+            _ => {
+                // Multiple matches - return 412 Precondition Failed
+                // Per FHIR spec, conditional delete with multiple matches should fail
+                Err(ApiError::precondition_failed(
+                    "Multiple resources match the search criteria for conditional delete",
+                ))
+            }
+        },
+        Err(e) => Err(ApiError::bad_request(format!("Search failed: {}", e))),
+    }
+}
+
+/// PATCH /[type]/[id] - Patch a resource using JSON Patch (RFC 6902)
+pub async fn patch_resource(
+    State(state): State<crate::server::AppState>,
+    Path((resource_type, id)): Path<(String, String)>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<impl IntoResponse, ApiError> {
+    let span = tracing::info_span!("fhir.patch", resource_type = %resource_type, id = %id);
+    let _g = span.enter();
+
+    // Validate resource type
+    let rt = match resource_type.parse::<ResourceType>() {
+        Ok(rt) => rt,
+        Err(_) => {
+            return Err(ApiError::bad_request(format!(
+                "Unknown resourceType '{resource_type}'"
+            )));
+        }
+    };
+
+    // Check Content-Type header to determine patch format
+    let content_type = headers
+        .get(header::CONTENT_TYPE)
+        .and_then(|h| h.to_str().ok())
+        .unwrap_or("");
+
+    let is_json_patch = content_type.contains("application/json-patch+json");
+    let is_fhirpath_patch = content_type.contains("application/fhir+json");
+
+    if !is_json_patch && !is_fhirpath_patch {
+        return Err(ApiError::unsupported_media_type(format!(
+            "PATCH requires Content-Type: application/json-patch+json or application/fhir+json, got: {}",
+            content_type
+        )));
+    }
+
+    // Extract If-Match header for version checking
+    let if_match = headers
+        .get(header::IF_MATCH)
+        .and_then(|h| h.to_str().ok())
+        .map(parse_etag);
+
+    // Parse Prefer header for return preference
+    let prefer_return = headers
+        .get("Prefer")
+        .and_then(|h| h.to_str().ok())
+        .map(parse_prefer_return);
+
+    // Read current resource
+    let existing = state
+        .storage
+        .get(&rt, &id)
+        .await
+        .map_err(map_core_error)?
+        .ok_or_else(|| ApiError::not_found(format!("{resource_type} with id '{id}' not found")))?;
+
+    // Check If-Match if provided
+    if let Some(expected_version) = &if_match {
+        let current_version = existing.meta.version_id.as_deref().unwrap_or("1");
+        if expected_version != current_version {
+            return Err(ApiError::conflict(format!(
+                "Version conflict: expected {}, but current is {}",
+                expected_version, current_version
+            )));
+        }
+    }
+
+    // Convert envelope to JSON for patching
+    let current_json = json_from_envelope(&existing);
+
+    // Apply patch based on content type
+    let patched_json = if is_json_patch {
+        apply_json_patch(&current_json, &body)?
+    } else {
+        // FHIRPath Patch requires the engine and model provider
+        let engine = state.fhirpath_engine.as_ref().ok_or_else(|| {
+            ApiError::internal("FHIRPath engine not available for FHIRPath Patch")
+        })?;
+        let model_provider = state
+            .model_provider
+            .as_ref()
+            .ok_or_else(|| ApiError::internal("Model provider not available for FHIRPath Patch"))?;
+        apply_fhirpath_patch(engine, model_provider, &current_json, &body).await?
+    };
+
+    // Validate patched resource
+    if let Err(e) = crate::validation::validate_resource(&resource_type, &patched_json) {
+        return Err(ApiError::bad_request(format!("Validation failed: {e}")));
+    }
+
+    // Verify resourceType hasn't changed (extra safety check)
+    if patched_json["resourceType"].as_str() != Some(&resource_type) {
+        return Err(ApiError::bad_request(
+            "Patch resulted in changed resourceType".to_string(),
+        ));
+    }
+
+    // Verify id hasn't changed (extra safety check)
+    if patched_json["id"].as_str() != Some(&id) {
+        return Err(ApiError::bad_request(
+            "Patch resulted in changed id".to_string(),
+        ));
+    }
+
+    // Convert patched JSON back to envelope and update
+    let patched_env = envelope_from_json(
+        &resource_type,
+        &patched_json,
+        IdPolicy::Update {
+            path_id: id.clone(),
+        },
+    )
+    .map_err(ApiError::bad_request)?;
+
+    match state.storage.update(&rt, &id, patched_env.clone()).await {
+        Ok(_) => {
+            let version_id = patched_env
+                .meta
+                .version_id
+                .clone()
+                .unwrap_or_else(|| "1".to_string());
+            let last_updated = patched_env.meta.last_updated.clone();
+            let response_body = json_from_envelope(&patched_env);
+
+            let mut response_headers = HeaderMap::new();
+
+            // ETag
+            let etag = format!("W/\"{}\"", version_id);
+            if let Ok(val) = header::HeaderValue::from_str(&etag) {
+                response_headers.insert(header::ETAG, val);
+            }
+
+            // Last-Modified
+            let last_modified = httpdate::fmt_http_date(
+                std::time::UNIX_EPOCH
+                    + std::time::Duration::from_secs(last_updated.timestamp() as u64),
+            );
+            if let Ok(val) = header::HeaderValue::from_str(&last_modified) {
+                response_headers.insert(header::LAST_MODIFIED, val);
+            }
+
+            // Content-Type
+            response_headers.insert(
+                header::CONTENT_TYPE,
+                header::HeaderValue::from_static("application/fhir+json; charset=utf-8"),
+            );
+
+            // Handle Prefer return preference
+            match prefer_return {
+                Some(PreferReturn::Minimal) => {
+                    Ok((StatusCode::OK, response_headers, Json(json!({}))))
+                }
+                Some(PreferReturn::OperationOutcome) => {
+                    let outcome = json!({
+                        "resourceType": "OperationOutcome",
+                        "issue": [{
+                            "severity": "information",
+                            "code": "informational",
+                            "diagnostics": format!("Resource patched: {}/{}", resource_type, id)
+                        }]
+                    });
+                    Ok((StatusCode::OK, response_headers, Json(outcome)))
+                }
+                _ => Ok((StatusCode::OK, response_headers, Json(response_body))),
+            }
+        }
+        Err(e) => Err(map_core_error(e)),
+    }
+}
+
+/// PATCH /[type]?[search params] - Conditional patch based on search criteria
+pub async fn conditional_patch_resource(
+    State(state): State<crate::server::AppState>,
+    Path(resource_type): Path<String>,
+    RawQuery(raw): RawQuery,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<impl IntoResponse, ApiError> {
+    let span = tracing::info_span!("fhir.conditional_patch", resource_type = %resource_type);
+    let _g = span.enter();
+
+    // Validate resource type
+    let rt = match resource_type.parse::<ResourceType>() {
+        Ok(rt) => rt,
+        Err(_) => {
+            return Err(ApiError::bad_request(format!(
+                "Unknown resourceType '{resource_type}'"
+            )));
+        }
+    };
+
+    // Conditional patch requires search parameters
+    let raw_q = raw.unwrap_or_default();
+    if raw_q.is_empty() {
+        return Err(ApiError::bad_request(
+            "Conditional patch requires search parameters",
+        ));
+    }
+
+    // Check Content-Type header to determine patch format
+    let content_type = headers
+        .get(header::CONTENT_TYPE)
+        .and_then(|h| h.to_str().ok())
+        .unwrap_or("");
+
+    let is_json_patch = content_type.contains("application/json-patch+json");
+    let is_fhirpath_patch = content_type.contains("application/fhir+json");
+
+    if !is_json_patch && !is_fhirpath_patch {
+        return Err(ApiError::unsupported_media_type(format!(
+            "PATCH requires Content-Type: application/json-patch+json or application/fhir+json, got: {}",
+            content_type
+        )));
+    }
+
+    // Extract If-Match header for version checking
+    let if_match = headers
+        .get(header::IF_MATCH)
+        .and_then(|h| h.to_str().ok())
+        .map(parse_etag);
+
+    // Parse Prefer header for return preference
+    let prefer_return = headers
+        .get("Prefer")
+        .and_then(|h| h.to_str().ok())
+        .map(parse_prefer_return);
+
+    // Search for matching resources
+    let cfg = &state.search_cfg;
+    let search_result =
+        octofhir_search::SearchEngine::execute(&state.storage, rt.clone(), &raw_q, cfg).await;
+
+    match search_result {
+        Ok(result) => match result.resources.len() {
+            0 => {
+                // No match - return 404
+                Err(ApiError::not_found(
+                    "No resources match the search criteria for conditional patch",
+                ))
+            }
+            1 => {
+                // One match - patch that resource
+                let existing = &result.resources[0];
+                let id = existing.id.clone();
+
+                // Check If-Match if provided
+                if let Some(expected_version) = &if_match {
+                    let current_version = existing.meta.version_id.as_deref().unwrap_or("1");
+                    if expected_version != current_version {
+                        return Err(ApiError::conflict(format!(
+                            "Version conflict: expected {}, but current is {}",
+                            expected_version, current_version
+                        )));
+                    }
+                }
+
+                // Convert envelope to JSON for patching
+                let current_json = json_from_envelope(existing);
+
+                // Apply patch based on content type
+                let patched_json = if is_json_patch {
+                    apply_json_patch(&current_json, &body)?
+                } else {
+                    // FHIRPath Patch requires the engine and model provider
+                    let engine = state.fhirpath_engine.as_ref().ok_or_else(|| {
+                        ApiError::internal("FHIRPath engine not available for FHIRPath Patch")
+                    })?;
+                    let model_provider = state.model_provider.as_ref().ok_or_else(|| {
+                        ApiError::internal("Model provider not available for FHIRPath Patch")
+                    })?;
+                    apply_fhirpath_patch(engine, model_provider, &current_json, &body).await?
+                };
+
+                // Validate patched resource
+                if let Err(e) = crate::validation::validate_resource(&resource_type, &patched_json)
+                {
+                    return Err(ApiError::bad_request(format!("Validation failed: {e}")));
+                }
+
+                // Verify resourceType hasn't changed
+                if patched_json["resourceType"].as_str() != Some(&resource_type) {
+                    return Err(ApiError::bad_request(
+                        "Patch resulted in changed resourceType".to_string(),
+                    ));
+                }
+
+                // Verify id hasn't changed
+                if patched_json["id"].as_str() != Some(&id) {
+                    return Err(ApiError::bad_request(
+                        "Patch resulted in changed id".to_string(),
+                    ));
+                }
+
+                // Convert patched JSON back to envelope and update
+                let patched_env = envelope_from_json(
+                    &resource_type,
+                    &patched_json,
+                    IdPolicy::Update {
+                        path_id: id.clone(),
+                    },
+                )
+                .map_err(ApiError::bad_request)?;
+
+                match state.storage.update(&rt, &id, patched_env.clone()).await {
+                    Ok(_) => {
+                        let version_id = patched_env
+                            .meta
+                            .version_id
+                            .clone()
+                            .unwrap_or_else(|| "1".to_string());
+                        let last_updated = patched_env.meta.last_updated.clone();
+                        let response_body = json_from_envelope(&patched_env);
+
+                        let mut response_headers = HeaderMap::new();
+
+                        // Content-Location header
+                        let content_loc = format!("/{resource_type}/{id}");
+                        if let Ok(val) = header::HeaderValue::from_str(&content_loc) {
+                            response_headers.insert(header::CONTENT_LOCATION, val);
+                        }
+
+                        // ETag
+                        let etag = format!("W/\"{}\"", version_id);
+                        if let Ok(val) = header::HeaderValue::from_str(&etag) {
+                            response_headers.insert(header::ETAG, val);
+                        }
+
+                        // Last-Modified
+                        let last_modified = httpdate::fmt_http_date(
+                            std::time::UNIX_EPOCH
+                                + std::time::Duration::from_secs(last_updated.timestamp() as u64),
+                        );
+                        if let Ok(val) = header::HeaderValue::from_str(&last_modified) {
+                            response_headers.insert(header::LAST_MODIFIED, val);
+                        }
+
+                        // Content-Type
+                        response_headers.insert(
+                            header::CONTENT_TYPE,
+                            header::HeaderValue::from_static(
+                                "application/fhir+json; charset=utf-8",
+                            ),
+                        );
+
+                        // Handle Prefer return preference
+                        match prefer_return {
+                            Some(PreferReturn::Minimal) => {
+                                Ok((StatusCode::OK, response_headers, Json(json!({}))))
+                            }
+                            Some(PreferReturn::OperationOutcome) => {
+                                let outcome = json!({
+                                    "resourceType": "OperationOutcome",
+                                    "issue": [{
+                                        "severity": "information",
+                                        "code": "informational",
+                                        "diagnostics": format!("Resource patched: {}/{}", resource_type, id)
+                                    }]
+                                });
+                                Ok((StatusCode::OK, response_headers, Json(outcome)))
+                            }
+                            _ => Ok((StatusCode::OK, response_headers, Json(response_body))),
+                        }
+                    }
+                    Err(e) => Err(map_core_error(e)),
+                }
+            }
+            _ => {
+                // Multiple matches - return 412 Precondition Failed
+                Err(ApiError::precondition_failed(
+                    "Multiple resources match the search criteria for conditional patch",
+                ))
+            }
+        },
+        Err(e) => Err(ApiError::bad_request(format!("Search failed: {}", e))),
+    }
+}
+
 pub async fn search_resource(
     State(state): State<crate::server::AppState>,
     Path(resource_type): Path<String>,
@@ -1161,6 +1598,9 @@ fn map_core_error(e: CoreError) -> ApiError {
         }
         CoreError::ResourceConflict { resource_type, id } => {
             ApiError::conflict(format!("{resource_type} with id '{id}' already exists"))
+        }
+        CoreError::ResourceDeleted { resource_type, id } => {
+            ApiError::gone(format!("{resource_type} with id '{id}' has been deleted"))
         }
         CoreError::InvalidResource { message } => ApiError::bad_request(message),
         CoreError::InvalidResourceType(s) => {

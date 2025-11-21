@@ -125,7 +125,43 @@ impl InMemoryStorage {
     ) -> Result<Option<ResourceEnvelope>> {
         let key = make_storage_key(resource_type, id);
         let guard = self.data.pin();
-        Ok(guard.get(&key).cloned())
+        match guard.get(&key) {
+            Some(env) => {
+                if env.is_deleted() {
+                    Err(CoreError::resource_deleted(
+                        resource_type.to_string(),
+                        id.to_string(),
+                    ))
+                } else {
+                    Ok(Some(env.clone()))
+                }
+            }
+            None => Ok(None),
+        }
+    }
+
+    /// Internal method to get a resource regardless of deleted status.
+    /// Used for transaction rollback purposes.
+    async fn get_raw(&self, resource_type: &ResourceType, id: &str) -> Option<ResourceEnvelope> {
+        let key = make_storage_key(resource_type, id);
+        let guard = self.data.pin();
+        guard.get(&key).cloned()
+    }
+
+    /// Internal method to restore a deleted resource or force insert.
+    /// Used for transaction rollback purposes.
+    async fn force_insert(&self, resource_type: &ResourceType, resource: ResourceEnvelope) {
+        let key = make_storage_key(resource_type, &resource.id);
+        let guard = self.data.pin();
+        guard.insert(key, resource);
+    }
+
+    /// Internal method to hard delete a resource (actually remove it).
+    /// Used for transaction rollback of create operations.
+    async fn hard_delete(&self, resource_type: &ResourceType, id: &str) {
+        let key = make_storage_key(resource_type, id);
+        let guard = self.data.pin();
+        guard.remove(&key);
     }
 
     pub async fn insert(
@@ -173,21 +209,42 @@ impl InMemoryStorage {
         let key = make_storage_key(resource_type, id);
         let guard = self.data.pin();
 
-        guard
-            .remove(&key)
-            .ok_or_else(|| CoreError::resource_not_found(resource_type.to_string(), id.to_string()))
-            .cloned()
+        // Check if resource exists
+        let existing = match guard.get(&key) {
+            Some(env) => env.clone(),
+            None => {
+                // Per FHIR spec: delete of non-existent resource is idempotent
+                // Return a placeholder envelope to indicate success
+                return Ok(ResourceEnvelope::new(id.to_string(), resource_type.clone()));
+            }
+        };
+
+        // Check if already deleted - idempotent success
+        if existing.is_deleted() {
+            return Ok(existing);
+        }
+
+        // Soft delete: mark as deleted instead of removing
+        let mut deleted_env = existing.clone();
+        deleted_env.mark_deleted();
+
+        guard.insert(key, deleted_env);
+
+        Ok(existing)
     }
 
     pub async fn exists(&self, resource_type: &ResourceType, id: &str) -> bool {
         let key = make_storage_key(resource_type, id);
         let guard = self.data.pin();
-        guard.get(&key).is_some()
+        match guard.get(&key) {
+            Some(env) => !env.is_deleted(),
+            None => false,
+        }
     }
 
     pub async fn count(&self) -> usize {
         let guard = self.data.pin();
-        guard.len()
+        guard.iter().filter(|(_, env)| !env.is_deleted()).count()
     }
 
     pub async fn count_by_type(&self, resource_type: &ResourceType) -> usize {
@@ -195,7 +252,7 @@ impl InMemoryStorage {
         let guard = self.data.pin();
         guard
             .iter()
-            .filter(|(key, _)| key.starts_with(&prefix))
+            .filter(|(key, env)| key.starts_with(&prefix) && !env.is_deleted())
             .count()
     }
 
@@ -204,10 +261,12 @@ impl InMemoryStorage {
         let prefix = format!("{}/", query.resource_type);
         let guard = self.data.pin();
 
-        // Collect all matching resources
+        // Collect all matching resources (excluding soft-deleted ones)
         let mut matching_resources: Vec<ResourceEnvelope> = guard
             .iter()
-            .filter(|(key, resource)| key.starts_with(&prefix) && query.matches(resource))
+            .filter(|(key, resource)| {
+                key.starts_with(&prefix) && !resource.is_deleted() && query.matches(resource)
+            })
             .map(|(_, resource)| resource.clone())
             .collect();
 
@@ -330,10 +389,13 @@ impl InMemoryStorage {
             }
             TransactionOperation::Update {
                 resource_type, id, ..
-            }
-            | TransactionOperation::Delete { resource_type, id } => {
-                // For update/delete, we need the current state to rollback to
+            } => {
+                // For update, we need the current state to rollback to
                 self.get(resource_type, id).await
+            }
+            TransactionOperation::Delete { resource_type, id } => {
+                // For delete, use get_raw to capture even if already deleted
+                Ok(self.get_raw(resource_type, id).await)
             }
             TransactionOperation::Read { .. } => {
                 // Read operations don't need rollback snapshots
@@ -355,19 +417,20 @@ impl InMemoryStorage {
                 },
                 None,
             ) => {
-                // Rollback create by deleting the created resource
-                let _ = self.delete(resource_type, &resource.id).await?;
+                // Rollback create by hard deleting the created resource
+                self.hard_delete(resource_type, &resource.id).await;
             }
             (
                 TransactionOperation::Update {
-                    resource_type, id, ..
+                    resource_type,
+                    id: _,
+                    ..
                 },
                 Some(original_resource),
             ) => {
-                // Rollback update by restoring the original resource
-                let _ = self
-                    .update(resource_type, id, original_resource.clone())
-                    .await?;
+                // Rollback update by force inserting the original resource
+                self.force_insert(resource_type, original_resource.clone())
+                    .await;
             }
             (
                 TransactionOperation::Update {
@@ -375,12 +438,13 @@ impl InMemoryStorage {
                 },
                 None,
             ) => {
-                // If there was no original resource, delete the updated one
-                let _ = self.delete(resource_type, id).await?;
+                // If there was no original resource, hard delete the updated one
+                self.hard_delete(resource_type, id).await;
             }
             (TransactionOperation::Delete { resource_type, .. }, Some(deleted_resource)) => {
-                // Rollback delete by recreating the resource
-                self.insert(resource_type, deleted_resource.clone()).await?;
+                // Rollback delete by force inserting the original resource
+                self.force_insert(resource_type, deleted_resource.clone())
+                    .await;
             }
             (TransactionOperation::Read { .. }, _) => {
                 // Read operations don't need rollback
@@ -635,13 +699,12 @@ mod tests {
             CoreError::ResourceNotFound { .. }
         ));
 
-        // Test not found on delete
+        // Test idempotent delete on non-existent resource (per FHIR spec)
         let delete_result = storage.delete(&ResourceType::Patient, "nonexistent").await;
-        assert!(delete_result.is_err());
-        assert!(matches!(
-            delete_result.unwrap_err(),
-            CoreError::ResourceNotFound { .. }
-        ));
+        assert!(
+            delete_result.is_ok(),
+            "Delete of non-existent resource should succeed (idempotent)"
+        );
     }
 
     #[tokio::test]
@@ -1072,12 +1135,13 @@ mod tests {
         let storage = InMemoryStorage::new();
         assert_eq!(storage.count().await, 0);
 
+        // Per FHIR spec: delete of non-existent resource is idempotent (success)
         let result = storage.delete(&ResourceType::Patient, "nonexistent").await;
-        assert!(result.is_err());
-        assert!(matches!(
-            result.unwrap_err(),
-            CoreError::ResourceNotFound { .. }
-        ));
+        assert!(
+            result.is_ok(),
+            "Delete of non-existent resource should succeed (idempotent)"
+        );
+        assert_eq!(storage.count().await, 0);
     }
 
     #[tokio::test]

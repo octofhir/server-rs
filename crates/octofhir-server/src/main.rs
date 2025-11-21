@@ -73,7 +73,14 @@ async fn main() {
         octofhir_server::config_watch::start_config_watcher(path, shared_cfg, rt_handle)
     });
 
-    let server = ServerBuilder::new().with_config(cfg).build();
+    // Build server with the appropriate storage backend
+    let server = match ServerBuilder::new().with_config(cfg).build_async().await {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("failed to initialize server: {e}");
+            std::process::exit(2);
+        }
+    };
 
     if let Err(err) = server.run().await {
         eprintln!("server error: {err}");

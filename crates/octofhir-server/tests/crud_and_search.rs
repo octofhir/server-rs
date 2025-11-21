@@ -125,14 +125,14 @@ async fn patient_crud_and_search_flow() {
         .unwrap();
     assert_eq!(resp.status(), reqwest::StatusCode::NO_CONTENT);
 
-    // Reading after delete should produce 404
+    // Reading after delete should produce 410 Gone (soft delete)
     let resp = client
         .get(format!("{base}/Patient/{id}"))
         .header("accept", "application/fhir+json")
         .send()
         .await
         .unwrap();
-    assert_eq!(resp.status(), reqwest::StatusCode::NOT_FOUND);
+    assert_eq!(resp.status(), reqwest::StatusCode::GONE);
 
     let _ = shutdown_tx.send(());
     let _ = handle.await;
@@ -227,14 +227,14 @@ async fn error_cases_invalid_resource_and_id_mismatch_and_delete_404() {
         .unwrap();
     assert_eq!(resp.status(), reqwest::StatusCode::BAD_REQUEST);
 
-    // DELETE non-existent resource
+    // DELETE non-existent resource - per FHIR spec, delete is idempotent (204 No Content)
     let resp = client
         .delete(format!("{}/Patient/{}", base, "non-existent-id"))
         .header("accept", "application/fhir+json")
         .send()
         .await
         .unwrap();
-    assert_eq!(resp.status(), reqwest::StatusCode::NOT_FOUND);
+    assert_eq!(resp.status(), reqwest::StatusCode::NO_CONTENT);
 
     let _ = shutdown_tx.send(());
     let _ = handle.await;

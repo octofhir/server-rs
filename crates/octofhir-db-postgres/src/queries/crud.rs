@@ -120,7 +120,8 @@ pub async fn create(
 
 /// Reads a FHIR resource by type and ID.
 ///
-/// Returns `None` if the resource doesn't exist or has been deleted.
+/// Returns `None` if the resource doesn't exist.
+/// Returns `StorageError::Deleted` if the resource has been soft-deleted.
 pub async fn read(
     pool: &PgPool,
     resource_type: &str,
@@ -132,13 +133,14 @@ pub async fn read(
     let id_uuid = Uuid::parse_str(id)
         .map_err(|e| StorageError::invalid_resource(format!("Invalid UUID format: {e}")))?;
 
+    // Query including status to detect deleted resources
     let sql = format!(
-        r#"SELECT id, txid, ts, resource
+        r#"SELECT id, txid, ts, resource, status::text
            FROM "{table}"
-           WHERE id = $1 AND status != 'deleted'"#
+           WHERE id = $1"#
     );
 
-    let row: Option<(Uuid, i64, DateTime<Utc>, Value)> = query_as(&sql)
+    let row: Option<(Uuid, i64, DateTime<Utc>, Value, String)> = query_as(&sql)
         .bind(id_uuid)
         .fetch_optional(pool)
         .await
@@ -151,7 +153,12 @@ pub async fn read(
         })?;
 
     match row {
-        Some((row_id, txid, ts, resource)) => {
+        Some((row_id, txid, ts, resource, status)) => {
+            // Check if the resource is soft-deleted
+            if status == "deleted" {
+                return Err(StorageError::deleted(resource_type, id));
+            }
+
             let ts_time = chrono_to_time(ts);
             Ok(Some(StoredResource {
                 id: row_id.to_string(),
@@ -269,6 +276,9 @@ pub async fn update(
 ///
 /// The resource is marked as deleted but not physically removed,
 /// preserving history and allowing for potential recovery.
+///
+/// Per FHIR spec, delete is idempotent - deleting a non-existent or
+/// already deleted resource returns success (204 No Content).
 pub async fn delete(pool: &PgPool, resource_type: &str, id: &str) -> Result<(), StorageError> {
     let table = SchemaManager::table_name(resource_type);
 
@@ -285,23 +295,21 @@ pub async fn delete(pool: &PgPool, resource_type: &str, id: &str) -> Result<(), 
            WHERE id = $2 AND status != 'deleted'"#
     );
 
-    let result = query(&sql)
+    let _result = query(&sql)
         .bind(txid)
         .bind(id_uuid)
         .execute(pool)
         .await
         .map_err(|e| {
+            // Table might not exist, but that's OK for idempotent delete
             if e.to_string().contains("does not exist") {
-                StorageError::not_found(resource_type, id)
-            } else {
-                StorageError::internal(format!("Failed to delete resource: {e}"))
+                return StorageError::internal(format!("Table does not exist: {e}"));
             }
+            StorageError::internal(format!("Failed to delete resource: {e}"))
         })?;
 
-    if result.rows_affected() == 0 {
-        return Err(StorageError::not_found(resource_type, id));
-    }
-
+    // Per FHIR spec: delete is idempotent, so success regardless of whether
+    // any rows were affected (resource didn't exist or was already deleted)
     Ok(())
 }
 

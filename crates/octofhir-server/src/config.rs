@@ -56,6 +56,22 @@ impl AppConfig {
         if !allowed.contains(&v.as_str()) {
             return Err("fhir.version must be one of R4, R4B, R5, R6".into());
         }
+        // Storage backend validation
+        if matches!(self.storage.backend, StorageBackend::Postgres) {
+            if self.storage.postgres.is_none() {
+                return Err(
+                    "storage.postgres config is required when backend is 'postgres'".into(),
+                );
+            }
+            if let Some(ref pg) = self.storage.postgres {
+                if pg.url.is_empty() {
+                    return Err("storage.postgres.url must not be empty".into());
+                }
+                if pg.pool_size == 0 {
+                    return Err("storage.postgres.pool_size must be > 0".into());
+                }
+            }
+        }
         Ok(())
     }
 
@@ -123,10 +139,14 @@ impl Default for ServerConfig {
 pub struct StorageConfig {
     #[serde(default)]
     pub backend: StorageBackend,
+    /// In-memory storage options
     #[serde(default)]
     pub memory_limit_bytes: Option<usize>,
     #[serde(default)]
     pub preallocate_items: Option<usize>,
+    /// PostgreSQL storage options
+    #[serde(default)]
+    pub postgres: Option<PostgresStorageConfig>,
 }
 
 impl Default for StorageConfig {
@@ -135,15 +155,58 @@ impl Default for StorageConfig {
             backend: StorageBackend::InMemoryPapaya,
             memory_limit_bytes: None,
             preallocate_items: None,
+            postgres: None,
         }
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "kebab-case")]
 pub enum StorageBackend {
     #[default]
     InMemoryPapaya,
+    Postgres,
+}
+
+/// PostgreSQL storage configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PostgresStorageConfig {
+    /// Connection URL: `postgres://user:pass@host:port/database`
+    pub url: String,
+    /// Connection pool size (maximum number of connections)
+    #[serde(default = "default_postgres_pool_size")]
+    pub pool_size: u32,
+    /// Connection timeout in milliseconds
+    #[serde(default = "default_postgres_connect_timeout")]
+    pub connect_timeout_ms: u64,
+    /// Idle timeout in milliseconds
+    #[serde(default)]
+    pub idle_timeout_ms: Option<u64>,
+    /// Whether to run migrations on startup
+    #[serde(default = "default_postgres_run_migrations")]
+    pub run_migrations: bool,
+}
+
+fn default_postgres_pool_size() -> u32 {
+    10
+}
+fn default_postgres_connect_timeout() -> u64 {
+    5000
+}
+fn default_postgres_run_migrations() -> bool {
+    true
+}
+
+impl Default for PostgresStorageConfig {
+    fn default() -> Self {
+        Self {
+            url: "postgres://localhost/octofhir".into(),
+            pool_size: default_postgres_pool_size(),
+            connect_timeout_ms: default_postgres_connect_timeout(),
+            idle_timeout_ms: Some(300_000), // 5 minutes
+            run_migrations: default_postgres_run_migrations(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

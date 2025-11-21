@@ -112,6 +112,11 @@ impl FhirStorage for InMemoryStorage {
 
         match guard.get(&key) {
             Some(envelope) => {
+                // Check if resource is deleted (soft delete)
+                if envelope.is_deleted() {
+                    return Err(StorageError::deleted(resource_type, id));
+                }
+
                 let version_id = envelope
                     .meta
                     .version_id
@@ -213,15 +218,33 @@ impl FhirStorage for InMemoryStorage {
         let version_id = self.next_version();
         let now = OffsetDateTime::now_utc();
 
-        // Use block scope to capture removed resource and drop guard before await
+        // Use block scope to ensure guard is dropped before await
         let resource_json = {
             let guard = self.data.pin();
 
-            let removed = guard
-                .remove(&key)
-                .ok_or_else(|| StorageError::not_found(resource_type, id))?;
+            // Check if resource exists
+            let existing = match guard.get(&key) {
+                Some(env) => env.clone(),
+                None => {
+                    // Per FHIR spec: delete of non-existent resource is idempotent (success)
+                    return Ok(());
+                }
+            };
 
-            serde_json::to_value(removed).unwrap_or_default()
+            // Check if already deleted
+            if existing.is_deleted() {
+                // Already deleted - idempotent success
+                return Ok(());
+            }
+
+            // Soft delete: mark as deleted instead of removing
+            let mut deleted_env = existing.clone();
+            deleted_env.mark_deleted();
+            deleted_env.meta.version_id = Some(version_id.clone());
+
+            guard.insert(key, deleted_env);
+
+            serde_json::to_value(existing).unwrap_or_default()
         };
 
         // Create a tombstone entry for history
@@ -526,9 +549,17 @@ mod tests {
         // Delete
         fhir.delete("Patient", &created.id).await.unwrap();
 
-        // Verify deleted
-        let read = fhir.read("Patient", &created.id).await.unwrap();
-        assert!(read.is_none());
+        // Verify deleted - soft delete returns StorageError::Deleted (410 Gone)
+        let read_result = fhir.read("Patient", &created.id).await;
+        assert!(
+            read_result.is_err(),
+            "Reading a soft-deleted resource should return an error"
+        );
+        let err = read_result.unwrap_err();
+        assert!(
+            err.is_deleted(),
+            "Error should indicate resource was deleted"
+        );
     }
 
     #[tokio::test]

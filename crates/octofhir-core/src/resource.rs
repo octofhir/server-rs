@@ -10,6 +10,8 @@ pub enum ResourceStatus {
     Inactive,
     Draft,
     Unknown,
+    /// Resource has been soft-deleted (FHIR delete interaction)
+    Deleted,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -116,6 +118,17 @@ impl ResourceEnvelope {
 
     pub fn is_active(&self) -> bool {
         matches!(self.status, ResourceStatus::Active)
+    }
+
+    /// Check if the resource has been soft-deleted
+    pub fn is_deleted(&self) -> bool {
+        matches!(self.status, ResourceStatus::Deleted)
+    }
+
+    /// Mark resource as deleted (soft delete)
+    pub fn mark_deleted(&mut self) {
+        self.status = ResourceStatus::Deleted;
+        self.meta.update_timestamp();
     }
 }
 
