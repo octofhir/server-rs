@@ -1,0 +1,49 @@
+[package]
+name = "octofhir-db-postgres"
+description = "PostgreSQL storage backend for OctoFHIR server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+# Local dependencies
+octofhir-storage = { workspace = true }
+
+# Async
+async-trait = { workspace = true }
+tokio = { workspace = true }
+
+# Database
+sqlx-core = { version = "0.8.6", default-features = false, features = [
+    "_rt-tokio",
+    "_tls-native-tls",
+    "json",
+    "migrate"
+] }
+sqlx-postgres = { version = "0.8.6", default-features = false, features = [
+    "json",
+    "chrono",
+    "uuid",
+    "migrate"
+] }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Types
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { workspace = true }
+
+# Error handling
+thiserror = { workspace = true }
+
+# Tracing
+tracing = { workspace = true }
+
+[dev-dependencies]
+tokio-test = { workspace = true }
+testcontainers = "0.25"
+testcontainers-modules = { version = "0.13", features = ["postgres"] }

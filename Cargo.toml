@@ -4,6 +4,7 @@ members = [
     "crates/octofhir-core",
     "crates/octofhir-api",
     "crates/octofhir-db-memory",
+    "crates/octofhir-db-postgres",
     "crates/octofhir-search",
     "crates/octofhir-server",
     "crates/octofhir-storage",
