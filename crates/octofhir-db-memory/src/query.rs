@@ -180,16 +180,16 @@ impl QueryFilter {
             return false;
         };
 
-        if let Some(start) = start {
-            if &date_value < start {
-                return false;
-            }
+        if let Some(start) = start
+            && &date_value < start
+        {
+            return false;
         }
 
-        if let Some(end) = end {
-            if &date_value > end {
-                return false;
-            }
+        if let Some(end) = end
+            && &date_value > end
+        {
+            return false;
         }
 
         true
@@ -272,16 +272,16 @@ impl QueryFilter {
                 _ => return false,
             };
 
-            if let Some(min) = min {
-                if number < min {
-                    return false;
-                }
+            if let Some(min) = min
+                && number < min
+            {
+                return false;
             }
 
-            if let Some(max) = max {
-                if number > max {
-                    return false;
-                }
+            if let Some(max) = max
+                && number > max
+            {
+                return false;
             }
 
             true

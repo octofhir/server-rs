@@ -4,7 +4,7 @@ use axum::{Router, middleware, routing::get};
 use tower_http::{compression::CompressionLayer, cors::CorsLayer, trace::TraceLayer};
 
 use crate::{config::AppConfig, handlers, middleware as app_middleware};
-use octofhir_db::{
+use octofhir_db_memory::{
     DynStorage, StorageBackend as DbBackend, StorageConfig as DbStorageConfig,
     StorageOptions as DbStorageOptions, create_storage,
 };

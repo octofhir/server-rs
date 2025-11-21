@@ -3,7 +3,7 @@ resolver = "3"
 members = [
     "crates/octofhir-core",
     "crates/octofhir-api",
-    "crates/octofhir-db",
+    "crates/octofhir-db-memory",
     "crates/octofhir-search",
     "crates/octofhir-server",
     "crates/octofhir-storage",
@@ -21,7 +21,7 @@ categories = ["web-programming", "science"]
 [workspace.dependencies]
 # Local dependencies
 octofhir-core = { path = "crates/octofhir-core" }
-octofhir-db = { path = "crates/octofhir-db" }
+octofhir-db-memory = { path = "crates/octofhir-db-memory" }
 octofhir-storage = { path = "crates/octofhir-storage" }
 octofhir-canonical-manager = { version = "0.1.13" }
 octofhir-fhir-model = {version = "0.1.2"}
@@ -59,10 +59,10 @@ notify-debouncer-mini = "0.7"
 # Logging and observability  
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "registry"] }
-opentelemetry = { version = "0.31", features = ["trace"] }
+opentelemetry = { version = "0.30", features = ["trace"] }
 opentelemetry-otlp = { version = "0.30", features = ["http-proto", "reqwest"] }
-tracing-opentelemetry = "0.32"
-opentelemetry_sdk = { version = "0.31", features = ["rt-tokio"] }
+tracing-opentelemetry = "0.31"
+opentelemetry_sdk = { version = "0.30", features = ["rt-tokio"] }
 hostname = "0.4"
 
 # Utilities

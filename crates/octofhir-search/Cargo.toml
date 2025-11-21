@@ -12,7 +12,7 @@ description = "Search parameter parsing and execution for OctoFHIR server"
 [dependencies]
 # Local dependencies
 octofhir-core = { path = "../octofhir-core" }
-octofhir-db = { path = "../octofhir-db" }
+octofhir-db-memory = { path = "../octofhir-db-memory" }
 
 # Workspace dependencies
 serde = { workspace = true }

@@ -1,11 +1,15 @@
 [package]
-name = "octofhir-db"
-version = "0.1.0"
-edition = "2021"
-description = "Storage layer for OctoFHIR server"
+name = "octofhir-db-memory"
+description = "In-memory storage backend for OctoFHIR server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
 
 [dependencies]
 octofhir-core = { workspace = true }
+octofhir-storage = { workspace = true }
 papaya = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -13,6 +17,7 @@ tokio = { workspace = true }
 uuid = { workspace = true }
 thiserror = { workspace = true }
 async-trait = { workspace = true }
+time = { workspace = true }
 
 [dev-dependencies]
 fastrand = "2.0"

@@ -16,7 +16,7 @@ path = "src/main.rs"
 [dependencies]
 # Local dependencies
 octofhir-core = { path = "../octofhir-core" }
-octofhir-db = { path = "../octofhir-db" }
+octofhir-db-memory = { path = "../octofhir-db-memory" }
 octofhir-api = { path = "../octofhir-api" }
 octofhir-search = { path = "../octofhir-search" }
 octofhir-canonical-manager = { workspace = true }

@@ -1,6 +1,6 @@
 use crate::parser::{SearchParameterParser, SearchValidationError};
 use octofhir_core::ResourceType;
-use octofhir_db::{DynStorage, QueryResult};
+use octofhir_db_memory::{DynStorage, QueryResult};
 use thiserror::Error;
 
 #[derive(Debug, Clone)]

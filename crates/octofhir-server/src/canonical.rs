@@ -108,7 +108,6 @@ async fn build_registry_with_manager(cfg: &AppConfig) -> Result<CanonicalRegistr
         .unwrap_or_else(|| ".fhir".to_string());
     let base = std::path::PathBuf::from(&base_dir);
     fcm_cfg.storage.packages_dir = base.join("packages");
-    fcm_cfg.storage.index_dir = base.join("index");
     fcm_cfg.storage.cache_dir = base.join("cache");
     // Optionally, we could direct storage into a project-local path by env vars
 

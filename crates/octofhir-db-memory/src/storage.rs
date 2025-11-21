@@ -5,39 +5,111 @@ use crate::transaction::{
     TransactionStats,
 };
 use octofhir_core::{CoreError, ResourceEnvelope, ResourceType, Result};
+use octofhir_storage::{HistoryEntry, HistoryMethod, StoredResource};
 use papaya::HashMap as PapayaHashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use time::OffsetDateTime;
 use tokio::sync::RwLock;
 
 pub type StorageKey = String; // Format: "ResourceType/id"
 
-fn make_storage_key(resource_type: &ResourceType, id: &str) -> StorageKey { format!("{resource_type}/{id}") }
+pub(crate) fn make_storage_key(resource_type: &ResourceType, id: &str) -> StorageKey {
+    format!("{resource_type}/{id}")
+}
 
+pub(crate) fn make_storage_key_str(resource_type: &str, id: &str) -> StorageKey {
+    format!("{resource_type}/{id}")
+}
+
+/// In-memory FHIR storage backend using papaya lock-free HashMap.
+///
+/// This storage implementation provides:
+/// - Lock-free concurrent access via papaya::HashMap
+/// - Full CRUD operations
+/// - History tracking for resource versions
+/// - Transaction support with rollback
+/// - Search functionality with filtering and pagination
 #[derive(Debug)]
 pub struct InMemoryStorage {
-    // Main storage using papaya for lock-free concurrent access
-    data: Arc<PapayaHashMap<StorageKey, ResourceEnvelope>>,
-    // Transaction statistics
+    /// Main storage using papaya for lock-free concurrent access
+    pub(crate) data: Arc<PapayaHashMap<StorageKey, ResourceEnvelope>>,
+    /// History storage: key -> list of historical versions
+    pub(crate) history: Arc<RwLock<std::collections::HashMap<StorageKey, Vec<HistoryEntry>>>>,
+    /// Atomic counter for generating version IDs
+    pub(crate) version_counter: AtomicU64,
+    /// Transaction statistics
     transaction_stats: Arc<RwLock<TransactionStats>>,
-    // Storage configuration options (soft hints for in-memory backend)
+    /// Storage configuration options (soft hints for in-memory backend)
     _options: StorageOptions,
 }
 
 impl InMemoryStorage {
+    /// Creates a new in-memory storage with default options.
     pub fn new() -> Self {
         Self {
             data: Arc::new(PapayaHashMap::new()),
+            history: Arc::new(RwLock::new(std::collections::HashMap::new())),
+            version_counter: AtomicU64::new(1),
             transaction_stats: Arc::new(RwLock::new(TransactionStats::new())),
             _options: StorageOptions::default(),
         }
     }
 
+    /// Creates a new in-memory storage with the given options.
     pub fn with_options(options: StorageOptions) -> Self {
         Self {
             data: Arc::new(PapayaHashMap::new()),
+            history: Arc::new(RwLock::new(std::collections::HashMap::new())),
+            version_counter: AtomicU64::new(1),
             transaction_stats: Arc::new(RwLock::new(TransactionStats::new())),
             _options: options,
         }
+    }
+
+    /// Generates the next version ID.
+    pub(crate) fn next_version(&self) -> String {
+        self.version_counter.fetch_add(1, Ordering::SeqCst).to_string()
+    }
+
+    /// Adds a history entry for a resource.
+    pub(crate) async fn add_history(&self, stored: &StoredResource, method: HistoryMethod) {
+        let key = make_storage_key_str(&stored.resource_type, &stored.id);
+        let entry = HistoryEntry::new(stored.clone(), method);
+        let mut history_guard = self.history.write().await;
+        history_guard.entry(key).or_default().push(entry);
+    }
+
+    /// Converts a ResourceEnvelope to a StoredResource.
+    #[allow(dead_code)]
+    pub(crate) fn envelope_to_stored(&self, env: &ResourceEnvelope, version_id: &str) -> StoredResource {
+        let now = OffsetDateTime::now_utc();
+        StoredResource {
+            id: env.id.clone(),
+            version_id: version_id.to_string(),
+            resource_type: env.resource_type.to_string(),
+            resource: serde_json::to_value(env).unwrap_or_default(),
+            last_updated: now,
+            created_at: now,
+        }
+    }
+
+    /// Gets history entries for a resource.
+    pub(crate) async fn get_history(&self, resource_type: &str, id: &str) -> Vec<HistoryEntry> {
+        let key = make_storage_key_str(resource_type, id);
+        let history_guard = self.history.read().await;
+        history_guard.get(&key).cloned().unwrap_or_default()
+    }
+
+    /// Gets all history entries for a resource type.
+    pub(crate) async fn get_type_history(&self, resource_type: &str) -> Vec<HistoryEntry> {
+        let prefix = format!("{resource_type}/");
+        let history_guard = self.history.read().await;
+        history_guard
+            .iter()
+            .filter(|(k, _)| k.starts_with(&prefix))
+            .flat_map(|(_, entries)| entries.clone())
+            .collect()
     }
 
     pub async fn get(
@@ -429,11 +501,11 @@ impl TransactionManager for InMemoryStorage {
                     _ => continue,
                 };
 
-                if let Some(snapshot) = transaction.get_rollback_snapshot(&key) {
-                    if let Err(error) = self.rollback_operation(operation, snapshot).await {
-                        // Log rollback errors but continue with other operations
-                        eprintln!("Rollback error for operation {operation_id}: {error}");
-                    }
+                if let Some(snapshot) = transaction.get_rollback_snapshot(&key)
+                    && let Err(error) = self.rollback_operation(operation, snapshot).await
+                {
+                    // Log rollback errors but continue with other operations
+                    eprintln!("Rollback error for operation {operation_id}: {error}");
                 }
             }
         }

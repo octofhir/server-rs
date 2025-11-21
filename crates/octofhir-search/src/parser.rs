@@ -22,7 +22,7 @@ pub struct ParsedParameters {
 }
 
 use octofhir_core::{FhirDateTime, ResourceType};
-use octofhir_db::{QueryFilter, SearchQuery};
+use octofhir_db_memory::{QueryFilter, SearchQuery};
 
 pub struct SearchParameterParser;
 
