@@ -21,7 +21,6 @@ use crate::schema::SchemaManager;
 #[derive(Debug, Clone)]
 pub struct PostgresStorage {
     pool: PgPool,
-    #[allow(dead_code)]
     schema_manager: SchemaManager,
 }
 
@@ -70,13 +69,35 @@ impl PostgresStorage {
     pub fn pool(&self) -> &PgPool {
         &self.pool
     }
+
+    /// Returns a reference to the schema manager.
+    #[must_use]
+    pub fn schema_manager(&self) -> &SchemaManager {
+        &self.schema_manager
+    }
+
+    /// Extracts the resource type from a FHIR resource JSON.
+    fn extract_resource_type(resource: &Value) -> Result<&str, StorageError> {
+        resource["resourceType"]
+            .as_str()
+            .ok_or_else(|| StorageError::invalid_resource("Missing or invalid resourceType field"))
+    }
 }
 
 #[async_trait]
 impl FhirStorage for PostgresStorage {
-    async fn create(&self, _resource: &Value) -> Result<StoredResource, StorageError> {
+    async fn create(&self, resource: &Value) -> Result<StoredResource, StorageError> {
+        let resource_type = Self::extract_resource_type(resource)?;
+
+        // Ensure the table exists for this resource type
+        self.schema_manager
+            .ensure_table(resource_type)
+            .await
+            .map_err(|e| StorageError::internal(format!("Schema error: {e}")))?;
+
+        // TODO: Implement actual resource creation
         Err(StorageError::internal(
-            "PostgreSQL storage not yet implemented",
+            "PostgreSQL storage create not yet implemented",
         ))
     }
 

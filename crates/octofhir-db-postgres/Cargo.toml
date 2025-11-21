@@ -37,6 +37,9 @@ serde_json = { workspace = true }
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { workspace = true }
 
+# Concurrent data structures
+dashmap = { workspace = true }
+
 # Error handling
 thiserror = { workspace = true }
 
