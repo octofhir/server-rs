@@ -12,6 +12,7 @@ use octofhir_storage::{
 use crate::config::PostgresConfig;
 use crate::migrations;
 use crate::pool;
+use crate::queries;
 use crate::schema::SchemaManager;
 
 /// PostgreSQL storage backend for FHIR resources.
@@ -75,78 +76,50 @@ impl PostgresStorage {
     pub fn schema_manager(&self) -> &SchemaManager {
         &self.schema_manager
     }
-
-    /// Extracts the resource type from a FHIR resource JSON.
-    fn extract_resource_type(resource: &Value) -> Result<&str, StorageError> {
-        resource["resourceType"]
-            .as_str()
-            .ok_or_else(|| StorageError::invalid_resource("Missing or invalid resourceType field"))
-    }
 }
 
 #[async_trait]
 impl FhirStorage for PostgresStorage {
     async fn create(&self, resource: &Value) -> Result<StoredResource, StorageError> {
-        let resource_type = Self::extract_resource_type(resource)?;
-
-        // Ensure the table exists for this resource type
-        self.schema_manager
-            .ensure_table(resource_type)
-            .await
-            .map_err(|e| StorageError::internal(format!("Schema error: {e}")))?;
-
-        // TODO: Implement actual resource creation
-        Err(StorageError::internal(
-            "PostgreSQL storage create not yet implemented",
-        ))
+        queries::create(&self.pool, &self.schema_manager, resource).await
     }
 
     async fn read(
         &self,
-        _resource_type: &str,
-        _id: &str,
+        resource_type: &str,
+        id: &str,
     ) -> Result<Option<StoredResource>, StorageError> {
-        Err(StorageError::internal(
-            "PostgreSQL storage not yet implemented",
-        ))
+        queries::read(&self.pool, resource_type, id).await
     }
 
     async fn update(
         &self,
-        _resource: &Value,
-        _if_match: Option<&str>,
+        resource: &Value,
+        if_match: Option<&str>,
     ) -> Result<StoredResource, StorageError> {
-        Err(StorageError::internal(
-            "PostgreSQL storage not yet implemented",
-        ))
+        queries::update(&self.pool, &self.schema_manager, resource, if_match).await
     }
 
-    async fn delete(&self, _resource_type: &str, _id: &str) -> Result<(), StorageError> {
-        Err(StorageError::internal(
-            "PostgreSQL storage not yet implemented",
-        ))
+    async fn delete(&self, resource_type: &str, id: &str) -> Result<(), StorageError> {
+        queries::delete(&self.pool, resource_type, id).await
     }
 
     async fn vread(
         &self,
-        _resource_type: &str,
-        _id: &str,
-        _version: &str,
+        resource_type: &str,
+        id: &str,
+        version: &str,
     ) -> Result<Option<StoredResource>, StorageError> {
-        Err(StorageError::internal(
-            "PostgreSQL storage not yet implemented",
-        ))
+        queries::vread(&self.pool, resource_type, id, version).await
     }
 
     async fn history(
         &self,
-        _resource_type: &str,
-        _id: Option<&str>,
-        _params: &HistoryParams,
+        resource_type: &str,
+        id: Option<&str>,
+        params: &HistoryParams,
     ) -> Result<HistoryResult, StorageError> {
-        Err(StorageError::internal(
-            "PostgreSQL storage not yet implemented",
-        ))
+        queries::get_history(&self.pool, resource_type, id, params).await
     }
 
     async fn search(
@@ -154,19 +127,22 @@ impl FhirStorage for PostgresStorage {
         _resource_type: &str,
         _params: &SearchParams,
     ) -> Result<SearchResult, StorageError> {
+        // Search implementation is planned for a future task
         Err(StorageError::internal(
-            "PostgreSQL storage not yet implemented",
+            "PostgreSQL search not yet implemented",
         ))
     }
 
     async fn begin_transaction(&self) -> Result<Box<dyn Transaction>, StorageError> {
+        // Full transaction support is planned for a future task
         Err(StorageError::transaction_error(
             "PostgreSQL transactions not yet implemented",
         ))
     }
 
     fn supports_transactions(&self) -> bool {
-        true // PostgreSQL supports transactions, but implementation is pending
+        // PostgreSQL supports transactions, but full implementation is pending
+        false
     }
 
     fn backend_name(&self) -> &'static str {
@@ -176,9 +152,6 @@ impl FhirStorage for PostgresStorage {
 
 #[cfg(test)]
 mod tests {
-    #[allow(unused_imports)]
-    use super::*;
-
     #[test]
     fn test_backend_name() {
         // We can't create a storage without a DB, but we can test constants

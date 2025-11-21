@@ -1,10 +1,16 @@
 //! Search query implementations.
 //!
 //! This module contains the SQL queries for FHIR search operations.
+//!
+//! Note: This module is a placeholder for future implementation.
+
+#![allow(dead_code)]
 
 use sqlx_postgres::PgPool;
 
 /// Search query executor for FHIR resources.
+///
+/// This is a placeholder struct for future search implementation.
 #[derive(Debug, Clone)]
 pub struct SearchQueries {
     pool: PgPool,
