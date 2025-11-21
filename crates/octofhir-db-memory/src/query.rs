@@ -206,20 +206,23 @@ impl QueryFilter {
             match field_value {
                 Value::Object(obj) => {
                     let system_matches = if let Some(system) = system {
-                        obj.get("system").and_then(|v| v.as_str()).is_some_and(|s| s == system)
+                        obj.get("system")
+                            .and_then(|v| v.as_str())
+                            .is_some_and(|s| s == system)
                     } else {
                         true
                     };
 
-                    let value_matches =
-                        obj.get("value").and_then(|v| v.as_str()) == Some(value);
+                    let value_matches = obj.get("value").and_then(|v| v.as_str()) == Some(value);
 
                     system_matches && value_matches
                 }
                 Value::Array(arr) => arr.iter().any(|item| {
                     if let Value::Object(obj) = item {
                         let system_matches = if let Some(system) = system {
-                            obj.get("system").and_then(|v| v.as_str()).is_some_and(|s| s == system)
+                            obj.get("system")
+                                .and_then(|v| v.as_str())
+                                .is_some_and(|s| s == system)
                         } else {
                             true
                         };

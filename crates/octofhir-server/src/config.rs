@@ -141,7 +141,10 @@ impl Default for StorageConfig {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Default)]
 #[serde(rename_all = "kebab-case")]
-pub enum StorageBackend { #[default] InMemoryPapaya }
+pub enum StorageBackend {
+    #[default]
+    InMemoryPapaya,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchSettings {

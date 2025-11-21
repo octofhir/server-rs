@@ -12,7 +12,7 @@ use octofhir_storage::{
     SearchResult, StorageError, StoredResource, Transaction as FhirTransaction,
 };
 
-use crate::storage::{make_storage_key_str, InMemoryStorage};
+use crate::storage::{InMemoryStorage, make_storage_key_str};
 
 /// Extracts resourceType from a JSON Value.
 fn extract_resource_type(resource: &Value) -> Result<String, StorageError> {
@@ -25,13 +25,17 @@ fn extract_resource_type(resource: &Value) -> Result<String, StorageError> {
 
 /// Extracts id from a JSON Value.
 fn extract_id(resource: &Value) -> Option<String> {
-    resource.get("id").and_then(|v| v.as_str()).map(String::from)
+    resource
+        .get("id")
+        .and_then(|v| v.as_str())
+        .map(String::from)
 }
 
 /// Parses a resource type string to ResourceType enum.
 fn parse_resource_type(resource_type: &str) -> Result<ResourceType, StorageError> {
-    ResourceType::from_str(resource_type)
-        .map_err(|_| StorageError::invalid_resource(format!("Unknown resource type: {resource_type}")))
+    ResourceType::from_str(resource_type).map_err(|_| {
+        StorageError::invalid_resource(format!("Unknown resource type: {resource_type}"))
+    })
 }
 
 #[async_trait]
@@ -179,7 +183,10 @@ impl FhirStorage for InMemoryStorage {
             if let Some(expected_version) = if_match {
                 let actual_version = existing.meta.version_id.as_deref().unwrap_or("1");
                 if actual_version != expected_version {
-                    return Err(StorageError::version_conflict(expected_version, actual_version));
+                    return Err(StorageError::version_conflict(
+                        expected_version,
+                        actual_version,
+                    ));
                 }
             }
 
@@ -320,7 +327,11 @@ impl FhirStorage for InMemoryStorage {
             .resources
             .iter()
             .map(|env| {
-                let version_id = env.meta.version_id.clone().unwrap_or_else(|| "1".to_string());
+                let version_id = env
+                    .meta
+                    .version_id
+                    .clone()
+                    .unwrap_or_else(|| "1".to_string());
                 StoredResource {
                     id: env.id.clone(),
                     version_id,
@@ -390,7 +401,8 @@ impl FhirTransaction for InMemoryFhirTransaction {
     }
 
     async fn create(&mut self, resource: &Value) -> Result<StoredResource, StorageError> {
-        self.operations.push(TransactionOp::Create(resource.clone()));
+        self.operations
+            .push(TransactionOp::Create(resource.clone()));
 
         // Return a placeholder - real implementation would defer to commit
         let resource_type = extract_resource_type(resource)?;
@@ -408,7 +420,8 @@ impl FhirTransaction for InMemoryFhirTransaction {
     }
 
     async fn update(&mut self, resource: &Value) -> Result<StoredResource, StorageError> {
-        self.operations.push(TransactionOp::Update(resource.clone()));
+        self.operations
+            .push(TransactionOp::Update(resource.clone()));
 
         // Return a placeholder
         let resource_type = extract_resource_type(resource)?;
@@ -542,7 +555,10 @@ mod tests {
 
         // Get history
         let params = HistoryParams::new();
-        let history = fhir.history("Patient", Some(&created.id), &params).await.unwrap();
+        let history = fhir
+            .history("Patient", Some(&created.id), &params)
+            .await
+            .unwrap();
 
         // Should have 4 entries (1 create + 3 updates)
         assert_eq!(history.entries.len(), 4);

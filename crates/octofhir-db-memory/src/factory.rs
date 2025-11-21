@@ -3,9 +3,9 @@ use std::sync::Arc;
 use async_trait::async_trait;
 
 use crate::{
+    InMemoryStorage,
     query::{QueryFilter, QueryResult, SearchQuery},
     transaction::{TransactionManager, TransactionStats},
-    InMemoryStorage,
 };
 use octofhir_core::{ResourceEnvelope, ResourceType, Result};
 
@@ -48,7 +48,7 @@ impl Default for StorageConfig {
 #[async_trait]
 pub trait Storage: Send + Sync + TransactionManager {
     async fn get(&self, resource_type: &ResourceType, id: &str)
-        -> Result<Option<ResourceEnvelope>>;
+    -> Result<Option<ResourceEnvelope>>;
     async fn insert(&self, resource_type: &ResourceType, resource: ResourceEnvelope) -> Result<()>;
     async fn update(
         &self,

@@ -50,8 +50,12 @@ pub enum ApiError {
     Forbidden(String),
     #[error("Not found: {0}")]
     NotFound(String),
+    #[error("Gone: {0}")]
+    Gone(String),
     #[error("Conflict: {0}")]
     Conflict(String),
+    #[error("Precondition failed: {0}")]
+    PreconditionFailed(String),
     #[error("Unsupported media type: {0}")]
     UnsupportedMediaType(String),
     #[error("Internal server error: {0}")]
@@ -71,8 +75,14 @@ impl ApiError {
     pub fn not_found(msg: impl Into<String>) -> Self {
         Self::NotFound(msg.into())
     }
+    pub fn gone(msg: impl Into<String>) -> Self {
+        Self::Gone(msg.into())
+    }
     pub fn conflict(msg: impl Into<String>) -> Self {
         Self::Conflict(msg.into())
+    }
+    pub fn precondition_failed(msg: impl Into<String>) -> Self {
+        Self::PreconditionFailed(msg.into())
     }
     pub fn unsupported_media_type(msg: impl Into<String>) -> Self {
         Self::UnsupportedMediaType(msg.into())
@@ -87,7 +97,9 @@ impl ApiError {
             ApiError::Unauthorized(_) => StatusCode::UNAUTHORIZED,
             ApiError::Forbidden(_) => StatusCode::FORBIDDEN,
             ApiError::NotFound(_) => StatusCode::NOT_FOUND,
+            ApiError::Gone(_) => StatusCode::GONE,
             ApiError::Conflict(_) => StatusCode::CONFLICT,
+            ApiError::PreconditionFailed(_) => StatusCode::PRECONDITION_FAILED,
             ApiError::UnsupportedMediaType(_) => StatusCode::UNSUPPORTED_MEDIA_TYPE,
             ApiError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
@@ -99,7 +111,9 @@ impl ApiError {
             ApiError::Unauthorized(msg) => OperationOutcome::single("error", "unauthorized", msg),
             ApiError::Forbidden(msg) => OperationOutcome::single("error", "forbidden", msg),
             ApiError::NotFound(msg) => OperationOutcome::single("error", "not-found", msg),
+            ApiError::Gone(msg) => OperationOutcome::single("error", "deleted", msg),
             ApiError::Conflict(msg) => OperationOutcome::single("error", "conflict", msg),
+            ApiError::PreconditionFailed(msg) => OperationOutcome::single("error", "conflict", msg),
             ApiError::UnsupportedMediaType(msg) => {
                 OperationOutcome::single("error", "not-supported", msg)
             }
@@ -183,7 +197,13 @@ mod tests {
             ),
             (ApiError::forbidden("x"), StatusCode::FORBIDDEN, "forbidden"),
             (ApiError::not_found("x"), StatusCode::NOT_FOUND, "not-found"),
+            (ApiError::gone("x"), StatusCode::GONE, "deleted"),
             (ApiError::conflict("x"), StatusCode::CONFLICT, "conflict"),
+            (
+                ApiError::precondition_failed("x"),
+                StatusCode::PRECONDITION_FAILED,
+                "conflict",
+            ),
             (
                 ApiError::unsupported_media_type("x"),
                 StatusCode::UNSUPPORTED_MEDIA_TYPE,
@@ -794,7 +814,10 @@ mod bundle_generation_tests {
         for key in ["self", "first", "last", "next"].iter() {
             if let Some(u) = rels.get(*key) {
                 assert!(u.contains("name=John"), "{key} missing name param: {u}");
-                assert!(u.contains("identifier=urn%3Asys%7C123"), "{key} missing identifier param: {u}");
+                assert!(
+                    u.contains("identifier=urn%3Asys%7C123"),
+                    "{key} missing identifier param: {u}"
+                );
             }
         }
     }

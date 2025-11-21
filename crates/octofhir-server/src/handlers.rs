@@ -1,18 +1,18 @@
 use crate::mapping::{IdPolicy, envelope_from_json, json_from_envelope};
+use axum::response::Response;
 use axum::{
     Json,
     extract::{Path, Query, RawQuery, State},
     http::{HeaderMap, StatusCode, header},
     response::IntoResponse,
 };
+use include_dir::{Dir, include_dir};
+use mime_guess::MimeGuess;
 use octofhir_api::ApiError;
 use octofhir_core::{CoreError, ResourceType};
 use serde::Serialize;
 use serde_json::{Value, json};
 use std::collections::HashMap;
-use include_dir::{include_dir, Dir};
-use mime_guess::MimeGuess;
-use axum::response::Response;
 
 #[derive(Serialize)]
 pub struct HealthResponse<'a> {
@@ -119,13 +119,13 @@ pub async fn metadata(State(state): State<crate::server::AppState>) -> impl Into
             if let Ok(results) = mgr.search_engine().search(&query).await {
                 for rm in results.resources {
                     let content = &rm.resource.content;
-                    if content.get("type").and_then(|v| v.as_str()) == Some(rt) {
-                        if let Some(url) = content.get("url").and_then(|v| v.as_str()) {
-                            match content.get("derivation").and_then(|v| v.as_str()) {
-                                Some("specialization") => base_profile = Some(url.to_string()),
-                                Some("constraint") => supported_profiles.push(url.to_string()),
-                                _ => {}
-                            }
+                    if content.get("type").and_then(|v| v.as_str()) == Some(rt)
+                        && let Some(url) = content.get("url").and_then(|v| v.as_str())
+                    {
+                        match content.get("derivation").and_then(|v| v.as_str()) {
+                            Some("specialization") => base_profile = Some(url.to_string()),
+                            Some("constraint") => supported_profiles.push(url.to_string()),
+                            _ => {}
                         }
                     }
                 }
@@ -133,7 +133,7 @@ pub async fn metadata(State(state): State<crate::server::AppState>) -> impl Into
         }
 
         let resource = octofhir_api::CapabilityStatementRestResource::new(*rt)
-            .with_interactions(&["read", "search-type", "create", "update", "delete"][..])
+            .with_interactions(&["read", "vread", "search-type", "create", "update", "delete"][..])
             .with_search_params(mapped)
             .with_profile(base_profile)
             .with_supported_profiles(supported_profiles);
@@ -229,22 +229,131 @@ pub async fn create_resource(
 pub async fn read_resource(
     State(state): State<crate::server::AppState>,
     Path((resource_type, id)): Path<(String, String)>,
+    headers: HeaderMap,
 ) -> Result<impl IntoResponse, ApiError> {
     let span = tracing::info_span!("fhir.read", resource_type = %resource_type, id = %id);
     let _g = span.enter();
     let rt = match resource_type.parse::<ResourceType>() {
         Ok(rt) => rt,
-        Err(_) => return Err(ApiError::bad_request(format!(
-            "Unknown resourceType '{resource_type}'"
-        ))),
+        Err(_) => {
+            return Err(ApiError::bad_request(format!(
+                "Unknown resourceType '{resource_type}'"
+            )));
+        }
     };
     match state.storage.get(&rt, &id).await {
         Ok(Some(env)) => {
+            // Get version_id for ETag (default to "1" if not set)
+            let version_id = env.meta.version_id.as_deref().unwrap_or("1");
+
+            // Check If-None-Match (conditional read - return 304 if version matches)
+            if octofhir_api::check_if_none_match(&headers, version_id) {
+                return Ok((StatusCode::NOT_MODIFIED, HeaderMap::new(), Json(json!({}))));
+            }
+
+            // Check If-Modified-Since (conditional read)
+            if let Some(if_modified_since) = headers.get(header::IF_MODIFIED_SINCE)
+                && let Ok(since_str) = if_modified_since.to_str()
+                && let Ok(since) = httpdate::parse_http_date(since_str)
+            {
+                let last_updated_ts = std::time::UNIX_EPOCH
+                    + std::time::Duration::from_secs(env.meta.last_updated.timestamp() as u64);
+                if last_updated_ts <= since {
+                    return Ok((StatusCode::NOT_MODIFIED, HeaderMap::new(), Json(json!({}))));
+                }
+            }
+
+            // Build response headers
+            let mut response_headers = HeaderMap::new();
+
+            // ETag: W/"version_id"
+            let etag = format!("W/\"{}\"", version_id);
+            if let Ok(val) = header::HeaderValue::from_str(&etag) {
+                response_headers.insert(header::ETAG, val);
+            }
+
+            // Last-Modified: HTTP date format
+            let last_modified = httpdate::fmt_http_date(
+                std::time::UNIX_EPOCH
+                    + std::time::Duration::from_secs(env.meta.last_updated.timestamp() as u64),
+            );
+            if let Ok(val) = header::HeaderValue::from_str(&last_modified) {
+                response_headers.insert(header::LAST_MODIFIED, val);
+            }
+
+            // Content-Type
+            response_headers.insert(
+                header::CONTENT_TYPE,
+                header::HeaderValue::from_static("application/fhir+json; charset=utf-8"),
+            );
+
             let body = json_from_envelope(&env);
-            Ok((StatusCode::OK, Json(body)))
+            Ok((StatusCode::OK, response_headers, Json(body)))
         }
         Ok(None) => Err(ApiError::not_found(format!(
             "{resource_type} with id '{id}' not found"
+        ))),
+        Err(e) => Err(map_core_error(e)),
+    }
+}
+
+/// GET /[type]/[id]/_history/[vid] - Read a specific version of a resource
+pub async fn vread_resource(
+    State(state): State<crate::server::AppState>,
+    Path((resource_type, id, version_id)): Path<(String, String, String)>,
+) -> Result<impl IntoResponse, ApiError> {
+    let span = tracing::info_span!("fhir.vread", resource_type = %resource_type, id = %id, version_id = %version_id);
+    let _g = span.enter();
+    let rt = match resource_type.parse::<ResourceType>() {
+        Ok(rt) => rt,
+        Err(_) => {
+            return Err(ApiError::bad_request(format!(
+                "Unknown resourceType '{resource_type}'"
+            )));
+        }
+    };
+    match state.storage.get(&rt, &id).await {
+        Ok(Some(env)) => {
+            // Get current version_id (default to "1" if not set)
+            let current_version = env.meta.version_id.as_deref().unwrap_or("1");
+
+            // Check if requested version matches current version
+            // Note: In-memory storage doesn't support historical versions yet
+            if current_version != version_id {
+                return Err(ApiError::not_found(format!(
+                    "{resource_type}/{id}/_history/{version_id} not found"
+                )));
+            }
+
+            // Build response headers
+            let mut response_headers = HeaderMap::new();
+
+            // ETag: W/"version_id"
+            let etag = format!("W/\"{}\"", current_version);
+            if let Ok(val) = header::HeaderValue::from_str(&etag) {
+                response_headers.insert(header::ETAG, val);
+            }
+
+            // Last-Modified: HTTP date format
+            let last_modified = httpdate::fmt_http_date(
+                std::time::UNIX_EPOCH
+                    + std::time::Duration::from_secs(env.meta.last_updated.timestamp() as u64),
+            );
+            if let Ok(val) = header::HeaderValue::from_str(&last_modified) {
+                response_headers.insert(header::LAST_MODIFIED, val);
+            }
+
+            // Content-Type
+            response_headers.insert(
+                header::CONTENT_TYPE,
+                header::HeaderValue::from_static("application/fhir+json; charset=utf-8"),
+            );
+
+            let body = json_from_envelope(&env);
+            Ok((StatusCode::OK, response_headers, Json(body)))
+        }
+        Ok(None) => Err(ApiError::not_found(format!(
+            "{resource_type}/{id}/_history/{version_id} not found"
         ))),
         Err(e) => Err(map_core_error(e)),
     }
@@ -262,9 +371,11 @@ pub async fn update_resource(
     }
     let rt = match resource_type.parse::<ResourceType>() {
         Ok(rt) => rt,
-        Err(_) => return Err(ApiError::bad_request(format!(
-            "Unknown resourceType '{resource_type}'"
-        ))),
+        Err(_) => {
+            return Err(ApiError::bad_request(format!(
+                "Unknown resourceType '{resource_type}'"
+            )));
+        }
     };
     match envelope_from_json(
         &resource_type,
@@ -317,9 +428,11 @@ pub async fn search_resource(
     // Execute search using search engine config (respects allow-lists)
     let rt = match resource_type.parse::<ResourceType>() {
         Ok(rt) => rt,
-        Err(_) => return Err(ApiError::bad_request(format!(
-            "Unknown resourceType '{resource_type}'"
-        ))),
+        Err(_) => {
+            return Err(ApiError::bad_request(format!(
+                "Unknown resourceType '{resource_type}'"
+            )));
+        }
     };
 
     let raw_q = raw.unwrap_or_default();
@@ -407,7 +520,9 @@ pub async fn api_build_info() -> impl IntoResponse {
     let response = BuildInfoResponse {
         server_version: env!("CARGO_PKG_VERSION").to_string(),
         commit: option_env!("GIT_COMMIT").unwrap_or("unknown").to_string(),
-        commit_timestamp: option_env!("GIT_COMMIT_TIMESTAMP").unwrap_or("unknown").to_string(),
+        commit_timestamp: option_env!("GIT_COMMIT_TIMESTAMP")
+            .unwrap_or("unknown")
+            .to_string(),
         ui_version: Some("1.0.0".to_string()), // Will be updated when we build UI
     };
     (StatusCode::OK, Json(response))
@@ -433,23 +548,25 @@ pub async fn api_resource_types() -> impl IntoResponse {
             Ok(results) => {
                 for resource_match in results.resources {
                     let content = &resource_match.resource.content;
-                    
+
                     // Only include base resource types (not profiles)
                     if let (Some(kind), Some(derivation), Some(resource_type)) = (
                         content.get("kind").and_then(|v| v.as_str()),
                         content.get("derivation").and_then(|v| v.as_str()),
                         content.get("type").and_then(|v| v.as_str()),
-                    ) {
-                        if kind == "resource" && derivation == "specialization" {
-                            if !resource_types.contains(&resource_type.to_string()) {
-                                resource_types.push(resource_type.to_string());
-                            }
-                        }
+                    ) && kind == "resource"
+                        && derivation == "specialization"
+                        && !resource_types.contains(&resource_type.to_string())
+                    {
+                        resource_types.push(resource_type.to_string());
                     }
                 }
             }
             Err(e) => {
-                tracing::warn!("Failed to query canonical manager for resource types: {}", e);
+                tracing::warn!(
+                    "Failed to query canonical manager for resource types: {}",
+                    e
+                );
             }
         }
     }
@@ -488,9 +605,9 @@ fn map_core_error(e: CoreError) -> ApiError {
             ApiError::conflict(format!("{resource_type} with id '{id}' already exists"))
         }
         CoreError::InvalidResource { message } => ApiError::bad_request(message),
-        CoreError::InvalidResourceType(s) => ApiError::bad_request(format!(
-            "Invalid resource type: {s}"
-        )),
+        CoreError::InvalidResourceType(s) => {
+            ApiError::bad_request(format!("Invalid resource type: {s}"))
+        }
         other => ApiError::internal(other.to_string()),
     }
 }

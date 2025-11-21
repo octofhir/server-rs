@@ -418,9 +418,7 @@ mod tests {
 
     #[test]
     fn test_search_result() {
-        let result = SearchResult::empty()
-            .with_total(100)
-            .with_has_more(true);
+        let result = SearchResult::empty().with_total(100).with_has_more(true);
 
         assert!(result.is_empty());
         assert_eq!(result.total, Some(100));

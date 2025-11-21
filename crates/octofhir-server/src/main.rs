@@ -16,18 +16,17 @@ async fn main() {
     let mut args = env::args().skip(1);
     let mut config_path: Option<String> = None;
     while let Some(arg) = args.next() {
-        if arg == "--config" {
-            if let Some(p) = args.next() {
-                config_path = Some(p);
-            }
+        if arg == "--config"
+            && let Some(p) = args.next()
+        {
+            config_path = Some(p);
         }
     }
-    if config_path.is_none() {
-        if let Ok(p) = env::var("OCTOFHIR_CONFIG") {
-            if !p.is_empty() {
-                config_path = Some(p);
-            }
-        }
+    if config_path.is_none()
+        && let Ok(p) = env::var("OCTOFHIR_CONFIG")
+        && !p.is_empty()
+    {
+        config_path = Some(p);
     }
     // Default to root-level octofhir.toml when not provided
     if config_path.is_none() {

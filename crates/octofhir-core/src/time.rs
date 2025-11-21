@@ -45,9 +45,7 @@ impl FromStr for FhirDateTime {
     fn from_str(s: &str) -> Result<Self> {
         let datetime = OffsetDateTime::parse(s, &time::format_description::well_known::Rfc3339)
             .map_err(|e| {
-                CoreError::invalid_date_time(format!(
-                    "Failed to parse FHIR DateTime '{s}': {e}",
-                ))
+                CoreError::invalid_date_time(format!("Failed to parse FHIR DateTime '{s}': {e}",))
             })?;
         Ok(FhirDateTime(datetime))
     }
@@ -81,14 +79,18 @@ pub fn now_utc() -> FhirDateTime {
 }
 
 pub fn from_unix_timestamp(timestamp: i64) -> Result<FhirDateTime> {
-    let datetime = OffsetDateTime::from_unix_timestamp(timestamp)
-        .map_err(|e| CoreError::invalid_date_time(format!("Invalid Unix timestamp {timestamp}: {e}")))?;
+    let datetime = OffsetDateTime::from_unix_timestamp(timestamp).map_err(|e| {
+        CoreError::invalid_date_time(format!("Invalid Unix timestamp {timestamp}: {e}"))
+    })?;
     Ok(FhirDateTime(datetime))
 }
 
 pub fn from_unix_timestamp_nanos(timestamp_nanos: i128) -> Result<FhirDateTime> {
-    let datetime = OffsetDateTime::from_unix_timestamp_nanos(timestamp_nanos)
-        .map_err(|e| CoreError::invalid_date_time(format!("Invalid Unix timestamp nanos {timestamp_nanos}: {e}")))?;
+    let datetime = OffsetDateTime::from_unix_timestamp_nanos(timestamp_nanos).map_err(|e| {
+        CoreError::invalid_date_time(format!(
+            "Invalid Unix timestamp nanos {timestamp_nanos}: {e}"
+        ))
+    })?;
     Ok(FhirDateTime(datetime))
 }
 

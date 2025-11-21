@@ -7,8 +7,8 @@ use crate::transaction::{
 use octofhir_core::{CoreError, ResourceEnvelope, ResourceType, Result};
 use octofhir_storage::{HistoryEntry, HistoryMethod, StoredResource};
 use papaya::HashMap as PapayaHashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use time::OffsetDateTime;
 use tokio::sync::RwLock;
 
@@ -69,7 +69,9 @@ impl InMemoryStorage {
 
     /// Generates the next version ID.
     pub(crate) fn next_version(&self) -> String {
-        self.version_counter.fetch_add(1, Ordering::SeqCst).to_string()
+        self.version_counter
+            .fetch_add(1, Ordering::SeqCst)
+            .to_string()
     }
 
     /// Adds a history entry for a resource.
@@ -82,7 +84,11 @@ impl InMemoryStorage {
 
     /// Converts a ResourceEnvelope to a StoredResource.
     #[allow(dead_code)]
-    pub(crate) fn envelope_to_stored(&self, env: &ResourceEnvelope, version_id: &str) -> StoredResource {
+    pub(crate) fn envelope_to_stored(
+        &self,
+        env: &ResourceEnvelope,
+        version_id: &str,
+    ) -> StoredResource {
         let now = OffsetDateTime::now_utc();
         StoredResource {
             id: env.id.clone(),
@@ -1409,8 +1415,8 @@ mod tests {
     // Advanced concurrency tests for task 2.5.2
     #[tokio::test]
     async fn test_high_volume_concurrent_operations() {
-        use std::sync::atomic::{AtomicUsize, Ordering};
         use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
         use tokio::task::JoinSet;
 
         let storage = Arc::new(InMemoryStorage::new());
@@ -1426,7 +1432,7 @@ mod tests {
             let error_counter_clone = Arc::clone(&error_counter);
 
             join_set.spawn(async move {
-            let resource_id = format!("high-volume-{i}");
+                let resource_id = format!("high-volume-{i}");
                 let resource = create_test_resource(&resource_id, ResourceType::Patient);
 
                 // Try to insert
@@ -1601,8 +1607,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_stress_concurrent_mixed_workload() {
-        use std::sync::atomic::{AtomicUsize, Ordering};
         use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
         use std::time::Duration;
         use tokio::task::JoinSet;
 
@@ -1954,10 +1960,12 @@ mod tests {
 
         let result = storage.search(&query).await.unwrap();
         assert_eq!(result.total, 2);
-        assert!(result
-            .resources
-            .iter()
-            .all(|r| r.id == "patient-1" || r.id == "patient-3"));
+        assert!(
+            result
+                .resources
+                .iter()
+                .all(|r| r.id == "patient-1" || r.id == "patient-3")
+        );
 
         // Test active = false
         let query = SearchQuery::new(ResourceType::Patient).with_filter(QueryFilter::Boolean {
@@ -2303,7 +2311,10 @@ mod tests {
         assert!(result.has_more);
 
         // Search should complete quickly (under 100ms for 1000 records)
-        assert!(duration.as_millis() < 100, "Search took too long: {duration:?}");
+        assert!(
+            duration.as_millis() < 100,
+            "Search took too long: {duration:?}"
+        );
 
         println!("Search of 1000 records took: {duration:?}");
     }

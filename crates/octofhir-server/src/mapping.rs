@@ -48,12 +48,12 @@ pub fn envelope_from_json(
     let id = match policy {
         IdPolicy::Create => body_id.unwrap_or_else(generate_id),
         IdPolicy::Update { path_id } => {
-            if let Some(bid) = body_id {
-                if bid != path_id {
-                    return Err(format!(
-                        "id in body '{bid}' does not match URL id '{path_id}'"
-                    ));
-                }
+            if let Some(bid) = body_id
+                && bid != path_id
+            {
+                return Err(format!(
+                    "id in body '{bid}' does not match URL id '{path_id}'"
+                ));
             }
             path_id
         }

@@ -2,10 +2,7 @@ use std::process::Command;
 
 fn main() {
     // Get git commit hash
-    if let Ok(output) = Command::new("git")
-        .args(&["rev-parse", "HEAD"])
-        .output() 
-    {
+    if let Ok(output) = Command::new("git").args(["rev-parse", "HEAD"]).output() {
         if output.status.success() {
             let commit = String::from_utf8_lossy(&output.stdout).trim().to_string();
             println!("cargo:rustc-env=GIT_COMMIT={}", commit);
@@ -18,7 +15,7 @@ fn main() {
 
     // Get git commit timestamp
     if let Ok(output) = Command::new("git")
-        .args(&["show", "-s", "--format=%cI", "HEAD"])
+        .args(["show", "-s", "--format=%cI", "HEAD"])
         .output()
     {
         if output.status.success() {

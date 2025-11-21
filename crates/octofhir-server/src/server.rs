@@ -62,14 +62,18 @@ pub fn build_app(cfg: &AppConfig) -> Router {
         .route("/api/health", get(handlers::api_health))
         .route("/api/build-info", get(handlers::api_build_info))
         .route("/api/resource-types", get(handlers::api_resource_types))
-        
         // Embedded UI under /ui
         .route("/ui", get(handlers::ui_index))
         .route("/ui/{*path}", get(handlers::ui_static))
-        // CRUD and search placeholders
+        // CRUD, search, and versioned read endpoints
         .route(
             "/{resource_type}",
             get(handlers::search_resource).post(handlers::create_resource),
+        )
+        // Vread: GET /[type]/[id]/_history/[vid]
+        .route(
+            "/{resource_type}/{id}/_history/{version_id}",
+            get(handlers::vread_resource),
         )
         .route(
             "/{resource_type}/{id}",
@@ -119,14 +123,14 @@ pub fn build_app(cfg: &AppConfig) -> Router {
                         // Determine if this span is our real request span by checking that it has the http.method field recorded (noop span won't)
                         // Unfortunately Span API doesn't expose field inspection, so we conservatively avoid extra logic and instead rely on make_span_with to avoid logging favicon.
                         // Thus, only emit the access log if the span's metadata target matches our request span name.
-                        if let Some(meta) = span.metadata() {
-                            if meta.name() != "noop" {
-                                tracing::info!(
-                                    http.status = %res.status().as_u16(),
-                                    elapsed_ms = %latency.as_millis(),
-                                    "request handled"
-                                );
-                            }
+                        if let Some(meta) = span.metadata()
+                            && meta.name() != "noop"
+                        {
+                            tracing::info!(
+                                http.status = %res.status().as_u16(),
+                                elapsed_ms = %latency.as_millis(),
+                                "request handled"
+                            );
                         }
                     },
                 ),
@@ -171,7 +175,9 @@ impl ServerBuilder {
 }
 
 impl Default for ServerBuilder {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl OctofhirServer {

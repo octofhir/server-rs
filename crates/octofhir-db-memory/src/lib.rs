@@ -30,7 +30,7 @@ pub use octofhir_storage::{FhirStorage, StorageError, StoredResource};
 
 // Legacy Storage trait (for backward compatibility)
 pub use factory::{
-    create_storage, DynStorage, Storage, StorageBackend, StorageConfig, StorageOptions,
+    DynStorage, Storage, StorageBackend, StorageConfig, StorageOptions, create_storage,
 };
 pub use query::{QueryFilter, QueryResult, SearchQuery};
 pub use storage::{InMemoryStorage, StorageKey};
