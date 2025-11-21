@@ -2,10 +2,11 @@
 resolver = "3"
 members = [
     "crates/octofhir-core",
-    "crates/octofhir-api", 
+    "crates/octofhir-api",
     "crates/octofhir-db",
     "crates/octofhir-search",
     "crates/octofhir-server",
+    "crates/octofhir-storage",
 ]
 
 [workspace.package]
@@ -21,24 +22,25 @@ categories = ["web-programming", "science"]
 # Local dependencies
 octofhir-core = { path = "crates/octofhir-core" }
 octofhir-db = { path = "crates/octofhir-db" }
-octofhir-canonical-manager = { version = "0.1.7" }
+octofhir-storage = { path = "crates/octofhir-storage" }
+octofhir-canonical-manager = { version = "0.1.13" }
 octofhir-fhir-model = {version = "0.1.2"}
 
 # Test utilities
 filetime = "0.2"
 
 # Core dependencies
-tokio = { version = "1.0", features = ["full"] }
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-thiserror = "2.0"
-anyhow = "1.0"
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+anyhow = "1"
 
 # HTTP server
 axum = { version = "0.8", features = ["json",  "macros"] }
 tower = { version = "0.5", features = ["timeout", "load-shed", "limit"] }
 tower-http = { version = "0.6", features = ["trace", "cors", "compression-gzip"] }
-hyper = { version = "1.0", features = ["full"] }
+hyper = { version = "1", features = ["full"] }
 
 # Storage and concurrency
 papaya = "0.2"
@@ -57,22 +59,22 @@ notify-debouncer-mini = "0.7"
 # Logging and observability  
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "registry"] }
-opentelemetry = { version = "0.30", features = ["trace"] }
+opentelemetry = { version = "0.31", features = ["trace"] }
 opentelemetry-otlp = { version = "0.30", features = ["http-proto", "reqwest"] }
-tracing-opentelemetry = "0.31"
-opentelemetry_sdk = { version = "0.30", features = ["rt-tokio"] }
+tracing-opentelemetry = "0.32"
+opentelemetry_sdk = { version = "0.31", features = ["rt-tokio"] }
 hostname = "0.4"
 
 # Utilities
 futures-util = "0.3"
-regex = "1.0"
+regex = "1"
 url = { version = "2.5", features = ["serde"] }
-indexmap = "2.0"
+indexmap = "2"
 async-trait = "0.1"
 
 # Development dependencies
 tokio-test = "0.4"
-tempfile = "3.0"
+tempfile = "3"
 wiremock = "0.6"
 assert-json-diff = "2.0"
 
