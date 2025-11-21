@@ -189,6 +189,7 @@ pub async fn metadata(State(state): State<crate::server::AppState>) -> impl Into
 pub async fn create_resource(
     State(state): State<crate::server::AppState>,
     Path(resource_type): Path<String>,
+    headers: HeaderMap,
     Json(payload): Json<Value>,
 ) -> Result<impl IntoResponse, ApiError> {
     let span = tracing::info_span!("fhir.create", resource_type = %resource_type);
@@ -196,6 +197,91 @@ pub async fn create_resource(
     if let Err(e) = crate::validation::validate_resource(&resource_type, &payload) {
         return Err(ApiError::bad_request(format!("Validation failed: {e}")));
     }
+
+    // Handle conditional create (If-None-Exist)
+    if let Some(condition) = headers.get("If-None-Exist")
+        && let Ok(condition_str) = condition.to_str()
+    {
+        let rt = match resource_type.parse::<ResourceType>() {
+            Ok(rt) => rt,
+            Err(_) => {
+                return Err(ApiError::bad_request(format!(
+                    "Unknown resourceType '{resource_type}'"
+                )));
+            }
+        };
+        // Execute search with If-None-Exist criteria
+        let search_cfg = &state.search_cfg;
+        match octofhir_search::SearchEngine::execute(
+            &state.storage,
+            rt.clone(),
+            condition_str,
+            search_cfg,
+        )
+        .await
+        {
+            Ok(result) => match result.resources.len() {
+                0 => {
+                    // No match - proceed with create
+                }
+                1 => {
+                    // One match - return existing resource with 200
+                    let existing = &result.resources[0];
+                    let version_id = existing.meta.version_id.as_deref().unwrap_or("1");
+                    let mut response_headers = HeaderMap::new();
+
+                    // ETag
+                    let etag = format!("W/\"{}\"", version_id);
+                    if let Ok(val) = header::HeaderValue::from_str(&etag) {
+                        response_headers.insert(header::ETAG, val);
+                    }
+
+                    // Last-Modified
+                    let last_modified = httpdate::fmt_http_date(
+                        std::time::UNIX_EPOCH
+                            + std::time::Duration::from_secs(
+                                existing.meta.last_updated.timestamp() as u64,
+                            ),
+                    );
+                    if let Ok(val) = header::HeaderValue::from_str(&last_modified) {
+                        response_headers.insert(header::LAST_MODIFIED, val);
+                    }
+
+                    // Content-Location
+                    let content_loc = format!("/{}/{}", resource_type, existing.id);
+                    if let Ok(val) = header::HeaderValue::from_str(&content_loc) {
+                        response_headers.insert(header::CONTENT_LOCATION, val);
+                    }
+
+                    // Content-Type
+                    response_headers.insert(
+                        header::CONTENT_TYPE,
+                        header::HeaderValue::from_static("application/fhir+json; charset=utf-8"),
+                    );
+
+                    let body = json_from_envelope(existing);
+                    return Ok((StatusCode::OK, response_headers, Json(body)));
+                }
+                _ => {
+                    // Multiple matches - return 412 Precondition Failed
+                    return Err(ApiError::precondition_failed(
+                        "Multiple resources match If-None-Exist criteria",
+                    ));
+                }
+            },
+            Err(e) => {
+                tracing::warn!("If-None-Exist search failed: {}, proceeding with create", e);
+                // Proceed with create if search fails
+            }
+        }
+    }
+
+    // Parse Prefer header for return preference
+    let prefer_return = headers
+        .get("Prefer")
+        .and_then(|h| h.to_str().ok())
+        .map(parse_prefer_return);
+
     // Map JSON -> envelope and insert into storage
     match envelope_from_json(&resource_type, &payload, IdPolicy::Create) {
         Err(err) => {
@@ -204,18 +290,66 @@ pub async fn create_resource(
         }
         Ok(env) => {
             let id = env.id.clone();
+            let version_id = env
+                .meta
+                .version_id
+                .clone()
+                .unwrap_or_else(|| "1".to_string());
+            let last_updated = env.meta.last_updated.clone();
             let rt = env.resource_type.clone();
             let body = json_from_envelope(&env);
             match state.storage.insert(&rt, env).await {
                 Ok(()) => {
-                    let mut headers = HeaderMap::new();
+                    let mut response_headers = HeaderMap::new();
+
+                    // Location header
                     let loc = format!("/{resource_type}/{id}");
-                    headers.insert(
-                        header::LOCATION,
-                        header::HeaderValue::from_str(&loc)
-                            .unwrap_or_else(|_| header::HeaderValue::from_static("/")),
+                    if let Ok(val) = header::HeaderValue::from_str(&loc) {
+                        response_headers.insert(header::LOCATION, val);
+                    }
+
+                    // ETag
+                    let etag = format!("W/\"{}\"", version_id);
+                    if let Ok(val) = header::HeaderValue::from_str(&etag) {
+                        response_headers.insert(header::ETAG, val);
+                    }
+
+                    // Last-Modified
+                    let last_modified = httpdate::fmt_http_date(
+                        std::time::UNIX_EPOCH
+                            + std::time::Duration::from_secs(last_updated.timestamp() as u64),
                     );
-                    Ok((StatusCode::CREATED, headers, Json(body)))
+                    if let Ok(val) = header::HeaderValue::from_str(&last_modified) {
+                        response_headers.insert(header::LAST_MODIFIED, val);
+                    }
+
+                    // Content-Type
+                    response_headers.insert(
+                        header::CONTENT_TYPE,
+                        header::HeaderValue::from_static("application/fhir+json; charset=utf-8"),
+                    );
+
+                    // Handle Prefer return preference
+                    match prefer_return {
+                        Some(PreferReturn::Minimal) => {
+                            Ok((StatusCode::CREATED, response_headers, Json(json!({}))))
+                        }
+                        Some(PreferReturn::OperationOutcome) => {
+                            let outcome = json!({
+                                "resourceType": "OperationOutcome",
+                                "issue": [{
+                                    "severity": "information",
+                                    "code": "informational",
+                                    "diagnostics": format!("Resource created: {}/{}", resource_type, id)
+                                }]
+                            });
+                            Ok((StatusCode::CREATED, response_headers, Json(outcome)))
+                        }
+                        _ => {
+                            // Default: return representation
+                            Ok((StatusCode::CREATED, response_headers, Json(body)))
+                        }
+                    }
                 }
                 Err(e) => {
                     tracing::error!(error.kind = "create-failed", message = %e);
@@ -223,6 +357,25 @@ pub async fn create_resource(
                 }
             }
         }
+    }
+}
+
+/// Prefer header return preference
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PreferReturn {
+    Minimal,
+    Representation,
+    OperationOutcome,
+}
+
+/// Parse Prefer header for return preference
+fn parse_prefer_return(header: &str) -> PreferReturn {
+    if header.contains("return=minimal") {
+        PreferReturn::Minimal
+    } else if header.contains("return=OperationOutcome") {
+        PreferReturn::OperationOutcome
+    } else {
+        PreferReturn::Representation
     }
 }
 
@@ -362,6 +515,7 @@ pub async fn vread_resource(
 pub async fn update_resource(
     State(state): State<crate::server::AppState>,
     Path((resource_type, id)): Path<(String, String)>,
+    headers: HeaderMap,
     Json(payload): Json<Value>,
 ) -> Result<impl IntoResponse, ApiError> {
     let span = tracing::info_span!("fhir.update", resource_type = %resource_type, id = %id);
@@ -377,21 +531,425 @@ pub async fn update_resource(
             )));
         }
     };
-    match envelope_from_json(
-        &resource_type,
-        &payload,
-        IdPolicy::Update {
-            path_id: id.clone(),
-        },
-    ) {
-        Err(err) => Err(ApiError::bad_request(err)),
-        Ok(env) => match state.storage.update(&rt, &id, env.clone()).await {
-            Ok(_) => {
-                let body = json_from_envelope(&env);
-                Ok((StatusCode::OK, Json(body)))
+
+    // Extract If-Match header for version checking
+    let if_match = headers
+        .get(header::IF_MATCH)
+        .and_then(|h| h.to_str().ok())
+        .map(parse_etag);
+
+    // Parse Prefer header for return preference
+    let prefer_return = headers
+        .get("Prefer")
+        .and_then(|h| h.to_str().ok())
+        .map(parse_prefer_return);
+
+    // Check if resource exists
+    let existing = state.storage.get(&rt, &id).await;
+
+    match existing {
+        Ok(Some(existing_env)) => {
+            // Resource exists - check If-Match if provided
+            if let Some(expected_version) = &if_match {
+                let current_version = existing_env.meta.version_id.as_deref().unwrap_or("1");
+                if expected_version != current_version {
+                    return Err(ApiError::conflict(format!(
+                        "Version conflict: expected {}, but current is {}",
+                        expected_version, current_version
+                    )));
+                }
             }
-            Err(e) => Err(map_core_error(e)),
+
+            // Update existing resource
+            match envelope_from_json(
+                &resource_type,
+                &payload,
+                IdPolicy::Update {
+                    path_id: id.clone(),
+                },
+            ) {
+                Err(err) => Err(ApiError::bad_request(err)),
+                Ok(env) => match state.storage.update(&rt, &id, env.clone()).await {
+                    Ok(_) => {
+                        let version_id = env
+                            .meta
+                            .version_id
+                            .clone()
+                            .unwrap_or_else(|| "1".to_string());
+                        let last_updated = env.meta.last_updated.clone();
+                        let body = json_from_envelope(&env);
+
+                        let mut response_headers = HeaderMap::new();
+
+                        // ETag
+                        let etag = format!("W/\"{}\"", version_id);
+                        if let Ok(val) = header::HeaderValue::from_str(&etag) {
+                            response_headers.insert(header::ETAG, val);
+                        }
+
+                        // Last-Modified
+                        let last_modified = httpdate::fmt_http_date(
+                            std::time::UNIX_EPOCH
+                                + std::time::Duration::from_secs(last_updated.timestamp() as u64),
+                        );
+                        if let Ok(val) = header::HeaderValue::from_str(&last_modified) {
+                            response_headers.insert(header::LAST_MODIFIED, val);
+                        }
+
+                        // Content-Type
+                        response_headers.insert(
+                            header::CONTENT_TYPE,
+                            header::HeaderValue::from_static(
+                                "application/fhir+json; charset=utf-8",
+                            ),
+                        );
+
+                        // Handle Prefer return preference
+                        match prefer_return {
+                            Some(PreferReturn::Minimal) => {
+                                Ok((StatusCode::OK, response_headers, Json(json!({}))))
+                            }
+                            Some(PreferReturn::OperationOutcome) => {
+                                let outcome = json!({
+                                    "resourceType": "OperationOutcome",
+                                    "issue": [{
+                                        "severity": "information",
+                                        "code": "informational",
+                                        "diagnostics": format!("Resource updated: {}/{}", resource_type, id)
+                                    }]
+                                });
+                                Ok((StatusCode::OK, response_headers, Json(outcome)))
+                            }
+                            _ => Ok((StatusCode::OK, response_headers, Json(body))),
+                        }
+                    }
+                    Err(e) => Err(map_core_error(e)),
+                },
+            }
+        }
+        Ok(None) => {
+            // Resource doesn't exist - create-on-update
+            if if_match.is_some() {
+                // If-Match provided but resource doesn't exist
+                return Err(ApiError::precondition_failed(
+                    "Resource does not exist but If-Match was provided",
+                ));
+            }
+
+            // Create new resource with provided ID
+            match envelope_from_json(
+                &resource_type,
+                &payload,
+                IdPolicy::Update {
+                    path_id: id.clone(),
+                },
+            ) {
+                Err(err) => Err(ApiError::bad_request(err)),
+                Ok(env) => match state.storage.insert(&rt, env.clone()).await {
+                    Ok(()) => {
+                        let version_id = env
+                            .meta
+                            .version_id
+                            .clone()
+                            .unwrap_or_else(|| "1".to_string());
+                        let last_updated = env.meta.last_updated.clone();
+                        let body = json_from_envelope(&env);
+
+                        let mut response_headers = HeaderMap::new();
+
+                        // Location header (for create)
+                        let loc = format!("/{resource_type}/{id}");
+                        if let Ok(val) = header::HeaderValue::from_str(&loc) {
+                            response_headers.insert(header::LOCATION, val);
+                        }
+
+                        // ETag
+                        let etag = format!("W/\"{}\"", version_id);
+                        if let Ok(val) = header::HeaderValue::from_str(&etag) {
+                            response_headers.insert(header::ETAG, val);
+                        }
+
+                        // Last-Modified
+                        let last_modified = httpdate::fmt_http_date(
+                            std::time::UNIX_EPOCH
+                                + std::time::Duration::from_secs(last_updated.timestamp() as u64),
+                        );
+                        if let Ok(val) = header::HeaderValue::from_str(&last_modified) {
+                            response_headers.insert(header::LAST_MODIFIED, val);
+                        }
+
+                        // Content-Type
+                        response_headers.insert(
+                            header::CONTENT_TYPE,
+                            header::HeaderValue::from_static(
+                                "application/fhir+json; charset=utf-8",
+                            ),
+                        );
+
+                        // Handle Prefer return preference
+                        match prefer_return {
+                            Some(PreferReturn::Minimal) => {
+                                Ok((StatusCode::CREATED, response_headers, Json(json!({}))))
+                            }
+                            Some(PreferReturn::OperationOutcome) => {
+                                let outcome = json!({
+                                    "resourceType": "OperationOutcome",
+                                    "issue": [{
+                                        "severity": "information",
+                                        "code": "informational",
+                                        "diagnostics": format!("Resource created: {}/{}", resource_type, id)
+                                    }]
+                                });
+                                Ok((StatusCode::CREATED, response_headers, Json(outcome)))
+                            }
+                            _ => Ok((StatusCode::CREATED, response_headers, Json(body))),
+                        }
+                    }
+                    Err(e) => Err(map_core_error(e)),
+                },
+            }
+        }
+        Err(e) => Err(map_core_error(e)),
+    }
+}
+
+/// Parse ETag header value (W/"version" or "version")
+fn parse_etag(header: &str) -> String {
+    let trimmed = header.trim();
+    if trimmed.starts_with("W/\"") && trimmed.ends_with('"') {
+        trimmed[3..trimmed.len() - 1].to_string()
+    } else if trimmed.starts_with('"') && trimmed.ends_with('"') {
+        trimmed[1..trimmed.len() - 1].to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+/// PUT /[type]?[search params] - Conditional update based on search criteria
+pub async fn conditional_update_resource(
+    State(state): State<crate::server::AppState>,
+    Path(resource_type): Path<String>,
+    RawQuery(raw): RawQuery,
+    headers: HeaderMap,
+    Json(payload): Json<Value>,
+) -> Result<impl IntoResponse, ApiError> {
+    let span = tracing::info_span!("fhir.conditional_update", resource_type = %resource_type);
+    let _g = span.enter();
+
+    // Validate resource type
+    let rt = match resource_type.parse::<ResourceType>() {
+        Ok(rt) => rt,
+        Err(_) => {
+            return Err(ApiError::bad_request(format!(
+                "Unknown resourceType '{resource_type}'"
+            )));
+        }
+    };
+
+    // Conditional update requires search parameters
+    let raw_q = raw.unwrap_or_default();
+    if raw_q.is_empty() {
+        return Err(ApiError::bad_request(
+            "Conditional update requires search parameters",
+        ));
+    }
+
+    // Validate payload
+    if let Err(e) = crate::validation::validate_resource(&resource_type, &payload) {
+        return Err(ApiError::bad_request(format!("Validation failed: {e}")));
+    }
+
+    // Extract If-Match header for version checking
+    let if_match = headers
+        .get(header::IF_MATCH)
+        .and_then(|h| h.to_str().ok())
+        .map(parse_etag);
+
+    // Parse Prefer header for return preference
+    let prefer_return = headers
+        .get("Prefer")
+        .and_then(|h| h.to_str().ok())
+        .map(parse_prefer_return);
+
+    // Search for matching resources
+    let cfg = &state.search_cfg;
+    let search_result =
+        octofhir_search::SearchEngine::execute(&state.storage, rt.clone(), &raw_q, cfg).await;
+
+    match search_result {
+        Ok(result) => match result.resources.len() {
+            0 => {
+                // No match - create new resource (201)
+                match envelope_from_json(&resource_type, &payload, IdPolicy::Create) {
+                    Err(err) => Err(ApiError::bad_request(err)),
+                    Ok(env) => {
+                        let id = env.id.clone();
+                        let version_id = env
+                            .meta
+                            .version_id
+                            .clone()
+                            .unwrap_or_else(|| "1".to_string());
+                        let last_updated = env.meta.last_updated.clone();
+                        let body = json_from_envelope(&env);
+
+                        match state.storage.insert(&rt, env).await {
+                            Ok(()) => {
+                                let mut response_headers = HeaderMap::new();
+
+                                // Location header
+                                let loc = format!("/{resource_type}/{id}");
+                                if let Ok(val) = header::HeaderValue::from_str(&loc) {
+                                    response_headers.insert(header::LOCATION, val);
+                                }
+
+                                // ETag
+                                let etag = format!("W/\"{}\"", version_id);
+                                if let Ok(val) = header::HeaderValue::from_str(&etag) {
+                                    response_headers.insert(header::ETAG, val);
+                                }
+
+                                // Last-Modified
+                                let last_modified = httpdate::fmt_http_date(
+                                    std::time::UNIX_EPOCH
+                                        + std::time::Duration::from_secs(
+                                            last_updated.timestamp() as u64
+                                        ),
+                                );
+                                if let Ok(val) = header::HeaderValue::from_str(&last_modified) {
+                                    response_headers.insert(header::LAST_MODIFIED, val);
+                                }
+
+                                // Content-Type
+                                response_headers.insert(
+                                    header::CONTENT_TYPE,
+                                    header::HeaderValue::from_static(
+                                        "application/fhir+json; charset=utf-8",
+                                    ),
+                                );
+
+                                // Handle Prefer return preference
+                                match prefer_return {
+                                    Some(PreferReturn::Minimal) => {
+                                        Ok((StatusCode::CREATED, response_headers, Json(json!({}))))
+                                    }
+                                    Some(PreferReturn::OperationOutcome) => {
+                                        let outcome = json!({
+                                            "resourceType": "OperationOutcome",
+                                            "issue": [{
+                                                "severity": "information",
+                                                "code": "informational",
+                                                "diagnostics": format!("Resource created: {}/{}", resource_type, id)
+                                            }]
+                                        });
+                                        Ok((StatusCode::CREATED, response_headers, Json(outcome)))
+                                    }
+                                    _ => Ok((StatusCode::CREATED, response_headers, Json(body))),
+                                }
+                            }
+                            Err(e) => Err(map_core_error(e)),
+                        }
+                    }
+                }
+            }
+            1 => {
+                // One match - update that resource (200)
+                let existing = &result.resources[0];
+                let id = existing.id.clone();
+
+                // Check If-Match if provided
+                if let Some(expected_version) = &if_match {
+                    let current_version = existing.meta.version_id.as_deref().unwrap_or("1");
+                    if expected_version != current_version {
+                        return Err(ApiError::conflict(format!(
+                            "Version conflict: expected {}, but current is {}",
+                            expected_version, current_version
+                        )));
+                    }
+                }
+
+                // Update the matched resource
+                match envelope_from_json(
+                    &resource_type,
+                    &payload,
+                    IdPolicy::Update {
+                        path_id: id.clone(),
+                    },
+                ) {
+                    Err(err) => Err(ApiError::bad_request(err)),
+                    Ok(env) => match state.storage.update(&rt, &id, env.clone()).await {
+                        Ok(_) => {
+                            let version_id = env
+                                .meta
+                                .version_id
+                                .clone()
+                                .unwrap_or_else(|| "1".to_string());
+                            let last_updated = env.meta.last_updated.clone();
+                            let body = json_from_envelope(&env);
+
+                            let mut response_headers = HeaderMap::new();
+
+                            // Content-Location header
+                            let content_loc = format!("/{resource_type}/{id}");
+                            if let Ok(val) = header::HeaderValue::from_str(&content_loc) {
+                                response_headers.insert(header::CONTENT_LOCATION, val);
+                            }
+
+                            // ETag
+                            let etag = format!("W/\"{}\"", version_id);
+                            if let Ok(val) = header::HeaderValue::from_str(&etag) {
+                                response_headers.insert(header::ETAG, val);
+                            }
+
+                            // Last-Modified
+                            let last_modified = httpdate::fmt_http_date(
+                                std::time::UNIX_EPOCH
+                                    + std::time::Duration::from_secs(
+                                        last_updated.timestamp() as u64
+                                    ),
+                            );
+                            if let Ok(val) = header::HeaderValue::from_str(&last_modified) {
+                                response_headers.insert(header::LAST_MODIFIED, val);
+                            }
+
+                            // Content-Type
+                            response_headers.insert(
+                                header::CONTENT_TYPE,
+                                header::HeaderValue::from_static(
+                                    "application/fhir+json; charset=utf-8",
+                                ),
+                            );
+
+                            // Handle Prefer return preference
+                            match prefer_return {
+                                Some(PreferReturn::Minimal) => {
+                                    Ok((StatusCode::OK, response_headers, Json(json!({}))))
+                                }
+                                Some(PreferReturn::OperationOutcome) => {
+                                    let outcome = json!({
+                                        "resourceType": "OperationOutcome",
+                                        "issue": [{
+                                            "severity": "information",
+                                            "code": "informational",
+                                            "diagnostics": format!("Resource updated: {}/{}", resource_type, id)
+                                        }]
+                                    });
+                                    Ok((StatusCode::OK, response_headers, Json(outcome)))
+                                }
+                                _ => Ok((StatusCode::OK, response_headers, Json(body))),
+                            }
+                        }
+                        Err(e) => Err(map_core_error(e)),
+                    },
+                }
+            }
+            _ => {
+                // Multiple matches - return 412 Precondition Failed
+                Err(ApiError::precondition_failed(
+                    "Multiple resources match the search criteria",
+                ))
+            }
         },
+        Err(e) => Err(ApiError::bad_request(format!("Search failed: {}", e))),
     }
 }
 

@@ -68,7 +68,9 @@ pub fn build_app(cfg: &AppConfig) -> Router {
         // CRUD, search, and versioned read endpoints
         .route(
             "/{resource_type}",
-            get(handlers::search_resource).post(handlers::create_resource),
+            get(handlers::search_resource)
+                .post(handlers::create_resource)
+                .put(handlers::conditional_update_resource),
         )
         // Vread: GET /[type]/[id]/_history/[vid]
         .route(
