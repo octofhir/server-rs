@@ -1,9 +1,12 @@
 //! PostgreSQL implementation of the FhirStorage trait.
 
+use std::sync::Arc;
+
 use async_trait::async_trait;
 use serde_json::Value;
 use sqlx_postgres::PgPool;
 
+use octofhir_search::{SearchParameter, SearchParameterRegistry};
 use octofhir_storage::{
     FhirStorage, HistoryParams, HistoryResult, SearchParams, SearchResult, StorageError,
     StoredResource, Transaction,
@@ -23,6 +26,8 @@ use crate::schema::SchemaManager;
 pub struct PostgresStorage {
     pool: PgPool,
     schema_manager: SchemaManager,
+    /// Search parameter registry for parameter lookup during search
+    search_registry: Option<Arc<SearchParameterRegistry>>,
 }
 
 impl PostgresStorage {
@@ -49,6 +54,7 @@ impl PostgresStorage {
         Ok(Self {
             pool,
             schema_manager,
+            search_registry: None,
         })
     }
 
@@ -62,6 +68,7 @@ impl PostgresStorage {
         Self {
             pool,
             schema_manager,
+            search_registry: None,
         }
     }
 
@@ -75,6 +82,34 @@ impl PostgresStorage {
     #[must_use]
     pub fn schema_manager(&self) -> &SchemaManager {
         &self.schema_manager
+    }
+
+    /// Sets the search parameter registry for this storage.
+    ///
+    /// The registry is used to look up search parameters during search execution.
+    /// This should be called after loading search parameters from packages.
+    pub fn set_search_registry(&mut self, registry: Arc<SearchParameterRegistry>) {
+        self.search_registry = Some(registry);
+    }
+
+    /// Returns a reference to the search parameter registry, if set.
+    #[must_use]
+    pub fn search_registry(&self) -> Option<&Arc<SearchParameterRegistry>> {
+        self.search_registry.as_ref()
+    }
+
+    /// Gets a search parameter for a specific resource type and code.
+    ///
+    /// Returns `None` if no registry is set or the parameter is not found.
+    #[must_use]
+    pub fn get_search_parameter(
+        &self,
+        resource_type: &str,
+        code: &str,
+    ) -> Option<Arc<SearchParameter>> {
+        self.search_registry
+            .as_ref()
+            .and_then(|r| r.get(resource_type, code))
     }
 
     /// Retrieves history across all resource types (system-level history).

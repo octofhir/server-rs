@@ -10,6 +10,7 @@ repository.workspace = true
 [dependencies]
 # Local dependencies
 octofhir-storage = { workspace = true }
+octofhir-search = { path = "../octofhir-search" }
 
 # Async
 async-trait = { workspace = true }
