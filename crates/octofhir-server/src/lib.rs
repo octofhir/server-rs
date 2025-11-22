@@ -12,4 +12,4 @@ pub mod validation;
 
 pub use config::{AppConfig, OtelConfig, PostgresStorageConfig, ServerConfig, StorageBackend};
 pub use observability::{init_tracing, shutdown_tracing};
-pub use server::{AppState, OctofhirServer, ServerBuilder, build_app, build_app_async};
+pub use server::{AppState, OctofhirServer, ServerBuilder, build_app};

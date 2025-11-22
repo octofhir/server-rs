@@ -11,7 +11,7 @@ async fn start_server_with_cfg(
     let shared = std::sync::Arc::new(std::sync::RwLock::new(cfg.clone()));
     config::shared::set_shared(shared);
 
-    let app = build_app(&cfg);
+    let app = build_app(&cfg).await.expect("build app");
     let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
         .await
         .unwrap();

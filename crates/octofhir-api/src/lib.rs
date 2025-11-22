@@ -450,6 +450,28 @@ pub struct BundleEntry {
     pub full_url: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub resource: Option<JsonValue>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub request: Option<BundleEntryRequest>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub response: Option<BundleEntryResponse>,
+}
+
+/// Request component of a Bundle entry (used in history bundles)
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct BundleEntryRequest {
+    pub method: String,
+    pub url: String,
+}
+
+/// Response component of a Bundle entry (used in history bundles)
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct BundleEntryResponse {
+    pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub etag: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "lastModified")]
+    pub last_modified: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -507,6 +529,8 @@ mod bundle_tests {
         let entry = BundleEntry {
             full_url: Some("http://example.org/Patient/1".into()),
             resource: Some(serde_json::json!({"resourceType":"Patient","id":"1"})),
+            request: None,
+            response: None,
         };
         let link_self = BundleLink {
             relation: "self".into(),
@@ -519,6 +543,34 @@ mod bundle_tests {
         assert_eq!(j["total"], 1);
         assert!(j["entry"].is_array());
         assert!(j["link"].is_array());
+    }
+
+    #[test]
+    fn serialize_history_bundle() {
+        let entry = BundleEntry {
+            full_url: Some("http://example.org/Patient/1".into()),
+            resource: Some(serde_json::json!({"resourceType":"Patient","id":"1"})),
+            request: Some(BundleEntryRequest {
+                method: "PUT".into(),
+                url: "Patient/1".into(),
+            }),
+            response: Some(BundleEntryResponse {
+                status: "200 OK".into(),
+                etag: Some("W/\"2\"".into()),
+                last_modified: Some("2023-01-15T10:30:00Z".into()),
+            }),
+        };
+        let link_self = BundleLink {
+            relation: "self".into(),
+            url: "http://example.org/Patient/1/_history".into(),
+        };
+        let b = Bundle::history(vec![entry], vec![link_self]);
+        let j = serde_json::to_value(&b).unwrap();
+        assert_eq!(j["resourceType"], "Bundle");
+        assert_eq!(j["type"], "history");
+        assert!(j["entry"].is_array());
+        assert_eq!(j["entry"][0]["request"]["method"], "PUT");
+        assert_eq!(j["entry"][0]["response"]["status"], "200 OK");
     }
 }
 
@@ -643,6 +695,8 @@ pub fn bundle_from_search(
         entries.push(BundleEntry {
             full_url,
             resource: Some(res),
+            request: None,
+            response: None,
         });
     }
 
@@ -693,6 +747,165 @@ pub fn bundle_from_search(
     }
 
     Bundle::searchset(total as u64, entries, links)
+}
+
+// -------------------------
+// History Bundle Generation
+// -------------------------
+
+/// Represents a history entry for bundle generation
+#[derive(Debug, Clone)]
+pub struct HistoryBundleEntry {
+    /// The resource JSON
+    pub resource: JsonValue,
+    /// Resource ID
+    pub id: String,
+    /// Resource type
+    pub resource_type: String,
+    /// Version ID
+    pub version_id: String,
+    /// Last modified timestamp (RFC3339 format)
+    pub last_modified: String,
+    /// HTTP method that created this entry
+    pub method: HistoryBundleMethod,
+}
+
+/// HTTP method for history entries
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HistoryBundleMethod {
+    Create,
+    Update,
+    Delete,
+}
+
+impl HistoryBundleMethod {
+    pub fn http_method(&self) -> &'static str {
+        match self {
+            Self::Create => "POST",
+            Self::Update => "PUT",
+            Self::Delete => "DELETE",
+        }
+    }
+
+    pub fn http_status(&self) -> &'static str {
+        match self {
+            Self::Create => "201 Created",
+            Self::Update => "200 OK",
+            Self::Delete => "204 No Content",
+        }
+    }
+}
+
+/// Build a history bundle from history entries
+pub fn bundle_from_history(
+    entries: Vec<HistoryBundleEntry>,
+    base_url: &str,
+    resource_type: &str,
+    id: Option<&str>,
+    offset: usize,
+    count: usize,
+    total: Option<u32>,
+) -> Bundle {
+    let bundle_entries: Vec<BundleEntry> = entries
+        .into_iter()
+        .map(|entry| {
+            let full_url = format!("{}/{}/{}", base_url, entry.resource_type, entry.id);
+
+            let request_url = match entry.method {
+                HistoryBundleMethod::Create => entry.resource_type.clone(),
+                HistoryBundleMethod::Update | HistoryBundleMethod::Delete => {
+                    format!("{}/{}", entry.resource_type, entry.id)
+                }
+            };
+
+            // For DELETE entries, don't include the resource
+            let resource = if entry.method == HistoryBundleMethod::Delete {
+                None
+            } else {
+                Some(entry.resource)
+            };
+
+            BundleEntry {
+                full_url: Some(full_url),
+                resource,
+                request: Some(BundleEntryRequest {
+                    method: entry.method.http_method().to_string(),
+                    url: request_url,
+                }),
+                response: Some(BundleEntryResponse {
+                    status: entry.method.http_status().to_string(),
+                    etag: Some(format!("W/\"{}\"", entry.version_id)),
+                    last_modified: Some(entry.last_modified),
+                }),
+            }
+        })
+        .collect();
+
+    // Build links
+    let mut links = Vec::new();
+
+    // Build self link URL
+    let self_url = build_history_link(base_url, resource_type, id, offset, count);
+    links.push(BundleLink {
+        relation: "self".to_string(),
+        url: self_url,
+    });
+
+    // Pagination links
+    if let Some(total_count) = total {
+        let total_usize = total_count as usize;
+
+        // first
+        links.push(BundleLink {
+            relation: "first".to_string(),
+            url: build_history_link(base_url, resource_type, id, 0, count),
+        });
+
+        // prev
+        if offset > 0 {
+            let prev_offset = offset.saturating_sub(count);
+            links.push(BundleLink {
+                relation: "previous".to_string(),
+                url: build_history_link(base_url, resource_type, id, prev_offset, count),
+            });
+        }
+
+        // next
+        if count > 0 && offset + count < total_usize {
+            links.push(BundleLink {
+                relation: "next".to_string(),
+                url: build_history_link(base_url, resource_type, id, offset + count, count),
+            });
+        }
+
+        // last
+        if count > 0 && total_usize > 0 {
+            let last_offset = ((total_usize - 1) / count) * count;
+            links.push(BundleLink {
+                relation: "last".to_string(),
+                url: build_history_link(base_url, resource_type, id, last_offset, count),
+            });
+        }
+    }
+
+    Bundle::history(bundle_entries, links)
+}
+
+/// Build a history endpoint URL with pagination
+fn build_history_link(
+    base_url: &str,
+    resource_type: &str,
+    id: Option<&str>,
+    offset: usize,
+    count: usize,
+) -> String {
+    let base_url = base_url.trim_end_matches('/');
+    let path = match id {
+        Some(id) => format!("{base_url}/{resource_type}/{id}/_history"),
+        None => format!("{base_url}/{resource_type}/_history"),
+    };
+
+    format!("{path}?_count={count}&__offset={offset}")
 }
 
 #[cfg(test)]

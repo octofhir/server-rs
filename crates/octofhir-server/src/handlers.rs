@@ -59,7 +59,18 @@ pub async fn readyz() -> impl IntoResponse {
     (StatusCode::OK, Json(HealthResponse { status: "ready" }))
 }
 
-pub async fn metadata(State(state): State<crate::server::AppState>) -> impl IntoResponse {
+/// Query parameters for capabilities endpoint
+#[derive(Debug, Clone, Default, serde::Deserialize)]
+pub struct CapabilitiesParams {
+    /// Summary mode: true, text, data, count, false
+    #[serde(rename = "_summary")]
+    pub summary: Option<String>,
+}
+
+pub async fn metadata(
+    State(state): State<crate::server::AppState>,
+    Query(params): Query<CapabilitiesParams>,
+) -> impl IntoResponse {
     use octofhir_api::{CapabilityStatementBuilder, SearchParam};
 
     // Build base CapabilityStatement per spec
@@ -80,8 +91,47 @@ pub async fn metadata(State(state): State<crate::server::AppState>) -> impl Into
     });
 
     // Reflect capabilities from canonical manager search parameters when available
-    // MVP resources advertised
-    let resource_types = ["Patient", "Observation"]; // MVP scope
+    // Core FHIR resources advertised (commonly used clinical and administrative resources)
+    let resource_types = [
+        // Foundation
+        "CapabilityStatement",
+        "OperationDefinition",
+        "StructureDefinition",
+        "ValueSet",
+        "CodeSystem",
+        "Bundle",
+        // Clinical
+        "Patient",
+        "Observation",
+        "Condition",
+        "Procedure",
+        "DiagnosticReport",
+        "MedicationRequest",
+        "Medication",
+        "AllergyIntolerance",
+        "Immunization",
+        "CarePlan",
+        "CareTeam",
+        "Goal",
+        // Administrative
+        "Practitioner",
+        "PractitionerRole",
+        "Organization",
+        "Location",
+        "Encounter",
+        "EpisodeOfCare",
+        "Appointment",
+        "Schedule",
+        "Slot",
+        // Financial
+        "Coverage",
+        "Claim",
+        "ClaimResponse",
+        // Documents
+        "DocumentReference",
+        "Composition",
+        "Binary",
+    ];
 
     // Optionally augment with canonical manager data when available
     let manager = crate::canonical::get_manager();
@@ -135,7 +185,18 @@ pub async fn metadata(State(state): State<crate::server::AppState>) -> impl Into
         }
 
         let resource = octofhir_api::CapabilityStatementRestResource::new(*rt)
-            .with_interactions(&["read", "vread", "search-type", "create", "update", "delete"][..])
+            .with_interactions(
+                &[
+                    "read",
+                    "vread",
+                    "search-type",
+                    "create",
+                    "update",
+                    "delete",
+                    "history-instance",
+                    "history-type",
+                ][..],
+            )
             .with_search_params(mapped)
             .with_profile(base_profile)
             .with_supported_profiles(supported_profiles);
@@ -157,6 +218,30 @@ pub async fn metadata(State(state): State<crate::server::AppState>) -> impl Into
         })
     });
     body["software"] = json!({ "name": "OctoFHIR Server", "version": env!("CARGO_PKG_VERSION") });
+
+    // Add implementation section
+    body["implementation"] = json!({
+        "description": "OctoFHIR FHIR Server",
+        "url": &state.base_url
+    });
+
+    // Add security section to rest
+    if let Some(rest) = body.get_mut("rest")
+        && let Some(rest_arr) = rest.as_array_mut()
+        && let Some(rest_item) = rest_arr.first_mut()
+    {
+        rest_item["security"] = json!({
+            "cors": true,
+            "service": [{
+                "coding": [{
+                    "system": "http://terminology.hl7.org/CodeSystem/restful-security-service",
+                    "code": "SMART-on-FHIR",
+                    "display": "SMART-on-FHIR"
+                }]
+            }],
+            "description": "OAuth2 using SMART-on-FHIR profile (when enabled)"
+        });
+    }
 
     // Reflect loaded canonical packages via an extension (Phase 8)
     if let Some(pkgs) = crate::canonical::with_registry(|r| {
@@ -183,7 +268,74 @@ pub async fn metadata(State(state): State<crate::server::AppState>) -> impl Into
         }
     }
 
-    (StatusCode::OK, Json(body))
+    // Handle _summary parameter
+    let response = match params.summary.as_deref() {
+        Some("true") => summarize_capability_statement(&body),
+        Some("text") => text_summary_capability_statement(&body),
+        Some("data") => data_summary_capability_statement(&body),
+        Some("count") => count_summary_capability_statement(&body),
+        _ => body, // "false" or no summary
+    };
+
+    (StatusCode::OK, Json(response))
+}
+
+/// Return minimal summary of CapabilityStatement (_summary=true)
+fn summarize_capability_statement(cs: &Value) -> Value {
+    json!({
+        "resourceType": "CapabilityStatement",
+        "status": cs["status"],
+        "date": cs["date"],
+        "fhirVersion": cs["fhirVersion"],
+        "format": cs["format"],
+        "rest": cs["rest"].as_array().map(|rest| {
+            rest.iter().map(|r| {
+                json!({
+                    "mode": r["mode"],
+                    "resource": r["resource"].as_array().map(|resources| {
+                        resources.iter().map(|res| json!({"type": res["type"]})).collect::<Vec<_>>()
+                    })
+                })
+            }).collect::<Vec<_>>()
+        })
+    })
+}
+
+/// Return text narrative only (_summary=text)
+fn text_summary_capability_statement(cs: &Value) -> Value {
+    json!({
+        "resourceType": "CapabilityStatement",
+        "text": cs.get("text").cloned().unwrap_or_else(|| json!({
+            "status": "generated",
+            "div": "<div xmlns=\"http://www.w3.org/1999/xhtml\"><p>OctoFHIR Server CapabilityStatement</p></div>"
+        })),
+        "status": cs["status"]
+    })
+}
+
+/// Return data elements only, no text narrative (_summary=data)
+fn data_summary_capability_statement(cs: &Value) -> Value {
+    let mut result = cs.clone();
+    if let Some(obj) = result.as_object_mut() {
+        obj.remove("text");
+    }
+    result
+}
+
+/// Return count only (_summary=count)
+fn count_summary_capability_statement(cs: &Value) -> Value {
+    let resource_count = cs["rest"]
+        .as_array()
+        .and_then(|rest| rest.first())
+        .and_then(|r| r["resource"].as_array())
+        .map(|resources| resources.len())
+        .unwrap_or(0);
+
+    json!({
+        "resourceType": "CapabilityStatement",
+        "status": cs["status"],
+        "total": resource_count
+    })
 }
 
 // ---- CRUD & Search placeholders ----
@@ -381,6 +533,53 @@ fn parse_prefer_return(header: &str) -> PreferReturn {
     }
 }
 
+// ---- History Query Parameters ----
+
+/// Query parameters for history endpoints
+#[derive(Debug, Clone, Default, serde::Deserialize)]
+pub struct HistoryQueryParams {
+    /// Only include entries from after this time
+    #[serde(rename = "_since")]
+    pub since: Option<String>,
+    /// Only include entries from before this time (point-in-time)
+    #[serde(rename = "_at")]
+    pub at: Option<String>,
+    /// Maximum number of entries to return
+    #[serde(rename = "_count")]
+    pub count: Option<u32>,
+    /// Number of entries to skip for pagination
+    #[serde(rename = "__offset")]
+    pub offset: Option<u32>,
+}
+
+/// Parse a FHIR instant/datetime string into OffsetDateTime
+fn parse_fhir_instant(value: &str) -> Result<time::OffsetDateTime, ApiError> {
+    use time::format_description::well_known::Rfc3339;
+    use time::macros::format_description;
+
+    // Try RFC3339 first (full instant with timezone)
+    if let Ok(dt) = time::OffsetDateTime::parse(value, &Rfc3339) {
+        return Ok(dt);
+    }
+
+    // Try datetime without timezone (assume UTC)
+    let datetime_format = format_description!("[year]-[month]-[day]T[hour]:[minute]:[second]");
+    if let Ok(dt) = time::PrimitiveDateTime::parse(value, &datetime_format) {
+        return Ok(dt.assume_utc());
+    }
+
+    // Try date only (assume start of day UTC)
+    let date_format = format_description!("[year]-[month]-[day]");
+    if let Ok(date) = time::Date::parse(value, &date_format) {
+        return Ok(date.with_hms(0, 0, 0).unwrap().assume_utc());
+    }
+
+    Err(ApiError::bad_request(format!(
+        "Invalid datetime format: {}. Expected FHIR instant format (e.g., 2023-01-15T10:30:00Z or 2023-01-15)",
+        value
+    )))
+}
+
 pub async fn read_resource(
     State(state): State<crate::server::AppState>,
     Path((resource_type, id)): Path<(String, String)>,
@@ -512,6 +711,213 @@ pub async fn vread_resource(
         ))),
         Err(e) => Err(map_core_error(e)),
     }
+}
+
+// ---- History Handlers ----
+
+/// Instance history: GET /{type}/{id}/_history
+pub async fn instance_history(
+    State(state): State<crate::server::AppState>,
+    Path((resource_type, id)): Path<(String, String)>,
+    Query(params): Query<HistoryQueryParams>,
+) -> Result<impl IntoResponse, ApiError> {
+    use octofhir_api::{HistoryBundleEntry, HistoryBundleMethod, bundle_from_history};
+    use octofhir_storage::HistoryParams;
+    use time::format_description::well_known::Rfc3339;
+
+    let span =
+        tracing::info_span!("fhir.history.instance", resource_type = %resource_type, id = %id);
+    let _g = span.enter();
+
+    // Parse resource type
+    let rt: ResourceType = match resource_type.parse() {
+        Ok(rt) => rt,
+        Err(_) => {
+            return Err(ApiError::bad_request(format!(
+                "Unknown resourceType '{resource_type}'"
+            )));
+        }
+    };
+
+    // First check if resource exists
+    let exists = state.storage.exists(&rt, &id).await;
+    if !exists {
+        // Check if it might be a deleted resource by trying to get it
+        match state.storage.get(&rt, &id).await {
+            Err(octofhir_core::CoreError::ResourceDeleted { .. }) => {
+                // Resource was deleted, we can still show history
+            }
+            Ok(None) => {
+                return Err(ApiError::not_found(format!(
+                    "{resource_type}/{id} not found"
+                )));
+            }
+            _ => {}
+        }
+    }
+
+    // Build history params
+    let mut history_params = HistoryParams::new();
+    if let Some(ref since) = params.since {
+        history_params.since = Some(parse_fhir_instant(since)?);
+    }
+    if let Some(ref at) = params.at {
+        history_params.at = Some(parse_fhir_instant(at)?);
+    }
+    let count = params.count.unwrap_or(100);
+    let offset = params.offset.unwrap_or(0);
+    history_params.count = Some(count);
+    history_params.offset = Some(offset);
+
+    // Get history from storage
+    let result = state
+        .storage
+        .history(&resource_type, Some(&id), &history_params)
+        .await
+        .map_err(map_core_error)?;
+
+    // Convert to bundle entries
+    let entries: Vec<HistoryBundleEntry> = result
+        .entries
+        .into_iter()
+        .map(|entry| {
+            let method = match entry.method {
+                octofhir_storage::HistoryMethod::Create => HistoryBundleMethod::Create,
+                octofhir_storage::HistoryMethod::Update => HistoryBundleMethod::Update,
+                octofhir_storage::HistoryMethod::Delete => HistoryBundleMethod::Delete,
+            };
+            HistoryBundleEntry {
+                resource: entry.resource.resource,
+                id: entry.resource.id,
+                resource_type: entry.resource.resource_type,
+                version_id: entry.resource.version_id,
+                last_modified: entry
+                    .resource
+                    .last_updated
+                    .format(&Rfc3339)
+                    .unwrap_or_default(),
+                method,
+            }
+        })
+        .collect();
+
+    let bundle = bundle_from_history(
+        entries,
+        &state.base_url,
+        &resource_type,
+        Some(&id),
+        offset as usize,
+        count as usize,
+        result.total,
+    );
+
+    let mut response_headers = HeaderMap::new();
+    response_headers.insert(
+        header::CONTENT_TYPE,
+        header::HeaderValue::from_static("application/fhir+json; charset=utf-8"),
+    );
+
+    Ok((StatusCode::OK, response_headers, Json(bundle)))
+}
+
+/// Type history: GET /{type}/_history
+pub async fn type_history(
+    State(state): State<crate::server::AppState>,
+    Path(resource_type): Path<String>,
+    Query(params): Query<HistoryQueryParams>,
+) -> Result<impl IntoResponse, ApiError> {
+    use octofhir_api::{HistoryBundleEntry, HistoryBundleMethod, bundle_from_history};
+    use octofhir_storage::HistoryParams;
+    use time::format_description::well_known::Rfc3339;
+
+    let span = tracing::info_span!("fhir.history.type", resource_type = %resource_type);
+    let _g = span.enter();
+
+    // Validate resource type
+    let _rt: ResourceType = match resource_type.parse() {
+        Ok(rt) => rt,
+        Err(_) => {
+            return Err(ApiError::bad_request(format!(
+                "Unknown resourceType '{resource_type}'"
+            )));
+        }
+    };
+
+    // Build history params
+    let mut history_params = HistoryParams::new();
+    if let Some(ref since) = params.since {
+        history_params.since = Some(parse_fhir_instant(since)?);
+    }
+    if let Some(ref at) = params.at {
+        history_params.at = Some(parse_fhir_instant(at)?);
+    }
+    let count = params.count.unwrap_or(100);
+    let offset = params.offset.unwrap_or(0);
+    history_params.count = Some(count);
+    history_params.offset = Some(offset);
+
+    // Get history from storage (None for id = type-level history)
+    let result = state
+        .storage
+        .history(&resource_type, None, &history_params)
+        .await
+        .map_err(map_core_error)?;
+
+    // Convert to bundle entries
+    let entries: Vec<HistoryBundleEntry> = result
+        .entries
+        .into_iter()
+        .map(|entry| {
+            let method = match entry.method {
+                octofhir_storage::HistoryMethod::Create => HistoryBundleMethod::Create,
+                octofhir_storage::HistoryMethod::Update => HistoryBundleMethod::Update,
+                octofhir_storage::HistoryMethod::Delete => HistoryBundleMethod::Delete,
+            };
+            HistoryBundleEntry {
+                resource: entry.resource.resource,
+                id: entry.resource.id,
+                resource_type: entry.resource.resource_type,
+                version_id: entry.resource.version_id,
+                last_modified: entry
+                    .resource
+                    .last_updated
+                    .format(&Rfc3339)
+                    .unwrap_or_default(),
+                method,
+            }
+        })
+        .collect();
+
+    let bundle = bundle_from_history(
+        entries,
+        &state.base_url,
+        &resource_type,
+        None,
+        offset as usize,
+        count as usize,
+        result.total,
+    );
+
+    let mut response_headers = HeaderMap::new();
+    response_headers.insert(
+        header::CONTENT_TYPE,
+        header::HeaderValue::from_static("application/fhir+json; charset=utf-8"),
+    );
+
+    Ok((StatusCode::OK, response_headers, Json(bundle)))
+}
+
+/// System history: GET /_history
+pub async fn system_history(
+    State(_state): State<crate::server::AppState>,
+    Query(_params): Query<HistoryQueryParams>,
+) -> Result<Json<octofhir_api::Bundle>, ApiError> {
+    // System-level history is not yet implemented
+    // This would require iterating over all resource types
+    Err(ApiError::bad_request(
+        "System-level history is not yet implemented. Use type-level or instance-level history."
+            .to_string(),
+    ))
 }
 
 pub async fn update_resource(
@@ -1107,15 +1513,14 @@ pub async fn patch_resource(
     let patched_json = if is_json_patch {
         apply_json_patch(&current_json, &body)?
     } else {
-        // FHIRPath Patch requires the engine and model provider
-        let engine = state.fhirpath_engine.as_ref().ok_or_else(|| {
-            ApiError::internal("FHIRPath engine not available for FHIRPath Patch")
-        })?;
-        let model_provider = state
-            .model_provider
-            .as_ref()
-            .ok_or_else(|| ApiError::internal("Model provider not available for FHIRPath Patch"))?;
-        apply_fhirpath_patch(engine, model_provider, &current_json, &body).await?
+        // FHIRPath Patch
+        apply_fhirpath_patch(
+            &state.fhirpath_engine,
+            &state.model_provider,
+            &current_json,
+            &body,
+        )
+        .await?
     };
 
     // Validate patched resource
@@ -1296,14 +1701,14 @@ pub async fn conditional_patch_resource(
                 let patched_json = if is_json_patch {
                     apply_json_patch(&current_json, &body)?
                 } else {
-                    // FHIRPath Patch requires the engine and model provider
-                    let engine = state.fhirpath_engine.as_ref().ok_or_else(|| {
-                        ApiError::internal("FHIRPath engine not available for FHIRPath Patch")
-                    })?;
-                    let model_provider = state.model_provider.as_ref().ok_or_else(|| {
-                        ApiError::internal("Model provider not available for FHIRPath Patch")
-                    })?;
-                    apply_fhirpath_patch(engine, model_provider, &current_json, &body).await?
+                    // FHIRPath Patch
+                    apply_fhirpath_patch(
+                        &state.fhirpath_engine,
+                        &state.model_provider,
+                        &current_json,
+                        &body,
+                    )
+                    .await?
                 };
 
                 // Validate patched resource
@@ -1451,7 +1856,7 @@ pub async fn search_resource(
             let bundle = octofhir_api::bundle_from_search(
                 result.total,
                 resources_json,
-                "",
+                &state.base_url,
                 &resource_type,
                 result.offset,
                 result.count,

@@ -8,6 +8,7 @@ use crate::{
     transaction::{TransactionManager, TransactionStats},
 };
 use octofhir_core::{ResourceEnvelope, ResourceType, Result};
+use octofhir_storage::{HistoryParams, HistoryResult};
 
 /// Supported storage backend types.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -68,6 +69,16 @@ pub trait Storage: Send + Sync + TransactionManager {
         offset: usize,
         count: usize,
     ) -> Result<QueryResult>;
+
+    /// Get history for a specific resource instance or all resources of a type.
+    /// If `id` is Some, returns history for the specific resource.
+    /// If `id` is None, returns history for all resources of that type.
+    async fn history(
+        &self,
+        resource_type: &str,
+        id: Option<&str>,
+        params: &HistoryParams,
+    ) -> Result<HistoryResult>;
 
     fn transaction_stats(&self) -> TransactionStats {
         self.get_transaction_stats()
@@ -142,5 +153,43 @@ impl Storage for InMemoryStorage {
         count: usize,
     ) -> Result<QueryResult> {
         InMemoryStorage::search_by_type(self, resource_type, filters, offset, count).await
+    }
+
+    async fn history(
+        &self,
+        resource_type: &str,
+        id: Option<&str>,
+        params: &HistoryParams,
+    ) -> Result<HistoryResult> {
+        let mut entries = match id {
+            Some(id) => self.get_history(resource_type, id).await,
+            None => self.get_type_history(resource_type).await,
+        };
+
+        // Sort by last_updated descending (newest first)
+        entries.sort_by(|a, b| b.resource.last_updated.cmp(&a.resource.last_updated));
+
+        // Apply _since filter
+        if let Some(since) = params.since {
+            entries.retain(|e| e.resource.last_updated > since);
+        }
+
+        // Apply _at filter
+        if let Some(at) = params.at {
+            entries.retain(|e| e.resource.last_updated <= at);
+        }
+
+        let total = entries.len() as u32;
+
+        // Apply pagination
+        let offset = params.offset.unwrap_or(0) as usize;
+        let count = params.count.unwrap_or(100) as usize;
+
+        let paginated: Vec<_> = entries.into_iter().skip(offset).take(count).collect();
+
+        Ok(HistoryResult {
+            entries: paginated,
+            total: Some(total),
+        })
     }
 }

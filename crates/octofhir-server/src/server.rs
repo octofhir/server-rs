@@ -29,10 +29,12 @@ pub struct AppState {
     pub storage: DynStorage,
     pub search_cfg: EngineSearchConfig,
     pub fhir_version: String,
+    /// Base URL for the server, used in links and responses
+    pub base_url: String,
     /// FHIRPath engine for FHIRPath Patch support
-    pub fhirpath_engine: Option<Arc<FhirPathEngine>>,
+    pub fhirpath_engine: Arc<FhirPathEngine>,
     /// Model provider for FHIRPath evaluation (schema-aware)
-    pub model_provider: Option<SharedModelProvider>,
+    pub model_provider: SharedModelProvider,
 }
 
 pub struct OctofhirServer {
@@ -123,10 +125,8 @@ async fn load_structure_definitions_from_packages() -> Vec<StructureDefinition> 
     Vec::new()
 }
 
-/// Builds the application router with the given configuration (async version).
-///
-/// Use this when PostgreSQL backend may be configured.
-pub async fn build_app_async(cfg: &AppConfig) -> Result<Router, anyhow::Error> {
+/// Builds the application router with the given configuration.
+pub async fn build_app(cfg: &AppConfig) -> Result<Router, anyhow::Error> {
     let body_limit = cfg.server.body_limit_bytes;
     let storage = create_storage(cfg).await?;
 
@@ -206,67 +206,22 @@ pub async fn build_app_async(cfg: &AppConfig) -> Result<Router, anyhow::Error> {
 
     // Create FHIRPath function registry and engine
     let registry = Arc::new(octofhir_fhirpath::create_function_registry());
-    let fhirpath_engine = match FhirPathEngine::new(registry, model_provider.clone()).await {
-        Ok(engine) => {
-            tracing::info!(
-                "FHIRPath engine initialized successfully with schema-aware model provider"
-            );
-            Some(Arc::new(engine))
-        }
-        Err(e) => {
-            tracing::warn!(
-                "Failed to initialize FHIRPath engine: {}. FHIRPath Patch will not be available.",
-                e
-            );
-            None
-        }
-    };
+    let fhirpath_engine = FhirPathEngine::new(registry, model_provider.clone())
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to initialize FHIRPath engine: {}", e))?;
+
+    tracing::info!("FHIRPath engine initialized successfully with schema-aware model provider");
 
     let state = AppState {
         storage,
         search_cfg,
         fhir_version: cfg.fhir.version.clone(),
-        fhirpath_engine,
-        model_provider: Some(model_provider),
+        base_url: cfg.base_url(),
+        fhirpath_engine: Arc::new(fhirpath_engine),
+        model_provider,
     };
 
     Ok(build_router(state, body_limit))
-}
-
-/// Builds the application router with the given configuration (sync version).
-///
-/// Note: This only works with in-memory backend. Use `build_app_async` for PostgreSQL.
-/// FHIRPath Patch is not available in sync mode - use `build_app_async` for full feature support.
-pub fn build_app(cfg: &AppConfig) -> Router {
-    let body_limit = cfg.server.body_limit_bytes;
-
-    // Build storage from server config (in-memory backend only)
-    let db_cfg = DbStorageConfig {
-        backend: DbBackend::InMemoryPapaya,
-        options: DbStorageOptions {
-            memory_limit_bytes: cfg.storage.memory_limit_bytes,
-            preallocate_items: cfg.storage.preallocate_items,
-        },
-    };
-    let storage = create_memory_storage(&db_cfg);
-
-    // Build search engine config using counts from AppConfig
-    let search_cfg = EngineSearchConfig {
-        default_count: cfg.search.default_count,
-        max_count: cfg.search.max_count,
-        ..Default::default()
-    };
-
-    let state = AppState {
-        storage,
-        search_cfg,
-        fhir_version: cfg.fhir.version.clone(),
-        // FHIRPath engine requires async initialization, not available in sync mode
-        fhirpath_engine: None,
-        model_provider: None,
-    };
-
-    build_router(state, body_limit)
 }
 
 fn build_router(state: AppState, body_limit: usize) -> Router {
@@ -285,6 +240,10 @@ fn build_router(state: AppState, body_limit: usize) -> Router {
         // Embedded UI under /ui
         .route("/ui", get(handlers::ui_index))
         .route("/ui/{*path}", get(handlers::ui_static))
+        // System history: GET /_history
+        .route("/_history", get(handlers::system_history))
+        // Type history: GET /{type}/_history (before CRUD route)
+        .route("/{resource_type}/_history", get(handlers::type_history))
         // CRUD, search, and versioned read endpoints
         .route(
             "/{resource_type}",
@@ -293,6 +252,11 @@ fn build_router(state: AppState, body_limit: usize) -> Router {
                 .put(handlers::conditional_update_resource)
                 .patch(handlers::conditional_patch_resource)
                 .delete(handlers::conditional_delete_resource),
+        )
+        // Instance history: GET /{type}/{id}/_history (before vread)
+        .route(
+            "/{resource_type}/{id}/_history",
+            get(handlers::instance_history),
         )
         // Vread: GET /[type]/[id]/_history/[vid]
         .route(
@@ -389,23 +353,9 @@ impl ServerBuilder {
         self
     }
 
-    /// Builds the server synchronously (in-memory storage only).
-    ///
-    /// Use `build_async` for PostgreSQL backend.
-    pub fn build(self) -> OctofhirServer {
-        let app = build_app(&self.config);
-
-        OctofhirServer {
-            addr: self.addr,
-            app,
-        }
-    }
-
-    /// Builds the server asynchronously (supports all backends).
-    ///
-    /// This is the recommended method when PostgreSQL backend may be configured.
-    pub async fn build_async(self) -> Result<OctofhirServer, anyhow::Error> {
-        let app = build_app_async(&self.config).await?;
+    /// Builds the server asynchronously.
+    pub async fn build(self) -> Result<OctofhirServer, anyhow::Error> {
+        let app = build_app(&self.config).await?;
 
         Ok(OctofhirServer {
             addr: self.addr,

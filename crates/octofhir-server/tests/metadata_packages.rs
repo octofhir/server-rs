@@ -23,7 +23,7 @@ async fn start_server_with_packages() -> (String, tokio::sync::oneshot::Sender<(
         .expect("canonical init");
     canonical::set_registry(reg);
 
-    let app = build_app(&cfg);
+    let app = build_app(&cfg).await.expect("build app");
     let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
         .await
         .unwrap();

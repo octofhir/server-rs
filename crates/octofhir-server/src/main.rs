@@ -74,7 +74,7 @@ async fn main() {
     });
 
     // Build server with the appropriate storage backend
-    let server = match ServerBuilder::new().with_config(cfg).build_async().await {
+    let server = match ServerBuilder::new().with_config(cfg).build().await {
         Ok(s) => s,
         Err(e) => {
             eprintln!("failed to initialize server: {e}");

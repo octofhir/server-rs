@@ -3,7 +3,7 @@ use serde_json::Value;
 use tokio::task::JoinHandle;
 
 async fn start_server() -> (String, tokio::sync::oneshot::Sender<()>, JoinHandle<()>) {
-    let app = build_app(&AppConfig::default());
+    let app = build_app(&AppConfig::default()).await.expect("build app");
 
     // Bind to an ephemeral port
     let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))

@@ -12,7 +12,7 @@ use octofhir_db_memory::{
     transaction::{Transaction, TransactionManager, TransactionStats},
 };
 use octofhir_db_postgres::PostgresStorage;
-use octofhir_storage::{FhirStorage, StorageError};
+use octofhir_storage::{FhirStorage, HistoryParams, HistoryResult, StorageError};
 use serde_json::Value;
 use std::sync::Arc;
 
@@ -171,6 +171,18 @@ impl Storage for PostgresStorageAdapter {
     ) -> Result<QueryResult> {
         // PostgreSQL search is not yet implemented
         Ok(QueryResult::empty())
+    }
+
+    async fn history(
+        &self,
+        resource_type: &str,
+        id: Option<&str>,
+        params: &HistoryParams,
+    ) -> Result<HistoryResult> {
+        match self.inner.history(resource_type, id, params).await {
+            Ok(result) => Ok(result),
+            Err(e) => Err(CoreError::invalid_resource(e.to_string())),
+        }
     }
 }
 

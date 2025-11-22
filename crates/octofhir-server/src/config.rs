@@ -91,6 +91,15 @@ impl AppConfig {
     pub fn write_timeout(&self) -> Duration {
         Duration::from_millis(self.server.write_timeout_ms as u64)
     }
+
+    /// Returns the base URL for the server.
+    /// If `base_url` is configured, returns that; otherwise computes from host:port.
+    pub fn base_url(&self) -> String {
+        self.server
+            .base_url
+            .clone()
+            .unwrap_or_else(|| format!("http://{}:{}", self.server.host, self.server.port))
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -99,6 +108,10 @@ pub struct ServerConfig {
     pub host: String,
     #[serde(default = "default_port")]
     pub port: u16,
+    /// Base URL for the server, used in links and responses.
+    /// If not set, defaults to http://{host}:{port}
+    #[serde(default)]
+    pub base_url: Option<String>,
     #[serde(default = "default_read_timeout_ms")]
     pub read_timeout_ms: u32,
     #[serde(default = "default_write_timeout_ms")]
@@ -128,6 +141,7 @@ impl Default for ServerConfig {
         Self {
             host: default_host(),
             port: default_port(),
+            base_url: None,
             read_timeout_ms: default_read_timeout_ms(),
             write_timeout_ms: default_write_timeout_ms(),
             body_limit_bytes: default_body_limit(),
