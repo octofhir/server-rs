@@ -451,9 +451,20 @@ pub struct BundleEntry {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub resource: Option<JsonValue>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub search: Option<BundleEntrySearch>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub request: Option<BundleEntryRequest>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub response: Option<BundleEntryResponse>,
+}
+
+/// Search component of a Bundle entry (used in searchset bundles)
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct BundleEntrySearch {
+    /// "match" for main search results, "include" for _include/_revinclude results
+    pub mode: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub score: Option<f64>,
 }
 
 /// Request component of a Bundle entry (used in history bundles)
@@ -529,6 +540,10 @@ mod bundle_tests {
         let entry = BundleEntry {
             full_url: Some("http://example.org/Patient/1".into()),
             resource: Some(serde_json::json!({"resourceType":"Patient","id":"1"})),
+            search: Some(BundleEntrySearch {
+                mode: "match".into(),
+                score: None,
+            }),
             request: None,
             response: None,
         };
@@ -543,6 +558,7 @@ mod bundle_tests {
         assert_eq!(j["total"], 1);
         assert!(j["entry"].is_array());
         assert!(j["link"].is_array());
+        assert_eq!(j["entry"][0]["search"]["mode"], "match");
     }
 
     #[test]
@@ -550,6 +566,7 @@ mod bundle_tests {
         let entry = BundleEntry {
             full_url: Some("http://example.org/Patient/1".into()),
             resource: Some(serde_json::json!({"resourceType":"Patient","id":"1"})),
+            search: None,
             request: Some(BundleEntryRequest {
                 method: "PUT".into(),
                 url: "Patient/1".into(),
@@ -695,6 +712,10 @@ pub fn bundle_from_search(
         entries.push(BundleEntry {
             full_url,
             resource: Some(res),
+            search: Some(BundleEntrySearch {
+                mode: "match".to_string(),
+                score: None,
+            }),
             request: None,
             response: None,
         });
@@ -746,6 +767,117 @@ pub fn bundle_from_search(
         });
     }
 
+    Bundle::searchset(total as u64, entries, links)
+}
+
+/// Represents an included resource for bundle generation.
+#[derive(Debug, Clone)]
+pub struct IncludedResourceEntry {
+    /// The resource JSON
+    pub resource: JsonValue,
+    /// Resource type
+    pub resource_type: String,
+    /// Resource ID
+    pub id: String,
+}
+
+/// Create a search bundle with included resources.
+///
+/// Match resources have `search.mode = "match"`, included resources have `search.mode = "include"`.
+#[allow(clippy::too_many_arguments)]
+pub fn bundle_from_search_with_includes(
+    total: usize,
+    resources_json: Vec<JsonValue>,
+    included_resources: Vec<IncludedResourceEntry>,
+    base_url: &str,
+    resource_type: &str,
+    offset: usize,
+    count: usize,
+    query_suffix: Option<&str>,
+) -> Bundle {
+    let total_entries = resources_json.len() + included_resources.len();
+    let mut entries = Vec::with_capacity(total_entries);
+
+    // Add match entries
+    for res in resources_json.into_iter() {
+        let full_url = res
+            .get("id")
+            .and_then(|v| v.as_str())
+            .map(|id| join_url(base_url, &format!("{resource_type}/{id}")));
+        entries.push(BundleEntry {
+            full_url,
+            resource: Some(res),
+            search: Some(BundleEntrySearch {
+                mode: "match".to_string(),
+                score: None,
+            }),
+            request: None,
+            response: None,
+        });
+    }
+
+    // Add include entries
+    for inc in included_resources.into_iter() {
+        let full_url = join_url(base_url, &format!("{}/{}", inc.resource_type, inc.id));
+        entries.push(BundleEntry {
+            full_url: Some(full_url),
+            resource: Some(inc.resource),
+            search: Some(BundleEntrySearch {
+                mode: "include".to_string(),
+                score: None,
+            }),
+            request: None,
+            response: None,
+        });
+    }
+
+    // compute links
+    let mut links = Vec::new();
+    // self
+    links.push(BundleLink {
+        relation: "self".to_string(),
+        url: build_page_url(base_url, resource_type, offset, count, query_suffix),
+    });
+
+    // first
+    links.push(BundleLink {
+        relation: "first".to_string(),
+        url: build_page_url(base_url, resource_type, 0, count, query_suffix),
+    });
+
+    // last
+    if count > 0 && total > 0 {
+        let last_offset = ((total - 1) / count) * count;
+        links.push(BundleLink {
+            relation: "last".to_string(),
+            url: build_page_url(base_url, resource_type, last_offset, count, query_suffix),
+        });
+    } else {
+        links.push(BundleLink {
+            relation: "last".to_string(),
+            url: build_page_url(base_url, resource_type, 0, count, query_suffix),
+        });
+    }
+
+    // prev
+    if offset > 0 {
+        let prev_offset = offset.saturating_sub(count);
+        links.push(BundleLink {
+            relation: "previous".to_string(),
+            url: build_page_url(base_url, resource_type, prev_offset, count, query_suffix),
+        });
+    }
+
+    // next
+    if count > 0 && offset + count < total {
+        let next_offset = offset + count;
+        links.push(BundleLink {
+            relation: "next".to_string(),
+            url: build_page_url(base_url, resource_type, next_offset, count, query_suffix),
+        });
+    }
+
+    // Note: total only counts match entries, not includes
     Bundle::searchset(total as u64, entries, links)
 }
 
@@ -828,6 +960,7 @@ pub fn bundle_from_history(
             BundleEntry {
                 full_url: Some(full_url),
                 resource,
+                search: None, // History entries don't have search mode
                 request: Some(BundleEntryRequest {
                     method: entry.method.http_method().to_string(),
                     url: request_url,

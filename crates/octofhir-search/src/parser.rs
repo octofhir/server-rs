@@ -125,39 +125,38 @@ impl ParsedParameters {
             }
         }
         // _count must be positive integer within max
-        if let Some(p) = self.params.iter().find(|p| p.name == "_count") {
-            if let Some(v) = p.values.first() {
-                if let Ok(n) = v.raw.parse::<usize>() {
-                    if n == 0 {
-                        return Err(SearchValidationError::InvalidValue {
-                            param: "_count".to_string(),
-                            message: "must be >= 1".to_string(),
-                        });
-                    }
-                    if n > max_count {
-                        return Err(SearchValidationError::InvalidValue {
-                            param: "_count".to_string(),
-                            message: format!("exceeds maximum of {max_count}"),
-                        });
-                    }
-                } else {
+        if let Some(p) = self.params.iter().find(|p| p.name == "_count")
+            && let Some(v) = p.values.first()
+        {
+            if let Ok(n) = v.raw.parse::<usize>() {
+                if n == 0 {
                     return Err(SearchValidationError::InvalidValue {
                         param: "_count".to_string(),
-                        message: "must be a positive integer".to_string(),
+                        message: "must be >= 1".to_string(),
                     });
                 }
+                if n > max_count {
+                    return Err(SearchValidationError::InvalidValue {
+                        param: "_count".to_string(),
+                        message: format!("exceeds maximum of {max_count}"),
+                    });
+                }
+            } else {
+                return Err(SearchValidationError::InvalidValue {
+                    param: "_count".to_string(),
+                    message: "must be a positive integer".to_string(),
+                });
             }
         }
         // _offset must be non-negative integer (usize)
-        if let Some(p) = self.params.iter().find(|p| p.name == "_offset") {
-            if let Some(v) = p.values.first() {
-                if v.raw.parse::<usize>().is_err() {
-                    return Err(SearchValidationError::InvalidValue {
-                        param: "_offset".to_string(),
-                        message: "must be a non-negative integer".to_string(),
-                    });
-                }
-            }
+        if let Some(p) = self.params.iter().find(|p| p.name == "_offset")
+            && let Some(v) = p.values.first()
+            && v.raw.parse::<usize>().is_err()
+        {
+            return Err(SearchValidationError::InvalidValue {
+                param: "_offset".to_string(),
+                message: "must be a non-negative integer".to_string(),
+            });
         }
         // _sort field must be in allowed list if present
         if let Some(p) = self.params.iter().find(|p| p.name == "_sort") {
@@ -194,13 +193,13 @@ impl ParsedParameters {
             match p.name.as_str() {
                 // _id: exact string match; if multiple values provided, take the first for now
                 "_id" => {
-                    if let Some(v) = p.values.first() {
-                        if !v.raw.is_empty() {
-                            filters.push(QueryFilter::Exact {
-                                field: "_id".to_string(),
-                                value: v.raw.clone(),
-                            });
-                        }
+                    if let Some(v) = p.values.first()
+                        && !v.raw.is_empty()
+                    {
+                        filters.push(QueryFilter::Exact {
+                            field: "_id".to_string(),
+                            value: v.raw.clone(),
+                        });
                     }
                 }
                 // _lastUpdated: date range; support ge, le, gt, lt, eq or no prefix (treated as eq)
@@ -237,49 +236,49 @@ impl ParsedParameters {
                 }
                 // identifier: Token/Identifier match on identifier field, support system|value or value-only
                 "identifier" => {
-                    if let Some(v) = p.values.first() {
-                        if !v.raw.is_empty() {
-                            let mut parts = v.raw.splitn(2, '|');
-                            let first = parts.next().unwrap_or("");
-                            let second = parts.next();
-                            let (system, value) = match second {
-                                Some(val) => {
-                                    let sys_opt = if first.is_empty() {
-                                        None
-                                    } else {
-                                        Some(first.to_string())
-                                    };
-                                    (sys_opt, val.to_string())
-                                }
-                                None => (None, first.to_string()),
-                            };
-                            if !value.is_empty() {
-                                filters.push(QueryFilter::Identifier {
-                                    field: "identifier".to_string(),
-                                    system,
-                                    value,
-                                });
+                    if let Some(v) = p.values.first()
+                        && !v.raw.is_empty()
+                    {
+                        let mut parts = v.raw.splitn(2, '|');
+                        let first = parts.next().unwrap_or("");
+                        let second = parts.next();
+                        let (system, value) = match second {
+                            Some(val) => {
+                                let sys_opt = if first.is_empty() {
+                                    None
+                                } else {
+                                    Some(first.to_string())
+                                };
+                                (sys_opt, val.to_string())
                             }
+                            None => (None, first.to_string()),
+                        };
+                        if !value.is_empty() {
+                            filters.push(QueryFilter::Identifier {
+                                field: "identifier".to_string(),
+                                system,
+                                value,
+                            });
                         }
                     }
                 }
                 // Patient name-related parameters: minimal mapping to the 'name' field
                 "name" | "family" | "given" => {
-                    if let Some(v) = p.values.first() {
-                        if !v.raw.is_empty() {
-                            match p.modifier {
-                                Some(SearchModifier::Exact) => {
-                                    filters.push(QueryFilter::Exact {
-                                        field: "name".to_string(),
-                                        value: v.raw.clone(),
-                                    });
-                                }
-                                _ => {
-                                    filters.push(QueryFilter::Contains {
-                                        field: "name".to_string(),
-                                        value: v.raw.clone(),
-                                    });
-                                }
+                    if let Some(v) = p.values.first()
+                        && !v.raw.is_empty()
+                    {
+                        match p.modifier {
+                            Some(SearchModifier::Exact) => {
+                                filters.push(QueryFilter::Exact {
+                                    field: "name".to_string(),
+                                    value: v.raw.clone(),
+                                });
+                            }
+                            _ => {
+                                filters.push(QueryFilter::Contains {
+                                    field: "name".to_string(),
+                                    value: v.raw.clone(),
+                                });
                             }
                         }
                     }
@@ -295,27 +294,25 @@ impl ParsedParameters {
     /// Returns an effective count value within [1..=max]. If missing/invalid, returns `default_`.
     pub fn parse_count(&self, default_: usize, max: usize) -> usize {
         // find first occurrence of _count
-        if let Some(p) = self.params.iter().find(|p| p.name == "_count") {
-            if let Some(v) = p.values.first() {
-                if let Ok(n) = v.raw.parse::<usize>() {
-                    if n == 0 {
-                        return default_;
-                    }
-                    return n.min(max);
-                }
+        if let Some(p) = self.params.iter().find(|p| p.name == "_count")
+            && let Some(v) = p.values.first()
+            && let Ok(n) = v.raw.parse::<usize>()
+        {
+            if n == 0 {
+                return default_;
             }
+            return n.min(max);
         }
         default_
     }
 
     /// Parse optional _offset parameter; returns default_ if missing/invalid.
     pub fn parse_offset(&self, default_: usize) -> usize {
-        if let Some(p) = self.params.iter().find(|p| p.name == "_offset") {
-            if let Some(v) = p.values.first() {
-                if let Ok(n) = v.raw.parse::<usize>() {
-                    return n;
-                }
-            }
+        if let Some(p) = self.params.iter().find(|p| p.name == "_offset")
+            && let Some(v) = p.values.first()
+            && let Ok(n) = v.raw.parse::<usize>()
+        {
+            return n;
         }
         default_
     }
@@ -324,7 +321,7 @@ impl ParsedParameters {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use octofhir_db::QueryFilter;
+    use octofhir_db_memory::QueryFilter;
 
     #[test]
     fn parses_id_and_maps_to_exact_filter() {
@@ -462,7 +459,7 @@ mod tests {
 mod tests_more {
     use super::*;
     use crate::parameters::SearchModifier;
-    use octofhir_db::QueryFilter;
+    use octofhir_db_memory::QueryFilter;
 
     #[test]
     fn parses_comma_separated_id_uses_first_value_in_filter() {
@@ -643,27 +640,27 @@ impl SearchParameterParser {
             q = q.with_filter(f);
         }
         // Apply sorting if _sort is present (support first occurrence only)
-        if let Some(p) = parsed.params.iter().find(|p| p.name == "_sort") {
-            if let Some(v) = p.values.first() {
-                let mut ascending = true;
-                let mut field = v.raw.as_str();
-                // Value form: -field for descending
-                if let Some(stripped) = field.strip_prefix('-') {
+        if let Some(p) = parsed.params.iter().find(|p| p.name == "_sort")
+            && let Some(v) = p.values.first()
+        {
+            let mut ascending = true;
+            let mut field = v.raw.as_str();
+            // Value form: -field for descending
+            if let Some(stripped) = field.strip_prefix('-') {
+                ascending = false;
+                field = stripped;
+            }
+            // Modifier form: _sort:desc=field or _sort:asc=field
+            if let Some(SearchModifier::Type(m)) = &p.modifier {
+                if m.eq_ignore_ascii_case("desc") {
                     ascending = false;
-                    field = stripped;
                 }
-                // Modifier form: _sort:desc=field or _sort:asc=field
-                if let Some(SearchModifier::Type(m)) = &p.modifier {
-                    if m.eq_ignore_ascii_case("desc") {
-                        ascending = false;
-                    }
-                    if m.eq_ignore_ascii_case("asc") {
-                        ascending = true;
-                    }
+                if m.eq_ignore_ascii_case("asc") {
+                    ascending = true;
                 }
-                if !field.is_empty() {
-                    q = q.with_sort(field.to_string(), ascending);
-                }
+            }
+            if !field.is_empty() {
+                q = q.with_sort(field.to_string(), ascending);
             }
         }
         q
@@ -674,7 +671,7 @@ impl SearchParameterParser {
 mod tests_query_builder {
     use super::*;
     use octofhir_core::ResourceType;
-    use octofhir_db::QueryFilter;
+    use octofhir_db_memory::QueryFilter;
 
     #[test]
     fn build_query_uses_default_and_filters() {

@@ -66,7 +66,7 @@ impl SearchEngine {
 mod tests {
     use super::*;
     use octofhir_core::{ResourceEnvelope, ResourceType};
-    use octofhir_db::{StorageConfig as DbStorageConfig, create_storage};
+    use octofhir_db_memory::{StorageConfig as DbStorageConfig, create_storage};
     use serde_json::json;
     use tokio_test::block_on;
 
