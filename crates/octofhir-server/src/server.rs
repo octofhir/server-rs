@@ -10,7 +10,7 @@ use octofhir_fhirschema::model_provider::DynamicSchemaProvider;
 use octofhir_fhirschema::types::StructureDefinition;
 use tower_http::{compression::CompressionLayer, cors::CorsLayer, trace::TraceLayer};
 
-use crate::operations::{DynOperationHandler, OperationRegistry};
+use crate::operations::{DynOperationHandler, OperationRegistry, register_core_operations};
 
 use crate::{
     config::{AppConfig, StorageBackend as ConfigBackend},
@@ -213,9 +213,11 @@ pub async fn build_app(cfg: &AppConfig) -> Result<Router, anyhow::Error> {
 
     // Create FHIRPath function registry and engine
     let registry = Arc::new(octofhir_fhirpath::create_function_registry());
-    let fhirpath_engine = FhirPathEngine::new(registry, model_provider.clone())
-        .await
-        .map_err(|e| anyhow::anyhow!("Failed to initialize FHIRPath engine: {}", e))?;
+    let fhirpath_engine = Arc::new(
+        FhirPathEngine::new(registry, model_provider.clone())
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to initialize FHIRPath engine: {}", e))?,
+    );
 
     tracing::info!("FHIRPath engine initialized successfully with schema-aware model provider");
 
@@ -234,15 +236,21 @@ pub async fn build_app(cfg: &AppConfig) -> Result<Router, anyhow::Error> {
         }
     };
 
-    // Initialize empty operation handlers map - handlers are registered separately
-    let operation_handlers: Arc<HashMap<String, DynOperationHandler>> = Arc::new(HashMap::new());
+    // Register core operation handlers
+    let operation_handlers: Arc<HashMap<String, DynOperationHandler>> = Arc::new(
+        register_core_operations(fhirpath_engine.clone(), model_provider.clone()),
+    );
+    tracing::info!(
+        count = operation_handlers.len(),
+        "Registered operation handlers"
+    );
 
     let state = AppState {
         storage,
         search_cfg,
         fhir_version: cfg.fhir.version.clone(),
         base_url: cfg.base_url(),
-        fhirpath_engine: Arc::new(fhirpath_engine),
+        fhirpath_engine,
         model_provider,
         operation_registry,
         operation_handlers,

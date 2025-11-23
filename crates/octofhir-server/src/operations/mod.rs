@@ -43,14 +43,17 @@
 pub mod definition;
 pub mod handler;
 pub mod loader;
+pub mod meta;
 pub mod params;
 pub mod registry;
 pub mod router;
+pub mod validate;
 
 // Re-export main types for convenience
 pub use definition::{OperationDefinition, OperationKind, OperationParameter, ParameterUse};
 pub use handler::{DynOperationHandler, OperationError, OperationHandler};
 pub use loader::{LoadError, load_operations};
+pub use meta::{MetaAddOperation, MetaDeleteOperation, MetaOperation};
 pub use params::OperationParams;
 pub use registry::OperationRegistry;
 pub use router::{
@@ -58,3 +61,49 @@ pub use router::{
     merged_type_get_handler, merged_type_post_handler, system_operation_handler,
     type_operation_handler,
 };
+pub use validate::{Issue, Severity, ValidateOperation};
+
+use std::collections::HashMap;
+use std::sync::Arc;
+
+use crate::server::SharedModelProvider;
+use octofhir_fhirpath::FhirPathEngine;
+
+/// Registers the core FHIR operations.
+///
+/// This function creates and registers handlers for:
+/// - `$validate` - Resource validation
+/// - `$meta` - Get resource metadata
+/// - `$meta-add` - Add metadata elements
+/// - `$meta-delete` - Remove metadata elements
+///
+/// # Arguments
+///
+/// * `fhirpath_engine` - The FHIRPath engine for validation constraints
+/// * `model_provider` - The schema provider for type information
+///
+/// # Returns
+///
+/// A HashMap mapping operation codes to their handlers.
+pub fn register_core_operations(
+    fhirpath_engine: Arc<FhirPathEngine>,
+    model_provider: SharedModelProvider,
+) -> HashMap<String, DynOperationHandler> {
+    let mut handlers: HashMap<String, DynOperationHandler> = HashMap::new();
+
+    // $validate operation
+    handlers.insert(
+        "validate".to_string(),
+        Arc::new(ValidateOperation::new(
+            fhirpath_engine.clone(),
+            model_provider.clone(),
+        )),
+    );
+
+    // $meta operations
+    handlers.insert("meta".to_string(), Arc::new(MetaOperation));
+    handlers.insert("meta-add".to_string(), Arc::new(MetaAddOperation));
+    handlers.insert("meta-delete".to_string(), Arc::new(MetaDeleteOperation));
+
+    handlers
+}
