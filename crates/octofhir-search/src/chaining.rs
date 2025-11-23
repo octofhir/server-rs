@@ -221,7 +221,11 @@ fn build_nested_chain(
     let ref_source = if depth == 0 {
         ref_path
     } else {
-        format!("chain{}.{}", depth - 1, ref_path.strip_prefix("resource").unwrap_or(&ref_path))
+        format!(
+            "chain{}.{}",
+            depth - 1,
+            ref_path.strip_prefix("resource").unwrap_or(&ref_path)
+        )
     };
 
     // Build inner condition: either next chain level or final condition

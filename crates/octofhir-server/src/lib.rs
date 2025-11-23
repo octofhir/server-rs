@@ -5,6 +5,7 @@ pub mod handlers;
 pub mod mapping;
 pub mod middleware;
 pub mod observability;
+pub mod operations;
 pub mod patch;
 pub mod server;
 pub mod storage_adapter;

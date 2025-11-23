@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
@@ -8,6 +9,8 @@ use octofhir_fhirschema::embedded::{FhirVersion as SchemaFhirVersion, get_schema
 use octofhir_fhirschema::model_provider::DynamicSchemaProvider;
 use octofhir_fhirschema::types::StructureDefinition;
 use tower_http::{compression::CompressionLayer, cors::CorsLayer, trace::TraceLayer};
+
+use crate::operations::{DynOperationHandler, OperationRegistry};
 
 use crate::{
     config::{AppConfig, StorageBackend as ConfigBackend},
@@ -35,6 +38,10 @@ pub struct AppState {
     pub fhirpath_engine: Arc<FhirPathEngine>,
     /// Model provider for FHIRPath evaluation (schema-aware)
     pub model_provider: SharedModelProvider,
+    /// Registry of available FHIR operations loaded from packages
+    pub operation_registry: Arc<OperationRegistry>,
+    /// Map of operation handlers by operation code
+    pub operation_handlers: Arc<HashMap<String, DynOperationHandler>>,
 }
 
 pub struct OctofhirServer {
@@ -212,6 +219,24 @@ pub async fn build_app(cfg: &AppConfig) -> Result<Router, anyhow::Error> {
 
     tracing::info!("FHIRPath engine initialized successfully with schema-aware model provider");
 
+    // Load operation definitions from canonical manager
+    let operation_registry = match crate::operations::load_operations().await {
+        Ok(registry) => {
+            tracing::info!(
+                count = registry.len(),
+                "Loaded operation definitions from packages"
+            );
+            Arc::new(registry)
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "Failed to load operation definitions, using empty registry");
+            Arc::new(OperationRegistry::new())
+        }
+    };
+
+    // Initialize empty operation handlers map - handlers are registered separately
+    let operation_handlers: Arc<HashMap<String, DynOperationHandler>> = Arc::new(HashMap::new());
+
     let state = AppState {
         storage,
         search_cfg,
@@ -219,6 +244,8 @@ pub async fn build_app(cfg: &AppConfig) -> Result<Router, anyhow::Error> {
         base_url: cfg.base_url(),
         fhirpath_engine: Arc::new(fhirpath_engine),
         model_provider,
+        operation_registry,
+        operation_handlers,
     };
 
     Ok(build_router(state, body_limit))
@@ -251,14 +278,21 @@ fn build_router(state: AppState, body_limit: usize) -> Router {
             "/{resource_type}/_search",
             axum::routing::post(handlers::search_resource_post),
         )
-        // CRUD, search, and versioned read endpoints
+        // CRUD, search, and system operations
+        // This merged route handles both /$operation and /ResourceType
         .route(
             "/{resource_type}",
-            get(handlers::search_resource)
-                .post(handlers::create_resource)
+            get(crate::operations::merged_root_get_handler)
+                .post(crate::operations::merged_root_post_handler)
                 .put(handlers::conditional_update_resource)
                 .patch(handlers::conditional_patch_resource)
                 .delete(handlers::conditional_delete_resource),
+        )
+        // Instance-level operations: GET/POST /{type}/{id}/$operation
+        .route(
+            "/{resource_type}/{id}/{operation}",
+            get(crate::operations::instance_operation_handler)
+                .post(crate::operations::instance_operation_handler),
         )
         // Instance history: GET /{type}/{id}/_history (before vread)
         .route(
@@ -270,9 +304,12 @@ fn build_router(state: AppState, body_limit: usize) -> Router {
             "/{resource_type}/{id}/_history/{version_id}",
             get(handlers::vread_resource),
         )
+        // Type operations and resource CRUD
+        // This merged route handles both /{type}/$operation and /{type}/{id}
         .route(
             "/{resource_type}/{id}",
-            get(handlers::read_resource)
+            get(crate::operations::merged_type_get_handler)
+                .post(crate::operations::merged_type_post_handler)
                 .put(handlers::update_resource)
                 .patch(handlers::patch_resource)
                 .delete(handlers::delete_resource),

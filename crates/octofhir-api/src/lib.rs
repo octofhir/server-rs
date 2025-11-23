@@ -58,6 +58,8 @@ pub enum ApiError {
     PreconditionFailed(String),
     #[error("Unsupported media type: {0}")]
     UnsupportedMediaType(String),
+    #[error("Not implemented: {0}")]
+    NotImplemented(String),
     #[error("Internal server error: {0}")]
     Internal(String),
 }
@@ -90,6 +92,9 @@ impl ApiError {
     pub fn internal(msg: impl Into<String>) -> Self {
         Self::Internal(msg.into())
     }
+    pub fn not_implemented(msg: impl Into<String>) -> Self {
+        Self::NotImplemented(msg.into())
+    }
 
     pub fn status_code(&self) -> StatusCode {
         match self {
@@ -101,6 +106,7 @@ impl ApiError {
             ApiError::Conflict(_) => StatusCode::CONFLICT,
             ApiError::PreconditionFailed(_) => StatusCode::PRECONDITION_FAILED,
             ApiError::UnsupportedMediaType(_) => StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            ApiError::NotImplemented(_) => StatusCode::NOT_IMPLEMENTED,
             ApiError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
@@ -115,6 +121,9 @@ impl ApiError {
             ApiError::Conflict(msg) => OperationOutcome::single("error", "conflict", msg),
             ApiError::PreconditionFailed(msg) => OperationOutcome::single("error", "conflict", msg),
             ApiError::UnsupportedMediaType(msg) => {
+                OperationOutcome::single("error", "not-supported", msg)
+            }
+            ApiError::NotImplemented(msg) => {
                 OperationOutcome::single("error", "not-supported", msg)
             }
             ApiError::Internal(msg) => OperationOutcome::single("fatal", "exception", msg),
@@ -207,6 +216,11 @@ mod tests {
             (
                 ApiError::unsupported_media_type("x"),
                 StatusCode::UNSUPPORTED_MEDIA_TYPE,
+                "not-supported",
+            ),
+            (
+                ApiError::not_implemented("x"),
+                StatusCode::NOT_IMPLEMENTED,
                 "not-supported",
             ),
             (
