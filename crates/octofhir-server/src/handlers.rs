@@ -3149,13 +3149,63 @@ async fn process_delete_entry(
     }
 }
 
-/// Process GET (read) entry
+/// Process GET (read, vread, search) entry
 async fn process_get_entry(
     state: &crate::server::AppState,
     url: &str,
 ) -> Result<(Value, Option<(String, String)>), ApiError> {
+    // Check for search: Type?params
+    if url.contains('?') {
+        return process_get_search_entry(state, url).await;
+    }
+
     let parts: Vec<&str> = url.split('/').collect();
 
+    // Check for vread: Type/id/_history/version
+    if parts.len() == 4 && parts[2] == "_history" {
+        let resource_type = parts[0];
+        let id = parts[1];
+        let version = parts[3];
+
+        let rt = resource_type.parse::<ResourceType>().map_err(|_| {
+            ApiError::bad_request(format!("Unknown resource type: {}", resource_type))
+        })?;
+
+        // Get the resource and check version
+        let resource = state
+            .storage
+            .get(&rt, id)
+            .await
+            .map_err(map_core_error)?
+            .ok_or_else(|| {
+                ApiError::not_found(format!(
+                    "{}/{}/_history/{} not found",
+                    resource_type, id, version
+                ))
+            })?;
+
+        // Check if requested version matches current version
+        let current_version = resource.meta.version_id.as_deref().unwrap_or("1");
+        if current_version != version {
+            return Err(ApiError::not_found(format!(
+                "{}/{}/_history/{} not found",
+                resource_type, id, version
+            )));
+        }
+
+        let resource_json = json_from_envelope(&resource);
+        let response_entry = build_transaction_response_entry(
+            Some(&resource_json),
+            "200 OK",
+            Some(resource_type),
+            Some(id),
+            Some(version),
+        );
+
+        return Ok((response_entry, None));
+    }
+
+    // Direct read: Type/id
     if parts.len() == 2 {
         let resource_type = parts[0];
         let id = parts[1];
@@ -3184,6 +3234,53 @@ async fn process_get_entry(
     } else {
         Err(ApiError::bad_request(format!("Invalid GET URL: {}", url)))
     }
+}
+
+/// Process GET with search params in batch: Type?params
+async fn process_get_search_entry(
+    state: &crate::server::AppState,
+    url: &str,
+) -> Result<(Value, Option<(String, String)>), ApiError> {
+    let (resource_type, query) = if let Some(idx) = url.find('?') {
+        (&url[..idx], &url[idx + 1..])
+    } else {
+        return Err(ApiError::bad_request("Invalid search URL"));
+    };
+
+    let rt = resource_type
+        .parse::<ResourceType>()
+        .map_err(|_| ApiError::bad_request(format!("Unknown resource type: {}", resource_type)))?;
+
+    let cfg = &state.search_cfg;
+    let result = octofhir_search::SearchEngine::execute(&state.storage, rt, query, cfg)
+        .await
+        .map_err(|e| ApiError::bad_request(e.to_string()))?;
+
+    let resources_json: Vec<Value> = result.resources.iter().map(json_from_envelope).collect();
+
+    // Build a searchset bundle for the response
+    let search_bundle = octofhir_api::bundle_from_search(
+        result.total,
+        resources_json,
+        &state.base_url,
+        resource_type,
+        result.offset,
+        result.count,
+        None,
+    );
+
+    // Return the bundle as the response resource
+    let search_bundle_json =
+        serde_json::to_value(search_bundle).map_err(|e| ApiError::internal(e.to_string()))?;
+
+    let response_entry = json!({
+        "response": {
+            "status": "200 OK"
+        },
+        "resource": search_bundle_json
+    });
+
+    Ok((response_entry, None))
 }
 
 /// Process PATCH entry
