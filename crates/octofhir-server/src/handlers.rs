@@ -1815,15 +1815,31 @@ pub async fn conditional_patch_resource(
     }
 }
 
+/// Query parameters for search result modification
+#[derive(Debug, Clone, Default, serde::Deserialize)]
+pub struct SearchResultParams {
+    /// _summary parameter: true, text, data, count, false
+    #[serde(rename = "_summary")]
+    pub summary: Option<String>,
+    /// _elements parameter: comma-separated list of elements to include
+    #[serde(rename = "_elements")]
+    pub elements: Option<String>,
+    /// _include parameter(s)
+    #[serde(rename = "_include")]
+    pub include: Option<String>,
+    /// _revinclude parameter(s)
+    #[serde(rename = "_revinclude")]
+    pub revinclude: Option<String>,
+}
+
 pub async fn search_resource(
     State(state): State<crate::server::AppState>,
     Path(resource_type): Path<String>,
-    Query(_params): Query<HashMap<String, String>>,
+    Query(params): Query<HashMap<String, String>>,
     RawQuery(raw): RawQuery,
 ) -> Result<impl IntoResponse, ApiError> {
     let span = tracing::info_span!("fhir.search", resource_type = %resource_type);
     let _g = span.enter();
-    // Pagination is enforced by search engine config; no extra handling here.
 
     // Execute search using search engine config (respects allow-lists)
     let rt = match resource_type.parse::<ResourceType>() {
@@ -1839,35 +1855,521 @@ pub async fn search_resource(
     let cfg = &state.search_cfg;
     match octofhir_search::SearchEngine::execute(&state.storage, rt.clone(), &raw_q, cfg).await {
         Ok(result) => {
-            // Strip _count/_offset from query suffix
-            let suffix = if raw_q.is_empty() {
-                None
-            } else {
-                let filtered: Vec<_> = raw_q
-                    .split('&')
-                    .filter(|kv| !kv.starts_with("_count=") && !kv.starts_with("_offset="))
-                    .collect();
-                let s = filtered.join("&");
-                Some(s)
-            };
+            // Strip result params from query suffix for pagination links
+            let suffix = build_query_suffix_for_links(&raw_q);
 
             let resources_json: Vec<Value> =
                 result.resources.iter().map(json_from_envelope).collect();
-            let bundle = octofhir_api::bundle_from_search(
-                result.total,
-                resources_json,
-                &state.base_url,
+
+            // Check for _include/_revinclude parameters
+            let included_resources = resolve_includes_for_search(
+                &state.storage,
+                &result.resources,
                 &resource_type,
-                result.offset,
-                result.count,
-                suffix.as_deref(),
-            );
-            let val =
-                serde_json::to_value(bundle).map_err(|e| ApiError::internal(e.to_string()))?;
-            Ok((StatusCode::OK, Json(val)))
+                &params,
+            )
+            .await;
+
+            // Build bundle with or without includes
+            let bundle = if included_resources.is_empty() {
+                octofhir_api::bundle_from_search(
+                    result.total,
+                    resources_json,
+                    &state.base_url,
+                    &resource_type,
+                    result.offset,
+                    result.count,
+                    suffix.as_deref(),
+                )
+            } else {
+                octofhir_api::bundle_from_search_with_includes(
+                    result.total,
+                    resources_json,
+                    included_resources,
+                    &state.base_url,
+                    &resource_type,
+                    result.offset,
+                    result.count,
+                    suffix.as_deref(),
+                )
+            };
+
+            // Apply _summary and _elements filters
+            let bundle_value = apply_result_params(bundle, &params)?;
+
+            Ok((StatusCode::OK, Json(bundle_value)))
         }
         Err(e) => Err(ApiError::bad_request(e.to_string())),
     }
+}
+
+/// POST /[type]/_search - Search via POST with form-encoded parameters
+pub async fn search_resource_post(
+    State(state): State<crate::server::AppState>,
+    Path(resource_type): Path<String>,
+    axum::Form(params): axum::Form<HashMap<String, String>>,
+) -> Result<impl IntoResponse, ApiError> {
+    let span = tracing::info_span!("fhir.search.post", resource_type = %resource_type);
+    let _g = span.enter();
+
+    // Execute search using search engine config
+    let rt = match resource_type.parse::<ResourceType>() {
+        Ok(rt) => rt,
+        Err(_) => {
+            return Err(ApiError::bad_request(format!(
+                "Unknown resourceType '{resource_type}'"
+            )));
+        }
+    };
+
+    // Convert params to query string format
+    let raw_q: String = params
+        .iter()
+        .map(|(k, v)| format!("{}={}", urlencoding::encode(k), urlencoding::encode(v)))
+        .collect::<Vec<_>>()
+        .join("&");
+
+    let cfg = &state.search_cfg;
+    match octofhir_search::SearchEngine::execute(&state.storage, rt.clone(), &raw_q, cfg).await {
+        Ok(result) => {
+            let suffix = build_query_suffix_for_links(&raw_q);
+
+            let resources_json: Vec<Value> =
+                result.resources.iter().map(json_from_envelope).collect();
+
+            // Check for _include/_revinclude parameters
+            let included_resources = resolve_includes_for_search(
+                &state.storage,
+                &result.resources,
+                &resource_type,
+                &params,
+            )
+            .await;
+
+            // Build bundle with or without includes
+            let bundle = if included_resources.is_empty() {
+                octofhir_api::bundle_from_search(
+                    result.total,
+                    resources_json,
+                    &state.base_url,
+                    &resource_type,
+                    result.offset,
+                    result.count,
+                    suffix.as_deref(),
+                )
+            } else {
+                octofhir_api::bundle_from_search_with_includes(
+                    result.total,
+                    resources_json,
+                    included_resources,
+                    &state.base_url,
+                    &resource_type,
+                    result.offset,
+                    result.count,
+                    suffix.as_deref(),
+                )
+            };
+
+            // Apply _summary and _elements filters
+            let bundle_value = apply_result_params(bundle, &params)?;
+
+            Ok((StatusCode::OK, Json(bundle_value)))
+        }
+        Err(e) => Err(ApiError::bad_request(e.to_string())),
+    }
+}
+
+/// GET / or GET /?_type=Patient,Observation - System-level search
+pub async fn system_search(
+    State(state): State<crate::server::AppState>,
+    Query(params): Query<HashMap<String, String>>,
+    RawQuery(raw): RawQuery,
+) -> Result<impl IntoResponse, ApiError> {
+    let span = tracing::info_span!("fhir.search.system");
+    let _g = span.enter();
+
+    // Get _type parameter - required for system search
+    let types_param = params.get("_type").ok_or_else(|| {
+        ApiError::bad_request("System search requires _type parameter to specify resource types")
+    })?;
+
+    let types: Vec<&str> = types_param.split(',').map(|s| s.trim()).collect();
+
+    if types.is_empty() {
+        return Err(ApiError::bad_request(
+            "_type parameter must specify at least one resource type",
+        ));
+    }
+
+    let raw_q = raw.unwrap_or_default();
+    let cfg = &state.search_cfg;
+
+    let mut all_resources: Vec<Value> = Vec::new();
+    let mut total_count: usize = 0;
+
+    // Search each resource type
+    for type_name in &types {
+        let rt = match type_name.parse::<ResourceType>() {
+            Ok(rt) => rt,
+            Err(_) => {
+                tracing::warn!("Skipping unknown resource type: {}", type_name);
+                continue;
+            }
+        };
+
+        match octofhir_search::SearchEngine::execute(&state.storage, rt, &raw_q, cfg).await {
+            Ok(result) => {
+                total_count += result.total;
+                for res in result.resources {
+                    all_resources.push(json_from_envelope(&res));
+                }
+            }
+            Err(e) => {
+                tracing::warn!("Search failed for type {}: {}", type_name, e);
+                // Continue with other types
+            }
+        }
+    }
+
+    // Apply _count limit to combined results
+    let count = params
+        .get("_count")
+        .and_then(|c| c.parse::<usize>().ok())
+        .unwrap_or(cfg.default_count)
+        .min(cfg.max_count);
+
+    let offset = params
+        .get("_offset")
+        .and_then(|o| o.parse::<usize>().ok())
+        .unwrap_or(0);
+
+    // Paginate combined results
+    let paginated: Vec<Value> = all_resources.into_iter().skip(offset).take(count).collect();
+
+    // Build system search bundle (use first type for link building)
+    let primary_type = types.first().unwrap_or(&"Resource");
+    let suffix = build_query_suffix_for_links(&raw_q);
+
+    let bundle = octofhir_api::bundle_from_search(
+        total_count,
+        paginated,
+        &state.base_url,
+        primary_type,
+        offset,
+        count,
+        suffix.as_deref(),
+    );
+
+    // Apply _summary and _elements filters
+    let bundle_value = apply_result_params(bundle, &params)?;
+
+    Ok((StatusCode::OK, Json(bundle_value)))
+}
+
+/// Build query suffix for pagination links, stripping result params
+fn build_query_suffix_for_links(raw_q: &str) -> Option<String> {
+    if raw_q.is_empty() {
+        return None;
+    }
+    let filtered: Vec<_> = raw_q
+        .split('&')
+        .filter(|kv| {
+            !kv.starts_with("_count=")
+                && !kv.starts_with("_offset=")
+                && !kv.starts_with("_summary=")
+                && !kv.starts_with("_elements=")
+        })
+        .collect();
+    let s = filtered.join("&");
+    if s.is_empty() { None } else { Some(s) }
+}
+
+/// Resolve _include and _revinclude for search results
+async fn resolve_includes_for_search(
+    storage: &octofhir_db_memory::DynStorage,
+    resources: &[octofhir_core::ResourceEnvelope],
+    resource_type: &str,
+    params: &HashMap<String, String>,
+) -> Vec<octofhir_api::IncludedResourceEntry> {
+    let mut included = Vec::new();
+    let mut included_keys: std::collections::HashSet<(String, String)> =
+        std::collections::HashSet::new();
+
+    // Process _include parameters
+    if let Some(include_values) = params.get("_include") {
+        for include_spec in include_values.split(',') {
+            let parts: Vec<&str> = include_spec.split(':').collect();
+            if parts.len() >= 2 {
+                let source_type = parts[0];
+                let param_name = parts[1];
+                let target_type = parts.get(2).copied();
+
+                // Only process includes for matching source type
+                if source_type == resource_type || source_type == "*" {
+                    // Extract references from resources and fetch included resources
+                    for res in resources {
+                        // Convert envelope to JSON for reference extraction
+                        let res_json = json_from_envelope(res);
+                        if let Some(refs) = extract_references_from_resource(&res_json, param_name)
+                        {
+                            for (ref_type, ref_id) in refs {
+                                // Skip if target type filter doesn't match
+                                if let Some(tt) = target_type
+                                    && ref_type != tt
+                                {
+                                    continue;
+                                }
+
+                                // Skip duplicates
+                                let key = (ref_type.clone(), ref_id.clone());
+                                if included_keys.contains(&key) {
+                                    continue;
+                                }
+
+                                // Fetch the referenced resource
+                                if let Ok(rt) = ref_type.parse::<ResourceType>()
+                                    && let Ok(Some(env)) = storage.get(&rt, &ref_id).await
+                                {
+                                    included_keys.insert(key);
+                                    included.push(octofhir_api::IncludedResourceEntry {
+                                        resource: json_from_envelope(&env),
+                                        resource_type: ref_type,
+                                        id: ref_id,
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Process _revinclude parameters
+    if let Some(revinclude_values) = params.get("_revinclude") {
+        for revinclude_spec in revinclude_values.split(',') {
+            let parts: Vec<&str> = revinclude_spec.split(':').collect();
+            if parts.len() >= 2 {
+                let source_type = parts[0];
+                let param_name = parts[1];
+
+                // For revinclude, find resources of source_type that reference our results
+                if let Ok(source_rt) = source_type.parse::<ResourceType>() {
+                    for res in resources {
+                        // Build search query to find referencing resources
+                        let ref_value = format!("{}/{}", resource_type, res.id);
+                        let search_query = format!("{}={}", param_name, ref_value);
+
+                        // Execute search for referencing resources
+                        let cfg = octofhir_search::SearchConfig {
+                            default_count: 100,
+                            max_count: 100,
+                            ..Default::default()
+                        };
+
+                        if let Ok(result) = octofhir_search::SearchEngine::execute(
+                            storage,
+                            source_rt.clone(),
+                            &search_query,
+                            &cfg,
+                        )
+                        .await
+                        {
+                            for referring_res in result.resources {
+                                let rt_str = referring_res.resource_type.to_string();
+                                let key = (rt_str.clone(), referring_res.id.clone());
+                                if !included_keys.contains(&key) {
+                                    included_keys.insert(key);
+                                    included.push(octofhir_api::IncludedResourceEntry {
+                                        resource: json_from_envelope(&referring_res),
+                                        resource_type: rt_str,
+                                        id: referring_res.id.clone(),
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    included
+}
+
+/// Extract reference values from a resource for a given search parameter
+fn extract_references_from_resource(
+    resource: &Value,
+    param_name: &str,
+) -> Option<Vec<(String, String)>> {
+    let mut refs = Vec::new();
+
+    // Common reference field mappings
+    let field_name = match param_name {
+        "patient" | "subject" => "subject",
+        "encounter" => "encounter",
+        "performer" => "performer",
+        "author" => "author",
+        "organization" => "managingOrganization",
+        "practitioner" => "practitioner",
+        "location" => "location",
+        _ => param_name,
+    };
+
+    // Try to get the field
+    if let Some(field_value) = resource.get(field_name) {
+        extract_refs_from_value(field_value, &mut refs);
+    }
+
+    // Also try direct param name
+    if let Some(field_value) = resource.get(param_name) {
+        extract_refs_from_value(field_value, &mut refs);
+    }
+
+    if refs.is_empty() { None } else { Some(refs) }
+}
+
+/// Extract references from a JSON value (handles Reference objects and arrays)
+fn extract_refs_from_value(value: &Value, refs: &mut Vec<(String, String)>) {
+    match value {
+        Value::Object(obj) => {
+            // Check if this is a Reference
+            if let Some(ref_str) = obj.get("reference").and_then(|v| v.as_str())
+                && let Some((rtype, rid)) = parse_reference_string(ref_str)
+            {
+                refs.push((rtype, rid));
+            }
+        }
+        Value::Array(arr) => {
+            for item in arr {
+                extract_refs_from_value(item, refs);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Parse a FHIR reference string into (type, id)
+fn parse_reference_string(reference: &str) -> Option<(String, String)> {
+    // Handle absolute URLs
+    let local_ref = if reference.contains("://") {
+        let parts: Vec<&str> = reference.rsplitn(3, '/').collect();
+        if parts.len() >= 2 {
+            format!("{}/{}", parts[1], parts[0])
+        } else {
+            return None;
+        }
+    } else {
+        reference.to_string()
+    };
+
+    // Split Type/id
+    let (rtype, rid) = local_ref.split_once('/')?;
+    if rtype.is_empty() || rid.is_empty() {
+        return None;
+    }
+
+    Some((rtype.to_string(), rid.to_string()))
+}
+
+/// Apply _summary and _elements result parameters to a bundle
+fn apply_result_params(
+    bundle: octofhir_api::Bundle,
+    params: &HashMap<String, String>,
+) -> Result<Value, ApiError> {
+    let mut bundle_value =
+        serde_json::to_value(bundle).map_err(|e| ApiError::internal(e.to_string()))?;
+
+    let summary = params.get("_summary").map(|s| s.as_str());
+    let elements = params.get("_elements");
+
+    // Handle _summary=count - remove entries
+    if summary == Some("count") {
+        if let Some(obj) = bundle_value.as_object_mut() {
+            obj.remove("entry");
+        }
+        return Ok(bundle_value);
+    }
+
+    // Apply summary or elements to each entry's resource
+    if let Some(entries) = bundle_value.get_mut("entry").and_then(|e| e.as_array_mut()) {
+        for entry in entries {
+            if let Some(resource) = entry.get_mut("resource") {
+                // Apply _summary
+                if let Some(sum) = summary {
+                    *resource = apply_summary(resource, sum);
+                }
+
+                // Apply _elements
+                if let Some(elems) = elements {
+                    *resource = apply_elements_filter(resource, elems);
+                }
+            }
+        }
+    }
+
+    Ok(bundle_value)
+}
+
+/// Apply _summary parameter to a resource
+fn apply_summary(resource: &Value, summary: &str) -> Value {
+    match summary {
+        "true" => {
+            // Return only summary elements (id, meta, text, and type-specific summary fields)
+            let mut result = json!({
+                "resourceType": resource.get("resourceType").cloned().unwrap_or(Value::Null),
+                "id": resource.get("id").cloned().unwrap_or(Value::Null),
+            });
+            if let Some(meta) = resource.get("meta") {
+                result["meta"] = meta.clone();
+            }
+            if let Some(text) = resource.get("text") {
+                result["text"] = text.clone();
+            }
+            result
+        }
+        "text" => {
+            // Return only text narrative
+            json!({
+                "resourceType": resource.get("resourceType").cloned().unwrap_or(Value::Null),
+                "id": resource.get("id").cloned().unwrap_or(Value::Null),
+                "text": resource.get("text").cloned().unwrap_or(Value::Null),
+            })
+        }
+        "data" => {
+            // Return everything except text
+            let mut result = resource.clone();
+            if let Some(obj) = result.as_object_mut() {
+                obj.remove("text");
+            }
+            result
+        }
+        _ => resource.clone(),
+    }
+}
+
+/// Apply _elements filter to a resource
+fn apply_elements_filter(resource: &Value, elements: &str) -> Value {
+    let element_list: Vec<&str> = elements.split(',').map(|s| s.trim()).collect();
+
+    let mut result = json!({
+        "resourceType": resource.get("resourceType").cloned().unwrap_or(Value::Null),
+        "id": resource.get("id").cloned().unwrap_or(Value::Null),
+    });
+
+    // Always include meta
+    if let Some(meta) = resource.get("meta") {
+        result["meta"] = meta.clone();
+    }
+
+    // Include requested elements
+    for elem in element_list {
+        if let Some(value) = resource.get(elem) {
+            result[elem] = value.clone();
+        }
+    }
+
+    result
 }
 
 // Removed: unified ApiError is used for error responses now
@@ -2068,4 +2570,760 @@ pub async fn ui_static(Path(path): Path<String>) -> Response {
     }
 
     (StatusCode::NOT_FOUND, "Not Found").into_response()
+}
+
+// ============================================================================
+// Transaction/Batch Bundle Processing (Task 0020)
+// ============================================================================
+
+/// POST / - Process transaction or batch bundle
+pub async fn transaction_handler(
+    State(state): State<crate::server::AppState>,
+    Json(bundle): Json<Value>,
+) -> Result<impl IntoResponse, ApiError> {
+    let span = tracing::info_span!("fhir.bundle");
+    let _g = span.enter();
+
+    // Validate bundle structure
+    let resource_type = bundle["resourceType"].as_str();
+    if resource_type != Some("Bundle") {
+        return Err(ApiError::bad_request(
+            "Expected Bundle resource at root endpoint",
+        ));
+    }
+
+    let bundle_type = bundle["type"]
+        .as_str()
+        .ok_or_else(|| ApiError::bad_request("Missing bundle type"))?;
+
+    match bundle_type {
+        "transaction" => process_transaction(&state, &bundle).await,
+        "batch" => process_batch(&state, &bundle).await,
+        _ => Err(ApiError::bad_request(format!(
+            "Bundle type '{}' not supported at root endpoint. Use 'transaction' or 'batch'.",
+            bundle_type
+        ))),
+    }
+}
+
+/// Process a transaction bundle atomically - all entries succeed or all fail
+async fn process_transaction(
+    state: &crate::server::AppState,
+    bundle: &Value,
+) -> Result<(StatusCode, Json<Value>), ApiError> {
+    let entries = bundle["entry"]
+        .as_array()
+        .ok_or_else(|| ApiError::bad_request("Missing or invalid bundle entries"))?;
+
+    if entries.is_empty() {
+        // Empty transaction is valid - return empty response
+        let response_bundle = json!({
+            "resourceType": "Bundle",
+            "type": "transaction-response",
+            "entry": []
+        });
+        return Ok((StatusCode::OK, Json(response_bundle)));
+    }
+
+    // Sort entries by HTTP method for proper processing order
+    let sorted_entries = sort_transaction_entries(entries);
+
+    // Build reference map for fullUrl -> actual reference resolution
+    let mut reference_map: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
+
+    // Track created resources for rollback
+    let mut created_resources: Vec<(String, String)> = Vec::new(); // (resource_type, id)
+    let mut response_entries: Vec<Value> = Vec::new();
+
+    // Process each entry
+    for entry in &sorted_entries {
+        let result = process_transaction_entry(state, entry, &mut reference_map).await;
+
+        match result {
+            Ok((response_entry, created)) => {
+                if let Some((rt, id)) = created {
+                    created_resources.push((rt, id));
+                }
+                response_entries.push(response_entry);
+            }
+            Err(e) => {
+                // Transaction failed - rollback created resources
+                tracing::warn!(
+                    "Transaction failed, rolling back {} created resources: {}",
+                    created_resources.len(),
+                    e
+                );
+
+                for (rt, id) in created_resources.iter().rev() {
+                    if let Ok(resource_type) = rt.parse::<ResourceType>() {
+                        let _ = state.storage.delete(&resource_type, id).await;
+                    }
+                }
+
+                return Err(e);
+            }
+        }
+    }
+
+    // Build response bundle
+    let response_bundle = json!({
+        "resourceType": "Bundle",
+        "type": "transaction-response",
+        "entry": response_entries
+    });
+
+    Ok((StatusCode::OK, Json(response_bundle)))
+}
+
+/// Process a batch bundle non-atomically - each entry is independent
+async fn process_batch(
+    state: &crate::server::AppState,
+    bundle: &Value,
+) -> Result<(StatusCode, Json<Value>), ApiError> {
+    let entries = bundle["entry"]
+        .as_array()
+        .ok_or_else(|| ApiError::bad_request("Missing or invalid bundle entries"))?;
+
+    if entries.is_empty() {
+        let response_bundle = json!({
+            "resourceType": "Bundle",
+            "type": "batch-response",
+            "entry": []
+        });
+        return Ok((StatusCode::OK, Json(response_bundle)));
+    }
+
+    let mut reference_map: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
+    let mut response_entries: Vec<Value> = Vec::new();
+
+    // Process each entry independently (no rollback on failure)
+    for entry in entries {
+        let result = process_transaction_entry(state, entry, &mut reference_map).await;
+
+        match result {
+            Ok((response_entry, _)) => {
+                response_entries.push(response_entry);
+            }
+            Err(e) => {
+                // For batch, return error response for this entry and continue
+                response_entries.push(json!({
+                    "response": {
+                        "status": format!("{} {}", e.status_code().as_u16(), e.status_code().canonical_reason().unwrap_or("Error")),
+                        "outcome": e.to_operation_outcome()
+                    }
+                }));
+            }
+        }
+    }
+
+    let response_bundle = json!({
+        "resourceType": "Bundle",
+        "type": "batch-response",
+        "entry": response_entries
+    });
+
+    Ok((StatusCode::OK, Json(response_bundle)))
+}
+
+/// Sort transaction entries by HTTP method order per FHIR spec
+/// Order: DELETE, POST, PUT, PATCH, GET, HEAD
+fn sort_transaction_entries(entries: &[Value]) -> Vec<&Value> {
+    let mut sorted: Vec<_> = entries.iter().collect();
+
+    sorted.sort_by(|a, b| {
+        let method_a = a["request"]["method"].as_str().unwrap_or("");
+        let method_b = b["request"]["method"].as_str().unwrap_or("");
+
+        let order_a = transaction_method_order(method_a);
+        let order_b = transaction_method_order(method_b);
+
+        order_a.cmp(&order_b)
+    });
+
+    sorted
+}
+
+/// Get processing order for HTTP methods in transactions
+fn transaction_method_order(method: &str) -> u8 {
+    match method.to_uppercase().as_str() {
+        "DELETE" => 0, // Delete first
+        "POST" => 1,   // Create second (may be referenced by later entries)
+        "PUT" => 2,    // Update third
+        "PATCH" => 3,  // Patch fourth
+        "GET" => 4,    // Read last
+        "HEAD" => 5,   // Head last
+        _ => 6,
+    }
+}
+
+/// Process a single transaction entry
+/// Returns (response_entry, Option<(resource_type, id)>) where the tuple indicates a created resource for rollback
+async fn process_transaction_entry(
+    state: &crate::server::AppState,
+    entry: &Value,
+    reference_map: &mut std::collections::HashMap<String, String>,
+) -> Result<(Value, Option<(String, String)>), ApiError> {
+    let request = &entry["request"];
+    let method = request["method"]
+        .as_str()
+        .ok_or_else(|| ApiError::bad_request("Missing request.method in bundle entry"))?;
+    let url = request["url"]
+        .as_str()
+        .ok_or_else(|| ApiError::bad_request("Missing request.url in bundle entry"))?;
+
+    let full_url = entry["fullUrl"].as_str();
+
+    // Resolve references in the resource if present
+    let resource = if let Some(res) = entry.get("resource") {
+        Some(resolve_bundle_references(res, reference_map)?)
+    } else {
+        None
+    };
+
+    match method.to_uppercase().as_str() {
+        "POST" => process_post_entry(state, url, resource, full_url, reference_map).await,
+        "PUT" => process_put_entry(state, url, resource, request).await,
+        "DELETE" => process_delete_entry(state, url).await,
+        "GET" => process_get_entry(state, url).await,
+        "PATCH" => process_patch_entry(state, url, resource, request).await,
+        _ => Err(ApiError::bad_request(format!(
+            "Unknown HTTP method in bundle entry: {}",
+            method
+        ))),
+    }
+}
+
+/// Process POST (create) entry
+async fn process_post_entry(
+    state: &crate::server::AppState,
+    url: &str,
+    resource: Option<Value>,
+    full_url: Option<&str>,
+    reference_map: &mut std::collections::HashMap<String, String>,
+) -> Result<(Value, Option<(String, String)>), ApiError> {
+    let resource =
+        resource.ok_or_else(|| ApiError::bad_request("POST entry requires a resource"))?;
+
+    // Parse URL - can be "Type" or "Type?condition"
+    let (resource_type, condition) = if let Some(idx) = url.find('?') {
+        (&url[..idx], Some(&url[idx + 1..]))
+    } else {
+        (url, None)
+    };
+
+    let rt = resource_type
+        .parse::<ResourceType>()
+        .map_err(|_| ApiError::bad_request(format!("Unknown resource type: {}", resource_type)))?;
+
+    // Handle conditional create
+    if let Some(cond) = condition {
+        let search_query = format!("{}&_count=2", cond);
+        let cfg = &state.search_cfg;
+
+        if let Ok(result) =
+            octofhir_search::SearchEngine::execute(&state.storage, rt.clone(), &search_query, cfg)
+                .await
+        {
+            match result.resources.len() {
+                0 => {
+                    // No match - proceed with create
+                }
+                1 => {
+                    // Match found - return existing resource
+                    let existing = &result.resources[0];
+                    let existing_json = json_from_envelope(existing);
+
+                    if let Some(fu) = full_url {
+                        reference_map
+                            .insert(fu.to_string(), format!("{}/{}", resource_type, existing.id));
+                    }
+
+                    let response_entry = build_transaction_response_entry(
+                        Some(&existing_json),
+                        "200 OK",
+                        Some(resource_type),
+                        Some(&existing.id),
+                        existing.meta.version_id.as_deref(),
+                    );
+
+                    return Ok((response_entry, None));
+                }
+                _ => {
+                    return Err(ApiError::precondition_failed(
+                        "Multiple matches for conditional create",
+                    ));
+                }
+            }
+        }
+    }
+
+    // Create the resource
+    let env = envelope_from_json(resource_type, &resource, IdPolicy::Create)
+        .map_err(ApiError::bad_request)?;
+
+    let id = env.id.clone();
+
+    state
+        .storage
+        .insert(&rt, env.clone())
+        .await
+        .map_err(map_core_error)?;
+
+    // Update reference map
+    if let Some(fu) = full_url {
+        reference_map.insert(fu.to_string(), format!("{}/{}", resource_type, id));
+    }
+
+    let created_json = json_from_envelope(&env);
+    let response_entry = build_transaction_response_entry(
+        Some(&created_json),
+        "201 Created",
+        Some(resource_type),
+        Some(&id),
+        env.meta.version_id.as_deref(),
+    );
+
+    Ok((response_entry, Some((resource_type.to_string(), id))))
+}
+
+/// Process PUT (update or conditional update) entry
+async fn process_put_entry(
+    state: &crate::server::AppState,
+    url: &str,
+    resource: Option<Value>,
+    request: &Value,
+) -> Result<(Value, Option<(String, String)>), ApiError> {
+    let resource =
+        resource.ok_or_else(|| ApiError::bad_request("PUT entry requires a resource"))?;
+
+    // Parse URL: "Type/id" or "Type?condition"
+    let parts: Vec<&str> = url.split('/').collect();
+
+    if parts.len() == 2 && !parts[1].contains('?') {
+        // Direct update: PUT Type/id
+        let resource_type = parts[0];
+        let id = parts[1];
+
+        let rt = resource_type.parse::<ResourceType>().map_err(|_| {
+            ApiError::bad_request(format!("Unknown resource type: {}", resource_type))
+        })?;
+
+        let env = envelope_from_json(
+            resource_type,
+            &resource,
+            IdPolicy::Update {
+                path_id: id.to_string(),
+            },
+        )
+        .map_err(ApiError::bad_request)?;
+
+        // Check if resource exists
+        let existing = state.storage.get(&rt, id).await.map_err(map_core_error)?;
+
+        // Handle If-Match
+        if let Some(if_match) = request["ifMatch"].as_str()
+            && let Some(ref existing_env) = existing
+        {
+            let current_version = existing_env.meta.version_id.as_deref().unwrap_or("1");
+            let expected_version = if_match
+                .trim_start_matches("W/\"")
+                .trim_end_matches('"')
+                .trim_start_matches('"');
+            if current_version != expected_version {
+                return Err(ApiError::conflict(format!(
+                    "Version mismatch: expected {}, found {}",
+                    expected_version, current_version
+                )));
+            }
+        }
+
+        let (status, updated_env) = if existing.is_some() {
+            let updated = state
+                .storage
+                .update(&rt, id, env)
+                .await
+                .map_err(map_core_error)?;
+            ("200 OK", updated)
+        } else {
+            state
+                .storage
+                .insert(&rt, env.clone())
+                .await
+                .map_err(map_core_error)?;
+            ("201 Created", env)
+        };
+
+        let updated_json = json_from_envelope(&updated_env);
+        let response_entry = build_transaction_response_entry(
+            Some(&updated_json),
+            status,
+            Some(resource_type),
+            Some(id),
+            updated_env.meta.version_id.as_deref(),
+        );
+
+        let created = if status == "201 Created" {
+            Some((resource_type.to_string(), id.to_string()))
+        } else {
+            None
+        };
+
+        Ok((response_entry, created))
+    } else if url.contains('?') {
+        // Conditional update: PUT Type?condition
+        let (resource_type, condition) = if let Some(idx) = url.find('?') {
+            (&url[..idx], &url[idx + 1..])
+        } else {
+            return Err(ApiError::bad_request(format!("Invalid PUT URL: {}", url)));
+        };
+
+        let rt = resource_type.parse::<ResourceType>().map_err(|_| {
+            ApiError::bad_request(format!("Unknown resource type: {}", resource_type))
+        })?;
+
+        let search_query = format!("{}&_count=2", condition);
+        let cfg = &state.search_cfg;
+
+        let result =
+            octofhir_search::SearchEngine::execute(&state.storage, rt.clone(), &search_query, cfg)
+                .await
+                .map_err(|e| ApiError::bad_request(e.to_string()))?;
+
+        match result.resources.len() {
+            0 => {
+                // No match - create
+                let env = envelope_from_json(resource_type, &resource, IdPolicy::Create)
+                    .map_err(ApiError::bad_request)?;
+                let id = env.id.clone();
+
+                state
+                    .storage
+                    .insert(&rt, env.clone())
+                    .await
+                    .map_err(map_core_error)?;
+
+                let created_json = json_from_envelope(&env);
+                let response_entry = build_transaction_response_entry(
+                    Some(&created_json),
+                    "201 Created",
+                    Some(resource_type),
+                    Some(&id),
+                    env.meta.version_id.as_deref(),
+                );
+
+                Ok((response_entry, Some((resource_type.to_string(), id))))
+            }
+            1 => {
+                // Update existing
+                let existing = &result.resources[0];
+                let env = envelope_from_json(
+                    resource_type,
+                    &resource,
+                    IdPolicy::Update {
+                        path_id: existing.id.clone(),
+                    },
+                )
+                .map_err(ApiError::bad_request)?;
+
+                let updated = state
+                    .storage
+                    .update(&rt, &existing.id, env)
+                    .await
+                    .map_err(map_core_error)?;
+
+                let updated_json = json_from_envelope(&updated);
+                let response_entry = build_transaction_response_entry(
+                    Some(&updated_json),
+                    "200 OK",
+                    Some(resource_type),
+                    Some(&existing.id),
+                    updated.meta.version_id.as_deref(),
+                );
+
+                Ok((response_entry, None))
+            }
+            _ => Err(ApiError::precondition_failed(
+                "Multiple matches for conditional update",
+            )),
+        }
+    } else {
+        Err(ApiError::bad_request(format!("Invalid PUT URL: {}", url)))
+    }
+}
+
+/// Process DELETE entry
+async fn process_delete_entry(
+    state: &crate::server::AppState,
+    url: &str,
+) -> Result<(Value, Option<(String, String)>), ApiError> {
+    let parts: Vec<&str> = url.split('/').collect();
+
+    if parts.len() == 2 && !parts[1].contains('?') {
+        // Direct delete: DELETE Type/id
+        let resource_type = parts[0];
+        let id = parts[1];
+
+        let rt = resource_type.parse::<ResourceType>().map_err(|_| {
+            ApiError::bad_request(format!("Unknown resource type: {}", resource_type))
+        })?;
+
+        // Delete may fail if not found - for transaction that's an error, for batch we continue
+        let _ = state
+            .storage
+            .delete(&rt, id)
+            .await
+            .map_err(map_core_error)?;
+
+        let response_entry = build_transaction_response_entry(
+            None,
+            "204 No Content",
+            Some(resource_type),
+            None,
+            None,
+        );
+
+        Ok((response_entry, None))
+    } else if url.contains('?') {
+        // Conditional delete: DELETE Type?condition
+        let (resource_type, condition) = if let Some(idx) = url.find('?') {
+            (&url[..idx], &url[idx + 1..])
+        } else {
+            return Err(ApiError::bad_request(format!(
+                "Invalid DELETE URL: {}",
+                url
+            )));
+        };
+
+        let rt = resource_type.parse::<ResourceType>().map_err(|_| {
+            ApiError::bad_request(format!("Unknown resource type: {}", resource_type))
+        })?;
+
+        let search_query = format!("{}&_count=2", condition);
+        let cfg = &state.search_cfg;
+
+        let result =
+            octofhir_search::SearchEngine::execute(&state.storage, rt.clone(), &search_query, cfg)
+                .await
+                .map_err(|e| ApiError::bad_request(e.to_string()))?;
+
+        match result.resources.len() {
+            0 => {
+                // Nothing to delete - success
+                let response_entry = build_transaction_response_entry(
+                    None,
+                    "204 No Content",
+                    Some(resource_type),
+                    None,
+                    None,
+                );
+                Ok((response_entry, None))
+            }
+            1 => {
+                let id = &result.resources[0].id;
+                let _ = state
+                    .storage
+                    .delete(&rt, id)
+                    .await
+                    .map_err(map_core_error)?;
+
+                let response_entry = build_transaction_response_entry(
+                    None,
+                    "204 No Content",
+                    Some(resource_type),
+                    None,
+                    None,
+                );
+                Ok((response_entry, None))
+            }
+            _ => Err(ApiError::precondition_failed(
+                "Multiple matches for conditional delete",
+            )),
+        }
+    } else {
+        Err(ApiError::bad_request(format!(
+            "Invalid DELETE URL: {}",
+            url
+        )))
+    }
+}
+
+/// Process GET (read) entry
+async fn process_get_entry(
+    state: &crate::server::AppState,
+    url: &str,
+) -> Result<(Value, Option<(String, String)>), ApiError> {
+    let parts: Vec<&str> = url.split('/').collect();
+
+    if parts.len() == 2 {
+        let resource_type = parts[0];
+        let id = parts[1];
+
+        let rt = resource_type.parse::<ResourceType>().map_err(|_| {
+            ApiError::bad_request(format!("Unknown resource type: {}", resource_type))
+        })?;
+
+        let resource = state
+            .storage
+            .get(&rt, id)
+            .await
+            .map_err(map_core_error)?
+            .ok_or_else(|| ApiError::not_found(format!("{}/{} not found", resource_type, id)))?;
+
+        let resource_json = json_from_envelope(&resource);
+        let response_entry = build_transaction_response_entry(
+            Some(&resource_json),
+            "200 OK",
+            Some(resource_type),
+            Some(id),
+            resource.meta.version_id.as_deref(),
+        );
+
+        Ok((response_entry, None))
+    } else {
+        Err(ApiError::bad_request(format!("Invalid GET URL: {}", url)))
+    }
+}
+
+/// Process PATCH entry
+async fn process_patch_entry(
+    state: &crate::server::AppState,
+    url: &str,
+    resource: Option<Value>,
+    _request: &Value,
+) -> Result<(Value, Option<(String, String)>), ApiError> {
+    let patch = resource.ok_or_else(|| ApiError::bad_request("PATCH entry requires a resource"))?;
+
+    let parts: Vec<&str> = url.split('/').collect();
+
+    if parts.len() == 2 {
+        let resource_type = parts[0];
+        let id = parts[1];
+
+        let rt = resource_type.parse::<ResourceType>().map_err(|_| {
+            ApiError::bad_request(format!("Unknown resource type: {}", resource_type))
+        })?;
+
+        // Get existing resource
+        let existing = state
+            .storage
+            .get(&rt, id)
+            .await
+            .map_err(map_core_error)?
+            .ok_or_else(|| ApiError::not_found(format!("{}/{} not found", resource_type, id)))?;
+
+        // Apply JSON Patch
+        let mut existing_json = json_from_envelope(&existing);
+        let patch_ops: Vec<json_patch::PatchOperation> = serde_json::from_value(patch)
+            .map_err(|e| ApiError::bad_request(format!("Invalid JSON Patch: {}", e)))?;
+
+        json_patch::patch(&mut existing_json, &patch_ops)
+            .map_err(|e| ApiError::bad_request(format!("Patch failed: {}", e)))?;
+
+        // Update the resource
+        let env = envelope_from_json(
+            resource_type,
+            &existing_json,
+            IdPolicy::Update {
+                path_id: id.to_string(),
+            },
+        )
+        .map_err(ApiError::bad_request)?;
+
+        let updated = state
+            .storage
+            .update(&rt, id, env)
+            .await
+            .map_err(map_core_error)?;
+
+        let updated_json = json_from_envelope(&updated);
+        let response_entry = build_transaction_response_entry(
+            Some(&updated_json),
+            "200 OK",
+            Some(resource_type),
+            Some(id),
+            updated.meta.version_id.as_deref(),
+        );
+
+        Ok((response_entry, None))
+    } else {
+        Err(ApiError::bad_request(format!("Invalid PATCH URL: {}", url)))
+    }
+}
+
+/// Resolve bundle references (fullUrl and urn:uuid) in a resource
+fn resolve_bundle_references(
+    resource: &Value,
+    reference_map: &std::collections::HashMap<String, String>,
+) -> Result<Value, ApiError> {
+    let mut resolved = resource.clone();
+    resolve_references_recursive(&mut resolved, reference_map)?;
+    Ok(resolved)
+}
+
+/// Recursively resolve references in a JSON value
+fn resolve_references_recursive(
+    value: &mut Value,
+    reference_map: &std::collections::HashMap<String, String>,
+) -> Result<(), ApiError> {
+    match value {
+        Value::Object(map) => {
+            // Check for reference field
+            if let Some(ref_value) = map.get_mut("reference")
+                && let Some(ref_str) = ref_value.as_str()
+            {
+                if let Some(resolved) = reference_map.get(ref_str) {
+                    *ref_value = json!(resolved);
+                } else if ref_str.starts_with("urn:uuid:") {
+                    // Unresolved UUID reference - this is an error
+                    return Err(ApiError::bad_request(format!(
+                        "Unresolved reference: {}",
+                        ref_str
+                    )));
+                }
+                // If it's a regular reference (Type/id), leave it as-is
+            }
+
+            // Recurse into object values
+            for (_, v) in map.iter_mut() {
+                resolve_references_recursive(v, reference_map)?;
+            }
+        }
+        Value::Array(arr) => {
+            for item in arr.iter_mut() {
+                resolve_references_recursive(item, reference_map)?;
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+/// Build a transaction response entry
+fn build_transaction_response_entry(
+    resource: Option<&Value>,
+    status: &str,
+    resource_type: Option<&str>,
+    id: Option<&str>,
+    version_id: Option<&str>,
+) -> Value {
+    let mut entry = json!({
+        "response": {
+            "status": status
+        }
+    });
+
+    if let Some(res) = resource {
+        entry["resource"] = res.clone();
+    }
+
+    if let (Some(rt), Some(id)) = (resource_type, id) {
+        let version = version_id.unwrap_or("1");
+        entry["response"]["location"] = json!(format!("{}/{}/_history/{}", rt, id, version));
+        entry["response"]["etag"] = json!(format!("W/\"{}\"", version));
+        entry["fullUrl"] = json!(format!("{}/{}/{}", &"", rt, id)); // base_url would go here
+    }
+
+    entry
 }

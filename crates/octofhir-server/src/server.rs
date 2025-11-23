@@ -227,7 +227,7 @@ pub async fn build_app(cfg: &AppConfig) -> Result<Router, anyhow::Error> {
 fn build_router(state: AppState, body_limit: usize) -> Router {
     Router::new()
         // Health and info endpoints
-        .route("/", get(handlers::root))
+        .route("/", get(handlers::root).post(handlers::transaction_handler))
         .route("/healthz", get(handlers::healthz))
         .route("/readyz", get(handlers::readyz))
         .route("/metadata", get(handlers::metadata))
@@ -240,10 +240,17 @@ fn build_router(state: AppState, body_limit: usize) -> Router {
         // Embedded UI under /ui
         .route("/ui", get(handlers::ui_index))
         .route("/ui/{*path}", get(handlers::ui_static))
+        // System search: GET /?_type=... or POST /_search
+        .route("/_search", axum::routing::post(handlers::system_search))
         // System history: GET /_history
         .route("/_history", get(handlers::system_history))
         // Type history: GET /{type}/_history (before CRUD route)
         .route("/{resource_type}/_history", get(handlers::type_history))
+        // POST search: /{type}/_search
+        .route(
+            "/{resource_type}/_search",
+            axum::routing::post(handlers::search_resource_post),
+        )
         // CRUD, search, and versioned read endpoints
         .route(
             "/{resource_type}",
