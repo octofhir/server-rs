@@ -62,6 +62,11 @@ pub enum ApiError {
     NotImplemented(String),
     #[error("Internal server error: {0}")]
     Internal(String),
+    #[error("Unprocessable entity: {message}")]
+    UnprocessableEntity {
+        message: String,
+        operation_outcome: Option<serde_json::Value>,
+    },
 }
 
 impl ApiError {
@@ -95,6 +100,12 @@ impl ApiError {
     pub fn not_implemented(msg: impl Into<String>) -> Self {
         Self::NotImplemented(msg.into())
     }
+    pub fn unprocessable_entity(msg: impl Into<String>, outcome: Option<serde_json::Value>) -> Self {
+        Self::UnprocessableEntity {
+            message: msg.into(),
+            operation_outcome: outcome,
+        }
+    }
 
     pub fn status_code(&self) -> StatusCode {
         match self {
@@ -108,6 +119,7 @@ impl ApiError {
             ApiError::UnsupportedMediaType(_) => StatusCode::UNSUPPORTED_MEDIA_TYPE,
             ApiError::NotImplemented(_) => StatusCode::NOT_IMPLEMENTED,
             ApiError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            ApiError::UnprocessableEntity { .. } => StatusCode::UNPROCESSABLE_ENTITY,
         }
     }
 
@@ -127,6 +139,9 @@ impl ApiError {
                 OperationOutcome::single("error", "not-supported", msg)
             }
             ApiError::Internal(msg) => OperationOutcome::single("fatal", "exception", msg),
+            ApiError::UnprocessableEntity { message, .. } => {
+                OperationOutcome::single("error", "invalid", message)
+            }
         }
     }
 }
@@ -134,15 +149,31 @@ impl ApiError {
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         let status = self.status_code();
-        let outcome = self.to_operation_outcome();
-        // Serialize to JSON
-        let body = match serde_json::to_vec(&outcome) {
-            Ok(b) => b,
-            Err(_) => {
-                // Fallback minimal body if serialization fails
-                let fallback =
-                    OperationOutcome::single("fatal", "exception", "Serialization failure");
-                serde_json::to_vec(&fallback).unwrap_or_else(|_| b"{}".to_vec())
+
+        // For UnprocessableEntity, use the provided OperationOutcome if available
+        let body = if let ApiError::UnprocessableEntity {
+            operation_outcome: Some(outcome),
+            ..
+        } = &self
+        {
+            match serde_json::to_vec(outcome) {
+                Ok(b) => b,
+                Err(_) => {
+                    let fallback =
+                        OperationOutcome::single("fatal", "exception", "Serialization failure");
+                    serde_json::to_vec(&fallback).unwrap_or_else(|_| b"{}".to_vec())
+                }
+            }
+        } else {
+            let outcome = self.to_operation_outcome();
+            match serde_json::to_vec(&outcome) {
+                Ok(b) => b,
+                Err(_) => {
+                    // Fallback minimal body if serialization fails
+                    let fallback =
+                        OperationOutcome::single("fatal", "exception", "Serialization failure");
+                    serde_json::to_vec(&fallback).unwrap_or_else(|_| b"{}".to_vec())
+                }
             }
         };
 

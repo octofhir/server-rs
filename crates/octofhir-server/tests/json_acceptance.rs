@@ -46,7 +46,7 @@ async fn accepts_application_json_content_type_on_post() {
     let (base, shutdown_tx, handle) = start_server().await;
     let client = reqwest::Client::new();
 
-    let payload = serde_json::json!({"resourceType":"Patient"});
+    let payload = serde_json::json!({"resourceType":"Patient", "name": [{"family": "Test"}]});
 
     let resp = client
         .post(format!("{base}/Patient"))

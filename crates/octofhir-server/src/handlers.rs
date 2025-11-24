@@ -348,8 +348,19 @@ pub async fn create_resource(
 ) -> Result<impl IntoResponse, ApiError> {
     let span = tracing::info_span!("fhir.create", resource_type = %resource_type);
     let _g = span.enter();
+
+    // Basic structural validation (resourceType match)
     if let Err(e) = crate::validation::validate_resource(&resource_type, &payload) {
         return Err(ApiError::bad_request(format!("Validation failed: {e}")));
+    }
+
+    // Full schema + FHIRPath constraint validation using ValidationService
+    let validation_outcome = state.validation_service.validate(&payload).await;
+    if !validation_outcome.valid {
+        return Err(ApiError::UnprocessableEntity {
+            message: "Resource validation failed".to_string(),
+            operation_outcome: Some(validation_outcome.to_operation_outcome()),
+        });
     }
 
     // Handle conditional create (If-None-Exist)
@@ -928,9 +939,21 @@ pub async fn update_resource(
 ) -> Result<impl IntoResponse, ApiError> {
     let span = tracing::info_span!("fhir.update", resource_type = %resource_type, id = %id);
     let _g = span.enter();
+
+    // Basic structural validation (resourceType match)
     if let Err(e) = crate::validation::validate_resource(&resource_type, &payload) {
         return Err(ApiError::bad_request(format!("Validation failed: {e}")));
     }
+
+    // Full schema + FHIRPath constraint validation using ValidationService
+    let validation_outcome = state.validation_service.validate(&payload).await;
+    if !validation_outcome.valid {
+        return Err(ApiError::UnprocessableEntity {
+            message: "Resource validation failed".to_string(),
+            operation_outcome: Some(validation_outcome.to_operation_outcome()),
+        });
+    }
+
     let rt = match resource_type.parse::<ResourceType>() {
         Ok(rt) => rt,
         Err(_) => {
@@ -1162,9 +1185,18 @@ pub async fn conditional_update_resource(
         ));
     }
 
-    // Validate payload
+    // Basic structural validation (resourceType match)
     if let Err(e) = crate::validation::validate_resource(&resource_type, &payload) {
         return Err(ApiError::bad_request(format!("Validation failed: {e}")));
+    }
+
+    // Full schema + FHIRPath constraint validation using ValidationService
+    let validation_outcome = state.validation_service.validate(&payload).await;
+    if !validation_outcome.valid {
+        return Err(ApiError::UnprocessableEntity {
+            message: "Resource validation failed".to_string(),
+            operation_outcome: Some(validation_outcome.to_operation_outcome()),
+        });
     }
 
     // Extract If-Match header for version checking
@@ -1523,9 +1555,18 @@ pub async fn patch_resource(
         .await?
     };
 
-    // Validate patched resource
+    // Basic structural validation (resourceType match)
     if let Err(e) = crate::validation::validate_resource(&resource_type, &patched_json) {
         return Err(ApiError::bad_request(format!("Validation failed: {e}")));
+    }
+
+    // Full schema + FHIRPath constraint validation using ValidationService
+    let validation_outcome = state.validation_service.validate(&patched_json).await;
+    if !validation_outcome.valid {
+        return Err(ApiError::UnprocessableEntity {
+            message: "Patched resource validation failed".to_string(),
+            operation_outcome: Some(validation_outcome.to_operation_outcome()),
+        });
     }
 
     // Verify resourceType hasn't changed (extra safety check)
@@ -1711,10 +1752,19 @@ pub async fn conditional_patch_resource(
                     .await?
                 };
 
-                // Validate patched resource
+                // Basic structural validation (resourceType match)
                 if let Err(e) = crate::validation::validate_resource(&resource_type, &patched_json)
                 {
                     return Err(ApiError::bad_request(format!("Validation failed: {e}")));
+                }
+
+                // Full schema + FHIRPath constraint validation using ValidationService
+                let validation_outcome = state.validation_service.validate(&patched_json).await;
+                if !validation_outcome.valid {
+                    return Err(ApiError::UnprocessableEntity {
+                        message: "Patched resource validation failed".to_string(),
+                        operation_outcome: Some(validation_outcome.to_operation_outcome()),
+                    });
                 }
 
                 // Verify resourceType hasn't changed

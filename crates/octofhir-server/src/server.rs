@@ -11,6 +11,7 @@ use octofhir_fhirschema::types::StructureDefinition;
 use tower_http::{compression::CompressionLayer, cors::CorsLayer, trace::TraceLayer};
 
 use crate::operations::{DynOperationHandler, OperationRegistry, register_core_operations};
+use crate::validation::ValidationService;
 
 use crate::{
     config::{AppConfig, StorageBackend as ConfigBackend},
@@ -42,6 +43,8 @@ pub struct AppState {
     pub operation_registry: Arc<OperationRegistry>,
     /// Map of operation handlers by operation code
     pub operation_handlers: Arc<HashMap<String, DynOperationHandler>>,
+    /// Validation service for FHIR resource validation with FHIRPath constraints
+    pub validation_service: ValidationService,
 }
 
 pub struct OctofhirServer {
@@ -223,16 +226,42 @@ pub async fn build_app(cfg: &AppConfig) -> Result<Router, anyhow::Error> {
 
     // Load operation definitions from canonical manager
     let operation_registry = match crate::operations::load_operations().await {
-        Ok(registry) => {
+        Ok(mut registry) => {
             tracing::info!(
                 count = registry.len(),
                 "Loaded operation definitions from packages"
             );
+            // Manually register $validate at system level (FHIR spec supports it but package may not)
+            registry.register(crate::operations::OperationDefinition {
+                code: "validate".to_string(),
+                url: "http://hl7.org/fhir/OperationDefinition/Resource-validate".to_string(),
+                kind: crate::operations::OperationKind::Operation,
+                system: true,
+                type_level: true,
+                instance: true,
+                resource: vec![], // All resource types
+                parameters: vec![],
+                affects_state: false,
+            });
+            tracing::info!("Registered $validate at system level");
             Arc::new(registry)
         }
         Err(e) => {
             tracing::warn!(error = %e, "Failed to load operation definitions, using empty registry");
-            Arc::new(OperationRegistry::new())
+            let mut registry = OperationRegistry::new();
+            // Register $validate even when packages fail to load
+            registry.register(crate::operations::OperationDefinition {
+                code: "validate".to_string(),
+                url: "http://hl7.org/fhir/OperationDefinition/Resource-validate".to_string(),
+                kind: crate::operations::OperationKind::Operation,
+                system: true,
+                type_level: true,
+                instance: true,
+                resource: vec![],
+                parameters: vec![],
+                affects_state: false,
+            });
+            Arc::new(registry)
         }
     };
 
@@ -245,6 +274,12 @@ pub async fn build_app(cfg: &AppConfig) -> Result<Router, anyhow::Error> {
         "Registered operation handlers"
     );
 
+    // Initialize ValidationService with FHIRPath constraint support
+    let validation_service = ValidationService::new(model_provider.clone(), fhirpath_engine.clone())
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to initialize validation service: {}", e))?;
+    tracing::info!("Validation service initialized with FHIRPath constraint support");
+
     let state = AppState {
         storage,
         search_cfg,
@@ -254,6 +289,7 @@ pub async fn build_app(cfg: &AppConfig) -> Result<Router, anyhow::Error> {
         model_provider,
         operation_registry,
         operation_handlers,
+        validation_service,
     };
 
     Ok(build_router(state, body_limit))

@@ -201,8 +201,8 @@ async fn error_cases_invalid_resource_and_id_mismatch_and_delete_404() {
         .unwrap();
     assert_eq!(resp.status(), reqwest::StatusCode::BAD_REQUEST);
 
-    // Create a Patient first
-    let payload = json!({"resourceType": "Patient", "active": true});
+    // Create a Patient first - must include name for validation
+    let payload = json!({"resourceType": "Patient", "active": true, "name": [{"family": "TestFamily"}]});
     let resp = client
         .post(format!("{base}/Patient"))
         .header("accept", "application/fhir+json")
@@ -215,8 +215,8 @@ async fn error_cases_invalid_resource_and_id_mismatch_and_delete_404() {
     let created: Value = resp.json().await.unwrap();
     let id = created["id"].as_str().unwrap().to_string();
 
-    // PUT id mismatch (body id != path id)
-    let mism = json!({"resourceType": "Patient", "id": "DIFFERENT"});
+    // PUT id mismatch (body id != path id) - must include name for validation
+    let mism = json!({"resourceType": "Patient", "id": "DIFFERENT", "name": [{"family": "Mismatch"}]});
     let resp = client
         .put(format!("{base}/Patient/{id}"))
         .header("accept", "application/fhir+json")

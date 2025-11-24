@@ -286,21 +286,49 @@ impl OperationHandler for ValidateOperation {
 
     async fn handle_system(
         &self,
-        _state: &AppState,
+        state: &AppState,
         params: &Value,
     ) -> Result<Value, OperationError> {
         // System-level validation: validate any resource without type constraint
-        self.validate_resource(params, None).await
+        let resource = self.extract_resource(params).ok_or_else(|| {
+            OperationError::InvalidParameters("resource parameter required".into())
+        })?;
+
+        // Use ValidationService for comprehensive validation
+        let outcome = state.validation_service.validate(&resource).await;
+        Ok(outcome.to_operation_outcome())
     }
 
     async fn handle_type(
         &self,
-        _state: &AppState,
+        state: &AppState,
         resource_type: &str,
         params: &Value,
     ) -> Result<Value, OperationError> {
         // Type-level validation: validate resource must match the specified type
-        self.validate_resource(params, Some(resource_type)).await
+        let resource = self.extract_resource(params).ok_or_else(|| {
+            OperationError::InvalidParameters("resource parameter required".into())
+        })?;
+
+        // Verify resource type matches
+        let actual_type = resource["resourceType"].as_str().ok_or_else(|| {
+            OperationError::InvalidParameters("Resource must have a resourceType".into())
+        })?;
+
+        if actual_type != resource_type {
+            return Ok(serde_json::json!({
+                "resourceType": "OperationOutcome",
+                "issue": [{
+                    "severity": "error",
+                    "code": "invalid",
+                    "diagnostics": format!("Resource type '{}' does not match expected type '{}'", actual_type, resource_type)
+                }]
+            }));
+        }
+
+        // Use ValidationService for comprehensive validation
+        let outcome = state.validation_service.validate(&resource).await;
+        Ok(outcome.to_operation_outcome())
     }
 
     async fn handle_instance(
@@ -311,13 +339,8 @@ impl OperationHandler for ValidateOperation {
         params: &Value,
     ) -> Result<Value, OperationError> {
         // Instance-level validation: validate existing resource or provided resource
-        let resource = self.extract_resource(params);
-
-        match resource {
-            Some(res) => {
-                self.validate_resource_value(&res, Some(resource_type))
-                    .await
-            }
+        let resource = match self.extract_resource(params) {
+            Some(res) => res,
             None => {
                 // Fetch from storage - parse resource type first
                 let rt = ResourceType::from_str(resource_type).map_err(|_| {
@@ -337,13 +360,30 @@ impl OperationHandler for ValidateOperation {
                     })?;
 
                 // Convert envelope to JSON for validation
-                let resource_json = serde_json::to_value(&envelope)
-                    .map_err(|e| OperationError::Internal(e.to_string()))?;
-
-                self.validate_resource_value(&resource_json, Some(resource_type))
-                    .await
+                serde_json::to_value(&envelope)
+                    .map_err(|e| OperationError::Internal(e.to_string()))?
             }
+        };
+
+        // Verify resource type matches
+        let actual_type = resource["resourceType"].as_str().ok_or_else(|| {
+            OperationError::InvalidParameters("Resource must have a resourceType".into())
+        })?;
+
+        if actual_type != resource_type {
+            return Ok(serde_json::json!({
+                "resourceType": "OperationOutcome",
+                "issue": [{
+                    "severity": "error",
+                    "code": "invalid",
+                    "diagnostics": format!("Resource type '{}' does not match expected type '{}'", actual_type, resource_type)
+                }]
+            }));
         }
+
+        // Use ValidationService for comprehensive validation
+        let outcome = state.validation_service.validate(&resource).await;
+        Ok(outcome.to_operation_outcome())
     }
 }
 
