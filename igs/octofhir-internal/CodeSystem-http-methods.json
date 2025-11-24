@@ -1,0 +1,48 @@
+{
+  "resourceType": "CodeSystem",
+  "id": "http-methods",
+  "url": "http://octofhir.io/CodeSystem/http-methods",
+  "name": "HttpMethods",
+  "title": "HTTP Methods Code System",
+  "status": "active",
+  "content": "complete",
+  "description": "HTTP methods for custom operations",
+  "caseSensitive": true,
+  "concept": [
+    {
+      "code": "GET",
+      "display": "GET",
+      "definition": "HTTP GET method - retrieve a resource"
+    },
+    {
+      "code": "POST",
+      "display": "POST",
+      "definition": "HTTP POST method - create a resource or invoke an action"
+    },
+    {
+      "code": "PUT",
+      "display": "PUT",
+      "definition": "HTTP PUT method - update a resource"
+    },
+    {
+      "code": "DELETE",
+      "display": "DELETE",
+      "definition": "HTTP DELETE method - delete a resource"
+    },
+    {
+      "code": "PATCH",
+      "display": "PATCH",
+      "definition": "HTTP PATCH method - partial update of a resource"
+    },
+    {
+      "code": "HEAD",
+      "display": "HEAD",
+      "definition": "HTTP HEAD method - retrieve headers only"
+    },
+    {
+      "code": "OPTIONS",
+      "display": "OPTIONS",
+      "definition": "HTTP OPTIONS method - retrieve available operations"
+    }
+  ]
+}

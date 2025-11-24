@@ -1,0 +1,100 @@
+.container {
+    max-width: 1000px;
+    margin: 0 auto;
+}
+
+.header {
+    margin-bottom: var(--spacing-6);
+}
+
+.title {
+    font-size: var(--font-size-2xl);
+    font-weight: var(--font-weight-bold);
+    color: var(--text-color);
+    margin-bottom: var(--spacing-2);
+}
+
+.subtitle {
+    font-size: var(--font-size-md);
+    color: var(--text-muted);
+}
+
+.section {
+    margin-bottom: var(--spacing-8);
+}
+
+.sectionTitle {
+    font-size: var(--font-size-lg);
+    font-weight: var(--font-weight-semibold);
+    color: var(--text-color);
+    margin-bottom: var(--spacing-4);
+    padding-bottom: var(--spacing-2);
+    border-bottom: 1px solid var(--border-subtle);
+}
+
+.grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: var(--spacing-4);
+}
+
+.resourceCard {
+    background-color: var(--card-bg);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    padding: var(--spacing-4);
+    transition: box-shadow var(--transition-fast);
+}
+
+.resourceCard:hover {
+    box-shadow: var(--shadow-sm);
+    border-color: var(--border-color);
+}
+
+.resourceName {
+    font-size: var(--font-size-md);
+    font-weight: var(--font-weight-medium);
+    color: var(--primary-color);
+    margin-bottom: var(--spacing-2);
+}
+
+.interactionList {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--spacing-2);
+}
+
+.interactionBadge {
+    font-size: var(--font-size-xs);
+    padding: 2px 6px;
+    background-color: var(--bg-secondary);
+    border-radius: var(--radius-sm);
+    color: var(--text-secondary);
+    border: 1px solid var(--border-subtle);
+    text-transform: uppercase;
+}
+
+.infoGrid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: var(--spacing-4);
+}
+
+.infoItem {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-1);
+}
+
+.infoLabel {
+    font-size: var(--font-size-xs);
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.infoValue {
+    font-size: var(--font-size-sm);
+    color: var(--text-color);
+    font-weight: var(--font-weight-medium);
+}

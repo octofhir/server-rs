@@ -1,0 +1,243 @@
+{
+  "resourceType": "StructureDefinition",
+  "id": "CustomOperation",
+  "url": "http://octofhir.io/StructureDefinition/CustomOperation",
+  "name": "CustomOperation",
+  "title": "Custom Operation Resource",
+  "status": "active",
+  "fhirVersion": "4.0.1",
+  "kind": "resource",
+  "abstract": false,
+  "type": "CustomOperation",
+  "baseDefinition": "http://hl7.org/fhir/StructureDefinition/DomainResource",
+  "derivation": "specialization",
+  "description": "A CustomOperation defines a custom API endpoint with configurable behavior (proxy, SQL, FHIRPath, or custom handler).",
+  "differential": {
+    "element": [
+      {
+        "id": "CustomOperation",
+        "path": "CustomOperation",
+        "short": "Custom API operation definition",
+        "definition": "Defines a custom API endpoint with its path, method, and implementation."
+      },
+      {
+        "id": "CustomOperation.app",
+        "path": "CustomOperation.app",
+        "short": "Parent application",
+        "definition": "Reference to the App that contains this operation",
+        "min": 1,
+        "max": "1",
+        "type": [
+          {
+            "code": "Reference",
+            "targetProfile": [
+              "http://octofhir.io/StructureDefinition/App"
+            ]
+          }
+        ]
+      },
+      {
+        "id": "CustomOperation.path",
+        "path": "CustomOperation.path",
+        "short": "Relative URL path",
+        "definition": "Path relative to App.basePath (e.g., /users/:id)",
+        "comment": "Supports path parameters like :id, :resourceId",
+        "min": 1,
+        "max": "1",
+        "type": [
+          {
+            "code": "string"
+          }
+        ]
+      },
+      {
+        "id": "CustomOperation.method",
+        "path": "CustomOperation.method",
+        "short": "HTTP method",
+        "definition": "HTTP method for this operation (GET, POST, PUT, DELETE, PATCH)",
+        "min": 1,
+        "max": "1",
+        "type": [
+          {
+            "code": "code"
+          }
+        ],
+        "binding": {
+          "strength": "required",
+          "valueSet": "http://octofhir.io/ValueSet/http-methods"
+        }
+      },
+      {
+        "id": "CustomOperation.type",
+        "path": "CustomOperation.type",
+        "short": "Operation type",
+        "definition": "Type of operation implementation: proxy | sql | fhirpath | handler",
+        "min": 1,
+        "max": "1",
+        "type": [
+          {
+            "code": "code"
+          }
+        ],
+        "binding": {
+          "strength": "required",
+          "valueSet": "http://octofhir.io/ValueSet/operation-types"
+        }
+      },
+      {
+        "id": "CustomOperation.proxy",
+        "path": "CustomOperation.proxy",
+        "short": "Proxy configuration",
+        "definition": "Configuration for proxy-type operations",
+        "condition": [
+          "type == 'proxy'"
+        ],
+        "min": 0,
+        "max": "1",
+        "type": [
+          {
+            "code": "BackboneElement"
+          }
+        ]
+      },
+      {
+        "id": "CustomOperation.proxy.url",
+        "path": "CustomOperation.proxy.url",
+        "short": "Target URL",
+        "definition": "Full URL to proxy requests to",
+        "min": 1,
+        "max": "1",
+        "type": [
+          {
+            "code": "url"
+          }
+        ]
+      },
+      {
+        "id": "CustomOperation.proxy.timeout",
+        "path": "CustomOperation.proxy.timeout",
+        "short": "Timeout in seconds",
+        "definition": "Request timeout in seconds (default: 30)",
+        "min": 0,
+        "max": "1",
+        "type": [
+          {
+            "code": "integer"
+          }
+        ]
+      },
+      {
+        "id": "CustomOperation.proxy.headers",
+        "path": "CustomOperation.proxy.headers",
+        "short": "Additional headers",
+        "definition": "Headers to add to proxied requests",
+        "min": 0,
+        "max": "*",
+        "type": [
+          {
+            "code": "BackboneElement"
+          }
+        ]
+      },
+      {
+        "id": "CustomOperation.proxy.headers.name",
+        "path": "CustomOperation.proxy.headers.name",
+        "short": "Header name",
+        "min": 1,
+        "max": "1",
+        "type": [
+          {
+            "code": "string"
+          }
+        ]
+      },
+      {
+        "id": "CustomOperation.proxy.headers.value",
+        "path": "CustomOperation.proxy.headers.value",
+        "short": "Header value",
+        "min": 1,
+        "max": "1",
+        "type": [
+          {
+            "code": "string"
+          }
+        ]
+      },
+      {
+        "id": "CustomOperation.sql",
+        "path": "CustomOperation.sql",
+        "short": "SQL query",
+        "definition": "SQL query to execute (for type = sql)",
+        "comment": "Use parameterized queries to prevent SQL injection",
+        "condition": [
+          "type == 'sql'"
+        ],
+        "min": 0,
+        "max": "1",
+        "type": [
+          {
+            "code": "string"
+          }
+        ]
+      },
+      {
+        "id": "CustomOperation.fhirpath",
+        "path": "CustomOperation.fhirpath",
+        "short": "FHIRPath expression",
+        "definition": "FHIRPath expression to evaluate (for type = fhirpath)",
+        "condition": [
+          "type == 'fhirpath'"
+        ],
+        "min": 0,
+        "max": "1",
+        "type": [
+          {
+            "code": "string"
+          }
+        ]
+      },
+      {
+        "id": "CustomOperation.handler",
+        "path": "CustomOperation.handler",
+        "short": "Handler identifier",
+        "definition": "Identifier for a registered custom handler (for type = handler)",
+        "condition": [
+          "type == 'handler'"
+        ],
+        "min": 0,
+        "max": "1",
+        "type": [
+          {
+            "code": "string"
+          }
+        ]
+      },
+      {
+        "id": "CustomOperation.active",
+        "path": "CustomOperation.active",
+        "short": "Whether the operation is active",
+        "definition": "If false, requests to this operation return 404",
+        "min": 1,
+        "max": "1",
+        "type": [
+          {
+            "code": "boolean"
+          }
+        ]
+      },
+      {
+        "id": "CustomOperation.description",
+        "path": "CustomOperation.description",
+        "short": "Description",
+        "definition": "Human-readable description of what this operation does",
+        "min": 0,
+        "max": "1",
+        "type": [
+          {
+            "code": "string"
+          }
+        ]
+      }
+    ]
+  }
+}

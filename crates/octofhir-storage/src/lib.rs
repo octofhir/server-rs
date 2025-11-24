@@ -58,7 +58,10 @@ mod types;
 
 // Re-export everything from submodules
 pub use error::{ErrorCategory, StorageError};
-pub use traits::{FhirStorage, StorageCapabilities, Transaction};
+pub use traits::{
+    ConformanceChangeEvent, ConformanceChangeOp, ConformanceStorage, FhirStorage,
+    StorageCapabilities, Transaction,
+};
 pub use types::{
     HistoryEntry, HistoryMethod, HistoryParams, HistoryResult, SearchParams, SearchResult,
     SortParam, StoredResource, TotalMode,
@@ -77,7 +80,10 @@ pub type DynStorage = std::sync::Arc<dyn FhirStorage>;
 /// ```
 pub mod prelude {
     pub use crate::error::{ErrorCategory, StorageError};
-    pub use crate::traits::{FhirStorage, StorageCapabilities, Transaction};
+    pub use crate::traits::{
+        ConformanceChangeEvent, ConformanceChangeOp, ConformanceStorage, FhirStorage,
+        StorageCapabilities, Transaction,
+    };
     pub use crate::types::{
         HistoryEntry, HistoryMethod, HistoryParams, HistoryResult, SearchParams, SearchResult,
         SortParam, StoredResource, TotalMode,

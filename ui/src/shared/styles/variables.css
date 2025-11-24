@@ -1,0 +1,148 @@
+:root {
+  /* Colors - Light theme (Linear-inspired) */
+  --primary-color: #5e6ad2;
+  --primary-hover: #4e5bc2;
+  --primary-light: #8b92e8;
+  --primary-subtle: rgba(94, 106, 210, 0.08);
+  --secondary-color: #6b7280;
+  --success-color: #2da44e;
+  --success-subtle: rgba(45, 164, 78, 0.1);
+  --warning-color: #d29922;
+  --warning-subtle: rgba(210, 153, 34, 0.1);
+  --error-color: #cf222e;
+  --error-subtle: rgba(207, 34, 46, 0.1);
+
+  /* Background - Clean, minimal */
+  --bg-color: #ffffff;
+  --bg-secondary: #f7f8fa;
+  --bg-tertiary: #f2f3f5;
+  --header-bg: rgba(255, 255, 255, 0.85);
+  --sidebar-bg: #f7f8fa;
+  --card-bg: #ffffff;
+  --input-bg: #ffffff;
+  --hover-bg: rgba(0, 0, 0, 0.04);
+  --active-bg: rgba(0, 0, 0, 0.08);
+
+  /* Text - High contrast, clean */
+  --text-color: #1f2328;
+  --text-secondary: #656d76;
+  --text-muted: #8c959f;
+  --text-subtle: #afb8c1;
+  --text-inverse: #ffffff;
+
+  /* Border - Subtle, clean lines */
+  --border-color: #d0d7de;
+  --border-subtle: #eff2f5;
+  --border-focus: var(--primary-color);
+  --border-width: 1px;
+
+  /* Shadow - Minimal, subtle */
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.04);
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.04);
+  --shadow-md: 0 4px 8px rgba(0, 0, 0, 0.08), 0 2px 4px rgba(0, 0, 0, 0.04);
+  --shadow-lg: 0 12px 24px rgba(0, 0, 0, 0.1), 0 4px 8px rgba(0, 0, 0, 0.04);
+  --shadow-focus: 0 0 0 3px var(--primary-subtle);
+
+  /* Typography - Clean, modern */
+  --font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    sans-serif;
+  --font-mono: "JetBrains Mono", "SF Mono", "Fira Code", Consolas, monospace;
+  --font-size-2xs: 0.625rem;
+  --font-size-xs: 0.75rem;
+  --font-size-sm: 0.8125rem;
+  --font-size-md: 0.875rem;
+  --font-size-lg: 1rem;
+  --font-size-xl: 1.125rem;
+  --font-size-2xl: 1.25rem;
+  --font-size-3xl: 1.5rem;
+  --font-weight-normal: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+  --font-weight-bold: 700;
+  --line-height-tight: 1.25;
+  --line-height-normal: 1.5;
+  --line-height-relaxed: 1.625;
+  --letter-spacing-tight: -0.01em;
+  --letter-spacing-normal: 0;
+
+  /* Spacing - Consistent scale */
+  --spacing-0: 0;
+  --spacing-1: 0.25rem;
+  --spacing-2: 0.5rem;
+  --spacing-3: 0.75rem;
+  --spacing-4: 1rem;
+  --spacing-5: 1.25rem;
+  --spacing-6: 1.5rem;
+  --spacing-8: 2rem;
+  --spacing-10: 2.5rem;
+  --spacing-12: 3rem;
+  --spacing-16: 4rem;
+  /* Legacy aliases */
+  --spacing-xs: var(--spacing-1);
+  --spacing-sm: var(--spacing-2);
+  --spacing-md: var(--spacing-4);
+  --spacing-lg: var(--spacing-6);
+  --spacing-xl: var(--spacing-8);
+  --spacing-2xl: var(--spacing-12);
+
+  /* Border radius - Subtle, modern */
+  --radius-none: 0;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 12px;
+  --radius-2xl: 16px;
+  --radius-full: 9999px;
+
+  /* Transitions - Smooth, subtle */
+  --transition-fast: 100ms ease;
+  --transition-normal: 150ms ease;
+  --transition-slow: 200ms ease;
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+
+  /* Layout */
+  --header-height: 56px;
+  --sidebar-width: 240px;
+  --sidebar-collapsed-width: 64px;
+  --content-max-width: 1400px;
+  --z-dropdown: 100;
+  --z-sticky: 200;
+  --z-modal: 300;
+  --z-tooltip: 400;
+}
+
+/* Dark theme - Linear-inspired */
+[data-theme="dark"] {
+  --primary-color: #7983d6;
+  --primary-hover: #8b92e8;
+  --primary-light: #5e6ad2;
+  --primary-subtle: rgba(121, 131, 214, 0.15);
+
+  --bg-color: #161618;
+  --bg-secondary: #1c1c1f;
+  --bg-tertiary: #232326;
+  --header-bg: rgba(22, 22, 24, 0.85);
+  --sidebar-bg: #1c1c1f;
+  --card-bg: #1c1c1f;
+  --input-bg: #232326;
+  --hover-bg: rgba(255, 255, 255, 0.06);
+  --active-bg: rgba(255, 255, 255, 0.1);
+
+  --text-color: #ededef;
+  --text-secondary: #a0a0a3;
+  --text-muted: #707075;
+  --text-subtle: #4e4e52;
+
+  --border-color: #2e2e32;
+  --border-subtle: #28282b;
+
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.4), 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 4px 8px rgba(0, 0, 0, 0.4), 0 2px 4px rgba(0, 0, 0, 0.3);
+  --shadow-lg: 0 12px 24px rgba(0, 0, 0, 0.5), 0 4px 8px rgba(0, 0, 0, 0.4);
+
+  --success-subtle: rgba(45, 164, 78, 0.15);
+  --warning-subtle: rgba(210, 153, 34, 0.15);
+  --error-subtle: rgba(207, 34, 46, 0.15);
+}

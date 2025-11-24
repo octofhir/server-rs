@@ -1,190 +1,126 @@
-import { Box } from "@mantine/core";
-import { useMediaQuery } from "@mantine/hooks";
-import { useUnit } from "effector-react";
-import type React from "react";
-import { useState } from "react";
+import { createSignal, onMount, For, Show } from "solid-js";
+import { useParams } from "@solidjs/router";
+import { Card, Loader, JsonViewer, Splitter } from "@/shared/ui";
 import {
-  $resourceList,
-  $selectedResource,
-  $selectedResourceType,
+  loadCapabilities,
+  getResourceTypes,
+  searchResources,
+  loadResource,
+  resources,
+  selectedResource,
+  resourcesLoading,
+  bundle,
+  clearSelectedResource,
 } from "@/entities/fhir";
-import { ResourceDetails } from "@/features/resource-details";
-import {
-  Pagination,
-  ResourceCard,
-  ResourceSearchForm,
-  ResourceTypeList,
-} from "@/features/resource-list";
-import { Splitter } from "@/shared/ui/Splitter";
 import styles from "./ResourceBrowserPage.module.css";
 
-export const ResourceBrowserPage: React.FC = () => {
-  // URL state synchronization - temporarily disabled to fix infinite loop
-  // useResourceBrowserUrlState();
+export const ResourceBrowserPage = () => {
+  const params = useParams();
+  const [resourceTypes, setResourceTypes] = createSignal<string[]>([]);
+  const [selectedType, setSelectedType] = createSignal<string | null>(null);
 
-  // Effector state
-  const selectedResourceType = useUnit($selectedResourceType);
-  const resourceList = useUnit($resourceList);
-  const selectedResource = useUnit($selectedResource);
+  onMount(async () => {
+    try {
+      await loadCapabilities();
+      setResourceTypes(getResourceTypes());
 
-  // Responsive layout
-  const isMobile = useMediaQuery("(max-width: 768px)");
-  const isTablet = useMediaQuery("(max-width: 1024px)");
+      if (params.type) {
+        setSelectedType(params.type);
+        await searchResources(params.type);
+      }
+    } catch (err) {
+      console.error("Failed to load:", err);
+    }
+  });
 
-  // Layout state for mobile/tablet
-  const [mobileView, setMobileView] = useState<"types" | "list" | "details">("types");
-
-  // Resource list is automatically updated via the resource browser store
-
-  // Handle edit resource
-  const handleEditResource = (resource: any) => {
-    // TODO: Implement resource editing
-    console.log("Edit resource:", resource);
+  const handleTypeSelect = async (type: string) => {
+    setSelectedType(type);
+    clearSelectedResource();
+    await searchResources(type);
   };
 
-  // Mobile layout - single view at a time
-  if (isMobile) {
-    return (
-      <Box className={styles.container}>
-        <Box className={styles.mobileHeader}>
-          <div className={styles.mobileNav}>
-            <button
-              type="button"
-              className={`${styles.navButton} ${mobileView === "types" ? styles.active : ""}`}
-              onClick={() => setMobileView("types")}
-            >
-              Types
-            </button>
-            <button
-              type="button"
-              className={`${styles.navButton} ${mobileView === "list" ? styles.active : ""}`}
-              onClick={() => setMobileView("list")}
-              disabled={!selectedResourceType}
-            >
-              List ({resourceList.total || 0})
-            </button>
-            <button
-              type="button"
-              className={`${styles.navButton} ${mobileView === "details" ? styles.active : ""}`}
-              onClick={() => setMobileView("details")}
-              disabled={!selectedResource}
-            >
-              Details
-            </button>
-          </div>
-        </Box>
+  const handleResourceSelect = async (resourceType: string, id: string) => {
+    await loadResource(resourceType, id);
+  };
 
-        <Box className={styles.mobileContent}>
-          {mobileView === "types" && (
-            <ResourceTypeList
-              className={styles.resourceTypes}
-              onResourceTypeSelect={() => setMobileView("list")}
-            />
-          )}
-
-          {mobileView === "list" && selectedResourceType && (
-            <Box className={styles.resourceList}>
-              <ResourceSearchForm />
-              <Box className={styles.listContent}>
-                {resourceList.data.map((resource) => (
-                  <ResourceCard
-                    key={resource.id}
-                    resource={resource}
-                    isSelected={selectedResource?.id === resource.id}
-                  />
-                ))}
-              </Box>
-              <Pagination />
-            </Box>
-          )}
-
-          {mobileView === "details" && selectedResource && (
-            <ResourceDetails onEdit={handleEditResource} />
-          )}
-        </Box>
-      </Box>
-    );
-  }
-
-  // Tablet layout - two panels with collapsible sidebar
-  if (isTablet) {
-    return (
-      <Box className={styles.container}>
-        <Splitter
-          direction="horizontal"
-          defaultSize={30}
-          minSize={20}
-          maxSize={80}
-          className={styles.tabletSplitter}
-        >
-          <Box className={styles.leftPanel}>
-            <ResourceTypeList className={styles.resourceTypes} />
-            {selectedResourceType && (
-              <Box className={styles.resourceList}>
-                <ResourceSearchForm />
-                <Box className={styles.listContent}>
-                  {resourceList.data.map((resource) => (
-                    <ResourceCard
-                      key={resource.id}
-                      resource={resource}
-                      isSelected={selectedResource?.id === resource.id}
-                    />
-                  ))}
-                </Box>
-                <Pagination />
-              </Box>
-            )}
-          </Box>
-          <ResourceDetails onEdit={handleEditResource} />
-        </Splitter>
-      </Box>
-    );
-  }
-
-  // Desktop layout - three panels
   return (
-    <Box className={styles.container}>
-      <Splitter
-        direction="horizontal"
-        defaultSize={25}
-        minSize={15}
-        maxSize={40}
-        className={styles.desktopSplitter}
-      >
-        {/* Resource Types Sidebar */}
-        <ResourceTypeList className={styles.resourceTypes} />
-
-        {/* Right Panel containing List and Details */}
-        <Splitter
-          direction="horizontal"
-          defaultSize={50}
-          minSize={30}
-          maxSize={70}
-          className={styles.rightPanel}
-        >
-          {/* Resource List Panel */}
-          <Box className={styles.middlePanel}>
-            <ResourceSearchForm />
-            <Box className={styles.listContent}>
-              {selectedResourceType ? (
-                resourceList.data.map((resource) => (
-                  <ResourceCard
-                    key={resource.id}
-                    resource={resource}
-                    isSelected={selectedResource?.id === resource.id}
-                  />
-                ))
-              ) : (
-                <Box className={styles.emptyState}>Select a resource type to browse resources</Box>
+    <div class={styles.container}>
+      <Splitter direction="horizontal" defaultSize={20} minSize={15} maxSize={35}>
+        <div class={styles.typesPanel}>
+          <h3 class={styles.panelTitle}>Resource Types</h3>
+          <div class={styles.typesList}>
+            <For each={resourceTypes()}>
+              {(type) => (
+                <button
+                  type="button"
+                  class={styles.typeItem}
+                  classList={{ [styles.active]: selectedType() === type }}
+                  onClick={() => handleTypeSelect(type)}
+                >
+                  {type}
+                </button>
               )}
-            </Box>
-            <Pagination />
-          </Box>
+            </For>
+          </div>
+        </div>
 
-          {/* Resource Details Panel */}
-          <ResourceDetails onEdit={handleEditResource} />
+        <Splitter direction="horizontal" defaultSize={50} minSize={30} maxSize={70}>
+          <div class={styles.listPanel}>
+            <h3 class={styles.panelTitle}>
+              {selectedType() || "Resources"}
+              <Show when={bundle()}>
+                <span class={styles.count}>({bundle()?.total || 0})</span>
+              </Show>
+            </h3>
+
+            <Show when={resourcesLoading()}>
+              <div class={styles.loaderContainer}>
+                <Loader label="Loading..." />
+              </div>
+            </Show>
+
+            <Show when={!resourcesLoading()}>
+              <div class={styles.resourceList}>
+                <Show
+                  when={resources().length > 0}
+                  fallback={
+                    <div class={styles.emptyState}>
+                      {selectedType() ? "No resources found" : "Select a resource type"}
+                    </div>
+                  }
+                >
+                  <For each={resources()}>
+                    {(resource) => (
+                      <Card
+                        class={styles.resourceCard}
+                        hoverable
+                        onClick={() => handleResourceSelect(resource.resourceType, resource.id!)}
+                      >
+                        <div class={styles.resourceId}>{resource.id}</div>
+                        <div class={styles.resourceMeta}>
+                          {resource.meta?.lastUpdated
+                            ? new Date(resource.meta.lastUpdated).toLocaleString()
+                            : "No date"}
+                        </div>
+                      </Card>
+                    )}
+                  </For>
+                </Show>
+              </div>
+            </Show>
+          </div>
+
+          <div class={styles.detailsPanel}>
+            <h3 class={styles.panelTitle}>Details</h3>
+            <Show
+              when={selectedResource()}
+              fallback={<div class={styles.emptyState}>Select a resource to view details</div>}
+            >
+              <JsonViewer data={selectedResource()} />
+            </Show>
+          </div>
         </Splitter>
       </Splitter>
-    </Box>
+    </div>
   );
 };

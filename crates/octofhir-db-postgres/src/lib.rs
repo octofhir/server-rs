@@ -46,7 +46,10 @@
 //! - [`migrations`]: Database migration management
 
 mod config;
+mod conformance;
+mod db_sync;
 mod error;
+mod hot_reload;
 mod migrations;
 mod pool;
 mod queries;
@@ -55,11 +58,14 @@ mod storage;
 
 // Re-export main types
 pub use config::PostgresConfig;
+pub use conformance::PostgresConformanceStorage;
+pub use db_sync::{load_to_memory, sync_and_load, sync_to_directory, ConformanceBundle, SyncStats};
 pub use error::{PostgresError, Result};
+pub use hot_reload::{HotReloadBuilder, HotReloadListener};
 pub use storage::PostgresStorage;
 
 // Re-export storage traits for convenience
-pub use octofhir_storage::{FhirStorage, StorageError, StoredResource};
+pub use octofhir_storage::{ConformanceStorage, FhirStorage, StorageError, StoredResource};
 
 /// Type alias for a shareable PostgresStorage instance.
 pub type DynPostgresStorage = std::sync::Arc<PostgresStorage>;
@@ -87,8 +93,11 @@ pub async fn create_storage(
 /// ```
 pub mod prelude {
     pub use crate::config::PostgresConfig;
+    pub use crate::conformance::PostgresConformanceStorage;
+    pub use crate::db_sync::{load_to_memory, sync_and_load, sync_to_directory, ConformanceBundle, SyncStats};
     pub use crate::error::{PostgresError, Result};
+    pub use crate::hot_reload::{HotReloadBuilder, HotReloadListener};
     pub use crate::storage::PostgresStorage;
     pub use crate::{DynPostgresStorage, create_storage};
-    pub use octofhir_storage::{FhirStorage, StorageError, StoredResource};
+    pub use octofhir_storage::{ConformanceStorage, FhirStorage, StorageError, StoredResource};
 }

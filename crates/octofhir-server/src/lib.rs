@@ -1,6 +1,8 @@
+pub mod bootstrap;
 pub mod canonical;
 pub mod config;
 pub mod config_watch;
+pub mod gateway;
 pub mod handlers;
 pub mod mapping;
 pub mod middleware;

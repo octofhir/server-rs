@@ -235,6 +235,165 @@ pub trait StorageCapabilities {
     }
 }
 
+// ==================== Conformance Storage ====================
+
+/// Storage trait for FHIR conformance resources (StructureDefinitions, ValueSets, etc.)
+///
+/// This trait provides CRUD operations for conformance resources stored in the
+/// internal OctoFHIR schema. These resources define custom resource types like
+/// App, CustomOperation, and their associated terminology.
+///
+/// # Hot-Reload Support
+///
+/// Implementations should support change notifications for hot-reload functionality.
+/// When a conformance resource is modified, subscribers should be notified so they
+/// can update their caches (e.g., canonical manager, FHIRSchema validator).
+#[async_trait]
+pub trait ConformanceStorage: Send + Sync {
+    // ==================== StructureDefinition ====================
+
+    /// Lists all StructureDefinitions.
+    async fn list_structure_definitions(&self) -> Result<Vec<Value>, StorageError>;
+
+    /// Gets a StructureDefinition by its canonical URL.
+    async fn get_structure_definition_by_url(
+        &self,
+        url: &str,
+        version: Option<&str>,
+    ) -> Result<Option<Value>, StorageError>;
+
+    /// Gets a StructureDefinition by its database ID.
+    async fn get_structure_definition(&self, id: &str) -> Result<Option<Value>, StorageError>;
+
+    /// Creates a new StructureDefinition.
+    async fn create_structure_definition(&self, resource: &Value) -> Result<Value, StorageError>;
+
+    /// Updates an existing StructureDefinition.
+    async fn update_structure_definition(
+        &self,
+        id: &str,
+        resource: &Value,
+    ) -> Result<Value, StorageError>;
+
+    /// Deletes a StructureDefinition by ID.
+    async fn delete_structure_definition(&self, id: &str) -> Result<(), StorageError>;
+
+    // ==================== ValueSet ====================
+
+    /// Lists all ValueSets.
+    async fn list_value_sets(&self) -> Result<Vec<Value>, StorageError>;
+
+    /// Gets a ValueSet by its canonical URL.
+    async fn get_value_set_by_url(
+        &self,
+        url: &str,
+        version: Option<&str>,
+    ) -> Result<Option<Value>, StorageError>;
+
+    /// Gets a ValueSet by its database ID.
+    async fn get_value_set(&self, id: &str) -> Result<Option<Value>, StorageError>;
+
+    /// Creates a new ValueSet.
+    async fn create_value_set(&self, resource: &Value) -> Result<Value, StorageError>;
+
+    /// Updates an existing ValueSet.
+    async fn update_value_set(&self, id: &str, resource: &Value) -> Result<Value, StorageError>;
+
+    /// Deletes a ValueSet by ID.
+    async fn delete_value_set(&self, id: &str) -> Result<(), StorageError>;
+
+    // ==================== CodeSystem ====================
+
+    /// Lists all CodeSystems.
+    async fn list_code_systems(&self) -> Result<Vec<Value>, StorageError>;
+
+    /// Gets a CodeSystem by its canonical URL.
+    async fn get_code_system_by_url(
+        &self,
+        url: &str,
+        version: Option<&str>,
+    ) -> Result<Option<Value>, StorageError>;
+
+    /// Gets a CodeSystem by its database ID.
+    async fn get_code_system(&self, id: &str) -> Result<Option<Value>, StorageError>;
+
+    /// Creates a new CodeSystem.
+    async fn create_code_system(&self, resource: &Value) -> Result<Value, StorageError>;
+
+    /// Updates an existing CodeSystem.
+    async fn update_code_system(&self, id: &str, resource: &Value) -> Result<Value, StorageError>;
+
+    /// Deletes a CodeSystem by ID.
+    async fn delete_code_system(&self, id: &str) -> Result<(), StorageError>;
+
+    // ==================== SearchParameter ====================
+
+    /// Lists all SearchParameters.
+    async fn list_search_parameters(&self) -> Result<Vec<Value>, StorageError>;
+
+    /// Gets a SearchParameter by its canonical URL.
+    async fn get_search_parameter_by_url(
+        &self,
+        url: &str,
+        version: Option<&str>,
+    ) -> Result<Option<Value>, StorageError>;
+
+    /// Gets SearchParameters for a specific resource type.
+    async fn get_search_parameters_for_resource(
+        &self,
+        resource_type: &str,
+    ) -> Result<Vec<Value>, StorageError>;
+
+    /// Gets a SearchParameter by its database ID.
+    async fn get_search_parameter(&self, id: &str) -> Result<Option<Value>, StorageError>;
+
+    /// Creates a new SearchParameter.
+    async fn create_search_parameter(&self, resource: &Value) -> Result<Value, StorageError>;
+
+    /// Updates an existing SearchParameter.
+    async fn update_search_parameter(
+        &self,
+        id: &str,
+        resource: &Value,
+    ) -> Result<Value, StorageError>;
+
+    /// Deletes a SearchParameter by ID.
+    async fn delete_search_parameter(&self, id: &str) -> Result<(), StorageError>;
+
+    // ==================== Bulk Operations ====================
+
+    /// Loads all conformance resources (for cache initialization).
+    ///
+    /// Returns a tuple of (StructureDefinitions, ValueSets, CodeSystems, SearchParameters).
+    async fn load_all_conformance(
+        &self,
+    ) -> Result<(Vec<Value>, Vec<Value>, Vec<Value>, Vec<Value>), StorageError>;
+}
+
+/// Notification about a conformance resource change.
+#[derive(Debug, Clone)]
+pub struct ConformanceChangeEvent {
+    /// The type of conformance resource (StructureDefinition, ValueSet, etc.)
+    pub resource_type: String,
+    /// The operation that was performed
+    pub operation: ConformanceChangeOp,
+    /// The database ID of the resource
+    pub id: String,
+    /// The canonical URL of the resource (if available)
+    pub url: Option<String>,
+}
+
+/// Type of conformance change operation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConformanceChangeOp {
+    /// Resource was created
+    Insert,
+    /// Resource was updated
+    Update,
+    /// Resource was deleted
+    Delete,
+}
+
 // Ensure traits are object-safe by using them as trait objects
 #[cfg(test)]
 mod tests {
@@ -248,4 +407,7 @@ mod tests {
 
     // Compile-time test that StorageCapabilities is object-safe
     fn _assert_capabilities_object_safe(_: &dyn StorageCapabilities) {}
+
+    // Compile-time test that ConformanceStorage is object-safe
+    fn _assert_conformance_storage_object_safe(_: &dyn ConformanceStorage) {}
 }

@@ -1,2 +1,1 @@
-export { EffectorProvider } from "./EffectorProvider";
-export { ThemeProvider } from "./ThemeProvider";
+export { ThemeProvider, useTheme } from "./ThemeProvider";

@@ -1,0 +1,117 @@
+{
+  "resourceType": "StructureDefinition",
+  "id": "App",
+  "url": "http://octofhir.io/StructureDefinition/App",
+  "name": "App",
+  "title": "App Resource",
+  "status": "active",
+  "fhirVersion": "4.0.1",
+  "kind": "resource",
+  "abstract": false,
+  "type": "App",
+  "baseDefinition": "http://hl7.org/fhir/StructureDefinition/DomainResource",
+  "derivation": "specialization",
+  "description": "An App groups custom operations under a common base path and configuration. Used for API Gateway functionality.",
+  "differential": {
+    "element": [
+      {
+        "id": "App",
+        "path": "App",
+        "short": "API Gateway application definition",
+        "definition": "Defines an application grouping for custom operations with a common base path and configuration."
+      },
+      {
+        "id": "App.name",
+        "path": "App.name",
+        "short": "Name of the application",
+        "definition": "Human-readable name for the application",
+        "min": 1,
+        "max": "1",
+        "type": [
+          {
+            "code": "string"
+          }
+        ]
+      },
+      {
+        "id": "App.description",
+        "path": "App.description",
+        "short": "Description of the application",
+        "definition": "Detailed description of what this application provides",
+        "min": 0,
+        "max": "1",
+        "type": [
+          {
+            "code": "string"
+          }
+        ]
+      },
+      {
+        "id": "App.basePath",
+        "path": "App.basePath",
+        "short": "Base URL path",
+        "definition": "Base path for all operations in this app (e.g., /api/v1/custom)",
+        "comment": "This path is prepended to all CustomOperation paths",
+        "min": 1,
+        "max": "1",
+        "type": [
+          {
+            "code": "string"
+          }
+        ]
+      },
+      {
+        "id": "App.active",
+        "path": "App.active",
+        "short": "Whether the app is active",
+        "definition": "If false, all operations under this app are disabled",
+        "min": 1,
+        "max": "1",
+        "type": [
+          {
+            "code": "boolean"
+          }
+        ]
+      },
+      {
+        "id": "App.authentication",
+        "path": "App.authentication",
+        "short": "Authentication configuration",
+        "definition": "Authentication requirements for this app",
+        "min": 0,
+        "max": "1",
+        "type": [
+          {
+            "code": "BackboneElement"
+          }
+        ]
+      },
+      {
+        "id": "App.authentication.type",
+        "path": "App.authentication.type",
+        "short": "Authentication type",
+        "definition": "Type of authentication required (e.g., bearer, basic, apiKey)",
+        "min": 1,
+        "max": "1",
+        "type": [
+          {
+            "code": "code"
+          }
+        ]
+      },
+      {
+        "id": "App.authentication.required",
+        "path": "App.authentication.required",
+        "short": "Whether authentication is required",
+        "definition": "If true, requests without valid authentication are rejected",
+        "min": 1,
+        "max": "1",
+        "type": [
+          {
+            "code": "boolean"
+          }
+        ]
+      }
+    ]
+  }
+}

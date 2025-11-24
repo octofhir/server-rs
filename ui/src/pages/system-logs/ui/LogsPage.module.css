@@ -1,0 +1,127 @@
+.container {
+    height: calc(100vh - var(--header-height) - var(--spacing-8));
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-4);
+}
+
+.header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.title {
+    font-size: var(--font-size-2xl);
+    font-weight: var(--font-weight-bold);
+    color: var(--text-color);
+}
+
+.controls {
+    display: flex;
+    gap: var(--spacing-2);
+    align-items: center;
+}
+
+.searchInput {
+    width: 250px;
+}
+
+.levelSelect {
+    width: 150px;
+}
+
+.logsContainer {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    background-color: var(--bg-secondary);
+}
+
+.logsHeader {
+    display: flex;
+    padding: var(--spacing-2) var(--spacing-4);
+    background-color: var(--card-bg);
+    border-bottom: 1px solid var(--border-color);
+    font-size: var(--font-size-xs);
+    font-weight: var(--font-weight-semibold);
+    color: var(--text-muted);
+    text-transform: uppercase;
+}
+
+.logsList {
+    flex: 1;
+    overflow-y: auto;
+    font-family: var(--font-mono);
+    font-size: var(--font-size-sm);
+}
+
+.logRow {
+    display: flex;
+    padding: var(--spacing-1) var(--spacing-4);
+    border-bottom: 1px solid var(--border-subtle);
+    transition: background-color var(--transition-fast);
+}
+
+.logRow:hover {
+    background-color: var(--hover-bg);
+}
+
+.colTimestamp {
+    width: 100px;
+    flex-shrink: 0;
+    color: var(--text-muted);
+}
+
+.colLevel {
+    width: 80px;
+    flex-shrink: 0;
+}
+
+.colSource {
+    width: 120px;
+    flex-shrink: 0;
+    color: var(--primary-color);
+}
+
+.colMessage {
+    flex: 1;
+    color: var(--text-color);
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.badge {
+    padding: 2px 6px;
+    border-radius: var(--radius-sm);
+    font-size: 10px;
+    font-weight: var(--font-weight-bold);
+    text-transform: uppercase;
+}
+
+.badgeINFO {
+    background-color: rgba(59, 130, 246, 0.1);
+    color: #3b82f6;
+}
+
+.badgeWARN {
+    background-color: rgba(245, 158, 11, 0.1);
+    color: #f59e0b;
+}
+
+.badgeERROR {
+    background-color: rgba(239, 68, 68, 0.1);
+    color: #ef4444;
+}
+
+.badgeDEBUG {
+    background-color: rgba(107, 114, 128, 0.1);
+    color: #6b7280;
+}
+
+.emptyState {
+    padding: var(--spacing-8);
+    text-align: center;
+    color: var(--text-muted);
+}

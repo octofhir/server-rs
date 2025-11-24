@@ -1,2 +1,2 @@
-export type { JsonViewerProps } from "./JsonViewer";
 export { JsonViewer } from "./JsonViewer";
+export type { JsonViewerProps } from "./JsonViewer";

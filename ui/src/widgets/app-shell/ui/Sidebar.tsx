@@ -1,64 +1,61 @@
-import { Group, NavLink, Stack, Text, ThemeIcon } from "@mantine/core";
-import { IconApi, IconDatabase, IconSearch, IconSettings } from "@tabler/icons-react";
-import { Link, useLocation } from "react-router-dom";
+import { For } from "solid-js";
+import { A, useLocation } from "@solidjs/router";
+import styles from "./Sidebar.module.css";
 
-interface SidebarProps {
-  width: number;
+interface NavItem {
+  label: string;
+  path: string;
+  description: string;
 }
 
-const navigation = [
+const navigation: NavItem[] = [
+  {
+    label: "Dashboard",
+    path: "/",
+    description: "Overview and quick actions",
+  },
   {
     label: "Resource Browser",
-    path: "/",
-    icon: IconDatabase,
+    path: "/resources",
     description: "Browse FHIR resources",
   },
   {
     label: "REST Console",
     path: "/console",
-    icon: IconApi,
     description: "Test FHIR API endpoints",
   },
   {
     label: "Settings",
     path: "/settings",
-    icon: IconSettings,
     description: "Configure server settings",
+  },
+  {
+    label: "DB Console",
+    path: "/db-console",
+    description: "SQL Editor & Query Tool",
   },
 ];
 
-export function Sidebar({ width }: SidebarProps) {
+export const Sidebar = () => {
   const location = useLocation();
 
   return (
-    <Stack
-      w={width}
-      h="100%"
-      p="md"
-      gap="xs"
-      style={{ borderRight: "1px solid var(--mantine-color-gray-3)" }}
-    >
-      <Group mb="md">
-        <ThemeIcon variant="light" size="sm">
-          <IconSearch size={16} />
-        </ThemeIcon>
-        <Text size="sm" fw={600} c="dimmed">
-          Navigation
-        </Text>
-      </Group>
-
-      {navigation.map((item) => (
-        <NavLink
-          key={item.path}
-          component={Link}
-          to={item.path}
-          label={item.label}
-          description={item.description}
-          leftSection={<item.icon size={20} />}
-          active={location.pathname === item.path}
-          style={{ borderRadius: "var(--mantine-radius-md)" }}
-        />
-      ))}
-    </Stack>
+    <aside class={styles.sidebar}>
+      <div class={styles.title}>Navigation</div>
+      <nav class={styles.nav}>
+        <For each={navigation}>
+          {(item) => (
+            <A
+              href={item.path}
+              class={styles.navItem}
+              classList={{ [styles.active]: location.pathname === item.path }}
+            >
+              <span class={styles.navLabel}>{item.label}</span>
+              <span class={styles.navDescription}>{item.description}</span>
+            </A>
+          )}
+        </For>
+      </nav>
+    </aside>
   );
-}
+};

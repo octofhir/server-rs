@@ -1,0 +1,104 @@
+.container {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    gap: var(--spacing-4);
+}
+
+.header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: var(--spacing-2);
+}
+
+.title {
+    font-size: var(--font-size-xl);
+    font-weight: var(--font-weight-semibold);
+    color: var(--text-color);
+}
+
+.actions {
+    display: flex;
+    gap: var(--spacing-2);
+}
+
+.editorContainer {
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+    background-color: var(--input-bg);
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 300px;
+}
+
+.editorToolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--spacing-2) var(--spacing-3);
+    border-bottom: 1px solid var(--border-subtle);
+    background-color: var(--bg-secondary);
+}
+
+.editorLabel {
+    font-size: var(--font-size-xs);
+    font-weight: var(--font-weight-medium);
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.editor {
+    flex: 1;
+    overflow: auto;
+    font-family: var(--font-mono);
+    font-size: var(--font-size-sm);
+}
+
+/* CodeMirror overrides to match theme */
+:global(.cm-editor) {
+    height: 100%;
+}
+
+:global(.cm-scroller) {
+    font-family: var(--font-mono) !important;
+}
+
+.resultsContainer {
+    flex: 1;
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+    background-color: var(--card-bg);
+    display: flex;
+    flex-direction: column;
+}
+
+.resultsHeader {
+    padding: var(--spacing-2) var(--spacing-3);
+    border-bottom: 1px solid var(--border-subtle);
+    background-color: var(--bg-secondary);
+    font-size: var(--font-size-xs);
+    font-weight: var(--font-weight-medium);
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.resultsContent {
+    flex: 1;
+    overflow: auto;
+    padding: var(--spacing-3);
+}
+
+.emptyState {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+}

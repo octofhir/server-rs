@@ -1,111 +1,113 @@
+import { createSignal } from "solid-js";
+import { Button, Card, Input, Select } from "@/shared/ui";
 import {
-  Button,
-  Card,
-  Container,
-  Group,
-  NumberInput,
-  Select,
-  Stack,
-  Text,
-  TextInput,
-  Title,
-} from "@mantine/core";
-import { useUnit } from "effector-react";
-import { IconCheck, IconPlugConnected, IconPlugConnectedX } from "@tabler/icons-react";
-import {
-  $apiBaseUrl,
-  $apiTimeout,
-  $colorScheme,
-  setApiBaseUrl,
-  setApiTimeout,
+  fhirBaseUrl,
+  setFhirBaseUrl,
+  requestTimeout,
+  setRequestTimeout,
+  colorScheme,
   setColorScheme,
-} from "@/entities/settings/model";
-import { $connectionStatus, getHealthFx } from "@/entities/system";
+} from "@/entities/settings";
+import { connectionStatus, checkHealth } from "@/entities/system";
+import styles from "./SettingsPage.module.css";
 
-export function SettingsPage() {
-  const [apiBaseUrl, apiTimeout, colorScheme] = useUnit([
-    $apiBaseUrl,
-    $apiTimeout,
-    $colorScheme,
-  ]);
-  const connectionStatus = useUnit($connectionStatus);
-  const healthLoading = useUnit(getHealthFx.pending);
+const themeOptions = [
+  { value: "light", label: "Light" },
+  { value: "dark", label: "Dark" },
+  { value: "auto", label: "System" },
+];
 
-  const statusColor =
-    connectionStatus === "connected"
-      ? "green"
-      : connectionStatus === "connecting"
-      ? "yellow"
-      : "red";
-  const statusIconEl =
-    connectionStatus === "connected"
-      ? <IconCheck size={16} />
-      : connectionStatus === "connecting"
-      ? <IconPlugConnected size={16} />
-      : <IconPlugConnectedX size={16} />;
+export const SettingsPage = () => {
+  const [healthLoading, setHealthLoading] = createSignal(false);
+
+  const handleTestConnection = async () => {
+    setHealthLoading(true);
+    try {
+      await checkHealth();
+    } finally {
+      setHealthLoading(false);
+    }
+  };
+
+  const handleTimeoutChange = (e: Event) => {
+    const target = e.currentTarget as HTMLInputElement;
+    const value = parseInt(target.value, 10);
+    if (!Number.isNaN(value) && value >= 1000) {
+      setRequestTimeout(value);
+    }
+  };
 
   return (
-    <Container size="lg">
-      <Stack gap="lg">
-        <div>
-          <Title order={1} size="h2" mb="xs">
-            Settings
-          </Title>
-          <Text c="dimmed">Configure server settings and preferences</Text>
-        </div>
+    <div class={styles.container}>
+      <h1 class={styles.title}>Settings</h1>
+      <p class={styles.subtitle}>Configure server settings and preferences</p>
 
-        {/* Connection Settings */}
-        <Card withBorder radius="lg" p="xl">
-          <Stack gap="md">
-            <Group justify="space-between" align="center">
-              <Title order={3}>Connection</Title>
-              <Group gap="sm">
-                <Text c={statusColor} fw={600} size="sm" style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                  {statusIconEl}
-                  {connectionStatus.charAt(0).toUpperCase() + connectionStatus.slice(1)}
-                </Text>
-                <Button size="xs" loading={healthLoading} onClick={() => getHealthFx()}>Test connection</Button>
-              </Group>
-            </Group>
+      <div class={styles.section}>
+        <Card>
+          <div class={styles.sectionHeader}>
+            <h3>Connection</h3>
+            <div class={styles.statusGroup}>
+              <span
+                class={styles.statusIndicator}
+                classList={{
+                  [styles.connected]: connectionStatus() === "connected",
+                  [styles.connecting]: connectionStatus() === "connecting",
+                  [styles.disconnected]: connectionStatus() === "disconnected",
+                }}
+              />
+              <span class={styles.statusText}>{connectionStatus()}</span>
+              <Button size="sm" onClick={handleTestConnection} loading={healthLoading()}>
+                Test connection
+              </Button>
+            </div>
+          </div>
 
-            <TextInput
+          <div class={styles.formGroup}>
+            <Input
               label="FHIR Base URL"
+              value={fhirBaseUrl()}
+              onInput={(e) => setFhirBaseUrl(e.currentTarget.value)}
               placeholder="http://localhost:8080"
-              value={apiBaseUrl}
-              onChange={(e) => setApiBaseUrl(e.currentTarget.value)}
-              description="Base URL of your FHIR server (e.g., http://localhost:8080)"
+              fullWidth
             />
+            <span class={styles.helpText}>
+              Base URL of your FHIR server (e.g., http://localhost:8080)
+            </span>
+          </div>
 
-            <NumberInput
+          <div class={styles.formGroup}>
+            <Input
               label="Request timeout (ms)"
-              value={apiTimeout}
-              onChange={(v) => typeof v === "number" && setApiTimeout(v)}
+              type="number"
+              value={requestTimeout().toString()}
+              onInput={handleTimeoutChange}
               min={1000}
               step={500}
-              clampBehavior="strict"
-              description="How long to wait before a request is aborted"
+              fullWidth
             />
-          </Stack>
+            <span class={styles.helpText}>
+              How long to wait before a request is aborted
+            </span>
+          </div>
         </Card>
+      </div>
 
-        {/* Appearance */}
-        <Card withBorder radius="lg" p="xl">
-          <Stack gap="md">
-            <Title order={3}>Appearance</Title>
+      <div class={styles.section}>
+        <Card>
+          <div class={styles.sectionHeader}>
+            <h3>Appearance</h3>
+          </div>
+
+          <div class={styles.formGroup}>
             <Select
               label="Theme"
-              data={[
-                { value: "light", label: "Light" },
-                { value: "dark", label: "Dark" },
-                { value: "auto", label: "System" },
-              ]}
-              value={colorScheme}
-              onChange={(v) => v && setColorScheme(v as "light" | "dark" | "auto")}
-              allowDeselect={false}
+              options={themeOptions}
+              value={colorScheme()}
+              onChange={(v) => setColorScheme(v as "light" | "dark" | "auto")}
             />
-          </Stack>
+          </div>
         </Card>
-      </Stack>
-    </Container>
+      </div>
+    </div>
   );
-}
+};

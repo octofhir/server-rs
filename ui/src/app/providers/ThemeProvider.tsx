@@ -1,58 +1,79 @@
-import { ColorSchemeScript, MantineProvider } from "@mantine/core";
-import { useEffect, useState } from "react";
-import { useUnit } from "effector-react";
-import { initializeTheme, theme } from "../theme";
-import "@mantine/core/styles.css";
-import "@mantine/notifications/styles.css";
-import { $colorScheme } from "@/entities/settings/model";
+import {
+  createContext,
+  useContext,
+  createSignal,
+  createEffect,
+  onMount,
+  type ParentComponent,
+  type Accessor,
+} from "solid-js";
 
-interface ThemeProviderProps {
-  children: React.ReactNode;
+type Theme = "light" | "dark" | "system";
+
+interface ThemeContextValue {
+  theme: Accessor<Theme>;
+  setTheme: (theme: Theme) => void;
+  effectiveTheme: Accessor<"light" | "dark">;
 }
 
-export function ThemeProvider({ children }: ThemeProviderProps) {
-  const colorScheme = useUnit($colorScheme);
-  const [themeInitialized, setThemeInitialized] = useState(false);
+const ThemeContext = createContext<ThemeContextValue>();
 
-  // Initialize theme colors from logo
-  useEffect(() => {
-    initializeTheme()
-      .then(() => {
-        setThemeInitialized(true);
-      })
-      .catch((error) => {
-        console.warn("Theme initialization failed:", error);
-        setThemeInitialized(true);
-      });
-  }, []);
+export const ThemeProvider: ParentComponent = (props) => {
+  const [theme, setThemeState] = createSignal<Theme>(
+    (localStorage.getItem("octofhir-theme") as Theme) || "system",
+  );
+  const [effectiveTheme, setEffectiveTheme] = createSignal<"light" | "dark">(
+    "light",
+  );
 
-  if (!themeInitialized) {
-    return (
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          height: "100vh",
-          fontFamily: "Inter, sans-serif",
-          fontSize: "14px",
-          color: "#666",
-        }}
-      >
-        Initializing theme...
-      </div>
-    );
-  }
+  const updateEffectiveTheme = () => {
+    const currentTheme = theme();
+    if (currentTheme === "system") {
+      const prefersDark = window.matchMedia(
+        "(prefers-color-scheme: dark)",
+      ).matches;
+      setEffectiveTheme(prefersDark ? "dark" : "light");
+    } else {
+      setEffectiveTheme(currentTheme);
+    }
+  };
 
-  // Mantine v7: use defaultColorScheme for initial value and forceColorScheme to override
-  const force = colorScheme === "auto" ? undefined : colorScheme;
+  const setTheme = (newTheme: Theme) => {
+    setThemeState(newTheme);
+    localStorage.setItem("octofhir-theme", newTheme);
+  };
+
+  onMount(() => {
+    updateEffectiveTheme();
+
+    const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
+    const handler = () => updateEffectiveTheme();
+    mediaQuery.addEventListener("change", handler);
+
+    return () => mediaQuery.removeEventListener("change", handler);
+  });
+
+  createEffect(() => {
+    const effective = effectiveTheme();
+    document.documentElement.setAttribute("data-theme", effective);
+  });
+
+  createEffect(() => {
+    theme();
+    updateEffectiveTheme();
+  });
 
   return (
-    <>
-      <ColorSchemeScript defaultColorScheme="auto" />
-      <MantineProvider theme={theme} defaultColorScheme="auto" forceColorScheme={force}>
-        {children}
-      </MantineProvider>
-    </>
+    <ThemeContext.Provider value={{ theme, setTheme, effectiveTheme }}>
+      {props.children}
+    </ThemeContext.Provider>
   );
-}
+};
+
+export const useTheme = () => {
+  const context = useContext(ThemeContext);
+  if (!context) {
+    throw new Error("useTheme must be used within ThemeProvider");
+  }
+  return context;
+};

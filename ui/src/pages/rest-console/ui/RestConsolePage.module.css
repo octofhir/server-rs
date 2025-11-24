@@ -1,0 +1,139 @@
+.container {
+  max-width: 1000px;
+  margin: 0 auto;
+}
+
+.title {
+  font-size: var(--font-size-2xl);
+  font-weight: 700;
+  color: var(--text-color);
+  margin-bottom: var(--spacing-xs);
+}
+
+.subtitle {
+  font-size: var(--font-size-md);
+  color: var(--text-muted);
+  margin-bottom: var(--spacing-xl);
+}
+
+.requestCard {
+  margin-bottom: var(--spacing-lg);
+}
+
+.requestForm {
+  display: flex;
+  gap: var(--spacing-md);
+  align-items: flex-end;
+}
+
+.methodSelect {
+  width: 120px;
+}
+
+.pathInput {
+  flex: 1;
+}
+
+.bodySection {
+  margin-top: var(--spacing-lg);
+}
+
+.bodyLabel {
+  display: block;
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  color: var(--text-color);
+  margin-bottom: var(--spacing-xs);
+}
+
+.bodyTextarea {
+  width: 100%;
+  padding: var(--spacing-sm);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background-color: var(--input-bg);
+  color: var(--text-color);
+  resize: vertical;
+}
+
+.bodyTextarea:focus {
+  outline: none;
+  border-color: var(--border-focus);
+}
+
+.responseCard {
+  min-height: 300px;
+}
+
+.responseHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--spacing-md);
+}
+
+.responseHeader h3 {
+  font-size: var(--font-size-lg);
+  font-weight: 600;
+  color: var(--text-color);
+}
+
+.responseMeta {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+}
+
+.statusBadge {
+  padding: 2px 8px;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  border-radius: var(--radius-sm);
+  background-color: var(--bg-tertiary);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-subtle);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.statusBadge.success {
+  background-color: var(--success-subtle);
+  color: var(--success-color);
+  border-color: transparent;
+}
+
+.statusBadge.error {
+  background-color: var(--error-subtle);
+  color: var(--error-color);
+  border-color: transparent;
+}
+
+.responseTime {
+  font-size: var(--font-size-sm);
+  color: var(--text-muted);
+}
+
+.loaderContainer {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 200px;
+}
+
+.errorMessage {
+  padding: var(--spacing-md);
+  background-color: rgba(239, 68, 68, 0.1);
+  border: 1px solid var(--error-color);
+  border-radius: var(--radius-md);
+  color: var(--error-color);
+}
+
+.emptyState {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 200px;
+  color: var(--text-muted);
+}

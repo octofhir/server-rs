@@ -1,0 +1,46 @@
+{
+  "resourceType": "ValueSet",
+  "id": "http-methods",
+  "url": "http://octofhir.io/ValueSet/http-methods",
+  "name": "HttpMethods",
+  "title": "HTTP Methods",
+  "status": "active",
+  "description": "HTTP methods supported for custom operations",
+  "compose": {
+    "include": [
+      {
+        "system": "http://octofhir.io/CodeSystem/http-methods",
+        "concept": [
+          {
+            "code": "GET",
+            "display": "GET"
+          },
+          {
+            "code": "POST",
+            "display": "POST"
+          },
+          {
+            "code": "PUT",
+            "display": "PUT"
+          },
+          {
+            "code": "DELETE",
+            "display": "DELETE"
+          },
+          {
+            "code": "PATCH",
+            "display": "PATCH"
+          },
+          {
+            "code": "HEAD",
+            "display": "HEAD"
+          },
+          {
+            "code": "OPTIONS",
+            "display": "OPTIONS"
+          }
+        ]
+      }
+    ]
+  }
+}

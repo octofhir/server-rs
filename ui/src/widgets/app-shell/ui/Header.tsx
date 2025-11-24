@@ -1,60 +1,45 @@
-import { ActionIcon, Badge, Group, Text, Title } from "@mantine/core";
-import { useColorScheme, useLocalStorage } from "@mantine/hooks";
-import { IconMoon, IconPalette, IconSun } from "@tabler/icons-react";
-import logoUrl from "@/shared/assets/logo.png";
+import { useTheme } from "@/app/providers";
+import styles from "./Header.module.css";
 
-interface HeaderProps {
-  height: number;
-}
+export const Header = () => {
+  const { theme, setTheme, effectiveTheme } = useTheme();
 
-export function Header({ height }: HeaderProps) {
-  const systemColorScheme = useColorScheme();
-  const [colorScheme, setColorScheme] = useLocalStorage({
-    key: "octofhir-color-scheme",
-    defaultValue: "auto" as "light" | "dark" | "auto",
-  });
-
-  const toggleColorScheme = () => {
-    if (colorScheme === "auto") {
-      setColorScheme("light");
-    } else if (colorScheme === "light") {
-      setColorScheme("dark");
+  const toggleTheme = () => {
+    const current = theme();
+    if (current === "system") {
+      setTheme("light");
+    } else if (current === "light") {
+      setTheme("dark");
     } else {
-      setColorScheme("auto");
+      setTheme("system");
     }
   };
 
-  const getIcon = () => {
-    if (colorScheme === "auto") return <IconPalette size={18} />;
-    if (colorScheme === "light") return <IconSun size={18} />;
-    return <IconMoon size={18} />;
+  const getThemeIcon = () => {
+    const current = theme();
+    if (current === "system") return "Auto";
+    if (current === "light") return "Light";
+    return "Dark";
   };
 
   return (
-    <Group
-      h={height}
-      px="md"
-      justify="space-between"
-      style={{ borderBottom: "1px solid var(--mantine-color-gray-3)" }}
-    >
-      <Group gap="sm">
-        <img src={logoUrl} alt="OctoFHIR" style={{ height: 32, width: 32 }} />
-        <Title order={3} size="h4">
-          OctoFHIR
-        </Title>
-        <Badge variant="light" size="sm">
-          Server UI
-        </Badge>
-      </Group>
+    <header class={styles.header}>
+      <div class={styles.logo}>
+        <span class={styles.logoText}>OctoFHIR</span>
+        <span class={styles.badge}>Server UI</span>
+      </div>
 
-      <Group gap="sm">
-        <Text size="sm" c="dimmed">
-          {colorScheme === "auto" ? `Auto (${systemColorScheme})` : colorScheme}
-        </Text>
-        <ActionIcon variant="subtle" onClick={toggleColorScheme} aria-label="Toggle color scheme">
-          {getIcon()}
-        </ActionIcon>
-      </Group>
-    </Group>
+      <div class={styles.actions}>
+        <span class={styles.themeLabel}>{getThemeIcon()}</span>
+        <button
+          type="button"
+          class={styles.themeToggle}
+          onClick={toggleTheme}
+          aria-label="Toggle theme"
+        >
+          {effectiveTheme() === "dark" ? "🌙" : "☀️"}
+        </button>
+      </div>
+    </header>
   );
-}
+};

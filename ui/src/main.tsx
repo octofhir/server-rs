@@ -1,10 +1,12 @@
-import { StrictMode } from "react";
-import { createRoot } from "react-dom/client";
-import App from "@/app/App";
-import "@/app/index.css";
+/* @refresh reload */
+import { render } from "solid-js/web";
+import App from "@/app";
+import "@/shared/styles/global.css";
 
-createRoot(document.getElementById("root")!).render(
-  <StrictMode>
-    <App />
-  </StrictMode>
-);
+const root = document.getElementById("root");
+
+if (!root) {
+  throw new Error("Root element not found");
+}
+
+render(() => <App />, root);

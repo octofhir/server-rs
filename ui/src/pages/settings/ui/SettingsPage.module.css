@@ -1,0 +1,75 @@
+.container {
+  max-width: 800px;
+  margin: 0 auto;
+}
+
+.title {
+  font-size: var(--font-size-2xl);
+  font-weight: var(--font-weight-bold);
+  color: var(--text-color);
+  margin-bottom: var(--spacing-xs);
+}
+
+.subtitle {
+  font-size: var(--font-size-md);
+  color: var(--text-muted);
+  margin-bottom: var(--spacing-xl);
+}
+
+.section {
+  margin-bottom: var(--spacing-lg);
+}
+
+.sectionHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--spacing-lg);
+}
+
+.sectionHeader h3 {
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-semibold);
+  color: var(--text-color);
+}
+
+.statusGroup {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+}
+
+.statusIndicator {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+
+.statusIndicator.connected {
+  background-color: var(--success-color);
+}
+
+.statusIndicator.connecting {
+  background-color: var(--warning-color);
+}
+
+.statusIndicator.disconnected {
+  background-color: var(--error-color);
+}
+
+.statusText {
+  font-size: var(--font-size-sm);
+  color: var(--text-muted);
+  text-transform: capitalize;
+}
+
+.formGroup {
+  margin-bottom: var(--spacing-md);
+}
+
+.helpText {
+  display: block;
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+  margin-top: var(--spacing-xs);
+}

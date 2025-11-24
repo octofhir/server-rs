@@ -1,41 +1,16 @@
-import { AppShell as MantineAppShell } from "@mantine/core";
-import { useDisclosure, useLocalStorage } from "@mantine/hooks";
+import { type ParentComponent } from "solid-js";
 import { Header } from "./Header";
 import { Sidebar } from "./Sidebar";
+import styles from "./AppShell.module.css";
 
-interface AppShellProps {
-  children: React.ReactNode;
-}
-
-const HEADER_HEIGHT = 60;
-const DEFAULT_SIDEBAR_WIDTH = 280;
-
-export function AppShell({ children }: AppShellProps) {
-  const [sidebarOpened] = useDisclosure(true);
-  const [sidebarWidth] = useLocalStorage({
-    key: "octofhir-sidebar-width",
-    defaultValue: DEFAULT_SIDEBAR_WIDTH,
-  });
-
+export const AppShell: ParentComponent = (props) => {
   return (
-    <MantineAppShell
-      header={{ height: HEADER_HEIGHT }}
-      navbar={{
-        width: sidebarWidth,
-        breakpoint: "sm",
-        collapsed: { mobile: !sidebarOpened },
-      }}
-      padding="md"
-    >
-      <MantineAppShell.Header>
-        <Header height={HEADER_HEIGHT} />
-      </MantineAppShell.Header>
-
-      <MantineAppShell.Navbar p="md">
-        <Sidebar width={sidebarWidth} />
-      </MantineAppShell.Navbar>
-
-      <MantineAppShell.Main>{children}</MantineAppShell.Main>
-    </MantineAppShell>
+    <div class={styles.container}>
+      <Header />
+      <div class={styles.body}>
+        <Sidebar />
+        <main class={styles.main}>{props.children}</main>
+      </div>
+    </div>
   );
-}
+};

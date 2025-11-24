@@ -1,0 +1,33 @@
+{
+  "resourceType": "CodeSystem",
+  "id": "operation-types",
+  "url": "http://octofhir.io/CodeSystem/operation-types",
+  "name": "OperationTypes",
+  "title": "Operation Types Code System",
+  "status": "active",
+  "content": "complete",
+  "description": "Types of custom operation implementations",
+  "caseSensitive": true,
+  "concept": [
+    {
+      "code": "proxy",
+      "display": "Proxy",
+      "definition": "Forward requests to an external service. The operation acts as a reverse proxy, forwarding requests to a configured URL with optional header transformation."
+    },
+    {
+      "code": "sql",
+      "display": "SQL Query",
+      "definition": "Execute a SQL query against the database. The query can use parameters from the request and returns results as JSON."
+    },
+    {
+      "code": "fhirpath",
+      "display": "FHIRPath",
+      "definition": "Evaluate a FHIRPath expression against input data. Useful for data transformation and extraction operations."
+    },
+    {
+      "code": "handler",
+      "display": "Custom Handler",
+      "definition": "Invoke a registered custom handler function. The handler is implemented in Rust code and registered with the server at startup."
+    }
+  ]
+}

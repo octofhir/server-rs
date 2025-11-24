@@ -45,6 +45,12 @@ pub struct AppState {
     pub operation_handlers: Arc<HashMap<String, DynOperationHandler>>,
     /// Validation service for FHIR resource validation with FHIRPath constraints
     pub validation_service: ValidationService,
+    /// Gateway router for dynamic API endpoints
+    pub gateway_router: crate::gateway::GatewayRouter,
+    /// PostgreSQL connection pool for SQL handler (if using PostgreSQL storage)
+    pub db_pool: Option<Arc<sqlx::PgPool>>,
+    /// Custom handler registry for gateway operations
+    pub handler_registry: Arc<crate::gateway::HandlerRegistry>,
 }
 
 pub struct OctofhirServer {
@@ -52,11 +58,107 @@ pub struct OctofhirServer {
     app: Router,
 }
 
+/// Bootstraps conformance resources for PostgreSQL backend.
+///
+/// This function:
+/// 1. Creates conformance storage
+/// 2. Loads bootstrap resources from igs/octofhir-internal/
+/// 3. Syncs to canonical manager
+/// 4. Starts hot-reload listener
+async fn bootstrap_conformance_if_postgres(cfg: &AppConfig) -> Result<(), anyhow::Error> {
+    use octofhir_db_postgres::{HotReloadBuilder, PostgresConformanceStorage, sync_and_load};
+    use std::path::PathBuf;
+
+    let pg_cfg = cfg.storage.postgres.as_ref().ok_or_else(|| {
+        anyhow::anyhow!("PostgreSQL config is required for conformance bootstrap")
+    })?;
+
+    // Create connection pool for conformance storage
+    let postgres_config = octofhir_db_postgres::PostgresConfig::new(&pg_cfg.url)
+        .with_pool_size(pg_cfg.pool_size)
+        .with_connect_timeout_ms(pg_cfg.connect_timeout_ms)
+        .with_idle_timeout_ms(pg_cfg.idle_timeout_ms);
+
+    let pool = octofhir_db_postgres::pool::create_pool(&postgres_config).await?;
+    let conformance_storage = Arc::new(PostgresConformanceStorage::new(pool.clone()));
+
+    // Bootstrap conformance resources
+    match crate::bootstrap::bootstrap_conformance_resources(&conformance_storage).await {
+        Ok(stats) if stats.total() > 0 => {
+            tracing::info!(
+                structure_definitions = stats.structure_definitions,
+                value_sets = stats.value_sets,
+                code_systems = stats.code_systems,
+                "Bootstrapped conformance resources"
+            );
+        }
+        Ok(_) => {
+            tracing::debug!("Conformance resources already bootstrapped");
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "Failed to bootstrap conformance resources");
+        }
+    }
+
+    // Sync to canonical manager
+    let base_dir = PathBuf::from(cfg.packages.path.as_deref().unwrap_or(".fhir"));
+
+    let canonical_manager = crate::canonical::get_manager();
+
+    match sync_and_load(
+        &conformance_storage,
+        &base_dir,
+        canonical_manager.as_ref().map(|m| m.as_ref()),
+    )
+    .await
+    {
+        Ok(package_dir) => {
+            tracing::info!(
+                package_dir = %package_dir.display(),
+                "Synced internal conformance resources to canonical manager"
+            );
+        }
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                "Failed to sync conformance resources to canonical manager"
+            );
+        }
+    }
+
+    // Start hot-reload listener to monitor conformance changes
+    match HotReloadBuilder::new(pool)
+        .with_conformance_storage(conformance_storage)
+        .with_canonical_manager(canonical_manager.unwrap_or_else(|| {
+            Arc::new(octofhir_canonical_manager::CanonicalManager::new())
+        }))
+        .with_base_dir(base_dir)
+        .start()
+    {
+        Ok(_handle) => {
+            tracing::info!("Hot-reload listener started for conformance resources");
+            // Handle is dropped here, but the task continues running in the background
+        }
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                "Failed to start hot-reload listener"
+            );
+        }
+    }
+
+    Ok(())
+}
+
 /// Creates storage based on the configured backend.
 ///
 /// For in-memory backend, this is synchronous.
 /// For PostgreSQL, this must be called in an async context.
-async fn create_storage(cfg: &AppConfig) -> Result<DynStorage, anyhow::Error> {
+///
+/// Returns (storage, optional PostgreSQL pool for SQL handler).
+async fn create_storage(
+    cfg: &AppConfig,
+) -> Result<(DynStorage, Option<Arc<sqlx::PgPool>>), anyhow::Error> {
     match cfg.storage.backend {
         ConfigBackend::InMemoryPapaya => {
             let db_cfg = DbStorageConfig {
@@ -66,7 +168,7 @@ async fn create_storage(cfg: &AppConfig) -> Result<DynStorage, anyhow::Error> {
                     preallocate_items: cfg.storage.preallocate_items,
                 },
             };
-            Ok(create_memory_storage(&db_cfg))
+            Ok((create_memory_storage(&db_cfg), None))
         }
         ConfigBackend::Postgres => {
             let pg_cfg = cfg.storage.postgres.as_ref().ok_or_else(|| {
@@ -83,8 +185,11 @@ async fn create_storage(cfg: &AppConfig) -> Result<DynStorage, anyhow::Error> {
                 .await
                 .map_err(|e| anyhow::anyhow!("Failed to create PostgreSQL storage: {e}"))?;
 
+            // Get the pool reference for SQL handler
+            let pool = pg_storage.pool().clone();
+
             let adapter = PostgresStorageAdapter::new(pg_storage);
-            Ok(Arc::new(adapter))
+            Ok((Arc::new(adapter), Some(Arc::new(pool))))
         }
     }
 }
@@ -138,7 +243,14 @@ async fn load_structure_definitions_from_packages() -> Vec<StructureDefinition> 
 /// Builds the application router with the given configuration.
 pub async fn build_app(cfg: &AppConfig) -> Result<Router, anyhow::Error> {
     let body_limit = cfg.server.body_limit_bytes;
-    let storage = create_storage(cfg).await?;
+    let (storage, db_pool) = create_storage(cfg).await?;
+
+    // Bootstrap conformance resources for PostgreSQL backend
+    if matches!(cfg.storage.backend, ConfigBackend::Postgres) {
+        if let Err(e) = bootstrap_conformance_if_postgres(cfg).await {
+            tracing::warn!(error = %e, "Failed to bootstrap conformance resources");
+        }
+    }
 
     // Build search engine config using counts from AppConfig
     let search_cfg = EngineSearchConfig {
@@ -280,6 +392,44 @@ pub async fn build_app(cfg: &AppConfig) -> Result<Router, anyhow::Error> {
         .map_err(|e| anyhow::anyhow!("Failed to initialize validation service: {}", e))?;
     tracing::info!("Validation service initialized with FHIRPath constraint support");
 
+    // Initialize gateway router and load initial routes
+    let gateway_router = Arc::new(crate::gateway::GatewayRouter::new());
+    match gateway_router.reload_routes(&storage).await {
+        Ok(count) => {
+            tracing::info!(count = count, "Loaded initial gateway routes");
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "Failed to load initial gateway routes");
+        }
+    }
+
+    // Start gateway hot-reload listener for PostgreSQL backend
+    if let Some(pool) = &db_pool {
+        match crate::gateway::GatewayReloadBuilder::new()
+            .with_pool(pool.as_ref().clone())
+            .with_gateway_router(gateway_router.clone())
+            .with_storage(storage.clone())
+            .start()
+        {
+            Ok(_handle) => {
+                tracing::info!("Gateway hot-reload listener started");
+                // Handle is dropped here, but the task continues running
+            }
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    "Failed to start gateway hot-reload listener"
+                );
+            }
+        }
+    } else {
+        tracing::debug!("Gateway hot-reload not available (PostgreSQL backend required)");
+    }
+
+    // Initialize custom handler registry
+    let handler_registry = Arc::new(crate::gateway::HandlerRegistry::new());
+    tracing::info!("Initialized custom handler registry");
+
     let state = AppState {
         storage,
         search_cfg,
@@ -290,12 +440,18 @@ pub async fn build_app(cfg: &AppConfig) -> Result<Router, anyhow::Error> {
         operation_registry,
         operation_handlers,
         validation_service,
+        gateway_router: (*gateway_router).clone(),
+        db_pool,
+        handler_registry,
     };
 
     Ok(build_router(state, body_limit))
 }
 
 fn build_router(state: AppState, body_limit: usize) -> Router {
+    // Create gateway router for dynamic API endpoints
+    let gateway_routes = crate::gateway::GatewayRouter::create_router();
+
     Router::new()
         // Health and info endpoints
         .route("/", get(handlers::root).post(handlers::transaction_handler))
@@ -304,6 +460,8 @@ fn build_router(state: AppState, body_limit: usize) -> Router {
         .route("/metadata", get(handlers::metadata))
         // Browser favicon shortcut
         .route("/favicon.ico", get(handlers::favicon))
+        // Merge gateway routes (handles /api/* dynamically)
+        .merge(gateway_routes)
         // New API endpoints for UI
         .route("/api/health", get(handlers::api_health))
         .route("/api/build-info", get(handlers::api_build_info))
