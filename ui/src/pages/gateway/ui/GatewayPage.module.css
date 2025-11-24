@@ -1,0 +1,95 @@
+.container {
+  padding: var(--spacing-6);
+  max-width: 1400px;
+  margin: 0 auto;
+}
+
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: var(--spacing-6);
+}
+
+.title {
+  font-size: var(--font-size-2xl);
+  font-weight: var(--font-weight-bold);
+  color: var(--text-color);
+  margin: 0 0 var(--spacing-2) 0;
+}
+
+.subtitle {
+  font-size: var(--font-size-md);
+  color: var(--text-secondary);
+  margin: 0;
+}
+
+.searchCard {
+  margin-bottom: var(--spacing-4);
+}
+
+.searchInput {
+  width: 100%;
+}
+
+.loaderContainer {
+  display: flex;
+  justify-content: center;
+  padding: var(--spacing-8);
+}
+
+.errorCard {
+  background-color: var(--error-subtle);
+  border-color: var(--error-color);
+}
+
+.errorText {
+  color: var(--error-color);
+  margin: 0;
+}
+
+.emptyCard {
+  text-align: center;
+  padding: var(--spacing-8);
+}
+
+.emptyText {
+  color: var(--text-secondary);
+  margin: 0;
+}
+
+.appName {
+  font-weight: var(--font-weight-medium);
+  color: var(--text-color);
+}
+
+.basePath {
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-sm);
+  padding: var(--spacing-1) var(--spacing-2);
+  background-color: var(--bg-tertiary);
+  border-radius: var(--radius-sm);
+}
+
+.description {
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+}
+
+.auth {
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+}
+
+.modalContent {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-4);
+}
+
+.modalActions {
+  display: flex;
+  gap: var(--spacing-3);
+  justify-content: flex-end;
+}

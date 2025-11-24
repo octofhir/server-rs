@@ -25,6 +25,11 @@ const navigation: NavItem[] = [
     description: "Test FHIR API endpoints",
   },
   {
+    label: "API Gateway",
+    path: "/gateway",
+    description: "Manage custom API endpoints",
+  },
+  {
     label: "Settings",
     path: "/settings",
     description: "Configure server settings",
