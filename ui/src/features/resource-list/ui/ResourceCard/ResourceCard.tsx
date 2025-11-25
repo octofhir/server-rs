@@ -1,29 +1,23 @@
-import { ActionIcon, Badge, Box, Card, Group, Menu, Text, Tooltip } from "@mantine/core";
-import { notifications } from "@mantine/notifications";
-import { IconCopy, IconDots, IconEye, IconTrash } from "@tabler/icons-react";
-import type React from "react";
-import { useCallback } from "react";
+import { type Component, Show, createMemo } from "solid-js";
 import { setSelectedResource } from "@/entities/fhir";
 import type { FhirResource } from "@/shared/api/types";
 import { formatRelativeTime } from "@/shared/lib/time";
+import { IconEye, IconCopy, IconTrash, IconDots } from "@/shared/ui/Icon";
+import { useToast } from "@/shared/ui/Toast";
 import styles from "./ResourceCard.module.css";
 
 interface ResourceCardProps {
   resource: FhirResource;
   isSelected?: boolean;
   onDelete?: (resource: FhirResource) => void;
-  className?: string;
+  class?: string;
 }
 
-export const ResourceCard: React.FC<ResourceCardProps> = ({
-  resource,
-  isSelected = false,
-  onDelete,
-  className,
-}) => {
+export const ResourceCard: Component<ResourceCardProps> = (props) => {
+  const toast = useToast();
+
   // Extract key information from resource
-  const getResourceTitle = useCallback((resource: FhirResource): string => {
-    // Try to get a meaningful title based on resource type
+  const getResourceTitle = (resource: FhirResource): string => {
     switch (resource.resourceType) {
       case "Patient": {
         const patient = resource as any;
@@ -68,170 +62,108 @@ export const ResourceCard: React.FC<ResourceCardProps> = ({
       default:
         return `${resource.resourceType} ${resource.id}`;
     }
-  }, []);
+  };
 
-  const getResourceStatus = useCallback(
-    (resource: FhirResource): { status?: string; color?: string } => {
-      const res = resource as any;
+  const getResourceStatus = (resource: FhirResource): { status?: string; variant?: "success" | "error" | "warning" | "neutral" } => {
+    const res = resource as any;
 
-      if (res.status) {
-        const status = res.status.toLowerCase();
-        switch (status) {
-          case "active":
-            return { status: "Active", color: "green" };
-          case "inactive":
-          case "retired":
-            return { status: "Inactive", color: "gray" };
-          case "draft":
-            return { status: "Draft", color: "blue" };
-          case "final":
-            return { status: "Final", color: "green" };
-          case "cancelled":
-          case "rejected":
-            return { status: "Cancelled", color: "red" };
-          case "entered-in-error":
-            return { status: "Error", color: "red" };
-          default:
-            return { status: status.charAt(0).toUpperCase() + status.slice(1), color: "gray" };
-        }
+    if (res.status) {
+      const status = res.status.toLowerCase();
+      switch (status) {
+        case "active":
+          return { status: "Active", variant: "success" };
+        case "inactive":
+        case "retired":
+          return { status: "Inactive", variant: "neutral" };
+        case "draft":
+          return { status: "Draft", variant: "warning" };
+        case "final":
+          return { status: "Final", variant: "success" };
+        case "cancelled":
+        case "rejected":
+          return { status: "Cancelled", variant: "error" };
+        case "entered-in-error":
+          return { status: "Error", variant: "error" };
+        default:
+          return { status: status.charAt(0).toUpperCase() + status.slice(1), variant: "neutral" };
       }
+    }
 
-      return {};
-    },
-    []
-  );
+    return {};
+  };
 
-  const handleSelect = useCallback(() => {
-    setSelectedResource(resource);
-  }, [resource]);
+  const handleSelect = () => {
+    setSelectedResource(props.resource);
+  };
 
-  const handleCopyId = useCallback(
-    async (e: React.MouseEvent) => {
-      e.stopPropagation();
+  const handleCopyId = async (e: MouseEvent) => {
+    e.stopPropagation();
 
-      if (!resource.id) {
-        notifications.show({
-          title: "Copy failed",
-          message: "Resource has no ID",
-          color: "red",
-        });
-        return;
-      }
+    if (!props.resource.id) {
+      toast.error("Resource has no ID", "Copy failed");
+      return;
+    }
 
-      try {
-        await navigator.clipboard.writeText(resource.id);
-        notifications.show({
-          title: "Copied",
-          message: `Resource ID copied: ${resource.id}`,
-          color: "green",
-        });
-      } catch (error) {
-        notifications.show({
-          title: "Copy failed",
-          message: "Failed to copy resource ID",
-          color: "red",
-        });
-      }
-    },
-    [resource.id]
-  );
+    try {
+      await navigator.clipboard.writeText(props.resource.id);
+      toast.success(`Resource ID copied: ${props.resource.id}`, "Copied");
+    } catch (error) {
+      toast.error("Failed to copy resource ID", "Copy failed");
+    }
+  };
 
-  const handleDelete = useCallback(
-    (e: React.MouseEvent) => {
-      e.stopPropagation();
-      onDelete?.(resource);
-    },
-    [onDelete, resource]
-  );
+  const handleDelete = (e: MouseEvent) => {
+    e.stopPropagation();
+    props.onDelete?.(props.resource);
+  };
 
-  const title = getResourceTitle(resource);
-  const { status, color } = getResourceStatus(resource);
-  const lastUpdated = resource.meta?.lastUpdated;
+  const title = createMemo(() => getResourceTitle(props.resource));
+  const statusInfo = createMemo(() => getResourceStatus(props.resource));
+  const lastUpdated = () => props.resource.meta?.lastUpdated;
 
   return (
-    <Card
-      className={`${styles.card} ${isSelected ? styles.selected : ""} ${className || ""}`}
+    <div
+      class={`${styles.card} ${props.isSelected ? styles.selected : ""} ${props.class || ""}`}
       onClick={handleSelect}
-      withBorder
-      padding="sm"
     >
-      <Group justify="space-between" wrap="nowrap">
-        <Box className={styles.content}>
-          <Group gap="xs" wrap="nowrap">
-            <Text size="sm" fw={500} className={styles.title}>
-              {title}
-            </Text>
-            {status && (
-              <Badge size="xs" color={color} variant="light">
-                {status}
-              </Badge>
-            )}
-          </Group>
+      <div class={styles.content}>
+        <div class={styles.header}>
+          <span class={styles.title}>{title()}</span>
+          <Show when={statusInfo().status}>
+            <span class={`${styles.badge} ${styles[statusInfo().variant || "neutral"]}`}>
+              {statusInfo().status}
+            </span>
+          </Show>
+        </div>
 
-          <Group gap="xs" mt="xs">
-            <Text size="xs" c="dimmed">
-              {resource.resourceType}
-            </Text>
-            {resource.id && (
-              <>
-                <Text size="xs" c="dimmed">
-                  •
-                </Text>
-                <Text size="xs" c="dimmed" className={styles.resourceId}>
-                  {resource.id}
-                </Text>
-              </>
-            )}
-            {lastUpdated && (
-              <>
-                <Text size="xs" c="dimmed">
-                  •
-                </Text>
-                <Text size="xs" c="dimmed" title={new Date(lastUpdated).toLocaleString()}>
-                  {formatRelativeTime(lastUpdated)}
-                </Text>
-              </>
-            )}
-          </Group>
-        </Box>
+        <div class={styles.meta}>
+          <span class={styles.metaItem}>{props.resource.resourceType}</span>
+          <Show when={props.resource.id}>
+            <span class={styles.metaSeparator}>•</span>
+            <span class={styles.metaItem}>{props.resource.id}</span>
+          </Show>
+          <Show when={lastUpdated()}>
+            <span class={styles.metaSeparator}>•</span>
+            <span class={styles.metaItem} title={new Date(lastUpdated()!).toLocaleString()}>
+              {formatRelativeTime(lastUpdated()!)}
+            </span>
+          </Show>
+        </div>
+      </div>
 
-        <Group gap="xs" wrap="nowrap">
-          <Tooltip label="View details">
-            <ActionIcon size="sm" variant="subtle" color="blue" onClick={handleSelect}>
-              <IconEye size={16} />
-            </ActionIcon>
-          </Tooltip>
-
-          <Menu position="bottom-end" withinPortal>
-            <Menu.Target>
-              <ActionIcon size="sm" variant="subtle" onClick={(e) => e.stopPropagation()}>
-                <IconDots size={16} />
-              </ActionIcon>
-            </Menu.Target>
-
-            <Menu.Dropdown>
-              <Menu.Item leftSection={<IconEye size={14} />} onClick={handleSelect}>
-                View Details
-              </Menu.Item>
-              <Menu.Item leftSection={<IconCopy size={14} />} onClick={handleCopyId}>
-                Copy ID
-              </Menu.Item>
-              {onDelete && (
-                <>
-                  <Menu.Divider />
-                  <Menu.Item
-                    leftSection={<IconTrash size={14} />}
-                    color="red"
-                    onClick={handleDelete}
-                  >
-                    Delete
-                  </Menu.Item>
-                </>
-              )}
-            </Menu.Dropdown>
-          </Menu>
-        </Group>
-      </Group>
-    </Card>
+      <div class={styles.actions}>
+        <button class={styles.actionButton} onClick={handleSelect} title="View details">
+          <IconEye size={16} />
+        </button>
+        <button class={styles.actionButton} onClick={handleCopyId} title="Copy ID">
+          <IconCopy size={16} />
+        </button>
+        <Show when={props.onDelete}>
+          <button class={`${styles.actionButton} ${styles.danger}`} onClick={handleDelete} title="Delete">
+            <IconTrash size={16} />
+          </button>
+        </Show>
+      </div>
+    </div>
   );
 };

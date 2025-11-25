@@ -1,113 +1,116 @@
-import { ActionIcon, Box, Button, Group, Select, Text, TextInput, Tooltip } from "@mantine/core";
-import { useForm } from "@mantine/form";
-import { useDebouncedValue } from "@mantine/hooks";
-import { IconFilter, IconSearch, IconX } from "@tabler/icons-react";
-import { useUnit } from "effector-react";
-import type React from "react";
-import { useCallback, useEffect, useState } from "react";
+import { type Component, Show, For, createSignal, createEffect, createMemo } from "solid-js";
+import { useUnit } from "effector-solid";
 import {
   $searchParams,
   $selectedResourceType,
   setSearchParams,
 } from "@/entities/fhir";
+import { Input, Select, Button } from "@/shared/ui";
+import { IconSearch, IconFilter, IconX, IconPlus } from "@/shared/ui/Icon";
 import styles from "./ResourceSearchForm.module.css";
 
 interface ResourceSearchFormProps {
-  className?: string;
+  class?: string;
 }
 
-interface SearchFormValues {
-  _text: string;
-  _content: string;
-  status: string;
-  active: string;
-  customParam: string;
-  customValue: string;
-}
+// Debounce helper
+function createDebouncedValue<T>(value: () => T, delay: number): () => T {
+  const [debouncedValue, setDebouncedValue] = createSignal<T>(value());
 
-export const ResourceSearchForm: React.FC<ResourceSearchFormProps> = ({ className }) => {
-  const searchParams = useUnit($searchParams);
-  const selectedResourceType = useUnit($selectedResourceType);
-  const [showAdvanced, setShowAdvanced] = useState(false);
-
-  const form = useForm<SearchFormValues>({
-    initialValues: {
-      _text: searchParams._text || "",
-      _content: searchParams._content || "",
-      status: searchParams.status || "",
-      active: searchParams.active || "",
-      customParam: "",
-      customValue: "",
-    },
+  createEffect(() => {
+    const currentValue = value();
+    const timeoutId = setTimeout(() => {
+      setDebouncedValue(() => currentValue);
+    }, delay);
+    return () => clearTimeout(timeoutId);
   });
 
-  const [debouncedText] = useDebouncedValue(form.values._text, 500);
-  const [debouncedContent] = useDebouncedValue(form.values._content, 500);
+  return debouncedValue;
+}
 
-  // Update search params when debounced values change
-  useEffect(() => {
-    if (debouncedText) {
-      setSearchParams({ _text: debouncedText, _count: "20" });
+export const ResourceSearchForm: Component<ResourceSearchFormProps> = (props) => {
+  const searchParams = useUnit($searchParams);
+  const selectedResourceType = useUnit($selectedResourceType);
+
+  // Local form state
+  const [textSearch, setTextSearch] = createSignal(searchParams()._text || "");
+  const [contentSearch, setContentSearch] = createSignal(searchParams()._content || "");
+  const [status, setStatus] = createSignal(searchParams().status || "");
+  const [active, setActive] = createSignal(searchParams().active || "");
+  const [customParam, setCustomParam] = createSignal("");
+  const [customValue, setCustomValue] = createSignal("");
+  const [showAdvanced, setShowAdvanced] = createSignal(false);
+
+  // Debounced search values
+  const debouncedText = createDebouncedValue(textSearch, 500);
+  const debouncedContent = createDebouncedValue(contentSearch, 500);
+
+  // Update search params when debounced text changes
+  createEffect(() => {
+    const text = debouncedText();
+    if (text) {
+      setSearchParams({ _text: text, _count: "20" });
     }
-  }, [debouncedText]);
+  });
 
-  useEffect(() => {
-    if (debouncedContent) {
-      setSearchParams({ _content: debouncedContent, _count: "20" });
+  // Update search params when debounced content changes
+  createEffect(() => {
+    const content = debouncedContent();
+    if (content) {
+      setSearchParams({ _content: content, _count: "20" });
     }
-  }, [debouncedContent]);
+  });
 
-  const handleFilterChange = useCallback(
-    (field: string, value: string | null) => {
-      if (value && value !== "") {
-        setSearchParams({ [field]: value, _count: "20" });
-      } else {
-        setSearchParams({ _count: "20" });
-      }
-      form.setFieldValue(field as keyof SearchFormValues, value || "");
-    },
-    [form]
-  );
-
-  const handleCustomParameterAdd = useCallback(() => {
-    const { customParam, customValue } = form.values;
-
-    if (customParam && customValue) {
-      setSearchParams({ [customParam]: customValue, _count: "20" });
-
-      // Reset custom parameter fields
-      form.setFieldValue("customParam", "");
-      form.setFieldValue("customValue", "");
+  const handleFilterChange = (field: string, value: string | null) => {
+    if (value && value !== "") {
+      setSearchParams({ [field]: value, _count: "20" });
+    } else {
+      setSearchParams({ _count: "20" });
     }
-  }, [form]);
 
-  const handleClearAll = useCallback(() => {
+    // Update local state
+    if (field === "status") setStatus(value || "");
+    if (field === "active") setActive(value || "");
+  };
+
+  const handleCustomParameterAdd = () => {
+    const param = customParam();
+    const val = customValue();
+
+    if (param && val) {
+      setSearchParams({ [param]: val, _count: "20" });
+      setCustomParam("");
+      setCustomValue("");
+    }
+  };
+
+  const handleClearAll = () => {
     setSearchParams({ _count: "20" });
+    setTextSearch("");
+    setContentSearch("");
+    setStatus("");
+    setActive("");
+    setCustomParam("");
+    setCustomValue("");
+  };
 
-    form.setValues({
-      _text: "",
-      _content: "",
-      status: "",
-      active: "",
-      customParam: "",
-      customValue: "",
-    });
-  }, [form]);
+  const hasActiveFilters = createMemo(() => {
+    const params = searchParams();
+    return Object.keys(params).some(
+      (key) => key !== "_count" && params[key]
+    );
+  });
 
-  const hasActiveFilters = Object.keys(searchParams).some(
-    (key) => key !== "_count" && searchParams[key]
-  );
-
-  // Common status options (can be customized per resource type)
-  const getStatusOptions = () => {
+  // Status options based on resource type
+  const getStatusOptions = createMemo(() => {
+    const resourceType = selectedResourceType();
     const commonOptions = [
       { value: "", label: "Any status" },
       { value: "active", label: "Active" },
       { value: "inactive", label: "Inactive" },
     ];
 
-    // Add resource-specific status options
-    switch (selectedResourceType) {
+    switch (resourceType) {
       case "Patient":
         return [
           { value: "", label: "Any status" },
@@ -126,136 +129,137 @@ export const ResourceSearchForm: React.FC<ResourceSearchFormProps> = ({ classNam
       default:
         return commonOptions;
     }
-  };
+  });
+
+  const activeFilterEntries = createMemo(() => {
+    const params = searchParams();
+    return Object.entries(params).filter(
+      ([key, value]) => key !== "_count" && value
+    );
+  });
 
   return (
-    <Box className={`${styles.container} ${className || ""}`}>
-      <Group justify="space-between" mb="sm">
-        <Text size="sm" fw={500}>
-          Search {selectedResourceType || "Resources"}
-        </Text>
-        <Group gap="xs">
-          <Tooltip label="Advanced filters">
-            <ActionIcon
-              variant={showAdvanced ? "filled" : "subtle"}
-              size="sm"
-              onClick={() => setShowAdvanced(!showAdvanced)}
+    <div class={`${styles.container} ${props.class || ""}`}>
+      <div class={styles.header}>
+        <span class={styles.title}>
+          Search {selectedResourceType() || "Resources"}
+        </span>
+        <div class={styles.headerActions}>
+          <button
+            class={`${styles.iconButton} ${showAdvanced() ? styles.active : ""}`}
+            onClick={() => setShowAdvanced(!showAdvanced())}
+            title="Advanced filters"
+          >
+            <IconFilter size={14} />
+          </button>
+          <Show when={hasActiveFilters()}>
+            <button
+              class={`${styles.iconButton} ${styles.danger}`}
+              onClick={handleClearAll}
+              title="Clear all filters"
             >
-              <IconFilter size={14} />
-            </ActionIcon>
-          </Tooltip>
-          {hasActiveFilters && (
-            <Tooltip label="Clear all filters">
-              <ActionIcon size="sm" variant="subtle" color="red" onClick={handleClearAll}>
-                <IconX size={14} />
-              </ActionIcon>
-            </Tooltip>
-          )}
-        </Group>
-      </Group>
+              <IconX size={14} />
+            </button>
+          </Show>
+        </div>
+      </div>
 
-      <Box className={styles.searchForm}>
-        <TextInput
+      <div class={styles.searchForm}>
+        <Input
           placeholder="Search in text fields..."
-          leftSection={<IconSearch size={16} />}
-          value={form.values._text}
-          onChange={(event) => form.setFieldValue("_text", event.currentTarget.value)}
-          mb="sm"
-          size="sm"
+          icon={<IconSearch size={16} />}
+          value={textSearch()}
+          onInput={(e) => setTextSearch(e.currentTarget.value)}
+          fullWidth
         />
 
-        {showAdvanced && (
-          <Box className={styles.advancedFilters}>
-            <TextInput
-              placeholder="Search in all content..."
+        <Show when={showAdvanced()}>
+          <div class={styles.advancedFilters}>
+            <Input
               label="Content Search"
-              value={form.values._content}
-              onChange={(event) => form.setFieldValue("_content", event.currentTarget.value)}
-              size="sm"
-              mb="sm"
+              placeholder="Search in all content..."
+              value={contentSearch()}
+              onInput={(e) => setContentSearch(e.currentTarget.value)}
+              fullWidth
             />
 
-            <Group grow mb="sm">
-              <Select
-                label="Status"
-                data={getStatusOptions()}
-                value={form.values.status}
-                onChange={(value) => handleFilterChange("status", value)}
-                size="sm"
-              />
+            <div class={styles.filterRow}>
+              <div class={styles.filterField}>
+                <label class={styles.filterLabel}>Status</label>
+                <Select
+                  value={status()}
+                  onChange={(e) => handleFilterChange("status", e.currentTarget.value || null)}
+                >
+                  <For each={getStatusOptions()}>
+                    {(opt) => <option value={opt.value}>{opt.label}</option>}
+                  </For>
+                </Select>
+              </div>
 
-              <Select
-                label="Active"
-                data={[
-                  { value: "", label: "Any" },
-                  { value: "true", label: "Yes" },
-                  { value: "false", label: "No" },
-                ]}
-                value={form.values.active}
-                onChange={(value) => handleFilterChange("active", value)}
-                size="sm"
-              />
-            </Group>
+              <div class={styles.filterField}>
+                <label class={styles.filterLabel}>Active</label>
+                <Select
+                  value={active()}
+                  onChange={(e) => handleFilterChange("active", e.currentTarget.value || null)}
+                >
+                  <option value="">Any</option>
+                  <option value="true">Yes</option>
+                  <option value="false">No</option>
+                </Select>
+              </div>
+            </div>
 
-            <Box className={styles.customParameter}>
-              <Text size="xs" c="dimmed" mb="xs">
-                Custom Parameter
-              </Text>
-              <Group>
-                <TextInput
+            <div class={styles.customParameter}>
+              <span class={styles.customLabel}>Custom Parameter</span>
+              <div class={styles.customInputs}>
+                <Input
                   placeholder="Parameter name"
-                  value={form.values.customParam}
-                  onChange={(event) => form.setFieldValue("customParam", event.currentTarget.value)}
-                  size="sm"
-                  style={{ flex: 1 }}
+                  value={customParam()}
+                  onInput={(e) => setCustomParam(e.currentTarget.value)}
                 />
-                <TextInput
+                <Input
                   placeholder="Value"
-                  value={form.values.customValue}
-                  onChange={(event) => form.setFieldValue("customValue", event.currentTarget.value)}
-                  size="sm"
-                  style={{ flex: 1 }}
+                  value={customValue()}
+                  onInput={(e) => setCustomValue(e.currentTarget.value)}
                 />
                 <Button
+                  variant="secondary"
                   size="sm"
-                  variant="light"
                   onClick={handleCustomParameterAdd}
-                  disabled={!form.values.customParam || !form.values.customValue}
+                  disabled={!customParam() || !customValue()}
                 >
+                  <IconPlus size={14} />
                   Add
                 </Button>
-              </Group>
-            </Box>
-          </Box>
-        )}
+              </div>
+            </div>
+          </div>
+        </Show>
 
-        {hasActiveFilters && (
-          <Box className={styles.activeFilters}>
-            <Text size="xs" c="dimmed" mb="xs">
-              Active Filters:
-            </Text>
-            <Group gap="xs">
-              {Object.entries(searchParams)
-                .filter(([key, value]) => key !== "_count" && value)
-                .map(([key, value]) => (
-                  <Box key={key} className={styles.filterTag}>
-                    <Text size="xs">
+        <Show when={hasActiveFilters()}>
+          <div class={styles.activeFilters}>
+            <span class={styles.activeLabel}>Active Filters:</span>
+            <div class={styles.filterTags}>
+              <For each={activeFilterEntries()}>
+                {([key, value]) => (
+                  <div class={styles.filterTag}>
+                    <span class={styles.filterTagText}>
                       <strong>{key}:</strong> {value}
-                    </Text>
-                    <ActionIcon
-                      size="xs"
-                      variant="subtle"
-                      color="red"
+                    </span>
+                    <button
+                      class={styles.filterTagRemove}
                       onClick={() => handleFilterChange(key, null)}
+                      title={`Remove ${key} filter`}
                     >
                       <IconX size={10} />
-                    </ActionIcon>
-                  </Box>
-                ))}
-            </Group>
-          </Box>
-        )}
-      </Box>
-    </Box>
+                    </button>
+                  </div>
+                )}
+              </For>
+            </div>
+          </div>
+        </Show>
+      </div>
+    </div>
   );
 };

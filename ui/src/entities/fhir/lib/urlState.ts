@@ -1,5 +1,5 @@
-import { useUnit } from "effector-react";
-import { useEffect } from "react";
+import { useUnit } from "effector-solid";
+import { createEffect, onCleanup } from "solid-js";
 import { useUrlState } from "@/shared/lib/url-state";
 import {
   $pagination,
@@ -43,7 +43,7 @@ export const paginationConfig = {
   defaultValue: 1,
 };
 
-// Custom hooks for FHIR URL state management
+// Custom hook for FHIR URL state management
 export function useResourceBrowserUrlState() {
   // URL state hooks that handle sync automatically
   const [urlResourceType, setUrlResourceType] = useUrlState("resourceType", resourceTypeConfig);
@@ -55,31 +55,36 @@ export function useResourceBrowserUrlState() {
   const searchParams = useUnit($searchParams);
   const pagination = useUnit($pagination);
 
-  // Only sync from URL to Effector store on initial load or URL changes
-  useEffect(() => {
-    setSelectedResourceType(urlResourceType);
-  }, [urlResourceType]);
+  // Sync from URL to Effector store when URL changes
+  createEffect(() => {
+    const resourceType = urlResourceType();
+    setSelectedResourceType(resourceType);
+  });
 
-  useEffect(() => {
-    if (Object.keys(urlSearchParams).length > 0) {
-      setSearchParams(urlSearchParams);
+  createEffect(() => {
+    const params = urlSearchParams();
+    if (Object.keys(params).length > 0) {
+      setSearchParams(params);
     }
-  }, [urlSearchParams]);
+  });
 
-  // Only sync from Effector store to URL when store changes
-  useEffect(() => {
-    setUrlResourceType(selectedResourceType);
-  }, [selectedResourceType]);
+  // Sync from Effector store to URL when store changes
+  createEffect(() => {
+    const resourceType = selectedResourceType();
+    setUrlResourceType(resourceType);
+  });
 
-  useEffect(() => {
-    setUrlSearchParams(searchParams);
-  }, [searchParams]);
+  createEffect(() => {
+    const params = searchParams();
+    setUrlSearchParams(params);
+  });
 
-  useEffect(() => {
-    setUrlPage(pagination.currentPage);
-  }, [pagination.currentPage]);
+  createEffect(() => {
+    const page = pagination().currentPage;
+    setUrlPage(page);
+  });
 
-  // Return current URL state
+  // Return current URL state as accessors
   return {
     urlResourceType,
     urlSearchParams,

@@ -1,14 +1,12 @@
-import { Chip, Loader, Text, Tooltip } from "@mantine/core";
-import { notifications } from "@mantine/notifications";
-import { IconCopy, IconGitCommit } from "@tabler/icons-react";
-import type React from "react";
-import { useCallback, useEffect, useState } from "react";
-import { serverApi } from "../../../../shared/api";
-import type { BuildInfo } from "../../../../shared/api/types";
+import { type Component, Show, createSignal, onMount, onCleanup } from "solid-js";
+import { serverApi } from "@/shared/api";
+import type { BuildInfo } from "@/shared/api/types";
+import { IconGitCommit, IconCopy } from "@/shared/ui/Icon";
+import { useToast } from "@/shared/ui/Toast";
 import styles from "./CommitChip.module.css";
 
 interface CommitChipProps {
-  className?: string;
+  class?: string;
   showIcon?: boolean;
   maxShaLength?: number;
   autoRefresh?: boolean;
@@ -16,20 +14,18 @@ interface CommitChipProps {
   onClick?: (buildInfo: BuildInfo) => void;
 }
 
-export const CommitChip: React.FC<CommitChipProps> = ({
-  className,
-  showIcon = true,
-  maxShaLength = 7,
-  autoRefresh = false,
-  refreshInterval = 300000, // 5 minutes
-  onClick,
-}) => {
-  const [buildInfo, setBuildInfo] = useState<BuildInfo | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+export const CommitChip: Component<CommitChipProps> = (props) => {
+  const showIcon = () => props.showIcon ?? true;
+  const maxShaLength = () => props.maxShaLength ?? 7;
+  const autoRefresh = () => props.autoRefresh ?? false;
+  const refreshInterval = () => props.refreshInterval ?? 300000;
 
-  // Fetch build info
-  const fetchBuildInfo = useCallback(async () => {
+  const toast = useToast();
+  const [buildInfo, setBuildInfo] = createSignal<BuildInfo | null>(null);
+  const [loading, setLoading] = createSignal(true);
+  const [error, setError] = createSignal<string | null>(null);
+
+  const fetchBuildInfo = async () => {
     try {
       setError(null);
       const info = await serverApi.getBuildInfo();
@@ -41,72 +37,51 @@ export const CommitChip: React.FC<CommitChipProps> = ({
     } finally {
       setLoading(false);
     }
-  }, []);
+  };
 
-  // Copy commit SHA to clipboard
-  const handleCopy = useCallback(
-    async (e: React.MouseEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
+  const handleCopy = async (e: MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
 
-      if (!buildInfo?.commit) {
-        notifications.show({
-          title: "Copy failed",
-          message: "No commit SHA available",
-          color: "red",
-        });
-        return;
-      }
-
-      try {
-        await navigator.clipboard.writeText(buildInfo.commit);
-        notifications.show({
-          title: "Copied to clipboard",
-          message: `Commit SHA: ${buildInfo.commit}`,
-          color: "green",
-        });
-      } catch (error) {
-        // Fallback for browsers without clipboard API
-        try {
-          const textArea = document.createElement("textarea");
-          textArea.value = buildInfo.commit;
-          textArea.style.position = "fixed";
-          textArea.style.opacity = "0";
-          document.body.appendChild(textArea);
-          textArea.select();
-          document.execCommand("copy");
-          document.body.removeChild(textArea);
-
-          notifications.show({
-            title: "Copied to clipboard",
-            message: `Commit SHA: ${buildInfo.commit}`,
-            color: "green",
-          });
-        } catch (fallbackError) {
-          notifications.show({
-            title: "Copy failed",
-            message: "Unable to copy to clipboard",
-            color: "red",
-          });
-        }
-      }
-    },
-    [buildInfo]
-  );
-
-  // Handle chip click
-  const handleClick = useCallback(() => {
-    if (buildInfo) {
-      onClick?.(buildInfo);
+    const info = buildInfo();
+    if (!info?.commit) {
+      toast.error("No commit SHA available", "Copy failed");
+      return;
     }
-  }, [buildInfo, onClick]);
-
-  // Format commit timestamp
-  const formatCommitDate = useCallback(() => {
-    if (!buildInfo?.commitTimestamp) return "";
 
     try {
-      const date = new Date(buildInfo.commitTimestamp);
+      await navigator.clipboard.writeText(info.commit);
+      toast.success(`Commit SHA: ${info.commit}`, "Copied to clipboard");
+    } catch {
+      try {
+        const textArea = document.createElement("textarea");
+        textArea.value = info.commit;
+        textArea.style.position = "fixed";
+        textArea.style.opacity = "0";
+        document.body.appendChild(textArea);
+        textArea.select();
+        document.execCommand("copy");
+        document.body.removeChild(textArea);
+        toast.success(`Commit SHA: ${info.commit}`, "Copied to clipboard");
+      } catch {
+        toast.error("Unable to copy to clipboard", "Copy failed");
+      }
+    }
+  };
+
+  const handleClick = () => {
+    const info = buildInfo();
+    if (info) {
+      props.onClick?.(info);
+    }
+  };
+
+  const formatCommitDate = () => {
+    const info = buildInfo();
+    if (!info?.commitTimestamp) return "";
+
+    try {
+      const date = new Date(info.commitTimestamp);
       return date.toLocaleDateString("en-US", {
         year: "numeric",
         month: "short",
@@ -115,109 +90,85 @@ export const CommitChip: React.FC<CommitChipProps> = ({
         minute: "2-digit",
       });
     } catch {
-      return buildInfo.commitTimestamp;
+      return info.commitTimestamp;
     }
-  }, [buildInfo]);
+  };
 
-  // Generate tooltip content
   const getTooltipContent = () => {
-    if (loading) {
-      return "Loading build information...";
-    }
+    if (loading()) return "Loading build information...";
+    if (error()) return `Error: ${error()}`;
 
-    if (error) {
-      return `Error: ${error}`;
-    }
+    const info = buildInfo();
+    if (!info) return "No build information available";
 
-    if (!buildInfo) {
-      return "No build information available";
-    }
-
-    const lines = [`Full SHA: ${buildInfo.commit}`, `Server: ${buildInfo.serverVersion}`];
-
-    if (buildInfo.uiVersion) {
-      lines.push(`UI: ${buildInfo.uiVersion}`);
-    }
+    const lines = [`Full SHA: ${info.commit}`, `Server: ${info.serverVersion}`];
+    if (info.uiVersion) lines.push(`UI: ${info.uiVersion}`);
 
     const commitDate = formatCommitDate();
-    if (commitDate) {
-      lines.push(`Date: ${commitDate}`);
-    }
+    if (commitDate) lines.push(`Date: ${commitDate}`);
 
     lines.push("", "Click to copy full SHA");
-
     return lines.join("\n");
   };
 
-  // Set up data fetching
-  useEffect(() => {
+  onMount(() => {
     fetchBuildInfo();
 
-    // Set up auto-refresh if enabled
-    let interval: NodeJS.Timeout;
-    if (autoRefresh && refreshInterval > 0) {
-      interval = setInterval(fetchBuildInfo, refreshInterval);
+    let interval: number | undefined;
+    if (autoRefresh() && refreshInterval() > 0) {
+      interval = window.setInterval(fetchBuildInfo, refreshInterval());
     }
 
-    return () => {
-      if (interval) {
-        clearInterval(interval);
-      }
-    };
-  }, [fetchBuildInfo, autoRefresh, refreshInterval]);
+    onCleanup(() => {
+      if (interval) clearInterval(interval);
+    });
+  });
 
-  // Loading state
-  if (loading) {
-    return (
-      <div className={`${styles.container} ${className || ""}`}>
-        <Tooltip label="Loading build information...">
-          <Chip variant="light" color="gray" className={styles.chip} icon={<Loader size="xs" />}>
-            <span className={styles.text}>Loading...</span>
-          </Chip>
-        </Tooltip>
-      </div>
-    );
-  }
-
-  // Error state
-  if (error || !buildInfo) {
-    return (
-      <div className={`${styles.container} ${className || ""}`}>
-        <Tooltip label={error || "No build information available"}>
-          <Chip variant="light" color="red" className={styles.chip}>
-            <Text size="xs" c="dimmed">
-              Error
-            </Text>
-          </Chip>
-        </Tooltip>
-      </div>
-    );
-  }
-
-  const shortSha = buildInfo.commit.substring(0, maxShaLength);
+  const shortSha = () => {
+    const info = buildInfo();
+    return info ? info.commit.substring(0, maxShaLength()) : "";
+  };
 
   return (
-    <div className={`${styles.container} ${className || ""}`}>
-      <Tooltip label={getTooltipContent()} position="bottom" multiline className={styles.tooltip}>
-        <Chip
-          variant="light"
-          color="blue"
-          className={styles.chip}
-          onClick={handleClick}
-          icon={showIcon ? <IconGitCommit size={14} /> : undefined}
+    <div class={`${styles.container} ${props.class || ""}`}>
+      <Show
+        when={!loading()}
+        fallback={
+          <div class={`${styles.chip} ${styles.loading}`} title="Loading build information...">
+            <span class={styles.spinner} />
+            <span class={styles.text}>Loading...</span>
+          </div>
+        }
+      >
+        <Show
+          when={!error() && buildInfo()}
+          fallback={
+            <div class={`${styles.chip} ${styles.error}`} title={error() || "No build information available"}>
+              <span class={styles.text}>Error</span>
+            </div>
+          }
         >
-          <span className={styles.text}>{shortSha}</span>
-          <button
-            type="button"
-            className={styles.copyButton}
-            onClick={handleCopy}
-            title="Copy full SHA"
-            aria-label="Copy full commit SHA"
+          <div
+            class={styles.chip}
+            onClick={handleClick}
+            title={getTooltipContent()}
           >
-            <IconCopy size={12} />
-          </button>
-        </Chip>
-      </Tooltip>
+            <Show when={showIcon()}>
+              <IconGitCommit size={14} />
+            </Show>
+            <span class={styles.text}>{shortSha()}</span>
+            <button
+              type="button"
+              class={styles.copyButton}
+              onClick={handleCopy}
+              title="Copy full SHA"
+              aria-label="Copy full commit SHA"
+            >
+              <IconCopy size={12} />
+            </button>
+          </div>
+        </Show>
+      </Show>
     </div>
   );
 };

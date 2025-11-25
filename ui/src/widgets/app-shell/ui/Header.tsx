@@ -1,4 +1,7 @@
 import { useTheme } from "@/app/providers";
+import { IconSun, IconMoon } from "@/shared/ui/Icon";
+import { HealthBadge } from "./HealthBadge";
+import { CommitChip } from "./CommitChip";
 import styles from "./Header.module.css";
 
 export const Header = () => {
@@ -15,7 +18,7 @@ export const Header = () => {
     }
   };
 
-  const getThemeIcon = () => {
+  const getThemeLabel = () => {
     const current = theme();
     if (current === "system") return "Auto";
     if (current === "light") return "Light";
@@ -24,20 +27,25 @@ export const Header = () => {
 
   return (
     <header class={styles.header}>
-      <div class={styles.logo}>
-        <span class={styles.logoText}>OctoFHIR</span>
-        <span class={styles.badge}>Server UI</span>
+      <div class={styles.left}>
+        <HealthBadge showRefreshButton={false} />
+        <CommitChip />
       </div>
 
-      <div class={styles.actions}>
-        <span class={styles.themeLabel}>{getThemeIcon()}</span>
+      <div class={styles.right}>
+        <span class={styles.themeLabel}>{getThemeLabel()}</span>
         <button
           type="button"
           class={styles.themeToggle}
           onClick={toggleTheme}
           aria-label="Toggle theme"
+          title={`Current: ${getThemeLabel()}`}
         >
-          {effectiveTheme() === "dark" ? "🌙" : "☀️"}
+          {effectiveTheme() === "dark" ? (
+            <IconMoon size={18} />
+          ) : (
+            <IconSun size={18} />
+          )}
         </button>
       </div>
     </header>

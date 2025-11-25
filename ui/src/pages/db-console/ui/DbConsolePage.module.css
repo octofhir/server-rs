@@ -3,6 +3,7 @@
     flex-direction: column;
     height: 100%;
     gap: var(--spacing-4);
+    padding: var(--spacing-6);
 }
 
 .header {
@@ -101,4 +102,13 @@
     height: 100%;
     color: var(--text-muted);
     font-size: var(--font-size-sm);
+}
+
+.resultsPre {
+    margin: 0;
+    font-family: var(--font-mono);
+    font-size: var(--font-size-sm);
+    color: var(--text-color);
+    white-space: pre-wrap;
+    word-break: break-word;
 }

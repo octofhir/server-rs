@@ -61,3 +61,27 @@
   font-size: var(--font-size-xs);
   color: var(--error-color);
 }
+
+.inputWrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.inputWrapper.hasIcon .input {
+  padding-left: 36px;
+}
+
+.icon {
+  position: absolute;
+  left: var(--spacing-3);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  pointer-events: none;
+}
+
+.inputWrapper .input {
+  width: 100%;
+}

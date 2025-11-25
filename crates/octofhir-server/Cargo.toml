@@ -64,6 +64,13 @@ httpdate = "1.0"
 # URL encoding for query string construction
 urlencoding = "2.1"
 
+# HTTP client
+reqwest = { version = "0.12", features = ["json"] }
+
+# Database
+sqlx = { version = "0.8.6", default-features = false, features = ["postgres"] }
+sqlx-postgres = { version = "0.8.6" }
+
 [dev-dependencies]
 tokio-test = { workspace = true }
 tempfile = { workspace = true }

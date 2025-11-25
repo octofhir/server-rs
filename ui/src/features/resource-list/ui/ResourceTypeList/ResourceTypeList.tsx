@@ -1,25 +1,21 @@
 import {
-  ActionIcon,
-  Badge,
-  Box,
-  Button,
-  Loader,
-  ScrollArea,
-  Text,
-  TextInput,
-  Tooltip,
-} from "@mantine/core";
-import { useDebouncedValue } from "@mantine/hooks";
-import { IconRefresh, IconSearch } from "@tabler/icons-react";
-import { useUnit } from "effector-react";
-import type React from "react";
-import { useCallback, useEffect, useState } from "react";
+  createSignal,
+  createMemo,
+  createEffect,
+  onMount,
+  For,
+  Show,
+  type Component,
+} from "solid-js";
+import { useUnit } from "effector-solid";
 import { $selectedResourceType, setSelectedResourceType } from "@/entities/fhir";
 import { serverApi } from "@/shared/api";
+import { Button, Input } from "@/shared/ui";
+import { IconSearch, IconRefresh, IconLoader } from "@/shared/ui/Icon";
 import styles from "./ResourceTypeList.module.css";
 
 interface ResourceTypeListProps {
-  className?: string;
+  class?: string;
   onResourceTypeSelect?: () => void;
 }
 
@@ -28,20 +24,30 @@ interface ResourceType {
   count?: number;
 }
 
-export const ResourceTypeList: React.FC<ResourceTypeListProps> = ({
-  className,
-  onResourceTypeSelect,
-}) => {
-  const [resourceTypes, setResourceTypes] = useState<ResourceType[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [searchTerm, setSearchTerm] = useState("");
-  const [debouncedSearch] = useDebouncedValue(searchTerm, 300);
+// Simple debounce hook
+const createDebouncedValue = <T,>(value: () => T, delay: number) => {
+  const [debouncedValue, setDebouncedValue] = createSignal<T>(value());
 
+  createEffect(() => {
+    const v = value();
+    const timer = setTimeout(() => setDebouncedValue(() => v), delay);
+    return () => clearTimeout(timer);
+  });
+
+  return debouncedValue;
+};
+
+export const ResourceTypeList: Component<ResourceTypeListProps> = (props) => {
+  const [resourceTypes, setResourceTypes] = createSignal<ResourceType[]>([]);
+  const [loading, setLoading] = createSignal(false);
+  const [error, setError] = createSignal<string | null>(null);
+  const [searchTerm, setSearchTerm] = createSignal("");
+
+  const debouncedSearch = createDebouncedValue(searchTerm, 300);
   const selectedResourceType = useUnit($selectedResourceType);
 
   // Load resource types from server
-  const loadResourceTypes = useCallback(async () => {
+  const loadResourceTypes = async () => {
     setLoading(true);
     setError(null);
 
@@ -54,155 +60,151 @@ export const ResourceTypeList: React.FC<ResourceTypeListProps> = ({
     } finally {
       setLoading(false);
     }
-  }, []);
+  };
 
   // Initial load
-  useEffect(() => {
+  onMount(() => {
     loadResourceTypes();
-  }, [loadResourceTypes]);
+  });
 
   // Filter resource types based on search
-  const filteredResourceTypes = resourceTypes.filter((type) =>
-    type.name.toLowerCase().includes(debouncedSearch.toLowerCase())
+  const filteredResourceTypes = createMemo(() =>
+    resourceTypes().filter((type) =>
+      type.name.toLowerCase().includes(debouncedSearch().toLowerCase())
+    )
   );
 
   // Group resource types alphabetically
-  const groupedResourceTypes = filteredResourceTypes.reduce(
-    (acc, type) => {
+  const groupedResourceTypes = createMemo(() => {
+    const groups = new Map<string, ResourceType[]>();
+
+    for (const type of filteredResourceTypes()) {
       const firstLetter = type.name[0].toUpperCase();
-      if (!acc[firstLetter]) {
-        acc[firstLetter] = [];
-      }
-      acc[firstLetter].push(type);
-      return acc;
-    },
-    {} as Record<string, ResourceType[]>
-  );
+      const existing = groups.get(firstLetter) || [];
+      existing.push(type);
+      groups.set(firstLetter, existing);
+    }
 
-  const handleResourceTypeSelect = useCallback(
-    (resourceType: string) => {
-      setSelectedResourceType(resourceType);
-      onResourceTypeSelect?.();
-    },
-    [onResourceTypeSelect]
-  );
+    return Array.from(groups.entries())
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([letter, types]) => ({ letter, types }));
+  });
 
-  const handleRefresh = useCallback(() => {
-    loadResourceTypes();
-  }, [loadResourceTypes]);
+  const handleResourceTypeSelect = (resourceType: string) => {
+    setSelectedResourceType(resourceType);
+    props.onResourceTypeSelect?.();
+  };
 
-  if (loading && resourceTypes.length === 0) {
+  // Loading state
+  if (loading() && resourceTypes().length === 0) {
     return (
-      <Box className={`${styles.container} ${className || ""}`}>
-        <Box className={styles.header}>
-          <Text size="sm" fw={600}>
-            Resource Types
-          </Text>
-        </Box>
-        <Box className={styles.loadingContainer}>
-          <Loader size="sm" />
-          <Text size="sm" c="dimmed">
-            Loading resource types...
-          </Text>
-        </Box>
-      </Box>
+      <div class={`${styles.container} ${props.class || ""}`}>
+        <div class={styles.header}>
+          <span class={styles.headerTitle}>Resource Types</span>
+        </div>
+        <div class={styles.loadingContainer}>
+          <IconLoader size={20} />
+          <span class={styles.loadingText}>Loading resource types...</span>
+        </div>
+      </div>
     );
   }
 
-  if (error && resourceTypes.length === 0) {
+  // Error state (no data)
+  if (error() && resourceTypes().length === 0) {
     return (
-      <Box className={`${styles.container} ${className || ""}`}>
-        <Box className={styles.header}>
-          <Text size="sm" fw={600}>
-            Resource Types
-          </Text>
-          <Tooltip label="Refresh">
-            <ActionIcon size="sm" variant="subtle" onClick={handleRefresh}>
-              <IconRefresh size={14} />
-            </ActionIcon>
-          </Tooltip>
-        </Box>
-        <Box className={styles.errorContainer}>
-          <Text size="sm" c="red">
-            {error}
-          </Text>
-          <Button size="xs" variant="outline" onClick={handleRefresh}>
+      <div class={`${styles.container} ${props.class || ""}`}>
+        <div class={styles.header}>
+          <span class={styles.headerTitle}>Resource Types</span>
+          <button class={styles.iconButton} onClick={loadResourceTypes} title="Refresh">
+            <IconRefresh size={14} />
+          </button>
+        </div>
+        <div class={styles.errorContainer}>
+          <span class={styles.errorText}>{error()}</span>
+          <Button size="sm" variant="outline" onClick={loadResourceTypes}>
             Retry
           </Button>
-        </Box>
-      </Box>
+        </div>
+      </div>
     );
   }
 
   return (
-    <Box className={`${styles.container} ${className || ""}`}>
-      <Box className={styles.header}>
-        <Text size="sm" fw={600}>
-          Resource Types
-        </Text>
-        <Box className={styles.headerActions}>
-          {loading && <Loader size="xs" />}
-          <Tooltip label="Refresh">
-            <ActionIcon size="sm" variant="subtle" onClick={handleRefresh} loading={loading}>
-              <IconRefresh size={14} />
-            </ActionIcon>
-          </Tooltip>
-        </Box>
-      </Box>
+    <div class={`${styles.container} ${props.class || ""}`}>
+      <div class={styles.header}>
+        <span class={styles.headerTitle}>Resource Types</span>
+        <div class={styles.headerActions}>
+          <Show when={loading()}>
+            <IconLoader size={14} />
+          </Show>
+          <button
+            class={styles.iconButton}
+            onClick={loadResourceTypes}
+            disabled={loading()}
+            title="Refresh"
+          >
+            <IconRefresh size={14} />
+          </button>
+        </div>
+      </div>
 
-      <Box className={styles.searchContainer}>
-        <TextInput
+      <div class={styles.searchContainer}>
+        <Input
           placeholder="Search resource types..."
-          leftSection={<IconSearch size={16} />}
-          value={searchTerm}
-          onChange={(event) => setSearchTerm(event.currentTarget.value)}
-          size="sm"
+          value={searchTerm()}
+          onInput={(e) => setSearchTerm(e.currentTarget.value)}
+          icon={<IconSearch size={16} />}
         />
-      </Box>
+      </div>
 
-      <ScrollArea className={styles.listContainer}>
-        {filteredResourceTypes.length === 0 ? (
-          <Box className={styles.emptyState}>
-            <Text size="sm" c="dimmed">
-              {debouncedSearch ? "No matching resource types" : "No resource types available"}
-            </Text>
-          </Box>
-        ) : (
-          Object.keys(groupedResourceTypes)
-            .sort()
-            .map((letter) => (
-              <Box key={letter} className={styles.group}>
-                <Text size="xs" c="dimmed" fw={600} className={styles.groupHeader}>
-                  {letter}
-                </Text>
-                {groupedResourceTypes[letter].map((type) => (
-                  <Box
-                    key={type.name}
-                    className={`${styles.resourceType} ${
-                      selectedResourceType === type.name ? styles.selected : ""
-                    }`}
-                    onClick={() => handleResourceTypeSelect(type.name)}
-                  >
-                    <Text size="sm">{type.name}</Text>
-                    {type.count !== undefined && (
-                      <Badge size="xs" color="gray" variant="light">
-                        {type.count}
-                      </Badge>
-                    )}
-                  </Box>
-                ))}
-              </Box>
-            ))
-        )}
-      </ScrollArea>
+      <div class={styles.listContainer}>
+        <Show
+          when={filteredResourceTypes().length > 0}
+          fallback={
+            <div class={styles.emptyState}>
+              <span class={styles.emptyText}>
+                {debouncedSearch() ? "No matching resource types" : "No resource types available"}
+              </span>
+            </div>
+          }
+        >
+          <For each={groupedResourceTypes()}>
+            {(group) => (
+              <div class={styles.group}>
+                <div class={styles.groupHeader}>{group.letter}</div>
+                <For each={group.types}>
+                  {(type) => (
+                    <div
+                      class={`${styles.resourceType} ${
+                        selectedResourceType() === type.name ? styles.selected : ""
+                      }`}
+                      onClick={() => handleResourceTypeSelect(type.name)}
+                      tabIndex={0}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          handleResourceTypeSelect(type.name);
+                        }
+                      }}
+                    >
+                      <span class={styles.resourceTypeName}>{type.name}</span>
+                      <Show when={type.count !== undefined}>
+                        <span class={styles.badge}>{type.count}</span>
+                      </Show>
+                    </div>
+                  )}
+                </For>
+              </div>
+            )}
+          </For>
+        </Show>
+      </div>
 
-      {error && resourceTypes.length > 0 && (
-        <Box className={styles.errorBanner}>
-          <Text size="xs" c="red">
-            Failed to refresh: {error}
-          </Text>
-        </Box>
-      )}
-    </Box>
+      <Show when={error() && resourceTypes().length > 0}>
+        <div class={styles.errorBanner}>
+          <span class={styles.errorBannerText}>Failed to refresh: {error()}</span>
+        </div>
+      </Show>
+    </div>
   );
 };

@@ -262,7 +262,7 @@ pub async fn sync_and_load(
     // If manager is provided, load the package
     if let Some(mgr) = manager {
         match mgr
-            .load_from_directory(&package_dir, PACKAGE_NAME, PACKAGE_VERSION)
+            .load_from_directory(&package_dir, Some(PACKAGE_NAME))
             .await
         {
             Ok(_) => {

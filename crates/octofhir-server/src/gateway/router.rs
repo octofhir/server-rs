@@ -59,25 +59,19 @@ impl GatewayRouter {
         info!("Reloading gateway routes from storage");
 
         // Load all active Apps
+        let app_query = octofhir_db_memory::SearchQuery::new("App".parse().unwrap());
         let apps_result = storage
-            .search(
-                "App",
-                &octofhir_search::SearchParameters {
-                    resource_type: "App".to_string(),
-                    parameters: vec![("active".to_string(), vec!["true".to_string()])]
-                        .into_iter()
-                        .collect(),
-                    ..Default::default()
-                },
-            )
+            .search(&app_query)
             .await
             .map_err(|e| GatewayError::StorageError(format!("Failed to load Apps: {}", e)))?;
 
         let apps: Vec<App> = apps_result
-            .results
+            .resources
             .into_iter()
             .filter_map(|entry| {
-                serde_json::from_value(entry.resource).ok()
+                serde_json::to_value(&entry.data)
+                    .ok()
+                    .and_then(|v| serde_json::from_value(v).ok())
             })
             .collect();
 
@@ -90,27 +84,21 @@ impl GatewayRouter {
             .collect();
 
         // Load all active CustomOperations
+        let ops_query = octofhir_db_memory::SearchQuery::new("CustomOperation".parse().unwrap());
         let ops_result = storage
-            .search(
-                "CustomOperation",
-                &octofhir_search::SearchParameters {
-                    resource_type: "CustomOperation".to_string(),
-                    parameters: vec![("active".to_string(), vec!["true".to_string()])]
-                        .into_iter()
-                        .collect(),
-                    ..Default::default()
-                },
-            )
+            .search(&ops_query)
             .await
             .map_err(|e| {
                 GatewayError::StorageError(format!("Failed to load CustomOperations: {}", e))
             })?;
 
         let operations: Vec<CustomOperation> = ops_result
-            .results
+            .resources
             .into_iter()
             .filter_map(|entry| {
-                serde_json::from_value(entry.resource).ok()
+                serde_json::to_value(&entry.data)
+                    .ok()
+                    .and_then(|v| serde_json::from_value(v).ok())
             })
             .collect();
 
@@ -176,7 +164,7 @@ impl GatewayRouter {
     /// The router handles all requests to `/api/*` and dispatches them
     /// based on the loaded routes.
     pub fn create_router() -> Router<AppState> {
-        Router::new().route("/api/*path", any(gateway_handler))
+        Router::new().route("/api/{*path}", any(gateway_handler))
     }
 
     /// Looks up a route by method and path.
@@ -198,6 +186,7 @@ impl Default for GatewayRouter {
 }
 
 /// Main gateway handler that dispatches requests to the appropriate operation handler.
+#[axum::debug_handler]
 async fn gateway_handler(
     State(state): State<AppState>,
     AxumPath(path): AxumPath<String>,

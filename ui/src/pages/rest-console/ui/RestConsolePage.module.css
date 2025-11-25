@@ -1,19 +1,23 @@
 .container {
   max-width: 1000px;
   margin: 0 auto;
+  padding: var(--spacing-6);
+}
+
+.header {
+  margin-bottom: var(--spacing-6);
 }
 
 .title {
   font-size: var(--font-size-2xl);
   font-weight: 700;
   color: var(--text-color);
-  margin-bottom: var(--spacing-xs);
+  margin-bottom: var(--spacing-2);
 }
 
 .subtitle {
   font-size: var(--font-size-md);
   color: var(--text-muted);
-  margin-bottom: var(--spacing-xl);
 }
 
 .requestCard {

@@ -1,5 +1,6 @@
 import { Router, Route } from "@solidjs/router";
 import { ThemeProvider } from "./providers/ThemeProvider";
+import { ToastProvider } from "@/shared/ui/Toast";
 import { AppShell } from "@/widgets/app-shell";
 import { ResourceBrowserPage } from "@/pages/resource-browser";
 import { RestConsolePage } from "@/pages/rest-console";
@@ -15,8 +16,11 @@ import { OperationDetailPage } from "@/pages/gateway-operation";
 export default function App() {
   return (
     <ThemeProvider>
-      <AppShell>
-        <Router base="/ui">
+      <ToastProvider>
+        <Router
+          base="/ui"
+          root={(props) => <AppShell>{props.children}</AppShell>}
+        >
           <Route path="/" component={DashboardPage} />
           <Route path="/resources" component={ResourceBrowserPage} />
           <Route path="/resources/:type" component={ResourceBrowserPage} />
@@ -29,7 +33,7 @@ export default function App() {
           <Route path="/logs" component={LogsPage} />
           <Route path="/metadata" component={CapabilityStatementPage} />
         </Router>
-      </AppShell>
+      </ToastProvider>
     </ThemeProvider>
   );
 }

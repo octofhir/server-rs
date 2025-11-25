@@ -6,10 +6,8 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use futures_util::StreamExt;
 use serde::Deserialize;
-use sqlx_core::postgres::PgListener;
-use sqlx_postgres::PgPool;
+use sqlx_postgres::{PgListener, PgPool};
 use tokio::time::sleep;
 use tracing::{debug, error, info, instrument, warn};
 
@@ -82,9 +80,14 @@ impl GatewayReloadListener {
     }
 
     /// Main listen loop that connects and receives notifications.
-    async fn listen_loop(&self) -> Result<(), Box<dyn std::error::Error>> {
-        let mut listener = PgListener::connect_with(&self.pool).await?;
-        listener.listen(GATEWAY_CHANNEL).await?;
+    async fn listen_loop(&self) -> Result<(), Box<dyn std::error::Error + Send>> {
+        let mut listener = PgListener::connect_with(&self.pool)
+            .await
+            .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send>)?;
+        listener
+            .listen(GATEWAY_CHANNEL)
+            .await
+            .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send>)?;
 
         info!(
             channel = GATEWAY_CHANNEL,
@@ -92,7 +95,10 @@ impl GatewayReloadListener {
         );
 
         loop {
-            let notification = listener.recv().await?;
+            let notification = listener
+                .recv()
+                .await
+                .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send>)?;
             let payload = notification.payload();
 
             debug!(payload = %payload, "Received gateway NOTIFY");

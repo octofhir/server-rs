@@ -1,0 +1,223 @@
+/* RequestBuilder Component Styles */
+.container {
+  padding: var(--spacing-4);
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-4);
+  padding: var(--spacing-4);
+  background: var(--card-bg);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+}
+
+.requestLine {
+  display: flex;
+  gap: var(--spacing-2);
+  align-items: flex-end;
+}
+
+.methodSelect {
+  width: 120px;
+  flex-shrink: 0;
+}
+
+.pathInput {
+  flex: 1;
+}
+
+.sendButton {
+  flex-shrink: 0;
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-2);
+}
+
+.sectionHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-2);
+}
+
+.sectionTitle {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  color: var(--text-color);
+}
+
+.headerQuickActions {
+  display: flex;
+  gap: var(--spacing-1);
+}
+
+.quickButton {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  padding: var(--spacing-1) var(--spacing-2);
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  cursor: pointer;
+  border-radius: var(--radius-md);
+  transition: background-color var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast);
+}
+
+.quickButton:hover {
+  background: var(--primary-subtle);
+  border-color: var(--primary-color);
+  color: var(--primary-color);
+}
+
+.headersList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-2);
+}
+
+.headerRow {
+  display: flex;
+  gap: var(--spacing-2);
+  align-items: center;
+}
+
+.headerKey {
+  width: 200px;
+  flex-shrink: 0;
+}
+
+.headerValue {
+  flex: 1;
+}
+
+.emptyText {
+  font-size: var(--font-size-sm);
+  color: var(--text-muted);
+  padding: var(--spacing-2) 0;
+}
+
+.iconButton {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  border-radius: var(--radius-md);
+  transition: background-color var(--transition-fast), color var(--transition-fast);
+  flex-shrink: 0;
+}
+
+.iconButton:hover {
+  background: var(--hover-bg);
+  color: var(--text-color);
+}
+
+.iconButton.danger:hover {
+  background: var(--error-subtle);
+  color: var(--error-color);
+}
+
+.bodyTextarea {
+  width: 100%;
+  min-height: 150px;
+  padding: var(--spacing-3);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  line-height: 1.5;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--input-bg);
+  color: var(--text-color);
+  resize: vertical;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.bodyTextarea:hover:not(:focus) {
+  border-color: var(--border-color);
+}
+
+.bodyTextarea:focus {
+  outline: none;
+  border-color: var(--border-focus);
+  box-shadow: 0 0 0 3px var(--primary-subtle);
+}
+
+.bodyTextarea::placeholder {
+  color: var(--text-subtle);
+}
+
+.hint {
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.hint kbd {
+  display: inline-block;
+  padding: 2px 6px;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 1px 0 var(--border-subtle);
+}
+
+/* Focus styles */
+.quickButton:focus-visible,
+.iconButton:focus-visible {
+  outline: 2px solid var(--primary-color);
+  outline-offset: 2px;
+}
+
+/* Responsive */
+@media (max-width: 640px) {
+  .container {
+    padding: var(--spacing-2);
+  }
+
+  .card {
+    padding: var(--spacing-3);
+  }
+
+  .requestLine {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .methodSelect {
+    width: 100%;
+  }
+
+  .sectionHeader {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .headerRow {
+    flex-wrap: wrap;
+  }
+
+  .headerKey {
+    width: 100%;
+  }
+}
+
+/* Reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  .quickButton,
+  .iconButton,
+  .bodyTextarea {
+    transition: none;
+  }
+}

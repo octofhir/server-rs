@@ -1,18 +1,39 @@
+/* AppShell Component Styles */
 .container {
   display: flex;
   flex-direction: column;
-  min-height: 100vh;
+  height: 100vh;
+  overflow: hidden;
 }
 
 .body {
   display: flex;
   flex: 1;
   overflow: hidden;
+  min-height: 0;
 }
 
 .main {
   flex: 1;
   overflow: auto;
-  padding: var(--spacing-lg);
   background-color: var(--bg-color);
+}
+
+/* Custom scrollbar for main content */
+.main::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.main::-webkit-scrollbar-track {
+  background: var(--bg-secondary);
+}
+
+.main::-webkit-scrollbar-thumb {
+  background: var(--border-color);
+  border-radius: 4px;
+}
+
+.main::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
 }

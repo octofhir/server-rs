@@ -1,186 +1,326 @@
-import { Box, Group, Kbd, Text } from "@mantine/core";
-import { useUnit } from "effector-react";
 import {
-  type ActionImpl,
-  KBarAnimator,
-  KBarPortal,
-  KBarPositioner,
-  KBarProvider,
-  KBarResults,
-  KBarSearch,
-  useMatches,
-} from "kbar";
-import type React from "react";
-import { useEffect, useMemo } from "react";
-import { useNavigate, useLocation } from "react-router-dom";
-import { commandToAction, createNavigationCommands, actionCommands, systemCommands, restConsoleCommands } from "../model/commands";
+  createSignal,
+  createMemo,
+  createEffect,
+  onMount,
+  onCleanup,
+  For,
+  Show,
+  type ParentComponent,
+} from "solid-js";
+import { useNavigate, useLocation } from "@solidjs/router";
+import { useUnit } from "effector-solid";
+import { Portal } from "solid-js/web";
+import {
+  type Command,
+  createNavigationCommands,
+  actionCommands,
+  systemCommands,
+  restConsoleCommands,
+} from "../model/commands";
 import {
   $isCommandPaletteOpen,
-  attachGlobalKeydownListener,
   closeCommandPalette,
-  detachGlobalKeydownListener,
-  openCommandPalette,
+  toggleCommandPalette,
 } from "../model/store";
 import styles from "./CommandPalette.module.css";
 
-interface RenderResultsProps {
-  onRender: (action: ActionImpl, active: boolean) => React.ReactNode;
-}
+// Kbd component for keyboard shortcuts
+const Kbd = (props: { children: string }) => (
+  <kbd class={styles.kbd}>{props.children}</kbd>
+);
 
-const RenderResults: React.FC<RenderResultsProps> = ({ onRender }) => {
-  const { results } = useMatches();
+// Fuzzy match function
+const fuzzyMatch = (text: string, query: string): boolean => {
+  const normalizedText = text.toLowerCase();
+  const normalizedQuery = query.toLowerCase();
 
-  return (
-    <KBarResults
-      items={results}
-      onRender={({ item, active }) => {
-        if (typeof item === "string") {
-          // Section header
-          return (
-            <div className={styles.section}>
-              <Text size="xs" fw={600} c="dimmed" tt="uppercase">
-                {item}
-              </Text>
-            </div>
-          );
-        }
+  if (normalizedQuery.length === 0) return true;
+  if (normalizedText.includes(normalizedQuery)) return true;
 
-        return onRender(item, active) as React.ReactElement;
-      }}
-    />
-  );
+  // Simple fuzzy matching
+  let queryIndex = 0;
+  for (let i = 0; i < normalizedText.length && queryIndex < normalizedQuery.length; i++) {
+    if (normalizedText[i] === normalizedQuery[queryIndex]) {
+      queryIndex++;
+    }
+  }
+  return queryIndex === normalizedQuery.length;
 };
 
+// Command Item component
 interface CommandItemProps {
-  action: ActionImpl;
+  command: Command;
   active: boolean;
+  onSelect: () => void;
 }
 
-const CommandItem: React.FC<CommandItemProps> = ({ action, active }) => {
-  const hasShortcut = action.shortcut && action.shortcut.length > 0;
+const CommandItem = (props: CommandItemProps) => {
+  const hasShortcut = () => props.command.shortcut && props.command.shortcut.length > 0;
 
   return (
-    <Box className={`${styles.item} ${active ? styles.active : ""}`} data-active={active}>
-      <Group justify="space-between" wrap="nowrap" w="100%">
-        <Group gap="sm" wrap="nowrap">
-          {action.icon && <Box className={styles.icon}>{action.icon}</Box>}
-          <Box>
-            <Text size="sm" fw={500}>
-              {action.name}
-            </Text>
-            {action.subtitle && (
-              <Text size="xs" c="dimmed">
-                {action.subtitle}
-              </Text>
-            )}
-          </Box>
-        </Group>
+    <div
+      class={`${styles.item} ${props.active ? styles.active : ""}`}
+      onClick={props.onSelect}
+      onMouseEnter={() => {}}
+      data-active={props.active}
+    >
+      <div class={styles.itemContent}>
+        <Show when={props.command.icon}>
+          <div class={styles.icon}>{props.command.icon}</div>
+        </Show>
+        <div class={styles.itemText}>
+          <span class={styles.itemName}>{props.command.name}</span>
+          <Show when={props.command.subtitle}>
+            <span class={styles.itemSubtitle}>{props.command.subtitle}</span>
+          </Show>
+        </div>
+      </div>
 
-        {hasShortcut && (
-          <Group gap="xs">
-            {action.shortcut!.map((key) => (
-              <Kbd key={key} size="xs">
-                {key}
-              </Kbd>
-            ))}
-          </Group>
-        )}
-      </Group>
-    </Box>
+      <Show when={hasShortcut()}>
+        <div class={styles.shortcuts}>
+          <For each={props.command.shortcut}>
+            {(key) => <Kbd>{key}</Kbd>}
+          </For>
+        </div>
+      </Show>
+    </div>
   );
 };
 
-interface CommandPaletteProviderProps {
-  children: React.ReactNode;
+// Group commands by section
+interface GroupedCommands {
+  section: string;
+  commands: Command[];
 }
 
-export const CommandPaletteProvider: React.FC<CommandPaletteProviderProps> = ({ children }) => {
+const groupCommands = (commands: Command[]): GroupedCommands[] => {
+  const groups = new Map<string, Command[]>();
+
+  for (const command of commands) {
+    const section = command.section || "Other";
+    const existing = groups.get(section) || [];
+    existing.push(command);
+    groups.set(section, existing);
+  }
+
+  return Array.from(groups.entries()).map(([section, commands]) => ({
+    section,
+    commands,
+  }));
+};
+
+// Main Command Palette Modal
+const CommandPaletteModal = () => {
   const navigate = useNavigate();
   const location = useLocation();
+  const isOpen = useUnit($isCommandPaletteOpen);
 
-  // Generate commands with proper navigation
-  const commands = useMemo(() => {
-    const navigationCommands = createNavigationCommands(navigate);
-    const allCommands = [...navigationCommands, ...systemCommands, ...actionCommands, ...restConsoleCommands];
+  const [query, setQuery] = createSignal("");
+  const [activeIndex, setActiveIndex] = createSignal(0);
+  let inputRef: HTMLInputElement | undefined;
 
-    // Filter commands based on current route/context
-    return allCommands
-      .filter((command) => {
-        // Always show navigation and system commands
-        if (command.section === "Navigation" || command.section === "System") {
-          return true;
-        }
+  // Build commands with navigation
+  const allCommands = createMemo(() => {
+    const navCommands = createNavigationCommands(navigate);
+    return [...navCommands, ...systemCommands, ...actionCommands, ...restConsoleCommands];
+  });
 
-        // Show REST console commands only when in console
-        if (command.section === "REST Console") {
-          return location.pathname === "/console";
-        }
-
-        // Show theme commands everywhere
-        if (command.section === "Theme") {
-          return true;
-        }
-
+  // Filter commands based on current route
+  const contextCommands = createMemo(() => {
+    return allCommands().filter((command) => {
+      if (command.section === "Navigation" || command.section === "System" || command.section === "Theme") {
         return true;
-      })
-      .sort((a, b) => (b.priority || 0) - (a.priority || 0));
-  }, [navigate, location.pathname]);
+      }
+      if (command.section === "REST Console") {
+        return location.pathname === "/console";
+      }
+      return true;
+    });
+  });
 
-  // Convert commands to kbar actions
-  const actions = useMemo(() => commands.map(commandToAction), [commands]);
+  // Filter commands based on search query
+  const filteredCommands = createMemo(() => {
+    const q = query();
+    if (!q) return contextCommands();
 
-  useEffect(() => {
-    attachGlobalKeydownListener();
-    return detachGlobalKeydownListener;
-  }, []);
+    return contextCommands().filter((command) => {
+      const searchText = `${command.name} ${command.keywords || ""} ${command.subtitle || ""}`;
+      return fuzzyMatch(searchText, q);
+    });
+  });
+
+  // Group filtered commands
+  const groupedCommands = createMemo(() => groupCommands(filteredCommands()));
+
+  // Flat list for keyboard navigation
+  const flatCommands = createMemo(() => filteredCommands());
+
+  // Reset active index when results change
+  createEffect(() => {
+    flatCommands();
+    setActiveIndex(0);
+  });
+
+  // Focus input when opened
+  createEffect(() => {
+    if (isOpen()) {
+      setQuery("");
+      setActiveIndex(0);
+      setTimeout(() => inputRef?.focus(), 10);
+    }
+  });
+
+  // Handle keyboard navigation
+  const handleKeyDown = (e: KeyboardEvent) => {
+    const commands = flatCommands();
+
+    switch (e.key) {
+      case "ArrowDown":
+        e.preventDefault();
+        setActiveIndex((i) => Math.min(i + 1, commands.length - 1));
+        break;
+      case "ArrowUp":
+        e.preventDefault();
+        setActiveIndex((i) => Math.max(i - 1, 0));
+        break;
+      case "Enter":
+        e.preventDefault();
+        const activeCommand = commands[activeIndex()];
+        if (activeCommand) {
+          executeCommand(activeCommand);
+        }
+        break;
+      case "Escape":
+        e.preventDefault();
+        closeCommandPalette();
+        break;
+    }
+  };
+
+  const executeCommand = (command: Command) => {
+    closeCommandPalette();
+    if (command.perform) {
+      command.perform();
+    }
+  };
 
   return (
-    <KBarProvider
-      actions={actions}
-      options={{
-        enableHistory: true,
-        disableScrollbarManagement: true,
-      }}
-    >
-      {children}
-
-      <KBarPortal>
-        <KBarPositioner className={styles.positioner}>
-          <KBarAnimator className={styles.animator}>
-            <Box className={styles.search}>
-              <KBarSearch
-                className={styles.searchInput}
+    <Show when={isOpen()}>
+      <Portal>
+        <div class={styles.overlay} onClick={() => closeCommandPalette()}>
+          <div class={styles.container} onClick={(e) => e.stopPropagation()}>
+            <div class={styles.search}>
+              <svg class={styles.searchIcon} viewBox="0 0 20 20" fill="currentColor">
+                <path
+                  fill-rule="evenodd"
+                  d="M8 4a4 4 0 100 8 4 4 0 000-8zM2 8a6 6 0 1110.89 3.476l4.817 4.817a1 1 0 01-1.414 1.414l-4.816-4.816A6 6 0 012 8z"
+                  clip-rule="evenodd"
+                />
+              </svg>
+              <input
+                ref={inputRef}
+                type="text"
+                class={styles.searchInput}
                 placeholder="Search commands..."
-                defaultPlaceholder="Search commands..."
+                value={query()}
+                onInput={(e) => setQuery(e.currentTarget.value)}
+                onKeyDown={handleKeyDown}
               />
-            </Box>
+              <Kbd>esc</Kbd>
+            </div>
 
-            <Box className={styles.results}>
-              <RenderResults
-                onRender={(action, active) => <CommandItem action={action} active={active} />}
-              />
-            </Box>
-          </KBarAnimator>
-        </KBarPositioner>
-      </KBarPortal>
-    </KBarProvider>
+            <div class={styles.results}>
+              <Show
+                when={flatCommands().length > 0}
+                fallback={
+                  <div class={styles.noResults}>No commands found</div>
+                }
+              >
+                <For each={groupedCommands()}>
+                  {(group) => (
+                    <>
+                      <div class={styles.section}>{group.section}</div>
+                      <For each={group.commands}>
+                        {(command) => {
+                          const commandIndex = createMemo(() =>
+                            flatCommands().findIndex((c) => c.id === command.id)
+                          );
+                          return (
+                            <CommandItem
+                              command={command}
+                              active={activeIndex() === commandIndex()}
+                              onSelect={() => executeCommand(command)}
+                            />
+                          );
+                        }}
+                      </For>
+                    </>
+                  )}
+                </For>
+              </Show>
+            </div>
+
+            <div class={styles.footer}>
+              <span class={styles.footerHint}>
+                <Kbd>↑</Kbd>
+                <Kbd>↓</Kbd>
+                <span>to navigate</span>
+              </span>
+              <span class={styles.footerHint}>
+                <Kbd>↵</Kbd>
+                <span>to select</span>
+              </span>
+              <span class={styles.footerHint}>
+                <Kbd>esc</Kbd>
+                <span>to close</span>
+              </span>
+            </div>
+          </div>
+        </div>
+      </Portal>
+    </Show>
+  );
+};
+
+// Provider component with global keyboard listener
+export const CommandPaletteProvider: ParentComponent = (props) => {
+  onMount(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Cmd/Ctrl + K to open
+      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+        e.preventDefault();
+        toggleCommandPalette();
+      }
+    };
+
+    document.addEventListener("keydown", handleKeyDown);
+    onCleanup(() => document.removeEventListener("keydown", handleKeyDown));
+  });
+
+  return (
+    <>
+      {props.children}
+      <CommandPaletteModal />
+    </>
   );
 };
 
 // Hook to control the command palette programmatically
 export const useCommandPalette = () => {
+  const isOpen = useUnit($isCommandPaletteOpen);
   return {
-    open: openCommandPalette,
-    close: closeCommandPalette,
-    isOpen: useUnit($isCommandPaletteOpen),
+    isOpen,
+    open: () => toggleCommandPalette(),
+    close: () => closeCommandPalette(),
   };
 };
 
-// Component to trigger command palette (for header button)
-export const CommandPaletteTrigger: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+// Trigger component for header button
+export const CommandPaletteTrigger: ParentComponent = (props) => {
   return (
-    <Box onClick={() => openCommandPalette()} style={{ cursor: "pointer" }}>
-      {children}
-    </Box>
+    <div onClick={() => toggleCommandPalette()} style={{ cursor: "pointer" }}>
+      {props.children}
+    </div>
   );
 };

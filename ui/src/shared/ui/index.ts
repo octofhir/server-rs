@@ -1,5 +1,6 @@
 export * from "./Button";
 export * from "./Card";
+export * from "./Icon";
 export * from "./Input";
 export * from "./JsonViewer";
 export * from "./Loader";
@@ -9,3 +10,4 @@ export * from "./Splitter";
 export * from "./StatusBadge";
 export * from "./Table";
 export * from "./Tabs";
+export * from "./Toast";

@@ -5,48 +5,78 @@
 }
 
 .chip {
-  cursor: pointer;
-  transition:
-    transform 0.1s ease,
-    box-shadow 0.1s ease;
-  user-select: none;
-  position: relative;
   display: flex;
   align-items: center;
-  gap: var(--mantine-spacing-xs);
+  gap: var(--spacing-1);
+  padding: var(--spacing-1) var(--spacing-2);
+  border: none;
+  border-radius: var(--radius-full);
+  font-size: var(--font-size-xs);
+  background: var(--primary-subtle);
+  color: var(--primary-color);
+  cursor: pointer;
+  user-select: none;
+  transition: transform var(--transition-fast), box-shadow var(--transition-fast);
 }
 
 .chip:hover {
   transform: translateY(-1px);
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  box-shadow: var(--shadow-sm);
 }
 
 .chip:active {
   transform: translateY(0);
 }
 
+.chip.loading {
+  opacity: 0.8;
+  cursor: default;
+}
+
+.chip.error {
+  background: var(--error-subtle);
+  color: var(--error-color);
+  cursor: not-allowed;
+}
+
+.chip.error:hover {
+  transform: none;
+  box-shadow: none;
+}
+
 .text {
-  font-family: var(--mantine-font-family-monospace);
-  font-size: var(--mantine-font-size-xs);
-  font-weight: 500;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
   letter-spacing: 0.02em;
+}
+
+.spinner {
+  width: 12px;
+  height: 12px;
+  border: 2px solid currentColor;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
 }
 
 .copyButton {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  background: none;
-  border: none;
-  cursor: pointer;
   padding: 2px;
-  border-radius: var(--mantine-radius-xs);
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
   color: currentColor;
+  cursor: pointer;
   opacity: 0.6;
-  transition:
-    opacity 0.2s ease,
-    background-color 0.2s ease;
-  margin-left: var(--mantine-spacing-xs);
+  margin-left: var(--spacing-1);
+  transition: opacity var(--transition-fast), background-color var(--transition-fast);
 }
 
 .copyButton:hover {
@@ -58,44 +88,23 @@
   background: rgba(0, 0, 0, 0.1);
 }
 
-.tooltip {
-  max-width: 400px;
-}
-
-/* Dark mode adjustments */
-@media (prefers-color-scheme: dark) {
-  .chip:hover {
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
-  }
-
-  .copyButton:hover {
-    background: rgba(255, 255, 255, 0.1);
-  }
-
-  .copyButton:active {
-    background: rgba(255, 255, 255, 0.15);
-  }
-}
-
-/* Focus indicators */
-.chip:focus-visible {
-  outline: 2px solid var(--mantine-color-blue-6);
+/* Focus styles */
+.chip:focus-visible,
+.copyButton:focus-visible {
+  outline: 2px solid var(--primary-color);
   outline-offset: 2px;
 }
 
-.copyButton:focus-visible {
-  outline: 2px solid var(--mantine-color-blue-6);
-  outline-offset: 1px;
+/* Responsive */
+@media (max-width: 640px) {
+  .text {
+    font-size: calc(var(--font-size-xs) - 1px);
+  }
 }
 
-/* High contrast mode */
-@media (prefers-contrast: high) {
-  .chip {
-    border: 1px solid currentColor;
-  }
-
+@media (max-width: 480px) {
   .copyButton {
-    border: 1px solid currentColor;
+    display: none;
   }
 }
 
@@ -109,54 +118,19 @@
   .chip:hover {
     transform: none;
   }
-}
 
-/* Responsive adjustments */
-@media (max-width: 768px) {
-  .text {
-    font-size: calc(var(--mantine-font-size-xs) - 1px);
-  }
-
-  .tooltip {
-    max-width: 300px;
+  .spinner {
+    animation: none;
   }
 }
 
-@media (max-width: 480px) {
-  .copyButton {
-    display: none; /* Hide copy button on very small screens */
-  }
-}
-
-/* Animation for successful copy */
+/* Copy success animation */
 @keyframes copy-success {
-  0% {
-    transform: scale(1);
-  }
-  50% {
-    transform: scale(1.1);
-    background: var(--mantine-color-green-1);
-  }
-  100% {
-    transform: scale(1);
-  }
+  0% { transform: scale(1); }
+  50% { transform: scale(1.1); background: var(--success-subtle); }
+  100% { transform: scale(1); }
 }
 
 .copyButton.success {
   animation: copy-success 0.3s ease;
-}
-
-/* Loading state improvements */
-.chip.loading {
-  opacity: 0.8;
-}
-
-/* Error state styling */
-.chip.error {
-  cursor: not-allowed;
-}
-
-.chip.error:hover {
-  transform: none;
-  box-shadow: none;
 }

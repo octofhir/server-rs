@@ -1,5 +1,4 @@
-import type { Action } from "kbar";
-import type React from "react";
+import type { JSX } from "solid-js";
 
 export interface Command {
   id: string;
@@ -10,7 +9,7 @@ export interface Command {
   priority?: number;
   perform?: () => void | Promise<void>;
   subtitle?: string;
-  icon?: React.ReactNode;
+  icon?: JSX.Element;
 }
 
 // Predefined command sections
@@ -33,7 +32,6 @@ export const systemCommands: Command[] = [
     priority: 100,
     perform: async () => {
       try {
-        // This will be implemented when we create the API utilities
         const buildInfo = await fetch("/api/build-info").then((r) => r.json());
         await navigator.clipboard.writeText(buildInfo.commit);
       } catch (error) {
@@ -49,7 +47,6 @@ export const systemCommands: Command[] = [
     section: COMMAND_SECTIONS.SYSTEM,
     priority: 90,
     perform: () => {
-      // This will be implemented when we create the health badge
       window.dispatchEvent(new CustomEvent("refresh-health"));
     },
   },
@@ -58,37 +55,67 @@ export const systemCommands: Command[] = [
 // Navigation commands factory function
 export const createNavigationCommands = (navigate: (path: string) => void): Command[] => [
   {
-    id: "open-resource-browser",
-    name: "Open Resource Browser",
-    shortcut: ["r", "b"],
-    keywords: "resources browser fhir explore",
+    id: "go-dashboard",
+    name: "Go to Dashboard",
+    shortcut: ["g", "d"],
+    keywords: "dashboard home",
     section: COMMAND_SECTIONS.NAVIGATION,
     priority: 100,
-    perform: () => {
-      navigate("/");
-    },
+    perform: () => navigate("/"),
   },
   {
-    id: "open-rest-console",
-    name: "Open REST Console",
-    shortcut: ["r", "c"],
-    keywords: "rest console api request",
+    id: "go-resources",
+    name: "Go to Resource Browser",
+    shortcut: ["g", "r"],
+    keywords: "resources browser fhir explore",
     section: COMMAND_SECTIONS.NAVIGATION,
     priority: 95,
-    perform: () => {
-      navigate("/console");
-    },
+    perform: () => navigate("/resources"),
   },
   {
-    id: "open-settings",
-    name: "Open Settings",
-    shortcut: ["s"],
-    keywords: "settings preferences config",
+    id: "go-console",
+    name: "Go to REST Console",
+    shortcut: ["g", "c"],
+    keywords: "rest console api request",
+    section: COMMAND_SECTIONS.NAVIGATION,
+    priority: 90,
+    perform: () => navigate("/console"),
+  },
+  {
+    id: "go-gateway",
+    name: "Go to API Gateway",
+    shortcut: ["g", "g"],
+    keywords: "gateway api custom endpoints",
+    section: COMMAND_SECTIONS.NAVIGATION,
+    priority: 85,
+    perform: () => navigate("/gateway"),
+  },
+  {
+    id: "go-db-console",
+    name: "Go to DB Console",
+    shortcut: ["g", "q"],
+    keywords: "database sql query console",
     section: COMMAND_SECTIONS.NAVIGATION,
     priority: 80,
-    perform: () => {
-      navigate("/settings");
-    },
+    perform: () => navigate("/db-console"),
+  },
+  {
+    id: "go-settings",
+    name: "Go to Settings",
+    shortcut: ["g", "s"],
+    keywords: "settings preferences config",
+    section: COMMAND_SECTIONS.NAVIGATION,
+    priority: 75,
+    perform: () => navigate("/settings"),
+  },
+  {
+    id: "go-metadata",
+    name: "Go to Capability Statement",
+    shortcut: ["g", "m"],
+    keywords: "metadata capability statement fhir",
+    section: COMMAND_SECTIONS.NAVIGATION,
+    priority: 70,
+    perform: () => navigate("/metadata"),
   },
 ];
 
@@ -100,38 +127,14 @@ export const navigationCommands: Command[] = createNavigationCommands(() => {
 // Action commands
 export const actionCommands: Command[] = [
   {
-    id: "send-rest-request",
-    name: "Send REST Request",
-    shortcut: ["ctrl+enter", "cmd+enter"],
-    keywords: "send request execute run",
-    section: COMMAND_SECTIONS.ACTIONS,
-    priority: 100,
-    perform: () => {
-      // Dispatch event for REST console to handle
-      window.dispatchEvent(new CustomEvent("send-request"));
-    },
-  },
-  {
     id: "toggle-theme",
     name: "Toggle Theme",
-    shortcut: ["ctrl+shift+t", "cmd+shift+t"],
+    shortcut: ["t"],
     keywords: "theme dark light toggle",
     section: COMMAND_SECTIONS.THEME,
     priority: 85,
     perform: () => {
-      // This will be implemented when we have theme management
       window.dispatchEvent(new CustomEvent("toggle-theme"));
-    },
-  },
-  {
-    id: "rebuild-theme",
-    name: "Rebuild Theme from Logo",
-    shortcut: [],
-    keywords: "theme rebuild logo colors",
-    section: COMMAND_SECTIONS.THEME,
-    priority: 70,
-    perform: () => {
-      window.dispatchEvent(new CustomEvent("rebuild-theme"));
     },
   },
 ];
@@ -139,36 +142,25 @@ export const actionCommands: Command[] = [
 // REST Console specific commands
 export const restConsoleCommands: Command[] = [
   {
+    id: "send-request",
+    name: "Send Request",
+    shortcut: ["ctrl+enter"],
+    keywords: "send request execute run",
+    section: COMMAND_SECTIONS.REST_CONSOLE,
+    priority: 100,
+    perform: () => {
+      window.dispatchEvent(new CustomEvent("send-request"));
+    },
+  },
+  {
     id: "clear-response",
     name: "Clear Response",
-    shortcut: ["ctrl+k", "cmd+k"],
+    shortcut: ["ctrl+l"],
     keywords: "clear response reset",
     section: COMMAND_SECTIONS.REST_CONSOLE,
     priority: 90,
     perform: () => {
       window.dispatchEvent(new CustomEvent("clear-response"));
-    },
-  },
-  {
-    id: "save-preset",
-    name: "Save as Preset",
-    shortcut: ["ctrl+s", "cmd+s"],
-    keywords: "save preset bookmark",
-    section: COMMAND_SECTIONS.REST_CONSOLE,
-    priority: 80,
-    perform: () => {
-      window.dispatchEvent(new CustomEvent("save-preset"));
-    },
-  },
-  {
-    id: "load-preset",
-    name: "Load Preset",
-    shortcut: ["ctrl+o", "cmd+o"],
-    keywords: "load preset open",
-    section: COMMAND_SECTIONS.REST_CONSOLE,
-    priority: 75,
-    perform: () => {
-      window.dispatchEvent(new CustomEvent("load-preset"));
     },
   },
 ];
@@ -180,9 +172,3 @@ export const defaultCommands: Command[] = [
   ...actionCommands,
   ...restConsoleCommands,
 ];
-
-// Helper to convert our commands to kbar actions
-export const commandToAction = (command: Command): Action => ({
-  ...command,
-  perform: command.perform || (() => {}),
-});

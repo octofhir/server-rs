@@ -5,6 +5,7 @@ export interface InputProps extends JSX.InputHTMLAttributes<HTMLInputElement> {
   label?: string;
   error?: string;
   fullWidth?: boolean;
+  icon?: JSX.Element;
 }
 
 export const Input = (props: InputProps) => {
@@ -14,6 +15,7 @@ export const Input = (props: InputProps) => {
     "fullWidth",
     "class",
     "id",
+    "icon",
   ]);
 
   const inputId = local.id || `input-${Math.random().toString(36).slice(2)}`;
@@ -27,11 +29,16 @@ export const Input = (props: InputProps) => {
           {local.label}
         </label>
       </Show>
-      <input
-        id={inputId}
-        class={`${styles.input} ${local.error ? styles.error : ""}`}
-        {...rest}
-      />
+      <div class={`${styles.inputWrapper} ${local.icon ? styles.hasIcon : ""}`}>
+        <Show when={local.icon}>
+          <span class={styles.icon}>{local.icon}</span>
+        </Show>
+        <input
+          id={inputId}
+          class={`${styles.input} ${local.error ? styles.error : ""}`}
+          {...rest}
+        />
+      </div>
       <Show when={local.error}>
         <span class={styles.errorText}>{local.error}</span>
       </Show>

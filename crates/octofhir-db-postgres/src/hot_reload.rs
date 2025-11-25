@@ -6,11 +6,9 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use futures_util::StreamExt;
 use serde::Deserialize;
-use sqlx_core::postgres::PgListener;
-use sqlx_postgres::PgPool;
-use tokio::sync::mpsc;
+use sqlx_postgres::{PgListener, PgPool};
+use tokio::sync::broadcast;
 use tokio::time::sleep;
 use tracing::{debug, error, info, instrument, warn};
 
@@ -73,8 +71,7 @@ impl NotifyPayload {
 /// change notifications to subscribers.
 pub struct HotReloadListener {
     pool: PgPool,
-    sender: mpsc::UnboundedSender<ConformanceChangeEvent>,
-    receiver: Arc<tokio::sync::Mutex<mpsc::UnboundedReceiver<ConformanceChangeEvent>>>,
+    sender: broadcast::Sender<ConformanceChangeEvent>,
 }
 
 impl HotReloadListener {
@@ -84,20 +81,17 @@ impl HotReloadListener {
     /// Call `start()` to begin listening for changes.
     #[must_use]
     pub fn new(pool: PgPool) -> Self {
-        let (sender, receiver) = mpsc::unbounded_channel();
+        // Create broadcast channel with capacity of 100 events
+        let (sender, _) = broadcast::channel(100);
 
-        Self {
-            pool,
-            sender,
-            receiver: Arc::new(tokio::sync::Mutex::new(receiver)),
-        }
+        Self { pool, sender }
     }
 
     /// Returns a clone of the change event sender.
     ///
     /// This can be used to manually inject change events for testing.
     #[must_use]
-    pub fn sender(&self) -> mpsc::UnboundedSender<ConformanceChangeEvent> {
+    pub fn sender(&self) -> broadcast::Sender<ConformanceChangeEvent> {
         self.sender.clone()
     }
 
@@ -134,9 +128,14 @@ impl HotReloadListener {
     }
 
     /// Main listen loop that connects and receives notifications.
-    async fn listen_loop(&self) -> Result<(), Box<dyn std::error::Error>> {
-        let mut listener = PgListener::connect_with(&self.pool).await?;
-        listener.listen(CONFORMANCE_CHANNEL).await?;
+    async fn listen_loop(&self) -> Result<(), Box<dyn std::error::Error + Send>> {
+        let mut listener = PgListener::connect_with(&self.pool)
+            .await
+            .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send>)?;
+        listener
+            .listen(CONFORMANCE_CHANNEL)
+            .await
+            .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send>)?;
 
         info!(
             channel = CONFORMANCE_CHANNEL,
@@ -144,7 +143,10 @@ impl HotReloadListener {
         );
 
         loop {
-            let notification = listener.recv().await?;
+            let notification = listener
+                .recv()
+                .await
+                .map_err(|e| Box::new(e) as Box<dyn std::error::Error + Send>)?;
             let payload = notification.payload();
 
             debug!(payload = %payload, "Received NOTIFY");
@@ -179,30 +181,20 @@ impl HotReloadListener {
     /// Subscribes to conformance change events.
     ///
     /// Returns a receiver that yields `ConformanceChangeEvent` as they occur.
+    /// Multiple subscribers can call this method to receive independent copies
+    /// of all events.
     ///
     /// # Example
     ///
     /// ```ignore
     /// let mut rx = listener.subscribe();
-    /// while let Some(event) = rx.recv().await {
+    /// while let Ok(event) = rx.recv().await {
     ///     println!("Resource changed: {:?}", event);
     /// }
     /// ```
-    pub async fn subscribe(&self) -> mpsc::UnboundedReceiver<ConformanceChangeEvent> {
-        let mut receiver_guard = self.receiver.lock().await;
-        let (tx, rx) = mpsc::unbounded_channel();
-
-        // Forward all events from the main receiver to new subscribers
-        // Note: This is a simple implementation. For multiple subscribers,
-        // you'd want to use broadcast channel or similar.
-        let main_tx = self.sender.clone();
-        tokio::spawn(async move {
-            drop(receiver_guard);
-            drop(main_tx);
-            drop(tx);
-        });
-
-        rx
+    #[must_use]
+    pub fn subscribe(&self) -> broadcast::Receiver<ConformanceChangeEvent> {
+        self.sender.subscribe()
     }
 }
 
@@ -265,21 +257,27 @@ impl HotReloadBuilder {
     /// Returns a handle to the spawned task.
     pub fn start(self) -> Result<tokio::task::JoinHandle<()>, Box<dyn std::error::Error>> {
         let listener = Arc::new(HotReloadListener::new(self.pool.clone()));
-        let sender = listener.sender();
+
+        // If auto-sync is configured, subscribe before starting
+        let receiver = if self.conformance_storage.is_some() && self.base_dir.is_some() {
+            Some(listener.subscribe())
+        } else {
+            None
+        };
 
         // Start the listener task
         let listener_handle = listener.start();
 
         // If auto-sync is configured, start the sync task
-        if let (Some(storage), Some(base_dir)) = (self.conformance_storage, self.base_dir) {
+        if let (Some(storage), Some(base_dir), Some(mut rx)) = (
+            self.conformance_storage,
+            self.base_dir,
+            receiver,
+        ) {
             let manager = self.canonical_manager;
 
             tokio::spawn(async move {
-                let mut rx = mpsc::UnboundedReceiver::new();
-                // Workaround: Since subscribe() requires async lock, we'll use the sender directly
-                std::mem::swap(&mut rx, &mut *listener.receiver.lock().await);
-
-                while let Some(event) = rx.recv().await {
+                while let Ok(event) = rx.recv().await {
                     info!(
                         resource_type = %event.resource_type,
                         operation = ?event.operation,
@@ -290,7 +288,7 @@ impl HotReloadBuilder {
                     match crate::db_sync::sync_and_load(
                         &storage,
                         &base_dir,
-                        manager.as_ref().map(|m| m.as_ref()),
+                        manager.as_ref(),
                     )
                     .await
                     {

@@ -1,21 +1,10 @@
-import {
-  ActionIcon,
-  Button,
-  Card,
-  Group,
-  Select,
-  Stack,
-  Text,
-  TextInput,
-  Textarea,
-  Tooltip,
-} from "@mantine/core";
-import { useHotkeys } from "@mantine/hooks";
-import { useUnit } from "effector-react";
-import { IconPlus, IconTrash } from "@tabler/icons-react";
-import { useCallback, useMemo, useState } from "react";
+import { type Component, For, Show, createSignal, createMemo, createEffect, onMount, onCleanup } from "solid-js";
+import { useUnit } from "effector-solid";
 import type { HttpMethod } from "@/shared/api/types";
 import { $apiBaseUrl, $apiTimeout } from "@/entities/settings/model";
+import { Input, Select, Button } from "@/shared/ui";
+import { IconPlus, IconTrash } from "@/shared/ui/Icon";
+import { useToast } from "@/shared/ui/Toast";
 import {
   $restRequest,
   removeHeader,
@@ -28,6 +17,7 @@ import {
 } from "../model/store";
 import { addHistoryItem } from "@/features/rest-console/model/history";
 import { setResponseState, setResponseError } from "@/features/rest-response-viewer/model/store";
+import styles from "./RequestBuilder.module.css";
 
 const METHOD_OPTIONS: { value: HttpMethod; label: string }[] = [
   { value: "GET", label: "GET" },
@@ -37,20 +27,27 @@ const METHOD_OPTIONS: { value: HttpMethod; label: string }[] = [
   { value: "PATCH", label: "PATCH" },
 ];
 
-export function RequestBuilder() {
+export const RequestBuilder: Component = () => {
   const request = useUnit($restRequest);
-  const [apiBaseUrl, apiTimeout] = useUnit([$apiBaseUrl, $apiTimeout]);
+  const apiBaseUrl = useUnit($apiBaseUrl);
+  const apiTimeout = useUnit($apiTimeout);
   const isSending = useUnit(sendRequestFx.pending);
-  const [newHeaderKey, setNewHeaderKey] = useState("");
-  const [newHeaderValue, setNewHeaderValue] = useState("");
+  const toast = useToast();
 
-  const onSend = useCallback(async () => {
+  const [newHeaderKey, setNewHeaderKey] = createSignal("");
+  const [newHeaderValue, setNewHeaderValue] = createSignal("");
+
+  const onSend = async () => {
+    const currentRequest = request();
+    const baseUrl = apiBaseUrl();
+    const timeout = apiTimeout();
+
     try {
       setResponseState({ loading: true });
       const result = await sendRequestFx({
-        request,
-        baseUrl: apiBaseUrl,
-        timeout: apiTimeout,
+        request: currentRequest,
+        baseUrl,
+        timeout,
       });
 
       setResponseState({
@@ -63,8 +60,8 @@ export function RequestBuilder() {
       addHistoryItem({
         id: crypto.randomUUID(),
         timestamp: new Date().toISOString(),
-        method: request.method,
-        path: request.path,
+        method: currentRequest.method,
+        path: currentRequest.path,
         status: result.response.status,
         duration: result.durationMs,
         success: result.response.status >= 200 && result.response.status < 300,
@@ -73,94 +70,165 @@ export function RequestBuilder() {
       const message = error instanceof Error ? error.message : "Unknown error";
       setResponseError(message);
       setResponseState({ loading: false });
+      toast.error(message, "Request failed");
     }
-  }, [apiBaseUrl, apiTimeout, request]);
+  };
 
-  useHotkeys([
-    ["mod+Enter", (e) => {
-      e.preventDefault();
-      onSend();
-    }],
-  ]);
+  // Hotkey: Cmd/Ctrl + Enter to send
+  onMount(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+        e.preventDefault();
+        onSend();
+      }
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    onCleanup(() => document.removeEventListener("keydown", handleKeyDown));
+  });
 
-  const headersList = useMemo(() => Object.entries(request.headers), [request.headers]);
+  const headersList = createMemo(() => Object.entries(request().headers));
+
+  const handleAddHeader = () => {
+    const key = newHeaderKey();
+    if (!key) return;
+    setHeader({ key, value: newHeaderValue() });
+    setNewHeaderKey("");
+    setNewHeaderValue("");
+  };
+
+  const handleMethodChange = (e: Event) => {
+    const value = (e.target as HTMLSelectElement).value as HttpMethod;
+    if (value) setMethod(value);
+  };
 
   return (
-    <Card withBorder radius="md" p="md">
-      <Stack gap="md">
-        <Group align="flex-end" gap="sm" wrap="nowrap">
+    <div class={styles.container}>
+      <div class={styles.card}>
+        {/* Method and Path */}
+        <div class={styles.requestLine}>
           <Select
-            data={METHOD_OPTIONS}
-            value={request.method}
-            onChange={(v) => v && setMethod(v as HttpMethod)}
-            w={120}
-            allowDeselect={false}
-          />
-          <TextInput
-            label="Path"
+            value={request().method}
+            onChange={handleMethodChange}
+            class={styles.methodSelect}
+          >
+            <For each={METHOD_OPTIONS}>
+              {(opt) => <option value={opt.value}>{opt.label}</option>}
+            </For>
+          </Select>
+
+          <Input
             placeholder="/Patient/123 or /metadata"
-            value={request.path}
-            onChange={(e) => setPath(e.currentTarget.value)}
-            style={{ flex: 1 }}
+            value={request().path}
+            onInput={(e) => setPath(e.currentTarget.value)}
+            class={styles.pathInput}
           />
-          <Button onClick={onSend} loading={isSending}>
+
+          <Button
+            onClick={onSend}
+            loading={isSending()}
+            class={styles.sendButton}
+          >
             Send
           </Button>
-        </Group>
+        </div>
 
-        <Group gap="xs">
-          <Text fw={600}>Headers</Text>
-          <Tooltip label="Add Accept: application/fhir+json">
-            <Button size="xs" variant="light" onClick={() => setCommonHeader("Accept")}>Add Accept</Button>
-          </Tooltip>
-          <Tooltip label="Add Content-Type: application/fhir+json">
-            <Button size="xs" variant="light" onClick={() => setCommonHeader("Content-Type")}>
-              Add Content-Type
-            </Button>
-          </Tooltip>
-        </Group>
+        {/* Headers Section */}
+        <div class={styles.section}>
+          <div class={styles.sectionHeader}>
+            <span class={styles.sectionTitle}>Headers</span>
+            <div class={styles.headerQuickActions}>
+              <button
+                class={styles.quickButton}
+                onClick={() => setCommonHeader("Accept")}
+                title="Add Accept: application/fhir+json"
+              >
+                Add Accept
+              </button>
+              <button
+                class={styles.quickButton}
+                onClick={() => setCommonHeader("Content-Type")}
+                title="Add Content-Type: application/fhir+json"
+              >
+                Add Content-Type
+              </button>
+            </div>
+          </div>
 
-        {/* Headers editor */}
-        <Stack gap="xs">
-          {headersList.length === 0 && (
-            <Text c="dimmed" size="sm">No headers</Text>
-          )}
-          {headersList.map(([key, value]) => (
-            <Group key={key} gap="xs">
-              <TextInput value={key} readOnly w={240} />
-              <TextInput value={value} onChange={(e) => setHeader({ key, value: e.currentTarget.value })} style={{ flex: 1 }} />
-              <ActionIcon variant="subtle" color="red" aria-label="Remove header" onClick={() => removeHeader(key)}>
-                <IconTrash size={18} />
-              </ActionIcon>
-            </Group>
-          ))}
-          <Group gap="xs">
-            <TextInput placeholder="Header name" value={newHeaderKey} onChange={(e) => setNewHeaderKey(e.currentTarget.value)} w={240} />
-            <TextInput placeholder="Header value" value={newHeaderValue} onChange={(e) => setNewHeaderValue(e.currentTarget.value)} style={{ flex: 1 }} />
-            <ActionIcon
-              variant="subtle"
-              aria-label="Add header"
-              onClick={() => {
-                if (!newHeaderKey) return;
-                setHeader({ key: newHeaderKey, value: newHeaderValue });
-                setNewHeaderKey("");
-                setNewHeaderValue("");
-              }}
+          <div class={styles.headersList}>
+            <Show
+              when={headersList().length > 0}
+              fallback={<span class={styles.emptyText}>No headers</span>}
             >
-              <IconPlus size={18} />
-            </ActionIcon>
-          </Group>
-        </Stack>
+              <For each={headersList()}>
+                {([key, value]) => (
+                  <div class={styles.headerRow}>
+                    <Input
+                      value={key}
+                      readonly
+                      class={styles.headerKey}
+                    />
+                    <Input
+                      value={value}
+                      onInput={(e) => setHeader({ key, value: e.currentTarget.value })}
+                      class={styles.headerValue}
+                    />
+                    <button
+                      class={`${styles.iconButton} ${styles.danger}`}
+                      onClick={() => removeHeader(key)}
+                      title="Remove header"
+                    >
+                      <IconTrash size={16} />
+                    </button>
+                  </div>
+                )}
+              </For>
+            </Show>
 
-        <Textarea
-          label="Body (JSON)"
-          placeholder="{}"
-          minRows={6}
-          autosize
-          value={request.body}
-          onChange={(e) => setBody(e.currentTarget.value)}
-        />
-      </Stack>
-    </Card>
+            {/* Add new header row */}
+            <div class={styles.headerRow}>
+              <Input
+                placeholder="Header name"
+                value={newHeaderKey()}
+                onInput={(e) => setNewHeaderKey(e.currentTarget.value)}
+                class={styles.headerKey}
+              />
+              <Input
+                placeholder="Header value"
+                value={newHeaderValue()}
+                onInput={(e) => setNewHeaderValue(e.currentTarget.value)}
+                class={styles.headerValue}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") handleAddHeader();
+                }}
+              />
+              <button
+                class={styles.iconButton}
+                onClick={handleAddHeader}
+                title="Add header"
+              >
+                <IconPlus size={16} />
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* Body Section */}
+        <div class={styles.section}>
+          <label class={styles.sectionTitle}>Body (JSON)</label>
+          <textarea
+            class={styles.bodyTextarea}
+            placeholder="{}"
+            value={request().body}
+            onInput={(e) => setBody(e.currentTarget.value)}
+            rows={6}
+          />
+        </div>
+
+        {/* Keyboard shortcut hint */}
+        <div class={styles.hint}>
+          Press <kbd>Cmd/Ctrl + Enter</kbd> to send request
+        </div>
+      </div>
+    </div>
   );
-}
+};

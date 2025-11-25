@@ -13,7 +13,7 @@ export type { Command } from "./model/commands";
 export {
   actionCommands,
   COMMAND_SECTIONS,
-  commandToAction,
+  createNavigationCommands,
   defaultCommands,
   navigationCommands,
   restConsoleCommands,

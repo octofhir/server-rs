@@ -73,14 +73,15 @@ async fn bootstrap_conformance_if_postgres(cfg: &AppConfig) -> Result<(), anyhow
         anyhow::anyhow!("PostgreSQL config is required for conformance bootstrap")
     })?;
 
-    // Create connection pool for conformance storage
+    // Create PostgresStorage first to get access to the pool
     let postgres_config = octofhir_db_postgres::PostgresConfig::new(&pg_cfg.url)
         .with_pool_size(pg_cfg.pool_size)
         .with_connect_timeout_ms(pg_cfg.connect_timeout_ms)
-        .with_idle_timeout_ms(pg_cfg.idle_timeout_ms);
+        .with_idle_timeout_ms(pg_cfg.idle_timeout_ms)
+        .with_run_migrations(true);
 
-    let pool = octofhir_db_postgres::pool::create_pool(&postgres_config).await?;
-    let conformance_storage = Arc::new(PostgresConformanceStorage::new(pool.clone()));
+    let pg_storage = octofhir_db_postgres::PostgresStorage::new(postgres_config).await?;
+    let conformance_storage = Arc::new(PostgresConformanceStorage::new(pg_storage.pool().clone()));
 
     // Bootstrap conformance resources
     match crate::bootstrap::bootstrap_conformance_resources(&conformance_storage).await {
@@ -108,7 +109,7 @@ async fn bootstrap_conformance_if_postgres(cfg: &AppConfig) -> Result<(), anyhow
     match sync_and_load(
         &conformance_storage,
         &base_dir,
-        canonical_manager.as_ref().map(|m| m.as_ref()),
+        canonical_manager.as_ref(),
     )
     .await
     {
@@ -126,12 +127,25 @@ async fn bootstrap_conformance_if_postgres(cfg: &AppConfig) -> Result<(), anyhow
         }
     }
 
+    // Ensure we have a canonical manager
+    let canonical_manager = if canonical_manager.is_none() {
+        // Create a default FcmConfig
+        let config = octofhir_canonical_manager::FcmConfig::default();
+        match octofhir_canonical_manager::CanonicalManager::new(config).await {
+            Ok(manager) => Some(Arc::new(manager)),
+            Err(e) => {
+                tracing::warn!(error = %e, "Failed to create canonical manager, continuing without one");
+                None
+            }
+        }
+    } else {
+        canonical_manager
+    };
+
     // Start hot-reload listener to monitor conformance changes
-    match HotReloadBuilder::new(pool)
+    match HotReloadBuilder::new(pg_storage.pool().clone())
         .with_conformance_storage(conformance_storage)
-        .with_canonical_manager(canonical_manager.unwrap_or_else(|| {
-            Arc::new(octofhir_canonical_manager::CanonicalManager::new())
-        }))
+        .with_canonical_manager(canonical_manager.unwrap())
         .with_base_dir(base_dir)
         .start()
     {

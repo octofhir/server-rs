@@ -55,8 +55,10 @@ export const RestConsolePage = () => {
 
   return (
     <div class={styles.container}>
-      <h1 class={styles.title}>REST Console</h1>
-      <p class={styles.subtitle}>Test and interact with FHIR REST API endpoints</p>
+      <div class={styles.header}>
+        <h1 class={styles.title}>REST Console</h1>
+        <p class={styles.subtitle}>Test and interact with FHIR REST API endpoints</p>
+      </div>
 
       <Card class={styles.requestCard}>
         <div class={styles.requestForm}>

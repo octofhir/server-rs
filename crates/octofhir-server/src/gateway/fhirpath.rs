@@ -1,5 +1,7 @@
 //! FHIRPath handler for evaluating FHIRPath expressions.
 
+use std::sync::Arc;
+
 use axum::{
     body::Body,
     http::{Request, StatusCode},
@@ -61,44 +63,34 @@ pub async fn handle_fhirpath(
 
     debug!(context = ?context, "Evaluation context");
 
+    // Create evaluation context from JSON
+    use octofhir_fhirpath::{Collection, EvaluationContext};
+
+    let fhirpath_provider: Arc<dyn octofhir_fhirpath::ModelProvider + Send + Sync> =
+        state.model_provider.clone();
+    let collection = Collection::from_json_resource(context, Some(fhirpath_provider.clone()))
+        .await
+        .map_err(|e| GatewayError::FhirPathError(format!("Failed to create FHIRPath context: {}", e)))?;
+    let eval_context = EvaluationContext::new(collection, fhirpath_provider, None, None, None);
+
     // Evaluate FHIRPath expression
     match state
         .fhirpath_engine
-        .evaluate(fhirpath_expr, &context, &*state.model_provider)
+        .evaluate(fhirpath_expr, &eval_context)
+        .await
     {
         Ok(result) => {
-            info!(result = ?result, "FHIRPath evaluation succeeded");
+            info!("FHIRPath evaluation succeeded");
 
             // Convert FHIRPath result to JSON
-            let json_result = match result {
-                octofhir_fhirpath::Value::Boolean(b) => json!(b),
-                octofhir_fhirpath::Value::String(s) => json!(s),
-                octofhir_fhirpath::Value::Integer(i) => json!(i),
-                octofhir_fhirpath::Value::Decimal(d) => json!(d),
-                octofhir_fhirpath::Value::Quantity { value, unit } => {
-                    json!({
-                        "value": value,
-                        "unit": unit
-                    })
-                }
-                octofhir_fhirpath::Value::Collection(items) => {
-                    let json_items: Vec<Value> = items
-                        .into_iter()
-                        .map(|item| match item {
-                            octofhir_fhirpath::Value::Boolean(b) => json!(b),
-                            octofhir_fhirpath::Value::String(s) => json!(s),
-                            octofhir_fhirpath::Value::Integer(i) => json!(i),
-                            octofhir_fhirpath::Value::Decimal(d) => json!(d),
-                            octofhir_fhirpath::Value::Json(j) => j,
-                            _ => json!(null),
-                        })
-                        .collect();
-                    json!(json_items)
-                }
-                octofhir_fhirpath::Value::Json(j) => j,
-                octofhir_fhirpath::Value::Empty => json!(null),
-                _ => json!(null),
-            };
+            // EvaluationResult has a value field that contains the result collection
+            let values_json: Vec<Value> = result
+                .value
+                .iter()
+                .map(|v| v.to_json_value())
+                .collect();
+
+            let json_result = json!(values_json);
 
             Ok((StatusCode::OK, Json(json_result)).into_response())
         }

@@ -39,8 +39,10 @@ export const SettingsPage = () => {
 
   return (
     <div class={styles.container}>
-      <h1 class={styles.title}>Settings</h1>
-      <p class={styles.subtitle}>Configure server settings and preferences</p>
+      <div class={styles.header}>
+        <h1 class={styles.title}>Settings</h1>
+        <p class={styles.subtitle}>Configure server settings and preferences</p>
+      </div>
 
       <div class={styles.section}>
         <Card>

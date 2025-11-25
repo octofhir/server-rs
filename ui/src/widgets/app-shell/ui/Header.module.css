@@ -1,45 +1,22 @@
+/* Header Component Styles */
 .header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  height: var(--header-height);
+  height: var(--header-height, 48px);
   padding: 0 var(--spacing-4);
   background-color: var(--header-bg);
   border-bottom: 1px solid var(--border-subtle);
   flex-shrink: 0;
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  position: sticky;
-  top: 0;
-  z-index: var(--z-sticky);
 }
 
-.logo {
+.left {
   display: flex;
   align-items: center;
-  gap: var(--spacing-2);
+  gap: var(--spacing-3);
 }
 
-.logoText {
-  font-size: var(--font-size-md);
-  font-weight: var(--font-weight-semibold);
-  color: var(--text-color);
-  letter-spacing: var(--letter-spacing-tight);
-}
-
-.badge {
-  padding: 2px 6px;
-  font-size: 10px;
-  font-weight: var(--font-weight-medium);
-  background-color: var(--bg-tertiary);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-sm);
-  color: var(--text-secondary);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-}
-
-.actions {
+.right {
   display: flex;
   align-items: center;
   gap: var(--spacing-2);
@@ -49,32 +26,43 @@
   font-size: var(--font-size-xs);
   color: var(--text-muted);
   display: none;
-  /* Hide label for cleaner look */
+}
+
+@media (min-width: 640px) {
+  .themeLabel {
+    display: block;
+  }
 }
 
 .themeToggle {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
-  background-color: transparent;
-  border: 1px solid transparent;
-  border-radius: var(--radius-md);
-  cursor: pointer;
-  transition:
-    background-color var(--transition-fast),
-    color var(--transition-fast);
-  font-size: 14px;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid var(--border-subtle);
+  background: var(--card-bg);
   color: var(--text-secondary);
+  cursor: pointer;
+  border-radius: var(--radius-md);
+  transition: background-color var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast);
 }
 
 .themeToggle:hover {
-  background-color: var(--hover-bg);
+  background: var(--hover-bg);
+  border-color: var(--border-color);
   color: var(--text-color);
 }
 
 .themeToggle:focus-visible {
-  box-shadow: var(--shadow-focus);
-  border-color: var(--border-focus);
+  outline: 2px solid var(--primary-color);
+  outline-offset: 2px;
+}
+
+/* Reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  .themeToggle {
+    transition: none;
+  }
 }

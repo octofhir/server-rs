@@ -1,7 +1,8 @@
-import { createSignal, onMount, onCleanup } from "solid-js";
+import { createSignal, onMount, onCleanup, Show } from "solid-js";
 import { EditorView, basicSetup } from "codemirror";
 import { sql } from "@codemirror/lang-sql";
 import { EditorState } from "@codemirror/state";
+import { Button } from "@/shared/ui";
 import styles from "./DbConsolePage.module.css";
 
 export const DbConsolePage = () => {
@@ -64,23 +65,9 @@ export const DbConsolePage = () => {
             <div class={styles.header}>
                 <h1 class={styles.title}>DB Console</h1>
                 <div class={styles.actions}>
-                    <button
-                        class="btn-primary" // Using simple class if Button component not found or complex
-                        onClick={handleExecute}
-                        disabled={loading()}
-                        style={{
-                            "background-color": "var(--primary-color)",
-                            "color": "white",
-                            "border": "none",
-                            "padding": "8px 16px",
-                            "border-radius": "var(--radius-md)",
-                            "font-weight": "500",
-                            "cursor": "pointer",
-                            "opacity": loading() ? "0.7" : "1"
-                        }}
-                    >
-                        {loading() ? "Running..." : "Execute Query"}
-                    </button>
+                    <Button onClick={handleExecute} loading={loading()}>
+                        Execute Query
+                    </Button>
                 </div>
             </div>
 
@@ -94,15 +81,18 @@ export const DbConsolePage = () => {
             <div class={styles.resultsContainer}>
                 <div class={styles.resultsHeader}>Results</div>
                 <div class={styles.resultsContent}>
-                    {results() ? (
-                        <pre style={{ "font-family": "var(--font-mono)", "font-size": "var(--font-size-sm)" }}>
+                    <Show
+                        when={results()}
+                        fallback={
+                            <div class={styles.emptyState}>
+                                Run a query to see results
+                            </div>
+                        }
+                    >
+                        <pre class={styles.resultsPre}>
                             {JSON.stringify(results(), null, 2)}
                         </pre>
-                    ) : (
-                        <div class={styles.emptyState}>
-                            Run a query to see results
-                        </div>
-                    )}
+                    </Show>
                 </div>
             </div>
         </div>

@@ -51,7 +51,7 @@ pub async fn handle_sql(
     }
 
     // Extract parameters from request
-    let params = extract_parameters(&request).await?;
+    let params = extract_parameters(&request)?;
 
     debug!(params = ?params, "Extracted query parameters");
 
@@ -153,12 +153,12 @@ fn is_read_only_query(query: &str) -> bool {
 /// - URL query parameters (?key=value)
 /// - Request body (JSON)
 /// - Path parameters (via Axum extractors)
-async fn extract_parameters(request: &Request<Body>) -> Result<HashMap<String, Value>, GatewayError> {
+fn extract_parameters(request: &Request<Body>) -> Result<HashMap<String, Value>, GatewayError> {
     let mut params = HashMap::new();
 
     // Extract query parameters
     if let Some(query) = request.uri().query() {
-        for (key, value) in form_urlencoded::parse(query.as_bytes()) {
+        for (key, value) in url::form_urlencoded::parse(query.as_bytes()) {
             params.insert(key.to_string(), Value::String(value.to_string()));
         }
     }

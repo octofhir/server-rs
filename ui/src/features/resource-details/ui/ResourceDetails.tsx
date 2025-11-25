@@ -1,143 +1,109 @@
-import { ActionIcon, Badge, Box, Button, Group, Text, Tooltip } from "@mantine/core";
-import { modals } from "@mantine/modals";
-import { notifications } from "@mantine/notifications";
-import { IconCopy, IconEdit, IconRefresh, IconTrash } from "@tabler/icons-react";
-import { useUnit } from "effector-react";
-import type React from "react";
-import { useCallback, useState } from "react";
+import { type Component, Show, createSignal, createMemo } from "solid-js";
+import { useUnit } from "effector-solid";
 import { $selectedResource, deleteResourceFx, fetchResourceFx } from "@/entities/fhir";
 import type { FhirResource } from "@/shared/api/types";
 import { formatRelativeTime } from "@/shared/lib/time";
-import { JsonViewer } from "@/shared/ui/JsonViewer";
+import { JsonViewer, Button, Modal } from "@/shared/ui";
+import { IconCopy, IconEdit, IconRefresh, IconTrash } from "@/shared/ui/Icon";
+import { useToast } from "@/shared/ui/Toast";
 import styles from "./ResourceDetails.module.css";
 
 interface ResourceDetailsProps {
-  className?: string;
+  class?: string;
   onEdit?: (resource: FhirResource) => void;
 }
 
-export const ResourceDetails: React.FC<ResourceDetailsProps> = ({ className, onEdit }) => {
+export const ResourceDetails: Component<ResourceDetailsProps> = (props) => {
   const selectedResource = useUnit($selectedResource);
-  const [rawView, setRawView] = useState(false);
-  const [loading, setLoading] = useState(false);
+  const toast = useToast();
+  const [rawView, setRawView] = createSignal(false);
+  const [loading, setLoading] = createSignal(false);
+  const [showDeleteModal, setShowDeleteModal] = createSignal(false);
 
-  const handleCopyId = useCallback(async () => {
-    if (!selectedResource?.id) {
-      notifications.show({
-        title: "Copy failed",
-        message: "Resource has no ID",
-        color: "red",
-      });
+  const handleCopyId = async () => {
+    const resource = selectedResource();
+    if (!resource?.id) {
+      toast.error("Resource has no ID", "Copy failed");
       return;
     }
 
     try {
-      await navigator.clipboard.writeText(selectedResource.id);
-      notifications.show({
-        title: "Copied",
-        message: `Resource ID copied: ${selectedResource.id}`,
-        color: "green",
-      });
+      await navigator.clipboard.writeText(resource.id);
+      toast.success(`Resource ID copied: ${resource.id}`, "Copied");
     } catch (error) {
-      notifications.show({
-        title: "Copy failed",
-        message: "Failed to copy resource ID",
-        color: "red",
-      });
+      toast.error("Failed to copy resource ID", "Copy failed");
     }
-  }, [selectedResource?.id]);
+  };
 
-  const handleCopyJson = useCallback(async () => {
-    if (!selectedResource) {
+  const handleCopyJson = async () => {
+    const resource = selectedResource();
+    if (!resource) {
       return;
     }
 
     try {
-      const json = JSON.stringify(selectedResource, null, 2);
+      const json = JSON.stringify(resource, null, 2);
       await navigator.clipboard.writeText(json);
-      notifications.show({
-        title: "Copied",
-        message: "Resource JSON copied to clipboard",
-        color: "green",
-      });
+      toast.success("Resource JSON copied to clipboard", "Copied");
     } catch (error) {
-      notifications.show({
-        title: "Copy failed",
-        message: "Failed to copy resource JSON",
-        color: "red",
-      });
+      toast.error("Failed to copy resource JSON", "Copy failed");
     }
-  }, [selectedResource]);
+  };
 
-  const handleDelete = useCallback(() => {
-    if (!selectedResource?.id || !selectedResource.resourceType) {
+  const handleDelete = () => {
+    const resource = selectedResource();
+    if (!resource?.id || !resource.resourceType) {
+      return;
+    }
+    setShowDeleteModal(true);
+  };
+
+  const confirmDelete = async () => {
+    const resource = selectedResource();
+    if (!resource?.id || !resource.resourceType) {
       return;
     }
 
-    modals.openConfirmModal({
-      title: "Delete Resource",
-      children: (
-        <Box>
-          <Text size="sm">
-            Are you sure you want to delete this resource? This action cannot be undone.
-          </Text>
-          <Box mt="md" p="md" className={styles.deletePreview}>
-            <Text size="sm" fw={500}>
-              {selectedResource.resourceType}/{selectedResource.id}
-            </Text>
-            <Text size="xs" c="dimmed">
-              {selectedResource.meta?.lastUpdated &&
-                `Last updated: ${formatRelativeTime(selectedResource.meta.lastUpdated)}`}
-            </Text>
-          </Box>
-        </Box>
-      ),
-      labels: { confirm: "Delete", cancel: "Cancel" },
-      confirmProps: { color: "red" },
-      onConfirm: () => {
-        deleteResourceFx({
-          resourceType: selectedResource.resourceType,
-          id: selectedResource.id!,
-        });
-      },
-    });
-  }, [selectedResource]);
+    try {
+      await deleteResourceFx({
+        resourceType: resource.resourceType,
+        id: resource.id,
+      });
+      toast.success("Resource deleted successfully", "Deleted");
+      setShowDeleteModal(false);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to delete resource", "Delete failed");
+    }
+  };
 
-  const handleRefresh = useCallback(async () => {
-    if (!selectedResource?.id || !selectedResource.resourceType) {
+  const handleRefresh = async () => {
+    const resource = selectedResource();
+    if (!resource?.id || !resource.resourceType) {
       return;
     }
 
     setLoading(true);
     try {
       await fetchResourceFx({
-        resourceType: selectedResource.resourceType,
-        resourceId: selectedResource.id,
+        resourceType: resource.resourceType,
+        resourceId: resource.id,
       });
-      notifications.show({
-        title: "Refreshed",
-        message: "Resource data refreshed",
-        color: "green",
-      });
+      toast.success("Resource data refreshed", "Refreshed");
     } catch (error) {
-      notifications.show({
-        title: "Refresh failed",
-        message: error instanceof Error ? error.message : "Failed to refresh resource",
-        color: "red",
-      });
+      toast.error(error instanceof Error ? error.message : "Failed to refresh resource", "Refresh failed");
     } finally {
       setLoading(false);
     }
-  }, [selectedResource]);
+  };
 
-  const handleEdit = useCallback(() => {
-    if (selectedResource) {
-      onEdit?.(selectedResource);
+  const handleEdit = () => {
+    const resource = selectedResource();
+    if (resource) {
+      props.onEdit?.(resource);
     }
-  }, [selectedResource, onEdit]);
+  };
 
-  const getResourceTitle = useCallback((resource: FhirResource): string => {
-    // Try to get a meaningful title based on resource type
+  const getResourceTitle = (resource: FhirResource): string => {
     switch (resource.resourceType) {
       case "Patient": {
         const patient = resource as any;
@@ -170,159 +136,193 @@ export const ResourceDetails: React.FC<ResourceDetailsProps> = ({ className, onE
       default:
         return `${resource.resourceType} ${resource.id}`;
     }
-  }, []);
+  };
 
-  const getResourceStatus = useCallback(
-    (resource: FhirResource): { status?: string; color?: string } => {
-      const res = resource as any;
+  const getResourceStatus = (resource: FhirResource): { status?: string; variant?: "success" | "error" | "warning" | "neutral" } => {
+    const res = resource as any;
 
-      if (res.status) {
-        const status = res.status.toLowerCase();
-        switch (status) {
-          case "active":
-            return { status: "Active", color: "green" };
-          case "inactive":
-          case "retired":
-            return { status: "Inactive", color: "gray" };
-          case "draft":
-            return { status: "Draft", color: "blue" };
-          case "final":
-            return { status: "Final", color: "green" };
-          case "cancelled":
-          case "rejected":
-            return { status: "Cancelled", color: "red" };
-          default:
-            return { status: status.charAt(0).toUpperCase() + status.slice(1), color: "gray" };
-        }
+    if (res.status) {
+      const status = res.status.toLowerCase();
+      switch (status) {
+        case "active":
+          return { status: "Active", variant: "success" };
+        case "inactive":
+        case "retired":
+          return { status: "Inactive", variant: "neutral" };
+        case "draft":
+          return { status: "Draft", variant: "warning" };
+        case "final":
+          return { status: "Final", variant: "success" };
+        case "cancelled":
+        case "rejected":
+          return { status: "Cancelled", variant: "error" };
+        default:
+          return { status: status.charAt(0).toUpperCase() + status.slice(1), variant: "neutral" };
       }
+    }
 
-      return {};
-    },
-    []
-  );
+    return {};
+  };
 
-  if (!selectedResource) {
-    return (
-      <Box className={`${styles.container} ${className || ""}`}>
-        <Box className={styles.emptyState}>
-          <Text size="sm" c="dimmed" ta="center">
-            Select a resource to view details
-          </Text>
-        </Box>
-      </Box>
-    );
-  }
+  const title = createMemo(() => {
+    const resource = selectedResource();
+    return resource ? getResourceTitle(resource) : "";
+  });
 
-  const title = getResourceTitle(selectedResource);
-  const { status, color } = getResourceStatus(selectedResource);
+  const statusInfo = createMemo(() => {
+    const resource = selectedResource();
+    return resource ? getResourceStatus(resource) : {};
+  });
+
+  const lastUpdated = () => selectedResource()?.meta?.lastUpdated;
 
   return (
-    <Box className={`${styles.container} ${className || ""}`}>
-      <Box className={styles.header}>
-        <Box className={styles.titleSection}>
-          <Group gap="xs">
-            <Text size="sm" fw={600} className={styles.title}>
-              {title}
-            </Text>
-            {status && (
-              <Badge size="sm" color={color} variant="light">
-                {status}
-              </Badge>
-            )}
-          </Group>
-          <Group gap="xs" mt="xs">
-            <Text size="xs" c="dimmed">
-              {selectedResource.resourceType}
-            </Text>
-            {selectedResource.id && (
-              <>
-                <Text size="xs" c="dimmed">
-                  •
-                </Text>
-                <Text size="xs" c="dimmed" className={styles.resourceId}>
-                  {selectedResource.id}
-                </Text>
-              </>
-            )}
-            {selectedResource.meta?.lastUpdated && (
-              <>
-                <Text size="xs" c="dimmed">
-                  •
-                </Text>
-                <Text
-                  size="xs"
-                  c="dimmed"
-                  title={new Date(selectedResource.meta.lastUpdated).toLocaleString()}
+    <div class={`${styles.container} ${props.class || ""}`}>
+      <Show
+        when={selectedResource()}
+        fallback={
+          <div class={styles.emptyState}>
+            <span class={styles.emptyText}>Select a resource to view details</span>
+          </div>
+        }
+      >
+        <div class={styles.header}>
+          <div class={styles.titleSection}>
+            <div class={styles.titleRow}>
+              <span class={styles.title}>{title()}</span>
+              <Show when={statusInfo().status}>
+                <span class={`${styles.badge} ${styles[statusInfo().variant || "neutral"]}`}>
+                  {statusInfo().status}
+                </span>
+              </Show>
+            </div>
+            <div class={styles.meta}>
+              <span class={styles.metaItem}>{selectedResource()?.resourceType}</span>
+              <Show when={selectedResource()?.id}>
+                <span class={styles.metaSeparator}>•</span>
+                <span class={`${styles.metaItem} ${styles.resourceId}`}>
+                  {selectedResource()?.id}
+                </span>
+              </Show>
+              <Show when={lastUpdated()}>
+                <span class={styles.metaSeparator}>•</span>
+                <span
+                  class={styles.metaItem}
+                  title={new Date(lastUpdated()!).toLocaleString()}
                 >
-                  {formatRelativeTime(selectedResource.meta.lastUpdated)}
-                </Text>
-              </>
-            )}
-          </Group>
-        </Box>
+                  {formatRelativeTime(lastUpdated()!)}
+                </span>
+              </Show>
+            </div>
+          </div>
 
-        <Group gap="xs">
-          <Tooltip label="Toggle raw/formatted view">
-            <Button
-              size="xs"
-              variant={rawView ? "filled" : "light"}
-              onClick={() => setRawView(!rawView)}
+          <div class={styles.actions}>
+            <button
+              class={`${styles.actionButton} ${rawView() ? styles.active : ""}`}
+              onClick={() => setRawView(!rawView())}
+              title="Toggle raw/formatted view"
             >
-              {rawView ? "Formatted" : "Raw"}
-            </Button>
-          </Tooltip>
+              {rawView() ? "Formatted" : "Raw"}
+            </button>
 
-          <Tooltip label="Refresh">
-            <ActionIcon size="sm" variant="subtle" onClick={handleRefresh} loading={loading}>
-              <IconRefresh size={16} />
-            </ActionIcon>
-          </Tooltip>
+            <button
+              class={styles.iconButton}
+              onClick={handleRefresh}
+              disabled={loading()}
+              title="Refresh"
+            >
+              <IconRefresh size={16} class={loading() ? styles.spinning : ""} />
+            </button>
 
-          <Tooltip label="Copy ID">
-            <ActionIcon size="sm" variant="subtle" onClick={handleCopyId}>
+            <button
+              class={styles.iconButton}
+              onClick={handleCopyId}
+              title="Copy ID"
+            >
               <IconCopy size={16} />
-            </ActionIcon>
-          </Tooltip>
+            </button>
 
-          <Tooltip label="Copy JSON">
-            <ActionIcon size="sm" variant="subtle" onClick={handleCopyJson}>
+            <button
+              class={styles.iconButton}
+              onClick={handleCopyJson}
+              title="Copy JSON"
+            >
               <IconCopy size={16} />
-            </ActionIcon>
-          </Tooltip>
+            </button>
 
-          {onEdit && (
-            <Tooltip label="Edit">
-              <ActionIcon size="sm" variant="subtle" color="blue" onClick={handleEdit}>
+            <Show when={props.onEdit}>
+              <button
+                class={`${styles.iconButton} ${styles.primary}`}
+                onClick={handleEdit}
+                title="Edit"
+              >
                 <IconEdit size={16} />
-              </ActionIcon>
-            </Tooltip>
-          )}
+              </button>
+            </Show>
 
-          <Tooltip label="Delete">
-            <ActionIcon size="sm" variant="subtle" color="red" onClick={handleDelete}>
+            <button
+              class={`${styles.iconButton} ${styles.danger}`}
+              onClick={handleDelete}
+              title="Delete"
+            >
               <IconTrash size={16} />
-            </ActionIcon>
-          </Tooltip>
-        </Group>
-      </Box>
+            </button>
+          </div>
+        </div>
 
-      <Box className={styles.content}>
-        {rawView ? (
-          <Box className={styles.rawJson}>
-            <pre>
-              <code>{JSON.stringify(selectedResource, null, 2)}</code>
-            </pre>
-          </Box>
-        ) : (
-          <JsonViewer
-            data={selectedResource}
-            expanded={false}
-            maxHeight={600}
-            searchable={true}
-            copyable={false}
-          />
-        )}
-      </Box>
-    </Box>
+        <div class={styles.content}>
+          <Show
+            when={!rawView()}
+            fallback={
+              <div class={styles.rawJson}>
+                <pre>
+                  <code>{JSON.stringify(selectedResource(), null, 2)}</code>
+                </pre>
+              </div>
+            }
+          >
+            <JsonViewer
+              data={selectedResource()}
+              expanded={false}
+              maxHeight={600}
+              searchable={true}
+              copyable={false}
+            />
+          </Show>
+        </div>
+      </Show>
+
+      {/* Delete Confirmation Modal */}
+      <Modal
+        open={showDeleteModal()}
+        onClose={() => setShowDeleteModal(false)}
+        title="Delete Resource"
+        size="sm"
+      >
+        <div class={styles.modalContent}>
+          <p class={styles.modalText}>
+            Are you sure you want to delete this resource? This action cannot be undone.
+          </p>
+          <div class={styles.deletePreview}>
+            <span class={styles.deletePreviewTitle}>
+              {selectedResource()?.resourceType}/{selectedResource()?.id}
+            </span>
+            <Show when={selectedResource()?.meta?.lastUpdated}>
+              <span class={styles.deletePreviewMeta}>
+                Last updated: {formatRelativeTime(selectedResource()!.meta!.lastUpdated!)}
+              </span>
+            </Show>
+          </div>
+          <div class={styles.modalActions}>
+            <Button variant="secondary" onClick={() => setShowDeleteModal(false)}>
+              Cancel
+            </Button>
+            <Button variant="danger" onClick={confirmDelete}>
+              Delete
+            </Button>
+          </div>
+        </div>
+      </Modal>
+    </div>
   );
 };

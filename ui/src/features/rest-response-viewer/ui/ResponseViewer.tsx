@@ -1,104 +1,126 @@
-import { Badge, Card, Group, ScrollArea, Stack, Text, Tooltip } from "@mantine/core";
-import { useUnit } from "effector-react";
-import { useMemo, useState } from "react";
+import { type Component, For, Show, createSignal, createMemo } from "solid-js";
+import { useUnit } from "effector-solid";
 import { JsonViewer } from "@/shared/ui";
 import { $responseState } from "../model/store";
+import styles from "./ResponseViewer.module.css";
 
-function statusColor(status?: number): string {
-  if (!status) return "gray";
-  if (status >= 200 && status < 300) return "green";
-  if (status >= 300 && status < 400) return "yellow";
-  if (status >= 400 && status < 500) return "orange";
-  return "red";
+function statusVariant(status?: number): "success" | "warning" | "error" | "neutral" {
+  if (!status) return "neutral";
+  if (status >= 200 && status < 300) return "success";
+  if (status >= 300 && status < 400) return "warning";
+  if (status >= 400) return "error";
+  return "neutral";
 }
 
-export function ResponseViewer() {
+export const ResponseViewer: Component = () => {
   const state = useUnit($responseState);
-  const [showRaw, setShowRaw] = useState(false);
+  const [showRaw, setShowRaw] = createSignal(false);
 
-  const headersList = useMemo(
-    () => Object.entries(state.response?.headers ?? {}),
-    [state.response]
+  const headersList = createMemo(() =>
+    Object.entries(state().response?.headers ?? {})
   );
 
-  const dataForViewer = useMemo(() => {
-    if (!state.response) return null;
-    const data = state.response.data;
-    if (showRaw) return typeof data === "string" ? data : JSON.stringify(data);
+  const dataForViewer = createMemo(() => {
+    const response = state().response;
+    if (!response) return null;
+    const data = response.data;
+    if (showRaw()) {
+      return typeof data === "string" ? data : JSON.stringify(data, null, 2);
+    }
     return data;
-  }, [state.response, showRaw]);
+  });
+
+  const formatBytes = (bytes: number | null): string => {
+    if (bytes === null) return "-";
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  };
 
   return (
-    <Card withBorder radius="md" p="md">
-      <Stack gap="sm">
-        <Group justify="space-between" wrap="wrap">
-          <Group gap="sm">
-            <Text fw={600}>Response</Text>
-            {state.response && (
-              <Badge color={statusColor(state.response.status)}>
-                {state.response.status} {state.response.statusText}
-              </Badge>
-            )}
-          </Group>
-          <Group gap="md">
-            <Text size="sm" c="dimmed">
-              {state.durationMs != null ? `${state.durationMs} ms` : "-"}
-            </Text>
-            <Text size="sm" c="dimmed">
-              {state.sizeBytes != null ? `${state.sizeBytes} B` : "-"}
-            </Text>
-            <Badge variant="light" onClick={() => setShowRaw((v) => !v)} style={{ cursor: "pointer" }}>
-              {showRaw ? "Raw" : "JSON"}
-            </Badge>
-          </Group>
-        </Group>
+    <div class={styles.container}>
+      <div class={styles.card}>
+        {/* Header */}
+        <div class={styles.header}>
+          <div class={styles.headerLeft}>
+            <span class={styles.title}>Response</span>
+            <Show when={state().response}>
+              <span class={`${styles.badge} ${styles[statusVariant(state().response?.status)]}`}>
+                {state().response?.status} {state().response?.statusText}
+              </span>
+            </Show>
+          </div>
+          <div class={styles.headerRight}>
+            <span class={styles.stat}>
+              {state().durationMs != null ? `${state().durationMs} ms` : "-"}
+            </span>
+            <span class={styles.stat}>
+              {formatBytes(state().sizeBytes)}
+            </span>
+            <button
+              class={`${styles.toggleButton} ${showRaw() ? styles.active : ""}`}
+              onClick={() => setShowRaw(!showRaw())}
+            >
+              {showRaw() ? "Raw" : "JSON"}
+            </button>
+          </div>
+        </div>
 
-        {state.loading && <Text size="sm">Loading...</Text>}
-        {state.error && (
-          <Text c="red" size="sm">
-            {state.error}
-          </Text>
-        )}
+        {/* Loading State */}
+        <Show when={state().loading}>
+          <div class={styles.loadingState}>
+            <span class={styles.loadingText}>Sending request...</span>
+          </div>
+        </Show>
 
-        {/* Headers */}
-        {headersList.length > 0 && (
-          <Stack gap={4}>
-            <Text fw={600} size="sm">
-              Headers
-            </Text>
-            <ScrollArea h={100} offsetScrollbars>
-              <Stack gap={2}
-                styles={{
-                  root: { border: "1px solid var(--mantine-color-gray-3)", borderRadius: 8, padding: 8 },
-                }}
+        {/* Error State */}
+        <Show when={state().error}>
+          <div class={styles.errorState}>
+            <span class={styles.errorText}>{state().error}</span>
+          </div>
+        </Show>
+
+        {/* Headers Section */}
+        <Show when={headersList().length > 0}>
+          <div class={styles.section}>
+            <span class={styles.sectionTitle}>Headers</span>
+            <div class={styles.headersContainer}>
+              <For each={headersList()}>
+                {([key, value]) => (
+                  <div class={styles.headerRow}>
+                    <span class={styles.headerKey} title={key}>{key}</span>
+                    <span class={styles.headerValue} title={String(value)}>{String(value)}</span>
+                  </div>
+                )}
+              </For>
+            </div>
+          </div>
+        </Show>
+
+        {/* Body Section */}
+        <Show when={state().response}>
+          <div class={styles.section}>
+            <span class={styles.sectionTitle}>Body</span>
+            <div class={styles.bodyContainer}>
+              <Show
+                when={typeof dataForViewer() !== "string"}
+                fallback={
+                  <pre class={styles.rawContent}>{dataForViewer() as string}</pre>
+                }
               >
-                {headersList.map(([k, v]) => (
-                  <Group key={k} gap={8} wrap="nowrap">
-                    <Tooltip label={k}><Text fw={600} size="xs" style={{ width: 200, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{k}</Text></Tooltip>
-                    <Text size="xs" c="dimmed" style={{ whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{v}</Text>
-                  </Group>
-                ))}
-              </Stack>
-            </ScrollArea>
-          </Stack>
-        )}
+                <JsonViewer data={dataForViewer()} />
+              </Show>
+            </div>
+          </div>
+        </Show>
 
-        {/* Body */}
-        {state.response && (
-          <Stack gap={4}>
-            <Text fw={600} size="sm">
-              Body
-            </Text>
-            <ScrollArea h={240} offsetScrollbars>
-              {typeof dataForViewer === "string" ? (
-                <pre style={{ margin: 0 }}>{dataForViewer}</pre>
-              ) : (
-                <JsonViewer data={dataForViewer} />
-              )}
-            </ScrollArea>
-          </Stack>
-        )}
-      </Stack>
-    </Card>
+        {/* Empty State */}
+        <Show when={!state().response && !state().loading && !state().error}>
+          <div class={styles.emptyState}>
+            <span class={styles.emptyText}>Send a request to see the response</span>
+          </div>
+        </Show>
+      </div>
+    </div>
   );
-}
+};
