@@ -1,0 +1,32 @@
+[package]
+name = "octofhir-auth"
+description = "Authentication and authorization module for OctoFHIR"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+async-trait = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+time = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+url = { workspace = true }
+uuid = { workspace = true }
+
+# JWT
+jsonwebtoken = { version = "10", features = ["rust_crypto"] }
+base64 = "0.22"
+
+# Key generation (jsonwebtoken doesn't generate keys)
+rsa = { version = "0.9", features = ["pem"] }
+p384 = { version = "0.13", features = ["ecdsa", "pem", "pkcs8"] }
+elliptic-curve = { version = "0.13", features = ["sec1", "pkcs8"] }
+rand = "0.8"
+
+[dev-dependencies]
+tokio-test = { workspace = true }
