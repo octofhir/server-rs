@@ -2,7 +2,7 @@
 
 use axum::{
     body::Body,
-    http::{HeaderMap, HeaderName, HeaderValue, Request, StatusCode},
+    http::{HeaderMap, HeaderName, HeaderValue, Request},
     response::Response,
 };
 use tracing::{debug, info, instrument, warn};

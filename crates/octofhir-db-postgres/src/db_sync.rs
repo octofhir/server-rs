@@ -62,11 +62,12 @@ pub async fn sync_to_directory(
     let (structure_definitions, value_sets, code_systems, search_parameters) =
         conformance_storage.load_all_conformance().await?;
 
-    let mut stats = SyncStats::default();
-    stats.structure_definitions = structure_definitions.len();
-    stats.value_sets = value_sets.len();
-    stats.code_systems = code_systems.len();
-    stats.search_parameters = search_parameters.len();
+    let stats = SyncStats {
+        structure_definitions: structure_definitions.len(),
+        value_sets: value_sets.len(),
+        code_systems: code_systems.len(),
+        search_parameters: search_parameters.len(),
+    };
 
     // Write StructureDefinitions
     for sd in structure_definitions {

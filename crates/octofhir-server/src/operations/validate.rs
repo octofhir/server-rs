@@ -95,6 +95,7 @@ pub struct ValidateOperation {
     model_provider: SharedModelProvider,
 }
 
+#[allow(dead_code)]
 impl ValidateOperation {
     /// Creates a new $validate operation handler.
     pub fn new(fhirpath_engine: Arc<FhirPathEngine>, model_provider: SharedModelProvider) -> Self {

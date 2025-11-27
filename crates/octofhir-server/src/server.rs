@@ -254,10 +254,10 @@ pub async fn build_app(cfg: &AppConfig) -> Result<Router, anyhow::Error> {
     let (storage, db_pool) = create_storage(cfg).await?;
 
     // Bootstrap conformance resources for PostgreSQL backend
-    if matches!(cfg.storage.backend, ConfigBackend::Postgres) {
-        if let Err(e) = bootstrap_conformance_if_postgres(cfg).await {
-            tracing::warn!(error = %e, "Failed to bootstrap conformance resources");
-        }
+    if matches!(cfg.storage.backend, ConfigBackend::Postgres)
+        && let Err(e) = bootstrap_conformance_if_postgres(cfg).await
+    {
+        tracing::warn!(error = %e, "Failed to bootstrap conformance resources");
     }
 
     // Build search engine config using counts from AppConfig

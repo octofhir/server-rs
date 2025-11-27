@@ -107,10 +107,6 @@ impl RouteKey {
         Self { method, path }
     }
 
-    pub fn to_string(&self) -> String {
-        format!("{}:{}", self.method, self.path)
-    }
-
     pub fn from_string(s: &str) -> Option<Self> {
         let parts: Vec<&str> = s.splitn(2, ':').collect();
         if parts.len() == 2 {

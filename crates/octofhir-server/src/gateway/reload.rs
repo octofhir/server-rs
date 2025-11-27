@@ -19,6 +19,7 @@ const GATEWAY_CHANNEL: &str = "octofhir_gateway_changes";
 
 /// Payload from PostgreSQL NOTIFY trigger.
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct NotifyPayload {
     table: String,
     resource_type: String,

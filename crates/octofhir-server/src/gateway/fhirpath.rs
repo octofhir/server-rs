@@ -105,8 +105,6 @@ pub async fn handle_fhirpath(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     // Tests would require setting up a full AppState with FHIRPath engine
     // Placeholder for now
     #[test]

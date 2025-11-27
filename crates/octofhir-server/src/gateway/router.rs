@@ -7,12 +7,12 @@ use axum::{
     Router,
     body::Body,
     extract::{Path as AxumPath, State},
-    http::{Method, Request},
+    http::Request,
     response::Response,
     routing::any,
 };
 use tokio::sync::RwLock;
-use tracing::{debug, info, instrument, warn};
+use tracing::{debug, info, instrument};
 
 use crate::server::AppState;
 use octofhir_db_memory::DynStorage;
@@ -114,7 +114,7 @@ impl GatewayRouter {
             })?;
 
             // Extract app ID from reference (e.g., "App/123" -> "123")
-            let app_id = app_ref.split('/').last().ok_or_else(|| {
+            let app_id = app_ref.split('/').next_back().ok_or_else(|| {
                 GatewayError::InvalidConfig(format!("Invalid app reference: {}", app_ref))
             })?;
 

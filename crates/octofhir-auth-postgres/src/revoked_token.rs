@@ -121,8 +121,6 @@ impl<'a> RevokedTokenStorage<'a> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[test]
     fn test_storage_creation() {
         // This is a compile-time test to ensure the storage can be created
