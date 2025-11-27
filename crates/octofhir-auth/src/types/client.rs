@@ -4,6 +4,7 @@
 //! client registrations. The field names align with the StructureDefinition-Client.json
 //! in the internal IG.
 
+use jsonwebtoken::jwk::JwkSet;
 use serde::{Deserialize, Serialize};
 
 // =============================================================================
@@ -100,6 +101,16 @@ pub struct Client {
     /// Origins allowed for CORS requests from browser-based clients.
     #[serde(default)]
     pub allowed_origins: Vec<String>,
+
+    /// Inline JWKS for backend service clients using private_key_jwt authentication.
+    /// The keys in this set are the client's public keys used to verify JWT assertions.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub jwks: Option<JwkSet>,
+
+    /// JWKS URI for fetching the client's public keys dynamically.
+    /// Used when the client rotates keys and provides them via a URL.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub jwks_uri: Option<String>,
 }
 
 impl Client {
@@ -253,6 +264,8 @@ mod tests {
             refresh_token_lifetime: None,
             pkce_required: None,
             allowed_origins: vec![],
+            jwks: None,
+            jwks_uri: None,
         }
     }
 
@@ -271,6 +284,8 @@ mod tests {
             refresh_token_lifetime: Some(86400),
             pkce_required: Some(false),
             allowed_origins: vec!["https://admin.example.com".to_string()],
+            jwks: None,
+            jwks_uri: None,
         }
     }
 

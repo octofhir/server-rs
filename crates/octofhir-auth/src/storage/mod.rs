@@ -5,6 +5,7 @@
 //! - OAuth client registrations
 //! - Authorization codes and sessions
 //! - Access and refresh tokens
+//! - JWT ID tracking (replay prevention)
 //! - User sessions
 //! - AccessPolicy resources
 //!
@@ -15,7 +16,11 @@
 //! - `octofhir-auth-postgres` - PostgreSQL storage backend
 
 pub mod client;
+pub mod jti;
+pub mod refresh_token;
 pub mod session;
 
 pub use client::ClientStorage;
+pub use jti::JtiStorage;
+pub use refresh_token::RefreshTokenStorage;
 pub use session::SessionStorage;

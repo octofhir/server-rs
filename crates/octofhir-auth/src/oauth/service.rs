@@ -465,6 +465,8 @@ mod tests {
             refresh_token_lifetime: None,
             pkce_required: None,
             allowed_origins: vec![],
+            jwks: None,
+            jwks_uri: None,
         }
     }
 

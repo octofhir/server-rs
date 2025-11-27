@@ -39,13 +39,27 @@
 //! ```
 
 pub mod authorize;
+pub mod client_assertion;
+pub mod client_auth;
 pub mod pkce;
 pub mod service;
 pub mod session;
+pub mod token;
 
 // Authorization endpoint types
 pub use authorize::{
     AuthorizationError, AuthorizationErrorCode, AuthorizationRequest, AuthorizationResponse,
+};
+
+// Client assertion types (for private_key_jwt authentication)
+pub use client_assertion::{
+    ClientAssertionClaims, ClientAssertionConfig, ClientAssertionValidator, StringOrArray,
+};
+
+// Client authentication
+pub use client_auth::{
+    AuthenticatedClient, TokenEndpointAuthMethod, authenticate_client,
+    authenticate_private_key_jwt, parse_basic_auth,
 };
 
 // PKCE types
@@ -56,3 +70,6 @@ pub use service::{AuthorizationConfig, AuthorizationService};
 
 // Session types
 pub use session::{AuthorizationSession, FhirContextItem, LaunchContext};
+
+// Token endpoint types
+pub use token::{TokenError, TokenErrorCode, TokenRequest, TokenResponse};

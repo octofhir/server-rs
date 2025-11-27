@@ -38,8 +38,8 @@ pub mod token;
 pub mod types;
 
 pub use error::{AuthError, ErrorCategory};
-pub use storage::{ClientStorage, SessionStorage};
-pub use types::{Client, ClientValidationError, GrantType};
+pub use storage::{ClientStorage, JtiStorage, RefreshTokenStorage, SessionStorage};
+pub use types::{Client, ClientValidationError, GrantType, RefreshToken};
 
 /// Type alias for authentication/authorization results.
 pub type AuthResult<T> = Result<T, AuthError>;
@@ -52,6 +52,6 @@ pub type AuthResult<T> = Result<T, AuthError>;
 pub mod prelude {
     pub use crate::AuthResult;
     pub use crate::error::{AuthError, ErrorCategory};
-    pub use crate::storage::{ClientStorage, SessionStorage};
-    pub use crate::types::{Client, ClientValidationError, GrantType};
+    pub use crate::storage::{ClientStorage, JtiStorage, RefreshTokenStorage, SessionStorage};
+    pub use crate::types::{Client, ClientValidationError, GrantType, RefreshToken};
 }
