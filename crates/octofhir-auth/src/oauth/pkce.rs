@@ -136,9 +136,10 @@ impl PkceError {
 ///
 /// Only S256 (SHA-256) is supported. The "plain" method is explicitly
 /// forbidden per SMART on FHIR requirements.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum PkceChallengeMethod {
     /// SHA-256 hash (the only supported method).
+    #[default]
     S256,
 }
 
@@ -171,12 +172,6 @@ impl PkceChallengeMethod {
 impl std::fmt::Display for PkceChallengeMethod {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.as_str())
-    }
-}
-
-impl Default for PkceChallengeMethod {
-    fn default() -> Self {
-        Self::S256
     }
 }
 
