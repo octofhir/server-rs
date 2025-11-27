@@ -25,10 +25,12 @@
 //! - [`middleware`] - HTTP middleware for authentication/authorization
 //! - [`audit`] - Security event audit logging
 //! - [`storage`] - Storage traits for auth-related data
+//! - [`http`] - Axum HTTP handlers for OAuth endpoints
 
 pub mod audit;
 pub mod error;
 pub mod federation;
+pub mod http;
 pub mod middleware;
 pub mod oauth;
 pub mod policy;
@@ -38,7 +40,9 @@ pub mod token;
 pub mod types;
 
 pub use error::{AuthError, ErrorCategory};
-pub use storage::{ClientStorage, JtiStorage, RefreshTokenStorage, SessionStorage};
+pub use storage::{
+    ClientStorage, JtiStorage, RefreshTokenStorage, RevokedTokenStorage, SessionStorage,
+};
 pub use types::{Client, ClientValidationError, GrantType, RefreshToken};
 
 /// Type alias for authentication/authorization results.
@@ -52,6 +56,8 @@ pub type AuthResult<T> = Result<T, AuthError>;
 pub mod prelude {
     pub use crate::AuthResult;
     pub use crate::error::{AuthError, ErrorCategory};
-    pub use crate::storage::{ClientStorage, JtiStorage, RefreshTokenStorage, SessionStorage};
+    pub use crate::storage::{
+        ClientStorage, JtiStorage, RefreshTokenStorage, RevokedTokenStorage, SessionStorage,
+    };
     pub use crate::types::{Client, ClientValidationError, GrantType, RefreshToken};
 }

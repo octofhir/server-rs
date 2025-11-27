@@ -5,6 +5,7 @@
 //! - OAuth clients (Client resource)
 //! - Authorization sessions (Session resource)
 //! - Refresh tokens (RefreshToken resource)
+//! - Revoked access token JTIs (for token revocation per RFC 7009)
 //! - Access policies (AccessPolicy resource)
 //! - Users (User resource)
 //!
@@ -27,6 +28,7 @@
 
 pub mod client;
 pub mod policy;
+pub mod revoked_token;
 pub mod session;
 pub mod token;
 pub mod user;
@@ -41,6 +43,7 @@ pub type PgPool = Pool<Postgres>;
 
 pub use client::{ClientStorage, PostgresClientStorage};
 pub use policy::PolicyStorage;
+pub use revoked_token::RevokedTokenStorage;
 pub use session::SessionStorage;
 pub use token::TokenStorage;
 pub use user::UserStorage;
@@ -224,6 +227,12 @@ impl PostgresAuthStorage {
     #[must_use]
     pub fn users(&self) -> UserStorage<'_> {
         UserStorage::new(&self.pool)
+    }
+
+    /// Get revoked token storage operations.
+    #[must_use]
+    pub fn revoked_tokens(&self) -> RevokedTokenStorage<'_> {
+        RevokedTokenStorage::new(&self.pool)
     }
 }
 

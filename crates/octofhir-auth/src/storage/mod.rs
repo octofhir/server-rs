@@ -6,6 +6,7 @@
 //! - Authorization codes and sessions
 //! - Access and refresh tokens
 //! - JWT ID tracking (replay prevention)
+//! - Revoked access token tracking
 //! - User sessions
 //! - AccessPolicy resources
 //!
@@ -18,9 +19,11 @@
 pub mod client;
 pub mod jti;
 pub mod refresh_token;
+pub mod revoked_token;
 pub mod session;
 
 pub use client::ClientStorage;
 pub use jti::JtiStorage;
 pub use refresh_token::RefreshTokenStorage;
+pub use revoked_token::RevokedTokenStorage;
 pub use session::SessionStorage;

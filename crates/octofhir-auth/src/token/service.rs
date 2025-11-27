@@ -29,8 +29,10 @@ use crate::oauth::pkce::{PkceChallenge, PkceVerifier};
 use crate::oauth::session::AuthorizationSession;
 use crate::oauth::token::{TokenRequest, TokenResponse};
 use crate::storage::refresh_token::RefreshTokenStorage;
+use crate::storage::revoked_token::RevokedTokenStorage;
 use crate::storage::session::SessionStorage;
 use crate::token::jwt::{AccessTokenClaims, IdTokenClaims, JwtService};
+use crate::token::revocation::{RevocationRequest, TokenTypeHint};
 use crate::types::Client;
 use crate::types::refresh_token::RefreshToken;
 
@@ -44,6 +46,9 @@ pub struct TokenService {
 
     /// Refresh token storage.
     refresh_token_storage: Arc<dyn RefreshTokenStorage>,
+
+    /// Revoked access token storage.
+    revoked_token_storage: Arc<dyn RevokedTokenStorage>,
 
     /// Service configuration.
     config: TokenConfig,
@@ -131,18 +136,21 @@ impl TokenService {
     /// * `jwt_service` - Service for JWT encoding/decoding
     /// * `session_storage` - Storage for authorization sessions
     /// * `refresh_token_storage` - Storage for refresh tokens
+    /// * `revoked_token_storage` - Storage for revoked access token JTIs
     /// * `config` - Service configuration
     #[must_use]
     pub fn new(
         jwt_service: Arc<JwtService>,
         session_storage: Arc<dyn SessionStorage>,
         refresh_token_storage: Arc<dyn RefreshTokenStorage>,
+        revoked_token_storage: Arc<dyn RevokedTokenStorage>,
         config: TokenConfig,
     ) -> Self {
         Self {
             jwt_service,
             session_storage,
             refresh_token_storage,
+            revoked_token_storage,
             config,
         }
     }
@@ -736,6 +744,186 @@ impl TokenService {
         }
     }
 
+    // =========================================================================
+    // Token Revocation (RFC 7009)
+    // =========================================================================
+
+    /// Revokes a token per RFC 7009.
+    ///
+    /// This method handles revocation of both access tokens and refresh tokens.
+    /// Per RFC 7009, the endpoint always returns success even if the token was
+    /// invalid or already revoked (to avoid revealing token existence).
+    ///
+    /// # Arguments
+    ///
+    /// * `request` - The revocation request containing the token and optional type hint
+    /// * `client` - The authenticated client making the request
+    ///
+    /// # Returns
+    ///
+    /// Returns `Ok(())` on success. Per RFC 7009, this includes cases where:
+    /// - The token was successfully revoked
+    /// - The token was already revoked
+    /// - The token was invalid or expired
+    /// - The token belongs to another client (silent fail for security)
+    ///
+    /// # Security
+    ///
+    /// - Only the client that was issued the token can revoke it
+    /// - Invalid tokens return success to avoid revealing token existence
+    /// - Access token revocation tracks JTI until natural expiration
+    pub async fn revoke(&self, request: &RevocationRequest, client: &Client) -> AuthResult<()> {
+        // Try to determine token type
+        let token_type = self.determine_token_type(&request.token, request.token_type_hint);
+
+        match token_type {
+            Some(TokenTypeHint::AccessToken) => {
+                self.revoke_access_token(&request.token, client).await
+            }
+            Some(TokenTypeHint::RefreshToken) => {
+                self.revoke_refresh_token(&request.token, client).await
+            }
+            None => {
+                // Try both (hint was wrong or absent)
+                // Per RFC 7009, invalid tokens should return 200 OK
+                let access_result = self.revoke_access_token(&request.token, client).await;
+                let refresh_result = self.revoke_refresh_token(&request.token, client).await;
+
+                // If either succeeded, consider it success
+                if access_result.is_ok() || refresh_result.is_ok() {
+                    Ok(())
+                } else {
+                    // Token doesn't exist or was already revoked - still return OK
+                    Ok(())
+                }
+            }
+        }
+    }
+
+    /// Revokes an access token by tracking its JTI.
+    async fn revoke_access_token(&self, token: &str, client: &Client) -> AuthResult<()> {
+        // Try to decode the token to get JTI and client_id
+        // Use decode_allow_expired since we want to revoke even expired tokens
+        match self
+            .jwt_service
+            .decode_allow_expired::<AccessTokenClaims>(token)
+        {
+            Ok(token_data) => {
+                // Verify client owns this token
+                if token_data.claims.client_id != client.client_id {
+                    // Per RFC 7009, don't reveal if token exists
+                    // Just return success
+                    tracing::debug!(
+                        client_id = %client.client_id,
+                        token_client_id = %token_data.claims.client_id,
+                        "Token revocation: client mismatch (silent fail)"
+                    );
+                    return Ok(());
+                }
+
+                // Add JTI to revocation list
+                let expires_at = OffsetDateTime::from_unix_timestamp(token_data.claims.exp)
+                    .unwrap_or_else(|_| OffsetDateTime::now_utc() + Duration::hours(1));
+
+                self.revoked_token_storage
+                    .revoke(&token_data.claims.jti, expires_at)
+                    .await?;
+
+                tracing::info!(
+                    jti = %token_data.claims.jti,
+                    client_id = %client.client_id,
+                    "Access token revoked"
+                );
+
+                Ok(())
+            }
+            Err(e) => {
+                // Token is invalid (bad signature, wrong issuer, etc.)
+                // Consider it revoked/non-existent and return success
+                tracing::debug!(
+                    error = %e,
+                    client_id = %client.client_id,
+                    "Token revocation: invalid access token (silent success)"
+                );
+                Ok(())
+            }
+        }
+    }
+
+    /// Revokes a refresh token.
+    async fn revoke_refresh_token(&self, token: &str, client: &Client) -> AuthResult<()> {
+        let token_hash = RefreshToken::hash_token(token);
+
+        // Find the token
+        match self.refresh_token_storage.find_by_hash(&token_hash).await? {
+            Some(stored_token) => {
+                // Verify client owns this token
+                if stored_token.client_id != client.client_id {
+                    // Don't reveal token exists
+                    tracing::debug!(
+                        client_id = %client.client_id,
+                        token_client_id = %stored_token.client_id,
+                        "Refresh token revocation: client mismatch (silent fail)"
+                    );
+                    return Ok(());
+                }
+
+                // Revoke it
+                self.refresh_token_storage.revoke(&token_hash).await?;
+
+                tracing::info!(
+                    client_id = %client.client_id,
+                    "Refresh token revoked"
+                );
+
+                Ok(())
+            }
+            None => {
+                // Token doesn't exist - consider success
+                tracing::debug!(
+                    client_id = %client.client_id,
+                    "Refresh token revocation: token not found (silent success)"
+                );
+                Ok(())
+            }
+        }
+    }
+
+    /// Determines the token type from the token string and optional hint.
+    fn determine_token_type(
+        &self,
+        token: &str,
+        hint: Option<TokenTypeHint>,
+    ) -> Option<TokenTypeHint> {
+        if let Some(h) = hint {
+            return Some(h);
+        }
+
+        // Try to detect based on format
+        // JWTs have three parts separated by dots
+        if token.matches('.').count() == 2 {
+            Some(TokenTypeHint::AccessToken)
+        } else {
+            Some(TokenTypeHint::RefreshToken)
+        }
+    }
+
+    /// Checks if an access token JTI is revoked.
+    ///
+    /// This method is used during token validation to check if an otherwise
+    /// valid token has been explicitly revoked.
+    ///
+    /// # Arguments
+    ///
+    /// * `jti` - The JWT ID to check
+    ///
+    /// # Returns
+    ///
+    /// Returns `true` if the JTI has been revoked, `false` otherwise.
+    pub async fn is_token_revoked(&self, jti: &str) -> AuthResult<bool> {
+        self.revoked_token_storage.is_revoked(jti).await
+    }
+
     /// Gets the JWT service reference.
     #[must_use]
     pub fn jwt_service(&self) -> &Arc<JwtService> {
@@ -943,6 +1131,42 @@ mod tests {
         }
     }
 
+    /// Mock revoked token storage for testing.
+    struct MockRevokedTokenStorage {
+        revoked: RwLock<HashMap<String, OffsetDateTime>>,
+    }
+
+    impl MockRevokedTokenStorage {
+        fn new() -> Self {
+            Self {
+                revoked: RwLock::new(HashMap::new()),
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl RevokedTokenStorage for MockRevokedTokenStorage {
+        async fn revoke(&self, jti: &str, expires_at: OffsetDateTime) -> AuthResult<()> {
+            self.revoked
+                .write()
+                .unwrap()
+                .insert(jti.to_string(), expires_at);
+            Ok(())
+        }
+
+        async fn is_revoked(&self, jti: &str) -> AuthResult<bool> {
+            Ok(self.revoked.read().unwrap().contains_key(jti))
+        }
+
+        async fn cleanup_expired(&self) -> AuthResult<u64> {
+            let mut revoked = self.revoked.write().unwrap();
+            let now = OffsetDateTime::now_utc();
+            let before = revoked.len();
+            revoked.retain(|_, expires_at| *expires_at > now);
+            Ok((before - revoked.len()) as u64)
+        }
+    }
+
     fn create_test_client() -> Client {
         Client {
             client_id: "test-client".to_string(),
@@ -991,12 +1215,14 @@ mod tests {
         TokenService,
         Arc<MockSessionStorage>,
         Arc<MockRefreshTokenStorage>,
+        Arc<MockRevokedTokenStorage>,
     ) {
         let key_pair = SigningKeyPair::generate_rsa(SigningAlgorithm::RS256).unwrap();
         let jwt_service = Arc::new(JwtService::new(key_pair, "https://auth.example.com"));
 
         let session_storage = Arc::new(MockSessionStorage::new());
         let refresh_storage = Arc::new(MockRefreshTokenStorage::new());
+        let revoked_storage = Arc::new(MockRevokedTokenStorage::new());
 
         let config = TokenConfig::new("https://auth.example.com", "https://fhir.example.com/r4");
 
@@ -1004,15 +1230,16 @@ mod tests {
             jwt_service,
             session_storage.clone(),
             refresh_storage.clone(),
+            revoked_storage.clone(),
             config,
         );
 
-        (service, session_storage, refresh_storage)
+        (service, session_storage, refresh_storage, revoked_storage)
     }
 
     #[tokio::test]
     async fn test_exchange_code_success() {
-        let (service, session_storage, _) = create_test_service();
+        let (service, session_storage, _, _) = create_test_service();
         let client = create_test_client();
 
         // Use a valid PKCE verifier (43-128 chars)
@@ -1046,7 +1273,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_exchange_code_invalid_grant_type() {
-        let (service, _, _) = create_test_service();
+        let (service, _, _, _) = create_test_service();
         let client = create_test_client();
 
         let request = TokenRequest {
@@ -1071,7 +1298,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_exchange_code_missing_code() {
-        let (service, _, _) = create_test_service();
+        let (service, _, _, _) = create_test_service();
         let client = create_test_client();
 
         let request = TokenRequest {
@@ -1093,7 +1320,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_exchange_code_invalid_code() {
-        let (service, _, _) = create_test_service();
+        let (service, _, _, _) = create_test_service();
         let client = create_test_client();
 
         let request = TokenRequest {
@@ -1115,7 +1342,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_exchange_code_client_mismatch() {
-        let (service, session_storage, _) = create_test_service();
+        let (service, session_storage, _, _) = create_test_service();
 
         let verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
         let session = create_test_session(verifier);
@@ -1144,7 +1371,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_exchange_code_redirect_uri_mismatch() {
-        let (service, session_storage, _) = create_test_service();
+        let (service, session_storage, _, _) = create_test_service();
         let client = create_test_client();
 
         let verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
@@ -1170,7 +1397,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_exchange_code_pkce_failure() {
-        let (service, session_storage, _) = create_test_service();
+        let (service, session_storage, _, _) = create_test_service();
         let client = create_test_client();
 
         let verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
@@ -1196,7 +1423,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_exchange_code_with_offline_access() {
-        let (service, session_storage, refresh_storage) = create_test_service();
+        let (service, session_storage, refresh_storage, _) = create_test_service();
         let client = create_test_client();
 
         let verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
@@ -1230,7 +1457,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_exchange_code_with_launch_context() {
-        let (service, session_storage, _) = create_test_service();
+        let (service, session_storage, _, _) = create_test_service();
         let client = create_test_client();
 
         let verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
@@ -1341,7 +1568,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_refresh_success() {
-        let (service, _, refresh_storage) = create_test_service();
+        let (service, _, refresh_storage, _) = create_test_service();
         let client = create_refresh_client();
 
         // Store a refresh token
@@ -1379,7 +1606,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_refresh_invalid_grant_type() {
-        let (service, _, _) = create_test_service();
+        let (service, _, _, _) = create_test_service();
         let client = create_refresh_client();
 
         let request = TokenRequest {
@@ -1404,7 +1631,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_refresh_missing_token() {
-        let (service, _, _) = create_test_service();
+        let (service, _, _, _) = create_test_service();
         let client = create_refresh_client();
 
         let request = TokenRequest {
@@ -1426,7 +1653,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_refresh_unknown_token() {
-        let (service, _, _) = create_test_service();
+        let (service, _, _, _) = create_test_service();
         let client = create_refresh_client();
 
         let request = TokenRequest {
@@ -1448,7 +1675,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_refresh_expired_token() {
-        let (service, _, refresh_storage) = create_test_service();
+        let (service, _, refresh_storage, _) = create_test_service();
         let client = create_refresh_client();
 
         // Create an expired token
@@ -1486,7 +1713,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_refresh_revoked_token() {
-        let (service, _, refresh_storage) = create_test_service();
+        let (service, _, refresh_storage, _) = create_test_service();
         let client = create_refresh_client();
 
         // Create a revoked token
@@ -1524,7 +1751,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_refresh_client_mismatch() {
-        let (service, _, refresh_storage) = create_test_service();
+        let (service, _, refresh_storage, _) = create_test_service();
         let client = create_refresh_client();
 
         // Token issued to a different client
@@ -1551,7 +1778,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_refresh_scope_narrowing() {
-        let (service, _, refresh_storage) = create_test_service();
+        let (service, _, refresh_storage, _) = create_test_service();
         let client = create_refresh_client();
 
         let token_value = "scope-narrowing-token";
@@ -1583,7 +1810,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_refresh_scope_expansion_rejected() {
-        let (service, _, refresh_storage) = create_test_service();
+        let (service, _, refresh_storage, _) = create_test_service();
         let client = create_refresh_client();
 
         let token_value = "scope-expansion-token";
@@ -1611,7 +1838,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_refresh_with_launch_context() {
-        let (service, _, refresh_storage) = create_test_service();
+        let (service, _, refresh_storage, _) = create_test_service();
         let client = create_refresh_client();
 
         let token_value = "launch-context-token";
@@ -1665,7 +1892,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_refresh_token_rotation() {
-        let (service, _, refresh_storage) = create_test_service();
+        let (service, _, refresh_storage, _) = create_test_service();
         let client = create_refresh_client();
 
         let token_value = "rotation-test-token";
@@ -1708,7 +1935,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_refresh_client_not_authorized() {
-        let (service, _, refresh_storage) = create_test_service();
+        let (service, _, refresh_storage, _) = create_test_service();
 
         // Client without refresh_token grant
         let client = create_test_client(); // Only has authorization_code
@@ -1732,5 +1959,242 @@ mod tests {
 
         let result = service.refresh(&request, &client).await;
         assert!(matches!(result, Err(AuthError::Unauthorized { .. })));
+    }
+
+    // =========================================================================
+    // Token Revocation Tests (RFC 7009)
+    // =========================================================================
+
+    #[tokio::test]
+    async fn test_revoke_access_token_success() {
+        let (service, session_storage, _, revoked_storage) = create_test_service();
+        let client = create_test_client();
+
+        // First, get an access token
+        let verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+        let session = create_test_session(verifier);
+        session_storage.add_session(session);
+
+        let request = TokenRequest {
+            grant_type: "authorization_code".to_string(),
+            code: Some("test-auth-code".to_string()),
+            redirect_uri: Some("https://app.example.com/callback".to_string()),
+            code_verifier: Some(verifier.to_string()),
+            client_id: Some("test-client".to_string()),
+            client_secret: None,
+            client_assertion_type: None,
+            client_assertion: None,
+            refresh_token: None,
+            scope: None,
+        };
+
+        let token_response = service.exchange_code(&request, &client).await.unwrap();
+
+        // Now revoke the access token
+        let revoke_request = RevocationRequest {
+            token: token_response.access_token.clone(),
+            token_type_hint: Some(TokenTypeHint::AccessToken),
+        };
+
+        let result = service.revoke(&revoke_request, &client).await;
+        assert!(result.is_ok());
+
+        // Verify the token is now revoked
+        // We need to decode the token to get the JTI
+        let token_data = service
+            .jwt_service
+            .decode::<AccessTokenClaims>(&token_response.access_token)
+            .unwrap();
+
+        let is_revoked = revoked_storage
+            .is_revoked(&token_data.claims.jti)
+            .await
+            .unwrap();
+        assert!(is_revoked);
+    }
+
+    #[tokio::test]
+    async fn test_revoke_refresh_token_success() {
+        let (service, _, refresh_storage, _) = create_test_service();
+        let client = create_refresh_client();
+
+        // Store a refresh token
+        let token_value = "revoke-test-refresh-token-1234567890";
+        let stored_token =
+            create_stored_refresh_token(&client.client_id, "openid patient/*.read", token_value);
+        refresh_storage.create(&stored_token).await.unwrap();
+
+        // Revoke the refresh token
+        let revoke_request = RevocationRequest {
+            token: token_value.to_string(),
+            token_type_hint: Some(TokenTypeHint::RefreshToken),
+        };
+
+        let result = service.revoke(&revoke_request, &client).await;
+        assert!(result.is_ok());
+
+        // Verify the token is now revoked
+        let token_hash = RefreshToken::hash_token(token_value);
+        let stored = refresh_storage.find_by_hash(&token_hash).await.unwrap();
+        assert!(stored.unwrap().is_revoked());
+    }
+
+    #[tokio::test]
+    async fn test_revoke_invalid_token_returns_ok() {
+        let (service, _, _, _) = create_test_service();
+        let client = create_test_client();
+
+        // Per RFC 7009, invalid tokens should return 200 OK
+        let revoke_request = RevocationRequest {
+            token: "invalid-token-that-does-not-exist".to_string(),
+            token_type_hint: None,
+        };
+
+        let result = service.revoke(&revoke_request, &client).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_revoke_token_wrong_client_returns_ok() {
+        let (service, _, refresh_storage, _) = create_test_service();
+
+        // Token owned by "other-client"
+        let token_value = "other-client-refresh-token";
+        let stored_token = create_stored_refresh_token("other-client", "openid", token_value);
+        refresh_storage.create(&stored_token).await.unwrap();
+
+        // Try to revoke as "test-client"
+        let client = create_test_client();
+        let revoke_request = RevocationRequest {
+            token: token_value.to_string(),
+            token_type_hint: Some(TokenTypeHint::RefreshToken),
+        };
+
+        // Per RFC 7009, wrong client should silently succeed (don't reveal token existence)
+        let result = service.revoke(&revoke_request, &client).await;
+        assert!(result.is_ok());
+
+        // But the token should NOT be revoked
+        let token_hash = RefreshToken::hash_token(token_value);
+        let stored = refresh_storage.find_by_hash(&token_hash).await.unwrap();
+        assert!(!stored.unwrap().is_revoked());
+    }
+
+    #[tokio::test]
+    async fn test_revoke_already_revoked_token() {
+        let (service, _, refresh_storage, _) = create_test_service();
+        let client = create_refresh_client();
+
+        // Create and immediately revoke a token
+        let token_value = "already-revoked-token";
+        let mut stored_token =
+            create_stored_refresh_token(&client.client_id, "openid", token_value);
+        stored_token.revoked_at = Some(OffsetDateTime::now_utc());
+        refresh_storage.create(&stored_token).await.unwrap();
+
+        // Try to revoke again - should succeed
+        let revoke_request = RevocationRequest {
+            token: token_value.to_string(),
+            token_type_hint: Some(TokenTypeHint::RefreshToken),
+        };
+
+        let result = service.revoke(&revoke_request, &client).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_revoke_without_type_hint_detects_jwt() {
+        let (service, session_storage, _, revoked_storage) = create_test_service();
+        let client = create_test_client();
+
+        // Get an access token (which is a JWT)
+        let verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+        let session = create_test_session(verifier);
+        let session_code = session.code.clone();
+        session_storage.add_session(session);
+
+        let request = TokenRequest {
+            grant_type: "authorization_code".to_string(),
+            code: Some(session_code),
+            redirect_uri: Some("https://app.example.com/callback".to_string()),
+            code_verifier: Some(verifier.to_string()),
+            client_id: Some("test-client".to_string()),
+            client_secret: None,
+            client_assertion_type: None,
+            client_assertion: None,
+            refresh_token: None,
+            scope: None,
+        };
+
+        let token_response = service.exchange_code(&request, &client).await.unwrap();
+
+        // Revoke without type hint - should detect it's a JWT (access token)
+        let revoke_request = RevocationRequest {
+            token: token_response.access_token.clone(),
+            token_type_hint: None, // No hint provided
+        };
+
+        let result = service.revoke(&revoke_request, &client).await;
+        assert!(result.is_ok());
+
+        // Verify it was revoked
+        let token_data = service
+            .jwt_service
+            .decode::<AccessTokenClaims>(&token_response.access_token)
+            .unwrap();
+
+        let is_revoked = revoked_storage
+            .is_revoked(&token_data.claims.jti)
+            .await
+            .unwrap();
+        assert!(is_revoked);
+    }
+
+    #[tokio::test]
+    async fn test_is_token_revoked() {
+        let (service, _, _, revoked_storage) = create_test_service();
+
+        let jti = "test-jti-12345";
+
+        // Initially not revoked
+        let is_revoked = service.is_token_revoked(jti).await.unwrap();
+        assert!(!is_revoked);
+
+        // Revoke it
+        revoked_storage
+            .revoke(jti, OffsetDateTime::now_utc() + Duration::hours(1))
+            .await
+            .unwrap();
+
+        // Now should be revoked
+        let is_revoked = service.is_token_revoked(jti).await.unwrap();
+        assert!(is_revoked);
+    }
+
+    #[test]
+    fn test_determine_token_type_with_hint() {
+        let (service, _, _, _) = create_test_service();
+
+        // When hint is provided, use it
+        let result = service.determine_token_type("anything", Some(TokenTypeHint::AccessToken));
+        assert_eq!(result, Some(TokenTypeHint::AccessToken));
+
+        let result = service.determine_token_type("anything", Some(TokenTypeHint::RefreshToken));
+        assert_eq!(result, Some(TokenTypeHint::RefreshToken));
+    }
+
+    #[test]
+    fn test_determine_token_type_jwt_detection() {
+        let (service, _, _, _) = create_test_service();
+
+        // JWT format (3 dots)
+        let jwt = "header.payload.signature";
+        let result = service.determine_token_type(jwt, None);
+        assert_eq!(result, Some(TokenTypeHint::AccessToken));
+
+        // Non-JWT format
+        let refresh = "simple-refresh-token-string";
+        let result = service.determine_token_type(refresh, None);
+        assert_eq!(result, Some(TokenTypeHint::RefreshToken));
     }
 }
