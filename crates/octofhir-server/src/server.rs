@@ -106,13 +106,7 @@ async fn bootstrap_conformance_if_postgres(cfg: &AppConfig) -> Result<(), anyhow
 
     let canonical_manager = crate::canonical::get_manager();
 
-    match sync_and_load(
-        &conformance_storage,
-        &base_dir,
-        canonical_manager.as_ref(),
-    )
-    .await
-    {
+    match sync_and_load(&conformance_storage, &base_dir, canonical_manager.as_ref()).await {
         Ok(package_dir) => {
             tracing::info!(
                 package_dir = %package_dir.display(),
@@ -401,9 +395,10 @@ pub async fn build_app(cfg: &AppConfig) -> Result<Router, anyhow::Error> {
     );
 
     // Initialize ValidationService with FHIRPath constraint support
-    let validation_service = ValidationService::new(model_provider.clone(), fhirpath_engine.clone())
-        .await
-        .map_err(|e| anyhow::anyhow!("Failed to initialize validation service: {}", e))?;
+    let validation_service =
+        ValidationService::new(model_provider.clone(), fhirpath_engine.clone())
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to initialize validation service: {}", e))?;
     tracing::info!("Validation service initialized with FHIRPath constraint support");
 
     // Initialize gateway router and load initial routes

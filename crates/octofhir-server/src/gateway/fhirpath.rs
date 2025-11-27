@@ -3,12 +3,12 @@
 use std::sync::Arc;
 
 use axum::{
+    Json,
     body::Body,
     http::{Request, StatusCode},
     response::{IntoResponse, Response},
-    Json,
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tracing::{debug, info, instrument, warn};
 
 use super::error::GatewayError;
@@ -57,8 +57,9 @@ pub async fn handle_fhirpath(
         // If no body provided, use empty object
         json!({})
     } else {
-        serde_json::from_slice(&body_bytes)
-            .map_err(|e| GatewayError::FhirPathError(format!("Invalid JSON in request body: {}", e)))?
+        serde_json::from_slice(&body_bytes).map_err(|e| {
+            GatewayError::FhirPathError(format!("Invalid JSON in request body: {}", e))
+        })?
     };
 
     debug!(context = ?context, "Evaluation context");
@@ -70,7 +71,9 @@ pub async fn handle_fhirpath(
         state.model_provider.clone();
     let collection = Collection::from_json_resource(context, Some(fhirpath_provider.clone()))
         .await
-        .map_err(|e| GatewayError::FhirPathError(format!("Failed to create FHIRPath context: {}", e)))?;
+        .map_err(|e| {
+            GatewayError::FhirPathError(format!("Failed to create FHIRPath context: {}", e))
+        })?;
     let eval_context = EvaluationContext::new(collection, fhirpath_provider, None, None, None);
 
     // Evaluate FHIRPath expression
@@ -84,11 +87,7 @@ pub async fn handle_fhirpath(
 
             // Convert FHIRPath result to JSON
             // EvaluationResult has a value field that contains the result collection
-            let values_json: Vec<Value> = result
-                .value
-                .iter()
-                .map(|v| v.to_json_value())
-                .collect();
+            let values_json: Vec<Value> = result.value.iter().map(|v| v.to_json_value()).collect();
 
             let json_result = json!(values_json);
 

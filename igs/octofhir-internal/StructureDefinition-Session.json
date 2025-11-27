@@ -1,0 +1,133 @@
+{
+  "resourceType": "StructureDefinition",
+  "id": "Session",
+  "url": "http://octofhir.io/StructureDefinition/Session",
+  "name": "Session",
+  "title": "Authorization Session",
+  "status": "active",
+  "fhirVersion": "4.0.1",
+  "kind": "resource",
+  "abstract": false,
+  "type": "Session",
+  "baseDefinition": "http://hl7.org/fhir/StructureDefinition/DomainResource",
+  "derivation": "specialization",
+  "description": "An OAuth authorization session that tracks state during the authorization code flow. Stores PKCE challenge, scopes, and other flow parameters.",
+  "differential": {
+    "element": [
+      {
+        "id": "Session",
+        "path": "Session",
+        "short": "OAuth authorization session",
+        "definition": "Tracks state during OAuth authorization code flow."
+      },
+      {
+        "id": "Session.code",
+        "path": "Session.code",
+        "short": "Authorization code",
+        "definition": "The authorization code issued after user consent",
+        "min": 1,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "Session.clientId",
+        "path": "Session.clientId",
+        "short": "Client ID",
+        "definition": "The OAuth client that initiated this session",
+        "min": 1,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "Session.userId",
+        "path": "Session.userId",
+        "short": "User ID",
+        "definition": "The user who authorized this session",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "Session.redirectUri",
+        "path": "Session.redirectUri",
+        "short": "Redirect URI",
+        "definition": "The redirect URI to return the user to",
+        "min": 1,
+        "max": "1",
+        "type": [{ "code": "uri" }]
+      },
+      {
+        "id": "Session.scopes",
+        "path": "Session.scopes",
+        "short": "Authorized scopes",
+        "definition": "Scopes the user authorized",
+        "min": 0,
+        "max": "*",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "Session.codeChallenge",
+        "path": "Session.codeChallenge",
+        "short": "PKCE code challenge",
+        "definition": "The code_challenge from PKCE flow",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "Session.codeChallengeMethod",
+        "path": "Session.codeChallengeMethod",
+        "short": "PKCE method",
+        "definition": "The code_challenge_method (plain or S256)",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "code" }]
+      },
+      {
+        "id": "Session.state",
+        "path": "Session.state",
+        "short": "OAuth state parameter",
+        "definition": "The state parameter for CSRF protection",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "Session.nonce",
+        "path": "Session.nonce",
+        "short": "OpenID nonce",
+        "definition": "Nonce for OpenID Connect",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "Session.launchContext",
+        "path": "Session.launchContext",
+        "short": "SMART launch context",
+        "definition": "Launch context parameters (patient, encounter, etc.)",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "Session.expiresAt",
+        "path": "Session.expiresAt",
+        "short": "Expiration time",
+        "definition": "When this authorization code expires",
+        "min": 1,
+        "max": "1",
+        "type": [{ "code": "instant" }]
+      },
+      {
+        "id": "Session.used",
+        "path": "Session.used",
+        "short": "Code used",
+        "definition": "Whether the authorization code has been exchanged",
+        "min": 1,
+        "max": "1",
+        "type": [{ "code": "boolean" }]
+      }
+    ]
+  }
+}

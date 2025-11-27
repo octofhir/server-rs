@@ -151,9 +151,7 @@ impl ValidationService {
 
     /// Create a validation service without FHIRPath constraint evaluation
     /// (structural validation only)
-    pub async fn new_structural_only(
-        fhir_version: FhirVersion,
-    ) -> Result<Self, anyhow::Error> {
+    pub async fn new_structural_only(fhir_version: FhirVersion) -> Result<Self, anyhow::Error> {
         let schemas = get_schemas(fhir_version);
         let model_fhir_version = match fhir_version {
             FhirVersion::R4 => octofhir_fhir_model::FhirVersion::R4,

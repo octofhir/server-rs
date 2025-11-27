@@ -4,12 +4,12 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use axum::{
+    Router,
     body::Body,
     extract::{Path as AxumPath, State},
     http::{Method, Request},
     response::Response,
     routing::any,
-    Router,
 };
 use tokio::sync::RwLock;
 use tracing::{debug, info, instrument, warn};
@@ -85,12 +85,9 @@ impl GatewayRouter {
 
         // Load all active CustomOperations
         let ops_query = octofhir_db_memory::SearchQuery::new("CustomOperation".parse().unwrap());
-        let ops_result = storage
-            .search(&ops_query)
-            .await
-            .map_err(|e| {
-                GatewayError::StorageError(format!("Failed to load CustomOperations: {}", e))
-            })?;
+        let ops_result = storage.search(&ops_query).await.map_err(|e| {
+            GatewayError::StorageError(format!("Failed to load CustomOperations: {}", e))
+        })?;
 
         let operations: Vec<CustomOperation> = ops_result
             .resources
@@ -109,29 +106,22 @@ impl GatewayRouter {
 
         for operation in operations {
             // Extract app reference
-            let app_ref = operation
-                .app
-                .reference
-                .as_ref()
-                .ok_or_else(|| {
-                    GatewayError::InvalidConfig(format!(
-                        "CustomOperation {} has no app reference",
-                        operation.id.as_deref().unwrap_or("unknown")
-                    ))
-                })?;
+            let app_ref = operation.app.reference.as_ref().ok_or_else(|| {
+                GatewayError::InvalidConfig(format!(
+                    "CustomOperation {} has no app reference",
+                    operation.id.as_deref().unwrap_or("unknown")
+                ))
+            })?;
 
             // Extract app ID from reference (e.g., "App/123" -> "123")
-            let app_id = app_ref
-                .split('/')
-                .last()
-                .ok_or_else(|| {
-                    GatewayError::InvalidConfig(format!("Invalid app reference: {}", app_ref))
-                })?;
+            let app_id = app_ref.split('/').last().ok_or_else(|| {
+                GatewayError::InvalidConfig(format!("Invalid app reference: {}", app_ref))
+            })?;
 
             // Find the app
-            let app = app_map.get(app_id).ok_or_else(|| {
-                GatewayError::InvalidConfig(format!("App not found: {}", app_id))
-            })?;
+            let app = app_map
+                .get(app_id)
+                .ok_or_else(|| GatewayError::InvalidConfig(format!("App not found: {}", app_id)))?;
 
             // Build full path
             let full_path = format!("{}{}", app.base_path, operation.path);
@@ -168,11 +158,7 @@ impl GatewayRouter {
     }
 
     /// Looks up a route by method and path.
-    pub async fn get_route(
-        &self,
-        method: &str,
-        path: &str,
-    ) -> Option<CustomOperation> {
+    pub async fn get_route(&self, method: &str, path: &str) -> Option<CustomOperation> {
         let route_key = RouteKey::new(method.to_string(), path.to_string());
         let routes = self.routes.read().await;
         routes.get(&route_key.to_string()).cloned()

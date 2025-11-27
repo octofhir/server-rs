@@ -12,7 +12,7 @@ use tracing::{info, warn};
 /// Embedded internal IG resources
 /// These are compiled into the binary for single-binary distribution
 const EMBEDDED_RESOURCES: &[(&str, &str)] = &[
-    // StructureDefinitions
+    // StructureDefinitions - Gateway
     (
         "StructureDefinition-App.json",
         include_str!("../../../igs/octofhir-internal/StructureDefinition-App.json"),
@@ -20,6 +20,27 @@ const EMBEDDED_RESOURCES: &[(&str, &str)] = &[
     (
         "StructureDefinition-CustomOperation.json",
         include_str!("../../../igs/octofhir-internal/StructureDefinition-CustomOperation.json"),
+    ),
+    // StructureDefinitions - Auth
+    (
+        "StructureDefinition-Client.json",
+        include_str!("../../../igs/octofhir-internal/StructureDefinition-Client.json"),
+    ),
+    (
+        "StructureDefinition-User.json",
+        include_str!("../../../igs/octofhir-internal/StructureDefinition-User.json"),
+    ),
+    (
+        "StructureDefinition-AccessPolicy.json",
+        include_str!("../../../igs/octofhir-internal/StructureDefinition-AccessPolicy.json"),
+    ),
+    (
+        "StructureDefinition-Session.json",
+        include_str!("../../../igs/octofhir-internal/StructureDefinition-Session.json"),
+    ),
+    (
+        "StructureDefinition-RefreshToken.json",
+        include_str!("../../../igs/octofhir-internal/StructureDefinition-RefreshToken.json"),
     ),
     // ValueSets
     (
@@ -69,7 +90,10 @@ pub async fn bootstrap_conformance_resources(
         return Ok(stats);
     }
 
-    info!("Loading {} embedded conformance resources", EMBEDDED_RESOURCES.len());
+    info!(
+        "Loading {} embedded conformance resources",
+        EMBEDDED_RESOURCES.len()
+    );
 
     // Load all embedded resources
     for (filename, content) in EMBEDDED_RESOURCES {

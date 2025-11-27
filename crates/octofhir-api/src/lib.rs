@@ -100,7 +100,10 @@ impl ApiError {
     pub fn not_implemented(msg: impl Into<String>) -> Self {
         Self::NotImplemented(msg.into())
     }
-    pub fn unprocessable_entity(msg: impl Into<String>, outcome: Option<serde_json::Value>) -> Self {
+    pub fn unprocessable_entity(
+        msg: impl Into<String>,
+        outcome: Option<serde_json::Value>,
+    ) -> Self {
         Self::UnprocessableEntity {
             message: msg.into(),
             operation_outcome: outcome,

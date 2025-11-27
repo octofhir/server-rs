@@ -28,5 +28,8 @@ p384 = { version = "0.13", features = ["ecdsa", "pem", "pkcs8"] }
 elliptic-curve = { version = "0.13", features = ["sec1", "pkcs8"] }
 rand = "0.8"
 
+# PKCE
+sha2 = "0.10"
+
 [dev-dependencies]
 tokio-test = { workspace = true }

@@ -1,0 +1,117 @@
+{
+  "resourceType": "StructureDefinition",
+  "id": "User",
+  "url": "http://octofhir.io/StructureDefinition/User",
+  "name": "User",
+  "title": "User Account",
+  "status": "active",
+  "fhirVersion": "4.0.1",
+  "kind": "resource",
+  "abstract": false,
+  "type": "User",
+  "baseDefinition": "http://hl7.org/fhir/StructureDefinition/DomainResource",
+  "derivation": "specialization",
+  "description": "A user account for authentication. Can be linked to FHIR Practitioner, Patient, or Person resources.",
+  "differential": {
+    "element": [
+      {
+        "id": "User",
+        "path": "User",
+        "short": "User account",
+        "definition": "Defines a user account with credentials and profile information."
+      },
+      {
+        "id": "User.username",
+        "path": "User.username",
+        "short": "Username for login",
+        "definition": "Unique username for authentication",
+        "min": 1,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "User.passwordHash",
+        "path": "User.passwordHash",
+        "short": "Hashed password",
+        "definition": "BCrypt-hashed password",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "User.email",
+        "path": "User.email",
+        "short": "Email address",
+        "definition": "User's email address",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "User.fhirUser",
+        "path": "User.fhirUser",
+        "short": "Linked FHIR resource",
+        "definition": "Reference to the FHIR resource this user represents (Practitioner, Patient, Person, or RelatedPerson)",
+        "comment": "Used for SMART on FHIR fhirUser claim",
+        "min": 0,
+        "max": "1",
+        "type": [
+          {
+            "code": "Reference",
+            "targetProfile": [
+              "http://hl7.org/fhir/StructureDefinition/Practitioner",
+              "http://hl7.org/fhir/StructureDefinition/Patient",
+              "http://hl7.org/fhir/StructureDefinition/Person",
+              "http://hl7.org/fhir/StructureDefinition/RelatedPerson"
+            ]
+          }
+        ]
+      },
+      {
+        "id": "User.active",
+        "path": "User.active",
+        "short": "Is account active",
+        "definition": "Whether this user account is currently active",
+        "min": 1,
+        "max": "1",
+        "type": [{ "code": "boolean" }]
+      },
+      {
+        "id": "User.roles",
+        "path": "User.roles",
+        "short": "User roles",
+        "definition": "Roles assigned to this user for authorization",
+        "min": 0,
+        "max": "*",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "User.lastLogin",
+        "path": "User.lastLogin",
+        "short": "Last login timestamp",
+        "definition": "When the user last successfully authenticated",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "instant" }]
+      },
+      {
+        "id": "User.mfaEnabled",
+        "path": "User.mfaEnabled",
+        "short": "MFA enabled",
+        "definition": "Whether multi-factor authentication is enabled",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "boolean" }]
+      },
+      {
+        "id": "User.mfaSecret",
+        "path": "User.mfaSecret",
+        "short": "MFA secret",
+        "definition": "Encrypted TOTP secret for MFA",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      }
+    ]
+  }
+}

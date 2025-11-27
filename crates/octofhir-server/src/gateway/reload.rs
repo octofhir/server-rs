@@ -115,10 +115,7 @@ impl GatewayReloadListener {
                     // Trigger route reload
                     match self.gateway_router.reload_routes(&self.storage).await {
                         Ok(count) => {
-                            info!(
-                                count = count,
-                                "Gateway routes reloaded successfully"
-                            );
+                            info!(count = count, "Gateway routes reloaded successfully");
                         }
                         Err(e) => {
                             error!(

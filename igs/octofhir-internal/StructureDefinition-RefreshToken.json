@@ -1,0 +1,124 @@
+{
+  "resourceType": "StructureDefinition",
+  "id": "RefreshToken",
+  "url": "http://octofhir.io/StructureDefinition/RefreshToken",
+  "name": "RefreshToken",
+  "title": "Refresh Token",
+  "status": "active",
+  "fhirVersion": "4.0.1",
+  "kind": "resource",
+  "abstract": false,
+  "type": "RefreshToken",
+  "baseDefinition": "http://hl7.org/fhir/StructureDefinition/DomainResource",
+  "derivation": "specialization",
+  "description": "A refresh token issued to an OAuth client. Used to obtain new access tokens without user interaction.",
+  "differential": {
+    "element": [
+      {
+        "id": "RefreshToken",
+        "path": "RefreshToken",
+        "short": "OAuth refresh token",
+        "definition": "Stores refresh token state for token refresh flow."
+      },
+      {
+        "id": "RefreshToken.tokenHash",
+        "path": "RefreshToken.tokenHash",
+        "short": "Hashed token value",
+        "definition": "SHA-256 hash of the refresh token value",
+        "min": 1,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "RefreshToken.clientId",
+        "path": "RefreshToken.clientId",
+        "short": "Client ID",
+        "definition": "The OAuth client this token was issued to",
+        "min": 1,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "RefreshToken.userId",
+        "path": "RefreshToken.userId",
+        "short": "User ID",
+        "definition": "The user this token was issued for",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "RefreshToken.scopes",
+        "path": "RefreshToken.scopes",
+        "short": "Authorized scopes",
+        "definition": "Scopes associated with this refresh token",
+        "min": 0,
+        "max": "*",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "RefreshToken.launchContext",
+        "path": "RefreshToken.launchContext",
+        "short": "SMART launch context",
+        "definition": "Launch context to include in access tokens",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "RefreshToken.issuedAt",
+        "path": "RefreshToken.issuedAt",
+        "short": "Issue time",
+        "definition": "When this refresh token was issued",
+        "min": 1,
+        "max": "1",
+        "type": [{ "code": "instant" }]
+      },
+      {
+        "id": "RefreshToken.expiresAt",
+        "path": "RefreshToken.expiresAt",
+        "short": "Expiration time",
+        "definition": "When this refresh token expires",
+        "min": 1,
+        "max": "1",
+        "type": [{ "code": "instant" }]
+      },
+      {
+        "id": "RefreshToken.lastUsedAt",
+        "path": "RefreshToken.lastUsedAt",
+        "short": "Last used time",
+        "definition": "When this refresh token was last used",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "instant" }]
+      },
+      {
+        "id": "RefreshToken.revoked",
+        "path": "RefreshToken.revoked",
+        "short": "Is revoked",
+        "definition": "Whether this refresh token has been revoked",
+        "min": 1,
+        "max": "1",
+        "type": [{ "code": "boolean" }]
+      },
+      {
+        "id": "RefreshToken.revokedAt",
+        "path": "RefreshToken.revokedAt",
+        "short": "Revocation time",
+        "definition": "When this refresh token was revoked",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "instant" }]
+      },
+      {
+        "id": "RefreshToken.parentTokenId",
+        "path": "RefreshToken.parentTokenId",
+        "short": "Parent token ID",
+        "definition": "ID of the parent token if this is a rotated token",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      }
+    ]
+  }
+}

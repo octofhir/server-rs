@@ -1,0 +1,144 @@
+{
+  "resourceType": "StructureDefinition",
+  "id": "AccessPolicy",
+  "url": "http://octofhir.io/StructureDefinition/AccessPolicy",
+  "name": "AccessPolicy",
+  "title": "Access Policy",
+  "status": "active",
+  "fhirVersion": "4.0.1",
+  "kind": "resource",
+  "abstract": false,
+  "type": "AccessPolicy",
+  "baseDefinition": "http://hl7.org/fhir/StructureDefinition/DomainResource",
+  "derivation": "specialization",
+  "description": "An access policy that defines authorization rules. Policies can use different engines (allow, deny, matcho, sql) and be linked to clients, users, or roles.",
+  "differential": {
+    "element": [
+      {
+        "id": "AccessPolicy",
+        "path": "AccessPolicy",
+        "short": "Access control policy",
+        "definition": "Defines authorization rules for resource access."
+      },
+      {
+        "id": "AccessPolicy.name",
+        "path": "AccessPolicy.name",
+        "short": "Policy name",
+        "definition": "Human-readable name for the policy",
+        "min": 1,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "AccessPolicy.description",
+        "path": "AccessPolicy.description",
+        "short": "Policy description",
+        "definition": "Detailed description of what this policy allows or denies",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "AccessPolicy.engine",
+        "path": "AccessPolicy.engine",
+        "short": "Policy engine type",
+        "definition": "The engine used to evaluate this policy",
+        "comment": "Values: allow (always allow), deny (always deny), matcho (pattern matching), sql (SQL-based rules)",
+        "min": 1,
+        "max": "1",
+        "type": [{ "code": "code" }]
+      },
+      {
+        "id": "AccessPolicy.link",
+        "path": "AccessPolicy.link",
+        "short": "Policy links",
+        "definition": "Links this policy to clients, users, or roles",
+        "min": 0,
+        "max": "*",
+        "type": [{ "code": "BackboneElement" }]
+      },
+      {
+        "id": "AccessPolicy.link.client",
+        "path": "AccessPolicy.link.client",
+        "short": "Linked client",
+        "definition": "Reference to a Client this policy applies to",
+        "min": 0,
+        "max": "1",
+        "type": [
+          {
+            "code": "Reference",
+            "targetProfile": ["http://octofhir.io/StructureDefinition/Client"]
+          }
+        ]
+      },
+      {
+        "id": "AccessPolicy.link.user",
+        "path": "AccessPolicy.link.user",
+        "short": "Linked user",
+        "definition": "Reference to a User this policy applies to",
+        "min": 0,
+        "max": "1",
+        "type": [
+          {
+            "code": "Reference",
+            "targetProfile": ["http://octofhir.io/StructureDefinition/User"]
+          }
+        ]
+      },
+      {
+        "id": "AccessPolicy.link.role",
+        "path": "AccessPolicy.link.role",
+        "short": "Linked role",
+        "definition": "Role name this policy applies to",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "AccessPolicy.resourceType",
+        "path": "AccessPolicy.resourceType",
+        "short": "Target resource types",
+        "definition": "FHIR resource types this policy applies to (empty means all)",
+        "min": 0,
+        "max": "*",
+        "type": [{ "code": "code" }]
+      },
+      {
+        "id": "AccessPolicy.matcho",
+        "path": "AccessPolicy.matcho",
+        "short": "Matcho pattern rules",
+        "definition": "Pattern matching rules for matcho engine",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "AccessPolicy.sql",
+        "path": "AccessPolicy.sql",
+        "short": "SQL rule",
+        "definition": "SQL expression for sql engine",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "AccessPolicy.priority",
+        "path": "AccessPolicy.priority",
+        "short": "Policy priority",
+        "definition": "Evaluation priority (lower numbers evaluated first)",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "integer" }]
+      },
+      {
+        "id": "AccessPolicy.active",
+        "path": "AccessPolicy.active",
+        "short": "Is policy active",
+        "definition": "Whether this policy is currently active",
+        "min": 1,
+        "max": "1",
+        "type": [{ "code": "boolean" }]
+      }
+    ]
+  }
+}

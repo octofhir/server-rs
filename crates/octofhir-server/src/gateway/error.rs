@@ -1,9 +1,9 @@
 //! Gateway-specific error types.
 
 use axum::{
+    Json,
     http::StatusCode,
     response::{IntoResponse, Response},
-    Json,
 };
 use serde_json::json;
 use std::fmt;
@@ -59,9 +59,7 @@ impl IntoResponse for GatewayError {
     fn into_response(self) -> Response {
         let (status, severity, code) = match &self {
             Self::RouteNotFound { .. } => (StatusCode::NOT_FOUND, "error", "not-found"),
-            Self::InvalidConfig(_) => {
-                (StatusCode::INTERNAL_SERVER_ERROR, "error", "invalid")
-            }
+            Self::InvalidConfig(_) => (StatusCode::INTERNAL_SERVER_ERROR, "error", "invalid"),
             Self::StorageError(_) => (StatusCode::INTERNAL_SERVER_ERROR, "error", "exception"),
             Self::ProxyError(_) => (StatusCode::BAD_GATEWAY, "error", "exception"),
             Self::SqlError(_) => (StatusCode::INTERNAL_SERVER_ERROR, "error", "exception"),

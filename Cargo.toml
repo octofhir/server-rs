@@ -3,6 +3,7 @@ resolver = "3"
 members = [
     "crates/octofhir-api",
     "crates/octofhir-auth",
+    "crates/octofhir-auth-postgres",
     "crates/octofhir-core",
     "crates/octofhir-db-memory",
     "crates/octofhir-db-postgres",
@@ -24,6 +25,7 @@ categories = ["web-programming", "science"]
 [workspace.dependencies]
 # Local dependencies
 octofhir-auth = { path = "crates/octofhir-auth" }
+octofhir-auth-postgres = { path = "crates/octofhir-auth-postgres" }
 octofhir-core = { path = "crates/octofhir-core" }
 octofhir-db-memory = { path = "crates/octofhir-db-memory" }
 octofhir-sof = { path = "crates/octofhir-sof" }

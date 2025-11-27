@@ -8,11 +8,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
-use axum::{
-    body::Body,
-    http::Request,
-    response::Response,
-};
+use axum::{body::Body, http::Request, response::Response};
 
 use super::error::GatewayError;
 use super::types::CustomOperation;
@@ -112,13 +108,9 @@ pub async fn handle_handler(
     tracing::info!(handler_name = %handler_name, "Invoking custom handler");
 
     // Look up the handler in the registry
-    let handler_fn = state
-        .handler_registry
-        .get(handler_name)
-        .ok_or_else(|| GatewayError::HandlerNotFound(format!(
-            "Handler '{}' not found in registry",
-            handler_name
-        )))?;
+    let handler_fn = state.handler_registry.get(handler_name).ok_or_else(|| {
+        GatewayError::HandlerNotFound(format!("Handler '{}' not found in registry", handler_name))
+    })?;
 
     // Invoke the handler
     handler_fn(state.clone(), operation.clone(), request).await
@@ -139,11 +131,8 @@ mod tests {
     fn test_registry_register() {
         let mut registry = HandlerRegistry::new();
 
-        let handler: HandlerFn = Arc::new(|_state, _op, _req| {
-            Box::pin(async move {
-                Ok(Response::new(Body::empty()))
-            })
-        });
+        let handler: HandlerFn =
+            Arc::new(|_state, _op, _req| Box::pin(async move { Ok(Response::new(Body::empty())) }));
 
         registry.register("test_handler", handler);
 

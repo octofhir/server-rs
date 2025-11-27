@@ -4,12 +4,12 @@
 //! to prevent accidental or malicious data modification.
 
 use axum::{
+    Json,
     body::Body,
     http::{Request, StatusCode},
     response::{IntoResponse, Response},
-    Json,
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use sqlx::{Column, Row};
 use std::collections::HashMap;
 use tracing::{debug, info, instrument, warn};
@@ -57,9 +57,7 @@ pub async fn handle_sql(
 
     // Execute the query if we have a PostgreSQL pool
     let pool = state.db_pool.as_ref().ok_or_else(|| {
-        GatewayError::SqlError(
-            "SQL handler requires PostgreSQL storage backend".to_string()
-        )
+        GatewayError::SqlError("SQL handler requires PostgreSQL storage backend".to_string())
     })?;
 
     info!("Executing SQL query");
@@ -123,18 +121,8 @@ fn is_read_only_query(query: &str) -> bool {
 
     // Check for disallowed keywords anywhere in the query
     let disallowed = [
-        "INSERT",
-        "UPDATE",
-        "DELETE",
-        "DROP",
-        "CREATE",
-        "ALTER",
-        "TRUNCATE",
-        "GRANT",
-        "REVOKE",
-        "EXEC",
-        "EXECUTE",
-        "CALL",
+        "INSERT", "UPDATE", "DELETE", "DROP", "CREATE", "ALTER", "TRUNCATE", "GRANT", "REVOKE",
+        "EXEC", "EXECUTE", "CALL",
     ];
 
     for keyword in &disallowed {
@@ -177,7 +165,9 @@ mod tests {
     fn test_is_read_only_query() {
         // Valid SELECT queries
         assert!(is_read_only_query("SELECT * FROM users"));
-        assert!(is_read_only_query("select id, name from patients where active = true"));
+        assert!(is_read_only_query(
+            "select id, name from patients where active = true"
+        ));
         assert!(is_read_only_query("  SELECT count(*) FROM observation  "));
 
         // Invalid queries

@@ -1,0 +1,143 @@
+{
+  "resourceType": "StructureDefinition",
+  "id": "Client",
+  "url": "http://octofhir.io/StructureDefinition/Client",
+  "name": "Client",
+  "title": "OAuth 2.0 Client",
+  "status": "active",
+  "fhirVersion": "4.0.1",
+  "kind": "resource",
+  "abstract": false,
+  "type": "Client",
+  "baseDefinition": "http://hl7.org/fhir/StructureDefinition/DomainResource",
+  "derivation": "specialization",
+  "description": "An OAuth 2.0 client registration. Stores client credentials, grant types, redirect URIs, and other OAuth client metadata.",
+  "differential": {
+    "element": [
+      {
+        "id": "Client",
+        "path": "Client",
+        "short": "OAuth 2.0 client registration",
+        "definition": "Defines an OAuth 2.0 client with credentials and configuration."
+      },
+      {
+        "id": "Client.clientId",
+        "path": "Client.clientId",
+        "short": "OAuth client_id",
+        "definition": "Unique identifier for the client, used in OAuth flows",
+        "min": 1,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "Client.clientSecret",
+        "path": "Client.clientSecret",
+        "short": "Hashed client secret",
+        "definition": "BCrypt-hashed client secret for confidential clients",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "Client.name",
+        "path": "Client.name",
+        "short": "Display name",
+        "definition": "Human-readable name for the client application",
+        "min": 1,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "Client.description",
+        "path": "Client.description",
+        "short": "Client description",
+        "definition": "Detailed description of the client application",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "Client.grantTypes",
+        "path": "Client.grantTypes",
+        "short": "Allowed OAuth grant types",
+        "definition": "OAuth 2.0 grant types this client is allowed to use",
+        "comment": "Common values: authorization_code, client_credentials, refresh_token",
+        "min": 1,
+        "max": "*",
+        "type": [{ "code": "code" }]
+      },
+      {
+        "id": "Client.redirectUris",
+        "path": "Client.redirectUris",
+        "short": "Allowed redirect URIs",
+        "definition": "List of allowed redirect URIs for authorization code flow",
+        "min": 0,
+        "max": "*",
+        "type": [{ "code": "uri" }]
+      },
+      {
+        "id": "Client.scopes",
+        "path": "Client.scopes",
+        "short": "Allowed scopes",
+        "definition": "OAuth scopes this client is allowed to request",
+        "min": 0,
+        "max": "*",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "Client.confidential",
+        "path": "Client.confidential",
+        "short": "Is confidential client",
+        "definition": "Whether this is a confidential client (has client secret)",
+        "min": 1,
+        "max": "1",
+        "type": [{ "code": "boolean" }]
+      },
+      {
+        "id": "Client.active",
+        "path": "Client.active",
+        "short": "Is client active",
+        "definition": "Whether this client is currently active and can be used",
+        "min": 1,
+        "max": "1",
+        "type": [{ "code": "boolean" }]
+      },
+      {
+        "id": "Client.accessTokenLifetime",
+        "path": "Client.accessTokenLifetime",
+        "short": "Access token lifetime in seconds",
+        "definition": "How long access tokens issued to this client are valid",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "integer" }]
+      },
+      {
+        "id": "Client.refreshTokenLifetime",
+        "path": "Client.refreshTokenLifetime",
+        "short": "Refresh token lifetime in seconds",
+        "definition": "How long refresh tokens issued to this client are valid",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "integer" }]
+      },
+      {
+        "id": "Client.pkceRequired",
+        "path": "Client.pkceRequired",
+        "short": "Require PKCE",
+        "definition": "Whether PKCE is required for authorization code flow",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "boolean" }]
+      },
+      {
+        "id": "Client.allowedOrigins",
+        "path": "Client.allowedOrigins",
+        "short": "Allowed CORS origins",
+        "definition": "Origins allowed for CORS requests from browser-based clients",
+        "min": 0,
+        "max": "*",
+        "type": [{ "code": "uri" }]
+      }
+    ]
+  }
+}

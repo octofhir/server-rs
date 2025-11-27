@@ -269,11 +269,9 @@ impl HotReloadBuilder {
         let listener_handle = listener.start();
 
         // If auto-sync is configured, start the sync task
-        if let (Some(storage), Some(base_dir), Some(mut rx)) = (
-            self.conformance_storage,
-            self.base_dir,
-            receiver,
-        ) {
+        if let (Some(storage), Some(base_dir), Some(mut rx)) =
+            (self.conformance_storage, self.base_dir, receiver)
+        {
             let manager = self.canonical_manager;
 
             tokio::spawn(async move {
@@ -285,12 +283,7 @@ impl HotReloadBuilder {
                     );
 
                     // Perform sync
-                    match crate::db_sync::sync_and_load(
-                        &storage,
-                        &base_dir,
-                        manager.as_ref(),
-                    )
-                    .await
+                    match crate::db_sync::sync_and_load(&storage, &base_dir, manager.as_ref()).await
                     {
                         Ok(path) => {
                             info!(

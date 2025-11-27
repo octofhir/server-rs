@@ -59,7 +59,7 @@ mod storage;
 // Re-export main types
 pub use config::PostgresConfig;
 pub use conformance::PostgresConformanceStorage;
-pub use db_sync::{load_to_memory, sync_and_load, sync_to_directory, ConformanceBundle, SyncStats};
+pub use db_sync::{ConformanceBundle, SyncStats, load_to_memory, sync_and_load, sync_to_directory};
 pub use error::{PostgresError, Result};
 pub use hot_reload::{HotReloadBuilder, HotReloadListener};
 pub use storage::PostgresStorage;
@@ -94,7 +94,9 @@ pub async fn create_storage(
 pub mod prelude {
     pub use crate::config::PostgresConfig;
     pub use crate::conformance::PostgresConformanceStorage;
-    pub use crate::db_sync::{load_to_memory, sync_and_load, sync_to_directory, ConformanceBundle, SyncStats};
+    pub use crate::db_sync::{
+        ConformanceBundle, SyncStats, load_to_memory, sync_and_load, sync_to_directory,
+    };
     pub use crate::error::{PostgresError, Result};
     pub use crate::hot_reload::{HotReloadBuilder, HotReloadListener};
     pub use crate::storage::PostgresStorage;
