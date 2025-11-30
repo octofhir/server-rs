@@ -1,0 +1,18 @@
+{
+  "resourceType": "ValueSet",
+  "id": "identity-provider-types",
+  "url": "http://octofhir.io/ValueSet/identity-provider-types",
+  "version": "1.0.0",
+  "name": "IdentityProviderTypesValueSet",
+  "title": "Identity Provider Types",
+  "status": "active",
+  "experimental": false,
+  "description": "Value set for identity provider types.",
+  "compose": {
+    "include": [
+      {
+        "system": "http://octofhir.io/CodeSystem/identity-provider-types"
+      }
+    ]
+  }
+}

@@ -42,6 +42,10 @@ const EMBEDDED_RESOURCES: &[(&str, &str)] = &[
         "StructureDefinition-RefreshToken.json",
         include_str!("../../../igs/octofhir-internal/StructureDefinition-RefreshToken.json"),
     ),
+    (
+        "StructureDefinition-IdentityProvider.json",
+        include_str!("../../../igs/octofhir-internal/StructureDefinition-IdentityProvider.json"),
+    ),
     // ValueSets
     (
         "ValueSet-http-methods.json",
@@ -51,6 +55,10 @@ const EMBEDDED_RESOURCES: &[(&str, &str)] = &[
         "ValueSet-operation-types.json",
         include_str!("../../../igs/octofhir-internal/ValueSet-operation-types.json"),
     ),
+    (
+        "ValueSet-identity-provider-types.json",
+        include_str!("../../../igs/octofhir-internal/ValueSet-identity-provider-types.json"),
+    ),
     // CodeSystems
     (
         "CodeSystem-http-methods.json",
@@ -59,6 +67,10 @@ const EMBEDDED_RESOURCES: &[(&str, &str)] = &[
     (
         "CodeSystem-operation-types.json",
         include_str!("../../../igs/octofhir-internal/CodeSystem-operation-types.json"),
+    ),
+    (
+        "CodeSystem-identity-provider-types.json",
+        include_str!("../../../igs/octofhir-internal/CodeSystem-identity-provider-types.json"),
     ),
 ];
 

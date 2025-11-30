@@ -111,6 +111,56 @@
         "min": 0,
         "max": "1",
         "type": [{ "code": "string" }]
+      },
+      {
+        "id": "User.identity",
+        "path": "User.identity",
+        "short": "External identity links",
+        "definition": "Links to external identity providers for federated authentication",
+        "min": 0,
+        "max": "*",
+        "type": [{ "code": "BackboneElement" }]
+      },
+      {
+        "id": "User.identity.provider",
+        "path": "User.identity.provider",
+        "short": "Identity provider reference",
+        "definition": "Reference to the IdentityProvider resource",
+        "min": 1,
+        "max": "1",
+        "type": [
+          {
+            "code": "Reference",
+            "targetProfile": ["http://octofhir.io/StructureDefinition/IdentityProvider"]
+          }
+        ]
+      },
+      {
+        "id": "User.identity.externalId",
+        "path": "User.identity.externalId",
+        "short": "External subject ID",
+        "definition": "The subject identifier from the external identity provider",
+        "min": 1,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "User.identity.email",
+        "path": "User.identity.email",
+        "short": "Email from IdP",
+        "definition": "Email address provided by the identity provider",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "User.identity.linkedAt",
+        "path": "User.identity.linkedAt",
+        "short": "When linked",
+        "definition": "When this identity was linked to the user account",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "instant" }]
       }
     ]
   }

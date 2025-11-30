@@ -1,0 +1,26 @@
+{
+  "resourceType": "CodeSystem",
+  "id": "identity-provider-types",
+  "url": "http://octofhir.io/CodeSystem/identity-provider-types",
+  "version": "1.0.0",
+  "name": "IdentityProviderTypes",
+  "title": "Identity Provider Types",
+  "status": "active",
+  "experimental": false,
+  "description": "Types of external identity providers supported for federated authentication.",
+  "caseSensitive": true,
+  "content": "complete",
+  "count": 2,
+  "concept": [
+    {
+      "code": "oidc",
+      "display": "OpenID Connect",
+      "definition": "OpenID Connect 1.0 identity provider"
+    },
+    {
+      "code": "saml",
+      "display": "SAML 2.0",
+      "definition": "SAML 2.0 identity provider (future support)"
+    }
+  ]
+}

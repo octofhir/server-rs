@@ -256,6 +256,27 @@ pub trait UserStorage: Send + Sync {
     /// Returns an error if the storage operation fails.
     async fn find_by_email(&self, email: &str) -> AuthResult<Option<User>>;
 
+    /// Find a user by external identity provider link.
+    ///
+    /// Searches for a user that has a linked identity from the specified
+    /// provider with the given external subject identifier.
+    ///
+    /// Returns `None` if no user is found with the matching external identity.
+    ///
+    /// # Arguments
+    ///
+    /// * `provider_id` - The identity provider ID (e.g., "google", "azure-ad")
+    /// * `external_subject` - The subject identifier from the IdP
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the storage operation fails.
+    async fn find_by_external_identity(
+        &self,
+        provider_id: &str,
+        external_subject: &str,
+    ) -> AuthResult<Option<User>>;
+
     /// Create a new user.
     ///
     /// # Errors

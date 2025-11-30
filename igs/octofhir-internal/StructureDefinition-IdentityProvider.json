@@ -1,0 +1,210 @@
+{
+  "resourceType": "StructureDefinition",
+  "id": "IdentityProvider",
+  "url": "http://octofhir.io/StructureDefinition/IdentityProvider",
+  "name": "IdentityProvider",
+  "title": "External Identity Provider",
+  "status": "active",
+  "fhirVersion": "4.0.1",
+  "kind": "resource",
+  "abstract": false,
+  "type": "IdentityProvider",
+  "baseDefinition": "http://hl7.org/fhir/StructureDefinition/DomainResource",
+  "derivation": "specialization",
+  "description": "Configuration for an external OIDC/SAML identity provider used for federated authentication.",
+  "differential": {
+    "element": [
+      {
+        "id": "IdentityProvider",
+        "path": "IdentityProvider",
+        "short": "External identity provider configuration",
+        "definition": "Defines an external identity provider for federated authentication."
+      },
+      {
+        "id": "IdentityProvider.name",
+        "path": "IdentityProvider.name",
+        "short": "Provider name",
+        "definition": "Unique identifier name for this provider (e.g., 'google', 'okta')",
+        "min": 1,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "IdentityProvider.type",
+        "path": "IdentityProvider.type",
+        "short": "Provider type",
+        "definition": "Type of identity provider protocol (oidc or saml)",
+        "min": 1,
+        "max": "1",
+        "type": [{ "code": "code" }],
+        "binding": {
+          "strength": "required",
+          "valueSet": "http://octofhir.io/ValueSet/identity-provider-types"
+        }
+      },
+      {
+        "id": "IdentityProvider.issuer",
+        "path": "IdentityProvider.issuer",
+        "short": "Issuer URL",
+        "definition": "The OIDC issuer URL (e.g., 'https://accounts.google.com')",
+        "min": 1,
+        "max": "1",
+        "type": [{ "code": "uri" }]
+      },
+      {
+        "id": "IdentityProvider.clientId",
+        "path": "IdentityProvider.clientId",
+        "short": "OAuth client ID",
+        "definition": "The OAuth client_id registered with this provider",
+        "min": 1,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "IdentityProvider.clientSecret",
+        "path": "IdentityProvider.clientSecret",
+        "short": "OAuth client secret",
+        "definition": "The OAuth client_secret for confidential clients (should be encrypted at rest)",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "IdentityProvider.active",
+        "path": "IdentityProvider.active",
+        "short": "Is provider active",
+        "definition": "Whether this provider is currently active and can be used for authentication",
+        "min": 1,
+        "max": "1",
+        "type": [{ "code": "boolean" }]
+      },
+      {
+        "id": "IdentityProvider.scopes",
+        "path": "IdentityProvider.scopes",
+        "short": "OAuth scopes",
+        "definition": "OAuth scopes to request during authentication",
+        "comment": "Default should include 'openid', 'profile', 'email'",
+        "min": 0,
+        "max": "*",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "IdentityProvider.authorizationEndpoint",
+        "path": "IdentityProvider.authorizationEndpoint",
+        "short": "Authorization endpoint override",
+        "definition": "Override for the OAuth authorization endpoint (if not using OIDC discovery)",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "uri" }]
+      },
+      {
+        "id": "IdentityProvider.tokenEndpoint",
+        "path": "IdentityProvider.tokenEndpoint",
+        "short": "Token endpoint override",
+        "definition": "Override for the OAuth token endpoint (if not using OIDC discovery)",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "uri" }]
+      },
+      {
+        "id": "IdentityProvider.userinfoEndpoint",
+        "path": "IdentityProvider.userinfoEndpoint",
+        "short": "Userinfo endpoint override",
+        "definition": "Override for the OIDC userinfo endpoint (if not using discovery)",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "uri" }]
+      },
+      {
+        "id": "IdentityProvider.jwksUri",
+        "path": "IdentityProvider.jwksUri",
+        "short": "JWKS URI override",
+        "definition": "Override for the JWKS URI (if not using OIDC discovery)",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "uri" }]
+      },
+      {
+        "id": "IdentityProvider.userMapping",
+        "path": "IdentityProvider.userMapping",
+        "short": "User claim mapping",
+        "definition": "Configuration for mapping IdP claims to local user attributes",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "BackboneElement" }]
+      },
+      {
+        "id": "IdentityProvider.userMapping.subjectClaim",
+        "path": "IdentityProvider.userMapping.subjectClaim",
+        "short": "Subject claim name",
+        "definition": "Claim to use as the subject identifier (default: 'sub')",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "IdentityProvider.userMapping.emailClaim",
+        "path": "IdentityProvider.userMapping.emailClaim",
+        "short": "Email claim name",
+        "definition": "Claim containing the user's email address",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "IdentityProvider.userMapping.rolesClaim",
+        "path": "IdentityProvider.userMapping.rolesClaim",
+        "short": "Roles claim name",
+        "definition": "Claim containing user roles (array or comma-separated)",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "IdentityProvider.userMapping.fhirResourceType",
+        "path": "IdentityProvider.userMapping.fhirResourceType",
+        "short": "FHIR user resource type",
+        "definition": "FHIR resource type to create for users (Practitioner, Patient, RelatedPerson, Person)",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "code" }]
+      },
+      {
+        "id": "IdentityProvider.userMapping.autoProvision",
+        "path": "IdentityProvider.userMapping.autoProvision",
+        "short": "Auto-provision users",
+        "definition": "Whether to automatically create users on first login",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "boolean" }]
+      },
+      {
+        "id": "IdentityProvider.displayName",
+        "path": "IdentityProvider.displayName",
+        "short": "Display name for UI",
+        "definition": "Human-readable name to display on login buttons",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "IdentityProvider.logoUrl",
+        "path": "IdentityProvider.logoUrl",
+        "short": "Logo URL",
+        "definition": "URL to provider logo for login UI",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "uri" }]
+      },
+      {
+        "id": "IdentityProvider.buttonColor",
+        "path": "IdentityProvider.buttonColor",
+        "short": "Button color",
+        "definition": "CSS color for the login button (e.g., '#4285F4' for Google blue)",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      }
+    ]
+  }
+}

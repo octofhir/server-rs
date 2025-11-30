@@ -1,3 +1,4 @@
+pub mod admin;
 pub mod bootstrap;
 pub mod canonical;
 pub mod config;
@@ -13,6 +14,7 @@ pub mod server;
 pub mod storage_adapter;
 pub mod validation;
 
+pub use admin::{admin_routes, AdminState, CombinedAdminState};
 pub use config::{AppConfig, OtelConfig, PostgresStorageConfig, ServerConfig, StorageBackend};
 pub use observability::{init_tracing, shutdown_tracing};
 pub use server::{AppState, OctofhirServer, ServerBuilder, build_app};

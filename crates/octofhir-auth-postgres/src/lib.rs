@@ -27,6 +27,7 @@
 //! ```
 
 pub mod client;
+pub mod identity_provider;
 pub mod launch_context;
 pub mod policy;
 pub mod revoked_token;
@@ -43,6 +44,7 @@ use sqlx_postgres::Postgres;
 pub type PgPool = Pool<Postgres>;
 
 pub use client::{ClientStorage, PostgresClientStorage};
+pub use identity_provider::{IdentityProviderRow, IdentityProviderStorage};
 pub use launch_context::LaunchContextStorage;
 pub use policy::PolicyStorage;
 pub use revoked_token::RevokedTokenStorage;
@@ -241,6 +243,12 @@ impl PostgresAuthStorage {
     #[must_use]
     pub fn launch_contexts(&self) -> LaunchContextStorage<'_> {
         LaunchContextStorage::new(&self.pool)
+    }
+
+    /// Get identity provider storage operations.
+    #[must_use]
+    pub fn identity_providers(&self) -> IdentityProviderStorage<'_> {
+        IdentityProviderStorage::new(&self.pool)
     }
 }
 

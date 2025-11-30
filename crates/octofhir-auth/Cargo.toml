@@ -42,5 +42,8 @@ reqwest = { version = "0.11", features = ["json"] }
 # HTTP handlers
 axum = { workspace = true }
 
+# Admin API types
+octofhir-api = { path = "../octofhir-api" }
+
 [dev-dependencies]
 tokio-test = { workspace = true }

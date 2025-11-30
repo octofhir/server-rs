@@ -147,6 +147,40 @@ impl<'a> UserStorage<'a> {
         Ok(row.map(UserRow::from_tuple))
     }
 
+    /// Find a user by external identity provider link.
+    ///
+    /// Searches for a user that has a linked identity from the specified
+    /// provider with the given external subject identifier.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the database query fails.
+    pub async fn find_by_external_identity(
+        &self,
+        provider_id: &str,
+        external_subject: &str,
+    ) -> StorageResult<Option<UserRow>> {
+        // Build the JSON object to match against the identities array
+        let identity_match = serde_json::json!([{
+            "provider_id": provider_id,
+            "external_subject": external_subject
+        }]);
+
+        let row: Option<(Uuid, i64, OffsetDateTime, serde_json::Value, String)> = query_as(
+            r#"
+            SELECT id, txid, ts, resource, status
+            FROM "user"
+            WHERE resource->'attributes'->'identities' @> $1::jsonb
+              AND status != 'deleted'
+            "#,
+        )
+        .bind(&identity_match)
+        .fetch_optional(self.pool)
+        .await?;
+
+        Ok(row.map(UserRow::from_tuple))
+    }
+
     /// Create a new user.
     ///
     /// # Errors
@@ -292,6 +326,32 @@ impl<'a> UserStorage<'a> {
             WHERE status != 'deleted'
             "#,
         )
+        .fetch_one(self.pool)
+        .await?;
+
+        Ok(count.0)
+    }
+
+    /// Count users linked to a specific identity provider.
+    ///
+    /// This is used to check if an identity provider can be safely deleted.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the database query fails.
+    pub async fn count_by_identity_provider(&self, provider_id: &str) -> StorageResult<i64> {
+        // Search for users with identities that have a provider reference containing the provider_id
+        let provider_ref = format!("IdentityProvider/{}", provider_id);
+
+        let count: (i64,) = query_as(
+            r#"
+            SELECT COUNT(*)
+            FROM "user"
+            WHERE status != 'deleted'
+              AND resource->'identity' @> $1::jsonb
+            "#,
+        )
+        .bind(serde_json::json!([{ "provider": { "reference": provider_ref } }]))
         .fetch_one(self.pool)
         .await?;
 
