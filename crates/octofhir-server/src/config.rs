@@ -1,3 +1,4 @@
+use octofhir_auth::config::AuthConfig;
 use serde::{Deserialize, Serialize};
 use std::{net::SocketAddr, time::Duration};
 
@@ -17,6 +18,9 @@ pub struct AppConfig {
     pub otel: OtelConfig,
     #[serde(default)]
     pub packages: PackagesConfig,
+    /// Authentication and authorization configuration
+    #[serde(default)]
+    pub auth: AuthConfig,
 }
 
 // Default derived via field defaults
@@ -71,6 +75,12 @@ impl AppConfig {
                     return Err("storage.postgres.pool_size must be > 0".into());
                 }
             }
+        }
+        // Auth validation
+        if self.auth.enabled {
+            self.auth
+                .validate()
+                .map_err(|e| format!("auth config error: {e}"))?;
         }
         Ok(())
     }

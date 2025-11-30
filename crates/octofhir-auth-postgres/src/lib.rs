@@ -27,6 +27,7 @@
 //! ```
 
 pub mod client;
+pub mod launch_context;
 pub mod policy;
 pub mod revoked_token;
 pub mod session;
@@ -42,6 +43,7 @@ use sqlx_postgres::Postgres;
 pub type PgPool = Pool<Postgres>;
 
 pub use client::{ClientStorage, PostgresClientStorage};
+pub use launch_context::LaunchContextStorage;
 pub use policy::PolicyStorage;
 pub use revoked_token::RevokedTokenStorage;
 pub use session::SessionStorage;
@@ -233,6 +235,12 @@ impl PostgresAuthStorage {
     #[must_use]
     pub fn revoked_tokens(&self) -> RevokedTokenStorage<'_> {
         RevokedTokenStorage::new(&self.pool)
+    }
+
+    /// Get SMART launch context storage operations.
+    #[must_use]
+    pub fn launch_contexts(&self) -> LaunchContextStorage<'_> {
+        LaunchContextStorage::new(&self.pool)
     }
 }
 

@@ -7,3 +7,14 @@
 //! - SMART configuration endpoint (/.well-known/smart-configuration)
 //! - Clinical scope enforcement
 //! - Patient context selection
+
+pub mod launch;
+pub mod scopes;
+
+pub use launch::{
+    DEFAULT_LAUNCH_CONTEXT_TTL, FhirContextItem, StoredLaunchContext, generate_launch_id,
+};
+pub use scopes::{
+    FhirOperation, Permissions, ResourceType, ScopeContext, ScopeError, ScopeFilter, SmartScope,
+    SmartScopes, StandaloneContextRequirements,
+};

@@ -21,6 +21,7 @@ octofhir-db-postgres = { path = "../octofhir-db-postgres" }
 octofhir-storage = { path = "../octofhir-storage" }
 octofhir-api = { path = "../octofhir-api" }
 octofhir-search = { path = "../octofhir-search" }
+octofhir-auth = { path = "../octofhir-auth" }
 octofhir-canonical-manager = { workspace = true }
 async-trait = { workspace = true }
 

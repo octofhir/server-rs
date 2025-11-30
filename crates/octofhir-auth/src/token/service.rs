@@ -31,6 +31,7 @@ use crate::oauth::token::{TokenRequest, TokenResponse};
 use crate::storage::refresh_token::RefreshTokenStorage;
 use crate::storage::revoked_token::RevokedTokenStorage;
 use crate::storage::session::SessionStorage;
+use crate::token::introspection::{IntrospectionRequest, IntrospectionResponse};
 use crate::token::jwt::{AccessTokenClaims, IdTokenClaims, JwtService};
 use crate::token::revocation::{RevocationRequest, TokenTypeHint};
 use crate::types::Client;
@@ -922,6 +923,195 @@ impl TokenService {
     /// Returns `true` if the JTI has been revoked, `false` otherwise.
     pub async fn is_token_revoked(&self, jti: &str) -> AuthResult<bool> {
         self.revoked_token_storage.is_revoked(jti).await
+    }
+
+    // =========================================================================
+    // Token Introspection (RFC 7662)
+    // =========================================================================
+
+    /// Introspects a token per RFC 7662.
+    ///
+    /// This method determines if a token is currently active and returns
+    /// metadata about the token if it is active. Unlike revocation, this
+    /// does not require client ownership of the token - resource servers
+    /// can introspect any token.
+    ///
+    /// # Arguments
+    ///
+    /// * `request` - The introspection request containing the token and optional type hint
+    ///
+    /// # Returns
+    ///
+    /// Returns an `IntrospectionResponse` with:
+    /// - `active: true` and metadata if the token is valid and not expired/revoked
+    /// - `active: false` with no metadata otherwise (expired, revoked, malformed)
+    ///
+    /// # Security
+    ///
+    /// - Never reveals why a token is inactive (expired vs revoked vs invalid)
+    /// - Always returns valid JSON response
+    /// - Response should only be provided to authenticated clients
+    pub async fn introspect(&self, request: &IntrospectionRequest) -> IntrospectionResponse {
+        // Try to determine token type
+        let token_type = self.determine_token_type(&request.token, request.token_type_hint);
+
+        match token_type {
+            Some(TokenTypeHint::AccessToken) => self.introspect_access_token(&request.token).await,
+            Some(TokenTypeHint::RefreshToken) => {
+                self.introspect_refresh_token(&request.token).await
+            }
+            None => {
+                // Try access token first (JWT detection), then refresh token
+                let response = self.introspect_access_token(&request.token).await;
+                if response.active {
+                    response
+                } else {
+                    self.introspect_refresh_token(&request.token).await
+                }
+            }
+        }
+    }
+
+    /// Introspects an access token (JWT).
+    async fn introspect_access_token(&self, token: &str) -> IntrospectionResponse {
+        // Try to decode the token - use regular decode which validates expiration
+        match self.jwt_service.decode::<AccessTokenClaims>(token) {
+            Ok(token_data) => {
+                let claims = &token_data.claims;
+
+                // Check if the token has been revoked
+                match self.revoked_token_storage.is_revoked(&claims.jti).await {
+                    Ok(true) => {
+                        tracing::debug!(
+                            jti = %claims.jti,
+                            "Token introspection: token is revoked"
+                        );
+                        return IntrospectionResponse::inactive();
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            error = %e,
+                            jti = %claims.jti,
+                            "Token introspection: error checking revocation status"
+                        );
+                        return IntrospectionResponse::inactive();
+                    }
+                    Ok(false) => {
+                        // Token is not revoked, continue
+                    }
+                }
+
+                // Build active response with all claims
+                let mut response = IntrospectionResponse::active()
+                    .with_scope(claims.scope.clone())
+                    .with_client_id(claims.client_id.clone())
+                    .with_sub(claims.sub.clone())
+                    .with_exp(claims.exp)
+                    .with_iat(claims.iat)
+                    .with_iss(claims.iss.clone())
+                    .with_jti(claims.jti.clone())
+                    .with_token_type("Bearer");
+
+                // Add audience
+                if !claims.aud.is_empty() {
+                    response = response.with_aud(claims.aud.clone());
+                }
+
+                // Add SMART on FHIR context if present
+                if let Some(ref patient) = claims.patient {
+                    response = response.with_patient(patient.clone());
+                }
+                if let Some(ref encounter) = claims.encounter {
+                    response = response.with_encounter(encounter.clone());
+                }
+                if let Some(ref fhir_user) = claims.fhir_user {
+                    response = response.with_fhir_user(fhir_user.clone());
+                }
+
+                tracing::debug!(
+                    jti = %claims.jti,
+                    client_id = %claims.client_id,
+                    "Token introspection: access token is active"
+                );
+
+                response
+            }
+            Err(e) => {
+                // Token is invalid, expired, or has bad signature
+                tracing::debug!(
+                    error = %e,
+                    "Token introspection: access token decode failed"
+                );
+                IntrospectionResponse::inactive()
+            }
+        }
+    }
+
+    /// Introspects a refresh token.
+    async fn introspect_refresh_token(&self, token: &str) -> IntrospectionResponse {
+        let token_hash = RefreshToken::hash_token(token);
+
+        // Look up the token
+        match self.refresh_token_storage.find_by_hash(&token_hash).await {
+            Ok(Some(stored_token)) => {
+                // Check if revoked
+                if stored_token.is_revoked() {
+                    tracing::debug!("Token introspection: refresh token is revoked");
+                    return IntrospectionResponse::inactive();
+                }
+
+                // Check if expired
+                if stored_token.is_expired() {
+                    tracing::debug!("Token introspection: refresh token is expired");
+                    return IntrospectionResponse::inactive();
+                }
+
+                // Build active response
+                let mut response = IntrospectionResponse::active()
+                    .with_scope(stored_token.scope.clone())
+                    .with_client_id(stored_token.client_id.clone())
+                    .with_token_type("refresh_token")
+                    .with_iat(stored_token.created_at.unix_timestamp());
+
+                // Add subject if we have user_id
+                if let Some(user_id) = stored_token.user_id {
+                    response = response.with_sub(user_id.to_string());
+                }
+
+                // Add expiration if set
+                if let Some(exp) = stored_token.expires_at {
+                    response = response.with_exp(exp.unix_timestamp());
+                }
+
+                // Add SMART on FHIR context if present
+                if let Some(ref ctx) = stored_token.launch_context {
+                    if let Some(ref patient) = ctx.patient {
+                        response = response.with_patient(patient.clone());
+                    }
+                    if let Some(ref encounter) = ctx.encounter {
+                        response = response.with_encounter(encounter.clone());
+                    }
+                }
+
+                tracing::debug!(
+                    client_id = %stored_token.client_id,
+                    "Token introspection: refresh token is active"
+                );
+
+                response
+            }
+            Ok(None) => {
+                tracing::debug!("Token introspection: refresh token not found");
+                IntrospectionResponse::inactive()
+            }
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    "Token introspection: error looking up refresh token"
+                );
+                IntrospectionResponse::inactive()
+            }
+        }
     }
 
     /// Gets the JWT service reference.
@@ -2196,5 +2386,325 @@ mod tests {
         let refresh = "simple-refresh-token-string";
         let result = service.determine_token_type(refresh, None);
         assert_eq!(result, Some(TokenTypeHint::RefreshToken));
+    }
+
+    // =========================================================================
+    // Token Introspection Tests (RFC 7662)
+    // =========================================================================
+
+    #[tokio::test]
+    async fn test_introspect_valid_access_token() {
+        let (service, session_storage, _, _) = create_test_service();
+        let client = create_test_client();
+
+        // Generate an access token
+        let verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+        let session = create_test_session(verifier);
+        session_storage.add_session(session);
+
+        let request = TokenRequest {
+            grant_type: "authorization_code".to_string(),
+            code: Some("test-auth-code".to_string()),
+            redirect_uri: Some("https://app.example.com/callback".to_string()),
+            code_verifier: Some(verifier.to_string()),
+            client_id: Some("test-client".to_string()),
+            client_secret: None,
+            client_assertion_type: None,
+            client_assertion: None,
+            refresh_token: None,
+            scope: None,
+        };
+
+        let token_response = service.exchange_code(&request, &client).await.unwrap();
+
+        // Introspect the access token
+        let introspect_request = IntrospectionRequest {
+            token: token_response.access_token.clone(),
+            token_type_hint: Some(TokenTypeHint::AccessToken),
+        };
+
+        let response = service.introspect(&introspect_request).await;
+        assert!(response.active);
+        assert_eq!(response.client_id, Some("test-client".to_string()));
+        assert_eq!(response.scope, Some("openid patient/*.read".to_string()));
+        assert_eq!(response.token_type, Some("Bearer".to_string()));
+        assert!(response.jti.is_some());
+        assert!(response.exp.is_some());
+        assert!(response.iat.is_some());
+        assert_eq!(response.iss, Some("https://auth.example.com".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_introspect_expired_access_token() {
+        let (service, _, _, _) = create_test_service();
+
+        // Create an expired token manually using the JWT service
+        let expired_claims = AccessTokenClaims {
+            iss: "https://auth.example.com".to_string(),
+            sub: "user123".to_string(),
+            aud: vec!["https://fhir.example.com/r4".to_string()],
+            exp: (OffsetDateTime::now_utc() - Duration::hours(1)).unix_timestamp(), // Expired
+            iat: (OffsetDateTime::now_utc() - Duration::hours(2)).unix_timestamp(),
+            jti: Uuid::new_v4().to_string(),
+            scope: "openid".to_string(),
+            client_id: "test-client".to_string(),
+            patient: None,
+            encounter: None,
+            fhir_user: None,
+        };
+
+        let expired_token = service.jwt_service.encode(&expired_claims).unwrap();
+
+        let introspect_request = IntrospectionRequest {
+            token: expired_token,
+            token_type_hint: Some(TokenTypeHint::AccessToken),
+        };
+
+        let response = service.introspect(&introspect_request).await;
+        assert!(!response.active);
+        // No metadata for inactive tokens
+        assert!(response.scope.is_none());
+        assert!(response.client_id.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_introspect_revoked_access_token() {
+        let (service, session_storage, _, revoked_storage) = create_test_service();
+        let client = create_test_client();
+
+        // Generate an access token
+        let verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+        let session = create_test_session(verifier);
+        session_storage.add_session(session);
+
+        let request = TokenRequest {
+            grant_type: "authorization_code".to_string(),
+            code: Some("test-auth-code".to_string()),
+            redirect_uri: Some("https://app.example.com/callback".to_string()),
+            code_verifier: Some(verifier.to_string()),
+            client_id: Some("test-client".to_string()),
+            client_secret: None,
+            client_assertion_type: None,
+            client_assertion: None,
+            refresh_token: None,
+            scope: None,
+        };
+
+        let token_response = service.exchange_code(&request, &client).await.unwrap();
+
+        // Decode to get JTI and revoke it
+        let token_data = service
+            .jwt_service
+            .decode::<AccessTokenClaims>(&token_response.access_token)
+            .unwrap();
+        revoked_storage
+            .revoke(
+                &token_data.claims.jti,
+                OffsetDateTime::now_utc() + Duration::hours(1),
+            )
+            .await
+            .unwrap();
+
+        // Introspect the revoked token
+        let introspect_request = IntrospectionRequest {
+            token: token_response.access_token.clone(),
+            token_type_hint: Some(TokenTypeHint::AccessToken),
+        };
+
+        let response = service.introspect(&introspect_request).await;
+        assert!(!response.active);
+    }
+
+    #[tokio::test]
+    async fn test_introspect_invalid_access_token() {
+        let (service, _, _, _) = create_test_service();
+
+        // Introspect a malformed token
+        let introspect_request = IntrospectionRequest {
+            token: "invalid-token-not-a-jwt".to_string(),
+            token_type_hint: Some(TokenTypeHint::AccessToken),
+        };
+
+        let response = service.introspect(&introspect_request).await;
+        assert!(!response.active);
+    }
+
+    #[tokio::test]
+    async fn test_introspect_valid_refresh_token() {
+        let (service, _, refresh_storage, _) = create_test_service();
+        let client = create_refresh_client();
+
+        // Store a refresh token
+        let token_value = "introspect-test-refresh-token-1234567890";
+        let stored_token =
+            create_stored_refresh_token(&client.client_id, "openid patient/*.read", token_value);
+        refresh_storage.create(&stored_token).await.unwrap();
+
+        // Introspect the refresh token
+        let introspect_request = IntrospectionRequest {
+            token: token_value.to_string(),
+            token_type_hint: Some(TokenTypeHint::RefreshToken),
+        };
+
+        let response = service.introspect(&introspect_request).await;
+        assert!(response.active);
+        assert_eq!(response.client_id, Some(client.client_id.clone()));
+        assert_eq!(response.scope, Some("openid patient/*.read".to_string()));
+        assert_eq!(response.token_type, Some("refresh_token".to_string()));
+        assert!(response.exp.is_some());
+        assert!(response.iat.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_introspect_expired_refresh_token() {
+        let (service, _, refresh_storage, _) = create_test_service();
+        let client = create_refresh_client();
+
+        // Create an expired refresh token
+        let token_value = "expired-introspect-refresh-token";
+        let now = OffsetDateTime::now_utc();
+        let expired_token = RefreshToken {
+            id: Uuid::new_v4(),
+            token_hash: RefreshToken::hash_token(token_value),
+            client_id: client.client_id.clone(),
+            user_id: Some(Uuid::new_v4()),
+            scope: "openid".to_string(),
+            launch_context: None,
+            created_at: now - Duration::days(100),
+            expires_at: Some(now - Duration::days(1)), // Expired
+            revoked_at: None,
+        };
+        refresh_storage.create(&expired_token).await.unwrap();
+
+        let introspect_request = IntrospectionRequest {
+            token: token_value.to_string(),
+            token_type_hint: Some(TokenTypeHint::RefreshToken),
+        };
+
+        let response = service.introspect(&introspect_request).await;
+        assert!(!response.active);
+    }
+
+    #[tokio::test]
+    async fn test_introspect_revoked_refresh_token() {
+        let (service, _, refresh_storage, _) = create_test_service();
+        let client = create_refresh_client();
+
+        // Create a revoked refresh token
+        let token_value = "revoked-introspect-refresh-token";
+        let now = OffsetDateTime::now_utc();
+        let revoked_token = RefreshToken {
+            id: Uuid::new_v4(),
+            token_hash: RefreshToken::hash_token(token_value),
+            client_id: client.client_id.clone(),
+            user_id: Some(Uuid::new_v4()),
+            scope: "openid".to_string(),
+            launch_context: None,
+            created_at: now,
+            expires_at: Some(now + Duration::days(90)),
+            revoked_at: Some(now), // Revoked
+        };
+        refresh_storage.create(&revoked_token).await.unwrap();
+
+        let introspect_request = IntrospectionRequest {
+            token: token_value.to_string(),
+            token_type_hint: Some(TokenTypeHint::RefreshToken),
+        };
+
+        let response = service.introspect(&introspect_request).await;
+        assert!(!response.active);
+    }
+
+    #[tokio::test]
+    async fn test_introspect_unknown_refresh_token() {
+        let (service, _, _, _) = create_test_service();
+
+        let introspect_request = IntrospectionRequest {
+            token: "unknown-refresh-token".to_string(),
+            token_type_hint: Some(TokenTypeHint::RefreshToken),
+        };
+
+        let response = service.introspect(&introspect_request).await;
+        assert!(!response.active);
+    }
+
+    #[tokio::test]
+    async fn test_introspect_without_type_hint() {
+        let (service, session_storage, _, _) = create_test_service();
+        let client = create_test_client();
+
+        // Generate an access token
+        let verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+        let session = create_test_session(verifier);
+        session_storage.add_session(session);
+
+        let request = TokenRequest {
+            grant_type: "authorization_code".to_string(),
+            code: Some("test-auth-code".to_string()),
+            redirect_uri: Some("https://app.example.com/callback".to_string()),
+            code_verifier: Some(verifier.to_string()),
+            client_id: Some("test-client".to_string()),
+            client_secret: None,
+            client_assertion_type: None,
+            client_assertion: None,
+            refresh_token: None,
+            scope: None,
+        };
+
+        let token_response = service.exchange_code(&request, &client).await.unwrap();
+
+        // Introspect without type hint - should auto-detect JWT as access token
+        let introspect_request = IntrospectionRequest {
+            token: token_response.access_token.clone(),
+            token_type_hint: None, // No hint
+        };
+
+        let response = service.introspect(&introspect_request).await;
+        assert!(response.active);
+        assert_eq!(response.token_type, Some("Bearer".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_introspect_with_smart_context() {
+        let (service, session_storage, _, _) = create_test_service();
+        let client = create_test_client();
+
+        // Generate an access token with launch context
+        let verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+        let mut session = create_test_session(verifier);
+        session.launch_context = Some(LaunchContext {
+            patient: Some("Patient/123".to_string()),
+            encounter: Some("Encounter/456".to_string()),
+            fhir_context: vec![],
+            need_patient_banner: true,
+            smart_style_url: None,
+            intent: None,
+        });
+        session_storage.add_session(session);
+
+        let request = TokenRequest {
+            grant_type: "authorization_code".to_string(),
+            code: Some("test-auth-code".to_string()),
+            redirect_uri: Some("https://app.example.com/callback".to_string()),
+            code_verifier: Some(verifier.to_string()),
+            client_id: Some("test-client".to_string()),
+            client_secret: None,
+            client_assertion_type: None,
+            client_assertion: None,
+            refresh_token: None,
+            scope: None,
+        };
+
+        let token_response = service.exchange_code(&request, &client).await.unwrap();
+
+        let introspect_request = IntrospectionRequest {
+            token: token_response.access_token.clone(),
+            token_type_hint: Some(TokenTypeHint::AccessToken),
+        };
+
+        let response = service.introspect(&introspect_request).await;
+        assert!(response.active);
+        assert_eq!(response.patient, Some("Patient/123".to_string()));
+        assert_eq!(response.encounter, Some("Encounter/456".to_string()));
     }
 }

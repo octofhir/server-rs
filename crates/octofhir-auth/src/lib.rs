@@ -17,6 +17,7 @@
 //!
 //! ## Modules
 //!
+//! - [`config`] - Authentication and authorization configuration
 //! - [`oauth`] - OAuth 2.0 authorization server implementation
 //! - [`token`] - Token generation, validation, and management
 //! - [`smart`] - SMART on FHIR scopes and launch contexts
@@ -28,6 +29,7 @@
 //! - [`http`] - Axum HTTP handlers for OAuth endpoints
 
 pub mod audit;
+pub mod config;
 pub mod error;
 pub mod federation;
 pub mod http;
@@ -39,9 +41,20 @@ pub mod storage;
 pub mod token;
 pub mod types;
 
+pub use config::{AuthConfig, ConfigError};
 pub use error::{AuthError, ErrorCategory};
+pub use http::{
+    CreateLaunchRequest, CreateLaunchResponse, LaunchState, create_launch_handler,
+    introspect_handler, revoke_handler,
+};
+pub use middleware::{AuthContext, AuthState, BearerAuth, OptionalBearerAuth, UserContext};
+pub use smart::{
+    DEFAULT_LAUNCH_CONTEXT_TTL, FhirContextItem, SmartScopes, StandaloneContextRequirements,
+    StoredLaunchContext, generate_launch_id,
+};
 pub use storage::{
-    ClientStorage, JtiStorage, RefreshTokenStorage, RevokedTokenStorage, SessionStorage,
+    ClientStorage, JtiStorage, LaunchContextStorage, RefreshTokenStorage, RevokedTokenStorage,
+    SessionStorage, User, UserStorage,
 };
 pub use types::{Client, ClientValidationError, GrantType, RefreshToken};
 
@@ -55,9 +68,22 @@ pub type AuthResult<T> = Result<T, AuthError>;
 /// ```
 pub mod prelude {
     pub use crate::AuthResult;
+    pub use crate::config::{AuthConfig, ConfigError};
     pub use crate::error::{AuthError, ErrorCategory};
+    pub use crate::http::{
+        CreateLaunchRequest, CreateLaunchResponse, LaunchState, create_launch_handler,
+        introspect_handler, revoke_handler,
+    };
+    pub use crate::middleware::{
+        AuthContext, AuthState, BearerAuth, OptionalBearerAuth, UserContext,
+    };
+    pub use crate::smart::{
+        DEFAULT_LAUNCH_CONTEXT_TTL, FhirContextItem, SmartScopes, StandaloneContextRequirements,
+        StoredLaunchContext, generate_launch_id,
+    };
     pub use crate::storage::{
-        ClientStorage, JtiStorage, RefreshTokenStorage, RevokedTokenStorage, SessionStorage,
+        ClientStorage, JtiStorage, LaunchContextStorage, RefreshTokenStorage, RevokedTokenStorage,
+        SessionStorage, User, UserStorage,
     };
     pub use crate::types::{Client, ClientValidationError, GrantType, RefreshToken};
 }

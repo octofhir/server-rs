@@ -38,8 +38,11 @@ use crate::AuthResult;
 use crate::error::AuthError;
 use crate::oauth::authorize::AuthorizationRequest;
 use crate::oauth::pkce::{PkceChallenge, PkceChallengeMethod};
-use crate::oauth::session::AuthorizationSession;
+use crate::oauth::session::{AuthorizationSession, LaunchContext};
+use crate::smart::launch::StoredLaunchContext;
+use crate::smart::scopes::SmartScopes;
 use crate::storage::ClientStorage;
+use crate::storage::LaunchContextStorage;
 use crate::storage::session::SessionStorage;
 use crate::types::GrantType;
 
@@ -53,6 +56,10 @@ pub struct AuthorizationService {
 
     /// Session storage for persisting authorization sessions.
     session_storage: Arc<dyn SessionStorage>,
+
+    /// Launch context storage for EHR launch flow.
+    /// Optional - only needed for EHR launch support.
+    launch_context_storage: Option<Arc<dyn LaunchContextStorage>>,
 
     /// Service configuration.
     config: AuthorizationConfig,
@@ -124,8 +131,27 @@ impl AuthorizationService {
         Self {
             client_storage,
             session_storage,
+            launch_context_storage: None,
             config,
         }
+    }
+
+    /// Configures the service with launch context storage for EHR launch support.
+    ///
+    /// # Arguments
+    ///
+    /// * `launch_storage` - Storage for SMART launch contexts
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let service = AuthorizationService::new(client_storage, session_storage, config)
+    ///     .with_launch_storage(launch_context_storage);
+    /// ```
+    #[must_use]
+    pub fn with_launch_storage(mut self, launch_storage: Arc<dyn LaunchContextStorage>) -> Self {
+        self.launch_context_storage = Some(launch_storage);
+        self
     }
 
     /// Processes an authorization request.
@@ -222,7 +248,16 @@ impl AuthorizationService {
             }
         }
 
-        // 10. Create authorization session
+        // 10. Parse scopes for launch validation
+        let scopes = SmartScopes::parse(&request.scope)
+            .map_err(|e| AuthError::invalid_scope(format!("Invalid scope format: {}", e)))?;
+
+        // 11. Process EHR launch if present
+        let launch_context = self
+            .process_launch_parameter(request.launch.as_deref(), &scopes)
+            .await?;
+
+        // 12. Create authorization session
         let now = OffsetDateTime::now_utc();
         let session = AuthorizationSession {
             id: Uuid::new_v4(),
@@ -234,7 +269,7 @@ impl AuthorizationService {
             code_challenge: request.code_challenge.clone(),
             code_challenge_method: request.code_challenge_method.clone(),
             user_id: None,
-            launch_context: None,
+            launch_context,
             nonce: request.nonce.clone(),
             aud: request.aud.clone(),
             created_at: now,
@@ -242,7 +277,7 @@ impl AuthorizationService {
             consumed_at: None,
         };
 
-        // 11. Store session
+        // 13. Store session
         self.session_storage.create(&session).await?;
 
         Ok(session)
@@ -274,6 +309,183 @@ impl AuthorizationService {
         Ok(())
     }
 
+    /// Processes the launch parameter from an EHR launch.
+    ///
+    /// This method handles the `launch` parameter in authorization requests,
+    /// retrieving the corresponding launch context from storage and converting
+    /// it to a session launch context.
+    ///
+    /// # Arguments
+    ///
+    /// * `launch_param` - The opaque launch parameter from the authorization request
+    /// * `scopes` - The parsed SMART scopes from the request
+    ///
+    /// # Returns
+    ///
+    /// Returns `Some(LaunchContext)` if a valid launch context was found,
+    /// or `None` for standalone launches (no launch parameter).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - `launch` scope requested but no launch parameter provided
+    /// - Launch parameter present but no `launch` scope requested
+    /// - Launch context storage not configured
+    /// - Launch context not found or expired
+    /// - Launch scopes don't match context (e.g., `launch/patient` without patient)
+    async fn process_launch_parameter(
+        &self,
+        launch_param: Option<&str>,
+        scopes: &SmartScopes,
+    ) -> AuthResult<Option<LaunchContext>> {
+        // Case 1: launch scope requested but no launch parameter
+        if scopes.launch && launch_param.is_none() {
+            return Err(AuthError::invalid_scope(
+                "launch scope requested but no launch parameter provided",
+            ));
+        }
+
+        // Case 2: launch parameter present but no launch scope
+        if launch_param.is_some() && !scopes.launch {
+            return Err(AuthError::invalid_scope(
+                "launch parameter present but launch scope not requested",
+            ));
+        }
+
+        // Case 3: No launch parameter and no launch scope - standalone launch
+        let Some(launch_id) = launch_param else {
+            return Ok(None);
+        };
+
+        // Case 4: EHR launch - retrieve launch context from storage
+        let Some(launch_storage) = &self.launch_context_storage else {
+            return Err(AuthError::internal("Launch context storage not configured"));
+        };
+
+        let stored_context = launch_storage
+            .get(launch_id)
+            .await?
+            .ok_or_else(|| AuthError::invalid_grant("Invalid or expired launch parameter"))?;
+
+        // Validate launch scopes against context
+        self.validate_launch_scopes(scopes, &stored_context)?;
+
+        // Convert StoredLaunchContext to session LaunchContext
+        let launch_context = LaunchContext {
+            patient: stored_context.patient.clone(),
+            encounter: stored_context.encounter.clone(),
+            fhir_context: stored_context
+                .fhir_context
+                .iter()
+                .map(|item| crate::oauth::session::FhirContextItem {
+                    reference: item.reference.clone(),
+                    role: item.role.clone(),
+                })
+                .collect(),
+            need_patient_banner: stored_context.need_patient_banner,
+            smart_style_url: stored_context.smart_style_url.clone(),
+            intent: stored_context.intent.clone(),
+        };
+
+        Ok(Some(launch_context))
+    }
+
+    /// Validates that launch scopes match the launch context.
+    ///
+    /// # Arguments
+    ///
+    /// * `scopes` - The parsed SMART scopes from the request
+    /// * `context` - The stored launch context
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - `launch/patient` scope requested but no patient in context
+    /// - `launch/encounter` scope requested but no encounter in context
+    fn validate_launch_scopes(
+        &self,
+        scopes: &SmartScopes,
+        context: &StoredLaunchContext,
+    ) -> AuthResult<()> {
+        // launch/patient requires patient in context
+        if scopes.launch_patient && context.patient.is_none() {
+            return Err(AuthError::invalid_scope(
+                "launch/patient scope requested but no patient in launch context",
+            ));
+        }
+
+        // launch/encounter requires encounter in context
+        if scopes.launch_encounter && context.encounter.is_none() {
+            return Err(AuthError::invalid_scope(
+                "launch/encounter scope requested but no encounter in launch context",
+            ));
+        }
+
+        Ok(())
+    }
+
+    /// Validates that standalone context selection matches the requested scopes.
+    ///
+    /// For standalone launches, the user must select patient/encounter context
+    /// during the authorization flow if `launch/patient` or `launch/encounter`
+    /// scopes were requested. This method validates that the required context
+    /// was provided.
+    ///
+    /// # Arguments
+    ///
+    /// * `session` - The authorization session to validate
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - `launch/patient` scope requested but no patient in launch_context
+    /// - `launch/encounter` scope requested but no encounter in launch_context
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// // After user selects patient in UI
+    /// session_storage.update_launch_context(session.id, launch_context).await?;
+    ///
+    /// // Validate before issuing authorization code
+    /// auth_service.validate_standalone_context(&session)?;
+    /// ```
+    pub fn validate_standalone_context(&self, session: &AuthorizationSession) -> AuthResult<()> {
+        let scopes = SmartScopes::parse(&session.scope)
+            .map_err(|e| AuthError::internal(format!("Failed to parse session scopes: {}", e)))?;
+
+        // For standalone launch, check that required context was selected
+        if scopes.is_standalone_with_context() {
+            let launch_context = session.launch_context.as_ref();
+
+            // launch/patient requires patient in context
+            if scopes.launch_patient {
+                let has_patient = launch_context
+                    .map(|ctx| ctx.patient.is_some())
+                    .unwrap_or(false);
+                if !has_patient {
+                    return Err(AuthError::invalid_grant(
+                        "launch/patient scope requires patient selection",
+                    ));
+                }
+            }
+
+            // launch/encounter requires encounter in context
+            if scopes.launch_encounter {
+                let has_encounter = launch_context
+                    .map(|ctx| ctx.encounter.is_some())
+                    .unwrap_or(false);
+                if !has_encounter {
+                    return Err(AuthError::invalid_grant(
+                        "launch/encounter scope requires encounter selection",
+                    ));
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     /// Gets the session storage reference.
     ///
     /// Useful for operations that need direct access to session storage,
@@ -287,6 +499,12 @@ impl AuthorizationService {
     #[must_use]
     pub fn client_storage(&self) -> &Arc<dyn ClientStorage> {
         &self.client_storage
+    }
+
+    /// Gets the launch context storage reference.
+    #[must_use]
+    pub fn launch_context_storage(&self) -> Option<&Arc<dyn LaunchContextStorage>> {
+        self.launch_context_storage.as_ref()
     }
 
     /// Gets the service configuration.
@@ -663,7 +881,7 @@ mod tests {
         client_storage.add_client(create_test_client());
 
         let mut request = create_test_request();
-        request.launch = Some("launch-context-123".to_string());
+        // Note: launch parameter requires launch scope, so we only test nonce here
         request.nonce = Some("nonce-456".to_string());
 
         let result = service.authorize(&request).await;
@@ -671,6 +889,34 @@ mod tests {
 
         let session = result.unwrap();
         assert_eq!(session.nonce, Some("nonce-456".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_authorize_launch_scope_without_parameter() {
+        let (service, client_storage, _) = create_service();
+        client_storage.add_client(create_test_client());
+
+        let mut request = create_test_request();
+        request.launch = None;
+        request.scope = "launch openid patient/*.rs".to_string();
+
+        let result = service.authorize(&request).await;
+        // Should fail: launch scope without launch parameter
+        assert!(matches!(result, Err(AuthError::InvalidScope { .. })));
+    }
+
+    #[tokio::test]
+    async fn test_authorize_launch_parameter_without_scope() {
+        let (service, client_storage, _) = create_service();
+        client_storage.add_client(create_test_client());
+
+        let mut request = create_test_request();
+        request.launch = Some("launch123".to_string());
+        request.scope = "openid patient/*.rs".to_string(); // No launch scope
+
+        let result = service.authorize(&request).await;
+        // Should fail: launch parameter without launch scope
+        assert!(matches!(result, Err(AuthError::InvalidScope { .. })));
     }
 
     #[tokio::test]
@@ -709,5 +955,131 @@ mod tests {
         // 10 characters * 6 bits = 60 bits < 122 bits
         let result = service.validate_state_entropy("abcdefghij");
         assert!(result.is_err());
+    }
+
+    // -------------------------------------------------------------------------
+    // Standalone Context Validation Tests
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_validate_standalone_context_no_context_needed() {
+        let (service, _, _) = create_service();
+
+        // No launch/patient or launch/encounter scope - no context needed
+        let session = AuthorizationSession {
+            id: Uuid::new_v4(),
+            code: "test-code".to_string(),
+            client_id: "test-client".to_string(),
+            redirect_uri: "https://app.example.com/callback".to_string(),
+            scope: "patient/Patient.rs openid".to_string(),
+            state: "test-state".to_string(),
+            code_challenge: "test-challenge".to_string(),
+            code_challenge_method: "S256".to_string(),
+            user_id: None,
+            launch_context: None,
+            nonce: None,
+            aud: "https://fhir.example.com".to_string(),
+            created_at: OffsetDateTime::now_utc(),
+            expires_at: OffsetDateTime::now_utc() + Duration::minutes(10),
+            consumed_at: None,
+        };
+
+        let result = service.validate_standalone_context(&session);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_validate_standalone_context_patient_provided() {
+        let (service, _, _) = create_service();
+
+        // launch/patient requested and patient provided
+        let session = AuthorizationSession {
+            id: Uuid::new_v4(),
+            code: "test-code".to_string(),
+            client_id: "test-client".to_string(),
+            redirect_uri: "https://app.example.com/callback".to_string(),
+            scope: "launch/patient patient/Patient.rs".to_string(),
+            state: "test-state".to_string(),
+            code_challenge: "test-challenge".to_string(),
+            code_challenge_method: "S256".to_string(),
+            user_id: None,
+            launch_context: Some(crate::oauth::session::LaunchContext {
+                patient: Some("patient-123".to_string()),
+                encounter: None,
+                fhir_context: vec![],
+                need_patient_banner: true,
+                smart_style_url: None,
+                intent: None,
+            }),
+            nonce: None,
+            aud: "https://fhir.example.com".to_string(),
+            created_at: OffsetDateTime::now_utc(),
+            expires_at: OffsetDateTime::now_utc() + Duration::minutes(10),
+            consumed_at: None,
+        };
+
+        let result = service.validate_standalone_context(&session);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_validate_standalone_context_patient_missing() {
+        let (service, _, _) = create_service();
+
+        // launch/patient requested but no patient selected
+        let session = AuthorizationSession {
+            id: Uuid::new_v4(),
+            code: "test-code".to_string(),
+            client_id: "test-client".to_string(),
+            redirect_uri: "https://app.example.com/callback".to_string(),
+            scope: "launch/patient patient/Patient.rs".to_string(),
+            state: "test-state".to_string(),
+            code_challenge: "test-challenge".to_string(),
+            code_challenge_method: "S256".to_string(),
+            user_id: None,
+            launch_context: None, // No context set
+            nonce: None,
+            aud: "https://fhir.example.com".to_string(),
+            created_at: OffsetDateTime::now_utc(),
+            expires_at: OffsetDateTime::now_utc() + Duration::minutes(10),
+            consumed_at: None,
+        };
+
+        let result = service.validate_standalone_context(&session);
+        assert!(matches!(result, Err(AuthError::InvalidGrant { .. })));
+    }
+
+    #[test]
+    fn test_validate_standalone_context_encounter_missing() {
+        let (service, _, _) = create_service();
+
+        // launch/encounter requested but no encounter selected
+        let session = AuthorizationSession {
+            id: Uuid::new_v4(),
+            code: "test-code".to_string(),
+            client_id: "test-client".to_string(),
+            redirect_uri: "https://app.example.com/callback".to_string(),
+            scope: "launch/encounter patient/Encounter.rs".to_string(),
+            state: "test-state".to_string(),
+            code_challenge: "test-challenge".to_string(),
+            code_challenge_method: "S256".to_string(),
+            user_id: None,
+            launch_context: Some(crate::oauth::session::LaunchContext {
+                patient: Some("patient-123".to_string()), // Has patient but no encounter
+                encounter: None,
+                fhir_context: vec![],
+                need_patient_banner: true,
+                smart_style_url: None,
+                intent: None,
+            }),
+            nonce: None,
+            aud: "https://fhir.example.com".to_string(),
+            created_at: OffsetDateTime::now_utc(),
+            expires_at: OffsetDateTime::now_utc() + Duration::minutes(10),
+            consumed_at: None,
+        };
+
+        let result = service.validate_standalone_context(&session);
+        assert!(matches!(result, Err(AuthError::InvalidGrant { .. })));
     }
 }

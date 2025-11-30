@@ -46,10 +46,11 @@ impl ColumnInfo {
 }
 
 /// Data types supported by SQL on FHIR columns.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum ColumnType {
     /// String/text values.
+    #[default]
     String,
 
     /// Integer values.
@@ -118,12 +119,6 @@ impl ColumnType {
     /// Get the default value representation for null values.
     pub fn null_representation(&self) -> &'static str {
         "NULL"
-    }
-}
-
-impl Default for ColumnType {
-    fn default() -> Self {
-        Self::String
     }
 }
 
