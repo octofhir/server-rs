@@ -1,0 +1,133 @@
+---
+title: Authentication
+head: []
+---
+
+OctoFHIR implements **SMART on FHIR** authorization based on OAuth 2.0 and OpenID Connect.
+
+## Discovery Endpoints
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /.well-known/smart-configuration` | SMART configuration metadata |
+| `GET /.well-known/jwks.json` | Server's public keys for JWT verification |
+
+## OAuth Endpoints
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /auth/authorize` | Authorization endpoint (user consent) |
+| `POST /auth/token` | Token endpoint (exchange codes, refresh tokens) |
+| `POST /auth/revoke` | Token revocation (RFC 7009) |
+| `POST /auth/introspect` | Token introspection (RFC 7662) |
+| `GET /userinfo` | OpenID Connect UserInfo endpoint |
+
+## Supported Grant Types
+
+- `authorization_code` - Standard OAuth flow with PKCE
+- `client_credentials` - Machine-to-machine (system scope)
+- `refresh_token` - Refresh access tokens
+
+## Client Types
+
+| Type | Authentication | Use Case |
+|------|---------------|----------|
+| Public | PKCE only | Browser apps, mobile apps |
+| Confidential (symmetric) | `client_secret` | Server-side apps |
+| Confidential (asymmetric) | `private_key_jwt` | Bulk Data, secure backends |
+
+## SMART Scopes
+
+### Launch Scopes
+
+- `launch` - EHR launch (receive context from EHR)
+- `launch/patient` - Standalone launch with patient picker
+- `launch/encounter` - Standalone launch with encounter picker
+
+### Resource Scopes
+
+Format: `{context}/{resourceType}.{permissions}`
+
+- Context: `patient`, `user`, `system`
+- Permissions: `c` (create), `r` (read), `u` (update), `d` (delete), `s` (search)
+
+Examples:
+
+```
+patient/Patient.rs          # Read/search Patient in patient context
+user/Observation.cruds      # Full access to Observations for logged-in user
+system/*.rs                 # Read/search all resources (backend service)
+```
+
+### Identity Scopes
+
+- `openid` - Enable OpenID Connect (required for `/userinfo`)
+- `fhirUser` - Include FHIR resource reference in token/userinfo
+
+## Configuration
+
+All auth settings are in `octofhir.toml` under `[auth]`:
+
+```toml
+[auth]
+enabled = true
+issuer = "http://localhost:8888"
+
+[auth.oauth]
+access_token_lifetime = "1h"
+refresh_token_lifetime = "90d"
+grant_types = ["authorization_code", "client_credentials", "refresh_token"]
+
+[auth.smart]
+launch_ehr_enabled = true
+launch_standalone_enabled = true
+public_clients_allowed = true
+openid_enabled = true
+supported_scopes = ["openid", "fhirUser", "patient/*.cruds", "..."]
+
+[auth.signing]
+algorithm = "RS384"          # RS256, RS384, or ES384
+key_rotation_days = 90
+```
+
+See `octofhir.toml` for the full configuration reference including:
+
+- `[auth.policy]` - Access policy engine settings
+- `[auth.federation]` - External IdP integration
+- `[auth.rate_limiting]` - Request rate limits
+- `[auth.audit]` - Audit logging options
+
+## Example: Authorization Code Flow
+
+```bash
+# 1. Redirect user to authorize
+open "http://localhost:8888/auth/authorize?\
+client_id=my-app&\
+redirect_uri=http://localhost:3000/callback&\
+response_type=code&\
+scope=openid%20fhirUser%20patient/Patient.rs&\
+state=random-state&\
+code_challenge=BASE64URL_CHALLENGE&\
+code_challenge_method=S256"
+
+# 2. Exchange code for tokens
+curl -X POST http://localhost:8888/auth/token \
+  -d "grant_type=authorization_code" \
+  -d "code=AUTHORIZATION_CODE" \
+  -d "redirect_uri=http://localhost:3000/callback" \
+  -d "client_id=my-app" \
+  -d "code_verifier=ORIGINAL_VERIFIER"
+
+# 3. Use access token
+curl -H "Authorization: Bearer ACCESS_TOKEN" \
+  http://localhost:8888/Patient
+```
+
+## Example: Client Credentials Flow
+
+```bash
+curl -X POST http://localhost:8888/auth/token \
+  -u "client_id:client_secret" \
+  -d "grant_type=client_credentials" \
+  -d "scope=system/Patient.rs"
+```

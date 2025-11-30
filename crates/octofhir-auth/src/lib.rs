@@ -44,13 +44,15 @@ pub mod types;
 pub use config::{AuthConfig, ConfigError};
 pub use error::{AuthError, ErrorCategory};
 pub use http::{
-    CreateLaunchRequest, CreateLaunchResponse, LaunchState, create_launch_handler,
-    introspect_handler, revoke_handler,
+    CreateLaunchRequest, CreateLaunchResponse, JwksState, LaunchState, SmartConfigState,
+    UserInfoResponse, create_launch_handler, introspect_handler, jwks_handler, revoke_handler,
+    smart_configuration_handler, userinfo_handler,
 };
 pub use middleware::{AuthContext, AuthState, BearerAuth, OptionalBearerAuth, UserContext};
 pub use smart::{
-    DEFAULT_LAUNCH_CONTEXT_TTL, FhirContextItem, SmartScopes, StandaloneContextRequirements,
-    StoredLaunchContext, generate_launch_id,
+    CapabilitySecurityBuilder, ConformanceError, DEFAULT_LAUNCH_CONTEXT_TTL, FhirContextItem,
+    SmartConfiguration, SmartScopes, StandaloneContextRequirements, StoredLaunchContext,
+    add_smart_security, generate_launch_id,
 };
 pub use storage::{
     ClientStorage, JtiStorage, LaunchContextStorage, RefreshTokenStorage, RevokedTokenStorage,
@@ -71,15 +73,17 @@ pub mod prelude {
     pub use crate::config::{AuthConfig, ConfigError};
     pub use crate::error::{AuthError, ErrorCategory};
     pub use crate::http::{
-        CreateLaunchRequest, CreateLaunchResponse, LaunchState, create_launch_handler,
-        introspect_handler, revoke_handler,
+        CreateLaunchRequest, CreateLaunchResponse, JwksState, LaunchState, SmartConfigState,
+        UserInfoResponse, create_launch_handler, introspect_handler, jwks_handler, revoke_handler,
+        smart_configuration_handler, userinfo_handler,
     };
     pub use crate::middleware::{
         AuthContext, AuthState, BearerAuth, OptionalBearerAuth, UserContext,
     };
     pub use crate::smart::{
-        DEFAULT_LAUNCH_CONTEXT_TTL, FhirContextItem, SmartScopes, StandaloneContextRequirements,
-        StoredLaunchContext, generate_launch_id,
+        CapabilitySecurityBuilder, ConformanceError, DEFAULT_LAUNCH_CONTEXT_TTL, FhirContextItem,
+        SmartConfiguration, SmartScopes, StandaloneContextRequirements, StoredLaunchContext,
+        add_smart_security, generate_launch_id,
     };
     pub use crate::storage::{
         ClientStorage, JtiStorage, LaunchContextStorage, RefreshTokenStorage, RevokedTokenStorage,

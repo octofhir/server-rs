@@ -34,6 +34,7 @@ export default defineConfig({
       sidebar: [
         { label: 'Overview', link: '' },
         { label: 'Getting Started', link: 'getting-started/' },
+        { label: 'Authentication', link: 'authentication/' },
         { label: 'API Reference', link: 'api-reference/' },
         { label: 'Development', link: 'development/' },
         { label: 'Deployment', link: 'deployment/' },

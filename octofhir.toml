@@ -45,3 +45,101 @@ enabled = false
 endpoint = ""
 # Optional sampling ratio between 0.0 and 1.0
 sample_ratio = 0.0
+
+# =============================================================================
+# Authentication & Authorization (SMART on FHIR / OAuth 2.0)
+# =============================================================================
+
+[auth]
+# Enable the authentication module
+enabled = true
+# Issuer URL for tokens (should match your server's public URL)
+issuer = "http://localhost:8888"
+
+[auth.oauth]
+# OAuth 2.0 token lifetimes
+authorization_code_lifetime = "10m"
+access_token_lifetime = "1h"
+refresh_token_lifetime = "90d"
+# Rotate refresh tokens on each use (security best practice)
+refresh_token_rotation = true
+# Allowed OAuth grant types
+grant_types = ["authorization_code", "client_credentials", "refresh_token"]
+
+[auth.smart]
+# SMART on FHIR launch modes
+launch_ehr_enabled = true
+launch_standalone_enabled = true
+# Client types
+public_clients_allowed = true
+confidential_symmetric_allowed = true
+confidential_asymmetric_allowed = true
+# Token features
+refresh_tokens_enabled = true
+openid_enabled = true
+# Dynamic client registration (RFC 7591)
+dynamic_registration_enabled = false
+# Advertised scopes
+supported_scopes = [
+    "openid",
+    "fhirUser",
+    "launch",
+    "launch/patient",
+    "launch/encounter",
+    "offline_access",
+    "online_access",
+    "patient/*.cruds",
+    "user/*.cruds",
+    "system/*.cruds",
+]
+
+[auth.signing]
+# JWT signing algorithm: RS256, RS384, or ES384
+algorithm = "RS384"
+# Key rotation period in days
+key_rotation_days = 90
+# Number of old keys to retain for validation
+keys_to_keep = 3
+
+[auth.policy]
+# Default policy decision when no policy matches
+default_deny = true
+# Enable Rhai script engine for policies
+rhai_enabled = true
+# Enable QuickJS script engine for policies
+quickjs_enabled = true
+
+[auth.policy.rhai]
+max_operations = 10000
+max_call_levels = 32
+
+[auth.policy.quickjs]
+memory_limit_mb = 16
+max_stack_size_kb = 256
+timeout_ms = 100
+
+[auth.federation]
+# Allow tokens from external identity providers
+allow_external_idp = true
+# Automatically create users from federated IdP claims
+auto_provision_users = false
+# JWKS cache TTL for external IdPs
+jwks_cache_ttl = "1h"
+jwks_refresh_on_failure = true
+
+[auth.rate_limiting]
+# Token endpoint rate limits
+token_requests_per_minute = 60
+token_requests_per_hour = 1000
+# Authorization endpoint rate limits
+auth_requests_per_minute = 30
+# Lockout settings
+max_failed_attempts = 5
+lockout_duration = "5m"
+
+[auth.audit]
+# Audit logging settings
+log_successful_auth = true
+log_failed_auth = true
+log_access_decisions = true
+log_token_operations = true
