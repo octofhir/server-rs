@@ -60,20 +60,20 @@ impl AppConfig {
         if !allowed.contains(&v.as_str()) {
             return Err("fhir.version must be one of R4, R4B, R5, R6".into());
         }
-        // Storage backend validation
-        if matches!(self.storage.backend, StorageBackend::Postgres) {
-            if self.storage.postgres.is_none() {
-                return Err(
-                    "storage.postgres config is required when backend is 'postgres'".into(),
-                );
+        // Storage validation - PostgreSQL is required
+        if self.storage.postgres.is_none() {
+            return Err("storage.postgres config is required".into());
+        }
+        if let Some(ref pg) = self.storage.postgres {
+            // Validate that we have either a URL or valid host/database
+            if pg.url.is_none() && pg.host.is_empty() {
+                return Err("storage.postgres requires either 'url' or 'host' to be set".into());
             }
-            if let Some(ref pg) = self.storage.postgres {
-                if pg.url.is_empty() {
-                    return Err("storage.postgres.url must not be empty".into());
-                }
-                if pg.pool_size == 0 {
-                    return Err("storage.postgres.pool_size must be > 0".into());
-                }
+            if pg.url.is_none() && pg.database.is_empty() {
+                return Err("storage.postgres.database must not be empty".into());
+            }
+            if pg.pool_size == 0 {
+                return Err("storage.postgres.pool_size must be > 0".into());
             }
         }
         // Auth validation
@@ -161,14 +161,7 @@ impl Default for ServerConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StorageConfig {
-    #[serde(default)]
-    pub backend: StorageBackend,
-    /// In-memory storage options
-    #[serde(default)]
-    pub memory_limit_bytes: Option<usize>,
-    #[serde(default)]
-    pub preallocate_items: Option<usize>,
-    /// PostgreSQL storage options
+    /// PostgreSQL storage options (required)
     #[serde(default)]
     pub postgres: Option<PostgresStorageConfig>,
 }
@@ -176,59 +169,112 @@ pub struct StorageConfig {
 impl Default for StorageConfig {
     fn default() -> Self {
         Self {
-            backend: StorageBackend::InMemoryPapaya,
-            memory_limit_bytes: None,
-            preallocate_items: None,
-            postgres: None,
+            postgres: Some(PostgresStorageConfig::default()),
         }
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[serde(rename_all = "kebab-case")]
-pub enum StorageBackend {
-    #[default]
-    InMemoryPapaya,
-    Postgres,
-}
-
 /// PostgreSQL storage configuration
+///
+/// Supports two modes:
+/// 1. URL mode: Set `url` to a full connection string like `postgres://user:pass@host:port/database`
+/// 2. Separate options mode: Set `host`, `port`, `user`, `password`, `database` individually
+///
+/// If `url` is set, it takes precedence. Otherwise, a URL is constructed from the separate options.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PostgresStorageConfig {
-    /// Connection URL: `postgres://user:pass@host:port/database`
-    pub url: String,
+    /// Full connection URL: `postgres://user:pass@host:port/database`
+    /// If set, this takes precedence over individual options.
+    #[serde(default)]
+    pub url: Option<String>,
+
+    /// PostgreSQL host (default: localhost)
+    #[serde(default = "default_postgres_host")]
+    pub host: String,
+
+    /// PostgreSQL port (default: 5432)
+    #[serde(default = "default_postgres_port")]
+    pub port: u16,
+
+    /// PostgreSQL user (default: postgres)
+    #[serde(default = "default_postgres_user")]
+    pub user: String,
+
+    /// PostgreSQL password (default: empty)
+    #[serde(default)]
+    pub password: Option<String>,
+
+    /// PostgreSQL database name (default: octofhir)
+    #[serde(default = "default_postgres_database")]
+    pub database: String,
+
     /// Connection pool size (maximum number of connections)
     #[serde(default = "default_postgres_pool_size")]
     pub pool_size: u32,
+
     /// Connection timeout in milliseconds
     #[serde(default = "default_postgres_connect_timeout")]
     pub connect_timeout_ms: u64,
+
     /// Idle timeout in milliseconds
     #[serde(default)]
     pub idle_timeout_ms: Option<u64>,
-    /// Whether to run migrations on startup
-    #[serde(default = "default_postgres_run_migrations")]
-    pub run_migrations: bool,
 }
 
+fn default_postgres_host() -> String {
+    "localhost".into()
+}
+fn default_postgres_port() -> u16 {
+    5432
+}
+fn default_postgres_user() -> String {
+    "postgres".into()
+}
+fn default_postgres_database() -> String {
+    "octofhir".into()
+}
 fn default_postgres_pool_size() -> u32 {
     10
 }
 fn default_postgres_connect_timeout() -> u64 {
     5000
 }
-fn default_postgres_run_migrations() -> bool {
-    true
+
+impl PostgresStorageConfig {
+    /// Returns the connection URL.
+    /// If `url` is set, returns it directly.
+    /// Otherwise, constructs URL from individual options.
+    pub fn connection_url(&self) -> String {
+        if let Some(ref url) = self.url {
+            return url.clone();
+        }
+
+        // Construct URL from individual options
+        let password_part = self
+            .password
+            .as_ref()
+            .map(|p| format!(":{}", p))
+            .unwrap_or_default();
+
+        format!(
+            "postgres://{}{}@{}:{}/{}",
+            self.user, password_part, self.host, self.port, self.database
+        )
+    }
 }
 
 impl Default for PostgresStorageConfig {
     fn default() -> Self {
         Self {
-            url: "postgres://localhost/octofhir".into(),
+            url: None,
+            host: default_postgres_host(),
+            port: default_postgres_port(),
+            user: default_postgres_user(),
+            password: None,
+            database: default_postgres_database(),
             pool_size: default_postgres_pool_size(),
             connect_timeout_ms: default_postgres_connect_timeout(),
             idle_timeout_ms: Some(300_000), // 5 minutes
-            run_migrations: default_postgres_run_migrations(),
         }
     }
 }

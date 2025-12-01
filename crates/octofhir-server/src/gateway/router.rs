@@ -15,7 +15,7 @@ use tokio::sync::RwLock;
 use tracing::{debug, info, instrument};
 
 use crate::server::AppState;
-use octofhir_db_memory::DynStorage;
+use octofhir_storage::legacy::{DynStorage, SearchQuery};
 
 use super::error::GatewayError;
 use super::types::{App, CustomOperation, RouteKey};
@@ -59,7 +59,7 @@ impl GatewayRouter {
         info!("Reloading gateway routes from storage");
 
         // Load all active Apps
-        let app_query = octofhir_db_memory::SearchQuery::new("App".parse().unwrap());
+        let app_query = SearchQuery::new("App".parse().unwrap());
         let apps_result = storage
             .search(&app_query)
             .await
@@ -84,7 +84,7 @@ impl GatewayRouter {
             .collect();
 
         // Load all active CustomOperations
-        let ops_query = octofhir_db_memory::SearchQuery::new("CustomOperation".parse().unwrap());
+        let ops_query = SearchQuery::new("CustomOperation".parse().unwrap());
         let ops_result = storage.search(&ops_query).await.map_err(|e| {
             GatewayError::StorageError(format!("Failed to load CustomOperations: {}", e))
         })?;

@@ -5,7 +5,6 @@ members = [
     "crates/octofhir-auth",
     "crates/octofhir-auth-postgres",
     "crates/octofhir-core",
-    "crates/octofhir-db-memory",
     "crates/octofhir-db-postgres",
     "crates/octofhir-search",
     "crates/octofhir-server",
@@ -27,7 +26,6 @@ categories = ["web-programming", "science"]
 octofhir-auth = { path = "crates/octofhir-auth" }
 octofhir-auth-postgres = { path = "crates/octofhir-auth-postgres" }
 octofhir-core = { path = "crates/octofhir-core" }
-octofhir-db-memory = { path = "crates/octofhir-db-memory" }
 octofhir-sof = { path = "crates/octofhir-sof" }
 octofhir-storage = { path = "crates/octofhir-storage" }
 octofhir-canonical-manager = { version = "0.1.13" }
@@ -50,7 +48,6 @@ tower-http = { version = "0.6", features = ["trace", "cors", "compression-gzip"]
 hyper = { version = "1", features = ["full"] }
 
 # Storage and concurrency
-papaya = "0.2"
 dashmap = "6.1"  # For some auxiliary maps if needed
 uuid = { version = "1.0", features = ["v4", "serde"] }
 

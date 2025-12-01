@@ -100,8 +100,18 @@ impl SchemaManager {
         self.create_indexes(resource_type).await?;
         self.create_history_trigger(resource_type).await?;
 
+        // Add gateway notification trigger for App and CustomOperation resources
+        if Self::is_gateway_resource(&table) {
+            self.create_gateway_trigger(resource_type).await?;
+        }
+
         self.created_tables.insert(table);
         Ok(())
+    }
+
+    /// Returns true if this resource type requires gateway notifications.
+    fn is_gateway_resource(table: &str) -> bool {
+        matches!(table, "app" | "customoperation")
     }
 
     /// Checks if a table exists in the database.
@@ -270,21 +280,57 @@ impl SchemaManager {
             .await
             .map_err(PostgresError::from)?;
 
-        // Create the trigger (drop first to ensure idempotency)
-        let trigger_sql = format!(
-            r#"
-            DROP TRIGGER IF EXISTS "{trigger_name}" ON "{table}";
-            CREATE TRIGGER "{trigger_name}"
+        // Drop existing trigger first (separate query - PostgreSQL doesn't allow multiple commands)
+        let drop_sql = format!(r#"DROP TRIGGER IF EXISTS "{trigger_name}" ON "{table}""#);
+        sqlx_core::query::query(&drop_sql)
+            .execute(&self.pool)
+            .await
+            .map_err(PostgresError::from)?;
+
+        // Create the trigger
+        let create_sql = format!(
+            r#"CREATE TRIGGER "{trigger_name}"
                 BEFORE UPDATE OR DELETE ON "{table}"
-                FOR EACH ROW EXECUTE FUNCTION archive_to_history();
-            "#
+                FOR EACH ROW EXECUTE FUNCTION archive_to_history()"#
         );
-        sqlx_core::query::query(&trigger_sql)
+        sqlx_core::query::query(&create_sql)
             .execute(&self.pool)
             .await
             .map_err(PostgresError::from)?;
 
         info!("Created history trigger for: {}", table);
+        Ok(())
+    }
+
+    /// Creates gateway notification trigger for App and CustomOperation resources.
+    ///
+    /// This trigger calls `notify_gateway_resource_change()` (created by migration 003)
+    /// on INSERT/UPDATE/DELETE to enable hot-reload of gateway routes.
+    #[instrument(skip(self))]
+    async fn create_gateway_trigger(&self, resource_type: &str) -> Result<()> {
+        let table = Self::table_name(resource_type);
+        let trigger_name = format!("{}_gateway_notify", table);
+
+        // Drop existing trigger first (separate query - PostgreSQL doesn't allow multiple commands)
+        let drop_sql = format!(r#"DROP TRIGGER IF EXISTS "{trigger_name}" ON "{table}""#);
+        sqlx_core::query::query(&drop_sql)
+            .execute(&self.pool)
+            .await
+            .map_err(PostgresError::from)?;
+
+        // Create the trigger
+        // Uses notify_gateway_resource_change() function created by migration 003
+        let create_sql = format!(
+            r#"CREATE TRIGGER "{trigger_name}"
+                AFTER INSERT OR UPDATE OR DELETE ON "{table}"
+                FOR EACH ROW EXECUTE FUNCTION notify_gateway_resource_change()"#
+        );
+        sqlx_core::query::query(&create_sql)
+            .execute(&self.pool)
+            .await
+            .map_err(PostgresError::from)?;
+
+        info!("Created gateway notification trigger for: {}", table);
         Ok(())
     }
 

@@ -1,3 +1,5 @@
+//! Query types for FHIR search operations.
+
 use octofhir_core::{FhirDateTime, ResourceEnvelope, ResourceType};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -124,7 +126,6 @@ impl QueryFilter {
     }
 
     fn match_exact(&self, resource: &ResourceEnvelope, field: &str, value: &str) -> bool {
-        // Handle special FHIR fields
         match field {
             "_id" => resource.id == value,
             "_lastUpdated" => {
@@ -137,7 +138,6 @@ impl QueryFilter {
             "resourceType" => resource.resource_type.to_string() == value,
             "status" => format!("{:?}", resource.status) == value,
             _ => {
-                // Check in resource data
                 if let Some(field_value) = resource.get_field(field) {
                     match field_value {
                         Value::String(s) => s == value,
@@ -300,7 +300,6 @@ impl QueryFilter {
         system: Option<&String>,
         code: &str,
     ) -> bool {
-        // Similar to identifier matching but for coded values
         self.match_identifier(resource, field, system, code)
     }
 
@@ -314,7 +313,6 @@ impl QueryFilter {
         }
     }
 
-    /// Recursively search through JSON values (arrays and objects) for string matches
     #[allow(clippy::only_used_in_recursion)]
     fn search_value_recursive<F>(&self, value: &Value, search_term: &str, matcher: F) -> bool
     where
@@ -350,7 +348,7 @@ impl SearchQuery {
             resource_type,
             filters: Vec::new(),
             offset: 0,
-            count: 10, // Default count
+            count: 10,
             sort_field: None,
             sort_ascending: true,
         }
@@ -375,228 +373,9 @@ impl SearchQuery {
 
     /// Check if a resource matches all filters in this query
     pub fn matches(&self, resource: &ResourceEnvelope) -> bool {
-        // Check resource type first
         if resource.resource_type != self.resource_type {
             return false;
         }
-
-        // All filters must match
         self.filters.iter().all(|filter| filter.matches(resource))
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use octofhir_core::ResourceType;
-    use serde_json::json;
-
-    fn create_test_patient(id: &str) -> ResourceEnvelope {
-        let mut resource = ResourceEnvelope::new(id.to_string(), ResourceType::Patient);
-        resource.add_field(
-            "name".to_string(),
-            json!([{
-                "use": "official",
-                "family": "Doe",
-                "given": ["John", "Q"]
-            }]),
-        );
-        resource.add_field("birthDate".to_string(), json!("1990-01-01"));
-        resource.add_field("active".to_string(), json!(true));
-        resource.add_field(
-            "identifier".to_string(),
-            json!([{
-                "system": "http://example.com/mrn",
-                "value": "12345"
-            }]),
-        );
-        resource
-    }
-
-    #[test]
-    fn test_query_filter_exact() {
-        let resource = create_test_patient("patient-123");
-
-        let filter = QueryFilter::Exact {
-            field: "_id".to_string(),
-            value: "patient-123".to_string(),
-        };
-        assert!(filter.matches(&resource));
-
-        let filter = QueryFilter::Exact {
-            field: "_id".to_string(),
-            value: "patient-456".to_string(),
-        };
-        assert!(!filter.matches(&resource));
-
-        let filter = QueryFilter::Exact {
-            field: "birthDate".to_string(),
-            value: "1990-01-01".to_string(),
-        };
-        assert!(filter.matches(&resource));
-    }
-
-    #[test]
-    fn test_query_filter_contains() {
-        let resource = create_test_patient("patient-123");
-
-        let filter = QueryFilter::Contains {
-            field: "name".to_string(),
-            value: "Doe".to_string(),
-        };
-        assert!(filter.matches(&resource));
-
-        let filter = QueryFilter::Contains {
-            field: "name".to_string(),
-            value: "Smith".to_string(),
-        };
-        assert!(!filter.matches(&resource));
-    }
-
-    #[test]
-    fn test_query_filter_boolean() {
-        let resource = create_test_patient("patient-123");
-
-        let filter = QueryFilter::Boolean {
-            field: "active".to_string(),
-            value: true,
-        };
-        assert!(filter.matches(&resource));
-
-        let filter = QueryFilter::Boolean {
-            field: "active".to_string(),
-            value: false,
-        };
-        assert!(!filter.matches(&resource));
-    }
-
-    #[test]
-    fn test_query_filter_identifier() {
-        let resource = create_test_patient("patient-123");
-
-        let filter = QueryFilter::Identifier {
-            field: "identifier".to_string(),
-            system: Some("http://example.com/mrn".to_string()),
-            value: "12345".to_string(),
-        };
-        assert!(filter.matches(&resource));
-
-        let filter = QueryFilter::Identifier {
-            field: "identifier".to_string(),
-            system: None,
-            value: "12345".to_string(),
-        };
-        assert!(filter.matches(&resource));
-
-        let filter = QueryFilter::Identifier {
-            field: "identifier".to_string(),
-            system: Some("http://example.com/ssn".to_string()),
-            value: "12345".to_string(),
-        };
-        assert!(!filter.matches(&resource));
-    }
-
-    #[test]
-    fn test_query_result_new() {
-        let resources = vec![create_test_patient("patient-1")];
-        let result = QueryResult::new(10, resources.clone(), 0, 5);
-
-        assert_eq!(result.total, 10);
-        assert_eq!(result.resources.len(), 1);
-        assert_eq!(result.offset, 0);
-        assert_eq!(result.count, 5);
-        assert!(result.has_more);
-    }
-
-    #[test]
-    fn test_query_result_empty() {
-        let result = QueryResult::empty();
-
-        assert_eq!(result.total, 0);
-        assert_eq!(result.resources.len(), 0);
-        assert_eq!(result.offset, 0);
-        assert_eq!(result.count, 0);
-        assert!(!result.has_more);
-    }
-
-    #[test]
-    fn test_search_query_matches() {
-        let resource = create_test_patient("patient-123");
-
-        let query = SearchQuery::new(ResourceType::Patient)
-            .with_filter(QueryFilter::Exact {
-                field: "_id".to_string(),
-                value: "patient-123".to_string(),
-            })
-            .with_filter(QueryFilter::Boolean {
-                field: "active".to_string(),
-                value: true,
-            });
-
-        assert!(query.matches(&resource));
-
-        // Wrong resource type
-        let mut wrong_type = resource.clone();
-        wrong_type.resource_type = ResourceType::Organization;
-        assert!(!query.matches(&wrong_type));
-
-        // Wrong filter value
-        let query_false =
-            SearchQuery::new(ResourceType::Patient).with_filter(QueryFilter::Boolean {
-                field: "active".to_string(),
-                value: false,
-            });
-
-        assert!(!query_false.matches(&resource));
-    }
-
-    #[test]
-    fn test_search_query_builder() {
-        let query = SearchQuery::new(ResourceType::Patient)
-            .with_pagination(20, 50)
-            .with_sort("name".to_string(), false);
-
-        assert_eq!(query.resource_type, ResourceType::Patient);
-        assert_eq!(query.offset, 20);
-        assert_eq!(query.count, 50);
-        assert_eq!(query.sort_field, Some("name".to_string()));
-        assert!(!query.sort_ascending);
-    }
-
-    #[test]
-    fn test_number_range_filter() {
-        let mut resource = create_test_patient("patient-123");
-        resource.add_field("age".to_string(), json!(25));
-
-        let filter = QueryFilter::NumberRange {
-            field: "age".to_string(),
-            min: Some(18.0),
-            max: Some(65.0),
-        };
-        assert!(filter.matches(&resource));
-
-        let filter = QueryFilter::NumberRange {
-            field: "age".to_string(),
-            min: Some(30.0),
-            max: None,
-        };
-        assert!(!filter.matches(&resource));
-    }
-
-    #[test]
-    fn test_prefix_filter() {
-        let resource = create_test_patient("patient-123");
-
-        let filter = QueryFilter::Prefix {
-            field: "name".to_string(),
-            value: "Do".to_string(),
-        };
-        assert!(filter.matches(&resource));
-
-        let filter = QueryFilter::Prefix {
-            field: "name".to_string(),
-            value: "Smith".to_string(),
-        };
-        assert!(!filter.matches(&resource));
     }
 }

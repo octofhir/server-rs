@@ -6,13 +6,14 @@
 
 use async_trait::async_trait;
 use octofhir_core::{CoreError, ResourceEnvelope, ResourceType, Result};
-use octofhir_db_memory::{
-    Storage,
-    query::{QueryFilter, QueryResult, SearchQuery},
-    transaction::{Transaction, TransactionManager, TransactionStats},
-};
 use octofhir_db_postgres::PostgresStorage;
-use octofhir_storage::{FhirStorage, HistoryParams, HistoryResult, StorageError};
+use octofhir_storage::{
+    FhirStorage, HistoryParams, HistoryResult, StorageError,
+    legacy::{
+        QueryFilter, QueryResult, SearchQuery, Storage, Transaction, TransactionManager,
+        TransactionStats,
+    },
+};
 use serde_json::Value;
 use std::sync::Arc;
 

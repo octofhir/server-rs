@@ -55,16 +55,11 @@ pub async fn handle_sql(
 
     debug!(params = ?params, "Extracted query parameters");
 
-    // Execute the query if we have a PostgreSQL pool
-    let pool = state.db_pool.as_ref().ok_or_else(|| {
-        GatewayError::SqlError("SQL handler requires PostgreSQL storage backend".to_string())
-    })?;
-
     info!("Executing SQL query");
 
     // Execute the query and convert rows to JSON
     let rows = sqlx::query(sql_query)
-        .fetch_all(pool.as_ref())
+        .fetch_all(state.db_pool.as_ref())
         .await
         .map_err(|e| GatewayError::SqlError(format!("Query execution failed: {}", e)))?;
 

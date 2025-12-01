@@ -68,6 +68,14 @@ install-tools:
 example-config:
     @cat octofhir.toml
 
+# Start PostgreSQL database
+db-up:
+    docker compose up -d
+
+# Stop PostgreSQL database
+db-down:
+    docker compose down
+
 # Start local OTEL collector (requires Docker)
 otel-up:
     docker run --rm -d -p 4318:4318 -p 16686:16686 --name otelcol jaegertracing/all-in-one:latest

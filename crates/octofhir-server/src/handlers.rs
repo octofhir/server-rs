@@ -2136,7 +2136,7 @@ fn build_query_suffix_for_links(raw_q: &str) -> Option<String> {
 
 /// Resolve _include and _revinclude for search results
 async fn resolve_includes_for_search(
-    storage: &octofhir_db_memory::DynStorage,
+    storage: &octofhir_storage::legacy::DynStorage,
     resources: &[octofhir_core::ResourceEnvelope],
     resource_type: &str,
     params: &HashMap<String, String>,

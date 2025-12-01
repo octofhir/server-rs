@@ -14,15 +14,12 @@ use crate::operations::{DynOperationHandler, OperationRegistry, register_core_op
 use crate::validation::ValidationService;
 
 use crate::{
-    config::{AppConfig, StorageBackend as ConfigBackend},
+    config::AppConfig,
     handlers, middleware as app_middleware,
     storage_adapter::PostgresStorageAdapter,
 };
-use octofhir_db_memory::{
-    DynStorage, StorageBackend as DbBackend, StorageConfig as DbStorageConfig,
-    StorageOptions as DbStorageOptions, create_storage as create_memory_storage,
-};
 use octofhir_db_postgres::{PostgresConfig, PostgresStorage};
+use octofhir_storage::legacy::DynStorage;
 use octofhir_search::SearchConfig as EngineSearchConfig;
 
 /// Shared model provider type for FHIRPath evaluation
@@ -47,8 +44,8 @@ pub struct AppState {
     pub validation_service: ValidationService,
     /// Gateway router for dynamic API endpoints
     pub gateway_router: crate::gateway::GatewayRouter,
-    /// PostgreSQL connection pool for SQL handler (if using PostgreSQL storage)
-    pub db_pool: Option<Arc<sqlx::PgPool>>,
+    /// PostgreSQL connection pool for SQL handler
+    pub db_pool: Arc<sqlx::PgPool>,
     /// Custom handler registry for gateway operations
     pub handler_registry: Arc<crate::gateway::HandlerRegistry>,
 }
@@ -74,7 +71,7 @@ async fn bootstrap_conformance_if_postgres(cfg: &AppConfig) -> Result<(), anyhow
     })?;
 
     // Create PostgresStorage first to get access to the pool
-    let postgres_config = octofhir_db_postgres::PostgresConfig::new(&pg_cfg.url)
+    let postgres_config = octofhir_db_postgres::PostgresConfig::new(pg_cfg.connection_url())
         .with_pool_size(pg_cfg.pool_size)
         .with_connect_timeout_ms(pg_cfg.connect_timeout_ms)
         .with_idle_timeout_ms(pg_cfg.idle_timeout_ms)
@@ -121,25 +118,22 @@ async fn bootstrap_conformance_if_postgres(cfg: &AppConfig) -> Result<(), anyhow
         }
     }
 
-    // Ensure we have a canonical manager
-    let canonical_manager = if canonical_manager.is_none() {
+    // Ensure we have a canonical manager (required)
+    let canonical_manager = if let Some(manager) = canonical_manager {
+        manager
+    } else {
         // Create a default FcmConfig
         let config = octofhir_canonical_manager::FcmConfig::default();
-        match octofhir_canonical_manager::CanonicalManager::new(config).await {
-            Ok(manager) => Some(Arc::new(manager)),
-            Err(e) => {
-                tracing::warn!(error = %e, "Failed to create canonical manager, continuing without one");
-                None
-            }
-        }
-    } else {
-        canonical_manager
+        let manager = octofhir_canonical_manager::CanonicalManager::new(config)
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to create canonical manager: {}", e))?;
+        Arc::new(manager)
     };
 
     // Start hot-reload listener to monitor conformance changes
     match HotReloadBuilder::new(pg_storage.pool().clone())
         .with_conformance_storage(conformance_storage)
-        .with_canonical_manager(canonical_manager.unwrap())
+        .with_canonical_manager(canonical_manager)
         .with_base_dir(base_dir)
         .start()
     {
@@ -158,48 +152,31 @@ async fn bootstrap_conformance_if_postgres(cfg: &AppConfig) -> Result<(), anyhow
     Ok(())
 }
 
-/// Creates storage based on the configured backend.
+/// Creates PostgreSQL storage.
 ///
-/// For in-memory backend, this is synchronous.
-/// For PostgreSQL, this must be called in an async context.
-///
-/// Returns (storage, optional PostgreSQL pool for SQL handler).
+/// Returns (storage, PostgreSQL pool for SQL handler).
 async fn create_storage(
     cfg: &AppConfig,
-) -> Result<(DynStorage, Option<Arc<sqlx::PgPool>>), anyhow::Error> {
-    match cfg.storage.backend {
-        ConfigBackend::InMemoryPapaya => {
-            let db_cfg = DbStorageConfig {
-                backend: DbBackend::InMemoryPapaya,
-                options: DbStorageOptions {
-                    memory_limit_bytes: cfg.storage.memory_limit_bytes,
-                    preallocate_items: cfg.storage.preallocate_items,
-                },
-            };
-            Ok((create_memory_storage(&db_cfg), None))
-        }
-        ConfigBackend::Postgres => {
-            let pg_cfg = cfg.storage.postgres.as_ref().ok_or_else(|| {
-                anyhow::anyhow!("PostgreSQL config is required when backend is 'postgres'")
-            })?;
+) -> Result<(DynStorage, Arc<sqlx::PgPool>), anyhow::Error> {
+    let pg_cfg = cfg.storage.postgres.as_ref().ok_or_else(|| {
+        anyhow::anyhow!("PostgreSQL config is required")
+    })?;
 
-            let postgres_config = PostgresConfig::new(&pg_cfg.url)
-                .with_pool_size(pg_cfg.pool_size)
-                .with_connect_timeout_ms(pg_cfg.connect_timeout_ms)
-                .with_idle_timeout_ms(pg_cfg.idle_timeout_ms)
-                .with_run_migrations(pg_cfg.run_migrations);
+    let postgres_config = PostgresConfig::new(pg_cfg.connection_url())
+        .with_pool_size(pg_cfg.pool_size)
+        .with_connect_timeout_ms(pg_cfg.connect_timeout_ms)
+        .with_idle_timeout_ms(pg_cfg.idle_timeout_ms)
+        .with_run_migrations(true);
 
-            let pg_storage = PostgresStorage::new(postgres_config)
-                .await
-                .map_err(|e| anyhow::anyhow!("Failed to create PostgreSQL storage: {e}"))?;
+    let pg_storage = PostgresStorage::new(postgres_config)
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to create PostgreSQL storage: {e}"))?;
 
-            // Get the pool reference for SQL handler
-            let pool = pg_storage.pool().clone();
+    // Get the pool reference for SQL handler
+    let pool = pg_storage.pool().clone();
 
-            let adapter = PostgresStorageAdapter::new(pg_storage);
-            Ok((Arc::new(adapter), Some(Arc::new(pool))))
-        }
-    }
+    let adapter = PostgresStorageAdapter::new(pg_storage);
+    Ok((Arc::new(adapter), Arc::new(pool)))
 }
 
 /// Loads FHIR StructureDefinitions from the canonical manager's packages.
@@ -253,10 +230,8 @@ pub async fn build_app(cfg: &AppConfig) -> Result<Router, anyhow::Error> {
     let body_limit = cfg.server.body_limit_bytes;
     let (storage, db_pool) = create_storage(cfg).await?;
 
-    // Bootstrap conformance resources for PostgreSQL backend
-    if matches!(cfg.storage.backend, ConfigBackend::Postgres)
-        && let Err(e) = bootstrap_conformance_if_postgres(cfg).await
-    {
+    // Bootstrap conformance resources
+    if let Err(e) = bootstrap_conformance_if_postgres(cfg).await {
         tracing::warn!(error = %e, "Failed to bootstrap conformance resources");
     }
 
@@ -412,27 +387,23 @@ pub async fn build_app(cfg: &AppConfig) -> Result<Router, anyhow::Error> {
         }
     }
 
-    // Start gateway hot-reload listener for PostgreSQL backend
-    if let Some(pool) = &db_pool {
-        match crate::gateway::GatewayReloadBuilder::new()
-            .with_pool(pool.as_ref().clone())
-            .with_gateway_router(gateway_router.clone())
-            .with_storage(storage.clone())
-            .start()
-        {
-            Ok(_handle) => {
-                tracing::info!("Gateway hot-reload listener started");
-                // Handle is dropped here, but the task continues running
-            }
-            Err(e) => {
-                tracing::warn!(
-                    error = %e,
-                    "Failed to start gateway hot-reload listener"
-                );
-            }
+    // Start gateway hot-reload listener
+    match crate::gateway::GatewayReloadBuilder::new()
+        .with_pool(db_pool.as_ref().clone())
+        .with_gateway_router(gateway_router.clone())
+        .with_storage(storage.clone())
+        .start()
+    {
+        Ok(_handle) => {
+            tracing::info!("Gateway hot-reload listener started");
+            // Handle is dropped here, but the task continues running
         }
-    } else {
-        tracing::debug!("Gateway hot-reload not available (PostgreSQL backend required)");
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                "Failed to start gateway hot-reload listener"
+            );
+        }
     }
 
     // Initialize custom handler registry

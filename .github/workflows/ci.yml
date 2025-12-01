@@ -9,6 +9,22 @@ on:
 jobs:
   build-test:
     runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: octofhir
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -45,5 +61,11 @@ jobs:
           RUST_LOG: info
           # Ensure canonical online tests remain skipped unless explicitly enabled
           OCTOFHIR_TEST_CANONICAL_ONLINE: "0"
+          # PostgreSQL connection settings for CI
+          OCTOFHIR__STORAGE__POSTGRES__HOST: localhost
+          OCTOFHIR__STORAGE__POSTGRES__PORT: "5432"
+          OCTOFHIR__STORAGE__POSTGRES__USER: postgres
+          OCTOFHIR__STORAGE__POSTGRES__PASSWORD: postgres
+          OCTOFHIR__STORAGE__POSTGRES__DATABASE: octofhir
         run: cargo test --all --all-features
 

@@ -12,7 +12,7 @@ description = "Search parameter parsing and execution for OctoFHIR server"
 [dependencies]
 # Local dependencies
 octofhir-core = { path = "../octofhir-core" }
-octofhir-db-memory = { path = "../octofhir-db-memory" }
+octofhir-storage = { path = "../octofhir-storage" }
 
 # Canonical manager for loading search parameters from packages
 octofhir-canonical-manager = { workspace = true }

@@ -12,7 +12,7 @@ use tokio::time::sleep;
 use tracing::{debug, error, info, instrument, warn};
 
 use super::GatewayRouter;
-use octofhir_db_memory::DynStorage;
+use octofhir_storage::legacy::DynStorage;
 
 /// Channel for gateway resource change notifications.
 const GATEWAY_CHANNEL: &str = "octofhir_gateway_changes";

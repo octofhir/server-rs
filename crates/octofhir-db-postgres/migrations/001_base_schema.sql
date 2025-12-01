@@ -1,6 +1,10 @@
 -- Base schema for OctoFHIR PostgreSQL storage
 -- This creates the foundational types and tables needed by all resource tables.
 
+-- Enable pgcrypto extension for gen_random_uuid() function
+-- (Built-in since PostgreSQL 13, but extension provides compatibility with older versions)
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
 -- Transaction log for atomicity
 CREATE TABLE IF NOT EXISTS _transaction (
     txid BIGSERIAL PRIMARY KEY,

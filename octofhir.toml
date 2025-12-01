@@ -11,11 +11,28 @@ write_timeout_ms = 15000
 body_limit_bytes = 1048576
 
 [storage]
-# Available backends: "in-memory-papaya"
-backend = "in-memory-papaya"
-# Optional soft memory limit hint (not enforced for in-memory backend)
-memory_limit_bytes = 0 # 0 means unset
-preallocate_items = 0  # 0 means unset
+# PostgreSQL storage configuration (required)
+#
+# Two configuration modes are supported:
+# 1. URL mode: Set `url` to a full connection string
+# 2. Separate options: Set host, port, user, password, database individually
+#
+# If `url` is set, it takes precedence over individual options.
+[storage.postgres]
+# Option 1: Full connection URL (takes precedence if set)
+# url = "postgres://postgres:postgres@localhost:5450/octofhir"
+
+# Option 2: Separate connection options
+host = "localhost"
+port = 5450
+user = "postgres"
+password = "postgres"
+database = "octofhir"
+
+# Connection pool settings
+pool_size = 20
+connect_timeout_ms = 10000
+idle_timeout_ms = 60000
 
 [fhir]
 # Supported: R4 (default), R4B, R5, R6

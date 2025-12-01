@@ -22,7 +22,7 @@ pub struct ParsedParameters {
 }
 
 use octofhir_core::{FhirDateTime, ResourceType};
-use octofhir_db_memory::{QueryFilter, SearchQuery};
+use octofhir_storage::legacy::{QueryFilter, SearchQuery};
 
 pub struct SearchParameterParser;
 
@@ -321,7 +321,7 @@ impl ParsedParameters {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use octofhir_db_memory::QueryFilter;
+    use octofhir_storage::legacy::QueryFilter;
 
     #[test]
     fn parses_id_and_maps_to_exact_filter() {
@@ -459,7 +459,7 @@ mod tests {
 mod tests_more {
     use super::*;
     use crate::parameters::SearchModifier;
-    use octofhir_db_memory::QueryFilter;
+    use octofhir_storage::legacy::QueryFilter;
 
     #[test]
     fn parses_comma_separated_id_uses_first_value_in_filter() {
@@ -671,7 +671,7 @@ impl SearchParameterParser {
 mod tests_query_builder {
     use super::*;
     use octofhir_core::ResourceType;
-    use octofhir_db_memory::QueryFilter;
+    use octofhir_storage::legacy::QueryFilter;
 
     #[test]
     fn build_query_uses_default_and_filters() {
