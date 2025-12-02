@@ -229,8 +229,8 @@ async fn build_registry_with_manager(cfg: &AppConfig) -> Result<CanonicalRegistr
 /// Creates a PostgreSQL connection pool for FCM storage.
 async fn create_fcm_postgres_pool(
     pg_cfg: &crate::config::PostgresStorageConfig,
-) -> Result<sqlx::PgPool, String> {
-    use sqlx::postgres::PgPoolOptions;
+) -> Result<sqlx_postgres::PgPool, String> {
+    use sqlx_postgres::PgPoolOptions;
     use std::time::Duration;
 
     let pool = PgPoolOptions::new()

@@ -44,9 +44,13 @@ pub struct AppState {
     /// Gateway router for dynamic API endpoints
     pub gateway_router: crate::gateway::GatewayRouter,
     /// PostgreSQL connection pool for SQL handler
-    pub db_pool: Arc<sqlx::PgPool>,
+    pub db_pool: Arc<sqlx_postgres::PgPool>,
     /// Custom handler registry for gateway operations
     pub handler_registry: Arc<crate::gateway::HandlerRegistry>,
+    /// Compartment registry for compartment-based search
+    pub compartment_registry: Arc<crate::compartments::CompartmentRegistry>,
+    /// Async job manager for FHIR asynchronous request pattern
+    pub async_job_manager: Arc<crate::async_jobs::AsyncJobManager>,
 }
 
 pub struct OctofhirServer {
@@ -154,7 +158,9 @@ async fn bootstrap_conformance_if_postgres(cfg: &AppConfig) -> Result<(), anyhow
 /// Creates PostgreSQL storage.
 ///
 /// Returns (storage, PostgreSQL pool for SQL handler).
-async fn create_storage(cfg: &AppConfig) -> Result<(DynStorage, Arc<sqlx::PgPool>), anyhow::Error> {
+async fn create_storage(
+    cfg: &AppConfig,
+) -> Result<(DynStorage, Arc<sqlx_postgres::PgPool>), anyhow::Error> {
     let pg_cfg = cfg
         .storage
         .postgres
@@ -430,6 +436,44 @@ pub async fn build_app(cfg: &AppConfig) -> Result<Router, anyhow::Error> {
     let handler_registry = Arc::new(crate::gateway::HandlerRegistry::new());
     tracing::info!("Initialized custom handler registry");
 
+    // Initialize compartment registry from canonical manager
+    let compartment_registry = match crate::canonical::get_manager() {
+        Some(manager) => {
+            match crate::compartments::CompartmentRegistry::from_canonical_manager(&manager).await {
+                Ok(registry) => {
+                    tracing::info!(
+                        compartments = %registry.list_compartments().join(", "),
+                        "Compartment registry initialized"
+                    );
+                    Arc::new(registry)
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "Failed to load compartment definitions, using empty registry");
+                    Arc::new(crate::compartments::CompartmentRegistry::new())
+                }
+            }
+        }
+        None => {
+            tracing::warn!(
+                "Canonical manager not available, compartment search will not be available"
+            );
+            Arc::new(crate::compartments::CompartmentRegistry::new())
+        }
+    };
+
+    // Initialize async job manager
+    let async_job_config = crate::async_jobs::AsyncJobConfig::default();
+    let async_job_manager = Arc::new(crate::async_jobs::AsyncJobManager::new(
+        db_pool.clone(),
+        async_job_config,
+    ));
+    tracing::info!("Async job manager initialized");
+
+    // Start background cleanup task for expired jobs
+    let _cleanup_handle = async_job_manager.clone().start_cleanup_task();
+    tracing::info!("Async job cleanup task started");
+    // Note: _cleanup_handle is dropped here but the task continues running in the background
+
     let state = AppState {
         storage,
         search_cfg,
@@ -443,6 +487,8 @@ pub async fn build_app(cfg: &AppConfig) -> Result<Router, anyhow::Error> {
         gateway_router: (*gateway_router).clone(),
         db_pool,
         handler_registry,
+        compartment_registry,
+        async_job_manager,
     };
 
     Ok(build_router(state, body_limit))
@@ -469,6 +515,15 @@ fn build_router(state: AppState, body_limit: usize) -> Router {
         // Embedded UI under /ui
         .route("/ui", get(handlers::ui_index))
         .route("/ui/{*path}", get(handlers::ui_static))
+        // Async job status endpoints (FHIR asynchronous request pattern)
+        .route(
+            "/_async-status/{job_id}",
+            get(handlers::async_job_status).delete(handlers::async_job_cancel),
+        )
+        .route(
+            "/_async-status/{job_id}/result",
+            get(handlers::async_job_result),
+        )
         // System search: GET /?_type=... or POST /_search
         .route("/_search", axum::routing::post(handlers::system_search))
         // System history: GET /_history
@@ -479,6 +534,40 @@ fn build_router(state: AppState, body_limit: usize) -> Router {
         .route(
             "/{resource_type}/_search",
             axum::routing::post(handlers::search_resource_post),
+        )
+        // Compartment search routes (must come before instance-level routes)
+        // GET /Patient/123/* - all resources in Patient/123 compartment
+        .route("/Patient/{id}/*", get(handlers::compartment_search_all))
+        .route("/Encounter/{id}/*", get(handlers::compartment_search_all))
+        .route(
+            "/Practitioner/{id}/*",
+            get(handlers::compartment_search_all),
+        )
+        .route(
+            "/RelatedPerson/{id}/*",
+            get(handlers::compartment_search_all),
+        )
+        .route("/Device/{id}/*", get(handlers::compartment_search_all))
+        // GET /Patient/123/Observation - resources in compartment
+        .route(
+            "/Patient/{id}/{resource_type}",
+            get(handlers::compartment_search),
+        )
+        .route(
+            "/Encounter/{id}/{resource_type}",
+            get(handlers::compartment_search),
+        )
+        .route(
+            "/Practitioner/{id}/{resource_type}",
+            get(handlers::compartment_search),
+        )
+        .route(
+            "/RelatedPerson/{id}/{resource_type}",
+            get(handlers::compartment_search),
+        )
+        .route(
+            "/Device/{id}/{resource_type}",
+            get(handlers::compartment_search),
         )
         // CRUD, search, and system operations
         // This merged route handles both /$operation and /ResourceType

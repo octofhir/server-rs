@@ -69,8 +69,19 @@ urlencoding = "2.1"
 reqwest = { version = "0.12", features = ["json"] }
 
 # Database
-sqlx = { version = "0.8.6", default-features = false, features = ["postgres"] }
-sqlx-postgres = { version = "0.8.6" }
+sqlx-core = { version = "0.8.6", default-features = false, features = [
+    "_rt-tokio",
+    "_tls-native-tls",
+    "json",
+    "migrate"
+] }
+sqlx-postgres = { version = "0.8.6", default-features = false, features = [
+    "json",
+    "chrono",
+    "uuid",
+    "migrate"
+] }
+chrono = { version = "0.4", features = ["serde"] }
 
 [dev-dependencies]
 tokio-test = { workspace = true }

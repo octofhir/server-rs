@@ -2682,10 +2682,21 @@ pub async fn ui_static(Path(path): Path<String>) -> Response {
 /// POST / - Process transaction or batch bundle
 pub async fn transaction_handler(
     State(state): State<crate::server::AppState>,
+    headers: HeaderMap,
     Json(bundle): Json<Value>,
 ) -> Result<impl IntoResponse, ApiError> {
     let span = tracing::info_span!("fhir.bundle");
     let _g = span.enter();
+
+    // Check for Prefer: respond-async header
+    let prefer_async = headers
+        .get("prefer")
+        .and_then(|v| v.to_str().ok())
+        .map(|v| {
+            v.split(',')
+                .any(|part| part.trim().eq_ignore_ascii_case("respond-async"))
+        })
+        .unwrap_or(false);
 
     // Validate bundle structure
     let resource_type = bundle["resourceType"].as_str();
@@ -2699,9 +2710,36 @@ pub async fn transaction_handler(
         .as_str()
         .ok_or_else(|| ApiError::bad_request("Missing bundle type"))?;
 
+    // If async requested, submit job
+    if prefer_async {
+        let request = crate::async_jobs::AsyncJobRequest {
+            request_type: format!("bundle-{}", bundle_type),
+            method: "POST".to_string(),
+            url: "/".to_string(),
+            body: Some(bundle),
+            headers: None,
+            client_id: None,
+        };
+
+        let job_id = state
+            .async_job_manager
+            .submit_job(request)
+            .await
+            .map_err(|e| ApiError::Internal(format!("Failed to submit async job: {}", e)))?;
+
+        return Ok(create_async_accepted_response(job_id, &state.base_url));
+    }
+
+    // Otherwise, process synchronously
     match bundle_type {
-        "transaction" => process_transaction(&state, &bundle).await,
-        "batch" => process_batch(&state, &bundle).await,
+        "transaction" => {
+            let (status, json) = process_transaction(&state, &bundle).await?;
+            Ok((status, HeaderMap::new(), json))
+        }
+        "batch" => {
+            let (status, json) = process_batch(&state, &bundle).await?;
+            Ok((status, HeaderMap::new(), json))
+        }
         _ => Err(ApiError::bad_request(format!(
             "Bundle type '{}' not supported at root endpoint. Use 'transaction' or 'batch'.",
             bundle_type
@@ -3526,4 +3564,451 @@ fn build_transaction_response_entry(
     }
 
     entry
+}
+
+// ============================================================================
+// Compartment Search Handlers
+// ============================================================================
+
+/// Handler for compartment search: GET /{CompartmentType}/{id}/{ResourceType}
+///
+/// Examples:
+/// - GET /Patient/123/Observation - All observations for patient 123
+/// - GET /Patient/123/Condition?clinical-status=active - Active conditions for patient 123
+/// - GET /Encounter/456/Procedure - All procedures for encounter 456
+pub async fn compartment_search(
+    Path((compartment_type, compartment_id, resource_type)): Path<(String, String, String)>,
+    RawQuery(query_string): RawQuery,
+    State(state): State<crate::server::AppState>,
+) -> Result<impl IntoResponse, ApiError> {
+    use octofhir_search::SearchEngine;
+
+    tracing::info!(
+        compartment_type = %compartment_type,
+        compartment_id = %compartment_id,
+        resource_type = %resource_type,
+        query = ?query_string,
+        "Compartment search request"
+    );
+
+    // Parse resource type
+    let rt = resource_type
+        .parse::<ResourceType>()
+        .map_err(|_| ApiError::BadRequest(format!("Invalid resource type: {}", resource_type)))?;
+
+    // Get compartment definition
+    let compartment_def = state
+        .compartment_registry
+        .get(&compartment_type)
+        .map_err(|e| ApiError::NotFound(format!("Compartment not found: {}", e)))?;
+
+    // Get inclusion parameters for this resource type
+    let inclusion_params = compartment_def
+        .get_inclusion_params(&resource_type)
+        .ok_or_else(|| {
+            ApiError::BadRequest(format!(
+                "Resource type '{}' is not in {} compartment",
+                resource_type, compartment_type
+            ))
+        })?;
+
+    // Verify compartment resource exists
+    let compartment_resource_type = compartment_type.parse::<ResourceType>().map_err(|_| {
+        ApiError::BadRequest(format!("Invalid compartment type: {}", compartment_type))
+    })?;
+
+    // Check if the compartment resource exists
+    match state
+        .storage
+        .get(&compartment_resource_type, &compartment_id)
+        .await
+    {
+        Ok(Some(_)) => {} // Resource exists
+        Ok(None) => {
+            return Err(ApiError::NotFound(format!(
+                "Compartment resource {}/{} not found",
+                compartment_type, compartment_id
+            )));
+        }
+        Err(e) => {
+            return Err(ApiError::Internal(format!("Storage error: {}", e)));
+        }
+    }
+
+    // Build compartment constraint
+    // The compartment constraint is: (param1=CompartmentType/id OR param2=CompartmentType/id OR ...)
+    let compartment_ref = format!("{}/{}", compartment_type, compartment_id);
+
+    // FHIR spec requires OR semantics: match if ANY param references the compartment
+    // For multiple inclusion params, we need to execute searches for each param and merge results
+    let base_query: String = query_string.unwrap_or_default();
+
+    tracing::debug!(
+        resource_type = %resource_type,
+        compartment = %compartment_ref,
+        inclusion_params = ?inclusion_params,
+        base_query = %base_query,
+        "Executing compartment search with OR semantics"
+    );
+
+    // Execute searches for all inclusion parameters and collect unique resources
+    let mut all_resources = std::collections::HashMap::new(); // Use HashMap to deduplicate by ID
+    let mut total_count = 0usize;
+
+    for param in inclusion_params {
+        // Build query with this inclusion parameter
+        let mut query = base_query.clone();
+        if !query.is_empty() {
+            query.push('&');
+        }
+        query.push_str(&format!("{}={}", param, compartment_ref));
+
+        tracing::debug!(
+            param = %param,
+            query = %query,
+            "Searching with inclusion parameter"
+        );
+
+        // Execute search for this parameter
+        match SearchEngine::execute(&state.storage, rt.clone(), &query, &state.search_cfg).await {
+            Ok(result) => {
+                total_count = total_count.max(result.total);
+
+                // Add resources, deduplicating by ID
+                for envelope in result.resources {
+                    let resource_json = json_from_envelope(&envelope);
+                    if let Some(id) = resource_json.get("id").and_then(|v| v.as_str()) {
+                        all_resources.insert(id.to_string(), resource_json);
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::warn!(
+                    param = %param,
+                    error = %e,
+                    "Search failed for inclusion parameter, continuing with others"
+                );
+                // Continue with other parameters even if one fails
+            }
+        }
+    }
+
+    // Convert deduplicated resources to Vec
+    let resources_json: Vec<Value> = all_resources.into_values().collect();
+    let actual_count = resources_json.len();
+
+    tracing::info!(
+        compartment = %compartment_ref,
+        resource_type = %resource_type,
+        inclusion_params_count = inclusion_params.len(),
+        unique_resources = actual_count,
+        "Compartment search completed with OR semantics"
+    );
+
+    // Build Bundle with deduplicated results
+    let bundle = octofhir_api::bundle_from_search(
+        actual_count,
+        resources_json,
+        &state.base_url,
+        &resource_type,
+        0,
+        actual_count,
+        None,
+    );
+
+    Ok((StatusCode::OK, Json(bundle)))
+}
+
+/// Handler for wildcard compartment search: GET /{CompartmentType}/{id}/*
+///
+/// Returns all resources in the specified compartment.
+///
+/// Examples:
+/// - GET /Patient/123/* - All resources in patient 123's compartment
+/// - GET /Encounter/456/* - All resources in encounter 456's compartment
+pub async fn compartment_search_all(
+    Path((compartment_type, compartment_id)): Path<(String, String)>,
+    State(state): State<crate::server::AppState>,
+) -> Result<impl IntoResponse, ApiError> {
+    use octofhir_search::SearchEngine;
+
+    tracing::info!(
+        compartment_type = %compartment_type,
+        compartment_id = %compartment_id,
+        "Wildcard compartment search request"
+    );
+
+    // Get compartment definition
+    let compartment_def = state
+        .compartment_registry
+        .get(&compartment_type)
+        .map_err(|e| ApiError::NotFound(format!("Compartment not found: {}", e)))?;
+
+    // Verify compartment resource exists
+    let compartment_resource_type = compartment_type.parse::<ResourceType>().map_err(|_| {
+        ApiError::BadRequest(format!("Invalid compartment type: {}", compartment_type))
+    })?;
+
+    match state
+        .storage
+        .get(&compartment_resource_type, &compartment_id)
+        .await
+    {
+        Ok(Some(_)) => {} // Resource exists
+        Ok(None) => {
+            return Err(ApiError::NotFound(format!(
+                "Compartment resource {}/{} not found",
+                compartment_type, compartment_id
+            )));
+        }
+        Err(e) => {
+            return Err(ApiError::Internal(format!("Storage error: {}", e)));
+        }
+    }
+
+    // Get all resource types in this compartment
+    let resource_types = compartment_def.resource_types();
+    let resource_types_count = resource_types.len();
+
+    tracing::info!(
+        compartment = %format!("{}/{}", compartment_type, compartment_id),
+        resource_types = ?resource_types,
+        count = resource_types_count,
+        "Searching all resource types in compartment"
+    );
+
+    // Build searchset Bundle
+    let mut all_entries = Vec::new();
+    let mut total = 0usize;
+
+    // Execute search for each resource type
+    for resource_type_str in resource_types {
+        let rt = match resource_type_str.parse::<ResourceType>() {
+            Ok(rt) => rt,
+            Err(_) => {
+                tracing::warn!(
+                    resource_type = %resource_type_str,
+                    "Skipping unknown resource type"
+                );
+                continue;
+            }
+        };
+
+        // Get inclusion parameters for this resource type
+        let inclusion_params = match compartment_def.get_inclusion_params(resource_type_str) {
+            Some(params) => params,
+            None => {
+                tracing::debug!(
+                    resource_type = %resource_type_str,
+                    "Resource type not in compartment definition"
+                );
+                continue;
+            }
+        };
+
+        // Build search query for this resource type
+        let compartment_ref = format!("{}/{}", compartment_type, compartment_id);
+        let mut query = String::new();
+
+        // Use the first (primary) inclusion parameter
+        if !inclusion_params.is_empty() {
+            let param = &inclusion_params[0];
+            query.push_str(&format!("{}={}", param, compartment_ref));
+        }
+
+        // Execute search
+        match SearchEngine::execute(&state.storage, rt, &query, &state.search_cfg).await {
+            Ok(result) => {
+                // Convert search result to entries
+                let resources_json: Vec<Value> =
+                    result.resources.iter().map(json_from_envelope).collect();
+
+                total += resources_json.len();
+
+                // Add each resource as an entry in the bundle
+                for resource in resources_json {
+                    all_entries.push(json!({
+                        "resource": resource,
+                        "search": {
+                            "mode": "match"
+                        }
+                    }));
+                }
+            }
+            Err(e) => {
+                tracing::warn!(
+                    resource_type = %resource_type_str,
+                    error = %e,
+                    "Failed to search resource type in compartment"
+                );
+                // Continue with other resource types
+            }
+        }
+    }
+
+    // Build searchset Bundle with all entries
+    let bundle = json!({
+        "resourceType": "Bundle",
+        "type": "searchset",
+        "total": total,
+        "entry": all_entries,
+    });
+
+    tracing::info!(
+        total = total,
+        resource_types_searched = resource_types_count,
+        "Wildcard compartment search completed"
+    );
+
+    Ok((StatusCode::OK, Json(bundle)))
+}
+
+// ============================================================================
+// Async Job Handlers (FHIR Asynchronous Request Pattern)
+// ============================================================================
+
+/// GET /_async-status/{job-id}
+///
+/// Retrieve status and progress of an asynchronous job.
+/// Returns 202 Accepted if job is still in progress, 200 OK if completed.
+pub async fn async_job_status(
+    Path(job_id): Path<uuid::Uuid>,
+    State(state): State<crate::server::AppState>,
+) -> Result<impl IntoResponse, ApiError> {
+    let job = state
+        .async_job_manager
+        .get_job(job_id)
+        .await
+        .map_err(|e| match e {
+            crate::async_jobs::AsyncJobError::NotFound(_) => {
+                ApiError::NotFound(format!("Async job not found: {}", job_id))
+            }
+            _ => ApiError::Internal(format!("Failed to get job status: {}", e)),
+        })?;
+
+    // Build response based on job status
+    let response = json!({
+        "jobId": job.id,
+        "status": job.status,
+        "progress": job.progress,
+        "createdAt": job.created_at.to_rfc3339(),
+        "updatedAt": job.updated_at.to_rfc3339(),
+        "completedAt": job.completed_at.map(|dt| dt.to_rfc3339()),
+        "expiresAt": job.expires_at.to_rfc3339(),
+        "requestType": job.request_type,
+        "errorMessage": job.error_message,
+    });
+
+    let status_code = match job.status {
+        crate::async_jobs::AsyncJobStatus::Queued
+        | crate::async_jobs::AsyncJobStatus::InProgress => StatusCode::ACCEPTED,
+        crate::async_jobs::AsyncJobStatus::Completed => StatusCode::OK,
+        crate::async_jobs::AsyncJobStatus::Failed => StatusCode::INTERNAL_SERVER_ERROR,
+        crate::async_jobs::AsyncJobStatus::Cancelled => StatusCode::GONE,
+    };
+
+    Ok((status_code, Json(response)))
+}
+
+/// GET /_async-status/{job-id}/result
+///
+/// Retrieve the result of a completed asynchronous job.
+/// Returns 404 if job not found, 425 if job not yet completed, 200 with result if completed.
+pub async fn async_job_result(
+    Path(job_id): Path<uuid::Uuid>,
+    State(state): State<crate::server::AppState>,
+) -> Result<impl IntoResponse, ApiError> {
+    let job = state
+        .async_job_manager
+        .get_job(job_id)
+        .await
+        .map_err(|e| match e {
+            crate::async_jobs::AsyncJobError::NotFound(_) => {
+                ApiError::NotFound(format!("Async job not found: {}", job_id))
+            }
+            _ => ApiError::Internal(format!("Failed to get job: {}", e)),
+        })?;
+
+    // Check if job is completed
+    match job.status {
+        crate::async_jobs::AsyncJobStatus::Completed => {
+            if let Some(result) = job.result {
+                Ok((StatusCode::OK, Json(result)))
+            } else {
+                Err(ApiError::Internal(
+                    "Job marked as completed but result is missing".to_string(),
+                ))
+            }
+        }
+        crate::async_jobs::AsyncJobStatus::Failed => {
+            let error_msg = job
+                .error_message
+                .unwrap_or_else(|| "Job failed without error message".to_string());
+            Err(ApiError::Internal(error_msg))
+        }
+        crate::async_jobs::AsyncJobStatus::Cancelled => {
+            Err(ApiError::BadRequest("Job was cancelled".to_string()))
+        }
+        crate::async_jobs::AsyncJobStatus::Queued
+        | crate::async_jobs::AsyncJobStatus::InProgress => {
+            // 425 Too Early - job not yet ready
+            let response = json!({
+                "resourceType": "OperationOutcome",
+                "issue": [{
+                    "severity": "information",
+                    "code": "processing",
+                    "diagnostics": format!("Job is still {} (progress: {:.1}%)", job.status, job.progress * 100.0),
+                }]
+            });
+            Ok((StatusCode::from_u16(425).unwrap(), Json(response)))
+        }
+    }
+}
+
+/// DELETE /_async-status/{job-id}
+///
+/// Cancel a queued or in-progress asynchronous job.
+/// Returns 204 No Content if successfully cancelled.
+pub async fn async_job_cancel(
+    Path(job_id): Path<uuid::Uuid>,
+    State(state): State<crate::server::AppState>,
+) -> Result<impl IntoResponse, ApiError> {
+    state
+        .async_job_manager
+        .cancel_job(job_id)
+        .await
+        .map_err(|e| match e {
+            crate::async_jobs::AsyncJobError::NotFound(_) => {
+                ApiError::NotFound(format!("Async job not found: {}", job_id))
+            }
+            _ => ApiError::Internal(format!("Failed to cancel job: {}", e)),
+        })?;
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Helper: Create 202 Accepted response for async job submission
+///
+/// Returns 202 Accepted with Content-Location header pointing to the status endpoint
+pub fn create_async_accepted_response(
+    job_id: uuid::Uuid,
+    base_url: &str,
+) -> (StatusCode, HeaderMap, Json<Value>) {
+    let status_url = format!("{}/_async-status/{}", base_url, job_id);
+
+    let response = json!({
+        "resourceType": "OperationOutcome",
+        "issue": [{
+            "severity": "information",
+            "code": "informational",
+            "diagnostics": format!("Request accepted for asynchronous processing. Job ID: {}", job_id),
+        }]
+    });
+
+    let mut headers = HeaderMap::new();
+    if let Ok(header_value) = header::HeaderValue::from_str(&status_url) {
+        headers.insert(header::CONTENT_LOCATION, header_value);
+    }
+
+    (StatusCode::ACCEPTED, headers, Json(response))
 }

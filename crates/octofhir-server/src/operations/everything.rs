@@ -585,12 +585,13 @@ impl EverythingOperation {
         if let Some(members) = group.data.get("member").and_then(|m| m.as_array()) {
             for member in members {
                 if let Some(entity) = member.get("entity").and_then(|e| e.get("reference"))
-                    && let Some(reference) = entity.as_str() {
-                        // Extract ID from reference like "Patient/123"
-                        if let Some(id) = reference.strip_prefix("Patient/") {
-                            member_ids.push(id.to_string());
-                        }
+                    && let Some(reference) = entity.as_str()
+                {
+                    // Extract ID from reference like "Patient/123"
+                    if let Some(id) = reference.strip_prefix("Patient/") {
+                        member_ids.push(id.to_string());
                     }
+                }
             }
         }
 

@@ -1,6 +1,8 @@
 pub mod admin;
+pub mod async_jobs;
 pub mod bootstrap;
 pub mod canonical;
+pub mod compartments;
 pub mod config;
 pub mod config_watch;
 pub mod gateway;
@@ -15,6 +17,8 @@ pub mod storage_adapter;
 pub mod validation;
 
 pub use admin::{AdminState, CombinedAdminState, admin_routes};
+pub use async_jobs::{AsyncJob, AsyncJobConfig, AsyncJobError, AsyncJobManager, AsyncJobStatus};
+pub use compartments::{CompartmentDefinition, CompartmentRegistry};
 pub use config::{AppConfig, OtelConfig, PostgresStorageConfig, ServerConfig};
 pub use observability::{init_tracing, shutdown_tracing};
 pub use server::{AppState, OctofhirServer, ServerBuilder, build_app};

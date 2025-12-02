@@ -10,7 +10,9 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use serde_json::{Value, json};
-use sqlx::{Column, Row};
+use sqlx_core::column::Column;
+use sqlx_core::query::query;
+use sqlx_core::row::Row;
 use std::collections::HashMap;
 use tracing::{debug, info, instrument, warn};
 
@@ -58,7 +60,7 @@ pub async fn handle_sql(
     info!("Executing SQL query");
 
     // Execute the query and convert rows to JSON
-    let rows = sqlx::query(sql_query)
+    let rows = query(sql_query)
         .fetch_all(state.db_pool.as_ref())
         .await
         .map_err(|e| GatewayError::SqlError(format!("Query execution failed: {}", e)))?;

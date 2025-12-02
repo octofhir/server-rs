@@ -86,3 +86,29 @@ fn error_response(status: StatusCode, msg: &str) -> Response {
     });
     (status, Json(body)).into_response()
 }
+
+/// Helper function to check if the request has the `Prefer: respond-async` header.
+///
+/// This is used to detect when a client wants to use the FHIR asynchronous request pattern
+/// for long-running operations.
+///
+/// ## FHIR Specification
+/// Per FHIR spec, the client sends:
+/// ```
+/// Prefer: respond-async
+/// ```
+///
+/// The server should then:
+/// 1. Return 202 Accepted
+/// 2. Include `Content-Location` header pointing to the status endpoint
+/// 3. Process the request asynchronously
+pub fn has_prefer_async_header(req: &Request<Body>) -> bool {
+    if let Some(prefer) = req.headers().get("prefer")
+        && let Ok(prefer_str) = prefer.to_str()
+    {
+        return prefer_str
+            .split(',')
+            .any(|v| v.trim().eq_ignore_ascii_case("respond-async"));
+    }
+    false
+}

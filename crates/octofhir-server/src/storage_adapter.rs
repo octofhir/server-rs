@@ -15,6 +15,8 @@ use octofhir_storage::{
     },
 };
 use serde_json::Value;
+use sqlx_core::query_as::query_as;
+use sqlx_core::query_scalar::query_scalar;
 use std::sync::Arc;
 
 /// Adapter that wraps `PostgresStorage` and implements the internal `Storage` trait.
@@ -227,7 +229,7 @@ impl PostgresStorageAdapter {
         params: &[String],
     ) -> std::result::Result<i64, CoreError> {
         // Build dynamic query with parameters
-        let mut query = sqlx::query_scalar::<_, i64>(sql);
+        let mut query = query_scalar::<_, i64>(sql);
         for param in params {
             query = query.bind(param);
         }
@@ -247,7 +249,7 @@ impl PostgresStorageAdapter {
         offset: i64,
     ) -> Result<Vec<ResourceEnvelope>> {
         // Build dynamic query - parameters come in this order: filter params, then limit, offset
-        let mut query = sqlx::query_as::<_, (Value,)>(sql);
+        let mut query = query_as::<_, (Value,)>(sql);
         for param in params {
             query = query.bind(param);
         }
@@ -367,7 +369,7 @@ impl Storage for PostgresStorageAdapter {
     async fn count_by_type(&self, resource_type: &ResourceType) -> usize {
         let table = resource_type.to_string().to_lowercase();
         let sql = format!(r#"SELECT COUNT(*) FROM "{table}" WHERE status != 'deleted'"#);
-        match sqlx::query_scalar::<_, i64>(&sql)
+        match query_scalar::<_, i64>(&sql)
             .fetch_one(self.inner.pool())
             .await
         {
