@@ -41,6 +41,7 @@
 //! ```
 
 pub mod definition;
+pub mod everything;
 pub mod handler;
 pub mod loader;
 pub mod meta;
@@ -51,6 +52,7 @@ pub mod validate;
 
 // Re-export main types for convenience
 pub use definition::{OperationDefinition, OperationKind, OperationParameter, ParameterUse};
+pub use everything::EverythingOperation;
 pub use handler::{DynOperationHandler, OperationError, OperationHandler};
 pub use loader::{LoadError, load_operations};
 pub use meta::{MetaAddOperation, MetaDeleteOperation, MetaOperation};
@@ -76,6 +78,7 @@ use octofhir_fhirpath::FhirPathEngine;
 /// - `$meta` - Get resource metadata
 /// - `$meta-add` - Add metadata elements
 /// - `$meta-delete` - Remove metadata elements
+/// - `$everything` - Retrieve complete record for Patient, Encounter, or Group
 ///
 /// # Arguments
 ///
@@ -104,6 +107,12 @@ pub fn register_core_operations(
     handlers.insert("meta".to_string(), Arc::new(MetaOperation));
     handlers.insert("meta-add".to_string(), Arc::new(MetaAddOperation));
     handlers.insert("meta-delete".to_string(), Arc::new(MetaDeleteOperation));
+
+    // $everything operation
+    handlers.insert(
+        "everything".to_string(),
+        Arc::new(EverythingOperation::new()),
+    );
 
     handlers
 }

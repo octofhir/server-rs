@@ -468,6 +468,13 @@ impl Storage for PostgresStorageAdapter {
         }
     }
 
+    async fn system_history(&self, params: &HistoryParams) -> Result<HistoryResult> {
+        match self.inner.system_history(params).await {
+            Ok(result) => Ok(result),
+            Err(e) => Err(CoreError::invalid_resource(e.to_string())),
+        }
+    }
+
     async fn vread(
         &self,
         resource_type: &ResourceType,

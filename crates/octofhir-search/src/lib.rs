@@ -21,7 +21,27 @@ pub use parameters::{
 pub use parser::{ParsedParameters, SearchParameterParser};
 pub use registry::SearchParameterRegistry;
 pub use sql_builder::{
-    SqlBuilder, SqlBuilderError, SqlParam, build_jsonb_accessor, fhirpath_to_jsonb_path,
+    // New fluent query builder
+    BuiltQuery,
+    ChainJoin,
+    FhirQueryBuilder,
+    IncludeSpec,
+    JsonbPath,
+    Operator,
+    Pagination,
+    QueryMode,
+    RevIncludeSpec,
+    SearchCondition,
+    SortOrder,
+    SortSpec,
+    // Legacy SQL builder
+    SqlBuilder,
+    SqlBuilderError,
+    SqlParam,
+    SqlValue,
+    build_jsonb_accessor,
+    escape_identifier,
+    fhirpath_to_jsonb_path,
 };
 pub use types::{
     DateRange, build_date_search, build_human_name_search, build_identifier_search,

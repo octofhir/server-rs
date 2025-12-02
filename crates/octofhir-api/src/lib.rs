@@ -1089,6 +1089,109 @@ fn build_history_link(
     format!("{path}?_count={count}&__offset={offset}")
 }
 
+/// Build a system-level history endpoint URL with pagination
+fn build_system_history_link(base_url: &str, offset: usize, count: usize) -> String {
+    let base_url = base_url.trim_end_matches('/');
+    format!("{base_url}/_history?_count={count}&__offset={offset}")
+}
+
+/// Build a system-level history bundle from history entries
+///
+/// This creates a Bundle with type=history containing entries from all resource types
+/// in the system, ordered by transaction ID (most recent first).
+pub fn bundle_from_system_history(
+    entries: Vec<HistoryBundleEntry>,
+    base_url: &str,
+    offset: usize,
+    count: usize,
+    total: Option<u32>,
+) -> Bundle {
+    let bundle_entries: Vec<BundleEntry> = entries
+        .into_iter()
+        .map(|entry| {
+            let full_url = format!("{}/{}/{}", base_url, entry.resource_type, entry.id);
+
+            let request_url = match entry.method {
+                HistoryBundleMethod::Create => entry.resource_type.clone(),
+                HistoryBundleMethod::Update | HistoryBundleMethod::Delete => {
+                    format!("{}/{}", entry.resource_type, entry.id)
+                }
+            };
+
+            // For DELETE entries, don't include the resource
+            let resource = if entry.method == HistoryBundleMethod::Delete {
+                None
+            } else {
+                Some(entry.resource)
+            };
+
+            BundleEntry {
+                full_url: Some(full_url),
+                resource,
+                search: None, // History entries don't have search mode
+                request: Some(BundleEntryRequest {
+                    method: entry.method.http_method().to_string(),
+                    url: request_url,
+                }),
+                response: Some(BundleEntryResponse {
+                    status: entry.method.http_status().to_string(),
+                    etag: Some(format!("W/\"{}\"", entry.version_id)),
+                    last_modified: Some(entry.last_modified),
+                }),
+            }
+        })
+        .collect();
+
+    // Build links
+    let mut links = Vec::new();
+
+    // Build self link URL
+    let self_url = build_system_history_link(base_url, offset, count);
+    links.push(BundleLink {
+        relation: "self".to_string(),
+        url: self_url,
+    });
+
+    // Pagination links
+    if let Some(total_count) = total {
+        let total_usize = total_count as usize;
+
+        // first
+        links.push(BundleLink {
+            relation: "first".to_string(),
+            url: build_system_history_link(base_url, 0, count),
+        });
+
+        // prev
+        if offset > 0 {
+            let prev_offset = offset.saturating_sub(count);
+            links.push(BundleLink {
+                relation: "previous".to_string(),
+                url: build_system_history_link(base_url, prev_offset, count),
+            });
+        }
+
+        // next
+        if count > 0 && offset + count < total_usize {
+            links.push(BundleLink {
+                relation: "next".to_string(),
+                url: build_system_history_link(base_url, offset + count, count),
+            });
+        }
+
+        // last
+        if count > 0 && total_usize > 0 {
+            let last_offset = ((total_usize - 1) / count) * count;
+            links.push(BundleLink {
+                relation: "last".to_string(),
+                url: build_system_history_link(base_url, last_offset, count),
+            });
+        }
+    }
+
+    Bundle::history(bundle_entries, links)
+}
+
 #[cfg(test)]
 mod bundle_generation_tests {
     use super::*;

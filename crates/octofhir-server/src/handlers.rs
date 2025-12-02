@@ -915,15 +915,76 @@ pub async fn type_history(
 
 /// System history: GET /_history
 pub async fn system_history(
-    State(_state): State<crate::server::AppState>,
-    Query(_params): Query<HistoryQueryParams>,
-) -> Result<Json<octofhir_api::Bundle>, ApiError> {
-    // System-level history is not yet implemented
-    // This would require iterating over all resource types
-    Err(ApiError::bad_request(
-        "System-level history is not yet implemented. Use type-level or instance-level history."
-            .to_string(),
-    ))
+    State(state): State<crate::server::AppState>,
+    Query(params): Query<HistoryQueryParams>,
+) -> Result<impl IntoResponse, ApiError> {
+    use octofhir_api::{HistoryBundleEntry, HistoryBundleMethod, bundle_from_system_history};
+    use octofhir_storage::HistoryParams;
+    use time::format_description::well_known::Rfc3339;
+
+    let span = tracing::info_span!("fhir.history.system");
+    let _g = span.enter();
+
+    // Build history params
+    let mut history_params = HistoryParams::new();
+    if let Some(ref since) = params.since {
+        history_params.since = Some(parse_fhir_instant(since)?);
+    }
+    if let Some(ref at) = params.at {
+        history_params.at = Some(parse_fhir_instant(at)?);
+    }
+    let count = params.count.unwrap_or(100);
+    let offset = params.offset.unwrap_or(0);
+    history_params.count = Some(count);
+    history_params.offset = Some(offset);
+
+    // Get system-level history from storage
+    let result = state
+        .storage
+        .system_history(&history_params)
+        .await
+        .map_err(map_core_error)?;
+
+    // Convert to bundle entries
+    let entries: Vec<HistoryBundleEntry> = result
+        .entries
+        .into_iter()
+        .map(|entry| {
+            let method = match entry.method {
+                octofhir_storage::HistoryMethod::Create => HistoryBundleMethod::Create,
+                octofhir_storage::HistoryMethod::Update => HistoryBundleMethod::Update,
+                octofhir_storage::HistoryMethod::Delete => HistoryBundleMethod::Delete,
+            };
+            HistoryBundleEntry {
+                resource: entry.resource.resource,
+                id: entry.resource.id,
+                resource_type: entry.resource.resource_type,
+                version_id: entry.resource.version_id,
+                last_modified: entry
+                    .resource
+                    .last_updated
+                    .format(&Rfc3339)
+                    .unwrap_or_default(),
+                method,
+            }
+        })
+        .collect();
+
+    let bundle = bundle_from_system_history(
+        entries,
+        &state.base_url,
+        offset as usize,
+        count as usize,
+        result.total,
+    );
+
+    let mut response_headers = HeaderMap::new();
+    response_headers.insert(
+        header::CONTENT_TYPE,
+        header::HeaderValue::from_static("application/fhir+json; charset=utf-8"),
+    );
+
+    Ok((StatusCode::OK, response_headers, Json(bundle)))
 }
 
 pub async fn update_resource(

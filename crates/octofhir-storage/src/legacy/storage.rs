@@ -51,6 +51,10 @@ pub trait Storage: Send + Sync + TransactionManager {
         params: &HistoryParams,
     ) -> Result<HistoryResult>;
 
+    /// Get system-level history across all resource types.
+    /// Returns history entries from all resources ordered by transaction ID (most recent first).
+    async fn system_history(&self, params: &HistoryParams) -> Result<HistoryResult>;
+
     /// Get a specific version of a resource.
     /// Returns None if the resource or version does not exist.
     async fn vread(
