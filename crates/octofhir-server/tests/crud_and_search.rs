@@ -16,7 +16,10 @@ async fn start_postgres() -> (ContainerAsync<Postgres>, String) {
         .expect("start postgres container");
 
     let host_port = container.get_host_port_ipv4(5432).await.expect("get port");
-    let url = format!("postgres://postgres:postgres@127.0.0.1:{}/postgres", host_port);
+    let url = format!(
+        "postgres://postgres:postgres@127.0.0.1:{}/postgres",
+        host_port
+    );
 
     (container, url)
 }
@@ -34,7 +37,9 @@ fn create_config(postgres_url: &str) -> AppConfig {
     config
 }
 
-async fn start_server(config: &AppConfig) -> (String, tokio::sync::oneshot::Sender<()>, JoinHandle<()>) {
+async fn start_server(
+    config: &AppConfig,
+) -> (String, tokio::sync::oneshot::Sender<()>, JoinHandle<()>) {
     let app = build_app(config).await.expect("build app");
 
     // Bind to an ephemeral port

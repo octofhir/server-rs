@@ -1,4 +1,5 @@
-use crate::parameters::{SearchModifier, SearchPrefix};
+use crate::parameters::{SearchModifier, SearchParameter, SearchParameterType, SearchPrefix};
+use crate::registry::SearchParameterRegistry;
 use std::borrow::Cow;
 use thiserror::Error;
 use url::form_urlencoded;
@@ -53,12 +54,6 @@ impl SearchParameterParser {
             });
         }
         result
-    }
-
-    /// Convenience: parse query and immediately convert to QueryFilter list (limited support)
-    pub fn parse_query_to_filters(query: &str) -> Vec<QueryFilter> {
-        let parsed = Self::parse_query(query);
-        parsed.to_filters()
     }
 
     fn split_name_and_modifier(key: Cow<'_, str>) -> (Cow<'_, str>, Option<SearchModifier>) {
@@ -185,111 +180,6 @@ impl ParsedParameters {
         Ok(())
     }
 
-    /// Convert parsed parameters to storage filters (limited initial support)
-    pub fn to_filters(&self) -> Vec<QueryFilter> {
-        let mut filters = Vec::new();
-
-        for p in &self.params {
-            match p.name.as_str() {
-                // _id: exact string match; if multiple values provided, take the first for now
-                "_id" => {
-                    if let Some(v) = p.values.first()
-                        && !v.raw.is_empty()
-                    {
-                        filters.push(QueryFilter::Exact {
-                            field: "_id".to_string(),
-                            value: v.raw.clone(),
-                        });
-                    }
-                }
-                // _lastUpdated: date range; support ge, le, gt, lt, eq or no prefix (treated as eq)
-                "_lastUpdated" => {
-                    let mut start: Option<FhirDateTime> = None;
-                    let mut end: Option<FhirDateTime> = None;
-
-                    for v in &p.values {
-                        if v.raw.is_empty() {
-                            continue;
-                        }
-                        if let Ok(dt) = v.raw.parse::<FhirDateTime>() {
-                            match v.prefix {
-                                Some(SearchPrefix::Ge) => start = Some(dt),
-                                Some(SearchPrefix::Gt) => start = Some(dt), // TODO: strict greater-than
-                                Some(SearchPrefix::Le) => end = Some(dt),
-                                Some(SearchPrefix::Lt) => end = Some(dt), // TODO: strict less-than
-                                Some(SearchPrefix::Eq) | None => {
-                                    start = Some(dt.clone());
-                                    end = Some(dt);
-                                }
-                                _ => { /* unsupported prefixes (sa, eb, ap) ignored for now */ }
-                            }
-                        }
-                    }
-
-                    if start.is_some() || end.is_some() {
-                        filters.push(QueryFilter::DateRange {
-                            field: "_lastUpdated".to_string(),
-                            start,
-                            end,
-                        });
-                    }
-                }
-                // identifier: Token/Identifier match on identifier field, support system|value or value-only
-                "identifier" => {
-                    if let Some(v) = p.values.first()
-                        && !v.raw.is_empty()
-                    {
-                        let mut parts = v.raw.splitn(2, '|');
-                        let first = parts.next().unwrap_or("");
-                        let second = parts.next();
-                        let (system, value) = match second {
-                            Some(val) => {
-                                let sys_opt = if first.is_empty() {
-                                    None
-                                } else {
-                                    Some(first.to_string())
-                                };
-                                (sys_opt, val.to_string())
-                            }
-                            None => (None, first.to_string()),
-                        };
-                        if !value.is_empty() {
-                            filters.push(QueryFilter::Identifier {
-                                field: "identifier".to_string(),
-                                system,
-                                value,
-                            });
-                        }
-                    }
-                }
-                // Patient name-related parameters: minimal mapping to the 'name' field
-                "name" | "family" | "given" => {
-                    if let Some(v) = p.values.first()
-                        && !v.raw.is_empty()
-                    {
-                        match p.modifier {
-                            Some(SearchModifier::Exact) => {
-                                filters.push(QueryFilter::Exact {
-                                    field: "name".to_string(),
-                                    value: v.raw.clone(),
-                                });
-                            }
-                            _ => {
-                                filters.push(QueryFilter::Contains {
-                                    field: "name".to_string(),
-                                    value: v.raw.clone(),
-                                });
-                            }
-                        }
-                    }
-                }
-                _ => { /* other params not yet mapped */ }
-            }
-        }
-
-        filters
-    }
-
     /// Parse the optional _count parameter with defaults and clamping.
     /// Returns an effective count value within [1..=max]. If missing/invalid, returns `default_`.
     pub fn parse_count(&self, default_: usize, max: usize) -> usize {
@@ -321,86 +211,6 @@ impl ParsedParameters {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use octofhir_storage::legacy::QueryFilter;
-
-    #[test]
-    fn parses_id_and_maps_to_exact_filter() {
-        let filters = SearchParameterParser::parse_query_to_filters("_id=abc123");
-        assert_eq!(filters.len(), 1);
-        match &filters[0] {
-            QueryFilter::Exact { field, value } => {
-                assert_eq!(field, "_id");
-                assert_eq!(value, "abc123");
-            }
-            other => panic!("unexpected filter: {other:?}"),
-        }
-    }
-
-    #[test]
-    fn parses_last_updated_ge_to_date_range_start() {
-        let filters =
-            SearchParameterParser::parse_query_to_filters("_lastUpdated=ge2020-01-01T00:00:00Z");
-        assert_eq!(filters.len(), 1);
-        match &filters[0] {
-            QueryFilter::DateRange { field, start, end } => {
-                assert_eq!(field, "_lastUpdated");
-                assert!(start.is_some());
-                assert!(end.is_none());
-            }
-            other => panic!("unexpected filter: {other:?}"),
-        }
-    }
-
-    #[test]
-    fn parses_last_updated_eq_to_date_range_start_and_end() {
-        let filters =
-            SearchParameterParser::parse_query_to_filters("_lastUpdated=2020-01-01T00:00:00Z");
-        assert_eq!(filters.len(), 1);
-        match &filters[0] {
-            QueryFilter::DateRange { field, start, end } => {
-                assert_eq!(field, "_lastUpdated");
-                assert!(start.is_some());
-                assert!(end.is_some());
-            }
-            other => panic!("unexpected filter: {other:?}"),
-        }
-    }
-
-    #[test]
-    fn parses_identifier_system_and_value() {
-        let filters = SearchParameterParser::parse_query_to_filters("identifier=http://sys|12345");
-        assert_eq!(filters.len(), 1);
-        match &filters[0] {
-            QueryFilter::Identifier {
-                field,
-                system,
-                value,
-            } => {
-                assert_eq!(field, "identifier");
-                assert_eq!(system.as_deref(), Some("http://sys"));
-                assert_eq!(value, "12345");
-            }
-            other => panic!("unexpected filter: {other:?}"),
-        }
-    }
-
-    #[test]
-    fn parses_identifier_value_only() {
-        let filters = SearchParameterParser::parse_query_to_filters("identifier=999");
-        assert_eq!(filters.len(), 1);
-        match &filters[0] {
-            QueryFilter::Identifier {
-                field,
-                system,
-                value,
-            } => {
-                assert_eq!(field, "identifier");
-                assert!(system.is_none());
-                assert_eq!(value, "999");
-            }
-            other => panic!("unexpected filter: {other:?}"),
-        }
-    }
 
     #[test]
     fn count_missing_uses_default() {
@@ -427,52 +237,12 @@ mod tests {
         let parsed_zero = SearchParameterParser::parse_query("_count=0");
         assert_eq!(parsed_zero.parse_count(10, 100), 10);
     }
-
-    #[test]
-    fn maps_name_to_contains_by_default() {
-        let filters = SearchParameterParser::parse_query_to_filters("name=John");
-        assert_eq!(filters.len(), 1);
-        match &filters[0] {
-            QueryFilter::Contains { field, value } => {
-                assert_eq!(field, "name");
-                assert_eq!(value, "John");
-            }
-            other => panic!("unexpected filter: {other:?}"),
-        }
-    }
-
-    #[test]
-    fn maps_family_exact_to_exact_filter_on_name_field() {
-        let filters = SearchParameterParser::parse_query_to_filters("family:exact=Doe");
-        assert_eq!(filters.len(), 1);
-        match &filters[0] {
-            QueryFilter::Exact { field, value } => {
-                assert_eq!(field, "name");
-                assert_eq!(value, "Doe");
-            }
-            other => panic!("unexpected filter: {other:?}"),
-        }
-    }
 }
 
 #[cfg(test)]
-mod tests_more {
+mod tests_parsing {
     use super::*;
     use crate::parameters::SearchModifier;
-    use octofhir_storage::legacy::QueryFilter;
-
-    #[test]
-    fn parses_comma_separated_id_uses_first_value_in_filter() {
-        let filters = SearchParameterParser::parse_query_to_filters("_id=a1,b2,c3");
-        assert_eq!(filters.len(), 1);
-        match &filters[0] {
-            QueryFilter::Exact { field, value } => {
-                assert_eq!(field, "_id");
-                assert_eq!(value, "a1");
-            }
-            other => panic!("unexpected filter: {other:?}"),
-        }
-    }
 
     #[test]
     fn parses_contains_modifier_for_name() {
@@ -545,43 +315,11 @@ mod tests_more {
     }
 
     #[test]
-    fn last_updated_with_ap_prefix_is_ignored_and_no_filter_emitted() {
-        let filters = SearchParameterParser::parse_query_to_filters("_lastUpdated=ap2020-01-01");
-        assert!(filters.is_empty());
-    }
-
-    #[test]
-    fn comma_separated_values_with_spaces_are_trimmed() {
-        let filters = SearchParameterParser::parse_query_to_filters("_id= a , b ");
-        assert_eq!(filters.len(), 1);
-        match &filters[0] {
-            QueryFilter::Exact { field, value } => {
-                assert_eq!(field, "_id");
-                assert_eq!(value, "a");
-            }
-            other => panic!("unexpected filter: {other:?}"),
-        }
-    }
-
-    #[test]
     fn plus_is_decoded_to_space() {
         let parsed = SearchParameterParser::parse_query("name=John+Doe");
         assert_eq!(parsed.params.len(), 1);
         let p = &parsed.params[0];
         assert_eq!(p.values[0].raw, "John Doe");
-    }
-
-    #[test]
-    fn multiple_values_for_name_use_first_in_filter_mapping() {
-        let filters = SearchParameterParser::parse_query_to_filters("name=John,Jane");
-        assert_eq!(filters.len(), 1);
-        match &filters[0] {
-            QueryFilter::Contains { field, value } => {
-                assert_eq!(field, "name");
-                assert_eq!(value, "John");
-            }
-            other => panic!("unexpected filter: {other:?}"),
-        }
     }
 
     #[test]
@@ -607,12 +345,6 @@ mod tests_more {
     }
 
     #[test]
-    fn last_updated_with_ne_prefix_emits_no_filter() {
-        let filters = SearchParameterParser::parse_query_to_filters("_lastUpdated=ne2020-01-01");
-        assert!(filters.is_empty());
-    }
-
-    #[test]
     fn uri_style_value_is_url_decoded() {
         let parsed = SearchParameterParser::parse_query("uri=https%3A%2F%2Fexample.org%2Fabc");
         assert_eq!(parsed.params.len(), 1);
@@ -623,163 +355,9 @@ mod tests_more {
     }
 }
 
-impl SearchParameterParser {
-    /// Build a SearchQuery from a resource type and URL query string, applying _count defaults/limits.
-    pub fn build_search_query(
-        resource_type: ResourceType,
-        query: &str,
-        default_count: usize,
-        max_count: usize,
-    ) -> SearchQuery {
-        let parsed = Self::parse_query(query);
-        let filters = parsed.to_filters();
-        let count = parsed.parse_count(default_count, max_count);
-        let offset = parsed.parse_offset(0);
-        let mut q = SearchQuery::new(resource_type).with_pagination(offset, count);
-        for f in filters {
-            q = q.with_filter(f);
-        }
-        // Apply sorting if _sort is present (support first occurrence only)
-        if let Some(p) = parsed.params.iter().find(|p| p.name == "_sort")
-            && let Some(v) = p.values.first()
-        {
-            let mut ascending = true;
-            let mut field = v.raw.as_str();
-            // Value form: -field for descending
-            if let Some(stripped) = field.strip_prefix('-') {
-                ascending = false;
-                field = stripped;
-            }
-            // Modifier form: _sort:desc=field or _sort:asc=field
-            if let Some(SearchModifier::Type(m)) = &p.modifier {
-                if m.eq_ignore_ascii_case("desc") {
-                    ascending = false;
-                }
-                if m.eq_ignore_ascii_case("asc") {
-                    ascending = true;
-                }
-            }
-            if !field.is_empty() {
-                q = q.with_sort(field.to_string(), ascending);
-            }
-        }
-        q
-    }
-}
-
 #[cfg(test)]
-mod tests_query_builder {
+mod tests_validation {
     use super::*;
-    use octofhir_core::ResourceType;
-    use octofhir_storage::legacy::QueryFilter;
-
-    #[test]
-    fn build_query_uses_default_and_filters() {
-        let q =
-            SearchParameterParser::build_search_query(ResourceType::Patient, "_id=abc", 10, 100);
-        assert_eq!(q.resource_type, ResourceType::Patient);
-        assert_eq!(q.count, 10);
-        assert_eq!(q.offset, 0);
-        assert_eq!(q.filters.len(), 1);
-        match &q.filters[0] {
-            QueryFilter::Exact { field, value } => {
-                assert_eq!(field, "_id");
-                assert_eq!(value, "abc");
-            }
-            other => panic!("unexpected filter: {other:?}"),
-        }
-    }
-
-    #[test]
-    fn build_query_clamps_count() {
-        let q =
-            SearchParameterParser::build_search_query(ResourceType::Patient, "_count=250", 10, 100);
-        assert_eq!(q.count, 100);
-    }
-
-    #[test]
-    fn build_query_invalid_count_uses_default() {
-        let q = SearchParameterParser::build_search_query(
-            ResourceType::Patient,
-            "_count=zero",
-            10,
-            100,
-        );
-        assert_eq!(q.count, 10);
-    }
-}
-
-#[cfg(test)]
-mod tests_sort {
-    use super::*;
-    use octofhir_core::ResourceType;
-
-    #[test]
-    fn sort_default_asc_with_field_value() {
-        let q =
-            SearchParameterParser::build_search_query(ResourceType::Patient, "_sort=_id", 10, 100);
-        assert_eq!(q.sort_field.as_deref(), Some("_id"));
-        assert!(q.sort_ascending);
-    }
-
-    #[test]
-    fn sort_desc_with_hyphen() {
-        let q =
-            SearchParameterParser::build_search_query(ResourceType::Patient, "_sort=-_id", 10, 100);
-        assert_eq!(q.sort_field.as_deref(), Some("_id"));
-        assert!(!q.sort_ascending);
-    }
-
-    #[test]
-    fn sort_desc_with_modifier_desc() {
-        let q = SearchParameterParser::build_search_query(
-            ResourceType::Patient,
-            "_sort:desc=_lastUpdated",
-            10,
-            100,
-        );
-        assert_eq!(q.sort_field.as_deref(), Some("_lastUpdated"));
-        assert!(!q.sort_ascending);
-    }
-
-    #[test]
-    fn sort_asc_with_modifier_asc() {
-        let q = SearchParameterParser::build_search_query(
-            ResourceType::Patient,
-            "_sort:asc=_lastUpdated",
-            10,
-            100,
-        );
-        assert_eq!(q.sort_field.as_deref(), Some("_lastUpdated"));
-        assert!(q.sort_ascending);
-    }
-}
-
-impl SearchParameterParser {
-    /// Validate parameters and build a SearchQuery in one step.
-    pub fn validate_and_build_search_query(
-        resource_type: ResourceType,
-        query: &str,
-        default_count: usize,
-        max_count: usize,
-        allowed_params: &[&str],
-        allowed_sort_fields: &[&str],
-    ) -> Result<SearchQuery, SearchValidationError> {
-        let parsed = Self::parse_query(query);
-        parsed.validate(allowed_params, allowed_sort_fields, max_count)?;
-        Ok(Self::build_search_query(
-            resource_type,
-            query,
-            default_count,
-            max_count,
-        ))
-    }
-}
-
-#[cfg(test)]
-mod tests_validation_and_offset {
-    use super::*;
-    use octofhir_core::ResourceType;
 
     #[test]
     fn parse_offset_defaults_and_valid() {
@@ -789,18 +367,6 @@ mod tests_validation_and_offset {
         assert_eq!(p.parse_offset(0), 15);
         let p = SearchParameterParser::parse_query("_offset=abc");
         assert_eq!(p.parse_offset(7), 7);
-    }
-
-    #[test]
-    fn build_query_applies_offset() {
-        let q = SearchParameterParser::build_search_query(
-            ResourceType::Patient,
-            "_offset=20&_count=5",
-            10,
-            100,
-        );
-        assert_eq!(q.offset, 20);
-        assert_eq!(q.count, 5);
     }
 
     #[test]
@@ -855,5 +421,456 @@ mod tests_validation_and_offset {
         // valid case
         let p = SearchParameterParser::parse_query("_sort=-_id&_count=5");
         assert!(p.validate(&allowed, &allowed_sort, 100).is_ok());
+    }
+}
+
+// ============================================================================
+// Registry-Based Parameter Validation and Filter Building
+// ============================================================================
+
+/// Control parameters that are always allowed (not resource-specific)
+const CONTROL_PARAMS: &[&str] = &[
+    "_count",
+    "_offset",
+    "_sort",
+    "_include",
+    "_revinclude",
+    "_summary",
+    "_elements",
+    "_total",
+    "_contained",
+    "_containedType",
+];
+
+impl ParsedParameters {
+    /// Validate parameters using the search parameter registry.
+    ///
+    /// Checks that each parameter either:
+    /// - Is a control parameter (e.g., _count, _offset, _sort)
+    /// - Exists in the registry for the given resource type
+    pub fn validate_with_registry(
+        &self,
+        resource_type: &str,
+        registry: &SearchParameterRegistry,
+        max_count: usize,
+    ) -> Result<(), SearchValidationError> {
+        // Validate each parameter
+        for p in &self.params {
+            // Allow control parameters
+            if CONTROL_PARAMS.contains(&p.name.as_str()) {
+                continue;
+            }
+
+            // Check if parameter exists in registry for this resource type
+            if registry.get(resource_type, &p.name).is_none() {
+                return Err(SearchValidationError::UnknownParameter(p.name.clone()));
+            }
+        }
+
+        // Validate _count constraints
+        if let Some(p) = self.params.iter().find(|p| p.name == "_count")
+            && let Some(v) = p.values.first()
+        {
+            if let Ok(n) = v.raw.parse::<usize>() {
+                if n == 0 {
+                    return Err(SearchValidationError::InvalidValue {
+                        param: "_count".to_string(),
+                        message: "must be >= 1".to_string(),
+                    });
+                }
+                if n > max_count {
+                    return Err(SearchValidationError::InvalidValue {
+                        param: "_count".to_string(),
+                        message: format!("exceeds maximum of {max_count}"),
+                    });
+                }
+            } else {
+                return Err(SearchValidationError::InvalidValue {
+                    param: "_count".to_string(),
+                    message: "must be a positive integer".to_string(),
+                });
+            }
+        }
+
+        // Validate _offset
+        if let Some(p) = self.params.iter().find(|p| p.name == "_offset")
+            && let Some(v) = p.values.first()
+            && v.raw.parse::<usize>().is_err()
+        {
+            return Err(SearchValidationError::InvalidValue {
+                param: "_offset".to_string(),
+                message: "must be a non-negative integer".to_string(),
+            });
+        }
+
+        Ok(())
+    }
+
+    /// Convert parsed parameters to filters using the registry for type-based conversion.
+    ///
+    /// This method uses the parameter type from the registry to determine how to build
+    /// the appropriate filter:
+    /// - String -> Contains or Exact filter
+    /// - Token -> Token filter
+    /// - Date -> DateRange filter
+    /// - Reference -> Reference filter
+    /// - Number -> Number filter (if supported)
+    /// - Quantity -> Quantity filter (if supported)
+    pub fn to_filters_with_registry(
+        &self,
+        resource_type: &str,
+        registry: &SearchParameterRegistry,
+    ) -> Vec<QueryFilter> {
+        let mut filters = Vec::new();
+
+        for p in &self.params {
+            // Skip control parameters - they don't generate filters
+            if CONTROL_PARAMS.contains(&p.name.as_str()) {
+                continue;
+            }
+
+            // Look up the parameter in the registry
+            let Some(param_def) = registry.get(resource_type, &p.name) else {
+                // Unknown parameter - skip (validation should have caught this)
+                continue;
+            };
+
+            // Extract field name from FHIRPath expression
+            let field = extract_field_name(&param_def);
+
+            // Build filter based on parameter type
+            match param_def.param_type {
+                SearchParameterType::String => {
+                    if let Some(filter) = build_string_filter(&p.name, &field, p) {
+                        filters.push(filter);
+                    }
+                }
+                SearchParameterType::Token => {
+                    if let Some(filter) = build_token_filter(&field, p) {
+                        filters.push(filter);
+                    }
+                }
+                SearchParameterType::Date => {
+                    if let Some(filter) = build_date_filter(&field, p) {
+                        filters.push(filter);
+                    }
+                }
+                SearchParameterType::Reference => {
+                    if let Some(filter) = build_reference_filter(&field, p) {
+                        filters.push(filter);
+                    }
+                }
+                SearchParameterType::Number => {
+                    // TODO: Implement number filter when storage supports it
+                    tracing::debug!(param = %p.name, "number search not yet implemented");
+                }
+                SearchParameterType::Quantity => {
+                    // TODO: Implement quantity filter when storage supports it
+                    tracing::debug!(param = %p.name, "quantity search not yet implemented");
+                }
+                SearchParameterType::Uri => {
+                    if let Some(filter) = build_uri_filter(&field, p) {
+                        filters.push(filter);
+                    }
+                }
+                SearchParameterType::Composite => {
+                    // TODO: Implement composite search
+                    tracing::debug!(param = %p.name, "composite search not yet implemented");
+                }
+                SearchParameterType::Special => {
+                    // Special parameters like _id, _lastUpdated are handled separately
+                    if let Some(filter) = build_special_filter(&p.name, p) {
+                        filters.push(filter);
+                    }
+                }
+            }
+        }
+
+        filters
+    }
+}
+
+/// Extract field name from a SearchParameter's FHIRPath expression.
+///
+/// Examples:
+/// - "Patient.name" -> "name"
+/// - "Patient.identifier" -> "identifier"
+/// - "Patient.birthDate" -> "birthDate"
+fn extract_field_name(param: &SearchParameter) -> String {
+    if let Some(expr) = &param.expression {
+        // Handle simple paths: "Resource.field" -> "field"
+        // Also handle patterns like "Patient.name.family" -> "name"
+        // or "(Patient.name | Practitioner.name)" -> "name"
+        let expr = expr.trim();
+
+        // Handle union expressions: "(A.x | B.x)" - take first part
+        let expr = if expr.starts_with('(') {
+            expr.trim_start_matches('(')
+                .split('|')
+                .next()
+                .unwrap_or(expr)
+                .trim()
+        } else {
+            expr
+        };
+
+        // Handle .where() and .as() modifiers by taking prefix
+        let expr = expr.split(".where(").next().unwrap_or(expr);
+        let expr = expr.split(".as(").next().unwrap_or(expr);
+
+        // Split by '.' and take second part (after resource type)
+        let parts: Vec<&str> = expr.split('.').collect();
+        if parts.len() >= 2 {
+            return parts[1].to_string();
+        }
+    }
+
+    // Fallback to parameter code
+    param.code.clone()
+}
+
+/// Build a string-type filter (Contains or Exact based on modifier).
+fn build_string_filter(_param_name: &str, field: &str, p: &ParsedParam) -> Option<QueryFilter> {
+    let v = p.values.first()?;
+    if v.raw.is_empty() {
+        return None;
+    }
+
+    match p.modifier {
+        Some(SearchModifier::Exact) => Some(QueryFilter::Exact {
+            field: field.to_string(),
+            value: v.raw.clone(),
+        }),
+        _ => Some(QueryFilter::Contains {
+            field: field.to_string(),
+            value: v.raw.clone(),
+        }),
+    }
+}
+
+/// Build a token-type filter (code/system matching).
+fn build_token_filter(field: &str, p: &ParsedParam) -> Option<QueryFilter> {
+    let v = p.values.first()?;
+    if v.raw.is_empty() {
+        return None;
+    }
+
+    // Token format: system|code or just code
+    let (system, code) = if let Some(pos) = v.raw.find('|') {
+        let sys = &v.raw[..pos];
+        let code = &v.raw[pos + 1..];
+        (
+            if sys.is_empty() {
+                None
+            } else {
+                Some(sys.to_string())
+            },
+            code.to_string(),
+        )
+    } else {
+        (None, v.raw.clone())
+    };
+
+    // Handle boolean fields specially
+    if field == "active" || field == "deceased" {
+        let value = code.eq_ignore_ascii_case("true");
+        return Some(QueryFilter::Boolean {
+            field: field.to_string(),
+            value,
+        });
+    }
+
+    // Handle identifier specially
+    if field == "identifier" {
+        return Some(QueryFilter::Identifier {
+            field: field.to_string(),
+            system,
+            value: code,
+        });
+    }
+
+    Some(QueryFilter::Token {
+        field: field.to_string(),
+        system,
+        code,
+    })
+}
+
+/// Build a date-type filter (DateRange with optional prefixes).
+fn build_date_filter(field: &str, p: &ParsedParam) -> Option<QueryFilter> {
+    let mut start: Option<FhirDateTime> = None;
+    let mut end: Option<FhirDateTime> = None;
+
+    for v in &p.values {
+        if v.raw.is_empty() {
+            continue;
+        }
+        if let Ok(dt) = v.raw.parse::<FhirDateTime>() {
+            match v.prefix {
+                Some(SearchPrefix::Ge) | Some(SearchPrefix::Gt) => start = Some(dt),
+                Some(SearchPrefix::Le) | Some(SearchPrefix::Lt) => end = Some(dt),
+                Some(SearchPrefix::Eq) | None => {
+                    start = Some(dt.clone());
+                    end = Some(dt);
+                }
+                _ => { /* unsupported prefixes ignored */ }
+            }
+        }
+    }
+
+    if start.is_some() || end.is_some() {
+        Some(QueryFilter::DateRange {
+            field: field.to_string(),
+            start,
+            end,
+        })
+    } else {
+        None
+    }
+}
+
+/// Build a reference-type filter.
+/// References are stored as strings, so we use Contains filter to match.
+fn build_reference_filter(field: &str, p: &ParsedParam) -> Option<QueryFilter> {
+    let v = p.values.first()?;
+    if v.raw.is_empty() {
+        return None;
+    }
+
+    // Reference can be: Type/id, url, or just id
+    // Use Contains filter to match reference values
+    Some(QueryFilter::Contains {
+        field: field.to_string(),
+        value: v.raw.clone(),
+    })
+}
+
+/// Build a URI-type filter.
+fn build_uri_filter(field: &str, p: &ParsedParam) -> Option<QueryFilter> {
+    let v = p.values.first()?;
+    if v.raw.is_empty() {
+        return None;
+    }
+
+    // URI is treated as exact match
+    Some(QueryFilter::Exact {
+        field: field.to_string(),
+        value: v.raw.clone(),
+    })
+}
+
+/// Build filters for special parameters (_id, _lastUpdated).
+fn build_special_filter(param_name: &str, p: &ParsedParam) -> Option<QueryFilter> {
+    match param_name {
+        "_id" => {
+            let v = p.values.first()?;
+            if v.raw.is_empty() {
+                return None;
+            }
+            Some(QueryFilter::Exact {
+                field: "_id".to_string(),
+                value: v.raw.clone(),
+            })
+        }
+        "_lastUpdated" => {
+            let mut start: Option<FhirDateTime> = None;
+            let mut end: Option<FhirDateTime> = None;
+
+            for v in &p.values {
+                if v.raw.is_empty() {
+                    continue;
+                }
+                if let Ok(dt) = v.raw.parse::<FhirDateTime>() {
+                    match v.prefix {
+                        Some(SearchPrefix::Ge) | Some(SearchPrefix::Gt) => start = Some(dt),
+                        Some(SearchPrefix::Le) | Some(SearchPrefix::Lt) => end = Some(dt),
+                        Some(SearchPrefix::Eq) | None => {
+                            start = Some(dt.clone());
+                            end = Some(dt);
+                        }
+                        _ => {}
+                    }
+                }
+            }
+
+            if start.is_some() || end.is_some() {
+                Some(QueryFilter::DateRange {
+                    field: "_lastUpdated".to_string(),
+                    start,
+                    end,
+                })
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
+impl SearchParameterParser {
+    /// Validate and build a SearchQuery using the registry for dynamic parameter lookup.
+    ///
+    /// This method:
+    /// 1. Parses the query string
+    /// 2. Validates parameters against the registry
+    /// 3. Builds filters based on parameter types from the registry
+    pub fn validate_and_build_with_registry(
+        resource_type: ResourceType,
+        query: &str,
+        default_count: usize,
+        max_count: usize,
+        registry: &SearchParameterRegistry,
+    ) -> Result<SearchQuery, SearchValidationError> {
+        let parsed = Self::parse_query(query);
+        let resource_type_str = resource_type.to_string();
+
+        // Validate parameters using registry
+        parsed.validate_with_registry(&resource_type_str, registry, max_count)?;
+
+        // Build filters using registry
+        let filters = parsed.to_filters_with_registry(&resource_type_str, registry);
+
+        // Build the search query
+        let count = parsed.parse_count(default_count, max_count);
+        let offset = parsed.parse_offset(0);
+        let mut q = SearchQuery::new(resource_type).with_pagination(offset, count);
+
+        for f in filters {
+            q = q.with_filter(f);
+        }
+
+        // Apply sorting if _sort is present
+        if let Some(p) = parsed.params.iter().find(|p| p.name == "_sort")
+            && let Some(v) = p.values.first()
+        {
+            let mut ascending = true;
+            let mut field = v.raw.as_str();
+
+            if let Some(stripped) = field.strip_prefix('-') {
+                ascending = false;
+                field = stripped;
+            }
+
+            if let Some(SearchModifier::Type(m)) = &p.modifier {
+                if m.eq_ignore_ascii_case("desc") {
+                    ascending = false;
+                }
+                if m.eq_ignore_ascii_case("asc") {
+                    ascending = true;
+                }
+            }
+
+            if !field.is_empty() {
+                // Validate sort field exists in registry
+                if registry.get(&resource_type_str, field).is_some()
+                    || field == "_id"
+                    || field == "_lastUpdated"
+                {
+                    q = q.with_sort(field.to_string(), ascending);
+                }
+            }
+        }
+
+        Ok(q)
     }
 }

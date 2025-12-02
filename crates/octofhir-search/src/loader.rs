@@ -135,7 +135,7 @@ pub fn parse_search_parameter(value: &Value) -> Result<SearchParameter, LoaderEr
         .and_then(|v| v.as_str())
         .map(String::from);
 
-    let xpath = value
+    let _xpath = value
         .get("xpath")
         .and_then(|v| v.as_str())
         .map(String::from);
@@ -183,17 +183,29 @@ pub fn parse_search_parameter(value: &Value) -> Result<SearchParameter, LoaderEr
         .unwrap_or("")
         .to_string();
 
-    Ok(SearchParameter {
-        code,
-        url,
-        param_type,
-        expression,
-        xpath,
-        base,
-        target,
-        modifier,
-        description,
-    })
+    // Build using builder pattern to ensure cached_jsonb_path is computed
+    let mut param = SearchParameter::new(code, url, param_type, base);
+
+    if let Some(expr) = expression {
+        param = param.with_expression(expr);
+    }
+
+    if !target.is_empty() {
+        param = param.with_targets(target);
+    }
+
+    if !modifier.is_empty() {
+        param = param.with_modifiers(modifier);
+    }
+
+    if !description.is_empty() {
+        param = param.with_description(description);
+    }
+
+    // Note: xpath is rarely used and we skip it since there's no builder method
+    // If needed, it can be added later via a with_xpath() method
+
+    Ok(param)
 }
 
 #[cfg(test)]

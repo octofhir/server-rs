@@ -17,7 +17,14 @@ write_timeout_ms = 1000
 body_limit_bytes = 1024
 
 [storage]
-backend = "in-memory-papaya"
+backend = "postgres"
+
+[storage.postgres]
+host = "localhost"
+port = 5432
+database = "octofhir"
+username = "test"
+password = "test"
 
 [search]
 default_count = 5
@@ -56,6 +63,13 @@ load = ["hl7.fhir.r4b.core#4.3.0", "hl7.terminology#5.5.0"]
     // 3) Invalid config (default > max) should error
     let invalid_path = dir.path().join("invalid.toml");
     let invalid_toml = r#"
+[storage.postgres]
+host = "localhost"
+port = 5432
+database = "octofhir"
+username = "test"
+password = "test"
+
 [search]
 default_count = 50
 max_count = 10

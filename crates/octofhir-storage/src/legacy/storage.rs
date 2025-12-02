@@ -17,7 +17,11 @@ use octofhir_core::{ResourceEnvelope, ResourceType, Result};
 pub trait Storage: Send + Sync + TransactionManager {
     async fn get(&self, resource_type: &ResourceType, id: &str)
     -> Result<Option<ResourceEnvelope>>;
-    async fn insert(&self, resource_type: &ResourceType, resource: ResourceEnvelope) -> Result<()>;
+    async fn insert(
+        &self,
+        resource_type: &ResourceType,
+        resource: ResourceEnvelope,
+    ) -> Result<ResourceEnvelope>;
     async fn update(
         &self,
         resource_type: &ResourceType,
@@ -46,6 +50,15 @@ pub trait Storage: Send + Sync + TransactionManager {
         id: Option<&str>,
         params: &HistoryParams,
     ) -> Result<HistoryResult>;
+
+    /// Get a specific version of a resource.
+    /// Returns None if the resource or version does not exist.
+    async fn vread(
+        &self,
+        resource_type: &ResourceType,
+        id: &str,
+        version: &str,
+    ) -> Result<Option<ResourceEnvelope>>;
 
     fn transaction_stats(&self) -> TransactionStats {
         self.get_transaction_stats()

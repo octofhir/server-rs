@@ -1,4 +1,5 @@
 use octofhir_auth::config::AuthConfig;
+use octofhir_search::TerminologyConfig;
 use serde::{Deserialize, Serialize};
 use std::{net::SocketAddr, time::Duration};
 
@@ -21,6 +22,9 @@ pub struct AppConfig {
     /// Authentication and authorization configuration
     #[serde(default)]
     pub auth: AuthConfig,
+    /// Terminology service configuration
+    #[serde(default)]
+    pub terminology: TerminologyConfig,
 }
 
 // Default derived via field defaults
@@ -357,8 +361,9 @@ pub struct PackagesConfig {
     ///   When specified as tables, fields: { id = "...", version = "...", path = "..." }
     #[serde(default)]
     pub load: Vec<PackageSpec>,
-    /// Optional directory where loaded packages will be stored.
+    /// Optional directory for package cache (downloads from registry).
     /// If unset, canonical manager defaults are used (~/.fcm/packages).
+    /// Note: Package data is stored in PostgreSQL's 'fcm' schema.
     #[serde(default)]
     pub path: Option<String>,
 }

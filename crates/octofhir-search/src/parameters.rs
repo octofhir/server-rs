@@ -216,6 +216,10 @@ pub struct SearchParameter {
     pub modifier: Vec<SearchModifier>,
     /// Human-readable description
     pub description: String,
+    /// Cached JSONB path segments derived from FHIRPath expression.
+    /// Pre-computed once when parameter is created to avoid repeated parsing.
+    /// Format: segments like ["name", "family"] derived from "Patient.name.family"
+    cached_jsonb_path: Option<Vec<String>>,
 }
 
 impl SearchParameter {
@@ -236,14 +240,98 @@ impl SearchParameter {
             target: Vec::new(),
             modifier: Vec::new(),
             description: String::new(),
+            cached_jsonb_path: None,
         }
     }
 
-    /// Set the FHIRPath expression.
+    /// Set the FHIRPath expression and pre-compute the JSONB path.
     #[must_use]
     pub fn with_expression(mut self, expr: impl Into<String>) -> Self {
-        self.expression = Some(expr.into());
+        let expr_str = expr.into();
+        // Pre-compute JSONB path for efficiency
+        self.cached_jsonb_path = Some(Self::compute_jsonb_path(&expr_str));
+        self.expression = Some(expr_str);
         self
+    }
+
+    /// Compute JSONB path segments from a FHIRPath expression.
+    ///
+    /// Converts expressions like "Patient.name.family" to ["name", "family"].
+    fn compute_jsonb_path(expression: &str) -> Vec<String> {
+        // Remove common resource type prefixes
+        let expr = expression
+            .split('.')
+            .skip(1) // Skip resource type (Patient, Resource, etc.)
+            .collect::<Vec<_>>()
+            .join(".");
+
+        if expr.is_empty() {
+            return Vec::new();
+        }
+
+        // Split by '.' and handle special cases
+        expr.split('.')
+            .filter(|s| !s.is_empty())
+            .map(|s| {
+                // Handle array access like "name[0]"
+                if let Some(base) = s.strip_suffix(']')
+                    && let Some((name, _idx)) = base.split_once('[')
+                {
+                    return name.to_string();
+                }
+                s.to_string()
+            })
+            .collect()
+    }
+
+    /// Get the cached JSONB path, or compute it on-demand if not cached.
+    ///
+    /// For parameters created with `with_expression()`, this returns the pre-computed path.
+    /// For parameters with expression set directly, this computes and returns the path.
+    pub fn jsonb_path(&self) -> Option<Vec<String>> {
+        if let Some(ref cached) = self.cached_jsonb_path {
+            return Some(cached.clone());
+        }
+        self.expression
+            .as_ref()
+            .map(|e| Self::compute_jsonb_path(e))
+    }
+
+    /// Get the cached JSONB path for a specific resource type.
+    ///
+    /// This strips the resource type prefix if it matches, providing the correct
+    /// path segments for the JSONB query.
+    pub fn jsonb_path_for_type(&self, resource_type: &str) -> Option<Vec<String>> {
+        let expr = self.expression.as_ref()?;
+
+        // Check if expression starts with specific resource type
+        let prefixes = [
+            format!("{}.", resource_type),
+            "Resource.".to_string(),
+            "DomainResource.".to_string(),
+        ];
+
+        for prefix in &prefixes {
+            if let Some(stripped) = expr.strip_prefix(prefix) {
+                return Some(
+                    stripped
+                        .split('.')
+                        .filter(|s| !s.is_empty())
+                        .map(|s| {
+                            if let Some(base) = s.strip_suffix(']')
+                                && let Some((name, _idx)) = base.split_once('[')
+                            {
+                                return name.to_string();
+                            }
+                            s.to_string()
+                        })
+                        .collect(),
+                );
+            }
+        }
+
+        // Fallback to cached path
+        self.jsonb_path()
     }
 
     /// Set the description.
@@ -284,5 +372,111 @@ impl SearchParameter {
     /// Get this parameter as an Arc for shared ownership.
     pub fn into_arc(self) -> Arc<Self> {
         Arc::new(self)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_jsonb_path_caching() {
+        let param = SearchParameter::new(
+            "name",
+            "http://hl7.org/fhir/SearchParameter/Patient-name",
+            SearchParameterType::String,
+            vec!["Patient".to_string()],
+        )
+        .with_expression("Patient.name.family");
+
+        // Cached path should be available immediately
+        let path = param.jsonb_path();
+        assert!(path.is_some());
+        assert_eq!(path.unwrap(), vec!["name", "family"]);
+    }
+
+    #[test]
+    fn test_jsonb_path_for_type() {
+        let param = SearchParameter::new(
+            "name",
+            "http://hl7.org/fhir/SearchParameter/Patient-name",
+            SearchParameterType::String,
+            vec!["Patient".to_string()],
+        )
+        .with_expression("Patient.name.family");
+
+        let path = param.jsonb_path_for_type("Patient");
+        assert!(path.is_some());
+        assert_eq!(path.unwrap(), vec!["name", "family"]);
+    }
+
+    #[test]
+    fn test_jsonb_path_resource_common() {
+        let param = SearchParameter::new(
+            "_id",
+            "http://hl7.org/fhir/SearchParameter/Resource-id",
+            SearchParameterType::Token,
+            vec!["Resource".to_string()],
+        )
+        .with_expression("Resource.id");
+
+        let path = param.jsonb_path_for_type("Patient");
+        assert!(path.is_some());
+        assert_eq!(path.unwrap(), vec!["id"]);
+
+        let path = param.jsonb_path_for_type("Observation");
+        assert!(path.is_some());
+        assert_eq!(path.unwrap(), vec!["id"]);
+    }
+
+    #[test]
+    fn test_jsonb_path_with_array_index() {
+        let param = SearchParameter::new(
+            "given",
+            "http://hl7.org/fhir/SearchParameter/Patient-given",
+            SearchParameterType::String,
+            vec!["Patient".to_string()],
+        )
+        .with_expression("Patient.name[0].given");
+
+        let path = param.jsonb_path();
+        assert!(path.is_some());
+        assert_eq!(path.unwrap(), vec!["name", "given"]);
+    }
+
+    #[test]
+    fn test_jsonb_path_no_expression() {
+        let param = SearchParameter::new(
+            "_content",
+            "http://hl7.org/fhir/SearchParameter/Resource-content",
+            SearchParameterType::Special,
+            vec!["Resource".to_string()],
+        );
+
+        let path = param.jsonb_path();
+        assert!(path.is_none());
+    }
+
+    #[test]
+    fn test_modifier_applicable_to() {
+        // String modifiers
+        assert!(SearchModifier::Exact.applicable_to(&SearchParameterType::String));
+        assert!(SearchModifier::Contains.applicable_to(&SearchParameterType::String));
+        assert!(!SearchModifier::Exact.applicable_to(&SearchParameterType::Token));
+
+        // Token modifiers
+        assert!(SearchModifier::In.applicable_to(&SearchParameterType::Token));
+        assert!(SearchModifier::NotIn.applicable_to(&SearchParameterType::Token));
+        assert!(!SearchModifier::In.applicable_to(&SearchParameterType::String));
+
+        // :missing works for all
+        assert!(SearchModifier::Missing.applicable_to(&SearchParameterType::String));
+        assert!(SearchModifier::Missing.applicable_to(&SearchParameterType::Token));
+        assert!(SearchModifier::Missing.applicable_to(&SearchParameterType::Date));
+
+        // :below/:above work for token and uri
+        assert!(SearchModifier::Below.applicable_to(&SearchParameterType::Token));
+        assert!(SearchModifier::Below.applicable_to(&SearchParameterType::Uri));
+        assert!(!SearchModifier::Below.applicable_to(&SearchParameterType::String));
     }
 }

@@ -129,9 +129,11 @@ pub async fn read(
 ) -> Result<Option<StoredResource>, StorageError> {
     let table = SchemaManager::table_name(resource_type);
 
-    // Parse ID as UUID
-    let id_uuid = Uuid::parse_str(id)
-        .map_err(|e| StorageError::invalid_resource(format!("Invalid UUID format: {e}")))?;
+    // Parse ID as UUID - if invalid format, resource doesn't exist
+    let id_uuid = match Uuid::parse_str(id) {
+        Ok(u) => u,
+        Err(_) => return Ok(None), // Invalid ID format means resource not found
+    };
 
     // Query including status to detect deleted resources
     let sql = format!(
@@ -282,9 +284,11 @@ pub async fn update(
 pub async fn delete(pool: &PgPool, resource_type: &str, id: &str) -> Result<(), StorageError> {
     let table = SchemaManager::table_name(resource_type);
 
-    // Parse ID as UUID
-    let id_uuid = Uuid::parse_str(id)
-        .map_err(|e| StorageError::invalid_resource(format!("Invalid UUID format: {e}")))?;
+    // Parse ID as UUID - if invalid format, delete is idempotent (nothing to delete)
+    let id_uuid = match Uuid::parse_str(id) {
+        Ok(u) => u,
+        Err(_) => return Ok(()), // Invalid ID format means nothing to delete
+    };
 
     // Create transaction for the delete operation
     let txid = create_transaction(pool).await?;
@@ -325,9 +329,11 @@ pub async fn vread(
     let table = SchemaManager::table_name(resource_type);
     let history_table = format!("{}_history", table);
 
-    // Parse ID as UUID
-    let id_uuid = Uuid::parse_str(id)
-        .map_err(|e| StorageError::invalid_resource(format!("Invalid UUID format: {e}")))?;
+    // Parse ID as UUID - if invalid format, resource doesn't exist
+    let id_uuid = match Uuid::parse_str(id) {
+        Ok(u) => u,
+        Err(_) => return Ok(None), // Invalid ID format means resource not found
+    };
 
     // Parse version as i64
     let version_id: i64 = version

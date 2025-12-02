@@ -14,13 +14,12 @@ use crate::operations::{DynOperationHandler, OperationRegistry, register_core_op
 use crate::validation::ValidationService;
 
 use crate::{
-    config::AppConfig,
-    handlers, middleware as app_middleware,
+    config::AppConfig, handlers, middleware as app_middleware,
     storage_adapter::PostgresStorageAdapter,
 };
 use octofhir_db_postgres::{PostgresConfig, PostgresStorage};
-use octofhir_storage::legacy::DynStorage;
 use octofhir_search::SearchConfig as EngineSearchConfig;
+use octofhir_storage::legacy::DynStorage;
 
 /// Shared model provider type for FHIRPath evaluation
 pub type SharedModelProvider = Arc<dyn ModelProvider + Send + Sync>;
@@ -155,12 +154,12 @@ async fn bootstrap_conformance_if_postgres(cfg: &AppConfig) -> Result<(), anyhow
 /// Creates PostgreSQL storage.
 ///
 /// Returns (storage, PostgreSQL pool for SQL handler).
-async fn create_storage(
-    cfg: &AppConfig,
-) -> Result<(DynStorage, Arc<sqlx::PgPool>), anyhow::Error> {
-    let pg_cfg = cfg.storage.postgres.as_ref().ok_or_else(|| {
-        anyhow::anyhow!("PostgreSQL config is required")
-    })?;
+async fn create_storage(cfg: &AppConfig) -> Result<(DynStorage, Arc<sqlx::PgPool>), anyhow::Error> {
+    let pg_cfg = cfg
+        .storage
+        .postgres
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("PostgreSQL config is required"))?;
 
     let postgres_config = PostgresConfig::new(pg_cfg.connection_url())
         .with_pool_size(pg_cfg.pool_size)
@@ -235,12 +234,33 @@ pub async fn build_app(cfg: &AppConfig) -> Result<Router, anyhow::Error> {
         tracing::warn!(error = %e, "Failed to bootstrap conformance resources");
     }
 
-    // Build search engine config using counts from AppConfig
-    let search_cfg = EngineSearchConfig {
-        default_count: cfg.search.default_count,
-        max_count: cfg.search.max_count,
-        ..Default::default()
+    // Build search parameter registry from canonical manager (REQUIRED)
+    let search_registry = match crate::canonical::get_manager() {
+        Some(manager) => match crate::canonical::build_search_registry(&manager).await {
+            Ok(registry) => {
+                tracing::info!(
+                    params_loaded = registry.len(),
+                    "Search parameter registry built from canonical manager"
+                );
+                Arc::new(registry)
+            }
+            Err(e) => {
+                return Err(anyhow::anyhow!(
+                    "Failed to build search parameter registry: {}. Server cannot start without search parameters.",
+                    e
+                ));
+            }
+        },
+        None => {
+            return Err(anyhow::anyhow!(
+                "Canonical manager not available. Server cannot start without search parameters."
+            ));
+        }
     };
+
+    // Build search engine config using counts from AppConfig and registry
+    let search_cfg = EngineSearchConfig::new(search_registry)
+        .with_counts(cfg.search.default_count, cfg.search.max_count);
 
     // Initialize FHIRPath engine with schema-aware model provider
     let fhir_version = match cfg.fhir.version.as_str() {

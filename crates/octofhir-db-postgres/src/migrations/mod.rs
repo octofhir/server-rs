@@ -15,10 +15,25 @@ use crate::error::Result;
 ///
 /// Migration 003 creates the gateway notification function.
 /// Triggers are added dynamically by SchemaManager for `app` and `customoperation` tables.
+/// Migration 004 creates the FCM (FHIR Canonical Manager) schema for storing
+/// FHIR packages and resources from Implementation Guides.
 const MIGRATIONS: &[(&str, &str)] = &[
-    ("001_base_schema", include_str!("../../migrations/001_base_schema.sql")),
-    ("002_octofhir_schema", include_str!("../../migrations/002_octofhir_schema.sql")),
-    ("003_gateway_resource_notify", include_str!("../../migrations/003_gateway_resource_notify.sql")),
+    (
+        "001_base_schema",
+        include_str!("../../migrations/001_base_schema.sql"),
+    ),
+    (
+        "002_octofhir_schema",
+        include_str!("../../migrations/002_octofhir_schema.sql"),
+    ),
+    (
+        "003_gateway_resource_notify",
+        include_str!("../../migrations/003_gateway_resource_notify.sql"),
+    ),
+    (
+        "004_fcm_schema",
+        include_str!("../../migrations/004_fcm_schema.sql"),
+    ),
 ];
 
 /// Runs all pending database migrations.
@@ -106,7 +121,7 @@ mod tests {
     #[test]
     fn test_migrations_embedded() {
         // Verify that all migration files are properly embedded
-        assert_eq!(MIGRATIONS.len(), 3);
+        assert_eq!(MIGRATIONS.len(), 4);
 
         for (name, sql) in MIGRATIONS {
             assert!(!name.is_empty(), "Migration name should not be empty");
@@ -126,5 +141,6 @@ mod tests {
         assert_eq!(names[0], "001_base_schema");
         assert_eq!(names[1], "002_octofhir_schema");
         assert_eq!(names[2], "003_gateway_resource_notify");
+        assert_eq!(names[3], "004_fcm_schema");
     }
 }

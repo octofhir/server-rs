@@ -17,7 +17,13 @@ octofhir-storage = { path = "../octofhir-storage" }
 # Canonical manager for loading search parameters from packages
 octofhir-canonical-manager = { workspace = true }
 
+# FHIR model with terminology support
+octofhir-fhir-model = { workspace = true }
+
 # Workspace dependencies
+dashmap = { workspace = true }
+async-trait = { workspace = true }
+tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }

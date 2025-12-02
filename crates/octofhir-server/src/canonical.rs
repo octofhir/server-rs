@@ -1,7 +1,11 @@
 use std::sync::{Arc, OnceLock, RwLock};
 
 use crate::config::{AppConfig, PackageSpec};
+use octofhir_canonical_manager::SearchParameterInfo;
 use octofhir_core::fhir::FhirVersion;
+use octofhir_db_postgres::PostgresPackageStore;
+use octofhir_search::parameters::{SearchParameter, SearchParameterType};
+use octofhir_search::registry::SearchParameterRegistry;
 use std::str::FromStr;
 
 /// Information about a loaded canonical package.
@@ -155,9 +159,34 @@ async fn build_registry_with_manager(cfg: &AppConfig) -> Result<CanonicalRegistr
     preflight_validate_all(&registry_client, &install_specs, desired).await?;
     tracing::info!(packages = %install_specs.iter().map(|(n,v)| format!("{n}@{v}")).collect::<Vec<_>>().join(", "), count = install_specs.len(), "FHIR package preflight passed");
 
-    // Initialize manager
-    let manager = match CanonicalManager::new(fcm_cfg).await {
-        Ok(m) => std::sync::Arc::new(m),
+    // Initialize manager with PostgreSQL storage
+    let pg_cfg = cfg
+        .storage
+        .postgres
+        .as_ref()
+        .ok_or_else(|| "storage.postgres configuration is required".to_string())?;
+
+    // Create PostgreSQL pool for FCM (separate from main storage pool)
+    let pg_pool = create_fcm_postgres_pool(pg_cfg)
+        .await
+        .map_err(|e| format!("failed to create FCM PostgreSQL pool: {e}"))?;
+
+    // Create PostgresPackageStore (implements both PackageStore and SearchStorage)
+    let postgres_store = Arc::new(PostgresPackageStore::new(pg_pool));
+
+    // Create manager with PostgreSQL storage
+    let manager: std::sync::Arc<CanonicalManager> = match CanonicalManager::new_with_components(
+        fcm_cfg,
+        postgres_store.clone(),
+        Arc::new(registry_client),
+        postgres_store,
+    )
+    .await
+    {
+        Ok(m) => {
+            tracing::info!("canonical manager initialized with PostgreSQL storage");
+            std::sync::Arc::new(m)
+        }
         Err(e) => {
             tracing::error!("failed to initialize canonical manager: {}", e);
             return Ok(build_registry(cfg));
@@ -193,8 +222,31 @@ async fn build_registry_with_manager(cfg: &AppConfig) -> Result<CanonicalRegistr
     }
     reg.packages = pkgs_vec;
     reg.manager = Some(manager);
-    tracing::info!(packages_loaded = %reg.packages.len(), "canonical manager initialized with packages");
+    tracing::info!(packages_loaded = %reg.packages.len(), storage = "PostgreSQL", "canonical manager initialized with packages");
     Ok(reg)
+}
+
+/// Creates a PostgreSQL connection pool for FCM storage.
+async fn create_fcm_postgres_pool(
+    pg_cfg: &crate::config::PostgresStorageConfig,
+) -> Result<sqlx::PgPool, String> {
+    use sqlx::postgres::PgPoolOptions;
+    use std::time::Duration;
+
+    let pool = PgPoolOptions::new()
+        .max_connections(pg_cfg.pool_size)
+        .acquire_timeout(Duration::from_millis(pg_cfg.connect_timeout_ms))
+        .idle_timeout(pg_cfg.idle_timeout_ms.map(Duration::from_millis))
+        .connect(&pg_cfg.connection_url())
+        .await
+        .map_err(|e| format!("failed to connect to PostgreSQL for FCM: {e}"))?;
+
+    // Run FCM migrations
+    octofhir_db_postgres::migrations::run(&pool)
+        .await
+        .map_err(|e| format!("failed to run FCM migrations: {e}"))?;
+
+    Ok(pool)
 }
 
 fn normalize_spec(spec: &PackageSpec) -> Result<LoadedPackage, String> {
@@ -312,4 +364,91 @@ fn default_core_for(v: FhirVersion) -> (String, String) {
         FhirVersion::R5 => ("hl7.fhir.r5.core".to_string(), "5.0.0".to_string()),
         FhirVersion::R6 => ("hl7.fhir.r6.core".to_string(), "6.0.0".to_string()),
     }
+}
+
+// ============================================================================
+// Search Parameter Registry Building
+// ============================================================================
+
+/// Convert a SearchParameterInfo from canonical manager to SearchParameter for search engine.
+fn convert_to_search_param(info: &SearchParameterInfo) -> Option<SearchParameter> {
+    let param_type = SearchParameterType::parse(&info.type_field)?;
+    let mut sp = SearchParameter::new(
+        &info.code,
+        info.url.as_deref().unwrap_or(""),
+        param_type,
+        info.base.clone(),
+    );
+    if let Some(expr) = &info.expression {
+        sp = sp.with_expression(expr);
+    }
+    if let Some(desc) = &info.description {
+        sp = sp.with_description(desc);
+    }
+    Some(sp)
+}
+
+/// Build a SearchParameterRegistry by loading ALL SearchParameter resources from the canonical manager.
+///
+/// This function queries all SearchParameter resources from the canonical manager and registers
+/// them in the search registry. The registry can then be used for validating and executing
+/// FHIR search queries.
+///
+/// # Errors
+/// Returns an error if:
+/// - The canonical manager is unavailable
+/// - No search parameters could be loaded
+pub async fn build_search_registry(
+    manager: &octofhir_canonical_manager::CanonicalManager,
+) -> Result<SearchParameterRegistry, String> {
+    let mut registry = SearchParameterRegistry::new();
+
+    // Query ALL SearchParameter resources from canonical manager
+    // The search method allows filtering by resource type
+    let search_results = manager
+        .search()
+        .await
+        .resource_type("SearchParameter")
+        .limit(10000) // Ensure we get all search parameters
+        .execute()
+        .await
+        .map_err(|e| format!("failed to query SearchParameter resources: {e}"))?;
+
+    let mut loaded_count = 0;
+    let mut skipped_count = 0;
+
+    for resource_match in &search_results.resources {
+        match SearchParameterInfo::from_resource(&resource_match.resource) {
+            Ok(info) => {
+                if let Some(sp) = convert_to_search_param(&info) {
+                    registry.register(sp);
+                    loaded_count += 1;
+                } else {
+                    skipped_count += 1;
+                    tracing::debug!(
+                        code = %info.code,
+                        type_field = %info.type_field,
+                        "skipping SearchParameter with unknown type"
+                    );
+                }
+            }
+            Err(e) => {
+                skipped_count += 1;
+                tracing::debug!(error = %e, "failed to parse SearchParameter resource");
+            }
+        }
+    }
+
+    if registry.is_empty() {
+        return Err("no search parameters loaded from canonical manager".to_string());
+    }
+
+    tracing::info!(
+        loaded = loaded_count,
+        skipped = skipped_count,
+        total_in_registry = registry.len(),
+        "search parameter registry built from canonical manager"
+    );
+
+    Ok(registry)
 }

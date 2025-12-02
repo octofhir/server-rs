@@ -2,10 +2,10 @@
 //!
 //! This module provides CRUD handlers for managing users and their external identities.
 
+use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
-use axum::Json;
 use octofhir_api::ApiError;
 use octofhir_auth_postgres::{IdentityProviderStorage, UserStorage};
 use time::OffsetDateTime;
@@ -167,9 +167,7 @@ pub async fn create_user(
         .map_err(|e| ApiError::internal(e.to_string()))?
         .is_some()
     {
-        return Err(ApiError::conflict(
-            "User with this username already exists",
-        ));
+        return Err(ApiError::conflict("User with this username already exists"));
     }
 
     // Check for duplicate email (if provided)
@@ -241,9 +239,7 @@ pub async fn update_user(
             .map_err(|e| ApiError::internal(e.to_string()))?
             .is_some()
     {
-        return Err(ApiError::conflict(
-            "User with this username already exists",
-        ));
+        return Err(ApiError::conflict("User with this username already exists"));
     }
 
     // Check for duplicate email (if changed)

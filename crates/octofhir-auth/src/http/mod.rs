@@ -25,7 +25,10 @@ pub mod launch;
 pub mod revoke;
 pub mod userinfo;
 
-pub use admin::{Bundle, BundleEntry, IdpSearchParams, LinkIdentityRequest, UnlinkIdentityRequest, UserSearchParams};
+pub use admin::{
+    Bundle, BundleEntry, IdpSearchParams, LinkIdentityRequest, UnlinkIdentityRequest,
+    UserSearchParams,
+};
 pub use discovery::{SmartConfigState, smart_configuration_handler};
 pub use introspect::introspect_handler;
 pub use jwks::{JwksState, jwks_handler};

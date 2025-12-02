@@ -8,6 +8,7 @@ pub mod parser;
 pub mod registry;
 pub mod reverse_chaining;
 pub mod sql_builder;
+pub mod terminology;
 pub mod types;
 
 pub use common::register_common_parameters;
@@ -41,3 +42,4 @@ pub use reverse_chaining::{
     ReverseChainParameter, ReverseChainingError, build_reverse_chain_search,
     is_reverse_chain_parameter, parse_reverse_chain,
 };
+pub use terminology::{CacheStats, HybridTerminologyProvider, TerminologyConfig, TerminologyError};

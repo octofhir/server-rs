@@ -49,18 +49,22 @@ mod config;
 mod conformance;
 mod db_sync;
 mod error;
+mod fcm_storage;
 mod hot_reload;
-mod migrations;
 mod pool;
 mod queries;
 mod schema;
 mod storage;
+
+/// Database migrations module.
+pub mod migrations;
 
 // Re-export main types
 pub use config::PostgresConfig;
 pub use conformance::PostgresConformanceStorage;
 pub use db_sync::{ConformanceBundle, SyncStats, load_to_memory, sync_and_load, sync_to_directory};
 pub use error::{PostgresError, Result};
+pub use fcm_storage::PostgresPackageStore;
 pub use hot_reload::{HotReloadBuilder, HotReloadListener};
 pub use storage::PostgresStorage;
 
@@ -98,6 +102,7 @@ pub mod prelude {
         ConformanceBundle, SyncStats, load_to_memory, sync_and_load, sync_to_directory,
     };
     pub use crate::error::{PostgresError, Result};
+    pub use crate::fcm_storage::PostgresPackageStore;
     pub use crate::hot_reload::{HotReloadBuilder, HotReloadListener};
     pub use crate::storage::PostgresStorage;
     pub use crate::{DynPostgresStorage, create_storage};

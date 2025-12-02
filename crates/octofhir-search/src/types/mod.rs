@@ -34,7 +34,8 @@ pub use special::{
 };
 pub use string::{build_array_string_search, build_human_name_search, build_string_search};
 pub use token::{
-    build_code_search, build_identifier_search, build_token_search, parse_token_value,
+    build_code_search, build_identifier_search, build_token_search,
+    build_token_search_with_terminology, parse_token_value,
 };
 pub use uri::{build_uri_array_search, build_uri_search};
 

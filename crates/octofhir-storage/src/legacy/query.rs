@@ -300,7 +300,106 @@ impl QueryFilter {
         system: Option<&String>,
         code: &str,
     ) -> bool {
-        self.match_identifier(resource, field, system, code)
+        if let Some(field_value) = resource.get_field(field) {
+            match field_value {
+                // Simple string value (e.g., gender: "male")
+                Value::String(s) => s.eq_ignore_ascii_case(code),
+                // CodeableConcept or Coding structure
+                Value::Object(obj) => {
+                    // Check if it's a Coding (has system/code)
+                    if let Some(Value::String(c)) = obj.get("code") {
+                        let code_matches = c.eq_ignore_ascii_case(code);
+                        let system_matches = if let Some(sys) = system {
+                            obj.get("system")
+                                .and_then(|v| v.as_str())
+                                .is_some_and(|s| s == sys)
+                        } else {
+                            true
+                        };
+                        return system_matches && code_matches;
+                    }
+                    // Check if it's a CodeableConcept (has coding array)
+                    if let Some(Value::Array(codings)) = obj.get("coding") {
+                        return codings.iter().any(|coding| {
+                            if let Value::Object(c) = coding {
+                                let code_matches = c
+                                    .get("code")
+                                    .and_then(|v| v.as_str())
+                                    .is_some_and(|s| s.eq_ignore_ascii_case(code));
+                                let system_matches = if let Some(sys) = system {
+                                    c.get("system")
+                                        .and_then(|v| v.as_str())
+                                        .is_some_and(|s| s == sys)
+                                } else {
+                                    true
+                                };
+                                system_matches && code_matches
+                            } else {
+                                false
+                            }
+                        });
+                    }
+                    false
+                }
+                // Array of tokens
+                Value::Array(arr) => arr.iter().any(|item| match item {
+                    Value::String(s) => s.eq_ignore_ascii_case(code),
+                    Value::Object(_) => {
+                        let temp_filter = QueryFilter::Token {
+                            field: String::new(),
+                            system: system.cloned(),
+                            code: code.to_string(),
+                        };
+                        temp_filter.match_token_value(item, system, code)
+                    }
+                    _ => false,
+                }),
+                _ => false,
+            }
+        } else {
+            false
+        }
+    }
+
+    fn match_token_value(&self, value: &Value, system: Option<&String>, code: &str) -> bool {
+        match value {
+            Value::String(s) => s.eq_ignore_ascii_case(code),
+            Value::Object(obj) => {
+                if let Some(Value::String(c)) = obj.get("code") {
+                    let code_matches = c.eq_ignore_ascii_case(code);
+                    let system_matches = if let Some(sys) = system {
+                        obj.get("system")
+                            .and_then(|v| v.as_str())
+                            .is_some_and(|s| s == sys)
+                    } else {
+                        true
+                    };
+                    return system_matches && code_matches;
+                }
+                if let Some(Value::Array(codings)) = obj.get("coding") {
+                    return codings.iter().any(|coding| {
+                        if let Value::Object(c) = coding {
+                            let code_matches = c
+                                .get("code")
+                                .and_then(|v| v.as_str())
+                                .is_some_and(|s| s.eq_ignore_ascii_case(code));
+                            let system_matches = if let Some(sys) = system {
+                                c.get("system")
+                                    .and_then(|v| v.as_str())
+                                    .is_some_and(|s| s == sys)
+                            } else {
+                                true
+                            };
+                            system_matches && code_matches
+                        } else {
+                            false
+                        }
+                    });
+                }
+                false
+            }
+            _ => false,
+        }
     }
 
     fn match_prefix(&self, resource: &ResourceEnvelope, field: &str, value: &str) -> bool {

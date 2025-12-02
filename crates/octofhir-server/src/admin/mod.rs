@@ -36,9 +36,9 @@ pub use user::{
     create_user, delete_user, link_identity, read_user, search_users, unlink_identity, update_user,
 };
 
+use axum::Router;
 use axum::extract::FromRef;
 use axum::routing::{get, post};
-use axum::Router;
 
 use octofhir_auth::middleware::AuthState;
 

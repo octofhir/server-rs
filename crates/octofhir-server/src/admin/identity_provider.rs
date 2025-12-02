@@ -2,10 +2,10 @@
 //!
 //! This module provides CRUD handlers for managing identity providers.
 
+use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
-use axum::Json;
 use octofhir_api::ApiError;
 use octofhir_auth_postgres::{IdentityProviderStorage, UserStorage};
 use uuid::Uuid;

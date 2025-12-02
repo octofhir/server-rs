@@ -454,17 +454,18 @@ pub async fn create_resource(
             Err(ApiError::bad_request(err))
         }
         Ok(env) => {
-            let id = env.id.clone();
-            let version_id = env
-                .meta
-                .version_id
-                .clone()
-                .unwrap_or_else(|| "1".to_string());
-            let last_updated = env.meta.last_updated.clone();
             let rt = env.resource_type.clone();
-            let body = json_from_envelope(&env);
             match state.storage.insert(&rt, env).await {
-                Ok(()) => {
+                Ok(stored_env) => {
+                    // Use the stored envelope which has the actual version from database
+                    let id = stored_env.id.clone();
+                    let version_id = stored_env
+                        .meta
+                        .version_id
+                        .clone()
+                        .unwrap_or_else(|| "1".to_string());
+                    let last_updated = stored_env.meta.last_updated.clone();
+                    let body = json_from_envelope(&stored_env);
                     let mut response_headers = HeaderMap::new();
 
                     // Location header
@@ -677,24 +678,18 @@ pub async fn vread_resource(
             )));
         }
     };
-    match state.storage.get(&rt, &id).await {
-        Ok(Some(env)) => {
-            // Get current version_id (default to "1" if not set)
-            let current_version = env.meta.version_id.as_deref().unwrap_or("1");
 
-            // Check if requested version matches current version
-            // Note: In-memory storage doesn't support historical versions yet
-            if current_version != version_id {
-                return Err(ApiError::not_found(format!(
-                    "{resource_type}/{id}/_history/{version_id} not found"
-                )));
-            }
+    // Use vread to get the specific version from storage (including history)
+    match state.storage.vread(&rt, &id, &version_id).await {
+        Ok(Some(env)) => {
+            // Get version_id for ETag
+            let version = env.meta.version_id.as_deref().unwrap_or(&version_id);
 
             // Build response headers
             let mut response_headers = HeaderMap::new();
 
             // ETag: W/"version_id"
-            let etag = format!("W/\"{}\"", current_version);
+            let etag = format!("W/\"{}\"", version);
             if let Ok(val) = header::HeaderValue::from_str(&etag) {
                 response_headers.insert(header::ETAG, val);
             }
@@ -1000,15 +995,16 @@ pub async fn update_resource(
                 },
             ) {
                 Err(err) => Err(ApiError::bad_request(err)),
-                Ok(env) => match state.storage.update(&rt, &id, env.clone()).await {
-                    Ok(_) => {
-                        let version_id = env
+                Ok(env) => match state.storage.update(&rt, &id, env).await {
+                    Ok(stored_env) => {
+                        // Use the stored envelope which has the actual version from database
+                        let version_id = stored_env
                             .meta
                             .version_id
                             .clone()
                             .unwrap_or_else(|| "1".to_string());
-                        let last_updated = env.meta.last_updated.clone();
-                        let body = json_from_envelope(&env);
+                        let last_updated = stored_env.meta.last_updated.clone();
+                        let body = json_from_envelope(&stored_env);
 
                         let mut response_headers = HeaderMap::new();
 
@@ -1076,15 +1072,15 @@ pub async fn update_resource(
                 },
             ) {
                 Err(err) => Err(ApiError::bad_request(err)),
-                Ok(env) => match state.storage.insert(&rt, env.clone()).await {
-                    Ok(()) => {
-                        let version_id = env
+                Ok(env) => match state.storage.insert(&rt, env).await {
+                    Ok(stored_env) => {
+                        let version_id = stored_env
                             .meta
                             .version_id
                             .clone()
                             .unwrap_or_else(|| "1".to_string());
-                        let last_updated = env.meta.last_updated.clone();
-                        let body = json_from_envelope(&env);
+                        let last_updated = stored_env.meta.last_updated.clone();
+                        let body = json_from_envelope(&stored_env);
 
                         let mut response_headers = HeaderMap::new();
 
@@ -1223,17 +1219,16 @@ pub async fn conditional_update_resource(
                 match envelope_from_json(&resource_type, &payload, IdPolicy::Create) {
                     Err(err) => Err(ApiError::bad_request(err)),
                     Ok(env) => {
-                        let id = env.id.clone();
-                        let version_id = env
-                            .meta
-                            .version_id
-                            .clone()
-                            .unwrap_or_else(|| "1".to_string());
-                        let last_updated = env.meta.last_updated.clone();
-                        let body = json_from_envelope(&env);
-
                         match state.storage.insert(&rt, env).await {
-                            Ok(()) => {
+                            Ok(stored_env) => {
+                                let id = stored_env.id.clone();
+                                let version_id = stored_env
+                                    .meta
+                                    .version_id
+                                    .clone()
+                                    .unwrap_or_else(|| "1".to_string());
+                                let last_updated = stored_env.meta.last_updated.clone();
+                                let body = json_from_envelope(&stored_env);
                                 let mut response_headers = HeaderMap::new();
 
                                 // Location header
@@ -1917,6 +1912,7 @@ pub async fn search_resource(
                 &result.resources,
                 &resource_type,
                 &params,
+                &state.search_cfg,
             )
             .await;
 
@@ -1993,6 +1989,7 @@ pub async fn search_resource_post(
                 &result.resources,
                 &resource_type,
                 &params,
+                &state.search_cfg,
             )
             .await;
 
@@ -2140,6 +2137,7 @@ async fn resolve_includes_for_search(
     resources: &[octofhir_core::ResourceEnvelope],
     resource_type: &str,
     params: &HashMap<String, String>,
+    search_cfg: &octofhir_search::SearchConfig,
 ) -> Vec<octofhir_api::IncludedResourceEntry> {
     let mut included = Vec::new();
     let mut included_keys: std::collections::HashSet<(String, String)> =
@@ -2210,18 +2208,12 @@ async fn resolve_includes_for_search(
                         let ref_value = format!("{}/{}", resource_type, res.id);
                         let search_query = format!("{}={}", param_name, ref_value);
 
-                        // Execute search for referencing resources
-                        let cfg = octofhir_search::SearchConfig {
-                            default_count: 100,
-                            max_count: 100,
-                            ..Default::default()
-                        };
-
+                        // Execute search for referencing resources using provided config
                         if let Ok(result) = octofhir_search::SearchEngine::execute(
                             storage,
                             source_rt.clone(),
                             &search_query,
-                            &cfg,
+                            search_cfg,
                         )
                         .await
                         {
