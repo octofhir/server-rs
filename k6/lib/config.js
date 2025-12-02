@@ -12,6 +12,8 @@ export const config = {
 export const fhirHeaders = {
   "Content-Type": "application/fhir+json",
   Accept: "application/fhir+json",
+  // Skip validation for performance testing
+  "X-Skip-Validation": "true",
 };
 
 // Get headers with optional auth
@@ -25,6 +27,7 @@ export function getHeaders() {
 
 // Common request parameters
 export const httpParams = {
+  headers: fhirHeaders,
   timeout: config.timeout,
 };
 

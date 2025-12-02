@@ -15,6 +15,30 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+    networks:
+      - octofhir-network
+
+  # Redis cache for horizontal scaling (non-default port for local dev)
+  redis:
+    image: redis:7-alpine
+    container_name: octofhir-redis
+    command: redis-server --port 6380
+    ports:
+      - "6380:6380"
+    volumes:
+      - octofhir_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-p", "6380", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - octofhir-network
 
 volumes:
   octofhir_postgres_data:
+  octofhir_redis_data:
+
+networks:
+  octofhir-network:
+    driver: bridge

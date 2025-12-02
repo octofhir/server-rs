@@ -83,6 +83,12 @@ sqlx-postgres = { version = "0.8.6", default-features = false, features = [
 ] }
 chrono = { version = "0.4", features = ["serde"] }
 
+# Redis caching (optional, for horizontal scaling)
+deadpool-redis = "0.18"
+redis = { version = "0.27", features = ["tokio-comp", "connection-manager"] }
+rmp-serde = "1.3"  # MessagePack for efficient serialization
+dashmap = "6.1"  # Concurrent HashMap for L1 cache
+
 [dev-dependencies]
 tokio-test = { workspace = true }
 tempfile = { workspace = true }
@@ -90,5 +96,5 @@ wiremock = { workspace = true }
 reqwest = { version = "0.12", features = ["json"] }
 filetime = { workspace = true }
 testcontainers = "0.25"
-testcontainers-modules = { version = "0.13", features = ["postgres"] }
+testcontainers-modules = { version = "0.13", features = ["postgres", "redis"] }
 

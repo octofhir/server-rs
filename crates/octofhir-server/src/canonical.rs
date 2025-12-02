@@ -301,12 +301,15 @@ async fn preflight_validate_all(
             .map_err(|e| format!("failed to fetch package metadata for {key}: {e}"))?;
         let pkg_ver = map_metadata_version(&meta.fhir_version);
         if pkg_ver != desired {
-            return Err(format!(
-                "package {} targets FHIR {} but server configured for {}",
-                key,
+            // Use improved error formatting for better user experience
+            let error_msg = format_version_mismatch_error(
+                &name,
+                &version,
                 display_fhir(pkg_ver),
-                display_fhir(desired)
-            ));
+                display_fhir(desired),
+                roots,
+            );
+            return Err(error_msg);
         }
         for (dep_name, dep_version) in meta.dependencies {
             queue.push_back((dep_name, dep_version));
@@ -346,6 +349,76 @@ fn map_metadata_version(s: &str) -> FhirVersion {
     } else {
         FhirVersion::R4
     }
+}
+
+/// Get the FHIR registry URL for a package.
+fn get_package_registry_url(package_id: &str) -> String {
+    format!("https://registry.fhir.org/package/{}", package_id)
+}
+
+/// Format a user-friendly error message for FHIR version mismatches.
+///
+/// This function creates a detailed error message that:
+/// - Clearly states the problem
+/// - Shows which package is affected
+/// - Provides actionable remediation steps
+/// - Lists all configured packages for context
+fn format_version_mismatch_error(
+    package_id: &str,
+    package_version: &str,
+    package_fhir_version: &str,
+    server_fhir_version: &str,
+    all_packages: &[(String, String)],
+) -> String {
+    let registry_url = get_package_registry_url(package_id);
+    let packages_list = all_packages
+        .iter()
+        .map(|(name, ver)| format!("  - {}@{}", name, ver))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    format!(
+        r#"
+========================================================================
+FHIR VERSION MISMATCH DETECTED
+========================================================================
+
+Package: {}@{}
+Package FHIR Version: {}
+Server FHIR Version: {}
+
+All packages must target the same FHIR version as the server.
+
+To fix this issue:
+
+Option 1: Change server configuration to use FHIR {}
+  - Update your config file:
+    [fhir]
+    version = "{}"
+
+Option 2: Use a {}-compatible version of {}
+  - Check {} for available versions
+  - Update your config file to use a compatible version
+
+Currently configured packages:
+{}
+
+For more information about FHIR package versions, see:
+https://confluence.hl7.org/display/FHIR/NPM+Package+Specification
+
+========================================================================
+"#,
+        package_id,
+        package_version,
+        package_fhir_version,
+        server_fhir_version,
+        package_fhir_version,
+        package_fhir_version,
+        server_fhir_version,
+        package_id,
+        registry_url,
+        packages_list
+    )
 }
 
 fn display_fhir(v: FhirVersion) -> &'static str {

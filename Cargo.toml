@@ -28,7 +28,7 @@ octofhir-auth-postgres = { path = "crates/octofhir-auth-postgres" }
 octofhir-core = { path = "crates/octofhir-core" }
 octofhir-sof = { path = "crates/octofhir-sof" }
 octofhir-storage = { path = "crates/octofhir-storage" }
-octofhir-canonical-manager = { path = "../canonical-manager" }
+octofhir-canonical-manager = { version = "0.1.16"}
 octofhir-fhir-model = { version = "0.1.6", features = ["http-client"] }
 
 # Test utilities

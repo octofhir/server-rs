@@ -16,6 +16,21 @@ use serde::Serialize;
 use serde_json::{Value, json};
 use std::collections::HashMap;
 
+/// Check if validation should be skipped based on X-Skip-Validation header and config
+fn should_skip_validation(headers: &HeaderMap, config: &crate::config::ValidationSettings) -> bool {
+    // Feature must be enabled in config
+    if !config.allow_skip_validation {
+        return false;
+    }
+
+    // Check if X-Skip-Validation header is present and set to "true"
+    headers
+        .get("X-Skip-Validation")
+        .and_then(|h| h.to_str().ok())
+        .map(|v| v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+}
+
 #[derive(Serialize)]
 pub struct HealthResponse<'a> {
     status: &'a str,
@@ -355,12 +370,22 @@ pub async fn create_resource(
     }
 
     // Full schema + FHIRPath constraint validation using ValidationService
-    let validation_outcome = state.validation_service.validate(&payload).await;
-    if !validation_outcome.valid {
-        return Err(ApiError::UnprocessableEntity {
-            message: "Resource validation failed".to_string(),
-            operation_outcome: Some(validation_outcome.to_operation_outcome()),
-        });
+    let skip_validation = should_skip_validation(&headers, &state.config.validation);
+
+    if !skip_validation {
+        let validation_outcome = state.validation_service.validate(&payload).await;
+        if !validation_outcome.valid {
+            return Err(ApiError::UnprocessableEntity {
+                message: "Resource validation failed".to_string(),
+                operation_outcome: Some(validation_outcome.to_operation_outcome()),
+            });
+        }
+    } else {
+        tracing::warn!(
+            resource_type = %resource_type,
+            operation = "create",
+            "Validation skipped via X-Skip-Validation header"
+        );
     }
 
     // Handle conditional create (If-None-Exist)
@@ -494,6 +519,14 @@ pub async fn create_resource(
                         header::CONTENT_TYPE,
                         header::HeaderValue::from_static("application/fhir+json; charset=utf-8"),
                     );
+
+                    // X-Validation-Skipped header if validation was skipped
+                    if skip_validation {
+                        response_headers.insert(
+                            "X-Validation-Skipped",
+                            header::HeaderValue::from_static("true"),
+                        );
+                    }
 
                     // Handle Prefer return preference
                     match prefer_return {
@@ -1002,12 +1035,23 @@ pub async fn update_resource(
     }
 
     // Full schema + FHIRPath constraint validation using ValidationService
-    let validation_outcome = state.validation_service.validate(&payload).await;
-    if !validation_outcome.valid {
-        return Err(ApiError::UnprocessableEntity {
-            message: "Resource validation failed".to_string(),
-            operation_outcome: Some(validation_outcome.to_operation_outcome()),
-        });
+    let skip_validation = should_skip_validation(&headers, &state.config.validation);
+
+    if !skip_validation {
+        let validation_outcome = state.validation_service.validate(&payload).await;
+        if !validation_outcome.valid {
+            return Err(ApiError::UnprocessableEntity {
+                message: "Resource validation failed".to_string(),
+                operation_outcome: Some(validation_outcome.to_operation_outcome()),
+            });
+        }
+    } else {
+        tracing::warn!(
+            resource_type = %resource_type,
+            id = %id,
+            operation = "update",
+            "Validation skipped via X-Skip-Validation header"
+        );
     }
 
     let rt = match resource_type.parse::<ResourceType>() {
@@ -1091,6 +1135,14 @@ pub async fn update_resource(
                                 "application/fhir+json; charset=utf-8",
                             ),
                         );
+
+                        // X-Validation-Skipped header if validation was skipped
+                        if skip_validation {
+                            response_headers.insert(
+                                "X-Validation-Skipped",
+                                header::HeaderValue::from_static("true"),
+                            );
+                        }
 
                         // Handle Prefer return preference
                         match prefer_return {

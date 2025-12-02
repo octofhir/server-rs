@@ -26,24 +26,54 @@ Performance and functional tests for the OctoFHIR FHIR server using [k6](https:/
 
 ```
 k6/
-├── README.md           # This file
+├── README.md                      # This file
 ├── data/
-│   └── patients.js     # Test data (valid/invalid Patient resources)
+│   └── patients.js                # Test data (valid/invalid Patient resources)
 ├── lib/
-│   ├── config.js       # Configuration and test scenarios
-│   └── fhir.js         # FHIR utility functions
+│   ├── config.js                  # Configuration and test scenarios
+│   ├── fhir.js                    # FHIR utility functions
+│   ├── fixtures.js                # Resource fixtures for all types
+│   └── utils.js                   # General utility functions
 ├── tests/
-│   ├── patient-crud.js        # CRUD functional tests
-│   ├── patient-validation.js  # Validation/negative tests
-│   └── patient-performance.js # Performance/load tests
-└── results/            # Test results output (created on run)
+│   ├── crud-operations.js         # Comprehensive CRUD for all resource types
+│   ├── search-performance.js      # Search performance tests
+│   ├── patient-crud.js            # Patient-specific CRUD tests
+│   ├── patient-validation.js      # Validation/negative tests
+│   └── patient-performance.js     # Legacy performance tests
+├── scenarios/
+│   └── stress-test.js             # Stress testing with load ramping
+└── results/                       # Test results output (created on run)
 ```
 
 ## Running Tests
 
-### Functional CRUD Tests
+### Comprehensive CRUD Operations
 
-Test all Patient CRUD operations with valid data:
+Test CRUD operations across all resource types:
+
+```bash
+k6 run k6/tests/crud-operations.js
+```
+
+### Search Performance Tests
+
+Test simple, complex, and chained searches:
+
+```bash
+k6 run k6/tests/search-performance.js
+```
+
+### Stress Testing
+
+Run stress tests with gradual load increase:
+
+```bash
+k6 run k6/scenarios/stress-test.js
+```
+
+### Patient-Specific Tests
+
+Test Patient CRUD operations:
 
 ```bash
 k6 run k6/tests/patient-crud.js

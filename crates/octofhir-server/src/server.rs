@@ -51,6 +51,8 @@ pub struct AppState {
     pub compartment_registry: Arc<crate::compartments::CompartmentRegistry>,
     /// Async job manager for FHIR asynchronous request pattern
     pub async_job_manager: Arc<crate::async_jobs::AsyncJobManager>,
+    /// Application configuration for runtime access
+    pub config: Arc<AppConfig>,
 }
 
 pub struct OctofhirServer {
@@ -489,6 +491,7 @@ pub async fn build_app(cfg: &AppConfig) -> Result<Router, anyhow::Error> {
         handler_registry,
         compartment_registry,
         async_job_manager,
+        config: Arc::new(cfg.clone()),
     };
 
     Ok(build_router(state, body_limit))
@@ -536,19 +539,7 @@ fn build_router(state: AppState, body_limit: usize) -> Router {
             axum::routing::post(handlers::search_resource_post),
         )
         // Compartment search routes (must come before instance-level routes)
-        // GET /Patient/123/* - all resources in Patient/123 compartment
-        .route("/Patient/{id}/*", get(handlers::compartment_search_all))
-        .route("/Encounter/{id}/*", get(handlers::compartment_search_all))
-        .route(
-            "/Practitioner/{id}/*",
-            get(handlers::compartment_search_all),
-        )
-        .route(
-            "/RelatedPerson/{id}/*",
-            get(handlers::compartment_search_all),
-        )
-        .route("/Device/{id}/*", get(handlers::compartment_search_all))
-        // GET /Patient/123/Observation - resources in compartment
+        // GET /Patient/123/Observation - resources in compartment (specific routes first)
         .route(
             "/Patient/{id}/{resource_type}",
             get(handlers::compartment_search),

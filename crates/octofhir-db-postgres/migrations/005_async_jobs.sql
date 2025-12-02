@@ -55,8 +55,8 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
--- Trigger to auto-update updated_at on row modification
-CREATE TRIGGER trigger_async_jobs_updated_at
+-- Trigger to auto-update updated_at on row modification (PostgreSQL 14+)
+CREATE OR REPLACE TRIGGER trigger_async_jobs_updated_at
     BEFORE UPDATE ON async_jobs
     FOR EACH ROW
     EXECUTE FUNCTION update_async_jobs_updated_at();

@@ -38,6 +38,11 @@ idle_timeout_ms = 60000
 # Supported: R4 (default), R4B, R5, R6
 version = "R4"
 
+[validation]
+# Allow clients to skip validation via X-Skip-Validation header
+# Useful for bulk imports, testing, or high-performance scenarios
+allow_skip_validation = true
+
 [search]
 # Default and max page sizes
 default_count = 10
@@ -160,3 +165,23 @@ log_successful_auth = true
 log_failed_auth = true
 log_access_decisions = true
 log_token_operations = true
+
+# =============================================================================
+# Redis Cache Configuration (for horizontal scaling)
+# =============================================================================
+
+[redis]
+# Enable Redis caching (set to true for multi-instance deployments)
+enabled = false
+# Redis connection URL (matches docker-compose.yml configuration)
+url = "redis://localhost:6380"
+# Connection pool size
+pool_size = 10
+# Connection timeout in milliseconds
+timeout_ms = 5000
+
+[cache]
+# Terminology cache TTL in seconds (1 hour)
+terminology_ttl_secs = 3600
+# Local (L1) cache max entries
+local_cache_max_entries = 10000

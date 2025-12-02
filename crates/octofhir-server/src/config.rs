@@ -25,6 +25,15 @@ pub struct AppConfig {
     /// Terminology service configuration
     #[serde(default)]
     pub terminology: TerminologyConfig,
+    /// Validation configuration
+    #[serde(default)]
+    pub validation: ValidationSettings,
+    /// Redis configuration
+    #[serde(default)]
+    pub redis: RedisConfig,
+    /// Cache configuration
+    #[serde(default)]
+    pub cache: CacheConfig,
 }
 
 // Default derived via field defaults
@@ -381,6 +390,104 @@ pub enum PackageSpec {
         version: Option<String>,
         path: Option<String>,
     },
+}
+
+/// Validation configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ValidationSettings {
+    /// Allow clients to skip validation via X-Skip-Validation header
+    /// Default: false (disabled for security)
+    #[serde(default = "default_allow_skip_validation")]
+    pub allow_skip_validation: bool,
+}
+
+fn default_allow_skip_validation() -> bool {
+    false
+}
+
+impl Default for ValidationSettings {
+    fn default() -> Self {
+        Self {
+            allow_skip_validation: default_allow_skip_validation(),
+        }
+    }
+}
+
+/// Redis configuration for horizontal scaling
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RedisConfig {
+    /// Enable Redis (gracefully degrades without it)
+    /// Default: false (disabled for single-instance deployments)
+    #[serde(default = "default_redis_enabled")]
+    pub enabled: bool,
+
+    /// Redis connection URL (e.g., "redis://localhost:6379")
+    #[serde(default = "default_redis_url")]
+    pub url: String,
+
+    /// Connection pool size
+    #[serde(default = "default_redis_pool_size")]
+    pub pool_size: usize,
+
+    /// Connection timeout in milliseconds
+    #[serde(default = "default_redis_timeout_ms")]
+    pub timeout_ms: u64,
+}
+
+fn default_redis_enabled() -> bool {
+    false
+}
+
+fn default_redis_url() -> String {
+    "redis://localhost:6379".to_string()
+}
+
+fn default_redis_pool_size() -> usize {
+    10
+}
+
+fn default_redis_timeout_ms() -> u64 {
+    5000
+}
+
+impl Default for RedisConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_redis_enabled(),
+            url: default_redis_url(),
+            pool_size: default_redis_pool_size(),
+            timeout_ms: default_redis_timeout_ms(),
+        }
+    }
+}
+
+/// Cache configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CacheConfig {
+    /// Terminology cache TTL in seconds
+    #[serde(default = "default_terminology_ttl_secs")]
+    pub terminology_ttl_secs: u64,
+
+    /// Local (L1) cache max entries
+    #[serde(default = "default_local_cache_max_entries")]
+    pub local_cache_max_entries: usize,
+}
+
+fn default_terminology_ttl_secs() -> u64 {
+    3600 // 1 hour
+}
+
+fn default_local_cache_max_entries() -> usize {
+    10000
+}
+
+impl Default for CacheConfig {
+    fn default() -> Self {
+        Self {
+            terminology_ttl_secs: default_terminology_ttl_secs(),
+            local_cache_max_entries: default_local_cache_max_entries(),
+        }
+    }
 }
 
 pub mod loader {

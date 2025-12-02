@@ -34,6 +34,10 @@ const MIGRATIONS: &[(&str, &str)] = &[
         "004_fcm_schema",
         include_str!("../../migrations/004_fcm_schema.sql"),
     ),
+    (
+        "005_async_jobs",
+        include_str!("../../migrations/005_async_jobs.sql"),
+    ),
 ];
 
 /// Runs all pending database migrations.
@@ -121,7 +125,7 @@ mod tests {
     #[test]
     fn test_migrations_embedded() {
         // Verify that all migration files are properly embedded
-        assert_eq!(MIGRATIONS.len(), 4);
+        assert_eq!(MIGRATIONS.len(), 5);
 
         for (name, sql) in MIGRATIONS {
             assert!(!name.is_empty(), "Migration name should not be empty");
@@ -142,5 +146,6 @@ mod tests {
         assert_eq!(names[1], "002_octofhir_schema");
         assert_eq!(names[2], "003_gateway_resource_notify");
         assert_eq!(names[3], "004_fcm_schema");
+        assert_eq!(names[4], "005_async_jobs");
     }
 }

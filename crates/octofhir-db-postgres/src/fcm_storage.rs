@@ -16,9 +16,9 @@ use sqlx_core::row::Row;
 use sqlx_postgres::PgPool;
 use tracing::{debug, info, instrument, warn};
 
+use octofhir_canonical_manager::domain::{PackageInfo, ResourceIndex};
 use octofhir_canonical_manager::error::{FcmError, StorageError};
 use octofhir_canonical_manager::package::{ExtractedPackage, FhirResource};
-use octofhir_canonical_manager::sqlite_storage::{PackageInfo, ResourceIndex};
 use octofhir_canonical_manager::traits::{PackageStore, SearchStorage};
 
 /// PostgreSQL storage backend for FHIR packages from canonical manager.
