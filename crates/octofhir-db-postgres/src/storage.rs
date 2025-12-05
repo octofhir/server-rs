@@ -188,15 +188,20 @@ impl FhirStorage for PostgresStorage {
     }
 
     async fn begin_transaction(&self) -> Result<Box<dyn Transaction>, StorageError> {
-        // Full transaction support is planned for a future task
-        Err(StorageError::transaction_error(
-            "PostgreSQL transactions not yet implemented",
-        ))
+        // Begin a new PostgreSQL transaction
+        let sqlx_tx = self.pool.begin().await.map_err(|e| {
+            StorageError::transaction_error(format!("Failed to begin transaction: {}", e))
+        })?;
+
+        // Wrap in our PostgresTransaction type
+        let pg_tx = crate::transaction::PostgresTransaction::new(sqlx_tx, self.schema_manager.clone());
+
+        Ok(Box::new(pg_tx))
     }
 
     fn supports_transactions(&self) -> bool {
-        // PostgreSQL supports transactions, but full implementation is pending
-        false
+        // Native PostgreSQL transactions with ACID guarantees
+        true
     }
 
     fn backend_name(&self) -> &'static str {

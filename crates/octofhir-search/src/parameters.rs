@@ -192,6 +192,15 @@ impl SearchParameters {
     }
 }
 
+/// Component of a composite search parameter.
+#[derive(Debug, Clone)]
+pub struct SearchParameterComponent {
+    /// URL of the component SearchParameter definition
+    pub definition: String,
+    /// FHIRPath expression for this component
+    pub expression: String,
+}
+
 /// A complete search parameter definition loaded from FHIR packages.
 ///
 /// This represents a FHIR SearchParameter resource with all fields needed
@@ -216,6 +225,8 @@ pub struct SearchParameter {
     pub modifier: Vec<SearchModifier>,
     /// Human-readable description
     pub description: String,
+    /// Components for composite search parameters
+    pub component: Vec<SearchParameterComponent>,
     /// Cached JSONB path segments derived from FHIRPath expression.
     /// Pre-computed once when parameter is created to avoid repeated parsing.
     /// Format: segments like ["name", "family"] derived from "Patient.name.family"
@@ -240,6 +251,7 @@ impl SearchParameter {
             target: Vec::new(),
             modifier: Vec::new(),
             description: String::new(),
+            component: Vec::new(),
             cached_jsonb_path: None,
         }
     }
@@ -352,6 +364,13 @@ impl SearchParameter {
     #[must_use]
     pub fn with_modifiers(mut self, modifiers: Vec<SearchModifier>) -> Self {
         self.modifier = modifiers;
+        self
+    }
+
+    /// Set components for composite search parameters.
+    #[must_use]
+    pub fn with_components(mut self, components: Vec<SearchParameterComponent>) -> Self {
+        self.component = components;
         self
     }
 

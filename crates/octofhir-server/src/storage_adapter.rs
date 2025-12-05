@@ -42,6 +42,11 @@ impl PostgresStorageAdapter {
         }
     }
 
+    /// Get a reference to the underlying PostgreSQL storage for direct access to native transaction support.
+    pub fn inner_storage(&self) -> &PostgresStorage {
+        &self.inner
+    }
+
     /// Convert StorageError to CoreError
     fn map_error(e: StorageError, resource_type: &str, id: &str) -> CoreError {
         match e {

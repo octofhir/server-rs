@@ -55,6 +55,7 @@ mod pool;
 mod queries;
 mod schema;
 mod storage;
+mod transaction;
 
 /// Database migrations module.
 pub mod migrations;

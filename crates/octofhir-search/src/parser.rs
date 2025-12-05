@@ -574,8 +574,15 @@ impl ParsedParameters {
                     }
                 }
                 SearchParameterType::Composite => {
-                    // TODO: Implement composite search
-                    tracing::debug!(param = %p.name, "composite search not yet implemented");
+                    // Composite search is handled by the modern SqlBuilder system via dispatch_search().
+                    // The legacy QueryFilter system doesn't support composite parameters.
+                    // When using FhirQueryBuilder or dispatch_search, composite parameters with
+                    // component definitions will be properly processed.
+                    tracing::debug!(
+                        param = %p.name,
+                        components = param_def.component.len(),
+                        "Composite search parameter (supported via SqlBuilder/dispatch_search)"
+                    );
                 }
                 SearchParameterType::Special => {
                     // Special parameters like _id, _lastUpdated are handled separately

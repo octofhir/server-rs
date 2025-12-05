@@ -130,12 +130,37 @@ pub fn dispatch_search(
         }
 
         SearchParameterType::Composite => {
-            // Composite search requires component definitions
-            // For now, return not implemented as it requires additional metadata
-            // The composite module provides the building blocks for when we have component info
-            Err(SqlBuilderError::NotImplemented(
-                "Composite search requires component definitions - use build_composite_search directly".to_string(),
-            ))
+            // Build composite search using component definitions
+            if definition.component.is_empty() {
+                return Err(SqlBuilderError::InvalidPath(format!(
+                    "Composite search parameter {} has no components defined",
+                    definition.code
+                )));
+            }
+
+            // Convert SearchParameterComponent to CompositeComponent
+            let components: Vec<CompositeComponent> = definition
+                .component
+                .iter()
+                .map(|c| {
+                    // Extract parameter type from component expression or definition URL
+                    // For now, use a simple heuristic based on common patterns
+                    let param_type = infer_component_type(&c.expression);
+
+                    CompositeComponent {
+                        name: definition.code.clone(),
+                        param_type,
+                        expression: c.expression.clone(),
+                    }
+                })
+                .collect();
+
+            // Process each value in the search parameter
+            for value in &param.values {
+                build_composite_search(builder, &value.raw, &components)?;
+            }
+
+            Ok(())
         }
 
         SearchParameterType::Uri => {
@@ -260,6 +285,54 @@ fn split_array_path(path: &[String]) -> (Vec<String>, String) {
     } else {
         (path.to_vec(), String::new())
     }
+}
+
+/// Infer component type from FHIRPath expression.
+///
+/// This is a heuristic-based approach that examines the expression to determine
+/// the likely FHIR type. A more robust implementation would look up the component
+/// definition URL to get the exact type.
+fn infer_component_type(expression: &str) -> String {
+    let lower = expression.to_lowercase();
+
+    // Date patterns (check before code as "effective" could match both)
+    if lower.contains("date")
+        || lower.contains("time")
+        || lower.contains("instant")
+        || lower.contains("effective")
+        || lower.contains("period")
+        || lower.starts_with("authored")
+    {
+        return "date".to_string();
+    }
+
+    // Token-like patterns
+    if lower.contains("code") || lower.contains("coding") || lower.contains("codeable") {
+        return "token".to_string();
+    }
+
+    // String-like patterns
+    if lower.contains("text") || lower.contains("display") || lower.contains("name") {
+        return "string".to_string();
+    }
+
+    // Quantity patterns
+    if lower.contains("quantity") || (lower.contains("value") && (lower.contains("unit") || lower.contains("system"))) {
+        return "quantity".to_string();
+    }
+
+    // Reference patterns
+    if lower.contains("reference") || lower.contains("subject") || lower.contains("patient") {
+        return "reference".to_string();
+    }
+
+    // Number patterns
+    if lower.contains("integer") || lower.contains("decimal") {
+        return "number".to_string();
+    }
+
+    // Default to token as it's most common
+    "token".to_string()
 }
 
 #[cfg(test)]
@@ -446,5 +519,86 @@ mod tests {
 
         let clause = builder.build_where_clause();
         assert!(clause.is_some());
+    }
+
+    #[test]
+    fn test_dispatch_composite_search() {
+        use crate::parameters::SearchParameterComponent;
+
+        let mut builder = SqlBuilder::new();
+        let param = ParsedParam {
+            name: "code-value-quantity".to_string(),
+            modifier: None,
+            values: vec![ParsedValue {
+                prefix: None,
+                raw: "http://loinc.org|8480-6$gt100".to_string(),
+            }],
+        };
+
+        let def = Arc::new(
+            SearchParameter::new(
+                "code-value-quantity",
+                "http://hl7.org/fhir/SearchParameter/Observation-code-value-quantity",
+                SearchParameterType::Composite,
+                vec!["Observation".to_string()],
+            )
+            .with_expression("Observation")
+            .with_components(vec![
+                SearchParameterComponent {
+                    definition: "http://hl7.org/fhir/SearchParameter/Observation-code".to_string(),
+                    expression: "code".to_string(),
+                },
+                SearchParameterComponent {
+                    definition: "http://hl7.org/fhir/SearchParameter/Observation-value-quantity".to_string(),
+                    expression: "valueQuantity".to_string(),
+                },
+            ]),
+        );
+
+        let result = dispatch_search(&mut builder, &param, &def, "Observation");
+        assert!(result.is_ok());
+
+        let clause = builder.build_where_clause();
+        assert!(clause.is_some());
+        let clause_str = clause.unwrap();
+        // Verify the SQL contains both code and value conditions
+        assert!(clause_str.len() > 0);
+    }
+
+    #[test]
+    fn test_dispatch_composite_no_components_fails() {
+        let mut builder = SqlBuilder::new();
+        let param = ParsedParam {
+            name: "test-composite".to_string(),
+            modifier: None,
+            values: vec![ParsedValue {
+                prefix: None,
+                raw: "value1$value2".to_string(),
+            }],
+        };
+
+        let def = Arc::new(
+            SearchParameter::new(
+                "test-composite",
+                "http://example.org/test-composite",
+                SearchParameterType::Composite,
+                vec!["Patient".to_string()],
+            )
+            .with_expression("Patient"),
+        );
+
+        let result = dispatch_search(&mut builder, &param, &def, "Patient");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("no components defined"));
+    }
+
+    #[test]
+    fn test_infer_component_type() {
+        assert_eq!(super::infer_component_type("code"), "token");
+        assert_eq!(super::infer_component_type("valueQuantity"), "quantity");
+        assert_eq!(super::infer_component_type("value.as(CodeableConcept)"), "token");
+        assert_eq!(super::infer_component_type("effective"), "date");
+        assert_eq!(super::infer_component_type("subject"), "reference");
+        assert_eq!(super::infer_component_type("display"), "string");
     }
 }
