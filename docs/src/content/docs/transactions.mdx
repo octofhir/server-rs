@@ -1,0 +1,433 @@
+---
+title: Transactions
+description: FHIR Bundle transactions and batch operations with ACID guarantees
+---
+
+OctoFHIR provides native PostgreSQL transaction support for FHIR Bundle operations, ensuring atomicity, consistency, isolation, and durability (ACID) for complex multi-resource operations.
+
+## Transaction vs Batch
+
+FHIR defines two types of Bundle operations:
+
+| Feature | Transaction | Batch |
+|---------|-------------|-------|
+| Atomicity | All-or-nothing | Independent operations |
+| On failure | All changes rolled back | Only failed operation fails |
+| Use case | Related changes that must succeed together | Bulk operations where partial success is OK |
+
+## Transaction Bundles
+
+### Basic Transaction
+
+```json
+POST /
+Content-Type: application/fhir+json
+
+{
+  "resourceType": "Bundle",
+  "type": "transaction",
+  "entry": [
+    {
+      "fullUrl": "urn:uuid:patient-1",
+      "resource": {
+        "resourceType": "Patient",
+        "name": [{"family": "Smith", "given": ["John"]}]
+      },
+      "request": {
+        "method": "POST",
+        "url": "Patient"
+      }
+    },
+    {
+      "fullUrl": "urn:uuid:obs-1",
+      "resource": {
+        "resourceType": "Observation",
+        "status": "final",
+        "code": {"coding": [{"system": "http://loinc.org", "code": "8867-4"}]},
+        "subject": {"reference": "urn:uuid:patient-1"}
+      },
+      "request": {
+        "method": "POST",
+        "url": "Observation"
+      }
+    }
+  ]
+}
+```
+
+### Transaction Response
+
+```json
+{
+  "resourceType": "Bundle",
+  "type": "transaction-response",
+  "entry": [
+    {
+      "response": {
+        "status": "201 Created",
+        "location": "Patient/abc123/_history/1",
+        "etag": "W/\"1\"",
+        "lastModified": "2024-01-15T10:00:00Z"
+      }
+    },
+    {
+      "response": {
+        "status": "201 Created",
+        "location": "Observation/def456/_history/1",
+        "etag": "W/\"1\"",
+        "lastModified": "2024-01-15T10:00:00Z"
+      }
+    }
+  ]
+}
+```
+
+## Reference Resolution
+
+### Internal References (urn:uuid)
+
+References within a transaction can use `urn:uuid:` URIs that are resolved to actual resource IDs:
+
+```json
+{
+  "resourceType": "Bundle",
+  "type": "transaction",
+  "entry": [
+    {
+      "fullUrl": "urn:uuid:new-patient",
+      "resource": {
+        "resourceType": "Patient",
+        "name": [{"family": "Smith"}]
+      },
+      "request": {"method": "POST", "url": "Patient"}
+    },
+    {
+      "fullUrl": "urn:uuid:new-encounter",
+      "resource": {
+        "resourceType": "Encounter",
+        "status": "finished",
+        "class": {"system": "http://terminology.hl7.org/CodeSystem/v3-ActCode", "code": "AMB"},
+        "subject": {"reference": "urn:uuid:new-patient"}
+      },
+      "request": {"method": "POST", "url": "Encounter"}
+    },
+    {
+      "resource": {
+        "resourceType": "Condition",
+        "subject": {"reference": "urn:uuid:new-patient"},
+        "encounter": {"reference": "urn:uuid:new-encounter"},
+        "code": {"coding": [{"system": "http://snomed.info/sct", "code": "386661006"}]}
+      },
+      "request": {"method": "POST", "url": "Condition"}
+    }
+  ]
+}
+```
+
+The server resolves `urn:uuid:new-patient` to `Patient/abc123` in all referencing resources.
+
+## Request Methods
+
+### POST (Create)
+
+```json
+{
+  "resource": {"resourceType": "Patient", "name": [{"family": "Smith"}]},
+  "request": {
+    "method": "POST",
+    "url": "Patient"
+  }
+}
+```
+
+### PUT (Update)
+
+```json
+{
+  "resource": {
+    "resourceType": "Patient",
+    "id": "existing-id",
+    "name": [{"family": "Smith", "given": ["Jane"]}]
+  },
+  "request": {
+    "method": "PUT",
+    "url": "Patient/existing-id"
+  }
+}
+```
+
+### DELETE
+
+```json
+{
+  "request": {
+    "method": "DELETE",
+    "url": "Patient/to-delete"
+  }
+}
+```
+
+### GET (Read)
+
+```json
+{
+  "request": {
+    "method": "GET",
+    "url": "Patient/some-id"
+  }
+}
+```
+
+## Conditional Operations
+
+### Conditional Create (if-none-exist)
+
+Create only if no matching resource exists:
+
+```json
+{
+  "resource": {
+    "resourceType": "Patient",
+    "identifier": [{"system": "http://hospital.org/mrn", "value": "12345"}],
+    "name": [{"family": "Smith"}]
+  },
+  "request": {
+    "method": "POST",
+    "url": "Patient",
+    "ifNoneExist": "identifier=http://hospital.org/mrn|12345"
+  }
+}
+```
+
+### Conditional Update
+
+Update based on search criteria:
+
+```json
+{
+  "resource": {
+    "resourceType": "Patient",
+    "identifier": [{"system": "http://hospital.org/mrn", "value": "12345"}],
+    "name": [{"family": "Smith", "given": ["Updated"]}]
+  },
+  "request": {
+    "method": "PUT",
+    "url": "Patient?identifier=http://hospital.org/mrn|12345"
+  }
+}
+```
+
+### Conditional Delete
+
+```json
+{
+  "request": {
+    "method": "DELETE",
+    "url": "Observation?status=entered-in-error"
+  }
+}
+```
+
+## Version-Aware Updates
+
+Use `If-Match` to ensure you're updating the expected version:
+
+```json
+{
+  "resource": {
+    "resourceType": "Patient",
+    "id": "patient-1",
+    "name": [{"family": "Updated"}]
+  },
+  "request": {
+    "method": "PUT",
+    "url": "Patient/patient-1",
+    "ifMatch": "W/\"1\""
+  }
+}
+```
+
+If the current version doesn't match, the transaction fails with a 409 Conflict.
+
+## Batch Bundles
+
+Batch operations are processed independently:
+
+```json
+POST /
+Content-Type: application/fhir+json
+
+{
+  "resourceType": "Bundle",
+  "type": "batch",
+  "entry": [
+    {
+      "resource": {"resourceType": "Patient", "name": [{"family": "One"}]},
+      "request": {"method": "POST", "url": "Patient"}
+    },
+    {
+      "resource": {"resourceType": "Patient", "name": [{"family": "Two"}]},
+      "request": {"method": "POST", "url": "Patient"}
+    }
+  ]
+}
+```
+
+### Batch Response
+
+Each entry gets its own status, even if some fail:
+
+```json
+{
+  "resourceType": "Bundle",
+  "type": "batch-response",
+  "entry": [
+    {
+      "response": {"status": "201 Created", "location": "Patient/abc123"}
+    },
+    {
+      "response": {
+        "status": "400 Bad Request",
+        "outcome": {
+          "resourceType": "OperationOutcome",
+          "issue": [{"severity": "error", "code": "invalid"}]
+        }
+      }
+    }
+  ]
+}
+```
+
+## Error Handling
+
+### Transaction Failure
+
+If any operation in a transaction fails, the entire transaction is rolled back:
+
+```json
+{
+  "resourceType": "OperationOutcome",
+  "issue": [
+    {
+      "severity": "error",
+      "code": "exception",
+      "diagnostics": "Transaction failed: Resource Patient/nonexistent not found"
+    }
+  ]
+}
+```
+
+### Common Error Codes
+
+| HTTP Status | Meaning |
+|-------------|---------|
+| 200 | Transaction/batch processed successfully |
+| 400 | Invalid Bundle structure |
+| 404 | Referenced resource not found |
+| 409 | Version conflict (If-Match failed) |
+| 412 | Precondition failed |
+| 422 | Unprocessable (validation errors) |
+
+## Processing Order
+
+Transactions are processed in the following order:
+
+1. DELETE operations
+2. POST operations
+3. PUT operations
+4. GET operations
+5. Reference resolution
+
+This ensures references can be resolved correctly.
+
+## Performance Considerations
+
+### Large Transactions
+
+For large transactions (100+ entries), consider:
+
+- Breaking into smaller batches if atomicity isn't required
+- Using batch instead of transaction for bulk imports
+- Monitoring transaction duration
+
+### Concurrent Transactions
+
+OctoFHIR uses PostgreSQL's transaction isolation to handle concurrent modifications:
+
+- Optimistic locking via version IDs
+- Serialization errors result in 409 Conflict
+- Retry with fresh data if conflict occurs
+
+## Examples
+
+### Patient Registration
+
+Register a new patient with observations:
+
+```json
+{
+  "resourceType": "Bundle",
+  "type": "transaction",
+  "entry": [
+    {
+      "fullUrl": "urn:uuid:patient",
+      "resource": {
+        "resourceType": "Patient",
+        "identifier": [{"system": "http://hospital.org/mrn", "value": "NEW-001"}],
+        "name": [{"family": "Doe", "given": ["John"]}],
+        "birthDate": "1980-01-15"
+      },
+      "request": {"method": "POST", "url": "Patient"}
+    },
+    {
+      "resource": {
+        "resourceType": "Observation",
+        "status": "final",
+        "code": {"coding": [{"system": "http://loinc.org", "code": "8867-4", "display": "Heart rate"}]},
+        "subject": {"reference": "urn:uuid:patient"},
+        "valueQuantity": {"value": 72, "unit": "beats/minute"}
+      },
+      "request": {"method": "POST", "url": "Observation"}
+    },
+    {
+      "resource": {
+        "resourceType": "Observation",
+        "status": "final",
+        "code": {"coding": [{"system": "http://loinc.org", "code": "8480-6", "display": "Systolic BP"}]},
+        "subject": {"reference": "urn:uuid:patient"},
+        "valueQuantity": {"value": 120, "unit": "mmHg"}
+      },
+      "request": {"method": "POST", "url": "Observation"}
+    }
+  ]
+}
+```
+
+### Void and Replace
+
+Delete an erroneous observation and create a corrected one:
+
+```json
+{
+  "resourceType": "Bundle",
+  "type": "transaction",
+  "entry": [
+    {
+      "request": {
+        "method": "DELETE",
+        "url": "Observation/error-obs-id"
+      }
+    },
+    {
+      "resource": {
+        "resourceType": "Observation",
+        "status": "final",
+        "code": {"coding": [{"system": "http://loinc.org", "code": "8867-4"}]},
+        "subject": {"reference": "Patient/patient-id"},
+        "valueQuantity": {"value": 75, "unit": "beats/minute"}
+      },
+      "request": {"method": "POST", "url": "Observation"}
+    }
+  ]
+}
+```

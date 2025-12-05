@@ -1,0 +1,454 @@
+---
+title: Performance Tuning
+description: Query caching, index optimization, and performance best practices
+---
+
+OctoFHIR includes built-in performance optimizations including query caching, automatic index analysis, and configurable tuning options.
+
+## Query Caching
+
+### Overview
+
+OctoFHIR caches query execution plans to improve performance for repeated searches:
+
+- **Cache key**: Based on parameter structure (not values)
+- **Cache hit**: Skip query planning, reuse prepared statement
+- **Expected improvement**: 30-50% faster for cached queries
+
+### Configuration
+
+```toml
+[search]
+default_count = 10
+max_count = 1000
+
+# Query cache settings
+cache_enabled = true
+cache_capacity = 1000      # Maximum cached queries
+cache_max_age_secs = 3600  # Cache entry TTL
+```
+
+### How It Works
+
+1. **First request**: Query is parsed, planned, and cached
+2. **Subsequent requests**: Cache hit, only values are bound
+3. **Cache eviction**: LRU (Least Recently Used) when capacity reached
+
+### Cache Statistics
+
+Monitor cache performance via admin endpoint:
+
+```bash
+GET /admin/cache/stats
+```
+
+Response:
+
+```json
+{
+  "query_cache": {
+    "hits": 15420,
+    "misses": 1230,
+    "size": 456,
+    "capacity": 1000,
+    "hit_ratio": 0.926
+  }
+}
+```
+
+### Cache Invalidation
+
+The cache automatically invalidates when:
+
+- TTL expires
+- Server restarts
+- Manual clear via admin API
+
+```bash
+POST /admin/cache/clear
+```
+
+## Index Optimization
+
+### Automatic Index Analysis
+
+OctoFHIR analyzes query performance and suggests indexes:
+
+```bash
+GET /admin/indexes/suggestions?resource_type=Patient
+```
+
+Response:
+
+```json
+{
+  "suggestions": [
+    {
+      "table": "patient",
+      "column": "resource->>'family'",
+      "type": "btree",
+      "reason": "Frequently searched, currently using sequential scan",
+      "estimated_improvement": "10x",
+      "create_statement": "CREATE INDEX idx_patient_family ON patient ((resource->>'family'));"
+    }
+  ]
+}
+```
+
+### Recommended Indexes
+
+For optimal performance, create these indexes:
+
+#### Core Indexes (All Resources)
+
+```sql
+-- Resource type filtering (if using single table)
+CREATE INDEX idx_resource_type ON fhir_resources ((resource->>'resourceType'));
+
+-- Last updated (for _lastUpdated searches and history)
+CREATE INDEX idx_resource_ts ON fhir_resources (ts DESC);
+
+-- Resource ID lookup
+CREATE INDEX idx_resource_id ON fhir_resources ((resource->>'id'));
+
+-- Version tracking
+CREATE INDEX idx_resource_txid ON fhir_resources (txid);
+```
+
+#### Patient Indexes
+
+```sql
+-- Name searches
+CREATE INDEX idx_patient_family ON patient USING btree (
+  (resource->'name'->0->>'family')
+);
+
+-- Identifier searches
+CREATE INDEX idx_patient_identifier ON patient USING gin (
+  (resource->'identifier')
+);
+
+-- Birth date range searches
+CREATE INDEX idx_patient_birthdate ON patient USING btree (
+  (resource->>'birthDate')
+);
+```
+
+#### Observation Indexes
+
+```sql
+-- Code searches (most common)
+CREATE INDEX idx_observation_code ON observation USING gin (
+  (resource->'code'->'coding')
+);
+
+-- Subject reference
+CREATE INDEX idx_observation_subject ON observation USING btree (
+  (resource->'subject'->>'reference')
+);
+
+-- Effective date ranges
+CREATE INDEX idx_observation_effective ON observation USING btree (
+  (resource->>'effectiveDateTime')
+);
+
+-- Composite: code + date (common query pattern)
+CREATE INDEX idx_observation_code_date ON observation USING btree (
+  (resource->'code'->'coding'->0->>'code'),
+  (resource->>'effectiveDateTime')
+);
+```
+
+### GIN vs BTREE
+
+| Index Type | Use Case | Example |
+|------------|----------|---------|
+| BTREE | Equality, ranges | `birthDate`, `_lastUpdated` |
+| GIN | JSONB containment, arrays | `identifier`, `code.coding` |
+
+### Analyzing Query Performance
+
+Enable slow query logging:
+
+```toml
+[search]
+slow_query_threshold_ms = 100  # Log queries slower than 100ms
+```
+
+View slow queries:
+
+```bash
+GET /admin/queries/slow?limit=10
+```
+
+Response:
+
+```json
+{
+  "slow_queries": [
+    {
+      "query_hash": "abc123",
+      "execution_time_ms": 450,
+      "resource_type": "Observation",
+      "parameters": ["code", "date", "subject"],
+      "sequential_scans": ["observation"],
+      "suggestion": "Add index on (resource->'code'->'coding')"
+    }
+  ]
+}
+```
+
+## Connection Pooling
+
+### Configuration
+
+```toml
+[storage.postgres]
+url = "postgres://user:pass@localhost/octofhir"
+pool_size = 20
+connect_timeout_ms = 5000
+idle_timeout_ms = 600000
+```
+
+### Sizing Guidelines
+
+| Concurrent Users | Pool Size |
+|-----------------|-----------|
+| < 50 | 10-20 |
+| 50-200 | 20-50 |
+| 200-1000 | 50-100 |
+| > 1000 | Use PgBouncer |
+
+### Monitoring
+
+```bash
+GET /admin/db/stats
+```
+
+```json
+{
+  "pool": {
+    "size": 20,
+    "available": 15,
+    "in_use": 5,
+    "waiting": 0
+  },
+  "queries": {
+    "total": 125000,
+    "avg_time_ms": 12.5
+  }
+}
+```
+
+## Redis Caching
+
+### Configuration
+
+```toml
+[redis]
+enabled = true
+url = "redis://localhost:6379"
+pool_size = 10
+timeout_ms = 1000
+```
+
+### Cache Layers
+
+1. **Local cache** (in-memory DashMap): Fastest, per-instance
+2. **Redis cache**: Shared across instances
+3. **Database**: Source of truth
+
+### Cache Invalidation
+
+When resources are modified:
+
+1. Local cache entry removed
+2. Redis `PUBLISH` sent to invalidation channel
+3. Other instances receive notification and clear local cache
+
+## Search Optimization
+
+### Use Specific Parameters
+
+```bash
+# Slower: scans all observations
+GET /Observation?status=final
+
+# Faster: filters by code first (likely indexed)
+GET /Observation?code=http://loinc.org|8867-4&status=final
+```
+
+### Limit Results
+
+```bash
+# Returns up to 10 results (default)
+GET /Patient?family=Smith
+
+# Explicitly limit
+GET /Patient?family=Smith&_count=50
+
+# Just get the count
+GET /Patient?family=Smith&_summary=count
+```
+
+### Use _elements
+
+```bash
+# Returns full resources
+GET /Patient?family=Smith
+
+# Returns only needed fields (less data transfer)
+GET /Patient?family=Smith&_elements=id,name,birthDate
+```
+
+### Avoid Large _include
+
+```bash
+# Can return many resources
+GET /Patient?_revinclude=Observation:subject
+
+# Better: paginate and fetch separately
+GET /Patient?family=Smith&_count=10
+GET /Observation?subject=Patient/123&_count=50
+```
+
+## Monitoring and Metrics
+
+### Prometheus Metrics
+
+OctoFHIR exposes Prometheus metrics at `/metrics`:
+
+```
+# Query cache
+octofhir_query_cache_hits_total
+octofhir_query_cache_misses_total
+octofhir_query_cache_size
+
+# Search performance
+octofhir_search_duration_seconds{resource_type, modifier}
+octofhir_search_results_total{resource_type}
+
+# Transaction performance
+octofhir_transaction_duration_seconds
+octofhir_transaction_entries_total
+octofhir_transaction_rollback_total
+
+# Database
+octofhir_db_pool_connections_total
+octofhir_db_query_duration_seconds
+octofhir_slow_query_total
+```
+
+### OpenTelemetry
+
+Enable distributed tracing:
+
+```toml
+[otel]
+enabled = true
+endpoint = "http://jaeger:4317"
+service_name = "octofhir"
+```
+
+Spans include:
+- `http.request` - Full request lifecycle
+- `search.execute` - Search execution
+- `search.cache_lookup` - Cache operations
+- `terminology.expand` - ValueSet expansion
+- `transaction.execute` - Transaction processing
+
+## Benchmarking
+
+### Load Testing with k6
+
+```javascript
+import http from 'k6/http';
+import { check, sleep } from 'k6';
+
+export const options = {
+  stages: [
+    { duration: '30s', target: 50 },
+    { duration: '1m', target: 100 },
+    { duration: '30s', target: 0 },
+  ],
+};
+
+export default function () {
+  const res = http.get('http://localhost:8080/Patient?family=Smith', {
+    headers: { 'Accept': 'application/fhir+json' },
+  });
+
+  check(res, {
+    'status is 200': (r) => r.status === 200,
+    'response time < 100ms': (r) => r.timings.duration < 100,
+  });
+
+  sleep(0.1);
+}
+```
+
+Run:
+
+```bash
+k6 run loadtest.js
+```
+
+### Expected Performance
+
+| Operation | Target | Notes |
+|-----------|--------|-------|
+| Simple search | < 50ms | Indexed parameter |
+| Complex search | < 200ms | Multiple parameters |
+| _include search | < 500ms | Depends on included count |
+| Transaction (10 entries) | < 100ms | |
+| ValueSet expansion | < 100ms | Cached |
+| ValueSet expansion | < 2s | Uncached, large |
+
+## Troubleshooting
+
+### Slow Queries
+
+1. Check for missing indexes:
+   ```bash
+   GET /admin/indexes/suggestions
+   ```
+
+2. Enable slow query logging:
+   ```toml
+   [search]
+   slow_query_threshold_ms = 50
+   ```
+
+3. Analyze specific query:
+   ```bash
+   POST /admin/queries/analyze
+   {"query": "Patient?family=Smith&birthdate=lt1980"}
+   ```
+
+### High Memory Usage
+
+1. Reduce cache sizes:
+   ```toml
+   [search]
+   cache_capacity = 500
+   ```
+
+2. Check for large result sets:
+   ```bash
+   GET /admin/queries/large_results
+   ```
+
+### Connection Pool Exhaustion
+
+1. Increase pool size:
+   ```toml
+   [storage.postgres]
+   pool_size = 50
+   ```
+
+2. Check for long-running queries:
+   ```bash
+   GET /admin/db/active_queries
+   ```
+
+3. Consider using PgBouncer for connection pooling

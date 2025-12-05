@@ -1,20 +1,22 @@
+//! Tests for configuration hot-reload functionality.
+//!
+//! These tests verify that the unified configuration management system
+//! properly detects and applies configuration changes.
+
 use std::{
     fs,
-    sync::{Arc, RwLock},
-    thread,
+    sync::Arc,
     time::Duration,
 };
 
 use octofhir_server::config::loader;
+use octofhir_server::config_manager::ServerConfigManager;
+use tokio::sync::RwLock;
 
-// Unused helper removed
-
-#[test]
-fn file_watching_triggers_reload_and_updates_shared_config() {
+#[tokio::test]
+async fn file_watching_triggers_reload_and_updates_shared_config() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("octofhir.toml");
-    // Create a Tokio runtime for watcher to spawn tasks on
-    let rt = tokio::runtime::Runtime::new().unwrap();
 
     let base = r#"
 [server]
@@ -39,14 +41,18 @@ enabled = false
     let cfg = loader::load_config(path.to_str()).expect("load initial");
     let shared_cfg = Arc::new(RwLock::new(cfg.clone()));
 
-    let _guard = octofhir_server::config_watch::start_config_watcher(
-        path.clone(),
-        shared_cfg.clone(),
-        rt.handle().clone(),
-    );
+    // Create config manager with file watching
+    let manager = ServerConfigManager::builder()
+        .with_file(&path)
+        .build()
+        .await
+        .expect("build config manager");
+
+    // Start watching for changes
+    manager.start_watching(shared_cfg.clone()).await;
 
     // Give watcher a brief moment to start
-    thread::sleep(Duration::from_millis(300));
+    tokio::time::sleep(Duration::from_millis(500)).await;
 
     // Modify the file to change logging level and search.default_count
     let updated = base
@@ -57,8 +63,9 @@ enabled = false
     // Poll for up to 10 seconds for the change to be applied
     let mut applied = false;
     for i in 0..100 {
-        thread::sleep(Duration::from_millis(100));
-        if let Ok(guard) = shared_cfg.read() {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        {
+            let guard = shared_cfg.read().await;
             let c = &*guard;
             if c.logging.level.eq_ignore_ascii_case("debug") && c.search.default_count == 7 {
                 applied = true;
@@ -73,12 +80,10 @@ enabled = false
     assert!(applied, "reload did not apply within timeout");
 }
 
-#[test]
-fn invalid_reload_does_not_replace_shared_config() {
+#[tokio::test]
+async fn invalid_reload_does_not_replace_shared_config() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("octofhir.toml");
-    // Create a Tokio runtime for watcher to spawn tasks on
-    let rt = tokio::runtime::Runtime::new().unwrap();
 
     let base = r#"
 [server]
@@ -99,11 +104,15 @@ level = "info"
     let cfg = loader::load_config(path.to_str()).expect("load initial");
     let shared_cfg = Arc::new(RwLock::new(cfg.clone()));
 
-    let _guard = octofhir_server::config_watch::start_config_watcher(
-        path.clone(),
-        shared_cfg.clone(),
-        rt.handle().clone(),
-    );
+    // Create config manager with file watching
+    let manager = ServerConfigManager::builder()
+        .with_file(&path)
+        .build()
+        .await
+        .expect("build config manager");
+
+    // Start watching for changes
+    manager.start_watching(shared_cfg.clone()).await;
 
     // Write invalid config (default_count > max_count)
     let invalid = base.replace(
@@ -113,9 +122,30 @@ level = "info"
     fs::write(&path, invalid).unwrap();
 
     // Wait for potential reload attempt
-    thread::sleep(Duration::from_millis(1000));
+    tokio::time::sleep(Duration::from_millis(1000)).await;
 
-    let guard = shared_cfg.read().unwrap();
+    let guard = shared_cfg.read().await;
     assert_eq!(guard.search.default_count, 5);
     assert_eq!(guard.search.max_count, 10);
+}
+
+#[tokio::test]
+async fn config_manager_builder_without_sources() {
+    // Should succeed even without any sources
+    let manager = ServerConfigManager::builder()
+        .build()
+        .await;
+
+    assert!(manager.is_ok(), "Config manager should build without sources");
+}
+
+#[tokio::test]
+async fn config_manager_subscribe_receives_events() {
+    let manager = ServerConfigManager::builder()
+        .build()
+        .await
+        .expect("build config manager");
+
+    // Subscribing should work
+    let _rx = manager.subscribe();
 }

@@ -1,0 +1,331 @@
+---
+title: Terminology Services
+description: ValueSet expansion, code system support, and terminology-based search modifiers
+---
+
+OctoFHIR integrates with external terminology servers to provide ValueSet expansion, code system validation, and advanced search modifiers like `:in`, `:not-in`, `:below`, and `:above`.
+
+## Configuration
+
+Enable terminology services in your `octofhir.toml`:
+
+```toml
+[terminology]
+enabled = true
+server_url = "https://tx.fhir.org/r4"
+cache_ttl_secs = 3600  # Cache expansions for 1 hour
+```
+
+### Supported Terminology Servers
+
+- [tx.fhir.org](https://tx.fhir.org) - HL7 FHIR Terminology Server
+- [Ontoserver](https://ontoserver.csiro.au/) - CSIRO Terminology Server
+- Any FHIR R4 compatible terminology server
+
+## ValueSet Search Modifiers
+
+### :in Modifier
+
+Search for resources with codes that are members of a ValueSet:
+
+```bash
+# Find observations with codes in the vital-signs ValueSet
+GET /Observation?code:in=http://hl7.org/fhir/ValueSet/observation-vitalsignresult
+
+# Find conditions with ICD-10 diabetes codes
+GET /Condition?code:in=http://example.org/ValueSet/diabetes-icd10
+```
+
+### :not-in Modifier
+
+Exclude resources with codes in a ValueSet:
+
+```bash
+# Find observations that are NOT vital signs
+GET /Observation?code:not-in=http://hl7.org/fhir/ValueSet/observation-vitalsignresult
+```
+
+## Hierarchy Modifiers (SNOMED CT)
+
+### :below Modifier
+
+Search for a code and all its descendants (subsumption):
+
+```bash
+# Find conditions with diabetes or any subtype
+# 73211009 = Diabetes mellitus
+GET /Condition?code:below=http://snomed.info/sct|73211009
+```
+
+This matches:
+- 73211009 - Diabetes mellitus
+- 44054006 - Type 2 diabetes mellitus
+- 46635009 - Type 1 diabetes mellitus
+- And all other descendants
+
+### :above Modifier
+
+Search for a code and all its ancestors:
+
+```bash
+# Find conditions that subsume Type 2 diabetes
+GET /Condition?code:above=http://snomed.info/sct|44054006
+```
+
+This matches:
+- 44054006 - Type 2 diabetes mellitus
+- 73211009 - Diabetes mellitus (parent)
+- And all other ancestors up to the root
+
+## Code Systems
+
+### SNOMED CT
+
+```bash
+# Exact SNOMED CT code match
+GET /Condition?code=http://snomed.info/sct|73211009
+
+# Hierarchy search
+GET /Condition?code:below=http://snomed.info/sct|73211009
+```
+
+SNOMED CT hierarchy is resolved using ECL (Expression Constraint Language):
+- `:below` uses `<< code` (descendants and self)
+- `:above` uses `>> code` (ancestors and self)
+
+### LOINC
+
+```bash
+# Exact LOINC code
+GET /Observation?code=http://loinc.org|8867-4
+
+# LOINC panel members (via ValueSet)
+GET /Observation?code:in=http://loinc.org/vs/LP200060-1
+```
+
+### ICD-10
+
+```bash
+# ICD-10-CM diagnosis code
+GET /Condition?code=http://hl7.org/fhir/sid/icd-10-cm|E11.9
+```
+
+## Performance Optimization
+
+### Automatic Optimization
+
+OctoFHIR automatically optimizes large ValueSet expansions:
+
+| Expansion Size | Strategy |
+|---------------|----------|
+| < 500 codes | SQL `IN` clause |
+| >= 500 codes | Temporary table with `JOIN` |
+
+The temporary table approach provides significant performance improvements for large ValueSets.
+
+### Caching
+
+ValueSet expansions are cached based on `cache_ttl_secs`:
+
+```toml
+[terminology]
+cache_ttl_secs = 3600  # 1 hour
+```
+
+Cache behavior:
+- First request expands the ValueSet (may take 1-2 seconds)
+- Subsequent requests use cached expansion (milliseconds)
+- Cache invalidates after TTL expires
+
+### Large ValueSets
+
+For very large ValueSets (>1000 codes), the server:
+
+1. Expands the ValueSet from the terminology server
+2. Bulk inserts codes into a temporary table
+3. Uses an efficient `JOIN` instead of large `IN` clause
+4. Automatically cleans up temporary data after 1 hour
+
+## $expand Operation
+
+Explicitly expand a ValueSet:
+
+```bash
+GET /ValueSet/$expand?url=http://hl7.org/fhir/ValueSet/observation-vitalsignresult
+
+POST /ValueSet/$expand
+Content-Type: application/fhir+json
+
+{
+  "resourceType": "Parameters",
+  "parameter": [
+    {"name": "url", "valueUri": "http://hl7.org/fhir/ValueSet/observation-vitalsignresult"},
+    {"name": "filter", "valueString": "heart"},
+    {"name": "count", "valueInteger": 100}
+  ]
+}
+```
+
+### Expansion Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `url` | uri | ValueSet URL to expand |
+| `filter` | string | Filter expansion by display text |
+| `count` | integer | Limit number of codes returned |
+| `offset` | integer | Pagination offset |
+| `includeDesignations` | boolean | Include alternate designations |
+
+## $validate-code Operation
+
+Validate a code against a ValueSet:
+
+```bash
+GET /ValueSet/$validate-code?url=http://hl7.org/fhir/ValueSet/observation-vitalsignresult&system=http://loinc.org&code=8867-4
+
+POST /ValueSet/$validate-code
+Content-Type: application/fhir+json
+
+{
+  "resourceType": "Parameters",
+  "parameter": [
+    {"name": "url", "valueUri": "http://hl7.org/fhir/ValueSet/observation-vitalsignresult"},
+    {"name": "coding", "valueCoding": {
+      "system": "http://loinc.org",
+      "code": "8867-4"
+    }}
+  ]
+}
+```
+
+Response:
+
+```json
+{
+  "resourceType": "Parameters",
+  "parameter": [
+    {"name": "result", "valueBoolean": true},
+    {"name": "display", "valueString": "Heart rate"}
+  ]
+}
+```
+
+## Error Handling
+
+### Terminology Server Unavailable
+
+When the terminology server is unavailable:
+
+```json
+{
+  "resourceType": "OperationOutcome",
+  "issue": [{
+    "severity": "error",
+    "code": "exception",
+    "diagnostics": "Terminology server unavailable: connection timeout"
+  }]
+}
+```
+
+### Invalid ValueSet
+
+```json
+{
+  "resourceType": "OperationOutcome",
+  "issue": [{
+    "severity": "error",
+    "code": "not-found",
+    "diagnostics": "ValueSet not found: http://example.org/ValueSet/invalid"
+  }]
+}
+```
+
+### Terminology Disabled
+
+If terminology is disabled in configuration:
+
+```json
+{
+  "resourceType": "OperationOutcome",
+  "issue": [{
+    "severity": "error",
+    "code": "not-supported",
+    "diagnostics": "Terminology services are disabled. Enable in configuration to use :in, :not-in, :below, :above modifiers."
+  }]
+}
+```
+
+## Examples
+
+### Search for Vital Signs
+
+```bash
+# All vital sign observations
+GET /Observation?code:in=http://hl7.org/fhir/ValueSet/observation-vitalsignresult
+
+# Heart rate observations (LOINC 8867-4) and children
+GET /Observation?code:below=http://loinc.org|8867-4
+```
+
+### Search for Diabetes Conditions
+
+```bash
+# All diabetes and subtypes
+GET /Condition?code:below=http://snomed.info/sct|73211009
+
+# Only Type 2 diabetes specifically
+GET /Condition?code=http://snomed.info/sct|44054006
+```
+
+### Exclude Specific Codes
+
+```bash
+# Observations that are NOT in the vitals ValueSet
+GET /Observation?code:not-in=http://hl7.org/fhir/ValueSet/observation-vitalsignresult
+
+# Conditions that are NOT diabetes-related
+GET /Condition?code:not-in=http://example.org/ValueSet/diabetes-all
+```
+
+### Combined with Other Parameters
+
+```bash
+# Final vital sign observations from January 2024
+GET /Observation?status=final&code:in=http://hl7.org/fhir/ValueSet/observation-vitalsignresult&date=ge2024-01-01&date=lt2024-02-01
+
+# Active diabetes conditions for a specific patient
+GET /Condition?patient=Patient/123&clinical-status=active&code:below=http://snomed.info/sct|73211009
+```
+
+## Troubleshooting
+
+### Slow Expansions
+
+If ValueSet expansions are slow:
+
+1. Check terminology server latency
+2. Increase `cache_ttl_secs` for frequently used ValueSets
+3. Consider using a local terminology server
+4. Monitor for large ValueSets (>1000 codes)
+
+### Memory Usage
+
+Large ValueSet expansions are handled efficiently:
+
+- Codes are streamed to temporary tables
+- Temporary data is cleaned up automatically
+- No in-memory caching of expansion results (uses Redis/local cache)
+
+### Debugging
+
+Enable debug logging:
+
+```toml
+[logging]
+level = "debug"
+```
+
+Look for:
+- `terminology.expansion` - Expansion requests
+- `terminology.cache` - Cache hits/misses
+- `terminology.temp_table` - Temp table operations

@@ -1,0 +1,324 @@
+---
+title: Search Parameters
+description: Complete guide to FHIR search parameters, modifiers, and advanced search features
+---
+
+OctoFHIR supports comprehensive FHIR search capabilities including all standard modifiers, date prefixes, and advanced features like `_include` and `_revinclude`.
+
+## Basic Search
+
+Search for resources using query parameters:
+
+```bash
+# Search for patients by family name
+GET /Patient?family=Smith
+
+# Search with multiple parameters (AND logic)
+GET /Patient?family=Smith&gender=female
+
+# Search with multiple values (OR logic)
+GET /Patient?family=Smith,Johnson
+```
+
+## String Modifiers
+
+String search parameters support the following modifiers:
+
+### Default (starts-with)
+
+```bash
+# Matches "Smith", "Smithson", "Smithfield"
+GET /Patient?family=Smith
+```
+
+### :exact
+
+Case-sensitive exact match:
+
+```bash
+# Matches only "Smith" (not "smith" or "SMITH")
+GET /Patient?family:exact=Smith
+```
+
+### :contains
+
+Substring match anywhere in the value:
+
+```bash
+# Matches "Smith", "Blacksmith", "Smithson"
+GET /Patient?family:contains=mit
+```
+
+### :missing
+
+Find resources where the element is present or absent:
+
+```bash
+# Patients without an identifier
+GET /Patient?identifier:missing=true
+
+# Patients with at least one identifier
+GET /Patient?identifier:missing=false
+```
+
+## Token Modifiers
+
+Token search parameters (for codes, identifiers, etc.) support:
+
+### System|Code Format
+
+```bash
+# Search by system and code
+GET /Patient?identifier=http://hospital.org/mrn|MRN-001
+
+# Search by code only (any system)
+GET /Patient?identifier=MRN-001
+
+# Search by system only (any code)
+GET /Patient?identifier=http://hospital.org/mrn|
+```
+
+### :text
+
+Search by display text rather than code:
+
+```bash
+# Find observations where code display contains "blood pressure"
+GET /Observation?code:text=blood pressure
+```
+
+### :not
+
+Exclude resources with matching codes:
+
+```bash
+# Patients that are NOT male
+GET /Patient?gender:not=male
+```
+
+### :of-type
+
+For Identifier searches, match by identifier type:
+
+```bash
+# Find patients by MRN type identifier
+GET /Patient?identifier:of-type=http://terminology.hl7.org/CodeSystem/v2-0203|MR
+```
+
+## Date Prefixes
+
+Date search parameters support precision-aware comparisons:
+
+| Prefix | Meaning | Example |
+|--------|---------|---------|
+| `eq` | Equal (default) | `birthdate=eq1980-01-15` |
+| `ne` | Not equal | `birthdate=ne1980-01-15` |
+| `lt` | Less than | `birthdate=lt1990-01-01` |
+| `le` | Less than or equal | `birthdate=le1990-01-01` |
+| `gt` | Greater than | `birthdate=gt1980-01-01` |
+| `ge` | Greater than or equal | `birthdate=ge1980-01-01` |
+| `sa` | Starts after | `date=sa2024-01-01` |
+| `eb` | Ends before | `date=eb2024-12-31` |
+| `ap` | Approximately | `date=ap2024-06-15` |
+
+### Date Ranges
+
+Combine prefixes to search within ranges:
+
+```bash
+# Patients born in the 1980s
+GET /Patient?birthdate=ge1980-01-01&birthdate=lt1990-01-01
+
+# Observations from January 2024
+GET /Observation?date=ge2024-01-01&date=lt2024-02-01
+```
+
+### Date Precision
+
+Dates match at their precision level:
+
+```bash
+# Matches any date in 1980
+GET /Patient?birthdate=1980
+
+# Matches any date in January 1980
+GET /Patient?birthdate=1980-01
+
+# Matches exactly January 15, 1980
+GET /Patient?birthdate=1980-01-15
+```
+
+## Include and RevInclude
+
+### _include
+
+Include referenced resources in the response:
+
+```bash
+# Search observations and include referenced Patient
+GET /Observation?code=8867-4&_include=Observation:subject
+
+# Include multiple reference types
+GET /Observation?_include=Observation:subject&_include=Observation:performer
+```
+
+### _revinclude
+
+Include resources that reference the search results:
+
+```bash
+# Search patients and include their observations
+GET /Patient?_revinclude=Observation:subject
+
+# Include multiple reverse references
+GET /Patient?_revinclude=Observation:subject&_revinclude=Condition:subject
+```
+
+### :iterate
+
+For recursive includes (follow reference chains):
+
+```bash
+# Include subject and the subject's organization
+GET /Observation?_include=Observation:subject&_include:iterate=Patient:organization
+```
+
+## Result Filtering
+
+### _elements
+
+Return only specific elements:
+
+```bash
+# Return only id, name, and birthDate
+GET /Patient?_elements=id,name,birthDate
+```
+
+Resources returned with `_elements` are tagged with `SUBSETTED` in their meta.
+
+### _summary
+
+Return summarized resources:
+
+| Value | Description |
+|-------|-------------|
+| `true` | Return summary elements only |
+| `false` | Return full resources (default) |
+| `text` | Return text, id, meta, and mandatory elements |
+| `data` | Return data elements only (no text) |
+| `count` | Return only the count, no entries |
+
+```bash
+# Get summary view
+GET /Patient?_summary=true
+
+# Get just the count
+GET /Patient?_summary=count
+```
+
+## Pagination
+
+### _count
+
+Limit the number of results:
+
+```bash
+# Return first 10 results
+GET /Patient?_count=10
+```
+
+### Page Navigation
+
+Use the `link` elements in the Bundle response:
+
+```json
+{
+  "resourceType": "Bundle",
+  "type": "searchset",
+  "total": 100,
+  "link": [
+    {"relation": "self", "url": "..."},
+    {"relation": "next", "url": "...?_page=2"},
+    {"relation": "previous", "url": "...?_page=0"}
+  ]
+}
+```
+
+## Sorting
+
+### _sort
+
+Sort results by one or more parameters:
+
+```bash
+# Sort by birthDate ascending
+GET /Patient?_sort=birthdate
+
+# Sort by birthDate descending
+GET /Patient?_sort=-birthdate
+
+# Sort by multiple fields
+GET /Patient?_sort=family,-birthdate
+```
+
+## Composite Search Parameters
+
+Search using composite parameters that combine multiple values:
+
+```bash
+# Search by code AND value (composite parameter)
+GET /Observation?code-value-quantity=http://loinc.org|8867-4$gt60
+```
+
+## Chained Search
+
+Search by properties of referenced resources:
+
+```bash
+# Observations for patients named "Smith"
+GET /Observation?subject:Patient.family=Smith
+
+# Observations for patients born after 1980
+GET /Observation?subject:Patient.birthdate=gt1980-01-01
+```
+
+## Common Search Parameters
+
+These parameters work on all resource types:
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `_id` | token | Resource logical ID |
+| `_lastUpdated` | date | When the resource was last updated |
+| `_profile` | uri | Profiles the resource claims to conform to |
+| `_tag` | token | Tags applied to the resource |
+| `_security` | token | Security labels on the resource |
+| `_source` | uri | Source URI for the resource |
+
+## Examples
+
+### Complex Patient Search
+
+```bash
+# Active female patients named Smith, born in the 1980s,
+# sorted by birthdate, returning only id and name
+GET /Patient?family=Smith&gender=female&active=true&birthdate=ge1980-01-01&birthdate=lt1990-01-01&_sort=birthdate&_elements=id,name
+```
+
+### Observation Search with Includes
+
+```bash
+# Final observations with heart rate code,
+# include the patient, return first 20
+GET /Observation?status=final&code=http://loinc.org|8867-4&_include=Observation:subject&_count=20
+```
+
+### Find Missing Data
+
+```bash
+# Patients without phone numbers
+GET /Patient?telecom:missing=true
+
+# Observations without values
+GET /Observation?value-quantity:missing=true
+```

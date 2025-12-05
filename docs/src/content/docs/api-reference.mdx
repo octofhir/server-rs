@@ -1,33 +1,349 @@
 ---
 title: API Reference
-head: []
+description: Complete FHIR R4 REST API reference
 ---
 
-Base URL: `http://localhost:8080`
+## Base Configuration
 
-Formats:
+- **Base URL**: `http://localhost:8080` (configurable)
+- **FHIR Version**: R4 (4.0.1)
 
-- Accepts: `application/fhir+json`, `application/json`
-- Produces: `application/fhir+json`
+### Content Types
 
-Resources (MVP):
+| Header | Values |
+|--------|--------|
+| Accept | `application/fhir+json`, `application/json` |
+| Content-Type | `application/fhir+json`, `application/json` |
 
-- Patient, Observation
+## Supported Resources
 
-Endpoints:
+OctoFHIR supports all standard FHIR R4 resource types. Common resources include:
 
-- `GET /metadata` → CapabilityStatement
-- `POST /{resourceType}` → Create resource
-- `GET /{resourceType}/{id}` → Read resource
-- `PUT /{resourceType}/{id}` → Update resource
-- `DELETE /{resourceType}/{id}` → Delete resource
-- `GET /{resourceType}?…` → Search (returns Bundle of type `searchset`)
+- **Clinical**: Patient, Observation, Condition, Procedure, DiagnosticReport
+- **Administrative**: Organization, Practitioner, Location, Encounter
+- **Financial**: Claim, Coverage, ExplanationOfBenefit
+- **Workflow**: Task, ServiceRequest, Appointment
 
-Search parameters (subset supported):
+## RESTful API
 
-- Common: `_id` (token), `_lastUpdated` (date)
-- Patient: `name`, `family`, `given` (string), `identifier` (token)
+### Metadata (CapabilityStatement)
 
-Errors:
+```bash
+GET /metadata
+```
 
-- Returns OperationOutcome with appropriate HTTP status (4xx/5xx)
+Returns the server's CapabilityStatement describing supported operations.
+
+### Create
+
+```bash
+POST /{resourceType}
+Content-Type: application/fhir+json
+
+{resource body}
+```
+
+**Response**: `201 Created` with `Location` header
+
+### Read
+
+```bash
+GET /{resourceType}/{id}
+```
+
+**Response**: `200 OK` with resource body
+
+### Update
+
+```bash
+PUT /{resourceType}/{id}
+Content-Type: application/fhir+json
+If-Match: W/"{versionId}"  # Optional, for conditional update
+
+{resource body with id}
+```
+
+**Response**: `200 OK` with updated resource
+
+### Delete
+
+```bash
+DELETE /{resourceType}/{id}
+```
+
+**Response**: `204 No Content`
+
+### Search
+
+```bash
+GET /{resourceType}?{parameters}
+POST /{resourceType}/_search
+Content-Type: application/x-www-form-urlencoded
+
+{parameters}
+```
+
+**Response**: `200 OK` with Bundle of type `searchset`
+
+See [Search Parameters](/search-parameters) for detailed search documentation.
+
+### History
+
+```bash
+# Instance history
+GET /{resourceType}/{id}/_history
+
+# Type history
+GET /{resourceType}/_history
+
+# System history
+GET /_history
+```
+
+### Version Read
+
+```bash
+GET /{resourceType}/{id}/_history/{versionId}
+```
+
+## Bundle Operations
+
+### Transaction
+
+```bash
+POST /
+Content-Type: application/fhir+json
+
+{
+  "resourceType": "Bundle",
+  "type": "transaction",
+  "entry": [...]
+}
+```
+
+All-or-nothing execution. See [Transactions](/transactions) for details.
+
+### Batch
+
+```bash
+POST /
+Content-Type: application/fhir+json
+
+{
+  "resourceType": "Bundle",
+  "type": "batch",
+  "entry": [...]
+}
+```
+
+Independent execution of each entry.
+
+## Operations
+
+### $validate
+
+```bash
+POST /{resourceType}/$validate
+POST /{resourceType}/{id}/$validate
+```
+
+Validate a resource against profiles.
+
+### $expand (ValueSet)
+
+```bash
+GET /ValueSet/$expand?url={valuesetUrl}
+POST /ValueSet/$expand
+```
+
+Expand a ValueSet. See [Terminology](/terminology) for details.
+
+### $validate-code (ValueSet)
+
+```bash
+GET /ValueSet/$validate-code?url={valuesetUrl}&code={code}&system={system}
+POST /ValueSet/$validate-code
+```
+
+### $everything (Patient)
+
+```bash
+GET /Patient/{id}/$everything
+```
+
+Returns a Bundle with all resources related to the patient.
+
+## Search Parameters
+
+### Common Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `_id` | token | Resource logical ID |
+| `_lastUpdated` | date | Last modification timestamp |
+| `_profile` | uri | Profiles the resource conforms to |
+| `_tag` | token | Tags on the resource |
+| `_security` | token | Security labels |
+| `_source` | uri | Source URI |
+
+### Search Modifiers
+
+| Modifier | Types | Description |
+|----------|-------|-------------|
+| `:exact` | string | Case-sensitive exact match |
+| `:contains` | string | Substring match |
+| `:missing` | all | Element present/absent |
+| `:text` | token | Match display text |
+| `:not` | token | Exclude matching codes |
+| `:in` | token | Code in ValueSet |
+| `:not-in` | token | Code not in ValueSet |
+| `:below` | token | Code or descendants |
+| `:above` | token | Code or ancestors |
+
+### Result Parameters
+
+| Parameter | Description |
+|-----------|-------------|
+| `_count` | Number of results per page |
+| `_offset` | Pagination offset |
+| `_sort` | Sort by parameter(s) |
+| `_elements` | Return only specified elements |
+| `_summary` | Return summary (`true`, `false`, `text`, `data`, `count`) |
+| `_include` | Include referenced resources |
+| `_revinclude` | Include resources that reference results |
+
+## Error Responses
+
+All errors return an OperationOutcome:
+
+```json
+{
+  "resourceType": "OperationOutcome",
+  "issue": [
+    {
+      "severity": "error",
+      "code": "not-found",
+      "diagnostics": "Resource Patient/xyz not found"
+    }
+  ]
+}
+```
+
+### HTTP Status Codes
+
+| Code | Meaning |
+|------|---------|
+| 200 | Success (search, read) |
+| 201 | Created |
+| 204 | No Content (delete) |
+| 400 | Bad Request |
+| 401 | Unauthorized |
+| 403 | Forbidden |
+| 404 | Not Found |
+| 409 | Conflict (version mismatch) |
+| 412 | Precondition Failed |
+| 422 | Unprocessable Entity |
+| 500 | Internal Server Error |
+
+## Headers
+
+### Request Headers
+
+| Header | Description |
+|--------|-------------|
+| `Accept` | Response format |
+| `Content-Type` | Request body format |
+| `If-Match` | Conditional update (ETag) |
+| `If-None-Match` | Conditional read |
+| `If-None-Exist` | Conditional create (search params) |
+| `Prefer` | Return preference (`return=minimal`, `return=representation`) |
+| `X-Request-Id` | Correlation ID for tracing |
+| `X-Skip-Validation` | Skip validation (if enabled) |
+
+### Response Headers
+
+| Header | Description |
+|--------|-------------|
+| `Location` | URL of created/updated resource |
+| `ETag` | Resource version (`W/"1"`) |
+| `Last-Modified` | Resource modification timestamp |
+| `Content-Location` | Canonical URL |
+
+## Admin API
+
+### Health Check
+
+```bash
+GET /health
+GET /health/ready
+GET /health/live
+```
+
+### Cache Management
+
+```bash
+GET /admin/cache/stats
+POST /admin/cache/clear
+```
+
+### Configuration
+
+```bash
+GET /admin/config
+GET /admin/config/{category}
+PUT /admin/config/{category}/{key}
+```
+
+### Feature Flags
+
+```bash
+GET /admin/features
+GET /admin/features/{flag}
+PUT /admin/features/{flag}
+```
+
+### Database
+
+```bash
+GET /admin/db/stats
+GET /admin/indexes/suggestions
+```
+
+## Pagination
+
+Search results include pagination links:
+
+```json
+{
+  "resourceType": "Bundle",
+  "type": "searchset",
+  "total": 150,
+  "link": [
+    {"relation": "self", "url": "...?_count=10"},
+    {"relation": "first", "url": "...?_count=10&_offset=0"},
+    {"relation": "next", "url": "...?_count=10&_offset=10"},
+    {"relation": "previous", "url": "...?_count=10&_offset=0"},
+    {"relation": "last", "url": "...?_count=10&_offset=140"}
+  ],
+  "entry": [...]
+}
+```
+
+## Rate Limiting
+
+When rate limiting is enabled:
+
+| Header | Description |
+|--------|-------------|
+| `X-RateLimit-Limit` | Requests allowed per window |
+| `X-RateLimit-Remaining` | Requests remaining |
+| `X-RateLimit-Reset` | Window reset timestamp |
+| `Retry-After` | Seconds until retry (when limited) |
+
+## CORS
+
+CORS is enabled by default for browser-based clients:
+
+- Allowed origins: Configurable
+- Allowed methods: GET, POST, PUT, DELETE, OPTIONS
+- Allowed headers: Content-Type, Authorization, Accept, X-Request-Id
