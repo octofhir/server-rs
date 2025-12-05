@@ -52,6 +52,13 @@ pub use http::{
 pub use middleware::{
     AdminAuth, AuthContext, AuthState, BearerAuth, OptionalBearerAuth, UserContext,
 };
+pub use policy::{
+    AccessPolicy, ClientIdentity, ClientType, CompartmentIdSource, CompartmentMatcher,
+    ContextError, ConversionError, EngineElement, EnvironmentContext, InternalPolicy, MatchPattern,
+    MatcherElement, PatternMatcher, PolicyContext, PolicyContextBuilder, PolicyEngine,
+    PolicyEngineType, PolicyMatchers, RequestContext, ResourceContext, ResourceMeta, ScopeSummary,
+    UserIdentity, ValidationError, detect_operation, parse_fhir_path,
+};
 pub use smart::{
     CapabilitySecurityBuilder, ConformanceError, DEFAULT_LAUNCH_CONTEXT_TTL, FhirContextItem,
     SmartConfiguration, SmartScopes, StandaloneContextRequirements, StoredLaunchContext,
@@ -83,6 +90,14 @@ pub mod prelude {
     };
     pub use crate::middleware::{
         AdminAuth, AuthContext, AuthState, BearerAuth, OptionalBearerAuth, UserContext,
+    };
+    pub use crate::policy::{
+        AccessPolicy, ClientIdentity, ClientType, CompartmentIdSource, CompartmentMatcher,
+        ContextError, ConversionError, EngineElement, EnvironmentContext, InternalPolicy,
+        MatchPattern, MatcherElement, PatternMatcher, PolicyContext, PolicyContextBuilder,
+        PolicyEngine, PolicyEngineType, PolicyMatchers, RequestContext, ResourceContext,
+        ResourceMeta, ScopeSummary, UserIdentity as PolicyUserIdentity, ValidationError,
+        detect_operation, parse_fhir_path,
     };
     pub use crate::smart::{
         CapabilitySecurityBuilder, ConformanceError, DEFAULT_LAUNCH_CONTEXT_TTL, FhirContextItem,

@@ -113,7 +113,8 @@ impl StandaloneContextRequirements {
 ///
 /// Each operation maps to a required permission (c, r, u, d, or s).
 /// Some operations like `Capabilities` are always allowed without checking scopes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub enum FhirOperation {
     /// Read a resource by ID (GET /[type]/[id])
     Read,

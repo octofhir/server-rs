@@ -18,6 +18,10 @@ tracing = { workspace = true }
 url = { workspace = true }
 uuid = { workspace = true }
 
+# Pattern matching
+regex = { workspace = true }
+ipnetwork = { workspace = true }
+
 # JWT
 jsonwebtoken = { version = "10", features = ["rust_crypto"] }
 base64 = "0.22"

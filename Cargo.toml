@@ -81,6 +81,7 @@ octofhir-fhirschema = { version = "0.3.5"}
 # Utilities
 futures-util = "0.3"
 regex = "1"
+ipnetwork = "0.20"
 url = { version = "2.5", features = ["serde"] }
 indexmap = "2"
 async-trait = "0.1"
