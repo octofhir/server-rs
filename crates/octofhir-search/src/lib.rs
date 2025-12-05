@@ -1,11 +1,14 @@
 pub mod chaining;
 pub mod common;
+pub mod config_watcher;
 pub mod engine;
 pub mod include;
 pub mod loader;
 pub mod parameters;
 pub mod parser;
+pub mod query_cache;
 pub mod registry;
+pub mod reloadable;
 pub mod reverse_chaining;
 pub mod sql_builder;
 pub mod terminology;
@@ -58,8 +61,20 @@ pub use include::{
     IncludeError, IncludeParam, extract_includes, extract_revincludes, is_include_parameter,
     is_revinclude_parameter, parse_include, parse_revinclude,
 };
+pub use query_cache::{
+    CacheError, CacheStatsSnapshot, ParamPosition, ParamValueType, PreparedQuery, QueryCache,
+    QueryCacheKey, QueryParamKey,
+};
+pub use config_watcher::{
+    ConfigCallback, ConfigWatcher, ReloadableTerminologyProvider, WatcherConfig, WatcherError,
+    WatcherHandle, watch_and_reload,
+};
 pub use reverse_chaining::{
     ReverseChainParameter, ReverseChainingError, build_reverse_chain_search,
     is_reverse_chain_parameter, parse_reverse_chain,
 };
-pub use terminology::{CacheStats, HybridTerminologyProvider, TerminologyConfig, TerminologyError};
+pub use terminology::{
+    CacheStats, ExpansionResult, HierarchyDirection, HybridTerminologyProvider, TerminologyConfig,
+    TerminologyError,
+};
+pub use reloadable::{ReloadableSearchConfig, SearchOptions};

@@ -1,0 +1,57 @@
+[package]
+name = "octofhir-config"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+description = "Unified configuration management system for OctoFHIR server"
+
+[dependencies]
+# Workspace dependencies
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+time = { workspace = true }
+toml = { workspace = true }
+notify = { workspace = true }
+notify-debouncer-mini = { workspace = true }
+dashmap = { workspace = true }
+
+# Async traits
+async-trait = { workspace = true }
+
+# Encryption
+aes-gcm = "0.10"
+base64 = "0.22"
+rand = "0.8"
+hex = "0.4"
+
+# Database - using sqlx-core and sqlx-postgres directly to avoid sqlite conflict
+sqlx-core = { version = "0.8.6", default-features = false, features = [
+    "_rt-tokio",
+    "_tls-native-tls",
+    "json",
+    "migrate"
+] }
+sqlx-postgres = { version = "0.8.6", default-features = false, features = [
+    "json",
+    "chrono",
+    "uuid",
+    "migrate"
+] }
+
+# UUID
+uuid = { workspace = true }
+
+# Time
+chrono = { version = "0.4", features = ["serde"] }
+
+[dev-dependencies]
+tokio-test = { workspace = true }
+tempfile = { workspace = true }

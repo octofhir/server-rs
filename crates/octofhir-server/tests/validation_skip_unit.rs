@@ -35,8 +35,9 @@ fn test_skip_validation_disabled_by_default() {
 
 #[test]
 fn test_skip_validation_header_parsing() {
-    let mut config = ValidationSettings::default();
-    config.allow_skip_validation = true;
+    let config = ValidationSettings {
+        allow_skip_validation: true,
+    };
 
     // Test with "true"
     let mut headers = HeaderMap::new();
@@ -91,23 +92,26 @@ fn test_validation_config_serde() {
 #[test]
 fn test_two_layer_security() {
     // Layer 1: Config must enable the feature
-    let mut config = ValidationSettings::default();
-    config.allow_skip_validation = false;
+    let config_disabled = ValidationSettings {
+        allow_skip_validation: false,
+    };
 
     let mut headers = HeaderMap::new();
     headers.insert("X-Skip-Validation", "true".parse().unwrap());
 
     // Config disabled, header present -> should not skip
-    assert!(!should_skip_validation(&headers, &config));
+    assert!(!should_skip_validation(&headers, &config_disabled));
 
     // Layer 2: Header must be present
-    config.allow_skip_validation = true;
+    let config_enabled = ValidationSettings {
+        allow_skip_validation: true,
+    };
     headers.clear();
 
     // Config enabled, no header -> should not skip
-    assert!(!should_skip_validation(&headers, &config));
+    assert!(!should_skip_validation(&headers, &config_enabled));
 
     // Both layers satisfied -> should skip
     headers.insert("X-Skip-Validation", "true".parse().unwrap());
-    assert!(should_skip_validation(&headers, &config));
+    assert!(should_skip_validation(&headers, &config_enabled));
 }

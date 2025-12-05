@@ -53,6 +53,7 @@ mod fcm_storage;
 mod hot_reload;
 mod pool;
 mod queries;
+mod query_analyzer;
 mod schema;
 mod storage;
 mod transaction;
@@ -67,6 +68,10 @@ pub use db_sync::{ConformanceBundle, SyncStats, load_to_memory, sync_and_load, s
 pub use error::{PostgresError, Result};
 pub use fcm_storage::PostgresPackageStore;
 pub use hot_reload::{HotReloadBuilder, HotReloadListener};
+pub use query_analyzer::{
+    AnalyzerConfig, AnalyzerError, AnalyzerStatsSnapshot, BufferStats, IndexSuggestion, IndexUsage,
+    QueryAnalysis, QueryAnalyzer, SeqScanInfo, SlowQueryRecord, SuggestionImpact,
+};
 pub use storage::PostgresStorage;
 
 // Re-export storage traits for convenience
@@ -105,6 +110,9 @@ pub mod prelude {
     pub use crate::error::{PostgresError, Result};
     pub use crate::fcm_storage::PostgresPackageStore;
     pub use crate::hot_reload::{HotReloadBuilder, HotReloadListener};
+    pub use crate::query_analyzer::{
+        AnalyzerConfig, IndexSuggestion, QueryAnalysis, QueryAnalyzer,
+    };
     pub use crate::storage::PostgresStorage;
     pub use crate::{DynPostgresStorage, create_storage};
     pub use octofhir_storage::{ConformanceStorage, FhirStorage, StorageError, StoredResource};

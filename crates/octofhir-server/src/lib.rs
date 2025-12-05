@@ -5,7 +5,7 @@ pub mod cache;
 pub mod canonical;
 pub mod compartments;
 pub mod config;
-pub mod config_watch;
+pub mod config_manager;
 pub mod gateway;
 pub mod handlers;
 pub mod mapping;
@@ -24,6 +24,7 @@ pub use compartments::{CompartmentDefinition, CompartmentRegistry};
 pub use config::{
     AppConfig, CacheConfig, OtelConfig, PostgresStorageConfig, RedisConfig, ServerConfig,
 };
+pub use config_manager::{ServerConfigManager, ServerConfigManagerBuilder};
 pub use observability::{init_tracing, shutdown_tracing};
 pub use server::{AppState, OctofhirServer, ServerBuilder, build_app};
 

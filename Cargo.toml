@@ -4,6 +4,7 @@ members = [
     "crates/octofhir-api",
     "crates/octofhir-auth",
     "crates/octofhir-auth-postgres",
+    "crates/octofhir-config",
     "crates/octofhir-core",
     "crates/octofhir-db-postgres",
     "crates/octofhir-search",
@@ -25,6 +26,7 @@ categories = ["web-programming", "science"]
 # Local dependencies
 octofhir-auth = { path = "crates/octofhir-auth" }
 octofhir-auth-postgres = { path = "crates/octofhir-auth-postgres" }
+octofhir-config = { path = "crates/octofhir-config" }
 octofhir-core = { path = "crates/octofhir-core" }
 octofhir-sof = { path = "crates/octofhir-sof" }
 octofhir-storage = { path = "crates/octofhir-storage" }

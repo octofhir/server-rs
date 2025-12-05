@@ -242,7 +242,7 @@ async fn create_fcm_postgres_pool(
         .map_err(|e| format!("failed to connect to PostgreSQL for FCM: {e}"))?;
 
     // Run FCM migrations
-    octofhir_db_postgres::migrations::run(&pool)
+    octofhir_db_postgres::migrations::run(&pool, &pg_cfg.connection_url())
         .await
         .map_err(|e| format!("failed to run FCM migrations: {e}"))?;
 

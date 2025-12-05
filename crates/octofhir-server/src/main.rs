@@ -1,90 +1,152 @@
-use std::{
-    env,
-    path::PathBuf,
-    sync::{Arc, RwLock},
-};
+use std::{env, path::PathBuf, sync::Arc};
 
-use octofhir_server::config::{loader::load_config, shared};
+use octofhir_server::config::loader::load_config;
+use octofhir_server::config_manager::ServerConfigManager;
 use octofhir_server::{ServerBuilder, shutdown_tracing};
+use tokio::sync::RwLock;
+
+/// How the configuration path was determined.
+#[derive(Debug, Clone, Copy)]
+enum ConfigSource {
+    /// From --config CLI argument
+    CliArgument,
+    /// From OCTOFHIR_CONFIG environment variable
+    EnvironmentVariable,
+    /// Default path (octofhir.toml)
+    Default,
+}
+
+impl std::fmt::Display for ConfigSource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::CliArgument => write!(f, "CLI argument (--config)"),
+            Self::EnvironmentVariable => write!(f, "environment variable (OCTOFHIR_CONFIG)"),
+            Self::Default => write!(f, "default"),
+        }
+    }
+}
 
 #[tokio::main]
 async fn main() {
-    // Initialize tracing early with the default level so we can log during a config load
+    // Initialize tracing early with the default level
     octofhir_server::observability::init_tracing();
 
-    // Basic CLI: --config <path>
-    let mut args = env::args().skip(1);
-    let mut config_path: Option<String> = None;
-    while let Some(arg) = args.next() {
-        if arg == "--config"
-            && let Some(p) = args.next()
-        {
-            config_path = Some(p);
-        }
-    }
-    if config_path.is_none()
-        && let Ok(p) = env::var("OCTOFHIR_CONFIG")
-        && !p.is_empty()
-    {
-        config_path = Some(p);
-    }
-    // Default to root-level octofhir.toml when not provided
-    if config_path.is_none() {
-        config_path = Some("octofhir.toml".to_string());
-    }
+    // Parse config path from CLI, environment, or use default
+    let (config_path, source) = resolve_config_path();
 
-    let cfg = match load_config(config_path.as_deref()) {
+    // Load initial configuration
+    let cfg = match load_config(Some(&config_path)) {
         Ok(c) => c,
         Err(e) => {
-            eprintln!("configuration error: {e}");
+            eprintln!("Configuration error: {e}");
             std::process::exit(2);
         }
     };
 
-    // Log that configuration was read successfully
-    tracing::info!(path = %config_path.as_deref().unwrap_or("octofhir.toml"), "configuration loaded successfully");
+    tracing::info!(
+        path = %config_path,
+        source = %source,
+        "Configuration loaded"
+    );
 
-    // Apply logging level from configuration dynamically
+    // Apply logging and OTEL settings
     octofhir_server::observability::apply_logging_level(&cfg.logging.level);
-    // Apply OTEL config (Phase 7 implements tracer initialization)
     octofhir_server::observability::apply_otel_config(&cfg.otel);
 
-    // Initialize the canonical registry from configuration (Phase 8) asynchronously
+    // Initialize canonical registry
     let registry = match octofhir_server::canonical::init_from_config_async(&cfg).await {
         Ok(r) => r,
         Err(e) => {
-            eprintln!("canonical manager init failed: {e}");
+            eprintln!("Canonical manager initialization failed: {e}");
             std::process::exit(2);
         }
     };
+
     if let Ok(guard) = registry.read() {
-        tracing::info!(fhir.version = %cfg.fhir.version, packages_loaded = %guard.list().len(), "canonical registry initialized");
+        tracing::info!(
+            fhir.version = %cfg.fhir.version,
+            packages_loaded = %guard.list().len(),
+            "Canonical registry initialized"
+        );
     }
     octofhir_server::canonical::set_registry(registry);
 
-    // Initialize shared config for hot-reload
-    let shared_cfg = Arc::new(RwLock::new(cfg.clone()));
-    shared::set_shared(shared_cfg.clone());
+    // Create shared config for hot-reload
+    let shared_config = Arc::new(RwLock::new(cfg.clone()));
 
-    // Start the config watcher if a path is provided
-    let rt_handle = tokio::runtime::Handle::current();
-    let _watcher_guard = config_path.as_ref().and_then(|p| {
-        let path = PathBuf::from(p);
-        octofhir_server::config_watch::start_config_watcher(path, shared_cfg, rt_handle)
-    });
+    // Initialize unified configuration manager
+    let config_manager = match init_config_manager(&config_path).await {
+        Ok(m) => Some(m),
+        Err(e) => {
+            tracing::warn!(error = %e, "Configuration manager initialization failed, hot-reload disabled");
+            None
+        }
+    };
 
-    // Build server with the appropriate storage backend
+    // Start config watcher
+    if let Some(ref manager) = config_manager {
+        manager.start_watching(shared_config.clone()).await;
+        tracing::info!("Hot-reload enabled");
+    }
+
+    // Build and run server
     let server = match ServerBuilder::new().with_config(cfg).build().await {
         Ok(s) => s,
         Err(e) => {
-            eprintln!("failed to initialize server: {e}");
+            eprintln!("Server initialization failed: {e}");
             std::process::exit(2);
         }
     };
 
     if let Err(err) = server.run().await {
-        eprintln!("server error: {err}");
+        eprintln!("Server error: {err}");
     }
 
     shutdown_tracing();
+}
+
+/// Resolve the configuration file path.
+///
+/// Priority order:
+/// 1. CLI argument: --config <path>
+/// 2. Environment variable: OCTOFHIR_CONFIG
+/// 3. Default: octofhir.toml
+fn resolve_config_path() -> (String, ConfigSource) {
+    // 1. Check CLI: --config <path>
+    let mut args = env::args().skip(1);
+    while let Some(arg) = args.next() {
+        if arg == "--config" {
+            if let Some(path) = args.next() {
+                return (path, ConfigSource::CliArgument);
+            }
+        }
+    }
+
+    // 2. Check environment variable
+    if let Ok(path) = env::var("OCTOFHIR_CONFIG") {
+        if !path.is_empty() {
+            return (path, ConfigSource::EnvironmentVariable);
+        }
+    }
+
+    // 3. Default to octofhir.toml
+    ("octofhir.toml".to_string(), ConfigSource::Default)
+}
+
+/// Initialize the unified configuration manager.
+async fn init_config_manager(
+    config_path: &str,
+) -> Result<ServerConfigManager, octofhir_config::ConfigError> {
+    let path_buf = PathBuf::from(config_path);
+
+    let mut builder = ServerConfigManager::builder();
+
+    if path_buf.exists() {
+        builder = builder.with_file(path_buf);
+    }
+
+    // Note: Database source can be added here when pool is available
+    // builder = builder.with_database(pool);
+
+    builder.build().await
 }

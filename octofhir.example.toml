@@ -1,0 +1,134 @@
+# OctoFHIR Server Configuration Example
+#
+# Copy this file to `octofhir.toml` and customize for your environment.
+# Configuration can also be overridden with environment variables using
+# the prefix OCTOFHIR__ (e.g., OCTOFHIR__SERVER__PORT=9090)
+
+[fhir]
+version = "R4"  # or R4B, R5, R6
+
+[server]
+host = "0.0.0.0"
+port = 8080
+# base_url = "https://fhir.example.com"  # Optional: Override base URL for links
+read_timeout_ms = 15000
+write_timeout_ms = 15000
+body_limit_bytes = 1048576  # 1MB
+
+[storage.postgres]
+# Option 1: Use a full connection URL
+# url = "postgres://user:password@localhost:5432/octofhir"
+
+# Option 2: Use individual connection parameters
+host = "localhost"
+port = 5432
+user = "postgres"
+password = "postgres"
+database = "octofhir"
+pool_size = 10
+connect_timeout_ms = 5000
+idle_timeout_ms = 300000  # 5 minutes
+
+[search]
+default_count = 10
+max_count = 100
+
+[logging]
+level = "info"  # trace, debug, info, warn, error, off
+
+[otel]
+enabled = false
+# endpoint = "http://localhost:4317"
+# sample_ratio = 1.0
+# environment = "dev"
+
+[packages]
+# Packages to load from FHIR registry or local filesystem
+load = [
+    "hl7.fhir.r4.core#4.0.1",
+    # "hl7.terminology#5.5.0",
+    # { id = "my.package", version = "1.0.0", path = "/path/to/package" }
+]
+# Optional: Custom package cache directory
+# path = "/custom/path/to/package/cache"
+
+[auth]
+enabled = false
+# When enabled, configure SMART on FHIR settings
+# See auth module documentation for full configuration
+
+# ============================================
+# TERMINOLOGY SERVICE CONFIGURATION
+# ============================================
+# Configuration for external terminology services (ValueSet expansion, code validation, etc.)
+#
+# This enables:
+# - :in and :not-in modifiers for ValueSet membership searches
+# - :below and :above modifiers for hierarchy/subsumption searches
+# - Automatic ValueSet expansion with performance optimization
+#   - Small ValueSets (<500 codes): Traditional IN clause
+#   - Large ValueSets (≥500 codes): Optimized temp table strategy
+#
+[terminology]
+# Enable terminology service integration (default: true)
+enabled = true
+
+# Terminology server URL (default: https://tx.fhir.org/r4)
+# This is the public FHIR terminology server provided by HL7
+#
+# For integration tests with tx.fhir.org, use the default or explicitly set:
+server_url = "https://tx.fhir.org/r4"
+#
+# Alternative terminology servers:
+# - Ontoserver: https://r4.ontoserver.csiro.au/fhir
+# - HAPI FHIR: http://hapi.fhir.org/baseR4
+# - Custom server: http://localhost:8081/fhir
+
+# Cache TTL for terminology responses in seconds (default: 3600 = 1 hour)
+# Increase for production to reduce external API calls
+# Decrease for development/testing to get fresh data
+cache_ttl_secs = 3600
+
+# ============================================
+# INTEGRATION TEST EXAMPLES
+# ============================================
+#
+# For integration tests with tx.fhir.org:
+# 1. Ensure terminology.enabled = true
+# 2. Use default server_url or set to "https://tx.fhir.org/r4"
+# 3. Run migrations to create temp_valueset_codes table:
+#    cargo run -- migrate
+#
+# Example searches that use terminology:
+#
+# ValueSet membership (:in modifier):
+#   GET /Observation?code:in=http://hl7.org/fhir/ValueSet/observation-codes
+#
+# Hierarchy search (:below modifier for SNOMED CT):
+#   GET /Condition?code:below=http://snomed.info/sct|73211009
+#   (Finds all conditions with diabetes or any subtype)
+#
+# Hierarchy search (:above modifier):
+#   GET /Condition?code:above=http://snomed.info/sct|44054006
+#   (Finds conditions that subsume Type 2 DM)
+#
+# These searches will automatically use the optimized expansion:
+# - Small expansions: Fast IN clause
+# - Large expansions: Temp table with bulk insert (10-50x faster)
+
+[validation]
+# Allow clients to skip validation via X-Skip-Validation header
+# WARNING: Setting to true bypasses validation - use only in dev/test
+allow_skip_validation = false
+
+[redis]
+# Redis for horizontal scaling (optional)
+enabled = false
+url = "redis://localhost:6379"
+pool_size = 10
+timeout_ms = 5000
+
+[cache]
+# Local cache settings
+terminology_ttl_secs = 3600
+local_cache_max_entries = 10000

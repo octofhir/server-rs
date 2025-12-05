@@ -534,8 +534,10 @@ mod tests {
 
     #[test]
     fn test_empty_issuer_fails_validation() {
-        let mut config = AuthConfig::default();
-        config.issuer = String::new();
+        let config = AuthConfig {
+            issuer: String::new(),
+            ..Default::default()
+        };
         let err = config.validate().unwrap_err();
         assert!(matches!(err, ConfigError::InvalidValue(_)));
         assert!(err.to_string().contains("issuer"));

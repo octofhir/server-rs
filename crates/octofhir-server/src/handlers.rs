@@ -12,7 +12,7 @@ use include_dir::{Dir, include_dir};
 use mime_guess::MimeGuess;
 use octofhir_api::ApiError;
 use octofhir_core::{CoreError, ResourceType};
-use octofhir_storage::FhirStorage;  // For begin_transaction method
+use octofhir_storage::FhirStorage; // For begin_transaction method
 use serde::Serialize;
 use serde_json::{Value, json};
 use std::collections::HashMap;
@@ -2883,7 +2883,6 @@ async fn process_transaction_entry_with_tx(
     entry: &Value,
     reference_map: &mut std::collections::HashMap<String, String>,
 ) -> Result<Value, ApiError> {
-
     let request = &entry["request"];
     let method = request["method"]
         .as_str()
@@ -2904,8 +2903,8 @@ async fn process_transaction_entry_with_tx(
     match method.to_uppercase().as_str() {
         "POST" => {
             // Create operation
-            let resource = resource
-                .ok_or_else(|| ApiError::bad_request("POST entry requires a resource"))?;
+            let resource =
+                resource.ok_or_else(|| ApiError::bad_request("POST entry requires a resource"))?;
 
             let (resource_type, _condition) = if let Some(idx) = url.find('?') {
                 (&url[..idx], Some(&url[idx + 1..]))
@@ -2913,11 +2912,9 @@ async fn process_transaction_entry_with_tx(
                 (url, None)
             };
 
-            let _rt = resource_type
-                .parse::<ResourceType>()
-                .map_err(|_| {
-                    ApiError::bad_request(format!("Unknown resource type: {}", resource_type))
-                })?;
+            let _rt = resource_type.parse::<ResourceType>().map_err(|_| {
+                ApiError::bad_request(format!("Unknown resource type: {}", resource_type))
+            })?;
 
             // Create using transaction
             let stored = tx
@@ -2931,8 +2928,10 @@ async fn process_transaction_entry_with_tx(
             }
 
             // Build response - convert StoredResource to ResourceEnvelope
-            let envelope: octofhir_core::ResourceEnvelope = serde_json::from_value(stored.resource.clone())
-                .map_err(|e| ApiError::internal(format!("Failed to deserialize resource: {}", e)))?;
+            let envelope: octofhir_core::ResourceEnvelope =
+                serde_json::from_value(stored.resource.clone()).map_err(|e| {
+                    ApiError::internal(format!("Failed to deserialize resource: {}", e))
+                })?;
             let response_json = json_from_envelope(&envelope);
             Ok(build_transaction_response_entry(
                 Some(&response_json),
@@ -2944,8 +2943,8 @@ async fn process_transaction_entry_with_tx(
         }
         "PUT" => {
             // Update operation
-            let resource = resource
-                .ok_or_else(|| ApiError::bad_request("PUT entry requires a resource"))?;
+            let resource =
+                resource.ok_or_else(|| ApiError::bad_request("PUT entry requires a resource"))?;
 
             // Update using transaction
             let stored = tx
@@ -2954,8 +2953,10 @@ async fn process_transaction_entry_with_tx(
                 .map_err(|e| ApiError::internal(format!("Failed to update resource: {}", e)))?;
 
             // Convert StoredResource to ResourceEnvelope
-            let envelope: octofhir_core::ResourceEnvelope = serde_json::from_value(stored.resource.clone())
-                .map_err(|e| ApiError::internal(format!("Failed to deserialize resource: {}", e)))?;
+            let envelope: octofhir_core::ResourceEnvelope =
+                serde_json::from_value(stored.resource.clone()).map_err(|e| {
+                    ApiError::internal(format!("Failed to deserialize resource: {}", e))
+                })?;
             let response_json = json_from_envelope(&envelope);
             let resource_type = stored.resource_type.clone();
             Ok(build_transaction_response_entry(
@@ -2979,11 +2980,9 @@ async fn process_transaction_entry_with_tx(
             let resource_type = parts[0];
             let id = parts[1];
 
-            let _rt = resource_type
-                .parse::<ResourceType>()
-                .map_err(|_| {
-                    ApiError::bad_request(format!("Unknown resource type: {}", resource_type))
-                })?;
+            let _rt = resource_type.parse::<ResourceType>().map_err(|_| {
+                ApiError::bad_request(format!("Unknown resource type: {}", resource_type))
+            })?;
 
             // Delete using transaction
             tx.delete(resource_type, id).await.map_err(|e| {
@@ -3015,11 +3014,9 @@ async fn process_transaction_entry_with_tx(
             let resource_type = parts[0];
             let id = parts[1];
 
-            let _rt = resource_type
-                .parse::<ResourceType>()
-                .map_err(|_| {
-                    ApiError::bad_request(format!("Unknown resource type: {}", resource_type))
-                })?;
+            let _rt = resource_type.parse::<ResourceType>().map_err(|_| {
+                ApiError::bad_request(format!("Unknown resource type: {}", resource_type))
+            })?;
 
             // Read using transaction (sees uncommitted changes in same transaction)
             let stored = tx
@@ -3029,8 +3026,10 @@ async fn process_transaction_entry_with_tx(
                 .ok_or_else(|| ApiError::not_found(format!("{}/{}", resource_type, id)))?;
 
             // Convert StoredResource to ResourceEnvelope
-            let envelope: octofhir_core::ResourceEnvelope = serde_json::from_value(stored.resource.clone())
-                .map_err(|e| ApiError::internal(format!("Failed to deserialize resource: {}", e)))?;
+            let envelope: octofhir_core::ResourceEnvelope =
+                serde_json::from_value(stored.resource.clone()).map_err(|e| {
+                    ApiError::internal(format!("Failed to deserialize resource: {}", e))
+                })?;
             let response_json = json_from_envelope(&envelope);
             Ok(build_transaction_response_entry(
                 Some(&response_json),
@@ -3042,9 +3041,9 @@ async fn process_transaction_entry_with_tx(
         }
         "PATCH" => {
             // Patch is typically converted to PUT in FHIR
-            return Err(ApiError::bad_request(
+            Err(ApiError::bad_request(
                 "PATCH not yet supported in transaction bundles with native transactions",
-            ));
+            ))
         }
         _ => Err(ApiError::bad_request(format!(
             "Unknown HTTP method in bundle entry: {}",

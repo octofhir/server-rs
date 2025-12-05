@@ -8,7 +8,7 @@
 -- Function to notify on gateway resource changes
 -- Works with table-per-resource pattern - uses TG_TABLE_NAME to identify resource type
 CREATE OR REPLACE FUNCTION notify_gateway_resource_change()
-RETURNS TRIGGER AS $$
+RETURNS TRIGGER AS $func$
 DECLARE
     resource_json JSONB;
     notification_payload JSON;
@@ -34,7 +34,7 @@ BEGIN
 
     RETURN COALESCE(NEW, OLD);
 END;
-$$ LANGUAGE plpgsql;
+$func$ LANGUAGE plpgsql;
 
 -- Note: Triggers are created dynamically by SchemaManager when 'app' or 'customoperation'
 -- tables are created. See SchemaManager.create_gateway_trigger() for implementation.

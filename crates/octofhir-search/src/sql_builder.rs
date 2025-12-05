@@ -1041,6 +1041,18 @@ impl SqlBuilder {
         self.param_offset + self.params.len()
     }
 
+    /// Add an integer parameter and return its placeholder number.
+    pub fn add_integer_param(&mut self, value: i64) -> usize {
+        self.params.push(SqlParam::Integer(value));
+        self.param_offset + self.params.len()
+    }
+
+    /// Add a boolean parameter and return its placeholder number.
+    pub fn add_boolean_param(&mut self, value: bool) -> usize {
+        self.params.push(SqlParam::Boolean(value));
+        self.param_offset + self.params.len()
+    }
+
     /// Get the current parameter count.
     pub fn param_count(&self) -> usize {
         self.params.len()
@@ -1054,6 +1066,92 @@ impl SqlBuilder {
     /// Get all conditions.
     pub fn conditions(&self) -> &[String] {
         &self.conditions
+    }
+
+    /// Add a condition for ValueSet expansion result (optimized for large expansions).
+    ///
+    /// This method handles both small (IN clause) and large (temp table) expansions:
+    /// - `InClause`: Generates traditional IN clause with code list
+    /// - `TempTable`: Generates JOIN with temp_valueset_codes table
+    ///
+    /// # Arguments
+    ///
+    /// * `jsonb_path` - The JSONB path to the coding element (e.g., "resource->'code'")
+    /// * `expansion_result` - The expansion result from terminology service
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// // Small expansion: code IN ('123', '456', '789')
+    /// builder.add_valueset_condition("resource->'code'", InClause(concepts));
+    ///
+    /// // Large expansion: JOIN with temp table
+    /// builder.add_valueset_condition("resource->'code'", TempTable(session_id));
+    /// ```
+    pub fn add_valueset_condition(
+        &mut self,
+        jsonb_path: &str,
+        expansion_result: &crate::terminology::ExpansionResult,
+    ) {
+        use crate::terminology::ExpansionResult;
+
+        match expansion_result {
+            ExpansionResult::InClause(concepts) => {
+                // Small expansion: use IN clause with code matching
+                if concepts.is_empty() {
+                    // Empty ValueSet matches nothing
+                    self.add_condition("FALSE");
+                    return;
+                }
+
+                let mut code_conditions = Vec::new();
+
+                for concept in concepts {
+                    let code_param = self.add_text_param(&concept.code);
+
+                    if let Some(ref system) = concept.system {
+                        // Match both system and code
+                        let system_param = self.add_text_param(system);
+                        code_conditions.push(format!(
+                            "EXISTS (SELECT 1 FROM jsonb_array_elements({jsonb_path}->'coding') AS c \
+                             WHERE c->>'system' = ${system_param} AND c->>'code' = ${code_param})"
+                        ));
+                    } else {
+                        // Match code only (any system)
+                        code_conditions.push(format!(
+                            "EXISTS (SELECT 1 FROM jsonb_array_elements({jsonb_path}->'coding') AS c \
+                             WHERE c->>'code' = ${code_param})"
+                        ));
+                    }
+                }
+
+                let condition = if code_conditions.len() == 1 {
+                    code_conditions[0].clone()
+                } else {
+                    format!("({})", code_conditions.join(" OR "))
+                };
+
+                self.add_condition(condition);
+            }
+
+            ExpansionResult::TempTable(session_id) => {
+                // Large expansion: JOIN with temp table for performance
+                let session_param = self.add_text_param(session_id);
+
+                let condition = format!(
+                    "EXISTS (
+                        SELECT 1
+                        FROM temp_valueset_codes t
+                        CROSS JOIN LATERAL jsonb_array_elements({jsonb_path}->'coding') AS c
+                        WHERE t.session_id = ${session_param}
+                          AND c->>'code' = t.code
+                          AND (t.system = '' OR t.system IS NULL OR c->>'system' = t.system)
+                    )"
+                );
+
+                self.add_condition(condition);
+            }
+        }
     }
 
     /// Build the final WHERE clause by joining conditions with AND.
@@ -1133,6 +1231,8 @@ pub fn build_jsonb_accessor(resource_col: &str, path: &[String], as_text: bool) 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::terminology::ExpansionResult;
+    use octofhir_fhir_model::terminology::ValueSetConcept;
 
     #[test]
     fn test_fhirpath_to_jsonb_path() {
@@ -1144,6 +1244,60 @@ mod tests {
 
         let path = fhirpath_to_jsonb_path("Patient.identifier", "Patient");
         assert_eq!(path, vec!["identifier"]);
+    }
+
+    #[test]
+    fn test_add_valueset_condition_inclause_small() {
+        let mut builder = SqlBuilder::new();
+
+        let concepts = vec![
+            ValueSetConcept {
+                code: "123".to_string(),
+                system: Some("http://loinc.org".to_string()),
+                display: None,
+            },
+            ValueSetConcept {
+                code: "456".to_string(),
+                system: Some("http://loinc.org".to_string()),
+                display: None,
+            },
+        ];
+
+        let result = ExpansionResult::InClause(concepts);
+        builder.add_valueset_condition("resource->'code'", &result);
+
+        let clause = builder.build_where_clause().unwrap();
+        assert!(clause.contains("EXISTS"));
+        assert!(clause.contains("jsonb_array_elements"));
+        assert!(clause.contains("OR"));
+        assert_eq!(builder.params().len(), 4); // 2 systems + 2 codes
+    }
+
+    #[test]
+    fn test_add_valueset_condition_inclause_empty() {
+        let mut builder = SqlBuilder::new();
+
+        let result = ExpansionResult::InClause(vec![]);
+        builder.add_valueset_condition("resource->'code'", &result);
+
+        let clause = builder.build_where_clause().unwrap();
+        assert_eq!(clause, "FALSE");
+    }
+
+    #[test]
+    fn test_add_valueset_condition_temp_table() {
+        let mut builder = SqlBuilder::new();
+
+        let session_id = "test-session-123".to_string();
+        let result = ExpansionResult::TempTable(session_id.clone());
+        builder.add_valueset_condition("resource->'code'", &result);
+
+        let clause = builder.build_where_clause().unwrap();
+        assert!(clause.contains("temp_valueset_codes"));
+        assert!(clause.contains("t.session_id"));
+        assert!(clause.contains("CROSS JOIN LATERAL"));
+        assert_eq!(builder.params().len(), 1); // Just the session_id
+        assert_eq!(builder.params()[0].as_str(), session_id);
     }
 
     #[test]
@@ -1383,7 +1537,7 @@ mod tests {
     #[test]
     fn test_fhir_query_builder_chain_join() {
         let ref_path = JsonbPath::new(vec!["subject".into(), "reference".into()]).unwrap();
-        let name_path = JsonbPath::new(vec!["name".into(), "family".into()]).unwrap();
+        let _name_path = JsonbPath::new(vec!["name".into(), "family".into()]).unwrap();
 
         let query = FhirQueryBuilder::new("Observation", "public")
             .chain_join(ChainJoin::new("Observation", "Patient", ref_path, "p"))
@@ -1516,7 +1670,7 @@ mod tests {
     fn test_sql_value_display() {
         assert_eq!(SqlValue::Text("hello".into()).as_display_str(), "hello");
         assert_eq!(SqlValue::Integer(42).as_display_str(), "42");
-        assert_eq!(SqlValue::Float(3.14).as_display_str(), "3.14");
+        assert_eq!(SqlValue::Float(2.71).as_display_str(), "2.71");
         assert_eq!(SqlValue::Boolean(true).as_display_str(), "true");
         assert_eq!(SqlValue::Null.as_display_str(), "NULL");
     }

@@ -19,7 +19,10 @@ static SHARED_REDIS: OnceCell<(ContainerAsync<Redis>, String)> = OnceCell::const
 async fn get_redis_url() -> String {
     let (_, url) = SHARED_REDIS
         .get_or_init(|| async {
-            let container = Redis::default().start().await.expect("start redis container");
+            let container = Redis::default()
+                .start()
+                .await
+                .expect("start redis container");
 
             let host_port = container.get_host_port_ipv4(6379).await.expect("get port");
             let url = format!("redis://127.0.0.1:{}", host_port);
@@ -56,7 +59,11 @@ async fn test_local_cache_expiration() {
 
     // Set with very short TTL
     cache
-        .set("expiring_key", b"value".to_vec(), Duration::from_millis(100))
+        .set(
+            "expiring_key",
+            b"value".to_vec(),
+            Duration::from_millis(100),
+        )
         .await;
 
     // Should be available immediately
@@ -75,7 +82,11 @@ async fn test_local_cache_invalidate() {
 
     // Set a value
     cache
-        .set("key_to_invalidate", b"value".to_vec(), Duration::from_secs(60))
+        .set(
+            "key_to_invalidate",
+            b"value".to_vec(),
+            Duration::from_secs(60),
+        )
         .await;
 
     // Verify it exists
@@ -123,7 +134,11 @@ async fn test_redis_cache_get_set() {
 
     // Set a value
     cache
-        .set("redis_test_key", b"redis_test_value".to_vec(), Duration::from_secs(60))
+        .set(
+            "redis_test_key",
+            b"redis_test_value".to_vec(),
+            Duration::from_secs(60),
+        )
         .await;
 
     // Wait a bit for async write to complete
@@ -150,7 +165,11 @@ async fn test_redis_cache_l1_l2_promotion() {
 
     // Set value in cache1
     cache1
-        .set("promotion_key", b"promotion_value".to_vec(), Duration::from_secs(60))
+        .set(
+            "promotion_key",
+            b"promotion_value".to_vec(),
+            Duration::from_secs(60),
+        )
         .await;
 
     // Wait for write to L2
@@ -183,7 +202,11 @@ async fn test_redis_cache_invalidation() {
 
     // Set a value
     cache
-        .set("invalidate_test", b"value".to_vec(), Duration::from_secs(60))
+        .set(
+            "invalidate_test",
+            b"value".to_vec(),
+            Duration::from_secs(60),
+        )
         .await;
 
     // Wait for write
@@ -219,7 +242,11 @@ async fn test_graceful_degradation_invalid_url() {
 
     // But should still work as local cache
     cache
-        .set("fallback_key", b"fallback_value".to_vec(), Duration::from_secs(60))
+        .set(
+            "fallback_key",
+            b"fallback_value".to_vec(),
+            Duration::from_secs(60),
+        )
         .await;
 
     let value = cache.get("fallback_key").await;

@@ -18,7 +18,7 @@ async-trait = { workspace = true }
 tokio = { workspace = true }
 futures-util = { workspace = true }
 
-# Database
+# Database - using sqlx-core and sqlx-postgres directly to avoid sqlite conflict
 sqlx-core = { version = "0.8.6", default-features = false, features = [
     "_rt-tokio",
     "_tls-native-tls",
@@ -49,6 +49,9 @@ thiserror = { workspace = true }
 
 # Tracing
 tracing = { workspace = true }
+
+# Pattern matching for query analysis
+regex = { workspace = true }
 
 [dev-dependencies]
 tokio-test = { workspace = true }

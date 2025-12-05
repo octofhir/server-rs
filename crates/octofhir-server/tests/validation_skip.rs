@@ -15,10 +15,12 @@ use testcontainers_modules::postgres::Postgres;
 use tokio::sync::{Mutex, OnceCell};
 use tokio::task::JoinHandle;
 
+/// Type alias for the shared PostgreSQL container and connection URL
+type SharedPostgres = Arc<Mutex<(ContainerAsync<Postgres>, String)>>;
+
 // Shared PostgreSQL container for all tests
 // We keep the container alive by storing it in a static OnceCell
-static SHARED_POSTGRES: OnceCell<Arc<Mutex<(ContainerAsync<Postgres>, String)>>> =
-    OnceCell::const_new();
+static SHARED_POSTGRES: OnceCell<SharedPostgres> = OnceCell::const_new();
 
 /// Helper to get the shared PostgreSQL URL
 /// The container is started once and reused across all tests

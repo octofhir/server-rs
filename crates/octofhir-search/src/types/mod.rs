@@ -317,7 +317,9 @@ fn infer_component_type(expression: &str) -> String {
     }
 
     // Quantity patterns
-    if lower.contains("quantity") || (lower.contains("value") && (lower.contains("unit") || lower.contains("system"))) {
+    if lower.contains("quantity")
+        || (lower.contains("value") && (lower.contains("unit") || lower.contains("system")))
+    {
         return "quantity".to_string();
     }
 
@@ -549,7 +551,8 @@ mod tests {
                     expression: "code".to_string(),
                 },
                 SearchParameterComponent {
-                    definition: "http://hl7.org/fhir/SearchParameter/Observation-value-quantity".to_string(),
+                    definition: "http://hl7.org/fhir/SearchParameter/Observation-value-quantity"
+                        .to_string(),
                     expression: "valueQuantity".to_string(),
                 },
             ]),
@@ -562,7 +565,7 @@ mod tests {
         assert!(clause.is_some());
         let clause_str = clause.unwrap();
         // Verify the SQL contains both code and value conditions
-        assert!(clause_str.len() > 0);
+        assert!(!clause_str.is_empty());
     }
 
     #[test]
@@ -589,14 +592,22 @@ mod tests {
 
         let result = dispatch_search(&mut builder, &param, &def, "Patient");
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("no components defined"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("no components defined")
+        );
     }
 
     #[test]
     fn test_infer_component_type() {
         assert_eq!(super::infer_component_type("code"), "token");
         assert_eq!(super::infer_component_type("valueQuantity"), "quantity");
-        assert_eq!(super::infer_component_type("value.as(CodeableConcept)"), "token");
+        assert_eq!(
+            super::infer_component_type("value.as(CodeableConcept)"),
+            "token"
+        );
         assert_eq!(super::infer_component_type("effective"), "date");
         assert_eq!(super::infer_component_type("subject"), "reference");
         assert_eq!(super::infer_component_type("display"), "string");

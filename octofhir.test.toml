@@ -1,0 +1,66 @@
+# OctoFHIR Integration Test Configuration
+#
+# Minimal configuration for running integration tests with tx.fhir.org
+#
+# Usage:
+#   1. Set up test database: createdb octofhir_test
+#   2. Run migrations: cargo run -- migrate
+#   3. Run tests: cargo test --test integration_tests
+#   4. Or start server: cargo run -- --config octofhir.test.toml
+
+[fhir]
+version = "R4"
+
+[server]
+host = "127.0.0.1"
+port = 8888  # Different port to avoid conflicts
+read_timeout_ms = 30000  # Longer timeout for tx.fhir.org calls
+write_timeout_ms = 30000
+
+[storage.postgres]
+# Test database
+host = "localhost"
+port = 5432
+user = "postgres"
+password = "postgres"
+database = "octofhir_test"  # Separate test database
+pool_size = 5
+connect_timeout_ms = 5000
+
+[search]
+default_count = 10
+max_count = 100
+
+[logging]
+level = "debug"  # More verbose logging for debugging tests
+
+[packages]
+# Core FHIR package for test data
+load = [
+    "hl7.fhir.r4.core#4.0.1"
+]
+
+# ============================================
+# TERMINOLOGY SERVICE FOR INTEGRATION TESTS
+# ============================================
+[terminology]
+# Enable terminology service to test :in, :not-in, :below, :above modifiers
+enabled = true
+
+# Use public tx.fhir.org for integration tests
+server_url = "https://tx.fhir.org/r4"
+
+# Shorter TTL for tests to ensure fresh data
+cache_ttl_secs = 300  # 5 minutes
+
+[validation]
+# Allow skipping validation in tests for faster execution
+allow_skip_validation = true
+
+[redis]
+# Disable Redis for integration tests (not needed)
+enabled = false
+
+[cache]
+terminology_ttl_secs = 300
+local_cache_max_entries = 1000

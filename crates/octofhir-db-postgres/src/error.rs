@@ -9,9 +9,9 @@ pub enum PostgresError {
     #[error("Database connection error: {0}")]
     Connection(#[from] sqlx_core::error::Error),
 
-    /// Migration error.
+    /// Migration error (generic string for compatibility with different migration tools).
     #[error("Migration error: {0}")]
-    Migration(#[from] sqlx_core::migrate::MigrateError),
+    Migration(String),
 
     /// Configuration error.
     #[error("Configuration error: {message}")]

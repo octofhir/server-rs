@@ -73,7 +73,9 @@ impl Transaction for PostgresTransaction {
         let schema = self.schema_manager.clone();
         let mut tx_guard = self.tx.lock().await;
         let tx = tx_guard.as_deref_mut().ok_or_else(|| {
-            StorageError::transaction_error("Transaction already completed (committed or rolled back)")
+            StorageError::transaction_error(
+                "Transaction already completed (committed or rolled back)",
+            )
         })?;
         queries::crud::create_with_tx(tx, &schema, resource).await
     }
@@ -82,7 +84,9 @@ impl Transaction for PostgresTransaction {
         let schema = self.schema_manager.clone();
         let mut tx_guard = self.tx.lock().await;
         let tx = tx_guard.as_deref_mut().ok_or_else(|| {
-            StorageError::transaction_error("Transaction already completed (committed or rolled back)")
+            StorageError::transaction_error(
+                "Transaction already completed (committed or rolled back)",
+            )
         })?;
         queries::crud::update_with_tx(tx, &schema, resource).await
     }
@@ -91,7 +95,9 @@ impl Transaction for PostgresTransaction {
         let schema = self.schema_manager.clone();
         let mut tx_guard = self.tx.lock().await;
         let tx = tx_guard.as_deref_mut().ok_or_else(|| {
-            StorageError::transaction_error("Transaction already completed (committed or rolled back)")
+            StorageError::transaction_error(
+                "Transaction already completed (committed or rolled back)",
+            )
         })?;
         queries::crud::delete_with_tx(tx, &schema, resource_type, id).await
     }
@@ -104,7 +110,9 @@ impl Transaction for PostgresTransaction {
         // Read operations see uncommitted changes within this transaction
         let mut tx_guard = self.tx.lock().await;
         let tx = tx_guard.as_deref_mut().ok_or_else(|| {
-            StorageError::transaction_error("Transaction already completed (committed or rolled back)")
+            StorageError::transaction_error(
+                "Transaction already completed (committed or rolled back)",
+            )
         })?;
         queries::crud::read_with_tx(tx, &self.schema_manager, resource_type, id).await
     }

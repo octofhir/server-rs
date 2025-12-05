@@ -48,15 +48,16 @@ CREATE INDEX IF NOT EXISTS idx_async_jobs_created ON async_jobs(created_at DESC)
 
 -- Function to automatically update updated_at timestamp
 CREATE OR REPLACE FUNCTION update_async_jobs_updated_at()
-RETURNS TRIGGER AS $$
+RETURNS TRIGGER AS $func$
 BEGIN
     NEW.updated_at = NOW();
     RETURN NEW;
 END;
-$$ LANGUAGE plpgsql;
+$func$ LANGUAGE plpgsql;
 
--- Trigger to auto-update updated_at on row modification (PostgreSQL 14+)
-CREATE OR REPLACE TRIGGER trigger_async_jobs_updated_at
+-- Trigger to auto-update updated_at on row modification
+DROP TRIGGER IF EXISTS trigger_async_jobs_updated_at ON async_jobs;
+CREATE TRIGGER trigger_async_jobs_updated_at
     BEFORE UPDATE ON async_jobs
     FOR EACH ROW
     EXECUTE FUNCTION update_async_jobs_updated_at();

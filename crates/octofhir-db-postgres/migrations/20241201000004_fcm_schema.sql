@@ -40,10 +40,10 @@ CREATE TABLE IF NOT EXISTS fcm.packages (
 );
 
 -- ============================================================================
--- RESOURCES TABLE
+-- RESOURCES TABLE (basic structure)
 -- ============================================================================
 
--- Resources table with JSONB content and enhanced search fields
+-- Resources table with JSONB content
 CREATE TABLE IF NOT EXISTS fcm.resources (
     id SERIAL PRIMARY KEY,
     resource_type TEXT NOT NULL,
@@ -71,21 +71,17 @@ CREATE TABLE IF NOT EXISTS fcm.resources (
     -- JSONB content storage (replaces CAS file storage)
     content JSONB NOT NULL,
 
-    -- Enhanced search fields (extracted from content for fast queries)
-    id_lower TEXT GENERATED ALWAYS AS (lower(resource_id)) STORED,
-    name_lower TEXT GENERATED ALWAYS AS (lower(name)) STORED,
-    url_lower TEXT GENERATED ALWAYS AS (lower(url)) STORED,
-    title TEXT,  -- extracted from content.title
-    description TEXT,  -- extracted from content.description
-    status TEXT,  -- extracted from content.status (active, draft, retired)
-    publisher TEXT,  -- extracted from content.publisher
+    -- Search fields (will be populated by trigger)
+    id_lower TEXT,
+    name_lower TEXT,
+    url_lower TEXT,
+    title TEXT,
+    description TEXT,
+    status TEXT,
+    publisher TEXT,
 
-    -- Full-text search vector
-    search_vector tsvector GENERATED ALWAYS AS (
-        setweight(to_tsvector('english', coalesce(name, '')), 'A') ||
-        setweight(to_tsvector('english', coalesce(title, '')), 'B') ||
-        setweight(to_tsvector('english', coalesce(description, '')), 'C')
-    ) STORED,
+    -- Full-text search vector (will be updated by trigger)
+    search_vector tsvector,
 
     FOREIGN KEY(package_name, package_version)
         REFERENCES fcm.packages(name, version) ON DELETE CASCADE
@@ -124,76 +120,6 @@ CREATE INDEX IF NOT EXISTS idx_fcm_resource_priority_lookup ON fcm.resources(url
 
 -- Index for base URL pattern matching (for version fallback queries)
 CREATE INDEX IF NOT EXISTS idx_fcm_resource_url_pattern ON fcm.resources(url text_pattern_ops);
-
--- ============================================================================
--- NOTIFICATION TRIGGERS FOR HOT-RELOAD
--- ============================================================================
-
--- Notification function for package changes
-CREATE OR REPLACE FUNCTION fcm.notify_package_change()
-RETURNS TRIGGER AS $$
-BEGIN
-    PERFORM pg_notify('fcm_package_changes',
-        json_build_object(
-            'operation', TG_OP,
-            'package_name', COALESCE(NEW.name, OLD.name),
-            'package_version', COALESCE(NEW.version, OLD.version)
-        )::text
-    );
-    RETURN COALESCE(NEW, OLD);
-END;
-$$ LANGUAGE plpgsql;
-
--- Trigger for package changes
-DROP TRIGGER IF EXISTS fcm_packages_notify ON fcm.packages;
-CREATE TRIGGER fcm_packages_notify
-    AFTER INSERT OR UPDATE OR DELETE ON fcm.packages
-    FOR EACH ROW EXECUTE FUNCTION fcm.notify_package_change();
-
--- ============================================================================
--- HELPER FUNCTIONS
--- ============================================================================
-
--- Function to extract search fields from content when inserting/updating
-CREATE OR REPLACE FUNCTION fcm.extract_search_fields()
-RETURNS TRIGGER AS $$
-BEGIN
-    NEW.title := NEW.content->>'title';
-    NEW.description := NEW.content->>'description';
-    NEW.status := NEW.content->>'status';
-    NEW.publisher := NEW.content->>'publisher';
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
--- Trigger to automatically extract search fields
-DROP TRIGGER IF EXISTS fcm_resources_extract_fields ON fcm.resources;
-CREATE TRIGGER fcm_resources_extract_fields
-    BEFORE INSERT OR UPDATE ON fcm.resources
-    FOR EACH ROW EXECUTE FUNCTION fcm.extract_search_fields();
-
--- Function to update package resource count
-CREATE OR REPLACE FUNCTION fcm.update_package_resource_count()
-RETURNS TRIGGER AS $$
-BEGIN
-    IF TG_OP = 'INSERT' THEN
-        UPDATE fcm.packages
-        SET resource_count = resource_count + 1
-        WHERE name = NEW.package_name AND version = NEW.package_version;
-    ELSIF TG_OP = 'DELETE' THEN
-        UPDATE fcm.packages
-        SET resource_count = resource_count - 1
-        WHERE name = OLD.package_name AND version = OLD.package_version;
-    END IF;
-    RETURN NULL;
-END;
-$$ LANGUAGE plpgsql;
-
--- Trigger to maintain resource count
-DROP TRIGGER IF EXISTS fcm_resources_count ON fcm.resources;
-CREATE TRIGGER fcm_resources_count
-    AFTER INSERT OR DELETE ON fcm.resources
-    FOR EACH ROW EXECUTE FUNCTION fcm.update_package_resource_count();
 
 -- ============================================================================
 -- COMMENTS

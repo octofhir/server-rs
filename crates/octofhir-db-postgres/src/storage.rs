@@ -46,7 +46,7 @@ impl PostgresStorage {
         let pool = pool::create_pool(&config).await?;
 
         if config.run_migrations {
-            migrations::run(&pool).await?;
+            migrations::run(&pool, &config.url).await?;
         }
 
         let schema_manager = SchemaManager::new(pool.clone());
@@ -194,7 +194,8 @@ impl FhirStorage for PostgresStorage {
         })?;
 
         // Wrap in our PostgresTransaction type
-        let pg_tx = crate::transaction::PostgresTransaction::new(sqlx_tx, self.schema_manager.clone());
+        let pg_tx =
+            crate::transaction::PostgresTransaction::new(sqlx_tx, self.schema_manager.clone());
 
         Ok(Box::new(pg_tx))
     }
