@@ -27,10 +27,11 @@ use std::sync::Arc;
 use serde::Serialize;
 
 use crate::AuthResult;
-use crate::config::RhaiConfig;
+use crate::config::{QuickJsConfig, RhaiConfig};
 use crate::policy::cache::PolicyCache;
 use crate::policy::context::PolicyContext;
 use crate::policy::matcher::PatternMatcher;
+use crate::policy::quickjs::QuickJsRuntime;
 use crate::policy::resources::{InternalPolicy, PolicyEngine as PolicyEngineType};
 use crate::policy::rhai::RhaiRuntime;
 use crate::smart::scopes::{FhirOperation, SmartScopes};
@@ -178,6 +179,9 @@ pub struct PolicyEvaluatorConfig {
     /// Enable QuickJS script engine for policies.
     pub quickjs_enabled: bool,
 
+    /// QuickJS engine configuration.
+    pub quickjs_config: QuickJsConfig,
+
     /// Default decision when no policy matches.
     pub default_decision: DefaultDecision,
 
@@ -194,6 +198,7 @@ impl Default for PolicyEvaluatorConfig {
             rhai_enabled: false,
             rhai_config: RhaiConfig::default(),
             quickjs_enabled: false,
+            quickjs_config: QuickJsConfig::default(),
             default_decision: DefaultDecision::Deny,
             evaluate_scopes_first: true,
         }
@@ -256,8 +261,8 @@ pub struct EvaluatedPolicy {
 ///
 /// Orchestrates policy lookup, matching, and decision-making.
 ///
-/// The Rhai runtime is created once and shared across all evaluations.
-/// Scripts are compiled to AST once and cached.
+/// Script runtimes (Rhai and QuickJS) are created once and shared across
+/// all evaluations. Scripts are compiled to AST once and cached.
 pub struct PolicyEvaluator {
     /// Pattern matcher for policy matching.
     pattern_matcher: PatternMatcher,
@@ -268,6 +273,9 @@ pub struct PolicyEvaluator {
     /// Rhai scripting runtime (shared, created once).
     rhai_runtime: Option<Arc<RhaiRuntime>>,
 
+    /// QuickJS scripting runtime (shared pool, created once).
+    quickjs_runtime: Option<Arc<QuickJsRuntime>>,
+
     /// Engine configuration.
     config: PolicyEvaluatorConfig,
 }
@@ -276,7 +284,8 @@ impl PolicyEvaluator {
     /// Create a new policy evaluator.
     ///
     /// If `rhai_enabled` is true in the config, a shared Rhai runtime is created.
-    /// The runtime is reused for all script evaluations.
+    /// If `quickjs_enabled` is true, a shared QuickJS runtime pool is created.
+    /// The runtimes are reused for all script evaluations.
     #[must_use]
     pub fn new(policy_cache: Arc<PolicyCache>, config: PolicyEvaluatorConfig) -> Self {
         let rhai_runtime = if config.rhai_enabled {
@@ -285,10 +294,23 @@ impl PolicyEvaluator {
             None
         };
 
+        let quickjs_runtime = if config.quickjs_enabled {
+            match QuickJsRuntime::new(config.quickjs_config.clone()) {
+                Ok(runtime) => Some(Arc::new(runtime)),
+                Err(e) => {
+                    tracing::error!(error = %e, "Failed to initialize QuickJS runtime");
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
         Self {
             pattern_matcher: PatternMatcher::new(),
             policy_cache,
             rhai_runtime,
+            quickjs_runtime,
             config,
         }
     }
@@ -568,15 +590,20 @@ impl PolicyEvaluator {
                 }
             }
 
-            PolicyEngineType::QuickJs { script: _ } => {
-                if self.config.quickjs_enabled {
-                    // TODO: Implement QuickJS script evaluation
-                    // For now, abstain - QuickJS runtime not yet implemented
-                    tracing::warn!(
+            PolicyEngineType::QuickJs { script } => {
+                if let Some(ref runtime) = self.quickjs_runtime {
+                    tracing::debug!(
                         policy_id = %policy.id,
-                        "QuickJS policy encountered but runtime not yet implemented"
+                        "Evaluating QuickJS policy script"
                     );
-                    AccessDecision::Abstain
+                    let decision = runtime.evaluate(script, context);
+                    // If the script returns a deny, attach the policy ID
+                    if let AccessDecision::Deny(mut reason) = decision {
+                        reason.policy_id = Some(policy.id.clone());
+                        AccessDecision::Deny(reason)
+                    } else {
+                        decision
+                    }
                 } else {
                     tracing::warn!(
                         policy_id = %policy.id,
@@ -598,6 +625,12 @@ impl PolicyEvaluator {
     #[must_use]
     pub fn rhai_runtime(&self) -> Option<&Arc<RhaiRuntime>> {
         self.rhai_runtime.as_ref()
+    }
+
+    /// Get a reference to the QuickJS runtime (if enabled).
+    #[must_use]
+    pub fn quickjs_runtime(&self) -> Option<&Arc<QuickJsRuntime>> {
+        self.quickjs_runtime.as_ref()
     }
 
     /// Invalidate the policy cache.

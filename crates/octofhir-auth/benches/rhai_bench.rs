@@ -25,7 +25,11 @@ fn create_benchmark_context() -> PolicyContext {
             fhir_user: Some("Practitioner/456".to_string()),
             fhir_user_type: Some("Practitioner".to_string()),
             fhir_user_id: Some("456".to_string()),
-            roles: vec!["doctor".to_string(), "admin".to_string(), "researcher".to_string()],
+            roles: vec![
+                "doctor".to_string(),
+                "admin".to_string(),
+                "researcher".to_string(),
+            ],
             attributes: HashMap::new(),
         }),
         client: ClientIdentity {
@@ -37,7 +41,10 @@ fn create_benchmark_context() -> PolicyContext {
         scopes: ScopeSummary {
             raw: "user/Patient.cruds user/Observation.rs".to_string(),
             patient_scopes: vec![],
-            user_scopes: vec!["user/Patient.cruds".to_string(), "user/Observation.rs".to_string()],
+            user_scopes: vec![
+                "user/Patient.cruds".to_string(),
+                "user/Observation.rs".to_string(),
+            ],
             system_scopes: vec![],
             has_wildcard: false,
             launch: false,
@@ -77,9 +84,7 @@ fn create_benchmark_context() -> PolicyContext {
 /// it's reasonable.
 fn bench_engine_creation(c: &mut Criterion) {
     c.bench_function("rhai_engine_creation", |b| {
-        b.iter(|| {
-            black_box(RhaiRuntime::new(RhaiConfig::default()))
-        });
+        b.iter(|| black_box(RhaiRuntime::new(RhaiConfig::default())));
     });
 }
 
@@ -91,9 +96,7 @@ fn bench_simple_script(c: &mut Criterion) {
     let context = create_benchmark_context();
 
     c.bench_function("rhai_simple_script", |b| {
-        b.iter(|| {
-            black_box(runtime.evaluate("true", &context))
-        });
+        b.iter(|| black_box(runtime.evaluate("true", &context)));
     });
 }
 
@@ -105,9 +108,7 @@ fn bench_role_check(c: &mut Criterion) {
     let context = create_benchmark_context();
 
     c.bench_function("rhai_role_check", |b| {
-        b.iter(|| {
-            black_box(runtime.evaluate(r#"has_role(user, "doctor")"#, &context))
-        });
+        b.iter(|| black_box(runtime.evaluate(r#"has_role(user, "doctor")"#, &context)));
     });
 }
 
@@ -133,9 +134,7 @@ fn bench_complex_script(c: &mut Criterion) {
     "#;
 
     c.bench_function("rhai_complex_script", |b| {
-        b.iter(|| {
-            black_box(runtime.evaluate(script, &context))
-        });
+        b.iter(|| black_box(runtime.evaluate(script, &context)));
     });
 }
 
@@ -150,9 +149,7 @@ fn bench_cache_hit(c: &mut Criterion) {
     let _ = runtime.evaluate("true", &context);
 
     c.bench_function("rhai_cache_hit", |b| {
-        b.iter(|| {
-            black_box(runtime.evaluate("true", &context))
-        });
+        b.iter(|| black_box(runtime.evaluate("true", &context)));
     });
 }
 
@@ -184,9 +181,7 @@ fn bench_user_type_check(c: &mut Criterion) {
     let context = create_benchmark_context();
 
     c.bench_function("rhai_user_type_check", |b| {
-        b.iter(|| {
-            black_box(runtime.evaluate("is_practitioner_user(user)", &context))
-        });
+        b.iter(|| black_box(runtime.evaluate("is_practitioner_user(user)", &context)));
     });
 }
 
@@ -204,9 +199,7 @@ fn bench_context_access(c: &mut Criterion) {
     "#;
 
     c.bench_function("rhai_context_access", |b| {
-        b.iter(|| {
-            black_box(runtime.evaluate(script, &context))
-        });
+        b.iter(|| black_box(runtime.evaluate(script, &context)));
     });
 }
 

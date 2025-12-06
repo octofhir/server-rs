@@ -42,6 +42,7 @@ num_cpus = "1"
 
 # Scripting
 rhai = { version = "1.19", features = ["sync"] }
+rquickjs = { version = "0.6", features = ["parallel"] }
 
 # HTTP client for JWKS fetching
 reqwest = { version = "0.11", features = ["json"] }
@@ -58,4 +59,8 @@ criterion = { version = "0.5", features = ["async_tokio"] }
 
 [[bench]]
 name = "rhai_bench"
+harness = false
+
+[[bench]]
+name = "quickjs_bench"
 harness = false

@@ -43,7 +43,7 @@ use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::RwLock;
 
-use rhai::{Dynamic, Engine, Map, Scope, AST};
+use rhai::{AST, Dynamic, Engine, Map, Scope};
 
 use crate::config::RhaiConfig;
 use crate::policy::context::PolicyContext;
@@ -173,18 +173,25 @@ impl RhaiRuntime {
         engine.register_fn("has_role", |user: Map, role: &str| -> bool {
             user.get("roles")
                 .and_then(|r| r.clone().try_cast::<rhai::Array>())
-                .map(|roles| roles.iter().any(|r| r.clone().into_string().ok() == Some(role.to_string())))
+                .map(|roles| {
+                    roles
+                        .iter()
+                        .any(|r| r.clone().into_string().ok() == Some(role.to_string()))
+                })
                 .unwrap_or(false)
         });
 
         engine.register_fn("has_any_role", |user: Map, roles: rhai::Array| -> bool {
-            let user_roles = user.get("roles")
+            let user_roles = user
+                .get("roles")
                 .and_then(|r| r.clone().try_cast::<rhai::Array>())
                 .unwrap_or_default();
 
             roles.iter().any(|check_role| {
                 let check_str = check_role.clone().into_string().ok();
-                user_roles.iter().any(|ur| ur.clone().into_string().ok() == check_str)
+                user_roles
+                    .iter()
+                    .any(|ur| ur.clone().into_string().ok() == check_str)
             })
         });
 
@@ -205,15 +212,14 @@ impl RhaiRuntime {
 
         // Resource helpers
         engine.register_fn("get_resource_subject", |resource: Map| -> Dynamic {
-            resource.get("subject")
-                .cloned()
-                .unwrap_or(Dynamic::UNIT)
+            resource.get("subject").cloned().unwrap_or(Dynamic::UNIT)
         });
 
         // Compartment checking
         engine.register_fn("in_patient_compartment", |context: Map| -> bool {
             // Check if patient context matches resource subject or compartment
-            let patient_context = context.get("environment")
+            let patient_context = context
+                .get("environment")
                 .and_then(|e| e.clone().try_cast::<Map>())
                 .and_then(|e| e.get("patientContext").cloned())
                 .and_then(|p| p.into_string().ok());
@@ -223,13 +229,18 @@ impl RhaiRuntime {
             };
 
             // Check compartment from request
-            let request = context.get("request")
+            let request = context
+                .get("request")
                 .and_then(|r| r.clone().try_cast::<Map>());
 
             if let Some(req) = &request
-                && let Some(comp_type) = req.get("compartmentType").and_then(|t| t.clone().into_string().ok())
+                && let Some(comp_type) = req
+                    .get("compartmentType")
+                    .and_then(|t| t.clone().into_string().ok())
                 && comp_type == "Patient"
-                && let Some(comp_id) = req.get("compartmentId").and_then(|i| i.clone().into_string().ok())
+                && let Some(comp_id) = req
+                    .get("compartmentId")
+                    .and_then(|i| i.clone().into_string().ok())
             {
                 let full_ref = format!("Patient/{}", comp_id);
                 if full_ref == patient || comp_id == patient {
@@ -238,11 +249,14 @@ impl RhaiRuntime {
             }
 
             // Check resource subject
-            let resource = context.get("resource")
+            let resource = context
+                .get("resource")
                 .and_then(|r| r.clone().try_cast::<Map>());
 
             if let Some(res) = resource
-                && let Some(subject) = res.get("subject").and_then(|s| s.clone().into_string().ok())
+                && let Some(subject) = res
+                    .get("subject")
+                    .and_then(|s| s.clone().into_string().ok())
                 && (subject == patient || subject.ends_with(&format!("/{}", patient)))
             {
                 return true;
@@ -279,7 +293,10 @@ impl RhaiRuntime {
         scope.push("client", self.client_to_dynamic(&context.client));
         scope.push("request", self.request_to_dynamic(&context.request));
         scope.push("scopes", self.scopes_to_dynamic(&context.scopes));
-        scope.push("environment", self.environment_to_dynamic(&context.environment));
+        scope.push(
+            "environment",
+            self.environment_to_dynamic(&context.environment),
+        );
 
         if let Some(ref resource) = context.resource {
             scope.push("resource", self.resource_to_dynamic(resource));
@@ -309,12 +326,15 @@ impl RhaiRuntime {
 
         // Map result with decision field
         if let Some(map) = result.try_cast::<Map>()
-            && let Some(decision) = map.get("decision").and_then(|d| d.clone().into_string().ok())
+            && let Some(decision) = map
+                .get("decision")
+                .and_then(|d| d.clone().into_string().ok())
         {
             return match decision.as_str() {
                 "allow" => AccessDecision::Allow,
                 "deny" => {
-                    let reason = map.get("reason")
+                    let reason = map
+                        .get("reason")
                         .and_then(|r| r.clone().into_string().ok())
                         .unwrap_or_else(|| "Access denied by policy script".to_string());
                     AccessDecision::Deny(DenyReason {
@@ -353,7 +373,9 @@ impl RhaiRuntime {
             map.insert("fhirUserId".into(), fhir_user_id.clone().into());
         }
 
-        let roles: rhai::Array = user.roles.iter()
+        let roles: rhai::Array = user
+            .roles
+            .iter()
             .map(|r| Dynamic::from(r.clone()))
             .collect();
         map.insert("roles".into(), roles.into());
@@ -367,14 +389,20 @@ impl RhaiRuntime {
         map.insert("id".into(), client.id.clone().into());
         map.insert("name".into(), client.name.clone().into());
         map.insert("trusted".into(), client.trusted.into());
-        map.insert("clientType".into(), format!("{:?}", client.client_type).into());
+        map.insert(
+            "clientType".into(),
+            format!("{:?}", client.client_type).into(),
+        );
         map.into()
     }
 
     /// Convert request context to Rhai Dynamic.
     fn request_to_dynamic(&self, request: &crate::policy::context::RequestContext) -> Dynamic {
         let mut map = Map::new();
-        map.insert("operation".into(), format!("{:?}", request.operation).into());
+        map.insert(
+            "operation".into(),
+            format!("{:?}", request.operation).into(),
+        );
         map.insert("resourceType".into(), request.resource_type.clone().into());
         map.insert("path".into(), request.path.clone().into());
         map.insert("method".into(), request.method.clone().into());
@@ -409,17 +437,23 @@ impl RhaiRuntime {
         map.insert("fhirUser".into(), scopes.fhir_user.into());
         map.insert("offlineAccess".into(), scopes.offline_access.into());
 
-        let patient: rhai::Array = scopes.patient_scopes.iter()
+        let patient: rhai::Array = scopes
+            .patient_scopes
+            .iter()
             .map(|s| Dynamic::from(s.clone()))
             .collect();
         map.insert("patientScopes".into(), patient.into());
 
-        let user: rhai::Array = scopes.user_scopes.iter()
+        let user: rhai::Array = scopes
+            .user_scopes
+            .iter()
             .map(|s| Dynamic::from(s.clone()))
             .collect();
         map.insert("userScopes".into(), user.into());
 
-        let system: rhai::Array = scopes.system_scopes.iter()
+        let system: rhai::Array = scopes
+            .system_scopes
+            .iter()
             .map(|s| Dynamic::from(s.clone()))
             .collect();
         map.insert("systemScopes".into(), system.into());
@@ -478,7 +512,10 @@ impl RhaiRuntime {
         map.insert("client".into(), self.client_to_dynamic(&context.client));
         map.insert("request".into(), self.request_to_dynamic(&context.request));
         map.insert("scopes".into(), self.scopes_to_dynamic(&context.scopes));
-        map.insert("environment".into(), self.environment_to_dynamic(&context.environment));
+        map.insert(
+            "environment".into(),
+            self.environment_to_dynamic(&context.environment),
+        );
 
         if let Some(ref resource) = context.resource {
             map.insert("resource".into(), self.resource_to_dynamic(resource));
@@ -504,9 +541,7 @@ impl RhaiRuntime {
             }
             serde_json::Value::String(s) => Dynamic::from(s.clone()),
             serde_json::Value::Array(arr) => {
-                let rhai_arr: rhai::Array = arr.iter()
-                    .map(|v| self.json_to_dynamic(v))
-                    .collect();
+                let rhai_arr: rhai::Array = arr.iter().map(|v| self.json_to_dynamic(v)).collect();
                 Dynamic::from(rhai_arr)
             }
             serde_json::Value::Object(obj) => {

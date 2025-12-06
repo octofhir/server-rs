@@ -102,6 +102,7 @@ pub mod cache;
 pub mod context;
 pub mod engine;
 pub mod matcher;
+pub mod quickjs;
 pub mod resources;
 pub mod rhai;
 
@@ -126,5 +127,7 @@ pub use resources::{
     AccessPolicy, ConversionError, EngineElement, InternalPolicy, MatcherElement, PolicyEngine,
     PolicyEngineType, ResourceMeta, ValidationError,
 };
+
+pub use quickjs::{QuickJsCacheStats, QuickJsError, QuickJsRuntime};
 
 pub use rhai::{RhaiCacheStats, RhaiRuntime};
