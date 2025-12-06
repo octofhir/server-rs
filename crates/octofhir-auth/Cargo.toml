@@ -40,6 +40,9 @@ hex = "0.4"
 humantime-serde = "1"
 num_cpus = "1"
 
+# Scripting
+rhai = { version = "1.19", features = ["sync"] }
+
 # HTTP client for JWKS fetching
 reqwest = { version = "0.11", features = ["json"] }
 
@@ -51,3 +54,8 @@ octofhir-api = { path = "../octofhir-api" }
 
 [dev-dependencies]
 tokio-test = { workspace = true }
+criterion = { version = "0.5", features = ["async_tokio"] }
+
+[[bench]]
+name = "rhai_bench"
+harness = false

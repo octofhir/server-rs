@@ -64,11 +64,53 @@
 //! let internal = policy.to_internal_policy()?;
 //! ```
 //!
+//! # Policy Cache
+//!
+//! The [`cache`] module provides an in-memory cache for active policies with
+//! automatic refresh and resource type indexing:
+//!
+//! ```ignore
+//! use octofhir_auth::policy::cache::PolicyCache;
+//! use std::sync::Arc;
+//! use time::Duration;
+//!
+//! let cache = PolicyCache::new(storage, Duration::minutes(5));
+//!
+//! // Get policies applicable to Patient resources
+//! let policies = cache.get_applicable_policies("Patient").await?;
+//! ```
+//!
+//! # Policy Evaluation Engine
+//!
+//! The [`engine`] module provides the policy evaluation engine:
+//!
+//! ```ignore
+//! use octofhir_auth::policy::engine::{PolicyEvaluator, PolicyEvaluatorConfig, DefaultDecision};
+//!
+//! let evaluator = PolicyEvaluator::new(cache, PolicyEvaluatorConfig {
+//!     default_decision: DefaultDecision::Deny,
+//!     evaluate_scopes_first: true,
+//!     ..Default::default()
+//! });
+//!
+//! let decision = evaluator.evaluate(&context).await;
+//! ```
+//!
 //! [`PolicyContext`]: context::PolicyContext
 
+pub mod cache;
 pub mod context;
+pub mod engine;
 pub mod matcher;
 pub mod resources;
+pub mod rhai;
+
+pub use cache::{PolicyCache, PolicyCacheError, PolicyCacheStats};
+
+pub use engine::{
+    AccessDecision, DefaultDecision, DenyReason, EvaluatedPolicy, EvaluationResult,
+    PolicyEvaluator, PolicyEvaluatorConfig,
+};
 
 pub use context::{
     ClientIdentity, ClientType, ContextError, EnvironmentContext, PolicyContext,
@@ -84,3 +126,5 @@ pub use resources::{
     AccessPolicy, ConversionError, EngineElement, InternalPolicy, MatcherElement, PolicyEngine,
     PolicyEngineType, ResourceMeta, ValidationError,
 };
+
+pub use rhai::{RhaiCacheStats, RhaiRuntime};

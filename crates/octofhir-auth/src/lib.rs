@@ -53,11 +53,13 @@ pub use middleware::{
     AdminAuth, AuthContext, AuthState, BearerAuth, OptionalBearerAuth, UserContext,
 };
 pub use policy::{
-    AccessPolicy, ClientIdentity, ClientType, CompartmentIdSource, CompartmentMatcher,
-    ContextError, ConversionError, EngineElement, EnvironmentContext, InternalPolicy, MatchPattern,
-    MatcherElement, PatternMatcher, PolicyContext, PolicyContextBuilder, PolicyEngine,
-    PolicyEngineType, PolicyMatchers, RequestContext, ResourceContext, ResourceMeta, ScopeSummary,
-    UserIdentity, ValidationError, detect_operation, parse_fhir_path,
+    AccessDecision, AccessPolicy, ClientIdentity, ClientType, CompartmentIdSource,
+    CompartmentMatcher, ContextError, ConversionError, DefaultDecision, DenyReason, EngineElement,
+    EnvironmentContext, EvaluatedPolicy, EvaluationResult, InternalPolicy, MatchPattern,
+    MatcherElement, PatternMatcher, PolicyCache, PolicyCacheError, PolicyCacheStats, PolicyContext,
+    PolicyContextBuilder, PolicyEngine, PolicyEngineType, PolicyEvaluator, PolicyEvaluatorConfig,
+    PolicyMatchers, RequestContext, ResourceContext, ResourceMeta, RhaiCacheStats, RhaiRuntime,
+    ScopeSummary, UserIdentity, ValidationError, detect_operation, parse_fhir_path,
 };
 pub use smart::{
     CapabilitySecurityBuilder, ConformanceError, DEFAULT_LAUNCH_CONTEXT_TTL, FhirContextItem,
@@ -65,8 +67,8 @@ pub use smart::{
     add_smart_security, generate_launch_id,
 };
 pub use storage::{
-    ClientStorage, JtiStorage, LaunchContextStorage, RefreshTokenStorage, RevokedTokenStorage,
-    SessionStorage, User, UserStorage,
+    ClientStorage, JtiStorage, LaunchContextStorage, PolicySearchParams, PolicyStorage,
+    RefreshTokenStorage, RevokedTokenStorage, SessionStorage, User, UserStorage,
 };
 pub use types::{Client, ClientValidationError, GrantType, RefreshToken};
 
@@ -92,12 +94,14 @@ pub mod prelude {
         AdminAuth, AuthContext, AuthState, BearerAuth, OptionalBearerAuth, UserContext,
     };
     pub use crate::policy::{
-        AccessPolicy, ClientIdentity, ClientType, CompartmentIdSource, CompartmentMatcher,
-        ContextError, ConversionError, EngineElement, EnvironmentContext, InternalPolicy,
-        MatchPattern, MatcherElement, PatternMatcher, PolicyContext, PolicyContextBuilder,
-        PolicyEngine, PolicyEngineType, PolicyMatchers, RequestContext, ResourceContext,
-        ResourceMeta, ScopeSummary, UserIdentity as PolicyUserIdentity, ValidationError,
-        detect_operation, parse_fhir_path,
+        AccessDecision, AccessPolicy, ClientIdentity, ClientType, CompartmentIdSource,
+        CompartmentMatcher, ContextError, ConversionError, DefaultDecision, DenyReason,
+        EngineElement, EnvironmentContext, EvaluatedPolicy, EvaluationResult, InternalPolicy,
+        MatchPattern, MatcherElement, PatternMatcher, PolicyCache, PolicyCacheError,
+        PolicyCacheStats, PolicyContext, PolicyContextBuilder, PolicyEngine, PolicyEngineType,
+        PolicyEvaluator, PolicyEvaluatorConfig, PolicyMatchers, RequestContext, ResourceContext,
+        ResourceMeta, RhaiCacheStats, RhaiRuntime, ScopeSummary,
+        UserIdentity as PolicyUserIdentity, ValidationError, detect_operation, parse_fhir_path,
     };
     pub use crate::smart::{
         CapabilitySecurityBuilder, ConformanceError, DEFAULT_LAUNCH_CONTEXT_TTL, FhirContextItem,
@@ -105,8 +109,8 @@ pub mod prelude {
         add_smart_security, generate_launch_id,
     };
     pub use crate::storage::{
-        ClientStorage, JtiStorage, LaunchContextStorage, RefreshTokenStorage, RevokedTokenStorage,
-        SessionStorage, User, UserStorage,
+        ClientStorage, JtiStorage, LaunchContextStorage, PolicySearchParams, PolicyStorage,
+        RefreshTokenStorage, RevokedTokenStorage, SessionStorage, User, UserStorage,
     };
     pub use crate::types::{Client, ClientValidationError, GrantType, RefreshToken};
 }

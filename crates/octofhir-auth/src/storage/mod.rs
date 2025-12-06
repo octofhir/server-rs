@@ -21,6 +21,7 @@
 pub mod client;
 pub mod jti;
 pub mod launch_context;
+pub mod policy;
 pub mod refresh_token;
 pub mod revoked_token;
 pub mod session;
@@ -29,6 +30,7 @@ pub mod user;
 pub use client::ClientStorage;
 pub use jti::JtiStorage;
 pub use launch_context::LaunchContextStorage;
+pub use policy::{PolicySearchParams, PolicyStorage};
 pub use refresh_token::RefreshTokenStorage;
 pub use revoked_token::RevokedTokenStorage;
 pub use session::SessionStorage;
