@@ -1125,6 +1125,85 @@ impl TokenService {
     pub fn config(&self) -> &TokenConfig {
         &self.config
     }
+
+    /// Gets the configured issuer URL.
+    #[must_use]
+    pub fn issuer(&self) -> &str {
+        &self.config.issuer
+    }
+
+    /// Gets the configured audience URL.
+    #[must_use]
+    pub fn audience(&self) -> &str {
+        &self.config.audience
+    }
+
+    /// Encodes access token claims into a signed JWT.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if JWT encoding fails.
+    pub fn encode_access_token(&self, claims: &AccessTokenClaims) -> Result<String, String> {
+        self.jwt_service
+            .encode(claims)
+            .map_err(|e| e.to_string())
+    }
+
+    /// Issues a refresh token for password grant or other direct user authentication.
+    ///
+    /// This method generates and stores a refresh token when there's no session
+    /// (e.g., for password grant where we authenticate the user directly).
+    ///
+    /// # Arguments
+    ///
+    /// * `user_id` - The authenticated user's ID
+    /// * `client` - The client requesting tokens
+    /// * `scope` - The granted scope
+    ///
+    /// # Returns
+    ///
+    /// Returns the plaintext refresh token value to send to the client.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if storing the refresh token fails.
+    pub async fn issue_refresh_token_for_user(
+        &self,
+        user_id: Uuid,
+        client: &Client,
+        scope: &str,
+    ) -> AuthResult<String> {
+        let now = OffsetDateTime::now_utc();
+
+        // Use client's configured lifetime (in seconds) or fall back to service default
+        let lifetime = client
+            .refresh_token_lifetime
+            .map(Duration::seconds)
+            .unwrap_or(self.config.refresh_token_lifetime);
+
+        // Generate random token
+        let token_value = RefreshToken::generate_token();
+        let token_hash = RefreshToken::hash_token(&token_value);
+
+        // Create refresh token record
+        let refresh_token = RefreshToken {
+            id: Uuid::new_v4(),
+            token_hash,
+            client_id: client.client_id.clone(),
+            user_id: Some(user_id),
+            scope: scope.to_string(),
+            launch_context: None,
+            created_at: now,
+            expires_at: Some(now + lifetime),
+            revoked_at: None,
+        };
+
+        // Store token
+        self.refresh_token_storage.create(&refresh_token).await?;
+
+        // Return plaintext token to client
+        Ok(token_value)
+    }
 }
 
 #[cfg(test)]

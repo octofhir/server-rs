@@ -23,6 +23,10 @@ pub enum GrantType {
     ClientCredentials,
     /// Refresh Token flow.
     RefreshToken,
+    /// Resource Owner Password Credentials flow.
+    /// WARNING: This grant type is considered legacy and should only be used
+    /// for trusted first-party applications or migration scenarios.
+    Password,
 }
 
 impl GrantType {
@@ -33,6 +37,7 @@ impl GrantType {
             Self::AuthorizationCode => "authorization_code",
             Self::ClientCredentials => "client_credentials",
             Self::RefreshToken => "refresh_token",
+            Self::Password => "password",
         }
     }
 }

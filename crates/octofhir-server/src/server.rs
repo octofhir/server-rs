@@ -106,9 +106,11 @@ pub struct OctofhirServer {
 /// 1. Creates conformance storage
 /// 2. Loads bootstrap resources from igs/octofhir-internal/
 /// 3. Syncs to canonical manager
-/// 4. Starts hot-reload listener
+/// 4. Bootstraps auth resources (admin user, default UI client)
+/// 5. Starts hot-reload listener
 async fn bootstrap_conformance_if_postgres(cfg: &AppConfig) -> Result<(), anyhow::Error> {
     use octofhir_db_postgres::{HotReloadBuilder, PostgresConformanceStorage, sync_and_load};
+    use octofhir_auth_postgres::{ArcClientStorage, ArcUserStorage};
     use std::path::PathBuf;
 
     let pg_cfg = cfg.storage.postgres.as_ref().ok_or_else(|| {
@@ -160,6 +162,88 @@ async fn bootstrap_conformance_if_postgres(cfg: &AppConfig) -> Result<(), anyhow
                 error = %e,
                 "Failed to sync conformance resources to canonical manager"
             );
+        }
+    }
+
+    // Create database tables for all FHIR resource types from FCM packages
+    // This includes all resource-kind and logical-kind StructureDefinitions
+    let fcm_storage = octofhir_db_postgres::PostgresPackageStore::new(pg_storage.pool().clone());
+    match fcm_storage.ensure_resource_tables().await {
+        Ok(count) => {
+            tracing::info!(
+                tables_created = count,
+                "Ensured database tables for FHIR resource types from FCM"
+            );
+        }
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                "Failed to ensure database tables for FHIR resource types"
+            );
+        }
+    }
+
+    // Bootstrap auth resources (admin user, default UI client)
+    // Tables are automatically created when StructureDefinitions are loaded above
+    if cfg.auth.enabled {
+        let pool = Arc::new(pg_storage.pool().clone());
+
+        // Bootstrap default UI client
+        let client_storage = ArcClientStorage::new(pool.clone());
+        let issuer = &cfg.auth.issuer;
+        match crate::bootstrap::bootstrap_default_ui_client(&client_storage, issuer).await {
+            Ok(true) => {
+                tracing::info!("Default UI client bootstrapped successfully");
+            }
+            Ok(false) => {
+                tracing::debug!("Default UI client already exists");
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "Failed to bootstrap default UI client");
+            }
+        }
+
+        // Bootstrap admin user if configured
+        if let Some(ref admin_config) = cfg.bootstrap.admin_user {
+            let user_storage = ArcUserStorage::new(pool.clone());
+            match crate::bootstrap::bootstrap_admin_user(&user_storage, admin_config).await {
+                Ok(true) => {
+                    tracing::info!(
+                        username = %admin_config.username,
+                        "Admin user bootstrapped successfully"
+                    );
+                }
+                Ok(false) => {
+                    tracing::debug!(
+                        username = %admin_config.username,
+                        "Admin user already exists"
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        username = %admin_config.username,
+                        "Failed to bootstrap admin user"
+                    );
+                }
+            }
+        }
+
+        // Bootstrap admin access policy
+        let policy_storage = PostgresPolicyStorageAdapter::new(pool);
+        match crate::bootstrap::bootstrap_admin_access_policy(&policy_storage).await {
+            Ok(true) => {
+                tracing::info!("Admin access policy bootstrapped successfully");
+            }
+            Ok(false) => {
+                tracing::debug!("Admin access policy already exists");
+            }
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    "Failed to bootstrap admin access policy"
+                );
+            }
         }
     }
 
@@ -588,6 +672,32 @@ pub async fn build_app(cfg: &AppConfig) -> Result<Router, anyhow::Error> {
     let auth_state = initialize_auth_state(&cfg, db_pool.clone()).await;
     if auth_state.is_some() {
         tracing::info!("Authentication enabled");
+
+        // Bootstrap admin user if configured
+        if let Some(ref admin_config) = cfg.bootstrap.admin_user {
+            let user_storage = octofhir_auth_postgres::ArcUserStorage::new(db_pool.clone());
+            match crate::bootstrap::bootstrap_admin_user(&user_storage, admin_config).await {
+                Ok(true) => {
+                    tracing::info!(
+                        username = %admin_config.username,
+                        "Admin user bootstrapped successfully"
+                    );
+                }
+                Ok(false) => {
+                    tracing::debug!(
+                        username = %admin_config.username,
+                        "Admin user already exists, skipping bootstrap"
+                    );
+                }
+                Err(e) => {
+                    tracing::error!(
+                        error = %e,
+                        username = %admin_config.username,
+                        "Failed to bootstrap admin user"
+                    );
+                }
+            }
+        }
     } else {
         tracing::warn!("Authentication disabled - no auth configuration found");
     }
@@ -621,7 +731,10 @@ fn build_router(state: AppState, body_limit: usize) -> Router {
     // Create gateway router for dynamic API endpoints
     let gateway_routes = crate::gateway::GatewayRouter::create_router();
 
-    Router::new()
+    // Build OAuth routes if auth is enabled
+    let oauth_routes = build_oauth_routes(&state);
+
+    let mut router = Router::new()
         // Health and info endpoints
         .route("/", get(handlers::root).post(handlers::transaction_handler))
         .route("/healthz", get(handlers::healthz))
@@ -635,6 +748,11 @@ fn build_router(state: AppState, body_limit: usize) -> Router {
         .route("/api/health", get(handlers::api_health))
         .route("/api/build-info", get(handlers::api_build_info))
         .route("/api/resource-types", get(handlers::api_resource_types))
+        // DB Console SQL execution endpoint
+        .route(
+            "/api/$sql",
+            axum::routing::post(crate::operations::sql::sql_operation),
+        )
         // Embedded UI under /ui
         .route("/ui", get(handlers::ui_index))
         .route("/ui/{*path}", get(handlers::ui_static))
@@ -716,15 +834,16 @@ fn build_router(state: AppState, body_limit: usize) -> Router {
                 .patch(handlers::patch_resource)
                 .delete(handlers::delete_resource),
         )
-        // Middleware stack (order: request id -> auth -> authz -> content negotiation -> compression/cors/trace -> body limit)
+        // Middleware stack (outer to inner: body limit -> trace -> compression/cors -> content negotiation -> authz -> auth -> request id -> handler)
+        // Note: Layers wrap from outside-in, so first .layer() is closest to handler
         .layer(middleware::from_fn(app_middleware::request_id))
         .layer(middleware::from_fn_with_state(
             state.clone(),
-            app_middleware::authentication_middleware,
+            app_middleware::authorization_middleware,
         ))
         .layer(middleware::from_fn_with_state(
             state.clone(),
-            app_middleware::authorization_middleware,
+            app_middleware::authentication_middleware,
         ))
         .layer(middleware::from_fn(app_middleware::content_negotiation))
         .layer(CorsLayer::permissive())
@@ -779,7 +898,37 @@ fn build_router(state: AppState, body_limit: usize) -> Router {
                 ),
         )
         .with_state(state)
-        .layer(axum::extract::DefaultBodyLimit::max(body_limit))
+        .layer(axum::extract::DefaultBodyLimit::max(body_limit));
+
+    // Merge OAuth routes if auth is enabled
+    // OAuth routes have their own state and are not subject to FHIR content negotiation
+    if let Some(oauth) = oauth_routes {
+        router = router.merge(oauth);
+    }
+
+    router
+}
+
+/// Build OAuth routes if auth is enabled.
+fn build_oauth_routes(state: &AppState) -> Option<Router> {
+    let auth_state = state.auth_state.as_ref()?;
+
+    // Create OAuth state using the JWT service from auth state
+    let oauth_state = crate::oauth::OAuthState::from_app_state(state, auth_state.jwt_service.clone())?;
+
+    // Build OAuth routes
+    let oauth_router = crate::oauth::oauth_routes(oauth_state.clone());
+    let jwks_router = crate::oauth::jwks_route(oauth_state.jwks_state.clone());
+    let smart_config_router = crate::oauth::smart_config_route(oauth_state.smart_config_state);
+
+    tracing::info!("OAuth routes enabled: /auth/token, /auth/jwks, /.well-known/smart-configuration");
+
+    Some(
+        Router::new()
+            .merge(oauth_router)
+            .merge(jwks_router)
+            .merge(smart_config_router),
+    )
 }
 
 pub struct ServerBuilder {

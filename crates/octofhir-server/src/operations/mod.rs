@@ -48,6 +48,7 @@ pub mod meta;
 pub mod params;
 pub mod registry;
 pub mod router;
+pub mod sql;
 pub mod validate;
 
 // Re-export main types for convenience

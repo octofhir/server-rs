@@ -1,0 +1,52 @@
+{
+  "resourceType": "StructureDefinition",
+  "id": "RevokedToken",
+  "url": "http://octofhir.io/StructureDefinition/RevokedToken",
+  "name": "RevokedToken",
+  "title": "Revoked Token",
+  "status": "active",
+  "fhirVersion": "4.0.1",
+  "kind": "resource",
+  "abstract": false,
+  "type": "RevokedToken",
+  "baseDefinition": "http://hl7.org/fhir/StructureDefinition/DomainResource",
+  "derivation": "specialization",
+  "description": "Tracks revoked access token JTIs to enable token revocation validation. Stores the JTI and expiration time for cleanup.",
+  "differential": {
+    "element": [
+      {
+        "id": "RevokedToken",
+        "path": "RevokedToken",
+        "short": "Revoked access token record",
+        "definition": "Stores revoked access token JTIs to prevent reuse of revoked tokens."
+      },
+      {
+        "id": "RevokedToken.jti",
+        "path": "RevokedToken.jti",
+        "short": "JWT Token ID",
+        "definition": "The unique identifier (jti claim) of the revoked access token",
+        "min": 1,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "RevokedToken.expiresAt",
+        "path": "RevokedToken.expiresAt",
+        "short": "Token expiration time",
+        "definition": "When the original token would have expired. Used for cleanup - once this time passes, the revocation record can be deleted.",
+        "min": 1,
+        "max": "1",
+        "type": [{ "code": "instant" }]
+      },
+      {
+        "id": "RevokedToken.revokedAt",
+        "path": "RevokedToken.revokedAt",
+        "short": "Revocation time",
+        "definition": "When this token was revoked",
+        "min": 1,
+        "max": "1",
+        "type": [{ "code": "instant" }]
+      }
+    ]
+  }
+}

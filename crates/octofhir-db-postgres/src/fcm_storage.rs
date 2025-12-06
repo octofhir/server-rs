@@ -21,6 +21,8 @@ use octofhir_canonical_manager::error::{FcmError, StorageError};
 use octofhir_canonical_manager::package::{ExtractedPackage, FhirResource};
 use octofhir_canonical_manager::traits::{PackageStore, SearchStorage};
 
+use crate::SchemaManager;
+
 /// PostgreSQL storage backend for FHIR packages from canonical manager.
 ///
 /// Implements both `PackageStore` and `SearchStorage` traits, enabling
@@ -182,6 +184,65 @@ impl PostgresPackageStore {
             sd_impose_profiles, sd_characteristics, sd_flavor
         FROM fcm.resources
     "#;
+
+    /// Creates database tables for all resource-kind StructureDefinitions in FCM.
+    ///
+    /// This method queries the FCM resources table for StructureDefinitions with
+    /// `sd_kind = 'resource'` or `sd_kind = 'logical'` and ensures that corresponding
+    /// tables exist in the public schema.
+    ///
+    /// # Returns
+    ///
+    /// Returns the number of tables created (excluding already existing tables).
+    #[instrument(skip(self))]
+    pub async fn ensure_resource_tables(&self) -> Result<usize, FcmError> {
+        info!("Ensuring database tables for all FHIR resource types from FCM");
+
+        // Query FCM for all resource-kind StructureDefinitions
+        let resource_types: Vec<String> = query_scalar(
+            r#"
+            SELECT DISTINCT sd_type
+            FROM fcm.resources
+            WHERE resource_type = 'StructureDefinition'
+              AND (sd_kind = 'resource' OR sd_kind = 'logical')
+              AND sd_type IS NOT NULL
+            ORDER BY sd_type
+            "#,
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(db_error)?;
+
+        info!(
+            "Found {} resource types to create tables for",
+            resource_types.len()
+        );
+
+        let schema_manager = SchemaManager::new(self.pool.clone());
+        let mut created_count = 0;
+
+        for resource_type in &resource_types {
+            match schema_manager.ensure_table(resource_type).await {
+                Ok(()) => {
+                    debug!("Ensured table for resource type: {}", resource_type);
+                    created_count += 1;
+                }
+                Err(e) => {
+                    warn!(
+                        resource_type = %resource_type,
+                        error = %e,
+                        "Failed to create table for resource type"
+                    );
+                }
+            }
+        }
+
+        info!(
+            "Created/verified {} tables for FHIR resource types",
+            created_count
+        );
+        Ok(created_count)
+    }
 }
 
 #[async_trait]

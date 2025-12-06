@@ -1,15 +1,21 @@
-import { createSignal, onMount, onCleanup, Show } from "solid-js";
-import { EditorView, basicSetup } from "codemirror";
-import { sql } from "@codemirror/lang-sql";
+import { createSignal, For, onCleanup, onMount, Show } from "solid-js";
+
 import { EditorState } from "@codemirror/state";
+import { sql } from "@codemirror/lang-sql";
+import { basicSetup, EditorView } from "codemirror";
+
+import { serverApi } from "@/shared/api/serverApi";
+import type { SqlResponse, SqlValue } from "@/shared/api/types";
 import { Button } from "@/shared/ui";
+
 import styles from "./DbConsolePage.module.css";
 
 export const DbConsolePage = () => {
     let editorRef: HTMLDivElement | undefined;
     let view: EditorView | undefined;
-    const [query, setQuery] = createSignal("SELECT * FROM Patient LIMIT 10;");
-    const [results, setResults] = createSignal<any[] | null>(null);
+    const [query, setQuery] = createSignal("SELECT * FROM patient LIMIT 10;");
+    const [results, setResults] = createSignal<SqlResponse | null>(null);
+    const [error, setError] = createSignal<string | null>(null);
     const [loading, setLoading] = createSignal(false);
 
     onMount(() => {
@@ -34,6 +40,17 @@ export const DbConsolePage = () => {
                         borderRight: "1px solid var(--border-subtle)"
                     },
                     "&.cm-focused": { outline: "none" }
+                }),
+                // Handle Ctrl+Enter to execute
+                EditorView.domEventHandlers({
+                    keydown: (event) => {
+                        if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
+                            event.preventDefault();
+                            handleExecute();
+                            return true;
+                        }
+                        return false;
+                    }
                 })
             ],
         });
@@ -50,14 +67,23 @@ export const DbConsolePage = () => {
 
     const handleExecute = async () => {
         setLoading(true);
-        // Mock execution for now
-        setTimeout(() => {
-            setResults([
-                { id: "1", resourceType: "Patient", name: "John Doe" },
-                { id: "2", resourceType: "Patient", name: "Jane Smith" },
-            ]);
+        setError(null);
+
+        try {
+            const result = await serverApi.executeSql(query());
+            setResults(result);
+        } catch (err) {
+            setError(err instanceof Error ? err.message : "Query execution failed");
+            setResults(null);
+        } finally {
             setLoading(false);
-        }, 500);
+        }
+    };
+
+    const formatCellValue = (value: SqlValue): string => {
+        if (value === null) return "NULL";
+        if (typeof value === "object") return JSON.stringify(value);
+        return String(value);
     };
 
     return (
@@ -66,7 +92,7 @@ export const DbConsolePage = () => {
                 <h1 class={styles.title}>DB Console</h1>
                 <div class={styles.actions}>
                     <Button onClick={handleExecute} loading={loading()}>
-                        Execute Query
+                        Execute (Ctrl+Enter)
                     </Button>
                 </div>
             </div>
@@ -79,19 +105,62 @@ export const DbConsolePage = () => {
             </div>
 
             <div class={styles.resultsContainer}>
-                <div class={styles.resultsHeader}>Results</div>
+                <div class={styles.resultsHeader}>
+                    <span>Results</span>
+                    <Show when={results()} keyed>
+                        {(res) => (
+                            <span class={styles.resultsMeta}>
+                                {res.rowCount} rows in {res.executionTimeMs}ms
+                            </span>
+                        )}
+                    </Show>
+                </div>
                 <div class={styles.resultsContent}>
+                    <Show when={error()}>
+                        <div class={styles.errorState}>
+                            <span class={styles.errorIcon}>⚠</span>
+                            {error()}
+                        </div>
+                    </Show>
                     <Show
                         when={results()}
+                        keyed
                         fallback={
-                            <div class={styles.emptyState}>
-                                Run a query to see results
-                            </div>
+                            <Show when={!error()}>
+                                <div class={styles.emptyState}>
+                                    Run a query to see results
+                                </div>
+                            </Show>
                         }
                     >
-                        <pre class={styles.resultsPre}>
-                            {JSON.stringify(results(), null, 2)}
-                        </pre>
+                        {(res) => (
+                            <div class={styles.tableWrapper}>
+                                <table class={styles.resultsTable}>
+                                    <thead>
+                                        <tr>
+                                            <For each={res.columns}>
+                                                {(col) => <th>{col}</th>}
+                                            </For>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <For each={res.rows}>
+                                            {(row) => (
+                                                <tr>
+                                                    <For each={row}>
+                                                        {(cell) => (
+                                                            <td class={cell === null ? styles.nullCell : ""}>
+                                                                {formatCellValue(cell)}
+                                                            </td>
+                                                        )}
+                                                    </For>
+                                                </tr>
+                                            )}
+                                        </For>
+                                    </tbody>
+                                </table>
+                            </div>
+                        )}
                     </Show>
                 </div>
             </div>

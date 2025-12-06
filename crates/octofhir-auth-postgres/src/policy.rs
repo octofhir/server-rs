@@ -79,7 +79,7 @@ impl<'a> PolicyStorage<'a> {
     pub async fn find_by_id(&self, id: Uuid) -> StorageResult<Option<PolicyRow>> {
         let row: Option<(Uuid, i64, OffsetDateTime, serde_json::Value, String)> = query_as(
             r#"
-            SELECT id, txid, ts, resource, status
+            SELECT id, txid, ts, resource, status::text
             FROM accesspolicy
             WHERE id = $1
               AND status != 'deleted'
@@ -100,7 +100,7 @@ impl<'a> PolicyStorage<'a> {
     pub async fn find_by_name(&self, name: &str) -> StorageResult<Option<PolicyRow>> {
         let row: Option<(Uuid, i64, OffsetDateTime, serde_json::Value, String)> = query_as(
             r#"
-            SELECT id, txid, ts, resource, status
+            SELECT id, txid, ts, resource, status::text
             FROM accesspolicy
             WHERE resource->>'name' = $1
               AND status != 'deleted'
@@ -123,7 +123,7 @@ impl<'a> PolicyStorage<'a> {
             r#"
             INSERT INTO accesspolicy (id, txid, ts, resource, status)
             VALUES ($1, 1, NOW(), $2, 'created')
-            RETURNING id, txid, ts, resource, status
+            RETURNING id, txid, ts, resource, status::text
             "#,
         )
         .bind(id)
@@ -160,7 +160,7 @@ impl<'a> PolicyStorage<'a> {
                 status = 'updated'
             WHERE id = $1
               AND status != 'deleted'
-            RETURNING id, txid, ts, resource, status
+            RETURNING id, txid, ts, resource, status::text
             "#,
         )
         .bind(id)
@@ -207,7 +207,7 @@ impl<'a> PolicyStorage<'a> {
     pub async fn list(&self, limit: i64, offset: i64) -> StorageResult<Vec<PolicyRow>> {
         let rows: Vec<(Uuid, i64, OffsetDateTime, serde_json::Value, String)> = query_as(
             r#"
-            SELECT id, txid, ts, resource, status
+            SELECT id, txid, ts, resource, status::text
             FROM accesspolicy
             WHERE status != 'deleted'
             ORDER BY (resource->>'priority')::int NULLS LAST, ts DESC
@@ -230,7 +230,7 @@ impl<'a> PolicyStorage<'a> {
     pub async fn find_for_client(&self, client_id: &str) -> StorageResult<Vec<PolicyRow>> {
         let rows: Vec<(Uuid, i64, OffsetDateTime, serde_json::Value, String)> = query_as(
             r#"
-            SELECT id, txid, ts, resource, status
+            SELECT id, txid, ts, resource, status::text
             FROM accesspolicy
             WHERE status != 'deleted'
               AND (resource->>'active')::boolean = true
@@ -256,7 +256,7 @@ impl<'a> PolicyStorage<'a> {
     pub async fn find_for_user(&self, user_id: &str) -> StorageResult<Vec<PolicyRow>> {
         let rows: Vec<(Uuid, i64, OffsetDateTime, serde_json::Value, String)> = query_as(
             r#"
-            SELECT id, txid, ts, resource, status
+            SELECT id, txid, ts, resource, status::text
             FROM accesspolicy
             WHERE status != 'deleted'
               AND (resource->>'active')::boolean = true
@@ -282,7 +282,7 @@ impl<'a> PolicyStorage<'a> {
     pub async fn find_for_role(&self, role: &str) -> StorageResult<Vec<PolicyRow>> {
         let rows: Vec<(Uuid, i64, OffsetDateTime, serde_json::Value, String)> = query_as(
             r#"
-            SELECT id, txid, ts, resource, status
+            SELECT id, txid, ts, resource, status::text
             FROM accesspolicy
             WHERE status != 'deleted'
               AND (resource->>'active')::boolean = true
@@ -369,7 +369,7 @@ impl PolicyStorageTrait for PostgresPolicyStorageAdapter {
     async fn list_active(&self) -> AuthResult<Vec<AccessPolicy>> {
         let rows: Vec<(Uuid, i64, OffsetDateTime, serde_json::Value, String)> = query_as(
             r#"
-            SELECT id, txid, ts, resource, status
+            SELECT id, txid, ts, resource, status::text
             FROM accesspolicy
             WHERE status != 'deleted'
               AND (resource->>'active')::boolean = true
@@ -451,7 +451,7 @@ impl PolicyStorageTrait for PostgresPolicyStorageAdapter {
         // Find policies that match the resource type or have no resource type filter
         let rows: Vec<(Uuid, i64, OffsetDateTime, serde_json::Value, String)> = query_as(
             r#"
-            SELECT id, txid, ts, resource, status
+            SELECT id, txid, ts, resource, status::text
             FROM accesspolicy
             WHERE status != 'deleted'
               AND (resource->>'active')::boolean = true
@@ -490,7 +490,7 @@ impl PolicyStorageTrait for PostgresPolicyStorageAdapter {
 
         let rows: Vec<(Uuid, i64, OffsetDateTime, serde_json::Value, String)> = query_as(
             r#"
-            SELECT id, txid, ts, resource, status
+            SELECT id, txid, ts, resource, status::text
             FROM accesspolicy
             WHERE status != 'deleted'
               AND id = ANY($1)
@@ -517,7 +517,7 @@ impl PolicyStorageTrait for PostgresPolicyStorageAdapter {
             if let Some(ref name) = params.name {
                 query_as(
                     r#"
-                SELECT id, txid, ts, resource, status
+                SELECT id, txid, ts, resource, status::text
                 FROM accesspolicy
                 WHERE status != 'deleted'
                   AND resource->>'name' ILIKE '%' || $1 || '%'
@@ -534,7 +534,7 @@ impl PolicyStorageTrait for PostgresPolicyStorageAdapter {
             } else {
                 query_as(
                     r#"
-                SELECT id, txid, ts, resource, status
+                SELECT id, txid, ts, resource, status::text
                 FROM accesspolicy
                 WHERE status != 'deleted'
                 ORDER BY (resource->>'priority')::int NULLS LAST

@@ -47,6 +47,22 @@ export interface FhirOperationOutcome {
   }>;
 }
 
+// SQL execution types
+export interface SqlRequest {
+  query: string;
+  /** Optional bind parameters for parameterized queries ($1, $2, etc.) */
+  params?: SqlValue[];
+}
+
+export type SqlValue = string | number | boolean | null | Record<string, unknown>;
+
+export interface SqlResponse {
+  columns: string[];
+  rows: SqlValue[][];
+  rowCount: number;
+  executionTimeMs: number;
+}
+
 // HTTP types
 export type HttpMethod = "GET" | "POST" | "PUT" | "DELETE" | "PATCH";
 

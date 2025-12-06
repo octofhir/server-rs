@@ -61,6 +61,8 @@ pub enum ConfigCategory {
     Fhir,
     /// Packages configuration
     Packages,
+    /// DB Console configuration (SQL execution, LSP)
+    DbConsole,
 }
 
 impl ConfigCategory {
@@ -80,6 +82,7 @@ impl ConfigCategory {
             Self::Validation,
             Self::Fhir,
             Self::Packages,
+            Self::DbConsole,
         ]
     }
 
@@ -99,6 +102,7 @@ impl ConfigCategory {
             "validation" => Some(Self::Validation),
             "fhir" => Some(Self::Fhir),
             "packages" => Some(Self::Packages),
+            "db_console" | "dbconsole" => Some(Self::DbConsole),
             _ => None,
         }
     }
@@ -120,6 +124,7 @@ impl std::fmt::Display for ConfigCategory {
             Self::Validation => write!(f, "validation"),
             Self::Fhir => write!(f, "fhir"),
             Self::Packages => write!(f, "packages"),
+            Self::DbConsole => write!(f, "db_console"),
         }
     }
 }

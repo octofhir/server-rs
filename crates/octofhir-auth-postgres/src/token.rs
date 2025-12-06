@@ -71,7 +71,7 @@ impl<'a> TokenStorage<'a> {
     pub async fn find_by_token_hash(&self, token_hash: &str) -> StorageResult<Option<TokenRow>> {
         let row: Option<(Uuid, i64, OffsetDateTime, serde_json::Value, String)> = query_as(
             r#"
-            SELECT id, txid, ts, resource, status
+            SELECT id, txid, ts, resource, status::text
             FROM refreshtoken
             WHERE resource->>'tokenHash' = $1
               AND status != 'deleted'
@@ -92,7 +92,7 @@ impl<'a> TokenStorage<'a> {
     pub async fn find_by_id(&self, id: Uuid) -> StorageResult<Option<TokenRow>> {
         let row: Option<(Uuid, i64, OffsetDateTime, serde_json::Value, String)> = query_as(
             r#"
-            SELECT id, txid, ts, resource, status
+            SELECT id, txid, ts, resource, status::text
             FROM refreshtoken
             WHERE id = $1
               AND status != 'deleted'
@@ -115,7 +115,7 @@ impl<'a> TokenStorage<'a> {
             r#"
             INSERT INTO refreshtoken (id, txid, ts, resource, status)
             VALUES ($1, 1, NOW(), $2, 'created')
-            RETURNING id, txid, ts, resource, status
+            RETURNING id, txid, ts, resource, status::text
             "#,
         )
         .bind(id)
@@ -152,7 +152,7 @@ impl<'a> TokenStorage<'a> {
                 status = 'updated'
             WHERE id = $1
               AND status != 'deleted'
-            RETURNING id, txid, ts, resource, status
+            RETURNING id, txid, ts, resource, status::text
             "#,
         )
         .bind(id)
@@ -178,7 +178,7 @@ impl<'a> TokenStorage<'a> {
                 status = 'updated'
             WHERE id = $1
               AND status != 'deleted'
-            RETURNING id, txid, ts, resource, status
+            RETURNING id, txid, ts, resource, status::text
             "#,
         )
         .bind(id)
@@ -261,5 +261,106 @@ impl<'a> TokenStorage<'a> {
         .await?;
 
         Ok(result.rows_affected())
+    }
+
+    /// Find a token by its hash (alias for `find_by_token_hash`).
+    pub async fn find_by_hash(&self, token_hash: &str) -> StorageResult<Option<TokenRow>> {
+        self.find_by_token_hash(token_hash).await
+    }
+
+    /// Revoke a token by its hash.
+    pub async fn revoke_by_hash(&self, token_hash: &str) -> StorageResult<()> {
+        let result = query(
+            r#"
+            UPDATE refreshtoken
+            SET resource = resource || jsonb_build_object('revoked', true, 'revokedAt', NOW()::text),
+                txid = txid + 1,
+                ts = NOW(),
+                status = 'updated'
+            WHERE resource->>'tokenHash' = $1
+              AND status != 'deleted'
+              AND (resource->>'revoked')::boolean IS NOT TRUE
+            "#,
+        )
+        .bind(token_hash)
+        .execute(self.pool)
+        .await?;
+
+        if result.rows_affected() == 0 {
+            return Err(StorageError::not_found("RefreshToken with given hash"));
+        }
+
+        Ok(())
+    }
+
+    /// Revoke all tokens for a client.
+    pub async fn revoke_by_client(&self, client_id: &str) -> StorageResult<u64> {
+        let result = query(
+            r#"
+            UPDATE refreshtoken
+            SET resource = resource || jsonb_build_object('revoked', true, 'revokedAt', NOW()::text),
+                txid = txid + 1,
+                ts = NOW(),
+                status = 'updated'
+            WHERE resource->>'clientId' = $1
+              AND status != 'deleted'
+              AND (resource->>'revoked')::boolean IS NOT TRUE
+            "#,
+        )
+        .bind(client_id)
+        .execute(self.pool)
+        .await?;
+
+        Ok(result.rows_affected())
+    }
+
+    /// Revoke all tokens for a user by UUID.
+    pub async fn revoke_by_user(&self, user_id: Uuid) -> StorageResult<u64> {
+        let result = query(
+            r#"
+            UPDATE refreshtoken
+            SET resource = resource || jsonb_build_object('revoked', true, 'revokedAt', NOW()::text),
+                txid = txid + 1,
+                ts = NOW(),
+                status = 'updated'
+            WHERE resource->>'userId' = $1
+              AND status != 'deleted'
+              AND (resource->>'revoked')::boolean IS NOT TRUE
+            "#,
+        )
+        .bind(user_id.to_string())
+        .execute(self.pool)
+        .await?;
+
+        Ok(result.rows_affected())
+    }
+
+    /// Cleanup expired tokens (alias for `delete_expired`).
+    pub async fn cleanup_expired(&self) -> StorageResult<u64> {
+        self.delete_expired().await
+    }
+
+    /// List all active (non-revoked, non-expired) tokens for a user.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the database query fails.
+    pub async fn list_by_user(&self, user_id: Uuid) -> StorageResult<Vec<TokenRow>> {
+        let rows: Vec<(Uuid, i64, OffsetDateTime, serde_json::Value, String)> = query_as(
+            r#"
+            SELECT id, txid, ts, resource, status::text
+            FROM refreshtoken
+            WHERE resource->>'userId' = $1
+              AND status != 'deleted'
+              AND (resource->>'revoked')::boolean IS NOT TRUE
+              AND (resource->>'expiresAt')::timestamptz > NOW()
+            ORDER BY ts DESC
+            "#,
+        )
+        .bind(user_id.to_string())
+        .fetch_all(self.pool)
+        .await?;
+
+        Ok(rows.into_iter().map(TokenRow::from_tuple).collect())
     }
 }

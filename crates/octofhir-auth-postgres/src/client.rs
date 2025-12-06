@@ -83,7 +83,7 @@ impl<'a> ClientStorage<'a> {
     pub async fn find_by_client_id(&self, client_id: &str) -> StorageResult<Option<ClientRow>> {
         let row: Option<(Uuid, i64, OffsetDateTime, serde_json::Value, String)> = query_as(
             r#"
-            SELECT id, txid, ts, resource, status
+            SELECT id, txid, ts, resource, status::text::text
             FROM client
             WHERE resource->>'clientId' = $1
               AND status != 'deleted'
@@ -104,7 +104,7 @@ impl<'a> ClientStorage<'a> {
     pub async fn find_by_id(&self, id: Uuid) -> StorageResult<Option<ClientRow>> {
         let row: Option<(Uuid, i64, OffsetDateTime, serde_json::Value, String)> = query_as(
             r#"
-            SELECT id, txid, ts, resource, status
+            SELECT id, txid, ts, resource, status::text
             FROM client
             WHERE id = $1
               AND status != 'deleted'
@@ -129,7 +129,7 @@ impl<'a> ClientStorage<'a> {
             r#"
             INSERT INTO client (id, txid, ts, resource, status)
             VALUES ($1, 1, NOW(), $2, 'created')
-            RETURNING id, txid, ts, resource, status
+            RETURNING id, txid, ts, resource, status::text
             "#,
         )
         .bind(id)
@@ -167,7 +167,7 @@ impl<'a> ClientStorage<'a> {
                 status = 'updated'
             WHERE id = $1
               AND status != 'deleted'
-            RETURNING id, txid, ts, resource, status
+            RETURNING id, txid, ts, resource, status::text
             "#,
         )
         .bind(id)
@@ -218,7 +218,7 @@ impl<'a> ClientStorage<'a> {
     pub async fn list(&self, limit: i64, offset: i64) -> StorageResult<Vec<ClientRow>> {
         let rows: Vec<(Uuid, i64, OffsetDateTime, serde_json::Value, String)> = query_as(
             r#"
-            SELECT id, txid, ts, resource, status
+            SELECT id, txid, ts, resource, status::text
             FROM client
             WHERE status != 'deleted'
             ORDER BY ts DESC

@@ -10,6 +10,7 @@ pub mod gateway;
 pub mod handlers;
 pub mod mapping;
 pub mod middleware;
+pub mod oauth;
 pub mod observability;
 pub mod operations;
 pub mod patch;

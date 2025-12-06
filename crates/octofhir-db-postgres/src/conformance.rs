@@ -1,24 +1,27 @@
 //! PostgreSQL implementation of ConformanceStorage for internal OctoFHIR resources.
 //!
 //! This module provides storage for conformance resources (StructureDefinitions,
-//! ValueSets, CodeSystems, SearchParameters) in the `octofhir` schema.
+//! ValueSets, CodeSystems, SearchParameters) in the public schema using standard
+//! FHIR resource tables.
 
 use async_trait::async_trait;
 use serde_json::Value;
 use sqlx_core::query::query;
 use sqlx_core::query_as::query_as;
 use sqlx_postgres::PgPool;
-use tracing::{debug, instrument};
+use tracing::{debug, info, instrument};
 use uuid::Uuid;
 
 use octofhir_storage::{ConformanceStorage, StorageError};
 
 use crate::error::PostgresError;
+use crate::schema::SchemaManager;
 
 /// PostgreSQL implementation of the ConformanceStorage trait.
 ///
-/// This implementation stores conformance resources in the `octofhir` schema
-/// with full CRUD support and change notifications for hot-reload.
+/// This implementation stores conformance resources in the public schema
+/// using standard FHIR resource tables with CRUD support and change notifications
+/// for hot-reload.
 #[derive(Debug, Clone)]
 pub struct PostgresConformanceStorage {
     pool: PgPool,
@@ -40,7 +43,7 @@ impl PostgresConformanceStorage {
     /// Creates a new transaction ID for conformance operations.
     async fn create_txid(&self) -> Result<i64, StorageError> {
         let row: (i64,) = query_as(
-            "INSERT INTO public._transaction (status) VALUES ('committed') RETURNING txid",
+            "INSERT INTO _transaction (status) VALUES ('committed') RETURNING txid",
         )
         .fetch_one(&self.pool)
         .await
@@ -49,28 +52,13 @@ impl PostgresConformanceStorage {
         Ok(row.0)
     }
 
-    /// Extracts common fields from a conformance resource.
-    fn extract_common_fields(
-        resource: &Value,
-    ) -> Result<(String, Option<String>, String), StorageError> {
-        let url = resource
-            .get("url")
-            .and_then(Value::as_str)
-            .ok_or_else(|| StorageError::invalid_resource("Missing required field: url"))?
-            .to_string();
-
-        let version = resource
-            .get("version")
-            .and_then(Value::as_str)
-            .map(String::from);
-
-        let name = resource
-            .get("name")
-            .and_then(Value::as_str)
-            .ok_or_else(|| StorageError::invalid_resource("Missing required field: name"))?
-            .to_string();
-
-        Ok((url, version, name))
+    /// Ensures the table exists for a resource type.
+    async fn ensure_table(&self, resource_type: &str) -> Result<(), StorageError> {
+        let schema_manager = SchemaManager::new(self.pool.clone());
+        schema_manager
+            .ensure_table(resource_type)
+            .await
+            .map_err(|e| StorageError::internal(format!("Failed to ensure table: {}", e)))
     }
 }
 
@@ -80,11 +68,15 @@ impl ConformanceStorage for PostgresConformanceStorage {
 
     #[instrument(skip(self))]
     async fn list_structure_definitions(&self) -> Result<Vec<Value>, StorageError> {
-        let rows: Vec<(Value,)> =
-            query_as("SELECT resource FROM octofhir.structuredefinition ORDER BY name")
-                .fetch_all(&self.pool)
-                .await
-                .map_err(PostgresError::from)?;
+        // Ensure table exists
+        self.ensure_table("StructureDefinition").await?;
+
+        let rows: Vec<(Value,)> = query_as(
+            "SELECT resource FROM structuredefinition WHERE status != 'deleted' ORDER BY resource->>'name'",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(PostgresError::from)?;
 
         Ok(rows.into_iter().map(|(r,)| r).collect())
     }
@@ -95,9 +87,11 @@ impl ConformanceStorage for PostgresConformanceStorage {
         url: &str,
         version: Option<&str>,
     ) -> Result<Option<Value>, StorageError> {
+        self.ensure_table("StructureDefinition").await?;
+
         let row: Option<(Value,)> = if let Some(ver) = version {
             query_as(
-                "SELECT resource FROM octofhir.structuredefinition WHERE url = $1 AND version = $2",
+                "SELECT resource FROM structuredefinition WHERE resource->>'url' = $1 AND resource->>'version' = $2 AND status != 'deleted'",
             )
             .bind(url)
             .bind(ver)
@@ -106,7 +100,7 @@ impl ConformanceStorage for PostgresConformanceStorage {
             .map_err(PostgresError::from)?
         } else {
             query_as(
-                "SELECT resource FROM octofhir.structuredefinition WHERE url = $1 ORDER BY version DESC NULLS LAST LIMIT 1",
+                "SELECT resource FROM structuredefinition WHERE resource->>'url' = $1 AND status != 'deleted' ORDER BY resource->>'version' DESC NULLS LAST LIMIT 1",
             )
             .bind(url)
             .fetch_optional(&self.pool)
@@ -119,11 +113,13 @@ impl ConformanceStorage for PostgresConformanceStorage {
 
     #[instrument(skip(self))]
     async fn get_structure_definition(&self, id: &str) -> Result<Option<Value>, StorageError> {
+        self.ensure_table("StructureDefinition").await?;
+
         let uuid = Uuid::parse_str(id)
             .map_err(|_| StorageError::invalid_resource("Invalid UUID format"))?;
 
         let row: Option<(Value,)> =
-            query_as("SELECT resource FROM octofhir.structuredefinition WHERE id = $1")
+            query_as("SELECT resource FROM structuredefinition WHERE id = $1 AND status != 'deleted'")
                 .bind(uuid)
                 .fetch_optional(&self.pool)
                 .await
@@ -134,21 +130,7 @@ impl ConformanceStorage for PostgresConformanceStorage {
 
     #[instrument(skip(self, resource))]
     async fn create_structure_definition(&self, resource: &Value) -> Result<Value, StorageError> {
-        let (url, version, name) = Self::extract_common_fields(resource)?;
-
-        let status = resource
-            .get("status")
-            .and_then(Value::as_str)
-            .unwrap_or("draft");
-
-        let kind = resource
-            .get("kind")
-            .and_then(Value::as_str)
-            .ok_or_else(|| StorageError::invalid_resource("Missing required field: kind"))?;
-
-        let type_field = resource.get("type").and_then(Value::as_str);
-        let base_definition = resource.get("baseDefinition").and_then(Value::as_str);
-        let derivation = resource.get("derivation").and_then(Value::as_str);
+        self.ensure_table("StructureDefinition").await?;
 
         let txid = self.create_txid().await?;
         let id = Uuid::new_v4();
@@ -159,27 +141,48 @@ impl ConformanceStorage for PostgresConformanceStorage {
 
         let row: (Value,) = query_as(
             r#"
-            INSERT INTO octofhir.structuredefinition
-                (id, url, version, name, status, kind, type, base_definition, derivation, txid, resource)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+            INSERT INTO structuredefinition (id, txid, resource, status)
+            VALUES ($1, $2, $3, 'created')
             RETURNING resource
             "#,
         )
         .bind(id)
-        .bind(&url)
-        .bind(&version)
-        .bind(&name)
-        .bind(status)
-        .bind(kind)
-        .bind(type_field)
-        .bind(base_definition)
-        .bind(derivation)
         .bind(txid)
         .bind(&result)
         .fetch_one(&self.pool)
         .await
         .map_err(PostgresError::from)?;
 
+        // If this is a resource or logical type, create the corresponding table in public schema
+        let kind = resource.get("kind").and_then(Value::as_str);
+        let type_field = resource.get("type").and_then(Value::as_str);
+
+        if let (Some(kind), Some(resource_type)) = (kind, type_field) {
+            if kind == "resource" || kind == "logical" {
+                let schema_manager = SchemaManager::new(self.pool.clone());
+                match schema_manager.ensure_table(resource_type).await {
+                    Ok(()) => {
+                        info!(
+                            resource_type = resource_type,
+                            kind = kind,
+                            "Created table for StructureDefinition"
+                        );
+                    }
+                    Err(e) => {
+                        // Log but don't fail - table creation is best-effort during bootstrap
+                        tracing::warn!(
+                            error = %e,
+                            resource_type = resource_type,
+                            kind = kind,
+                            "Failed to create table for StructureDefinition"
+                        );
+                    }
+                }
+            }
+        }
+
+        let name = resource.get("name").and_then(Value::as_str).unwrap_or("?");
+        let url = resource.get("url").and_then(Value::as_str).unwrap_or("?");
         debug!("Created StructureDefinition: {} ({})", name, url);
         Ok(row.0)
     }
@@ -190,24 +193,10 @@ impl ConformanceStorage for PostgresConformanceStorage {
         id: &str,
         resource: &Value,
     ) -> Result<Value, StorageError> {
+        self.ensure_table("StructureDefinition").await?;
+
         let uuid = Uuid::parse_str(id)
             .map_err(|_| StorageError::invalid_resource("Invalid UUID format"))?;
-
-        let (url, version, name) = Self::extract_common_fields(resource)?;
-
-        let status = resource
-            .get("status")
-            .and_then(Value::as_str)
-            .unwrap_or("draft");
-
-        let kind = resource
-            .get("kind")
-            .and_then(Value::as_str)
-            .ok_or_else(|| StorageError::invalid_resource("Missing required field: kind"))?;
-
-        let type_field = resource.get("type").and_then(Value::as_str);
-        let base_definition = resource.get("baseDefinition").and_then(Value::as_str);
-        let derivation = resource.get("derivation").and_then(Value::as_str);
 
         let txid = self.create_txid().await?;
 
@@ -217,23 +206,13 @@ impl ConformanceStorage for PostgresConformanceStorage {
 
         let row: Option<(Value,)> = query_as(
             r#"
-            UPDATE octofhir.structuredefinition
-            SET url = $2, version = $3, name = $4, status = $5, kind = $6,
-                type = $7, base_definition = $8, derivation = $9, txid = $10,
-                ts = NOW(), resource = $11
-            WHERE id = $1
+            UPDATE structuredefinition
+            SET txid = $2, ts = NOW(), resource = $3, status = 'updated'
+            WHERE id = $1 AND status != 'deleted'
             RETURNING resource
             "#,
         )
         .bind(uuid)
-        .bind(&url)
-        .bind(&version)
-        .bind(&name)
-        .bind(status)
-        .bind(kind)
-        .bind(type_field)
-        .bind(base_definition)
-        .bind(derivation)
         .bind(txid)
         .bind(&result)
         .fetch_optional(&self.pool)
@@ -246,14 +225,22 @@ impl ConformanceStorage for PostgresConformanceStorage {
 
     #[instrument(skip(self))]
     async fn delete_structure_definition(&self, id: &str) -> Result<(), StorageError> {
+        self.ensure_table("StructureDefinition").await?;
+
         let uuid = Uuid::parse_str(id)
             .map_err(|_| StorageError::invalid_resource("Invalid UUID format"))?;
 
-        let result = query("DELETE FROM octofhir.structuredefinition WHERE id = $1")
-            .bind(uuid)
-            .execute(&self.pool)
-            .await
-            .map_err(PostgresError::from)?;
+        let txid = self.create_txid().await?;
+
+        // Soft delete by updating status
+        let result = query(
+            "UPDATE structuredefinition SET status = 'deleted', txid = $2, ts = NOW() WHERE id = $1 AND status != 'deleted'",
+        )
+        .bind(uuid)
+        .bind(txid)
+        .execute(&self.pool)
+        .await
+        .map_err(PostgresError::from)?;
 
         if result.rows_affected() == 0 {
             return Err(StorageError::not_found("StructureDefinition", id));
@@ -267,10 +254,13 @@ impl ConformanceStorage for PostgresConformanceStorage {
 
     #[instrument(skip(self))]
     async fn list_value_sets(&self) -> Result<Vec<Value>, StorageError> {
-        let rows: Vec<(Value,)> = query_as("SELECT resource FROM octofhir.valueset ORDER BY name")
-            .fetch_all(&self.pool)
-            .await
-            .map_err(PostgresError::from)?;
+        self.ensure_table("ValueSet").await?;
+
+        let rows: Vec<(Value,)> =
+            query_as("SELECT resource FROM valueset WHERE status != 'deleted' ORDER BY resource->>'name'")
+                .fetch_all(&self.pool)
+                .await
+                .map_err(PostgresError::from)?;
 
         Ok(rows.into_iter().map(|(r,)| r).collect())
     }
@@ -281,8 +271,10 @@ impl ConformanceStorage for PostgresConformanceStorage {
         url: &str,
         version: Option<&str>,
     ) -> Result<Option<Value>, StorageError> {
+        self.ensure_table("ValueSet").await?;
+
         let row: Option<(Value,)> = if let Some(ver) = version {
-            query_as("SELECT resource FROM octofhir.valueset WHERE url = $1 AND version = $2")
+            query_as("SELECT resource FROM valueset WHERE resource->>'url' = $1 AND resource->>'version' = $2 AND status != 'deleted'")
                 .bind(url)
                 .bind(ver)
                 .fetch_optional(&self.pool)
@@ -290,7 +282,7 @@ impl ConformanceStorage for PostgresConformanceStorage {
                 .map_err(PostgresError::from)?
         } else {
             query_as(
-                "SELECT resource FROM octofhir.valueset WHERE url = $1 ORDER BY version DESC NULLS LAST LIMIT 1",
+                "SELECT resource FROM valueset WHERE resource->>'url' = $1 AND status != 'deleted' ORDER BY resource->>'version' DESC NULLS LAST LIMIT 1",
             )
             .bind(url)
             .fetch_optional(&self.pool)
@@ -303,11 +295,13 @@ impl ConformanceStorage for PostgresConformanceStorage {
 
     #[instrument(skip(self))]
     async fn get_value_set(&self, id: &str) -> Result<Option<Value>, StorageError> {
+        self.ensure_table("ValueSet").await?;
+
         let uuid = Uuid::parse_str(id)
             .map_err(|_| StorageError::invalid_resource("Invalid UUID format"))?;
 
         let row: Option<(Value,)> =
-            query_as("SELECT resource FROM octofhir.valueset WHERE id = $1")
+            query_as("SELECT resource FROM valueset WHERE id = $1 AND status != 'deleted'")
                 .bind(uuid)
                 .fetch_optional(&self.pool)
                 .await
@@ -318,12 +312,7 @@ impl ConformanceStorage for PostgresConformanceStorage {
 
     #[instrument(skip(self, resource))]
     async fn create_value_set(&self, resource: &Value) -> Result<Value, StorageError> {
-        let (url, version, name) = Self::extract_common_fields(resource)?;
-
-        let status = resource
-            .get("status")
-            .and_then(Value::as_str)
-            .unwrap_or("draft");
+        self.ensure_table("ValueSet").await?;
 
         let txid = self.create_txid().await?;
         let id = Uuid::new_v4();
@@ -333,37 +322,30 @@ impl ConformanceStorage for PostgresConformanceStorage {
 
         let row: (Value,) = query_as(
             r#"
-            INSERT INTO octofhir.valueset (id, url, version, name, status, txid, resource)
-            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            INSERT INTO valueset (id, txid, resource, status)
+            VALUES ($1, $2, $3, 'created')
             RETURNING resource
             "#,
         )
         .bind(id)
-        .bind(&url)
-        .bind(&version)
-        .bind(&name)
-        .bind(status)
         .bind(txid)
         .bind(&result)
         .fetch_one(&self.pool)
         .await
         .map_err(PostgresError::from)?;
 
+        let name = resource.get("name").and_then(Value::as_str).unwrap_or("?");
+        let url = resource.get("url").and_then(Value::as_str).unwrap_or("?");
         debug!("Created ValueSet: {} ({})", name, url);
         Ok(row.0)
     }
 
     #[instrument(skip(self, resource))]
     async fn update_value_set(&self, id: &str, resource: &Value) -> Result<Value, StorageError> {
+        self.ensure_table("ValueSet").await?;
+
         let uuid = Uuid::parse_str(id)
             .map_err(|_| StorageError::invalid_resource("Invalid UUID format"))?;
-
-        let (url, version, name) = Self::extract_common_fields(resource)?;
-
-        let status = resource
-            .get("status")
-            .and_then(Value::as_str)
-            .unwrap_or("draft");
 
         let txid = self.create_txid().await?;
 
@@ -372,17 +354,13 @@ impl ConformanceStorage for PostgresConformanceStorage {
 
         let row: Option<(Value,)> = query_as(
             r#"
-            UPDATE octofhir.valueset
-            SET url = $2, version = $3, name = $4, status = $5, txid = $6, ts = NOW(), resource = $7
-            WHERE id = $1
+            UPDATE valueset
+            SET txid = $2, ts = NOW(), resource = $3, status = 'updated'
+            WHERE id = $1 AND status != 'deleted'
             RETURNING resource
             "#,
         )
         .bind(uuid)
-        .bind(&url)
-        .bind(&version)
-        .bind(&name)
-        .bind(status)
         .bind(txid)
         .bind(&result)
         .fetch_optional(&self.pool)
@@ -395,14 +373,21 @@ impl ConformanceStorage for PostgresConformanceStorage {
 
     #[instrument(skip(self))]
     async fn delete_value_set(&self, id: &str) -> Result<(), StorageError> {
+        self.ensure_table("ValueSet").await?;
+
         let uuid = Uuid::parse_str(id)
             .map_err(|_| StorageError::invalid_resource("Invalid UUID format"))?;
 
-        let result = query("DELETE FROM octofhir.valueset WHERE id = $1")
-            .bind(uuid)
-            .execute(&self.pool)
-            .await
-            .map_err(PostgresError::from)?;
+        let txid = self.create_txid().await?;
+
+        let result = query(
+            "UPDATE valueset SET status = 'deleted', txid = $2, ts = NOW() WHERE id = $1 AND status != 'deleted'",
+        )
+        .bind(uuid)
+        .bind(txid)
+        .execute(&self.pool)
+        .await
+        .map_err(PostgresError::from)?;
 
         if result.rows_affected() == 0 {
             return Err(StorageError::not_found("ValueSet", id));
@@ -416,8 +401,10 @@ impl ConformanceStorage for PostgresConformanceStorage {
 
     #[instrument(skip(self))]
     async fn list_code_systems(&self) -> Result<Vec<Value>, StorageError> {
+        self.ensure_table("CodeSystem").await?;
+
         let rows: Vec<(Value,)> =
-            query_as("SELECT resource FROM octofhir.codesystem ORDER BY name")
+            query_as("SELECT resource FROM codesystem WHERE status != 'deleted' ORDER BY resource->>'name'")
                 .fetch_all(&self.pool)
                 .await
                 .map_err(PostgresError::from)?;
@@ -431,8 +418,10 @@ impl ConformanceStorage for PostgresConformanceStorage {
         url: &str,
         version: Option<&str>,
     ) -> Result<Option<Value>, StorageError> {
+        self.ensure_table("CodeSystem").await?;
+
         let row: Option<(Value,)> = if let Some(ver) = version {
-            query_as("SELECT resource FROM octofhir.codesystem WHERE url = $1 AND version = $2")
+            query_as("SELECT resource FROM codesystem WHERE resource->>'url' = $1 AND resource->>'version' = $2 AND status != 'deleted'")
                 .bind(url)
                 .bind(ver)
                 .fetch_optional(&self.pool)
@@ -440,7 +429,7 @@ impl ConformanceStorage for PostgresConformanceStorage {
                 .map_err(PostgresError::from)?
         } else {
             query_as(
-                "SELECT resource FROM octofhir.codesystem WHERE url = $1 ORDER BY version DESC NULLS LAST LIMIT 1",
+                "SELECT resource FROM codesystem WHERE resource->>'url' = $1 AND status != 'deleted' ORDER BY resource->>'version' DESC NULLS LAST LIMIT 1",
             )
             .bind(url)
             .fetch_optional(&self.pool)
@@ -453,11 +442,13 @@ impl ConformanceStorage for PostgresConformanceStorage {
 
     #[instrument(skip(self))]
     async fn get_code_system(&self, id: &str) -> Result<Option<Value>, StorageError> {
+        self.ensure_table("CodeSystem").await?;
+
         let uuid = Uuid::parse_str(id)
             .map_err(|_| StorageError::invalid_resource("Invalid UUID format"))?;
 
         let row: Option<(Value,)> =
-            query_as("SELECT resource FROM octofhir.codesystem WHERE id = $1")
+            query_as("SELECT resource FROM codesystem WHERE id = $1 AND status != 'deleted'")
                 .bind(uuid)
                 .fetch_optional(&self.pool)
                 .await
@@ -468,17 +459,7 @@ impl ConformanceStorage for PostgresConformanceStorage {
 
     #[instrument(skip(self, resource))]
     async fn create_code_system(&self, resource: &Value) -> Result<Value, StorageError> {
-        let (url, version, name) = Self::extract_common_fields(resource)?;
-
-        let status = resource
-            .get("status")
-            .and_then(Value::as_str)
-            .unwrap_or("draft");
-
-        let content = resource
-            .get("content")
-            .and_then(Value::as_str)
-            .unwrap_or("complete");
+        self.ensure_table("CodeSystem").await?;
 
         let txid = self.create_txid().await?;
         let id = Uuid::new_v4();
@@ -488,43 +469,30 @@ impl ConformanceStorage for PostgresConformanceStorage {
 
         let row: (Value,) = query_as(
             r#"
-            INSERT INTO octofhir.codesystem (id, url, version, name, status, content, txid, resource)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            INSERT INTO codesystem (id, txid, resource, status)
+            VALUES ($1, $2, $3, 'created')
             RETURNING resource
             "#,
         )
         .bind(id)
-        .bind(&url)
-        .bind(&version)
-        .bind(&name)
-        .bind(status)
-        .bind(content)
         .bind(txid)
         .bind(&result)
         .fetch_one(&self.pool)
         .await
         .map_err(PostgresError::from)?;
 
+        let name = resource.get("name").and_then(Value::as_str).unwrap_or("?");
+        let url = resource.get("url").and_then(Value::as_str).unwrap_or("?");
         debug!("Created CodeSystem: {} ({})", name, url);
         Ok(row.0)
     }
 
     #[instrument(skip(self, resource))]
     async fn update_code_system(&self, id: &str, resource: &Value) -> Result<Value, StorageError> {
+        self.ensure_table("CodeSystem").await?;
+
         let uuid = Uuid::parse_str(id)
             .map_err(|_| StorageError::invalid_resource("Invalid UUID format"))?;
-
-        let (url, version, name) = Self::extract_common_fields(resource)?;
-
-        let status = resource
-            .get("status")
-            .and_then(Value::as_str)
-            .unwrap_or("draft");
-
-        let content = resource
-            .get("content")
-            .and_then(Value::as_str)
-            .unwrap_or("complete");
 
         let txid = self.create_txid().await?;
 
@@ -533,19 +501,13 @@ impl ConformanceStorage for PostgresConformanceStorage {
 
         let row: Option<(Value,)> = query_as(
             r#"
-            UPDATE octofhir.codesystem
-            SET url = $2, version = $3, name = $4, status = $5, content = $6,
-                txid = $7, ts = NOW(), resource = $8
-            WHERE id = $1
+            UPDATE codesystem
+            SET txid = $2, ts = NOW(), resource = $3, status = 'updated'
+            WHERE id = $1 AND status != 'deleted'
             RETURNING resource
             "#,
         )
         .bind(uuid)
-        .bind(&url)
-        .bind(&version)
-        .bind(&name)
-        .bind(status)
-        .bind(content)
         .bind(txid)
         .bind(&result)
         .fetch_optional(&self.pool)
@@ -558,14 +520,21 @@ impl ConformanceStorage for PostgresConformanceStorage {
 
     #[instrument(skip(self))]
     async fn delete_code_system(&self, id: &str) -> Result<(), StorageError> {
+        self.ensure_table("CodeSystem").await?;
+
         let uuid = Uuid::parse_str(id)
             .map_err(|_| StorageError::invalid_resource("Invalid UUID format"))?;
 
-        let result = query("DELETE FROM octofhir.codesystem WHERE id = $1")
-            .bind(uuid)
-            .execute(&self.pool)
-            .await
-            .map_err(PostgresError::from)?;
+        let txid = self.create_txid().await?;
+
+        let result = query(
+            "UPDATE codesystem SET status = 'deleted', txid = $2, ts = NOW() WHERE id = $1 AND status != 'deleted'",
+        )
+        .bind(uuid)
+        .bind(txid)
+        .execute(&self.pool)
+        .await
+        .map_err(PostgresError::from)?;
 
         if result.rows_affected() == 0 {
             return Err(StorageError::not_found("CodeSystem", id));
@@ -579,8 +548,10 @@ impl ConformanceStorage for PostgresConformanceStorage {
 
     #[instrument(skip(self))]
     async fn list_search_parameters(&self) -> Result<Vec<Value>, StorageError> {
+        self.ensure_table("SearchParameter").await?;
+
         let rows: Vec<(Value,)> =
-            query_as("SELECT resource FROM octofhir.searchparameter ORDER BY name")
+            query_as("SELECT resource FROM searchparameter WHERE status != 'deleted' ORDER BY resource->>'name'")
                 .fetch_all(&self.pool)
                 .await
                 .map_err(PostgresError::from)?;
@@ -594,9 +565,11 @@ impl ConformanceStorage for PostgresConformanceStorage {
         url: &str,
         version: Option<&str>,
     ) -> Result<Option<Value>, StorageError> {
+        self.ensure_table("SearchParameter").await?;
+
         let row: Option<(Value,)> = if let Some(ver) = version {
             query_as(
-                "SELECT resource FROM octofhir.searchparameter WHERE url = $1 AND version = $2",
+                "SELECT resource FROM searchparameter WHERE resource->>'url' = $1 AND resource->>'version' = $2 AND status != 'deleted'",
             )
             .bind(url)
             .bind(ver)
@@ -605,7 +578,7 @@ impl ConformanceStorage for PostgresConformanceStorage {
             .map_err(PostgresError::from)?
         } else {
             query_as(
-                "SELECT resource FROM octofhir.searchparameter WHERE url = $1 ORDER BY version DESC NULLS LAST LIMIT 1",
+                "SELECT resource FROM searchparameter WHERE resource->>'url' = $1 AND status != 'deleted' ORDER BY resource->>'version' DESC NULLS LAST LIMIT 1",
             )
             .bind(url)
             .fetch_optional(&self.pool)
@@ -621,8 +594,11 @@ impl ConformanceStorage for PostgresConformanceStorage {
         &self,
         resource_type: &str,
     ) -> Result<Vec<Value>, StorageError> {
+        self.ensure_table("SearchParameter").await?;
+
+        // Use JSONB containment to check if resource_type is in the base array
         let rows: Vec<(Value,)> = query_as(
-            "SELECT resource FROM octofhir.searchparameter WHERE $1 = ANY(base) ORDER BY name",
+            "SELECT resource FROM searchparameter WHERE resource->'base' ? $1 AND status != 'deleted' ORDER BY resource->>'name'",
         )
         .bind(resource_type)
         .fetch_all(&self.pool)
@@ -634,11 +610,13 @@ impl ConformanceStorage for PostgresConformanceStorage {
 
     #[instrument(skip(self))]
     async fn get_search_parameter(&self, id: &str) -> Result<Option<Value>, StorageError> {
+        self.ensure_table("SearchParameter").await?;
+
         let uuid = Uuid::parse_str(id)
             .map_err(|_| StorageError::invalid_resource("Invalid UUID format"))?;
 
         let row: Option<(Value,)> =
-            query_as("SELECT resource FROM octofhir.searchparameter WHERE id = $1")
+            query_as("SELECT resource FROM searchparameter WHERE id = $1 AND status != 'deleted'")
                 .bind(uuid)
                 .fetch_optional(&self.pool)
                 .await
@@ -649,35 +627,7 @@ impl ConformanceStorage for PostgresConformanceStorage {
 
     #[instrument(skip(self, resource))]
     async fn create_search_parameter(&self, resource: &Value) -> Result<Value, StorageError> {
-        let (url, version, name) = Self::extract_common_fields(resource)?;
-
-        let code = resource
-            .get("code")
-            .and_then(Value::as_str)
-            .ok_or_else(|| StorageError::invalid_resource("Missing required field: code"))?;
-
-        let status = resource
-            .get("status")
-            .and_then(Value::as_str)
-            .unwrap_or("draft");
-
-        let base: Vec<String> = resource
-            .get("base")
-            .and_then(Value::as_array)
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(Value::as_str)
-                    .map(String::from)
-                    .collect()
-            })
-            .ok_or_else(|| StorageError::invalid_resource("Missing required field: base"))?;
-
-        let sp_type = resource
-            .get("type")
-            .and_then(Value::as_str)
-            .ok_or_else(|| StorageError::invalid_resource("Missing required field: type"))?;
-
-        let expression = resource.get("expression").and_then(Value::as_str);
+        self.ensure_table("SearchParameter").await?;
 
         let txid = self.create_txid().await?;
         let id = Uuid::new_v4();
@@ -687,27 +637,20 @@ impl ConformanceStorage for PostgresConformanceStorage {
 
         let row: (Value,) = query_as(
             r#"
-            INSERT INTO octofhir.searchparameter
-                (id, url, version, name, code, status, base, type, expression, txid, resource)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+            INSERT INTO searchparameter (id, txid, resource, status)
+            VALUES ($1, $2, $3, 'created')
             RETURNING resource
             "#,
         )
         .bind(id)
-        .bind(&url)
-        .bind(&version)
-        .bind(&name)
-        .bind(code)
-        .bind(status)
-        .bind(&base)
-        .bind(sp_type)
-        .bind(expression)
         .bind(txid)
         .bind(&result)
         .fetch_one(&self.pool)
         .await
         .map_err(PostgresError::from)?;
 
+        let name = resource.get("name").and_then(Value::as_str).unwrap_or("?");
+        let url = resource.get("url").and_then(Value::as_str).unwrap_or("?");
         debug!("Created SearchParameter: {} ({})", name, url);
         Ok(row.0)
     }
@@ -718,38 +661,10 @@ impl ConformanceStorage for PostgresConformanceStorage {
         id: &str,
         resource: &Value,
     ) -> Result<Value, StorageError> {
+        self.ensure_table("SearchParameter").await?;
+
         let uuid = Uuid::parse_str(id)
             .map_err(|_| StorageError::invalid_resource("Invalid UUID format"))?;
-
-        let (url, version, name) = Self::extract_common_fields(resource)?;
-
-        let code = resource
-            .get("code")
-            .and_then(Value::as_str)
-            .ok_or_else(|| StorageError::invalid_resource("Missing required field: code"))?;
-
-        let status = resource
-            .get("status")
-            .and_then(Value::as_str)
-            .unwrap_or("draft");
-
-        let base: Vec<String> = resource
-            .get("base")
-            .and_then(Value::as_array)
-            .map(|arr| {
-                arr.iter()
-                    .filter_map(Value::as_str)
-                    .map(String::from)
-                    .collect()
-            })
-            .ok_or_else(|| StorageError::invalid_resource("Missing required field: base"))?;
-
-        let sp_type = resource
-            .get("type")
-            .and_then(Value::as_str)
-            .ok_or_else(|| StorageError::invalid_resource("Missing required field: type"))?;
-
-        let expression = resource.get("expression").and_then(Value::as_str);
 
         let txid = self.create_txid().await?;
 
@@ -758,22 +673,13 @@ impl ConformanceStorage for PostgresConformanceStorage {
 
         let row: Option<(Value,)> = query_as(
             r#"
-            UPDATE octofhir.searchparameter
-            SET url = $2, version = $3, name = $4, code = $5, status = $6,
-                base = $7, type = $8, expression = $9, txid = $10, ts = NOW(), resource = $11
-            WHERE id = $1
+            UPDATE searchparameter
+            SET txid = $2, ts = NOW(), resource = $3, status = 'updated'
+            WHERE id = $1 AND status != 'deleted'
             RETURNING resource
             "#,
         )
         .bind(uuid)
-        .bind(&url)
-        .bind(&version)
-        .bind(&name)
-        .bind(code)
-        .bind(status)
-        .bind(&base)
-        .bind(sp_type)
-        .bind(expression)
         .bind(txid)
         .bind(&result)
         .fetch_optional(&self.pool)
@@ -786,14 +692,21 @@ impl ConformanceStorage for PostgresConformanceStorage {
 
     #[instrument(skip(self))]
     async fn delete_search_parameter(&self, id: &str) -> Result<(), StorageError> {
+        self.ensure_table("SearchParameter").await?;
+
         let uuid = Uuid::parse_str(id)
             .map_err(|_| StorageError::invalid_resource("Invalid UUID format"))?;
 
-        let result = query("DELETE FROM octofhir.searchparameter WHERE id = $1")
-            .bind(uuid)
-            .execute(&self.pool)
-            .await
-            .map_err(PostgresError::from)?;
+        let txid = self.create_txid().await?;
+
+        let result = query(
+            "UPDATE searchparameter SET status = 'deleted', txid = $2, ts = NOW() WHERE id = $1 AND status != 'deleted'",
+        )
+        .bind(uuid)
+        .bind(txid)
+        .execute(&self.pool)
+        .await
+        .map_err(PostgresError::from)?;
 
         if result.rows_affected() == 0 {
             return Err(StorageError::not_found("SearchParameter", id));
@@ -833,33 +746,8 @@ impl ConformanceStorage for PostgresConformanceStorage {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[test]
-    fn test_extract_common_fields() {
-        let resource = serde_json::json!({
-            "resourceType": "StructureDefinition",
-            "url": "http://example.org/sd/test",
-            "name": "TestSD",
-            "version": "1.0.0"
-        });
-
-        let (url, version, name) =
-            PostgresConformanceStorage::extract_common_fields(&resource).unwrap();
-
-        assert_eq!(url, "http://example.org/sd/test");
-        assert_eq!(version, Some("1.0.0".to_string()));
-        assert_eq!(name, "TestSD");
-    }
-
-    #[test]
-    fn test_extract_common_fields_missing_url() {
-        let resource = serde_json::json!({
-            "resourceType": "StructureDefinition",
-            "name": "TestSD"
-        });
-
-        let result = PostgresConformanceStorage::extract_common_fields(&resource);
-        assert!(result.is_err());
+    fn test_conformance_storage_creation() {
+        // Basic test - actual functionality requires database connection
     }
 }

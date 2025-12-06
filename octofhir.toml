@@ -185,3 +185,31 @@ timeout_ms = 5000
 terminology_ttl_secs = 3600
 # Local (L1) cache max entries
 local_cache_max_entries = 10000
+
+# =============================================================================
+# DB Console Configuration (SQL execution and LSP)
+# =============================================================================
+
+[db_console]
+# Enable DB console functionality
+enabled = true
+# SQL execution mode: "readonly" | "readwrite" | "admin"
+sql_mode = "admin"
+# Required role for DB console access (comment out for any authenticated user)
+# required_role = "admin"
+# Enable LSP features (autocomplete, hover, diagnostics)
+lsp_enabled = true
+
+# =============================================================================
+# Bootstrap Configuration (initial server setup)
+# =============================================================================
+
+[bootstrap.admin_user]
+# Admin user created on first startup if not already exists
+# Credentials can also be set via environment variables:
+#   OCTOFHIR__BOOTSTRAP__ADMIN_USER__USERNAME
+#   OCTOFHIR__BOOTSTRAP__ADMIN_USER__PASSWORD
+#   OCTOFHIR__BOOTSTRAP__ADMIN_USER__EMAIL
+username = "admin"
+password = "admin123"
+email = "admin@octofhir.io"

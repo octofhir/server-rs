@@ -33,7 +33,10 @@ pub struct User {
     pub email: Option<String>,
 
     /// BCrypt-hashed password (None for federated/SSO users).
-    #[serde(skip_serializing)]
+    ///
+    /// Note: This field is stored in the database for password authentication.
+    /// When exposing User via API, filter this field out manually for security.
+    #[serde(default)]
     pub password_hash: Option<String>,
 
     /// Reference to user's FHIR resource (e.g., "Practitioner/123").
@@ -409,14 +412,14 @@ mod tests {
         let user = User::builder("testuser")
             .email("test@example.com")
             .fhir_user("Practitioner/123")
-            .password_hash("$2b$12$...") // Should not appear in serialization
+            .password_hash("$2b$12$...")
             .build();
 
         let json = serde_json::to_string(&user).unwrap();
         assert!(json.contains("testuser"));
         assert!(json.contains("test@example.com"));
         assert!(json.contains("Practitioner/123"));
-        // password_hash should be skipped in serialization
-        assert!(!json.contains("$2b$12$"));
+        // password_hash is serialized for storage (filter it out when exposing via API)
+        assert!(json.contains("password_hash"));
     }
 }

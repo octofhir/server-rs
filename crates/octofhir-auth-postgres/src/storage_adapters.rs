@@ -9,15 +9,21 @@ use async_trait::async_trait;
 use time::OffsetDateTime;
 use uuid::Uuid;
 
+use octofhir_auth::oauth::session::{AuthorizationSession, LaunchContext};
 use octofhir_auth::storage::{
-    ClientStorage as ClientStorageTrait, RevokedTokenStorage as RevokedTokenStorageTrait,
+    ClientStorage as ClientStorageTrait,
+    RefreshTokenStorage as RefreshTokenStorageTrait,
+    RevokedTokenStorage as RevokedTokenStorageTrait,
+    SessionStorage as SessionStorageTrait,
     User, UserStorage as UserStorageTrait,
 };
-use octofhir_auth::types::Client;
+use octofhir_auth::types::{Client, RefreshToken};
 use octofhir_auth::{AuthError, AuthResult};
 
 use crate::client::PostgresClientStorage;
 use crate::revoked_token::RevokedTokenStorage;
+use crate::session::SessionStorage;
+use crate::token::TokenStorage;
 use crate::user::{UserRow, UserStorage};
 use crate::PgPool;
 
@@ -275,5 +281,274 @@ impl UserStorageTrait for ArcUserStorage {
             .map_err(|e| AuthError::storage(e.to_string()))?;
 
         rows.into_iter().map(Self::row_to_user).collect()
+    }
+}
+
+// =============================================================================
+// Arc-Owning Session Storage
+// =============================================================================
+
+/// Arc-owning PostgreSQL session storage adapter.
+#[derive(Clone)]
+pub struct ArcSessionStorage {
+    pool: Arc<PgPool>,
+}
+
+impl ArcSessionStorage {
+    /// Create a new Arc-owning session storage.
+    #[must_use]
+    pub fn new(pool: Arc<PgPool>) -> Self {
+        Self { pool }
+    }
+
+    /// Convert a session row to AuthorizationSession.
+    fn row_to_session(row: crate::session::SessionRow) -> AuthResult<AuthorizationSession> {
+        serde_json::from_value(row.resource)
+            .map_err(|e| AuthError::storage(format!("Failed to deserialize session: {}", e)))
+    }
+}
+
+#[async_trait]
+impl SessionStorageTrait for ArcSessionStorage {
+    async fn create(&self, session: &AuthorizationSession) -> AuthResult<()> {
+        let storage = SessionStorage::new(&self.pool);
+        let resource = serde_json::to_value(session)
+            .map_err(|e| AuthError::storage(format!("Failed to serialize session: {}", e)))?;
+        storage
+            .create(session.id, resource)
+            .await
+            .map_err(|e| AuthError::storage(e.to_string()))?;
+        Ok(())
+    }
+
+    async fn find_by_code(&self, code: &str) -> AuthResult<Option<AuthorizationSession>> {
+        let storage = SessionStorage::new(&self.pool);
+        let row = storage
+            .find_by_code(code)
+            .await
+            .map_err(|e| AuthError::storage(e.to_string()))?;
+
+        match row {
+            Some(r) => Ok(Some(Self::row_to_session(r)?)),
+            None => Ok(None),
+        }
+    }
+
+    async fn find_by_id(&self, id: Uuid) -> AuthResult<Option<AuthorizationSession>> {
+        let storage = SessionStorage::new(&self.pool);
+        let row = storage
+            .find_by_id(id)
+            .await
+            .map_err(|e| AuthError::storage(e.to_string()))?;
+
+        match row {
+            Some(r) => Ok(Some(Self::row_to_session(r)?)),
+            None => Ok(None),
+        }
+    }
+
+    async fn consume(&self, code: &str) -> AuthResult<AuthorizationSession> {
+        let storage = SessionStorage::new(&self.pool);
+
+        // First find the session by code
+        let row = storage
+            .find_by_code(code)
+            .await
+            .map_err(|e| AuthError::storage(e.to_string()))?
+            .ok_or_else(|| AuthError::invalid_grant("Authorization code not found"))?;
+
+        // Check if already consumed
+        let session: AuthorizationSession = serde_json::from_value(row.resource.clone())
+            .map_err(|e| AuthError::storage(format!("Failed to deserialize session: {}", e)))?;
+
+        if session.consumed_at.is_some() {
+            return Err(AuthError::invalid_grant("Authorization code already used"));
+        }
+
+        // Mark as used
+        let updated_row = storage
+            .mark_used(row.id)
+            .await
+            .map_err(|e| AuthError::storage(e.to_string()))?;
+
+        // Return the updated session with consumed_at set
+        let mut consumed_session: AuthorizationSession = serde_json::from_value(updated_row.resource)
+            .map_err(|e| AuthError::storage(format!("Failed to deserialize session: {}", e)))?;
+        consumed_session.consumed_at = Some(OffsetDateTime::now_utc());
+        Ok(consumed_session)
+    }
+
+    async fn update_user(&self, id: Uuid, user_id: Uuid) -> AuthResult<()> {
+        let storage = SessionStorage::new(&self.pool);
+
+        // Get current session
+        let row = storage
+            .find_by_id(id)
+            .await
+            .map_err(|e| AuthError::storage(e.to_string()))?
+            .ok_or_else(|| AuthError::storage("Session not found"))?;
+
+        // Update with user_id
+        let mut session: AuthorizationSession = serde_json::from_value(row.resource)
+            .map_err(|e| AuthError::storage(format!("Failed to deserialize session: {}", e)))?;
+        session.user_id = Some(user_id);
+
+        let resource = serde_json::to_value(&session)
+            .map_err(|e| AuthError::storage(format!("Failed to serialize session: {}", e)))?;
+
+        storage
+            .update(id, resource)
+            .await
+            .map_err(|e| AuthError::storage(e.to_string()))?;
+
+        Ok(())
+    }
+
+    async fn update_launch_context(&self, id: Uuid, launch_context: LaunchContext) -> AuthResult<()> {
+        let storage = SessionStorage::new(&self.pool);
+
+        // Get current session
+        let row = storage
+            .find_by_id(id)
+            .await
+            .map_err(|e| AuthError::storage(e.to_string()))?
+            .ok_or_else(|| AuthError::storage("Session not found"))?;
+
+        // Update with launch context
+        let mut session: AuthorizationSession = serde_json::from_value(row.resource)
+            .map_err(|e| AuthError::storage(format!("Failed to deserialize session: {}", e)))?;
+        session.launch_context = Some(launch_context);
+
+        let resource = serde_json::to_value(&session)
+            .map_err(|e| AuthError::storage(format!("Failed to serialize session: {}", e)))?;
+
+        storage
+            .update(id, resource)
+            .await
+            .map_err(|e| AuthError::storage(e.to_string()))?;
+
+        Ok(())
+    }
+
+    async fn cleanup_expired(&self) -> AuthResult<u64> {
+        let storage = SessionStorage::new(&self.pool);
+        storage
+            .cleanup_expired()
+            .await
+            .map_err(|e| AuthError::storage(e.to_string()))
+    }
+
+    async fn delete_by_client(&self, client_id: &str) -> AuthResult<u64> {
+        let storage = SessionStorage::new(&self.pool);
+        storage
+            .delete_by_client(client_id)
+            .await
+            .map_err(|e| AuthError::storage(e.to_string()))
+    }
+}
+
+// =============================================================================
+// Arc-Owning Refresh Token Storage
+// =============================================================================
+
+/// Arc-owning PostgreSQL refresh token storage adapter.
+#[derive(Clone)]
+pub struct ArcRefreshTokenStorage {
+    pool: Arc<PgPool>,
+}
+
+impl ArcRefreshTokenStorage {
+    /// Create a new Arc-owning refresh token storage.
+    #[must_use]
+    pub fn new(pool: Arc<PgPool>) -> Self {
+        Self { pool }
+    }
+
+    /// Convert a token row to RefreshToken.
+    fn row_to_token(row: crate::token::TokenRow) -> AuthResult<RefreshToken> {
+        serde_json::from_value(row.resource)
+            .map_err(|e| AuthError::storage(format!("Failed to deserialize refresh token: {}", e)))
+    }
+}
+
+#[async_trait]
+impl RefreshTokenStorageTrait for ArcRefreshTokenStorage {
+    async fn create(&self, token: &RefreshToken) -> AuthResult<()> {
+        let storage = TokenStorage::new(&self.pool);
+        let resource = serde_json::to_value(token)
+            .map_err(|e| AuthError::storage(format!("Failed to serialize refresh token: {}", e)))?;
+        storage
+            .create(token.id, resource)
+            .await
+            .map_err(|e| AuthError::storage(e.to_string()))?;
+        Ok(())
+    }
+
+    async fn find_by_hash(&self, token_hash: &str) -> AuthResult<Option<RefreshToken>> {
+        let storage = TokenStorage::new(&self.pool);
+        let row = storage
+            .find_by_hash(token_hash)
+            .await
+            .map_err(|e| AuthError::storage(e.to_string()))?;
+
+        match row {
+            Some(r) => Ok(Some(Self::row_to_token(r)?)),
+            None => Ok(None),
+        }
+    }
+
+    async fn find_by_id(&self, id: Uuid) -> AuthResult<Option<RefreshToken>> {
+        let storage = TokenStorage::new(&self.pool);
+        let row = storage
+            .find_by_id(id)
+            .await
+            .map_err(|e| AuthError::storage(e.to_string()))?;
+
+        match row {
+            Some(r) => Ok(Some(Self::row_to_token(r)?)),
+            None => Ok(None),
+        }
+    }
+
+    async fn revoke(&self, token_hash: &str) -> AuthResult<()> {
+        let storage = TokenStorage::new(&self.pool);
+        storage
+            .revoke_by_hash(token_hash)
+            .await
+            .map_err(|e| AuthError::storage(e.to_string()))
+    }
+
+    async fn revoke_by_client(&self, client_id: &str) -> AuthResult<u64> {
+        let storage = TokenStorage::new(&self.pool);
+        storage
+            .revoke_by_client(client_id)
+            .await
+            .map_err(|e| AuthError::storage(e.to_string()))
+    }
+
+    async fn revoke_by_user(&self, user_id: Uuid) -> AuthResult<u64> {
+        let storage = TokenStorage::new(&self.pool);
+        storage
+            .revoke_by_user(user_id)
+            .await
+            .map_err(|e| AuthError::storage(e.to_string()))
+    }
+
+    async fn cleanup_expired(&self) -> AuthResult<u64> {
+        let storage = TokenStorage::new(&self.pool);
+        storage
+            .cleanup_expired()
+            .await
+            .map_err(|e| AuthError::storage(e.to_string()))
+    }
+
+    async fn list_by_user(&self, user_id: Uuid) -> AuthResult<Vec<RefreshToken>> {
+        let storage = TokenStorage::new(&self.pool);
+        let rows = storage
+            .list_by_user(user_id)
+            .await
+            .map_err(|e| AuthError::storage(e.to_string()))?;
+
+        rows.into_iter().map(Self::row_to_token).collect()
     }
 }

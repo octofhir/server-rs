@@ -34,6 +34,12 @@ pub struct AppConfig {
     /// Cache configuration
     #[serde(default)]
     pub cache: CacheConfig,
+    /// DB Console configuration (SQL execution, LSP)
+    #[serde(default)]
+    pub db_console: DbConsoleConfig,
+    /// Bootstrap configuration (initial admin user, default data)
+    #[serde(default)]
+    pub bootstrap: BootstrapConfig,
 }
 
 // Default derived via field defaults
@@ -488,6 +494,154 @@ impl Default for CacheConfig {
             local_cache_max_entries: default_local_cache_max_entries(),
         }
     }
+}
+
+/// DB Console configuration for SQL execution and LSP features
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DbConsoleConfig {
+    /// Enable DB console functionality
+    /// Default: true
+    #[serde(default = "default_db_console_enabled")]
+    pub enabled: bool,
+
+    /// SQL execution mode:
+    /// - "readonly": SELECT queries only (default)
+    /// - "readwrite": SELECT, INSERT, UPDATE, DELETE
+    /// - "admin": All SQL including DDL (CREATE, DROP, ALTER, etc.)
+    #[serde(default = "default_sql_mode")]
+    pub sql_mode: SqlMode,
+
+    /// Required role for DB console access
+    /// If set, user must have this role to access the DB console
+    /// If not set, any authenticated user can access
+    #[serde(default)]
+    pub required_role: Option<String>,
+
+    /// Enable LSP (Language Server Protocol) features
+    /// Provides autocomplete, hover info, diagnostics for SQL
+    /// Default: true
+    #[serde(default = "default_lsp_enabled")]
+    pub lsp_enabled: bool,
+}
+
+fn default_db_console_enabled() -> bool {
+    true
+}
+
+fn default_sql_mode() -> SqlMode {
+    SqlMode::Readonly
+}
+
+fn default_lsp_enabled() -> bool {
+    true
+}
+
+impl Default for DbConsoleConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_db_console_enabled(),
+            sql_mode: default_sql_mode(),
+            required_role: None,
+            lsp_enabled: default_lsp_enabled(),
+        }
+    }
+}
+
+/// SQL execution mode for DB console
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SqlMode {
+    /// Only SELECT queries allowed
+    Readonly,
+    /// SELECT, INSERT, UPDATE, DELETE allowed
+    Readwrite,
+    /// All SQL including DDL (CREATE, DROP, ALTER, TRUNCATE, GRANT, REVOKE)
+    Admin,
+}
+
+impl SqlMode {
+    /// Check if a query is allowed in this mode
+    pub fn is_query_allowed(&self, query: &str) -> Result<(), String> {
+        let query_upper = query.trim().to_uppercase();
+
+        match self {
+            SqlMode::Readonly => {
+                // Must start with SELECT or WITH
+                if !query_upper.starts_with("SELECT") && !query_upper.starts_with("WITH") {
+                    return Err("Only SELECT queries are allowed in readonly mode".to_string());
+                }
+                // Check for dangerous keywords that could be in subqueries
+                let forbidden = [
+                    "INSERT", "UPDATE", "DELETE", "DROP", "CREATE", "ALTER", "TRUNCATE", "GRANT",
+                    "REVOKE",
+                ];
+                for kw in forbidden {
+                    if query_upper.contains(kw) {
+                        return Err(format!("{} is not allowed in readonly mode", kw));
+                    }
+                }
+                Ok(())
+            }
+            SqlMode::Readwrite => {
+                // DDL operations not allowed
+                let forbidden = ["DROP", "CREATE", "ALTER", "TRUNCATE", "GRANT", "REVOKE"];
+                for kw in forbidden {
+                    if query_upper.contains(kw) {
+                        return Err(format!("{} is not allowed in readwrite mode", kw));
+                    }
+                }
+                Ok(())
+            }
+            SqlMode::Admin => {
+                // All queries allowed
+                Ok(())
+            }
+        }
+    }
+}
+
+impl std::fmt::Display for SqlMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SqlMode::Readonly => write!(f, "readonly"),
+            SqlMode::Readwrite => write!(f, "readwrite"),
+            SqlMode::Admin => write!(f, "admin"),
+        }
+    }
+}
+
+/// Bootstrap configuration for initial server setup
+///
+/// Configures admin user creation on first startup.
+/// Admin credentials can also be set via environment variables:
+/// - OCTOFHIR__BOOTSTRAP__ADMIN_USER__USERNAME
+/// - OCTOFHIR__BOOTSTRAP__ADMIN_USER__PASSWORD
+/// - OCTOFHIR__BOOTSTRAP__ADMIN_USER__EMAIL
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BootstrapConfig {
+    /// Admin user configuration
+    /// If set, creates an admin user on first startup (if not already exists)
+    #[serde(default)]
+    pub admin_user: Option<AdminUserConfig>,
+}
+
+impl Default for BootstrapConfig {
+    fn default() -> Self {
+        Self { admin_user: None }
+    }
+}
+
+/// Configuration for bootstrapping an admin user
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AdminUserConfig {
+    /// Admin username (required)
+    pub username: String,
+    /// Admin password in plain text (will be hashed)
+    /// For security, prefer using OCTOFHIR__BOOTSTRAP__ADMIN_USER__PASSWORD env var
+    pub password: String,
+    /// Admin email address (optional)
+    #[serde(default)]
+    pub email: Option<String>,
 }
 
 pub mod loader {

@@ -72,6 +72,7 @@ pub use query_analyzer::{
     AnalyzerConfig, AnalyzerError, AnalyzerStatsSnapshot, BufferStats, IndexSuggestion, IndexUsage,
     QueryAnalysis, QueryAnalyzer, SeqScanInfo, SlowQueryRecord, SuggestionImpact,
 };
+pub use schema::SchemaManager;
 pub use storage::PostgresStorage;
 
 // Re-export storage traits for convenience

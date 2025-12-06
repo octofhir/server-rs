@@ -2,10 +2,14 @@
 //!
 //! Tracks revoked access token JTIs to enable token revocation validation.
 //! JTIs are stored with their expiration time for cleanup.
+//!
+//! Uses the standard FHIR resource table pattern with JSONB storage.
+//! The `revokedtoken` table is auto-created from the RevokedToken StructureDefinition.
 
 use sqlx_core::query::query;
 use sqlx_core::query_scalar::query_scalar;
 use time::OffsetDateTime;
+use uuid::Uuid;
 
 use crate::{PgPool, StorageResult};
 
@@ -16,7 +20,7 @@ use crate::{PgPool, StorageResult};
 /// Revoked access token JTI storage operations.
 ///
 /// Manages revoked access token JTIs in PostgreSQL.
-/// Uses a dedicated table in the octofhir_auth schema.
+/// Uses the standard FHIR resource table `revokedtoken` in the public schema.
 pub struct RevokedTokenStorage<'a> {
     pool: &'a PgPool,
 }
@@ -39,15 +43,28 @@ impl<'a> RevokedTokenStorage<'a> {
     ///
     /// Returns an error if the database insert fails.
     pub async fn revoke(&self, jti: &str, expires_at: OffsetDateTime) -> StorageResult<()> {
+        let id = Uuid::new_v4();
+        let now = OffsetDateTime::now_utc();
+        let resource = serde_json::json!({
+            "resourceType": "RevokedToken",
+            "id": id.to_string(),
+            "jti": jti,
+            "expiresAt": expires_at.format(&time::format_description::well_known::Rfc3339).unwrap_or_default(),
+            "revokedAt": now.format(&time::format_description::well_known::Rfc3339).unwrap_or_default()
+        });
+
         query(
             r#"
-            INSERT INTO octofhir_auth.revoked_token (jti, expires_at, revoked_at)
-            VALUES ($1, $2, NOW())
-            ON CONFLICT (jti) DO NOTHING
+            INSERT INTO revokedtoken (id, txid, ts, resource, status)
+            SELECT $1, txid, NOW(), $2, 'created'
+            FROM _transaction
+            ORDER BY txid DESC
+            LIMIT 1
+            ON CONFLICT (id) DO NOTHING
             "#,
         )
-        .bind(jti)
-        .bind(expires_at)
+        .bind(id)
+        .bind(&resource)
         .execute(self.pool)
         .await?;
 
@@ -63,7 +80,7 @@ impl<'a> RevokedTokenStorage<'a> {
         let exists: bool = query_scalar(
             r#"
             SELECT EXISTS(
-                SELECT 1 FROM octofhir_auth.revoked_token WHERE jti = $1
+                SELECT 1 FROM revokedtoken WHERE resource->>'jti' = $1
             )
             "#,
         )
@@ -89,8 +106,8 @@ impl<'a> RevokedTokenStorage<'a> {
     pub async fn cleanup_expired(&self) -> StorageResult<u64> {
         let result = query(
             r#"
-            DELETE FROM octofhir_auth.revoked_token
-            WHERE expires_at < NOW()
+            DELETE FROM revokedtoken
+            WHERE (resource->>'expiresAt')::timestamptz < NOW()
             "#,
         )
         .execute(self.pool)
@@ -107,7 +124,7 @@ impl<'a> RevokedTokenStorage<'a> {
     ///
     /// Returns an error if the database query fails.
     pub async fn count(&self) -> StorageResult<i64> {
-        let count: i64 = query_scalar("SELECT COUNT(*) FROM octofhir_auth.revoked_token")
+        let count: i64 = query_scalar("SELECT COUNT(*) FROM revokedtoken")
             .fetch_one(self.pool)
             .await?;
 

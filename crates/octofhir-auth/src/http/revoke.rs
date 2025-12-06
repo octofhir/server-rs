@@ -119,6 +119,8 @@ impl RevocationForm {
             client_assertion: None,
             refresh_token: None,
             scope: None,
+            username: None,
+            password: None,
         }
     }
 }

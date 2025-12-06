@@ -1,4 +1,4 @@
-import type { BuildInfo, HealthResponse, HttpResponse } from "./types";
+import type { BuildInfo, HealthResponse, HttpResponse, SqlResponse, SqlValue } from "./types";
 
 class ServerApiClient {
   private baseUrl: string;
@@ -90,6 +90,38 @@ class ServerApiClient {
 
   async getResourceTypes(): Promise<string[]> {
     const response = await this.request<string[]>("/api/resource-types");
+    return response.data;
+  }
+
+  /**
+   * Execute a SQL query against the database.
+   * Requires DB console to be enabled in server configuration.
+   *
+   * @param query - The SQL query to execute (supports $1, $2, etc. placeholders)
+   * @param params - Optional bind parameters for parameterized queries
+   * @returns SQL execution result with columns, rows, and timing info
+   * @throws Error if query fails or is not allowed by sql_mode policy
+   *
+   * @example
+   * // Simple query
+   * await executeSql("SELECT * FROM patient LIMIT 10");
+   *
+   * @example
+   * // Parameterized query (safe from SQL injection)
+   * await executeSql(
+   *   "SELECT * FROM patient WHERE id = $1 AND status = $2",
+   *   ["123", "active"]
+   * );
+   */
+  async executeSql(query: string, params?: SqlValue[]): Promise<SqlResponse> {
+    const body: { query: string; params?: SqlValue[] } = { query };
+    if (params && params.length > 0) {
+      body.params = params;
+    }
+    const response = await this.request<SqlResponse>("/api/$sql", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
     return response.data;
   }
 

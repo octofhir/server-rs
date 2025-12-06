@@ -52,7 +52,10 @@ pub use policy::{PolicyStorage, PostgresPolicyStorageAdapter};
 pub use policy_listener::{ListenerError, PolicyChangeEvent, PolicyChangeOp, PolicyListener};
 pub use revoked_token::RevokedTokenStorage;
 pub use session::SessionStorage;
-pub use storage_adapters::{ArcClientStorage, ArcRevokedTokenStorage, ArcUserStorage};
+pub use storage_adapters::{
+    ArcClientStorage, ArcRefreshTokenStorage, ArcRevokedTokenStorage, ArcSessionStorage,
+    ArcUserStorage,
+};
 pub use token::TokenStorage;
 pub use user::UserStorage;
 

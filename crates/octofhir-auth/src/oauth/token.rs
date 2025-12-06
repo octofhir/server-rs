@@ -81,6 +81,14 @@ pub struct TokenRequest {
     /// Requested scope (for refresh_token grant, must be subset of original).
     #[serde(default)]
     pub scope: Option<String>,
+
+    /// Username (for password grant - Resource Owner Password Credentials).
+    #[serde(default)]
+    pub username: Option<String>,
+
+    /// Password (for password grant - Resource Owner Password Credentials).
+    #[serde(default)]
+    pub password: Option<String>,
 }
 
 /// Successful token response.

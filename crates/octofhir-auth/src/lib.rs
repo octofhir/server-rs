@@ -45,9 +45,9 @@ pub use config::{AuthConfig, ConfigError};
 pub use error::{AuthError, ErrorCategory};
 pub use http::{
     Bundle, BundleEntry, CreateLaunchRequest, CreateLaunchResponse, IdpSearchParams, JwksState,
-    LaunchState, LinkIdentityRequest, SmartConfigState, UnlinkIdentityRequest, UserInfoResponse,
-    UserSearchParams, create_launch_handler, introspect_handler, jwks_handler, revoke_handler,
-    smart_configuration_handler, userinfo_handler,
+    LaunchState, LinkIdentityRequest, SmartConfigState, TokenState, UnlinkIdentityRequest,
+    UserInfoResponse, UserSearchParams, create_launch_handler, introspect_handler, jwks_handler,
+    revoke_handler, smart_configuration_handler, token_handler, userinfo_handler,
 };
 pub use middleware::{
     AdminAuth, AuthContext, AuthState, BearerAuth, OptionalBearerAuth, UserContext,
@@ -86,9 +86,9 @@ pub mod prelude {
     pub use crate::error::{AuthError, ErrorCategory};
     pub use crate::http::{
         Bundle, BundleEntry, CreateLaunchRequest, CreateLaunchResponse, IdpSearchParams, JwksState,
-        LaunchState, LinkIdentityRequest, SmartConfigState, UnlinkIdentityRequest,
+        LaunchState, LinkIdentityRequest, SmartConfigState, TokenState, UnlinkIdentityRequest,
         UserInfoResponse, UserSearchParams, create_launch_handler, introspect_handler,
-        jwks_handler, revoke_handler, smart_configuration_handler, userinfo_handler,
+        jwks_handler, revoke_handler, smart_configuration_handler, token_handler, userinfo_handler,
     };
     pub use crate::middleware::{
         AdminAuth, AuthContext, AuthState, BearerAuth, OptionalBearerAuth, UserContext,

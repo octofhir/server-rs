@@ -71,7 +71,7 @@ impl<'a> SessionStorage<'a> {
     pub async fn find_by_code(&self, code: &str) -> StorageResult<Option<SessionRow>> {
         let row: Option<(Uuid, i64, OffsetDateTime, serde_json::Value, String)> = query_as(
             r#"
-            SELECT id, txid, ts, resource, status
+            SELECT id, txid, ts, resource, status::text
             FROM session
             WHERE resource->>'code' = $1
               AND status != 'deleted'
@@ -92,7 +92,7 @@ impl<'a> SessionStorage<'a> {
     pub async fn find_by_id(&self, id: Uuid) -> StorageResult<Option<SessionRow>> {
         let row: Option<(Uuid, i64, OffsetDateTime, serde_json::Value, String)> = query_as(
             r#"
-            SELECT id, txid, ts, resource, status
+            SELECT id, txid, ts, resource, status::text
             FROM session
             WHERE id = $1
               AND status != 'deleted'
@@ -115,7 +115,7 @@ impl<'a> SessionStorage<'a> {
             r#"
             INSERT INTO session (id, txid, ts, resource, status)
             VALUES ($1, 1, NOW(), $2, 'created')
-            RETURNING id, txid, ts, resource, status
+            RETURNING id, txid, ts, resource, status::text
             "#,
         )
         .bind(id)
@@ -149,7 +149,7 @@ impl<'a> SessionStorage<'a> {
                 status = 'updated'
             WHERE id = $1
               AND status != 'deleted'
-            RETURNING id, txid, ts, resource, status
+            RETURNING id, txid, ts, resource, status::text
             "#,
         )
         .bind(id)
@@ -207,5 +207,60 @@ impl<'a> SessionStorage<'a> {
         .await?;
 
         Ok(result.rows_affected())
+    }
+
+    /// Cleanup expired sessions (alias for `delete_expired`).
+    pub async fn cleanup_expired(&self) -> StorageResult<u64> {
+        self.delete_expired().await
+    }
+
+    /// Delete all sessions for a specific client.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the database update fails.
+    pub async fn delete_by_client(&self, client_id: &str) -> StorageResult<u64> {
+        let result = query(
+            r#"
+            UPDATE session
+            SET status = 'deleted',
+                txid = txid + 1,
+                ts = NOW()
+            WHERE resource->>'clientId' = $1
+              AND status != 'deleted'
+            "#,
+        )
+        .bind(client_id)
+        .execute(self.pool)
+        .await?;
+
+        Ok(result.rows_affected())
+    }
+
+    /// Update a session.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the session doesn't exist or the database update fails.
+    pub async fn update(&self, id: Uuid, resource: serde_json::Value) -> StorageResult<SessionRow> {
+        let row: Option<(Uuid, i64, OffsetDateTime, serde_json::Value, String)> = query_as(
+            r#"
+            UPDATE session
+            SET resource = $2,
+                txid = txid + 1,
+                ts = NOW(),
+                status = 'updated'
+            WHERE id = $1
+              AND status != 'deleted'
+            RETURNING id, txid, ts, resource, status::text
+            "#,
+        )
+        .bind(id)
+        .bind(&resource)
+        .fetch_optional(self.pool)
+        .await?;
+
+        row.map(SessionRow::from_tuple)
+            .ok_or_else(|| StorageError::not_found(format!("Session {}", id)))
     }
 }

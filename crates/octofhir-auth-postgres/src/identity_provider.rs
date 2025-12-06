@@ -92,7 +92,7 @@ impl<'a> IdentityProviderStorage<'a> {
     pub async fn find_by_id(&self, id: Uuid) -> StorageResult<Option<IdentityProviderRow>> {
         let row: Option<(Uuid, i64, OffsetDateTime, serde_json::Value, String)> = query_as(
             r#"
-            SELECT id, txid, ts, resource, status
+            SELECT id, txid, ts, resource, status::text
             FROM identityprovider
             WHERE id = $1
               AND status != 'deleted'
@@ -113,7 +113,7 @@ impl<'a> IdentityProviderStorage<'a> {
     pub async fn find_by_name(&self, name: &str) -> StorageResult<Option<IdentityProviderRow>> {
         let row: Option<(Uuid, i64, OffsetDateTime, serde_json::Value, String)> = query_as(
             r#"
-            SELECT id, txid, ts, resource, status
+            SELECT id, txid, ts, resource, status::text
             FROM identityprovider
             WHERE resource->>'name' = $1
               AND status != 'deleted'
@@ -134,7 +134,7 @@ impl<'a> IdentityProviderStorage<'a> {
     pub async fn find_by_issuer(&self, issuer: &str) -> StorageResult<Option<IdentityProviderRow>> {
         let row: Option<(Uuid, i64, OffsetDateTime, serde_json::Value, String)> = query_as(
             r#"
-            SELECT id, txid, ts, resource, status
+            SELECT id, txid, ts, resource, status::text
             FROM identityprovider
             WHERE resource->>'issuer' = $1
               AND status != 'deleted'
@@ -155,7 +155,7 @@ impl<'a> IdentityProviderStorage<'a> {
     pub async fn list_active(&self) -> StorageResult<Vec<IdentityProviderRow>> {
         let rows: Vec<(Uuid, i64, OffsetDateTime, serde_json::Value, String)> = query_as(
             r#"
-            SELECT id, txid, ts, resource, status
+            SELECT id, txid, ts, resource, status::text
             FROM identityprovider
             WHERE resource->>'active' = 'true'
               AND status != 'deleted'
@@ -183,7 +183,7 @@ impl<'a> IdentityProviderStorage<'a> {
     ) -> StorageResult<Vec<IdentityProviderRow>> {
         let rows: Vec<(Uuid, i64, OffsetDateTime, serde_json::Value, String)> = query_as(
             r#"
-            SELECT id, txid, ts, resource, status
+            SELECT id, txid, ts, resource, status::text
             FROM identityprovider
             WHERE status != 'deleted'
             ORDER BY resource->>'name'
@@ -217,7 +217,7 @@ impl<'a> IdentityProviderStorage<'a> {
             r#"
             INSERT INTO identityprovider (id, txid, ts, resource, status)
             VALUES ($1, 1, NOW(), $2, 'created')
-            RETURNING id, txid, ts, resource, status
+            RETURNING id, txid, ts, resource, status::text
             "#,
         )
         .bind(id)
@@ -260,7 +260,7 @@ impl<'a> IdentityProviderStorage<'a> {
                 status = 'updated'
             WHERE id = $1
               AND status != 'deleted'
-            RETURNING id, txid, ts, resource, status
+            RETURNING id, txid, ts, resource, status::text
             "#,
         )
         .bind(id)

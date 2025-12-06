@@ -71,7 +71,7 @@ impl<'a> UserStorage<'a> {
     pub async fn find_by_id(&self, id: Uuid) -> StorageResult<Option<UserRow>> {
         let row: Option<(Uuid, i64, OffsetDateTime, serde_json::Value, String)> = query_as(
             r#"
-            SELECT id, txid, ts, resource, status
+            SELECT id, txid, ts, resource, status::text
             FROM "user"
             WHERE id = $1
               AND status != 'deleted'
@@ -92,7 +92,7 @@ impl<'a> UserStorage<'a> {
     pub async fn find_by_username(&self, username: &str) -> StorageResult<Option<UserRow>> {
         let row: Option<(Uuid, i64, OffsetDateTime, serde_json::Value, String)> = query_as(
             r#"
-            SELECT id, txid, ts, resource, status
+            SELECT id, txid, ts, resource, status::text
             FROM "user"
             WHERE resource->>'username' = $1
               AND status != 'deleted'
@@ -113,7 +113,7 @@ impl<'a> UserStorage<'a> {
     pub async fn find_by_email(&self, email: &str) -> StorageResult<Option<UserRow>> {
         let row: Option<(Uuid, i64, OffsetDateTime, serde_json::Value, String)> = query_as(
             r#"
-            SELECT id, txid, ts, resource, status
+            SELECT id, txid, ts, resource, status::text
             FROM "user"
             WHERE resource->>'email' = $1
               AND status != 'deleted'
@@ -134,7 +134,7 @@ impl<'a> UserStorage<'a> {
     pub async fn find_by_fhir_user(&self, fhir_user: &str) -> StorageResult<Option<UserRow>> {
         let row: Option<(Uuid, i64, OffsetDateTime, serde_json::Value, String)> = query_as(
             r#"
-            SELECT id, txid, ts, resource, status
+            SELECT id, txid, ts, resource, status::text
             FROM "user"
             WHERE resource->'fhirUser'->>'reference' = $1
               AND status != 'deleted'
@@ -168,7 +168,7 @@ impl<'a> UserStorage<'a> {
 
         let row: Option<(Uuid, i64, OffsetDateTime, serde_json::Value, String)> = query_as(
             r#"
-            SELECT id, txid, ts, resource, status
+            SELECT id, txid, ts, resource, status::text
             FROM "user"
             WHERE resource->'attributes'->'identities' @> $1::jsonb
               AND status != 'deleted'
@@ -191,7 +191,7 @@ impl<'a> UserStorage<'a> {
             r#"
             INSERT INTO "user" (id, txid, ts, resource, status)
             VALUES ($1, 1, NOW(), $2, 'created')
-            RETURNING id, txid, ts, resource, status
+            RETURNING id, txid, ts, resource, status::text
             "#,
         )
         .bind(id)
@@ -225,7 +225,7 @@ impl<'a> UserStorage<'a> {
                 status = 'updated'
             WHERE id = $1
               AND status != 'deleted'
-            RETURNING id, txid, ts, resource, status
+            RETURNING id, txid, ts, resource, status::text
             "#,
         )
         .bind(id)
@@ -252,7 +252,7 @@ impl<'a> UserStorage<'a> {
                 status = 'updated'
             WHERE id = $1
               AND status != 'deleted'
-            RETURNING id, txid, ts, resource, status
+            RETURNING id, txid, ts, resource, status::text
             "#,
         )
         .bind(id)
@@ -298,7 +298,7 @@ impl<'a> UserStorage<'a> {
     pub async fn list(&self, limit: i64, offset: i64) -> StorageResult<Vec<UserRow>> {
         let rows: Vec<(Uuid, i64, OffsetDateTime, serde_json::Value, String)> = query_as(
             r#"
-            SELECT id, txid, ts, resource, status
+            SELECT id, txid, ts, resource, status::text
             FROM "user"
             WHERE status != 'deleted'
             ORDER BY ts DESC

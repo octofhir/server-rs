@@ -6,6 +6,7 @@
 //!
 //! ## OAuth/OIDC Endpoints
 //!
+//! - [`token`] - Token endpoint (RFC 6749)
 //! - [`revoke`] - Token revocation endpoint (RFC 7009)
 //! - [`introspect`] - Token introspection endpoint (RFC 7662)
 //! - [`launch`] - SMART on FHIR launch context creation
@@ -23,6 +24,7 @@ pub mod introspect;
 pub mod jwks;
 pub mod launch;
 pub mod revoke;
+pub mod token;
 pub mod userinfo;
 
 pub use admin::{
@@ -34,4 +36,5 @@ pub use introspect::introspect_handler;
 pub use jwks::{JwksState, jwks_handler};
 pub use launch::{CreateLaunchRequest, CreateLaunchResponse, LaunchState, create_launch_handler};
 pub use revoke::revoke_handler;
+pub use token::{TokenState, token_handler};
 pub use userinfo::{UserInfoResponse, userinfo_handler};
