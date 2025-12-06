@@ -35,7 +35,7 @@ use octofhir_config::{
     FeatureContext, FeatureFlags,
 };
 use sqlx_postgres::PgPool;
-use tokio::sync::{broadcast, RwLock};
+use tokio::sync::{RwLock, broadcast};
 use tracing::{debug, error, info, warn};
 
 use crate::config::AppConfig;
@@ -181,7 +181,8 @@ impl ServerConfigManager {
                 if let Some(new_cfg) = Self::reload_app_config(config_path).await {
                     let cfg_clone = new_cfg.clone();
                     tokio::spawn(async move {
-                        if let Err(e) = crate::canonical::rebuild_from_config_async(&cfg_clone).await
+                        if let Err(e) =
+                            crate::canonical::rebuild_from_config_async(&cfg_clone).await
                         {
                             error!(error = %e, "Failed to rebuild canonical registry");
                         } else {
@@ -280,7 +281,9 @@ mod tests {
         let context = FeatureContext::new();
 
         // Unknown feature should be disabled by default
-        let enabled = manager.is_feature_enabled("unknown.feature", &context).await;
+        let enabled = manager
+            .is_feature_enabled("unknown.feature", &context)
+            .await;
         assert!(!enabled);
     }
 }

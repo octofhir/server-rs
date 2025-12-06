@@ -2,14 +2,16 @@
 //!
 //! Watches configuration files for changes and reloads when modified.
 
-use crate::events::{ConfigCategory, ConfigChangeEvent, ConfigOperation, ConfigSource as EventSource};
+use crate::ConfigError;
+use crate::events::{
+    ConfigCategory, ConfigChangeEvent, ConfigOperation, ConfigSource as EventSource,
+};
 use crate::merger::PartialConfig;
 use crate::sources::{ConfigSource, WatchHandle};
-use crate::ConfigError;
 
 use async_trait::async_trait;
 use notify::RecursiveMode;
-use notify_debouncer_mini::{new_debouncer, DebouncedEventKind};
+use notify_debouncer_mini::{DebouncedEventKind, new_debouncer};
 use std::path::PathBuf;
 use std::time::Duration;
 use tokio::sync::mpsc;
@@ -77,8 +79,7 @@ impl FileSource {
             return Ok(PartialConfig::new());
         }
 
-        let content = std::fs::read_to_string(path)
-            .map_err(|e| ConfigError::Io(e))?;
+        let content = std::fs::read_to_string(path).map_err(|e| ConfigError::Io(e))?;
 
         PartialConfig::from_toml(&content)
     }
@@ -128,7 +129,10 @@ impl ConfigSource for FileSource {
             };
 
             // Start watching
-            if let Err(e) = debouncer.watcher().watch(&watch_path, RecursiveMode::NonRecursive) {
+            if let Err(e) = debouncer
+                .watcher()
+                .watch(&watch_path, RecursiveMode::NonRecursive)
+            {
                 error!("Failed to watch path {:?}: {e}", watch_path);
                 return;
             }

@@ -474,12 +474,12 @@ async fn test_include_basic() {
 
     // Should have observations AND included patients
     let entries = get_bundle_entries(&bundle);
-    let has_observation = entries.iter().any(|e| {
-        e["resource"]["resourceType"].as_str() == Some("Observation")
-    });
-    let has_patient = entries.iter().any(|e| {
-        e["resource"]["resourceType"].as_str() == Some("Patient")
-    });
+    let has_observation = entries
+        .iter()
+        .any(|e| e["resource"]["resourceType"].as_str() == Some("Observation"));
+    let has_patient = entries
+        .iter()
+        .any(|e| e["resource"]["resourceType"].as_str() == Some("Patient"));
 
     assert!(has_observation, "Should include Observation resources");
     assert!(has_patient, "Should include Patient resources via _include");
@@ -499,9 +499,7 @@ async fn test_revinclude_basic() {
 
     // Search patients and reverse-include observations
     let resp = client
-        .get(format!(
-            "{base}/Patient?_revinclude=Observation:subject"
-        ))
+        .get(format!("{base}/Patient?_revinclude=Observation:subject"))
         .header("accept", "application/fhir+json")
         .send()
         .await
@@ -512,15 +510,18 @@ async fn test_revinclude_basic() {
 
     // Should have patients AND reverse-included observations
     let entries = get_bundle_entries(&bundle);
-    let has_patient = entries.iter().any(|e| {
-        e["resource"]["resourceType"].as_str() == Some("Patient")
-    });
-    let has_observation = entries.iter().any(|e| {
-        e["resource"]["resourceType"].as_str() == Some("Observation")
-    });
+    let has_patient = entries
+        .iter()
+        .any(|e| e["resource"]["resourceType"].as_str() == Some("Patient"));
+    let has_observation = entries
+        .iter()
+        .any(|e| e["resource"]["resourceType"].as_str() == Some("Observation"));
 
     assert!(has_patient, "Should include Patient resources");
-    assert!(has_observation, "Should include Observation resources via _revinclude");
+    assert!(
+        has_observation,
+        "Should include Observation resources via _revinclude"
+    );
 
     let _ = shutdown_tx.send(());
 }
@@ -556,11 +557,17 @@ async fn test_elements_filtering() {
         // Should have requested elements
         assert!(resource.get("id").is_some(), "Should include id");
         assert!(resource.get("name").is_some(), "Should include name");
-        assert!(resource.get("birthDate").is_some(), "Should include birthDate");
+        assert!(
+            resource.get("birthDate").is_some(),
+            "Should include birthDate"
+        );
 
         // Should NOT have non-requested elements (unless mandatory)
         // Note: resourceType and meta are usually always included
-        assert!(resource.get("telecom").is_none(), "Should not include telecom");
+        assert!(
+            resource.get("telecom").is_none(),
+            "Should not include telecom"
+        );
     }
 
     let _ = shutdown_tx.send(());
@@ -594,9 +601,7 @@ async fn test_summary_true() {
 
         // Check for SUBSETTED tag
         if let Some(tags) = meta["tag"].as_array() {
-            let has_subsetted = tags.iter().any(|t| {
-                t["code"].as_str() == Some("SUBSETTED")
-            });
+            let has_subsetted = tags.iter().any(|t| t["code"].as_str() == Some("SUBSETTED"));
             assert!(has_subsetted, "Summary should have SUBSETTED tag");
         }
     }

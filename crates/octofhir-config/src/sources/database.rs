@@ -3,10 +3,12 @@
 //! Stores configuration in PostgreSQL and listens for NOTIFY events
 //! when configuration changes.
 
-use crate::events::{ConfigCategory, ConfigChangeEvent, ConfigOperation, ConfigSource as EventSource};
+use crate::ConfigError;
+use crate::events::{
+    ConfigCategory, ConfigChangeEvent, ConfigOperation, ConfigSource as EventSource,
+};
 use crate::merger::PartialConfig;
 use crate::sources::{ConfigSource, WatchHandle};
-use crate::ConfigError;
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -92,13 +94,15 @@ impl DatabaseSource {
 
         Ok(entries
             .into_iter()
-            .map(|(key, category, value, description, is_secret)| ConfigEntry {
-                key,
-                category,
-                value,
-                description,
-                is_secret,
-            })
+            .map(
+                |(key, category, value, description, is_secret)| ConfigEntry {
+                    key,
+                    category,
+                    value,
+                    description,
+                    is_secret,
+                },
+            )
             .collect())
     }
 
@@ -107,8 +111,10 @@ impl DatabaseSource {
         let mut partial = PartialConfig::new();
 
         // Group entries by category
-        let mut by_category: std::collections::HashMap<String, serde_json::Map<String, serde_json::Value>> =
-            std::collections::HashMap::new();
+        let mut by_category: std::collections::HashMap<
+            String,
+            serde_json::Map<String, serde_json::Value>,
+        > = std::collections::HashMap::new();
 
         for entry in entries {
             by_category
@@ -141,13 +147,15 @@ impl DatabaseSource {
         .await
         .map_err(|e| ConfigError::database(format!("Failed to get config entry: {e}")))?;
 
-        Ok(result.map(|(key, category, value, description, is_secret)| ConfigEntry {
-            key,
-            category,
-            value,
-            description,
-            is_secret,
-        }))
+        Ok(result.map(
+            |(key, category, value, description, is_secret)| ConfigEntry {
+                key,
+                category,
+                value,
+                description,
+                is_secret,
+            },
+        ))
     }
 
     /// Set a configuration value
@@ -160,12 +168,11 @@ impl DatabaseSource {
         is_secret: bool,
     ) -> Result<(), ConfigError> {
         // First create a transaction entry
-        let txid: (i64,) = query_as(
-            "INSERT INTO _transaction (status) VALUES ('committed') RETURNING txid",
-        )
-        .fetch_one(&self.pool)
-        .await
-        .map_err(|e| ConfigError::database(format!("Failed to create transaction: {e}")))?;
+        let txid: (i64,) =
+            query_as("INSERT INTO _transaction (status) VALUES ('committed') RETURNING txid")
+                .fetch_one(&self.pool)
+                .await
+                .map_err(|e| ConfigError::database(format!("Failed to create transaction: {e}")))?;
 
         // Upsert the configuration
         query(
@@ -228,13 +235,15 @@ impl DatabaseSource {
 
         Ok(entries
             .into_iter()
-            .map(|(key, category, value, description, is_secret)| ConfigEntry {
-                key,
-                category,
-                value,
-                description,
-                is_secret,
-            })
+            .map(
+                |(key, category, value, description, is_secret)| ConfigEntry {
+                    key,
+                    category,
+                    value,
+                    description,
+                    is_secret,
+                },
+            )
             .collect())
     }
 }

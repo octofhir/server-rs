@@ -4,10 +4,10 @@
 //! like API keys, passwords, and tokens.
 
 use aes_gcm::{
-    aead::{Aead, KeyInit},
     Aes256Gcm, Nonce,
+    aead::{Aead, KeyInit},
 };
-use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
+use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -37,7 +37,11 @@ pub struct SecretValue {
 
 impl SecretValue {
     /// Encrypt a plaintext value
-    pub fn encrypt(plaintext: &str, key: &[u8; KEY_SIZE], key_id: &str) -> Result<Self, ConfigError> {
+    pub fn encrypt(
+        plaintext: &str,
+        key: &[u8; KEY_SIZE],
+        key_id: &str,
+    ) -> Result<Self, ConfigError> {
         let cipher = Aes256Gcm::new_from_slice(key)
             .map_err(|e| ConfigError::encryption(format!("Failed to create cipher: {e}")))?;
 
@@ -245,7 +249,11 @@ impl Secrets {
     }
 
     /// Rotate to a new key
-    pub async fn rotate(&self, new_key: [u8; KEY_SIZE], new_key_id: &str) -> Result<(), ConfigError> {
+    pub async fn rotate(
+        &self,
+        new_key: [u8; KEY_SIZE],
+        new_key_id: &str,
+    ) -> Result<(), ConfigError> {
         // Add the new key
         self.add_key(new_key, new_key_id).await;
 
@@ -258,9 +266,7 @@ impl Secrets {
     /// Remove an old key from the keyring
     pub async fn remove_key(&self, key_id: &str) -> Result<(), ConfigError> {
         if key_id == self.current_key_id {
-            return Err(ConfigError::encryption(
-                "Cannot remove the current key",
-            ));
+            return Err(ConfigError::encryption("Cannot remove the current key"));
         }
 
         let mut keyring = self.keyring.write().await;

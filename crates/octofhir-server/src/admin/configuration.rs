@@ -20,16 +20,14 @@
 //! - `POST /admin/features/:name/evaluate` - Evaluate a feature flag for a context
 
 use axum::{
+    Json,
     extract::{Path, Query, State},
     http::StatusCode,
     response::IntoResponse,
-    Json,
 };
 use octofhir_api::ApiError;
 use octofhir_auth::middleware::AdminAuth;
-use octofhir_config::{
-    ConfigCategory, ConfigurationManager, FeatureContext,
-};
+use octofhir_config::{ConfigCategory, ConfigurationManager, FeatureContext};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -141,7 +139,12 @@ pub async fn list_config(
     let categories: Vec<ConfigCategory> = if let Some(cat_str) = params.category {
         match ConfigCategory::from_str(&cat_str) {
             Some(cat) => vec![cat],
-            None => return Err(ApiError::bad_request(format!("Unknown category: {}", cat_str))),
+            None => {
+                return Err(ApiError::bad_request(format!(
+                    "Unknown category: {}",
+                    cat_str
+                )));
+            }
         }
     } else {
         ConfigCategory::all().to_vec()
@@ -154,7 +157,9 @@ pub async fn list_config(
                     entries.push(ConfigEntryResponse {
                         key: key.clone(),
                         category: category.to_string(),
-                        value: if octofhir_config::secrets::is_secret_key(key) && !params.include_secrets {
+                        value: if octofhir_config::secrets::is_secret_key(key)
+                            && !params.include_secrets
+                        {
                             serde_json::json!("<secret>")
                         } else {
                             value.clone()
@@ -359,7 +364,10 @@ pub async fn get_feature(
             flag_type: format!("{:?}", flag.flag_type),
             description: flag.description.clone(),
         })),
-        None => Err(ApiError::not_found(format!("Feature flag not found: {}", name))),
+        None => Err(ApiError::not_found(format!(
+            "Feature flag not found: {}",
+            name
+        ))),
     }
 }
 
@@ -460,8 +468,11 @@ pub async fn reload_config(
         .await
         .map_err(|e| ApiError::internal(format!("Failed to reload configuration: {}", e)))?;
 
-    Ok((StatusCode::OK, Json(serde_json::json!({
-        "status": "reloaded",
-        "message": "Configuration reloaded from all sources"
-    }))))
+    Ok((
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "status": "reloaded",
+            "message": "Configuration reloaded from all sources"
+        })),
+    ))
 }

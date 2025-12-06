@@ -206,7 +206,11 @@ impl ConfigChangeEvent {
 
     /// Create a reload event for all categories from file
     pub fn file_reload() -> Self {
-        Self::new(ConfigSource::File, ConfigCategory::Server, ConfigOperation::Reload)
+        Self::new(
+            ConfigSource::File,
+            ConfigCategory::Server,
+            ConfigOperation::Reload,
+        )
     }
 
     /// Create a reload event from database
@@ -228,8 +232,14 @@ mod tests {
 
     #[test]
     fn test_config_category_from_str() {
-        assert_eq!(ConfigCategory::from_str("server"), Some(ConfigCategory::Server));
-        assert_eq!(ConfigCategory::from_str("SEARCH"), Some(ConfigCategory::Search));
+        assert_eq!(
+            ConfigCategory::from_str("server"),
+            Some(ConfigCategory::Server)
+        );
+        assert_eq!(
+            ConfigCategory::from_str("SEARCH"),
+            Some(ConfigCategory::Search)
+        );
         assert_eq!(ConfigCategory::from_str("unknown"), None);
     }
 

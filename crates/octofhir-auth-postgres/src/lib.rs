@@ -30,8 +30,10 @@ pub mod client;
 pub mod identity_provider;
 pub mod launch_context;
 pub mod policy;
+pub mod policy_listener;
 pub mod revoked_token;
 pub mod session;
+pub mod storage_adapters;
 pub mod token;
 pub mod user;
 
@@ -46,9 +48,11 @@ pub type PgPool = Pool<Postgres>;
 pub use client::{ClientStorage, PostgresClientStorage};
 pub use identity_provider::{IdentityProviderRow, IdentityProviderStorage};
 pub use launch_context::LaunchContextStorage;
-pub use policy::PolicyStorage;
+pub use policy::{PolicyStorage, PostgresPolicyStorageAdapter};
+pub use policy_listener::{ListenerError, PolicyChangeEvent, PolicyChangeOp, PolicyListener};
 pub use revoked_token::RevokedTokenStorage;
 pub use session::SessionStorage;
+pub use storage_adapters::{ArcClientStorage, ArcRevokedTokenStorage, ArcUserStorage};
 pub use token::TokenStorage;
 pub use user::UserStorage;
 

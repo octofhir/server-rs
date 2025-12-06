@@ -28,7 +28,7 @@ use tracing::{debug, info};
 use octofhir_canonical_manager::CanonicalManager;
 
 use crate::engine::SearchConfig;
-use crate::loader::{load_search_parameters, LoaderError};
+use crate::loader::{LoaderError, load_search_parameters};
 use crate::query_cache::QueryCache;
 use crate::registry::SearchParameterRegistry;
 

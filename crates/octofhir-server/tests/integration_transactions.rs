@@ -69,7 +69,12 @@ async fn start_server(
 }
 
 /// Helper to check if a resource exists
-async fn resource_exists(client: &reqwest::Client, base: &str, resource_type: &str, id: &str) -> bool {
+async fn resource_exists(
+    client: &reqwest::Client,
+    base: &str,
+    resource_type: &str,
+    id: &str,
+) -> bool {
     let resp = client
         .get(format!("{base}/{resource_type}/{id}"))
         .header("accept", "application/fhir+json")
@@ -81,7 +86,12 @@ async fn resource_exists(client: &reqwest::Client, base: &str, resource_type: &s
 }
 
 /// Helper to read a resource
-async fn read_resource(client: &reqwest::Client, base: &str, resource_type: &str, id: &str) -> Option<Value> {
+async fn read_resource(
+    client: &reqwest::Client,
+    base: &str,
+    resource_type: &str,
+    id: &str,
+) -> Option<Value> {
     let resp = client
         .get(format!("{base}/{resource_type}/{id}"))
         .header("accept", "application/fhir+json")
@@ -164,8 +174,11 @@ async fn test_transaction_commit_all_creates() {
             if parts.len() >= 2 {
                 let resource_type = parts[0];
                 let id = parts[1].split('?').next().unwrap_or(parts[1]);
-                assert!(resource_exists(&client, &base, resource_type, id).await,
-                    "Resource {} should exist after commit", loc);
+                assert!(
+                    resource_exists(&client, &base, resource_type, id).await,
+                    "Resource {} should exist after commit",
+                    loc
+                );
             }
         }
     }
@@ -238,7 +251,10 @@ async fn test_transaction_commit_mixed_operations() {
         .await
         .expect("transaction request");
 
-    assert!(resp.status().is_success(), "Mixed transaction should succeed");
+    assert!(
+        resp.status().is_success(),
+        "Mixed transaction should succeed"
+    );
 
     // Verify patient was updated
     let updated_patient = read_resource(&client, &base, "Patient", patient_id)
@@ -302,7 +318,10 @@ async fn test_transaction_rollback_on_invalid_reference() {
         .expect("transaction request");
 
     // Transaction should fail
-    assert!(!resp.status().is_success(), "Transaction should fail on invalid reference");
+    assert!(
+        !resp.status().is_success(),
+        "Transaction should fail on invalid reference"
+    );
 
     // Search for the patient that should have been rolled back
     let search_resp = client
@@ -315,7 +334,10 @@ async fn test_transaction_rollback_on_invalid_reference() {
     let search_bundle: Value = search_resp.json().await.expect("parse");
     let total = search_bundle["total"].as_u64().unwrap_or(0);
 
-    assert_eq!(total, 0, "Patient should be rolled back when transaction fails");
+    assert_eq!(
+        total, 0,
+        "Patient should be rolled back when transaction fails"
+    );
 
     let _ = shutdown_tx.send(());
 }
@@ -383,7 +405,10 @@ async fn test_transaction_rollback_preserves_existing_data() {
         .expect("transaction request");
 
     // Transaction should fail
-    assert!(!resp.status().is_success(), "Transaction should fail on invalid resource");
+    assert!(
+        !resp.status().is_success(),
+        "Transaction should fail on invalid resource"
+    );
 
     // Verify original patient is unchanged
     let preserved = read_resource(&client, &base, "Patient", patient_id)
@@ -391,7 +416,10 @@ async fn test_transaction_rollback_preserves_existing_data() {
         .expect("patient should still exist");
 
     let given = &preserved["name"][0]["given"][0];
-    assert_eq!(given, "Original", "Patient should be unchanged after rollback");
+    assert_eq!(
+        given, "Original",
+        "Patient should be unchanged after rollback"
+    );
 
     let _ = shutdown_tx.send(());
 }
@@ -470,7 +498,10 @@ async fn test_batch_partial_failure() {
     let search_bundle: Value = search_resp.json().await.expect("parse");
     let total = search_bundle["total"].as_u64().unwrap_or(0);
 
-    assert!(total > 0, "Successful batch entry should persist despite other failures");
+    assert!(
+        total > 0,
+        "Successful batch entry should persist despite other failures"
+    );
 
     let _ = shutdown_tx.send(());
 }
@@ -576,7 +607,10 @@ async fn test_concurrent_transactions_isolation() {
         .filter(|&&x| x)
         .count();
 
-    assert!(success_count >= 1, "At least one concurrent transaction should succeed");
+    assert!(
+        success_count >= 1,
+        "At least one concurrent transaction should succeed"
+    );
 
     // Final state should be consistent (one of the two values)
     let final_patient = read_resource(&client, &base, "Patient", &patient_id)
@@ -661,7 +695,10 @@ async fn test_transaction_internal_reference_resolution() {
         .await
         .expect("transaction request");
 
-    assert!(resp.status().is_success(), "Transaction with internal refs should succeed");
+    assert!(
+        resp.status().is_success(),
+        "Transaction with internal refs should succeed"
+    );
 
     let response_bundle: Value = resp.json().await.expect("parse response");
     let entries = response_bundle["entry"].as_array().expect("entries");
@@ -674,11 +711,32 @@ async fn test_transaction_internal_reference_resolution() {
     for entry in entries {
         if let Some(location) = entry["response"]["location"].as_str() {
             if location.starts_with("Patient/") {
-                patient_id = location.split('/').nth(1).unwrap_or("").split('?').next().unwrap_or("").to_string();
+                patient_id = location
+                    .split('/')
+                    .nth(1)
+                    .unwrap_or("")
+                    .split('?')
+                    .next()
+                    .unwrap_or("")
+                    .to_string();
             } else if location.starts_with("Encounter/") {
-                encounter_id = location.split('/').nth(1).unwrap_or("").split('?').next().unwrap_or("").to_string();
+                encounter_id = location
+                    .split('/')
+                    .nth(1)
+                    .unwrap_or("")
+                    .split('?')
+                    .next()
+                    .unwrap_or("")
+                    .to_string();
             } else if location.starts_with("Condition/") {
-                condition_id = location.split('/').nth(1).unwrap_or("").split('?').next().unwrap_or("").to_string();
+                condition_id = location
+                    .split('/')
+                    .nth(1)
+                    .unwrap_or("")
+                    .split('?')
+                    .next()
+                    .unwrap_or("")
+                    .to_string();
             }
         }
     }
@@ -697,11 +755,13 @@ async fn test_transaction_internal_reference_resolution() {
 
     assert!(
         subject_ref.contains(&patient_id),
-        "Subject reference should be resolved to Patient/{}", patient_id
+        "Subject reference should be resolved to Patient/{}",
+        patient_id
     );
     assert!(
         encounter_ref.contains(&encounter_id),
-        "Encounter reference should be resolved to Encounter/{}", encounter_id
+        "Encounter reference should be resolved to Encounter/{}",
+        encounter_id
     );
 
     let _ = shutdown_tx.send(());
@@ -767,7 +827,10 @@ async fn test_transaction_with_delete() {
         .await
         .expect("transaction request");
 
-    assert!(resp.status().is_success(), "Transaction with delete should succeed");
+    assert!(
+        resp.status().is_success(),
+        "Transaction with delete should succeed"
+    );
 
     // Verify deleted patient no longer exists
     assert!(
@@ -849,11 +912,16 @@ async fn test_transaction_conditional_create() {
         .expect("transaction request");
 
     // Should succeed (either created or found existing)
-    assert!(resp.status().is_success(), "Conditional create transaction should succeed");
+    assert!(
+        resp.status().is_success(),
+        "Conditional create transaction should succeed"
+    );
 
     // Verify only one patient with this identifier
     let search_resp = client
-        .get(format!("{base}/Patient?identifier=http://example.org/mrn|COND-001"))
+        .get(format!(
+            "{base}/Patient?identifier=http://example.org/mrn|COND-001"
+        ))
         .header("accept", "application/fhir+json")
         .send()
         .await
@@ -862,7 +930,10 @@ async fn test_transaction_conditional_create() {
     let search_bundle: Value = search_resp.json().await.expect("parse");
     let total = search_bundle["total"].as_u64().unwrap_or(0);
 
-    assert_eq!(total, 1, "Should have exactly one patient with this identifier");
+    assert_eq!(
+        total, 1,
+        "Should have exactly one patient with this identifier"
+    );
 
     let _ = shutdown_tx.send(());
 }
@@ -912,16 +983,26 @@ async fn test_large_transaction_performance() {
 
     let duration = start.elapsed();
 
-    assert!(resp.status().is_success(), "Large transaction should succeed");
+    assert!(
+        resp.status().is_success(),
+        "Large transaction should succeed"
+    );
 
     let response_bundle: Value = resp.json().await.expect("parse response");
     let response_entries = response_bundle["entry"].as_array().expect("entries");
 
-    assert_eq!(response_entries.len(), 50, "All entries should be processed");
+    assert_eq!(
+        response_entries.len(),
+        50,
+        "All entries should be processed"
+    );
 
     // Performance check: 50 entries should complete in reasonable time
     // This is a soft assertion - mainly for benchmarking
-    println!("Large transaction (50 entries) completed in: {:?}", duration);
+    println!(
+        "Large transaction (50 entries) completed in: {:?}",
+        duration
+    );
     assert!(
         duration.as_secs() < 30,
         "Large transaction should complete within 30 seconds"
@@ -929,7 +1010,9 @@ async fn test_large_transaction_performance() {
 
     // Verify all patients exist
     let search_resp = client
-        .get(format!("{base}/Patient?name:contains=BulkPatient&_count=100"))
+        .get(format!(
+            "{base}/Patient?name:contains=BulkPatient&_count=100"
+        ))
         .header("accept", "application/fhir+json")
         .send()
         .await

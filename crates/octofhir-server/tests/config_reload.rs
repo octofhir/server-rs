@@ -3,11 +3,7 @@
 //! These tests verify that the unified configuration management system
 //! properly detects and applies configuration changes.
 
-use std::{
-    fs,
-    sync::Arc,
-    time::Duration,
-};
+use std::{fs, sync::Arc, time::Duration};
 
 use octofhir_server::config::loader;
 use octofhir_server::config_manager::ServerConfigManager;
@@ -132,11 +128,12 @@ level = "info"
 #[tokio::test]
 async fn config_manager_builder_without_sources() {
     // Should succeed even without any sources
-    let manager = ServerConfigManager::builder()
-        .build()
-        .await;
+    let manager = ServerConfigManager::builder().build().await;
 
-    assert!(manager.is_ok(), "Config manager should build without sources");
+    assert!(
+        manager.is_ok(),
+        "Config manager should build without sources"
+    );
 }
 
 #[tokio::test]

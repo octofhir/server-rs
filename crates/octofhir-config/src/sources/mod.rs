@@ -5,15 +5,15 @@
 //! - Database: Listen for PostgreSQL NOTIFY events
 //! - API: Runtime configuration updates via HTTP
 
-mod file;
 mod database;
+mod file;
 
-pub use file::{FileSource, FileWatcherConfig};
 pub use database::{DatabaseSource, DatabaseSourceConfig};
+pub use file::{FileSource, FileWatcherConfig};
 
+use crate::ConfigError;
 use crate::events::ConfigChangeEvent;
 use crate::merger::PartialConfig;
-use crate::ConfigError;
 
 use async_trait::async_trait;
 use tokio::sync::mpsc;

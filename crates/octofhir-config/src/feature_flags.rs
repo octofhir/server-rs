@@ -185,12 +185,10 @@ impl FeatureFlag {
                 bucket < *value
             }
 
-            FeatureFlagType::TenantBased { allowed_tenants } => {
-                context
-                    .tenant_id
-                    .as_ref()
-                    .is_some_and(|tid| allowed_tenants.contains(tid))
-            }
+            FeatureFlagType::TenantBased { allowed_tenants } => context
+                .tenant_id
+                .as_ref()
+                .is_some_and(|tid| allowed_tenants.contains(tid)),
 
             FeatureFlagType::TimeBased { start, end } => {
                 let now = OffsetDateTime::now_utc();
@@ -264,7 +262,9 @@ impl FeatureFlags {
 
     /// Check if a flag is enabled for the given context
     pub fn is_enabled(&self, name: &str, context: &FeatureContext) -> bool {
-        self.flags.get(name).is_some_and(|flag| flag.evaluate(context))
+        self.flags
+            .get(name)
+            .is_some_and(|flag| flag.evaluate(context))
     }
 
     /// Check if a flag is enabled (without context, for simple boolean flags)

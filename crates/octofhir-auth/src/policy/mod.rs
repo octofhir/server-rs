@@ -99,10 +99,12 @@
 //! [`PolicyContext`]: context::PolicyContext
 
 pub mod cache;
+pub mod compartment;
 pub mod context;
 pub mod engine;
 pub mod matcher;
 pub mod quickjs;
+pub mod reload;
 pub mod resources;
 pub mod rhai;
 
@@ -128,6 +130,14 @@ pub use resources::{
     PolicyEngineType, ResourceMeta, ValidationError,
 };
 
+pub use compartment::{
+    CompartmentChecker, CompartmentDefinition, CompartmentInclusion, PatientCompartmentPolicy,
+};
+
 pub use quickjs::{QuickJsCacheStats, QuickJsError, QuickJsRuntime};
 
 pub use rhai::{RhaiCacheStats, RhaiRuntime};
+
+pub use reload::{
+    PolicyChange, PolicyChangeNotifier, PolicyReloadService, ReloadConfig, ReloadStats,
+};

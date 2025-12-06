@@ -11,9 +11,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
 
+use crate::ConfigError;
 use crate::events::ConfigSource;
 use crate::feature_flags::FeatureFlags;
-use crate::ConfigError;
 
 /// Priority levels for configuration sources
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -230,8 +230,18 @@ impl MergedConfig {
 
         let mut sources = HashMap::new();
         for key in [
-            "fhir", "server", "storage", "search", "logging", "otel",
-            "packages", "auth", "terminology", "validation", "redis", "cache",
+            "fhir",
+            "server",
+            "storage",
+            "search",
+            "logging",
+            "otel",
+            "packages",
+            "auth",
+            "terminology",
+            "validation",
+            "redis",
+            "cache",
         ] {
             sources.insert(key.to_string(), ConfigSource::Default);
         }
@@ -248,8 +258,18 @@ impl MergedConfig {
         let priority = Priority::from(source);
 
         for category in [
-            "fhir", "server", "storage", "search", "logging", "otel",
-            "packages", "auth", "terminology", "validation", "redis", "cache",
+            "fhir",
+            "server",
+            "storage",
+            "search",
+            "logging",
+            "otel",
+            "packages",
+            "auth",
+            "terminology",
+            "validation",
+            "redis",
+            "cache",
         ] {
             if let Some(new_value) = partial.get_category(category) {
                 // Check if we should override based on priority
@@ -414,10 +434,7 @@ mod tests {
         let server = config.get_category("server").unwrap();
         assert_eq!(server.get("port").unwrap().as_u64(), Some(9090));
         // host should still have default value
-        assert_eq!(
-            server.get("host").unwrap().as_str(),
-            Some("0.0.0.0")
-        );
+        assert_eq!(server.get("host").unwrap().as_str(), Some("0.0.0.0"));
         assert_eq!(config.get_source("server"), Some(ConfigSource::File));
     }
 

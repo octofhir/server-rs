@@ -2,12 +2,25 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-use axum::{Router, middleware, routing::get};
+use axum::{Router, extract::FromRef, middleware, routing::get};
+use octofhir_auth::middleware::AuthState;
+use octofhir_auth::policy::{
+    PolicyCache, PolicyChangeNotifier, PolicyEvaluator, PolicyEvaluatorConfig, PolicyReloadService,
+    ReloadConfig,
+};
+use octofhir_auth::token::jwt::{JwtService, SigningAlgorithm, SigningKeyPair};
+use octofhir_auth_postgres::{
+    ArcClientStorage, ArcRevokedTokenStorage, ArcUserStorage, PolicyListener,
+    PostgresPolicyStorageAdapter,
+};
+
+use crate::middleware::AuthorizationState;
 use octofhir_fhir_model::provider::{FhirVersion, ModelProvider};
 use octofhir_fhirpath::FhirPathEngine;
 use octofhir_fhirschema::embedded::{FhirVersion as SchemaFhirVersion, get_schemas};
 use octofhir_fhirschema::model_provider::DynamicSchemaProvider;
 use octofhir_fhirschema::types::StructureDefinition;
+use time::Duration;
 use tower_http::{compression::CompressionLayer, cors::CorsLayer, trace::TraceLayer};
 
 use crate::operations::{DynOperationHandler, OperationRegistry, register_core_operations};
@@ -53,6 +66,33 @@ pub struct AppState {
     pub async_job_manager: Arc<crate::async_jobs::AsyncJobManager>,
     /// Application configuration for runtime access
     pub config: Arc<AppConfig>,
+    /// Policy evaluator for access control
+    pub policy_evaluator: Arc<PolicyEvaluator>,
+    /// Policy cache for hot-reload
+    pub policy_cache: Arc<PolicyCache>,
+    /// Policy reload service for hot-reload
+    pub policy_reload_service: Arc<PolicyReloadService>,
+    /// Authentication state for token validation
+    pub auth_state: Option<AuthState>,
+}
+
+// =============================================================================
+// FromRef Implementations for Middleware States
+// =============================================================================
+
+impl FromRef<AppState> for AuthState {
+    fn from_ref(state: &AppState) -> Self {
+        state
+            .auth_state
+            .clone()
+            .expect("AuthState not initialized in AppState")
+    }
+}
+
+impl FromRef<AppState> for AuthorizationState {
+    fn from_ref(state: &AppState) -> Self {
+        AuthorizationState::new(state.policy_evaluator.clone())
+    }
 }
 
 pub struct OctofhirServer {
@@ -476,6 +516,82 @@ pub async fn build_app(cfg: &AppConfig) -> Result<Router, anyhow::Error> {
     tracing::info!("Async job cleanup task started");
     // Note: _cleanup_handle is dropped here but the task continues running in the background
 
+    // Initialize policy evaluation components
+    let policy_storage = Arc::new(PostgresPolicyStorageAdapter::new(db_pool.clone()));
+    let policy_cache = Arc::new(PolicyCache::new(policy_storage, Duration::minutes(5)));
+
+    // Perform initial cache load
+    if let Err(e) = policy_cache.refresh().await {
+        tracing::warn!(error = %e, "Failed to load initial policies, continuing with empty cache");
+    } else {
+        let stats = policy_cache.stats().await;
+        tracing::info!(
+            policy_count = stats.policy_count,
+            "Policy cache initialized"
+        );
+    }
+
+    // Create policy change notifier and reload service
+    let policy_notifier = Arc::new(PolicyChangeNotifier::new(64));
+    let reload_config = ReloadConfig::default();
+    let policy_reload_service = Arc::new(PolicyReloadService::new(
+        policy_cache.clone(),
+        policy_notifier.clone(),
+        reload_config,
+    ));
+
+    // Start the reload service
+    let reload_service_clone = policy_reload_service.clone();
+    tokio::spawn(async move {
+        reload_service_clone.run().await;
+    });
+    tracing::info!("Policy reload service started");
+
+    // Create and start policy listener (PostgreSQL LISTEN/NOTIFY)
+    let policy_listener = Arc::new(PolicyListener::new(db_pool.as_ref().clone()));
+    let policy_notifier_for_listener = policy_notifier.clone();
+
+    // Wire listener to notifier
+    let mut policy_rx = policy_listener.subscribe();
+    tokio::spawn(async move {
+        use octofhir_auth::policy::PolicyChange;
+        use octofhir_auth_postgres::PolicyChangeOp;
+
+        while let Ok(event) = policy_rx.recv().await {
+            let change = match event.operation {
+                PolicyChangeOp::Insert => PolicyChange::Created {
+                    policy_id: event.policy_id,
+                },
+                PolicyChangeOp::Update => PolicyChange::Updated {
+                    policy_id: event.policy_id,
+                },
+                PolicyChangeOp::Delete => PolicyChange::Deleted {
+                    policy_id: event.policy_id,
+                },
+            };
+            policy_notifier_for_listener.notify(change);
+        }
+    });
+
+    // Start the listener
+    let _listener_handle = policy_listener.start();
+    tracing::info!("Policy LISTEN/NOTIFY listener started");
+
+    // Create policy evaluator
+    let policy_evaluator = Arc::new(PolicyEvaluator::new(
+        policy_cache.clone(),
+        PolicyEvaluatorConfig::default(),
+    ));
+    tracing::info!("Policy evaluator initialized");
+
+    // Initialize auth state if auth is enabled
+    let auth_state = initialize_auth_state(&cfg, db_pool.clone()).await;
+    if auth_state.is_some() {
+        tracing::info!("Authentication enabled");
+    } else {
+        tracing::warn!("Authentication disabled - no auth configuration found");
+    }
+
     let state = AppState {
         storage,
         search_cfg,
@@ -492,6 +608,10 @@ pub async fn build_app(cfg: &AppConfig) -> Result<Router, anyhow::Error> {
         compartment_registry,
         async_job_manager,
         config: Arc::new(cfg.clone()),
+        policy_evaluator,
+        policy_cache,
+        policy_reload_service,
+        auth_state,
     };
 
     Ok(build_router(state, body_limit))
@@ -596,8 +716,16 @@ fn build_router(state: AppState, body_limit: usize) -> Router {
                 .patch(handlers::patch_resource)
                 .delete(handlers::delete_resource),
         )
-        // Middleware stack (order: request id -> content negotiation -> compression/cors/trace -> body limit)
+        // Middleware stack (order: request id -> auth -> authz -> content negotiation -> compression/cors/trace -> body limit)
         .layer(middleware::from_fn(app_middleware::request_id))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            app_middleware::authentication_middleware,
+        ))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            app_middleware::authorization_middleware,
+        ))
         .layer(middleware::from_fn(app_middleware::content_negotiation))
         .layer(CorsLayer::permissive())
         .layer(CompressionLayer::new())
@@ -711,4 +839,71 @@ async fn shutdown_signal() {
     // Wait for Ctrl+C
     let _ = tokio::signal::ctrl_c().await;
     tracing::info!("shutdown signal received");
+}
+
+/// Initialize the authentication state if auth is enabled.
+///
+/// Returns `Some(AuthState)` if auth is enabled and initialization succeeds,
+/// or `None` if auth is disabled.
+async fn initialize_auth_state(
+    cfg: &AppConfig,
+    db_pool: Arc<sqlx_postgres::PgPool>,
+) -> Option<AuthState> {
+    // Check if auth is enabled
+    if !cfg.auth.enabled {
+        return None;
+    }
+
+    // Parse signing algorithm
+    let algorithm = match cfg.auth.signing.algorithm.as_str() {
+        "RS256" => SigningAlgorithm::RS256,
+        "RS384" => SigningAlgorithm::RS384,
+        "ES384" => SigningAlgorithm::ES384,
+        other => {
+            tracing::error!(algorithm = other, "Unsupported signing algorithm");
+            return None;
+        }
+    };
+
+    // Generate signing key pair
+    // TODO: In production, keys should be loaded from secure storage or rotated
+    let signing_key = match algorithm {
+        SigningAlgorithm::RS256 | SigningAlgorithm::RS384 => {
+            match SigningKeyPair::generate_rsa(algorithm) {
+                Ok(key) => key,
+                Err(e) => {
+                    tracing::error!(error = %e, "Failed to generate RSA signing key");
+                    return None;
+                }
+            }
+        }
+        SigningAlgorithm::ES384 => match SigningKeyPair::generate_ec() {
+            Ok(key) => key,
+            Err(e) => {
+                tracing::error!(error = %e, "Failed to generate EC signing key");
+                return None;
+            }
+        },
+    };
+
+    tracing::info!(
+        algorithm = %algorithm,
+        kid = %signing_key.kid,
+        "Generated JWT signing key"
+    );
+
+    // Create JWT service
+    let jwt_service = Arc::new(JwtService::new(signing_key, cfg.auth.issuer.clone()));
+
+    // Create Arc-owning storage adapters
+    let client_storage = Arc::new(ArcClientStorage::new(db_pool.clone()));
+    let revoked_token_storage = Arc::new(ArcRevokedTokenStorage::new(db_pool.clone()));
+    let user_storage = Arc::new(ArcUserStorage::new(db_pool));
+
+    Some(AuthState::new(
+        jwt_service,
+        client_storage,
+        revoked_token_storage,
+        user_storage,
+    ))
 }

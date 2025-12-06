@@ -34,12 +34,12 @@ use notify::{
     Watcher,
 };
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use thiserror::Error;
-use tokio::sync::mpsc;
 use tokio::sync::RwLock;
+use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
 use crate::terminology::{HybridTerminologyProvider, TerminologyConfig};
@@ -185,8 +185,8 @@ impl ConfigWatcher {
         let mut watcher = RecommendedWatcher::new(
             move |res: NotifyResult<Event>| {
                 if let Ok(event) = res {
-                    let dominated = event.kind.is_modify()
-                        || (reload_on_create && event.kind.is_create());
+                    let dominated =
+                        event.kind.is_modify() || (reload_on_create && event.kind.is_create());
                     if dominated {
                         for path in event.paths {
                             let _ = tx_clone.blocking_send(path);
@@ -331,7 +331,10 @@ impl ReloadableTerminologyProvider {
     }
 
     /// Update the configuration and reload the provider.
-    pub async fn reload(&self, new_config: TerminologyConfig) -> Result<(), crate::terminology::TerminologyError> {
+    pub async fn reload(
+        &self,
+        new_config: TerminologyConfig,
+    ) -> Result<(), crate::terminology::TerminologyError> {
         info!(
             server_url = %new_config.server_url,
             enabled = new_config.enabled,
@@ -340,7 +343,8 @@ impl ReloadableTerminologyProvider {
         );
 
         // Create new provider with new config
-        let new_provider = HybridTerminologyProvider::new(self.canonical_manager.clone(), &new_config)?;
+        let new_provider =
+            HybridTerminologyProvider::new(self.canonical_manager.clone(), &new_config)?;
 
         // Update the inner provider
         {
@@ -393,8 +397,10 @@ pub async fn watch_and_reload<P>(
 where
     P: AsRef<Path>,
 {
-    let provider = ReloadableTerminologyProvider::new(canonical_manager, initial_config)
-        .map_err(|e| WatcherError::InitFailed(format!("Failed to create terminology provider: {e}")))?;
+    let provider =
+        ReloadableTerminologyProvider::new(canonical_manager, initial_config).map_err(|e| {
+            WatcherError::InitFailed(format!("Failed to create terminology provider: {e}"))
+        })?;
     let provider_clone = provider.clone();
 
     let mut watcher = ConfigWatcher::new(watcher_config)?;

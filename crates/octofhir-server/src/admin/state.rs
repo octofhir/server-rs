@@ -10,6 +10,8 @@ use octofhir_auth_postgres::PgPool;
 use octofhir_auth::federation::IdpAuthService;
 use octofhir_auth::middleware::AuthState;
 
+use super::policy::PolicyState;
+
 // =============================================================================
 // Admin State
 // =============================================================================
@@ -60,13 +62,27 @@ pub struct CombinedAdminState {
 
     /// Admin state for storage operations.
     pub admin: AdminState,
+
+    /// Policy state for policy management (optional until initialized).
+    pub policy: Option<PolicyState>,
 }
 
 impl CombinedAdminState {
     /// Creates a new combined admin state.
     #[must_use]
     pub fn new(auth: AuthState, admin: AdminState) -> Self {
-        Self { auth, admin }
+        Self {
+            auth,
+            admin,
+            policy: None,
+        }
+    }
+
+    /// Sets the policy state.
+    #[must_use]
+    pub fn with_policy_state(mut self, policy: PolicyState) -> Self {
+        self.policy = Some(policy);
+        self
     }
 }
 
@@ -79,5 +95,14 @@ impl FromRef<CombinedAdminState> for AuthState {
 impl FromRef<CombinedAdminState> for AdminState {
     fn from_ref(state: &CombinedAdminState) -> Self {
         state.admin.clone()
+    }
+}
+
+impl FromRef<CombinedAdminState> for PolicyState {
+    fn from_ref(state: &CombinedAdminState) -> Self {
+        state
+            .policy
+            .clone()
+            .expect("PolicyState not initialized in CombinedAdminState")
     }
 }

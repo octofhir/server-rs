@@ -3,18 +3,20 @@
 //! Central coordinator for configuration from multiple sources.
 //! Handles merging, validation, and broadcasting of configuration changes.
 
-use crate::events::{ConfigCategory, ConfigChangeEvent, ConfigOperation, ConfigSource as EventSource};
+use crate::ConfigError;
+use crate::events::{
+    ConfigCategory, ConfigChangeEvent, ConfigOperation, ConfigSource as EventSource,
+};
 use crate::feature_flags::{FeatureContext, FeatureFlags};
 use crate::merger::MergedConfig;
 use crate::secrets::Secrets;
 use crate::sources::{ConfigSource, WatchHandle};
 use crate::storage::ConfigStorage;
-use crate::ConfigError;
 
 use sqlx_postgres::PgPool;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::sync::{broadcast, mpsc, RwLock};
+use tokio::sync::{RwLock, broadcast, mpsc};
 use tracing::{debug, error, info, warn};
 
 /// Configuration manager builder
@@ -155,7 +157,11 @@ impl ConfigurationManager {
 
     /// Check if a feature is enabled
     pub async fn is_feature_enabled(&self, name: &str, context: &FeatureContext) -> bool {
-        self.merged.read().await.feature_flags().is_enabled(name, context)
+        self.merged
+            .read()
+            .await
+            .feature_flags()
+            .is_enabled(name, context)
     }
 
     /// Subscribe to configuration changes
@@ -277,7 +283,14 @@ impl ConfigurationManager {
         // Store in database if available
         if let Some(storage) = &self.storage {
             storage
-                .set(&category.to_string(), key, value.clone(), description, is_secret, updated_by)
+                .set(
+                    &category.to_string(),
+                    key,
+                    value.clone(),
+                    description,
+                    is_secret,
+                    updated_by,
+                )
                 .await?;
         }
 
@@ -295,17 +308,13 @@ impl ConfigurationManager {
         }
 
         // Broadcast change event
-        let event = ConfigChangeEvent::with_key(
-            EventSource::Api,
-            category,
-            key,
-            ConfigOperation::Set,
-        )
-        .with_value(if is_secret {
-            serde_json::json!("<secret>")
-        } else {
-            value
-        });
+        let event =
+            ConfigChangeEvent::with_key(EventSource::Api, category, key, ConfigOperation::Set)
+                .with_value(if is_secret {
+                    serde_json::json!("<secret>")
+                } else {
+                    value
+                });
 
         let _ = self.event_bus.send(event);
 
@@ -314,7 +323,11 @@ impl ConfigurationManager {
     }
 
     /// Delete a configuration value
-    pub async fn delete_config(&self, category: ConfigCategory, key: &str) -> Result<bool, ConfigError> {
+    pub async fn delete_config(
+        &self,
+        category: ConfigCategory,
+        key: &str,
+    ) -> Result<bool, ConfigError> {
         // Delete from database if available
         let deleted = if let Some(storage) = &self.storage {
             storage.delete(&category.to_string(), key).await?
@@ -323,12 +336,8 @@ impl ConfigurationManager {
         };
 
         // Broadcast delete event
-        let event = ConfigChangeEvent::with_key(
-            EventSource::Api,
-            category,
-            key,
-            ConfigOperation::Delete,
-        );
+        let event =
+            ConfigChangeEvent::with_key(EventSource::Api, category, key, ConfigOperation::Delete);
         let _ = self.event_bus.send(event);
 
         Ok(deleted)

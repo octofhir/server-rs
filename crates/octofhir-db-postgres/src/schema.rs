@@ -105,6 +105,11 @@ impl SchemaManager {
             self.create_gateway_trigger(resource_type).await?;
         }
 
+        // Add policy notification trigger for AccessPolicy resources
+        if Self::is_policy_resource(&table) {
+            self.create_policy_trigger(resource_type).await?;
+        }
+
         self.created_tables.insert(table);
         Ok(())
     }
@@ -112,6 +117,11 @@ impl SchemaManager {
     /// Returns true if this resource type requires gateway notifications.
     fn is_gateway_resource(table: &str) -> bool {
         matches!(table, "app" | "customoperation")
+    }
+
+    /// Returns true if this resource type requires policy notifications.
+    fn is_policy_resource(table: &str) -> bool {
+        table == "accesspolicy"
     }
 
     /// Checks if a table exists in the database.
@@ -331,6 +341,38 @@ impl SchemaManager {
             .map_err(PostgresError::from)?;
 
         info!("Created gateway notification trigger for: {}", table);
+        Ok(())
+    }
+
+    /// Creates policy notification trigger for AccessPolicy resources.
+    ///
+    /// This trigger calls `notify_policy_change()` (created by migration 009)
+    /// on INSERT/UPDATE/DELETE to enable hot-reload of access policies.
+    #[instrument(skip(self))]
+    async fn create_policy_trigger(&self, resource_type: &str) -> Result<()> {
+        let table = Self::table_name(resource_type);
+        let trigger_name = format!("{}_policy_notify", table);
+
+        // Drop existing trigger first (separate query - PostgreSQL doesn't allow multiple commands)
+        let drop_sql = format!(r#"DROP TRIGGER IF EXISTS "{trigger_name}" ON "{table}""#);
+        sqlx_core::query::query(&drop_sql)
+            .execute(&self.pool)
+            .await
+            .map_err(PostgresError::from)?;
+
+        // Create the trigger
+        // Uses notify_policy_change() function created by migration 009
+        let create_sql = format!(
+            r#"CREATE TRIGGER "{trigger_name}"
+                AFTER INSERT OR UPDATE OR DELETE ON "{table}"
+                FOR EACH ROW EXECUTE FUNCTION notify_policy_change()"#
+        );
+        sqlx_core::query::query(&create_sql)
+            .execute(&self.pool)
+            .await
+            .map_err(PostgresError::from)?;
+
+        info!("Created policy notification trigger for: {}", table);
         Ok(())
     }
 

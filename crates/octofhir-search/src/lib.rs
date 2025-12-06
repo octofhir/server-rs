@@ -57,6 +57,10 @@ pub use chaining::{
     ChainLink, ChainedParameter, ChainingError, build_chained_search, is_chained_parameter,
     parse_chained_parameter,
 };
+pub use config_watcher::{
+    ConfigCallback, ConfigWatcher, ReloadableTerminologyProvider, WatcherConfig, WatcherError,
+    WatcherHandle, watch_and_reload,
+};
 pub use include::{
     IncludeError, IncludeParam, extract_includes, extract_revincludes, is_include_parameter,
     is_revinclude_parameter, parse_include, parse_revinclude,
@@ -65,10 +69,7 @@ pub use query_cache::{
     CacheError, CacheStatsSnapshot, ParamPosition, ParamValueType, PreparedQuery, QueryCache,
     QueryCacheKey, QueryParamKey,
 };
-pub use config_watcher::{
-    ConfigCallback, ConfigWatcher, ReloadableTerminologyProvider, WatcherConfig, WatcherError,
-    WatcherHandle, watch_and_reload,
-};
+pub use reloadable::{ReloadableSearchConfig, SearchOptions};
 pub use reverse_chaining::{
     ReverseChainParameter, ReverseChainingError, build_reverse_chain_search,
     is_reverse_chain_parameter, parse_reverse_chain,
@@ -77,4 +78,3 @@ pub use terminology::{
     CacheStats, ExpansionResult, HierarchyDirection, HybridTerminologyProvider, TerminologyConfig,
     TerminologyError,
 };
-pub use reloadable::{ReloadableSearchConfig, SearchOptions};
