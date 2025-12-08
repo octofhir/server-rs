@@ -8,6 +8,7 @@ pub mod config;
 pub mod config_manager;
 pub mod gateway;
 pub mod handlers;
+pub mod lsp;
 pub mod mapping;
 pub mod middleware;
 pub mod oauth;

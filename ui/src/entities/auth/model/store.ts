@@ -9,8 +9,8 @@ const [authError, setAuthError] = createSignal<string | null>(null);
 
 // Computed
 const isAdmin = () => {
-  const currentUser = user();
-  return currentUser?.roles?.includes("admin") ?? false;
+	const currentUser = user();
+	return currentUser?.roles?.includes("admin") ?? false;
 };
 
 // Actions
@@ -19,31 +19,34 @@ const isAdmin = () => {
  * Login with username and password.
  * On success, sets user state and marks as authenticated.
  */
-export const login = async (username: string, password: string): Promise<void> => {
-  setIsLoading(true);
-  setAuthError(null);
+export const login = async (
+	username: string,
+	password: string,
+): Promise<void> => {
+	setIsLoading(true);
+	setAuthError(null);
 
-  try {
-    // Call token endpoint - cookie is set automatically
-    await authApi.login(username, password);
-
-    // Fetch user info after successful login
-    const userInfo = await authApi.getCurrentUser();
-    if (userInfo) {
-      setUser(userInfo);
-      setIsAuthenticated(true);
-    } else {
-      throw new Error("Failed to get user info after login");
-    }
-  } catch (err) {
-    const message = err instanceof Error ? err.message : "Login failed";
-    setAuthError(message);
-    setIsAuthenticated(false);
-    setUser(null);
-    throw err;
-  } finally {
-    setIsLoading(false);
-  }
+	try {
+		// Call token endpoint - cookie is set automatically
+		const response = await authApi.login(username, password);
+		window.sessionStorage.setItem("octofhir_token", response.access_token);
+		// Fetch user info after successful login
+		const userInfo = await authApi.getCurrentUser();
+		if (userInfo) {
+			setUser(userInfo);
+			setIsAuthenticated(true);
+		} else {
+			throw new Error("Failed to get user info after login");
+		}
+	} catch (err) {
+		const message = err instanceof Error ? err.message : "Login failed";
+		setAuthError(message);
+		setIsAuthenticated(false);
+		setUser(null);
+		throw err;
+	} finally {
+		setIsLoading(false);
+	}
 };
 
 /**
@@ -51,19 +54,19 @@ export const login = async (username: string, password: string): Promise<void> =
  * Clears user state and marks as unauthenticated.
  */
 export const logout = async (): Promise<void> => {
-  setIsLoading(true);
-  setAuthError(null);
+	setIsLoading(true);
+	setAuthError(null);
 
-  try {
-    await authApi.logout();
-  } catch (err) {
-    // Log but don't fail - we still want to clear local state
-    console.warn("Logout request failed:", err);
-  } finally {
-    setUser(null);
-    setIsAuthenticated(false);
-    setIsLoading(false);
-  }
+	try {
+		await authApi.logout();
+	} catch (err) {
+		// Log but don't fail - we still want to clear local state
+		console.warn("Logout request failed:", err);
+	} finally {
+		setUser(null);
+		setIsAuthenticated(false);
+		setIsLoading(false);
+	}
 };
 
 /**
@@ -71,42 +74,36 @@ export const logout = async (): Promise<void> => {
  * Called on app startup to restore session from cookie.
  */
 export const checkAuth = async (): Promise<boolean> => {
-  setIsLoading(true);
-  setAuthError(null);
+	setIsLoading(true);
+	setAuthError(null);
 
-  try {
-    const userInfo = await authApi.getCurrentUser();
-    if (userInfo) {
-      setUser(userInfo);
-      setIsAuthenticated(true);
-      return true;
-    }
-    setUser(null);
-    setIsAuthenticated(false);
-    return false;
-  } catch (err) {
-    const message = err instanceof Error ? err.message : "Auth check failed";
-    setAuthError(message);
-    setUser(null);
-    setIsAuthenticated(false);
-    return false;
-  } finally {
-    setIsLoading(false);
-  }
+	try {
+		const userInfo = await authApi.getCurrentUser();
+		if (userInfo) {
+			setUser(userInfo);
+			setIsAuthenticated(true);
+			return true;
+		}
+		setUser(null);
+		setIsAuthenticated(false);
+		return false;
+	} catch (err) {
+		const message = err instanceof Error ? err.message : "Auth check failed";
+		setAuthError(message);
+		setUser(null);
+		setIsAuthenticated(false);
+		return false;
+	} finally {
+		setIsLoading(false);
+	}
 };
 
 /**
  * Clear any auth error.
  */
 export const clearAuthError = () => {
-  setAuthError(null);
+	setAuthError(null);
 };
 
 // Exports
-export {
-  user,
-  isAuthenticated,
-  isLoading,
-  authError,
-  isAdmin,
-};
+export { user, isAuthenticated, isLoading, authError, isAdmin };

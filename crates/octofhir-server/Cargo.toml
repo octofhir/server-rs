@@ -33,7 +33,7 @@ tower-http = { workspace = true }
 tower-lsp = { workspace = true }
 
 # PostgreSQL Language Server
-pgls_lsp = { workspace = true }
+pg_query = { workspace = true }
 hyper = { workspace = true }
 tokio = { workspace = true }
 futures-util = { workspace = true }

@@ -758,6 +758,8 @@ fn build_router(state: AppState, body_limit: usize) -> Router {
             "/api/$sql",
             axum::routing::post(crate::operations::sql::sql_operation),
         )
+        // PostgreSQL LSP WebSocket endpoint (authenticated)
+        .route("/api/pg-lsp", get(crate::lsp::lsp_websocket_handler))
         // Embedded UI under /ui
         .route("/ui", get(handlers::ui_index))
         .route("/ui/{*path}", get(handlers::ui_static))
