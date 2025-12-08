@@ -1,69 +1,17 @@
-import { createSignal, For, onCleanup, onMount, Show } from "solid-js";
-
-import { EditorState } from "@codemirror/state";
-import { sql } from "@codemirror/lang-sql";
-import { basicSetup, EditorView } from "codemirror";
+import { createSignal, For, Show } from "solid-js";
 
 import { serverApi } from "@/shared/api/serverApi";
 import type { SqlResponse, SqlValue } from "@/shared/api/types";
+import { SqlEditor } from "@/shared/monaco";
 import { Button } from "@/shared/ui";
 
 import styles from "./DbConsolePage.module.css";
 
 export const DbConsolePage = () => {
-    let editorRef: HTMLDivElement | undefined;
-    let view: EditorView | undefined;
     const [query, setQuery] = createSignal("SELECT * FROM patient LIMIT 10;");
     const [results, setResults] = createSignal<SqlResponse | null>(null);
     const [error, setError] = createSignal<string | null>(null);
     const [loading, setLoading] = createSignal(false);
-
-    onMount(() => {
-        if (!editorRef) return;
-
-        const state = EditorState.create({
-            doc: query(),
-            extensions: [
-                basicSetup,
-                sql(),
-                EditorView.updateListener.of((update) => {
-                    if (update.docChanged) {
-                        setQuery(update.state.doc.toString());
-                    }
-                }),
-                EditorView.theme({
-                    "&": { height: "100%", fontSize: "14px" },
-                    ".cm-content": { fontFamily: "var(--font-mono)" },
-                    ".cm-gutters": {
-                        backgroundColor: "var(--bg-secondary)",
-                        color: "var(--text-muted)",
-                        borderRight: "1px solid var(--border-subtle)"
-                    },
-                    "&.cm-focused": { outline: "none" }
-                }),
-                // Handle Ctrl+Enter to execute
-                EditorView.domEventHandlers({
-                    keydown: (event) => {
-                        if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
-                            event.preventDefault();
-                            handleExecute();
-                            return true;
-                        }
-                        return false;
-                    }
-                })
-            ],
-        });
-
-        view = new EditorView({
-            state,
-            parent: editorRef,
-        });
-    });
-
-    onCleanup(() => {
-        view?.destroy();
-    });
 
     const handleExecute = async () => {
         setLoading(true);
@@ -101,7 +49,13 @@ export const DbConsolePage = () => {
                 <div class={styles.editorToolbar}>
                     <span class={styles.editorLabel}>SQL Editor</span>
                 </div>
-                <div ref={editorRef} class={styles.editor} />
+                <div class={styles.editor}>
+                    <SqlEditor
+                        value={query()}
+                        onChange={setQuery}
+                        onExecute={handleExecute}
+                    />
+                </div>
             </div>
 
             <div class={styles.resultsContainer}>
@@ -118,7 +72,7 @@ export const DbConsolePage = () => {
                 <div class={styles.resultsContent}>
                     <Show when={error()}>
                         <div class={styles.errorState}>
-                            <span class={styles.errorIcon}>⚠</span>
+                            <span class={styles.errorIcon}>!</span>
                             {error()}
                         </div>
                     </Show>

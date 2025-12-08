@@ -28,6 +28,10 @@ export default defineConfig({
 				target: "http://localhost:8888",
 				changeOrigin: true,
 			},
+			"/auth": {
+				target: "http://localhost:8888",
+				changeOrigin: true,
+			},
 		},
 	},
 	css: {
@@ -38,5 +42,8 @@ export default defineConfig({
 	build: {
 		target: "esnext",
 		outDir: "dist",
+	},
+	optimizeDeps: {
+		include: ["monaco-editor"],
 	},
 });

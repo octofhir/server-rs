@@ -33,7 +33,7 @@
 //! ```
 
 use axum::{
-    Json,
+    Extension, Json,
     extract::State,
     http::StatusCode,
     response::{IntoResponse, Response},
@@ -49,6 +49,7 @@ use tracing::{debug, info, warn};
 
 use crate::server::AppState;
 use octofhir_api::ApiError;
+use octofhir_auth::middleware::AuthContext;
 
 /// Bind a JSON value to a sqlx query.
 ///
@@ -105,8 +106,19 @@ pub struct SqlResponse {
 ///
 /// Executes a SQL query against the database with security validation
 /// based on the configured `SqlMode`.
+///
+/// # Authentication
+///
+/// This endpoint requires authentication. The `AuthContext` is injected by
+/// the authentication middleware.
+///
+/// # Authorization
+///
+/// If `db_console.required_role` is configured, the authenticated user must
+/// have that role to access this endpoint.
 pub async fn sql_operation(
     State(state): State<AppState>,
+    Extension(auth_context): Extension<AuthContext>,
     Json(req): Json<SqlRequest>,
 ) -> Result<Response, ApiError> {
     let config = &state.config.db_console;
@@ -116,13 +128,31 @@ pub async fn sql_operation(
         return Err(ApiError::forbidden("DB console is disabled"));
     }
 
-    // TODO: Check required role if configured
-    // This requires access to the authenticated user context
-    // if let Some(ref required_role) = config.required_role {
-    //     if !auth_context.has_role(required_role) {
-    //         return Err(ApiError::forbidden("Insufficient permissions for DB console"));
-    //     }
-    // }
+    // Check required role if configured
+    if let Some(ref required_role) = config.required_role {
+        let has_role = auth_context
+            .user
+            .as_ref()
+            .is_some_and(|u| u.roles.iter().any(|r| r == required_role));
+
+        if !has_role {
+            warn!(
+                required_role = %required_role,
+                user = ?auth_context.user.as_ref().map(|u| &u.username),
+                "User lacks required role for DB console"
+            );
+            return Err(ApiError::forbidden(format!(
+                "DB console requires '{}' role",
+                required_role
+            )));
+        }
+
+        info!(
+            user = ?auth_context.user.as_ref().map(|u| &u.username),
+            role = %required_role,
+            "DB console access granted"
+        );
+    }
 
     // Validate query against sql_mode
     if let Err(msg) = config.sql_mode.is_query_allowed(&req.query) {

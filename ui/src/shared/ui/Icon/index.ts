@@ -32,4 +32,6 @@ export {
   IconGitCommit,
   IconFilter,
   IconEdit,
+  IconLogOut,
+  IconUser,
 } from "./Icon";

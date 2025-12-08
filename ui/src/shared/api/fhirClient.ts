@@ -24,6 +24,7 @@ export class FhirClient {
     try {
       const response = await fetch(fullUrl, {
         method,
+        credentials: "include", // Include cookies for auth
         headers: {
           ...this.defaultHeaders,
           ...headers,

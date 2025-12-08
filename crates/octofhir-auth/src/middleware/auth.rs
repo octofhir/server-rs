@@ -22,10 +22,11 @@ use std::sync::Arc;
 
 use axum::{
     extract::{FromRef, FromRequestParts},
-    http::{header::AUTHORIZATION, request::Parts},
+    http::{header::AUTHORIZATION, header::COOKIE, request::Parts},
 };
 use uuid::Uuid;
 
+use crate::config::CookieConfig;
 use crate::error::AuthError;
 use crate::storage::{ClientStorage, RevokedTokenStorage, UserStorage};
 use crate::token::jwt::{AccessTokenClaims, JwtService};
@@ -69,6 +70,9 @@ pub struct AuthState {
 
     /// User storage for loading user context.
     pub user_storage: Arc<dyn UserStorage>,
+
+    /// Cookie configuration for browser-based auth.
+    pub cookie_config: CookieConfig,
 }
 
 impl AuthState {
@@ -84,7 +88,15 @@ impl AuthState {
             client_storage,
             revoked_token_storage,
             user_storage,
+            cookie_config: CookieConfig::default(),
         }
+    }
+
+    /// Sets cookie configuration for browser-based authentication.
+    #[must_use]
+    pub fn with_cookie_config(mut self, cookie_config: CookieConfig) -> Self {
+        self.cookie_config = cookie_config;
+        self
     }
 }
 
@@ -130,17 +142,30 @@ where
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
         let auth_state = AuthState::from_ref(state);
 
-        // 1. Extract Authorization header
-        let auth_header = parts
+        // 1. Try Authorization header first
+        let token = if let Some(auth_header) = parts
             .headers
             .get(AUTHORIZATION)
             .and_then(|h| h.to_str().ok())
-            .ok_or_else(|| AuthError::unauthorized("Missing Authorization header"))?;
+        {
+            // Parse Bearer token from header
+            auth_header
+                .strip_prefix("Bearer ")
+                .filter(|t| !t.is_empty())
+                .map(ToString::to_string)
+        } else {
+            None
+        };
 
-        // 2. Parse Bearer token
-        let token = auth_header
-            .strip_prefix("Bearer ")
-            .ok_or_else(|| AuthError::unauthorized("Invalid Authorization header format"))?;
+        // 2. If no Authorization header, try cookie (if enabled)
+        let token = match token {
+            Some(t) => t,
+            None => {
+                // Try to extract from cookie
+                extract_token_from_cookie(parts, &auth_state.cookie_config)
+                    .ok_or_else(|| AuthError::unauthorized("Missing Authorization header"))?
+            }
+        };
 
         if token.is_empty() {
             return Err(AuthError::unauthorized("Empty Bearer token"));
@@ -149,7 +174,7 @@ where
         // 3. Decode and validate JWT
         let claims = auth_state
             .jwt_service
-            .decode::<AccessTokenClaims>(token)
+            .decode::<AccessTokenClaims>(&token)
             .map_err(|e| {
                 tracing::debug!(error = %e, "Failed to decode token");
                 AuthError::invalid_token(e.to_string())
@@ -283,12 +308,18 @@ where
     type Rejection = AuthError;
 
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
-        // Check if Authorization header is present
-        if parts.headers.get(AUTHORIZATION).is_none() {
+        let auth_state = AuthState::from_ref(state);
+
+        // Check if Authorization header is present or cookie auth is available
+        let has_auth_header = parts.headers.get(AUTHORIZATION).is_some();
+        let has_cookie_token = auth_state.cookie_config.enabled
+            && parts.headers.get(COOKIE).is_some();
+
+        if !has_auth_header && !has_cookie_token {
             return Ok(OptionalBearerAuth(None));
         }
 
-        // Try to extract, but convert missing header to None
+        // Try to extract, but convert missing credentials to None
         match BearerAuth::from_request_parts(parts, state).await {
             Ok(BearerAuth(ctx)) => Ok(OptionalBearerAuth(Some(ctx))),
             Err(AuthError::Unauthorized { .. }) => Ok(OptionalBearerAuth(None)),
@@ -298,14 +329,92 @@ where
 }
 
 // =============================================================================
+// Cookie Helpers
+// =============================================================================
+
+/// Extract token from cookie if cookie auth is enabled.
+///
+/// Parses the Cookie header and looks for the configured cookie name.
+fn extract_token_from_cookie(parts: &Parts, cookie_config: &CookieConfig) -> Option<String> {
+    // Only try cookie auth if enabled
+    if !cookie_config.enabled {
+        return None;
+    }
+
+    // Get Cookie header
+    let cookie_header = parts.headers.get(COOKIE)?.to_str().ok()?;
+
+    // Parse cookies (simple key=value; key=value format)
+    let cookie_name = &cookie_config.name;
+    for cookie in cookie_header.split(';') {
+        let cookie = cookie.trim();
+        if let Some((name, value)) = cookie.split_once('=') {
+            if name.trim() == cookie_name {
+                let value = value.trim();
+                if !value.is_empty() {
+                    tracing::debug!(cookie_name = %cookie_name, "Token extracted from cookie");
+                    return Some(value.to_string());
+                }
+            }
+        }
+    }
+
+    None
+}
+
+// =============================================================================
 // Tests
 // =============================================================================
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     #[test]
     fn test_auth_state_creation() {
         // This is a compile-time test to ensure AuthState can be created
         // Actual tests would require mock storage implementations
+    }
+
+    #[test]
+    fn test_cookie_config_build_cookie() {
+        let config = CookieConfig {
+            enabled: true,
+            name: "test_token".to_string(),
+            secure: true,
+            http_only: true,
+            same_site: "strict".to_string(),
+            path: "/".to_string(),
+            domain: None,
+        };
+
+        let cookie = config.build_cookie("my_token_value", 3600);
+        assert!(cookie.is_some());
+        let cookie = cookie.unwrap();
+        assert!(cookie.contains("test_token=my_token_value"));
+        assert!(cookie.contains("Max-Age=3600"));
+        assert!(cookie.contains("HttpOnly"));
+        assert!(cookie.contains("Secure"));
+        assert!(cookie.contains("SameSite=Strict"));
+    }
+
+    #[test]
+    fn test_cookie_config_disabled() {
+        // Explicitly create a disabled config
+        let config = CookieConfig {
+            enabled: false,
+            ..CookieConfig::default()
+        };
+        assert!(!config.enabled);
+
+        let cookie = config.build_cookie("my_token_value", 3600);
+        assert!(cookie.is_none());
+    }
+
+    #[test]
+    fn test_cookie_config_default_enabled() {
+        // Cookie config is enabled by default for UI support
+        let config = CookieConfig::default();
+        assert!(config.enabled);
     }
 }

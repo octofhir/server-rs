@@ -1,7 +1,10 @@
+import type { ParentComponent } from "solid-js";
 import { Router, Route } from "@solidjs/router";
 import { ThemeProvider } from "./providers/ThemeProvider";
 import { ToastProvider } from "@/shared/ui/Toast";
+import { RouteGuard } from "@/shared/ui";
 import { AppShell } from "@/widgets/app-shell";
+import { LoginPage } from "@/pages/login";
 import { ResourceBrowserPage } from "@/pages/resource-browser";
 import { RestConsolePage } from "@/pages/rest-console";
 import { SettingsPage } from "@/pages/settings";
@@ -13,25 +16,38 @@ import { GatewayPage } from "@/pages/gateway";
 import { AppDetailPage } from "@/pages/gateway-app";
 import { OperationDetailPage } from "@/pages/gateway-operation";
 
+/**
+ * Protected layout wrapper - requires authentication.
+ * Wraps content with RouteGuard and AppShell.
+ */
+const ProtectedLayout: ParentComponent = (props) => (
+  <RouteGuard>
+    <AppShell>{props.children}</AppShell>
+  </RouteGuard>
+);
+
 export default function App() {
   return (
     <ThemeProvider>
       <ToastProvider>
-        <Router
-          base="/ui"
-          root={(props) => <AppShell>{props.children}</AppShell>}
-        >
-          <Route path="/" component={DashboardPage} />
-          <Route path="/resources" component={ResourceBrowserPage} />
-          <Route path="/resources/:type" component={ResourceBrowserPage} />
-          <Route path="/console" component={RestConsolePage} />
-          <Route path="/gateway" component={GatewayPage} />
-          <Route path="/gateway/apps/:id" component={AppDetailPage} />
-          <Route path="/gateway/operations/:id" component={OperationDetailPage} />
-          <Route path="/settings" component={SettingsPage} />
-          <Route path="/db-console" component={DbConsolePage} />
-          <Route path="/logs" component={LogsPage} />
-          <Route path="/metadata" component={CapabilityStatementPage} />
+        <Router base="/ui">
+          {/* Public routes */}
+          <Route path="/login" component={LoginPage} />
+
+          {/* Protected routes - require authentication */}
+          <Route path="/" component={ProtectedLayout}>
+            <Route path="/" component={DashboardPage} />
+            <Route path="/resources" component={ResourceBrowserPage} />
+            <Route path="/resources/:type" component={ResourceBrowserPage} />
+            <Route path="/console" component={RestConsolePage} />
+            <Route path="/gateway" component={GatewayPage} />
+            <Route path="/gateway/apps/:id" component={AppDetailPage} />
+            <Route path="/gateway/operations/:id" component={OperationDetailPage} />
+            <Route path="/settings" component={SettingsPage} />
+            <Route path="/db-console" component={DbConsolePage} />
+            <Route path="/logs" component={LogsPage} />
+            <Route path="/metadata" component={CapabilityStatementPage} />
+          </Route>
         </Router>
       </ToastProvider>
     </ThemeProvider>

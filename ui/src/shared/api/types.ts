@@ -63,6 +63,40 @@ export interface SqlResponse {
   executionTimeMs: number;
 }
 
+// Auth types
+export interface LoginRequest {
+  grant_type: "password";
+  client_id: string;
+  username: string;
+  password: string;
+}
+
+export interface TokenResponse {
+  access_token: string;
+  token_type: "Bearer";
+  expires_in: number;
+  scope?: string;
+}
+
+export interface UserInfo {
+  sub: string;
+  name?: string;
+  preferred_username?: string;
+  email?: string;
+  fhirUser?: string;
+  roles?: string[];
+}
+
+export interface AuthError {
+  error: string;
+  error_description?: string;
+}
+
+export interface LogoutResponse {
+  success: boolean;
+  message: string;
+}
+
 // HTTP types
 export type HttpMethod = "GET" | "POST" | "PUT" | "DELETE" | "PATCH";
 

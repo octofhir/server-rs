@@ -3,6 +3,7 @@
 //! This module sets up the OAuth 2.0 routes for the FHIR server:
 //!
 //! - `/auth/token` - Token endpoint (RFC 6749)
+//! - `/auth/logout` - Logout endpoint (revokes token, clears cookie)
 //! - `/auth/authorize` - Authorization endpoint
 //! - `/auth/revoke` - Token revocation (RFC 7009)
 //! - `/auth/introspect` - Token introspection (RFC 7662)
@@ -14,9 +15,12 @@ use std::sync::Arc;
 
 use axum::{Router, routing::{get, post}};
 use octofhir_auth::{
+    AuthState,
+    LogoutState, logout_handler,
     TokenState, token_handler,
     jwks_handler, JwksState,
     smart_configuration_handler, SmartConfigState,
+    userinfo_handler,
 };
 use octofhir_auth::token::service::TokenConfig;
 use octofhir_auth::token::jwt::JwtService;
@@ -33,6 +37,7 @@ use crate::server::AppState;
 #[derive(Clone)]
 pub struct OAuthState {
     pub token_state: TokenState,
+    pub logout_state: LogoutState,
     pub jwks_state: JwksState,
     pub smart_config_state: SmartConfigState,
 }
@@ -73,15 +78,24 @@ impl OAuthState {
         // Create user storage for password grant support
         let user_storage = Arc::new(ArcUserStorage::new(db_pool.clone()));
 
-        // Create TokenState with user storage for password grant
+        // Create TokenState with user storage for password grant and cookie config
         let token_state = TokenState::new(
             jwt_service.clone(),
             session_storage,
             refresh_storage,
-            revoked_storage,
+            revoked_storage.clone(),
             client_storage.clone(),
             token_config,
-        ).with_user_storage(user_storage);
+        )
+        .with_user_storage(user_storage)
+        .with_cookie_config(config.auth.cookie.clone());
+
+        // Create LogoutState for browser-based logout
+        let logout_state = LogoutState::new(
+            jwt_service.clone(),
+            revoked_storage,
+            config.auth.cookie.clone(),
+        );
 
         // Create JwksState
         let jwks_state = JwksState::new(jwt_service.clone());
@@ -95,6 +109,7 @@ impl OAuthState {
 
         Some(Self {
             token_state,
+            logout_state,
             jwks_state,
             smart_config_state,
         })
@@ -109,7 +124,15 @@ pub fn oauth_routes(state: OAuthState) -> Router {
     Router::new()
         // Token endpoint - accepts x-www-form-urlencoded, returns JSON
         .route("/auth/token", post(token_handler))
-        .with_state(state.token_state)
+        .with_state(state.token_state.clone())
+        .merge(logout_route(state.logout_state))
+}
+
+/// Creates logout route for browser-based authentication.
+pub fn logout_route(state: LogoutState) -> Router {
+    Router::new()
+        .route("/auth/logout", post(logout_handler))
+        .with_state(state)
 }
 
 /// Creates JWKS route.
@@ -123,5 +146,12 @@ pub fn jwks_route(state: JwksState) -> Router {
 pub fn smart_config_route(state: SmartConfigState) -> Router {
     Router::new()
         .route("/.well-known/smart-configuration", get(smart_configuration_handler))
+        .with_state(state)
+}
+
+/// Creates userinfo route for OpenID Connect.
+pub fn userinfo_route(state: AuthState) -> Router {
+    Router::new()
+        .route("/auth/userinfo", get(userinfo_handler))
         .with_state(state)
 }

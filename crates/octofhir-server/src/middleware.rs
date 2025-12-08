@@ -6,13 +6,14 @@ use axum::response::IntoResponse;
 use axum::{
     Json,
     body::Body,
-    http::{HeaderName, HeaderValue, Request, StatusCode, header::AUTHORIZATION},
+    http::{HeaderName, HeaderValue, Request, StatusCode, header::{AUTHORIZATION, COOKIE}},
     middleware::Next,
     response::Response,
 };
 use serde_json::{Value, json};
 use uuid::Uuid;
 
+use octofhir_auth::config::CookieConfig;
 use octofhir_auth::middleware::{AuthContext, AuthState};
 use octofhir_auth::policy::{
     AccessDecision, DenyReason, PolicyContext, PolicyContextBuilder, PolicyEvaluator,
@@ -46,26 +47,40 @@ pub async fn authentication_middleware(
         return next.run(req).await;
     }
 
-    // Extract Authorization header
-    let auth_header = match req.headers().get(AUTHORIZATION).and_then(|h| h.to_str().ok()) {
-        Some(header) => header,
-        None => {
-            // No auth header - check if this route requires auth
-            tracing::debug!(path = %req.uri().path(), "No Authorization header");
-            return unauthorized_response("Authentication required");
+    // 1. Try Authorization header first
+    let token = if let Some(auth_header) = req
+        .headers()
+        .get(AUTHORIZATION)
+        .and_then(|h| h.to_str().ok())
+    {
+        // Parse Bearer token from header
+        match auth_header.strip_prefix("Bearer ") {
+            Some(t) if !t.is_empty() => Some(t.to_string()),
+            _ => {
+                return unauthorized_response("Invalid Authorization header format");
+            }
         }
+    } else {
+        None
     };
 
-    // Parse Bearer token
-    let token = match auth_header.strip_prefix("Bearer ") {
-        Some(t) if !t.is_empty() => t,
-        _ => {
-            return unauthorized_response("Invalid Authorization header format");
+    // 2. If no Authorization header, try cookie (if enabled)
+    let token = match token {
+        Some(t) => t,
+        None => {
+            // Try to extract from cookie
+            match extract_token_from_cookie(&req, &state.cookie_config) {
+                Some(t) => t,
+                None => {
+                    tracing::debug!(path = %req.uri().path(), "No Authorization header or cookie");
+                    return unauthorized_response("Authentication required");
+                }
+            }
         }
     };
 
     // Validate token and build auth context
-    match validate_token(&state, token).await {
+    match validate_token(&state, &token).await {
         Ok(auth_context) => {
             tracing::debug!(
                 client_id = %auth_context.client_id(),
@@ -153,6 +168,34 @@ async fn validate_token(
     })
 }
 
+/// Extract token from cookie if cookie auth is enabled.
+fn extract_token_from_cookie(req: &Request<Body>, cookie_config: &CookieConfig) -> Option<String> {
+    // Only try cookie auth if enabled
+    if !cookie_config.enabled {
+        return None;
+    }
+
+    // Get Cookie header
+    let cookie_header = req.headers().get(COOKIE)?.to_str().ok()?;
+
+    // Parse cookies (simple key=value; key=value format)
+    let cookie_name = &cookie_config.name;
+    for cookie in cookie_header.split(';') {
+        let cookie = cookie.trim();
+        if let Some((name, value)) = cookie.split_once('=') {
+            if name.trim() == cookie_name {
+                let value = value.trim();
+                if !value.is_empty() {
+                    tracing::debug!(cookie_name = %cookie_name, "Token extracted from cookie");
+                    return Some(value.to_string());
+                }
+            }
+        }
+    }
+
+    None
+}
+
 /// Check if a request should skip authentication.
 fn should_skip_authentication(req: &Request<Body>) -> bool {
     let path = req.uri().path();
@@ -170,6 +213,7 @@ fn should_skip_authentication(req: &Request<Body>) -> bool {
 
     // Check exact matches
     if public_paths.contains(&path) {
+        tracing::debug!(path = %path, "Skipping authentication: exact path match");
         return true;
     }
 
@@ -178,11 +222,14 @@ fn should_skip_authentication(req: &Request<Body>) -> bool {
         "/.well-known/",
         "/auth/",
         "/api/health",
-        "/api/build-info",
         "/ui",
     ];
 
-    public_prefixes.iter().any(|prefix| path.starts_with(prefix))
+    let skip = public_prefixes.iter().any(|prefix| path.starts_with(prefix));
+    if skip {
+        tracing::debug!(path = %path, "Skipping authentication: prefix match");
+    }
+    skip
 }
 
 // =============================================================================

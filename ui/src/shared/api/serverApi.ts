@@ -18,6 +18,7 @@ class ServerApiClient {
       const response = await fetch(url, {
         ...options,
         signal: controller.signal,
+        credentials: "include", // Include cookies for auth
         headers: {
           "Content-Type": "application/json",
           ...options.headers,

@@ -99,6 +99,7 @@ pub fn get_manager() -> Option<std::sync::Arc<octofhir_canonical_manager::Canoni
 }
 
 async fn build_registry_with_manager(cfg: &AppConfig) -> Result<CanonicalRegistry, String> {
+    use octofhir_canonical_manager::traits::PackageStore;
     use octofhir_canonical_manager::{CanonicalManager, FcmConfig};
 
     // Start with default FCM config; allow env overrides and quick init flags
@@ -113,7 +114,6 @@ async fn build_registry_with_manager(cfg: &AppConfig) -> Result<CanonicalRegistr
     let base = std::path::PathBuf::from(&base_dir);
     fcm_cfg.storage.packages_dir = base.join("packages");
     fcm_cfg.storage.cache_dir = base.join("cache");
-    // Optionally, we could direct storage into a project-local path by env vars
 
     // Collect installable specs (require id and version)
     let mut install_specs: Vec<(String, String)> = Vec::new();
@@ -148,18 +148,7 @@ async fn build_registry_with_manager(cfg: &AppConfig) -> Result<CanonicalRegistr
         install_specs.push((core_id, core_ver));
     }
 
-    // Preflight check package metadata (including dependencies) to ensure FHIR version compatibility
-    let storage = fcm_cfg.get_expanded_storage_config();
-    let registry_client = octofhir_canonical_manager::registry::RegistryClient::new(
-        &fcm_cfg.registry,
-        storage.cache_dir.clone(),
-    )
-    .await
-    .map_err(|e| format!("registry init error: {e}"))?;
-    preflight_validate_all(&registry_client, &install_specs, desired).await?;
-    tracing::info!(packages = %install_specs.iter().map(|(n,v)| format!("{n}@{v}")).collect::<Vec<_>>().join(", "), count = install_specs.len(), "FHIR package preflight passed");
-
-    // Initialize manager with PostgreSQL storage
+    // Initialize PostgreSQL storage FIRST to check for already-installed packages
     let pg_cfg = cfg
         .storage
         .postgres
@@ -173,6 +162,60 @@ async fn build_registry_with_manager(cfg: &AppConfig) -> Result<CanonicalRegistr
 
     // Create PostgresPackageStore (implements both PackageStore and SearchStorage)
     let postgres_store = Arc::new(PostgresPackageStore::new(pg_pool));
+
+    // Check which packages are already installed in the database
+    let installed_packages: std::collections::HashSet<String> = match postgres_store
+        .list_packages()
+        .await
+    {
+        Ok(pkgs) => pkgs
+            .iter()
+            .map(|p| format!("{}@{}", p.name, p.version))
+            .collect(),
+        Err(e) => {
+            tracing::warn!("failed to list installed packages: {}", e);
+            std::collections::HashSet::new()
+        }
+    };
+
+    // Filter out already-installed packages from preflight check
+    let packages_to_validate: Vec<(String, String)> = install_specs
+        .iter()
+        .filter(|(name, version)| {
+            let key = format!("{}@{}", name, version);
+            if installed_packages.contains(&key) {
+                tracing::info!(package = %key, "package already installed, skipping preflight");
+                false
+            } else {
+                true
+            }
+        })
+        .cloned()
+        .collect();
+
+    // Only do network preflight for packages that aren't already installed
+    let storage = fcm_cfg.get_expanded_storage_config();
+    let registry_client = octofhir_canonical_manager::registry::RegistryClient::new(
+        &fcm_cfg.registry,
+        storage.cache_dir.clone(),
+    )
+    .await
+    .map_err(|e| format!("registry init error: {e}"))?;
+
+    if !packages_to_validate.is_empty() {
+        preflight_validate_all(&registry_client, &packages_to_validate, desired).await?;
+        tracing::info!(
+            packages = %packages_to_validate.iter().map(|(n,v)| format!("{n}@{v}")).collect::<Vec<_>>().join(", "),
+            count = packages_to_validate.len(),
+            "FHIR package preflight passed"
+        );
+    } else {
+        tracing::info!(
+            packages = %install_specs.iter().map(|(n,v)| format!("{n}@{v}")).collect::<Vec<_>>().join(", "),
+            count = install_specs.len(),
+            "all packages already installed, skipping preflight"
+        );
+    }
 
     // Create manager with PostgreSQL storage
     let manager: std::sync::Arc<CanonicalManager> = match CanonicalManager::new_with_components(
@@ -194,7 +237,13 @@ async fn build_registry_with_manager(cfg: &AppConfig) -> Result<CanonicalRegistr
     };
 
     // Install configured packages (manager handles dependencies)
+    // Only install packages that aren't already in the database
     for (name, version) in &install_specs {
+        let key = format!("{}@{}", name, version);
+        if installed_packages.contains(&key) {
+            tracing::debug!(package = %key, "package already installed, skipping install");
+            continue;
+        }
         if let Err(e) = manager.install_package(name, version).await {
             tracing::error!("failed to install package {}@{}: {}", name, version, e);
         }

@@ -151,10 +151,14 @@ impl GatewayRouter {
 
     /// Creates an Axum router for the gateway.
     ///
-    /// The router handles all requests to `/api/*` and dispatches them
-    /// based on the loaded routes.
+    /// The router uses a catch-all `/{*path}` route as a fallback for any path
+    /// not matched by explicit routes. This allows users to define custom operations
+    /// on any path (not just `/api/*`).
+    ///
+    /// **Important**: This router should be merged LAST in the router chain so that
+    /// explicit routes are matched first.
     pub fn create_router() -> Router<AppState> {
-        Router::new().route("/api/{*path}", any(gateway_handler))
+        Router::new().route("/{*path}", any(gateway_handler))
     }
 
     /// Looks up a route by method and path.
@@ -171,7 +175,7 @@ impl Default for GatewayRouter {
     }
 }
 
-/// Main gateway handler that dispatches requests to the appropriate operation handler.
+/// Gateway handler for routed requests (used with `/{*path}` route).
 #[axum::debug_handler]
 async fn gateway_handler(
     State(state): State<AppState>,
@@ -179,18 +183,45 @@ async fn gateway_handler(
     request: Request<Body>,
 ) -> Result<Response, GatewayError> {
     let method = request.method().as_str();
-    let full_path = format!("/api/{}", path);
+    let full_path = format!("/{}", path);
 
-    debug!(method = method, path = %full_path, "Gateway request");
+    debug!(method = method, path = %full_path, "Gateway routed request");
+    gateway_dispatch(&state, &full_path, request).await
+}
+
+/// Gateway fallback handler for unmatched requests.
+///
+/// This is used as a `.fallback()` handler when no explicit route matches.
+/// It looks up custom operations defined by users. If no matching custom
+/// operation is found, it returns 404.
+#[axum::debug_handler]
+pub async fn gateway_fallback_handler(
+    State(state): State<AppState>,
+    request: Request<Body>,
+) -> Result<Response, GatewayError> {
+    let full_path = request.uri().path().to_string();
+    debug!(path = %full_path, "Gateway fallback request");
+    gateway_dispatch(&state, &full_path, request).await
+}
+
+/// Internal dispatch function used by both routed and fallback handlers.
+async fn gateway_dispatch(
+    state: &AppState,
+    full_path: &str,
+    request: Request<Body>,
+) -> Result<Response, GatewayError> {
+    let method = request.method().as_str();
+
+    debug!(method = method, path = %full_path, "Gateway dispatch");
 
     // Look up the route
     let operation = state
         .gateway_router
-        .get_route(method, &full_path)
+        .get_route(method, full_path)
         .await
         .ok_or_else(|| GatewayError::RouteNotFound {
             method: method.to_string(),
-            path: full_path.clone(),
+            path: full_path.to_string(),
         })?;
 
     info!(
@@ -202,10 +233,10 @@ async fn gateway_handler(
 
     // Dispatch to the appropriate handler based on operation type
     match operation.operation_type.as_str() {
-        "proxy" => super::proxy::handle_proxy(&state, &operation, request).await,
-        "sql" => super::sql::handle_sql(&state, &operation, request).await,
-        "fhirpath" => super::fhirpath::handle_fhirpath(&state, &operation, request).await,
-        "handler" => super::handler::handle_handler(Arc::new(state), &operation, request).await,
+        "proxy" => super::proxy::handle_proxy(state, &operation, request).await,
+        "sql" => super::sql::handle_sql(state, &operation, request).await,
+        "fhirpath" => super::fhirpath::handle_fhirpath(state, &operation, request).await,
+        "handler" => super::handler::handle_handler(Arc::new(state.clone()), &operation, request).await,
         unknown => Err(GatewayError::InvalidConfig(format!(
             "Unknown operation type: {}",
             unknown

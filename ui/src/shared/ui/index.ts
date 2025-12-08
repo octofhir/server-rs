@@ -5,6 +5,7 @@ export * from "./Input";
 export * from "./JsonViewer";
 export * from "./Loader";
 export * from "./Modal";
+export * from "./RouteGuard";
 export * from "./Select";
 export * from "./Splitter";
 export * from "./StatusBadge";

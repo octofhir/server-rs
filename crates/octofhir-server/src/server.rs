@@ -3,6 +3,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use axum::{Router, extract::FromRef, middleware, routing::get};
+use octofhir_auth::config::CookieConfig;
 use octofhir_auth::middleware::AuthState;
 use octofhir_auth::policy::{
     PolicyCache, PolicyChangeNotifier, PolicyEvaluator, PolicyEvaluatorConfig, PolicyReloadService,
@@ -661,10 +662,19 @@ pub async fn build_app(cfg: &AppConfig) -> Result<Router, anyhow::Error> {
     let _listener_handle = policy_listener.start();
     tracing::info!("Policy LISTEN/NOTIFY listener started");
 
-    // Create policy evaluator
+    // Create policy evaluator with policies evaluated FIRST
+    // This allows explicit Allow policies (like admin policy) to grant access
+    // without requiring SMART scopes for non-FHIR endpoints like /api/*
     let policy_evaluator = Arc::new(PolicyEvaluator::new(
         policy_cache.clone(),
-        PolicyEvaluatorConfig::default(),
+        PolicyEvaluatorConfig {
+            evaluate_scopes_first: false, // Policies first, then scope check
+            rhai_enabled: cfg.auth.policy.rhai_enabled,
+            quickjs_enabled: cfg.auth.policy.quickjs_enabled,
+            rhai_config: cfg.auth.policy.rhai.clone().into(),
+            quickjs_config: cfg.auth.policy.quickjs.clone().into(),
+            ..PolicyEvaluatorConfig::default()
+        },
     ));
     tracing::info!("Policy evaluator initialized");
 
@@ -728,9 +738,6 @@ pub async fn build_app(cfg: &AppConfig) -> Result<Router, anyhow::Error> {
 }
 
 fn build_router(state: AppState, body_limit: usize) -> Router {
-    // Create gateway router for dynamic API endpoints
-    let gateway_routes = crate::gateway::GatewayRouter::create_router();
-
     // Build OAuth routes if auth is enabled
     let oauth_routes = build_oauth_routes(&state);
 
@@ -742,9 +749,7 @@ fn build_router(state: AppState, body_limit: usize) -> Router {
         .route("/metadata", get(handlers::metadata))
         // Browser favicon shortcut
         .route("/favicon.ico", get(handlers::favicon))
-        // Merge gateway routes (handles /api/* dynamically)
-        .merge(gateway_routes)
-        // New API endpoints for UI
+        // API endpoints for UI (before gateway fallback)
         .route("/api/health", get(handlers::api_health))
         .route("/api/build-info", get(handlers::api_build_info))
         .route("/api/resource-types", get(handlers::api_resource_types))
@@ -834,6 +839,9 @@ fn build_router(state: AppState, body_limit: usize) -> Router {
                 .patch(handlers::patch_resource)
                 .delete(handlers::delete_resource),
         )
+        // Gateway fallback - only called when no explicit route matches.
+        // This allows users to define custom operations on any path.
+        .fallback(crate::gateway::router::gateway_fallback_handler)
         // Middleware stack (outer to inner: body limit -> trace -> compression/cors -> content negotiation -> authz -> auth -> request id -> handler)
         // Note: Layers wrap from outside-in, so first .layer() is closest to handler
         .layer(middleware::from_fn(app_middleware::request_id))
@@ -846,7 +854,8 @@ fn build_router(state: AppState, body_limit: usize) -> Router {
             app_middleware::authentication_middleware,
         ))
         .layer(middleware::from_fn(app_middleware::content_negotiation))
-        .layer(CorsLayer::permissive())
+
+        
         .layer(CompressionLayer::new())
         .layer(
             TraceLayer::new_for_http()
@@ -920,14 +929,16 @@ fn build_oauth_routes(state: &AppState) -> Option<Router> {
     let oauth_router = crate::oauth::oauth_routes(oauth_state.clone());
     let jwks_router = crate::oauth::jwks_route(oauth_state.jwks_state.clone());
     let smart_config_router = crate::oauth::smart_config_route(oauth_state.smart_config_state);
+    let userinfo_router = crate::oauth::userinfo_route(auth_state.clone());
 
-    tracing::info!("OAuth routes enabled: /auth/token, /auth/jwks, /.well-known/smart-configuration");
+    tracing::info!("OAuth routes enabled: /auth/token, /auth/logout, /auth/userinfo, /auth/jwks, /.well-known/smart-configuration");
 
     Some(
         Router::new()
             .merge(oauth_router)
             .merge(jwks_router)
-            .merge(smart_config_router),
+            .merge(smart_config_router)
+            .merge(userinfo_router),
     )
 }
 
@@ -992,6 +1003,47 @@ async fn shutdown_signal() {
 
 /// Initialize the authentication state if auth is enabled.
 ///
+/// Build CORS layer with appropriate settings for cookie-based auth.
+///
+/// When cookies are enabled:
+/// - Allow credentials
+/// - Mirror the Origin header (for development compatibility)
+/// - Allow common HTTP methods
+///
+/// When cookies are disabled:
+/// - Use permissive CORS (any origin, any method)
+fn build_cors_layer(cookie_config: &CookieConfig) -> CorsLayer {
+    use axum::http::{header, Method};
+
+    if cookie_config.enabled {
+        // When cookie auth is enabled, we need to:
+        // 1. Allow credentials
+        // 2. Use specific origin (not wildcard) - mirror the Origin header for development
+        CorsLayer::new()
+            .allow_credentials(true)
+            .allow_origin(tower_http::cors::AllowOrigin::mirror_request())
+            .allow_methods([
+                Method::GET,
+                Method::POST,
+                Method::PUT,
+                Method::PATCH,
+                Method::DELETE,
+                Method::OPTIONS,
+            ])
+            .allow_headers([
+                header::AUTHORIZATION,
+                header::CONTENT_TYPE,
+                header::ACCEPT,
+                header::ORIGIN,
+                header::COOKIE,
+            ])
+            .expose_headers([header::SET_COOKIE])
+    } else {
+        // Permissive CORS when cookie auth is disabled
+        CorsLayer::permissive()
+    }
+}
+
 /// Returns `Some(AuthState)` if auth is enabled and initialization succeeds,
 /// or `None` if auth is disabled.
 async fn initialize_auth_state(
@@ -1049,10 +1101,13 @@ async fn initialize_auth_state(
     let revoked_token_storage = Arc::new(ArcRevokedTokenStorage::new(db_pool.clone()));
     let user_storage = Arc::new(ArcUserStorage::new(db_pool));
 
-    Some(AuthState::new(
-        jwt_service,
-        client_storage,
-        revoked_token_storage,
-        user_storage,
-    ))
+    Some(
+        AuthState::new(
+            jwt_service,
+            client_storage,
+            revoked_token_storage,
+            user_storage,
+        )
+        .with_cookie_config(cfg.auth.cookie.clone()),
+    )
 }

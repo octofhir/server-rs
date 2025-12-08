@@ -30,8 +30,11 @@ octofhir-config = { path = "crates/octofhir-config" }
 octofhir-core = { path = "crates/octofhir-core" }
 octofhir-sof = { path = "crates/octofhir-sof" }
 octofhir-storage = { path = "crates/octofhir-storage" }
-octofhir-canonical-manager = { version = "0.1.16"}
+octofhir-canonical-manager = { version = "0.1.17", default-features = false }
 octofhir-fhir-model = { version = "0.1.6", features = ["http-client"] }
+
+# Tower LSP for SQL language server
+tower-lsp = "0.20.0"
 
 # Test utilities
 filetime = "0.2"
@@ -104,3 +107,7 @@ panic = "abort"
 [profile.bench]
 inherits = "release"
 debug = true
+
+# Patch sqlx to disable sqlite and avoid libsqlite3-sys version conflicts
+[patch.crates-io]
+sqlx = { git = "https://github.com/launchbadge/sqlx", tag = "v0.8.6", default-features = false, features = ["postgres", "runtime-tokio-native-tls", "macros", "migrate"] }

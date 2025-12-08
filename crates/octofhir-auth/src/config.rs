@@ -55,6 +55,9 @@ pub struct AuthConfig {
 
     /// Audit configuration.
     pub audit: AuditConfig,
+
+    /// Cookie configuration for browser-based authentication.
+    pub cookie: CookieConfig,
 }
 
 impl Default for AuthConfig {
@@ -69,6 +72,7 @@ impl Default for AuthConfig {
             federation: FederationConfig::default(),
             rate_limiting: RateLimitingConfig::default(),
             audit: AuditConfig::default(),
+            cookie: CookieConfig::default(),
         }
     }
 }
@@ -407,6 +411,135 @@ impl Default for AuditConfig {
             log_access_decisions: true,
             log_token_operations: true,
         }
+    }
+}
+
+/// Cookie configuration for browser-based authentication.
+///
+/// Controls the Set-Cookie header behavior for access tokens,
+/// enabling HttpOnly cookie-based authentication for web UIs.
+///
+/// # Example (TOML)
+///
+/// ```toml
+/// [auth.cookie]
+/// enabled = true
+/// name = "octofhir_token"
+/// secure = true
+/// same_site = "strict"
+/// path = "/"
+/// ```
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(default)]
+pub struct CookieConfig {
+    /// Enable cookie-based authentication.
+    /// When enabled, token responses include a Set-Cookie header.
+    pub enabled: bool,
+
+    /// Cookie name for the access token.
+    pub name: String,
+
+    /// Set the Secure flag (cookie only sent over HTTPS).
+    /// Should be true in production.
+    pub secure: bool,
+
+    /// Set the HttpOnly flag (cookie not accessible via JavaScript).
+    /// Always recommended for security.
+    pub http_only: bool,
+
+    /// SameSite attribute: "strict", "lax", or "none".
+    pub same_site: String,
+
+    /// Cookie path. Typically "/" for site-wide access.
+    pub path: String,
+
+    /// Optional domain for the cookie.
+    /// If not set, defaults to the current domain.
+    pub domain: Option<String>,
+}
+
+impl Default for CookieConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true, // Enabled by default for UI support
+            name: "octofhir_token".to_string(),
+            secure: false, // Set to true in production with HTTPS
+            http_only: true,
+            same_site: "lax".to_string(), // Lax allows cookies on top-level navigation
+            path: "/".to_string(),
+            domain: None,
+        }
+    }
+}
+
+impl CookieConfig {
+    /// Build a Set-Cookie header value for the given token and max-age.
+    ///
+    /// Returns `None` if cookies are disabled.
+    pub fn build_cookie(&self, token: &str, max_age_secs: i64) -> Option<String> {
+        if !self.enabled {
+            return None;
+        }
+
+        let mut parts = vec![
+            format!("{}={}", self.name, token),
+            format!("Max-Age={}", max_age_secs),
+            format!("Path={}", self.path),
+        ];
+
+        if self.http_only {
+            parts.push("HttpOnly".to_string());
+        }
+
+        if self.secure {
+            parts.push("Secure".to_string());
+        }
+
+        // SameSite attribute
+        let same_site = match self.same_site.to_lowercase().as_str() {
+            "strict" => "Strict",
+            "lax" => "Lax",
+            "none" => "None",
+            _ => "Strict", // Default to strict for security
+        };
+        parts.push(format!("SameSite={}", same_site));
+
+        if let Some(ref domain) = self.domain {
+            parts.push(format!("Domain={}", domain));
+        }
+
+        Some(parts.join("; "))
+    }
+
+    /// Build a Set-Cookie header to clear/delete the cookie.
+    pub fn build_clear_cookie(&self) -> String {
+        let mut parts = vec![
+            format!("{}=", self.name),
+            "Max-Age=0".to_string(),
+            format!("Path={}", self.path),
+        ];
+
+        if self.http_only {
+            parts.push("HttpOnly".to_string());
+        }
+
+        if self.secure {
+            parts.push("Secure".to_string());
+        }
+
+        let same_site = match self.same_site.to_lowercase().as_str() {
+            "strict" => "Strict",
+            "lax" => "Lax",
+            "none" => "None",
+            _ => "Strict",
+        };
+        parts.push(format!("SameSite={}", same_site));
+
+        if let Some(ref domain) = self.domain {
+            parts.push(format!("Domain={}", domain));
+        }
+
+        parts.join("; ")
     }
 }
 

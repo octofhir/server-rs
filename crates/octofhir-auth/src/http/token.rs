@@ -44,6 +44,7 @@ use tracing::{debug, info, warn};
 use time::{Duration, OffsetDateTime};
 use uuid::Uuid;
 
+use crate::config::CookieConfig;
 use crate::error::AuthError;
 use crate::oauth::token::{TokenError, TokenErrorCode, TokenRequest, TokenResponse};
 use crate::storage::{ClientStorage, RefreshTokenStorage, RevokedTokenStorage, UserStorage};
@@ -61,6 +62,8 @@ pub struct TokenState {
     client_storage: Arc<dyn ClientStorage>,
     /// User storage for password grant (optional).
     user_storage: Option<Arc<dyn UserStorage>>,
+    /// Cookie configuration for browser-based auth.
+    cookie_config: CookieConfig,
 }
 
 impl TokenState {
@@ -85,6 +88,7 @@ impl TokenState {
             token_service,
             client_storage,
             user_storage: None,
+            cookie_config: CookieConfig::default(),
         }
     }
 
@@ -97,6 +101,7 @@ impl TokenState {
             token_service,
             client_storage,
             user_storage: None,
+            cookie_config: CookieConfig::default(),
         }
     }
 
@@ -104,6 +109,13 @@ impl TokenState {
     #[must_use]
     pub fn with_user_storage(mut self, user_storage: Arc<dyn UserStorage>) -> Self {
         self.user_storage = Some(user_storage);
+        self
+    }
+
+    /// Sets cookie configuration for browser-based authentication.
+    #[must_use]
+    pub fn with_cookie_config(mut self, cookie_config: CookieConfig) -> Self {
+        self.cookie_config = cookie_config;
         self
     }
 }
@@ -175,7 +187,7 @@ pub async fn token_handler(
                 grant_type = %request.grant_type,
                 "Token issued successfully"
             );
-            token_success_response(response)
+            token_success_response(response, &state.cookie_config)
         }
         Err(e) => {
             warn!(
@@ -453,17 +465,37 @@ async fn password_grant(
 }
 
 /// Build a successful token response.
-fn token_success_response(response: TokenResponse) -> Response {
-    (
-        StatusCode::OK,
-        [
-            ("Content-Type", "application/json"),
-            ("Cache-Control", "no-store"),
-            ("Pragma", "no-cache"),
-        ],
-        Json(response),
-    )
-        .into_response()
+///
+/// If cookie configuration is enabled, includes a Set-Cookie header with
+/// the access token for browser-based authentication.
+fn token_success_response(response: TokenResponse, cookie_config: &CookieConfig) -> Response {
+    // Build the Set-Cookie header if enabled
+    let cookie_header = cookie_config.build_cookie(
+        &response.access_token,
+        response.expires_in as i64,
+    );
+
+    let mut headers = vec![
+        ("Content-Type".to_string(), "application/json".to_string()),
+        ("Cache-Control".to_string(), "no-store".to_string()),
+        ("Pragma".to_string(), "no-cache".to_string()),
+    ];
+
+    if let Some(cookie) = cookie_header {
+        debug!(cookie_name = %cookie_config.name, "Setting auth cookie");
+        headers.push(("Set-Cookie".to_string(), cookie));
+    }
+
+    let mut res = Response::builder().status(StatusCode::OK);
+
+    for (name, value) in &headers {
+        res = res.header(name.as_str(), value.as_str());
+    }
+
+    res.body(axum::body::Body::from(
+        serde_json::to_string(&response).unwrap_or_default(),
+    ))
+    .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
 }
 
 /// Build an error response for token endpoint.
