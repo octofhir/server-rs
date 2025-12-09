@@ -312,8 +312,8 @@ where
 
         // Check if Authorization header is present or cookie auth is available
         let has_auth_header = parts.headers.get(AUTHORIZATION).is_some();
-        let has_cookie_token = auth_state.cookie_config.enabled
-            && parts.headers.get(COOKIE).is_some();
+        let has_cookie_token =
+            auth_state.cookie_config.enabled && parts.headers.get(COOKIE).is_some();
 
         if !has_auth_header && !has_cookie_token {
             return Ok(OptionalBearerAuth(None));
@@ -348,15 +348,14 @@ fn extract_token_from_cookie(parts: &Parts, cookie_config: &CookieConfig) -> Opt
     let cookie_name = &cookie_config.name;
     for cookie in cookie_header.split(';') {
         let cookie = cookie.trim();
-        if let Some((name, value)) = cookie.split_once('=') {
-            if name.trim() == cookie_name {
+        if let Some((name, value)) = cookie.split_once('=')
+            && name.trim() == cookie_name {
                 let value = value.trim();
                 if !value.is_empty() {
                     tracing::debug!(cookie_name = %cookie_name, "Token extracted from cookie");
                     return Some(value.to_string());
                 }
             }
-        }
     }
 
     None

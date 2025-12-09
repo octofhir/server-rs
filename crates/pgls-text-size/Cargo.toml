@@ -1,0 +1,20 @@
+# This crate is derived from Supabase postgres-language-server
+# https://github.com/supabase-community/postgres-language-server
+# Licensed under MIT License
+# Copyright (c) 2023 Philipp Steinrötter
+
+[package]
+name = "pgls-text-size"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Text size types for PostgreSQL LSP (from Supabase postgres-language-server)"
+
+[features]
+default = []
+serde = ["dep:serde"]
+schema = ["schemars"]
+
+[dependencies]
+serde = { version = "1.0", optional = true }
+schemars = { version = "0.8", optional = true }

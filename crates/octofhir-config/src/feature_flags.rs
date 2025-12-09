@@ -77,8 +77,10 @@ impl FeatureContext {
 /// Type of feature flag
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "snake_case")]
+#[derive(Default)]
 pub enum FeatureFlagType {
     /// Simple on/off toggle
+    #[default]
     Boolean,
     /// Percentage-based rollout (0-100)
     Percentage {
@@ -103,11 +105,6 @@ fn default_percentage() -> u8 {
     0
 }
 
-impl Default for FeatureFlagType {
-    fn default() -> Self {
-        Self::Boolean
-    }
-}
 
 /// A single feature flag
 #[derive(Debug, Clone, Serialize, Deserialize)]

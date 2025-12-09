@@ -297,14 +297,13 @@ impl ConfigurationManager {
         // Update merged config
         {
             let mut merged = self.merged.write().await;
-            if let Some(category_value) = merged.config_mut().as_object_mut() {
-                if let Some(cat_obj) = category_value
+            if let Some(category_value) = merged.config_mut().as_object_mut()
+                && let Some(cat_obj) = category_value
                     .get_mut(&category.to_string())
                     .and_then(|v| v.as_object_mut())
                 {
                     cat_obj.insert(key.to_string(), value.clone());
                 }
-            }
         }
 
         // Broadcast change event

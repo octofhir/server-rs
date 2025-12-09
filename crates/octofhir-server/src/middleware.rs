@@ -6,7 +6,10 @@ use axum::response::IntoResponse;
 use axum::{
     Json,
     body::Body,
-    http::{HeaderName, HeaderValue, Request, StatusCode, header::{AUTHORIZATION, COOKIE}},
+    http::{
+        HeaderName, HeaderValue, Request, StatusCode,
+        header::{AUTHORIZATION, COOKIE},
+    },
     middleware::Next,
     response::Response,
 };
@@ -94,12 +97,8 @@ pub async fn authentication_middleware(
         Err(e) => {
             tracing::debug!(error = %e, "Token validation failed");
             match e {
-                octofhir_auth::AuthError::TokenExpired => {
-                    unauthorized_response("Token expired")
-                }
-                octofhir_auth::AuthError::TokenRevoked => {
-                    unauthorized_response("Token revoked")
-                }
+                octofhir_auth::AuthError::TokenExpired => unauthorized_response("Token expired"),
+                octofhir_auth::AuthError::TokenRevoked => unauthorized_response("Token revoked"),
                 _ => unauthorized_response(&e.to_string()),
             }
         }
@@ -137,7 +136,9 @@ async fn validate_token(
         .ok_or_else(|| octofhir_auth::AuthError::invalid_token("Unknown client"))?;
 
     if !client.active {
-        return Err(octofhir_auth::AuthError::invalid_token("Client is inactive"));
+        return Err(octofhir_auth::AuthError::invalid_token(
+            "Client is inactive",
+        ));
     }
 
     // Load user context if subject is a UUID
@@ -218,14 +219,11 @@ fn should_skip_authentication(req: &Request<Body>) -> bool {
     }
 
     // Check prefix matches
-    let public_prefixes = [
-        "/.well-known/",
-        "/auth/",
-        "/api/health",
-        "/ui",
-    ];
+    let public_prefixes = ["/.well-known/", "/auth/", "/api/health", "/ui"];
 
-    let skip = public_prefixes.iter().any(|prefix| path.starts_with(prefix));
+    let skip = public_prefixes
+        .iter()
+        .any(|prefix| path.starts_with(prefix));
     if skip {
         tracing::debug!(path = %path, "Skipping authentication: prefix match");
     }

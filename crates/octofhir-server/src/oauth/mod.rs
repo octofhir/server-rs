@@ -13,19 +13,18 @@
 
 use std::sync::Arc;
 
-use axum::{Router, routing::{get, post}};
-use octofhir_auth::{
-    AuthState,
-    LogoutState, logout_handler,
-    TokenState, token_handler,
-    jwks_handler, JwksState,
-    smart_configuration_handler, SmartConfigState,
-    userinfo_handler,
+use axum::{
+    Router,
+    routing::{get, post},
 };
-use octofhir_auth::token::service::TokenConfig;
 use octofhir_auth::token::jwt::JwtService;
+use octofhir_auth::token::service::TokenConfig;
+use octofhir_auth::{
+    AuthState, JwksState, LogoutState, SmartConfigState, TokenState, jwks_handler, logout_handler,
+    smart_configuration_handler, token_handler, userinfo_handler,
+};
 use octofhir_auth_postgres::{
-    ArcClientStorage, ArcRevokedTokenStorage, ArcRefreshTokenStorage, ArcSessionStorage,
+    ArcClientStorage, ArcRefreshTokenStorage, ArcRevokedTokenStorage, ArcSessionStorage,
     ArcUserStorage,
 };
 use time::Duration;
@@ -44,10 +43,7 @@ pub struct OAuthState {
 
 impl OAuthState {
     /// Creates OAuth state from application state.
-    pub fn from_app_state(
-        app_state: &AppState,
-        jwt_service: Arc<JwtService>,
-    ) -> Option<Self> {
+    pub fn from_app_state(app_state: &AppState, jwt_service: Arc<JwtService>) -> Option<Self> {
         // Get config
         let config = &app_state.config;
 
@@ -68,12 +64,9 @@ impl OAuthState {
         let refresh_token_secs = config.auth.oauth.refresh_token_lifetime.as_secs() as i64;
 
         // Create token config
-        let token_config = TokenConfig::new(
-            config.auth.issuer.clone(),
-            config.base_url(),
-        )
-        .with_access_token_lifetime(Duration::seconds(access_token_secs))
-        .with_refresh_token_lifetime(Duration::seconds(refresh_token_secs));
+        let token_config = TokenConfig::new(config.auth.issuer.clone(), config.base_url())
+            .with_access_token_lifetime(Duration::seconds(access_token_secs))
+            .with_refresh_token_lifetime(Duration::seconds(refresh_token_secs));
 
         // Create user storage for password grant support
         let user_storage = Arc::new(ArcUserStorage::new(db_pool.clone()));
@@ -102,10 +95,7 @@ impl OAuthState {
 
         // Create SmartConfigState - parse base URL
         let base_url = Url::parse(&config.base_url()).ok()?;
-        let smart_config_state = SmartConfigState::new(
-            config.auth.clone(),
-            base_url,
-        );
+        let smart_config_state = SmartConfigState::new(config.auth.clone(), base_url);
 
         Some(Self {
             token_state,
@@ -145,7 +135,10 @@ pub fn jwks_route(state: JwksState) -> Router {
 /// Creates SMART configuration discovery route.
 pub fn smart_config_route(state: SmartConfigState) -> Router {
     Router::new()
-        .route("/.well-known/smart-configuration", get(smart_configuration_handler))
+        .route(
+            "/.well-known/smart-configuration",
+            get(smart_configuration_handler),
+        )
         .with_state(state)
 }
 

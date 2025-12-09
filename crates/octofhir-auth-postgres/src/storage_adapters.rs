@@ -11,21 +11,19 @@ use uuid::Uuid;
 
 use octofhir_auth::oauth::session::{AuthorizationSession, LaunchContext};
 use octofhir_auth::storage::{
-    ClientStorage as ClientStorageTrait,
-    RefreshTokenStorage as RefreshTokenStorageTrait,
-    RevokedTokenStorage as RevokedTokenStorageTrait,
-    SessionStorage as SessionStorageTrait,
-    User, UserStorage as UserStorageTrait,
+    ClientStorage as ClientStorageTrait, RefreshTokenStorage as RefreshTokenStorageTrait,
+    RevokedTokenStorage as RevokedTokenStorageTrait, SessionStorage as SessionStorageTrait, User,
+    UserStorage as UserStorageTrait,
 };
 use octofhir_auth::types::{Client, RefreshToken};
 use octofhir_auth::{AuthError, AuthResult};
 
+use crate::PgPool;
 use crate::client::PostgresClientStorage;
 use crate::revoked_token::RevokedTokenStorage;
 use crate::session::SessionStorage;
 use crate::token::TokenStorage;
 use crate::user::{UserRow, UserStorage};
-use crate::PgPool;
 
 // =============================================================================
 // Arc-Owning Client Storage
@@ -260,8 +258,9 @@ impl UserStorageTrait for ArcUserStorage {
                 match u.password_hash {
                     Some(hash) => {
                         // Verify using bcrypt
-                        bcrypt::verify(password, &hash)
-                            .map_err(|e| AuthError::storage(format!("Password verification failed: {}", e)))
+                        bcrypt::verify(password, &hash).map_err(|e| {
+                            AuthError::storage(format!("Password verification failed: {}", e))
+                        })
                     }
                     None => {
                         // User has no password (federated/SSO user)
@@ -372,8 +371,9 @@ impl SessionStorageTrait for ArcSessionStorage {
             .map_err(|e| AuthError::storage(e.to_string()))?;
 
         // Return the updated session with consumed_at set
-        let mut consumed_session: AuthorizationSession = serde_json::from_value(updated_row.resource)
-            .map_err(|e| AuthError::storage(format!("Failed to deserialize session: {}", e)))?;
+        let mut consumed_session: AuthorizationSession =
+            serde_json::from_value(updated_row.resource)
+                .map_err(|e| AuthError::storage(format!("Failed to deserialize session: {}", e)))?;
         consumed_session.consumed_at = Some(OffsetDateTime::now_utc());
         Ok(consumed_session)
     }
@@ -404,7 +404,11 @@ impl SessionStorageTrait for ArcSessionStorage {
         Ok(())
     }
 
-    async fn update_launch_context(&self, id: Uuid, launch_context: LaunchContext) -> AuthResult<()> {
+    async fn update_launch_context(
+        &self,
+        id: Uuid,
+        launch_context: LaunchContext,
+    ) -> AuthResult<()> {
         let storage = SessionStorage::new(&self.pool);
 
         // Get current session

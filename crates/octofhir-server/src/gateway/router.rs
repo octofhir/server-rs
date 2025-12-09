@@ -236,7 +236,9 @@ async fn gateway_dispatch(
         "proxy" => super::proxy::handle_proxy(state, &operation, request).await,
         "sql" => super::sql::handle_sql(state, &operation, request).await,
         "fhirpath" => super::fhirpath::handle_fhirpath(state, &operation, request).await,
-        "handler" => super::handler::handle_handler(Arc::new(state.clone()), &operation, request).await,
+        "handler" => {
+            super::handler::handle_handler(Arc::new(state.clone()), &operation, request).await
+        }
         unknown => Err(GatewayError::InvalidConfig(format!(
             "Unknown operation type: {}",
             unknown

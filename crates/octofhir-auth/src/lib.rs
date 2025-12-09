@@ -45,9 +45,10 @@ pub use config::{AuthConfig, ConfigError};
 pub use error::{AuthError, ErrorCategory};
 pub use http::{
     Bundle, BundleEntry, CreateLaunchRequest, CreateLaunchResponse, IdpSearchParams, JwksState,
-    LaunchState, LinkIdentityRequest, LogoutState, SmartConfigState, TokenState, UnlinkIdentityRequest,
-    UserInfoResponse, UserSearchParams, create_launch_handler, introspect_handler, jwks_handler,
-    logout_handler, revoke_handler, smart_configuration_handler, token_handler, userinfo_handler,
+    LaunchState, LinkIdentityRequest, LogoutState, SmartConfigState, TokenState,
+    UnlinkIdentityRequest, UserInfoResponse, UserSearchParams, create_launch_handler,
+    introspect_handler, jwks_handler, logout_handler, revoke_handler, smart_configuration_handler,
+    token_handler, userinfo_handler,
 };
 pub use middleware::{
     AdminAuth, AuthContext, AuthState, BearerAuth, OptionalBearerAuth, UserContext,

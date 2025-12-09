@@ -30,7 +30,7 @@ use std::sync::Arc;
 use axum::{
     Json,
     extract::State,
-    http::{header::AUTHORIZATION, header::COOKIE, HeaderMap, StatusCode},
+    http::{HeaderMap, StatusCode, header::AUTHORIZATION, header::COOKIE},
     response::{IntoResponse, Response},
 };
 use serde::Serialize;
@@ -96,10 +96,7 @@ pub struct LogoutResponse {
 ///
 /// The endpoint is lenient - it returns 200 OK even if no token was found,
 /// to ensure the cookie is always cleared on the client.
-pub async fn logout_handler(
-    State(state): State<LogoutState>,
-    headers: HeaderMap,
-) -> Response {
+pub async fn logout_handler(State(state): State<LogoutState>, headers: HeaderMap) -> Response {
     // Try to extract token from Authorization header first
     let token = extract_token_from_header(&headers)
         .or_else(|| extract_token_from_cookie(&headers, &state.cookie_config));
@@ -160,14 +157,13 @@ fn extract_token_from_cookie(headers: &HeaderMap, cookie_config: &CookieConfig) 
 
     for cookie in cookie_header.split(';') {
         let cookie = cookie.trim();
-        if let Some((name, value)) = cookie.split_once('=') {
-            if name.trim() == cookie_name {
+        if let Some((name, value)) = cookie.split_once('=')
+            && name.trim() == cookie_name {
                 let value = value.trim();
                 if !value.is_empty() {
                     return Some(value.to_string());
                 }
             }
-        }
     }
 
     None

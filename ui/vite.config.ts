@@ -1,10 +1,21 @@
 import { resolve } from "node:path";
-import solid from "vite-plugin-solid";
 import { defineConfig } from "vite";
+import solid from "vite-plugin-solid";
+import { monaco as monacoEditorPlugin } from "@bithero/monaco-editor-vite-plugin";
 
 export default defineConfig({
-	plugins: [solid()],
 	base: "/ui/",
+	plugins: [
+		solid(),
+		monacoEditorPlugin({
+			// Only include SQL, JavaScript, TypeScript languages
+			languages: ["sql", "javascript", "typescript"],
+			// Include all features for these languages
+			features: "all",
+			// Expose Monaco globally for our custom worker setup
+			globalAPI: true,
+		}),
+	],
 	resolve: {
 		alias: {
 			"@": resolve(__dirname, "./src"),
@@ -29,7 +40,6 @@ export default defineConfig({
 				target: "http://localhost:8888",
 				changeOrigin: true,
 			},
-
 			"/auth": {
 				target: "http://localhost:8888",
 				changeOrigin: true,
@@ -46,6 +56,6 @@ export default defineConfig({
 		outDir: "dist",
 	},
 	optimizeDeps: {
-		include: ["monaco-editor"],
+		exclude: ["monaco-editor"],
 	},
 });

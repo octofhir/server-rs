@@ -110,8 +110,8 @@ pub struct OctofhirServer {
 /// 4. Bootstraps auth resources (admin user, default UI client)
 /// 5. Starts hot-reload listener
 async fn bootstrap_conformance_if_postgres(cfg: &AppConfig) -> Result<(), anyhow::Error> {
-    use octofhir_db_postgres::{HotReloadBuilder, PostgresConformanceStorage, sync_and_load};
     use octofhir_auth_postgres::{ArcClientStorage, ArcUserStorage};
+    use octofhir_db_postgres::{HotReloadBuilder, PostgresConformanceStorage, sync_and_load};
     use std::path::PathBuf;
 
     let pg_cfg = cfg.storage.postgres.as_ref().ok_or_else(|| {
@@ -317,10 +317,14 @@ async fn load_structure_definitions_from_packages() -> Vec<StructureDefinition> 
     use octofhir_canonical_manager::search::SearchQuery;
 
     // Try to get StructureDefinitions from canonical manager
+    tracing::debug!("Attempting to load StructureDefinitions from canonical manager");
     if let Some(manager) = crate::canonical::get_manager() {
-        // Query for all StructureDefinitions in loaded packages
+        tracing::debug!("Canonical manager is available, querying for StructureDefinitions");
+        // Query for ALL StructureDefinitions in loaded packages
+        // IMPORTANT: Set high limit to get all SDs (FHIR has ~140 resources + ~200 types)
         let query = SearchQuery {
             resource_types: vec!["StructureDefinition".to_string()],
+            limit: Some(10000), // High limit to ensure we get ALL StructureDefinitions
             ..Default::default()
         };
 
@@ -343,6 +347,8 @@ async fn load_structure_definitions_from_packages() -> Vec<StructureDefinition> 
                         structure_definitions.len()
                     );
                     return structure_definitions;
+                } else {
+                    tracing::warn!("Query returned 0 StructureDefinitions from canonical manager");
                 }
             }
             Err(e) => {
@@ -352,8 +358,11 @@ async fn load_structure_definitions_from_packages() -> Vec<StructureDefinition> 
                 );
             }
         }
+    } else {
+        tracing::debug!("Canonical manager not available");
     }
 
+    tracing::debug!("Returning empty StructureDefinition list");
     Vec::new()
 }
 
@@ -424,14 +433,30 @@ pub async fn build_app(cfg: &AppConfig) -> Result<Router, anyhow::Error> {
 
         if !structure_definitions.is_empty() {
             // DynamicSchemaProvider handles StructureDefinition -> FhirSchema translation internally
+            tracing::info!(
+                "Converting {} StructureDefinitions to FhirSchema format",
+                structure_definitions.len()
+            );
             let provider = DynamicSchemaProvider::from_structure_definitions(
                 structure_definitions,
                 fhir_version,
             );
+            let schema_count = provider.schema_count();
             tracing::info!(
-                "Initialized dynamic FHIR model provider for version {:?} with {} schemas from configured packages",
-                cfg.fhir.version,
-                provider.schema_count()
+                "Converted to {} FhirSchemas (FHIR version: {:?})",
+                schema_count,
+                cfg.fhir.version
+            );
+
+            if schema_count == 0 {
+                return Err(anyhow::anyhow!(
+                    "Failed to convert StructureDefinitions to FhirSchemas - conversion resulted in 0 schemas. Cannot start server without schemas."
+                ));
+            }
+
+            tracing::info!(
+                "✓ Model provider initialized successfully with {} schemas from packages",
+                schema_count
             );
             Arc::new(provider)
         } else {
@@ -441,23 +466,40 @@ pub async fn build_app(cfg: &AppConfig) -> Result<Router, anyhow::Error> {
             );
             let schemas = get_schemas(schema_version).clone();
             let schema_count = schemas.len();
+
+            if schema_count == 0 {
+                return Err(anyhow::anyhow!(
+                    "Embedded schemas are empty for version {:?}. Cannot start server without schemas.",
+                    schema_version
+                ));
+            }
+
             let provider = DynamicSchemaProvider::new(schemas, fhir_version);
             tracing::info!(
-                "Initialized dynamic FHIR model provider for version {:?} with {} embedded schemas (fallback)",
-                cfg.fhir.version,
-                schema_count
+                "✓ Model provider initialized with {} embedded schemas (fallback, FHIR version: {:?})",
+                schema_count,
+                cfg.fhir.version
             );
             Arc::new(provider)
         }
     } else {
         // No packages configured - use embedded schemas for the configured FHIR version
+        tracing::info!("No packages configured, using embedded schemas");
         let schemas = get_schemas(schema_version).clone();
         let schema_count = schemas.len();
+
+        if schema_count == 0 {
+            return Err(anyhow::anyhow!(
+                "Embedded schemas are empty for version {:?}. Cannot start server without schemas.",
+                schema_version
+            ));
+        }
+
         let provider = DynamicSchemaProvider::new(schemas, fhir_version);
         tracing::info!(
-            "Initialized FHIR model provider for version {:?} with {} embedded schemas",
-            cfg.fhir.version,
-            schema_count
+            "✓ Model provider initialized with {} embedded schemas (FHIR version: {:?})",
+            schema_count,
+            cfg.fhir.version
         );
         Arc::new(provider)
     };
@@ -856,15 +898,14 @@ fn build_router(state: AppState, body_limit: usize) -> Router {
             app_middleware::authentication_middleware,
         ))
         .layer(middleware::from_fn(app_middleware::content_negotiation))
-
-        
         .layer(CompressionLayer::new())
         .layer(
             TraceLayer::new_for_http()
                 .make_span_with(|req: &axum::http::Request<_>| {
                     use tracing::field::Empty;
-                    // Skip creating a span for browser favicon requests to avoid noisy logs
-                    if req.uri().path() == "/favicon.ico" {
+                    // Skip creating a span for browser favicon and health check requests to avoid noisy logs
+                    let path = req.uri().path();
+                    if path == "/favicon.ico" || path == "/api/health" || path == "/healthz" {
                         return tracing::span!(tracing::Level::TRACE, "noop");
                     }
                     let method = req.method().clone();
@@ -925,7 +966,8 @@ fn build_oauth_routes(state: &AppState) -> Option<Router> {
     let auth_state = state.auth_state.as_ref()?;
 
     // Create OAuth state using the JWT service from auth state
-    let oauth_state = crate::oauth::OAuthState::from_app_state(state, auth_state.jwt_service.clone())?;
+    let oauth_state =
+        crate::oauth::OAuthState::from_app_state(state, auth_state.jwt_service.clone())?;
 
     // Build OAuth routes
     let oauth_router = crate::oauth::oauth_routes(oauth_state.clone());
@@ -933,7 +975,9 @@ fn build_oauth_routes(state: &AppState) -> Option<Router> {
     let smart_config_router = crate::oauth::smart_config_route(oauth_state.smart_config_state);
     let userinfo_router = crate::oauth::userinfo_route(auth_state.clone());
 
-    tracing::info!("OAuth routes enabled: /auth/token, /auth/logout, /auth/userinfo, /auth/jwks, /.well-known/smart-configuration");
+    tracing::info!(
+        "OAuth routes enabled: /auth/token, /auth/logout, /auth/userinfo, /auth/jwks, /.well-known/smart-configuration"
+    );
 
     Some(
         Router::new()
@@ -1015,7 +1059,7 @@ async fn shutdown_signal() {
 /// When cookies are disabled:
 /// - Use permissive CORS (any origin, any method)
 fn build_cors_layer(cookie_config: &CookieConfig) -> CorsLayer {
-    use axum::http::{header, Method};
+    use axum::http::{Method, header};
 
     if cookie_config.enabled {
         // When cookie auth is enabled, we need to:
@@ -1068,32 +1112,66 @@ async fn initialize_auth_state(
         }
     };
 
-    // Generate signing key pair
-    // TODO: In production, keys should be loaded from secure storage or rotated
-    let signing_key = match algorithm {
-        SigningAlgorithm::RS256 | SigningAlgorithm::RS384 => {
-            match SigningKeyPair::generate_rsa(algorithm) {
+    // Load or generate signing key pair
+    let signing_key = if let (Some(private_pem), Some(public_pem)) = (
+        cfg.auth.signing.private_key_pem.as_ref(),
+        cfg.auth.signing.public_key_pem.as_ref(),
+    ) {
+        // Load key from configuration
+        let kid = cfg
+            .auth
+            .signing
+            .kid
+            .clone()
+            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+
+        match SigningKeyPair::from_pem(kid.clone(), algorithm, private_pem, public_pem) {
+            Ok(key) => {
+                tracing::info!(
+                    algorithm = %algorithm,
+                    kid = %kid,
+                    "Loaded JWT signing key from configuration"
+                );
+                key
+            }
+            Err(e) => {
+                tracing::error!(
+                    error = %e,
+                    "Failed to load JWT signing key from configuration"
+                );
+                return None;
+            }
+        }
+    } else {
+        // Generate new signing key pair
+        let key = match algorithm {
+            SigningAlgorithm::RS256 | SigningAlgorithm::RS384 => {
+                match SigningKeyPair::generate_rsa(algorithm) {
+                    Ok(key) => key,
+                    Err(e) => {
+                        tracing::error!(error = %e, "Failed to generate RSA signing key");
+                        return None;
+                    }
+                }
+            }
+            SigningAlgorithm::ES384 => match SigningKeyPair::generate_ec() {
                 Ok(key) => key,
                 Err(e) => {
-                    tracing::error!(error = %e, "Failed to generate RSA signing key");
+                    tracing::error!(error = %e, "Failed to generate EC signing key");
                     return None;
                 }
             }
-        }
-        SigningAlgorithm::ES384 => match SigningKeyPair::generate_ec() {
-            Ok(key) => key,
-            Err(e) => {
-                tracing::error!(error = %e, "Failed to generate EC signing key");
-                return None;
-            }
-        },
-    };
+        };
 
-    tracing::info!(
-        algorithm = %algorithm,
-        kid = %signing_key.kid,
-        "Generated JWT signing key"
-    );
+        tracing::warn!(
+            algorithm = %algorithm,
+            kid = %key.kid,
+            "Generated new JWT signing key - tokens will be invalidated on server restart. \
+             Consider setting auth.signing.private_key_pem in configuration for production."
+        );
+
+        key
+    };
 
     // Create JWT service
     let jwt_service = Arc::new(JwtService::new(signing_key, cfg.auth.issuer.clone()));

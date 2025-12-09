@@ -292,11 +292,10 @@ impl MergedConfig {
         }
 
         // Handle feature flags specially
-        if let Some(features_value) = partial.features {
-            if let Ok(flags) = serde_json::from_value::<FeatureFlags>(features_value) {
+        if let Some(features_value) = partial.features
+            && let Ok(flags) = serde_json::from_value::<FeatureFlags>(features_value) {
                 self.feature_flags.merge(flags);
             }
-        }
     }
 
     /// Get the merged configuration as JSON
@@ -337,13 +336,11 @@ impl MergedConfig {
     /// Validate the merged configuration
     pub fn validate(&self) -> Result<(), ConfigError> {
         // Server validation
-        if let Some(server) = self.config.get("server") {
-            if let Some(port) = server.get("port").and_then(|v| v.as_u64()) {
-                if port == 0 {
+        if let Some(server) = self.config.get("server")
+            && let Some(port) = server.get("port").and_then(|v| v.as_u64())
+                && port == 0 {
                     return Err(ConfigError::validation("server.port must be > 0"));
                 }
-            }
-        }
 
         // Search validation
         if let Some(search) = self.config.get("search") {
@@ -370,13 +367,12 @@ impl MergedConfig {
         }
 
         // Storage validation
-        if let Some(storage) = self.config.get("storage") {
-            if storage.get("postgres").is_none() {
+        if let Some(storage) = self.config.get("storage")
+            && storage.get("postgres").is_none() {
                 return Err(ConfigError::validation(
                     "storage.postgres config is required",
                 ));
             }
-        }
 
         Ok(())
     }

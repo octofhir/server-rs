@@ -8,7 +8,9 @@
 //!
 //! Resources are embedded at compile time using `include_str!` for single-binary distribution.
 
-use octofhir_auth::policy::resources::{AccessPolicy, EngineElement, MatcherElement, PolicyEngineType};
+use octofhir_auth::policy::resources::{
+    AccessPolicy, EngineElement, MatcherElement, PolicyEngineType,
+};
 use octofhir_auth::storage::{ClientStorage, PolicyStorage, User, UserStorage};
 use octofhir_auth::types::{Client, GrantType};
 use octofhir_db_postgres::PostgresConformanceStorage;
@@ -250,7 +252,10 @@ pub async fn bootstrap_admin_user<S: UserStorage>(
     );
 
     // Check if user already exists
-    if let Some(existing) = user_storage.find_by_username(&admin_config.username).await? {
+    if let Some(existing) = user_storage
+        .find_by_username(&admin_config.username)
+        .await?
+    {
         info!(
             user_id = %existing.id,
             username = %existing.username,
@@ -293,7 +298,7 @@ pub async fn bootstrap_admin_user<S: UserStorage>(
 
 /// Hash a password using bcrypt.
 fn hash_password(password: &str) -> Result<String, Box<dyn std::error::Error>> {
-    use bcrypt::{hash, DEFAULT_COST};
+    use bcrypt::{DEFAULT_COST, hash};
     let hashed = hash(password, DEFAULT_COST)?;
     Ok(hashed)
 }
@@ -321,7 +326,10 @@ pub async fn bootstrap_default_ui_client<S: ClientStorage>(
     );
 
     // Check if client already exists
-    if let Some(_existing) = client_storage.find_by_client_id(DEFAULT_UI_CLIENT_ID).await? {
+    if let Some(_existing) = client_storage
+        .find_by_client_id(DEFAULT_UI_CLIENT_ID)
+        .await?
+    {
         info!(
             client_id = DEFAULT_UI_CLIENT_ID,
             "Default UI client already exists, skipping bootstrap"
@@ -361,10 +369,7 @@ pub async fn bootstrap_default_ui_client<S: ClientStorage>(
         access_token_lifetime: None,
         refresh_token_lifetime: None,
         pkce_required: Some(true), // PKCE required for public clients
-        allowed_origins: vec![
-            issuer.to_string(),
-            "http://localhost:5173".to_string(),
-        ],
+        allowed_origins: vec![issuer.to_string(), "http://localhost:5173".to_string()],
         jwks: None,
         jwks_uri: None,
     };

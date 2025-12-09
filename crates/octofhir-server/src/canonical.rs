@@ -164,19 +164,17 @@ async fn build_registry_with_manager(cfg: &AppConfig) -> Result<CanonicalRegistr
     let postgres_store = Arc::new(PostgresPackageStore::new(pg_pool));
 
     // Check which packages are already installed in the database
-    let installed_packages: std::collections::HashSet<String> = match postgres_store
-        .list_packages()
-        .await
-    {
-        Ok(pkgs) => pkgs
-            .iter()
-            .map(|p| format!("{}@{}", p.name, p.version))
-            .collect(),
-        Err(e) => {
-            tracing::warn!("failed to list installed packages: {}", e);
-            std::collections::HashSet::new()
-        }
-    };
+    let installed_packages: std::collections::HashSet<String> =
+        match postgres_store.list_packages().await {
+            Ok(pkgs) => pkgs
+                .iter()
+                .map(|p| format!("{}@{}", p.name, p.version))
+                .collect(),
+            Err(e) => {
+                tracing::warn!("failed to list installed packages: {}", e);
+                std::collections::HashSet::new()
+            }
+        };
 
     // Filter out already-installed packages from preflight check
     let packages_to_validate: Vec<(String, String)> = install_specs

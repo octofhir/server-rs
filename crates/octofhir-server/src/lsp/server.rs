@@ -1,6 +1,8 @@
 //! PostgreSQL Language Server implementation using tower-lsp.
 //!
 //! Provides SQL completion with FHIR-aware JSONB path suggestions.
+//! Uses tree-sitter AST parsing from Supabase postgres-language-server for
+//! accurate context detection.
 
 use dashmap::DashMap;
 use std::sync::Arc;
@@ -8,14 +10,21 @@ use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::{
     CompletionItem, CompletionItemKind, CompletionOptions, CompletionParams, CompletionResponse,
     DidChangeTextDocumentParams, DidOpenTextDocumentParams, Hover, HoverParams,
-    HoverProviderCapability, InitializeParams, InitializeResult,
-    ServerCapabilities, TextDocumentSyncCapability, TextDocumentSyncKind, Url,
+    HoverProviderCapability, InitializeParams, InitializeResult, ServerCapabilities,
+    TextDocumentSyncCapability, TextDocumentSyncKind, Url,
 };
 use tower_lsp::{Client, LanguageServer};
 
+use crate::server::SharedModelProvider;
+
+use super::completion_filter::{CompletionFilter, CompletionRelevanceData};
 use super::fhir_resolver::FhirResolver;
 use super::parser::{CursorContext, SqlParser};
 use super::schema_cache::SchemaCache;
+
+// Tree-sitter imports for context-aware completions
+use pgls_text_size::TextSize;
+use pgls_treesitter::context::{TreeSitterContextParams, TreesitterContext};
 
 /// PostgreSQL Language Server with FHIR-aware JSONB path completion.
 pub struct PostgresLspServer {
@@ -34,9 +43,13 @@ pub struct PostgresLspServer {
 
 impl PostgresLspServer {
     /// Creates a new PostgreSQL LSP server.
-    pub fn new(client: Client, db_pool: Arc<sqlx_postgres::PgPool>) -> Self {
+    pub fn new(
+        client: Client,
+        db_pool: Arc<sqlx_postgres::PgPool>,
+        model_provider: SharedModelProvider,
+    ) -> Self {
         let schema_cache = Arc::new(SchemaCache::new(db_pool.clone()));
-        let fhir_resolver = Arc::new(FhirResolver::new());
+        let fhir_resolver = Arc::new(FhirResolver::with_model_provider(model_provider));
         Self {
             client,
             documents: DashMap::new(),
@@ -46,44 +59,431 @@ impl PostgresLspServer {
         }
     }
 
+    /// Get completions using tree-sitter AST context.
+    ///
+    /// This method uses Supabase's tree-sitter grammar and context detection
+    /// for accurate clause-based filtering of completions.
+    ///
+    /// Returns `None` if tree-sitter can't handle this context (e.g., JSONB paths)
+    /// and the caller should fall back to the regex parser.
+    fn get_completions_with_treesitter(
+        &self,
+        text: &str,
+        offset: usize,
+    ) -> Option<Vec<CompletionItem>> {
+        // Check for JSONB path context BEFORE tree-sitter parsing
+        // Tree-sitter grammar doesn't handle JSONB operator paths well
+        if self.is_jsonb_path_context(text, offset) {
+            tracing::debug!("Detected JSONB path context, deferring to regex parser");
+            return None; // Let the regex parser handle JSONB paths
+        }
+
+        // Parse SQL with Supabase's PostgreSQL grammar
+        let mut parser = tree_sitter::Parser::new();
+        if parser
+            .set_language(&pgls_treesitter_grammar::LANGUAGE.into())
+            .is_err()
+        {
+            tracing::warn!("Failed to load tree-sitter grammar, falling back to regex parser");
+            return None;
+        }
+
+        let Some(tree) = parser.parse(text, None) else {
+            tracing::debug!("Tree-sitter parse failed");
+            return None;
+        };
+
+        // Create context at cursor position
+        let position = TextSize::new(offset as u32);
+        let ctx = TreesitterContext::new(TreeSitterContextParams {
+            position,
+            text,
+            tree: &tree,
+        });
+
+        // Get mentioned tables from the query for column filtering
+        let mentioned_tables = self.get_mentioned_table_names(&ctx);
+
+        let mut items = Vec::new();
+        let mut has_non_keyword_items = false;
+
+        // Add tables with filtering
+        for table in self.schema_cache.get_tables() {
+            let filter = CompletionFilter::from(CompletionRelevanceData::Table(&table));
+            if filter.is_relevant(&ctx) {
+                items.push(self.table_to_completion(&table));
+                has_non_keyword_items = true;
+            }
+        }
+
+        // Add columns with filtering - ONLY from mentioned tables in the query
+        if !mentioned_tables.is_empty() {
+            for table_name in &mentioned_tables {
+                for col in self.schema_cache.get_columns(table_name) {
+                    let filter = CompletionFilter::from(CompletionRelevanceData::Column(&col));
+                    if filter.is_relevant(&ctx) {
+                        items.push(self.column_to_completion(&col, None));
+                        has_non_keyword_items = true;
+                    }
+                }
+            }
+        }
+
+        // Add functions with filtering
+        for func in self.schema_cache.get_functions() {
+            let filter = CompletionFilter::from(CompletionRelevanceData::Function(&func));
+            if filter.is_relevant(&ctx) {
+                items.push(self.function_to_completion(&func));
+                has_non_keyword_items = true;
+            }
+        }
+
+        // Add schemas with filtering
+        for schema in self.schema_cache.get_schemas() {
+            let filter = CompletionFilter::from(CompletionRelevanceData::Schema(&schema.name));
+            if filter.is_relevant(&ctx) {
+                // User schemas get higher sort priority
+                let sort_text = if schema.is_user_schema {
+                    format!("0{}", schema.name)
+                } else {
+                    format!("1{}", schema.name)
+                };
+
+                items.push(CompletionItem {
+                    label: schema.name.clone(),
+                    kind: Some(CompletionItemKind::MODULE),
+                    detail: Some("Schema".to_string()),
+                    sort_text: Some(sort_text),
+                    ..Default::default()
+                });
+                has_non_keyword_items = true;
+            }
+        }
+
+        // Only add keywords if we have other relevant items
+        // This prevents keyword-only responses that block JSONB path detection
+        if has_non_keyword_items {
+            items.extend(self.get_keyword_completions());
+        }
+
+        // Filter by prefix if there's a partial identifier at cursor
+        if let Some(ref identifier) = ctx.identifier_qualifiers.1 {
+            if !identifier.is_empty() {
+                let prefix_lower = identifier.to_lowercase();
+                items.retain(|item| item.label.to_lowercase().starts_with(&prefix_lower));
+            }
+        }
+
+        // Return None if no relevant items found - let regex parser handle it
+        if items.is_empty() {
+            return None;
+        }
+
+        Some(items)
+    }
+
+    /// Check if the cursor is in a JSONB path context (after ->, ->>, etc.)
+    fn is_jsonb_path_context(&self, text: &str, offset: usize) -> bool {
+        let before_cursor = &text[..offset.min(text.len())];
+
+        // Check for JSONB operators followed by optional quote
+        // Patterns: `->`, `->>`, `#>`, `#>>`, then optionally `'` and partial path
+        let jsonb_patterns = [
+            "->>'", "->'", "#>>'", "#>'", // With opening quote
+            "->>", "->", "#>>", "#>", // Without quote (might be typing)
+        ];
+
+        // Look for patterns near the end of the text before cursor
+        let check_len = 50.min(before_cursor.len());
+        let recent = &before_cursor[before_cursor.len() - check_len..];
+
+        for pattern in jsonb_patterns {
+            if recent.contains(pattern) {
+                // Found a JSONB operator - check if cursor is after it
+                if let Some(pos) = recent.rfind(pattern) {
+                    let after_op = &recent[pos + pattern.len()..];
+                    // If we're in quotes or right after the operator, it's JSONB context
+                    if after_op.is_empty()
+                        || after_op.starts_with('\'')
+                        || !after_op.contains(|c: char| c == ')' || c == ';' || c == ',')
+                    {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        false
+    }
+
+    /// Get the names of tables mentioned in the query (from FROM clause, JOINs, etc.)
+    fn get_mentioned_table_names(&self, ctx: &TreesitterContext) -> Vec<String> {
+        let mut tables = Vec::new();
+
+        // Get tables from mentioned_relations (no schema = None key)
+        if let Some(table_set) = ctx.get_mentioned_relations(&None) {
+            tables.extend(table_set.iter().cloned());
+        }
+
+        // Also check for tables with explicit schema
+        // We'd need to iterate all schema keys, but for now focus on public schema
+        if let Some(table_set) = ctx.get_mentioned_relations(&Some("public".to_string())) {
+            tables.extend(table_set.iter().cloned());
+        }
+
+        tables
+    }
+
+    /// Convert TableInfo to CompletionItem.
+    fn table_to_completion(&self, table: &super::schema_cache::TableInfo) -> CompletionItem {
+        let detail = if table.is_fhir_table {
+            format!(
+                "FHIR {} ({}.{})",
+                table.fhir_resource_type.as_deref().unwrap_or("Resource"),
+                table.schema,
+                table.table_type
+            )
+        } else {
+            format!("{}.{}", table.schema, table.table_type)
+        };
+
+        let sort_prefix = if table.is_fhir_table {
+            "0"
+        } else if table.schema == "public" {
+            "1"
+        } else {
+            "2"
+        };
+
+        CompletionItem {
+            label: table.name.clone(),
+            kind: Some(CompletionItemKind::CLASS),
+            detail: Some(detail),
+            sort_text: Some(format!("{}{}", sort_prefix, table.name)),
+            ..Default::default()
+        }
+    }
+
+    /// Convert ColumnInfo to CompletionItem.
+    fn column_to_completion(
+        &self,
+        col: &super::schema_cache::ColumnInfo,
+        alias: Option<&str>,
+    ) -> CompletionItem {
+        let label = col.name.clone();
+        let detail = format!(
+            "{} ({}) - from {}",
+            col.data_type,
+            if col.is_nullable {
+                "nullable"
+            } else {
+                "not null"
+            },
+            alias.unwrap_or(&col.table_name)
+        );
+
+        CompletionItem {
+            label,
+            kind: Some(CompletionItemKind::FIELD),
+            detail: Some(detail),
+            sort_text: Some(format!("0{}", col.name)),
+            ..Default::default()
+        }
+    }
+
+    /// Convert FunctionInfo to CompletionItem.
+    fn function_to_completion(&self, func: &super::schema_cache::FunctionInfo) -> CompletionItem {
+        use tower_lsp::lsp_types::InsertTextFormat;
+
+        let insert_text = Self::generate_function_snippet(&func.name, &func.signature);
+
+        CompletionItem {
+            label: func.name.clone(),
+            kind: Some(CompletionItemKind::FUNCTION),
+            detail: Some(format!("{} - {}", func.return_type, func.description)),
+            documentation: Some(tower_lsp::lsp_types::Documentation::String(format!(
+                "```sql\n{}\n```",
+                func.signature
+            ))),
+            insert_text: Some(insert_text),
+            insert_text_format: Some(InsertTextFormat::SNIPPET),
+            sort_text: Some(format!("1{}", func.name)),
+            ..Default::default()
+        }
+    }
+
+    /// Convert LSP position (line/character) to byte offset.
+    fn position_to_offset(text: &str, position: tower_lsp::lsp_types::Position) -> usize {
+        let mut offset = 0;
+        for (line_num, line) in text.lines().enumerate() {
+            if line_num == position.line as usize {
+                // Found the line, add character offset
+                // LSP uses UTF-16 code units, but we'll use byte offset for simplicity
+                let char_offset = position.character as usize;
+                let line_bytes: Vec<char> = line.chars().collect();
+                let byte_offset: usize = line_bytes
+                    .iter()
+                    .take(char_offset.min(line_bytes.len()))
+                    .map(|c| c.len_utf8())
+                    .sum();
+                return offset + byte_offset;
+            }
+            offset += line.len() + 1; // +1 for newline
+        }
+        offset.min(text.len())
+    }
+
     /// Get completions based on cursor context.
-    async fn get_completions_for_context(&self, context: &CursorContext) -> Vec<CompletionItem> {
+    async fn get_completions_for_context(
+        &self,
+        context: &CursorContext,
+        position: tower_lsp::lsp_types::Position,
+        document_text: &str,
+    ) -> Vec<CompletionItem> {
         match context {
             CursorContext::Keyword { partial } => {
                 self.filter_by_prefix(self.get_keyword_completions(), partial)
             }
-            CursorContext::SelectColumns { partial, .. } => {
-                let mut items = self.get_keyword_completions();
-                items.extend(self.get_jsonb_function_completions());
-                self.filter_by_prefix(items, partial)
-            }
-            CursorContext::FromClause { partial } => {
-                // Add table completions from schema cache
-                let mut items = self.get_table_completions();
+            CursorContext::SelectColumns { partial, tables, .. } => {
+                let mut items = Vec::new();
+
+                // Add column completions from all tables in FROM clause
+                for table_ref in tables {
+                    let cols = self.get_column_completions_for_table(&table_ref.table, table_ref.alias.as_deref());
+                    items.extend(cols);
+                }
+
+                items.extend(self.get_function_completions());
                 items.extend(self.get_keyword_completions());
                 self.filter_by_prefix(items, partial)
             }
-            CursorContext::WhereClause { partial, .. } => {
-                let mut items = self.get_keyword_completions();
-                items.extend(self.get_jsonb_function_completions());
+            CursorContext::FromClause { partial } => {
+                // Add table and schema completions (like Supabase LSP)
+                let mut items = self.get_table_completions();
+                items.extend(self.get_schema_completions());
+                items.extend(self.get_keyword_completions());
+                self.filter_by_prefix(items, partial)
+            }
+            CursorContext::SchemaTableAccess { schema, partial } => {
+                // Show only tables in the specified schema
+                let tables = self.get_tables_in_schema_completions(schema);
+                self.filter_by_prefix(tables, partial)
+            }
+            CursorContext::AliasColumnAccess { table, alias, partial, .. } => {
+                // Show columns for the aliased table
+                let items = self.get_column_completions_for_table(table, Some(alias));
+                self.filter_by_prefix(items, partial)
+            }
+            CursorContext::WhereClause { partial, tables, .. } => {
+                let mut items = Vec::new();
+
+                // Add column completions from all tables
+                for table_ref in tables {
+                    let cols = self.get_column_completions_for_table(&table_ref.table, table_ref.alias.as_deref());
+                    items.extend(cols);
+                }
+
+                items.extend(self.get_keyword_completions());
+                items.extend(self.get_function_completions());
                 items.extend(self.get_jsonb_operator_completions());
                 self.filter_by_prefix(items, partial)
             }
-            CursorContext::JsonbPath { table, path, .. } => {
+            CursorContext::JsonbPath { table, path, tables, quote_context, .. } => {
                 // Get FHIR path completions from canonical manager
-                self.get_fhir_path_completions(table, path).await
+                // If table is empty, try to infer from the first table in FROM clause
+                let resolved_table = if table.is_empty() && !tables.is_empty() {
+                    // Use the first table from FROM clause
+                    tables[0].table.clone()
+                } else {
+                    table.clone()
+                };
+                self.get_fhir_path_completions(&resolved_table, path, quote_context, position, document_text).await
             }
             CursorContext::FunctionArgs { function, .. } => {
                 // Return type hints for function arguments
                 self.get_function_arg_hints(function)
             }
+            CursorContext::GrantRole { partial } => {
+                // Show role completions for GRANT ... TO
+                let items = self.get_role_completions();
+                self.filter_by_prefix(items, partial)
+            }
+            CursorContext::GrantTable { partial } => {
+                // Show table completions for GRANT ON / POLICY ON
+                let mut items = self.get_table_completions();
+                items.extend(self.get_schema_completions());
+                self.filter_by_prefix(items, partial)
+            }
+            CursorContext::PolicyDefinition { table, partial } => {
+                // Show policy-related completions
+                let mut items = Vec::new();
+
+                // If we have a table, show policies for that table
+                if let Some(table_name) = table {
+                    let policies = self.schema_cache.get_policies_for_table(table_name);
+                    for policy in policies {
+                        items.push(CompletionItem {
+                            label: policy.name.clone(),
+                            kind: Some(CompletionItemKind::EVENT),
+                            detail: Some(format!("Policy ({}, {})",
+                                policy.command,
+                                if policy.permissive { "PERMISSIVE" } else { "RESTRICTIVE" }
+                            )),
+                            ..Default::default()
+                        });
+                    }
+                } else {
+                    // Show all policies
+                    items.extend(self.get_policy_completions());
+                }
+
+                // Also show roles for TO clause
+                items.extend(self.get_role_completions());
+                items.extend(self.get_keyword_completions());
+                self.filter_by_prefix(items, partial)
+            }
+            CursorContext::CastType { partial } => {
+                // Show type completions for CAST ... AS
+                let mut items = self.get_type_completions();
+                // Also add built-in type keywords
+                items.extend(self.get_keyword_completions());
+                self.filter_by_prefix(items, partial)
+            }
             CursorContext::Unknown { partial } => {
+                // Include all completions for unknown context
                 let mut items = self.get_keyword_completions();
-                items.extend(self.get_jsonb_function_completions());
+                items.extend(self.get_table_completions()); // Tables are useful everywhere
+                items.extend(self.get_function_completions());
                 items.extend(self.get_jsonb_operator_completions());
                 self.filter_by_prefix(items, partial)
             }
         }
+    }
+
+    /// Get column completions for a specific table, optionally prefixed with alias.
+    fn get_column_completions_for_table(&self, table_name: &str, alias: Option<&str>) -> Vec<CompletionItem> {
+        self.schema_cache
+            .get_columns(table_name)
+            .into_iter()
+            .map(|col| {
+                let label = col.name.clone();
+                let detail = format!(
+                    "{} ({}) - from {}",
+                    col.data_type,
+                    if col.is_nullable { "nullable" } else { "not null" },
+                    alias.unwrap_or(table_name)
+                );
+
+                CompletionItem {
+                    label,
+                    kind: Some(CompletionItemKind::FIELD),
+                    detail: Some(detail),
+                    // Sort columns higher than keywords
+                    sort_text: Some(format!("0{}", col.name)),
+                    ..Default::default()
+                }
+            })
+            .collect()
     }
 
     /// Filter completion items by prefix.
@@ -95,6 +495,55 @@ impl PostgresLspServer {
         items
             .into_iter()
             .filter(|item| item.label.to_lowercase().starts_with(&prefix_lower))
+            .collect()
+    }
+
+    /// Get schema completions from schema cache.
+    fn get_schema_completions(&self) -> Vec<CompletionItem> {
+        self.schema_cache
+            .get_schemas()
+            .into_iter()
+            .map(|schema| {
+                // User schemas get higher sort priority
+                let sort_text = if schema.is_user_schema {
+                    format!("0{}", schema.name)
+                } else {
+                    format!("1{}", schema.name)
+                };
+
+                CompletionItem {
+                    label: schema.name.clone(),
+                    kind: Some(CompletionItemKind::MODULE),
+                    detail: Some("Schema".to_string()),
+                    sort_text: Some(sort_text),
+                    ..Default::default()
+                }
+            })
+            .collect()
+    }
+
+    /// Get table completions for a specific schema.
+    fn get_tables_in_schema_completions(&self, schema: &str) -> Vec<CompletionItem> {
+        self.schema_cache
+            .get_tables_in_schema(schema)
+            .into_iter()
+            .map(|table| {
+                let detail = if table.is_fhir_table {
+                    format!(
+                        "FHIR {}",
+                        table.fhir_resource_type.as_deref().unwrap_or("Resource")
+                    )
+                } else {
+                    table.table_type.clone()
+                };
+
+                CompletionItem {
+                    label: table.name.clone(),
+                    kind: Some(CompletionItemKind::CLASS),
+                    detail: Some(detail),
+                    ..Default::default()
+                }
+            })
             .collect()
     }
 
@@ -115,10 +564,20 @@ impl PostgresLspServer {
                     format!("{}.{}", table.schema, table.table_type)
                 };
 
+                // Sorting: FHIR tables first (0), then public schema (1), then others (2)
+                let sort_prefix = if table.is_fhir_table {
+                    "0"
+                } else if table.schema == "public" {
+                    "1"
+                } else {
+                    "2"
+                };
+
                 CompletionItem {
                     label: table.name.clone(),
                     kind: Some(CompletionItemKind::CLASS),
                     detail: Some(detail),
+                    sort_text: Some(format!("{}{}", sort_prefix, table.name)),
                     ..Default::default()
                 }
             })
@@ -135,13 +594,117 @@ impl PostgresLspServer {
                 let detail = format!(
                     "{} ({})",
                     col.data_type,
-                    if col.is_nullable { "nullable" } else { "not null" }
+                    if col.is_nullable {
+                        "nullable"
+                    } else {
+                        "not null"
+                    }
                 );
 
                 CompletionItem {
                     label: col.name.clone(),
                     kind: Some(CompletionItemKind::FIELD),
                     detail: Some(detail),
+                    ..Default::default()
+                }
+            })
+            .collect()
+    }
+
+    /// Get policy completions from schema cache.
+    fn get_policy_completions(&self) -> Vec<CompletionItem> {
+        self.schema_cache
+            .get_policies()
+            .into_iter()
+            .map(|policy| {
+                let cmd_display = if policy.command == "ALL" {
+                    "all".to_string()
+                } else {
+                    policy.command.to_lowercase()
+                };
+                let perm_display = if policy.permissive {
+                    "PERMISSIVE"
+                } else {
+                    "RESTRICTIVE"
+                };
+                let detail = format!(
+                    "Policy on {}.{} ({}, {})",
+                    policy.schema, policy.table_name, cmd_display, perm_display
+                );
+
+                CompletionItem {
+                    label: policy.name.clone(),
+                    kind: Some(CompletionItemKind::EVENT), // Use EVENT kind for policies
+                    detail: Some(detail),
+                    sort_text: Some(format!("3{}", policy.name)), // Policies after tables and columns
+                    ..Default::default()
+                }
+            })
+            .collect()
+    }
+
+    /// Get role completions from schema cache.
+    fn get_role_completions(&self) -> Vec<CompletionItem> {
+        self.schema_cache
+            .get_roles()
+            .into_iter()
+            .map(|role| {
+                let mut attrs = Vec::new();
+                if role.is_superuser {
+                    attrs.push("superuser");
+                }
+                if role.can_login {
+                    attrs.push("login");
+                }
+                if role.create_db {
+                    attrs.push("createdb");
+                }
+                if role.create_role {
+                    attrs.push("createrole");
+                }
+                let detail = if attrs.is_empty() {
+                    "Role".to_string()
+                } else {
+                    format!("Role ({})", attrs.join(", "))
+                };
+
+                CompletionItem {
+                    label: role.name.clone(),
+                    kind: Some(CompletionItemKind::REFERENCE), // Use REFERENCE kind for roles
+                    detail: Some(detail),
+                    sort_text: Some(format!("4{}", role.name)), // Roles after policies
+                    ..Default::default()
+                }
+            })
+            .collect()
+    }
+
+    /// Get type completions from schema cache.
+    fn get_type_completions(&self) -> Vec<CompletionItem> {
+        self.schema_cache
+            .get_types()
+            .into_iter()
+            .map(|type_info| {
+                let detail = match type_info.category.as_str() {
+                    "Enum" => {
+                        if type_info.enum_labels.len() <= 5 {
+                            format!("Enum: {}", type_info.enum_labels.join(", "))
+                        } else {
+                            format!(
+                                "Enum: {}, ... ({} values)",
+                                type_info.enum_labels[..3].join(", "),
+                                type_info.enum_labels.len()
+                            )
+                        }
+                    }
+                    _ => format!("{} type", type_info.category),
+                };
+
+                CompletionItem {
+                    label: type_info.name.clone(),
+                    kind: Some(CompletionItemKind::TYPE_PARAMETER),
+                    detail: Some(detail),
+                    sort_text: Some(format!("5{}", type_info.name)), // Types after roles
                     ..Default::default()
                 }
             })
@@ -163,11 +726,75 @@ impl PostgresLspServer {
         }
     }
 
+    /// Calculate TextEdit for JSONB path completion with smart quote handling.
+    fn calculate_jsonb_text_edit(
+        element_name: &str,
+        quote_context: &super::parser::JsonbQuoteContext,
+        position: tower_lsp::lsp_types::Position,
+        document_text: &str,
+    ) -> tower_lsp::lsp_types::TextEdit {
+        use tower_lsp::lsp_types::{Position, Range, TextEdit};
+
+        let line_text = document_text
+            .lines()
+            .nth(position.line as usize)
+            .unwrap_or("");
+
+        let cursor_char = position.character as usize;
+
+        let (start_char, end_char, new_text) = if quote_context.cursor_inside_quotes {
+            // Inside quotes: resource->'nam|' → replace partial word
+            let before_cursor = &line_text[..cursor_char];
+            let quote_start = before_cursor
+                .rfind('\'')
+                .map(|p| p + 1)
+                .unwrap_or(cursor_char);
+
+            let after_cursor = &line_text[cursor_char..];
+            let quote_end = after_cursor
+                .find('\'')
+                .map(|p| cursor_char + p)
+                .unwrap_or(cursor_char);
+
+            (quote_start, quote_end, element_name.to_string())
+        } else if quote_context.has_opening_quote {
+            // After opening quote: resource->'| → insert without quotes
+            (cursor_char, cursor_char, element_name.to_string())
+        } else {
+            // No quotes: resource->| → insert with quotes
+            (cursor_char, cursor_char, format!("'{}'", element_name))
+        };
+
+        TextEdit {
+            range: Range {
+                start: Position {
+                    line: position.line,
+                    character: start_char as u32,
+                },
+                end: Position {
+                    line: position.line,
+                    character: end_char as u32,
+                },
+            },
+            new_text,
+        }
+    }
+
     /// Get FHIR path completions from the canonical manager.
     ///
     /// This method resolves FHIR element paths based on the table name (which maps
     /// to a resource type) and the current path context.
-    async fn get_fhir_path_completions(&self, table: &str, path: &[String]) -> Vec<CompletionItem> {
+    ///
+    /// Array indices in the path (like `identifier->0->system`) are filtered out
+    /// when building the FHIR path, since FHIR paths don't include array indices.
+    async fn get_fhir_path_completions(
+        &self,
+        table: &str,
+        path: &[String],
+        quote_context: &super::parser::JsonbQuoteContext,
+        position: tower_lsp::lsp_types::Position,
+        document_text: &str,
+    ) -> Vec<CompletionItem> {
         // Try to get resource type from table name via schema cache
         let resource_type = self
             .schema_cache
@@ -177,18 +804,44 @@ impl PostgresLspServer {
                 Self::to_pascal_case(table)
             });
 
+        // Filter out numeric segments (array indices) from the path
+        // FHIR paths don't include array indices: identifier[0].system -> identifier.system
+        let fhir_path_segments: Vec<&String> = path
+            .iter()
+            .filter(|s| !s.chars().all(|c| c.is_ascii_digit()))
+            .collect();
+
         // Build the parent path from existing path segments
-        let parent_path = if path.is_empty() {
+        // For nested paths like ['name', 'given'], we just pass 'name.given' to the resolver
+        let parent_path = if fhir_path_segments.is_empty() {
             String::new()
         } else {
-            format!("{}.{}", resource_type, path.join("."))
+            fhir_path_segments
+                .iter()
+                .map(|s| s.as_str())
+                .collect::<Vec<_>>()
+                .join(".")
         };
+
+        tracing::debug!(
+            "FHIR path completion: resource_type={}, parent_path='{}', raw_path={:?}",
+            resource_type,
+            parent_path,
+            path
+        );
 
         // Get children from FHIR resolver
         let children = self
             .fhir_resolver
             .get_children(&resource_type, &parent_path)
             .await;
+
+        tracing::debug!(
+            "FHIR resolver returned {} children for {}.{}",
+            children.len(),
+            resource_type,
+            parent_path
+        );
 
         // Convert to completion items
         children
@@ -217,14 +870,21 @@ impl PostgresLspServer {
                     cardinality
                 );
 
+                let text_edit = Self::calculate_jsonb_text_edit(
+                    &elem.name,
+                    quote_context,
+                    position,
+                    document_text,
+                );
+
                 CompletionItem {
                     label: elem.name.clone(),
                     kind: Some(kind),
                     detail: Some(detail),
-                    documentation: elem.definition.map(|d| {
-                        tower_lsp::lsp_types::Documentation::String(d)
-                    }),
-                    insert_text: Some(format!("'{}'", elem.name)),
+                    documentation: elem
+                        .definition
+                        .map(|d| tower_lsp::lsp_types::Documentation::String(d)),
+                    text_edit: Some(tower_lsp::lsp_types::CompletionTextEdit::Edit(text_edit)),
                     ..Default::default()
                 }
             })
@@ -258,10 +918,7 @@ impl PostgresLspServer {
                 vec![("'path_element'", "Path element string")]
             }
             "jsonb_set" | "jsonb_insert" => {
-                vec![
-                    ("'{path}'", "JSONB path array"),
-                    ("'value'", "New value"),
-                ]
+                vec![("'{path}'", "JSONB path array"), ("'value'", "New value")]
             }
             _ => vec![],
         };
@@ -277,95 +934,183 @@ impl PostgresLspServer {
             .collect()
     }
 
-    /// Get SQL keyword completions.
+    /// Get SQL keyword completions with context-aware sorting.
     fn get_keyword_completions(&self) -> Vec<CompletionItem> {
-        const SQL_KEYWORDS: &[(&str, &str)] = &[
-            ("SELECT", "Select columns from table"),
-            ("FROM", "Specify source table"),
-            ("WHERE", "Filter rows"),
-            ("JOIN", "Join tables"),
-            ("LEFT JOIN", "Left outer join"),
-            ("RIGHT JOIN", "Right outer join"),
-            ("INNER JOIN", "Inner join"),
-            ("ORDER BY", "Sort results"),
-            ("GROUP BY", "Group rows"),
-            ("HAVING", "Filter groups"),
-            ("LIMIT", "Limit result count"),
-            ("OFFSET", "Skip rows"),
-            ("INSERT INTO", "Insert data"),
-            ("UPDATE", "Update data"),
-            ("DELETE FROM", "Delete data"),
-            ("WITH", "Common table expression"),
-            ("UNION", "Combine results"),
-            ("DISTINCT", "Remove duplicates"),
-            ("AS", "Alias"),
-            ("AND", "Logical AND"),
-            ("OR", "Logical OR"),
-            ("NOT", "Logical NOT"),
-            ("IN", "In list"),
-            ("BETWEEN", "Between range"),
-            ("LIKE", "Pattern match"),
-            ("IS NULL", "Check null"),
-            ("IS NOT NULL", "Check not null"),
-            ("EXISTS", "Check existence"),
-            ("CASE", "Conditional expression"),
-            ("WHEN", "Case condition"),
-            ("THEN", "Case result"),
-            ("ELSE", "Default case"),
-            ("END", "End case/block"),
-            ("CAST", "Type cast"),
-            ("COALESCE", "First non-null"),
-            ("NULLIF", "Return null if equal"),
+        const SQL_KEYWORDS: &[(&str, &str, &str)] = &[
+            // Statement starters (high priority)
+            ("SELECT", "Select columns from table", "0"),
+            ("INSERT INTO", "Insert data", "0"),
+            ("UPDATE", "Update data", "0"),
+            ("DELETE FROM", "Delete data", "0"),
+            ("WITH", "Common table expression", "0"),
+            // Clause keywords (medium priority)
+            ("FROM", "Specify source table", "1"),
+            ("WHERE", "Filter rows", "1"),
+            ("JOIN", "Join tables", "1"),
+            ("LEFT JOIN", "Left outer join", "1"),
+            ("RIGHT JOIN", "Right outer join", "1"),
+            ("INNER JOIN", "Inner join", "1"),
+            ("FULL OUTER JOIN", "Full outer join", "1"),
+            ("CROSS JOIN", "Cross join", "1"),
+            ("ON", "Join condition", "1"),
+            ("ORDER BY", "Sort results", "1"),
+            ("GROUP BY", "Group rows", "1"),
+            ("HAVING", "Filter groups", "1"),
+            ("LIMIT", "Limit result count", "1"),
+            ("OFFSET", "Skip rows", "1"),
+            ("UNION", "Combine results", "1"),
+            ("UNION ALL", "Combine all results", "1"),
+            ("EXCEPT", "Subtract results", "1"),
+            ("INTERSECT", "Intersect results", "1"),
+            ("RETURNING", "Return modified rows", "1"),
+            // Modifiers (medium-low priority)
+            ("DISTINCT", "Remove duplicates", "2"),
+            ("ALL", "Include all", "2"),
+            ("AS", "Alias", "2"),
+            ("ASC", "Ascending order", "2"),
+            ("DESC", "Descending order", "2"),
+            ("NULLS FIRST", "Nulls first in ordering", "2"),
+            ("NULLS LAST", "Nulls last in ordering", "2"),
+            // Logical operators (lower priority)
+            ("AND", "Logical AND", "3"),
+            ("OR", "Logical OR", "3"),
+            ("NOT", "Logical NOT", "3"),
+            ("IN", "In list", "3"),
+            ("NOT IN", "Not in list", "3"),
+            ("BETWEEN", "Between range", "3"),
+            ("LIKE", "Pattern match (case-sensitive)", "3"),
+            ("ILIKE", "Pattern match (case-insensitive)", "3"),
+            ("SIMILAR TO", "Regex-like pattern match", "3"),
+            ("IS NULL", "Check null", "3"),
+            ("IS NOT NULL", "Check not null", "3"),
+            ("IS DISTINCT FROM", "Null-safe inequality", "3"),
+            ("IS NOT DISTINCT FROM", "Null-safe equality", "3"),
+            ("EXISTS", "Check existence", "3"),
+            ("ANY", "Compare to any array element", "3"),
+            ("SOME", "Alias for ANY", "3"),
+            // Conditional expressions (lower priority)
+            ("CASE", "Conditional expression", "4"),
+            ("WHEN", "Case condition", "4"),
+            ("THEN", "Case result", "4"),
+            ("ELSE", "Default case", "4"),
+            ("END", "End case/block", "4"),
+            // Type casting and coercion
+            ("CAST", "Type cast", "4"),
+            ("COALESCE", "First non-null", "4"),
+            ("NULLIF", "Return null if equal", "4"),
+            ("GREATEST", "Return largest value", "4"),
+            ("LEAST", "Return smallest value", "4"),
+            // Boolean literals
+            ("TRUE", "Boolean true", "5"),
+            ("FALSE", "Boolean false", "5"),
+            ("NULL", "Null value", "5"),
+            // Data types (for CAST)
+            ("TEXT", "Text data type", "6"),
+            ("INTEGER", "Integer data type", "6"),
+            ("BIGINT", "Big integer data type", "6"),
+            ("BOOLEAN", "Boolean data type", "6"),
+            ("NUMERIC", "Numeric data type", "6"),
+            ("TIMESTAMP", "Timestamp data type", "6"),
+            ("TIMESTAMPTZ", "Timestamp with timezone", "6"),
+            ("DATE", "Date data type", "6"),
+            ("TIME", "Time data type", "6"),
+            ("UUID", "UUID data type", "6"),
+            ("JSONB", "JSONB data type", "6"),
+            ("JSON", "JSON data type", "6"),
         ];
 
         SQL_KEYWORDS
             .iter()
-            .map(|(keyword, detail)| CompletionItem {
+            .map(|(keyword, detail, sort_priority)| CompletionItem {
                 label: keyword.to_string(),
                 kind: Some(CompletionItemKind::KEYWORD),
                 detail: Some(detail.to_string()),
+                sort_text: Some(format!("9{}{}", sort_priority, keyword)), // 9 prefix puts keywords after columns and functions
                 ..Default::default()
             })
             .collect()
     }
 
-    /// Get JSONB function completions.
-    fn get_jsonb_function_completions(&self) -> Vec<CompletionItem> {
-        const JSONB_FUNCTIONS: &[(&str, &str, &str)] = &[
-            ("jsonb_extract_path", "jsonb_extract_path(from_json, VARIADIC path_elems)", "Extract JSON sub-object at path"),
-            ("jsonb_extract_path_text", "jsonb_extract_path_text(from_json, VARIADIC path_elems)", "Extract JSON sub-object as text"),
-            ("jsonb_array_elements", "jsonb_array_elements(from_json)", "Expand JSONB array to set of rows"),
-            ("jsonb_array_elements_text", "jsonb_array_elements_text(from_json)", "Expand JSONB array as text"),
-            ("jsonb_object_keys", "jsonb_object_keys(from_json)", "Get set of keys in outermost object"),
-            ("jsonb_typeof", "jsonb_typeof(from_json)", "Get type of outermost JSON value"),
-            ("jsonb_agg", "jsonb_agg(expression)", "Aggregate values as JSONB array"),
-            ("jsonb_build_object", "jsonb_build_object(VARIADIC args)", "Build JSONB object from arguments"),
-            ("jsonb_build_array", "jsonb_build_array(VARIADIC args)", "Build JSONB array from arguments"),
-            ("jsonb_set", "jsonb_set(target, path, new_value [, create_if_missing])", "Set value at path"),
-            ("jsonb_insert", "jsonb_insert(target, path, new_value [, insert_after])", "Insert value at path"),
-            ("jsonb_path_query", "jsonb_path_query(target, path [, vars [, silent]])", "Execute JSONPath query"),
-            ("jsonb_path_query_array", "jsonb_path_query_array(target, path [, vars [, silent]])", "JSONPath query as array"),
-            ("jsonb_path_query_first", "jsonb_path_query_first(target, path [, vars [, silent]])", "First JSONPath result"),
-            ("jsonb_path_exists", "jsonb_path_exists(target, path [, vars [, silent]])", "Check if JSONPath returns items"),
-            ("jsonb_strip_nulls", "jsonb_strip_nulls(from_json)", "Remove null values recursively"),
-            ("jsonb_pretty", "jsonb_pretty(from_json)", "Pretty print JSONB"),
-            ("jsonb_each", "jsonb_each(from_json)", "Expand to key-value pairs"),
-            ("jsonb_each_text", "jsonb_each_text(from_json)", "Expand to key-text pairs"),
-            ("jsonb_populate_record", "jsonb_populate_record(base, from_json)", "Populate record from JSONB"),
-            ("jsonb_to_record", "jsonb_to_record(from_json)", "Convert JSONB to record"),
-            ("to_jsonb", "to_jsonb(anyelement)", "Convert to JSONB"),
-        ];
+    /// Get all PostgreSQL function completions from schema cache.
+    fn get_function_completions(&self) -> Vec<CompletionItem> {
+        use tower_lsp::lsp_types::InsertTextFormat;
 
-        JSONB_FUNCTIONS
-            .iter()
-            .map(|(name, signature, detail)| CompletionItem {
-                label: name.to_string(),
-                kind: Some(CompletionItemKind::FUNCTION),
-                detail: Some(detail.to_string()),
-                insert_text: Some(signature.to_string()),
-                ..Default::default()
+        self.schema_cache
+            .get_functions()
+            .into_iter()
+            .map(|func| {
+                // Generate snippet with placeholders for function arguments
+                let insert_text = Self::generate_function_snippet(&func.name, &func.signature);
+
+                CompletionItem {
+                    label: func.name.clone(),
+                    kind: Some(CompletionItemKind::FUNCTION),
+                    detail: Some(format!("{} - {}", func.return_type, func.description)),
+                    documentation: Some(tower_lsp::lsp_types::Documentation::String(
+                        format!("```sql\n{}\n```", func.signature)
+                    )),
+                    insert_text: Some(insert_text),
+                    insert_text_format: Some(InsertTextFormat::SNIPPET),
+                    // Sort functions after columns but before keywords
+                    sort_text: Some(format!("1{}", func.name)),
+                    ..Default::default()
+                }
             })
             .collect()
+    }
+
+    /// Generate a snippet with placeholders for function arguments.
+    fn generate_function_snippet(name: &str, signature: &str) -> String {
+        // Special cases for functions without parentheses
+        if matches!(name, "current_timestamp" | "current_date" | "current_time" |
+                          "localtime" | "localtimestamp" | "current_user") {
+            return name.to_string();
+        }
+
+        // Extract the part between parentheses from signature
+        if let Some(start) = signature.find('(') {
+            if let Some(end) = signature.rfind(')') {
+                let args_str = &signature[start + 1..end];
+
+                // Handle variadic and optional args by simplifying to simple placeholder
+                if args_str.contains("VARIADIC") || args_str.contains("...") {
+                    return format!("{}(${{1:}})", name);
+                }
+
+                // Handle special cases
+                if args_str.is_empty() || args_str.trim() == "*" {
+                    return format!("{}()", name);
+                }
+
+                // Parse arguments and create snippets
+                let args: Vec<&str> = args_str.split(',').collect();
+                let mut snippet_args = Vec::new();
+
+                for (i, arg) in args.iter().enumerate() {
+                    let arg = arg.trim();
+                    // Skip optional args (those in [])
+                    if arg.starts_with('[') {
+                        continue;
+                    }
+                    // Extract argument name (first word before type or AS)
+                    let arg_name = arg
+                        .split_whitespace()
+                        .next()
+                        .unwrap_or("arg")
+                        .trim_matches(|c| c == '[' || c == ']');
+                    snippet_args.push(format!("${{{}:{}}}", i + 1, arg_name));
+                }
+
+                if snippet_args.is_empty() {
+                    return format!("{}()", name);
+                }
+
+                return format!("{}({})", name, snippet_args.join(", "));
+            }
+        }
+
+        // Fallback: just the function name with empty parens
+        format!("{}()", name)
     }
 
     /// Get JSONB operator completions.
@@ -401,7 +1146,11 @@ impl PostgresLspServer {
 
 #[tower_lsp::async_trait]
 impl LanguageServer for PostgresLspServer {
-    async fn initialize(&self, _params: InitializeParams) -> Result<InitializeResult> {
+    async fn initialize(&self, params: InitializeParams) -> Result<InitializeResult> {
+        tracing::debug!(
+            client_name = ?params.client_info.as_ref().map(|c| &c.name),
+            "LSP initialize request received"
+        );
         Ok(InitializeResult {
             capabilities: ServerCapabilities {
                 text_document_sync: Some(TextDocumentSyncCapability::Kind(
@@ -429,13 +1178,16 @@ impl LanguageServer for PostgresLspServer {
     }
 
     async fn initialized(&self, _params: tower_lsp::lsp_types::InitializedParams) {
-        tracing::info!("PostgreSQL LSP server initialized");
+        tracing::debug!("PostgreSQL LSP server initialized");
 
         // Refresh schema cache on initialization
         self.refresh_schema_cache().await;
 
         self.client
-            .log_message(tower_lsp::lsp_types::MessageType::INFO, "PostgreSQL LSP ready")
+            .log_message(
+                tower_lsp::lsp_types::MessageType::INFO,
+                "PostgreSQL LSP ready",
+            )
             .await;
     }
 
@@ -444,18 +1196,23 @@ impl LanguageServer for PostgresLspServer {
     }
 
     async fn did_open(&self, params: DidOpenTextDocumentParams) {
-        self.documents.insert(
-            params.text_document.uri,
-            params.text_document.text,
+        tracing::trace!(
+            uri = %params.text_document.uri,
+            language = ?params.text_document.language_id,
+            text_len = params.text_document.text.len(),
+            "LSP did_open received"
         );
+        self.documents
+            .insert(params.text_document.uri, params.text_document.text);
     }
 
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
+        tracing::trace!(
+            uri = %params.text_document.uri,
+            "LSP did_change received"
+        );
         if let Some(change) = params.content_changes.into_iter().next() {
-            self.documents.insert(
-                params.text_document.uri,
-                change.text,
-            );
+            self.documents.insert(params.text_document.uri, change.text);
         }
     }
 
@@ -463,17 +1220,47 @@ impl LanguageServer for PostgresLspServer {
         let uri = &params.text_document_position.text_document.uri;
         let position = params.text_document_position.position;
 
+        tracing::trace!(
+            ?uri,
+            line = position.line,
+            character = position.character,
+            "LSP completion request received"
+        );
+
         let Some(text) = self.documents.get(uri) else {
+            tracing::debug!("LSP completion: document not found for URI");
             return Ok(None);
         };
 
-        // Use parser to detect cursor context
-        let context = SqlParser::get_context(&text, position);
+        // Calculate byte offset from position
+        let offset = Self::position_to_offset(&text, position);
 
-        tracing::debug!(?context, "LSP completion context detected");
+        // Try tree-sitter based completions first (Supabase approach)
+        // Returns None if tree-sitter can't handle this context (e.g., JSONB paths)
+        tracing::trace!("Trying tree-sitter based completions first");
+        if let Some(items) = self.get_completions_with_treesitter(&text, offset) {
+            tracing::debug!(
+                item_count = items.len(),
+                "LSP completion using tree-sitter context (early return)"
+            );
+            return Ok(Some(CompletionResponse::Array(items)));
+        }
+
+        // Fall back to regex-based parser for JSONB paths and other special cases
+        tracing::trace!("Tree-sitter returned None, falling back to SqlParser");
+        let context = SqlParser::get_context(&text, position);
+        tracing::debug!(
+            ?context,
+            line = position.line,
+            character = position.character,
+            "LSP completion context detected (works in SELECT, WHERE, JOIN, etc.)"
+        );
 
         // Get completions based on context
-        let items = self.get_completions_for_context(&context).await;
+        tracing::trace!("Getting completions for context");
+        let items = self.get_completions_for_context(&context, position, &text).await;
+
+        tracing::debug!(item_count = items.len(), "LSP completion returning items");
 
         Ok(Some(CompletionResponse::Array(items)))
     }
@@ -513,32 +1300,74 @@ impl PostgresLspServer {
                 column,
                 path,
                 operator,
+                tables,
+                ..
             } => {
                 // Get FHIR element hover info
-                self.get_fhir_path_hover(table, column, path, operator).await
+                // If table is empty, try to infer from the first table in FROM clause
+                let resolved_table = if table.is_empty() && !tables.is_empty() {
+                    &tables[0].table
+                } else {
+                    table
+                };
+                self.get_fhir_path_hover(resolved_table, column, path, operator)
+                    .await
             }
             CursorContext::FromClause { partial } if !partial.is_empty() => {
                 // Get table hover info
                 self.get_table_hover(partial)
             }
-            CursorContext::SelectColumns { partial, .. } if !partial.is_empty() => {
+            CursorContext::SelectColumns { partial, tables, .. } if !partial.is_empty() => {
                 // Try function hover first
                 if let Some(info) = self.get_function_hover(partial) {
                     return Some(info);
                 }
+                // Try column hover from tables in FROM clause
+                for table_ref in tables {
+                    if let Some(info) = self.get_column_hover(&table_ref.table, partial) {
+                        return Some(info);
+                    }
+                }
                 // Try table hover
                 self.get_table_hover(partial)
             }
-            CursorContext::WhereClause { partial, .. } if !partial.is_empty() => {
+            CursorContext::AliasColumnAccess { table, partial, .. } if !partial.is_empty() => {
+                // Show column hover for alias.column pattern
+                self.get_column_hover(table, partial)
+            }
+            CursorContext::WhereClause { partial, tables, .. } if !partial.is_empty() => {
                 // Try function hover
                 if let Some(info) = self.get_function_hover(partial) {
                     return Some(info);
                 }
+                // Try column hover from tables
+                for table_ref in tables {
+                    if let Some(info) = self.get_column_hover(&table_ref.table, partial) {
+                        return Some(info);
+                    }
+                }
                 // Try operator hover
                 self.get_operator_hover(partial)
             }
-            CursorContext::FunctionArgs { function, arg_index } => {
-                self.get_function_arg_hover(function, *arg_index)
+            CursorContext::FunctionArgs {
+                function,
+                arg_index,
+            } => self.get_function_arg_hover(function, *arg_index),
+            CursorContext::GrantRole { partial } if !partial.is_empty() => {
+                // Show role hover for GRANT/REVOKE TO role
+                self.get_role_hover(partial)
+            }
+            CursorContext::GrantTable { partial } if !partial.is_empty() => {
+                // Show table hover for GRANT ON table
+                self.get_table_hover(partial)
+            }
+            CursorContext::CastType { partial } if !partial.is_empty() => {
+                // Show type hover for CAST(... AS type)
+                self.get_type_hover(partial)
+            }
+            CursorContext::SchemaTableAccess { partial, .. } if !partial.is_empty() => {
+                // Show table hover for schema.table pattern
+                self.get_table_hover(partial)
             }
             _ => None,
         }
@@ -566,7 +1395,11 @@ impl PostgresLspServer {
         };
 
         // Try to get element info from FHIR resolver
-        if let Some(elem) = self.fhir_resolver.get_element(&resource_type, &element_path).await {
+        if let Some(elem) = self
+            .fhir_resolver
+            .get_element(&resource_type, &element_path)
+            .await
+        {
             let cardinality = if elem.max == 0 {
                 format!("{}..* (array)", elem.min)
             } else if elem.max == 1 {
@@ -617,8 +1450,8 @@ impl PostgresLspServer {
 
     /// Get hover information for a table.
     fn get_table_hover(&self, table_name: &str) -> Option<String> {
-        let tables = self.schema_cache.get_tables_matching(table_name);
-        let table = tables.first()?;
+        // Use exact match only - no prefix matching for hover
+        let table = self.schema_cache.get_table_by_name(table_name)?;
 
         let mut hover = format!("### Table: `{}.{}`\n\n", table.schema, table.name);
         hover.push_str(&format!("**Type:** {}\n\n", table.table_type));
@@ -642,11 +1475,72 @@ impl PostgresLspServer {
         if !columns.is_empty() {
             hover.push_str("\n\n**Columns:**\n");
             for col in columns.iter().take(10) {
-                let nullable = if col.is_nullable { "nullable" } else { "not null" };
-                hover.push_str(&format!("- `{}`: {} ({})\n", col.name, col.data_type, nullable));
+                let nullable = if col.is_nullable {
+                    "nullable"
+                } else {
+                    "not null"
+                };
+                hover.push_str(&format!(
+                    "- `{}`: {} ({})\n",
+                    col.name, col.data_type, nullable
+                ));
             }
             if columns.len() > 10 {
                 hover.push_str(&format!("- ... and {} more columns\n", columns.len() - 10));
+            }
+        }
+
+        Some(hover)
+    }
+
+    /// Get hover information for a column.
+    fn get_column_hover(&self, table_name: &str, column_name: &str) -> Option<String> {
+        let columns = self.schema_cache.get_columns(table_name);
+        let column = columns
+            .iter()
+            .find(|c| c.name.eq_ignore_ascii_case(column_name))?;
+
+        let mut hover = format!("### Column: `{}.{}`\n\n", table_name, column.name);
+        hover.push_str(&format!("**Type:** `{}`\n\n", column.data_type));
+        hover.push_str(&format!(
+            "**Nullable:** {}\n\n",
+            if column.is_nullable { "Yes" } else { "No" }
+        ));
+
+        if let Some(ref default) = column.default_value {
+            hover.push_str(&format!("**Default:** `{}`\n\n", default));
+        }
+
+        if let Some(ref desc) = column.description {
+            hover.push_str(&format!("**Description:** {}\n\n", desc));
+        }
+
+        // If this is a JSONB column in a FHIR table, add usage hints
+        if column.data_type == "jsonb" {
+            if self.schema_cache.is_fhir_table(table_name) {
+                let resource_type = self
+                    .schema_cache
+                    .get_fhir_resource_type(table_name)
+                    .unwrap_or_else(|| Self::to_pascal_case(table_name));
+
+                hover.push_str(&format!(
+                    "---\n**FHIR Resource:** `{}`\n\n",
+                    resource_type
+                ));
+                hover.push_str("**Usage:**\n```sql\n");
+                hover.push_str(&format!(
+                    "{col}->>'id'              -- Get resource ID as text\n",
+                    col = column.name
+                ));
+                hover.push_str(&format!(
+                    "{col}->'name'->0->>'family' -- Nested path access\n",
+                    col = column.name
+                ));
+                hover.push_str(&format!(
+                    "{col} @> '{{\"gender\": \"male\"}}' -- Contains check\n",
+                    col = column.name
+                ));
+                hover.push_str("```");
             }
         }
 
@@ -753,43 +1647,50 @@ impl PostgresLspServer {
 
     /// Get hover information for function arguments.
     fn get_function_arg_hover(&self, function: &str, arg_index: usize) -> Option<String> {
-        let (func_name, args_info): (&str, Vec<(&str, &str)>) = match function.to_lowercase().as_str() {
-            "jsonb_extract_path" | "jsonb_extract_path_text" => (
-                function,
-                vec![
-                    ("from_json", "JSONB value to extract from"),
-                    ("path_elems...", "Variable path elements as text strings"),
-                ],
-            ),
-            "jsonb_set" => (
-                "jsonb_set",
-                vec![
-                    ("target", "JSONB value to modify"),
-                    ("path", "Text array specifying path to set"),
-                    ("new_value", "JSONB value to insert"),
-                    ("create_if_missing", "Create path if missing (default: true)"),
-                ],
-            ),
-            "jsonb_insert" => (
-                "jsonb_insert",
-                vec![
-                    ("target", "JSONB value to modify"),
-                    ("path", "Text array specifying insertion point"),
-                    ("new_value", "JSONB value to insert"),
-                    ("insert_after", "Insert after (true) or before (false) path position"),
-                ],
-            ),
-            "jsonb_path_query" | "jsonb_path_query_array" | "jsonb_path_query_first" => (
-                function,
-                vec![
-                    ("target", "JSONB value to query"),
-                    ("path", "JSONPath expression"),
-                    ("vars", "Optional JSONB object with path variables"),
-                    ("silent", "Suppress errors on missing path (default: false)"),
-                ],
-            ),
-            _ => return None,
-        };
+        let (func_name, args_info): (&str, Vec<(&str, &str)>) =
+            match function.to_lowercase().as_str() {
+                "jsonb_extract_path" | "jsonb_extract_path_text" => (
+                    function,
+                    vec![
+                        ("from_json", "JSONB value to extract from"),
+                        ("path_elems...", "Variable path elements as text strings"),
+                    ],
+                ),
+                "jsonb_set" => (
+                    "jsonb_set",
+                    vec![
+                        ("target", "JSONB value to modify"),
+                        ("path", "Text array specifying path to set"),
+                        ("new_value", "JSONB value to insert"),
+                        (
+                            "create_if_missing",
+                            "Create path if missing (default: true)",
+                        ),
+                    ],
+                ),
+                "jsonb_insert" => (
+                    "jsonb_insert",
+                    vec![
+                        ("target", "JSONB value to modify"),
+                        ("path", "Text array specifying insertion point"),
+                        ("new_value", "JSONB value to insert"),
+                        (
+                            "insert_after",
+                            "Insert after (true) or before (false) path position",
+                        ),
+                    ],
+                ),
+                "jsonb_path_query" | "jsonb_path_query_array" | "jsonb_path_query_first" => (
+                    function,
+                    vec![
+                        ("target", "JSONB value to query"),
+                        ("path", "JSONPath expression"),
+                        ("vars", "Optional JSONB object with path variables"),
+                        ("silent", "Suppress errors on missing path (default: false)"),
+                    ],
+                ),
+                _ => return None,
+            };
 
         let mut hover = format!("### Argument {} of `{}`\n\n", arg_index + 1, func_name);
 
@@ -802,6 +1703,118 @@ impl PostgresLspServer {
         for (i, (name, desc)) in args_info.iter().enumerate() {
             let marker = if i == arg_index { "→ " } else { "  " };
             hover.push_str(&format!("{}{}: {}: {}\n", marker, i + 1, name, desc));
+        }
+
+        Some(hover)
+    }
+
+    /// Get hover information for a role.
+    fn get_role_hover(&self, role_name: &str) -> Option<String> {
+        let role = self.schema_cache.get_role(role_name)?;
+
+        let mut hover = format!("### Role: `{}`\n\n", role.name);
+
+        let mut attrs = Vec::new();
+        if role.is_superuser {
+            attrs.push("SUPERUSER");
+        }
+        if role.can_login {
+            attrs.push("LOGIN");
+        }
+        if role.create_db {
+            attrs.push("CREATEDB");
+        }
+        if role.create_role {
+            attrs.push("CREATEROLE");
+        }
+
+        if !attrs.is_empty() {
+            hover.push_str(&format!("**Attributes:** {}\n\n", attrs.join(", ")));
+        }
+
+        if !role.member_of.is_empty() {
+            hover.push_str(&format!(
+                "**Member of:** {}\n\n",
+                role.member_of.join(", ")
+            ));
+        }
+
+        hover.push_str("---\n");
+        hover.push_str("**Usage:**\n```sql\n");
+        hover.push_str(&format!("GRANT SELECT ON table TO {};\n", role.name));
+        hover.push_str(&format!("SET ROLE {};\n", role.name));
+        hover.push_str("```");
+
+        Some(hover)
+    }
+
+    /// Get hover information for a policy.
+    /// Note: This requires both table and policy name which needs more context detection.
+    #[allow(dead_code)]
+    fn get_policy_hover(&self, table_name: &str, policy_name: &str) -> Option<String> {
+        let policy = self.schema_cache.get_policy(table_name, policy_name)?;
+
+        let mut hover = format!("### Policy: `{}`\n\n", policy.name);
+        hover.push_str(&format!(
+            "**Table:** `{}.{}`\n\n",
+            policy.schema, policy.table_name
+        ));
+        hover.push_str(&format!("**Command:** {}\n\n", policy.command));
+        hover.push_str(&format!(
+            "**Type:** {}\n\n",
+            if policy.permissive {
+                "PERMISSIVE"
+            } else {
+                "RESTRICTIVE"
+            }
+        ));
+        hover.push_str(&format!("**Roles:** {}\n\n", policy.roles.join(", ")));
+
+        if let Some(ref using) = policy.using_expr {
+            hover.push_str(&format!("**USING:**\n```sql\n{}\n```\n\n", using));
+        }
+
+        if let Some(ref with_check) = policy.with_check_expr {
+            hover.push_str(&format!("**WITH CHECK:**\n```sql\n{}\n```\n", with_check));
+        }
+
+        Some(hover)
+    }
+
+    /// Get hover information for a type.
+    fn get_type_hover(&self, type_name: &str) -> Option<String> {
+        let type_info = self.schema_cache.get_type_by_name(type_name)?;
+
+        let mut hover = format!("### Type: `{}.{}`\n\n", type_info.schema, type_info.name);
+        hover.push_str(&format!("**Category:** {}\n\n", type_info.category));
+
+        match type_info.category.as_str() {
+            "Enum" => {
+                hover.push_str("**Values:**\n");
+                for label in &type_info.enum_labels {
+                    hover.push_str(&format!("- `{}`\n", label));
+                }
+                hover.push_str("\n**Usage:**\n```sql\n");
+                hover.push_str(&format!(
+                    "SELECT * FROM table WHERE column = '{}'::{};\n",
+                    type_info.enum_labels.first().map(|s| s.as_str()).unwrap_or("value"),
+                    type_info.name
+                ));
+                hover.push_str("```");
+            }
+            "Composite" => {
+                if !type_info.attributes.is_empty() {
+                    hover.push_str("**Attributes:**\n");
+                    for (name, typ) in &type_info.attributes {
+                        hover.push_str(&format!("- `{}`: {}\n", name, typ));
+                    }
+                }
+            }
+            _ => {}
+        }
+
+        if let Some(ref desc) = type_info.description {
+            hover.push_str(&format!("\n**Description:** {}\n", desc));
         }
 
         Some(hover)

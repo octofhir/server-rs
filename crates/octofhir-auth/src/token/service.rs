@@ -1144,9 +1144,7 @@ impl TokenService {
     ///
     /// Returns an error if JWT encoding fails.
     pub fn encode_access_token(&self, claims: &AccessTokenClaims) -> Result<String, String> {
-        self.jwt_service
-            .encode(claims)
-            .map_err(|e| e.to_string())
+        self.jwt_service.encode(claims).map_err(|e| e.to_string())
     }
 
     /// Issues a refresh token for password grant or other direct user authentication.

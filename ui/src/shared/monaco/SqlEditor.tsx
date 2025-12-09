@@ -1,20 +1,17 @@
-import { createEffect, createSignal, on, onCleanup, onMount } from "solid-js";
+import { createEffect, on, onCleanup, onMount } from "solid-js";
+// Use the full Monaco editor bundle instead of minimal API
+// The minimal API (editor.api) doesn't include suggest widget and other contributions
 import * as monaco from "monaco-editor";
-import { initializeLspClient, registerPgsqlLanguage } from "./lsp-client";
 
-// Configure Monaco workers via data URI to avoid worker loading issues
-self.MonacoEnvironment = {
-	getWorker(_workerId: string, _label: string) {
-		// Return a minimal worker that does nothing but prevents errors
-		const blob = new Blob(["self.onmessage = function() {}"], {
-			type: "application/javascript",
-		});
-		return new Worker(URL.createObjectURL(blob));
-	},
-};
-
-// Track LSP initialization globally
-let lspInitialized = false;
+import {
+	PG_LANGUAGE_ID,
+	bindModelToLanguageServer,
+	ensureMonacoServices,
+	ensurePgLanguageRegistered,
+	buildPgLspUrl,
+	startPgLsp,
+	stopPgLsp,
+} from "./lspClient";
 
 export interface SqlEditorProps {
 	/** Initial value of the editor */
@@ -29,37 +26,42 @@ export interface SqlEditorProps {
 	readOnly?: boolean;
 	/** Custom CSS class for the container */
 	class?: string;
-	/** Whether to enable LSP features (default: true) */
+	/** Whether to enable PostgreSQL LSP features */
 	enableLsp?: boolean;
-	/** Document URI for LSP (default: auto-generated) */
-	documentUri?: string;
+	/** Optional override for the LSP websocket path */
+	lspPath?: string;
 }
 
 export function SqlEditor(props: SqlEditorProps) {
 	let containerRef: HTMLDivElement | undefined;
 	let editor: monaco.editor.IStandaloneCodeEditor | undefined;
+	let disposeLsp: (() => void) | undefined;
+	let disposeModelBinding: (() => void) | undefined;
 	let model: monaco.editor.ITextModel | undefined;
-	const [lspStatus, setLspStatus] = createSignal<
-		"disconnected" | "connecting" | "connected"
-	>("disconnected");
-	console.log(lspStatus());
-	// Generate a unique document URI for this editor instance
-	const documentUri = () =>
-		props.documentUri ?? `file:///query-${Date.now()}.sql`;
 
 	onMount(async () => {
 		if (!containerRef) return;
 
-		// Register pgsql language
-		registerPgsqlLanguage();
+		console.log("[SqlEditor] onMount - initializing editor");
+		await ensureMonacoServices();
+		ensurePgLanguageRegistered();
 
-		// Create a model for the editor with a proper URI
-		const uri = monaco.Uri.parse(documentUri());
-		model = monaco.editor.createModel(props.value ?? "", "pgsql", uri);
+		const modelUri = monaco.Uri.parse(
+			`inmemory://pg-console/${
+				globalThis.crypto?.randomUUID?.() ?? Date.now()
+			}.sql`,
+		);
+		console.log("[SqlEditor] Creating model with language:", PG_LANGUAGE_ID, "uri:", modelUri.toString());
+		model = monaco.editor.createModel(
+			props.value ?? "",
+			PG_LANGUAGE_ID,
+			modelUri,
+		);
+		console.log("[SqlEditor] Model created, languageId:", model.getLanguageId());
 
-		// Create the Monaco editor with the model
 		editor = monaco.editor.create(containerRef, {
 			model,
+			language: PG_LANGUAGE_ID,
 			theme: "vs-dark",
 			automaticLayout: true,
 			minimap: { enabled: false },
@@ -72,61 +74,73 @@ export function SqlEditor(props: SqlEditorProps) {
 			wordWrap: "on",
 			readOnly: props.readOnly ?? false,
 			padding: { top: 8, bottom: 8 },
-			// SQL-specific settings
 			suggestOnTriggerCharacters: true,
-			quickSuggestions: true,
+			quickSuggestions: {
+				other: true,
+				comments: false,
+				strings: true,
+			},
 			acceptSuggestionOnEnter: "on",
+			suggest: {
+				showKeywords: true,
+				showSnippets: true,
+				showClasses: true,
+				showFunctions: true,
+				showVariables: true,
+			},
 		});
+		console.log("[SqlEditor] Editor created with quickSuggestions enabled");
 
-		// Handle content changes
 		editor.onDidChangeModelContent(() => {
 			if (editor && props.onChange) {
 				props.onChange(editor.getValue());
 			}
 		});
 
-		// Add Ctrl+Enter keybinding for execute
 		editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => {
 			props.onExecute?.();
 		});
 
-		// Initialize LSP if enabled
-		if (props.enableLsp !== false && !lspInitialized) {
-			setLspStatus("connecting");
+		if (props.enableLsp ?? true) {
+			console.log("[SqlEditor] Starting LSP connection...");
 			try {
-				await initializeLspClient();
-				lspInitialized = true;
-				setLspStatus("connected");
+				disposeLsp = await startPgLsp(() => buildPgLspUrl(props.lspPath));
+				console.log("[SqlEditor] LSP started successfully");
+				if (model) {
+					console.log("[SqlEditor] Binding model to LSP...");
+					disposeModelBinding = bindModelToLanguageServer(model);
+					console.log("[SqlEditor] Model bound to LSP");
+				}
 			} catch (error) {
-				console.error("[SqlEditor] LSP initialization failed:", error);
-				setLspStatus("disconnected");
+				console.warn("[SqlEditor] PostgreSQL LSP unavailable:", error);
 			}
-		} else if (lspInitialized) {
-			setLspStatus("connected");
 		}
 
-		// Focus the editor
 		editor.focus();
+
+		// Debug: Log all registered completion providers for this language
+		console.log("[SqlEditor] Registered languages:", monaco.languages.getLanguages().map(l => l.id));
+		console.log("[SqlEditor] Editor model language:", editor.getModel()?.getLanguageId());
+
+		// Test: trigger suggestions programmatically after 2 seconds
+		setTimeout(() => {
+			console.log("[SqlEditor] Triggering suggestions programmatically...");
+			editor?.trigger('keyboard', 'editor.action.triggerSuggest', {});
+		}, 2000);
 	});
 
-	// Update value from props when it changes externally
 	createEffect(
 		on(
 			() => props.value,
 			(newValue) => {
-				if (
-					editor &&
-					newValue !== undefined &&
-					newValue !== editor.getValue()
-				) {
-					editor.setValue(newValue);
+				if (model && newValue !== undefined && newValue !== model.getValue()) {
+					model.setValue(newValue);
 				}
 			},
 			{ defer: true },
 		),
 	);
 
-	// Update readOnly from props
 	createEffect(
 		on(
 			() => props.readOnly,
@@ -140,47 +154,22 @@ export function SqlEditor(props: SqlEditorProps) {
 	);
 
 	onCleanup(() => {
-		model?.dispose();
+		disposeLsp?.();
+		disposeModelBinding?.();
+		stopPgLsp();
 		editor?.dispose();
+		model?.dispose();
 	});
 
 	return (
 		<div
+			ref={containerRef}
+			class={props.class}
 			style={{
-				position: "relative",
 				width: "100%",
 				height: props.height ?? "100%",
+				overflow: "hidden",
 			}}
-		>
-			<div
-				ref={containerRef}
-				class={props.class}
-				style={{
-					width: "100%",
-					height: "100%",
-					overflow: "hidden",
-				}}
-			/>
-			{/* LSP status indicator */}
-			<div
-				style={{
-					position: "absolute",
-					bottom: "4px",
-					right: "8px",
-					"font-size": "10px",
-					color:
-						lspStatus() === "connected"
-							? "#4ade80"
-							: lspStatus() === "connecting"
-								? "#fbbf24"
-								: "#6b7280",
-					"pointer-events": "none",
-					"user-select": "none",
-				}}
-			>
-				{lspStatus() === "connected" && "● LSP"}
-				{lspStatus() === "connecting" && "○ LSP..."}
-			</div>
-		</div>
+		/>
 	);
 }

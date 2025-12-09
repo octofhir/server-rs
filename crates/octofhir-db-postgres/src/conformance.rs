@@ -42,12 +42,11 @@ impl PostgresConformanceStorage {
 
     /// Creates a new transaction ID for conformance operations.
     async fn create_txid(&self) -> Result<i64, StorageError> {
-        let row: (i64,) = query_as(
-            "INSERT INTO _transaction (status) VALUES ('committed') RETURNING txid",
-        )
-        .fetch_one(&self.pool)
-        .await
-        .map_err(PostgresError::from)?;
+        let row: (i64,) =
+            query_as("INSERT INTO _transaction (status) VALUES ('committed') RETURNING txid")
+                .fetch_one(&self.pool)
+                .await
+                .map_err(PostgresError::from)?;
 
         Ok(row.0)
     }
@@ -118,12 +117,13 @@ impl ConformanceStorage for PostgresConformanceStorage {
         let uuid = Uuid::parse_str(id)
             .map_err(|_| StorageError::invalid_resource("Invalid UUID format"))?;
 
-        let row: Option<(Value,)> =
-            query_as("SELECT resource FROM structuredefinition WHERE id = $1 AND status != 'deleted'")
-                .bind(uuid)
-                .fetch_optional(&self.pool)
-                .await
-                .map_err(PostgresError::from)?;
+        let row: Option<(Value,)> = query_as(
+            "SELECT resource FROM structuredefinition WHERE id = $1 AND status != 'deleted'",
+        )
+        .bind(uuid)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(PostgresError::from)?;
 
         Ok(row.map(|(r,)| r))
     }
@@ -256,11 +256,12 @@ impl ConformanceStorage for PostgresConformanceStorage {
     async fn list_value_sets(&self) -> Result<Vec<Value>, StorageError> {
         self.ensure_table("ValueSet").await?;
 
-        let rows: Vec<(Value,)> =
-            query_as("SELECT resource FROM valueset WHERE status != 'deleted' ORDER BY resource->>'name'")
-                .fetch_all(&self.pool)
-                .await
-                .map_err(PostgresError::from)?;
+        let rows: Vec<(Value,)> = query_as(
+            "SELECT resource FROM valueset WHERE status != 'deleted' ORDER BY resource->>'name'",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(PostgresError::from)?;
 
         Ok(rows.into_iter().map(|(r,)| r).collect())
     }
@@ -403,11 +404,12 @@ impl ConformanceStorage for PostgresConformanceStorage {
     async fn list_code_systems(&self) -> Result<Vec<Value>, StorageError> {
         self.ensure_table("CodeSystem").await?;
 
-        let rows: Vec<(Value,)> =
-            query_as("SELECT resource FROM codesystem WHERE status != 'deleted' ORDER BY resource->>'name'")
-                .fetch_all(&self.pool)
-                .await
-                .map_err(PostgresError::from)?;
+        let rows: Vec<(Value,)> = query_as(
+            "SELECT resource FROM codesystem WHERE status != 'deleted' ORDER BY resource->>'name'",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(PostgresError::from)?;
 
         Ok(rows.into_iter().map(|(r,)| r).collect())
     }

@@ -123,6 +123,37 @@ key_rotation_days = 90
 # Number of old keys to retain for validation
 keys_to_keep = 3
 
+# Optional: Provide your own signing keys to persist tokens across server restarts
+# If not set, a new key will be generated on each server start (tokens will be invalidated)
+#
+# To generate RSA keys (for RS256 or RS384):
+#   openssl genrsa -out private.pem 2048
+#   openssl rsa -in private.pem -pubout -out public.pem
+#
+# To generate EC keys (for ES384):
+#   openssl ecparam -name secp384r1 -genkey -noout -out private.pem
+#   openssl ec -in private.pem -pubout -out public.pem
+#
+# Then paste the contents (including BEGIN/END markers) or use environment variables:
+#   OCTOFHIR__AUTH__SIGNING__PRIVATE_KEY_PEM="$(cat private.pem)"
+#   OCTOFHIR__AUTH__SIGNING__PUBLIC_KEY_PEM="$(cat public.pem)"
+#   OCTOFHIR__AUTH__SIGNING__KID="my-stable-key-id"
+#
+# private_key_pem = """
+# -----BEGIN PRIVATE KEY-----
+# ...
+# -----END PRIVATE KEY-----
+# """
+#
+# public_key_pem = """
+# -----BEGIN PUBLIC KEY-----
+# ...
+# -----END PUBLIC KEY-----
+# """
+#
+# Optional: Set a stable key ID (recommended when using fixed keys)
+# kid = "production-key-2024-01"
+
 [auth.policy]
 # Default policy decision when no policy matches
 default_deny = true

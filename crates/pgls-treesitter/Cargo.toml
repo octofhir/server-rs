@@ -1,0 +1,21 @@
+# This crate is derived from Supabase postgres-language-server
+# https://github.com/supabase-community/postgres-language-server
+# Licensed under MIT License
+# Copyright (c) 2023 Philipp Steinrötter
+
+[package]
+name = "pgls-treesitter"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Tree-sitter context and queries for PostgreSQL LSP (from Supabase postgres-language-server)"
+
+[lib]
+doctest = false
+
+[dependencies]
+pgls-treesitter-grammar = { path = "../pgls-treesitter-grammar" }
+pgls-text-size = { path = "../pgls-text-size" }
+tree-sitter = "0.25"
+
+[dev-dependencies]

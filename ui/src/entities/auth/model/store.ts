@@ -28,8 +28,7 @@ export const login = async (
 
 	try {
 		// Call token endpoint - cookie is set automatically
-		const response = await authApi.login(username, password);
-		window.sessionStorage.setItem("octofhir_token", response.access_token);
+		await authApi.login(username, password);
 		// Fetch user info after successful login
 		const userInfo = await authApi.getCurrentUser();
 		if (userInfo) {

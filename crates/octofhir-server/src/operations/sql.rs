@@ -288,20 +288,23 @@ mod tests {
         let mode = SqlMode::Readonly;
         assert!(mode.is_query_allowed("SELECT * FROM users").is_ok());
         assert!(mode.is_query_allowed("select id from patient").is_ok());
-        assert!(mode
-            .is_query_allowed("WITH cte AS (SELECT 1) SELECT * FROM cte")
-            .is_ok());
+        assert!(
+            mode.is_query_allowed("WITH cte AS (SELECT 1) SELECT * FROM cte")
+                .is_ok()
+        );
     }
 
     #[test]
     fn test_sql_mode_readonly_blocks_mutations() {
         let mode = SqlMode::Readonly;
-        assert!(mode
-            .is_query_allowed("INSERT INTO users VALUES (1)")
-            .is_err());
-        assert!(mode
-            .is_query_allowed("UPDATE users SET name = 'x'")
-            .is_err());
+        assert!(
+            mode.is_query_allowed("INSERT INTO users VALUES (1)")
+                .is_err()
+        );
+        assert!(
+            mode.is_query_allowed("UPDATE users SET name = 'x'")
+                .is_err()
+        );
         assert!(mode.is_query_allowed("DELETE FROM users").is_err());
         assert!(mode.is_query_allowed("DROP TABLE users").is_err());
     }
@@ -310,12 +313,11 @@ mod tests {
     fn test_sql_mode_readwrite_allows_dml() {
         let mode = SqlMode::Readwrite;
         assert!(mode.is_query_allowed("SELECT * FROM users").is_ok());
-        assert!(mode
-            .is_query_allowed("INSERT INTO users VALUES (1)")
-            .is_ok());
-        assert!(mode
-            .is_query_allowed("UPDATE users SET name = 'x'")
-            .is_ok());
+        assert!(
+            mode.is_query_allowed("INSERT INTO users VALUES (1)")
+                .is_ok()
+        );
+        assert!(mode.is_query_allowed("UPDATE users SET name = 'x'").is_ok());
         assert!(mode.is_query_allowed("DELETE FROM users").is_ok());
     }
 
@@ -323,10 +325,11 @@ mod tests {
     fn test_sql_mode_readwrite_blocks_ddl() {
         let mode = SqlMode::Readwrite;
         assert!(mode.is_query_allowed("DROP TABLE users").is_err());
-        assert!(mode
-            .is_query_allowed("CREATE TABLE test (id INT)")
-            .is_err());
-        assert!(mode.is_query_allowed("ALTER TABLE users ADD col INT").is_err());
+        assert!(mode.is_query_allowed("CREATE TABLE test (id INT)").is_err());
+        assert!(
+            mode.is_query_allowed("ALTER TABLE users ADD col INT")
+                .is_err()
+        );
         assert!(mode.is_query_allowed("TRUNCATE TABLE users").is_err());
     }
 
@@ -335,9 +338,7 @@ mod tests {
         let mode = SqlMode::Admin;
         assert!(mode.is_query_allowed("SELECT * FROM users").is_ok());
         assert!(mode.is_query_allowed("DROP TABLE users").is_ok());
-        assert!(mode
-            .is_query_allowed("CREATE TABLE test (id INT)")
-            .is_ok());
+        assert!(mode.is_query_allowed("CREATE TABLE test (id INT)").is_ok());
         assert!(mode.is_query_allowed("TRUNCATE TABLE users").is_ok());
     }
 }

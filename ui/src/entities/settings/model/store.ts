@@ -5,9 +5,6 @@ import { APP_CONFIG } from "@/shared/config";
 export type ColorScheme = "light" | "dark" | "system";
 
 // Settings state
-const [fhirBaseUrl, setFhirBaseUrlInternal] = createSignal(
-  localStorage.getItem("octofhir-fhir-base-url") || APP_CONFIG.defaultFhirBaseUrl,
-);
 const [requestTimeout, setRequestTimeoutInternal] = createSignal(
   Number(localStorage.getItem("octofhir-request-timeout")) || APP_CONFIG.requestTimeout,
 );
@@ -19,12 +16,6 @@ const [pageSize, setPageSizeInternal] = createSignal(
 );
 
 // Setters that persist to localStorage
-export const setFhirBaseUrl = (url: string) => {
-  setFhirBaseUrlInternal(url);
-  localStorage.setItem("octofhir-fhir-base-url", url);
-  fhirClient.setBaseUrl(url);
-};
-
 export const setRequestTimeout = (timeout: number) => {
   setRequestTimeoutInternal(timeout);
   localStorage.setItem("octofhir-request-timeout", String(timeout));
@@ -42,8 +33,7 @@ export const setPageSize = (size: number) => {
 };
 
 // Initialize FHIR client with stored settings
-fhirClient.setBaseUrl(fhirBaseUrl());
 fhirClient.setTimeout(requestTimeout());
 
 // Exports
-export { fhirBaseUrl, requestTimeout, colorScheme, pageSize };
+export { requestTimeout, colorScheme, pageSize };

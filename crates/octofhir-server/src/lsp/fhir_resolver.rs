@@ -1,10 +1,12 @@
 //! FHIR element path resolver for LSP completions.
 //!
-//! This module provides element path completion from FHIR StructureDefinitions
-//! using the canonical manager.
+//! This module provides element path completion from embedded FHIR schemas
+//! using the FhirSchemaModelProvider for blazing fast lookups.
 
 use dashmap::DashMap;
-use serde_json::Value;
+use std::sync::Arc;
+
+use crate::server::SharedModelProvider;
 
 /// Information about a FHIR element from a StructureDefinition.
 #[derive(Debug, Clone)]
@@ -31,621 +33,220 @@ pub struct ElementInfo {
 
 /// Cache of element trees by resource type.
 pub struct FhirResolver {
-    /// Cache of elements by resource type
-    element_cache: DashMap<String, Vec<ElementInfo>>,
+    /// Model provider for accessing FHIR schemas (shared with validation/FHIRPath)
+    model_provider: SharedModelProvider,
+    /// Cache of children by (resource_type, parent_path) for fast lookups
+    children_cache: DashMap<(String, String), Vec<ElementInfo>>,
 }
 
 impl FhirResolver {
-    /// Creates a new FHIR resolver.
-    pub fn new() -> Self {
+    /// Creates a new FHIR resolver with a shared model provider.
+    pub fn with_model_provider(model_provider: SharedModelProvider) -> Self {
+        tracing::info!("FhirResolver: Created with shared model provider");
         Self {
-            element_cache: DashMap::new(),
+            model_provider,
+            children_cache: DashMap::new(),
         }
     }
 
-    /// Get elements for a resource type from the canonical manager.
+    /// Get elements for a resource type from embedded schemas.
     pub async fn get_elements(&self, resource_type: &str) -> Vec<ElementInfo> {
-        // Check cache first
-        if let Some(cached) = self.element_cache.get(resource_type) {
+        // Use model provider to get all elements for this resource type
+        tracing::debug!("get_elements called for resource_type={}", resource_type);
+        match self.model_provider.get_elements(resource_type).await {
+            Ok(model_elements) => {
+                tracing::debug!(
+                    "get_elements: got {} elements for {}",
+                    model_elements.len(),
+                    resource_type
+                );
+                // Convert ModelElementInfo to our ElementInfo format
+                model_elements
+                    .into_iter()
+                    .map(|elem| {
+                        // Extract the element name from the path (e.g., "Patient.name" -> "name")
+                        let name = elem.name.clone();
+
+                        // Build the full path
+                        let path = if elem.name.contains('.') {
+                            elem.name.clone()
+                        } else {
+                            format!("{}.{}", resource_type, elem.name)
+                        };
+
+                        ElementInfo {
+                            path,
+                            name,
+                            type_code: elem.element_type.clone(),
+                            min: 0, // ModelElementInfo doesn't expose cardinality
+                            max: 1, // ModelElementInfo doesn't expose cardinality
+                            short: elem.documentation.clone(),
+                            definition: elem.documentation,
+                            is_array: false, // Could infer from type or path
+                            is_backbone: elem.element_type == "BackboneElement",
+                        }
+                    })
+                    .collect()
+            }
+            Err(e) => {
+                tracing::warn!("Failed to get elements for {}: {}", resource_type, e);
+                Vec::new()
+            }
+        }
+    }
+
+
+    /// Get children of a path (direct descendants only) with caching.
+    pub async fn get_children(&self, resource_type: &str, parent_path: &str) -> Vec<ElementInfo> {
+        // Check children cache first for instant lookup
+        let cache_key = (resource_type.to_string(), parent_path.to_string());
+        if let Some(cached) = self.children_cache.get(&cache_key) {
+            tracing::trace!("Cache hit for {}.{}", resource_type, parent_path);
             return cached.value().clone();
         }
 
-        // Try to load from canonical manager
-        if let Some(elements) = self.load_elements_from_manager(resource_type).await {
-            self.element_cache.insert(resource_type.to_string(), elements.clone());
-            return elements;
-        }
+        tracing::debug!(
+            "get_children: resource_type={}, parent_path='{}'",
+            resource_type,
+            parent_path
+        );
 
-        // Fall back to common FHIR elements
-        self.get_common_elements(resource_type)
-    }
-
-    /// Load elements from the canonical manager.
-    async fn load_elements_from_manager(&self, resource_type: &str) -> Option<Vec<ElementInfo>> {
-        let manager = crate::canonical::get_manager()?;
-
-        // Query for the StructureDefinition
-        // Note: The canonical manager search API uses resource_type and limit,
-        // we then filter the results locally for the specific resource type
-        let search_result = manager
-            .search()
-            .await
-            .resource_type("StructureDefinition")
-            .limit(1000)
-            .execute()
-            .await
-            .ok()?;
-
-        // Find the StructureDefinition for this resource type
-        for resource_match in &search_result.resources {
-            let resource = &resource_match.resource;
-            let content = &resource.content;
-
-            // Check if this is the resource type we're looking for
-            let type_value = content.get("type").and_then(|t| t.as_str());
-            let kind_value = content.get("kind").and_then(|k| k.as_str());
-
-            match (type_value, kind_value) {
-                (Some(t), Some(k)) if t.eq_ignore_ascii_case(resource_type) && k == "resource" => {
-                    return self.parse_structure_definition(content);
-                }
-                _ => continue,
-            }
-        }
-
-        None
-    }
-
-    /// Parse a StructureDefinition to extract element info.
-    fn parse_structure_definition(&self, sd: &Value) -> Option<Vec<ElementInfo>> {
-        let snapshot = sd.get("snapshot")?;
-        let elements_arr = snapshot.get("element")?.as_array()?;
-
-        let mut elements = Vec::new();
-
-        for elem in elements_arr {
-            if let Some(info) = self.parse_element(elem) {
-                elements.push(info);
-            }
-        }
-
-        Some(elements)
-    }
-
-    /// Parse a single element from the snapshot.
-    fn parse_element(&self, elem: &Value) -> Option<ElementInfo> {
-        let path = elem.get("path")?.as_str()?.to_string();
-
-        // Extract element name from path (last segment)
-        let name = path.rsplit('.').next()?.to_string();
-
-        // Get type code
-        let type_code = elem
-            .get("type")
-            .and_then(|t| t.as_array())
-            .and_then(|arr| arr.first())
-            .and_then(|t| t.get("code"))
-            .and_then(|c| c.as_str())
-            .unwrap_or("BackboneElement")
-            .to_string();
-
-        // Get cardinality
-        let min = elem.get("min").and_then(|m| m.as_u64()).unwrap_or(0) as u32;
-        let max_str = elem.get("max").and_then(|m| m.as_str()).unwrap_or("1");
-        let max = if max_str == "*" { 0 } else { max_str.parse().unwrap_or(1) };
-
-        // Get descriptions
-        let short = elem.get("short").and_then(|s| s.as_str()).map(|s| s.to_string());
-        let definition = elem.get("definition").and_then(|d| d.as_str()).map(|s| s.to_string());
-
-        let is_array = max_str == "*" || max > 1;
-        let is_backbone = type_code == "BackboneElement" || type_code == "Element";
-
-        Some(ElementInfo {
-            path,
-            name,
-            type_code,
-            min,
-            max,
-            short,
-            definition,
-            is_array,
-            is_backbone,
-        })
-    }
-
-    /// Get children of a path (direct descendants only).
-    pub async fn get_children(&self, resource_type: &str, parent_path: &str) -> Vec<ElementInfo> {
-        let elements = self.get_elements(resource_type).await;
-
-        let expected_prefix = if parent_path.is_empty() {
-            resource_type.to_string()
+        let children = if parent_path.is_empty() {
+            // Root level: get direct children of the resource type
+            tracing::trace!("Getting root-level children for {}", resource_type);
+            self.get_direct_children(resource_type, resource_type).await
         } else {
-            format!("{}.", parent_path)
+            // Nested level: need to find the type of the parent element first
+            // Example: parent_path = "name" → need to get HumanName elements
+            //          parent_path = "name.given" → need to navigate through name first
+            tracing::trace!(
+                "Getting type for nested path: {}.{}",
+                resource_type,
+                parent_path
+            );
+            match self.get_element_type(resource_type, parent_path).await {
+                Some(parent_type) => {
+                    tracing::trace!("Parent type resolved to: {}", parent_type);
+                    // Get children of the parent type
+                    let full_parent_path = format!("{}.{}", resource_type, parent_path);
+                    self.get_direct_children(&parent_type, &full_parent_path).await
+                }
+                None => {
+                    tracing::debug!(
+                        "Could not determine type for path: {}.{} - this may be a primitive type or invalid path",
+                        resource_type,
+                        parent_path
+                    );
+                    Vec::new()
+                }
+            }
         };
 
-        elements
-            .into_iter()
-            .filter(|elem| {
-                // Must start with parent path
-                if !elem.path.starts_with(&expected_prefix) {
-                    return false;
-                }
+        tracing::debug!(
+            "Found {} children for {}.{}",
+            children.len(),
+            resource_type,
+            parent_path
+        );
 
-                // Must be a direct child (no additional dots after prefix)
-                let remaining = &elem.path[expected_prefix.len()..];
-                !remaining.contains('.')
-            })
-            .collect()
+        // Cache the result for next time
+        self.children_cache
+            .insert(cache_key, children.clone());
+
+        children
     }
 
-    /// Get common FHIR elements as fallback when canonical manager is unavailable.
-    fn get_common_elements(&self, resource_type: &str) -> Vec<ElementInfo> {
-        // Common Resource elements
-        let mut elements = vec![
-            ElementInfo {
-                path: format!("{}.id", resource_type),
-                name: "id".to_string(),
-                type_code: "id".to_string(),
-                min: 0,
-                max: 1,
-                short: Some("Logical id of this artifact".to_string()),
-                definition: Some("The logical id of the resource".to_string()),
-                is_array: false,
-                is_backbone: false,
-            },
-            ElementInfo {
-                path: format!("{}.meta", resource_type),
-                name: "meta".to_string(),
-                type_code: "Meta".to_string(),
-                min: 0,
-                max: 1,
-                short: Some("Metadata about the resource".to_string()),
-                definition: Some("The metadata about the resource".to_string()),
-                is_array: false,
-                is_backbone: false,
-            },
-            ElementInfo {
-                path: format!("{}.implicitRules", resource_type),
-                name: "implicitRules".to_string(),
-                type_code: "uri".to_string(),
-                min: 0,
-                max: 1,
-                short: Some("A set of rules under which this content was created".to_string()),
-                definition: None,
-                is_array: false,
-                is_backbone: false,
-            },
-            ElementInfo {
-                path: format!("{}.language", resource_type),
-                name: "language".to_string(),
-                type_code: "code".to_string(),
-                min: 0,
-                max: 1,
-                short: Some("Language of the resource content".to_string()),
-                definition: None,
-                is_array: false,
-                is_backbone: false,
-            },
-            ElementInfo {
-                path: format!("{}.text", resource_type),
-                name: "text".to_string(),
-                type_code: "Narrative".to_string(),
-                min: 0,
-                max: 1,
-                short: Some("Text summary of the resource".to_string()),
-                definition: None,
-                is_array: false,
-                is_backbone: false,
-            },
-            ElementInfo {
-                path: format!("{}.contained", resource_type),
-                name: "contained".to_string(),
-                type_code: "Resource".to_string(),
-                min: 0,
-                max: 0,
-                short: Some("Contained resources".to_string()),
-                definition: None,
-                is_array: true,
-                is_backbone: false,
-            },
-            ElementInfo {
-                path: format!("{}.extension", resource_type),
-                name: "extension".to_string(),
-                type_code: "Extension".to_string(),
-                min: 0,
-                max: 0,
-                short: Some("Additional content defined by implementations".to_string()),
-                definition: None,
-                is_array: true,
-                is_backbone: false,
-            },
-            ElementInfo {
-                path: format!("{}.modifierExtension", resource_type),
-                name: "modifierExtension".to_string(),
-                type_code: "Extension".to_string(),
-                min: 0,
-                max: 0,
-                short: Some("Extensions that cannot be ignored".to_string()),
-                definition: None,
-                is_array: true,
-                is_backbone: false,
-            },
-        ];
+    /// Get direct children of a type (helper for get_children).
+    async fn get_direct_children(
+        &self,
+        type_name: &str,
+        full_parent_path: &str,
+    ) -> Vec<ElementInfo> {
+        // Get all elements for this type from the model provider
+        match self.model_provider.get_elements(type_name).await {
+            Ok(model_elements) => {
+                tracing::debug!(
+                    "get_direct_children: type_name={}, got {} elements, first few: {:?}",
+                    type_name,
+                    model_elements.len(),
+                    model_elements.iter().take(3).map(|e| &e.name).collect::<Vec<_>>()
+                );
+                model_elements.into_iter().filter_map(|elem| {
+                    // For direct children, the element name should not contain dots
+                    // (e.g., "given", "family" but not "name.given")
+                    if elem.name.contains('.') {
+                        return None;
+                    }
 
-        // Add common elements for specific resource types
-        match resource_type {
-            "Patient" => {
-                elements.extend(vec![
-                    ElementInfo {
-                        path: format!("{}.identifier", resource_type),
-                        name: "identifier".to_string(),
-                        type_code: "Identifier".to_string(),
-                        min: 0,
-                        max: 0,
-                        short: Some("An identifier for this patient".to_string()),
-                        definition: None,
-                        is_array: true,
-                        is_backbone: false,
-                    },
-                    ElementInfo {
-                        path: format!("{}.active", resource_type),
-                        name: "active".to_string(),
-                        type_code: "boolean".to_string(),
+                    // Build the full path
+                    let path = format!("{}.{}", full_parent_path, elem.name);
+
+                    Some(ElementInfo {
+                        path,
+                        name: elem.name.clone(),
+                        type_code: elem.element_type.clone(),
                         min: 0,
                         max: 1,
-                        short: Some("Whether this patient record is in active use".to_string()),
-                        definition: None,
+                        short: elem.documentation.clone(),
+                        definition: elem.documentation,
                         is_array: false,
-                        is_backbone: false,
-                    },
-                    ElementInfo {
-                        path: format!("{}.name", resource_type),
-                        name: "name".to_string(),
-                        type_code: "HumanName".to_string(),
-                        min: 0,
-                        max: 0,
-                        short: Some("A name associated with the patient".to_string()),
-                        definition: None,
-                        is_array: true,
-                        is_backbone: false,
-                    },
-                    ElementInfo {
-                        path: format!("{}.telecom", resource_type),
-                        name: "telecom".to_string(),
-                        type_code: "ContactPoint".to_string(),
-                        min: 0,
-                        max: 0,
-                        short: Some("A contact detail for the individual".to_string()),
-                        definition: None,
-                        is_array: true,
-                        is_backbone: false,
-                    },
-                    ElementInfo {
-                        path: format!("{}.gender", resource_type),
-                        name: "gender".to_string(),
-                        type_code: "code".to_string(),
-                        min: 0,
-                        max: 1,
-                        short: Some("male | female | other | unknown".to_string()),
-                        definition: None,
-                        is_array: false,
-                        is_backbone: false,
-                    },
-                    ElementInfo {
-                        path: format!("{}.birthDate", resource_type),
-                        name: "birthDate".to_string(),
-                        type_code: "date".to_string(),
-                        min: 0,
-                        max: 1,
-                        short: Some("The date of birth for the individual".to_string()),
-                        definition: None,
-                        is_array: false,
-                        is_backbone: false,
-                    },
-                    ElementInfo {
-                        path: format!("{}.deceased[x]", resource_type),
-                        name: "deceased[x]".to_string(),
-                        type_code: "boolean|dateTime".to_string(),
-                        min: 0,
-                        max: 1,
-                        short: Some("Indicates if the individual is deceased or not".to_string()),
-                        definition: None,
-                        is_array: false,
-                        is_backbone: false,
-                    },
-                    ElementInfo {
-                        path: format!("{}.address", resource_type),
-                        name: "address".to_string(),
-                        type_code: "Address".to_string(),
-                        min: 0,
-                        max: 0,
-                        short: Some("An address for the individual".to_string()),
-                        definition: None,
-                        is_array: true,
-                        is_backbone: false,
-                    },
-                    ElementInfo {
-                        path: format!("{}.maritalStatus", resource_type),
-                        name: "maritalStatus".to_string(),
-                        type_code: "CodeableConcept".to_string(),
-                        min: 0,
-                        max: 1,
-                        short: Some("Marital (civil) status of a patient".to_string()),
-                        definition: None,
-                        is_array: false,
-                        is_backbone: false,
-                    },
-                    ElementInfo {
-                        path: format!("{}.multipleBirth[x]", resource_type),
-                        name: "multipleBirth[x]".to_string(),
-                        type_code: "boolean|integer".to_string(),
-                        min: 0,
-                        max: 1,
-                        short: Some("Whether patient is part of a multiple birth".to_string()),
-                        definition: None,
-                        is_array: false,
-                        is_backbone: false,
-                    },
-                    ElementInfo {
-                        path: format!("{}.photo", resource_type),
-                        name: "photo".to_string(),
-                        type_code: "Attachment".to_string(),
-                        min: 0,
-                        max: 0,
-                        short: Some("Image of the patient".to_string()),
-                        definition: None,
-                        is_array: true,
-                        is_backbone: false,
-                    },
-                    ElementInfo {
-                        path: format!("{}.contact", resource_type),
-                        name: "contact".to_string(),
-                        type_code: "BackboneElement".to_string(),
-                        min: 0,
-                        max: 0,
-                        short: Some("A contact party for the patient".to_string()),
-                        definition: None,
-                        is_array: true,
-                        is_backbone: true,
-                    },
-                    ElementInfo {
-                        path: format!("{}.communication", resource_type),
-                        name: "communication".to_string(),
-                        type_code: "BackboneElement".to_string(),
-                        min: 0,
-                        max: 0,
-                        short: Some("A language the patient can use".to_string()),
-                        definition: None,
-                        is_array: true,
-                        is_backbone: true,
-                    },
-                    ElementInfo {
-                        path: format!("{}.generalPractitioner", resource_type),
-                        name: "generalPractitioner".to_string(),
-                        type_code: "Reference".to_string(),
-                        min: 0,
-                        max: 0,
-                        short: Some("Patient's nominated primary care provider".to_string()),
-                        definition: None,
-                        is_array: true,
-                        is_backbone: false,
-                    },
-                    ElementInfo {
-                        path: format!("{}.managingOrganization", resource_type),
-                        name: "managingOrganization".to_string(),
-                        type_code: "Reference".to_string(),
-                        min: 0,
-                        max: 1,
-                        short: Some("Organization that is the custodian of the patient record".to_string()),
-                        definition: None,
-                        is_array: false,
-                        is_backbone: false,
-                    },
-                    ElementInfo {
-                        path: format!("{}.link", resource_type),
-                        name: "link".to_string(),
-                        type_code: "BackboneElement".to_string(),
-                        min: 0,
-                        max: 0,
-                        short: Some("Link to another patient resource".to_string()),
-                        definition: None,
-                        is_array: true,
-                        is_backbone: true,
-                    },
-                ]);
+                        is_backbone: elem.element_type == "BackboneElement",
+                    })
+                })
+                .collect()
             }
-            "Observation" => {
-                elements.extend(vec![
-                    ElementInfo {
-                        path: format!("{}.identifier", resource_type),
-                        name: "identifier".to_string(),
-                        type_code: "Identifier".to_string(),
-                        min: 0,
-                        max: 0,
-                        short: Some("Business Identifier for observation".to_string()),
-                        definition: None,
-                        is_array: true,
-                        is_backbone: false,
-                    },
-                    ElementInfo {
-                        path: format!("{}.status", resource_type),
-                        name: "status".to_string(),
-                        type_code: "code".to_string(),
-                        min: 1,
-                        max: 1,
-                        short: Some("registered | preliminary | final | amended +".to_string()),
-                        definition: None,
-                        is_array: false,
-                        is_backbone: false,
-                    },
-                    ElementInfo {
-                        path: format!("{}.category", resource_type),
-                        name: "category".to_string(),
-                        type_code: "CodeableConcept".to_string(),
-                        min: 0,
-                        max: 0,
-                        short: Some("Classification of type of observation".to_string()),
-                        definition: None,
-                        is_array: true,
-                        is_backbone: false,
-                    },
-                    ElementInfo {
-                        path: format!("{}.code", resource_type),
-                        name: "code".to_string(),
-                        type_code: "CodeableConcept".to_string(),
-                        min: 1,
-                        max: 1,
-                        short: Some("Type of observation (code / type)".to_string()),
-                        definition: None,
-                        is_array: false,
-                        is_backbone: false,
-                    },
-                    ElementInfo {
-                        path: format!("{}.subject", resource_type),
-                        name: "subject".to_string(),
-                        type_code: "Reference".to_string(),
-                        min: 0,
-                        max: 1,
-                        short: Some("Who/what is the subject of the observation".to_string()),
-                        definition: None,
-                        is_array: false,
-                        is_backbone: false,
-                    },
-                    ElementInfo {
-                        path: format!("{}.effective[x]", resource_type),
-                        name: "effective[x]".to_string(),
-                        type_code: "dateTime|Period|Timing|instant".to_string(),
-                        min: 0,
-                        max: 1,
-                        short: Some("Clinically relevant time/time-period".to_string()),
-                        definition: None,
-                        is_array: false,
-                        is_backbone: false,
-                    },
-                    ElementInfo {
-                        path: format!("{}.value[x]", resource_type),
-                        name: "value[x]".to_string(),
-                        type_code: "Quantity|CodeableConcept|string|boolean|integer|Range|Ratio|SampledData|time|dateTime|Period".to_string(),
-                        min: 0,
-                        max: 1,
-                        short: Some("Actual result".to_string()),
-                        definition: None,
-                        is_array: false,
-                        is_backbone: false,
-                    },
-                    ElementInfo {
-                        path: format!("{}.interpretation", resource_type),
-                        name: "interpretation".to_string(),
-                        type_code: "CodeableConcept".to_string(),
-                        min: 0,
-                        max: 0,
-                        short: Some("High, low, normal, etc.".to_string()),
-                        definition: None,
-                        is_array: true,
-                        is_backbone: false,
-                    },
-                    ElementInfo {
-                        path: format!("{}.note", resource_type),
-                        name: "note".to_string(),
-                        type_code: "Annotation".to_string(),
-                        min: 0,
-                        max: 0,
-                        short: Some("Comments about the observation".to_string()),
-                        definition: None,
-                        is_array: true,
-                        is_backbone: false,
-                    },
-                    ElementInfo {
-                        path: format!("{}.bodySite", resource_type),
-                        name: "bodySite".to_string(),
-                        type_code: "CodeableConcept".to_string(),
-                        min: 0,
-                        max: 1,
-                        short: Some("Observed body part".to_string()),
-                        definition: None,
-                        is_array: false,
-                        is_backbone: false,
-                    },
-                    ElementInfo {
-                        path: format!("{}.method", resource_type),
-                        name: "method".to_string(),
-                        type_code: "CodeableConcept".to_string(),
-                        min: 0,
-                        max: 1,
-                        short: Some("How it was done".to_string()),
-                        definition: None,
-                        is_array: false,
-                        is_backbone: false,
-                    },
-                    ElementInfo {
-                        path: format!("{}.specimen", resource_type),
-                        name: "specimen".to_string(),
-                        type_code: "Reference".to_string(),
-                        min: 0,
-                        max: 1,
-                        short: Some("Specimen used for this observation".to_string()),
-                        definition: None,
-                        is_array: false,
-                        is_backbone: false,
-                    },
-                    ElementInfo {
-                        path: format!("{}.device", resource_type),
-                        name: "device".to_string(),
-                        type_code: "Reference".to_string(),
-                        min: 0,
-                        max: 1,
-                        short: Some("(Measurement) Device".to_string()),
-                        definition: None,
-                        is_array: false,
-                        is_backbone: false,
-                    },
-                    ElementInfo {
-                        path: format!("{}.referenceRange", resource_type),
-                        name: "referenceRange".to_string(),
-                        type_code: "BackboneElement".to_string(),
-                        min: 0,
-                        max: 0,
-                        short: Some("Provides guide for interpretation".to_string()),
-                        definition: None,
-                        is_array: true,
-                        is_backbone: true,
-                    },
-                    ElementInfo {
-                        path: format!("{}.component", resource_type),
-                        name: "component".to_string(),
-                        type_code: "BackboneElement".to_string(),
-                        min: 0,
-                        max: 0,
-                        short: Some("Component results".to_string()),
-                        definition: None,
-                        is_array: true,
-                        is_backbone: true,
-                    },
-                ]);
+            Err(e) => {
+                tracing::warn!("Failed to get elements for type {}: {}", type_name, e);
+                Vec::new()
             }
-            _ => {
-                // Add common DomainResource elements for any resource type
-                elements.push(ElementInfo {
-                    path: format!("{}.identifier", resource_type),
-                    name: "identifier".to_string(),
-                    type_code: "Identifier".to_string(),
-                    min: 0,
-                    max: 0,
-                    short: Some("Business identifiers".to_string()),
-                    definition: None,
-                    is_array: true,
-                    is_backbone: false,
-                });
+        }
+    }
+
+    /// Get the type of an element at a given path.
+    async fn get_element_type(&self, resource_type: &str, path: &str) -> Option<String> {
+        // For a path like "name", we need to find the element "name" in the resource type
+        // and return its type (e.g., "HumanName")
+
+        // Split the path by dots to handle nested paths
+        // Example: "name.given" → ["name", "given"]
+        let path_parts: Vec<&str> = path.split('.').collect();
+
+        if path_parts.is_empty() {
+            return None;
+        }
+
+        // Start with the resource type
+        let mut current_type = resource_type.to_string();
+
+        // Navigate through each path segment
+        for part in path_parts {
+            match self.model_provider.get_elements(&current_type).await {
+                Ok(elements) => {
+                    // Find the element with this name
+                    if let Some(elem) = elements.iter().find(|e| e.name == part) {
+                        current_type = elem.element_type.clone();
+                    } else {
+                        tracing::debug!(
+                            "Element '{}' not found in type '{}'",
+                            part,
+                            current_type
+                        );
+                        return None;
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to get elements for type {}: {}", current_type, e);
+                    return None;
+                }
             }
         }
 
-        elements
+        Some(current_type)
     }
 
-    /// Clear the element cache.
+    /// Clear the children cache.
     pub fn clear_cache(&self) {
-        self.element_cache.clear();
+        self.children_cache.clear();
     }
 
     /// Get element info for a specific path.
@@ -663,25 +264,32 @@ impl FhirResolver {
 
         elements.into_iter().find(|e| e.path == full_path)
     }
+
+    // Note: The old get_common_elements fallback method has been removed.
+    // We now use FhirSchemaModelProvider with embedded schemas for ALL resource types.
 }
 
-impl Default for FhirResolver {
-    fn default() -> Self {
-        Self::new()
-    }
-}
+// Default impl removed - FhirResolver must be created with a specific model provider
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use octofhir_fhirschema::{embedded::get_schemas, model_provider::DynamicSchemaProvider};
+    use octofhir_fhir_model::provider::FhirVersion;
 
-    #[test]
-    fn test_common_elements() {
-        let resolver = FhirResolver::new();
-        let elements = resolver.get_common_elements("Patient");
+    fn create_test_provider() -> SharedModelProvider {
+        let schemas = get_schemas(octofhir_fhirschema::FhirVersion::R4B);
+        Arc::new(DynamicSchemaProvider::new(schemas.clone(), FhirVersion::R4B))
+    }
 
-        // Should have common Resource elements plus Patient-specific
-        assert!(elements.len() > 8);
+    #[tokio::test]
+    async fn test_get_patient_elements() {
+        let model_provider = create_test_provider();
+        let resolver = FhirResolver::with_model_provider(model_provider);
+        let elements = resolver.get_elements("Patient").await;
+
+        // Should have elements from embedded schema
+        assert!(!elements.is_empty(), "Patient should have elements");
 
         // Check for specific Patient elements
         let has_name = elements.iter().any(|e| e.name == "name");
@@ -693,17 +301,56 @@ mod tests {
         assert!(has_birthdate, "Patient should have birthDate element");
     }
 
-    #[test]
-    fn test_element_info_structure() {
-        let resolver = FhirResolver::new();
-        let elements = resolver.get_common_elements("Observation");
+    #[tokio::test]
+    async fn test_get_nested_elements() {
+        let model_provider = create_test_provider();
+        let resolver = FhirResolver::with_model_provider(model_provider);
 
-        // Find the status element which is required
-        let status = elements.iter().find(|e| e.name == "status");
-        assert!(status.is_some(), "Observation should have status element");
+        // Get children of "name" element (should be HumanName elements)
+        let name_children = resolver.get_children("Patient", "name").await;
 
-        let status = status.unwrap();
-        assert_eq!(status.min, 1, "status should be required");
-        assert!(!status.is_array, "status should not be an array");
+        assert!(!name_children.is_empty(), "Patient.name should have children");
+
+        // HumanName should have "given", "family", etc.
+        let has_given = name_children.iter().any(|e| e.name == "given");
+        let has_family = name_children.iter().any(|e| e.name == "family");
+
+        assert!(has_given, "HumanName should have given element");
+        assert!(has_family, "HumanName should have family element");
+    }
+
+    #[tokio::test]
+    async fn test_get_element_type() {
+        let model_provider = create_test_provider();
+        let resolver = FhirResolver::with_model_provider(model_provider);
+
+        // "name" in Patient should resolve to "HumanName"
+        let name_type = resolver.get_element_type("Patient", "name").await;
+        assert_eq!(name_type, Some("HumanName".to_string()));
+
+        // Non-existent element should return None
+        let invalid_type = resolver.get_element_type("Patient", "nonexistent").await;
+        assert_eq!(invalid_type, None);
+    }
+
+    #[tokio::test]
+    async fn test_cache_works() {
+        let model_provider = create_test_provider();
+        let resolver = FhirResolver::with_model_provider(model_provider);
+
+        // First call - populates cache
+        let children1 = resolver.get_children("Patient", "name").await;
+
+        // Second call - should use cache
+        let children2 = resolver.get_children("Patient", "name").await;
+
+        assert_eq!(children1.len(), children2.len());
+
+        // Clear cache
+        resolver.clear_cache();
+
+        // Third call - should repopulate
+        let children3 = resolver.get_children("Patient", "name").await;
+        assert_eq!(children1.len(), children3.len());
     }
 }

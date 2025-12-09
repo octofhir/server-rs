@@ -1,7 +1,6 @@
 export const APP_CONFIG = {
   name: "OctoFHIR Server UI",
   version: "0.1.0",
-  defaultFhirBaseUrl: window.location.origin,
   healthPollInterval: 15000,
   maxHistoryItems: 20,
   supportedFhirVersions: ["R4", "R4B", "R5"],

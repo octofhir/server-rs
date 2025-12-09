@@ -28,7 +28,10 @@
       "@/widgets/*": ["src/widgets/*"],
       "@/features/*": ["src/features/*"],
       "@/entities/*": ["src/entities/*"],
-      "@/shared/*": ["src/shared/*"]
+      "@/shared/*": ["src/shared/*"],
+      "@codingame/monaco-vscode-api/default-extensions": [
+        "src/shared/monaco/defaultExtensions.ts"
+      ]
     },
 
     /* Linting */

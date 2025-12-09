@@ -34,7 +34,15 @@ export default defineConfig({
       sidebar: [
         { label: 'Overview', link: '' },
         { label: 'Getting Started', link: 'getting-started/' },
-        { label: 'Authentication', link: 'authentication/' },
+        {
+          label: 'Authentication',
+          collapsed: false,
+          items: [
+            { label: 'Overview', link: 'authentication/' },
+            { label: 'Auth Architecture', link: 'auth-architecture/' },
+            { label: 'JWT Key Persistence', link: 'jwt-key-persistence/' },
+          ]
+        },
         { label: 'API Reference', link: 'api-reference/' },
         { label: 'Development', link: 'development/' },
         { label: 'Deployment', link: 'deployment/' },

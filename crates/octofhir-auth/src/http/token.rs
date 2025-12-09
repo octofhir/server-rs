@@ -47,8 +47,8 @@ use uuid::Uuid;
 use crate::config::CookieConfig;
 use crate::error::AuthError;
 use crate::oauth::token::{TokenError, TokenErrorCode, TokenRequest, TokenResponse};
-use crate::storage::{ClientStorage, RefreshTokenStorage, RevokedTokenStorage, UserStorage};
 use crate::storage::session::SessionStorage;
+use crate::storage::{ClientStorage, RefreshTokenStorage, RevokedTokenStorage, UserStorage};
 use crate::token::jwt::{AccessTokenClaims, JwtService};
 use crate::token::service::{TokenConfig, TokenService};
 use crate::types::{Client, GrantType};
@@ -169,11 +169,14 @@ pub async fn token_handler(
     // Process the grant based on grant_type
     let result = match request.grant_type.as_str() {
         "authorization_code" => state.token_service.exchange_code(&request, &client).await,
-        "client_credentials" => state.token_service.client_credentials(&request, &client).await,
-        "refresh_token" => state.token_service.refresh(&request, &client).await,
-        "password" => {
-            password_grant(&state, &request, &client).await
+        "client_credentials" => {
+            state
+                .token_service
+                .client_credentials(&request, &client)
+                .await
         }
+        "refresh_token" => state.token_service.refresh(&request, &client).await,
+        "password" => password_grant(&state, &request, &client).await,
         other => {
             warn!(grant_type = other, "Unsupported grant type");
             Err(AuthError::unsupported_grant_type(other))
@@ -204,11 +207,21 @@ pub async fn token_handler(
 /// Client authentication credentials extracted from the request.
 enum ClientAuth {
     /// HTTP Basic authentication.
-    Basic { client_id: String, client_secret: String },
+    Basic {
+        client_id: String,
+        client_secret: String,
+    },
     /// Client credentials in request body.
-    Body { client_id: String, client_secret: String },
+    Body {
+        client_id: String,
+        client_secret: String,
+    },
     /// Client assertion (JWT-based).
-    Assertion { client_id: String, assertion_type: String, assertion: String },
+    Assertion {
+        client_id: String,
+        assertion_type: String,
+        assertion: String,
+    },
     /// Public client (no secret).
     Public { client_id: String },
     /// No client credentials provided.
@@ -218,42 +231,36 @@ enum ClientAuth {
 /// Extract client authentication from headers and request.
 fn extract_client_auth(headers: &HeaderMap, request: &TokenRequest) -> ClientAuth {
     // Try HTTP Basic Auth first
-    if let Some(auth_header) = headers.get("authorization") {
-        if let Ok(auth_str) = auth_header.to_str() {
-            if let Some(basic_creds) = auth_str.strip_prefix("Basic ") {
-                if let Ok(decoded) = base64::engine::general_purpose::STANDARD.decode(basic_creds.trim()) {
-                    if let Ok(creds_str) = String::from_utf8(decoded) {
-                        if let Some((client_id, client_secret)) = creds_str.split_once(':') {
+    if let Some(auth_header) = headers.get("authorization")
+        && let Ok(auth_str) = auth_header.to_str()
+            && let Some(basic_creds) = auth_str.strip_prefix("Basic ")
+                && let Ok(decoded) =
+                    base64::engine::general_purpose::STANDARD.decode(basic_creds.trim())
+                    && let Ok(creds_str) = String::from_utf8(decoded)
+                        && let Some((client_id, client_secret)) = creds_str.split_once(':') {
                             return ClientAuth::Basic {
                                 client_id: client_id.to_string(),
                                 client_secret: client_secret.to_string(),
                             };
                         }
-                    }
-                }
-            }
-        }
-    }
 
     // Try client assertion (JWT)
     if let (Some(assertion_type), Some(assertion)) = (
         request.client_assertion_type.as_ref(),
         request.client_assertion.as_ref(),
-    ) {
-        if let Some(client_id) = request.client_id.as_ref() {
+    )
+        && let Some(client_id) = request.client_id.as_ref() {
             return ClientAuth::Assertion {
                 client_id: client_id.clone(),
                 assertion_type: assertion_type.clone(),
                 assertion: assertion.clone(),
             };
         }
-    }
 
     // Try client_id + client_secret in body
-    if let (Some(client_id), Some(client_secret)) = (
-        request.client_id.as_ref(),
-        request.client_secret.as_ref(),
-    ) {
+    if let (Some(client_id), Some(client_secret)) =
+        (request.client_id.as_ref(), request.client_secret.as_ref())
+    {
         return ClientAuth::Body {
             client_id: client_id.clone(),
             client_secret: client_secret.clone(),
@@ -277,15 +284,23 @@ async fn authenticate_client(
     request: &mut TokenRequest,
 ) -> Result<crate::types::Client, AuthError> {
     let (client_id, secret) = match auth {
-        ClientAuth::Basic { client_id, client_secret } => {
+        ClientAuth::Basic {
+            client_id,
+            client_secret,
+        } => {
             // Set client_id on request for downstream processing
             request.client_id = Some(client_id.clone());
             (client_id, Some(client_secret))
         }
-        ClientAuth::Body { client_id, client_secret } => {
-            (client_id, Some(client_secret))
-        }
-        ClientAuth::Assertion { client_id, assertion_type, assertion } => {
+        ClientAuth::Body {
+            client_id,
+            client_secret,
+        } => (client_id, Some(client_secret)),
+        ClientAuth::Assertion {
+            client_id,
+            assertion_type,
+            assertion,
+        } => {
             // TODO: Implement client assertion validation
             // For now, just look up the client
             debug!(
@@ -296,9 +311,7 @@ async fn authenticate_client(
             let _ = assertion; // Suppress unused warning
             (client_id, None)
         }
-        ClientAuth::Public { client_id } => {
-            (client_id, None)
-        }
+        ClientAuth::Public { client_id } => (client_id, None),
         ClientAuth::None => {
             return Err(AuthError::invalid_client("No client credentials provided"));
         }
@@ -364,13 +377,15 @@ async fn password_grant(
     })?;
 
     // 3. Extract and validate required parameters
-    let username = request.username.as_ref().ok_or_else(|| {
-        AuthError::invalid_request("Missing username parameter")
-    })?;
+    let username = request
+        .username
+        .as_ref()
+        .ok_or_else(|| AuthError::invalid_request("Missing username parameter"))?;
 
-    let password = request.password.as_ref().ok_or_else(|| {
-        AuthError::invalid_request("Missing password parameter")
-    })?;
+    let password = request
+        .password
+        .as_ref()
+        .ok_or_else(|| AuthError::invalid_request("Missing password parameter"))?;
 
     // 4. Find user by username
     let user = user_storage
@@ -470,10 +485,8 @@ async fn password_grant(
 /// the access token for browser-based authentication.
 fn token_success_response(response: TokenResponse, cookie_config: &CookieConfig) -> Response {
     // Build the Set-Cookie header if enabled
-    let cookie_header = cookie_config.build_cookie(
-        &response.access_token,
-        response.expires_in as i64,
-    );
+    let cookie_header =
+        cookie_config.build_cookie(&response.access_token, response.expires_in as i64);
 
     let mut headers = vec![
         ("Content-Type".to_string(), "application/json".to_string()),
@@ -504,27 +517,20 @@ fn token_error_response(error: AuthError) -> Response {
         AuthError::InvalidClient { message, .. } => {
             (TokenErrorCode::InvalidClient, message.clone())
         }
-        AuthError::InvalidGrant { message, .. } => {
-            (TokenErrorCode::InvalidGrant, message.clone())
-        }
-        AuthError::InvalidScope { message, .. } => {
-            (TokenErrorCode::InvalidScope, message.clone())
-        }
+        AuthError::InvalidGrant { message, .. } => (TokenErrorCode::InvalidGrant, message.clone()),
+        AuthError::InvalidScope { message, .. } => (TokenErrorCode::InvalidScope, message.clone()),
         AuthError::InvalidRequest { message, .. } => {
             (TokenErrorCode::InvalidRequest, message.clone())
         }
-        AuthError::UnsupportedGrantType { grant_type, .. } => {
-            (
-                TokenErrorCode::UnsupportedGrantType,
-                format!("Grant type '{}' is not supported", grant_type),
-            )
-        }
-        AuthError::PkceVerificationFailed => {
-            (TokenErrorCode::InvalidGrant, "PKCE verification failed".to_string())
-        }
-        _ => {
-            (TokenErrorCode::InvalidRequest, error.to_string())
-        }
+        AuthError::UnsupportedGrantType { grant_type, .. } => (
+            TokenErrorCode::UnsupportedGrantType,
+            format!("Grant type '{}' is not supported", grant_type),
+        ),
+        AuthError::PkceVerificationFailed => (
+            TokenErrorCode::InvalidGrant,
+            "PKCE verification failed".to_string(),
+        ),
+        _ => (TokenErrorCode::InvalidRequest, error.to_string()),
     };
 
     let token_error = TokenError::with_description(code, description);
@@ -574,7 +580,10 @@ mod tests {
 
         let auth = extract_client_auth(&headers, &request);
         match auth {
-            ClientAuth::Basic { client_id, client_secret } => {
+            ClientAuth::Basic {
+                client_id,
+                client_secret,
+            } => {
                 assert_eq!(client_id, "test-client");
                 assert_eq!(client_secret, "test-secret");
             }
@@ -600,7 +609,10 @@ mod tests {
 
         let auth = extract_client_auth(&headers, &request);
         match auth {
-            ClientAuth::Body { client_id, client_secret } => {
+            ClientAuth::Body {
+                client_id,
+                client_secret,
+            } => {
                 assert_eq!(client_id, "test-client");
                 assert_eq!(client_secret, "test-secret");
             }

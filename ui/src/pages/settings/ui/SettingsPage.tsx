@@ -1,8 +1,6 @@
 import { createSignal } from "solid-js";
 import { Button, Card, Input, Select } from "@/shared/ui";
 import {
-  fhirBaseUrl,
-  setFhirBaseUrl,
   requestTimeout,
   setRequestTimeout,
   colorScheme,
@@ -62,19 +60,6 @@ export const SettingsPage = () => {
                 Test connection
               </Button>
             </div>
-          </div>
-
-          <div class={styles.formGroup}>
-            <Input
-              label="FHIR Base URL"
-              value={fhirBaseUrl()}
-              onInput={(e) => setFhirBaseUrl(e.currentTarget.value)}
-              placeholder="http://localhost:8080"
-              fullWidth
-            />
-            <span class={styles.helpText}>
-              Base URL of your FHIR server (e.g., http://localhost:8080)
-            </span>
           </div>
 
           <div class={styles.formGroup}>

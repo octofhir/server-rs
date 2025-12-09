@@ -123,6 +123,12 @@
     word-break: break-word;
 }
 
+.errorContainer {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-2);
+}
+
 .errorState {
     display: flex;
     align-items: flex-start;
@@ -137,6 +143,45 @@
 
 .errorIcon {
     flex-shrink: 0;
+}
+
+.errorDetails {
+    margin-top: var(--spacing-2);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-sm);
+    background-color: var(--bg-secondary);
+}
+
+.errorDetailsSummary {
+    padding: var(--spacing-2) var(--spacing-3);
+    cursor: pointer;
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-medium);
+    color: var(--text-muted);
+    user-select: none;
+}
+
+.errorDetailsSummary:hover {
+    background-color: var(--bg-hover, rgba(0, 0, 0, 0.02));
+}
+
+.errorDetailsPre {
+    margin: 0;
+    padding: var(--spacing-3);
+    background-color: var(--input-bg);
+    border-top: 1px solid var(--border-subtle);
+    font-family: var(--font-mono);
+    font-size: var(--font-size-xs);
+    color: var(--text-color);
+    overflow-x: auto;
+    white-space: pre;
+}
+
+.infoIcon {
+    flex-shrink: 0;
+    margin-right: var(--spacing-2);
+    font-size: var(--font-size-lg);
+    color: var(--text-muted);
 }
 
 .tableWrapper {

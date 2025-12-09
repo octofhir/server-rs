@@ -262,14 +262,15 @@ pub async fn sync_and_load(
 
     // If manager is provided, load the package
     if let Some(mgr) = manager {
+        // Package ID includes version: name@version
+        let package_id = format!("{}@{}", PACKAGE_NAME, PACKAGE_VERSION);
         match mgr
-            .load_from_directory(&package_dir, Some(PACKAGE_NAME))
+            .load_from_directory(&package_dir, Some(&package_id))
             .await
         {
             Ok(_) => {
                 info!(
-                    package_name = PACKAGE_NAME,
-                    package_version = PACKAGE_VERSION,
+                    package_id = %package_id,
                     "Loaded internal package into canonical manager"
                 );
             }

@@ -1,0 +1,278 @@
+---
+title: JWT Key Persistence
+description: Production guide for managing JWT signing keys in OctoFHIR
+---
+
+# JWT Signing Key Persistence
+
+## Overview
+
+By default, OctoFHIR generates a new JWT signing key pair on each server startup. This means all access tokens become invalid when the server restarts, requiring users to re-authenticate.
+
+For production deployments, you should provide persistent JWT signing keys via configuration to maintain token validity across server restarts.
+
+## Quick Start
+
+### 1. Generate RSA Keys (for RS256 or RS384)
+
+```bash
+# Generate a 2048-bit RSA private key
+openssl genrsa -out jwt_private.pem 2048
+
+# Extract the public key
+openssl rsa -in jwt_private.pem -pubout -out jwt_public.pem
+```
+
+### 2. Generate EC Keys (for ES384)
+
+```bash
+# Generate a P-384 EC private key
+openssl ecparam -name secp384r1 -genkey -noout -out jwt_private.pem
+
+# Extract the public key
+openssl ec -in jwt_private.pem -pubout -out jwt_public.pem
+```
+
+### 3. Configure OctoFHIR
+
+You have three options for providing the keys:
+
+#### Option A: Direct Configuration File
+
+Edit `octofhir.toml`:
+
+```toml
+[auth.signing]
+algorithm = "RS384"
+kid = "production-key-2024"  # Optional but recommended
+
+private_key_pem = """
+-----BEGIN PRIVATE KEY-----
+MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQClWJYT...
+... (your full private key) ...
+-----END PRIVATE KEY-----
+"""
+
+public_key_pem = """
+-----BEGIN PUBLIC KEY-----
+MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEApViWEyoNK...
+... (your full public key) ...
+-----END PUBLIC KEY-----
+"""
+```
+
+#### Option B: Environment Variables
+
+```bash
+export OCTOFHIR__AUTH__SIGNING__PRIVATE_KEY_PEM="$(cat jwt_private.pem)"
+export OCTOFHIR__AUTH__SIGNING__PUBLIC_KEY_PEM="$(cat jwt_public.pem)"
+export OCTOFHIR__AUTH__SIGNING__KID="production-key-2024"
+
+# Start the server
+cargo run
+```
+
+#### Option C: Separate Configuration File
+
+Create a separate `jwt-keys.toml`:
+
+```toml
+[auth.signing]
+private_key_pem = """
+-----BEGIN PRIVATE KEY-----
+...
+-----END PRIVATE KEY-----
+"""
+
+public_key_pem = """
+-----BEGIN PUBLIC KEY-----
+...
+-----END PUBLIC KEY-----
+"""
+kid = "production-key-2024"
+```
+
+Then merge it with your main config using the config manager.
+
+## Key Management Best Practices
+
+### Security
+
+1. **Never commit private keys to version control**
+   - Add `*.pem` to `.gitignore`
+   - Use environment variables or secure secret management systems
+
+2. **Protect private key files**
+   ```bash
+   chmod 600 jwt_private.pem
+   ```
+
+3. **Use secure storage**
+   - For production, consider using HashiCorp Vault, AWS Secrets Manager, or similar
+   - Mount secrets as environment variables or files at runtime
+
+### Key Rotation
+
+The configuration includes `key_rotation_days` and `keys_to_keep` settings for future automatic key rotation support:
+
+```toml
+[auth.signing]
+algorithm = "RS384"
+key_rotation_days = 90  # Rotate keys every 90 days
+keys_to_keep = 3        # Keep 3 old keys for validation
+```
+
+**Note**: Automatic rotation is planned for a future release. Currently, you must rotate keys manually.
+
+### Key ID (kid) Management
+
+The `kid` (Key ID) field helps clients identify which key was used to sign a token. Best practices:
+
+1. **Use descriptive, stable IDs**: `production-key-2024-01` instead of random UUIDs
+2. **Include rotation date**: Makes it easy to track key age
+3. **Keep it stable**: Don't change the kid unless you rotate the actual key
+
+## Troubleshooting
+
+### Tokens Still Invalid After Restart
+
+**Problem**: Tokens are invalidated even with keys configured.
+
+**Solutions**:
+1. Verify both `private_key_pem` and `public_key_pem` are set
+2. Check that the `kid` is stable (set explicitly)
+3. Ensure the algorithm matches (`RS256`, `RS384`, or `ES384`)
+4. Check server logs for key loading errors
+
+### "Failed to load JWT signing key from configuration"
+
+**Problem**: Server logs show an error loading keys.
+
+**Solutions**:
+1. Verify PEM format includes BEGIN/END markers
+2. Ensure no extra whitespace or formatting issues
+3. Check that private/public keys are a matching pair
+4. Verify the algorithm matches the key type (RSA for RS256/RS384, EC for ES384)
+
+### Validation Errors
+
+Run validation:
+```bash
+# Check if keys are valid
+openssl rsa -in jwt_private.pem -check
+openssl ec -in jwt_private.pem -check  # For EC keys
+
+# Verify public key matches private key
+openssl rsa -in jwt_private.pem -pubout | diff - jwt_public.pem
+```
+
+## Docker Deployment
+
+For Docker deployments, use secrets or environment variables:
+
+```dockerfile
+# Dockerfile
+FROM rust:latest AS builder
+WORKDIR /app
+COPY . .
+RUN cargo build --release
+
+FROM debian:bookworm-slim
+COPY --from=builder /app/target/release/octofhir-server /usr/local/bin/
+# Don't copy keys to the image!
+CMD ["octofhir-server"]
+```
+
+```yaml
+# docker-compose.yml
+services:
+  octofhir:
+    image: octofhir-server
+    environment:
+      OCTOFHIR__AUTH__SIGNING__PRIVATE_KEY_PEM: ${JWT_PRIVATE_KEY}
+      OCTOFHIR__AUTH__SIGNING__PUBLIC_KEY_PEM: ${JWT_PUBLIC_KEY}
+      OCTOFHIR__AUTH__SIGNING__KID: "production-2024"
+    secrets:
+      - jwt_private_key
+      - jwt_public_key
+
+secrets:
+  jwt_private_key:
+    file: ./secrets/jwt_private.pem
+  jwt_public_key:
+    file: ./secrets/jwt_public.pem
+```
+
+## Kubernetes Deployment
+
+Use Kubernetes secrets:
+
+```yaml
+# Create secret from files
+kubectl create secret generic jwt-keys \
+  --from-file=private=./jwt_private.pem \
+  --from-file=public=./jwt_public.pem
+
+# Deployment
+apiVersion: v1
+kind: Pod
+metadata:
+  name: octofhir
+spec:
+  containers:
+  - name: octofhir
+    image: octofhir-server
+    env:
+    - name: OCTOFHIR__AUTH__SIGNING__PRIVATE_KEY_PEM
+      valueFrom:
+        secretKeyRef:
+          name: jwt-keys
+          key: private
+    - name: OCTOFHIR__AUTH__SIGNING__PUBLIC_KEY_PEM
+      valueFrom:
+        secretKeyRef:
+          name: jwt-keys
+          key: public
+    - name: OCTOFHIR__AUTH__SIGNING__KID
+      value: "production-2024"
+```
+
+## Migration from Auto-Generated Keys
+
+If you're migrating from auto-generated keys:
+
+1. **Generate and configure new keys** following the steps above
+2. **Deploy the new configuration** to your server
+3. **Users will need to re-authenticate** once (their old tokens will be invalid)
+4. **Future restarts** will maintain token validity
+
+To minimize disruption, deploy during a maintenance window.
+
+## Verification
+
+After configuration, the server logs should show:
+
+```
+INFO octofhir_server::server: Loaded JWT signing key from configuration
+    algorithm: RS384
+    kid: production-key-2024
+```
+
+Instead of:
+
+```
+WARN octofhir_server::server: Generated new JWT signing key - tokens will be invalidated on server restart.
+    Consider setting auth.signing.private_key_pem in configuration for production.
+```
+
+## Related Documentation
+
+- [Authentication Guide](./authentication) - OAuth 2.0 and SMART on FHIR
+- [Auth Architecture](./auth-architecture) - Authentication system architecture
+- [Deployment Guide](./deployment) - Production deployment best practices
+
+## Further Reading
+
+- [JWT Best Practices](https://tools.ietf.org/html/rfc8725)
+- [SMART on FHIR Security](https://www.hl7.org/fhir/smart-app-launch/index.html)
+- [OpenSSL Key Generation](https://www.openssl.org/docs/man1.1.1/man1/genrsa.html)

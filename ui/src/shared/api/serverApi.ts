@@ -1,5 +1,20 @@
 import type { BuildInfo, HealthResponse, HttpResponse, SqlResponse, SqlValue } from "./types";
 
+/**
+ * Custom error class that includes the parsed response body (e.g., OperationOutcome).
+ */
+export class ApiResponseError extends Error {
+  constructor(
+    message: string,
+    public status: number,
+    public statusText: string,
+    public responseData: any,
+  ) {
+    super(message);
+    this.name = "ApiResponseError";
+  }
+}
+
 class ServerApiClient {
   private baseUrl: string;
   private defaultTimeout: number;
@@ -37,7 +52,7 @@ class ServerApiClient {
       let data: T;
       const contentType = response.headers.get("content-type");
 
-      if (contentType?.includes("application/json")) {
+      if (contentType?.includes("application/json") || contentType?.includes("application/fhir+json")) {
         data = await response.json();
       } else {
         data = (await response.text()) as unknown as T;
@@ -57,7 +72,12 @@ class ServerApiClient {
       };
 
       if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        throw new ApiResponseError(
+          `HTTP ${response.status}: ${response.statusText}`,
+          response.status,
+          response.statusText,
+          data,
+        );
       }
 
       return result;

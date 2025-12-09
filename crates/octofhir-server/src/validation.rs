@@ -18,10 +18,13 @@ use std::sync::Arc;
 use octofhir_fhir_model::{ValidationProvider, provider::ModelProvider};
 use octofhir_fhirpath::FhirPathEngine;
 use octofhir_fhirschema::{
-    FhirSchemaValidationProvider, FhirVersion, create_validation_provider_with_fhirpath,
-    embedded::get_schemas, model_provider::FhirSchemaModelProvider, types::ValidationContext,
+    FhirSchemaValidationProvider, create_validation_provider_with_fhirpath,
+    types::ValidationContext,
 };
 use serde_json::Value as JsonValue;
+
+#[cfg(test)]
+use octofhir_fhirschema::{FhirVersion, embedded::get_schemas, model_provider::FhirSchemaModelProvider};
 
 use crate::canonical;
 
@@ -151,6 +154,11 @@ impl ValidationService {
 
     /// Create a validation service without FHIRPath constraint evaluation
     /// (structural validation only)
+    ///
+    /// **NOTE:** This method creates its own model provider and should only
+    /// be used in tests. In production, use `new()` with the shared provider
+    /// from AppState.
+    #[cfg(test)]
     pub async fn new_structural_only(fhir_version: FhirVersion) -> Result<Self, anyhow::Error> {
         let schemas = get_schemas(fhir_version);
         let model_fhir_version = match fhir_version {

@@ -1,36 +1,34 @@
 {
-  "name": "octofhir-ui",
-  "private": true,
-  "version": "0.1.0",
-  "type": "module",
-  "scripts": {
-    "dev": "vite",
-    "build": "vite build",
-    "preview": "vite preview",
-    "lint": "biome lint .",
-    "format": "biome format --write .",
-    "check": "biome check .",
-    "typecheck": "tsc --noEmit"
-  },
-  "dependencies": {
-    "solid-js": "^1.9.3",
-    "@solidjs/router": "^0.15.2",
-    "effector": "^23.2.0",
-    "effector-solid": "^0.23.0",
-    "@kobalte/core": "^0.13.0",
-    "solid-transition-group": "^0.2.3",
-    "@solid-primitives/keyboard": "^1.2.8",
-    "@solid-primitives/storage": "^4.2.0",
-    "monaco-editor": "^0.52.2",
-    "monaco-languageclient": "^9.0.0",
-    "vscode-languageclient": "^9.0.1",
-    "vscode-ws-jsonrpc": "^3.3.2"
-  },
-  "devDependencies": {
-    "@biomejs/biome": "^2.2.3",
-    "@types/node": "^24.3.1",
-    "typescript": "~5.8.3",
-    "vite": "^7.1.2",
-    "vite-plugin-solid": "^2.11.6"
-  }
+	"name": "octofhir-ui",
+	"private": true,
+	"version": "0.1.0",
+	"type": "module",
+	"scripts": {
+		"dev": "vite",
+		"build": "vite build",
+		"preview": "vite preview",
+		"lint": "biome lint .",
+		"format": "biome format --write .",
+		"check": "biome check .",
+		"typecheck": "tsc --noEmit"
+	},
+	"dependencies": {
+		"@kobalte/core": "^0.13.0",
+		"@solid-primitives/keyboard": "^1.2.8",
+		"@solid-primitives/storage": "^4.2.0",
+		"@solidjs/router": "^0.15.2",
+		"effector": "^23.2.0",
+		"effector-solid": "^0.23.0",
+		"monaco-editor": "^0.52.2",
+		"solid-js": "^1.9.3",
+		"solid-transition-group": "^0.2.3"
+	},
+	"devDependencies": {
+		"@biomejs/biome": "^2.2.3",
+		"@bithero/monaco-editor-vite-plugin": "^1.0.2",
+		"@types/node": "^24.3.1",
+		"typescript": "~5.8.3",
+		"vite": "^7.1.2",
+		"vite-plugin-solid": "^2.11.6"
+	}
 }

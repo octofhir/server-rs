@@ -213,6 +213,22 @@ pub struct SigningConfig {
     /// Number of old keys to keep for validation.
     /// Allows tokens signed with old keys to remain valid until expiry.
     pub keys_to_keep: u32,
+
+    /// Optional PEM-encoded private key.
+    /// If provided, this key will be used instead of generating a new one.
+    /// This ensures tokens remain valid across server restarts.
+    /// Can be set via environment variable: OCTOFHIR__AUTH__SIGNING__PRIVATE_KEY_PEM
+    pub private_key_pem: Option<String>,
+
+    /// Optional PEM-encoded public key.
+    /// Required if private_key_pem is provided.
+    /// Can be set via environment variable: OCTOFHIR__AUTH__SIGNING__PUBLIC_KEY_PEM
+    pub public_key_pem: Option<String>,
+
+    /// Optional Key ID (kid) for the signing key.
+    /// If not provided, a random UUID will be generated.
+    /// Should be stable across restarts when using a fixed key.
+    pub kid: Option<String>,
 }
 
 impl Default for SigningConfig {
@@ -221,6 +237,9 @@ impl Default for SigningConfig {
             algorithm: "RS384".to_string(),
             key_rotation_days: 90,
             keys_to_keep: 3,
+            private_key_pem: None,
+            public_key_pem: None,
+            kid: None,
         }
     }
 }
@@ -584,6 +603,19 @@ impl AuthConfig {
                     other
                 )));
             }
+        }
+
+        // Validate signing key configuration
+        if self.signing.private_key_pem.is_some() && self.signing.public_key_pem.is_none() {
+            return Err(ConfigError::InvalidValue(
+                "public_key_pem is required when private_key_pem is provided".to_string(),
+            ));
+        }
+
+        if self.signing.public_key_pem.is_some() && self.signing.private_key_pem.is_none() {
+            return Err(ConfigError::InvalidValue(
+                "private_key_pem is required when public_key_pem is provided".to_string(),
+            ));
         }
 
         // Validate grant types

@@ -11,6 +11,10 @@ members = [
     "crates/octofhir-server",
     "crates/octofhir-sof",
     "crates/octofhir-storage",
+    # PostgreSQL LSP tree-sitter crates (from Supabase postgres-language-server, MIT)
+    "crates/pgls-text-size",
+    "crates/pgls-treesitter-grammar",
+    "crates/pgls-treesitter",
 ]
 
 [workspace.package]
@@ -39,6 +43,13 @@ lsp-types = "0.95"
 
 # PostgreSQL parser (libpg_query bindings)
 pg_query = "6.1"
+
+# Tree-sitter for SQL AST parsing
+tree-sitter = "0.25"
+tree-sitter-language = "0.1"
+pgls-treesitter-grammar = { path = "crates/pgls-treesitter-grammar" }
+pgls-treesitter = { path = "crates/pgls-treesitter" }
+pgls-text-size = { path = "crates/pgls-text-size" }
 
 # Test utilities
 filetime = "0.2"
