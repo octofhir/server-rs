@@ -106,7 +106,6 @@ pub mod matcher;
 pub mod quickjs;
 pub mod reload;
 pub mod resources;
-pub mod rhai;
 
 pub use cache::{PolicyCache, PolicyCacheError, PolicyCacheStats};
 
@@ -135,8 +134,6 @@ pub use compartment::{
 };
 
 pub use quickjs::{QuickJsCacheStats, QuickJsError, QuickJsRuntime};
-
-pub use rhai::{RhaiCacheStats, RhaiRuntime};
 
 pub use reload::{
     PolicyChange, PolicyChangeNotifier, PolicyReloadService, ReloadConfig, ReloadStats,

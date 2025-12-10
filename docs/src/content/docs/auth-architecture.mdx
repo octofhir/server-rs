@@ -13,7 +13,7 @@ This document presents a comprehensive architectural plan for the OctoFHIR Auth 
 - **External Identity Provider Federation** via OpenID Connect
 - **Full SMART on FHIR Compliance** (STU 2.2) including App Launch and Backend Services
 - **Custom FHIR Resources** for auth configuration via internal Implementation Guide
-- **AccessPolicy Engine** with pattern matching and scriptable policies (Rhai + QuickJS)
+- **AccessPolicy Engine** with pattern matching and scriptable policies (QuickJS)
 
 ---
 
@@ -97,10 +97,10 @@ This document presents a comprehensive architectural plan for the OctoFHIR Auth 
 │  │                            ▼                                            ││
 │  │  ┌─────────────────────────────────────────────────────────────────┐   ││
 │  │  │                   AccessPolicy Engine                            │   ││
-│  │  │  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────────┐  │   ││
-│  │  │  │  Pattern    │  │  Rhai       │  │  QuickJS (rquickjs)     │  │   ││
-│  │  │  │  Matcher    │  │  Scripting  │  │  JavaScript Runtime     │  │   ││
-│  │  │  └─────────────┘  └─────────────┘  └─────────────────────────┘  │   ││
+│  │  │  ┌─────────────┐  ┌─────────────────────────┐                   │   ││
+│  │  │  │  Pattern    │  │  QuickJS (rquickjs)     │                   │   ││
+│  │  │  │  Matcher    │  │  JavaScript Runtime     │                   │   ││
+│  │  │  └─────────────┘  └─────────────────────────┘                   │   ││
 │  │  └─────────────────────────┬───────────────────────────────────────┘   ││
 │  │                            │                                            ││
 │  │                            ▼                                            ││
@@ -151,7 +151,7 @@ For the complete architectural details including component deep dives, data mode
 ### AccessPolicy Engine
 
 - Pattern-based access control matching
-- Scriptable policies using Rhai and QuickJS
+- Scriptable policies using QuickJS
 - Resource-level and field-level filtering
 - Sub-millisecond policy evaluation
 
@@ -193,7 +193,7 @@ public_clients_allowed = true
 openid_enabled = true
 
 [auth.policy]
-engine = "rhai"  # or "quickjs"
+engine = "quickjs"
 policy_reload_interval = "60s"
 
 [auth.federation]

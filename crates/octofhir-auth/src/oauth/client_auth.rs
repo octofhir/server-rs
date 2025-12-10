@@ -535,6 +535,8 @@ mod tests {
             client_assertion: None,
             refresh_token: None,
             scope: None,
+            username: None,
+            password: None,
         };
 
         let result = authenticate_client(&request, None, &storage).await;
@@ -561,6 +563,8 @@ mod tests {
             client_assertion: None,
             refresh_token: None,
             scope: None,
+            username: None,
+            password: None,
         };
 
         let result = authenticate_client(
@@ -592,6 +596,8 @@ mod tests {
             client_assertion: None,
             refresh_token: None,
             scope: None,
+            username: None,
+            password: None,
         };
 
         let result = authenticate_client(&request, None, &storage).await;
@@ -617,6 +623,8 @@ mod tests {
             client_assertion: None,
             refresh_token: None,
             scope: None,
+            username: None,
+            password: None,
         };
 
         let result = authenticate_client(&request, None, &storage).await;
@@ -639,6 +647,8 @@ mod tests {
             client_assertion: None,
             refresh_token: None,
             scope: None,
+            username: None,
+            password: None,
         };
 
         let result = authenticate_client(&request, None, &storage).await;
@@ -661,6 +671,8 @@ mod tests {
             client_assertion: None,
             refresh_token: None,
             scope: None,
+            username: None,
+            password: None,
         };
 
         let result = authenticate_client(&request, None, &storage).await;
@@ -683,6 +695,8 @@ mod tests {
             client_assertion: None,
             refresh_token: None,
             scope: None,
+            username: None,
+            password: None,
         };
 
         let result =
@@ -705,6 +719,8 @@ mod tests {
             client_assertion: None,
             refresh_token: None,
             scope: None,
+            username: None,
+            password: None,
         };
 
         let result = authenticate_client(&request, None, &storage).await;

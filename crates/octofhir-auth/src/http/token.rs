@@ -576,6 +576,8 @@ mod tests {
             client_assertion: None,
             refresh_token: None,
             scope: None,
+            username: None,
+            password: None,
         };
 
         let auth = extract_client_auth(&headers, &request);
@@ -605,6 +607,8 @@ mod tests {
             client_assertion: None,
             refresh_token: None,
             scope: None,
+            username: None,
+            password: None,
         };
 
         let auth = extract_client_auth(&headers, &request);
@@ -634,6 +638,8 @@ mod tests {
             client_assertion: None,
             refresh_token: None,
             scope: None,
+            username: None,
+            password: None,
         };
 
         let auth = extract_client_auth(&headers, &request);

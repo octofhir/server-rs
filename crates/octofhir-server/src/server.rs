@@ -732,9 +732,7 @@ pub async fn build_app(cfg: &AppConfig) -> Result<Router, anyhow::Error> {
         policy_cache.clone(),
         PolicyEvaluatorConfig {
             evaluate_scopes_first: false, // Policies first, then scope check
-            rhai_enabled: cfg.auth.policy.rhai_enabled,
             quickjs_enabled: cfg.auth.policy.quickjs_enabled,
-            rhai_config: cfg.auth.policy.rhai.clone().into(),
             quickjs_config: cfg.auth.policy.quickjs.clone().into(),
             ..PolicyEvaluatorConfig::default()
         },

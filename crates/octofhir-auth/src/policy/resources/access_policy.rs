@@ -183,7 +183,7 @@ pub struct EngineElement {
     #[serde(rename = "type")]
     pub engine_type: PolicyEngineType,
 
-    /// Script content (required for Rhai/QuickJS engines).
+    /// Script content (required for QuickJS engine).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub script: Option<String>,
 }
@@ -196,8 +196,6 @@ pub enum PolicyEngineType {
     Allow,
     /// Always deny access.
     Deny,
-    /// Evaluate using Rhai script.
-    Rhai,
     /// Evaluate using QuickJS script.
     #[serde(rename = "quickjs")]
     QuickJs,
@@ -219,9 +217,9 @@ impl AccessPolicy {
             return Err(ValidationError::MissingField("name"));
         }
 
-        // Script is required for Rhai/QuickJS engines
+        // Script is required for QuickJS engine
         match self.engine.engine_type {
-            PolicyEngineType::Rhai | PolicyEngineType::QuickJs => {
+            PolicyEngineType::QuickJs => {
                 if self
                     .engine
                     .script
@@ -364,11 +362,6 @@ pub enum PolicyEngine {
     Allow,
     /// Always deny access.
     Deny,
-    /// Evaluate using Rhai script.
-    Rhai {
-        /// The Rhai script to execute.
-        script: String,
-    },
     /// Evaluate using QuickJS script.
     QuickJs {
         /// The JavaScript code to execute.
@@ -439,14 +432,6 @@ impl AccessPolicy {
         match self.engine.engine_type {
             PolicyEngineType::Allow => Ok(PolicyEngine::Allow),
             PolicyEngineType::Deny => Ok(PolicyEngine::Deny),
-            PolicyEngineType::Rhai => {
-                let script = self
-                    .engine
-                    .script
-                    .clone()
-                    .ok_or(ConversionError::MissingScript)?;
-                Ok(PolicyEngine::Rhai { script })
-            }
             PolicyEngineType::QuickJs => {
                 let script = self
                     .engine
@@ -561,20 +546,6 @@ mod tests {
     }
 
     #[test]
-    fn test_valid_rhai_policy() {
-        let policy = AccessPolicy {
-            name: "Rhai policy".to_string(),
-            engine: EngineElement {
-                engine_type: PolicyEngineType::Rhai,
-                script: Some(r#"user.roles.contains("admin")"#.to_string()),
-            },
-            ..Default::default()
-        };
-
-        assert!(policy.validate().is_ok());
-    }
-
-    #[test]
     fn test_valid_quickjs_policy() {
         let policy = AccessPolicy {
             name: "QuickJS policy".to_string(),
@@ -601,42 +572,6 @@ mod tests {
 
         let result = policy.validate();
         assert!(matches!(result, Err(ValidationError::MissingField("name"))));
-    }
-
-    #[test]
-    fn test_missing_script_for_rhai() {
-        let policy = AccessPolicy {
-            name: "Bad Rhai policy".to_string(),
-            engine: EngineElement {
-                engine_type: PolicyEngineType::Rhai,
-                script: None,
-            },
-            ..Default::default()
-        };
-
-        let result = policy.validate();
-        assert!(matches!(
-            result,
-            Err(ValidationError::MissingField("engine.script"))
-        ));
-    }
-
-    #[test]
-    fn test_empty_script_for_rhai() {
-        let policy = AccessPolicy {
-            name: "Bad Rhai policy".to_string(),
-            engine: EngineElement {
-                engine_type: PolicyEngineType::Rhai,
-                script: Some("   ".to_string()), // Whitespace only
-            },
-            ..Default::default()
-        };
-
-        let result = policy.validate();
-        assert!(matches!(
-            result,
-            Err(ValidationError::MissingField("engine.script"))
-        ));
     }
 
     #[test]
@@ -779,40 +714,6 @@ mod tests {
         assert!(matches!(internal.engine, PolicyEngine::Allow));
         assert!(internal.matchers.roles.is_some());
         assert!(internal.matchers.resource_types.is_some());
-    }
-
-    #[test]
-    fn test_convert_to_internal_rhai() {
-        let policy = AccessPolicy {
-            name: "Rhai policy".to_string(),
-            engine: EngineElement {
-                engine_type: PolicyEngineType::Rhai,
-                script: Some("true".to_string()),
-            },
-            ..Default::default()
-        };
-
-        let internal = policy.to_internal_policy().unwrap();
-
-        match internal.engine {
-            PolicyEngine::Rhai { script } => assert_eq!(script, "true"),
-            _ => panic!("Expected Rhai engine"),
-        }
-    }
-
-    #[test]
-    fn test_convert_missing_script() {
-        let policy = AccessPolicy {
-            name: "Bad policy".to_string(),
-            engine: EngineElement {
-                engine_type: PolicyEngineType::Rhai,
-                script: None,
-            },
-            ..Default::default()
-        };
-
-        let result = policy.to_internal_policy();
-        assert!(matches!(result, Err(ConversionError::MissingScript)));
     }
 
     #[test]

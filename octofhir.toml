@@ -157,14 +157,8 @@ keys_to_keep = 3
 [auth.policy]
 # Default policy decision when no policy matches
 default_deny = true
-# Enable Rhai script engine for policies
-rhai_enabled = true
 # Enable QuickJS script engine for policies
 quickjs_enabled = true
-
-[auth.policy.rhai]
-max_operations = 10000
-max_call_levels = 32
 
 [auth.policy.quickjs]
 memory_limit_mb = 16

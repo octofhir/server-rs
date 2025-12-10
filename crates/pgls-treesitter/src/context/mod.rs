@@ -723,7 +723,45 @@ impl<'a> TreesitterContext<'a> {
 mod tests {
     use crate::context::{TreeSitterContextParams, TreesitterContext, WrappingClause};
 
-    use pgls_test_utils::QueryWithCursorPosition;
+    /// Test utility to handle cursor positions in SQL queries
+    struct QueryWithCursorPosition {
+        text: String,
+        position: usize,
+    }
+
+    impl QueryWithCursorPosition {
+        const CURSOR_MARKER: &'static str = "$CURSOR$";
+
+        fn cursor_marker() -> &'static str {
+            Self::CURSOR_MARKER
+        }
+
+        fn from(query: String) -> Self {
+            let position = query
+                .find(Self::CURSOR_MARKER)
+                .expect("Cursor marker not found in query");
+            let text = query.replace(Self::CURSOR_MARKER, "");
+
+            // If position is at or past the end of text, back up to the last valid position
+            // This handles trailing whitespace cases where cursor is at the very end
+            let position = if position >= text.len() {
+                if text.is_empty() {
+                    0
+                } else {
+                    // Back up to find the last non-whitespace character
+                    text.trim_end().len()
+                }
+            } else {
+                position
+            };
+
+            Self { text, position }
+        }
+
+        fn get_text_and_position(self) -> (usize, String) {
+            (self.position, self.text)
+        }
+    }
 
     fn get_tree(input: &str) -> tree_sitter::Tree {
         let mut parser = tree_sitter::Parser::new();

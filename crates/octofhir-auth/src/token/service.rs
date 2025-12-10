@@ -1525,6 +1525,8 @@ mod tests {
             client_assertion: None,
             refresh_token: None,
             scope: None,
+            username: None,
+            password: None,
         };
 
         let result = service.exchange_code(&request, &client).await;
@@ -1554,6 +1556,8 @@ mod tests {
             client_assertion: None,
             refresh_token: None,
             scope: None,
+            username: None,
+            password: None,
         };
 
         let result = service.exchange_code(&request, &client).await;
@@ -1579,6 +1583,8 @@ mod tests {
             client_assertion: None,
             refresh_token: None,
             scope: None,
+            username: None,
+            password: None,
         };
 
         let result = service.exchange_code(&request, &client).await;
@@ -1601,6 +1607,8 @@ mod tests {
             client_assertion: None,
             refresh_token: None,
             scope: None,
+            username: None,
+            password: None,
         };
 
         let result = service.exchange_code(&request, &client).await;
@@ -1630,6 +1638,8 @@ mod tests {
             client_assertion: None,
             refresh_token: None,
             scope: None,
+            username: None,
+            password: None,
         };
 
         let result = service.exchange_code(&request, &client).await;
@@ -1656,6 +1666,8 @@ mod tests {
             client_assertion: None,
             refresh_token: None,
             scope: None,
+            username: None,
+            password: None,
         };
 
         let result = service.exchange_code(&request, &client).await;
@@ -1682,6 +1694,8 @@ mod tests {
             client_assertion: None,
             refresh_token: None,
             scope: None,
+            username: None,
+            password: None,
         };
 
         let result = service.exchange_code(&request, &client).await;
@@ -1709,6 +1723,8 @@ mod tests {
             client_assertion: None,
             refresh_token: None,
             scope: None,
+            username: None,
+            password: None,
         };
 
         let result = service.exchange_code(&request, &client).await;
@@ -1750,6 +1766,8 @@ mod tests {
             client_assertion: None,
             refresh_token: None,
             scope: None,
+            username: None,
+            password: None,
         };
 
         let result = service.exchange_code(&request, &client).await;
@@ -1855,6 +1873,8 @@ mod tests {
             client_assertion: None,
             refresh_token: Some(token_value.to_string()),
             scope: None,
+            username: None,
+            password: None,
         };
 
         let result = service.refresh(&request, &client).await;
@@ -1887,6 +1907,8 @@ mod tests {
             client_assertion: None,
             refresh_token: Some("token".to_string()),
             scope: None,
+            username: None,
+            password: None,
         };
 
         let result = service.refresh(&request, &client).await;
@@ -1912,6 +1934,8 @@ mod tests {
             client_assertion: None,
             refresh_token: None,
             scope: None,
+            username: None,
+            password: None,
         };
 
         let result = service.refresh(&request, &client).await;
@@ -1934,6 +1958,8 @@ mod tests {
             client_assertion: None,
             refresh_token: Some("unknown-token".to_string()),
             scope: None,
+            username: None,
+            password: None,
         };
 
         let result = service.refresh(&request, &client).await;
@@ -1972,6 +1998,8 @@ mod tests {
             client_assertion: None,
             refresh_token: Some(token_value.to_string()),
             scope: None,
+            username: None,
+            password: None,
         };
 
         let result = service.refresh(&request, &client).await;
@@ -2010,6 +2038,8 @@ mod tests {
             client_assertion: None,
             refresh_token: Some(token_value.to_string()),
             scope: None,
+            username: None,
+            password: None,
         };
 
         let result = service.refresh(&request, &client).await;
@@ -2037,6 +2067,8 @@ mod tests {
             client_assertion: None,
             refresh_token: Some(token_value.to_string()),
             scope: None,
+            username: None,
+            password: None,
         };
 
         let result = service.refresh(&request, &client).await;
@@ -2068,6 +2100,8 @@ mod tests {
             client_assertion: None,
             refresh_token: Some(token_value.to_string()),
             scope: Some("openid patient/*.read".to_string()), // Narrower
+            username: None,
+            password: None,
         };
 
         let result = service.refresh(&request, &client).await;
@@ -2097,6 +2131,8 @@ mod tests {
             client_assertion: None,
             refresh_token: Some(token_value.to_string()),
             scope: Some("openid patient/*.read patient/*.write".to_string()), // Broader
+            username: None,
+            password: None,
         };
 
         let result = service.refresh(&request, &client).await;
@@ -2141,6 +2177,8 @@ mod tests {
             client_assertion: None,
             refresh_token: Some(token_value.to_string()),
             scope: None,
+            username: None,
+            password: None,
         };
 
         let result = service.refresh(&request, &client).await;
@@ -2178,6 +2216,8 @@ mod tests {
             client_assertion: None,
             refresh_token: Some(token_value.to_string()),
             scope: None,
+            username: None,
+            password: None,
         };
 
         let result = service.refresh(&request, &client).await;
@@ -2222,6 +2262,8 @@ mod tests {
             client_assertion: None,
             refresh_token: Some(token_value.to_string()),
             scope: None,
+            username: None,
+            password: None,
         };
 
         let result = service.refresh(&request, &client).await;
@@ -2253,6 +2295,8 @@ mod tests {
             client_assertion: None,
             refresh_token: None,
             scope: None,
+            username: None,
+            password: None,
         };
 
         let token_response = service.exchange_code(&request, &client).await.unwrap();
@@ -2391,6 +2435,8 @@ mod tests {
             client_assertion: None,
             refresh_token: None,
             scope: None,
+            username: None,
+            password: None,
         };
 
         let token_response = service.exchange_code(&request, &client).await.unwrap();
@@ -2490,6 +2536,8 @@ mod tests {
             client_assertion: None,
             refresh_token: None,
             scope: None,
+            username: None,
+            password: None,
         };
 
         let token_response = service.exchange_code(&request, &client).await.unwrap();
@@ -2565,6 +2613,8 @@ mod tests {
             client_assertion: None,
             refresh_token: None,
             scope: None,
+            username: None,
+            password: None,
         };
 
         let token_response = service.exchange_code(&request, &client).await.unwrap();
@@ -2726,6 +2776,8 @@ mod tests {
             client_assertion: None,
             refresh_token: None,
             scope: None,
+            username: None,
+            password: None,
         };
 
         let token_response = service.exchange_code(&request, &client).await.unwrap();
@@ -2770,6 +2822,8 @@ mod tests {
             client_assertion: None,
             refresh_token: None,
             scope: None,
+            username: None,
+            password: None,
         };
 
         let token_response = service.exchange_code(&request, &client).await.unwrap();

@@ -254,14 +254,8 @@ pub struct PolicyConfig {
     /// When enabled, access is denied unless a policy explicitly allows it.
     pub default_deny: bool,
 
-    /// Enable Rhai scripting for policies.
-    pub rhai_enabled: bool,
-
     /// Enable QuickJS scripting for policies.
     pub quickjs_enabled: bool,
-
-    /// Rhai scripting configuration.
-    pub rhai: RhaiConfig,
 
     /// QuickJS scripting configuration.
     pub quickjs: QuickJsConfig,
@@ -271,34 +265,8 @@ impl Default for PolicyConfig {
     fn default() -> Self {
         Self {
             default_deny: true,
-            rhai_enabled: true,
             quickjs_enabled: true,
-            rhai: RhaiConfig::default(),
             quickjs: QuickJsConfig::default(),
-        }
-    }
-}
-
-/// Rhai scripting engine configuration.
-///
-/// Controls resource limits for the Rhai policy scripting engine.
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(default)]
-pub struct RhaiConfig {
-    /// Maximum operations per script execution.
-    /// Prevents runaway scripts.
-    pub max_operations: u64,
-
-    /// Maximum call stack depth.
-    /// Prevents stack overflow from deep recursion.
-    pub max_call_levels: usize,
-}
-
-impl Default for RhaiConfig {
-    fn default() -> Self {
-        Self {
-            max_operations: 10_000,
-            max_call_levels: 32,
         }
     }
 }
@@ -652,21 +620,6 @@ impl AuthConfig {
             }
         }
 
-        // Validate Rhai limits
-        if self.policy.rhai_enabled {
-            if self.policy.rhai.max_operations == 0 {
-                return Err(ConfigError::InvalidValue(
-                    "Rhai max_operations must be > 0".to_string(),
-                ));
-            }
-
-            if self.policy.rhai.max_call_levels == 0 {
-                return Err(ConfigError::InvalidValue(
-                    "Rhai max_call_levels must be > 0".to_string(),
-                ));
-            }
-        }
-
         // Validate rate limiting
         if self.rate_limiting.max_failed_attempts == 0 {
             return Err(ConfigError::InvalidValue(
@@ -799,15 +752,6 @@ mod tests {
         config.policy.quickjs_enabled = false;
         config.policy.quickjs.memory_limit_mb = 0;
         // Should pass validation since QuickJS is disabled
-        assert!(config.validate().is_ok());
-    }
-
-    #[test]
-    fn test_disabled_rhai_skips_validation() {
-        let mut config = AuthConfig::default();
-        config.policy.rhai_enabled = false;
-        config.policy.rhai.max_operations = 0;
-        // Should pass validation since Rhai is disabled
         assert!(config.validate().is_ok());
     }
 

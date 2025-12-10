@@ -10,10 +10,10 @@
 //! use std::sync::Arc;
 //!
 //! let evaluator = PolicyEvaluator::new(policy_cache, PolicyEvaluatorConfig {
-//!     rhai_enabled: false,
 //!     quickjs_enabled: false,
 //!     default_decision: DefaultDecision::Deny,
 //!     evaluate_scopes_first: true,
+//!     ..Default::default()
 //! });
 //!
 //! let decision = evaluator.evaluate(&context).await;
@@ -27,13 +27,12 @@ use std::sync::Arc;
 use serde::Serialize;
 
 use crate::AuthResult;
-use crate::config::{QuickJsConfig, RhaiConfig};
+use crate::config::QuickJsConfig;
 use crate::policy::cache::PolicyCache;
 use crate::policy::context::PolicyContext;
 use crate::policy::matcher::PatternMatcher;
 use crate::policy::quickjs::QuickJsRuntime;
 use crate::policy::resources::{InternalPolicy, PolicyEngine as PolicyEngineType};
-use crate::policy::rhai::RhaiRuntime;
 use crate::smart::scopes::{FhirOperation, SmartScopes};
 
 // =============================================================================
@@ -170,12 +169,6 @@ impl DenyReason {
 /// Configuration for the policy evaluator.
 #[derive(Debug, Clone)]
 pub struct PolicyEvaluatorConfig {
-    /// Enable Rhai script engine for policies.
-    pub rhai_enabled: bool,
-
-    /// Rhai engine configuration.
-    pub rhai_config: RhaiConfig,
-
     /// Enable QuickJS script engine for policies.
     pub quickjs_enabled: bool,
 
@@ -195,8 +188,6 @@ pub struct PolicyEvaluatorConfig {
 impl Default for PolicyEvaluatorConfig {
     fn default() -> Self {
         Self {
-            rhai_enabled: false,
-            rhai_config: RhaiConfig::default(),
             quickjs_enabled: false,
             quickjs_config: QuickJsConfig::default(),
             default_decision: DefaultDecision::Deny,
@@ -261,17 +252,14 @@ pub struct EvaluatedPolicy {
 ///
 /// Orchestrates policy lookup, matching, and decision-making.
 ///
-/// Script runtimes (Rhai and QuickJS) are created once and shared across
-/// all evaluations. Scripts are compiled to AST once and cached.
+/// QuickJS runtime is created once and shared across all evaluations.
+/// Scripts are compiled to AST once and cached.
 pub struct PolicyEvaluator {
     /// Pattern matcher for policy matching.
     pattern_matcher: PatternMatcher,
 
     /// Policy cache for efficient policy lookup.
     policy_cache: Arc<PolicyCache>,
-
-    /// Rhai scripting runtime (shared, created once).
-    rhai_runtime: Option<Arc<RhaiRuntime>>,
 
     /// QuickJS scripting runtime (shared pool, created once).
     quickjs_runtime: Option<Arc<QuickJsRuntime>>,
@@ -283,17 +271,10 @@ pub struct PolicyEvaluator {
 impl PolicyEvaluator {
     /// Create a new policy evaluator.
     ///
-    /// If `rhai_enabled` is true in the config, a shared Rhai runtime is created.
     /// If `quickjs_enabled` is true, a shared QuickJS runtime pool is created.
-    /// The runtimes are reused for all script evaluations.
+    /// The runtime is reused for all script evaluations.
     #[must_use]
     pub fn new(policy_cache: Arc<PolicyCache>, config: PolicyEvaluatorConfig) -> Self {
-        let rhai_runtime = if config.rhai_enabled {
-            Some(Arc::new(RhaiRuntime::new(config.rhai_config.clone())))
-        } else {
-            None
-        };
-
         let quickjs_runtime = if config.quickjs_enabled {
             match QuickJsRuntime::new(config.quickjs_config.clone()) {
                 Ok(runtime) => Some(Arc::new(runtime)),
@@ -309,7 +290,6 @@ impl PolicyEvaluator {
         Self {
             pattern_matcher: PatternMatcher::new(),
             policy_cache,
-            rhai_runtime,
             quickjs_runtime,
             config,
         }
@@ -567,29 +547,6 @@ impl PolicyEvaluator {
                 policy.deny_message.clone(),
             )),
 
-            PolicyEngineType::Rhai { script } => {
-                if let Some(ref runtime) = self.rhai_runtime {
-                    tracing::debug!(
-                        policy_id = %policy.id,
-                        "Evaluating Rhai policy script"
-                    );
-                    let decision = runtime.evaluate(script, context);
-                    // If the script returns a deny, attach the policy ID
-                    if let AccessDecision::Deny(mut reason) = decision {
-                        reason.policy_id = Some(policy.id.clone());
-                        AccessDecision::Deny(reason)
-                    } else {
-                        decision
-                    }
-                } else {
-                    tracing::warn!(
-                        policy_id = %policy.id,
-                        "Rhai policy but Rhai is disabled"
-                    );
-                    AccessDecision::Abstain
-                }
-            }
-
             PolicyEngineType::QuickJs { script } => {
                 if let Some(ref runtime) = self.quickjs_runtime {
                     tracing::debug!(
@@ -619,12 +576,6 @@ impl PolicyEvaluator {
     #[must_use]
     pub fn cache(&self) -> &PolicyCache {
         &self.policy_cache
-    }
-
-    /// Get a reference to the Rhai runtime (if enabled).
-    #[must_use]
-    pub fn rhai_runtime(&self) -> Option<&Arc<RhaiRuntime>> {
-        self.rhai_runtime.as_ref()
     }
 
     /// Get a reference to the QuickJS runtime (if enabled).
@@ -811,7 +762,6 @@ mod tests {
         PolicyEvaluator::new(
             cache,
             PolicyEvaluatorConfig {
-                rhai_enabled: false,
                 quickjs_enabled: false,
                 default_decision: DefaultDecision::Deny,
                 evaluate_scopes_first: false, // Disable for simpler testing
@@ -954,7 +904,6 @@ mod tests {
         let engine = PolicyEvaluator::new(
             cache,
             PolicyEvaluatorConfig {
-                rhai_enabled: false,
                 quickjs_enabled: false,
                 default_decision: DefaultDecision::Deny,
                 evaluate_scopes_first: false,
@@ -977,7 +926,6 @@ mod tests {
         let engine = PolicyEvaluator::new(
             cache,
             PolicyEvaluatorConfig {
-                rhai_enabled: false,
                 quickjs_enabled: false,
                 default_decision: DefaultDecision::Allow,
                 evaluate_scopes_first: false,
@@ -1000,7 +948,6 @@ mod tests {
         let engine = PolicyEvaluator::new(
             cache,
             PolicyEvaluatorConfig {
-                rhai_enabled: false,
                 quickjs_enabled: false,
                 default_decision: DefaultDecision::Deny,
                 evaluate_scopes_first: true,
@@ -1028,7 +975,6 @@ mod tests {
         let engine = PolicyEvaluator::new(
             cache,
             PolicyEvaluatorConfig {
-                rhai_enabled: false,
                 quickjs_enabled: false,
                 default_decision: DefaultDecision::Allow,
                 evaluate_scopes_first: true,

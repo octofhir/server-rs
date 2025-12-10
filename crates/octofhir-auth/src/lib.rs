@@ -59,8 +59,8 @@ pub use policy::{
     EnvironmentContext, EvaluatedPolicy, EvaluationResult, InternalPolicy, MatchPattern,
     MatcherElement, PatternMatcher, PolicyCache, PolicyCacheError, PolicyCacheStats, PolicyContext,
     PolicyContextBuilder, PolicyEngine, PolicyEngineType, PolicyEvaluator, PolicyEvaluatorConfig,
-    PolicyMatchers, RequestContext, ResourceContext, ResourceMeta, RhaiCacheStats, RhaiRuntime,
-    ScopeSummary, UserIdentity, ValidationError, detect_operation, parse_fhir_path,
+    PolicyMatchers, RequestContext, ResourceContext, ResourceMeta, ScopeSummary, UserIdentity,
+    ValidationError, detect_operation, parse_fhir_path,
 };
 pub use smart::{
     CapabilitySecurityBuilder, ConformanceError, DEFAULT_LAUNCH_CONTEXT_TTL, FhirContextItem,
@@ -101,8 +101,8 @@ pub mod prelude {
         MatchPattern, MatcherElement, PatternMatcher, PolicyCache, PolicyCacheError,
         PolicyCacheStats, PolicyContext, PolicyContextBuilder, PolicyEngine, PolicyEngineType,
         PolicyEvaluator, PolicyEvaluatorConfig, PolicyMatchers, RequestContext, ResourceContext,
-        ResourceMeta, RhaiCacheStats, RhaiRuntime, ScopeSummary,
-        UserIdentity as PolicyUserIdentity, ValidationError, detect_operation, parse_fhir_path,
+        ResourceMeta, ScopeSummary, UserIdentity as PolicyUserIdentity, ValidationError,
+        detect_operation, parse_fhir_path,
     };
     pub use crate::smart::{
         CapabilitySecurityBuilder, ConformanceError, DEFAULT_LAUNCH_CONTEXT_TTL, FhirContextItem,
