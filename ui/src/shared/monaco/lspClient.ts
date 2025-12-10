@@ -637,7 +637,7 @@ class PgLspConnection {
 		const completionProvider = monaco.languages.registerCompletionItemProvider(
 			PG_LANGUAGE_ID,
 			{
-				triggerCharacters: [".", ">", ":", " ", "(", "'", '"', "{", ","],
+				triggerCharacters: [".", ">", ":", " ", "(", "'", '"', "{", ",", "$", "["],
 				provideCompletionItems: async (
 					model,
 					position,

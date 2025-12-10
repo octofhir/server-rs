@@ -17,14 +17,14 @@ use std::sync::Arc;
 
 use octofhir_fhir_model::{ValidationProvider, provider::ModelProvider};
 use octofhir_fhirpath::FhirPathEngine;
-use octofhir_fhirschema::{
-    FhirSchemaValidationProvider, create_validation_provider_with_fhirpath,
-    types::ValidationContext,
-};
+use octofhir_fhirschema::create_validation_provider_with_fhirpath;
 use serde_json::Value as JsonValue;
 
 #[cfg(test)]
-use octofhir_fhirschema::{FhirVersion, embedded::get_schemas, model_provider::FhirSchemaModelProvider};
+use octofhir_fhirschema::{
+    FhirSchemaValidationProvider, FhirVersion, ValidationContext, embedded::get_schemas,
+    model_provider::FhirSchemaModelProvider,
+};
 
 use crate::canonical;
 

@@ -180,3 +180,18 @@ tr:hover td {
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
 }
+
+/* Monaco Editor - Ensure hover widgets appear above all content */
+.monaco-editor .suggest-widget,
+.monaco-editor .monaco-hover,
+.monaco-editor .parameter-hints-widget,
+.monaco-editor .overlayWidgets,
+.monaco-editor .overflowingContentWidgets {
+  z-index: 9999 !important;
+}
+
+/* Monaco Editor hover rendered at body level */
+body > .monaco-editor-hover,
+body > .monaco-hover {
+  z-index: 9999 !important;
+}

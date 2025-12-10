@@ -16,10 +16,11 @@ use octofhir_auth_postgres::{
 };
 
 use crate::middleware::AuthorizationState;
+use crate::model_provider::OctoFhirModelProvider;
 use octofhir_fhir_model::provider::{FhirVersion, ModelProvider};
 use octofhir_fhirpath::FhirPathEngine;
 use octofhir_fhirschema::embedded::{FhirVersion as SchemaFhirVersion, get_schemas};
-use octofhir_fhirschema::model_provider::DynamicSchemaProvider;
+use octofhir_fhirschema::model_provider::FhirSchemaModelProvider;
 use octofhir_fhirschema::types::StructureDefinition;
 use time::Duration;
 use tower_http::{compression::CompressionLayer, cors::CorsLayer, trace::TraceLayer};
@@ -47,8 +48,8 @@ pub struct AppState {
     pub base_url: String,
     /// FHIRPath engine for FHIRPath Patch support
     pub fhirpath_engine: Arc<FhirPathEngine>,
-    /// Model provider for FHIRPath evaluation (schema-aware)
-    pub model_provider: SharedModelProvider,
+    /// Model provider for validation, FHIRPath, LSP, and all server features
+    pub model_provider: Arc<OctoFhirModelProvider>,
     /// Registry of available FHIR operations loaded from packages
     pub operation_registry: Arc<OperationRegistry>,
     /// Map of operation handlers by operation code
@@ -427,21 +428,34 @@ pub async fn build_app(cfg: &AppConfig) -> Result<Router, anyhow::Error> {
     // - If only FHIR version is set -> use embedded schemas
     let has_packages_configured = !cfg.packages.load.is_empty();
 
-    let model_provider: SharedModelProvider = if has_packages_configured {
+    let octofhir_provider = if has_packages_configured {
         // Load StructureDefinitions from canonical manager packages
         let structure_definitions = load_structure_definitions_from_packages().await;
 
         if !structure_definitions.is_empty() {
-            // DynamicSchemaProvider handles StructureDefinition -> FhirSchema translation internally
+            // Convert StructureDefinitions to FhirSchemas
             tracing::info!(
                 "Converting {} StructureDefinitions to FhirSchema format",
                 structure_definitions.len()
             );
-            let provider = DynamicSchemaProvider::from_structure_definitions(
-                structure_definitions,
-                fhir_version,
-            );
-            let schema_count = provider.schema_count();
+
+            let mut schemas = std::collections::HashMap::new();
+            for sd in structure_definitions {
+                match octofhir_fhirschema::translate(sd.clone(), None) {
+                    Ok(schema) => {
+                        schemas.insert(schema.name.clone(), schema);
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            "Failed to convert StructureDefinition '{}' to FhirSchema: {}",
+                            &sd.url,
+                            e
+                        );
+                    }
+                }
+            }
+
+            let schema_count = schemas.len();
             tracing::info!(
                 "Converted to {} FhirSchemas (FHIR version: {:?})",
                 schema_count,
@@ -458,7 +472,9 @@ pub async fn build_app(cfg: &AppConfig) -> Result<Router, anyhow::Error> {
                 "✓ Model provider initialized successfully with {} schemas from packages",
                 schema_count
             );
-            Arc::new(provider)
+            let provider = FhirSchemaModelProvider::new(schemas, fhir_version);
+            let octofhir_provider = Arc::new(OctoFhirModelProvider::new(provider));
+            octofhir_provider.clone()
         } else {
             // Packages configured but failed to load - fallback to embedded
             tracing::warn!(
@@ -474,13 +490,14 @@ pub async fn build_app(cfg: &AppConfig) -> Result<Router, anyhow::Error> {
                 ));
             }
 
-            let provider = DynamicSchemaProvider::new(schemas, fhir_version);
+            let provider = FhirSchemaModelProvider::new(schemas, fhir_version);
             tracing::info!(
                 "✓ Model provider initialized with {} embedded schemas (fallback, FHIR version: {:?})",
                 schema_count,
                 cfg.fhir.version
             );
-            Arc::new(provider)
+            let octofhir_provider = Arc::new(OctoFhirModelProvider::new(provider));
+            octofhir_provider.clone()
         }
     } else {
         // No packages configured - use embedded schemas for the configured FHIR version
@@ -495,14 +512,18 @@ pub async fn build_app(cfg: &AppConfig) -> Result<Router, anyhow::Error> {
             ));
         }
 
-        let provider = DynamicSchemaProvider::new(schemas, fhir_version);
+        let provider = FhirSchemaModelProvider::new(schemas, fhir_version);
         tracing::info!(
             "✓ Model provider initialized with {} embedded schemas (FHIR version: {:?})",
             schema_count,
             cfg.fhir.version
         );
-        Arc::new(provider)
+        let octofhir_provider = Arc::new(OctoFhirModelProvider::new(provider));
+        octofhir_provider.clone()
     };
+
+    // Use Arc<OctoFhirModelProvider> directly for all components
+    let model_provider = octofhir_provider;
 
     // Create FHIRPath function registry and engine
     let registry = Arc::new(octofhir_fhirpath::create_function_registry());

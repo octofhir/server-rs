@@ -11,6 +11,7 @@ pub mod handlers;
 pub mod lsp;
 pub mod mapping;
 pub mod middleware;
+pub mod model_provider;
 pub mod oauth;
 pub mod observability;
 pub mod operations;

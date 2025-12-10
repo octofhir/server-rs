@@ -102,7 +102,7 @@ fn extract_cookie_token(headers: &HeaderMap, cookie_name: &str) -> Option<String
 async fn handle_lsp_connection(
     socket: axum::extract::ws::WebSocket,
     db_pool: Arc<sqlx_postgres::PgPool>,
-    model_provider: crate::server::SharedModelProvider,
+    octofhir_provider: Arc<crate::model_provider::OctoFhirModelProvider>,
 ) {
     tracing::debug!("=== LSP WebSocket connection START ===");
     let (ws_write, mut ws_read) = socket.split();
@@ -110,7 +110,7 @@ async fn handle_lsp_connection(
     // Create LSP service - use direct service calls, not Server::new with duplex streams
     tracing::debug!("Creating LSP service...");
     let (service, _client_socket) =
-        LspService::new(|client| PostgresLspServer::new(client, db_pool, model_provider.clone()));
+        LspService::new(|client| PostgresLspServer::new(client, db_pool, octofhir_provider.clone()));
 
     // Wrap service in Arc<Mutex> for shared access
     let service = Arc::new(Mutex::new(service));

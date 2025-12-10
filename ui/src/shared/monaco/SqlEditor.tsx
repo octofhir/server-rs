@@ -78,8 +78,9 @@ export function SqlEditor(props: SqlEditorProps) {
 			quickSuggestions: {
 				other: true,
 				comments: false,
-				strings: true,
+				strings: true, // Already enabled ✓
 			},
+			quickSuggestionsDelay: 100, // Faster trigger (default: 300ms)
 			acceptSuggestionOnEnter: "on",
 			suggest: {
 				showKeywords: true,
@@ -87,6 +88,13 @@ export function SqlEditor(props: SqlEditorProps) {
 				showClasses: true,
 				showFunctions: true,
 				showVariables: true,
+				showFields: true,
+				showProperties: true,
+				// CRITICAL: Don't filter LSP suggestions
+				filterGraceful: false,
+				snippetsPreventQuickSuggestions: false,
+				localityBonus: false,
+				shareSuggestSelections: false,
 			},
 		});
 		console.log("[SqlEditor] Editor created with quickSuggestions enabled");
@@ -117,16 +125,6 @@ export function SqlEditor(props: SqlEditorProps) {
 		}
 
 		editor.focus();
-
-		// Debug: Log all registered completion providers for this language
-		console.log("[SqlEditor] Registered languages:", monaco.languages.getLanguages().map(l => l.id));
-		console.log("[SqlEditor] Editor model language:", editor.getModel()?.getLanguageId());
-
-		// Test: trigger suggestions programmatically after 2 seconds
-		setTimeout(() => {
-			console.log("[SqlEditor] Triggering suggestions programmatically...");
-			editor?.trigger('keyboard', 'editor.action.triggerSuggest', {});
-		}, 2000);
 	});
 
 	createEffect(

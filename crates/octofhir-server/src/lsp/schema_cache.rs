@@ -477,6 +477,7 @@ impl SchemaCache {
             ("jsonb_path_query_array", "jsonb", "jsonb_path_query_array(target jsonb, path jsonpath [, vars jsonb [, silent boolean]])", "JSONPath query as array"),
             ("jsonb_path_query_first", "jsonb", "jsonb_path_query_first(target jsonb, path jsonpath [, vars jsonb [, silent boolean]])", "First JSONPath result"),
             ("jsonb_path_exists", "boolean", "jsonb_path_exists(target jsonb, path jsonpath [, vars jsonb [, silent boolean]])", "Check if JSONPath returns items"),
+            ("jsonb_path_match", "boolean", "jsonb_path_match(target jsonb, path jsonpath [, vars jsonb [, silent boolean]])", "Check if JSONPath matches predicate"),
             ("jsonb_strip_nulls", "jsonb", "jsonb_strip_nulls(from_json jsonb)", "Remove null values recursively"),
             ("jsonb_pretty", "text", "jsonb_pretty(from_json jsonb)", "Pretty print JSONB"),
             ("jsonb_each", "setof record", "jsonb_each(from_json jsonb)", "Expand to key-value pairs"),

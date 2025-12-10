@@ -103,12 +103,18 @@ impl PostgresLspServer {
 
         // HIGHEST PRIORITY: Check if cursor is inside a function call
         if let Some(func_ctx) = Self::detect_function_call_context(&cursor_node, text, offset) {
-            tracing::debug!(
-                "Function call context: function='{}', arg_index={}",
+            tracing::info!(
+                "Detected function call context: function='{}', arg_index={}, arg_start={}",
                 func_ctx.function_name,
-                func_ctx.arg_index
+                func_ctx.arg_index,
+                func_ctx.arg_start_offset
             );
-            return Some(self.get_function_arg_completions(func_ctx, &tree, text, offset).await);
+            // Truly async - just await the async function
+            let completions = self.get_function_arg_completions(func_ctx, &tree, text, offset).await;
+            tracing::info!("Function arg completions returned {} items", completions.len());
+            return Some(completions);
+        } else {
+            tracing::debug!("No function call context detected at cursor");
         }
 
         // Check if we're in a JSONB path context using tree-sitter AST
@@ -493,18 +499,44 @@ impl PostgresLspServer {
         let mut current = *node;
         let mut depth = 0;
 
+        tracing::debug!("Starting function call detection from node: kind='{}', text='{}'",
+            current.kind(),
+            current.utf8_text(text.as_bytes()).unwrap_or("<invalid>").chars().take(50).collect::<String>()
+        );
+
         // Walk up the tree looking for a function call
         loop {
             let kind = current.kind();
 
+            if depth < 10 {
+                tracing::debug!("  {}Walking up: kind='{}' at byte {}",
+                    "  ".repeat(depth), kind, current.start_byte()
+                );
+            }
+
             // Check if this is a function call node
             if kind == "invocation" || kind == "function_call" {
+                let func_text = current.utf8_text(text.as_bytes()).unwrap_or("<invalid>");
+                tracing::info!(
+                    "Found function call node: kind='{}', text='{}'",
+                    kind,
+                    func_text.chars().take(100).collect::<String>()
+                );
+
                 // Extract function name from first identifier child
                 let function_name = Self::extract_function_name(&current, text)?;
+                tracing::debug!("  Extracted function name: '{}'", function_name);
 
                 // Count commas before cursor to determine argument index
                 let (arg_index, arg_start_offset) =
                     Self::find_argument_position(&current, text, cursor_offset)?;
+
+                tracing::info!(
+                    "Function context complete: name='{}', arg_index={}, arg_start={}",
+                    function_name,
+                    arg_index,
+                    arg_start_offset
+                );
 
                 return Some(FunctionCallContext {
                     function_name,
@@ -515,13 +547,14 @@ impl PostgresLspServer {
 
             // Move to parent node
             let Some(parent) = current.parent() else {
+                tracing::debug!("Reached root without finding function call");
                 return None;
             };
             current = parent;
             depth += 1;
 
             if depth > 20 {
-                tracing::warn!("Function call detection: max depth exceeded");
+                tracing::warn!("⚠️  Stopped walking up after 20 levels");
                 return None;
             }
         }

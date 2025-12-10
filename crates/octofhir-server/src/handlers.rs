@@ -1,5 +1,6 @@
 use crate::mapping::{IdPolicy, envelope_from_json, json_from_envelope};
 use crate::patch::{apply_fhirpath_patch, apply_json_patch};
+use crate::server::SharedModelProvider;
 use axum::body::Bytes;
 use axum::response::Response;
 use axum::{
@@ -1655,9 +1656,10 @@ pub async fn patch_resource(
         apply_json_patch(&current_json, &body)?
     } else {
         // FHIRPath Patch
+        let model_provider_trait: SharedModelProvider = state.model_provider.clone();
         apply_fhirpath_patch(
             &state.fhirpath_engine,
-            &state.model_provider,
+            &model_provider_trait,
             &current_json,
             &body,
         )
@@ -1852,9 +1854,10 @@ pub async fn conditional_patch_resource(
                     apply_json_patch(&current_json, &body)?
                 } else {
                     // FHIRPath Patch
+                    let model_provider_trait: SharedModelProvider = state.model_provider.clone();
                     apply_fhirpath_patch(
                         &state.fhirpath_engine,
-                        &state.model_provider,
+                        &model_provider_trait,
                         &current_json,
                         &body,
                     )
