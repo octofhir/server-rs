@@ -1,25 +1,24 @@
 //! Hybrid Terminology Provider for FHIR search operations.
 //!
-//! Provides a three-tier terminology lookup strategy:
-//! 1. In-memory cache (DashMap) - fastest, microseconds
-//! 2. Local FHIR packages via CanonicalManager - milliseconds
-//! 3. Remote terminology server (tx.fhir.org) - network latency
+//! Provides a two-tier terminology lookup strategy:
+//! 1. Local FHIR packages via CanonicalManager - fast, no network
+//! 2. Remote terminology server with moka caching - network latency, cached
 //!
-//! This module reuses the `HttpTerminologyProvider` from `fhir-model-rs` for
-//! remote terminology operations.
+//! Caching is handled by `CachedTerminologyProvider<HttpTerminologyProvider>` from
+//! `octofhir-fhir-model`, which provides TTL-based caching using the moka library.
 
 use async_trait::async_trait;
-use dashmap::DashMap;
 use octofhir_canonical_manager::CanonicalManager;
 use octofhir_fhir_model::terminology::{
     ConnectionStatus, ExpansionParameters, HttpTerminologyProvider, LookupResult,
     SubsumptionResult, TerminologyProvider, TranslationResult, ValidationResult, ValueSetConcept,
     ValueSetExpansion,
 };
+use octofhir_fhir_model::{CachedTerminologyProvider, TerminologyCacheConfig};
 use serde::{Deserialize, Serialize};
 use sqlx_postgres::{PgPool, PgPoolCopyExt};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use thiserror::Error;
 
 /// Default cache TTL: 1 hour
@@ -120,83 +119,22 @@ pub enum TerminologyError {
     CodeSystemNotFound(String),
 }
 
-/// Cached expansion entry with TTL tracking.
-#[derive(Debug, Clone)]
-struct CachedExpansion {
-    expansion: ValueSetExpansion,
-    cached_at: Instant,
-    ttl: Duration,
-}
 
-impl CachedExpansion {
-    fn new(expansion: ValueSetExpansion, ttl: Duration) -> Self {
-        Self {
-            expansion,
-            cached_at: Instant::now(),
-            ttl,
-        }
-    }
-
-    fn is_expired(&self) -> bool {
-        self.cached_at.elapsed() > self.ttl
-    }
-}
-
-/// Cached validation result with TTL.
-#[derive(Debug, Clone)]
-struct CachedValidation {
-    result: bool,
-    cached_at: Instant,
-    ttl: Duration,
-}
-
-impl CachedValidation {
-    fn new(result: bool, ttl: Duration) -> Self {
-        Self {
-            result,
-            cached_at: Instant::now(),
-            ttl,
-        }
-    }
-
-    fn is_expired(&self) -> bool {
-        self.cached_at.elapsed() > self.ttl
-    }
-}
-
-/// Cache key for ValueSet code validation.
-#[derive(Debug, Clone, Hash, PartialEq, Eq)]
-struct ValidationCacheKey {
-    valueset: String,
-    system: Option<String>,
-    code: String,
-}
-
-/// Hybrid terminology provider with three-tier lookup.
+/// Hybrid terminology provider with two-tier lookup.
 ///
 /// Priority order:
-/// 1. In-memory cache (DashMap) - O(1) lookup
-/// 2. Local FHIR packages via CanonicalManager
-/// 3. Remote terminology server fallback
+/// 1. Local FHIR packages via CanonicalManager (fast, no network)
+/// 2. Remote terminology server with moka caching (CachedTerminologyProvider)
+///
+/// The caching is handled by `CachedTerminologyProvider<HttpTerminologyProvider>`
+/// from the shared `octofhir-fhir-model` crate, which uses moka for TTL-based caching.
 #[derive(Debug)]
 pub struct HybridTerminologyProvider {
     /// Reference to the canonical manager for local package lookups
     canonical_manager: Arc<CanonicalManager>,
 
-    /// Remote terminology provider (tx.fhir.org)
-    remote: Option<Arc<HttpTerminologyProvider>>,
-
-    /// Cache for ValueSet expansions
-    expansion_cache: Arc<DashMap<String, CachedExpansion>>,
-
-    /// Cache for code validation results
-    validation_cache: Arc<DashMap<ValidationCacheKey, CachedValidation>>,
-
-    /// Cache TTL duration
-    cache_ttl: Duration,
-
-    /// Whether terminology service is enabled
-    enabled: bool,
+    /// Remote terminology provider with caching (using shared infrastructure)
+    remote: CachedTerminologyProvider<HttpTerminologyProvider>,
 }
 
 impl HybridTerminologyProvider {
@@ -214,54 +152,39 @@ impl HybridTerminologyProvider {
         canonical_manager: Arc<CanonicalManager>,
         config: &TerminologyConfig,
     ) -> Result<Self, TerminologyError> {
-        let remote = if config.enabled {
-            let provider = HttpTerminologyProvider::new(config.server_url.clone())
-                .map_err(|e| TerminologyError::HttpClientError(e.to_string()))?;
-            Some(Arc::new(provider))
-        } else {
-            None
-        };
+        let http_provider = HttpTerminologyProvider::new(config.server_url.clone())
+            .map_err(|e| TerminologyError::HttpClientError(e.to_string()))?;
+
+        let cache_config = TerminologyCacheConfig::default()
+            .with_validation_ttl(Duration::from_secs(config.cache_ttl_secs))
+            .with_expansion_ttl(Duration::from_secs(config.cache_ttl_secs));
+
+        let remote = CachedTerminologyProvider::new(http_provider, cache_config);
 
         Ok(Self {
             canonical_manager,
             remote,
-            expansion_cache: Arc::new(DashMap::new()),
-            validation_cache: Arc::new(DashMap::new()),
-            cache_ttl: Duration::from_secs(config.cache_ttl_secs),
-            enabled: config.enabled,
         })
-    }
-
-    /// Create a provider with only local lookups (no remote).
-    pub fn local_only(canonical_manager: Arc<CanonicalManager>) -> Self {
-        Self {
-            canonical_manager,
-            remote: None,
-            expansion_cache: Arc::new(DashMap::new()),
-            validation_cache: Arc::new(DashMap::new()),
-            cache_ttl: Duration::from_secs(DEFAULT_CACHE_TTL_SECS),
-            enabled: false,
-        }
-    }
-
-    /// Check if terminology service is enabled.
-    pub fn is_enabled(&self) -> bool {
-        self.enabled
     }
 
     /// Clear all caches.
     pub fn clear_cache(&self) {
-        self.expansion_cache.clear();
-        self.validation_cache.clear();
+        self.remote.clear_cache();
         tracing::debug!("Cleared terminology caches");
     }
 
     /// Get cache statistics.
     pub fn cache_stats(&self) -> CacheStats {
+        let stats = self.remote.cache_stats();
         CacheStats {
-            expansion_cache_size: self.expansion_cache.len(),
-            validation_cache_size: self.validation_cache.len(),
+            expansion_cache_size: stats.expansion_entries as usize,
+            validation_cache_size: stats.validation_entries as usize,
         }
+    }
+
+    /// Sync pending cache operations (moka is eventually consistent).
+    pub async fn sync_cache(&self) {
+        self.remote.sync().await;
     }
 
     /// Try to expand a ValueSet from local packages.
@@ -558,20 +481,8 @@ impl HybridTerminologyProvider {
             return self.expand_snomed_hierarchy(system, code, direction).await;
         }
 
-        // For other systems, try remote terminology server
-        if let Some(ref remote) = self.remote {
-            return self
-                .expand_remote_hierarchy(remote, system, code, direction)
-                .await;
-        }
-
-        // Fallback: return only the code itself
-        tracing::warn!(
-            system = system,
-            code = code,
-            "Hierarchy expansion not supported for system, returning code only"
-        );
-        Ok(vec![code.to_string()])
+        // For other systems, use remote terminology server
+        self.expand_remote_hierarchy(system, code, direction).await
     }
 
     /// Expand SNOMED CT hierarchy using Expression Constraint Language (ECL).
@@ -598,44 +509,35 @@ impl HybridTerminologyProvider {
             "Using ECL for SNOMED CT hierarchy"
         );
 
-        // Use remote terminology server with ECL
-        if let Some(ref remote) = self.remote {
-            // Create an implicit ValueSet using ECL
-            // Format: system?fhir_vs=ecl/ENCODED_ECL
-            let ecl_encoded = urlencoding::encode(&ecl);
-            let implicit_vs_url = format!("{}?fhir_vs=ecl/{}", system, ecl_encoded);
+        // Create an implicit ValueSet using ECL
+        // Format: system?fhir_vs=ecl/ENCODED_ECL
+        let ecl_encoded = urlencoding::encode(&ecl);
+        let implicit_vs_url = format!("{}?fhir_vs=ecl/{}", system, ecl_encoded);
 
-            // Expand the implicit ValueSet
-            let expansion = remote
-                .expand_valueset(&implicit_vs_url, None)
-                .await
-                .map_err(|e| {
-                    TerminologyError::RemoteError(format!(
-                        "Failed to expand SNOMED CT hierarchy: {}",
-                        e
-                    ))
-                })?;
+        // Expand the implicit ValueSet using inner provider to avoid double-caching
+        let expansion = self
+            .remote
+            .inner()
+            .expand_valueset(&implicit_vs_url, None)
+            .await
+            .map_err(|e| {
+                TerminologyError::RemoteError(format!(
+                    "Failed to expand SNOMED CT hierarchy: {}",
+                    e
+                ))
+            })?;
 
-            // Extract codes from expansion
-            let codes: Vec<String> = expansion.contains.iter().map(|c| c.code.clone()).collect();
+        // Extract codes from expansion
+        let codes: Vec<String> = expansion.contains.iter().map(|c| c.code.clone()).collect();
 
-            tracing::debug!(
-                system = system,
-                code = code,
-                hierarchy_size = codes.len(),
-                "Expanded SNOMED CT hierarchy"
-            );
-
-            return Ok(codes);
-        }
-
-        // No remote server available
-        tracing::warn!(
+        tracing::debug!(
             system = system,
             code = code,
-            "Remote terminology server required for SNOMED CT hierarchy, returning code only"
+            hierarchy_size = codes.len(),
+            "Expanded SNOMED CT hierarchy"
         );
-        Ok(vec![code.to_string()])
+
+        Ok(codes)
     }
 
     /// Expand hierarchy using remote terminology server.
@@ -644,7 +546,6 @@ impl HybridTerminologyProvider {
     /// or falls back to returning just the code.
     async fn expand_remote_hierarchy(
         &self,
-        _remote: &HttpTerminologyProvider,
         system: &str,
         code: &str,
         direction: HierarchyDirection,
@@ -679,14 +580,8 @@ impl TerminologyProvider for HybridTerminologyProvider {
         system: &str,
         version: Option<&str>,
     ) -> octofhir_fhir_model::error::Result<bool> {
-        // For CodeSystem validation, delegate to remote if available
-        if let Some(ref remote) = self.remote {
-            return remote.validate_code(code, system, version).await;
-        }
-
-        // Without remote, we can't validate against CodeSystem
-        // Return true to be permissive
-        Ok(true)
+        // Delegate to remote (cached provider handles caching)
+        self.remote.validate_code(code, system, version).await
     }
 
     async fn expand_valueset(
@@ -694,49 +589,15 @@ impl TerminologyProvider for HybridTerminologyProvider {
         valueset_url: &str,
         parameters: Option<&ExpansionParameters>,
     ) -> octofhir_fhir_model::error::Result<ValueSetExpansion> {
-        // 1. Check cache first (only if no special parameters)
-        if parameters.is_none()
-            && let Some(cached) = self.expansion_cache.get(valueset_url)
-            && !cached.is_expired()
-        {
-            tracing::debug!(valueset = %valueset_url, "Cache hit for ValueSet expansion");
-            return Ok(cached.expansion.clone());
-        }
-
-        // 2. Try local packages
+        // 1. Try local packages first (fast, no network)
         if let Some(expansion) = self.expand_from_local(valueset_url).await {
             tracing::debug!(valueset = %valueset_url, "Found ValueSet in local packages");
-            // Cache the result
-            self.expansion_cache.insert(
-                valueset_url.to_string(),
-                CachedExpansion::new(expansion.clone(), self.cache_ttl),
-            );
             return Ok(expansion);
         }
 
-        // 3. Fall back to remote
-        if let Some(ref remote) = self.remote {
-            tracing::debug!(valueset = %valueset_url, "Falling back to remote terminology server");
-            let expansion = remote.expand_valueset(valueset_url, parameters).await?;
-
-            // Cache if no special parameters
-            if parameters.is_none() {
-                self.expansion_cache.insert(
-                    valueset_url.to_string(),
-                    CachedExpansion::new(expansion.clone(), self.cache_ttl),
-                );
-            }
-
-            return Ok(expansion);
-        }
-
-        // No remote and not found locally
-        Ok(ValueSetExpansion {
-            contains: Vec::new(),
-            total: Some(0),
-            parameters: Vec::new(),
-            timestamp: None,
-        })
+        // 2. Fall back to cached remote (CachedTerminologyProvider handles caching)
+        tracing::debug!(valueset = %valueset_url, "Falling back to remote terminology server");
+        self.remote.expand_valueset(valueset_url, parameters).await
     }
 
     async fn translate_code(
@@ -745,19 +606,10 @@ impl TerminologyProvider for HybridTerminologyProvider {
         target_system: &str,
         concept_map_url: Option<&str>,
     ) -> octofhir_fhir_model::error::Result<TranslationResult> {
-        // Delegate to remote for ConceptMap operations
-        if let Some(ref remote) = self.remote {
-            return remote
-                .translate_code(source_code, target_system, concept_map_url)
-                .await;
-        }
-
-        // Without remote, return identity translation
-        Ok(TranslationResult {
-            success: false,
-            targets: Vec::new(),
-            message: Some("Terminology service not enabled".to_string()),
-        })
+        // Delegate to remote (translation is not cached)
+        self.remote
+            .translate_code(source_code, target_system, concept_map_url)
+            .await
     }
 
     async fn lookup_code(
@@ -767,15 +619,10 @@ impl TerminologyProvider for HybridTerminologyProvider {
         version: Option<&str>,
         properties: Option<Vec<&str>>,
     ) -> octofhir_fhir_model::error::Result<LookupResult> {
-        if let Some(ref remote) = self.remote {
-            return remote.lookup_code(system, code, version, properties).await;
-        }
-
-        Ok(LookupResult {
-            display: None,
-            definition: None,
-            properties: Vec::new(),
-        })
+        // Delegate to remote (cached provider handles caching)
+        self.remote
+            .lookup_code(system, code, version, properties)
+            .await
     }
 
     async fn validate_code_vs(
@@ -785,29 +632,7 @@ impl TerminologyProvider for HybridTerminologyProvider {
         code: &str,
         display: Option<&str>,
     ) -> octofhir_fhir_model::error::Result<ValidationResult> {
-        let cache_key = ValidationCacheKey {
-            valueset: valueset.to_string(),
-            system: system.map(String::from),
-            code: code.to_string(),
-        };
-
-        // 1. Check cache
-        if let Some(cached) = self.validation_cache.get(&cache_key)
-            && !cached.is_expired()
-        {
-            tracing::debug!(
-                valueset = %valueset,
-                code = %code,
-                "Cache hit for code validation"
-            );
-            return Ok(ValidationResult {
-                result: cached.result,
-                display: None,
-                message: None,
-            });
-        }
-
-        // 2. Try local validation
+        // 1. Try local validation first
         if let Some(result) = self.validate_code_vs_local(valueset, system, code).await {
             tracing::debug!(
                 valueset = %valueset,
@@ -815,8 +640,6 @@ impl TerminologyProvider for HybridTerminologyProvider {
                 result = result,
                 "Validated code against local ValueSet"
             );
-            self.validation_cache
-                .insert(cache_key, CachedValidation::new(result, self.cache_ttl));
             return Ok(ValidationResult {
                 result,
                 display: None,
@@ -824,24 +647,10 @@ impl TerminologyProvider for HybridTerminologyProvider {
             });
         }
 
-        // 3. Fall back to remote
-        if let Some(ref remote) = self.remote {
-            let result = remote
-                .validate_code_vs(valueset, system, code, display)
-                .await?;
-            self.validation_cache.insert(
-                cache_key,
-                CachedValidation::new(result.result, self.cache_ttl),
-            );
-            return Ok(result);
-        }
-
-        // No remote and not found locally - be permissive
-        Ok(ValidationResult {
-            result: true,
-            display: None,
-            message: Some("ValueSet not found, validation skipped".to_string()),
-        })
+        // 2. Fall back to cached remote (CachedTerminologyProvider handles caching)
+        self.remote
+            .validate_code_vs(valueset, system, code, display)
+            .await
     }
 
     async fn subsumes(
@@ -850,26 +659,13 @@ impl TerminologyProvider for HybridTerminologyProvider {
         parent: &str,
         child: &str,
     ) -> octofhir_fhir_model::error::Result<SubsumptionResult> {
-        if let Some(ref remote) = self.remote {
-            return remote.subsumes(system, parent, child).await;
-        }
-
-        Ok(SubsumptionResult {
-            outcome: octofhir_fhir_model::terminology::SubsumptionOutcome::NotSubsumed,
-        })
+        // Delegate to remote
+        self.remote.subsumes(system, parent, child).await
     }
 
     async fn test_connection(&self) -> octofhir_fhir_model::error::Result<ConnectionStatus> {
-        if let Some(ref remote) = self.remote {
-            return remote.test_connection().await;
-        }
-
-        Ok(ConnectionStatus {
-            connected: false,
-            response_time_ms: None,
-            server_version: None,
-            error: Some("Remote terminology service not configured".to_string()),
-        })
+        // Delegate to remote
+        self.remote.test_connection().await
     }
 }
 
@@ -890,59 +686,5 @@ mod tests {
         assert!(config.enabled);
         assert_eq!(config.server_url, "https://tx.fhir.org/r4");
         assert_eq!(config.cache_ttl_secs, 3600);
-    }
-
-    #[test]
-    fn test_cached_expansion_expiry() {
-        let expansion = ValueSetExpansion {
-            contains: vec![],
-            total: Some(0),
-            parameters: vec![],
-            timestamp: None,
-        };
-
-        // Create with very short TTL
-        let cached = CachedExpansion::new(expansion, Duration::from_millis(1));
-
-        // Should not be expired immediately
-        assert!(!cached.is_expired());
-
-        // Wait for expiry
-        std::thread::sleep(Duration::from_millis(10));
-        assert!(cached.is_expired());
-    }
-
-    #[test]
-    fn test_cached_validation_expiry() {
-        let cached = CachedValidation::new(true, Duration::from_millis(1));
-
-        assert!(!cached.is_expired());
-
-        std::thread::sleep(Duration::from_millis(10));
-        assert!(cached.is_expired());
-    }
-
-    #[test]
-    fn test_validation_cache_key_equality() {
-        let key1 = ValidationCacheKey {
-            valueset: "http://example.com/vs".to_string(),
-            system: Some("http://snomed.info/sct".to_string()),
-            code: "123456".to_string(),
-        };
-
-        let key2 = ValidationCacheKey {
-            valueset: "http://example.com/vs".to_string(),
-            system: Some("http://snomed.info/sct".to_string()),
-            code: "123456".to_string(),
-        };
-
-        let key3 = ValidationCacheKey {
-            valueset: "http://example.com/vs".to_string(),
-            system: None,
-            code: "123456".to_string(),
-        };
-
-        assert_eq!(key1, key2);
-        assert_ne!(key1, key3);
     }
 }
