@@ -7,6 +7,7 @@ members = [
     "crates/octofhir-config",
     "crates/octofhir-core",
     "crates/octofhir-db-postgres",
+    "crates/octofhir-graphql",
     "crates/octofhir-search",
     "crates/octofhir-server",
     "crates/octofhir-sof",
@@ -32,6 +33,7 @@ octofhir-auth = { path = "crates/octofhir-auth" }
 octofhir-auth-postgres = { path = "crates/octofhir-auth-postgres" }
 octofhir-config = { path = "crates/octofhir-config" }
 octofhir-core = { path = "crates/octofhir-core" }
+octofhir-graphql = { path = "crates/octofhir-graphql" }
 octofhir-sof = { path = "crates/octofhir-sof" }
 octofhir-storage = { path = "crates/octofhir-storage" }
 octofhir-canonical-manager = { version = "0.1.17", default-features = false }

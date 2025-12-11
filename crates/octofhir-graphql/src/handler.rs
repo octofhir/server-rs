@@ -1,0 +1,421 @@
+//! Axum HTTP handlers for GraphQL endpoints.
+//!
+//! This module provides the HTTP handlers for GraphQL requests:
+//! - `POST /$graphql` - System-level GraphQL endpoint
+//! - `GET /$graphql` - System-level GraphQL (query via URL param)
+//! - `POST /:type/:id/$graphql` - Instance-level GraphQL endpoint
+//!
+//! The handlers integrate with the OctoFHIR authentication middleware and
+//! convert GraphQL errors to FHIR-compliant responses.
+
+use std::sync::Arc;
+
+use async_graphql::http::{GraphQLPlaygroundConfig, playground_source};
+use async_graphql::{Request, Response, Variables};
+use axum::Json;
+use axum::extract::{Path, Query, State};
+use axum::http::{HeaderMap, StatusCode, header};
+use axum::response::{Html, IntoResponse};
+use serde::{Deserialize, Serialize};
+use tracing::{debug, warn};
+
+use crate::context::{GraphQLContext, GraphQLContextBuilder};
+use crate::error::GraphQLError;
+use crate::schema::LazySchema;
+
+/// State shared across GraphQL handlers.
+#[derive(Clone)]
+pub struct GraphQLState {
+    /// Lazy-loaded GraphQL schema.
+    pub lazy_schema: Arc<LazySchema>,
+
+    /// Context builder template with shared dependencies.
+    pub context_template: GraphQLContextTemplate,
+
+    /// Whether the GraphQL playground is enabled.
+    pub playground_enabled: bool,
+}
+
+/// Template for building per-request GraphQL context.
+///
+/// This contains the shared dependencies that are cloned into each request's context.
+#[derive(Clone)]
+pub struct GraphQLContextTemplate {
+    pub storage: octofhir_storage::DynStorage,
+    pub search_config: octofhir_search::SearchConfig,
+    pub policy_evaluator: Arc<octofhir_auth::policy::PolicyEvaluator>,
+}
+
+/// GraphQL request body.
+#[derive(Debug, Deserialize)]
+pub struct GraphQLRequest {
+    /// The GraphQL query string.
+    pub query: String,
+
+    /// Optional operation name for multi-operation documents.
+    #[serde(rename = "operationName")]
+    pub operation_name: Option<String>,
+
+    /// Optional variables for the query.
+    pub variables: Option<serde_json::Value>,
+
+    /// Optional extensions.
+    pub extensions: Option<serde_json::Value>,
+}
+
+/// Query parameters for GET requests.
+#[derive(Debug, Deserialize)]
+pub struct GraphQLQueryParams {
+    /// The GraphQL query string.
+    pub query: Option<String>,
+
+    /// Optional operation name.
+    #[serde(rename = "operationName")]
+    pub operation_name: Option<String>,
+
+    /// Optional variables (JSON string).
+    pub variables: Option<String>,
+}
+
+/// GraphQL response with optional error extensions.
+#[derive(Debug, Serialize)]
+pub struct GraphQLResponse {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data: Option<serde_json::Value>,
+
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub errors: Vec<serde_json::Value>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub extensions: Option<serde_json::Value>,
+}
+
+impl From<Response> for GraphQLResponse {
+    fn from(resp: Response) -> Self {
+        // Check if data is null/empty
+        let data_json = serde_json::to_value(&resp.data).unwrap_or(serde_json::Value::Null);
+        let data = if data_json.is_null() {
+            None
+        } else {
+            Some(data_json)
+        };
+
+        Self {
+            data,
+            errors: resp
+                .errors
+                .into_iter()
+                .map(|e| serde_json::to_value(e).unwrap_or(serde_json::Value::Null))
+                .collect(),
+            extensions: if resp.extensions.is_empty() {
+                None
+            } else {
+                Some(serde_json::to_value(&resp.extensions).unwrap_or(serde_json::Value::Null))
+            },
+        }
+    }
+}
+
+/// Handles POST requests to /$graphql (system-level endpoint).
+///
+/// This is the main GraphQL endpoint for executing queries against the entire
+/// FHIR server.
+pub async fn graphql_handler(
+    State(state): State<GraphQLState>,
+    headers: HeaderMap,
+    Json(request): Json<GraphQLRequest>,
+) -> impl IntoResponse {
+    execute_graphql(state, headers, request, None, None).await
+}
+
+/// Handles GET requests to /$graphql (system-level endpoint).
+///
+/// This endpoint supports GraphQL queries via URL query parameters.
+/// Also serves the GraphQL Playground if enabled and no query is provided.
+pub async fn graphql_handler_get(
+    State(state): State<GraphQLState>,
+    headers: HeaderMap,
+    Query(params): Query<GraphQLQueryParams>,
+) -> impl IntoResponse {
+    // If no query provided and playground is enabled, show playground
+    if params.query.is_none() && state.playground_enabled {
+        return playground_response().into_response();
+    }
+
+    // Parse query params into request
+    let request = match params_to_request(params) {
+        Ok(req) => req,
+        Err(e) => {
+            return error_response(GraphQLError::InvalidQuery(e.to_string())).into_response();
+        }
+    };
+
+    execute_graphql(state, headers, request, None, None)
+        .await
+        .into_response()
+}
+
+/// Handles POST requests to /:type/:id/$graphql (instance-level endpoint).
+///
+/// This endpoint executes GraphQL queries in the context of a specific
+/// FHIR resource instance.
+pub async fn instance_graphql_handler(
+    State(state): State<GraphQLState>,
+    headers: HeaderMap,
+    Path((resource_type, resource_id)): Path<(String, String)>,
+    Json(request): Json<GraphQLRequest>,
+) -> impl IntoResponse {
+    execute_graphql(
+        state,
+        headers,
+        request,
+        Some(resource_type),
+        Some(resource_id),
+    )
+    .await
+}
+
+/// Executes a GraphQL request.
+async fn execute_graphql(
+    state: GraphQLState,
+    headers: HeaderMap,
+    request: GraphQLRequest,
+    target_resource_type: Option<String>,
+    target_resource_id: Option<String>,
+) -> impl IntoResponse {
+    // Try to get or build the schema
+    let schema = match state.lazy_schema.get_or_build().await {
+        Ok(schema) => schema,
+        Err(GraphQLError::SchemaInitializing) => {
+            return schema_initializing_response().into_response();
+        }
+        Err(e) => {
+            warn!(error = %e, "Schema build failed");
+            return error_response(e).into_response();
+        }
+    };
+
+    // Extract request ID from headers (set by middleware)
+    let request_id = headers
+        .get("x-request-id")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("unknown")
+        .to_string();
+
+    // Build the context
+    let context = match build_context(
+        &state.context_template,
+        request_id,
+        target_resource_type,
+        target_resource_id,
+    ) {
+        Ok(ctx) => ctx,
+        Err(e) => {
+            return error_response(GraphQLError::Internal(e.to_string())).into_response();
+        }
+    };
+
+    // Build the async-graphql request
+    let mut gql_request = Request::new(&request.query);
+
+    if let Some(op_name) = request.operation_name {
+        gql_request = gql_request.operation_name(op_name);
+    }
+
+    if let Some(vars) = request.variables {
+        let variables = Variables::from_json(vars);
+        gql_request = gql_request.variables(variables);
+    }
+
+    // Add context data
+    gql_request = gql_request.data(context);
+
+    // Execute the query
+    debug!(query = %request.query, "Executing GraphQL query");
+    let response = schema.execute(gql_request).await;
+
+    // Convert to JSON response
+    // Note: GraphQL always returns 200 OK per spec, even with errors
+    let gql_response = GraphQLResponse::from(response);
+
+    (
+        StatusCode::OK,
+        [(header::CONTENT_TYPE, "application/json")],
+        Json(gql_response),
+    )
+        .into_response()
+}
+
+/// Builds a GraphQL context from the template.
+fn build_context(
+    template: &GraphQLContextTemplate,
+    request_id: String,
+    target_resource_type: Option<String>,
+    target_resource_id: Option<String>,
+) -> Result<GraphQLContext, crate::context::ContextBuilderError> {
+    let mut builder = GraphQLContextBuilder::new()
+        .with_storage(template.storage.clone())
+        .with_search_config(template.search_config.clone())
+        .with_policy_evaluator(template.policy_evaluator.clone())
+        .with_request_id(request_id);
+
+    if let (Some(rt), Some(id)) = (target_resource_type, target_resource_id) {
+        builder = builder.with_target_resource(rt, id);
+    }
+
+    builder.build()
+}
+
+/// Converts GET query params to a GraphQL request.
+fn params_to_request(params: GraphQLQueryParams) -> Result<GraphQLRequest, serde_json::Error> {
+    let variables = if let Some(vars_str) = params.variables {
+        Some(serde_json::from_str(&vars_str)?)
+    } else {
+        None
+    };
+
+    Ok(GraphQLRequest {
+        query: params.query.unwrap_or_default(),
+        operation_name: params.operation_name,
+        variables,
+        extensions: None,
+    })
+}
+
+/// Returns a 503 response when schema is initializing.
+fn schema_initializing_response() -> impl IntoResponse {
+    let body = serde_json::json!({
+        "errors": [{
+            "message": "GraphQL schema is initializing, please retry",
+            "extensions": {
+                "code": "SCHEMA_INITIALIZING"
+            }
+        }],
+        "extensions": {
+            "operationOutcome": {
+                "resourceType": "OperationOutcome",
+                "issue": [{
+                    "severity": "information",
+                    "code": "transient",
+                    "diagnostics": "GraphQL schema is still being built. Please retry in a few seconds."
+                }]
+            }
+        }
+    });
+
+    (
+        StatusCode::SERVICE_UNAVAILABLE,
+        [
+            (header::CONTENT_TYPE, "application/json"),
+            (header::RETRY_AFTER, "5"),
+        ],
+        Json(body),
+    )
+}
+
+/// Returns an error response.
+fn error_response(error: GraphQLError) -> impl IntoResponse {
+    let status = match error.status_code() {
+        503 => StatusCode::SERVICE_UNAVAILABLE,
+        401 => StatusCode::UNAUTHORIZED,
+        403 => StatusCode::FORBIDDEN,
+        404 => StatusCode::NOT_FOUND,
+        400 => StatusCode::BAD_REQUEST,
+        _ => StatusCode::INTERNAL_SERVER_ERROR,
+    };
+
+    let body = serde_json::json!({
+        "errors": [{
+            "message": error.to_string(),
+            "extensions": {
+                "code": error.error_code()
+            }
+        }],
+        "extensions": {
+            "operationOutcome": error.to_operation_outcome()
+        }
+    });
+
+    // Simple headers without retry-after for now (axum IntoResponse constraint)
+    (
+        status,
+        [(header::CONTENT_TYPE, "application/json")],
+        Json(body),
+    )
+}
+
+/// Returns the GraphQL Playground HTML.
+fn playground_response() -> impl IntoResponse {
+    Html(playground_source(
+        GraphQLPlaygroundConfig::new("/$graphql").subscription_endpoint("/$graphql/ws"),
+    ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_graphql_request_deserialize() {
+        let json = r#"{
+            "query": "{ _health }",
+            "operationName": "GetHealth",
+            "variables": {"foo": "bar"}
+        }"#;
+
+        let request: GraphQLRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(request.query, "{ _health }");
+        assert_eq!(request.operation_name, Some("GetHealth".to_string()));
+        assert!(request.variables.is_some());
+    }
+
+    #[test]
+    fn test_graphql_request_minimal() {
+        let json = r#"{"query": "{ _health }"}"#;
+
+        let request: GraphQLRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(request.query, "{ _health }");
+        assert!(request.operation_name.is_none());
+        assert!(request.variables.is_none());
+    }
+
+    #[test]
+    fn test_params_to_request() {
+        let params = GraphQLQueryParams {
+            query: Some("{ _health }".to_string()),
+            operation_name: Some("GetHealth".to_string()),
+            variables: Some(r#"{"foo": "bar"}"#.to_string()),
+        };
+
+        let request = params_to_request(params).unwrap();
+        assert_eq!(request.query, "{ _health }");
+        assert_eq!(request.operation_name, Some("GetHealth".to_string()));
+        assert!(request.variables.is_some());
+    }
+
+    #[test]
+    fn test_params_to_request_minimal() {
+        let params = GraphQLQueryParams {
+            query: Some("{ _health }".to_string()),
+            operation_name: None,
+            variables: None,
+        };
+
+        let request = params_to_request(params).unwrap();
+        assert_eq!(request.query, "{ _health }");
+        assert!(request.operation_name.is_none());
+        assert!(request.variables.is_none());
+    }
+
+    #[test]
+    fn test_params_to_request_invalid_variables() {
+        let params = GraphQLQueryParams {
+            query: Some("{ _health }".to_string()),
+            operation_name: None,
+            variables: Some("not valid json".to_string()),
+        };
+
+        let result = params_to_request(params);
+        assert!(result.is_err());
+    }
+}

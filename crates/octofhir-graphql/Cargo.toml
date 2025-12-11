@@ -1,0 +1,62 @@
+[package]
+name = "octofhir-graphql"
+description = "GraphQL API layer for OctoFHIR FHIR server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+# GraphQL framework with dynamic schema support
+async-graphql = { version = "7", features = ["dynamic-schema", "dataloader"] }
+async-graphql-axum = "7"
+
+# Local dependencies
+octofhir-storage = { path = "../octofhir-storage" }
+octofhir-search = { path = "../octofhir-search" }
+octofhir-auth = { path = "../octofhir-auth" }
+octofhir-core = { path = "../octofhir-core" }
+octofhir-api = { path = "../octofhir-api" }
+
+# FHIR model provider for schema generation
+octofhir-fhir-model = { workspace = true }
+octofhir-fhirschema = { workspace = true }
+
+# Core dependencies
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+# Time handling for FHIR date/time scalars
+time = { workspace = true }
+
+# URL validation
+url = { workspace = true }
+
+# UUID handling
+uuid = { workspace = true }
+
+# Base64 for FhirBase64Binary and cursor encoding
+base64 = "0.22"
+
+# URL encoding for search parameters
+urlencoding = "2"
+
+# Regex for validation
+regex = { workspace = true }
+
+# TOML parsing for config tests
+toml = { workspace = true }
+
+# HTTP framework for handlers
+axum = { workspace = true }
+
+# Async utilities
+async-trait = { workspace = true }
+futures-util = { workspace = true }
+
+[dev-dependencies]
+tokio-test = { workspace = true }
