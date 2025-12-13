@@ -583,4 +583,37 @@ impl PolicyStorageTrait for PostgresPolicyStorageAdapter {
 
         rows.into_iter().map(Self::row_to_policy).collect()
     }
+
+    async fn upsert(&self, policy: &AccessPolicy) -> AuthResult<AccessPolicy> {
+        let id = policy
+            .id
+            .as_ref()
+            .and_then(|s| Uuid::parse_str(s).ok())
+            .unwrap_or_else(Uuid::new_v4);
+
+        let resource = serde_json::to_value(policy).map_err(|e| {
+            octofhir_auth::AuthError::internal(format!("Failed to serialize policy: {}", e))
+        })?;
+
+        // Use INSERT ... ON CONFLICT DO UPDATE for upsert
+        let row: (Uuid, i64, OffsetDateTime, serde_json::Value, String) = query_as(
+            r#"
+            INSERT INTO accesspolicy (id, txid, ts, resource, status)
+            VALUES ($1, 1, NOW(), $2, 'created')
+            ON CONFLICT (id) DO UPDATE SET
+                resource = EXCLUDED.resource,
+                txid = accesspolicy.txid + 1,
+                ts = NOW(),
+                status = 'updated'
+            RETURNING id, txid, ts, resource, status::text
+            "#,
+        )
+        .bind(id)
+        .bind(&resource)
+        .fetch_one(self.pool.as_ref())
+        .await
+        .map_err(|e| octofhir_auth::AuthError::internal(format!("Database error: {}", e)))?;
+
+        Self::row_to_policy(PolicyRow::from_tuple(row))
+    }
 }

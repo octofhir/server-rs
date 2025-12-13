@@ -471,6 +471,7 @@ mod tests {
                 query_params: HashMap::new(),
                 path: "/Patient/pat-123".to_string(),
                 method: "GET".to_string(),
+                operation_id: None,
             },
             resource: None,
             environment: EnvironmentContext {

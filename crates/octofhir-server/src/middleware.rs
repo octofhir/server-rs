@@ -1,5 +1,5 @@
-use std::collections::HashMap;
-use std::sync::Arc;
+use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, RwLock};
 
 use axum::extract::State;
 use axum::response::IntoResponse;
@@ -24,13 +24,129 @@ use octofhir_auth::policy::{
 use octofhir_auth::token::jwt::AccessTokenClaims;
 
 // =============================================================================
+// Public Paths Cache (for dynamic public operation detection)
+// =============================================================================
+
+/// Cache for public operation paths loaded from the operation registry.
+///
+/// This cache is populated on server startup and can be refreshed when
+/// operations are synced. It stores both exact paths and path patterns
+/// from operations marked as `public: true`.
+#[derive(Clone, Default)]
+pub struct PublicPathsCache {
+    /// Exact public paths (e.g., "/metadata", "/healthz")
+    exact_paths: Arc<RwLock<HashSet<String>>>,
+    /// Public path prefixes (e.g., "/auth/", "/.well-known/")
+    path_prefixes: Arc<RwLock<HashSet<String>>>,
+}
+
+impl PublicPathsCache {
+    /// Creates a new empty cache.
+    pub fn new() -> Self {
+        Self {
+            exact_paths: Arc::new(RwLock::new(HashSet::new())),
+            path_prefixes: Arc::new(RwLock::new(HashSet::new())),
+        }
+    }
+
+    /// Updates the cache with paths from public operations.
+    ///
+    /// Path patterns are converted to either exact paths or prefixes:
+    /// - Patterns ending with `*` or containing `{` are treated as prefixes
+    /// - Other patterns are treated as exact paths
+    pub fn update_from_operations(&self, operations: &[octofhir_core::OperationDefinition]) {
+        let mut exact = HashSet::new();
+        let mut prefixes = HashSet::new();
+
+        for op in operations.iter().filter(|op| op.public) {
+            let path = &op.path_pattern;
+
+            // Determine if this is a prefix pattern or exact path
+            if path.ends_with('*') || path.contains('{') {
+                // Convert pattern to prefix (remove trailing * and type placeholders)
+                let prefix = path
+                    .trim_end_matches('*')
+                    .split('{')
+                    .next()
+                    .unwrap_or(path)
+                    .to_string();
+                if !prefix.is_empty() {
+                    prefixes.insert(prefix);
+                }
+            } else {
+                exact.insert(path.clone());
+            }
+        }
+
+        // Update both caches atomically
+        if let Ok(mut guard) = self.exact_paths.write() {
+            *guard = exact;
+        }
+        if let Ok(mut guard) = self.path_prefixes.write() {
+            *guard = prefixes;
+        }
+
+        let exact_count = self.exact_paths.read().map(|g| g.len()).unwrap_or(0);
+        let prefix_count = self.path_prefixes.read().map(|g| g.len()).unwrap_or(0);
+        tracing::debug!(
+            exact_count,
+            prefix_count,
+            "Public paths cache updated"
+        );
+    }
+
+    /// Checks if a path matches any public operation.
+    pub fn is_public(&self, path: &str) -> bool {
+        // Check exact match first
+        if let Ok(guard) = self.exact_paths.read() {
+            if guard.contains(path) {
+                return true;
+            }
+        }
+
+        // Check prefix matches
+        if let Ok(prefixes) = self.path_prefixes.read() {
+            return prefixes.iter().any(|prefix| path.starts_with(prefix));
+        }
+
+        false
+    }
+
+    /// Returns the count of cached paths (for debugging).
+    pub fn len(&self) -> (usize, usize) {
+        let exact = self.exact_paths.read().map(|g| g.len()).unwrap_or(0);
+        let prefix = self.path_prefixes.read().map(|g| g.len()).unwrap_or(0);
+        (exact, prefix)
+    }
+}
+
+/// Combined authentication state that includes public paths cache.
+#[derive(Clone)]
+pub struct ExtendedAuthState {
+    /// Core authentication state.
+    pub auth_state: AuthState,
+    /// Cache of public operation paths.
+    pub public_paths: PublicPathsCache,
+}
+
+impl ExtendedAuthState {
+    /// Creates a new extended auth state.
+    pub fn new(auth_state: AuthState, public_paths: PublicPathsCache) -> Self {
+        Self {
+            auth_state,
+            public_paths,
+        }
+    }
+}
+
+// =============================================================================
 // Authentication Middleware
 // =============================================================================
 
 /// Authentication middleware that validates Bearer tokens and injects AuthContext.
 ///
 /// This middleware:
-/// 1. Checks if the path should skip authentication (public endpoints)
+/// 1. Checks if the path should skip authentication (public endpoints from registry + hardcoded)
 /// 2. Extracts and validates Bearer tokens
 /// 3. Stores the `AuthContext` in request extensions for downstream use
 ///
@@ -39,16 +155,19 @@ use octofhir_auth::token::jwt::AccessTokenClaims;
 ///
 /// # Requirements
 ///
-/// - `AuthState` must be available via `FromRef<S>`
+/// - `ExtendedAuthState` must be available via `FromRef<S>`
 pub async fn authentication_middleware(
-    State(state): State<AuthState>,
+    State(state): State<ExtendedAuthState>,
     mut req: Request<Body>,
     next: Next,
 ) -> Response {
-    // Skip authentication for public endpoints
-    if should_skip_authentication(&req) {
+    // Skip authentication for public endpoints (from registry + hardcoded)
+    if should_skip_authentication(&req, &state.public_paths) {
         return next.run(req).await;
     }
+
+    // Get the core auth state for token validation
+    let auth_state = &state.auth_state;
 
     // 1. Try Authorization header first
     let token = if let Some(auth_header) = req
@@ -72,7 +191,7 @@ pub async fn authentication_middleware(
         Some(t) => t,
         None => {
             // Try to extract from cookie
-            match extract_token_from_cookie(&req, &state.cookie_config) {
+            match extract_token_from_cookie(&req, &auth_state.cookie_config) {
                 Some(t) => t,
                 None => {
                     tracing::debug!(path = %req.uri().path(), "No Authorization header or cookie");
@@ -83,7 +202,7 @@ pub async fn authentication_middleware(
     };
 
     // Validate token and build auth context
-    match validate_token(&state, &token).await {
+    match validate_token(auth_state, &token).await {
         Ok(auth_context) => {
             tracing::debug!(
                 client_id = %auth_context.client_id(),
@@ -198,10 +317,21 @@ fn extract_token_from_cookie(req: &Request<Body>, cookie_config: &CookieConfig) 
 }
 
 /// Check if a request should skip authentication.
-fn should_skip_authentication(req: &Request<Body>) -> bool {
+///
+/// Checks both:
+/// 1. Dynamic public paths from the operation registry (via cache)
+/// 2. Hardcoded public paths (fallback for paths not in registry)
+fn should_skip_authentication(req: &Request<Body>, cache: &PublicPathsCache) -> bool {
     let path = req.uri().path();
 
-    // Public endpoints that don't require authentication
+    // First, check the dynamic cache from operation registry
+    if cache.is_public(path) {
+        tracing::debug!(path = %path, "Skipping authentication: public operation from registry");
+        return true;
+    }
+
+    // Fallback: hardcoded public endpoints that don't require authentication
+    // These are kept for paths that might not be in the operation registry
     let public_paths = [
         "/metadata",
         "/healthz",
@@ -214,18 +344,18 @@ fn should_skip_authentication(req: &Request<Body>) -> bool {
 
     // Check exact matches
     if public_paths.contains(&path) {
-        tracing::debug!(path = %path, "Skipping authentication: exact path match");
+        tracing::debug!(path = %path, "Skipping authentication: hardcoded path match");
         return true;
     }
 
-    // Check prefix matches
+    // Check prefix matches (hardcoded fallback)
     let public_prefixes = ["/.well-known/", "/auth/", "/api/health", "/ui"];
 
     let skip = public_prefixes
         .iter()
         .any(|prefix| path.starts_with(prefix));
     if skip {
-        tracing::debug!(path = %path, "Skipping authentication: prefix match");
+        tracing::debug!(path = %path, "Skipping authentication: hardcoded prefix match");
     }
     skip
 }

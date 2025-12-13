@@ -37,6 +37,9 @@ pub struct AppConfig {
     /// DB Console configuration (SQL execution, LSP)
     #[serde(default)]
     pub db_console: DbConsoleConfig,
+    /// GraphQL configuration
+    #[serde(default)]
+    pub graphql: GraphQLConfig,
     /// Bootstrap configuration (initial admin user, default data)
     #[serde(default)]
     pub bootstrap: BootstrapConfig,
@@ -606,6 +609,65 @@ impl std::fmt::Display for SqlMode {
             SqlMode::Readonly => write!(f, "readonly"),
             SqlMode::Readwrite => write!(f, "readwrite"),
             SqlMode::Admin => write!(f, "admin"),
+        }
+    }
+}
+
+/// GraphQL configuration for FHIR GraphQL API
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GraphQLConfig {
+    /// Enable GraphQL endpoint
+    /// Default: true
+    #[serde(default = "default_graphql_enabled")]
+    pub enabled: bool,
+
+    /// Enable introspection queries (__schema, __type)
+    /// May want to disable in production for security
+    /// Default: true
+    #[serde(default = "default_graphql_introspection")]
+    pub introspection: bool,
+
+    /// Maximum query depth to prevent deeply nested queries
+    /// Default: 15
+    #[serde(default = "default_graphql_max_depth")]
+    pub max_depth: usize,
+
+    /// Maximum query complexity score
+    /// Default: 500
+    #[serde(default = "default_graphql_max_complexity")]
+    pub max_complexity: usize,
+
+    /// FHIR resource types to expose via GraphQL
+    /// If empty, all resource types are exposed
+    /// Default: [] (all resources)
+    #[serde(default)]
+    pub resource_types: Vec<String>,
+}
+
+fn default_graphql_enabled() -> bool {
+    true
+}
+
+fn default_graphql_introspection() -> bool {
+    true
+}
+
+fn default_graphql_max_depth() -> usize {
+    15
+}
+
+fn default_graphql_max_complexity() -> usize {
+    500
+}
+
+impl Default for GraphQLConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_graphql_enabled(),
+            introspection: default_graphql_introspection(),
+            max_depth: default_graphql_max_depth(),
+            max_complexity: default_graphql_max_complexity(),
+            resource_types: Vec::new(),
         }
     }
 }

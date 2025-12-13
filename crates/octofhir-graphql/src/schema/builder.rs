@@ -8,13 +8,23 @@ use std::sync::Arc;
 
 use async_graphql::dynamic::{Field, FieldFuture, InputValue, Object, Scalar, Schema, SchemaBuilder, TypeRef};
 use async_graphql::Value;
+use octofhir_fhir_model::provider::ModelProvider;
 use octofhir_search::{SearchParameterRegistry, SearchParameterType};
 use tracing::{debug, trace};
 
+use super::input_types::{
+    create_json_scalar, create_operation_outcome_issue_type, InputTypeGenerator,
+};
+use super::type_generator::FhirTypeGenerator;
 use crate::error::GraphQLError;
-use crate::resolvers::{ConnectionResolver, ReadResolver, SearchResolver};
+use crate::resolvers::{
+    ConnectionResolver, CreateResolver, DeleteResolver, NestedReverseReferenceResolver,
+    ReadResolver, SearchResolver, UpdateResolver,
+};
+use crate::types::{create_all_resources_union, create_reference_type};
 
 /// The name of the custom JSON scalar type used for FHIR resources.
+/// Kept for backwards compatibility but no longer primary mechanism.
 pub const FHIR_RESOURCE_SCALAR: &str = "FhirResource";
 
 /// Configuration for the schema builder.
@@ -40,19 +50,24 @@ impl Default for SchemaBuilderConfig {
     }
 }
 
+/// Dynamic model provider type alias for convenience.
+pub type DynModelProvider = Arc<dyn ModelProvider + Send + Sync>;
+
 /// Builds GraphQL schema from FHIR model definitions.
 ///
 /// `FhirSchemaBuilder` generates a complete GraphQL schema including:
 /// - Custom FHIR scalar types
-/// - FHIR resource types (Query.Patient, Query.Observation, etc.)
+/// - FHIR resource and complex types with typed fields
 /// - Search parameters as query arguments
 /// - Mutation operations (create, update, delete)
 ///
 /// # Example
 ///
 /// ```ignore
+/// // Use existing model provider from server (OctoFhirModelProvider)
 /// let builder = FhirSchemaBuilder::new(
 ///     search_registry,
+///     model_provider,  // Arc<dyn ModelProvider>
 ///     SchemaBuilderConfig::default(),
 /// );
 ///
@@ -62,16 +77,27 @@ pub struct FhirSchemaBuilder {
     /// Search parameter registry for building query arguments.
     search_registry: Arc<SearchParameterRegistry>,
 
+    /// Model provider for FHIR type introspection (reuses existing provider).
+    model_provider: DynModelProvider,
+
     /// Configuration options.
     config: SchemaBuilderConfig,
 }
 
 impl FhirSchemaBuilder {
     /// Creates a new schema builder.
+    ///
+    /// The `model_provider` should be the same instance used for validation,
+    /// FHIRPath, and LSP (e.g., `OctoFhirModelProvider` from the server).
     #[must_use]
-    pub fn new(search_registry: Arc<SearchParameterRegistry>, config: SchemaBuilderConfig) -> Self {
+    pub fn new(
+        search_registry: Arc<SearchParameterRegistry>,
+        model_provider: DynModelProvider,
+        config: SchemaBuilderConfig,
+    ) -> Self {
         Self {
             search_registry,
+            model_provider,
             config,
         }
     }
@@ -80,6 +106,7 @@ impl FhirSchemaBuilder {
     ///
     /// This constructs a complete schema with:
     /// - Custom FHIR scalars
+    /// - FHIR resource and complex types with typed fields
     /// - Query root with resource read and search operations
     /// - Mutation root with create/update/delete operations (stubbed)
     ///
@@ -98,14 +125,46 @@ impl FhirSchemaBuilder {
         // Register custom scalars
         schema_builder = self.register_scalars(schema_builder);
 
+        // Generate and register FHIR types using the type generator
+        let mut type_generator = FhirTypeGenerator::new(self.model_provider.clone());
+
+        // Queue resource types from the search registry to ensure they're generated
+        // (they may not be in the model provider's resource list if schemas are partially loaded)
+        let search_resource_types = self.search_registry.list_resource_types();
+        type_generator.queue_types(search_resource_types.iter());
+
+        let mut fhir_types = type_generator.generate_all_types().await?;
+
+        debug!(count = fhir_types.len(), "Generated FHIR types");
+
+        // Collect resource type names for Reference/union registration
+        let resource_type_names: Vec<String> = fhir_types.keys().cloned().collect();
+
+        // Add reverse reference fields to resource types
+        self.add_reverse_reference_fields(&mut fhir_types);
+
+        // Register all generated types
+        for (type_name, _object) in &fhir_types {
+            trace!(type_name = %type_name, "Registering FHIR type");
+        }
+        for (_type_name, object) in fhir_types {
+            schema_builder = schema_builder.register(object);
+        }
+
+        // Register Reference type and AllResources union for polymorphic resolution
+        schema_builder = self.register_reference_types(schema_builder, &resource_type_names);
+
         // Register connection types for each resource
         schema_builder = self.register_connection_types(schema_builder);
+
+        // Register input types and OperationOutcome for mutations
+        schema_builder = self.register_mutation_types(schema_builder);
 
         // Build Query type with resource fields
         let query = self.build_query_type();
         schema_builder = schema_builder.register(query);
 
-        // Build Mutation type (stub)
+        // Build Mutation type with create/update/delete operations
         let mutation = self.build_mutation_type();
         schema_builder = schema_builder.register(mutation);
 
@@ -162,6 +221,132 @@ impl FhirSchemaBuilder {
         builder
     }
 
+    /// Registers the Reference type and AllResources union for polymorphic reference resolution.
+    fn register_reference_types(
+        &self,
+        mut builder: SchemaBuilder,
+        resource_types: &[String],
+    ) -> SchemaBuilder {
+        // Only register if we have resource types
+        if resource_types.is_empty() {
+            trace!("No resource types for Reference type registration");
+            return builder;
+        }
+
+        // Register the AllResources union type
+        let union = create_all_resources_union(resource_types);
+        trace!(
+            member_count = resource_types.len(),
+            "Registering AllResources union"
+        );
+        builder = builder.register(union);
+
+        // Register the Reference type with resource resolution field
+        let reference = create_reference_type(resource_types);
+        trace!("Registering Reference type with resource resolution");
+        builder = builder.register(reference);
+
+        builder
+    }
+
+    /// Adds reverse reference fields to resource types.
+    ///
+    /// For each reference search parameter, this adds a field to the target resource types
+    /// that allows querying back to the source resources.
+    ///
+    /// For example, if Observation has a `subject` search parameter that targets Patient,
+    /// this adds an `ObservationList_subject` field to the Patient type.
+    fn add_reverse_reference_fields(&self, fhir_types: &mut std::collections::HashMap<String, Object>) {
+        use std::collections::HashMap;
+
+        // Build a map of target_type -> Vec<(source_type, param_name)>
+        let mut reverse_refs: HashMap<String, Vec<(String, String)>> = HashMap::new();
+
+        // Get all resource types with search parameters
+        let resource_types = self.search_registry.list_resource_types();
+
+        for source_type in &resource_types {
+            let params = self.search_registry.get_all_for_type(source_type);
+
+            for param in params {
+                if param.param_type == SearchParameterType::Reference {
+                    // This is a reference parameter - get its targets
+                    for target_type in &param.target {
+                        reverse_refs
+                            .entry(target_type.clone())
+                            .or_default()
+                            .push((source_type.to_string(), param.code.clone()));
+                    }
+                }
+            }
+        }
+
+        debug!(
+            target_count = reverse_refs.len(),
+            "Adding reverse reference fields to resource types"
+        );
+
+        // Now add fields to each target type
+        for (target_type, refs) in reverse_refs {
+            if let Some(object) = fhir_types.remove(&target_type) {
+                let mut updated_object = object;
+
+                for (source_type, param_name) in refs {
+                    // Create field name like "ObservationList_subject"
+                    let field_name = format!("{}List_{}", source_type, param_name.replace('-', "_"));
+
+                    trace!(
+                        target_type = %target_type,
+                        source_type = %source_type,
+                        param_name = %param_name,
+                        field_name = %field_name,
+                        "Adding reverse reference field"
+                    );
+
+                    // Create the resolver
+                    let resolver = NestedReverseReferenceResolver::resolve(
+                        source_type.clone(),
+                        param_name.clone(),
+                        target_type.clone(),
+                    );
+
+                    // Create the field with search arguments
+                    let mut field = Field::new(
+                        &field_name,
+                        TypeRef::named_list(&source_type),
+                        resolver,
+                    )
+                    .description(format!(
+                        "Find all {} resources where {} references this {}",
+                        source_type, param_name, target_type
+                    ));
+
+                    // Add common search arguments
+                    field = field.argument(InputValue::new("_count", TypeRef::named(TypeRef::INT)));
+                    field = field.argument(InputValue::new("_offset", TypeRef::named(TypeRef::INT)));
+                    field = field.argument(InputValue::new("_sort", TypeRef::named(TypeRef::STRING)));
+
+                    // Add search parameters for the source type
+                    let source_params = self.search_registry.get_all_for_type(&source_type);
+                    for source_param in source_params {
+                        // Skip the reference param itself - it's implicit
+                        if source_param.code == param_name {
+                            continue;
+                        }
+
+                        let graphql_name = source_param.code.replace('-', "_");
+                        let input = InputValue::new(&graphql_name, TypeRef::named(TypeRef::STRING));
+                        field = field.argument(input);
+                    }
+
+                    updated_object = updated_object.field(field);
+                }
+
+                fhir_types.insert(target_type.clone(), updated_object);
+            }
+        }
+    }
+
     /// Registers connection and edge types for pagination.
     fn register_connection_types(&self, mut builder: SchemaBuilder) -> SchemaBuilder {
         // Get all resource types with search parameters
@@ -170,10 +355,11 @@ impl FhirSchemaBuilder {
         for resource_type in &resource_types {
             // Create Edge type
             let edge_type_name = format!("{}Edge", resource_type);
+            // Use the actual resource type (Patient, Observation, etc.)
             let edge = Object::new(&edge_type_name)
                 .description(format!("Edge type for {} connection", resource_type))
                 .field(
-                    Field::new("resource", TypeRef::named_nn(FHIR_RESOURCE_SCALAR), |ctx| {
+                    Field::new("resource", TypeRef::named_nn(*resource_type), |ctx| {
                         FieldFuture::new(async move {
                             // The resource is stored in parent context
                             if let Some(parent) = ctx.parent_value.as_value() {
@@ -403,23 +589,25 @@ impl FhirSchemaBuilder {
     fn add_resource_query_fields(&self, mut query: Object, resource_type: &str) -> Object {
         let resource_type_owned = resource_type.to_string();
 
-        // 1. Single resource read: Patient(_id: ID!): FhirResource
+        // 1. Single resource read: Patient(_id: ID!): Patient
         let read_field_name = resource_type;
         let read_resolver = ReadResolver::resolve(resource_type_owned.clone());
 
-        let read_field = Field::new(read_field_name, TypeRef::named(FHIR_RESOURCE_SCALAR), read_resolver)
+        // Use the actual resource type (Patient, Observation, etc.)
+        let read_field = Field::new(read_field_name, TypeRef::named(resource_type), read_resolver)
             .argument(InputValue::new("_id", TypeRef::named_nn(TypeRef::ID)))
             .description(format!("Read a single {} resource by ID", resource_type));
 
         query = query.field(read_field);
         trace!(resource_type = %resource_type, "Added read query field");
 
-        // 2. List query: PatientList(...): [FhirResource!]!
+        // 2. List query: PatientList(...): [Patient!]!
         let list_field_name = format!("{}List", resource_type);
         let search_resolver = SearchResolver::resolve(resource_type_owned.clone());
 
+        // Use the actual resource type in the list
         let mut list_field =
-            Field::new(&list_field_name, TypeRef::named_nn_list_nn(FHIR_RESOURCE_SCALAR), search_resolver)
+            Field::new(&list_field_name, TypeRef::named_nn_list_nn(resource_type), search_resolver)
                 .description(format!("Search for {} resources", resource_type));
 
         // Add search parameter arguments
@@ -497,18 +685,151 @@ impl FhirSchemaBuilder {
         field
     }
 
-    /// Builds the Mutation root type (stub).
-    fn build_mutation_type(&self) -> Object {
-        let mut mutation = Object::new("Mutation").description("FHIR GraphQL Mutation root");
+    /// Registers types needed for mutations.
+    ///
+    /// This includes:
+    /// - JSON scalar for input data
+    /// - OperationOutcome types for error/success responses
+    /// - Input types for each resource type
+    fn register_mutation_types(&self, mut builder: SchemaBuilder) -> SchemaBuilder {
+        // Register JSON scalar for accepting arbitrary JSON input
+        let json_scalar = create_json_scalar();
+        builder = builder.register(json_scalar);
 
-        // Placeholder field (required for valid schema)
-        mutation = mutation.field(
-            Field::new("_placeholder", TypeRef::named(TypeRef::STRING), |_| {
-                FieldFuture::new(async { Ok(None::<Value>) })
-            })
-            .description("Placeholder - mutations will be added in Phase 4"),
+        // Register OperationOutcome types for mutation responses
+        let outcome_issue = create_operation_outcome_issue_type();
+        builder = builder.register(outcome_issue);
+
+        // Create and register OperationOutcome
+        let outcome = Object::new("OperationOutcome")
+            .description("Information about the outcome of an operation")
+            .field(
+                Field::new("resourceType", TypeRef::named_nn(TypeRef::STRING), |_| {
+                    FieldFuture::new(async move {
+                        Ok(Some(Value::String("OperationOutcome".to_string())))
+                    })
+                })
+                .description("Resource type (always 'OperationOutcome')"),
+            )
+            .field(
+                Field::new("id", TypeRef::named(TypeRef::STRING), |ctx| {
+                    FieldFuture::new(async move {
+                        if let Some(Value::Object(obj)) = ctx.parent_value.as_value()
+                            && let Some(v) = obj.get(&async_graphql::Name::new("id"))
+                        {
+                            return Ok(Some(v.clone()));
+                        }
+                        Ok(None)
+                    })
+                })
+                .description("Logical id of this outcome"),
+            )
+            .field(
+                Field::new("issue", TypeRef::named_nn_list_nn("OperationOutcomeIssue"), |ctx| {
+                    FieldFuture::new(async move {
+                        if let Some(Value::Object(obj)) = ctx.parent_value.as_value()
+                            && let Some(v) = obj.get(&async_graphql::Name::new("issue"))
+                        {
+                            return Ok(Some(v.clone()));
+                        }
+                        Ok(Some(Value::List(vec![])))
+                    })
+                })
+                .description("Issues that occurred during the operation"),
+            );
+        builder = builder.register(outcome);
+
+        // Register input types for each resource type
+        let resource_types = self.search_registry.list_resource_types();
+        for resource_type in &resource_types {
+            let input = InputTypeGenerator::create_resource_input(resource_type);
+            trace!(resource_type = %resource_type, "Registering input type");
+            builder = builder.register(input);
+        }
+
+        debug!(
+            count = resource_types.len(),
+            "Registered mutation input types"
         );
 
+        builder
+    }
+
+    /// Builds the Mutation root type with create/update/delete operations.
+    fn build_mutation_type(&self) -> Object {
+        let mut mutation = Object::new("Mutation")
+            .description("FHIR GraphQL Mutation root - create, update, and delete operations");
+
+        // Get all resource types
+        let resource_types = self.search_registry.list_resource_types();
+
+        // Add placeholder if no resource types (GraphQL requires at least one field)
+        if resource_types.is_empty() {
+            mutation = mutation.field(
+                Field::new("_placeholder", TypeRef::named(TypeRef::STRING), |_| {
+                    FieldFuture::new(async { Ok(None::<Value>) })
+                })
+                .description("Placeholder field - no resource types configured"),
+            );
+            return mutation;
+        }
+
+        for resource_type in resource_types {
+            // Create mutation: PatientCreate(res: PatientInput!): Patient
+            let create_field_name = format!("{}Create", resource_type);
+            let input_type_name = format!("{}Input", resource_type);
+
+            let create_resolver = CreateResolver::resolve(resource_type.to_string());
+            let create_field = Field::new(&create_field_name, TypeRef::named(&*resource_type), create_resolver)
+                .description(format!("Create a new {} resource", resource_type))
+                .argument(
+                    InputValue::new("res", TypeRef::named_nn(&input_type_name))
+                        .description("The resource to create"),
+                );
+
+            mutation = mutation.field(create_field);
+
+            // Update mutation: PatientUpdate(id: ID!, res: PatientInput!, ifMatch: String): Patient
+            let update_field_name = format!("{}Update", resource_type);
+
+            let update_resolver = UpdateResolver::resolve(resource_type.to_string());
+            let update_field = Field::new(&update_field_name, TypeRef::named(&*resource_type), update_resolver)
+                .description(format!("Update an existing {} resource", resource_type))
+                .argument(
+                    InputValue::new("id", TypeRef::named_nn(TypeRef::ID))
+                        .description("The ID of the resource to update"),
+                )
+                .argument(
+                    InputValue::new("res", TypeRef::named_nn(&input_type_name))
+                        .description("The updated resource data"),
+                )
+                .argument(
+                    InputValue::new("ifMatch", TypeRef::named(TypeRef::STRING))
+                        .description("Version for optimistic locking (e.g., 'W/\"1\"')"),
+                );
+
+            mutation = mutation.field(update_field);
+
+            // Delete mutation: PatientDelete(id: ID!): OperationOutcome
+            let delete_field_name = format!("{}Delete", resource_type);
+
+            let delete_resolver = DeleteResolver::resolve(resource_type.to_string());
+            let delete_field = Field::new(&delete_field_name, TypeRef::named("OperationOutcome"), delete_resolver)
+                .description(format!("Delete a {} resource", resource_type))
+                .argument(
+                    InputValue::new("id", TypeRef::named_nn(TypeRef::ID))
+                        .description("The ID of the resource to delete"),
+                );
+
+            mutation = mutation.field(delete_field);
+
+            trace!(
+                resource_type = %resource_type,
+                "Registered mutations for resource type"
+            );
+        }
+
+        debug!("Built Mutation type with CRUD operations");
         mutation
     }
 }
@@ -516,6 +837,16 @@ impl FhirSchemaBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use octofhir_fhir_model::provider::FhirVersion;
+    use octofhir_fhirschema::{FhirSchemaModelProvider, get_schemas};
+
+    fn test_model_provider() -> DynModelProvider {
+        // Use embedded FHIR R4 schemas for real type generation
+        // Note: R4B package only has 5 extension StructureDefinitions, R4 has all core types
+        let schemas = get_schemas(octofhir_fhirschema::FhirVersion::R4).clone();
+        let provider = FhirSchemaModelProvider::new(schemas, FhirVersion::R4);
+        Arc::new(provider)
+    }
 
     #[test]
     fn test_default_config() {
@@ -529,8 +860,9 @@ mod tests {
     async fn test_schema_builder_creates_valid_schema() {
         // Create a minimal search registry
         let registry = Arc::new(SearchParameterRegistry::default());
+        let model_provider = test_model_provider();
 
-        let builder = FhirSchemaBuilder::new(registry, SchemaBuilderConfig::default());
+        let builder = FhirSchemaBuilder::new(registry, model_provider, SchemaBuilderConfig::default());
 
         let result = builder.build().await;
         assert!(result.is_ok(), "Schema should build successfully");
@@ -563,7 +895,8 @@ mod tests {
     #[tokio::test]
     async fn test_schema_has_health_field() {
         let registry = Arc::new(SearchParameterRegistry::default());
-        let builder = FhirSchemaBuilder::new(registry, SchemaBuilderConfig::default());
+        let model_provider = test_model_provider();
+        let builder = FhirSchemaBuilder::new(registry, model_provider, SchemaBuilderConfig::default());
 
         let schema = builder.build().await.unwrap();
         let sdl = schema.sdl();
@@ -597,7 +930,8 @@ mod tests {
             vec!["Patient".to_string()],
         ));
 
-        let builder = FhirSchemaBuilder::new(Arc::new(registry), SchemaBuilderConfig::default());
+        let model_provider = test_model_provider();
+        let builder = FhirSchemaBuilder::new(Arc::new(registry), model_provider, SchemaBuilderConfig::default());
 
         let schema = builder.build().await.unwrap();
         let sdl = schema.sdl();
@@ -636,12 +970,13 @@ mod tests {
     #[tokio::test]
     async fn test_schema_with_disabled_introspection() {
         let registry = Arc::new(SearchParameterRegistry::default());
+        let model_provider = test_model_provider();
         let config = SchemaBuilderConfig {
             introspection_enabled: false,
             ..Default::default()
         };
 
-        let builder = FhirSchemaBuilder::new(registry, config);
+        let builder = FhirSchemaBuilder::new(registry, model_provider, config);
         let result = builder.build().await;
 
         assert!(

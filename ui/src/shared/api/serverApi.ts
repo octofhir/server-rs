@@ -1,4 +1,4 @@
-import type { BuildInfo, HealthResponse, HttpResponse, SqlResponse, SqlValue } from "./types";
+import type { BuildInfo, GraphQLResponse, HealthResponse, HttpResponse, SqlResponse, SqlValue } from "./types";
 
 /**
  * Custom error class that includes the parsed response body (e.g., OperationOutcome).
@@ -144,6 +144,120 @@ class ServerApiClient {
       body: JSON.stringify(body),
     });
     return response.data;
+  }
+
+  /**
+   * Execute a GraphQL query against the FHIR GraphQL endpoint.
+   *
+   * @param query - The GraphQL query to execute
+   * @param variables - Optional variables for the query
+   * @param operationName - Optional operation name when query contains multiple operations
+   * @returns GraphQL response with data and/or errors
+   *
+   * @example
+   * // Simple query
+   * await executeGraphQL("{ Patient(_id: \"123\") { id name { family } } }");
+   *
+   * @example
+   * // Query with variables
+   * await executeGraphQL(
+   *   "query GetPatient($id: String!) { Patient(_id: $id) { id } }",
+   *   { id: "123" },
+   *   "GetPatient"
+   * );
+   */
+  async executeGraphQL(
+    query: string,
+    variables?: Record<string, unknown>,
+    operationName?: string,
+  ): Promise<GraphQLResponse> {
+    const body: { query: string; variables?: Record<string, unknown>; operationName?: string } = {
+      query,
+    };
+    if (variables) {
+      body.variables = variables;
+    }
+    if (operationName) {
+      body.operationName = operationName;
+    }
+    const response = await this.request<GraphQLResponse>("/fhir/$graphql", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+    return response.data;
+  }
+
+  /**
+   * Fetch the GraphQL schema using introspection.
+   * Useful for providing autocomplete and documentation.
+   */
+  async getGraphQLSchema(): Promise<GraphQLResponse> {
+    const introspectionQuery = `
+      query IntrospectionQuery {
+        __schema {
+          queryType { name }
+          mutationType { name }
+          types {
+            ...FullType
+          }
+        }
+      }
+      fragment FullType on __Type {
+        kind
+        name
+        description
+        fields(includeDeprecated: true) {
+          name
+          description
+          args {
+            ...InputValue
+          }
+          type {
+            ...TypeRef
+          }
+          isDeprecated
+          deprecationReason
+        }
+        inputFields {
+          ...InputValue
+        }
+        enumValues(includeDeprecated: true) {
+          name
+          description
+          isDeprecated
+          deprecationReason
+        }
+      }
+      fragment InputValue on __InputValue {
+        name
+        description
+        type {
+          ...TypeRef
+        }
+        defaultValue
+      }
+      fragment TypeRef on __Type {
+        kind
+        name
+        ofType {
+          kind
+          name
+          ofType {
+            kind
+            name
+            ofType {
+              kind
+              name
+              ofType {
+                kind
+                name
+              }
+            }
+          }
+        }
+      }
+    `;
+    return this.executeGraphQL(introspectionQuery);
   }
 
   setBaseUrl(baseUrl: string): void {

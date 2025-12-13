@@ -278,6 +278,10 @@ pub struct RequestContext {
     /// Detected FHIR operation type.
     pub operation: FhirOperation,
 
+    /// Operation ID for policy targeting (e.g., "fhir.read", "graphql.query").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub operation_id: Option<String>,
+
     /// Resource type being accessed.
     pub resource_type: String,
 
@@ -706,6 +710,7 @@ impl PolicyContextBuilder {
 
         self.request = Some(RequestContext {
             operation,
+            operation_id: None,
             resource_type,
             resource_id,
             compartment_type,
@@ -715,6 +720,15 @@ impl PolicyContextBuilder {
             path: path.to_string(),
             method: method.to_string(),
         });
+        self
+    }
+
+    /// Set the operation ID for policy targeting.
+    #[must_use]
+    pub fn with_operation_id(mut self, operation_id: impl Into<String>) -> Self {
+        if let Some(ref mut request) = self.request {
+            request.operation_id = Some(operation_id.into());
+        }
         self
     }
 

@@ -15,6 +15,7 @@ import { CapabilityStatementPage } from "@/pages/capability-statement";
 import { GatewayPage } from "@/pages/gateway";
 import { AppDetailPage } from "@/pages/gateway-app";
 import { OperationDetailPage } from "@/pages/gateway-operation";
+import { GraphQLConsolePage } from "@/pages/graphql-console";
 
 /**
  * Protected layout wrapper - requires authentication.
@@ -45,6 +46,7 @@ export default function App() {
             <Route path="/gateway/operations/:id" component={OperationDetailPage} />
             <Route path="/settings" component={SettingsPage} />
             <Route path="/db-console" component={DbConsolePage} />
+            <Route path="/graphql" component={GraphQLConsolePage} />
             <Route path="/logs" component={LogsPage} />
             <Route path="/metadata" component={CapabilityStatementPage} />
           </Route>

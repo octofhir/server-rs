@@ -1383,6 +1383,8 @@ pub struct CapabilityStatementRest {
     pub mode: String, // "server" or "client"
     #[serde(skip_serializing_if = "Option::is_none")]
     pub resource: Option<Vec<CapabilityStatementRestResource>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub operation: Option<Vec<CapabilityStatementRestOperation>>,
 }
 
 impl CapabilityStatementRest {
@@ -1390,8 +1392,18 @@ impl CapabilityStatementRest {
         Self {
             mode: "server".to_string(),
             resource: Some(vec![]),
+            operation: None,
         }
     }
+}
+
+/// Operation definition in CapabilityStatement
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct CapabilityStatementRestOperation {
+    /// Name of the operation (e.g., "$graphql", "$validate")
+    pub name: String,
+    /// Canonical URL or URN for the operation definition
+    pub definition: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -1516,6 +1528,7 @@ pub struct CapabilityStatementBuilder {
     fhir_version: String,
     formats: Vec<String>,
     resources: Vec<CapabilityStatementRestResource>,
+    operations: Vec<CapabilityStatementRestOperation>,
 }
 
 impl CapabilityStatementBuilder {
@@ -1527,6 +1540,7 @@ impl CapabilityStatementBuilder {
             fhir_version: "4.3.0".to_string(),
             formats: vec!["application/fhir+json".to_string()],
             resources: Vec::new(),
+            operations: Vec::new(),
         }
     }
 
@@ -1569,7 +1583,26 @@ impl CapabilityStatementBuilder {
         self
     }
 
+    /// Add an operation to the capability statement
+    pub fn add_operation(
+        mut self,
+        name: impl Into<String>,
+        definition: impl Into<String>,
+    ) -> Self {
+        self.operations.push(CapabilityStatementRestOperation {
+            name: name.into(),
+            definition: definition.into(),
+        });
+        self
+    }
+
     pub fn build(self) -> CapabilityStatement {
+        let operations = if self.operations.is_empty() {
+            None
+        } else {
+            Some(self.operations)
+        };
+
         let mut cs = CapabilityStatement {
             resource_type: "CapabilityStatement",
             status: self.status,
@@ -1580,6 +1613,7 @@ impl CapabilityStatementBuilder {
             rest: vec![CapabilityStatementRest {
                 mode: "server".to_string(),
                 resource: Some(self.resources),
+                operation: operations,
             }],
         };
         // Ensure formats has at least application/fhir+json

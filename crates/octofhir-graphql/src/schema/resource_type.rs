@@ -1,13 +1,9 @@
 //! FHIR resource type generation for GraphQL schema.
 //!
-//! This module generates GraphQL object types for FHIR resources,
-//! including their fields, nested types, and type mappings.
+//! This module provides utilities for mapping FHIR types to GraphQL types
+//! and checking type categories.
 
-use std::sync::Arc;
-
-use async_graphql::dynamic::{Object, TypeRef};
-use octofhir_fhir_model::provider::ModelProvider;
-use tracing::{debug, warn};
+use async_graphql::dynamic::TypeRef;
 
 /// Maps a FHIR primitive type to a GraphQL type reference.
 ///
@@ -124,53 +120,6 @@ pub fn is_complex_type(type_name: &str) -> bool {
             | "BackboneElement"
             | "Element"
     )
-}
-
-/// Context for generating GraphQL types from FHIR model.
-pub struct TypeGenerator<M: ModelProvider> {
-    /// The model provider for accessing FHIR schema information.
-    model_provider: Arc<M>,
-}
-
-impl<M: ModelProvider + Send + Sync + 'static> TypeGenerator<M> {
-    /// Creates a new type generator with the given model provider.
-    pub fn new(model_provider: Arc<M>) -> Self {
-        Self { model_provider }
-    }
-
-    /// Generates a basic GraphQL object type for a FHIR resource.
-    ///
-    /// This creates a simplified type with just the JSON scalar representation
-    /// since we're using async-graphql's dynamic schema which returns the
-    /// resource as a JSON object that clients can query with any fields.
-    pub fn generate_resource_type(&self, resource_type: &str) -> Object {
-        debug!(resource_type = %resource_type, "Generating GraphQL type for resource");
-
-        // For dynamic schema, we create a simple object that the resolver
-        // populates with the full resource JSON
-        let obj = Object::new(resource_type)
-            .description(format!("FHIR {} resource", resource_type));
-
-        // The actual fields are added dynamically based on the JSON structure
-        // returned by the resolver. async-graphql's dynamic schema handles
-        // this through the Value::Object type.
-
-        obj
-    }
-
-    /// Gets the list of resource types from the model provider.
-    pub async fn get_resource_types(&self) -> Vec<String> {
-        match self.model_provider.get_resource_types().await {
-            Ok(types) => {
-                debug!(count = types.len(), "Retrieved resource types from model provider");
-                types
-            }
-            Err(e) => {
-                warn!(error = %e, "Failed to get resource types from model provider");
-                Vec::new()
-            }
-        }
-    }
 }
 
 #[cfg(test)]

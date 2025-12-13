@@ -4,9 +4,10 @@
 //! a single FHIR resource by its ID.
 
 use async_graphql::dynamic::{FieldFuture, ResolverContext};
+use octofhir_auth::smart::scopes::FhirOperation;
 use tracing::{debug, warn};
 
-use super::{get_graphql_context, json_to_graphql_value};
+use super::{evaluate_access, get_graphql_context, json_to_graphql_value};
 use crate::error::GraphQLError;
 
 /// Resolver for single resource read operations.
@@ -37,6 +38,9 @@ impl ReadResolver {
 
                 // Get the GraphQL context with storage
                 let gql_ctx = get_graphql_context(&ctx)?;
+
+                // Evaluate access control
+                evaluate_access(gql_ctx, FhirOperation::Read, &resource_type, Some(id)).await?;
 
                 // Read from storage using FhirStorage trait
                 let result = gql_ctx

@@ -117,7 +117,7 @@ supported_scopes = [
 
 [auth.signing]
 # JWT signing algorithm: RS256, RS384, or ES384
-algorithm = "RS384"
+algorithm = "ES384"
 # Key rotation period in days
 key_rotation_days = 90
 # Number of old keys to retain for validation
@@ -126,18 +126,19 @@ keys_to_keep = 3
 # Optional: Provide your own signing keys to persist tokens across server restarts
 # If not set, a new key will be generated on each server start (tokens will be invalidated)
 #
-# To generate RSA keys (for RS256 or RS384):
-#   openssl genrsa -out private.pem 2048
+# To generate RSA keys (for RS256 or RS384) in PKCS#8 format:
+#   openssl genpkey -algorithm RSA -out private.pem -pkeyopt rsa_keygen_bits:2048
 #   openssl rsa -in private.pem -pubout -out public.pem
 #
-# To generate EC keys (for ES384):
-#   openssl ecparam -name secp384r1 -genkey -noout -out private.pem
+# To generate EC keys (for ES384) in PKCS#8 format:
+#   openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-384 -out private.pem
 #   openssl ec -in private.pem -pubout -out public.pem
 #
-# Then paste the contents (including BEGIN/END markers) or use environment variables:
-#   OCTOFHIR__AUTH__SIGNING__PRIVATE_KEY_PEM="$(cat private.pem)"
-#   OCTOFHIR__AUTH__SIGNING__PUBLIC_KEY_PEM="$(cat public.pem)"
-#   OCTOFHIR__AUTH__SIGNING__KID="my-stable-key-id"
+# Note: Keys must be in PKCS#8 format (-----BEGIN PRIVATE KEY-----), not traditional format.
+# If you have a key in traditional format, convert it:
+#   openssl pkcs8 -topk8 -nocrypt -in old_private.pem -out private.pem
+#
+# Then paste the contents (including BEGIN/END markers) below:
 #
 # private_key_pem = """
 # -----BEGIN PRIVATE KEY-----
@@ -152,7 +153,24 @@ keys_to_keep = 3
 # """
 #
 # Optional: Set a stable key ID (recommended when using fixed keys)
-# kid = "production-key-2024-01"
+kid = "production-key-2024"
+
+private_key_pem = """
+-----BEGIN PRIVATE KEY-----
+MIG2AgEAMBAGByqGSM49AgEGBSuBBAAiBIGeMIGbAgEBBDDlHNrNl0aERfdGTnY5
+lyrffnjnOl/HJrT8IZIAqJ2bpJLsSjOjEHjiBnJObKnKaAihZANiAAQ+PY3EVCK7
+ju3cLV0ngCgy9XSXX9L+A7EfDg/OTMk4gchL6mhDdpHe6pVsdqVeJvTxbbJPLdCU
+Yg1KcVPNzZ78n3tZ6mQ0gih7J3tdwe7y26xQIzYH9a3YOx7QOdEEfx4=
+-----END PRIVATE KEY-----
+"""
+
+public_key_pem = """
+-----BEGIN PUBLIC KEY-----
+MHYwEAYHKoZIzj0CAQYFK4EEACIDYgAEPj2NxFQiu47t3C1dJ4AoMvV0l1/S/gOx
+Hw4PzkzJOIHIS+poQ3aR3uqVbHalXib08W2yTy3QlGINSnFTzc2e/J97WepkNIIo
+eyd7XcHu8tusUCM2B/Wt2Dse0DnRBH8e
+-----END PUBLIC KEY-----
+"""
 
 [auth.policy]
 # Default policy decision when no policy matches
@@ -224,6 +242,21 @@ sql_mode = "admin"
 # required_role = "admin"
 # Enable LSP features (autocomplete, hover, diagnostics)
 lsp_enabled = true
+
+# =============================================================================
+# GraphQL Configuration (FHIR GraphQL API)
+# =============================================================================
+
+[graphql]
+# Enable GraphQL endpoint at /fhir/$graphql
+enabled = true
+# Enable introspection queries (__schema, __type)
+# May want to disable in production for security
+introspection = true
+# Maximum query depth to prevent deeply nested queries
+max_depth = 15
+# Maximum query complexity score
+max_complexity = 500
 
 # =============================================================================
 # Bootstrap Configuration (initial server setup)

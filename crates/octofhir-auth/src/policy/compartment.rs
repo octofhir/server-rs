@@ -1825,6 +1825,7 @@ mod tests {
                 query_params: HashMap::new(),
                 path: format!("/{}/{}", resource_type, resource_id.unwrap_or("")),
                 method: "GET".to_string(),
+                operation_id: None,
             },
             resource: None,
             environment: EnvironmentContext {

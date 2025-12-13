@@ -229,4 +229,16 @@ pub trait PolicyStorage: Send + Sync {
     ///
     /// Returns an error if the storage operation fails.
     async fn find_for_role(&self, role: &str) -> AuthResult<Vec<AccessPolicy>>;
+
+    /// Insert or update a policy.
+    ///
+    /// If a policy with the same ID exists, it will be updated.
+    /// Otherwise, a new policy will be created.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The policy validation fails
+    /// - The storage operation fails
+    async fn upsert(&self, policy: &AccessPolicy) -> AuthResult<AccessPolicy>;
 }

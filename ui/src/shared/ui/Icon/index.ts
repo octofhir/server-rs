@@ -34,4 +34,5 @@ export {
   IconEdit,
   IconLogOut,
   IconUser,
+  IconCode,
 } from "./Icon";

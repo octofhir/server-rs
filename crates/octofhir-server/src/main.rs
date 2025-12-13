@@ -28,6 +28,15 @@ impl std::fmt::Display for ConfigSource {
 
 #[tokio::main]
 async fn main() {
+    // Load .env file if present (before anything else)
+    // This allows environment variables to be set from .env for local development
+    if let Err(e) = dotenvy::dotenv() {
+        // Not an error if .env doesn't exist - it's optional
+        if !matches!(e, dotenvy::Error::Io(ref io_err) if io_err.kind() == std::io::ErrorKind::NotFound) {
+            eprintln!("Warning: Failed to load .env file: {e}");
+        }
+    }
+
     // Initialize tracing early with the default level
     octofhir_server::observability::init_tracing();
 

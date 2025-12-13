@@ -14,6 +14,7 @@ pub mod middleware;
 pub mod model_provider;
 pub mod oauth;
 pub mod observability;
+pub mod operation_registry;
 pub mod operations;
 pub mod patch;
 pub mod server;

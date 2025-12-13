@@ -672,8 +672,15 @@ impl SigningKeyPair {
                 .map_err(|e| JwtError::invalid_key(e.to_string()))?;
 
             // Parse EC private key to get public key
-            let secret_key = EcSecretKey::from_sec1_pem(private_pem)
-                .map_err(|e| JwtError::invalid_key(e.to_string()))?;
+            // Try PKCS#8 format first (-----BEGIN PRIVATE KEY-----), then SEC1 (-----BEGIN EC PRIVATE KEY-----)
+            let secret_key = if private_pem.contains("BEGIN PRIVATE KEY") {
+                use p384::pkcs8::DecodePrivateKey;
+                EcSecretKey::from_pkcs8_pem(private_pem)
+                    .map_err(|e| JwtError::invalid_key(format!("PKCS8 parse error: {}", e)))?
+            } else {
+                EcSecretKey::from_sec1_pem(private_pem)
+                    .map_err(|e| JwtError::invalid_key(format!("SEC1 parse error: {}", e)))?
+            };
             let signing_key = EcSigningKey::from(&secret_key);
             let point = signing_key.verifying_key().to_encoded_point(false);
             let x = point

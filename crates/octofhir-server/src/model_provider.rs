@@ -6,7 +6,7 @@ use octofhir_fhir_model::error::Result as ModelResult;
 use octofhir_fhir_model::provider::{
     ChoiceTypeInfo, ElementInfo, FhirVersion, ModelProvider, TypeInfo,
 };
-use octofhir_fhirschema::model_provider::FhirSchemaModelProvider;
+use octofhir_fhirschema::FhirSchemaModelProvider;
 
 /// Server-wide model provider that wraps FhirSchemaModelProvider
 /// and adds server-specific methods for LSP, validation, etc.

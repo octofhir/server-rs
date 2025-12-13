@@ -17,14 +17,17 @@ use octofhir_auth_postgres::{
 
 use crate::middleware::AuthorizationState;
 use crate::model_provider::OctoFhirModelProvider;
+use octofhir_graphql::handler::{GraphQLContextTemplate, GraphQLState};
+use octofhir_graphql::{FhirSchemaBuilder, LazySchema, SchemaBuilderConfig};
 use octofhir_fhir_model::provider::{FhirVersion, ModelProvider};
 use octofhir_fhirpath::FhirPathEngine;
 use octofhir_fhirschema::embedded::{FhirVersion as SchemaFhirVersion, get_schemas};
-use octofhir_fhirschema::model_provider::FhirSchemaModelProvider;
+use octofhir_fhirschema::FhirSchemaModelProvider;
 use octofhir_fhirschema::types::StructureDefinition;
 use time::Duration;
 use tower_http::{compression::CompressionLayer, cors::CorsLayer, trace::TraceLayer};
 
+use crate::operation_registry::OperationStorage;
 use crate::operations::{DynOperationHandler, OperationRegistry, register_core_operations};
 use crate::validation::ValidationService;
 
@@ -32,7 +35,8 @@ use crate::{
     config::AppConfig, handlers, middleware as app_middleware,
     storage_adapter::PostgresStorageAdapter,
 };
-use octofhir_db_postgres::{PostgresConfig, PostgresStorage};
+use octofhir_db_postgres::PostgresConfig;
+use octofhir_db_postgres::PostgresStorage;
 use octofhir_search::SearchConfig as EngineSearchConfig;
 use octofhir_storage::legacy::DynStorage;
 
@@ -76,11 +80,25 @@ pub struct AppState {
     pub policy_reload_service: Arc<PolicyReloadService>,
     /// Authentication state for token validation
     pub auth_state: Option<AuthState>,
+    /// GraphQL state for GraphQL handlers
+    pub graphql_state: Option<GraphQLState>,
+    /// Cache of public operation paths for authentication middleware
+    pub public_paths_cache: crate::middleware::PublicPathsCache,
 }
 
 // =============================================================================
 // FromRef Implementations for Middleware States
 // =============================================================================
+
+impl FromRef<AppState> for crate::middleware::ExtendedAuthState {
+    fn from_ref(state: &AppState) -> Self {
+        let auth_state = state
+            .auth_state
+            .clone()
+            .expect("AuthState not initialized in AppState");
+        crate::middleware::ExtendedAuthState::new(auth_state, state.public_paths_cache.clone())
+    }
+}
 
 impl FromRef<AppState> for AuthState {
     fn from_ref(state: &AppState) -> Self {
@@ -773,6 +791,78 @@ pub async fn build_app(cfg: &AppConfig) -> Result<Router, anyhow::Error> {
         tracing::warn!("Authentication disabled - no auth configuration found");
     }
 
+    // Create public paths cache for authentication middleware (will be populated after bootstrap)
+    let public_paths_cache = crate::middleware::PublicPathsCache::new();
+
+    // Bootstrap operations registry
+    match crate::bootstrap::bootstrap_operations(db_pool.as_ref(), &cfg).await {
+        Ok(count) => {
+            tracing::info!(count, "Operations registry bootstrapped");
+
+            // Populate public paths cache from operations registry
+            let op_storage = crate::operation_registry::PostgresOperationStorage::new((*db_pool).clone());
+            if let Ok(all_operations) = op_storage.list_all().await {
+                public_paths_cache.update_from_operations(&all_operations);
+                let (exact, prefix) = public_paths_cache.len();
+                tracing::info!(exact_paths = exact, prefix_paths = prefix, "Public paths cache populated");
+            }
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "Failed to bootstrap operations registry");
+        }
+    }
+
+    // Initialize GraphQL state if enabled
+    let graphql_state = if cfg.graphql.enabled {
+        // Create schema builder config from GraphQL config
+        let schema_builder_config = SchemaBuilderConfig {
+            max_depth: cfg.graphql.max_depth,
+            max_complexity: cfg.graphql.max_complexity,
+            introspection_enabled: cfg.graphql.introspection,
+        };
+
+        // Create the schema builder with shared search registry and model provider
+        let schema_builder = FhirSchemaBuilder::new(
+            search_cfg.registry.clone(),
+            model_provider.clone(),
+            schema_builder_config,
+        );
+
+        // Create lazy schema for on-demand initialization
+        let lazy_schema = Arc::new(LazySchema::new(schema_builder));
+
+        // Create PostgresStorage from the pool for GraphQL
+        // GraphQL uses the new FhirStorage trait, not the legacy Storage trait
+        let graphql_storage: octofhir_storage::DynStorage = Arc::new(
+            PostgresStorage::from_pool(db_pool.as_ref().clone()),
+        );
+
+        // Create context template with shared dependencies
+        let context_template = GraphQLContextTemplate {
+            storage: graphql_storage,
+            search_config: search_cfg.clone(),
+            policy_evaluator: policy_evaluator.clone(),
+        };
+
+        let state = GraphQLState {
+            lazy_schema,
+            context_template,
+            playground_enabled: false, // Playground served from UI, not backend
+        };
+
+        tracing::info!(
+            introspection = cfg.graphql.introspection,
+            max_depth = cfg.graphql.max_depth,
+            max_complexity = cfg.graphql.max_complexity,
+            "GraphQL enabled"
+        );
+
+        Some(state)
+    } else {
+        tracing::info!("GraphQL disabled");
+        None
+    };
+
     let state = AppState {
         storage,
         search_cfg,
@@ -793,6 +883,8 @@ pub async fn build_app(cfg: &AppConfig) -> Result<Router, anyhow::Error> {
         policy_cache,
         policy_reload_service,
         auth_state,
+        graphql_state,
+        public_paths_cache,
     };
 
     Ok(build_router(state, body_limit))
@@ -801,6 +893,9 @@ pub async fn build_app(cfg: &AppConfig) -> Result<Router, anyhow::Error> {
 fn build_router(state: AppState, body_limit: usize) -> Router {
     // Build OAuth routes if auth is enabled
     let oauth_routes = build_oauth_routes(&state);
+
+    // Build GraphQL routes if GraphQL is enabled
+    let graphql_routes = build_graphql_routes(&state);
 
     let mut router = Router::new()
         // Health and info endpoints
@@ -814,6 +909,12 @@ fn build_router(state: AppState, body_limit: usize) -> Router {
         .route("/api/health", get(handlers::api_health))
         .route("/api/build-info", get(handlers::api_build_info))
         .route("/api/resource-types", get(handlers::api_resource_types))
+        // Operations registry API
+        .route("/api/operations", get(handlers::api_operations))
+        .route(
+            "/api/operations/{id}",
+            get(handlers::api_operation_get).patch(handlers::api_operation_patch),
+        )
         // DB Console SQL execution endpoint
         .route(
             "/api/$sql",
@@ -977,6 +1078,11 @@ fn build_router(state: AppState, body_limit: usize) -> Router {
         router = router.merge(oauth);
     }
 
+    // Merge GraphQL routes if enabled
+    if let Some(graphql) = graphql_routes {
+        router = router.merge(graphql);
+    }
+
     router
 }
 
@@ -1005,6 +1111,25 @@ fn build_oauth_routes(state: &AppState) -> Option<Router> {
             .merge(smart_config_router)
             .merge(userinfo_router),
     )
+}
+
+/// Build GraphQL routes if GraphQL is enabled.
+fn build_graphql_routes(state: &AppState) -> Option<Router> {
+    let graphql_state = state.graphql_state.clone()?;
+
+    // Build GraphQL router with its own state
+    // Routes: POST /fhir/$graphql, GET /fhir/$graphql (for playground/queries)
+    let graphql_router = Router::new()
+        .route(
+            "/fhir/$graphql",
+            get(octofhir_graphql::graphql_handler_get)
+                .post(octofhir_graphql::graphql_handler),
+        )
+        .with_state(graphql_state);
+
+    tracing::info!("GraphQL routes enabled: /fhir/$graphql");
+
+    Some(graphql_router)
 }
 
 pub struct ServerBuilder {

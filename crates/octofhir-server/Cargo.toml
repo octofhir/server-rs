@@ -14,6 +14,9 @@ name = "octofhir-server"
 path = "src/main.rs"
 
 [dependencies]
+# Environment loading
+dotenvy = { workspace = true }
+
 # Local dependencies
 octofhir-core = { path = "../octofhir-core" }
 octofhir-config = { path = "../octofhir-config" }
@@ -24,6 +27,7 @@ octofhir-search = { path = "../octofhir-search" }
 octofhir-auth = { path = "../octofhir-auth" }
 octofhir-auth-postgres = { path = "../octofhir-auth-postgres" }
 octofhir-canonical-manager = { workspace = true }
+octofhir-graphql = { path = "../octofhir-graphql" }
 async-trait = { workspace = true }
 
 # Workspace dependencies

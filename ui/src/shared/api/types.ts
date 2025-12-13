@@ -47,6 +47,20 @@ export interface FhirOperationOutcome {
   }>;
 }
 
+// GraphQL types
+export interface GraphQLError {
+  message: string;
+  locations?: Array<{ line: number; column: number }>;
+  path?: Array<string | number>;
+  extensions?: Record<string, unknown>;
+}
+
+export interface GraphQLResponse {
+  data?: Record<string, unknown> | null;
+  errors?: GraphQLError[];
+  extensions?: Record<string, unknown>;
+}
+
 // SQL execution types
 export interface SqlRequest {
   query: string;

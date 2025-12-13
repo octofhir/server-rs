@@ -162,6 +162,11 @@ pub struct MatcherElement {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub operations: Option<Vec<String>>,
 
+    /// Operation IDs for more specific targeting (e.g., "fhir.read", "graphql.query").
+    /// Supports wildcards with `*` (e.g., "fhir.*", "ui.admin.*").
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub operation_ids: Option<Vec<String>>,
+
     /// Request path patterns (glob syntax).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub paths: Option<Vec<String>>,
@@ -421,6 +426,7 @@ impl AccessPolicy {
                 .operations
                 .as_ref()
                 .map(|ops| ops.iter().flat_map(|o| Self::parse_operation(o)).collect()),
+            operation_ids: m.operation_ids.clone(),
             paths: m.paths.clone(),
             source_ips: m.source_ips.clone(),
             compartments: None,

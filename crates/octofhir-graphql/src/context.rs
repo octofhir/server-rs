@@ -2,7 +2,7 @@
 //!
 //! This module provides the context struct that holds all dependencies needed
 //! by GraphQL resolvers. The context is constructed per-request and contains
-//! both shared state (storage, config) and request-specific state (auth).
+//! both shared state (storage, config) and request-specific state (auth, loaders).
 //!
 //! # Example
 //!
@@ -26,6 +26,8 @@ use octofhir_auth::middleware::AuthContext;
 use octofhir_auth::policy::PolicyEvaluator;
 use octofhir_search::SearchConfig;
 use octofhir_storage::DynStorage;
+
+use crate::loaders::DataLoaders;
 
 /// GraphQL execution context.
 ///
@@ -60,6 +62,12 @@ pub struct GraphQLContext {
 
     /// Target resource ID for instance-level queries (e.g., "123").
     pub target_resource_id: Option<String>,
+
+    /// DataLoaders for efficient batched data loading.
+    ///
+    /// These loaders batch and cache resource loads within a single request,
+    /// preventing N+1 query problems when resolving references.
+    pub loaders: DataLoaders,
 }
 
 impl GraphQLContext {
@@ -91,6 +99,34 @@ impl GraphQLContext {
             (Some(rt), Some(id)) => Some(format!("{rt}/{id}")),
             _ => None,
         }
+    }
+
+    /// Loads a resource by type and ID using the DataLoader.
+    ///
+    /// Returns `None` if the resource does not exist.
+    pub async fn load_resource(
+        &self,
+        resource_type: &str,
+        id: &str,
+    ) -> Option<serde_json::Value> {
+        use crate::loaders::ResourceKey;
+        let key = ResourceKey::new(resource_type, id);
+        self.loaders.resource_loader.load_one(key).await.ok().flatten()
+    }
+
+    /// Resolves a FHIR reference string to a resource.
+    ///
+    /// Supports relative (`Patient/123`), absolute (`http://...`), and
+    /// contained (`#id`) reference formats.
+    ///
+    /// Returns `None` if the reference is invalid or the resource doesn't exist.
+    pub async fn resolve_reference(
+        &self,
+        reference: &str,
+    ) -> Option<crate::loaders::ResolvedReference> {
+        use crate::loaders::ReferenceKey;
+        let key = ReferenceKey::new(reference);
+        self.loaders.reference_loader.load_one(key).await.ok().flatten()
     }
 
     /// Creates a new builder for GraphQLContext.
@@ -213,6 +249,10 @@ impl GraphQLContextBuilder {
             .request_id
             .ok_or(ContextBuilderError::MissingField("request_id"))?;
 
+        // Create DataLoaders for this request
+        // Each request gets its own set of loaders to ensure proper batching scope
+        let loaders = DataLoaders::new(storage.clone());
+
         Ok(GraphQLContext {
             storage,
             search_config,
@@ -222,6 +262,7 @@ impl GraphQLContextBuilder {
             source_ip: self.source_ip,
             target_resource_type: self.target_resource_type,
             target_resource_id: self.target_resource_id,
+            loaders,
         })
     }
 }

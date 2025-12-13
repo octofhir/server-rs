@@ -310,3 +310,11 @@ export const IconUser: Component<Omit<IconProps, "children">> = (props) => (
     <circle cx="12" cy="7" r="4" />
   </Icon>
 );
+
+// GraphQL/Code icon (braces representing data query)
+export const IconCode: Component<Omit<IconProps, "children">> = (props) => (
+  <Icon {...props}>
+    <polyline points="16 18 22 12 16 6" />
+    <polyline points="8 6 2 12 8 18" />
+  </Icon>
+);

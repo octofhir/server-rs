@@ -7,6 +7,7 @@ import {
   IconServer,
   IconSettings,
   IconDatabase,
+  IconCode,
 } from "@/shared/ui/Icon";
 import styles from "./Sidebar.module.css";
 
@@ -47,6 +48,12 @@ const navigation: NavItem[] = [
     path: "/db-console",
     description: "SQL Editor & Query Tool",
     icon: IconDatabase,
+  },
+  {
+    label: "GraphQL",
+    path: "/graphql",
+    description: "GraphQL Query Console",
+    icon: IconCode,
   },
   {
     label: "Settings",
@@ -95,7 +102,7 @@ export const Sidebar = () => {
 
         <div class={styles.navSection}>
           <span class={styles.navSectionTitle}>Tools</span>
-          <For each={navigation.slice(4)}>
+          <For each={navigation.slice(4, 7)}>
             {(item) => (
               <A
                 href={item.path}

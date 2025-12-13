@@ -702,6 +702,10 @@ mod tests {
         async fn find_for_role(&self, _role: &str) -> AuthResult<Vec<AccessPolicy>> {
             unimplemented!()
         }
+
+        async fn upsert(&self, _policy: &AccessPolicy) -> AuthResult<AccessPolicy> {
+            unimplemented!()
+        }
     }
 
     // -------------------------------------------------------------------------
@@ -743,6 +747,7 @@ mod tests {
                 query_params: std::collections::HashMap::new(),
                 path: format!("/{}", resource_type),
                 method: "GET".to_string(),
+                operation_id: None,
             },
             resource: None,
             environment: EnvironmentContext {

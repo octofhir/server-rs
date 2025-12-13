@@ -1,4 +1,5 @@
 use crate::mapping::{IdPolicy, envelope_from_json, json_from_envelope};
+use crate::operation_registry::{OperationStorage, PostgresOperationStorage};
 use crate::patch::{apply_fhirpath_patch, apply_json_patch};
 use crate::server::SharedModelProvider;
 use axum::body::Bytes;
@@ -218,6 +219,37 @@ pub async fn metadata(
             .with_profile(base_profile)
             .with_supported_profiles(supported_profiles);
         builder = builder.add_resource_struct(resource);
+    }
+
+    // Add extended operations from the operation registry to CapabilityStatement
+    // Only include actual FHIR extended operations ($graphql, $validate, $everything)
+    // Basic CRUD operations (read, create, update, delete) are already in `interaction` field
+    let op_storage = PostgresOperationStorage::new((*state.db_pool).clone());
+    if let Ok(operations) = op_storage.list_all().await {
+        // Extended operations to advertise (not basic CRUD)
+        let extended_ops = [
+            "graphql.query",
+            "graphql.instance",
+            "system.validate",
+            "system.everything",
+        ];
+
+        for op in operations {
+            if extended_ops.contains(&op.id.as_str()) {
+                // Format operation name with $ prefix
+                let op_name = op
+                    .id
+                    .split('.')
+                    .last()
+                    .map(|s| format!("${}", s))
+                    .unwrap_or_else(|| format!("${}", op.id));
+
+                // Use a URN for the definition since these are server-specific operations
+                let definition = format!("urn:octofhir:operation:{}", op.id);
+
+                builder = builder.add_operation(op_name, definition);
+            }
+        }
     }
 
     let cs = builder.build();
@@ -2654,6 +2686,138 @@ pub async fn api_resource_types() -> impl IntoResponse {
     resource_types.sort();
 
     (StatusCode::OK, Json(resource_types))
+}
+
+/// Query parameters for operations list
+#[derive(Debug, Clone, Default, serde::Deserialize)]
+pub struct OperationsQueryParams {
+    /// Filter by category
+    pub category: Option<String>,
+    /// Filter by module
+    pub module: Option<String>,
+    /// Filter by public flag
+    pub public: Option<bool>,
+}
+
+/// GET /api/operations - List all server operations
+pub async fn api_operations(
+    State(state): State<crate::server::AppState>,
+    Query(params): Query<OperationsQueryParams>,
+) -> impl IntoResponse {
+    use crate::operation_registry::{OperationStorage, PostgresOperationStorage};
+    use octofhir_core::OperationDefinition;
+
+    let storage = PostgresOperationStorage::new(state.db_pool.as_ref().clone());
+
+    // Get all operations from the database
+    let operations: Result<Vec<OperationDefinition>, _> = match (&params.category, &params.module, params.public) {
+        (Some(category), _, _) => storage.list_by_category(category).await,
+        (_, Some(module), _) => storage.list_by_module(module).await,
+        (_, _, Some(true)) => storage.list_public().await,
+        _ => storage.list_all().await,
+    };
+
+    match operations {
+        Ok(ops) => {
+            let response = serde_json::json!({
+                "operations": ops,
+                "total": ops.len()
+            });
+            (StatusCode::OK, Json(response))
+        }
+        Err(e) => {
+            let error_response = serde_json::json!({
+                "error": format!("Failed to list operations: {}", e)
+            });
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(error_response))
+        }
+    }
+}
+
+/// GET /api/operations/{id} - Get a specific operation by ID
+pub async fn api_operation_get(
+    State(state): State<crate::server::AppState>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    use crate::operation_registry::{OperationStorage, PostgresOperationStorage};
+
+    let storage = PostgresOperationStorage::new(state.db_pool.as_ref().clone());
+
+    match storage.get(&id).await {
+        Ok(Some(op)) => (StatusCode::OK, Json(serde_json::to_value(op).unwrap())),
+        Ok(None) => {
+            let error_response = serde_json::json!({
+                "error": format!("Operation '{}' not found", id)
+            });
+            (StatusCode::NOT_FOUND, Json(error_response))
+        }
+        Err(e) => {
+            let error_response = serde_json::json!({
+                "error": format!("Failed to get operation: {}", e)
+            });
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(error_response))
+        }
+    }
+}
+
+/// Request body for PATCH /api/operations/{id}
+#[derive(Debug, serde::Deserialize)]
+pub struct OperationPatchRequest {
+    /// Update the public flag (whether operation requires authentication)
+    #[serde(default)]
+    pub public: Option<bool>,
+    /// Update the description
+    #[serde(default)]
+    pub description: Option<String>,
+}
+
+/// PATCH /api/operations/{id} - Update a specific operation
+///
+/// Allows updating mutable operation properties like `public` flag.
+/// This is useful for administrators to make operations public/private
+/// without restarting the server.
+///
+/// After updating, the public paths cache is refreshed to reflect changes.
+pub async fn api_operation_patch(
+    State(state): State<crate::server::AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<OperationPatchRequest>,
+) -> impl IntoResponse {
+    use crate::operation_registry::{OperationStorage, OperationUpdate, PostgresOperationStorage};
+
+    let storage = PostgresOperationStorage::new(state.db_pool.as_ref().clone());
+
+    // Build update from request
+    let update = OperationUpdate {
+        public: body.public,
+        description: body.description,
+    };
+
+    match storage.update(&id, update).await {
+        Ok(Some(op)) => {
+            // If public flag was changed, refresh the public paths cache
+            if body.public.is_some() {
+                if let Ok(all_operations) = storage.list_all().await {
+                    state.public_paths_cache.update_from_operations(&all_operations);
+                    tracing::info!(operation_id = %id, "Public paths cache refreshed after operation update");
+                }
+            }
+
+            (StatusCode::OK, Json(serde_json::to_value(op).unwrap()))
+        }
+        Ok(None) => {
+            let error_response = serde_json::json!({
+                "error": format!("Operation '{}' not found", id)
+            });
+            (StatusCode::NOT_FOUND, Json(error_response))
+        }
+        Err(e) => {
+            let error_response = serde_json::json!({
+                "error": format!("Failed to update operation: {}", e)
+            });
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(error_response))
+        }
+    }
 }
 
 // ---- Error mapping helpers ----

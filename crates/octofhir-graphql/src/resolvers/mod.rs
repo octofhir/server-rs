@@ -1,19 +1,43 @@
 //! GraphQL resolvers for FHIR resources.
 //!
-//! This module provides the resolver implementations for GraphQL queries:
+//! This module provides the resolver implementations for GraphQL queries and mutations:
+//!
+//! ## Query Resolvers
 //! - `read`: Single resource queries (e.g., `Patient(_id: "123")`)
 //! - `search`: List queries with search parameters (e.g., `PatientList(name: "John")`)
 //! - `connection`: Cursor-based pagination (e.g., `PatientConnection(...)`)
+//! - `include`: Nested reverse reference queries for related resources
+//!
+//! ## Mutation Resolvers
+//! - `create`: Create new resources (e.g., `PatientCreate(res: ...)`)
+//! - `update`: Update existing resources (e.g., `PatientUpdate(id: "123", res: ...)`)
+//! - `delete`: Delete resources (e.g., `PatientDelete(id: "123")`)
+//!
+//! ## Access Control
+//! - `access`: Policy evaluation and authorization for all operations
 
+pub mod access;
 mod connection;
+pub(crate) mod create;
+mod delete;
+mod include;
 mod read;
 mod reverse_reference;
 mod search;
+mod update;
 
+pub use access::{
+    build_policy_context, deny_reason_to_graphql_error, evaluate_access,
+    evaluate_access_with_resource, extract_resource_type, map_graphql_to_fhir_operation,
+};
 pub use connection::ConnectionResolver;
+pub use create::CreateResolver;
+pub use delete::DeleteResolver;
+pub use include::NestedReverseReferenceResolver;
 pub use read::ReadResolver;
 pub use reverse_reference::ReverseReferenceResolver;
 pub use search::SearchResolver;
+pub use update::UpdateResolver;
 
 use async_graphql::dynamic::ResolverContext;
 use async_graphql::{Error as GraphQLError, Value};

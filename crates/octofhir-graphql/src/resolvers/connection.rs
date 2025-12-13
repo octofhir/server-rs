@@ -5,10 +5,11 @@
 
 use async_graphql::dynamic::{FieldFuture, ResolverContext};
 use async_graphql::Value;
+use octofhir_auth::smart::scopes::FhirOperation;
 use octofhir_storage::{SearchParams, TotalMode};
 use tracing::{debug, warn};
 
-use super::{get_graphql_context, json_to_graphql_value};
+use super::{evaluate_access, get_graphql_context, json_to_graphql_value};
 
 /// Resolver for connection-based pagination.
 pub struct ConnectionResolver;
@@ -69,6 +70,9 @@ impl ConnectionResolver {
 
                 // Get the GraphQL context
                 let gql_ctx = get_graphql_context(&ctx)?;
+
+                // Evaluate access control
+                evaluate_access(gql_ctx, FhirOperation::Search, &resource_type, None).await?;
 
                 // Parse cursor if provided
                 let cursor_data = ctx

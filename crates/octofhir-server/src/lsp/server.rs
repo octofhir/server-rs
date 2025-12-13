@@ -355,7 +355,7 @@ impl PostgresLspServer {
 
         // Check immediate children
         for i in 0..node.child_count() {
-            if let Some(child) = node.child(i) {
+            if let Some(child) = node.child(i as u32) {
                 if child.kind() == "op_other" {
                     if let Ok(op_text) = child.utf8_text(text.as_bytes()) {
                         if matches!(op_text, "->" | "->>" | "#>" | "#>>" | "@>" | "<@") {
@@ -425,7 +425,7 @@ impl PostgresLspServer {
 
         // Recurse into children
         for i in 0..node.child_count() {
-            if let Some(child) = node.child(i) {
+            if let Some(child) = node.child(i as u32) {
                 // Skip operator nodes
                 if child.kind() != "op_other" {
                     Self::traverse_jsonb_expr(&child, text, column_name, path_segments);
@@ -453,7 +453,7 @@ impl PostgresLspServer {
         if node.kind() == "from" {
             // Find "relation" child
             for i in 0..node.child_count() {
-                if let Some(child) = node.child(i) {
+                if let Some(child) = node.child(i as u32) {
                     if child.kind() == "relation" || child.kind() == "identifier" {
                         if let Ok(table_name) = child.utf8_text(text.as_bytes()) {
                             // Clean up table name (remove schema prefix if present)
@@ -467,7 +467,7 @@ impl PostgresLspServer {
 
         // Recurse into children
         for i in 0..node.child_count() {
-            if let Some(child) = node.child(i) {
+            if let Some(child) = node.child(i as u32) {
                 if let Some(table) = Self::find_first_table_in_from(&child, text) {
                     return Some(table);
                 }
@@ -531,13 +531,13 @@ impl PostgresLspServer {
     fn extract_function_name(node: &tree_sitter::Node, text: &str) -> Option<String> {
         // Look for the function name - usually in a function_reference child
         for i in 0..node.child_count() {
-            if let Some(child) = node.child(i) {
+            if let Some(child) = node.child(i as u32) {
                 let kind = child.kind();
                 // Function name is in function_reference node
                 if kind == "function_reference" {
                     // Look for identifier inside function_reference
                     for j in 0..child.child_count() {
-                        if let Some(id_node) = child.child(j) {
+                        if let Some(id_node) = child.child(j as u32) {
                             if id_node.kind() == "identifier" || id_node.kind() == "any_identifier" {
                                 let name = id_node.utf8_text(text.as_bytes()).ok()?;
                                 return Some(name.to_string());
@@ -570,7 +570,7 @@ impl PostgresLspServer {
         // Find opening parenthesis
         let mut paren_pos = None;
         for i in 0..func_node.child_count() {
-            if let Some(child) = func_node.child(i) {
+            if let Some(child) = func_node.child(i as u32) {
                 if child.kind() == "(" {
                     paren_pos = Some(child.end_byte());
                     break;
@@ -585,7 +585,7 @@ impl PostgresLspServer {
         let mut last_comma_pos = arg_start;
 
         for i in 0..func_node.child_count() {
-            if let Some(child) = func_node.child(i) {
+            if let Some(child) = func_node.child(i as u32) {
                 let child_start = child.start_byte();
                 let child_end = child.end_byte();
 
@@ -1469,14 +1469,14 @@ impl PostgresLspServer {
         if node.kind() == "from" || node.kind() == "from_clause" {
             // Look for table names in FROM clause
             for i in 0..node.child_count() {
-                if let Some(child) = node.child(i) {
+                if let Some(child) = node.child(i as u32) {
                     Self::extract_table_names_recursive(&child, text, &mut tables);
                 }
             }
         } else {
             // Continue searching in children
             for i in 0..node.child_count() {
-                if let Some(child) = node.child(i) {
+                if let Some(child) = node.child(i as u32) {
                     let child_tables = Self::extract_tables_from_ast(&child, text);
                     tables.extend(child_tables);
                 }
@@ -1501,7 +1501,7 @@ impl PostgresLspServer {
         if kind == "relation" || kind == "table_reference" {
             // Look for identifier children
             for i in 0..node.child_count() {
-                if let Some(child) = node.child(i) {
+                if let Some(child) = node.child(i as u32) {
                     if child.kind() == "identifier" || child.kind() == "any_identifier" {
                         if let Ok(table_name) = child.utf8_text(text.as_bytes()) {
                             tables.push(table_name.to_string());
@@ -1514,7 +1514,7 @@ impl PostgresLspServer {
 
         // Recurse into children
         for i in 0..node.child_count() {
-            if let Some(child) = node.child(i) {
+            if let Some(child) = node.child(i as u32) {
                 Self::extract_table_names_recursive(&child, text, tables);
             }
         }
@@ -1771,7 +1771,7 @@ impl PostgresLspServer {
         // Find first argument (skip function_reference and opening paren)
         let mut found_paren = false;
         for i in 0..current.child_count() {
-            if let Some(child) = current.child(i) {
+            if let Some(child) = current.child(i as u32) {
                 let kind = child.kind();
 
                 // Skip until we find the opening paren
@@ -1808,7 +1808,7 @@ impl PostgresLspServer {
         if kind == "qualified_name" || kind == "field_reference" || kind == "column_reference" {
             // Look for the last identifier child
             for i in (0..node.child_count()).rev() {
-                if let Some(child) = node.child(i) {
+                if let Some(child) = node.child(i as u32) {
                     if child.kind() == "identifier" || child.kind() == "any_identifier" {
                         return child.utf8_text(text.as_bytes()).ok().map(String::from);
                     }
@@ -1818,7 +1818,7 @@ impl PostgresLspServer {
 
         // Recurse into children
         for i in 0..node.child_count() {
-            if let Some(child) = node.child(i) {
+            if let Some(child) = node.child(i as u32) {
                 if let Some(id) = Self::extract_identifier_from_expression(&child, text) {
                     return Some(id);
                 }

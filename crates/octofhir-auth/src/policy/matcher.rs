@@ -63,6 +63,11 @@ pub struct PolicyMatchers {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub operations: Option<Vec<FhirOperation>>,
 
+    /// Match by operation ID (e.g., "fhir.read", "graphql.query").
+    /// Supports wildcards with `*` (e.g., "fhir.*", "ui.admin.*").
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub operation_ids: Option<Vec<String>>,
+
     /// Match by compartment membership.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub compartments: Option<Vec<CompartmentMatcher>>,
@@ -250,6 +255,7 @@ impl PatternMatcher {
             && self.matches_user_types(matchers, context)
             && self.matches_resource_types(matchers, context)
             && self.matches_operations(matchers, context)
+            && self.matches_operation_ids(matchers, context)
             && self.matches_paths(matchers, context)
             && self.matches_source_ips(matchers, context)
             && self.matches_compartments(matchers, context)
@@ -299,6 +305,36 @@ impl PatternMatcher {
             .operations
             .as_ref()
             .is_none_or(|ops| ops.contains(&context.request.operation))
+    }
+
+    fn matches_operation_ids(&self, matchers: &PolicyMatchers, context: &PolicyContext) -> bool {
+        let Some(ref patterns) = matchers.operation_ids else {
+            return true;
+        };
+        let Some(ref operation_id) = context.request.operation_id else {
+            // If no operation_id in context but patterns are specified, no match
+            return false;
+        };
+        patterns.iter().any(|pattern| self.matches_operation_id_pattern(pattern, operation_id))
+    }
+
+    /// Match an operation ID against a pattern.
+    ///
+    /// Supports wildcards:
+    /// - `*` at the end matches any suffix (e.g., "fhir.*" matches "fhir.read", "fhir.create")
+    /// - Exact match otherwise
+    fn matches_operation_id_pattern(&self, pattern: &str, operation_id: &str) -> bool {
+        if pattern.ends_with(".*") {
+            // Prefix match: "fhir.*" matches "fhir.read", "fhir.create", etc.
+            let prefix = &pattern[..pattern.len() - 1]; // Remove the "*"
+            operation_id.starts_with(prefix)
+        } else if pattern == "*" {
+            // Full wildcard matches anything
+            true
+        } else {
+            // Exact match
+            pattern == operation_id
+        }
     }
 
     fn matches_paths(&self, matchers: &PolicyMatchers, context: &PolicyContext) -> bool {
@@ -539,6 +575,7 @@ mod tests {
             scopes: ScopeSummary::from_scope_string("patient/Patient.r user/Observation.rs"),
             request: RequestContext {
                 operation: FhirOperation::Read,
+                operation_id: Some("fhir.read".to_string()),
                 resource_type: "Patient".to_string(),
                 resource_id: Some("789".to_string()),
                 compartment_type: None,

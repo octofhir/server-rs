@@ -49,6 +49,8 @@ pub mod config;
 pub mod context;
 pub mod error;
 pub mod handler;
+pub mod loaders;
+pub mod operations;
 pub mod resolvers;
 pub mod schema;
 pub mod types;
@@ -58,7 +60,9 @@ pub use config::GraphQLConfig;
 pub use context::{GraphQLContext, GraphQLContextBuilder};
 pub use error::GraphQLError;
 pub use handler::{graphql_handler, graphql_handler_get, instance_graphql_handler};
-pub use schema::{FhirSchemaBuilder, LazySchema, SchemaBuilderConfig};
+pub use loaders::{DataLoaders, ReferenceKey, ReferenceLoader, ResourceKey, ResourceLoader};
+pub use operations::GraphQLOperationProvider;
+pub use schema::{DynModelProvider, FhirSchemaBuilder, LazySchema, SchemaBuilderConfig};
 
 /// Result type for GraphQL operations.
 pub type Result<T> = std::result::Result<T, GraphQLError>;

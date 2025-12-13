@@ -8,16 +8,25 @@
 //!
 //! Resources are embedded at compile time using `include_str!` for single-binary distribution.
 
+use std::sync::Arc;
+
 use octofhir_auth::policy::resources::{
     AccessPolicy, EngineElement, MatcherElement, PolicyEngineType,
 };
 use octofhir_auth::storage::{ClientStorage, PolicyStorage, User, UserStorage};
 use octofhir_auth::types::{Client, GrantType};
+use octofhir_core::OperationProvider;
 use octofhir_db_postgres::PostgresConformanceStorage;
 use octofhir_storage::ConformanceStorage;
+use sqlx_postgres::PgPool;
 use tracing::{info, warn};
 
+use crate::config::AppConfig;
 use crate::config::AdminUserConfig;
+use crate::operation_registry::{
+    AuthOperationProvider, FhirOperationProvider, OperationRegistryService,
+    PostgresOperationStorage, SystemOperationProvider, UiOperationProvider,
+};
 
 /// Default UI client ID - hardcoded for the built-in admin UI
 pub const DEFAULT_UI_CLIENT_ID: &str = "octofhir-ui";
@@ -387,9 +396,16 @@ pub async fn bootstrap_default_ui_client<S: ClientStorage>(
 
 /// Bootstraps the admin access policy for the admin interface.
 ///
-/// Creates an access policy that allows all operations for admin users
+/// Creates or updates an access policy that allows all operations for admin users
 /// when using the octofhir-ui client. This policy is required for the
 /// admin UI to function properly.
+///
+/// The policy includes:
+/// - FHIR operations (fhir.*)
+/// - GraphQL operations (graphql.*)
+/// - System operations (system.*)
+/// - UI operations (ui.*)
+/// - Auth operations (auth.*)
 ///
 /// # Arguments
 ///
@@ -397,25 +413,16 @@ pub async fn bootstrap_default_ui_client<S: ClientStorage>(
 ///
 /// # Returns
 ///
-/// Returns `true` if a policy was created, `false` if it already exists.
+/// Returns `true` if a policy was created or updated.
 pub async fn bootstrap_admin_access_policy<S: PolicyStorage>(
     policy_storage: &S,
 ) -> Result<bool, Box<dyn std::error::Error>> {
     info!(
         policy_id = ADMIN_ACCESS_POLICY_ID,
-        "Checking if admin access policy needs to be bootstrapped"
+        "Syncing admin access policy"
     );
 
-    // Check if policy already exists
-    if let Some(_existing) = policy_storage.get(ADMIN_ACCESS_POLICY_ID).await? {
-        info!(
-            policy_id = ADMIN_ACCESS_POLICY_ID,
-            "Admin access policy already exists, skipping bootstrap"
-        );
-        return Ok(false);
-    }
-
-    // Create the admin access policy
+    // Create the admin access policy with all operation categories
     let policy = AccessPolicy {
         id: Some(ADMIN_ACCESS_POLICY_ID.to_string()),
         name: ADMIN_ACCESS_POLICY_NAME.to_string(),
@@ -436,15 +443,71 @@ pub async fn bootstrap_admin_access_policy<S: PolicyStorage>(
         ..Default::default()
     };
 
-    policy_storage.create(&policy).await?;
+    // Always upsert to ensure policy stays in sync
+    policy_storage.upsert(&policy).await?;
 
     info!(
         policy_id = ADMIN_ACCESS_POLICY_ID,
         policy_name = ADMIN_ACCESS_POLICY_NAME,
-        "Admin access policy created successfully"
+        "Admin access policy synced successfully"
     );
 
     Ok(true)
+}
+
+/// Bootstraps the operation registry with all operation providers.
+///
+/// Collects operations from all enabled modules and syncs them to the database.
+/// This ensures all operations are registered for UI display and policy targeting.
+///
+/// # Arguments
+///
+/// * `pool` - PostgreSQL connection pool
+/// * `config` - Application configuration to check which modules are enabled
+///
+/// # Returns
+///
+/// Returns the number of operations synced.
+pub async fn bootstrap_operations(
+    pool: &PgPool,
+    config: &AppConfig,
+) -> Result<usize, Box<dyn std::error::Error>> {
+    info!("Bootstrapping operations registry");
+
+    // Create storage adapter
+    let storage = Arc::new(PostgresOperationStorage::new(pool.clone()));
+
+    // Collect operation providers based on enabled modules
+    let mut providers: Vec<Arc<dyn OperationProvider>> = vec![
+        // FHIR operations (always enabled)
+        Arc::new(FhirOperationProvider),
+        // System operations (always enabled)
+        Arc::new(SystemOperationProvider),
+        // UI operations (always enabled)
+        Arc::new(UiOperationProvider),
+    ];
+
+    // Add GraphQL provider if enabled
+    if config.graphql.enabled {
+        use octofhir_graphql::GraphQLOperationProvider;
+        providers.push(Arc::new(GraphQLOperationProvider));
+    }
+
+    // Add Auth provider if enabled
+    if config.auth.enabled {
+        providers.push(Arc::new(AuthOperationProvider));
+    }
+
+    // Create registry service
+    let registry = OperationRegistryService::with_providers(storage, providers);
+
+    // Sync operations to database
+    let count = registry.sync_operations(true).await.map_err(|e| {
+        format!("Failed to sync operations: {}", e)
+    })?;
+
+    info!(count, "Operations synced to database");
+    Ok(count)
 }
 
 #[cfg(test)]
