@@ -148,8 +148,9 @@ impl ArcUserStorage {
         let mut user: User = serde_json::from_value(row.resource.clone())
             .map_err(|e| AuthError::storage(format!("Failed to deserialize user: {}", e)))?;
 
-        // Ensure the ID matches the row ID
-        user.id = row.id;
+        // Ensure the ID matches the row ID (parse from String to Uuid)
+        user.id = Uuid::parse_str(&row.id)
+            .map_err(|e| AuthError::storage(format!("Invalid user ID: {}", e)))?;
 
         // Set timestamps from row metadata
         user.updated_at = row.ts;
@@ -365,8 +366,10 @@ impl SessionStorageTrait for ArcSessionStorage {
         }
 
         // Mark as used
+        let id = Uuid::parse_str(&row.id)
+            .map_err(|e| AuthError::storage(format!("Invalid session ID: {}", e)))?;
         let updated_row = storage
-            .mark_used(row.id)
+            .mark_used(id)
             .await
             .map_err(|e| AuthError::storage(e.to_string()))?;
 

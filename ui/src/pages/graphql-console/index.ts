@@ -1,1 +1,1 @@
-export { GraphQLConsolePage } from "./ui/GraphQLConsolePage";
+export { GraphQLConsolePage } from "./GraphQLConsolePage";

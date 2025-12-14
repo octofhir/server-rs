@@ -1,4 +1,15 @@
-import type { BuildInfo, GraphQLResponse, HealthResponse, HttpResponse, SqlResponse, SqlValue } from "./types";
+import type {
+  BuildInfo,
+  GraphQLResponse,
+  HealthResponse,
+  HttpResponse,
+  OperationDefinition,
+  OperationsResponse,
+  OperationUpdateRequest,
+  SqlResponse,
+  SqlValue,
+} from "./types";
+import { authInterceptor } from "./authInterceptor";
 
 /**
  * Custom error class that includes the parsed response body (e.g., OperationOutcome).
@@ -41,6 +52,9 @@ class ServerApiClient {
       });
 
       clearTimeout(timeoutId);
+
+      // Check for auth errors (401/403) and notify interceptor
+      authInterceptor.handleResponse(response);
 
       // Parse response headers
       const headers: Record<string, string> = {};
@@ -258,6 +272,49 @@ class ServerApiClient {
       }
     `;
     return this.executeGraphQL(introspectionQuery);
+  }
+
+  /**
+   * Get all server operations.
+   * Operations represent discrete API endpoints that can be targeted by access policies.
+   *
+   * @param category - Optional filter by category (fhir, graphql, system, auth, ui, api)
+   * @param module - Optional filter by module
+   * @param publicOnly - Optional filter to only show public operations
+   */
+  async getOperations(filters?: {
+    category?: string;
+    module?: string;
+    public?: boolean;
+  }): Promise<OperationsResponse> {
+    const params = new URLSearchParams();
+    if (filters?.category) params.set("category", filters.category);
+    if (filters?.module) params.set("module", filters.module);
+    if (filters?.public !== undefined) params.set("public", String(filters.public));
+    const queryString = params.toString();
+    const url = `/api/operations${queryString ? `?${queryString}` : ""}`;
+    const response = await this.request<OperationsResponse>(url);
+    return response.data;
+  }
+
+  /**
+   * Get a single operation by ID.
+   */
+  async getOperation(id: string): Promise<OperationDefinition> {
+    const response = await this.request<OperationDefinition>(`/api/operations/${encodeURIComponent(id)}`);
+    return response.data;
+  }
+
+  /**
+   * Update an operation (public flag, description).
+   * Requires admin permissions.
+   */
+  async updateOperation(id: string, update: OperationUpdateRequest): Promise<OperationDefinition> {
+    const response = await this.request<OperationDefinition>(`/api/operations/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: JSON.stringify(update),
+    });
+    return response.data;
   }
 
   setBaseUrl(baseUrl: string): void {

@@ -354,7 +354,7 @@ pub async fn link_identity(
         .map_err(|e| ApiError::internal(e.to_string()))?;
 
     if let Some(existing) = existing_user
-        && existing.id != uuid
+        && existing.id != uuid.to_string()
     {
         return Err(ApiError::conflict(
             "This identity is already linked to another user",

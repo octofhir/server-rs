@@ -14,9 +14,9 @@
     "moduleDetection": "force",
     "noEmit": true,
 
-    /* SolidJS JSX */
-    "jsx": "preserve",
-    "jsxImportSource": "solid-js",
+    /* React JSX */
+    "jsx": "react-jsx",
+    "jsxImportSource": "react",
 
     /* Path mapping */
     "baseUrl": ".",

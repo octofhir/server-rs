@@ -1,7 +1,8 @@
-import { createEffect, on, onCleanup, onMount } from "solid-js";
-// Use the full Monaco editor bundle instead of minimal API
-// The minimal API (editor.api) doesn't include suggest widget and other contributions
-import * as monaco from "monaco-editor";
+import { useRef, useEffect, useCallback } from "react";
+import Editor, { type OnMount, type OnChange } from "@monaco-editor/react";
+import type * as Monaco from "monaco-editor";
+
+// Monaco config is imported at app entry point (@/shared/monaco/config)
 
 import {
 	PG_LANGUAGE_ID,
@@ -21,153 +22,134 @@ export interface SqlEditorProps {
 	/** Callback for Ctrl+Enter key combination */
 	onExecute?: () => void;
 	/** Editor height (default: 100%) */
-	height?: string;
+	height?: string | number;
 	/** Whether the editor is read-only */
 	readOnly?: boolean;
 	/** Custom CSS class for the container */
-	class?: string;
+	className?: string;
 	/** Whether to enable PostgreSQL LSP features */
 	enableLsp?: boolean;
 	/** Optional override for the LSP websocket path */
 	lspPath?: string;
 }
 
-export function SqlEditor(props: SqlEditorProps) {
-	let containerRef: HTMLDivElement | undefined;
-	let editor: monaco.editor.IStandaloneCodeEditor | undefined;
-	let disposeLsp: (() => void) | undefined;
-	let disposeModelBinding: (() => void) | undefined;
-	let model: monaco.editor.ITextModel | undefined;
+/**
+ * React wrapper for Monaco SQL Editor with PostgreSQL LSP support.
+ * Uses the same LSP client as the SolidJS version.
+ */
+export function SqlEditor({
+	value = "",
+	onChange,
+	onExecute,
+	height = "100%",
+	readOnly = false,
+	className,
+	enableLsp = true,
+	lspPath,
+}: SqlEditorProps) {
+	const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
+	const monacoRef = useRef<typeof Monaco | null>(null);
+	const disposeLspRef = useRef<(() => void) | null>(null);
+	const disposeModelBindingRef = useRef<(() => void) | null>(null);
 
-	onMount(async () => {
-		if (!containerRef) return;
+	// Setup Monaco and LSP when editor mounts
+	const handleEditorDidMount: OnMount = useCallback(
+		async (editor, monaco) => {
+			editorRef.current = editor;
+			monacoRef.current = monaco;
 
-		console.log("[SqlEditor] onMount - initializing editor");
-		await ensureMonacoServices();
-		ensurePgLanguageRegistered();
+			// Initialize Monaco services and register PostgreSQL language
+			await ensureMonacoServices();
+			ensurePgLanguageRegistered();
 
-		const modelUri = monaco.Uri.parse(
-			`inmemory://pg-console/${
-				globalThis.crypto?.randomUUID?.() ?? Date.now()
-			}.sql`,
-		);
-		console.log("[SqlEditor] Creating model with language:", PG_LANGUAGE_ID, "uri:", modelUri.toString());
-		model = monaco.editor.createModel(
-			props.value ?? "",
-			PG_LANGUAGE_ID,
-			modelUri,
-		);
-		console.log("[SqlEditor] Model created, languageId:", model.getLanguageId());
+			// Add Ctrl+Enter command for execute
+			editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => {
+				onExecute?.();
+			});
 
-		editor = monaco.editor.create(containerRef, {
-			model,
-			language: PG_LANGUAGE_ID,
-			theme: "vs-dark",
-			automaticLayout: true,
-			minimap: { enabled: false },
-			lineNumbers: "on",
-			renderLineHighlight: "line",
-			scrollBeyondLastLine: false,
-			fontSize: 14,
-			fontFamily: "var(--font-mono, 'JetBrains Mono', 'Fira Code', monospace)",
-			tabSize: 2,
-			wordWrap: "on",
-			readOnly: props.readOnly ?? false,
-			padding: { top: 8, bottom: 8 },
-			suggestOnTriggerCharacters: true,
-			quickSuggestions: {
-				other: true,
-				comments: false,
-				strings: true, // Already enabled ✓
-			},
-			quickSuggestionsDelay: 100, // Faster trigger (default: 300ms)
-			acceptSuggestionOnEnter: "on",
-			suggest: {
-				showKeywords: true,
-				showSnippets: true,
-				showClasses: true,
-				showFunctions: true,
-				showVariables: true,
-				showFields: true,
-				showProperties: true,
-				// CRITICAL: Don't filter LSP suggestions
-				filterGraceful: false,
-				snippetsPreventQuickSuggestions: false,
-				localityBonus: false,
-				shareSuggestSelections: false,
-			},
-		});
-		console.log("[SqlEditor] Editor created with quickSuggestions enabled");
+			// Start LSP connection if enabled
+			if (enableLsp) {
+				try {
+					disposeLspRef.current = await startPgLsp(() => buildPgLspUrl(lspPath));
 
-		editor.onDidChangeModelContent(() => {
-			if (editor && props.onChange) {
-				props.onChange(editor.getValue());
-			}
-		});
-
-		editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => {
-			props.onExecute?.();
-		});
-
-		if (props.enableLsp ?? true) {
-			console.log("[SqlEditor] Starting LSP connection...");
-			try {
-				disposeLsp = await startPgLsp(() => buildPgLspUrl(props.lspPath));
-				console.log("[SqlEditor] LSP started successfully");
-				if (model) {
-					console.log("[SqlEditor] Binding model to LSP...");
-					disposeModelBinding = bindModelToLanguageServer(model);
-					console.log("[SqlEditor] Model bound to LSP");
+					// Bind model to LSP for completions and hover
+					const model = editor.getModel();
+					if (model) {
+						disposeModelBindingRef.current = bindModelToLanguageServer(model);
+					}
+				} catch (error) {
+					console.warn("[SqlEditor.react] PostgreSQL LSP unavailable:", error);
 				}
-			} catch (error) {
-				console.warn("[SqlEditor] PostgreSQL LSP unavailable:", error);
 			}
-		}
 
-		editor.focus();
-	});
-
-	createEffect(
-		on(
-			() => props.value,
-			(newValue) => {
-				if (model && newValue !== undefined && newValue !== model.getValue()) {
-					model.setValue(newValue);
-				}
-			},
-			{ defer: true },
-		),
+			// Focus the editor
+			editor.focus();
+		},
+		[enableLsp, lspPath, onExecute]
 	);
 
-	createEffect(
-		on(
-			() => props.readOnly,
-			(readOnly) => {
-				if (editor) {
-					editor.updateOptions({ readOnly: readOnly ?? false });
-				}
-			},
-			{ defer: true },
-		),
+	// Handle value changes from React
+	const handleChange: OnChange = useCallback(
+		(newValue) => {
+			onChange?.(newValue ?? "");
+		},
+		[onChange]
 	);
 
-	onCleanup(() => {
-		disposeLsp?.();
-		disposeModelBinding?.();
-		stopPgLsp();
-		editor?.dispose();
-		model?.dispose();
-	});
+	// Cleanup on unmount
+	useEffect(() => {
+		return () => {
+			disposeLspRef.current?.();
+			disposeModelBindingRef.current?.();
+			stopPgLsp();
+		};
+	}, []);
 
 	return (
-		<div
-			ref={containerRef}
-			class={props.class}
-			style={{
-				width: "100%",
-				height: props.height ?? "100%",
-				overflow: "hidden",
-			}}
-		/>
+		<div className={className} style={{ height, width: "100%" }}>
+			<Editor
+				height="100%"
+				language={PG_LANGUAGE_ID}
+				theme="vs-dark"
+				value={value}
+				onChange={handleChange}
+				onMount={handleEditorDidMount}
+				options={{
+					automaticLayout: true,
+					minimap: { enabled: false },
+					lineNumbers: "on",
+					renderLineHighlight: "line",
+					scrollBeyondLastLine: false,
+					fontSize: 14,
+					fontFamily: "var(--font-mono, 'JetBrains Mono', 'Fira Code', monospace)",
+					tabSize: 2,
+					wordWrap: "on",
+					readOnly,
+					padding: { top: 8, bottom: 8 },
+					suggestOnTriggerCharacters: true,
+					quickSuggestions: {
+						other: true,
+						comments: false,
+						strings: true,
+					},
+					quickSuggestionsDelay: 100,
+					acceptSuggestionOnEnter: "on",
+					suggest: {
+						showKeywords: true,
+						showSnippets: true,
+						showClasses: true,
+						showFunctions: true,
+						showVariables: true,
+						showFields: true,
+						showProperties: true,
+						filterGraceful: false,
+						snippetsPreventQuickSuggestions: false,
+						localityBonus: false,
+						shareSuggestSelections: false,
+					},
+				}}
+			/>
+		</div>
 	);
 }
+

@@ -110,6 +110,15 @@ pub trait FhirStorage: Send + Sync {
         params: &HistoryParams,
     ) -> Result<HistoryResult, StorageError>;
 
+    /// Returns the history of all resources in the system.
+    ///
+    /// This provides a system-level history view across all resource types.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for infrastructure issues or invalid parameters.
+    async fn system_history(&self, params: &HistoryParams) -> Result<HistoryResult, StorageError>;
+
     // ==================== Search ====================
 
     /// Searches for resources of a given type.

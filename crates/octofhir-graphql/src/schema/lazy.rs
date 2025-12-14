@@ -84,7 +84,10 @@ impl LazySchema {
     /// Gets the schema, building it if necessary.
     ///
     /// If the schema is not yet built, this method triggers a build.
-    /// Concurrent callers will wait for the build to complete.
+    /// Concurrent callers will receive an error if a build is in progress.
+    ///
+    /// For introspection queries or cases where waiting is acceptable,
+    /// use `get_or_build_wait()` instead.
     ///
     /// # Errors
     ///
@@ -140,6 +143,67 @@ impl LazySchema {
             Err(e) => {
                 let error_msg = e.to_string();
                 warn!(error = %error_msg, "Failed to build GraphQL schema");
+                *self.state.write().await = SchemaState::Failed;
+                *self.last_error.write().await = Some(error_msg.clone());
+                Err(GraphQLError::SchemaBuildFailed(error_msg))
+            }
+        }
+    }
+
+    /// Gets the schema, building it if necessary, and waits for the build to complete.
+    ///
+    /// Unlike `get_or_build()`, this method waits for an in-progress build to complete
+    /// instead of returning an error. This is useful for introspection queries where
+    /// waiting is acceptable.
+    ///
+    /// # Errors
+    ///
+    /// Returns `GraphQLError::SchemaBuildFailed` if the build fails.
+    pub async fn get_or_build_wait(&self) -> Result<Arc<Schema>, GraphQLError> {
+        // Fast path: schema already built
+        {
+            let schema = self.schema.read().await;
+            if let Some(ref s) = *schema {
+                return Ok(Arc::clone(s));
+            }
+        }
+
+        // Acquire build lock and wait for it
+        let _guard = self.build_lock.lock().await;
+
+        // Double-check after acquiring lock
+        {
+            let schema = self.schema.read().await;
+            if let Some(ref s) = *schema {
+                return Ok(Arc::clone(s));
+            }
+        }
+
+        // Check if build failed previously
+        let state = *self.state.read().await;
+        if state == SchemaState::Failed {
+            if let Some(err) = self.last_error.read().await.as_ref() {
+                return Err(GraphQLError::SchemaBuildFailed(err.clone()));
+            }
+        }
+
+        // Mark as building
+        *self.state.write().await = SchemaState::Building;
+        info!("Building GraphQL schema (wait mode)...");
+
+        // Build the schema
+        match self.builder.build().await {
+            Ok(schema) => {
+                let schema = Arc::new(schema);
+                *self.schema.write().await = Some(Arc::clone(&schema));
+                *self.state.write().await = SchemaState::Ready;
+                *self.last_error.write().await = None;
+                info!("GraphQL schema built successfully (wait mode)");
+                Ok(schema)
+            }
+            Err(e) => {
+                let error_msg = e.to_string();
+                warn!(error = %error_msg, "Failed to build GraphQL schema (wait mode)");
                 *self.state.write().await = SchemaState::Failed;
                 *self.last_error.write().await = Some(error_msg.clone());
                 Err(GraphQLError::SchemaBuildFailed(error_msg))

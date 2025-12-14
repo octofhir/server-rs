@@ -60,15 +60,16 @@ pub async fn create(
         .await
         .map_err(|e| StorageError::internal(format!("Schema error: {e}")))?;
 
-    // Generate ID if not provided
-    let id = resource["id"]
-        .as_str()
-        .map(String::from)
-        .unwrap_or_else(|| Uuid::new_v4().to_string());
-
-    // Parse ID as UUID
-    let id_uuid = Uuid::parse_str(&id)
-        .map_err(|e| StorageError::invalid_resource(format!("Invalid UUID format: {e}")))?;
+    // Generate ID if not provided, validate if provided
+    let id = if let Some(provided_id) = resource["id"].as_str() {
+        // Validate FHIR ID format
+        octofhir_core::validate_id(provided_id)
+            .map_err(|e| StorageError::invalid_resource(format!("Invalid resource ID: {e}")))?;
+        provided_id.to_string()
+    } else {
+        // Generate UUID by default
+        octofhir_core::generate_id()
+    };
 
     // Create transaction for this operation
     let txid = create_transaction(pool).await?;
@@ -90,8 +91,8 @@ pub async fn create(
            RETURNING id, txid, ts"#
     );
 
-    let row: (Uuid, i64, DateTime<Utc>) = query_as(&sql)
-        .bind(id_uuid)
+    let row: (String, i64, DateTime<Utc>) = query_as(&sql)
+        .bind(&id)
         .bind(txid)
         .bind(now)
         .bind(&resource)
@@ -129,12 +130,6 @@ pub async fn read(
 ) -> Result<Option<StoredResource>, StorageError> {
     let table = SchemaManager::table_name(resource_type);
 
-    // Parse ID as UUID - if invalid format, resource doesn't exist
-    let id_uuid = match Uuid::parse_str(id) {
-        Ok(u) => u,
-        Err(_) => return Ok(None), // Invalid ID format means resource not found
-    };
-
     // Query including status to detect deleted resources
     let sql = format!(
         r#"SELECT id, txid, ts, resource, status::text
@@ -142,8 +137,8 @@ pub async fn read(
            WHERE id = $1"#
     );
 
-    let row: Option<(Uuid, i64, DateTime<Utc>, Value, String)> = query_as(&sql)
-        .bind(id_uuid)
+    let row: Option<(String, i64, DateTime<Utc>, Value, String)> = query_as(&sql)
+        .bind(id)
         .fetch_optional(pool)
         .await
         .map_err(|e| {
@@ -163,7 +158,7 @@ pub async fn read(
 
             let ts_time = chrono_to_time(ts);
             Ok(Some(StoredResource {
-                id: row_id.to_string(),
+                id: row_id,
                 version_id: txid.to_string(),
                 resource_type: resource_type.to_string(),
                 resource,

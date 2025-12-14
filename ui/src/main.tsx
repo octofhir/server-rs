@@ -1,12 +1,10 @@
-/* @refresh reload */
-import { render } from "solid-js/web";
-import App from "@/app";
-import "@/shared/styles/global.css";
+import { createRoot } from "react-dom/client";
+import { App } from "./app";
 
-const root = document.getElementById("root");
-
-if (!root) {
-  throw new Error("Root element not found");
+const rootElement = document.getElementById("root");
+if (!rootElement) {
+	throw new Error("Root element not found");
 }
 
-render(() => <App />, root);
+const root = createRoot(rootElement);
+root.render(<App />);

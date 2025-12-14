@@ -1,57 +1,61 @@
-import type { ParentComponent } from "solid-js";
-import { Router, Route } from "@solidjs/router";
-import { ThemeProvider } from "./providers/ThemeProvider";
-import { ToastProvider } from "@/shared/ui/Toast";
-import { RouteGuard } from "@/shared/ui";
-import { AppShell } from "@/widgets/app-shell";
-import { LoginPage } from "@/pages/login";
-import { ResourceBrowserPage } from "@/pages/resource-browser";
-import { RestConsolePage } from "@/pages/rest-console";
-import { SettingsPage } from "@/pages/settings";
-import { DashboardPage } from "@/pages/dashboard";
-import { DbConsolePage } from "@/pages/db-console";
-import { LogsPage } from "@/pages/system-logs";
-import { CapabilityStatementPage } from "@/pages/capability-statement";
-import { GatewayPage } from "@/pages/gateway";
-import { AppDetailPage } from "@/pages/gateway-app";
-import { OperationDetailPage } from "@/pages/gateway-operation";
-import { GraphQLConsolePage } from "@/pages/graphql-console";
+// Configure Monaco web workers before any Monaco imports
+import "@/shared/monaco/config";
+
+import { StrictMode } from "react";
+import { BrowserRouter } from "react-router-dom";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { MantineProvider } from "@mantine/core";
+import { Notifications } from "@mantine/notifications";
+import { theme } from "./theme";
+import { AppRoutes } from "./routes";
+import { useAuthInterceptor } from "@/shared/api/hooks";
+
+// Import Mantine styles
+import "@mantine/core/styles.css";
+import "@mantine/notifications/styles.css";
+
+// Import existing global styles (CSS variables still work)
+import "@/shared/styles/global.css";
+
+// Create QueryClient with sensible defaults
+const queryClient = new QueryClient({
+	defaultOptions: {
+		queries: {
+			staleTime: 1000 * 60 * 5, // 5 minutes
+			gcTime: 1000 * 60 * 30, // 30 minutes (previously cacheTime)
+			retry: 1,
+			refetchOnWindowFocus: false,
+		},
+		mutations: {
+			retry: 0,
+		},
+	},
+});
 
 /**
- * Protected layout wrapper - requires authentication.
- * Wraps content with RouteGuard and AppShell.
+ * Inner app wrapper that sets up global auth error handling.
+ * Must be inside BrowserRouter to use navigation.
  */
-const ProtectedLayout: ParentComponent = (props) => (
-  <RouteGuard>
-    <AppShell>{props.children}</AppShell>
-  </RouteGuard>
-);
+function AppContent() {
+	// Set up global auth error interceptor
+	useAuthInterceptor();
 
-export default function App() {
-  return (
-    <ThemeProvider>
-      <ToastProvider>
-        <Router base="/ui">
-          {/* Public routes */}
-          <Route path="/login" component={LoginPage} />
-
-          {/* Protected routes - require authentication */}
-          <Route path="/" component={ProtectedLayout}>
-            <Route path="/" component={DashboardPage} />
-            <Route path="/resources" component={ResourceBrowserPage} />
-            <Route path="/resources/:type" component={ResourceBrowserPage} />
-            <Route path="/console" component={RestConsolePage} />
-            <Route path="/gateway" component={GatewayPage} />
-            <Route path="/gateway/apps/:id" component={AppDetailPage} />
-            <Route path="/gateway/operations/:id" component={OperationDetailPage} />
-            <Route path="/settings" component={SettingsPage} />
-            <Route path="/db-console" component={DbConsolePage} />
-            <Route path="/graphql" component={GraphQLConsolePage} />
-            <Route path="/logs" component={LogsPage} />
-            <Route path="/metadata" component={CapabilityStatementPage} />
-          </Route>
-        </Router>
-      </ToastProvider>
-    </ThemeProvider>
-  );
+	return <AppRoutes />;
 }
+
+export function App() {
+	return (
+		<StrictMode>
+			<QueryClientProvider client={queryClient}>
+				<MantineProvider theme={theme} defaultColorScheme="auto">
+					<Notifications position="top-right" />
+					<BrowserRouter basename="/ui">
+						<AppContent />
+					</BrowserRouter>
+				</MantineProvider>
+			</QueryClientProvider>
+		</StrictMode>
+	);
+}
+
+export default App;

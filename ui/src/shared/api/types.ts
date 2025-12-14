@@ -89,6 +89,7 @@ export interface TokenResponse {
   access_token: string;
   token_type: "Bearer";
   expires_in: number;
+  refresh_token?: string; // Optional: used for refreshing access tokens
   scope?: string;
 }
 
@@ -109,6 +110,28 @@ export interface AuthError {
 export interface LogoutResponse {
   success: boolean;
   message: string;
+}
+
+// Operation types
+export interface OperationDefinition {
+  id: string;
+  name: string;
+  description?: string;
+  category: string;
+  methods: string[];
+  path_pattern: string;
+  public: boolean;
+  module: string;
+}
+
+export interface OperationsResponse {
+  operations: OperationDefinition[];
+  total: number;
+}
+
+export interface OperationUpdateRequest {
+  public?: boolean;
+  description?: string;
 }
 
 // HTTP types

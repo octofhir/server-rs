@@ -154,7 +154,7 @@ impl SchemaManager {
         let sql = format!(
             r#"
             CREATE TABLE "{table}" (
-                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                id TEXT PRIMARY KEY,
                 txid BIGINT NOT NULL REFERENCES _transaction(txid),
                 ts TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                 resource JSONB NOT NULL,
@@ -185,7 +185,7 @@ impl SchemaManager {
         let sql = format!(
             r#"
             CREATE TABLE "{history_table}" (
-                id UUID NOT NULL,
+                id TEXT NOT NULL,
                 txid BIGINT NOT NULL,
                 ts TIMESTAMPTZ NOT NULL,
                 resource JSONB NOT NULL,

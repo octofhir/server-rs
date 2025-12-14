@@ -41,3 +41,4 @@ config/local.toml
 /docs/build/
 
 .fhir
+*.pem

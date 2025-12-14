@@ -226,6 +226,15 @@ pub async fn instance_graphql_handler(
     .into_response()
 }
 
+/// Checks if a GraphQL query is an introspection query.
+///
+/// Introspection queries typically start with __schema or __type.
+/// We detect them by checking if the query contains __schema or __type.
+fn is_introspection_query(query: &str) -> bool {
+    let trimmed = query.trim();
+    trimmed.contains("__schema") || trimmed.contains("__type") || trimmed.contains("IntrospectionQuery")
+}
+
 /// Executes a GraphQL request.
 async fn execute_graphql(
     state: GraphQLState,
@@ -236,15 +245,31 @@ async fn execute_graphql(
     auth_context: Option<AuthContext>,
     source_ip: Option<IpAddr>,
 ) -> impl IntoResponse {
+    // Check if this is an introspection query
+    let is_introspection = is_introspection_query(&request.query);
+
     // Try to get or build the schema
-    let schema = match state.lazy_schema.get_or_build().await {
-        Ok(schema) => schema,
-        Err(GraphQLError::SchemaInitializing) => {
-            return schema_initializing_response().into_response();
+    // For introspection queries, wait for the build to complete
+    // For regular queries, return error if build is in progress
+    let schema = if is_introspection {
+        debug!("Introspection query detected, waiting for schema build if needed");
+        match state.lazy_schema.get_or_build_wait().await {
+            Ok(schema) => schema,
+            Err(e) => {
+                warn!(error = %e, "Schema build failed for introspection");
+                return error_response(e).into_response();
+            }
         }
-        Err(e) => {
-            warn!(error = %e, "Schema build failed");
-            return error_response(e).into_response();
+    } else {
+        match state.lazy_schema.get_or_build().await {
+            Ok(schema) => schema,
+            Err(GraphQLError::SchemaInitializing) => {
+                return schema_initializing_response().into_response();
+            }
+            Err(e) => {
+                warn!(error = %e, "Schema build failed");
+                return error_response(e).into_response();
+            }
         }
     };
 

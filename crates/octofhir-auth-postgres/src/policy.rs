@@ -27,8 +27,8 @@ use crate::{PgPool, StorageError, StorageResult};
 /// Follows the standard FHIR resource table structure.
 #[derive(Debug, Clone)]
 pub struct PolicyRow {
-    /// Resource UUID
-    pub id: Uuid,
+    /// Resource ID (TEXT in database, supports both UUIDs and custom IDs)
+    pub id: String,
     /// Transaction ID (version)
     pub txid: i64,
     /// Timestamp
@@ -41,7 +41,7 @@ pub struct PolicyRow {
 
 impl PolicyRow {
     /// Create from database tuple.
-    fn from_tuple(row: (Uuid, i64, OffsetDateTime, serde_json::Value, String)) -> Self {
+    fn from_tuple(row: (String, i64, OffsetDateTime, serde_json::Value, String)) -> Self {
         Self {
             id: row.0,
             txid: row.1,
@@ -77,7 +77,7 @@ impl<'a> PolicyStorage<'a> {
     ///
     /// Returns an error if the database query fails.
     pub async fn find_by_id(&self, id: Uuid) -> StorageResult<Option<PolicyRow>> {
-        let row: Option<(Uuid, i64, OffsetDateTime, serde_json::Value, String)> = query_as(
+        let row: Option<(String, i64, OffsetDateTime, serde_json::Value, String)> = query_as(
             r#"
             SELECT id, txid, ts, resource, status::text
             FROM accesspolicy
@@ -85,7 +85,7 @@ impl<'a> PolicyStorage<'a> {
               AND status != 'deleted'
             "#,
         )
-        .bind(id)
+        .bind(id.to_string())
         .fetch_optional(self.pool)
         .await?;
 
@@ -98,7 +98,7 @@ impl<'a> PolicyStorage<'a> {
     ///
     /// Returns an error if the database query fails.
     pub async fn find_by_name(&self, name: &str) -> StorageResult<Option<PolicyRow>> {
-        let row: Option<(Uuid, i64, OffsetDateTime, serde_json::Value, String)> = query_as(
+        let row: Option<(String, i64, OffsetDateTime, serde_json::Value, String)> = query_as(
             r#"
             SELECT id, txid, ts, resource, status::text
             FROM accesspolicy
@@ -119,14 +119,15 @@ impl<'a> PolicyStorage<'a> {
     ///
     /// Returns an error if the database insert fails.
     pub async fn create(&self, id: Uuid, resource: serde_json::Value) -> StorageResult<PolicyRow> {
-        let row: (Uuid, i64, OffsetDateTime, serde_json::Value, String) = query_as(
+        let id_str = id.to_string();
+        let row: (String, i64, OffsetDateTime, serde_json::Value, String) = query_as(
             r#"
             INSERT INTO accesspolicy (id, txid, ts, resource, status)
             VALUES ($1, 1, NOW(), $2, 'created')
             RETURNING id, txid, ts, resource, status::text
             "#,
         )
-        .bind(id)
+        .bind(&id_str)
         .bind(&resource)
         .fetch_one(self.pool)
         .await
@@ -151,7 +152,7 @@ impl<'a> PolicyStorage<'a> {
     ///
     /// Returns an error if the policy doesn't exist or the database update fails.
     pub async fn update(&self, id: Uuid, resource: serde_json::Value) -> StorageResult<PolicyRow> {
-        let row: Option<(Uuid, i64, OffsetDateTime, serde_json::Value, String)> = query_as(
+        let row: Option<(String, i64, OffsetDateTime, serde_json::Value, String)> = query_as(
             r#"
             UPDATE accesspolicy
             SET resource = $2,
@@ -163,7 +164,7 @@ impl<'a> PolicyStorage<'a> {
             RETURNING id, txid, ts, resource, status::text
             "#,
         )
-        .bind(id)
+        .bind(id.to_string())
         .bind(&resource)
         .fetch_optional(self.pool)
         .await?;
@@ -188,7 +189,7 @@ impl<'a> PolicyStorage<'a> {
               AND status != 'deleted'
             "#,
         )
-        .bind(id)
+        .bind(id.to_string())
         .execute(self.pool)
         .await?;
 
@@ -205,7 +206,7 @@ impl<'a> PolicyStorage<'a> {
     ///
     /// Returns an error if the database query fails.
     pub async fn list(&self, limit: i64, offset: i64) -> StorageResult<Vec<PolicyRow>> {
-        let rows: Vec<(Uuid, i64, OffsetDateTime, serde_json::Value, String)> = query_as(
+        let rows: Vec<(String, i64, OffsetDateTime, serde_json::Value, String)> = query_as(
             r#"
             SELECT id, txid, ts, resource, status::text
             FROM accesspolicy
@@ -228,7 +229,7 @@ impl<'a> PolicyStorage<'a> {
     ///
     /// Returns an error if the database query fails.
     pub async fn find_for_client(&self, client_id: &str) -> StorageResult<Vec<PolicyRow>> {
-        let rows: Vec<(Uuid, i64, OffsetDateTime, serde_json::Value, String)> = query_as(
+        let rows: Vec<(String, i64, OffsetDateTime, serde_json::Value, String)> = query_as(
             r#"
             SELECT id, txid, ts, resource, status::text
             FROM accesspolicy
@@ -254,7 +255,7 @@ impl<'a> PolicyStorage<'a> {
     ///
     /// Returns an error if the database query fails.
     pub async fn find_for_user(&self, user_id: &str) -> StorageResult<Vec<PolicyRow>> {
-        let rows: Vec<(Uuid, i64, OffsetDateTime, serde_json::Value, String)> = query_as(
+        let rows: Vec<(String, i64, OffsetDateTime, serde_json::Value, String)> = query_as(
             r#"
             SELECT id, txid, ts, resource, status::text
             FROM accesspolicy
@@ -280,7 +281,7 @@ impl<'a> PolicyStorage<'a> {
     ///
     /// Returns an error if the database query fails.
     pub async fn find_for_role(&self, role: &str) -> StorageResult<Vec<PolicyRow>> {
-        let rows: Vec<(Uuid, i64, OffsetDateTime, serde_json::Value, String)> = query_as(
+        let rows: Vec<(String, i64, OffsetDateTime, serde_json::Value, String)> = query_as(
             r#"
             SELECT id, txid, ts, resource, status::text
             FROM accesspolicy
@@ -367,7 +368,7 @@ impl PolicyStorageTrait for PostgresPolicyStorageAdapter {
     }
 
     async fn list_active(&self) -> AuthResult<Vec<AccessPolicy>> {
-        let rows: Vec<(Uuid, i64, OffsetDateTime, serde_json::Value, String)> = query_as(
+        let rows: Vec<(String, i64, OffsetDateTime, serde_json::Value, String)> = query_as(
             r#"
             SELECT id, txid, ts, resource, status::text
             FROM accesspolicy
@@ -449,7 +450,7 @@ impl PolicyStorageTrait for PostgresPolicyStorageAdapter {
         _operation: FhirOperation,
     ) -> AuthResult<Vec<AccessPolicy>> {
         // Find policies that match the resource type or have no resource type filter
-        let rows: Vec<(Uuid, i64, OffsetDateTime, serde_json::Value, String)> = query_as(
+        let rows: Vec<(String, i64, OffsetDateTime, serde_json::Value, String)> = query_as(
             r#"
             SELECT id, txid, ts, resource, status::text
             FROM accesspolicy
@@ -488,7 +489,10 @@ impl PolicyStorageTrait for PostgresPolicyStorageAdapter {
             return Ok(Vec::new());
         }
 
-        let rows: Vec<(Uuid, i64, OffsetDateTime, serde_json::Value, String)> = query_as(
+        // Convert UUIDs to strings for the query
+        let uuid_strs: Vec<String> = uuids.iter().map(|u| u.to_string()).collect();
+
+        let rows: Vec<(String, i64, OffsetDateTime, serde_json::Value, String)> = query_as(
             r#"
             SELECT id, txid, ts, resource, status::text
             FROM accesspolicy
@@ -497,7 +501,7 @@ impl PolicyStorageTrait for PostgresPolicyStorageAdapter {
             ORDER BY (resource->>'priority')::int NULLS LAST
             "#,
         )
-        .bind(&uuids)
+        .bind(&uuid_strs)
         .fetch_all(self.pool.as_ref())
         .await
         .map_err(|e| octofhir_auth::AuthError::internal(format!("Database error: {}", e)))?;
@@ -513,7 +517,7 @@ impl PolicyStorageTrait for PostgresPolicyStorageAdapter {
         let limit = params.count.unwrap_or(100) as i64;
         let offset = params.offset.unwrap_or(0) as i64;
 
-        let rows: Vec<(Uuid, i64, OffsetDateTime, serde_json::Value, String)> =
+        let rows: Vec<(String, i64, OffsetDateTime, serde_json::Value, String)> =
             if let Some(ref name) = params.name {
                 query_as(
                     r#"
@@ -596,7 +600,8 @@ impl PolicyStorageTrait for PostgresPolicyStorageAdapter {
         })?;
 
         // Use INSERT ... ON CONFLICT DO UPDATE for upsert
-        let row: (Uuid, i64, OffsetDateTime, serde_json::Value, String) = query_as(
+        let id_str = id.to_string();
+        let row: (String, i64, OffsetDateTime, serde_json::Value, String) = query_as(
             r#"
             INSERT INTO accesspolicy (id, txid, ts, resource, status)
             VALUES ($1, 1, NOW(), $2, 'created')
@@ -608,7 +613,7 @@ impl PolicyStorageTrait for PostgresPolicyStorageAdapter {
             RETURNING id, txid, ts, resource, status::text
             "#,
         )
-        .bind(id)
+        .bind(&id_str)
         .bind(&resource)
         .fetch_one(self.pool.as_ref())
         .await

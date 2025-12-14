@@ -31,14 +31,11 @@ use crate::operation_registry::OperationStorage;
 use crate::operations::{DynOperationHandler, OperationRegistry, register_core_operations};
 use crate::validation::ValidationService;
 
-use crate::{
-    config::AppConfig, handlers, middleware as app_middleware,
-    storage_adapter::PostgresStorageAdapter,
-};
+use crate::{config::AppConfig, handlers, middleware as app_middleware};
 use octofhir_db_postgres::PostgresConfig;
 use octofhir_db_postgres::PostgresStorage;
 use octofhir_search::SearchConfig as EngineSearchConfig;
-use octofhir_storage::legacy::DynStorage;
+use octofhir_storage::DynStorage;
 
 /// Shared model provider type for FHIRPath evaluation
 pub type SharedModelProvider = Arc<dyn ModelProvider + Send + Sync>;
@@ -112,6 +109,15 @@ impl FromRef<AppState> for AuthState {
 impl FromRef<AppState> for AuthorizationState {
     fn from_ref(state: &AppState) -> Self {
         AuthorizationState::new(state.policy_evaluator.clone())
+    }
+}
+
+impl FromRef<AppState> for GraphQLState {
+    fn from_ref(state: &AppState) -> Self {
+        state
+            .graphql_state
+            .clone()
+            .expect("GraphQLState not initialized in AppState")
     }
 }
 
@@ -326,8 +332,8 @@ async fn create_storage(
     // Get the pool reference for SQL handler
     let pool = pg_storage.pool().clone();
 
-    let adapter = PostgresStorageAdapter::new(pg_storage);
-    Ok((Arc::new(adapter), Arc::new(pool)))
+    // Return PostgresStorage directly - it implements FhirStorage
+    Ok((Arc::new(pg_storage), Arc::new(pool)))
 }
 
 /// Loads FHIR StructureDefinitions from the canonical manager's packages.
@@ -845,16 +851,32 @@ pub async fn build_app(cfg: &AppConfig) -> Result<Router, anyhow::Error> {
         };
 
         let state = GraphQLState {
-            lazy_schema,
+            lazy_schema: lazy_schema.clone(),
             context_template,
             playground_enabled: false, // Playground served from UI, not backend
         };
+
+        // Trigger schema build in background (don't block server startup)
+        {
+            let schema = lazy_schema.clone();
+            tokio::spawn(async move {
+                tracing::info!("Starting background GraphQL schema build...");
+                match schema.get_or_build_wait().await {
+                    Ok(_) => {
+                        tracing::info!("Background GraphQL schema build completed successfully");
+                    }
+                    Err(e) => {
+                        tracing::error!(error = %e, "Background GraphQL schema build failed");
+                    }
+                }
+            });
+        }
 
         tracing::info!(
             introspection = cfg.graphql.introspection,
             max_depth = cfg.graphql.max_depth,
             max_complexity = cfg.graphql.max_complexity,
-            "GraphQL enabled"
+            "GraphQL enabled - schema building in background"
         );
 
         Some(state)
@@ -891,11 +913,12 @@ pub async fn build_app(cfg: &AppConfig) -> Result<Router, anyhow::Error> {
 }
 
 fn build_router(state: AppState, body_limit: usize) -> Router {
-    // Build OAuth routes if auth is enabled
+    // Build OAuth routes if auth is enabled (these are merged AFTER middleware, as they're public)
     let oauth_routes = build_oauth_routes(&state);
 
-    // Build GraphQL routes if GraphQL is enabled
-    let graphql_routes = build_graphql_routes(&state);
+    // NOTE: GraphQL routes are now added directly to the main router BEFORE middleware
+    // is applied, so they go through authentication. Previously they were merged after
+    // middleware, bypassing auth, which caused "Missing AuthContext extension" errors.
 
     let mut router = Router::new()
         // Health and info endpoints
@@ -1005,9 +1028,23 @@ fn build_router(state: AppState, body_limit: usize) -> Router {
         )
         // Gateway fallback - only called when no explicit route matches.
         // This allows users to define custom operations on any path.
-        .fallback(crate::gateway::router::gateway_fallback_handler)
-        // Middleware stack (outer to inner: body limit -> trace -> compression/cors -> content negotiation -> authz -> auth -> request id -> handler)
-        // Note: Layers wrap from outside-in, so first .layer() is closest to handler
+        .fallback(crate::gateway::router::gateway_fallback_handler);
+
+    // Add GraphQL route conditionally (before middleware so it goes through auth)
+    // GraphQL handlers use State<GraphQLState> which is extracted from AppState via FromRef
+    if state.graphql_state.is_some() {
+        router = router.route(
+            "/fhir/$graphql",
+            get(octofhir_graphql::graphql_handler_get)
+                .post(octofhir_graphql::graphql_handler),
+        );
+        tracing::info!("GraphQL endpoint enabled: /fhir/$graphql");
+    }
+
+    // Apply middleware stack (outer to inner: body limit -> trace -> compression/cors -> content negotiation -> authz -> auth -> request id -> handler)
+    // Note: Layers wrap from outside-in, so first .layer() is closest to handler
+    // Note: `.with_state(state)` consumes the AppState and returns Router<()>
+    let router: Router = router
         .layer(middleware::from_fn(app_middleware::request_id))
         .layer(middleware::from_fn_with_state(
             state.clone(),
@@ -1074,14 +1111,12 @@ fn build_router(state: AppState, body_limit: usize) -> Router {
 
     // Merge OAuth routes if auth is enabled
     // OAuth routes have their own state and are not subject to FHIR content negotiation
-    if let Some(oauth) = oauth_routes {
-        router = router.merge(oauth);
-    }
-
-    // Merge GraphQL routes if enabled
-    if let Some(graphql) = graphql_routes {
-        router = router.merge(graphql);
-    }
+    // Note: OAuth routes intentionally bypass auth middleware as they're public
+    let router = if let Some(oauth) = oauth_routes {
+        router.merge(oauth)
+    } else {
+        router
+    };
 
     router
 }
@@ -1111,25 +1146,6 @@ fn build_oauth_routes(state: &AppState) -> Option<Router> {
             .merge(smart_config_router)
             .merge(userinfo_router),
     )
-}
-
-/// Build GraphQL routes if GraphQL is enabled.
-fn build_graphql_routes(state: &AppState) -> Option<Router> {
-    let graphql_state = state.graphql_state.clone()?;
-
-    // Build GraphQL router with its own state
-    // Routes: POST /fhir/$graphql, GET /fhir/$graphql (for playground/queries)
-    let graphql_router = Router::new()
-        .route(
-            "/fhir/$graphql",
-            get(octofhir_graphql::graphql_handler_get)
-                .post(octofhir_graphql::graphql_handler),
-        )
-        .with_state(graphql_state);
-
-    tracing::info!("GraphQL routes enabled: /fhir/$graphql");
-
-    Some(graphql_router)
 }
 
 pub struct ServerBuilder {

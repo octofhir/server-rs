@@ -13,22 +13,32 @@
 		"typecheck": "tsc --noEmit"
 	},
 	"dependencies": {
-		"@kobalte/core": "^0.13.0",
-		"@solid-primitives/keyboard": "^1.2.8",
-		"@solid-primitives/storage": "^4.2.0",
-		"@solidjs/router": "^0.15.2",
+		"@graphiql/react": "^0.37.3",
+		"@graphiql/toolkit": "^0.11.3",
+		"@mantine/core": "^8.0.0",
+		"@mantine/hooks": "^8.0.0",
+		"@mantine/notifications": "^8.0.0",
+		"@monaco-editor/react": "^4.6.0",
+		"@tabler/icons-react": "^3.24.0",
+		"@tanstack/react-query": "^5.62.0",
 		"effector": "^23.2.0",
-		"effector-solid": "^0.23.0",
+		"effector-react": "^23.2.0",
+		"graphiql": "^5.2.2",
+		"graphql": "^16.9.0",
 		"monaco-editor": "^0.52.2",
-		"solid-js": "^1.9.3",
-		"solid-transition-group": "^0.2.3"
+		"monaco-graphql": "1.7.3",
+		"react": "^19.0.0",
+		"react-dom": "^19.0.0",
+		"react-router-dom": "^7.1.0"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "^2.2.3",
-		"@bithero/monaco-editor-vite-plugin": "^1.0.2",
 		"@types/node": "^24.3.1",
+		"@types/react": "^19.0.0",
+		"@types/react-dom": "^19.0.0",
+		"@vitejs/plugin-react": "^5.1.2",
 		"typescript": "~5.8.3",
 		"vite": "^7.1.2",
-		"vite-plugin-solid": "^2.11.6"
+		"vite-plugin-monaco-editor": "^1.1.0"
 	}
 }

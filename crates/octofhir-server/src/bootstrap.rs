@@ -475,7 +475,7 @@ pub async fn bootstrap_operations(
     info!("Bootstrapping operations registry");
 
     // Create storage adapter
-    let storage = Arc::new(PostgresOperationStorage::new(pool.clone()));
+    let op_storage = Arc::new(PostgresOperationStorage::new(pool.clone()));
 
     // Collect operation providers based on enabled modules
     let mut providers: Vec<Arc<dyn OperationProvider>> = vec![
@@ -498,8 +498,11 @@ pub async fn bootstrap_operations(
         providers.push(Arc::new(AuthOperationProvider));
     }
 
+    // Note: Gateway CustomOperations are NOT stored in the operations table
+    // to avoid duplication. They are loaded dynamically by the /api/operations endpoint.
+
     // Create registry service
-    let registry = OperationRegistryService::with_providers(storage, providers);
+    let registry = OperationRegistryService::with_providers(op_storage, providers);
 
     // Sync operations to database
     let count = registry.sync_operations(true).await.map_err(|e| {

@@ -19,8 +19,8 @@ use crate::{PgPool, StorageError, StorageResult};
 /// Follows the standard FHIR resource table structure.
 #[derive(Debug, Clone)]
 pub struct SessionRow {
-    /// Resource UUID
-    pub id: Uuid,
+    /// Resource ID (TEXT in database, supports both UUIDs and custom IDs)
+    pub id: String,
     /// Transaction ID (version)
     pub txid: i64,
     /// Timestamp
@@ -33,7 +33,7 @@ pub struct SessionRow {
 
 impl SessionRow {
     /// Create from database tuple.
-    fn from_tuple(row: (Uuid, i64, OffsetDateTime, serde_json::Value, String)) -> Self {
+    fn from_tuple(row: (String, i64, OffsetDateTime, serde_json::Value, String)) -> Self {
         Self {
             id: row.0,
             txid: row.1,
@@ -69,7 +69,7 @@ impl<'a> SessionStorage<'a> {
     ///
     /// Returns an error if the database query fails.
     pub async fn find_by_code(&self, code: &str) -> StorageResult<Option<SessionRow>> {
-        let row: Option<(Uuid, i64, OffsetDateTime, serde_json::Value, String)> = query_as(
+        let row: Option<(String, i64, OffsetDateTime, serde_json::Value, String)> = query_as(
             r#"
             SELECT id, txid, ts, resource, status::text
             FROM session
@@ -90,7 +90,7 @@ impl<'a> SessionStorage<'a> {
     ///
     /// Returns an error if the database query fails.
     pub async fn find_by_id(&self, id: Uuid) -> StorageResult<Option<SessionRow>> {
-        let row: Option<(Uuid, i64, OffsetDateTime, serde_json::Value, String)> = query_as(
+        let row: Option<(String, i64, OffsetDateTime, serde_json::Value, String)> = query_as(
             r#"
             SELECT id, txid, ts, resource, status::text
             FROM session
@@ -98,7 +98,7 @@ impl<'a> SessionStorage<'a> {
               AND status != 'deleted'
             "#,
         )
-        .bind(id)
+        .bind(id.to_string())
         .fetch_optional(self.pool)
         .await?;
 
@@ -111,14 +111,15 @@ impl<'a> SessionStorage<'a> {
     ///
     /// Returns an error if the database insert fails.
     pub async fn create(&self, id: Uuid, resource: serde_json::Value) -> StorageResult<SessionRow> {
-        let row: (Uuid, i64, OffsetDateTime, serde_json::Value, String) = query_as(
+        let id_str = id.to_string();
+        let row: (String, i64, OffsetDateTime, serde_json::Value, String) = query_as(
             r#"
             INSERT INTO session (id, txid, ts, resource, status)
             VALUES ($1, 1, NOW(), $2, 'created')
             RETURNING id, txid, ts, resource, status::text
             "#,
         )
-        .bind(id)
+        .bind(&id_str)
         .bind(&resource)
         .fetch_one(self.pool)
         .await
@@ -140,7 +141,7 @@ impl<'a> SessionStorage<'a> {
     ///
     /// Returns an error if the session doesn't exist or the database update fails.
     pub async fn mark_used(&self, id: Uuid) -> StorageResult<SessionRow> {
-        let row: Option<(Uuid, i64, OffsetDateTime, serde_json::Value, String)> = query_as(
+        let row: Option<(String, i64, OffsetDateTime, serde_json::Value, String)> = query_as(
             r#"
             UPDATE session
             SET resource = jsonb_set(resource, '{used}', 'true'),
@@ -152,7 +153,7 @@ impl<'a> SessionStorage<'a> {
             RETURNING id, txid, ts, resource, status::text
             "#,
         )
-        .bind(id)
+        .bind(id.to_string())
         .fetch_optional(self.pool)
         .await?;
 
@@ -176,7 +177,7 @@ impl<'a> SessionStorage<'a> {
               AND status != 'deleted'
             "#,
         )
-        .bind(id)
+        .bind(id.to_string())
         .execute(self.pool)
         .await?;
 
@@ -243,7 +244,7 @@ impl<'a> SessionStorage<'a> {
     ///
     /// Returns an error if the session doesn't exist or the database update fails.
     pub async fn update(&self, id: Uuid, resource: serde_json::Value) -> StorageResult<SessionRow> {
-        let row: Option<(Uuid, i64, OffsetDateTime, serde_json::Value, String)> = query_as(
+        let row: Option<(String, i64, OffsetDateTime, serde_json::Value, String)> = query_as(
             r#"
             UPDATE session
             SET resource = $2,
@@ -255,7 +256,7 @@ impl<'a> SessionStorage<'a> {
             RETURNING id, txid, ts, resource, status::text
             "#,
         )
-        .bind(id)
+        .bind(id.to_string())
         .bind(&resource)
         .fetch_optional(self.pool)
         .await?;

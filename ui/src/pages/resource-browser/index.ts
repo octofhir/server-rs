@@ -1,1 +1,1 @@
-export { ResourceBrowserPage } from "./ui/ResourceBrowserPage";
+export { ResourceBrowserPage } from "./ResourceBrowserPage";

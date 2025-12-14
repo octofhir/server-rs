@@ -62,6 +62,44 @@ class AuthApiClient {
 	}
 
 	/**
+	 * Refresh the access token using a refresh token.
+	 *
+	 * This endpoint may not be available on all servers.
+	 * If the server doesn't support refresh tokens, this will fail.
+	 */
+	async refresh(refreshToken: string): Promise<TokenResponse> {
+		const url = `${this.baseUrl}/auth/token`;
+
+		const body = new URLSearchParams({
+			grant_type: "refresh_token",
+			client_id: this.clientId,
+			refresh_token: refreshToken,
+		});
+
+		const response = await fetch(url, {
+			method: "POST",
+			headers: {
+				"Content-Type": "application/x-www-form-urlencoded",
+			},
+			body: body.toString(),
+			credentials: "include",
+		});
+
+		const data = await response.json();
+
+		if (!response.ok) {
+			const authError = data as AuthError;
+			throw new AuthApiError(
+				authError.error_description || authError.error || "Token refresh failed",
+				authError.error || "unknown_error",
+				response.status,
+			);
+		}
+
+		return data as TokenResponse;
+	}
+
+	/**
 	 * Logout the current user.
 	 *
 	 * This revokes the access token and clears the auth cookie.

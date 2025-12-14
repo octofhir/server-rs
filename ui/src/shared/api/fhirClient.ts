@@ -1,4 +1,5 @@
 import type { FhirBundle, FhirResource, HttpRequestConfig, HttpResponse } from "./types";
+import { authInterceptor } from "./authInterceptor";
 
 export class FhirClient {
   private baseUrl: string;
@@ -34,6 +35,9 @@ export class FhirClient {
       });
 
       clearTimeout(timeoutId);
+
+      // Check for auth errors (401/403) and notify interceptor
+      authInterceptor.handleResponse(response);
 
       // Parse response headers
       const responseHeaders: Record<string, string> = {};
@@ -150,6 +154,25 @@ export class FhirClient {
     config: Omit<HttpRequestConfig, "url"> & { url: string }
   ): Promise<HttpResponse<T>> {
     return this.request<T>(config);
+  }
+
+  // Raw request method for REST console with timing
+  async rawRequest<T = any>(
+    method: "GET" | "POST" | "PUT" | "DELETE" | "PATCH",
+    path: string,
+    body?: unknown
+  ): Promise<HttpResponse<T> & { responseTime: number }> {
+    const startTime = performance.now();
+    const response = await this.request<T>({
+      method,
+      url: path,
+      data: body,
+    });
+    const endTime = performance.now();
+    return {
+      ...response,
+      responseTime: endTime - startTime,
+    };
   }
 
   // Bundle navigation helpers

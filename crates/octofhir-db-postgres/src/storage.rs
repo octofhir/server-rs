@@ -176,15 +176,17 @@ impl FhirStorage for PostgresStorage {
         queries::get_history(&self.pool, resource_type, id, params).await
     }
 
+    async fn system_history(&self, params: &HistoryParams) -> Result<HistoryResult, StorageError> {
+        queries::get_system_history(&self.pool, &self.schema_manager, params).await
+    }
+
     async fn search(
         &self,
-        _resource_type: &str,
-        _params: &SearchParams,
+        resource_type: &str,
+        params: &SearchParams,
     ) -> Result<SearchResult, StorageError> {
-        // Search implementation is planned for a future task
-        Err(StorageError::internal(
-            "PostgreSQL search not yet implemented",
-        ))
+        queries::execute_search(&self.pool, resource_type, params, self.search_registry.as_ref())
+            .await
     }
 
     async fn begin_transaction(&self) -> Result<Box<dyn Transaction>, StorageError> {

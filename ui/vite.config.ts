@@ -1,25 +1,34 @@
 import { resolve } from "node:path";
+import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
-import solid from "vite-plugin-solid";
-import { monaco as monacoEditorPlugin } from "@bithero/monaco-editor-vite-plugin";
+// @ts-ignore - CommonJS module compatibility
+import monacoEditorPluginModule from "vite-plugin-monaco-editor";
+
+const monacoEditorPlugin =
+	monacoEditorPluginModule.default || monacoEditorPluginModule;
+
+// React is now the primary framework
+// Monaco workers are configured via vite-plugin-monaco-editor
 
 export default defineConfig({
 	base: "/ui/",
 	plugins: [
-		solid(),
+		react(),
 		monacoEditorPlugin({
-			// Only include SQL, JavaScript, TypeScript languages
-			languages: ["sql", "javascript", "typescript"],
-			// Include all features for these languages
-			features: "all",
-			// Expose Monaco globally for our custom worker setup
-			globalAPI: true,
+			languageWorkers: ["editorWorkerService", "json", "typescript"],
+			customWorkers: [
+				{
+					label: "graphql",
+					entry: "monaco-graphql/esm/graphql.worker",
+				},
+			],
 		}),
 	],
 	resolve: {
 		alias: {
 			"@": resolve(__dirname, "./src"),
 			"@/app": resolve(__dirname, "./src/app"),
+			"@/app-react": resolve(__dirname, "./src/app-react"),
 			"@/processes": resolve(__dirname, "./src/processes"),
 			"@/pages": resolve(__dirname, "./src/pages"),
 			"@/widgets": resolve(__dirname, "./src/widgets"),
@@ -56,6 +65,16 @@ export default defineConfig({
 		outDir: "dist",
 	},
 	optimizeDeps: {
-		exclude: ["monaco-editor"],
+		include: [
+			"react",
+			"react-dom",
+			"graphiql",
+			"@graphiql/react",
+			"monaco-editor",
+			"monaco-graphql",
+		],
+	},
+	worker: {
+		format: "es",
 	},
 });

@@ -343,26 +343,26 @@ impl OperationHandler for ValidateOperation {
         let resource = match self.extract_resource(params) {
             Some(res) => res,
             None => {
-                // Fetch from storage - parse resource type first
-                let rt = ResourceType::from_str(resource_type).map_err(|_| {
-                    OperationError::InvalidParameters(format!(
+                // Fetch from storage using modern API
+                // Validate resource type first
+                if ResourceType::from_str(resource_type).is_err() {
+                    return Err(OperationError::InvalidParameters(format!(
                         "Invalid resource type: {}",
                         resource_type
-                    ))
-                })?;
+                    )));
+                }
 
-                let envelope = state
+                let stored = state
                     .storage
-                    .get(&rt, id)
+                    .read(resource_type, id)
                     .await
                     .map_err(|e| OperationError::Internal(e.to_string()))?
                     .ok_or_else(|| {
                         OperationError::NotFound(format!("{}/{} not found", resource_type, id))
                     })?;
 
-                // Convert envelope to JSON for validation
-                serde_json::to_value(&envelope)
-                    .map_err(|e| OperationError::Internal(e.to_string()))?
+                // Use the resource JSON directly
+                stored.resource
             }
         };
 

@@ -52,7 +52,6 @@ mod error;
 mod fcm_storage;
 mod hot_reload;
 mod pool;
-mod queries;
 mod query_analyzer;
 mod schema;
 mod storage;
@@ -60,6 +59,9 @@ mod transaction;
 
 /// Database migrations module.
 pub mod migrations;
+
+/// SQL query implementations.
+pub mod queries;
 
 // Re-export main types
 pub use config::PostgresConfig;

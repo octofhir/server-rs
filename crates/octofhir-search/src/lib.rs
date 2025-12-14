@@ -5,6 +5,7 @@ pub mod engine;
 pub mod include;
 pub mod loader;
 pub mod parameters;
+pub mod params_converter;
 pub mod parser;
 pub mod query_cache;
 pub mod registry;
@@ -78,3 +79,6 @@ pub use terminology::{
     CacheStats, ExpansionResult, HierarchyDirection, HybridTerminologyProvider, TerminologyConfig,
     TerminologyError,
 };
+
+// SearchParams to query builder conversion
+pub use params_converter::{ConvertedQuery, build_query_from_params, parse_query_string};

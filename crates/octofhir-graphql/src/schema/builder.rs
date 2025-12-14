@@ -27,6 +27,20 @@ use crate::types::{create_all_resources_union, create_reference_type};
 /// Kept for backwards compatibility but no longer primary mechanism.
 pub const FHIR_RESOURCE_SCALAR: &str = "FhirResource";
 
+/// Internal resource types that should always be included in the GraphQL schema.
+/// These are OctoFHIR-specific resources used for authentication, authorization, and gateway functionality.
+const INTERNAL_RESOURCE_TYPES: &[&str] = &[
+    "User",
+    "Client",
+    "AccessPolicy",
+    "Session",
+    "RefreshToken",
+    "RevokedToken",
+    "IdentityProvider",
+    "App",
+    "CustomOperation",
+];
+
 /// Configuration for the schema builder.
 #[derive(Debug, Clone)]
 pub struct SchemaBuilderConfig {
@@ -132,6 +146,14 @@ impl FhirSchemaBuilder {
         // (they may not be in the model provider's resource list if schemas are partially loaded)
         let search_resource_types = self.search_registry.list_resource_types();
         type_generator.queue_types(search_resource_types.iter());
+
+        // Queue internal resource types (User, Client, AccessPolicy, etc.)
+        // These are OctoFHIR-specific resources that may not be in search registry
+        debug!(
+            internal_types = ?INTERNAL_RESOURCE_TYPES,
+            "Queuing internal resource types for GraphQL schema"
+        );
+        type_generator.queue_types(INTERNAL_RESOURCE_TYPES.iter());
 
         let mut fhir_types = type_generator.generate_all_types().await?;
 
@@ -353,193 +375,208 @@ impl FhirSchemaBuilder {
         let resource_types = self.search_registry.list_resource_types();
 
         for resource_type in &resource_types {
-            // Create Edge type
-            let edge_type_name = format!("{}Edge", resource_type);
-            // Use the actual resource type (Patient, Observation, etc.)
-            let edge = Object::new(&edge_type_name)
-                .description(format!("Edge type for {} connection", resource_type))
-                .field(
-                    Field::new("resource", TypeRef::named_nn(*resource_type), |ctx| {
-                        FieldFuture::new(async move {
-                            // The resource is stored in parent context
-                            if let Some(parent) = ctx.parent_value.as_value() {
-                                if let Value::Object(obj) = parent {
-                                    if let Some(resource) = obj.get("resource") {
-                                        return Ok(Some(resource.clone()));
-                                    }
-                                }
-                            }
-                            Ok(None)
-                        })
-                    })
-                    .description("The FHIR resource"),
-                )
-                .field(
-                    Field::new("mode", TypeRef::named(TypeRef::STRING), |ctx| {
-                        FieldFuture::new(async move {
-                            if let Some(parent) = ctx.parent_value.as_value() {
-                                if let Value::Object(obj) = parent {
-                                    if let Some(mode) = obj.get("mode") {
-                                        return Ok(Some(mode.clone()));
-                                    }
-                                }
-                            }
-                            Ok(None)
-                        })
-                    })
-                    .description("Search match mode"),
-                )
-                .field(
-                    Field::new("score", TypeRef::named(TypeRef::FLOAT), |ctx| {
-                        FieldFuture::new(async move {
-                            if let Some(parent) = ctx.parent_value.as_value() {
-                                if let Value::Object(obj) = parent {
-                                    if let Some(score) = obj.get("score") {
-                                        return Ok(Some(score.clone()));
-                                    }
-                                }
-                            }
-                            Ok(None)
-                        })
-                    })
-                    .description("Search relevance score"),
-                );
-
-            builder = builder.register(edge);
-
-            // Create Connection type
-            let connection_type_name = format!("{}Connection", resource_type);
-            let edge_type_ref = TypeRef::named_nn_list_nn(&edge_type_name);
-
-            let connection = Object::new(&connection_type_name)
-                .description(format!(
-                    "Connection type for {} cursor-based pagination",
-                    resource_type
-                ))
-                .field(
-                    Field::new("count", TypeRef::named(TypeRef::INT), |ctx| {
-                        FieldFuture::new(async move {
-                            if let Some(parent) = ctx.parent_value.as_value() {
-                                if let Value::Object(obj) = parent {
-                                    if let Some(count) = obj.get("count") {
-                                        return Ok(Some(count.clone()));
-                                    }
-                                }
-                            }
-                            Ok(None)
-                        })
-                    })
-                    .description("Total count of matching resources"),
-                )
-                .field(
-                    Field::new("offset", TypeRef::named(TypeRef::INT), |ctx| {
-                        FieldFuture::new(async move {
-                            if let Some(parent) = ctx.parent_value.as_value() {
-                                if let Value::Object(obj) = parent {
-                                    if let Some(offset) = obj.get("offset") {
-                                        return Ok(Some(offset.clone()));
-                                    }
-                                }
-                            }
-                            Ok(None)
-                        })
-                    })
-                    .description("Current offset into results"),
-                )
-                .field(
-                    Field::new("pageSize", TypeRef::named(TypeRef::INT), |ctx| {
-                        FieldFuture::new(async move {
-                            if let Some(parent) = ctx.parent_value.as_value() {
-                                if let Value::Object(obj) = parent {
-                                    if let Some(size) = obj.get("pageSize") {
-                                        return Ok(Some(size.clone()));
-                                    }
-                                }
-                            }
-                            Ok(None)
-                        })
-                    })
-                    .description("Page size"),
-                )
-                .field(
-                    Field::new("edges", edge_type_ref, |ctx| {
-                        FieldFuture::new(async move {
-                            if let Some(parent) = ctx.parent_value.as_value() {
-                                if let Value::Object(obj) = parent {
-                                    if let Some(edges) = obj.get("edges") {
-                                        return Ok(Some(edges.clone()));
-                                    }
-                                }
-                            }
-                            Ok(Some(Value::List(vec![])))
-                        })
-                    })
-                    .description("List of edges containing resources"),
-                )
-                .field(
-                    Field::new("first", TypeRef::named(TypeRef::STRING), |ctx| {
-                        FieldFuture::new(async move {
-                            if let Some(parent) = ctx.parent_value.as_value() {
-                                if let Value::Object(obj) = parent {
-                                    if let Some(cursor) = obj.get("first") {
-                                        return Ok(Some(cursor.clone()));
-                                    }
-                                }
-                            }
-                            Ok(None)
-                        })
-                    })
-                    .description("Cursor for first page"),
-                )
-                .field(
-                    Field::new("previous", TypeRef::named(TypeRef::STRING), |ctx| {
-                        FieldFuture::new(async move {
-                            if let Some(parent) = ctx.parent_value.as_value() {
-                                if let Value::Object(obj) = parent {
-                                    if let Some(cursor) = obj.get("previous") {
-                                        return Ok(Some(cursor.clone()));
-                                    }
-                                }
-                            }
-                            Ok(None)
-                        })
-                    })
-                    .description("Cursor for previous page"),
-                )
-                .field(
-                    Field::new("next", TypeRef::named(TypeRef::STRING), |ctx| {
-                        FieldFuture::new(async move {
-                            if let Some(parent) = ctx.parent_value.as_value() {
-                                if let Value::Object(obj) = parent {
-                                    if let Some(cursor) = obj.get("next") {
-                                        return Ok(Some(cursor.clone()));
-                                    }
-                                }
-                            }
-                            Ok(None)
-                        })
-                    })
-                    .description("Cursor for next page"),
-                )
-                .field(
-                    Field::new("last", TypeRef::named(TypeRef::STRING), |ctx| {
-                        FieldFuture::new(async move {
-                            if let Some(parent) = ctx.parent_value.as_value() {
-                                if let Value::Object(obj) = parent {
-                                    if let Some(cursor) = obj.get("last") {
-                                        return Ok(Some(cursor.clone()));
-                                    }
-                                }
-                            }
-                            Ok(None)
-                        })
-                    })
-                    .description("Cursor for last page"),
-                );
-
-            builder = builder.register(connection);
+            builder = self.register_connection_type_for(builder, resource_type);
         }
 
+        // Also register connection types for internal resource types
+        for resource_type in INTERNAL_RESOURCE_TYPES {
+            if !resource_types.contains(resource_type) {
+                builder = self.register_connection_type_for(builder, resource_type);
+            }
+        }
+
+        builder
+    }
+
+    /// Registers Edge and Connection types for a specific resource type.
+    fn register_connection_type_for(
+        &self,
+        mut builder: SchemaBuilder,
+        resource_type: &str,
+    ) -> SchemaBuilder {
+        // Create Edge type
+        let edge_type_name = format!("{}Edge", resource_type);
+        let edge = Object::new(&edge_type_name)
+            .description(format!("Edge type for {} connection", resource_type))
+            .field(
+                Field::new("resource", TypeRef::named_nn(resource_type), |ctx| {
+                    FieldFuture::new(async move {
+                        if let Some(parent) = ctx.parent_value.as_value() {
+                            if let Value::Object(obj) = parent {
+                                if let Some(resource) = obj.get("resource") {
+                                    return Ok(Some(resource.clone()));
+                                }
+                            }
+                        }
+                        Ok(None)
+                    })
+                })
+                .description("The FHIR resource"),
+            )
+            .field(
+                Field::new("mode", TypeRef::named(TypeRef::STRING), |ctx| {
+                    FieldFuture::new(async move {
+                        if let Some(parent) = ctx.parent_value.as_value() {
+                            if let Value::Object(obj) = parent {
+                                if let Some(mode) = obj.get("mode") {
+                                    return Ok(Some(mode.clone()));
+                                }
+                            }
+                        }
+                        Ok(None)
+                    })
+                })
+                .description("Search match mode"),
+            )
+            .field(
+                Field::new("score", TypeRef::named(TypeRef::FLOAT), |ctx| {
+                    FieldFuture::new(async move {
+                        if let Some(parent) = ctx.parent_value.as_value() {
+                            if let Value::Object(obj) = parent {
+                                if let Some(score) = obj.get("score") {
+                                    return Ok(Some(score.clone()));
+                                }
+                            }
+                        }
+                        Ok(None)
+                    })
+                })
+                .description("Search relevance score"),
+            );
+
+        builder = builder.register(edge);
+
+        // Create Connection type
+        let connection_type_name = format!("{}Connection", resource_type);
+        let edge_type_ref = TypeRef::named_nn_list_nn(&edge_type_name);
+
+        let connection = Object::new(&connection_type_name)
+            .description(format!(
+                "Connection type for {} cursor-based pagination",
+                resource_type
+            ))
+            .field(
+                Field::new("count", TypeRef::named(TypeRef::INT), |ctx| {
+                    FieldFuture::new(async move {
+                        if let Some(parent) = ctx.parent_value.as_value() {
+                            if let Value::Object(obj) = parent {
+                                if let Some(count) = obj.get("count") {
+                                    return Ok(Some(count.clone()));
+                                }
+                            }
+                        }
+                        Ok(None)
+                    })
+                })
+                .description("Total count of matching resources"),
+            )
+            .field(
+                Field::new("offset", TypeRef::named(TypeRef::INT), |ctx| {
+                    FieldFuture::new(async move {
+                        if let Some(parent) = ctx.parent_value.as_value() {
+                            if let Value::Object(obj) = parent {
+                                if let Some(offset) = obj.get("offset") {
+                                    return Ok(Some(offset.clone()));
+                                }
+                            }
+                        }
+                        Ok(None)
+                    })
+                })
+                .description("Current offset into results"),
+            )
+            .field(
+                Field::new("pageSize", TypeRef::named(TypeRef::INT), |ctx| {
+                    FieldFuture::new(async move {
+                        if let Some(parent) = ctx.parent_value.as_value() {
+                            if let Value::Object(obj) = parent {
+                                if let Some(size) = obj.get("pageSize") {
+                                    return Ok(Some(size.clone()));
+                                }
+                            }
+                        }
+                        Ok(None)
+                    })
+                })
+                .description("Page size"),
+            )
+            .field(
+                Field::new("edges", edge_type_ref, |ctx| {
+                    FieldFuture::new(async move {
+                        if let Some(parent) = ctx.parent_value.as_value() {
+                            if let Value::Object(obj) = parent {
+                                if let Some(edges) = obj.get("edges") {
+                                    return Ok(Some(edges.clone()));
+                                }
+                            }
+                        }
+                        Ok(Some(Value::List(vec![])))
+                    })
+                })
+                .description("List of edges containing resources"),
+            )
+            .field(
+                Field::new("first", TypeRef::named(TypeRef::STRING), |ctx| {
+                    FieldFuture::new(async move {
+                        if let Some(parent) = ctx.parent_value.as_value() {
+                            if let Value::Object(obj) = parent {
+                                if let Some(cursor) = obj.get("first") {
+                                    return Ok(Some(cursor.clone()));
+                                }
+                            }
+                        }
+                        Ok(None)
+                    })
+                })
+                .description("Cursor for first page"),
+            )
+            .field(
+                Field::new("previous", TypeRef::named(TypeRef::STRING), |ctx| {
+                    FieldFuture::new(async move {
+                        if let Some(parent) = ctx.parent_value.as_value() {
+                            if let Value::Object(obj) = parent {
+                                if let Some(cursor) = obj.get("previous") {
+                                    return Ok(Some(cursor.clone()));
+                                }
+                            }
+                        }
+                        Ok(None)
+                    })
+                })
+                .description("Cursor for previous page"),
+            )
+            .field(
+                Field::new("next", TypeRef::named(TypeRef::STRING), |ctx| {
+                    FieldFuture::new(async move {
+                        if let Some(parent) = ctx.parent_value.as_value() {
+                            if let Value::Object(obj) = parent {
+                                if let Some(cursor) = obj.get("next") {
+                                    return Ok(Some(cursor.clone()));
+                                }
+                            }
+                        }
+                        Ok(None)
+                    })
+                })
+                .description("Cursor for next page"),
+            )
+            .field(
+                Field::new("last", TypeRef::named(TypeRef::STRING), |ctx| {
+                    FieldFuture::new(async move {
+                        if let Some(parent) = ctx.parent_value.as_value() {
+                            if let Value::Object(obj) = parent {
+                                if let Some(cursor) = obj.get("last") {
+                                    return Ok(Some(cursor.clone()));
+                                }
+                            }
+                        }
+                        Ok(None)
+                    })
+                })
+                .description("Cursor for last page"),
+            );
+
+        builder = builder.register(connection);
         builder
     }
 
@@ -578,8 +615,18 @@ impl FhirSchemaBuilder {
         // - ResourceType(_id: ID!): FhirResource - single resource read
         // - ResourceTypeList(...): [FhirResource!]! - list/search query
         // - ResourceTypeConnection(...): ResourceTypeConnection! - cursor pagination
-        for resource_type in resource_types {
+        for resource_type in &resource_types {
             query = self.add_resource_query_fields(query, resource_type);
+        }
+
+        // Also add query fields for internal resource types (User, Client, AccessPolicy, etc.)
+        // These are OctoFHIR-specific resources that may not have search parameters
+        for resource_type in INTERNAL_RESOURCE_TYPES {
+            // Skip if already added from search registry
+            if !resource_types.contains(resource_type) {
+                debug!(resource_type = %resource_type, "Adding internal resource query fields");
+                query = self.add_resource_query_fields(query, resource_type);
+            }
         }
 
         query
@@ -747,6 +794,15 @@ impl FhirSchemaBuilder {
             builder = builder.register(input);
         }
 
+        // Also register input types for internal resource types (User, Client, AccessPolicy, etc.)
+        for resource_type in INTERNAL_RESOURCE_TYPES {
+            if !resource_types.contains(resource_type) {
+                let input = InputTypeGenerator::create_resource_input(resource_type);
+                trace!(resource_type = %resource_type, "Registering internal resource input type");
+                builder = builder.register(input);
+            }
+        }
+
         debug!(
             count = resource_types.len(),
             "Registered mutation input types"
@@ -774,62 +830,78 @@ impl FhirSchemaBuilder {
             return mutation;
         }
 
-        for resource_type in resource_types {
-            // Create mutation: PatientCreate(res: PatientInput!): Patient
-            let create_field_name = format!("{}Create", resource_type);
-            let input_type_name = format!("{}Input", resource_type);
+        for resource_type in &resource_types {
+            mutation = self.add_resource_mutation_fields(mutation, resource_type);
+        }
 
-            let create_resolver = CreateResolver::resolve(resource_type.to_string());
-            let create_field = Field::new(&create_field_name, TypeRef::named(&*resource_type), create_resolver)
-                .description(format!("Create a new {} resource", resource_type))
-                .argument(
-                    InputValue::new("res", TypeRef::named_nn(&input_type_name))
-                        .description("The resource to create"),
-                );
-
-            mutation = mutation.field(create_field);
-
-            // Update mutation: PatientUpdate(id: ID!, res: PatientInput!, ifMatch: String): Patient
-            let update_field_name = format!("{}Update", resource_type);
-
-            let update_resolver = UpdateResolver::resolve(resource_type.to_string());
-            let update_field = Field::new(&update_field_name, TypeRef::named(&*resource_type), update_resolver)
-                .description(format!("Update an existing {} resource", resource_type))
-                .argument(
-                    InputValue::new("id", TypeRef::named_nn(TypeRef::ID))
-                        .description("The ID of the resource to update"),
-                )
-                .argument(
-                    InputValue::new("res", TypeRef::named_nn(&input_type_name))
-                        .description("The updated resource data"),
-                )
-                .argument(
-                    InputValue::new("ifMatch", TypeRef::named(TypeRef::STRING))
-                        .description("Version for optimistic locking (e.g., 'W/\"1\"')"),
-                );
-
-            mutation = mutation.field(update_field);
-
-            // Delete mutation: PatientDelete(id: ID!): OperationOutcome
-            let delete_field_name = format!("{}Delete", resource_type);
-
-            let delete_resolver = DeleteResolver::resolve(resource_type.to_string());
-            let delete_field = Field::new(&delete_field_name, TypeRef::named("OperationOutcome"), delete_resolver)
-                .description(format!("Delete a {} resource", resource_type))
-                .argument(
-                    InputValue::new("id", TypeRef::named_nn(TypeRef::ID))
-                        .description("The ID of the resource to delete"),
-                );
-
-            mutation = mutation.field(delete_field);
-
-            trace!(
-                resource_type = %resource_type,
-                "Registered mutations for resource type"
-            );
+        // Also add mutations for internal resource types (User, Client, AccessPolicy, etc.)
+        for resource_type in INTERNAL_RESOURCE_TYPES {
+            // Skip if already added from search registry
+            if !resource_types.contains(resource_type) {
+                debug!(resource_type = %resource_type, "Adding internal resource mutation fields");
+                mutation = self.add_resource_mutation_fields(mutation, resource_type);
+            }
         }
 
         debug!("Built Mutation type with CRUD operations");
+        mutation
+    }
+
+    /// Adds mutation fields (Create, Update, Delete) for a specific resource type.
+    fn add_resource_mutation_fields(&self, mut mutation: Object, resource_type: &str) -> Object {
+        // Create mutation: PatientCreate(res: PatientInput!): Patient
+        let create_field_name = format!("{}Create", resource_type);
+        let input_type_name = format!("{}Input", resource_type);
+
+        let create_resolver = CreateResolver::resolve(resource_type.to_string());
+        let create_field = Field::new(&create_field_name, TypeRef::named(resource_type), create_resolver)
+            .description(format!("Create a new {} resource", resource_type))
+            .argument(
+                InputValue::new("res", TypeRef::named_nn(&input_type_name))
+                    .description("The resource to create"),
+            );
+
+        mutation = mutation.field(create_field);
+
+        // Update mutation: PatientUpdate(id: ID!, res: PatientInput!, ifMatch: String): Patient
+        let update_field_name = format!("{}Update", resource_type);
+
+        let update_resolver = UpdateResolver::resolve(resource_type.to_string());
+        let update_field = Field::new(&update_field_name, TypeRef::named(resource_type), update_resolver)
+            .description(format!("Update an existing {} resource", resource_type))
+            .argument(
+                InputValue::new("id", TypeRef::named_nn(TypeRef::ID))
+                    .description("The ID of the resource to update"),
+            )
+            .argument(
+                InputValue::new("res", TypeRef::named_nn(&input_type_name))
+                    .description("The updated resource data"),
+            )
+            .argument(
+                InputValue::new("ifMatch", TypeRef::named(TypeRef::STRING))
+                    .description("Version for optimistic locking (e.g., 'W/\"1\"')"),
+            );
+
+        mutation = mutation.field(update_field);
+
+        // Delete mutation: PatientDelete(id: ID!): OperationOutcome
+        let delete_field_name = format!("{}Delete", resource_type);
+
+        let delete_resolver = DeleteResolver::resolve(resource_type.to_string());
+        let delete_field = Field::new(&delete_field_name, TypeRef::named("OperationOutcome"), delete_resolver)
+            .description(format!("Delete a {} resource", resource_type))
+            .argument(
+                InputValue::new("id", TypeRef::named_nn(TypeRef::ID))
+                    .description("The ID of the resource to delete"),
+            );
+
+        mutation = mutation.field(delete_field);
+
+        trace!(
+            resource_type = %resource_type,
+            "Registered mutations for resource type"
+        );
+
         mutation
     }
 }

@@ -22,11 +22,9 @@ use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
 
 use super::handler::{OperationError, OperationHandler};
-use crate::mapping::json_from_envelope;
 use crate::server::AppState;
 use octofhir_api::bundle_from_search;
-use octofhir_core::{FhirDateTime, ResourceEnvelope, ResourceType};
-use octofhir_storage::legacy::query::{QueryFilter, SearchQuery};
+use octofhir_storage::{SearchParams, StoredResource};
 
 /// Handler for the $everything operation.
 pub struct EverythingOperation;
@@ -52,7 +50,7 @@ impl EverythingOperation {
         // 1. Verify patient exists and fetch it
         let patient = state
             .storage
-            .get(&ResourceType::Patient, patient_id)
+            .read("Patient", patient_id)
             .await
             .map_err(|e| OperationError::Internal(e.to_string()))?
             .ok_or_else(|| OperationError::NotFound(format!("Patient/{} not found", patient_id)))?;
@@ -66,49 +64,41 @@ impl EverythingOperation {
         for (resource_type, param_name, reference) in compartment_searches {
             // Skip if _type filter is specified and doesn't include this type
             if let Some(ref types) = params.type_filter {
-                let type_str = resource_type.to_string();
-                if !types.contains(&type_str) {
+                if !types.contains(&resource_type) {
                     continue;
                 }
             }
 
-            // Build search query
-            // Using Contains filter for reference parameters since Token expects system|code format
-            let mut filters = vec![QueryFilter::Contains {
-                field: param_name.to_string(),
-                value: reference.clone(),
-            }];
+            // Build search query using modern FhirStorage
+            let mut search_params = SearchParams::new()
+                .with_count(1000)
+                .with_param(&param_name, &reference);
 
             // Apply _since filter if specified
             if let Some(since) = params.since {
-                filters.push(QueryFilter::DateRange {
-                    field: "_lastUpdated".to_string(),
-                    start: Some(FhirDateTime::new(since)),
-                    end: None,
-                });
+                let since_str = since
+                    .format(&time::format_description::well_known::Rfc3339)
+                    .unwrap_or_default();
+                search_params = search_params.with_param("_lastUpdated", &format!("ge{}", since_str));
             }
 
             // Apply date range filters (start/end) if specified
             if let Some(start) = params.start {
-                filters.push(QueryFilter::DateRange {
-                    field: "date".to_string(),
-                    start: Some(FhirDateTime::new(start)),
-                    end: params.end.map(FhirDateTime::new),
-                });
+                let start_str = start
+                    .format(&time::format_description::well_known::Rfc3339)
+                    .unwrap_or_default();
+                search_params = search_params.with_param("date", &format!("ge{}", start_str));
+            }
+            if let Some(end) = params.end {
+                let end_str = end
+                    .format(&time::format_description::well_known::Rfc3339)
+                    .unwrap_or_default();
+                search_params = search_params.with_param("date", &format!("le{}", end_str));
             }
 
-            let query = SearchQuery {
-                resource_type: resource_type.clone(),
-                filters,
-                offset: 0,
-                count: 1000, // Large limit to fetch all related resources
-                sort_field: None,
-                sort_ascending: true,
-            };
-
-            match state.storage.search(&query).await {
+            match state.storage.search(&resource_type, &search_params).await {
                 Ok(result) => {
-                    resources.extend(result.resources);
+                    resources.extend(result.entries);
                 }
                 Err(e) => {
                     tracing::warn!(
@@ -136,7 +126,7 @@ impl EverythingOperation {
         };
 
         // 5. Build searchset Bundle
-        let resources_json: Vec<Value> = paginated.iter().map(json_from_envelope).collect();
+        let resources_json: Vec<Value> = paginated.iter().map(|r| r.resource.clone()).collect();
         let bundle = bundle_from_search(
             total,
             resources_json,
@@ -161,7 +151,7 @@ impl EverythingOperation {
         // 1. Verify encounter exists and fetch it
         let encounter = state
             .storage
-            .get(&ResourceType::Encounter, encounter_id)
+            .read("Encounter", encounter_id)
             .await
             .map_err(|e| OperationError::Internal(e.to_string()))?
             .ok_or_else(|| {
@@ -175,37 +165,25 @@ impl EverythingOperation {
 
         for (resource_type, param_name, reference) in compartment_searches {
             if let Some(ref types) = params.type_filter {
-                let type_str = resource_type.to_string();
-                if !types.contains(&type_str) {
+                if !types.contains(&resource_type) {
                     continue;
                 }
             }
 
-            let mut filters = vec![QueryFilter::Contains {
-                field: param_name.to_string(),
-                value: reference.clone(),
-            }];
+            let mut search_params = SearchParams::new()
+                .with_count(1000)
+                .with_param(&param_name, &reference);
 
             if let Some(since) = params.since {
-                filters.push(QueryFilter::DateRange {
-                    field: "_lastUpdated".to_string(),
-                    start: Some(FhirDateTime::new(since)),
-                    end: None,
-                });
+                let since_str = since
+                    .format(&time::format_description::well_known::Rfc3339)
+                    .unwrap_or_default();
+                search_params = search_params.with_param("_lastUpdated", &format!("ge{}", since_str));
             }
 
-            let query = SearchQuery {
-                resource_type: resource_type.clone(),
-                filters,
-                offset: 0,
-                count: 1000,
-                sort_field: None,
-                sort_ascending: true,
-            };
-
-            match state.storage.search(&query).await {
+            match state.storage.search(&resource_type, &search_params).await {
                 Ok(result) => {
-                    resources.extend(result.resources);
+                    resources.extend(result.entries);
                 }
                 Err(e) => {
                     tracing::warn!(
@@ -230,7 +208,7 @@ impl EverythingOperation {
             (deduplicated, total)
         };
 
-        let resources_json: Vec<Value> = paginated.iter().map(json_from_envelope).collect();
+        let resources_json: Vec<Value> = paginated.iter().map(|r| r.resource.clone()).collect();
         let bundle = bundle_from_search(
             total,
             resources_json,
@@ -255,7 +233,7 @@ impl EverythingOperation {
         // 1. Verify group exists and fetch it
         let group = state
             .storage
-            .get(&ResourceType::Custom("Group".to_string()), group_id)
+            .read("Group", group_id)
             .await
             .map_err(|e| OperationError::Internal(e.to_string()))?
             .ok_or_else(|| OperationError::NotFound(format!("Group/{} not found", group_id)))?;
@@ -265,7 +243,7 @@ impl EverythingOperation {
 
         if members.is_empty() {
             // Return just the group resource if no members
-            let resources_json: Vec<Value> = vec![json_from_envelope(&group)];
+            let resources_json: Vec<Value> = vec![group.resource.clone()];
             let bundle = bundle_from_search(
                 1,
                 resources_json,
@@ -291,13 +269,29 @@ impl EverythingOperation {
                     if let Some(entries) = bundle_value.get("entry").and_then(|e| e.as_array()) {
                         for entry in entries {
                             if let Some(resource) = entry.get("resource") {
-                                // Try to convert back to ResourceEnvelope
-                                match serde_json::from_value::<ResourceEnvelope>(resource.clone()) {
-                                    Ok(envelope) => all_resources.push(envelope),
-                                    Err(e) => {
-                                        tracing::warn!("Failed to parse resource envelope: {}", e)
-                                    }
-                                }
+                                // Create a StoredResource from the bundle entry
+                                let stored = StoredResource {
+                                    id: resource
+                                        .get("id")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("")
+                                        .to_string(),
+                                    version_id: resource
+                                        .get("meta")
+                                        .and_then(|m| m.get("versionId"))
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("1")
+                                        .to_string(),
+                                    resource_type: resource
+                                        .get("resourceType")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("")
+                                        .to_string(),
+                                    resource: resource.clone(),
+                                    last_updated: time::OffsetDateTime::now_utc(),
+                                    created_at: time::OffsetDateTime::now_utc(),
+                                };
+                                all_resources.push(stored);
                             }
                         }
                     }
@@ -326,7 +320,7 @@ impl EverythingOperation {
             (deduplicated, total)
         };
 
-        let resources_json: Vec<Value> = paginated.iter().map(json_from_envelope).collect();
+        let resources_json: Vec<Value> = paginated.iter().map(|r| r.resource.clone()).collect();
         let bundle = bundle_from_search(
             total,
             resources_json,
@@ -346,172 +340,44 @@ impl EverythingOperation {
     fn get_patient_compartment_searches(
         &self,
         patient_id: &str,
-    ) -> Vec<(ResourceType, String, String)> {
+    ) -> Vec<(String, String, String)> {
         let reference = format!("Patient/{}", patient_id);
         vec![
             // Core clinical resources
-            (
-                ResourceType::Observation,
-                "patient".to_string(),
-                reference.clone(),
-            ),
-            (
-                ResourceType::Observation,
-                "subject".to_string(),
-                reference.clone(),
-            ),
-            (
-                ResourceType::Condition,
-                "patient".to_string(),
-                reference.clone(),
-            ),
-            (
-                ResourceType::Condition,
-                "subject".to_string(),
-                reference.clone(),
-            ),
-            (
-                ResourceType::Custom("AllergyIntolerance".to_string()),
-                "patient".to_string(),
-                reference.clone(),
-            ),
-            (
-                ResourceType::MedicationRequest,
-                "patient".to_string(),
-                reference.clone(),
-            ),
-            (
-                ResourceType::MedicationRequest,
-                "subject".to_string(),
-                reference.clone(),
-            ),
-            (
-                ResourceType::Custom("MedicationStatement".to_string()),
-                "patient".to_string(),
-                reference.clone(),
-            ),
-            (
-                ResourceType::Custom("MedicationStatement".to_string()),
-                "subject".to_string(),
-                reference.clone(),
-            ),
-            (
-                ResourceType::Custom("MedicationAdministration".to_string()),
-                "patient".to_string(),
-                reference.clone(),
-            ),
-            (
-                ResourceType::Custom("MedicationAdministration".to_string()),
-                "subject".to_string(),
-                reference.clone(),
-            ),
-            (
-                ResourceType::Procedure,
-                "patient".to_string(),
-                reference.clone(),
-            ),
-            (
-                ResourceType::Procedure,
-                "subject".to_string(),
-                reference.clone(),
-            ),
-            (
-                ResourceType::Custom("Immunization".to_string()),
-                "patient".to_string(),
-                reference.clone(),
-            ),
-            (
-                ResourceType::DiagnosticReport,
-                "patient".to_string(),
-                reference.clone(),
-            ),
-            (
-                ResourceType::DiagnosticReport,
-                "subject".to_string(),
-                reference.clone(),
-            ),
-            (
-                ResourceType::Encounter,
-                "patient".to_string(),
-                reference.clone(),
-            ),
-            (
-                ResourceType::Encounter,
-                "subject".to_string(),
-                reference.clone(),
-            ),
-            (
-                ResourceType::Custom("CarePlan".to_string()),
-                "patient".to_string(),
-                reference.clone(),
-            ),
-            (
-                ResourceType::Custom("CarePlan".to_string()),
-                "subject".to_string(),
-                reference.clone(),
-            ),
-            (
-                ResourceType::Custom("Goal".to_string()),
-                "patient".to_string(),
-                reference.clone(),
-            ),
-            (
-                ResourceType::Custom("Goal".to_string()),
-                "subject".to_string(),
-                reference.clone(),
-            ),
-            (
-                ResourceType::Specimen,
-                "patient".to_string(),
-                reference.clone(),
-            ),
-            (
-                ResourceType::Specimen,
-                "subject".to_string(),
-                reference.clone(),
-            ),
+            ("Observation".to_string(), "patient".to_string(), reference.clone()),
+            ("Observation".to_string(), "subject".to_string(), reference.clone()),
+            ("Condition".to_string(), "patient".to_string(), reference.clone()),
+            ("Condition".to_string(), "subject".to_string(), reference.clone()),
+            ("AllergyIntolerance".to_string(), "patient".to_string(), reference.clone()),
+            ("MedicationRequest".to_string(), "patient".to_string(), reference.clone()),
+            ("MedicationRequest".to_string(), "subject".to_string(), reference.clone()),
+            ("MedicationStatement".to_string(), "patient".to_string(), reference.clone()),
+            ("MedicationStatement".to_string(), "subject".to_string(), reference.clone()),
+            ("MedicationAdministration".to_string(), "patient".to_string(), reference.clone()),
+            ("MedicationAdministration".to_string(), "subject".to_string(), reference.clone()),
+            ("Procedure".to_string(), "patient".to_string(), reference.clone()),
+            ("Procedure".to_string(), "subject".to_string(), reference.clone()),
+            ("Immunization".to_string(), "patient".to_string(), reference.clone()),
+            ("DiagnosticReport".to_string(), "patient".to_string(), reference.clone()),
+            ("DiagnosticReport".to_string(), "subject".to_string(), reference.clone()),
+            ("Encounter".to_string(), "patient".to_string(), reference.clone()),
+            ("Encounter".to_string(), "subject".to_string(), reference.clone()),
+            ("CarePlan".to_string(), "patient".to_string(), reference.clone()),
+            ("CarePlan".to_string(), "subject".to_string(), reference.clone()),
+            ("Goal".to_string(), "patient".to_string(), reference.clone()),
+            ("Goal".to_string(), "subject".to_string(), reference.clone()),
+            ("Specimen".to_string(), "patient".to_string(), reference.clone()),
+            ("Specimen".to_string(), "subject".to_string(), reference.clone()),
             // Documents and communications
-            (
-                ResourceType::DocumentReference,
-                "patient".to_string(),
-                reference.clone(),
-            ),
-            (
-                ResourceType::DocumentReference,
-                "subject".to_string(),
-                reference.clone(),
-            ),
-            (
-                ResourceType::Custom("Communication".to_string()),
-                "patient".to_string(),
-                reference.clone(),
-            ),
-            (
-                ResourceType::Custom("Communication".to_string()),
-                "subject".to_string(),
-                reference.clone(),
-            ),
+            ("DocumentReference".to_string(), "patient".to_string(), reference.clone()),
+            ("DocumentReference".to_string(), "subject".to_string(), reference.clone()),
+            ("Communication".to_string(), "patient".to_string(), reference.clone()),
+            ("Communication".to_string(), "subject".to_string(), reference.clone()),
             // Financial resources
-            (
-                ResourceType::Custom("Claim".to_string()),
-                "patient".to_string(),
-                reference.clone(),
-            ),
-            (
-                ResourceType::Custom("ExplanationOfBenefit".to_string()),
-                "patient".to_string(),
-                reference.clone(),
-            ),
-            (
-                ResourceType::Custom("Coverage".to_string()),
-                "patient".to_string(),
-                reference.clone(),
-            ),
-            (
-                ResourceType::Custom("Coverage".to_string()),
-                "beneficiary".to_string(),
-                reference.clone(),
-            ),
+            ("Claim".to_string(), "patient".to_string(), reference.clone()),
+            ("ExplanationOfBenefit".to_string(), "patient".to_string(), reference.clone()),
+            ("Coverage".to_string(), "patient".to_string(), reference.clone()),
+            ("Coverage".to_string(), "beneficiary".to_string(), reference.clone()),
         ]
     }
 
@@ -519,70 +385,30 @@ impl EverythingOperation {
     fn get_encounter_compartment_searches(
         &self,
         encounter_id: &str,
-    ) -> Vec<(ResourceType, String, String)> {
+    ) -> Vec<(String, String, String)> {
         let reference = format!("Encounter/{}", encounter_id);
         vec![
-            (
-                ResourceType::Observation,
-                "encounter".to_string(),
-                reference.clone(),
-            ),
-            (
-                ResourceType::Condition,
-                "encounter".to_string(),
-                reference.clone(),
-            ),
-            (
-                ResourceType::Procedure,
-                "encounter".to_string(),
-                reference.clone(),
-            ),
-            (
-                ResourceType::MedicationRequest,
-                "encounter".to_string(),
-                reference.clone(),
-            ),
-            (
-                ResourceType::Custom("MedicationStatement".to_string()),
-                "context".to_string(),
-                reference.clone(),
-            ),
-            (
-                ResourceType::Custom("MedicationAdministration".to_string()),
-                "encounter".to_string(),
-                reference.clone(),
-            ),
-            (
-                ResourceType::DiagnosticReport,
-                "encounter".to_string(),
-                reference.clone(),
-            ),
-            (
-                ResourceType::Custom("ServiceRequest".to_string()),
-                "encounter".to_string(),
-                reference.clone(),
-            ),
-            (
-                ResourceType::Custom("Communication".to_string()),
-                "encounter".to_string(),
-                reference.clone(),
-            ),
-            (
-                ResourceType::DocumentReference,
-                "encounter".to_string(),
-                reference.clone(),
-            ),
+            ("Observation".to_string(), "encounter".to_string(), reference.clone()),
+            ("Condition".to_string(), "encounter".to_string(), reference.clone()),
+            ("Procedure".to_string(), "encounter".to_string(), reference.clone()),
+            ("MedicationRequest".to_string(), "encounter".to_string(), reference.clone()),
+            ("MedicationStatement".to_string(), "context".to_string(), reference.clone()),
+            ("MedicationAdministration".to_string(), "encounter".to_string(), reference.clone()),
+            ("DiagnosticReport".to_string(), "encounter".to_string(), reference.clone()),
+            ("ServiceRequest".to_string(), "encounter".to_string(), reference.clone()),
+            ("Communication".to_string(), "encounter".to_string(), reference.clone()),
+            ("DocumentReference".to_string(), "encounter".to_string(), reference.clone()),
         ]
     }
 
     /// Extract patient member IDs from a Group resource
     fn extract_group_members(
         &self,
-        group: &ResourceEnvelope,
+        group: &StoredResource,
     ) -> Result<Vec<String>, OperationError> {
         let mut member_ids = Vec::new();
 
-        if let Some(members) = group.data.get("member").and_then(|m| m.as_array()) {
+        if let Some(members) = group.resource.get("member").and_then(|m| m.as_array()) {
             for member in members {
                 if let Some(entity) = member.get("entity").and_then(|e| e.get("reference"))
                     && let Some(reference) = entity.as_str()
@@ -599,7 +425,7 @@ impl EverythingOperation {
     }
 
     /// Deduplicate resources by type and id
-    fn deduplicate_resources(&self, resources: Vec<ResourceEnvelope>) -> Vec<ResourceEnvelope> {
+    fn deduplicate_resources(&self, resources: Vec<StoredResource>) -> Vec<StoredResource> {
         let mut seen = HashSet::new();
         let mut deduplicated = Vec::new();
 

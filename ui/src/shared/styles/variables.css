@@ -113,7 +113,9 @@
 }
 
 /* Dark theme - Linear-inspired */
-[data-theme="dark"] {
+/* Support both data-theme and Mantine's color scheme */
+[data-theme="dark"],
+[data-mantine-color-scheme="dark"] {
   --primary-color: #7983d6;
   --primary-hover: #8b92e8;
   --primary-light: #5e6ad2;

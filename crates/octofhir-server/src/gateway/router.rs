@@ -15,7 +15,7 @@ use tokio::sync::RwLock;
 use tracing::{debug, info, instrument};
 
 use crate::server::AppState;
-use octofhir_storage::legacy::{DynStorage, SearchQuery};
+use octofhir_storage::{DynStorage, SearchParams};
 
 use super::error::GatewayError;
 use super::types::{App, CustomOperation, RouteKey};
@@ -59,20 +59,16 @@ impl GatewayRouter {
         info!("Reloading gateway routes from storage");
 
         // Load all active Apps
-        let app_query = SearchQuery::new("App".parse().unwrap());
+        let search_params = SearchParams::new().with_count(1000);
         let apps_result = storage
-            .search(&app_query)
+            .search("App", &search_params)
             .await
             .map_err(|e| GatewayError::StorageError(format!("Failed to load Apps: {}", e)))?;
 
         let apps: Vec<App> = apps_result
-            .resources
+            .entries
             .into_iter()
-            .filter_map(|entry| {
-                serde_json::to_value(&entry.data)
-                    .ok()
-                    .and_then(|v| serde_json::from_value(v).ok())
-            })
+            .filter_map(|stored| serde_json::from_value(stored.resource).ok())
             .collect();
 
         debug!(count = apps.len(), "Loaded active Apps");
@@ -84,19 +80,17 @@ impl GatewayRouter {
             .collect();
 
         // Load all active CustomOperations
-        let ops_query = SearchQuery::new("CustomOperation".parse().unwrap());
-        let ops_result = storage.search(&ops_query).await.map_err(|e| {
-            GatewayError::StorageError(format!("Failed to load CustomOperations: {}", e))
-        })?;
+        let ops_result = storage
+            .search("CustomOperation", &search_params)
+            .await
+            .map_err(|e| {
+                GatewayError::StorageError(format!("Failed to load CustomOperations: {}", e))
+            })?;
 
         let operations: Vec<CustomOperation> = ops_result
-            .resources
+            .entries
             .into_iter()
-            .filter_map(|entry| {
-                serde_json::to_value(&entry.data)
-                    .ok()
-                    .and_then(|v| serde_json::from_value(v).ok())
-            })
+            .filter_map(|stored| serde_json::from_value(stored.resource).ok())
             .collect();
 
         debug!(count = operations.len(), "Loaded active CustomOperations");

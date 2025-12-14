@@ -4,6 +4,13 @@
 /* Load Inter font */
 @import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap");
 
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
 html {
   font-size: 16px;
   -webkit-font-smoothing: antialiased;
@@ -11,20 +18,16 @@ html {
   text-rendering: optimizeLegibility;
 }
 
+/* Let Mantine handle body background/colors */
 body {
   font-family: var(--font-family);
   font-size: var(--font-size-md);
   font-weight: var(--font-weight-normal);
   line-height: var(--line-height-normal);
   letter-spacing: var(--letter-spacing-normal);
-  color: var(--text-color);
-  background-color: var(--bg-color);
-  transition:
-    background-color var(--transition-normal),
-    color var(--transition-normal);
 }
 
-/* Headings */
+/* Headings - let Mantine handle colors */
 h1,
 h2,
 h3,
@@ -34,7 +37,6 @@ h6 {
   font-weight: var(--font-weight-semibold);
   line-height: var(--line-height-tight);
   letter-spacing: var(--letter-spacing-tight);
-  color: var(--text-color);
 }
 
 h1 {

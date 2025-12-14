@@ -29,8 +29,8 @@ use crate::{PgPool, StorageError, StorageResult};
 /// Follows the standard FHIR resource table structure.
 #[derive(Debug, Clone)]
 pub struct ClientRow {
-    /// Resource UUID (from resource.id)
-    pub id: Uuid,
+    /// Resource ID (TEXT in database, supports both UUIDs and custom IDs)
+    pub id: String,
     /// Transaction ID (version)
     pub txid: i64,
     /// Timestamp
@@ -43,7 +43,7 @@ pub struct ClientRow {
 
 impl ClientRow {
     /// Create from database tuple.
-    fn from_tuple(row: (Uuid, i64, OffsetDateTime, serde_json::Value, String)) -> Self {
+    fn from_tuple(row: (String, i64, OffsetDateTime, serde_json::Value, String)) -> Self {
         Self {
             id: row.0,
             txid: row.1,
@@ -81,7 +81,7 @@ impl<'a> ClientStorage<'a> {
     ///
     /// Returns an error if the database query fails.
     pub async fn find_by_client_id(&self, client_id: &str) -> StorageResult<Option<ClientRow>> {
-        let row: Option<(Uuid, i64, OffsetDateTime, serde_json::Value, String)> = query_as(
+        let row: Option<(String, i64, OffsetDateTime, serde_json::Value, String)> = query_as(
             r#"
             SELECT id, txid, ts, resource, status::text::text
             FROM client
@@ -102,7 +102,7 @@ impl<'a> ClientStorage<'a> {
     ///
     /// Returns an error if the database query fails.
     pub async fn find_by_id(&self, id: Uuid) -> StorageResult<Option<ClientRow>> {
-        let row: Option<(Uuid, i64, OffsetDateTime, serde_json::Value, String)> = query_as(
+        let row: Option<(String, i64, OffsetDateTime, serde_json::Value, String)> = query_as(
             r#"
             SELECT id, txid, ts, resource, status::text
             FROM client
@@ -110,7 +110,7 @@ impl<'a> ClientStorage<'a> {
               AND status != 'deleted'
             "#,
         )
-        .bind(id)
+        .bind(id.to_string())
         .fetch_optional(self.pool)
         .await?;
 
@@ -125,14 +125,15 @@ impl<'a> ClientStorage<'a> {
     /// - The database insert fails
     /// - A client with the same ID already exists
     pub async fn create(&self, id: Uuid, resource: serde_json::Value) -> StorageResult<ClientRow> {
-        let row: (Uuid, i64, OffsetDateTime, serde_json::Value, String) = query_as(
+        let id_str = id.to_string();
+        let row: (String, i64, OffsetDateTime, serde_json::Value, String) = query_as(
             r#"
             INSERT INTO client (id, txid, ts, resource, status)
             VALUES ($1, 1, NOW(), $2, 'created')
             RETURNING id, txid, ts, resource, status::text
             "#,
         )
-        .bind(id)
+        .bind(&id_str)
         .bind(&resource)
         .fetch_one(self.pool)
         .await
@@ -158,7 +159,7 @@ impl<'a> ClientStorage<'a> {
     /// - The client doesn't exist
     /// - The database update fails
     pub async fn update(&self, id: Uuid, resource: serde_json::Value) -> StorageResult<ClientRow> {
-        let row: Option<(Uuid, i64, OffsetDateTime, serde_json::Value, String)> = query_as(
+        let row: Option<(String, i64, OffsetDateTime, serde_json::Value, String)> = query_as(
             r#"
             UPDATE client
             SET resource = $2,
@@ -170,7 +171,7 @@ impl<'a> ClientStorage<'a> {
             RETURNING id, txid, ts, resource, status::text
             "#,
         )
-        .bind(id)
+        .bind(id.to_string())
         .bind(&resource)
         .fetch_optional(self.pool)
         .await?;
@@ -199,7 +200,7 @@ impl<'a> ClientStorage<'a> {
               AND status != 'deleted'
             "#,
         )
-        .bind(id)
+        .bind(id.to_string())
         .execute(self.pool)
         .await?;
 
@@ -216,7 +217,7 @@ impl<'a> ClientStorage<'a> {
     ///
     /// Returns an error if the database query fails.
     pub async fn list(&self, limit: i64, offset: i64) -> StorageResult<Vec<ClientRow>> {
-        let rows: Vec<(Uuid, i64, OffsetDateTime, serde_json::Value, String)> = query_as(
+        let rows: Vec<(String, i64, OffsetDateTime, serde_json::Value, String)> = query_as(
             r#"
             SELECT id, txid, ts, resource, status::text
             FROM client
@@ -356,9 +357,12 @@ impl ClientStorageTrait for PostgresClientStorage<'_> {
         let resource = serde_json::to_value(client)
             .map_err(|e| AuthError::storage(format!("Failed to serialize client: {}", e)))?;
 
+        let id = Uuid::parse_str(&existing.id)
+            .map_err(|e| AuthError::storage(format!("Invalid client ID: {}", e)))?;
+
         let row = self
             .storage()
-            .update(existing.id, resource)
+            .update(id, resource)
             .await
             .map_err(Self::map_storage_error)?;
 
@@ -377,8 +381,11 @@ impl ClientStorageTrait for PostgresClientStorage<'_> {
                 AuthError::invalid_client(format!("Client '{}' not found", client_id))
             })?;
 
+        let id = Uuid::parse_str(&existing.id)
+            .map_err(|e| AuthError::storage(format!("Invalid client ID: {}", e)))?;
+
         self.storage()
-            .delete(existing.id)
+            .delete(id)
             .await
             .map_err(Self::map_storage_error)
     }

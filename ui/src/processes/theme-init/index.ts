@@ -1,2 +1,0 @@
-// theme-init exports
-export {};

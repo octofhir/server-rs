@@ -1,1 +1,1 @@
-export { RestConsolePage } from "./ui/RestConsolePage";
+export { RestConsolePage } from "./RestConsolePage";

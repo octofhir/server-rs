@@ -1,1 +1,1 @@
-export { DbConsolePage } from "./ui/DbConsolePage";
+export { DbConsolePage } from "./DbConsolePage";

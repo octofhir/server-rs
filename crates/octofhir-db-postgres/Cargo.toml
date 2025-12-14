@@ -9,6 +9,7 @@ repository.workspace = true
 
 [dependencies]
 # Local dependencies
+octofhir-core = { workspace = true }
 octofhir-storage = { workspace = true }
 octofhir-search = { path = "../octofhir-search" }
 octofhir-canonical-manager = { workspace = true }
