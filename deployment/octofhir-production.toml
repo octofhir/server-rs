@@ -1,0 +1,181 @@
+# OctoFHIR Server Production Configuration
+# Copy this to /opt/octofhir/config/octofhir.toml and customize
+
+[server]
+host = "0.0.0.0"
+port = 8888
+read_timeout_ms = 30000
+write_timeout_ms = 30000
+# Increase body limit for production (10 MiB)
+body_limit_bytes = 10485760
+
+[storage.postgres]
+# PostgreSQL in Docker container
+host = "localhost"
+port = 5450
+user = "postgres"
+password = "postgres"
+database = "octofhir"
+
+# Production pool settings
+pool_size = 50
+connect_timeout_ms = 10000
+idle_timeout_ms = 600000
+
+[fhir]
+version = "R4"
+
+[validation]
+# Consider disabling skip validation in production for data integrity
+allow_skip_validation = false
+
+[search]
+default_count = 20
+max_count = 500
+
+[packages]
+# FHIR packages will be stored here
+path = "/opt/octofhir/data/.fhir"
+load = [
+  "hl7.fhir.r4.core#4.0.1"
+]
+
+[logging]
+# Production logging level
+level = "info"
+
+[otel]
+# Enable OpenTelemetry if you have a collector
+enabled = false
+endpoint = ""
+sample_ratio = 0.1
+
+# =============================================================================
+# Authentication & Authorization
+# =============================================================================
+
+[auth]
+enabled = true
+# IMPORTANT: Change this to your actual server URL in production
+issuer = "https://fhir.octofhir.tech"
+
+[auth.oauth]
+authorization_code_lifetime = "10m"
+access_token_lifetime = "1h"
+refresh_token_lifetime = "90d"
+refresh_token_rotation = true
+grant_types = ["authorization_code", "client_credentials", "refresh_token"]
+
+[auth.smart]
+launch_ehr_enabled = true
+launch_standalone_enabled = true
+public_clients_allowed = true
+confidential_symmetric_allowed = true
+confidential_asymmetric_allowed = true
+refresh_tokens_enabled = true
+openid_enabled = true
+dynamic_registration_enabled = false
+supported_scopes = [
+    "openid",
+    "fhirUser",
+    "launch",
+    "launch/patient",
+    "launch/encounter",
+    "offline_access",
+    "online_access",
+    "patient/*.cruds",
+    "user/*.cruds",
+    "system/*.cruds",
+]
+
+[auth.signing]
+algorithm = "ES384"
+key_rotation_days = 90
+keys_to_keep = 3
+
+# IMPORTANT: Generate your own production keys!
+# See instructions in the main octofhir.toml file
+# DO NOT use the keys from the development config in production!
+kid = "production-key-2024"
+
+# Uncomment and add your production keys:
+# private_key_pem = """
+# -----BEGIN PRIVATE KEY-----
+# ... your production private key ...
+# -----END PRIVATE KEY-----
+# """
+#
+# public_key_pem = """
+# -----BEGIN PUBLIC KEY-----
+# ... your production public key ...
+# -----END PUBLIC KEY-----
+# """
+
+[auth.policy]
+default_deny = true
+quickjs_enabled = true
+
+[auth.policy.quickjs]
+memory_limit_mb = 16
+max_stack_size_kb = 256
+timeout_ms = 100
+
+[auth.federation]
+allow_external_idp = true
+auto_provision_users = false
+jwks_cache_ttl = "1h"
+jwks_refresh_on_failure = true
+
+[auth.rate_limiting]
+token_requests_per_minute = 60
+token_requests_per_hour = 1000
+auth_requests_per_minute = 30
+max_failed_attempts = 5
+lockout_duration = "15m"
+
+[auth.audit]
+log_successful_auth = true
+log_failed_auth = true
+log_access_decisions = true
+log_token_operations = true
+
+# =============================================================================
+# Redis Cache (Enable for horizontal scaling)
+# =============================================================================
+
+[redis]
+# Enable Redis if running multiple server instances
+enabled = false
+url = "redis://localhost:6380"
+pool_size = 20
+timeout_ms = 5000
+
+[cache]
+terminology_ttl_secs = 7200  # 2 hours
+local_cache_max_entries = 50000
+
+# =============================================================================
+# DB Console & GraphQL
+# =============================================================================
+
+[db_console]
+enabled = true
+sql_mode = "readonly"  # Use "readonly" in production for safety
+required_role = "admin"
+lsp_enabled = true
+
+[graphql]
+enabled = true
+introspection = false  # Disable introspection in production
+max_depth = 10
+max_complexity = 300
+
+# =============================================================================
+# Bootstrap Configuration
+# =============================================================================
+
+[bootstrap.admin_user]
+# IMPORTANT: Change these credentials immediately after first deployment!
+username = "admin"
+password = "CHANGE_ME_IMMEDIATELY"
+email = "funyloony@gmail.com"

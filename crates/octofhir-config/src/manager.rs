@@ -301,9 +301,9 @@ impl ConfigurationManager {
                 && let Some(cat_obj) = category_value
                     .get_mut(&category.to_string())
                     .and_then(|v| v.as_object_mut())
-                {
-                    cat_obj.insert(key.to_string(), value.clone());
-                }
+            {
+                cat_obj.insert(key.to_string(), value.clone());
+            }
         }
 
         // Broadcast change event

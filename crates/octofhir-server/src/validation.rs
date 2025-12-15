@@ -22,8 +22,8 @@ use serde_json::Value as JsonValue;
 
 #[cfg(test)]
 use octofhir_fhirschema::{
-    FhirSchemaValidationProvider, FhirVersion, ValidationContext, embedded::get_schemas,
-    model_provider::FhirSchemaModelProvider,
+    FhirSchemaModelProvider, FhirSchemaValidationProvider, FhirVersion, ValidationContext,
+    embedded::get_schemas,
 };
 
 use crate::canonical;

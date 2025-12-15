@@ -6,8 +6,8 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 
-use async_graphql::dynamic::{Field, FieldFuture, Object, TypeRef};
 use async_graphql::Value;
+use async_graphql::dynamic::{Field, FieldFuture, Object, TypeRef};
 use octofhir_fhir_model::provider::ModelProvider;
 use tracing::{debug, trace};
 
@@ -122,9 +122,14 @@ impl FhirTypeGenerator {
             .model_provider
             .get_resource_types()
             .await
-            .map_err(|e| GraphQLError::SchemaBuildFailed(format!("Failed to get resource types: {}", e)))?;
+            .map_err(|e| {
+                GraphQLError::SchemaBuildFailed(format!("Failed to get resource types: {}", e))
+            })?;
 
-        debug!(count = resource_types.len(), "Queueing resource types for generation");
+        debug!(
+            count = resource_types.len(),
+            "Queueing resource types for generation"
+        );
         let mut skipped_resources = Vec::new();
         for rt in &resource_types {
             // Skip types with invalid GraphQL names (e.g., profiles with hyphens)
@@ -144,13 +149,14 @@ impl FhirTypeGenerator {
         }
 
         // Queue all complex types
-        let complex_types = self
-            .model_provider
-            .get_complex_types()
-            .await
-            .map_err(|e| GraphQLError::SchemaBuildFailed(format!("Failed to get complex types: {}", e)))?;
+        let complex_types = self.model_provider.get_complex_types().await.map_err(|e| {
+            GraphQLError::SchemaBuildFailed(format!("Failed to get complex types: {}", e))
+        })?;
 
-        debug!(count = complex_types.len(), "Queueing complex types for generation");
+        debug!(
+            count = complex_types.len(),
+            "Queueing complex types for generation"
+        );
         let mut skipped_complex = Vec::new();
         for ct in &complex_types {
             // Skip types with invalid GraphQL names (e.g., profiles with hyphens)
@@ -203,7 +209,10 @@ impl FhirTypeGenerator {
             .get_elements(type_name)
             .await
             .map_err(|e| {
-                GraphQLError::SchemaBuildFailed(format!("Failed to get elements for {}: {}", type_name, e))
+                GraphQLError::SchemaBuildFailed(format!(
+                    "Failed to get elements for {}: {}",
+                    type_name, e
+                ))
             })?;
 
         // Create the Object type
@@ -303,11 +312,17 @@ impl FhirTypeGenerator {
             .model_provider
             .get_type(parent_type)
             .await
-            .map_err(|e| GraphQLError::SchemaBuildFailed(format!("Failed to get type {}: {}", parent_type, e)))?;
+            .map_err(|e| {
+                GraphQLError::SchemaBuildFailed(format!(
+                    "Failed to get type {}: {}",
+                    parent_type, e
+                ))
+            })?;
 
         // Get element type for the backbone
         let backbone_type = if let Some(parent_info) = &parent_type_info {
-            match self.model_provider
+            match self
+                .model_provider
                 .get_element_type(parent_info, element_name)
                 .await
             {
@@ -371,7 +386,8 @@ impl FhirTypeGenerator {
         );
         self.registry.start_generating(type_name);
 
-        let mut obj = Object::new(type_name).description(format!("FHIR backbone element: {}", type_name));
+        let mut obj =
+            Object::new(type_name).description(format!("FHIR backbone element: {}", type_name));
         let mut has_fields = false;
 
         if let Some(backbone_info) = backbone_type {
@@ -391,11 +407,16 @@ impl FhirTypeGenerator {
                     let is_nested_backbone = element_type.contains('.');
                     if is_nested_backbone {
                         // Use underscore separator to avoid collision with mutation input types
-                        let nested_type_name = format!("{}_{}", type_name, capitalize_first(&child_name));
+                        let nested_type_name =
+                            format!("{}_{}", type_name, capitalize_first(&child_name));
 
                         // child_type IS the TypeInfo for this nested backbone element
                         // Recursively generate the nested backbone type with its TypeInfo
-                        Box::pin(self.generate_backbone_type_from_info(&nested_type_name, Some(&child_type))).await?;
+                        Box::pin(self.generate_backbone_type_from_info(
+                            &nested_type_name,
+                            Some(&child_type),
+                        ))
+                        .await?;
 
                         // Create the field reference
                         let is_array = is_likely_array(&child_name, element_type);

@@ -124,6 +124,7 @@ async fn test_skip_validation_disabled_by_default() {
     let config = create_config(&postgres_url);
     let (base, shutdown_tx, handle) = start_server(&config).await;
     let client = reqwest::Client::new();
+    let fhir_base = format!("{base}/fhir");
 
     // Create valid Patient with X-Skip-Validation header
     let patient = json!({
@@ -134,7 +135,7 @@ async fn test_skip_validation_disabled_by_default() {
 
     // Try with X-Skip-Validation header - feature is disabled by default
     let resp = client
-        .post(format!("{base}/Patient"))
+        .post(format!("{fhir_base}/Patient"))
         .header("accept", "application/fhir+json")
         .header("content-type", "application/fhir+json")
         .header("X-Skip-Validation", "true")
@@ -164,6 +165,7 @@ async fn test_skip_validation_enabled_create() {
 
     let (base, shutdown_tx, handle) = start_server(&config).await;
     let client = reqwest::Client::new();
+    let fhir_base = format!("{base}/fhir");
 
     // Create Patient with X-Skip-Validation header
     let patient = json!({
@@ -173,7 +175,7 @@ async fn test_skip_validation_enabled_create() {
     });
 
     let resp = client
-        .post(format!("{base}/Patient"))
+        .post(format!("{fhir_base}/Patient"))
         .header("accept", "application/fhir+json")
         .header("content-type", "application/fhir+json")
         .header("X-Skip-Validation", "true")
@@ -201,6 +203,7 @@ async fn test_skip_validation_enabled_update() {
 
     let (base, shutdown_tx, handle) = start_server(&config).await;
     let client = reqwest::Client::new();
+    let fhir_base = format!("{base}/fhir");
 
     // First create a valid patient
     let patient = json!({
@@ -210,7 +213,7 @@ async fn test_skip_validation_enabled_update() {
     });
 
     let create_resp = client
-        .post(format!("{base}/Patient"))
+        .post(format!("{fhir_base}/Patient"))
         .header("accept", "application/fhir+json")
         .header("content-type", "application/fhir+json")
         .json(&patient)
@@ -231,7 +234,7 @@ async fn test_skip_validation_enabled_update() {
     });
 
     let update_resp = client
-        .put(format!("{base}/Patient/{patient_id}"))
+        .put(format!("{fhir_base}/Patient/{patient_id}"))
         .header("accept", "application/fhir+json")
         .header("content-type", "application/fhir+json")
         .header("X-Skip-Validation", "true")
@@ -259,6 +262,7 @@ async fn test_validation_runs_without_header() {
 
     let (base, shutdown_tx, handle) = start_server(&config).await;
     let client = reqwest::Client::new();
+    let fhir_base = format!("{base}/fhir");
 
     // Create valid patient WITHOUT X-Skip-Validation header
     let patient = json!({
@@ -268,7 +272,7 @@ async fn test_validation_runs_without_header() {
     });
 
     let resp = client
-        .post(format!("{base}/Patient"))
+        .post(format!("{fhir_base}/Patient"))
         .header("accept", "application/fhir+json")
         .header("content-type", "application/fhir+json")
         .json(&patient)

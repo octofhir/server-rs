@@ -15,7 +15,7 @@ impl OperationProvider for GraphQLOperationProvider {
                 "GraphQL Query",
                 categories::GRAPHQL,
                 vec!["GET".to_string(), "POST".to_string()],
-                "/fhir/$graphql",
+                "/$graphql",
                 modules::GRAPHQL,
             )
             .with_description("Execute GraphQL queries against FHIR resources"),

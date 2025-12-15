@@ -185,8 +185,13 @@ impl FhirStorage for PostgresStorage {
         resource_type: &str,
         params: &SearchParams,
     ) -> Result<SearchResult, StorageError> {
-        queries::execute_search(&self.pool, resource_type, params, self.search_registry.as_ref())
-            .await
+        queries::execute_search(
+            &self.pool,
+            resource_type,
+            params,
+            self.search_registry.as_ref(),
+        )
+        .await
     }
 
     async fn begin_transaction(&self) -> Result<Box<dyn Transaction>, StorageError> {

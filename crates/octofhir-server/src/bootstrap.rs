@@ -21,8 +21,8 @@ use octofhir_storage::ConformanceStorage;
 use sqlx_postgres::PgPool;
 use tracing::{info, warn};
 
-use crate::config::AppConfig;
 use crate::config::AdminUserConfig;
+use crate::config::AppConfig;
 use crate::operation_registry::{
     AuthOperationProvider, FhirOperationProvider, OperationRegistryService,
     PostgresOperationStorage, SystemOperationProvider, UiOperationProvider,
@@ -505,9 +505,10 @@ pub async fn bootstrap_operations(
     let registry = OperationRegistryService::with_providers(op_storage, providers);
 
     // Sync operations to database
-    let count = registry.sync_operations(true).await.map_err(|e| {
-        format!("Failed to sync operations: {}", e)
-    })?;
+    let count = registry
+        .sync_operations(true)
+        .await
+        .map_err(|e| format!("Failed to sync operations: {}", e))?;
 
     info!(count, "Operations synced to database");
     Ok(count)

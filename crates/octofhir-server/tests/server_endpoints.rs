@@ -27,6 +27,7 @@ async fn start_server() -> (String, tokio::sync::oneshot::Sender<()>, JoinHandle
 async fn server_endpoints_work() {
     let (base, shutdown_tx, handle) = start_server().await;
     let client = reqwest::Client::new();
+    let fhir_base = format!("{base}/fhir");
 
     // GET /
     let resp = client
@@ -62,9 +63,9 @@ async fn server_endpoints_work() {
     let body: Value = resp.json().await.unwrap();
     assert_eq!(body["status"], "ready");
 
-    // GET /metadata
+    // GET /fhir/metadata
     let resp = client
-        .get(format!("{base}/metadata"))
+        .get(format!("{fhir_base}/metadata"))
         .header("accept", "application/fhir+json")
         .send()
         .await
@@ -73,9 +74,9 @@ async fn server_endpoints_work() {
     let body: Value = resp.json().await.unwrap();
     assert_eq!(body["resourceType"], "CapabilityStatement");
 
-    // GET /Patient (search placeholder)
+    // GET /fhir/Patient (search placeholder)
     let resp = client
-        .get(format!("{base}/Patient"))
+        .get(format!("{fhir_base}/Patient"))
         .header("accept", "application/fhir+json")
         .send()
         .await

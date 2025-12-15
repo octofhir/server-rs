@@ -6,14 +6,16 @@
 
 use std::sync::Arc;
 
-use async_graphql::dynamic::{Field, FieldFuture, InputValue, Object, Scalar, Schema, SchemaBuilder, TypeRef};
 use async_graphql::Value;
+use async_graphql::dynamic::{
+    Field, FieldFuture, InputValue, Object, Scalar, Schema, SchemaBuilder, TypeRef,
+};
 use octofhir_fhir_model::provider::ModelProvider;
 use octofhir_search::{SearchParameterRegistry, SearchParameterType};
 use tracing::{debug, trace};
 
 use super::input_types::{
-    create_json_scalar, create_operation_outcome_issue_type, InputTypeGenerator,
+    InputTypeGenerator, create_json_scalar, create_operation_outcome_issue_type,
 };
 use super::type_generator::FhirTypeGenerator;
 use crate::error::GraphQLError;
@@ -278,7 +280,10 @@ impl FhirSchemaBuilder {
     ///
     /// For example, if Observation has a `subject` search parameter that targets Patient,
     /// this adds an `ObservationList_subject` field to the Patient type.
-    fn add_reverse_reference_fields(&self, fhir_types: &mut std::collections::HashMap<String, Object>) {
+    fn add_reverse_reference_fields(
+        &self,
+        fhir_types: &mut std::collections::HashMap<String, Object>,
+    ) {
         use std::collections::HashMap;
 
         // Build a map of target_type -> Vec<(source_type, param_name)>
@@ -315,7 +320,8 @@ impl FhirSchemaBuilder {
 
                 for (source_type, param_name) in refs {
                     // Create field name like "ObservationList_subject"
-                    let field_name = format!("{}List_{}", source_type, param_name.replace('-', "_"));
+                    let field_name =
+                        format!("{}List_{}", source_type, param_name.replace('-', "_"));
 
                     trace!(
                         target_type = %target_type,
@@ -333,20 +339,19 @@ impl FhirSchemaBuilder {
                     );
 
                     // Create the field with search arguments
-                    let mut field = Field::new(
-                        &field_name,
-                        TypeRef::named_list(&source_type),
-                        resolver,
-                    )
-                    .description(format!(
-                        "Find all {} resources where {} references this {}",
-                        source_type, param_name, target_type
-                    ));
+                    let mut field =
+                        Field::new(&field_name, TypeRef::named_list(&source_type), resolver)
+                            .description(format!(
+                                "Find all {} resources where {} references this {}",
+                                source_type, param_name, target_type
+                            ));
 
                     // Add common search arguments
                     field = field.argument(InputValue::new("_count", TypeRef::named(TypeRef::INT)));
-                    field = field.argument(InputValue::new("_offset", TypeRef::named(TypeRef::INT)));
-                    field = field.argument(InputValue::new("_sort", TypeRef::named(TypeRef::STRING)));
+                    field =
+                        field.argument(InputValue::new("_offset", TypeRef::named(TypeRef::INT)));
+                    field =
+                        field.argument(InputValue::new("_sort", TypeRef::named(TypeRef::STRING)));
 
                     // Add search parameters for the source type
                     let source_params = self.search_registry.get_all_for_type(&source_type);
@@ -596,9 +601,7 @@ impl FhirSchemaBuilder {
         query = query.field(
             Field::new("_version", TypeRef::named_nn(TypeRef::STRING), |_| {
                 FieldFuture::new(async {
-                    Ok(Some(Value::String(
-                        env!("CARGO_PKG_VERSION").to_string(),
-                    )))
+                    Ok(Some(Value::String(env!("CARGO_PKG_VERSION").to_string())))
                 })
             })
             .description("API version"),
@@ -641,9 +644,13 @@ impl FhirSchemaBuilder {
         let read_resolver = ReadResolver::resolve(resource_type_owned.clone());
 
         // Use the actual resource type (Patient, Observation, etc.)
-        let read_field = Field::new(read_field_name, TypeRef::named(resource_type), read_resolver)
-            .argument(InputValue::new("_id", TypeRef::named_nn(TypeRef::ID)))
-            .description(format!("Read a single {} resource by ID", resource_type));
+        let read_field = Field::new(
+            read_field_name,
+            TypeRef::named(resource_type),
+            read_resolver,
+        )
+        .argument(InputValue::new("_id", TypeRef::named_nn(TypeRef::ID)))
+        .description(format!("Read a single {} resource by ID", resource_type));
 
         query = query.field(read_field);
         trace!(resource_type = %resource_type, "Added read query field");
@@ -653,9 +660,12 @@ impl FhirSchemaBuilder {
         let search_resolver = SearchResolver::resolve(resource_type_owned.clone());
 
         // Use the actual resource type in the list
-        let mut list_field =
-            Field::new(&list_field_name, TypeRef::named_nn_list_nn(resource_type), search_resolver)
-                .description(format!("Search for {} resources", resource_type));
+        let mut list_field = Field::new(
+            &list_field_name,
+            TypeRef::named_nn_list_nn(resource_type),
+            search_resolver,
+        )
+        .description(format!("Search for {} resources", resource_type));
 
         // Add search parameter arguments
         list_field = self.add_search_arguments(list_field, resource_type);
@@ -680,10 +690,8 @@ impl FhirSchemaBuilder {
 
         // Add search parameter arguments plus cursor
         connection_field = self.add_search_arguments(connection_field, resource_type);
-        connection_field = connection_field.argument(InputValue::new(
-            "cursor",
-            TypeRef::named(TypeRef::STRING),
-        ));
+        connection_field =
+            connection_field.argument(InputValue::new("cursor", TypeRef::named(TypeRef::STRING)));
 
         query = query.field(connection_field);
         trace!(resource_type = %resource_type, "Added connection query field");
@@ -727,7 +735,10 @@ impl FhirSchemaBuilder {
         // Add _reference for reverse reference queries (FHIR GraphQL spec)
         // This specifies which reference search parameter to use when finding
         // resources that reference the focused resource
-        field = field.argument(InputValue::new("_reference", TypeRef::named(TypeRef::STRING)));
+        field = field.argument(InputValue::new(
+            "_reference",
+            TypeRef::named(TypeRef::STRING),
+        ));
 
         field
     }
@@ -772,16 +783,20 @@ impl FhirSchemaBuilder {
                 .description("Logical id of this outcome"),
             )
             .field(
-                Field::new("issue", TypeRef::named_nn_list_nn("OperationOutcomeIssue"), |ctx| {
-                    FieldFuture::new(async move {
-                        if let Some(Value::Object(obj)) = ctx.parent_value.as_value()
-                            && let Some(v) = obj.get(&async_graphql::Name::new("issue"))
-                        {
-                            return Ok(Some(v.clone()));
-                        }
-                        Ok(Some(Value::List(vec![])))
-                    })
-                })
+                Field::new(
+                    "issue",
+                    TypeRef::named_nn_list_nn("OperationOutcomeIssue"),
+                    |ctx| {
+                        FieldFuture::new(async move {
+                            if let Some(Value::Object(obj)) = ctx.parent_value.as_value()
+                                && let Some(v) = obj.get(&async_graphql::Name::new("issue"))
+                            {
+                                return Ok(Some(v.clone()));
+                            }
+                            Ok(Some(Value::List(vec![])))
+                        })
+                    },
+                )
                 .description("Issues that occurred during the operation"),
             );
         builder = builder.register(outcome);
@@ -854,12 +869,16 @@ impl FhirSchemaBuilder {
         let input_type_name = format!("{}Input", resource_type);
 
         let create_resolver = CreateResolver::resolve(resource_type.to_string());
-        let create_field = Field::new(&create_field_name, TypeRef::named(resource_type), create_resolver)
-            .description(format!("Create a new {} resource", resource_type))
-            .argument(
-                InputValue::new("res", TypeRef::named_nn(&input_type_name))
-                    .description("The resource to create"),
-            );
+        let create_field = Field::new(
+            &create_field_name,
+            TypeRef::named(resource_type),
+            create_resolver,
+        )
+        .description(format!("Create a new {} resource", resource_type))
+        .argument(
+            InputValue::new("res", TypeRef::named_nn(&input_type_name))
+                .description("The resource to create"),
+        );
 
         mutation = mutation.field(create_field);
 
@@ -867,20 +886,24 @@ impl FhirSchemaBuilder {
         let update_field_name = format!("{}Update", resource_type);
 
         let update_resolver = UpdateResolver::resolve(resource_type.to_string());
-        let update_field = Field::new(&update_field_name, TypeRef::named(resource_type), update_resolver)
-            .description(format!("Update an existing {} resource", resource_type))
-            .argument(
-                InputValue::new("id", TypeRef::named_nn(TypeRef::ID))
-                    .description("The ID of the resource to update"),
-            )
-            .argument(
-                InputValue::new("res", TypeRef::named_nn(&input_type_name))
-                    .description("The updated resource data"),
-            )
-            .argument(
-                InputValue::new("ifMatch", TypeRef::named(TypeRef::STRING))
-                    .description("Version for optimistic locking (e.g., 'W/\"1\"')"),
-            );
+        let update_field = Field::new(
+            &update_field_name,
+            TypeRef::named(resource_type),
+            update_resolver,
+        )
+        .description(format!("Update an existing {} resource", resource_type))
+        .argument(
+            InputValue::new("id", TypeRef::named_nn(TypeRef::ID))
+                .description("The ID of the resource to update"),
+        )
+        .argument(
+            InputValue::new("res", TypeRef::named_nn(&input_type_name))
+                .description("The updated resource data"),
+        )
+        .argument(
+            InputValue::new("ifMatch", TypeRef::named(TypeRef::STRING))
+                .description("Version for optimistic locking (e.g., 'W/\"1\"')"),
+        );
 
         mutation = mutation.field(update_field);
 
@@ -888,12 +911,16 @@ impl FhirSchemaBuilder {
         let delete_field_name = format!("{}Delete", resource_type);
 
         let delete_resolver = DeleteResolver::resolve(resource_type.to_string());
-        let delete_field = Field::new(&delete_field_name, TypeRef::named("OperationOutcome"), delete_resolver)
-            .description(format!("Delete a {} resource", resource_type))
-            .argument(
-                InputValue::new("id", TypeRef::named_nn(TypeRef::ID))
-                    .description("The ID of the resource to delete"),
-            );
+        let delete_field = Field::new(
+            &delete_field_name,
+            TypeRef::named("OperationOutcome"),
+            delete_resolver,
+        )
+        .description(format!("Delete a {} resource", resource_type))
+        .argument(
+            InputValue::new("id", TypeRef::named_nn(TypeRef::ID))
+                .description("The ID of the resource to delete"),
+        );
 
         mutation = mutation.field(delete_field);
 
@@ -934,7 +961,8 @@ mod tests {
         let registry = Arc::new(SearchParameterRegistry::default());
         let model_provider = test_model_provider();
 
-        let builder = FhirSchemaBuilder::new(registry, model_provider, SchemaBuilderConfig::default());
+        let builder =
+            FhirSchemaBuilder::new(registry, model_provider, SchemaBuilderConfig::default());
 
         let result = builder.build().await;
         assert!(result.is_ok(), "Schema should build successfully");
@@ -968,7 +996,8 @@ mod tests {
     async fn test_schema_has_health_field() {
         let registry = Arc::new(SearchParameterRegistry::default());
         let model_provider = test_model_provider();
-        let builder = FhirSchemaBuilder::new(registry, model_provider, SchemaBuilderConfig::default());
+        let builder =
+            FhirSchemaBuilder::new(registry, model_provider, SchemaBuilderConfig::default());
 
         let schema = builder.build().await.unwrap();
         let sdl = schema.sdl();
@@ -1003,7 +1032,11 @@ mod tests {
         ));
 
         let model_provider = test_model_provider();
-        let builder = FhirSchemaBuilder::new(Arc::new(registry), model_provider, SchemaBuilderConfig::default());
+        let builder = FhirSchemaBuilder::new(
+            Arc::new(registry),
+            model_provider,
+            SchemaBuilderConfig::default(),
+        );
 
         let schema = builder.build().await.unwrap();
         let sdl = schema.sdl();

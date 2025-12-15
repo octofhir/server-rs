@@ -45,7 +45,9 @@ use async_graphql::{Error as GraphQLError, Value};
 use crate::context::GraphQLContext;
 
 /// Helper to extract GraphQL context from resolver context.
-pub(crate) fn get_graphql_context<'a>(ctx: &'a ResolverContext<'_>) -> Result<&'a GraphQLContext, GraphQLError> {
+pub(crate) fn get_graphql_context<'a>(
+    ctx: &'a ResolverContext<'_>,
+) -> Result<&'a GraphQLContext, GraphQLError> {
     ctx.data::<GraphQLContext>()
         .map_err(|_| GraphQLError::new("GraphQL context not available"))
 }
@@ -62,7 +64,8 @@ pub(crate) fn json_to_graphql_value(json: serde_json::Value) -> Value {
                 Value::Number(u.into())
             } else if let Some(f) = n.as_f64() {
                 Value::Number(
-                    async_graphql::Number::from_f64(f).unwrap_or_else(|| async_graphql::Number::from(0)),
+                    async_graphql::Number::from_f64(f)
+                        .unwrap_or_else(|| async_graphql::Number::from(0)),
                 )
             } else {
                 Value::Null

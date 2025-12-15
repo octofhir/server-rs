@@ -1,0 +1,55 @@
+[Unit]
+Description=OctoFHIR Server - High-performance FHIR R4B Server
+Documentation=https://github.com/octofhir/octofhir
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=simple
+# Running as root (NOT RECOMMENDED for production - consider using a dedicated user)
+User=root
+Group=root
+WorkingDirectory=/opt/octofhir
+
+# Path to the compiled binary
+ExecStart=/opt/octofhir/bin/octofhir-server
+
+# Environment variables
+Environment="RUST_LOG=info"
+Environment="OCTOFHIR_CONFIG=/opt/octofhir/config/octofhir.toml"
+
+# Optional: Override specific config via env vars
+# Environment="OCTOFHIR__SERVER__PORT=8888"
+# Environment="OCTOFHIR__STORAGE__POSTGRES__HOST=localhost"
+# Environment="OCTOFHIR__STORAGE__POSTGRES__PORT=5450"
+# Environment="OCTOFHIR__STORAGE__POSTGRES__DATABASE=octofhir"
+
+# Restart policy
+Restart=always
+RestartSec=10
+StartLimitBurst=5
+StartLimitIntervalSec=60
+
+# Resource limits (adjust based on your server capacity)
+LimitNOFILE=65536
+LimitNPROC=4096
+# Memory limit (optional - adjust as needed)
+# MemoryMax=4G
+# MemoryHigh=3G
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=octofhir
+
+# Wait for the service to be ready
+# TimeoutStartSec=60
+# TimeoutStopSec=30
+
+# Kill all processes in the service's control group on stop
+KillMode=mixed
+KillSignal=SIGTERM
+
+[Install]
+WantedBy=multi-user.target

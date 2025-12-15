@@ -3,8 +3,8 @@
 //! Implements resolvers for forward and reverse include functionality in GraphQL.
 //! These resolvers enable efficient querying of related resources within nested contexts.
 
-use async_graphql::dynamic::{FieldFuture, ResolverContext};
 use async_graphql::Value;
+use async_graphql::dynamic::{FieldFuture, ResolverContext};
 use octofhir_auth::smart::scopes::FhirOperation;
 use octofhir_storage::SearchParams;
 use tracing::{debug, trace, warn};
@@ -67,7 +67,8 @@ impl NestedReverseReferenceResolver {
 
                 // Build search params with reference to parent
                 let reference_value = format!("{}/{}", target_type, parent_id);
-                let mut search_params = SearchParams::new().with_param(&reference_param, &reference_value);
+                let mut search_params =
+                    SearchParams::new().with_param(&reference_param, &reference_value);
 
                 // Apply additional search parameters from arguments
                 search_params = apply_search_arguments(&ctx, search_params);

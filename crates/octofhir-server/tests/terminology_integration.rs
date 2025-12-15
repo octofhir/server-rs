@@ -80,7 +80,7 @@ async fn start_server(
             .await;
     });
 
-    (format!("http://{addr}"), tx, server)
+    (format!("http://{addr}/fhir"), tx, server)
 }
 
 /// Create test observation resources with known codes

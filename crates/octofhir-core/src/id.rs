@@ -49,14 +49,15 @@ pub fn validate_id(id: &str) -> Result<(), IdError> {
                 // Period is allowed but not at start or end
                 if idx == 0 || idx == id.len() - 1 {
                     return Err(IdError::Invalid(
-                        "ID cannot start or end with a period".to_string()
+                        "ID cannot start or end with a period".to_string(),
                     ));
                 }
             }
             _ => {
-                return Err(IdError::Invalid(
-                    format!("Invalid character '{}' at position {}. Only A-Z, a-z, 0-9, -, and . are allowed", ch, idx)
-                ));
+                return Err(IdError::Invalid(format!(
+                    "Invalid character '{}' at position {}. Only A-Z, a-z, 0-9, -, and . are allowed",
+                    ch, idx
+                )));
             }
         }
     }

@@ -315,7 +315,9 @@ impl PatternMatcher {
             // If no operation_id in context but patterns are specified, no match
             return false;
         };
-        patterns.iter().any(|pattern| self.matches_operation_id_pattern(pattern, operation_id))
+        patterns
+            .iter()
+            .any(|pattern| self.matches_operation_id_pattern(pattern, operation_id))
     }
 
     /// Match an operation ID against a pattern.

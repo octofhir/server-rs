@@ -79,7 +79,8 @@ impl EverythingOperation {
                 let since_str = since
                     .format(&time::format_description::well_known::Rfc3339)
                     .unwrap_or_default();
-                search_params = search_params.with_param("_lastUpdated", &format!("ge{}", since_str));
+                search_params =
+                    search_params.with_param("_lastUpdated", &format!("ge{}", since_str));
             }
 
             // Apply date range filters (start/end) if specified
@@ -178,7 +179,8 @@ impl EverythingOperation {
                 let since_str = since
                     .format(&time::format_description::well_known::Rfc3339)
                     .unwrap_or_default();
-                search_params = search_params.with_param("_lastUpdated", &format!("ge{}", since_str));
+                search_params =
+                    search_params.with_param("_lastUpdated", &format!("ge{}", since_str));
             }
 
             match state.storage.search(&resource_type, &search_params).await {
@@ -337,47 +339,164 @@ impl EverythingOperation {
 
     /// Get Patient compartment search parameters
     /// Returns (resource_type, param_name, reference_value) tuples
-    fn get_patient_compartment_searches(
-        &self,
-        patient_id: &str,
-    ) -> Vec<(String, String, String)> {
+    fn get_patient_compartment_searches(&self, patient_id: &str) -> Vec<(String, String, String)> {
         let reference = format!("Patient/{}", patient_id);
         vec![
             // Core clinical resources
-            ("Observation".to_string(), "patient".to_string(), reference.clone()),
-            ("Observation".to_string(), "subject".to_string(), reference.clone()),
-            ("Condition".to_string(), "patient".to_string(), reference.clone()),
-            ("Condition".to_string(), "subject".to_string(), reference.clone()),
-            ("AllergyIntolerance".to_string(), "patient".to_string(), reference.clone()),
-            ("MedicationRequest".to_string(), "patient".to_string(), reference.clone()),
-            ("MedicationRequest".to_string(), "subject".to_string(), reference.clone()),
-            ("MedicationStatement".to_string(), "patient".to_string(), reference.clone()),
-            ("MedicationStatement".to_string(), "subject".to_string(), reference.clone()),
-            ("MedicationAdministration".to_string(), "patient".to_string(), reference.clone()),
-            ("MedicationAdministration".to_string(), "subject".to_string(), reference.clone()),
-            ("Procedure".to_string(), "patient".to_string(), reference.clone()),
-            ("Procedure".to_string(), "subject".to_string(), reference.clone()),
-            ("Immunization".to_string(), "patient".to_string(), reference.clone()),
-            ("DiagnosticReport".to_string(), "patient".to_string(), reference.clone()),
-            ("DiagnosticReport".to_string(), "subject".to_string(), reference.clone()),
-            ("Encounter".to_string(), "patient".to_string(), reference.clone()),
-            ("Encounter".to_string(), "subject".to_string(), reference.clone()),
-            ("CarePlan".to_string(), "patient".to_string(), reference.clone()),
-            ("CarePlan".to_string(), "subject".to_string(), reference.clone()),
+            (
+                "Observation".to_string(),
+                "patient".to_string(),
+                reference.clone(),
+            ),
+            (
+                "Observation".to_string(),
+                "subject".to_string(),
+                reference.clone(),
+            ),
+            (
+                "Condition".to_string(),
+                "patient".to_string(),
+                reference.clone(),
+            ),
+            (
+                "Condition".to_string(),
+                "subject".to_string(),
+                reference.clone(),
+            ),
+            (
+                "AllergyIntolerance".to_string(),
+                "patient".to_string(),
+                reference.clone(),
+            ),
+            (
+                "MedicationRequest".to_string(),
+                "patient".to_string(),
+                reference.clone(),
+            ),
+            (
+                "MedicationRequest".to_string(),
+                "subject".to_string(),
+                reference.clone(),
+            ),
+            (
+                "MedicationStatement".to_string(),
+                "patient".to_string(),
+                reference.clone(),
+            ),
+            (
+                "MedicationStatement".to_string(),
+                "subject".to_string(),
+                reference.clone(),
+            ),
+            (
+                "MedicationAdministration".to_string(),
+                "patient".to_string(),
+                reference.clone(),
+            ),
+            (
+                "MedicationAdministration".to_string(),
+                "subject".to_string(),
+                reference.clone(),
+            ),
+            (
+                "Procedure".to_string(),
+                "patient".to_string(),
+                reference.clone(),
+            ),
+            (
+                "Procedure".to_string(),
+                "subject".to_string(),
+                reference.clone(),
+            ),
+            (
+                "Immunization".to_string(),
+                "patient".to_string(),
+                reference.clone(),
+            ),
+            (
+                "DiagnosticReport".to_string(),
+                "patient".to_string(),
+                reference.clone(),
+            ),
+            (
+                "DiagnosticReport".to_string(),
+                "subject".to_string(),
+                reference.clone(),
+            ),
+            (
+                "Encounter".to_string(),
+                "patient".to_string(),
+                reference.clone(),
+            ),
+            (
+                "Encounter".to_string(),
+                "subject".to_string(),
+                reference.clone(),
+            ),
+            (
+                "CarePlan".to_string(),
+                "patient".to_string(),
+                reference.clone(),
+            ),
+            (
+                "CarePlan".to_string(),
+                "subject".to_string(),
+                reference.clone(),
+            ),
             ("Goal".to_string(), "patient".to_string(), reference.clone()),
             ("Goal".to_string(), "subject".to_string(), reference.clone()),
-            ("Specimen".to_string(), "patient".to_string(), reference.clone()),
-            ("Specimen".to_string(), "subject".to_string(), reference.clone()),
+            (
+                "Specimen".to_string(),
+                "patient".to_string(),
+                reference.clone(),
+            ),
+            (
+                "Specimen".to_string(),
+                "subject".to_string(),
+                reference.clone(),
+            ),
             // Documents and communications
-            ("DocumentReference".to_string(), "patient".to_string(), reference.clone()),
-            ("DocumentReference".to_string(), "subject".to_string(), reference.clone()),
-            ("Communication".to_string(), "patient".to_string(), reference.clone()),
-            ("Communication".to_string(), "subject".to_string(), reference.clone()),
+            (
+                "DocumentReference".to_string(),
+                "patient".to_string(),
+                reference.clone(),
+            ),
+            (
+                "DocumentReference".to_string(),
+                "subject".to_string(),
+                reference.clone(),
+            ),
+            (
+                "Communication".to_string(),
+                "patient".to_string(),
+                reference.clone(),
+            ),
+            (
+                "Communication".to_string(),
+                "subject".to_string(),
+                reference.clone(),
+            ),
             // Financial resources
-            ("Claim".to_string(), "patient".to_string(), reference.clone()),
-            ("ExplanationOfBenefit".to_string(), "patient".to_string(), reference.clone()),
-            ("Coverage".to_string(), "patient".to_string(), reference.clone()),
-            ("Coverage".to_string(), "beneficiary".to_string(), reference.clone()),
+            (
+                "Claim".to_string(),
+                "patient".to_string(),
+                reference.clone(),
+            ),
+            (
+                "ExplanationOfBenefit".to_string(),
+                "patient".to_string(),
+                reference.clone(),
+            ),
+            (
+                "Coverage".to_string(),
+                "patient".to_string(),
+                reference.clone(),
+            ),
+            (
+                "Coverage".to_string(),
+                "beneficiary".to_string(),
+                reference.clone(),
+            ),
         ]
     }
 
@@ -388,24 +507,61 @@ impl EverythingOperation {
     ) -> Vec<(String, String, String)> {
         let reference = format!("Encounter/{}", encounter_id);
         vec![
-            ("Observation".to_string(), "encounter".to_string(), reference.clone()),
-            ("Condition".to_string(), "encounter".to_string(), reference.clone()),
-            ("Procedure".to_string(), "encounter".to_string(), reference.clone()),
-            ("MedicationRequest".to_string(), "encounter".to_string(), reference.clone()),
-            ("MedicationStatement".to_string(), "context".to_string(), reference.clone()),
-            ("MedicationAdministration".to_string(), "encounter".to_string(), reference.clone()),
-            ("DiagnosticReport".to_string(), "encounter".to_string(), reference.clone()),
-            ("ServiceRequest".to_string(), "encounter".to_string(), reference.clone()),
-            ("Communication".to_string(), "encounter".to_string(), reference.clone()),
-            ("DocumentReference".to_string(), "encounter".to_string(), reference.clone()),
+            (
+                "Observation".to_string(),
+                "encounter".to_string(),
+                reference.clone(),
+            ),
+            (
+                "Condition".to_string(),
+                "encounter".to_string(),
+                reference.clone(),
+            ),
+            (
+                "Procedure".to_string(),
+                "encounter".to_string(),
+                reference.clone(),
+            ),
+            (
+                "MedicationRequest".to_string(),
+                "encounter".to_string(),
+                reference.clone(),
+            ),
+            (
+                "MedicationStatement".to_string(),
+                "context".to_string(),
+                reference.clone(),
+            ),
+            (
+                "MedicationAdministration".to_string(),
+                "encounter".to_string(),
+                reference.clone(),
+            ),
+            (
+                "DiagnosticReport".to_string(),
+                "encounter".to_string(),
+                reference.clone(),
+            ),
+            (
+                "ServiceRequest".to_string(),
+                "encounter".to_string(),
+                reference.clone(),
+            ),
+            (
+                "Communication".to_string(),
+                "encounter".to_string(),
+                reference.clone(),
+            ),
+            (
+                "DocumentReference".to_string(),
+                "encounter".to_string(),
+                reference.clone(),
+            ),
         ]
     }
 
     /// Extract patient member IDs from a Group resource
-    fn extract_group_members(
-        &self,
-        group: &StoredResource,
-    ) -> Result<Vec<String>, OperationError> {
+    fn extract_group_members(&self, group: &StoredResource) -> Result<Vec<String>, OperationError> {
         let mut member_ids = Vec::new();
 
         if let Some(members) = group.resource.get("member").and_then(|m| m.as_array()) {

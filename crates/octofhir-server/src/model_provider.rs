@@ -85,7 +85,9 @@ impl ModelProvider for OctoFhirModelProvider {
         parent_type: &TypeInfo,
         property_name: &str,
     ) -> ModelResult<Option<TypeInfo>> {
-        self.inner.get_element_type(parent_type, property_name).await
+        self.inner
+            .get_element_type(parent_type, property_name)
+            .await
     }
 
     fn of_type(&self, type_info: &TypeInfo, target_type: &str) -> Option<TypeInfo> {
@@ -133,7 +135,9 @@ impl ModelProvider for OctoFhirModelProvider {
         parent_type: &str,
         property_name: &str,
     ) -> ModelResult<Option<Vec<ChoiceTypeInfo>>> {
-        self.inner.get_choice_types(parent_type, property_name).await
+        self.inner
+            .get_choice_types(parent_type, property_name)
+            .await
     }
 
     async fn get_union_types(&self, type_info: &TypeInfo) -> ModelResult<Option<Vec<TypeInfo>>> {

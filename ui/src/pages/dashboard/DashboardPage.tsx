@@ -122,8 +122,7 @@ function ResourceTypesCard() {
 	const { data: capabilities, isLoading } = useCapabilities();
 
 	// Extract resource count from capability statement
-	const resourceCount =
-		(capabilities as any)?.rest?.[0]?.resource?.length ?? 0;
+	const resourceCount = (capabilities as any)?.rest?.[0]?.resource?.length ?? 0;
 
 	return (
 		<Card shadow="sm" padding="lg" radius="md" withBorder>
@@ -177,12 +176,7 @@ export function DashboardPage() {
 							radius="md"
 							withBorder
 						>
-							<ThemeIcon
-								variant="light"
-								color={action.color}
-								size="xl"
-								mb="md"
-							>
+							<ThemeIcon variant="light" color={action.color} size="xl" mb="md">
 								<action.icon size={24} />
 							</ThemeIcon>
 							<Text fw={500} mb="xs">
@@ -205,4 +199,3 @@ export function DashboardPage() {
 		</Stack>
 	);
 }
-

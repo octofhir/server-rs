@@ -3,8 +3,8 @@
 //! Implements resolvers for queries like `PatientList(name: "John", _count: 10)`
 //! that search for FHIR resources using search parameters.
 
-use async_graphql::dynamic::{FieldFuture, ResolverContext};
 use async_graphql::Value;
+use async_graphql::dynamic::{FieldFuture, ResolverContext};
 use octofhir_auth::smart::scopes::FhirOperation;
 use octofhir_storage::{SearchParams, TotalMode};
 use tracing::{debug, warn};
@@ -18,7 +18,9 @@ impl SearchResolver {
     /// Creates a resolver function for searching resources.
     ///
     /// This is used to create the `PatientList(...)` style query fields.
-    pub fn resolve(resource_type: String) -> impl Fn(ResolverContext<'_>) -> FieldFuture<'_> + Send + Sync + Clone {
+    pub fn resolve(
+        resource_type: String,
+    ) -> impl Fn(ResolverContext<'_>) -> FieldFuture<'_> + Send + Sync + Clone {
         move |ctx| {
             let resource_type = resource_type.clone();
             FieldFuture::new(async move {

@@ -2,6 +2,12 @@
 
 use octofhir_core::{OperationDefinition, OperationProvider, categories, modules};
 
+const FHIR_BASE: &str = "/fhir";
+
+fn fhir_path(suffix: &str) -> String {
+    format!("{FHIR_BASE}{suffix}")
+}
+
 /// Provider for FHIR REST API operations
 pub struct FhirOperationProvider;
 
@@ -14,7 +20,7 @@ impl OperationProvider for FhirOperationProvider {
                 "Read Resource",
                 categories::FHIR,
                 vec!["GET".to_string()],
-                "/{type}/{id}",
+                fhir_path("/{type}/{id}"),
                 modules::SERVER,
             )
             .with_description("Read a single FHIR resource by ID"),
@@ -23,7 +29,7 @@ impl OperationProvider for FhirOperationProvider {
                 "Version Read",
                 categories::FHIR,
                 vec!["GET".to_string()],
-                "/{type}/{id}/_history/{vid}",
+                fhir_path("/{type}/{id}/_history/{vid}"),
                 modules::SERVER,
             )
             .with_description("Read a specific version of a FHIR resource"),
@@ -33,7 +39,7 @@ impl OperationProvider for FhirOperationProvider {
                 "Create Resource",
                 categories::FHIR,
                 vec!["POST".to_string()],
-                "/{type}",
+                fhir_path("/{type}"),
                 modules::SERVER,
             )
             .with_description("Create a new FHIR resource"),
@@ -42,7 +48,7 @@ impl OperationProvider for FhirOperationProvider {
                 "Update Resource",
                 categories::FHIR,
                 vec!["PUT".to_string()],
-                "/{type}/{id}",
+                fhir_path("/{type}/{id}"),
                 modules::SERVER,
             )
             .with_description("Update an existing FHIR resource"),
@@ -51,7 +57,7 @@ impl OperationProvider for FhirOperationProvider {
                 "Patch Resource",
                 categories::FHIR,
                 vec!["PATCH".to_string()],
-                "/{type}/{id}",
+                fhir_path("/{type}/{id}"),
                 modules::SERVER,
             )
             .with_description("Apply a partial update to a FHIR resource"),
@@ -60,7 +66,7 @@ impl OperationProvider for FhirOperationProvider {
                 "Delete Resource",
                 categories::FHIR,
                 vec!["DELETE".to_string()],
-                "/{type}/{id}",
+                fhir_path("/{type}/{id}"),
                 modules::SERVER,
             )
             .with_description("Delete a FHIR resource"),
@@ -70,7 +76,7 @@ impl OperationProvider for FhirOperationProvider {
                 "Search Resources",
                 categories::FHIR,
                 vec!["GET".to_string(), "POST".to_string()],
-                "/{type}",
+                fhir_path("/{type}"),
                 modules::SERVER,
             )
             .with_description("Search for FHIR resources by parameters"),
@@ -79,7 +85,7 @@ impl OperationProvider for FhirOperationProvider {
                 "Search All Resources",
                 categories::FHIR,
                 vec!["GET".to_string(), "POST".to_string()],
-                "/",
+                fhir_path(""),
                 modules::SERVER,
             )
             .with_description("Search across all resource types"),
@@ -89,7 +95,7 @@ impl OperationProvider for FhirOperationProvider {
                 "Instance History",
                 categories::FHIR,
                 vec!["GET".to_string()],
-                "/{type}/{id}/_history",
+                fhir_path("/{type}/{id}/_history"),
                 modules::SERVER,
             )
             .with_description("Get the history of a specific resource"),
@@ -98,7 +104,7 @@ impl OperationProvider for FhirOperationProvider {
                 "Type History",
                 categories::FHIR,
                 vec!["GET".to_string()],
-                "/{type}/_history",
+                fhir_path("/{type}/_history"),
                 modules::SERVER,
             )
             .with_description("Get the history of all resources of a type"),
@@ -107,7 +113,7 @@ impl OperationProvider for FhirOperationProvider {
                 "System History",
                 categories::FHIR,
                 vec!["GET".to_string()],
-                "/_history",
+                fhir_path("/_history"),
                 modules::SERVER,
             )
             .with_description("Get the history of all resources in the system"),
@@ -117,7 +123,7 @@ impl OperationProvider for FhirOperationProvider {
                 "Batch",
                 categories::FHIR,
                 vec!["POST".to_string()],
-                "/",
+                fhir_path(""),
                 modules::SERVER,
             )
             .with_description("Execute a batch of independent operations"),
@@ -126,7 +132,7 @@ impl OperationProvider for FhirOperationProvider {
                 "Transaction",
                 categories::FHIR,
                 vec!["POST".to_string()],
-                "/",
+                fhir_path(""),
                 modules::SERVER,
             )
             .with_description("Execute a transaction with atomic semantics"),
@@ -136,7 +142,7 @@ impl OperationProvider for FhirOperationProvider {
                 "$validate",
                 categories::FHIR,
                 vec!["POST".to_string()],
-                "/{type}/$validate",
+                fhir_path("/{type}/$validate"),
                 modules::SERVER,
             )
             .with_description("Validate a FHIR resource"),
@@ -145,7 +151,7 @@ impl OperationProvider for FhirOperationProvider {
                 "$everything",
                 categories::FHIR,
                 vec!["GET".to_string()],
-                "/{type}/{id}/$everything",
+                fhir_path("/{type}/{id}/$everything"),
                 modules::SERVER,
             )
             .with_description("Get the complete record for Patient, Encounter, or Group"),
@@ -154,7 +160,7 @@ impl OperationProvider for FhirOperationProvider {
                 "$meta",
                 categories::FHIR,
                 vec!["GET".to_string()],
-                "/{type}/{id}/$meta",
+                fhir_path("/{type}/{id}/$meta"),
                 modules::SERVER,
             )
             .with_description("Get resource metadata"),
@@ -163,7 +169,7 @@ impl OperationProvider for FhirOperationProvider {
                 "$meta-add",
                 categories::FHIR,
                 vec!["POST".to_string()],
-                "/{type}/{id}/$meta-add",
+                fhir_path("/{type}/{id}/$meta-add"),
                 modules::SERVER,
             )
             .with_description("Add metadata elements"),
@@ -172,7 +178,7 @@ impl OperationProvider for FhirOperationProvider {
                 "$meta-delete",
                 categories::FHIR,
                 vec!["POST".to_string()],
-                "/{type}/{id}/$meta-delete",
+                fhir_path("/{type}/{id}/$meta-delete"),
                 modules::SERVER,
             )
             .with_description("Remove metadata elements"),

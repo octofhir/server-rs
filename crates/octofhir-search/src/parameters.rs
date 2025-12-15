@@ -223,6 +223,8 @@ pub struct SearchParameter {
     pub target: Vec<String>,
     /// Supported modifiers for this parameter
     pub modifier: Vec<SearchModifier>,
+    /// Supported comparators (e.g., eq, ne, gt)
+    pub comparator: Vec<String>,
     /// Human-readable description
     pub description: String,
     /// Components for composite search parameters
@@ -250,6 +252,7 @@ impl SearchParameter {
             base,
             target: Vec::new(),
             modifier: Vec::new(),
+            comparator: Vec::new(),
             description: String::new(),
             component: Vec::new(),
             cached_jsonb_path: None,
@@ -364,6 +367,13 @@ impl SearchParameter {
     #[must_use]
     pub fn with_modifiers(mut self, modifiers: Vec<SearchModifier>) -> Self {
         self.modifier = modifiers;
+        self
+    }
+
+    /// Set supported comparators (raw string values as defined by FHIR).
+    #[must_use]
+    pub fn with_comparators(mut self, comparators: Vec<String>) -> Self {
+        self.comparator = comparators;
         self
     }
 

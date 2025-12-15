@@ -47,8 +47,10 @@ pub async fn load_search_parameters(
     register_common_parameters(&mut registry);
 
     // Query for all SearchParameter resources
+    // IMPORTANT: Set high limit to get all search parameters (FHIR R4 has ~1000 search parameters)
     let query = SearchQuery {
         resource_types: vec!["SearchParameter".to_string()],
+        limit: Some(10000), // High limit to ensure we get ALL SearchParameters
         ..Default::default()
     };
 
@@ -64,6 +66,15 @@ pub async fn load_search_parameters(
     for resource_match in results.resources {
         match parse_search_parameter(&resource_match.resource.content) {
             Ok(param) => {
+                if param.code == "gender" {
+                    tracing::warn!(
+                        code = %param.code,
+                        bases = ?param.base,
+                        param_type = ?param.param_type,
+                        url = %param.url,
+                        "🔍 FOUND gender search parameter!"
+                    );
+                }
                 tracing::debug!(
                     code = %param.code,
                     bases = ?param.base,
@@ -177,6 +188,16 @@ pub fn parse_search_parameter(value: &Value) -> Result<SearchParameter, LoaderEr
         })
         .unwrap_or_default();
 
+    let comparators: Vec<String> = value
+        .get("comparator")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .collect()
+        })
+        .unwrap_or_default();
+
     let description = value
         .get("description")
         .and_then(|v| v.as_str())
@@ -196,6 +217,10 @@ pub fn parse_search_parameter(value: &Value) -> Result<SearchParameter, LoaderEr
 
     if !modifier.is_empty() {
         param = param.with_modifiers(modifier);
+    }
+
+    if !comparators.is_empty() {
+        param = param.with_comparators(comparators);
     }
 
     if !description.is_empty() {
@@ -322,6 +347,27 @@ mod tests {
         assert!(param.modifier.contains(&SearchModifier::Exact));
         assert!(param.modifier.contains(&SearchModifier::Contains));
         assert!(param.modifier.contains(&SearchModifier::Missing));
+    }
+
+    #[test]
+    fn test_parse_search_parameter_with_comparators() {
+        let value = json!({
+            "resourceType": "SearchParameter",
+            "url": "http://hl7.org/fhir/SearchParameter/Observation-value-quantity",
+            "code": "value-quantity",
+            "type": "quantity",
+            "base": ["Observation"],
+            "comparator": ["eq", "ne", "gt"]
+        });
+
+        let result = parse_search_parameter(&value);
+        assert!(result.is_ok());
+
+        let param = result.unwrap();
+        assert_eq!(param.comparator.len(), 3);
+        assert!(param.comparator.contains(&"eq".to_string()));
+        assert!(param.comparator.contains(&"ne".to_string()));
+        assert!(param.comparator.contains(&"gt".to_string()));
     }
 
     #[test]

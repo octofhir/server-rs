@@ -49,7 +49,11 @@ impl ResourceKey {
 
             // Validate resource type starts with uppercase (FHIR convention)
             if !resource_type.is_empty()
-                && resource_type.chars().next().map(|c| c.is_uppercase()).unwrap_or(false)
+                && resource_type
+                    .chars()
+                    .next()
+                    .map(|c| c.is_uppercase())
+                    .unwrap_or(false)
                 && !id.is_empty()
             {
                 return Some(Self::new(resource_type, id));

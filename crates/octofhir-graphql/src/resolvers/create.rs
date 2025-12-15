@@ -61,14 +61,10 @@ impl CreateResolver {
                 trace!(resource_type = %resource_type, "Creating resource via storage");
 
                 // Create via storage
-                let result = gql_ctx
-                    .storage
-                    .create(&resource_json)
-                    .await
-                    .map_err(|e| {
-                        warn!(error = %e, resource_type = %resource_type, "Create failed");
-                        storage_error_to_graphql(e)
-                    })?;
+                let result = gql_ctx.storage.create(&resource_json).await.map_err(|e| {
+                    warn!(error = %e, resource_type = %resource_type, "Create failed");
+                    storage_error_to_graphql(e)
+                })?;
 
                 debug!(
                     resource_type = %resource_type,
@@ -172,7 +168,9 @@ pub(crate) fn value_accessor_to_json(
 
 /// Converts a GraphQL Value to serde_json::Value.
 #[allow(dead_code)]
-pub(crate) fn graphql_value_to_json(value: &Value) -> Result<serde_json::Value, async_graphql::Error> {
+pub(crate) fn graphql_value_to_json(
+    value: &Value,
+) -> Result<serde_json::Value, async_graphql::Error> {
     match value {
         Value::Null => Ok(serde_json::Value::Null),
         Value::Boolean(b) => Ok(serde_json::Value::Bool(*b)),
@@ -209,7 +207,9 @@ pub(crate) fn graphql_value_to_json(value: &Value) -> Result<serde_json::Value, 
 }
 
 /// Converts a storage error to a GraphQL error with OperationOutcome in extensions.
-pub(crate) fn storage_error_to_graphql(error: octofhir_storage::StorageError) -> async_graphql::Error {
+pub(crate) fn storage_error_to_graphql(
+    error: octofhir_storage::StorageError,
+) -> async_graphql::Error {
     use octofhir_storage::ErrorCategory;
 
     let message = error.to_string();

@@ -76,7 +76,9 @@ impl DataLoaders {
 
         Self {
             resource_loader: Arc::new(DataLoader::new(resource_loader, tokio::spawn).delay(delay)),
-            reference_loader: Arc::new(DataLoader::new(reference_loader, tokio::spawn).delay(delay)),
+            reference_loader: Arc::new(
+                DataLoader::new(reference_loader, tokio::spawn).delay(delay),
+            ),
         }
     }
 }

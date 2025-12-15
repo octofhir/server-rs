@@ -2,7 +2,12 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-use axum::{Router, extract::FromRef, middleware, routing::get};
+use axum::{
+    Router,
+    extract::FromRef,
+    middleware,
+    routing::{get, post},
+};
 use octofhir_auth::config::CookieConfig;
 use octofhir_auth::middleware::AuthState;
 use octofhir_auth::policy::{
@@ -17,13 +22,13 @@ use octofhir_auth_postgres::{
 
 use crate::middleware::AuthorizationState;
 use crate::model_provider::OctoFhirModelProvider;
-use octofhir_graphql::handler::{GraphQLContextTemplate, GraphQLState};
-use octofhir_graphql::{FhirSchemaBuilder, LazySchema, SchemaBuilderConfig};
 use octofhir_fhir_model::provider::{FhirVersion, ModelProvider};
 use octofhir_fhirpath::FhirPathEngine;
-use octofhir_fhirschema::embedded::{FhirVersion as SchemaFhirVersion, get_schemas};
 use octofhir_fhirschema::FhirSchemaModelProvider;
+use octofhir_fhirschema::embedded::{FhirVersion as SchemaFhirVersion, get_schemas};
 use octofhir_fhirschema::types::StructureDefinition;
+use octofhir_graphql::handler::{GraphQLContextTemplate, GraphQLState};
+use octofhir_graphql::{FhirSchemaBuilder, LazySchema, SchemaBuilderConfig};
 use time::Duration;
 use tower_http::{compression::CompressionLayer, cors::CorsLayer, trace::TraceLayer};
 
@@ -806,11 +811,16 @@ pub async fn build_app(cfg: &AppConfig) -> Result<Router, anyhow::Error> {
             tracing::info!(count, "Operations registry bootstrapped");
 
             // Populate public paths cache from operations registry
-            let op_storage = crate::operation_registry::PostgresOperationStorage::new((*db_pool).clone());
+            let op_storage =
+                crate::operation_registry::PostgresOperationStorage::new((*db_pool).clone());
             if let Ok(all_operations) = op_storage.list_all().await {
                 public_paths_cache.update_from_operations(&all_operations);
                 let (exact, prefix) = public_paths_cache.len();
-                tracing::info!(exact_paths = exact, prefix_paths = prefix, "Public paths cache populated");
+                tracing::info!(
+                    exact_paths = exact,
+                    prefix_paths = prefix,
+                    "Public paths cache populated"
+                );
             }
         }
         Err(e) => {
@@ -839,9 +849,8 @@ pub async fn build_app(cfg: &AppConfig) -> Result<Router, anyhow::Error> {
 
         // Create PostgresStorage from the pool for GraphQL
         // GraphQL uses the new FhirStorage trait, not the legacy Storage trait
-        let graphql_storage: octofhir_storage::DynStorage = Arc::new(
-            PostgresStorage::from_pool(db_pool.as_ref().clone()),
-        );
+        let graphql_storage: octofhir_storage::DynStorage =
+            Arc::new(PostgresStorage::from_pool(db_pool.as_ref().clone()));
 
         // Create context template with shared dependencies
         let context_template = GraphQLContextTemplate {
@@ -853,7 +862,6 @@ pub async fn build_app(cfg: &AppConfig) -> Result<Router, anyhow::Error> {
         let state = GraphQLState {
             lazy_schema: lazy_schema.clone(),
             context_template,
-            playground_enabled: false, // Playground served from UI, not backend
         };
 
         // Trigger schema build in background (don't block server startup)
@@ -922,7 +930,7 @@ fn build_router(state: AppState, body_limit: usize) -> Router {
 
     let mut router = Router::new()
         // Health and info endpoints
-        .route("/", get(handlers::root).post(handlers::transaction_handler))
+        .route("/", get(handlers::root))
         .route("/healthz", get(handlers::healthz))
         .route("/readyz", get(handlers::readyz))
         .route("/metadata", get(handlers::metadata))
@@ -932,6 +940,10 @@ fn build_router(state: AppState, body_limit: usize) -> Router {
         .route("/api/health", get(handlers::api_health))
         .route("/api/build-info", get(handlers::api_build_info))
         .route("/api/resource-types", get(handlers::api_resource_types))
+        .route(
+            "/api/__introspect/rest-console",
+            get(crate::rest_console::introspect),
+        )
         // Operations registry API
         .route("/api/operations", get(handlers::api_operations))
         .route(
@@ -947,7 +959,9 @@ fn build_router(state: AppState, body_limit: usize) -> Router {
         .route("/api/pg-lsp", get(crate::lsp::lsp_websocket_handler))
         // Embedded UI under /ui
         .route("/ui", get(handlers::ui_index))
-        .route("/ui/{*path}", get(handlers::ui_static))
+        .route("/ui/{*path}", get(handlers::ui_static));
+
+    let mut fhir_router = Router::new()
         // Async job status endpoints (FHIR asynchronous request pattern)
         .route(
             "/_async-status/{job_id}",
@@ -1026,6 +1040,10 @@ fn build_router(state: AppState, body_limit: usize) -> Router {
                 .patch(handlers::patch_resource)
                 .delete(handlers::delete_resource),
         )
+        // Metadata endpoint scoped to /fhir base
+        .route("/metadata", get(handlers::metadata))
+        // Transaction endpoint at base /fhir
+        .route("/", get(handlers::root).post(handlers::transaction_handler))
         // Gateway fallback - only called when no explicit route matches.
         // This allows users to define custom operations on any path.
         .fallback(crate::gateway::router::gateway_fallback_handler);
@@ -1034,12 +1052,19 @@ fn build_router(state: AppState, body_limit: usize) -> Router {
     // GraphQL handlers use State<GraphQLState> which is extracted from AppState via FromRef
     if state.graphql_state.is_some() {
         router = router.route(
-            "/fhir/$graphql",
-            get(octofhir_graphql::graphql_handler_get)
-                .post(octofhir_graphql::graphql_handler),
+            "/$graphql",
+            get(octofhir_graphql::graphql_handler_get).post(octofhir_graphql::graphql_handler),
         );
-        tracing::info!("GraphQL endpoint enabled: /fhir/$graphql");
+        fhir_router = fhir_router.route(
+            "/{resource_type}/{id}/$graphql",
+            post(octofhir_graphql::instance_graphql_handler),
+        );
+        tracing::info!(
+            "GraphQL endpoints enabled: /$graphql and /fhir/{{resourceType}}/{{id}}/$graphql"
+        );
     }
+
+    router = router.nest("/fhir", fhir_router);
 
     // Apply middleware stack (outer to inner: body limit -> trace -> compression/cors -> content negotiation -> authz -> auth -> request id -> handler)
     // Note: Layers wrap from outside-in, so first .layer() is closest to handler
@@ -1320,7 +1345,7 @@ async fn initialize_auth_state(
                     tracing::error!(error = %e, "Failed to generate EC signing key");
                     return None;
                 }
-            }
+            },
         };
 
         tracing::warn!(

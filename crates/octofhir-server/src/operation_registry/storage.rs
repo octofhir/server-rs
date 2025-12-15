@@ -83,7 +83,9 @@ impl PostgresOperationStorage {
     }
 
     /// Convert a row to OperationDefinition
-    fn row_to_operation(row: &sqlx_postgres::PgRow) -> Result<OperationDefinition, OperationStorageError> {
+    fn row_to_operation(
+        row: &sqlx_postgres::PgRow,
+    ) -> Result<OperationDefinition, OperationStorageError> {
         let methods_json: serde_json::Value = row.try_get("methods")?;
         let methods: Vec<String> = serde_json::from_value(methods_json)?;
 
@@ -234,7 +236,9 @@ impl OperationStorage for PostgresOperationStorage {
             .fetch_optional(&self.pool)
             .await?;
 
-        Ok(row.map(|r| r.try_get::<bool, _>("public").unwrap_or(false)).unwrap_or(false))
+        Ok(row
+            .map(|r| r.try_get::<bool, _>("public").unwrap_or(false))
+            .unwrap_or(false))
     }
 
     async fn delete_not_in(&self, ids: &[String]) -> Result<u64, OperationStorageError> {

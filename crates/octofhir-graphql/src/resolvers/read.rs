@@ -17,7 +17,9 @@ impl ReadResolver {
     /// Creates a resolver function for reading a single resource by ID.
     ///
     /// This is used to create the `Patient(_id: ID!)` style query fields.
-    pub fn resolve(resource_type: String) -> impl Fn(ResolverContext<'_>) -> FieldFuture<'_> + Send + Sync + Clone {
+    pub fn resolve(
+        resource_type: String,
+    ) -> impl Fn(ResolverContext<'_>) -> FieldFuture<'_> + Send + Sync + Clone {
         move |ctx| {
             let resource_type = resource_type.clone();
             FieldFuture::new(async move {
@@ -26,9 +28,7 @@ impl ReadResolver {
                     .args
                     .get("_id")
                     .and_then(|v| v.string().ok())
-                    .ok_or_else(|| {
-                        async_graphql::Error::new("Missing required argument '_id'")
-                    })?;
+                    .ok_or_else(|| async_graphql::Error::new("Missing required argument '_id'"))?;
 
                 debug!(
                     resource_type = %resource_type,
@@ -87,7 +87,10 @@ mod tests {
         assert!(matches!(json_to_graphql_value(json!(null)), Value::Null));
 
         // Boolean
-        assert!(matches!(json_to_graphql_value(json!(true)), Value::Boolean(true)));
+        assert!(matches!(
+            json_to_graphql_value(json!(true)),
+            Value::Boolean(true)
+        ));
 
         // Number
         assert!(matches!(json_to_graphql_value(json!(42)), Value::Number(_)));

@@ -32,10 +32,11 @@ async fn metadata_reports_configured_fhir_version_r4() {
     let mut cfg = AppConfig::default();
     cfg.fhir.version = "R4".to_string();
     let (base, shutdown_tx, handle) = start_server_with_cfg(cfg).await;
+    let fhir_base = format!("{base}/fhir");
 
     let client = reqwest::Client::new();
     let resp = client
-        .get(format!("{base}/metadata"))
+        .get(format!("{fhir_base}/metadata"))
         .header("accept", HeaderValue::from_static("application/fhir+json"))
         .send()
         .await
@@ -54,10 +55,11 @@ async fn metadata_reports_configured_fhir_version_r5() {
     let mut cfg = AppConfig::default();
     cfg.fhir.version = "R5".to_string();
     let (base, shutdown_tx, handle) = start_server_with_cfg(cfg).await;
+    let fhir_base = format!("{base}/fhir");
 
     let client = reqwest::Client::new();
     let resp = client
-        .get(format!("{base}/metadata"))
+        .get(format!("{fhir_base}/metadata"))
         .header("accept", HeaderValue::from_static("application/fhir+json"))
         .send()
         .await

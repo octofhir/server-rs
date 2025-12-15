@@ -88,11 +88,7 @@ impl PublicPathsCache {
 
         let exact_count = self.exact_paths.read().map(|g| g.len()).unwrap_or(0);
         let prefix_count = self.path_prefixes.read().map(|g| g.len()).unwrap_or(0);
-        tracing::debug!(
-            exact_count,
-            prefix_count,
-            "Public paths cache updated"
-        );
+        tracing::debug!(exact_count, prefix_count, "Public paths cache updated");
     }
 
     /// Checks if a path matches any public operation.

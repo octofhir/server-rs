@@ -105,7 +105,6 @@ fn default_percentage() -> u8 {
     0
 }
 
-
 /// A single feature flag
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FeatureFlag {

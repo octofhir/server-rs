@@ -108,7 +108,10 @@ impl PostgresLspServer {
                 func_ctx.function_name,
                 func_ctx.arg_index
             );
-            return Some(self.get_function_arg_completions(func_ctx, &tree, text, offset).await);
+            return Some(
+                self.get_function_arg_completions(func_ctx, &tree, text, offset)
+                    .await,
+            );
         }
 
         // Check if we're in a JSONB path context using tree-sitter AST
@@ -372,10 +375,7 @@ impl PostgresLspServer {
     /// Extract column name and path segments from a JSONB expression.
     ///
     /// Example: `resource->'name'->'given'` → ("resource", ["name", "given"])
-    fn extract_jsonb_path(
-        node: &tree_sitter::Node,
-        text: &str,
-    ) -> Option<(String, Vec<String>)> {
+    fn extract_jsonb_path(node: &tree_sitter::Node, text: &str) -> Option<(String, Vec<String>)> {
         let mut path_segments = Vec::new();
         let mut column_name = None;
 
@@ -538,13 +538,17 @@ impl PostgresLspServer {
                     // Look for identifier inside function_reference
                     for j in 0..child.child_count() {
                         if let Some(id_node) = child.child(j as u32) {
-                            if id_node.kind() == "identifier" || id_node.kind() == "any_identifier" {
+                            if id_node.kind() == "identifier" || id_node.kind() == "any_identifier"
+                            {
                                 let name = id_node.utf8_text(text.as_bytes()).ok()?;
                                 return Some(name.to_string());
                             }
                         }
                     }
-                } else if kind == "identifier" || kind == "any_identifier" || kind == "function_name" {
+                } else if kind == "identifier"
+                    || kind == "any_identifier"
+                    || kind == "function_name"
+                {
                     let name = child.utf8_text(text.as_bytes()).ok()?;
                     return Some(name.to_string());
                 }
@@ -747,12 +751,17 @@ impl PostgresLspServer {
             CursorContext::Keyword { partial } => {
                 self.filter_by_prefix(self.get_keyword_completions(), partial)
             }
-            CursorContext::SelectColumns { partial, tables, .. } => {
+            CursorContext::SelectColumns {
+                partial, tables, ..
+            } => {
                 let mut items = Vec::new();
 
                 // Add column completions from all tables in FROM clause
                 for table_ref in tables {
-                    let cols = self.get_column_completions_for_table(&table_ref.table, table_ref.alias.as_deref());
+                    let cols = self.get_column_completions_for_table(
+                        &table_ref.table,
+                        table_ref.alias.as_deref(),
+                    );
                     items.extend(cols);
                 }
 
@@ -772,17 +781,27 @@ impl PostgresLspServer {
                 let tables = self.get_tables_in_schema_completions(schema);
                 self.filter_by_prefix(tables, partial)
             }
-            CursorContext::AliasColumnAccess { table, alias, partial, .. } => {
+            CursorContext::AliasColumnAccess {
+                table,
+                alias,
+                partial,
+                ..
+            } => {
                 // Show columns for the aliased table
                 let items = self.get_column_completions_for_table(table, Some(alias));
                 self.filter_by_prefix(items, partial)
             }
-            CursorContext::WhereClause { partial, tables, .. } => {
+            CursorContext::WhereClause {
+                partial, tables, ..
+            } => {
                 let mut items = Vec::new();
 
                 // Add column completions from all tables
                 for table_ref in tables {
-                    let cols = self.get_column_completions_for_table(&table_ref.table, table_ref.alias.as_deref());
+                    let cols = self.get_column_completions_for_table(
+                        &table_ref.table,
+                        table_ref.alias.as_deref(),
+                    );
                     items.extend(cols);
                 }
 
@@ -791,7 +810,13 @@ impl PostgresLspServer {
                 items.extend(self.get_jsonb_operator_completions());
                 self.filter_by_prefix(items, partial)
             }
-            CursorContext::JsonbPath { table, path, tables, quote_context, .. } => {
+            CursorContext::JsonbPath {
+                table,
+                path,
+                tables,
+                quote_context,
+                ..
+            } => {
                 // Get FHIR path completions from canonical manager
                 // If table is empty, try to infer from the first table in FROM clause
                 let resolved_table = if table.is_empty() && !tables.is_empty() {
@@ -800,7 +825,14 @@ impl PostgresLspServer {
                 } else {
                     table.clone()
                 };
-                self.get_fhir_path_completions(&resolved_table, path, quote_context, position, document_text).await
+                self.get_fhir_path_completions(
+                    &resolved_table,
+                    path,
+                    quote_context,
+                    position,
+                    document_text,
+                )
+                .await
             }
             CursorContext::FunctionArgs { function, .. } => {
                 // Return type hints for function arguments
@@ -828,9 +860,14 @@ impl PostgresLspServer {
                         items.push(CompletionItem {
                             label: policy.name.clone(),
                             kind: Some(CompletionItemKind::EVENT),
-                            detail: Some(format!("Policy ({}, {})",
+                            detail: Some(format!(
+                                "Policy ({}, {})",
                                 policy.command,
-                                if policy.permissive { "PERMISSIVE" } else { "RESTRICTIVE" }
+                                if policy.permissive {
+                                    "PERMISSIVE"
+                                } else {
+                                    "RESTRICTIVE"
+                                }
                             )),
                             ..Default::default()
                         });
@@ -864,7 +901,11 @@ impl PostgresLspServer {
     }
 
     /// Get column completions for a specific table, optionally prefixed with alias.
-    fn get_column_completions_for_table(&self, table_name: &str, alias: Option<&str>) -> Vec<CompletionItem> {
+    fn get_column_completions_for_table(
+        &self,
+        table_name: &str,
+        alias: Option<&str>,
+    ) -> Vec<CompletionItem> {
         self.schema_cache
             .get_columns(table_name)
             .into_iter()
@@ -873,7 +914,11 @@ impl PostgresLspServer {
                 let detail = format!(
                     "{} ({}) - from {}",
                     col.data_type,
-                    if col.is_nullable { "nullable" } else { "not null" },
+                    if col.is_nullable {
+                        "nullable"
+                    } else {
+                        "not null"
+                    },
                     alias.unwrap_or(table_name)
                 );
 
@@ -1174,7 +1219,11 @@ impl PostgresLspServer {
 
             let segment_end_char = Self::byte_to_char_index(line_text, segment_end_byte);
 
-            (segment_start_char, segment_end_char, element_name.to_string())
+            (
+                segment_start_char,
+                segment_end_char,
+                element_name.to_string(),
+            )
         } else if quote_context.has_opening_quote {
             // After opening quote: resource->'| → insert without quotes
             (cursor_char, cursor_char, element_name.to_string())
@@ -1363,7 +1412,13 @@ impl PostgresLspServer {
             // Second argument: JSONPath expression completions
             1 => {
                 tracing::debug!("Providing JSONPath expression completions");
-                self.get_jsonpath_expression_completions(tree, text, cursor_offset, ctx.arg_start_offset).await
+                self.get_jsonpath_expression_completions(
+                    tree,
+                    text,
+                    cursor_offset,
+                    ctx.arg_start_offset,
+                )
+                .await
             }
             // Other arguments: could add hints for vars, silent, etc. in the future
             _ => {
@@ -1427,7 +1482,11 @@ impl PostgresLspServer {
         // Find all tables from FROM clause
         let tables = Self::extract_tables_from_ast(&root, text);
 
-        tracing::info!("Column completion: Found {} tables in FROM clause: {:?}", tables.len(), tables);
+        tracing::info!(
+            "Column completion: Found {} tables in FROM clause: {:?}",
+            tables.len(),
+            tables
+        );
 
         let mut items = Vec::new();
 
@@ -1573,11 +1632,7 @@ impl PostgresLspServer {
             return Vec::new();
         };
 
-        tracing::debug!(
-            "Resolved column '{}' to table '{}'",
-            column_name,
-            table
-        );
+        tracing::debug!("Resolved column '{}' to table '{}'", column_name, table);
 
         // Get FHIR resource type from table
         let resource_type = self
@@ -1602,7 +1657,8 @@ impl PostgresLspServer {
         );
 
         // We're already in an async context, so just await directly
-        let completions = self.get_fhir_path_completions(&table, &path_segments, &quote_context, position, text)
+        let completions = self
+            .get_fhir_path_completions(&table, &path_segments, &quote_context, position, text)
             .await;
 
         // Debug: log first few completion items to diagnose UI issues
@@ -1612,12 +1668,15 @@ impl PostgresLspServer {
                 i,
                 item.label,
                 item.text_edit.as_ref().map(|te| match te {
-                    tower_lsp::lsp_types::CompletionTextEdit::Edit(edit) =>
-                        format!("range={}:{}-{}:{} text='{}'",
-                            edit.range.start.line, edit.range.start.character,
-                            edit.range.end.line, edit.range.end.character,
-                            edit.new_text),
-                    _ => "InsertReplace".to_string()
+                    tower_lsp::lsp_types::CompletionTextEdit::Edit(edit) => format!(
+                        "range={}:{}-{}:{} text='{}'",
+                        edit.range.start.line,
+                        edit.range.start.character,
+                        edit.range.end.line,
+                        edit.range.end.character,
+                        edit.new_text
+                    ),
+                    _ => "InsertReplace".to_string(),
                 })
             );
         }
@@ -1983,9 +2042,10 @@ impl PostgresLspServer {
                     label: func.name.clone(),
                     kind: Some(CompletionItemKind::FUNCTION),
                     detail: Some(format!("{} - {}", func.return_type, func.description)),
-                    documentation: Some(tower_lsp::lsp_types::Documentation::String(
-                        format!("```sql\n{}\n```", func.signature)
-                    )),
+                    documentation: Some(tower_lsp::lsp_types::Documentation::String(format!(
+                        "```sql\n{}\n```",
+                        func.signature
+                    ))),
                     insert_text: Some(insert_text),
                     insert_text_format: Some(InsertTextFormat::SNIPPET),
                     // Sort functions after columns but before keywords
@@ -2005,25 +2065,41 @@ impl PostgresLspServer {
             // Path query functions get JSONPath template
             if matches!(
                 name_lower.as_str(),
-                "jsonb_path_exists" | "jsonb_path_match" | "jsonb_path_query"
-                | "jsonb_path_query_array" | "jsonb_path_query_first"
+                "jsonb_path_exists"
+                    | "jsonb_path_match"
+                    | "jsonb_path_query"
+                    | "jsonb_path_query_array"
+                    | "jsonb_path_query_first"
             ) {
                 return format!("{}(${{1:jsonb_column}}, '$.${{2:path}}')", name);
             }
 
             // Manipulation functions get path array template
             if name_lower == "jsonb_set" {
-                return format!("{}(${{1:jsonb_column}}, '{{${{2:path}}}}', '${{3:value}}')", name);
+                return format!(
+                    "{}(${{1:jsonb_column}}, '{{${{2:path}}}}', '${{3:value}}')",
+                    name
+                );
             }
 
             if name_lower == "jsonb_insert" {
-                return format!("{}(${{1:jsonb_column}}, '{{${{2:path}}}}', '${{3:value}}', ${{4:false}})", name);
+                return format!(
+                    "{}(${{1:jsonb_column}}, '{{${{2:path}}}}', '${{3:value}}', ${{4:false}})",
+                    name
+                );
             }
         }
 
         // Special cases for functions without parentheses
-        if matches!(name, "current_timestamp" | "current_date" | "current_time" |
-                          "localtime" | "localtimestamp" | "current_user") {
+        if matches!(
+            name,
+            "current_timestamp"
+                | "current_date"
+                | "current_time"
+                | "localtime"
+                | "localtimestamp"
+                | "current_user"
+        ) {
             return name.to_string();
         }
 
@@ -2218,7 +2294,9 @@ impl LanguageServer for PostgresLspServer {
 
         // Get completions based on context
         tracing::trace!("Getting completions for context");
-        let items = self.get_completions_for_context(&context, position, &text).await;
+        let items = self
+            .get_completions_for_context(&context, position, &text)
+            .await;
 
         tracing::debug!(item_count = items.len(), "LSP completion returning items");
 
@@ -2277,7 +2355,9 @@ impl PostgresLspServer {
                 // Get table hover info
                 self.get_table_hover(partial)
             }
-            CursorContext::SelectColumns { partial, tables, .. } if !partial.is_empty() => {
+            CursorContext::SelectColumns {
+                partial, tables, ..
+            } if !partial.is_empty() => {
                 // Try function hover first
                 if let Some(info) = self.get_function_hover(partial) {
                     return Some(info);
@@ -2295,7 +2375,9 @@ impl PostgresLspServer {
                 // Show column hover for alias.column pattern
                 self.get_column_hover(table, partial)
             }
-            CursorContext::WhereClause { partial, tables, .. } if !partial.is_empty() => {
+            CursorContext::WhereClause {
+                partial, tables, ..
+            } if !partial.is_empty() => {
                 // Try function hover
                 if let Some(info) = self.get_function_hover(partial) {
                     return Some(info);
@@ -2483,10 +2565,7 @@ impl PostgresLspServer {
                     .get_fhir_resource_type(table_name)
                     .unwrap_or_else(|| Self::to_pascal_case(table_name));
 
-                hover.push_str(&format!(
-                    "---\n**FHIR Resource:** `{}`\n\n",
-                    resource_type
-                ));
+                hover.push_str(&format!("---\n**FHIR Resource:** `{}`\n\n", resource_type));
                 hover.push_str("**Usage:**\n```sql\n");
                 hover.push_str(&format!(
                     "{col}->>'id'              -- Get resource ID as text\n",
@@ -2693,10 +2772,7 @@ impl PostgresLspServer {
         }
 
         if !role.member_of.is_empty() {
-            hover.push_str(&format!(
-                "**Member of:** {}\n\n",
-                role.member_of.join(", ")
-            ));
+            hover.push_str(&format!("**Member of:** {}\n\n", role.member_of.join(", ")));
         }
 
         hover.push_str("---\n");
@@ -2757,7 +2833,11 @@ impl PostgresLspServer {
                 hover.push_str("\n**Usage:**\n```sql\n");
                 hover.push_str(&format!(
                     "SELECT * FROM table WHERE column = '{}'::{};\n",
-                    type_info.enum_labels.first().map(|s| s.as_str()).unwrap_or("value"),
+                    type_info
+                        .enum_labels
+                        .first()
+                        .map(|s| s.as_str())
+                        .unwrap_or("value"),
                     type_info.name
                 ));
                 hover.push_str("```");
@@ -2840,7 +2920,8 @@ mod tests {
         let sql = "SELECT jsonb_path_exists(resource, '$.name') FROM patient";
 
         let mut parser = tree_sitter::Parser::new();
-        parser.set_language(&pgls_treesitter_grammar::LANGUAGE.into())
+        parser
+            .set_language(&pgls_treesitter_grammar::LANGUAGE.into())
             .expect("Failed to load grammar");
 
         let tree = parser.parse(sql, None).expect("Failed to parse");
@@ -2848,7 +2929,8 @@ mod tests {
 
         // Test cursor at first argument position (after opening paren)
         let offset = sql.find("(").unwrap() + 1;
-        let cursor_node = root.descendant_for_byte_range(offset, offset)
+        let cursor_node = root
+            .descendant_for_byte_range(offset, offset)
             .expect("Failed to find node");
 
         let ctx = PostgresLspServer::detect_function_call_context(&cursor_node, sql, offset);
@@ -2864,7 +2946,8 @@ mod tests {
         let sql = "SELECT jsonb_path_exists(resource, '$.name') FROM patient";
 
         let mut parser = tree_sitter::Parser::new();
-        parser.set_language(&pgls_treesitter_grammar::LANGUAGE.into())
+        parser
+            .set_language(&pgls_treesitter_grammar::LANGUAGE.into())
             .expect("Failed to load grammar");
 
         let tree = parser.parse(sql, None).expect("Failed to parse");
@@ -2872,7 +2955,8 @@ mod tests {
 
         // Test cursor at second argument position (after comma)
         let offset = sql.find(", '").unwrap() + 2;
-        let cursor_node = root.descendant_for_byte_range(offset, offset)
+        let cursor_node = root
+            .descendant_for_byte_range(offset, offset)
             .expect("Failed to find node");
 
         let ctx = PostgresLspServer::detect_function_call_context(&cursor_node, sql, offset);
@@ -2888,7 +2972,8 @@ mod tests {
         let sql = "SELECT * FROM patient WHERE jsonb_path_exists(resource, '$.')";
 
         let mut parser = tree_sitter::Parser::new();
-        parser.set_language(&pgls_treesitter_grammar::LANGUAGE.into())
+        parser
+            .set_language(&pgls_treesitter_grammar::LANGUAGE.into())
             .expect("Failed to load grammar");
 
         let tree = parser.parse(sql, None).expect("Failed to parse");
@@ -2896,11 +2981,15 @@ mod tests {
 
         // Test cursor at first argument in WHERE clause
         let offset = sql.find("(resource").unwrap() + 1;
-        let cursor_node = root.descendant_for_byte_range(offset, offset)
+        let cursor_node = root
+            .descendant_for_byte_range(offset, offset)
             .expect("Failed to find node");
 
         let ctx = PostgresLspServer::detect_function_call_context(&cursor_node, sql, offset);
-        assert!(ctx.is_some(), "Should detect function call context in WHERE clause");
+        assert!(
+            ctx.is_some(),
+            "Should detect function call context in WHERE clause"
+        );
 
         let ctx = ctx.unwrap();
         assert_eq!(ctx.function_name, "jsonb_path_exists");
@@ -2912,7 +3001,8 @@ mod tests {
         let sql = "SELECT * FROM patient WHERE id = '123'";
 
         let mut parser = tree_sitter::Parser::new();
-        parser.set_language(&pgls_treesitter_grammar::LANGUAGE.into())
+        parser
+            .set_language(&pgls_treesitter_grammar::LANGUAGE.into())
             .expect("Failed to load grammar");
 
         let tree = parser.parse(sql, None).expect("Failed to parse");
@@ -2928,15 +3018,22 @@ mod tests {
         let sql = "SELECT * FROM patient p JOIN observation o ON p.id = o.subject";
 
         let mut parser = tree_sitter::Parser::new();
-        parser.set_language(&pgls_treesitter_grammar::LANGUAGE.into())
+        parser
+            .set_language(&pgls_treesitter_grammar::LANGUAGE.into())
             .expect("Failed to load grammar");
 
         let tree = parser.parse(sql, None).expect("Failed to parse");
         let root = tree.root_node();
 
         let tables = PostgresLspServer::extract_tables_from_ast(&root, sql);
-        assert!(tables.contains(&"patient".to_string()), "Should contain patient");
-        assert!(tables.contains(&"observation".to_string()), "Should contain observation");
+        assert!(
+            tables.contains(&"patient".to_string()),
+            "Should contain patient"
+        );
+        assert!(
+            tables.contains(&"observation".to_string()),
+            "Should contain observation"
+        );
     }
 
     #[test]
@@ -2944,7 +3041,8 @@ mod tests {
         let sql = "SELECT jsonb_path_exists(resource, '$.name') FROM patient";
 
         let mut parser = tree_sitter::Parser::new();
-        parser.set_language(&pgls_treesitter_grammar::LANGUAGE.into())
+        parser
+            .set_language(&pgls_treesitter_grammar::LANGUAGE.into())
             .expect("Failed to load grammar");
 
         let tree = parser.parse(sql, None).expect("Failed to parse");
@@ -2952,7 +3050,8 @@ mod tests {
 
         // Get cursor in second argument to test extraction of first arg
         let offset = sql.find("'$.name'").unwrap();
-        let cursor_node = root.descendant_for_byte_range(offset, offset)
+        let cursor_node = root
+            .descendant_for_byte_range(offset, offset)
             .expect("Failed to find node");
 
         let column = PostgresLspServer::extract_first_arg_column(&cursor_node, sql);
@@ -2962,8 +3061,14 @@ mod tests {
     #[test]
     fn test_to_pascal_case() {
         assert_eq!(PostgresLspServer::to_pascal_case("patient"), "Patient");
-        assert_eq!(PostgresLspServer::to_pascal_case("patient_encounter"), "PatientEncounter");
-        assert_eq!(PostgresLspServer::to_pascal_case("observation"), "Observation");
+        assert_eq!(
+            PostgresLspServer::to_pascal_case("patient_encounter"),
+            "PatientEncounter"
+        );
+        assert_eq!(
+            PostgresLspServer::to_pascal_case("observation"),
+            "Observation"
+        );
         assert_eq!(PostgresLspServer::to_pascal_case("care_plan"), "CarePlan");
     }
 }

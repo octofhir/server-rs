@@ -15,7 +15,7 @@ use async_graphql::{Request, Response, Variables};
 use axum::Json;
 use axum::extract::{Extension, Path, Query, State};
 use axum::http::{HeaderMap, StatusCode, header};
-use axum::response::{Html, IntoResponse};
+use axum::response::IntoResponse;
 use octofhir_auth::middleware::AuthContext;
 use serde::{Deserialize, Serialize};
 use tracing::{debug, warn};
@@ -32,9 +32,6 @@ pub struct GraphQLState {
 
     /// Context builder template with shared dependencies.
     pub context_template: GraphQLContextTemplate,
-
-    /// Whether the GraphQL playground is enabled.
-    pub playground_enabled: bool,
 }
 
 /// Template for building per-request GraphQL context.
@@ -140,36 +137,32 @@ pub async fn graphql_handler(
         "Processing GraphQL request"
     );
 
-    execute_graphql(state, headers, request, None, None, Some(auth_context), None)
-        .await
-        .into_response()
+    execute_graphql(
+        state,
+        headers,
+        request,
+        None,
+        None,
+        Some(auth_context),
+        None,
+    )
+    .await
+    .into_response()
 }
 
 /// Handles GET requests to /$graphql (system-level endpoint).
 ///
 /// This endpoint supports GraphQL queries via URL query parameters.
-/// Also serves the GraphQL Playground if enabled and no query is provided.
 ///
 /// # Authentication
 ///
-/// Authentication is required for all GraphQL requests, including the playground.
-/// This ensures the playground is only accessible to authenticated users.
+/// Authentication is required for all GraphQL requests.
 pub async fn graphql_handler_get(
     State(state): State<GraphQLState>,
     Extension(auth_context): Extension<AuthContext>,
     headers: HeaderMap,
     Query(params): Query<GraphQLQueryParams>,
 ) -> impl IntoResponse {
-    // If no query provided and playground is enabled, show playground
-    // Note: Auth is still required (validated by middleware)
-    if params.query.is_none() && state.playground_enabled {
-        debug!(
-            user = ?auth_context.user.as_ref().map(|u| &u.id),
-            "Serving GraphQL Playground"
-        );
-        return playground_response().into_response();
-    }
-
     // Parse query params into request
     let request = match params_to_request(params) {
         Ok(req) => req,
@@ -184,9 +177,17 @@ pub async fn graphql_handler_get(
         "Processing GraphQL GET request"
     );
 
-    execute_graphql(state, headers, request, None, None, Some(auth_context), None)
-        .await
-        .into_response()
+    execute_graphql(
+        state,
+        headers,
+        request,
+        None,
+        None,
+        Some(auth_context),
+        None,
+    )
+    .await
+    .into_response()
 }
 
 /// Handles POST requests to /:type/:id/$graphql (instance-level endpoint).
@@ -232,7 +233,9 @@ pub async fn instance_graphql_handler(
 /// We detect them by checking if the query contains __schema or __type.
 fn is_introspection_query(query: &str) -> bool {
     let trimmed = query.trim();
-    trimmed.contains("__schema") || trimmed.contains("__type") || trimmed.contains("IntrospectionQuery")
+    trimmed.contains("__schema")
+        || trimmed.contains("__type")
+        || trimmed.contains("IntrospectionQuery")
 }
 
 /// Executes a GraphQL request.
@@ -427,108 +430,6 @@ fn error_response(error: GraphQLError) -> impl IntoResponse {
         Json(body),
     )
 }
-
-/// Returns the GraphiQL HTML with locally-served assets.
-///
-/// This uses embedded assets instead of loading from CDN for:
-/// - Better user experience (faster loading)
-/// - Offline/air-gapped environment support
-/// - No external network dependencies
-fn playground_response() -> impl IntoResponse {
-    Html(GRAPHIQL_HTML.to_string())
-}
-
-/// Embedded GraphiQL HTML template.
-///
-/// Assets are served from /fhir/$graphql/assets/* endpoints.
-/// This avoids CDN dependencies and works in offline environments.
-const GRAPHIQL_HTML: &str = r#"<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>OctoFHIR GraphQL</title>
-    <style>
-        body {
-            height: 100%;
-            margin: 0;
-            width: 100%;
-            overflow: hidden;
-        }
-        #graphiql {
-            height: 100vh;
-        }
-        .graphiql-container {
-            font-family: system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-        }
-        /* Loading state */
-        .loading {
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            height: 100vh;
-            font-family: system-ui, -apple-system, sans-serif;
-            color: #666;
-        }
-    </style>
-    <link rel="stylesheet" href="/fhir/$graphql/assets/graphiql.min.css" />
-</head>
-<body>
-    <div id="graphiql" class="loading">Loading GraphiQL...</div>
-    <script src="/fhir/$graphql/assets/react.production.min.js"></script>
-    <script src="/fhir/$graphql/assets/react-dom.production.min.js"></script>
-    <script src="/fhir/$graphql/assets/graphiql.min.js"></script>
-    <script>
-        const root = ReactDOM.createRoot(document.getElementById('graphiql'));
-
-        // Get auth token from cookie or localStorage
-        function getAuthToken() {
-            // Try localStorage first (set by UI)
-            const stored = localStorage.getItem('octofhir_token');
-            if (stored) {
-                try {
-                    const parsed = JSON.parse(stored);
-                    if (parsed.access_token) return parsed.access_token;
-                } catch (e) {}
-            }
-            // Fallback to cookie
-            const match = document.cookie.match(/octofhir_token=([^;]+)/);
-            return match ? match[1] : null;
-        }
-
-        const fetcher = GraphiQL.createFetcher({
-            url: '/fhir/$graphql',
-            headers: () => {
-                const token = getAuthToken();
-                return token ? { 'Authorization': 'Bearer ' + token } : {};
-            }
-        });
-
-        root.render(
-            React.createElement(GraphiQL, {
-                fetcher: fetcher,
-                defaultEditorToolsVisibility: true,
-                defaultQuery: `# Welcome to OctoFHIR GraphQL
-#
-# Query FHIR resources using GraphQL syntax.
-# Press Ctrl+Space for autocomplete.
-
-query GetPatients {
-  PatientList(first: 10) {
-    id
-    name {
-      given
-      family
-    }
-    birthDate
-  }
-}
-`,
-            })
-        );
-    </script>
-</body>
-</html>"#;
 
 #[cfg(test)]
 mod tests {

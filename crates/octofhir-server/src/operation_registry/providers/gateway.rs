@@ -4,7 +4,7 @@
 
 use std::collections::HashMap;
 
-use octofhir_core::{categories, OperationDefinition, OperationProvider};
+use octofhir_core::{OperationDefinition, OperationProvider, categories};
 use octofhir_storage::{DynStorage, SearchParams};
 use tracing::{debug, warn};
 
@@ -141,7 +141,10 @@ impl GatewayOperationProvider {
             operations.push(op_def);
         }
 
-        debug!(count = operations.len(), "Converted CustomOperations to OperationDefinitions");
+        debug!(
+            count = operations.len(),
+            "Converted CustomOperations to OperationDefinitions"
+        );
 
         Ok(operations)
     }

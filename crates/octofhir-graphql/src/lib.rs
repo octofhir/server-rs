@@ -33,7 +33,6 @@
 //! max_depth = 15
 //! max_complexity = 500
 //! introspection = true
-//! playground = true
 //! ```
 //!
 //! ## Modules

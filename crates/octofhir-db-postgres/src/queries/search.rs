@@ -11,7 +11,7 @@ use sqlx_core::query_scalar::query_scalar;
 use sqlx_postgres::PgPool;
 use time::OffsetDateTime;
 
-use octofhir_search::{build_query_from_params, BuiltQuery, SearchParameterRegistry, SqlValue};
+use octofhir_search::{BuiltQuery, SearchParameterRegistry, SqlValue, build_query_from_params};
 use octofhir_storage::{SearchParams, SearchResult, StorageError, StoredResource, TotalMode};
 
 use crate::schema::SchemaManager;
@@ -45,12 +45,11 @@ pub async fn execute_search(
     let registry = registry.map(|r| r.as_ref()).unwrap_or(&empty_registry);
 
     // Convert SearchParams to SQL query using the params converter
-    let converted = build_query_from_params(resource_type, params, registry, "public").map_err(
-        |e| {
+    let converted =
+        build_query_from_params(resource_type, params, registry, "public").map_err(|e| {
             tracing::warn!(error = %e, "Failed to build search query");
             StorageError::invalid_resource(format!("Invalid search parameters: {e}"))
-        },
-    )?;
+        })?;
 
     // Build the SQL query
     let built_query = converted.builder.build().map_err(|e| {
@@ -196,8 +195,7 @@ async fn resolve_includes_revincludes(
 
     // Handle _revinclude: find resources that reference main results
     for revinclude in revincludes {
-        let revincluded_resources =
-            resolve_revinclude(pool, main_results, revinclude).await?;
+        let revincluded_resources = resolve_revinclude(pool, main_results, revinclude).await?;
         included.extend(revincluded_resources);
     }
 
@@ -243,9 +241,7 @@ async fn resolve_include(
     let table = SchemaManager::table_name(target_type);
 
     // Query for included resources
-    let placeholders: Vec<String> = (1..=reference_ids.len())
-        .map(|i| format!("${i}"))
-        .collect();
+    let placeholders: Vec<String> = (1..=reference_ids.len()).map(|i| format!("${i}")).collect();
     let sql = format!(
         r#"SELECT resource, id, txid, ts FROM "{table}"
            WHERE id = ANY(ARRAY[{}]::text[])
@@ -258,12 +254,16 @@ async fn resolve_include(
         query = query.bind(id);
     }
 
-    let rows: Vec<(Value, String, i64, DateTime<Utc>)> = query.fetch_all(pool).await.map_err(|e| {
-        if e.to_string().contains("does not exist") {
-            return StorageError::internal(format!("Include target table {} not found", target_type));
-        }
-        StorageError::internal(format!("Include query failed: {e}"))
-    })?;
+    let rows: Vec<(Value, String, i64, DateTime<Utc>)> =
+        query.fetch_all(pool).await.map_err(|e| {
+            if e.to_string().contains("does not exist") {
+                return StorageError::internal(format!(
+                    "Include target table {} not found",
+                    target_type
+                ));
+            }
+            StorageError::internal(format!("Include query failed: {e}"))
+        })?;
 
     let entries: Vec<StoredResource> = rows
         .into_iter()
@@ -327,15 +327,16 @@ async fn resolve_revinclude(
         query = query.bind(ref_value);
     }
 
-    let rows: Vec<(Value, String, i64, DateTime<Utc>)> = query.fetch_all(pool).await.map_err(|e| {
-        if e.to_string().contains("does not exist") {
-            return StorageError::internal(format!(
-                "RevInclude source table {} not found",
-                source_type
-            ));
-        }
-        StorageError::internal(format!("RevInclude query failed: {e}"))
-    })?;
+    let rows: Vec<(Value, String, i64, DateTime<Utc>)> =
+        query.fetch_all(pool).await.map_err(|e| {
+            if e.to_string().contains("does not exist") {
+                return StorageError::internal(format!(
+                    "RevInclude source table {} not found",
+                    source_type
+                ));
+            }
+            StorageError::internal(format!("RevInclude query failed: {e}"))
+        })?;
 
     let entries: Vec<StoredResource> = rows
         .into_iter()
@@ -360,7 +361,14 @@ trait BindAllParams<'q> {
     fn bind_all_params(self, params: &'q [SqlValue]) -> Self;
 }
 
-impl<'q> BindAllParams<'q> for sqlx_core::query_as::QueryAs<'q, sqlx_postgres::Postgres, (Value, String, i64, DateTime<Utc>), sqlx_postgres::PgArguments> {
+impl<'q> BindAllParams<'q>
+    for sqlx_core::query_as::QueryAs<
+        'q,
+        sqlx_postgres::Postgres,
+        (Value, String, i64, DateTime<Utc>),
+        sqlx_postgres::PgArguments,
+    >
+{
     fn bind_all_params(mut self, params: &'q [SqlValue]) -> Self {
         for param in params {
             self = match param {
@@ -377,7 +385,14 @@ impl<'q> BindAllParams<'q> for sqlx_core::query_as::QueryAs<'q, sqlx_postgres::P
     }
 }
 
-impl<'q> BindAllParams<'q> for sqlx_core::query_scalar::QueryScalar<'q, sqlx_postgres::Postgres, i64, sqlx_postgres::PgArguments> {
+impl<'q> BindAllParams<'q>
+    for sqlx_core::query_scalar::QueryScalar<
+        'q,
+        sqlx_postgres::Postgres,
+        i64,
+        sqlx_postgres::PgArguments,
+    >
+{
     fn bind_all_params(mut self, params: &'q [SqlValue]) -> Self {
         for param in params {
             self = match param {

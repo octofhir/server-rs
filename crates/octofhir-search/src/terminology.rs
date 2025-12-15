@@ -119,7 +119,6 @@ pub enum TerminologyError {
     CodeSystemNotFound(String),
 }
 
-
 /// Hybrid terminology provider with two-tier lookup.
 ///
 /// Priority order:

@@ -11,18 +11,27 @@ fn test_treesitter_jsonb_parsing() {
 
     let test_cases = vec![
         // Complete JSONB expressions
-        ("SELECT resource->'name' FROM patient", "Complete single arrow"),
+        (
+            "SELECT resource->'name' FROM patient",
+            "Complete single arrow",
+        ),
         (
             "SELECT resource->'name'->>'given' FROM patient",
             "Complete double arrow",
         ),
-        ("SELECT resource#>'{name,0}' FROM patient", "Hash arrow with path"),
+        (
+            "SELECT resource#>'{name,0}' FROM patient",
+            "Hash arrow with path",
+        ),
         (
             "SELECT resource#>>'{name,given}' FROM patient",
             "Hash double arrow",
         ),
         // Incomplete expressions (critical for LSP completions!)
-        ("SELECT resource->'name'-> FROM patient", "Incomplete after arrow"),
+        (
+            "SELECT resource->'name'-> FROM patient",
+            "Incomplete after arrow",
+        ),
         ("SELECT resource->' FROM patient", "Incomplete string key"),
         ("SELECT resource-> FROM patient", "Incomplete no operand"),
         (
@@ -30,7 +39,10 @@ fn test_treesitter_jsonb_parsing() {
             "Incomplete chained access",
         ),
         // Edge cases
-        ("SELECT resource->'name'->0->'system' FROM patient", "Array index"),
+        (
+            "SELECT resource->'name'->0->'system' FROM patient",
+            "Array index",
+        ),
         (
             "SELECT resource @> '{\"name\": \"test\"}' FROM patient",
             "Contains operator",
@@ -49,7 +61,12 @@ fn test_treesitter_jsonb_parsing() {
             Some(tree) => {
                 let root = tree.root_node();
                 println!("✓ Parsed successfully");
-                println!("  Root: {} ({}..{})", root.kind(), root.start_byte(), root.end_byte());
+                println!(
+                    "  Root: {} ({}..{})",
+                    root.kind(),
+                    root.start_byte(),
+                    root.end_byte()
+                );
 
                 // Print AST structure
                 print_ast_tree(&root, sql.as_bytes(), 1);
@@ -95,7 +112,7 @@ fn print_ast_tree(node: &tree_sitter::Node, source: &[u8], depth: usize) {
     // Limit depth to avoid too much output
     if depth < 4 {
         for i in 0..node.child_count() {
-            if let Some(child) = node.child(i) {
+            if let Some(child) = node.child(i as u32) {
                 print_ast_tree(&child, source, depth + 1);
             }
         }
@@ -106,9 +123,7 @@ fn print_ast_tree(node: &tree_sitter::Node, source: &[u8], depth: usize) {
 
 /// Find JSONB operators in the AST
 fn find_jsonb_operators(node: &tree_sitter::Node, source: &[u8]) {
-    let jsonb_ops = vec![
-        "->", "->>", "#>", "#>>", "@>", "<@", "?", "?|", "?&",
-    ];
+    let jsonb_ops = vec!["->", "->>", "#>", "#>>", "@>", "<@", "?", "?|", "?&"];
 
     let mut found_ops = Vec::new();
 
@@ -135,27 +150,19 @@ fn search_operators(
     let text = node.utf8_text(source).unwrap_or("");
     for op in ops {
         if text == *op {
-            found.push((
-                op.to_string(),
-                node.kind().to_string(),
-                text.to_string(),
-            ));
+            found.push((op.to_string(), node.kind().to_string(), text.to_string()));
         }
     }
 
     // Check if node kind suggests operator
     let kind = node.kind();
     if kind.contains("operator") || kind.contains("arrow") || kind.contains("op") {
-        found.push((
-            "?".to_string(),
-            kind.to_string(),
-            text.to_string(),
-        ));
+        found.push(("?".to_string(), kind.to_string(), text.to_string()));
     }
 
     // Recurse into children
     for i in 0..node.child_count() {
-        if let Some(child) = node.child(i) {
+        if let Some(child) = node.child(i as u32) {
             search_operators(&child, source, ops, found);
         }
     }
@@ -229,7 +236,10 @@ fn test_extract_jsonb_path_from_ast() {
 }
 
 /// Helper: Find a JSONB expression node in the tree
-fn find_jsonb_expr_in_tree<'a>(node: &tree_sitter::Node<'a>, text: &str) -> Option<tree_sitter::Node<'a>> {
+fn find_jsonb_expr_in_tree<'a>(
+    node: &tree_sitter::Node<'a>,
+    text: &str,
+) -> Option<tree_sitter::Node<'a>> {
     // Check if this node contains JSONB operators
     if contains_jsonb_op(node, text) {
         return Some(*node);
@@ -237,7 +247,7 @@ fn find_jsonb_expr_in_tree<'a>(node: &tree_sitter::Node<'a>, text: &str) -> Opti
 
     // Recurse into children
     for i in 0..node.child_count() {
-        if let Some(child) = node.child(i) {
+        if let Some(child) = node.child(i as u32) {
             if let Some(found) = find_jsonb_expr_in_tree(&child, text) {
                 return Some(found);
             }
@@ -258,7 +268,7 @@ fn contains_jsonb_op(node: &tree_sitter::Node, text: &str) -> bool {
     }
 
     for i in 0..node.child_count() {
-        if let Some(child) = node.child(i) {
+        if let Some(child) = node.child(i as u32) {
             if child.kind() == "op_other" {
                 if let Ok(op_text) = child.utf8_text(text.as_bytes()) {
                     if matches!(op_text, "->" | "->>" | "#>" | "#>>") {
@@ -302,9 +312,12 @@ fn collect_segments(node: &tree_sitter::Node, text: &str, segments: &mut Vec<Str
 
     // Recurse into children
     for i in 0..node.child_count() {
-        if let Some(child) = node.child(i) {
+        if let Some(child) = node.child(i as u32) {
             // Skip operators and identifiers (column names)
-            if child.kind() != "op_other" && child.kind() != "identifier" && child.kind() != "column_reference" {
+            if child.kind() != "op_other"
+                && child.kind() != "identifier"
+                && child.kind() != "column_reference"
+            {
                 collect_segments(&child, text, segments);
             }
         }
@@ -340,9 +353,15 @@ fn test_jsonb_operator_detection() {
         let found = find_jsonb_expr_in_tree(&root, sql).is_some();
 
         if found == should_detect {
-            println!("✓ Detection correct (found={}, expected={})", found, should_detect);
+            println!(
+                "✓ Detection correct (found={}, expected={})",
+                found, should_detect
+            );
         } else {
-            println!("✗ Detection incorrect (found={}, expected={})", found, should_detect);
+            println!(
+                "✗ Detection incorrect (found={}, expected={})",
+                found, should_detect
+            );
         }
 
         if found {
@@ -364,7 +383,10 @@ fn test_table_extraction() {
     let test_cases = vec![
         ("SELECT * FROM patient", Some("patient")),
         ("SELECT * FROM public.patient", Some("patient")),
-        ("SELECT resource->'name' FROM observation", Some("observation")),
+        (
+            "SELECT resource->'name' FROM observation",
+            Some("observation"),
+        ),
         (
             "SELECT resource->'name' FROM medication_request",
             Some("medication_request"),
@@ -397,7 +419,7 @@ fn test_table_extraction() {
 fn find_table_name(node: &tree_sitter::Node, text: &str) -> Option<String> {
     if node.kind() == "from" {
         for i in 0..node.child_count() {
-            if let Some(child) = node.child(i) {
+            if let Some(child) = node.child(i as u32) {
                 if child.kind() == "relation" {
                     if let Ok(table) = child.utf8_text(text.as_bytes()) {
                         let cleaned = table.split('.').last().unwrap_or(table);
@@ -409,7 +431,7 @@ fn find_table_name(node: &tree_sitter::Node, text: &str) -> Option<String> {
     }
 
     for i in 0..node.child_count() {
-        if let Some(child) = node.child(i) {
+        if let Some(child) = node.child(i as u32) {
             if let Some(table) = find_table_name(&child, text) {
                 return Some(table);
             }

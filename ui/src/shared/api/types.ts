@@ -135,7 +135,7 @@ export interface OperationUpdateRequest {
 }
 
 // HTTP types
-export type HttpMethod = "GET" | "POST" | "PUT" | "DELETE" | "PATCH";
+export type HttpMethod = "GET" | "POST" | "PUT" | "DELETE" | "PATCH" | "HEAD" | "OPTIONS";
 
 export interface HttpRequestConfig {
   method: HttpMethod;
@@ -152,3 +152,57 @@ export interface HttpResponse<T = any> {
   headers: Record<string, string>;
   config: HttpRequestConfig;
 }
+
+// REST console introspection types (normalized format)
+export interface RestConsoleResponse {
+  api_version: number;
+  fhir_version: string;
+  base_path: string;
+  generated_at: string;
+  suggestions: RestConsoleSuggestions;
+  search_params: Record<string, RestConsoleSearchParam[]>;
+}
+
+export interface RestConsoleSuggestions {
+  resources: AutocompleteSuggestion[];
+  system_operations: AutocompleteSuggestion[];
+  type_operations: AutocompleteSuggestion[];
+  instance_operations: AutocompleteSuggestion[];
+  api_endpoints: AutocompleteSuggestion[];
+}
+
+export type SuggestionKind = "resource" | "system-op" | "type-op" | "instance-op" | "api-endpoint";
+
+export interface AutocompleteSuggestion {
+  id: string;
+  kind: SuggestionKind;
+  label: string;
+  path_template: string;
+  methods: string[];
+  placeholders: string[];
+  description?: string;
+  metadata: SuggestionMetadata;
+}
+
+export interface SuggestionMetadata {
+  resource_type?: string;
+  affects_state: boolean;
+  requires_body: boolean;
+  category?: string;
+}
+
+export interface RestConsoleSearchParam {
+  code: string;
+  type: string;
+  description?: string;
+  modifiers: ModifierSuggestion[];
+  comparators: string[];
+  targets: string[];
+  is_common: boolean;
+}
+
+export interface ModifierSuggestion {
+  code: string;
+  description?: string;
+}
+

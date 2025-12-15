@@ -32,7 +32,8 @@ async fn main() {
     // This allows environment variables to be set from .env for local development
     if let Err(e) = dotenvy::dotenv() {
         // Not an error if .env doesn't exist - it's optional
-        if !matches!(e, dotenvy::Error::Io(ref io_err) if io_err.kind() == std::io::ErrorKind::NotFound) {
+        if !matches!(e, dotenvy::Error::Io(ref io_err) if io_err.kind() == std::io::ErrorKind::NotFound)
+        {
             eprintln!("Warning: Failed to load .env file: {e}");
         }
     }

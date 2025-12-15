@@ -11,8 +11,8 @@
 //! }
 //! ```
 
-use async_graphql::dynamic::{FieldFuture, ResolverContext};
 use async_graphql::Value;
+use async_graphql::dynamic::{FieldFuture, ResolverContext};
 use octofhir_auth::smart::scopes::FhirOperation;
 use octofhir_storage::SearchParams;
 use tracing::{debug, warn};
@@ -39,15 +39,14 @@ impl ReverseReferenceResolver {
     /// ```graphql
     /// ConditionList(_reference: "patient", patient: "Patient/123")
     /// ```
-    pub fn resolve(resource_type: String) -> impl Fn(ResolverContext<'_>) -> FieldFuture<'_> + Send + Sync + Clone {
+    pub fn resolve(
+        resource_type: String,
+    ) -> impl Fn(ResolverContext<'_>) -> FieldFuture<'_> + Send + Sync + Clone {
         move |ctx| {
             let resource_type = resource_type.clone();
             FieldFuture::new(async move {
                 // Get the _reference parameter (specifies which search param to use)
-                let reference_param = ctx
-                    .args
-                    .get("_reference")
-                    .and_then(|v| v.string().ok());
+                let reference_param = ctx.args.get("_reference").and_then(|v| v.string().ok());
 
                 debug!(
                     resource_type = %resource_type,
@@ -62,7 +61,8 @@ impl ReverseReferenceResolver {
                 evaluate_access(gql_ctx, FhirOperation::Search, &resource_type, None).await?;
 
                 // Build search parameters
-                let search_params = build_reverse_reference_params(&ctx, reference_param.as_deref());
+                let search_params =
+                    build_reverse_reference_params(&ctx, reference_param.as_deref());
 
                 debug!(
                     resource_type = %resource_type,

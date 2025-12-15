@@ -34,10 +34,7 @@ fn merge_meta_into_resource(resource: &mut Value, meta_to_add: &Value) {
 
     // Merge profiles (avoid duplicates)
     if let Some(profiles_to_add) = meta_to_add["profile"].as_array() {
-        let existing_profiles = meta["profile"]
-            .as_array()
-            .cloned()
-            .unwrap_or_default();
+        let existing_profiles = meta["profile"].as_array().cloned().unwrap_or_default();
         let mut new_profiles = existing_profiles.clone();
         for profile in profiles_to_add {
             if !existing_profiles.contains(profile) {
@@ -49,10 +46,7 @@ fn merge_meta_into_resource(resource: &mut Value, meta_to_add: &Value) {
 
     // Merge tags (match by system+code)
     if let Some(tags_to_add) = meta_to_add["tag"].as_array() {
-        let existing_tags = meta["tag"]
-            .as_array()
-            .cloned()
-            .unwrap_or_default();
+        let existing_tags = meta["tag"].as_array().cloned().unwrap_or_default();
         let mut new_tags = existing_tags.clone();
         for tag in tags_to_add {
             let already_exists = existing_tags
@@ -67,10 +61,7 @@ fn merge_meta_into_resource(resource: &mut Value, meta_to_add: &Value) {
 
     // Merge security labels (match by system+code)
     if let Some(security_to_add) = meta_to_add["security"].as_array() {
-        let existing_security = meta["security"]
-            .as_array()
-            .cloned()
-            .unwrap_or_default();
+        let existing_security = meta["security"].as_array().cloned().unwrap_or_default();
         let mut new_security = existing_security.clone();
         for label in security_to_add {
             let already_exists = existing_security

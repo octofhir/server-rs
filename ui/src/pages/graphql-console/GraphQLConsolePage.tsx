@@ -23,7 +23,7 @@ query {
    }
  }
 `;
-const graphQLEndpoint = `${window.location.origin}/fhir/$graphql`;
+const graphQLEndpoint = `${window.location.origin}/$graphql`;
 
 export function GraphQLConsolePage() {
 	const fetcher = useMemo(

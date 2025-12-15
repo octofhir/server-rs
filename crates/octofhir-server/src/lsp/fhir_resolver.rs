@@ -105,9 +105,9 @@ impl FhirResolver {
     /// E.g., for "deceasedBoolean" returns Some("deceased") if "deceased[x]" exists in schema.
     /// Delegates to OctoFhirModelProvider for choice type detection.
     fn get_choice_base_name(&self, resource_type: &str, element_name: &str) -> Option<String> {
-        self.octofhir_provider.get_choice_base_name(resource_type, element_name)
+        self.octofhir_provider
+            .get_choice_base_name(resource_type, element_name)
     }
-
 
     /// Get children of a path (direct descendants only) with caching.
     pub async fn get_children(&self, resource_type: &str, parent_path: &str) -> Vec<ElementInfo> {
@@ -142,7 +142,8 @@ impl FhirResolver {
                     tracing::trace!("Parent type resolved to: {}", parent_type);
                     // Get children of the parent type
                     let full_parent_path = format!("{}.{}", resource_type, parent_path);
-                    self.get_direct_children(&parent_type, &full_parent_path).await
+                    self.get_direct_children(&parent_type, &full_parent_path)
+                        .await
                 }
                 None => {
                     tracing::debug!(
@@ -192,31 +193,37 @@ impl FhirResolver {
                     "get_direct_children: type_name={}, got {} elements, first few: {:?}",
                     type_name,
                     model_elements.len(),
-                    model_elements.iter().take(3).map(|e| &e.name).collect::<Vec<_>>()
+                    model_elements
+                        .iter()
+                        .take(3)
+                        .map(|e| &e.name)
+                        .collect::<Vec<_>>()
                 );
-                model_elements.into_iter().filter_map(|elem| {
-                    // For direct children, the element name should not contain dots
-                    // (e.g., "given", "family" but not "name.given")
-                    if elem.name.contains('.') {
-                        return None;
-                    }
+                model_elements
+                    .into_iter()
+                    .filter_map(|elem| {
+                        // For direct children, the element name should not contain dots
+                        // (e.g., "given", "family" but not "name.given")
+                        if elem.name.contains('.') {
+                            return None;
+                        }
 
-                    // Build the full path
-                    let path = format!("{}.{}", full_parent_path, elem.name);
+                        // Build the full path
+                        let path = format!("{}.{}", full_parent_path, elem.name);
 
-                    Some(ElementInfo {
-                        path,
-                        name: elem.name.clone(),
-                        type_code: elem.element_type.clone(),
-                        min: 0,
-                        max: 1,
-                        short: elem.documentation.clone(),
-                        definition: elem.documentation,
-                        is_array: false,
-                        is_backbone: elem.element_type == "BackboneElement",
+                        Some(ElementInfo {
+                            path,
+                            name: elem.name.clone(),
+                            type_code: elem.element_type.clone(),
+                            min: 0,
+                            max: 1,
+                            short: elem.documentation.clone(),
+                            definition: elem.documentation,
+                            is_array: false,
+                            is_backbone: elem.element_type == "BackboneElement",
+                        })
                     })
-                })
-                .collect()
+                    .collect()
             }
             Err(e) => {
                 tracing::warn!("Failed to get elements for type {}: {}", type_name, e);
@@ -249,11 +256,7 @@ impl FhirResolver {
                     if let Some(elem) = elements.iter().find(|e| e.name == part) {
                         current_type = elem.element_type.clone();
                     } else {
-                        tracing::debug!(
-                            "Element '{}' not found in type '{}'",
-                            part,
-                            current_type
-                        );
+                        tracing::debug!("Element '{}' not found in type '{}'", part, current_type);
                         return None;
                     }
                 }
@@ -281,7 +284,11 @@ impl FhirResolver {
     ///
     /// This function uses get_choice_base_name() to identify variants
     /// and removes the base fields when variants exist.
-    fn filter_choice_type_bases(&self, resource_type: &str, elements: Vec<ElementInfo>) -> Vec<ElementInfo> {
+    fn filter_choice_type_bases(
+        &self,
+        resource_type: &str,
+        elements: Vec<ElementInfo>,
+    ) -> Vec<ElementInfo> {
         use std::collections::HashSet;
 
         // Collect all base names that have typed variants
@@ -337,9 +344,9 @@ impl FhirResolver {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use octofhir_fhirschema::{embedded::get_schemas, model_provider::FhirSchemaModelProvider};
-    use octofhir_fhir_model::provider::FhirVersion;
     use crate::model_provider::OctoFhirModelProvider;
+    use octofhir_fhir_model::provider::FhirVersion;
+    use octofhir_fhirschema::{FhirSchemaModelProvider, embedded::get_schemas};
 
     fn create_test_provider() -> Arc<OctoFhirModelProvider> {
         let schemas = get_schemas(octofhir_fhirschema::FhirVersion::R4B).clone();
@@ -375,7 +382,10 @@ mod tests {
         // Get children of "name" element (should be HumanName elements)
         let name_children = resolver.get_children("Patient", "name").await;
 
-        assert!(!name_children.is_empty(), "Patient.name should have children");
+        assert!(
+            !name_children.is_empty(),
+            "Patient.name should have children"
+        );
 
         // HumanName should have "given", "family", etc.
         let has_given = name_children.iter().any(|e| e.name == "given");
@@ -439,7 +449,8 @@ mod tests {
         }
 
         // Check for deceased-related fields
-        let deceased_fields: Vec<_> = children.iter()
+        let deceased_fields: Vec<_> = children
+            .iter()
             .filter(|e| e.name.contains("deceased"))
             .collect();
         println!("\nDeceased-related fields:");
@@ -453,12 +464,21 @@ mod tests {
 
         // Check that "deceased" base field is hidden
         let has_deceased = children.iter().any(|e| e.name == "deceased");
-        assert!(!has_deceased, "Choice type base field 'deceased' should be hidden");
+        assert!(
+            !has_deceased,
+            "Choice type base field 'deceased' should be hidden"
+        );
 
         // Check that typed variants are shown
         let has_deceased_boolean = children.iter().any(|e| e.name == "deceasedBoolean");
         let has_deceased_datetime = children.iter().any(|e| e.name == "deceasedDateTime");
-        assert!(has_deceased_boolean, "Typed variant 'deceasedBoolean' should be shown");
-        assert!(has_deceased_datetime, "Typed variant 'deceasedDateTime' should be shown");
+        assert!(
+            has_deceased_boolean,
+            "Typed variant 'deceasedBoolean' should be shown"
+        );
+        assert!(
+            has_deceased_datetime,
+            "Typed variant 'deceasedDateTime' should be shown"
+        );
     }
 }

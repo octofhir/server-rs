@@ -68,7 +68,7 @@ async fn start_server(
             .await;
     });
 
-    (format!("http://{addr}"), tx, server)
+    (format!("http://{addr}/fhir"), tx, server)
 }
 
 /// Create test patients for search tests

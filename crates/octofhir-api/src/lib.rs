@@ -1584,11 +1584,7 @@ impl CapabilityStatementBuilder {
     }
 
     /// Add an operation to the capability statement
-    pub fn add_operation(
-        mut self,
-        name: impl Into<String>,
-        definition: impl Into<String>,
-    ) -> Self {
+    pub fn add_operation(mut self, name: impl Into<String>, definition: impl Into<String>) -> Self {
         self.operations.push(CapabilityStatementRestOperation {
             name: name.into(),
             definition: definition.into(),

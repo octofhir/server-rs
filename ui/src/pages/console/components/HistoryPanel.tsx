@@ -1,0 +1,221 @@
+import { useState } from "react";
+import {
+	ActionIcon,
+	Badge,
+	Button,
+	Card,
+	Drawer,
+	Group,
+	Menu,
+	Stack,
+	Text,
+	TextInput,
+	Tooltip,
+} from "@mantine/core";
+import {
+	IconClock,
+	IconDots,
+	IconPin,
+	IconPinFilled,
+	IconTrash,
+	IconDownload,
+	IconSearch,
+} from "@tabler/icons-react";
+import { useHistory } from "../hooks/useHistory";
+import { useConsoleStore } from "../state/consoleStore";
+import { historyService } from "../services/historyService";
+import type { HistoryEntry } from "../db/historyDatabase";
+
+interface HistoryPanelProps {
+	opened: boolean;
+	onClose: () => void;
+}
+
+export function HistoryPanel({ opened, onClose }: HistoryPanelProps) {
+	const [searchQuery, setSearchQuery] = useState("");
+	const { entries, isLoading, togglePin, deleteEntry, clearAll } = useHistory();
+	const setRawPath = useConsoleStore((state) => state.setRawPath);
+	const setMethod = useConsoleStore((state) => state.setMethod);
+	const setBody = useConsoleStore((state) => state.setBody);
+	const setMode = useConsoleStore((state) => state.setMode);
+
+	const filteredEntries = searchQuery
+		? entries.filter(
+				(e) =>
+					e.path.toLowerCase().includes(searchQuery.toLowerCase()) ||
+					e.method.toLowerCase().includes(searchQuery.toLowerCase()),
+			)
+		: entries;
+
+	const handleRestore = (entry: HistoryEntry) => {
+		// Restore the mode that was used when the request was made
+		// Default to "raw" for old entries that don't have mode saved
+		setMode(entry.mode || "raw");
+		setMethod(entry.method as any);
+		setRawPath(entry.path);
+		if (entry.body) {
+			setBody(entry.body);
+		}
+		onClose();
+	};
+
+	const handleExport = async () => {
+		const json = await historyService.exportAll();
+		const blob = new Blob([json], { type: "application/json" });
+		const url = URL.createObjectURL(blob);
+		const a = document.createElement("a");
+		a.href = url;
+		a.download = `rest-console-history-${Date.now()}.json`;
+		a.click();
+		URL.revokeObjectURL(url);
+	};
+
+	return (
+		<Drawer opened={opened} onClose={onClose} title="Request History" position="right" size="lg">
+			<Stack gap="md">
+				{/* Search */}
+				<TextInput
+					placeholder="Search by path or method..."
+					leftSection={<IconSearch size={16} />}
+					value={searchQuery}
+					onChange={(e) => setSearchQuery(e.target.value)}
+				/>
+
+				{/* Actions */}
+				<Group justify="space-between">
+					<Text size="sm" c="dimmed">
+						{filteredEntries.length} entries
+					</Text>
+					<Group gap="xs">
+						<Button
+							size="xs"
+							variant="light"
+							onClick={handleExport}
+							leftSection={<IconDownload size={14} />}
+						>
+							Export
+						</Button>
+						<Button size="xs" variant="light" color="red" onClick={() => clearAll()}>
+							Clear All
+						</Button>
+					</Group>
+				</Group>
+
+				{/* Entry list */}
+				<Stack gap="xs">
+					{filteredEntries.map((entry) => (
+						<HistoryEntryCard
+							key={entry.id}
+							entry={entry}
+							onRestore={handleRestore}
+							onTogglePin={() => togglePin(entry.id)}
+							onDelete={() => deleteEntry(entry.id)}
+						/>
+					))}
+				</Stack>
+
+				{filteredEntries.length === 0 && (
+					<Text size="sm" c="dimmed" ta="center" py="xl">
+						No history entries
+					</Text>
+				)}
+			</Stack>
+		</Drawer>
+	);
+}
+
+function HistoryEntryCard({
+	entry,
+	onRestore,
+	onTogglePin,
+	onDelete,
+}: {
+	entry: HistoryEntry;
+	onRestore: (entry: HistoryEntry) => void;
+	onTogglePin: () => void;
+	onDelete: () => void;
+}) {
+	const isSuccess =
+		entry.responseStatus && entry.responseStatus >= 200 && entry.responseStatus < 300;
+	const isError = entry.responseStatus && entry.responseStatus >= 400;
+
+	return (
+		<Card
+			withBorder
+			p="sm"
+			style={{ cursor: "pointer" }}
+			onClick={() => onRestore(entry)}
+		>
+			<Stack gap="xs">
+				<Group justify="space-between">
+					<Group gap="xs">
+						<Badge size="sm" variant="light">
+							{entry.method}
+						</Badge>
+						{entry.responseStatus && (
+							<Badge size="sm" color={isSuccess ? "green" : isError ? "red" : "yellow"}>
+								{entry.responseStatus}
+							</Badge>
+						)}
+					</Group>
+
+					<Group gap="xs">
+						<ActionIcon
+							size="sm"
+							variant="subtle"
+							onClick={(e) => {
+								e.stopPropagation();
+								onTogglePin();
+							}}
+						>
+							{entry.isPinned ? <IconPinFilled size={14} /> : <IconPin size={14} />}
+						</ActionIcon>
+
+						<Menu position="bottom-end">
+							<Menu.Target>
+								<ActionIcon
+									size="sm"
+									variant="subtle"
+									onClick={(e) => e.stopPropagation()}
+								>
+									<IconDots size={14} />
+								</ActionIcon>
+							</Menu.Target>
+							<Menu.Dropdown>
+								<Menu.Item
+									color="red"
+									leftSection={<IconTrash size={14} />}
+									onClick={(e) => {
+										e.stopPropagation();
+										onDelete();
+									}}
+								>
+									Delete
+								</Menu.Item>
+							</Menu.Dropdown>
+						</Menu>
+					</Group>
+				</Group>
+
+				<Text size="sm" truncate>
+					{entry.path}
+				</Text>
+
+				<Group gap="xs">
+					<Group gap={4}>
+						<IconClock size={12} />
+						<Text size="xs" c="dimmed">
+							{new Date(entry.requestedAt).toLocaleString()}
+						</Text>
+					</Group>
+
+					{entry.responseDurationMs && (
+						<Text size="xs" c="dimmed">
+							{entry.responseDurationMs}ms
+						</Text>
+					)}
+				</Group>
+			</Stack>
+		</Card>
+	);
+}

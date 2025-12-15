@@ -201,13 +201,12 @@ impl CompletionFilter<'_> {
                                 && ctx.history_ends_with(&["object_reference", "any_identifier"])))
                 }
 
-                WrappingClause::DropTable | WrappingClause::AlterTable => {
-                    ctx.before_cursor_matches_kind(&[
+                WrappingClause::DropTable | WrappingClause::AlterTable => ctx
+                    .before_cursor_matches_kind(&[
                         "keyword_exists",
                         "keyword_only",
                         "keyword_table",
-                    ])
-                }
+                    ]),
 
                 _ => false,
             },
@@ -254,13 +253,12 @@ impl CompletionFilter<'_> {
                     ctx.before_cursor_matches_kind(&["keyword_and", "keyword_where"])
                 }
 
-                WrappingClause::DropTable | WrappingClause::AlterTable => {
-                    ctx.before_cursor_matches_kind(&[
+                WrappingClause::DropTable | WrappingClause::AlterTable => ctx
+                    .before_cursor_matches_kind(&[
                         "keyword_exists",
                         "keyword_only",
                         "keyword_table",
-                    ])
-                }
+                    ]),
 
                 WrappingClause::Insert => {
                     ctx.wrapping_node_kind

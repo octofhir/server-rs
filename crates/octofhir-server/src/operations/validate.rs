@@ -392,8 +392,10 @@ impl OperationHandler for ValidateOperation {
 mod tests {
     use super::*;
     use octofhir_fhir_model::provider::FhirVersion;
-    use octofhir_fhirschema::embedded::{FhirVersion as SchemaFhirVersion, get_schemas};
-    use octofhir_fhirschema::model_provider::DynamicSchemaProvider;
+    use octofhir_fhirschema::{
+        DynamicSchemaProvider,
+        embedded::{FhirVersion as SchemaFhirVersion, get_schemas},
+    };
 
     async fn create_test_operation_async() -> ValidateOperation {
         let schemas = get_schemas(SchemaFhirVersion::R4).clone();

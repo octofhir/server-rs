@@ -158,12 +158,13 @@ fn extract_token_from_cookie(headers: &HeaderMap, cookie_config: &CookieConfig) 
     for cookie in cookie_header.split(';') {
         let cookie = cookie.trim();
         if let Some((name, value)) = cookie.split_once('=')
-            && name.trim() == cookie_name {
-                let value = value.trim();
-                if !value.is_empty() {
-                    return Some(value.to_string());
-                }
+            && name.trim() == cookie_name
+        {
+            let value = value.trim();
+            if !value.is_empty() {
+                return Some(value.to_string());
             }
+        }
     }
 
     None

@@ -70,7 +70,14 @@ pub fn build_query_from_params(
 
         // Handle chained parameters
         if is_chained_parameter(key) {
-            handle_chained_param(&mut builder, &mut sql_builder, key, values, registry, schema)?;
+            handle_chained_param(
+                &mut builder,
+                &mut sql_builder,
+                key,
+                values,
+                registry,
+                schema,
+            )?;
             continue;
         }
 
@@ -121,7 +128,12 @@ pub fn build_query_from_params(
     // Handle sorting
     if let Some(sort_params) = &params.sort {
         for sort_param in sort_params {
-            if let Some(sort_spec) = build_sort_spec(&sort_param.field, sort_param.descending, registry, resource_type) {
+            if let Some(sort_spec) = build_sort_spec(
+                &sort_param.field,
+                sort_param.descending,
+                registry,
+                resource_type,
+            ) {
                 builder = builder.sort_by(sort_spec);
             }
         }

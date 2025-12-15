@@ -87,6 +87,16 @@ impl OperationProvider for UiOperationProvider {
                 modules::SERVER,
             )
             .with_description("Update operation settings (public flag, description)"),
+            OperationDefinition::new(
+                "ui.rest_console.introspect",
+                "REST Console Introspection",
+                categories::UI,
+                vec!["GET".to_string()],
+                "/api/__introspect/rest-console",
+                modules::SERVER,
+            )
+            .with_description("Retrieve metadata for the UI REST console")
+            .with_public(false),
         ]
     }
 

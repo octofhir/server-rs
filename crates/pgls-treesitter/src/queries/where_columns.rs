@@ -1,6 +1,6 @@
 use std::sync::LazyLock;
 
-use crate::queries::{Query, QueryResult, object_references::parts_of_reference_query};
+use crate::queries::{object_references::parts_of_reference_query, Query, QueryResult};
 
 use tree_sitter::StreamingIterator;
 

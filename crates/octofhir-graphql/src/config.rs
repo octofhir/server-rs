@@ -11,7 +11,6 @@
 //! max_depth = 15
 //! max_complexity = 500
 //! introspection = true
-//! playground = true
 //! ```
 
 use serde::{Deserialize, Serialize};
@@ -43,13 +42,6 @@ pub struct GraphQLConfig {
     #[serde(default = "default_introspection")]
     pub introspection: bool,
 
-    /// Enable GraphQL Playground UI.
-    /// Interactive GraphQL IDE accessible via GET request to /$graphql.
-    /// Should be disabled in production.
-    /// Default: true (development-friendly)
-    #[serde(default = "default_playground")]
-    pub playground: bool,
-
     /// Batch query support.
     /// Allow multiple operations in a single request.
     /// Default: false
@@ -79,10 +71,6 @@ fn default_introspection() -> bool {
     true
 }
 
-fn default_playground() -> bool {
-    true
-}
-
 fn default_batching() -> bool {
     false
 }
@@ -98,7 +86,6 @@ impl Default for GraphQLConfig {
             max_depth: default_max_depth(),
             max_complexity: default_max_complexity(),
             introspection: default_introspection(),
-            playground: default_playground(),
             batching: default_batching(),
             max_batch_size: default_max_batch_size(),
         }
@@ -146,7 +133,6 @@ mod tests {
         assert_eq!(config.max_depth, 15);
         assert_eq!(config.max_complexity, 500);
         assert!(config.introspection);
-        assert!(config.playground);
         assert!(!config.batching);
         assert_eq!(config.max_batch_size, 10);
     }
@@ -186,7 +172,6 @@ mod tests {
             max_depth = 20
             max_complexity = 1000
             introspection = false
-            playground = false
         "#;
 
         let config: GraphQLConfig = toml::from_str(toml).unwrap();
@@ -194,6 +179,5 @@ mod tests {
         assert_eq!(config.max_depth, 20);
         assert_eq!(config.max_complexity, 1000);
         assert!(!config.introspection);
-        assert!(!config.playground);
     }
 }

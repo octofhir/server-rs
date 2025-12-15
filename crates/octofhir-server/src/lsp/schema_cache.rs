@@ -180,8 +180,8 @@ impl SchemaCache {
 
         for (schema_name,) in rows {
             // User schemas are those that are not system schemas
-            let is_user_schema = !schema_name.starts_with("pg_")
-                && schema_name != "information_schema";
+            let is_user_schema =
+                !schema_name.starts_with("pg_") && schema_name != "information_schema";
 
             self.schemas.insert(
                 schema_name.clone(),
@@ -288,7 +288,19 @@ impl SchemaCache {
 
     /// Refresh row-level security policies from pg_policies.
     async fn refresh_policies(&self) -> Result<(), SqlxError> {
-        let rows = query_as::<_, (String, String, String, String, bool, Vec<String>, Option<String>, Option<String>)>(
+        let rows = query_as::<
+            _,
+            (
+                String,
+                String,
+                String,
+                String,
+                bool,
+                Vec<String>,
+                Option<String>,
+                Option<String>,
+            ),
+        >(
             r#"
             SELECT
                 policyname,
@@ -308,7 +320,9 @@ impl SchemaCache {
 
         self.policies.clear();
 
-        for (name, schema, table_name, command, permissive, roles, using_expr, with_check_expr) in rows {
+        for (name, schema, table_name, command, permissive, roles, using_expr, with_check_expr) in
+            rows
+        {
             let key = format!("{}.{}.{}", schema, table_name, name);
             self.policies.insert(
                 key,
@@ -367,10 +381,7 @@ impl SchemaCache {
             );
         }
 
-        tracing::info!(
-            count = self.roles.len(),
-            "LSP schema cache: loaded roles"
-        );
+        tracing::info!(count = self.roles.len(), "LSP schema cache: loaded roles");
         Ok(())
     }
 
@@ -450,10 +461,7 @@ impl SchemaCache {
             }
         }
 
-        tracing::info!(
-            count = self.types.len(),
-            "LSP schema cache: loaded types"
-        );
+        tracing::info!(count = self.types.len(), "LSP schema cache: loaded types");
         Ok(())
     }
 
@@ -462,83 +470,388 @@ impl SchemaCache {
         // Format: (name, return_type, signature, description)
         const FUNCTIONS: &[(&str, &str, &str, &str)] = &[
             // === JSONB Functions ===
-            ("jsonb_extract_path", "jsonb", "jsonb_extract_path(from_json jsonb, VARIADIC path_elems text[])", "Extract JSON sub-object at path"),
-            ("jsonb_extract_path_text", "text", "jsonb_extract_path_text(from_json jsonb, VARIADIC path_elems text[])", "Extract JSON sub-object as text"),
-            ("jsonb_array_elements", "setof jsonb", "jsonb_array_elements(from_json jsonb)", "Expand JSONB array to set of rows"),
-            ("jsonb_array_elements_text", "setof text", "jsonb_array_elements_text(from_json jsonb)", "Expand JSONB array as text rows"),
-            ("jsonb_object_keys", "setof text", "jsonb_object_keys(from_json jsonb)", "Get set of keys in outermost object"),
-            ("jsonb_typeof", "text", "jsonb_typeof(from_json jsonb)", "Get type of outermost JSON value"),
-            ("jsonb_agg", "jsonb", "jsonb_agg(expression anyelement)", "Aggregate values as JSONB array"),
-            ("jsonb_build_object", "jsonb", "jsonb_build_object(VARIADIC args \"any\")", "Build JSONB object from arguments"),
-            ("jsonb_build_array", "jsonb", "jsonb_build_array(VARIADIC args \"any\")", "Build JSONB array from arguments"),
-            ("jsonb_set", "jsonb", "jsonb_set(target jsonb, path text[], new_value jsonb [, create_if_missing boolean])", "Set value at path"),
-            ("jsonb_insert", "jsonb", "jsonb_insert(target jsonb, path text[], new_value jsonb [, insert_after boolean])", "Insert value at path"),
-            ("jsonb_path_query", "setof jsonb", "jsonb_path_query(target jsonb, path jsonpath [, vars jsonb [, silent boolean]])", "Execute JSONPath query"),
-            ("jsonb_path_query_array", "jsonb", "jsonb_path_query_array(target jsonb, path jsonpath [, vars jsonb [, silent boolean]])", "JSONPath query as array"),
-            ("jsonb_path_query_first", "jsonb", "jsonb_path_query_first(target jsonb, path jsonpath [, vars jsonb [, silent boolean]])", "First JSONPath result"),
-            ("jsonb_path_exists", "boolean", "jsonb_path_exists(target jsonb, path jsonpath [, vars jsonb [, silent boolean]])", "Check if JSONPath returns items"),
-            ("jsonb_path_match", "boolean", "jsonb_path_match(target jsonb, path jsonpath [, vars jsonb [, silent boolean]])", "Check if JSONPath matches predicate"),
-            ("jsonb_strip_nulls", "jsonb", "jsonb_strip_nulls(from_json jsonb)", "Remove null values recursively"),
-            ("jsonb_pretty", "text", "jsonb_pretty(from_json jsonb)", "Pretty print JSONB"),
-            ("jsonb_each", "setof record", "jsonb_each(from_json jsonb)", "Expand to key-value pairs"),
-            ("jsonb_each_text", "setof record", "jsonb_each_text(from_json jsonb)", "Expand to key-text pairs"),
-            ("jsonb_populate_record", "anyelement", "jsonb_populate_record(base anyelement, from_json jsonb)", "Populate record from JSONB"),
-            ("jsonb_to_record", "record", "jsonb_to_record(from_json jsonb)", "Convert JSONB to record"),
-            ("to_jsonb", "jsonb", "to_jsonb(anyelement)", "Convert to JSONB"),
-            ("jsonb_array_length", "integer", "jsonb_array_length(from_json jsonb)", "Get length of JSONB array"),
-            ("jsonb_object", "jsonb", "jsonb_object(keys text[], values text[])", "Build JSONB object from arrays"),
+            (
+                "jsonb_extract_path",
+                "jsonb",
+                "jsonb_extract_path(from_json jsonb, VARIADIC path_elems text[])",
+                "Extract JSON sub-object at path",
+            ),
+            (
+                "jsonb_extract_path_text",
+                "text",
+                "jsonb_extract_path_text(from_json jsonb, VARIADIC path_elems text[])",
+                "Extract JSON sub-object as text",
+            ),
+            (
+                "jsonb_array_elements",
+                "setof jsonb",
+                "jsonb_array_elements(from_json jsonb)",
+                "Expand JSONB array to set of rows",
+            ),
+            (
+                "jsonb_array_elements_text",
+                "setof text",
+                "jsonb_array_elements_text(from_json jsonb)",
+                "Expand JSONB array as text rows",
+            ),
+            (
+                "jsonb_object_keys",
+                "setof text",
+                "jsonb_object_keys(from_json jsonb)",
+                "Get set of keys in outermost object",
+            ),
+            (
+                "jsonb_typeof",
+                "text",
+                "jsonb_typeof(from_json jsonb)",
+                "Get type of outermost JSON value",
+            ),
+            (
+                "jsonb_agg",
+                "jsonb",
+                "jsonb_agg(expression anyelement)",
+                "Aggregate values as JSONB array",
+            ),
+            (
+                "jsonb_build_object",
+                "jsonb",
+                "jsonb_build_object(VARIADIC args \"any\")",
+                "Build JSONB object from arguments",
+            ),
+            (
+                "jsonb_build_array",
+                "jsonb",
+                "jsonb_build_array(VARIADIC args \"any\")",
+                "Build JSONB array from arguments",
+            ),
+            (
+                "jsonb_set",
+                "jsonb",
+                "jsonb_set(target jsonb, path text[], new_value jsonb [, create_if_missing boolean])",
+                "Set value at path",
+            ),
+            (
+                "jsonb_insert",
+                "jsonb",
+                "jsonb_insert(target jsonb, path text[], new_value jsonb [, insert_after boolean])",
+                "Insert value at path",
+            ),
+            (
+                "jsonb_path_query",
+                "setof jsonb",
+                "jsonb_path_query(target jsonb, path jsonpath [, vars jsonb [, silent boolean]])",
+                "Execute JSONPath query",
+            ),
+            (
+                "jsonb_path_query_array",
+                "jsonb",
+                "jsonb_path_query_array(target jsonb, path jsonpath [, vars jsonb [, silent boolean]])",
+                "JSONPath query as array",
+            ),
+            (
+                "jsonb_path_query_first",
+                "jsonb",
+                "jsonb_path_query_first(target jsonb, path jsonpath [, vars jsonb [, silent boolean]])",
+                "First JSONPath result",
+            ),
+            (
+                "jsonb_path_exists",
+                "boolean",
+                "jsonb_path_exists(target jsonb, path jsonpath [, vars jsonb [, silent boolean]])",
+                "Check if JSONPath returns items",
+            ),
+            (
+                "jsonb_path_match",
+                "boolean",
+                "jsonb_path_match(target jsonb, path jsonpath [, vars jsonb [, silent boolean]])",
+                "Check if JSONPath matches predicate",
+            ),
+            (
+                "jsonb_strip_nulls",
+                "jsonb",
+                "jsonb_strip_nulls(from_json jsonb)",
+                "Remove null values recursively",
+            ),
+            (
+                "jsonb_pretty",
+                "text",
+                "jsonb_pretty(from_json jsonb)",
+                "Pretty print JSONB",
+            ),
+            (
+                "jsonb_each",
+                "setof record",
+                "jsonb_each(from_json jsonb)",
+                "Expand to key-value pairs",
+            ),
+            (
+                "jsonb_each_text",
+                "setof record",
+                "jsonb_each_text(from_json jsonb)",
+                "Expand to key-text pairs",
+            ),
+            (
+                "jsonb_populate_record",
+                "anyelement",
+                "jsonb_populate_record(base anyelement, from_json jsonb)",
+                "Populate record from JSONB",
+            ),
+            (
+                "jsonb_to_record",
+                "record",
+                "jsonb_to_record(from_json jsonb)",
+                "Convert JSONB to record",
+            ),
+            (
+                "to_jsonb",
+                "jsonb",
+                "to_jsonb(anyelement)",
+                "Convert to JSONB",
+            ),
+            (
+                "jsonb_array_length",
+                "integer",
+                "jsonb_array_length(from_json jsonb)",
+                "Get length of JSONB array",
+            ),
+            (
+                "jsonb_object",
+                "jsonb",
+                "jsonb_object(keys text[], values text[])",
+                "Build JSONB object from arrays",
+            ),
             // === Aggregate Functions ===
-            ("count", "bigint", "count(*) | count(expression)", "Count rows or non-null values"),
-            ("sum", "numeric", "sum(expression)", "Sum of all input values"),
-            ("avg", "numeric", "avg(expression)", "Average of all input values"),
+            (
+                "count",
+                "bigint",
+                "count(*) | count(expression)",
+                "Count rows or non-null values",
+            ),
+            (
+                "sum",
+                "numeric",
+                "sum(expression)",
+                "Sum of all input values",
+            ),
+            (
+                "avg",
+                "numeric",
+                "avg(expression)",
+                "Average of all input values",
+            ),
             ("min", "any", "min(expression)", "Minimum value"),
             ("max", "any", "max(expression)", "Maximum value"),
-            ("array_agg", "anyarray", "array_agg(expression [ORDER BY ...])", "Aggregate values into array"),
-            ("string_agg", "text", "string_agg(expression, delimiter [ORDER BY ...])", "Concatenate strings with delimiter"),
-            ("bool_and", "boolean", "bool_and(expression)", "True if all values are true"),
-            ("bool_or", "boolean", "bool_or(expression)", "True if any value is true"),
-            ("every", "boolean", "every(expression)", "Equivalent to bool_and"),
-            ("bit_and", "bit/integer", "bit_and(expression)", "Bitwise AND of all values"),
-            ("bit_or", "bit/integer", "bit_or(expression)", "Bitwise OR of all values"),
+            (
+                "array_agg",
+                "anyarray",
+                "array_agg(expression [ORDER BY ...])",
+                "Aggregate values into array",
+            ),
+            (
+                "string_agg",
+                "text",
+                "string_agg(expression, delimiter [ORDER BY ...])",
+                "Concatenate strings with delimiter",
+            ),
+            (
+                "bool_and",
+                "boolean",
+                "bool_and(expression)",
+                "True if all values are true",
+            ),
+            (
+                "bool_or",
+                "boolean",
+                "bool_or(expression)",
+                "True if any value is true",
+            ),
+            (
+                "every",
+                "boolean",
+                "every(expression)",
+                "Equivalent to bool_and",
+            ),
+            (
+                "bit_and",
+                "bit/integer",
+                "bit_and(expression)",
+                "Bitwise AND of all values",
+            ),
+            (
+                "bit_or",
+                "bit/integer",
+                "bit_or(expression)",
+                "Bitwise OR of all values",
+            ),
             // === String Functions ===
-            ("concat", "text", "concat(str1, str2, ...)", "Concatenate strings"),
-            ("concat_ws", "text", "concat_ws(separator, str1, str2, ...)", "Concatenate with separator"),
+            (
+                "concat",
+                "text",
+                "concat(str1, str2, ...)",
+                "Concatenate strings",
+            ),
+            (
+                "concat_ws",
+                "text",
+                "concat_ws(separator, str1, str2, ...)",
+                "Concatenate with separator",
+            ),
             ("length", "integer", "length(string)", "Length of string"),
-            ("char_length", "integer", "char_length(string)", "Number of characters"),
+            (
+                "char_length",
+                "integer",
+                "char_length(string)",
+                "Number of characters",
+            ),
             ("lower", "text", "lower(string)", "Convert to lowercase"),
             ("upper", "text", "upper(string)", "Convert to uppercase"),
-            ("initcap", "text", "initcap(string)", "Capitalize first letter of each word"),
-            ("trim", "text", "trim([leading|trailing|both] [characters] FROM string)", "Remove characters from string"),
-            ("ltrim", "text", "ltrim(string [, characters])", "Remove leading characters"),
-            ("rtrim", "text", "rtrim(string [, characters])", "Remove trailing characters"),
+            (
+                "initcap",
+                "text",
+                "initcap(string)",
+                "Capitalize first letter of each word",
+            ),
+            (
+                "trim",
+                "text",
+                "trim([leading|trailing|both] [characters] FROM string)",
+                "Remove characters from string",
+            ),
+            (
+                "ltrim",
+                "text",
+                "ltrim(string [, characters])",
+                "Remove leading characters",
+            ),
+            (
+                "rtrim",
+                "text",
+                "rtrim(string [, characters])",
+                "Remove trailing characters",
+            ),
             ("left", "text", "left(string, n)", "First n characters"),
             ("right", "text", "right(string, n)", "Last n characters"),
-            ("substring", "text", "substring(string FROM start [FOR count])", "Extract substring"),
-            ("substr", "text", "substr(string, start [, count])", "Extract substring"),
-            ("position", "integer", "position(substring IN string)", "Location of substring"),
-            ("strpos", "integer", "strpos(string, substring)", "Location of substring"),
-            ("replace", "text", "replace(string, from, to)", "Replace occurrences"),
-            ("regexp_replace", "text", "regexp_replace(string, pattern, replacement [, flags])", "Replace using regex"),
-            ("regexp_matches", "setof text[]", "regexp_matches(string, pattern [, flags])", "Return regex matches"),
-            ("regexp_split_to_array", "text[]", "regexp_split_to_array(string, pattern [, flags])", "Split string by regex"),
-            ("regexp_split_to_table", "setof text", "regexp_split_to_table(string, pattern [, flags])", "Split string to rows"),
-            ("split_part", "text", "split_part(string, delimiter, n)", "Split string and return nth part"),
-            ("repeat", "text", "repeat(string, number)", "Repeat string n times"),
+            (
+                "substring",
+                "text",
+                "substring(string FROM start [FOR count])",
+                "Extract substring",
+            ),
+            (
+                "substr",
+                "text",
+                "substr(string, start [, count])",
+                "Extract substring",
+            ),
+            (
+                "position",
+                "integer",
+                "position(substring IN string)",
+                "Location of substring",
+            ),
+            (
+                "strpos",
+                "integer",
+                "strpos(string, substring)",
+                "Location of substring",
+            ),
+            (
+                "replace",
+                "text",
+                "replace(string, from, to)",
+                "Replace occurrences",
+            ),
+            (
+                "regexp_replace",
+                "text",
+                "regexp_replace(string, pattern, replacement [, flags])",
+                "Replace using regex",
+            ),
+            (
+                "regexp_matches",
+                "setof text[]",
+                "regexp_matches(string, pattern [, flags])",
+                "Return regex matches",
+            ),
+            (
+                "regexp_split_to_array",
+                "text[]",
+                "regexp_split_to_array(string, pattern [, flags])",
+                "Split string by regex",
+            ),
+            (
+                "regexp_split_to_table",
+                "setof text",
+                "regexp_split_to_table(string, pattern [, flags])",
+                "Split string to rows",
+            ),
+            (
+                "split_part",
+                "text",
+                "split_part(string, delimiter, n)",
+                "Split string and return nth part",
+            ),
+            (
+                "repeat",
+                "text",
+                "repeat(string, number)",
+                "Repeat string n times",
+            ),
             ("reverse", "text", "reverse(string)", "Reverse string"),
-            ("format", "text", "format(formatstr, ...)", "Format string like printf"),
-            ("quote_ident", "text", "quote_ident(string)", "Quote identifier for SQL"),
-            ("quote_literal", "text", "quote_literal(string)", "Quote literal for SQL"),
-            ("quote_nullable", "text", "quote_nullable(string)", "Quote nullable literal"),
+            (
+                "format",
+                "text",
+                "format(formatstr, ...)",
+                "Format string like printf",
+            ),
+            (
+                "quote_ident",
+                "text",
+                "quote_ident(string)",
+                "Quote identifier for SQL",
+            ),
+            (
+                "quote_literal",
+                "text",
+                "quote_literal(string)",
+                "Quote literal for SQL",
+            ),
+            (
+                "quote_nullable",
+                "text",
+                "quote_nullable(string)",
+                "Quote nullable literal",
+            ),
             ("md5", "text", "md5(string)", "MD5 hash as hex"),
-            ("encode", "text", "encode(data bytea, format text)", "Encode binary to text"),
-            ("decode", "bytea", "decode(string text, format text)", "Decode text to binary"),
+            (
+                "encode",
+                "text",
+                "encode(data bytea, format text)",
+                "Encode binary to text",
+            ),
+            (
+                "decode",
+                "bytea",
+                "decode(string text, format text)",
+                "Decode text to binary",
+            ),
             // === Numeric Functions ===
             ("abs", "numeric", "abs(x)", "Absolute value"),
             ("ceil", "numeric", "ceil(x)", "Round up to integer"),
             ("ceiling", "numeric", "ceiling(x)", "Round up to integer"),
             ("floor", "numeric", "floor(x)", "Round down to integer"),
-            ("round", "numeric", "round(x [, s])", "Round to s decimal places"),
-            ("trunc", "numeric", "trunc(x [, s])", "Truncate to s decimal places"),
+            (
+                "round",
+                "numeric",
+                "round(x [, s])",
+                "Round to s decimal places",
+            ),
+            (
+                "trunc",
+                "numeric",
+                "trunc(x [, s])",
+                "Truncate to s decimal places",
+            ),
             ("mod", "numeric", "mod(y, x)", "Remainder of y/x"),
             ("power", "double", "power(a, b)", "a raised to power b"),
             ("sqrt", "double", "sqrt(x)", "Square root"),
@@ -547,81 +860,371 @@ impl SchemaCache {
             ("ln", "double", "ln(x)", "Natural logarithm"),
             ("log", "double", "log(x) | log(base, x)", "Logarithm"),
             ("log10", "double", "log10(x)", "Base 10 logarithm"),
-            ("random", "double", "random()", "Random value 0.0 <= x < 1.0"),
+            (
+                "random",
+                "double",
+                "random()",
+                "Random value 0.0 <= x < 1.0",
+            ),
             ("setseed", "void", "setseed(seed double)", "Set random seed"),
             ("sign", "integer", "sign(x)", "Sign of argument (-1, 0, 1)"),
             ("div", "integer", "div(y, x)", "Integer quotient of y/x"),
-            ("greatest", "any", "greatest(value1, value2, ...)", "Largest value"),
-            ("least", "any", "least(value1, value2, ...)", "Smallest value"),
+            (
+                "greatest",
+                "any",
+                "greatest(value1, value2, ...)",
+                "Largest value",
+            ),
+            (
+                "least",
+                "any",
+                "least(value1, value2, ...)",
+                "Smallest value",
+            ),
             // === Date/Time Functions ===
-            ("now", "timestamp with time zone", "now()", "Current date and time"),
-            ("current_timestamp", "timestamp with time zone", "current_timestamp", "Current date and time"),
+            (
+                "now",
+                "timestamp with time zone",
+                "now()",
+                "Current date and time",
+            ),
+            (
+                "current_timestamp",
+                "timestamp with time zone",
+                "current_timestamp",
+                "Current date and time",
+            ),
             ("current_date", "date", "current_date", "Current date"),
-            ("current_time", "time with time zone", "current_time", "Current time"),
+            (
+                "current_time",
+                "time with time zone",
+                "current_time",
+                "Current time",
+            ),
             ("localtime", "time", "localtime", "Current local time"),
-            ("localtimestamp", "timestamp", "localtimestamp", "Current local timestamp"),
-            ("age", "interval", "age(timestamp [, timestamp])", "Subtract timestamps"),
-            ("date_part", "double", "date_part(field, source)", "Extract date/time field"),
-            ("extract", "double", "extract(field FROM source)", "Extract date/time field"),
-            ("date_trunc", "timestamp", "date_trunc(field, source)", "Truncate to precision"),
-            ("to_char", "text", "to_char(timestamp, format)", "Convert to formatted string"),
-            ("to_date", "date", "to_date(text, format)", "Convert string to date"),
-            ("to_timestamp", "timestamp", "to_timestamp(text, format)", "Convert string to timestamp"),
-            ("make_date", "date", "make_date(year, month, day)", "Create date from parts"),
-            ("make_time", "time", "make_time(hour, min, sec)", "Create time from parts"),
-            ("make_timestamp", "timestamp", "make_timestamp(year, month, day, hour, min, sec)", "Create timestamp"),
-            ("make_interval", "interval", "make_interval(years, months, weeks, days, hours, mins, secs)", "Create interval"),
-            ("clock_timestamp", "timestamp with time zone", "clock_timestamp()", "Current timestamp (changes during statement)"),
-            ("statement_timestamp", "timestamp with time zone", "statement_timestamp()", "Start of current statement"),
-            ("transaction_timestamp", "timestamp with time zone", "transaction_timestamp()", "Start of current transaction"),
-            ("timeofday", "text", "timeofday()", "Current date and time as text"),
+            (
+                "localtimestamp",
+                "timestamp",
+                "localtimestamp",
+                "Current local timestamp",
+            ),
+            (
+                "age",
+                "interval",
+                "age(timestamp [, timestamp])",
+                "Subtract timestamps",
+            ),
+            (
+                "date_part",
+                "double",
+                "date_part(field, source)",
+                "Extract date/time field",
+            ),
+            (
+                "extract",
+                "double",
+                "extract(field FROM source)",
+                "Extract date/time field",
+            ),
+            (
+                "date_trunc",
+                "timestamp",
+                "date_trunc(field, source)",
+                "Truncate to precision",
+            ),
+            (
+                "to_char",
+                "text",
+                "to_char(timestamp, format)",
+                "Convert to formatted string",
+            ),
+            (
+                "to_date",
+                "date",
+                "to_date(text, format)",
+                "Convert string to date",
+            ),
+            (
+                "to_timestamp",
+                "timestamp",
+                "to_timestamp(text, format)",
+                "Convert string to timestamp",
+            ),
+            (
+                "make_date",
+                "date",
+                "make_date(year, month, day)",
+                "Create date from parts",
+            ),
+            (
+                "make_time",
+                "time",
+                "make_time(hour, min, sec)",
+                "Create time from parts",
+            ),
+            (
+                "make_timestamp",
+                "timestamp",
+                "make_timestamp(year, month, day, hour, min, sec)",
+                "Create timestamp",
+            ),
+            (
+                "make_interval",
+                "interval",
+                "make_interval(years, months, weeks, days, hours, mins, secs)",
+                "Create interval",
+            ),
+            (
+                "clock_timestamp",
+                "timestamp with time zone",
+                "clock_timestamp()",
+                "Current timestamp (changes during statement)",
+            ),
+            (
+                "statement_timestamp",
+                "timestamp with time zone",
+                "statement_timestamp()",
+                "Start of current statement",
+            ),
+            (
+                "transaction_timestamp",
+                "timestamp with time zone",
+                "transaction_timestamp()",
+                "Start of current transaction",
+            ),
+            (
+                "timeofday",
+                "text",
+                "timeofday()",
+                "Current date and time as text",
+            ),
             // === Array Functions ===
-            ("array_append", "anyarray", "array_append(array, element)", "Append element to array"),
-            ("array_prepend", "anyarray", "array_prepend(element, array)", "Prepend element to array"),
-            ("array_cat", "anyarray", "array_cat(array1, array2)", "Concatenate arrays"),
-            ("array_ndims", "integer", "array_ndims(array)", "Number of dimensions"),
-            ("array_dims", "text", "array_dims(array)", "Text representation of dimensions"),
-            ("array_length", "integer", "array_length(array, dimension)", "Length of dimension"),
-            ("array_lower", "integer", "array_lower(array, dimension)", "Lower bound of dimension"),
-            ("array_upper", "integer", "array_upper(array, dimension)", "Upper bound of dimension"),
-            ("array_position", "integer", "array_position(array, element [, start])", "Position of element"),
-            ("array_positions", "integer[]", "array_positions(array, element)", "All positions of element"),
-            ("array_remove", "anyarray", "array_remove(array, element)", "Remove all occurrences"),
-            ("array_replace", "anyarray", "array_replace(array, from, to)", "Replace occurrences"),
-            ("array_to_string", "text", "array_to_string(array, delimiter [, null_string])", "Convert to string"),
-            ("string_to_array", "text[]", "string_to_array(string, delimiter [, null_string])", "Split string to array"),
-            ("unnest", "setof anyelement", "unnest(array)", "Expand array to rows"),
-            ("cardinality", "integer", "cardinality(array)", "Total number of elements"),
+            (
+                "array_append",
+                "anyarray",
+                "array_append(array, element)",
+                "Append element to array",
+            ),
+            (
+                "array_prepend",
+                "anyarray",
+                "array_prepend(element, array)",
+                "Prepend element to array",
+            ),
+            (
+                "array_cat",
+                "anyarray",
+                "array_cat(array1, array2)",
+                "Concatenate arrays",
+            ),
+            (
+                "array_ndims",
+                "integer",
+                "array_ndims(array)",
+                "Number of dimensions",
+            ),
+            (
+                "array_dims",
+                "text",
+                "array_dims(array)",
+                "Text representation of dimensions",
+            ),
+            (
+                "array_length",
+                "integer",
+                "array_length(array, dimension)",
+                "Length of dimension",
+            ),
+            (
+                "array_lower",
+                "integer",
+                "array_lower(array, dimension)",
+                "Lower bound of dimension",
+            ),
+            (
+                "array_upper",
+                "integer",
+                "array_upper(array, dimension)",
+                "Upper bound of dimension",
+            ),
+            (
+                "array_position",
+                "integer",
+                "array_position(array, element [, start])",
+                "Position of element",
+            ),
+            (
+                "array_positions",
+                "integer[]",
+                "array_positions(array, element)",
+                "All positions of element",
+            ),
+            (
+                "array_remove",
+                "anyarray",
+                "array_remove(array, element)",
+                "Remove all occurrences",
+            ),
+            (
+                "array_replace",
+                "anyarray",
+                "array_replace(array, from, to)",
+                "Replace occurrences",
+            ),
+            (
+                "array_to_string",
+                "text",
+                "array_to_string(array, delimiter [, null_string])",
+                "Convert to string",
+            ),
+            (
+                "string_to_array",
+                "text[]",
+                "string_to_array(string, delimiter [, null_string])",
+                "Split string to array",
+            ),
+            (
+                "unnest",
+                "setof anyelement",
+                "unnest(array)",
+                "Expand array to rows",
+            ),
+            (
+                "cardinality",
+                "integer",
+                "cardinality(array)",
+                "Total number of elements",
+            ),
             // === Conditional Functions ===
-            ("coalesce", "any", "coalesce(value1, value2, ...)", "First non-null value"),
-            ("nullif", "any", "nullif(value1, value2)", "Null if values equal"),
-            ("greatest", "any", "greatest(value1, value2, ...)", "Largest value"),
-            ("least", "any", "least(value1, value2, ...)", "Smallest value"),
+            (
+                "coalesce",
+                "any",
+                "coalesce(value1, value2, ...)",
+                "First non-null value",
+            ),
+            (
+                "nullif",
+                "any",
+                "nullif(value1, value2)",
+                "Null if values equal",
+            ),
+            (
+                "greatest",
+                "any",
+                "greatest(value1, value2, ...)",
+                "Largest value",
+            ),
+            (
+                "least",
+                "any",
+                "least(value1, value2, ...)",
+                "Smallest value",
+            ),
             // === Type Conversion ===
             ("cast", "any", "cast(value AS type)", "Convert to type"),
-            ("to_char", "text", "to_char(value, format)", "Convert to formatted string"),
-            ("to_number", "numeric", "to_number(text, format)", "Convert string to number"),
+            (
+                "to_char",
+                "text",
+                "to_char(value, format)",
+                "Convert to formatted string",
+            ),
+            (
+                "to_number",
+                "numeric",
+                "to_number(text, format)",
+                "Convert string to number",
+            ),
             // === UUID Functions ===
-            ("gen_random_uuid", "uuid", "gen_random_uuid()", "Generate random UUID v4"),
-            ("uuid_generate_v4", "uuid", "uuid_generate_v4()", "Generate random UUID v4 (uuid-ossp)"),
+            (
+                "gen_random_uuid",
+                "uuid",
+                "gen_random_uuid()",
+                "Generate random UUID v4",
+            ),
+            (
+                "uuid_generate_v4",
+                "uuid",
+                "uuid_generate_v4()",
+                "Generate random UUID v4 (uuid-ossp)",
+            ),
             // === System Functions ===
             ("current_user", "name", "current_user", "Current user name"),
-            ("current_database", "name", "current_database()", "Current database name"),
-            ("current_schema", "name", "current_schema()", "Current schema name"),
-            ("current_schemas", "name[]", "current_schemas(include_implicit)", "Current search path"),
-            ("pg_typeof", "regtype", "pg_typeof(any)", "Get data type of value"),
+            (
+                "current_database",
+                "name",
+                "current_database()",
+                "Current database name",
+            ),
+            (
+                "current_schema",
+                "name",
+                "current_schema()",
+                "Current schema name",
+            ),
+            (
+                "current_schemas",
+                "name[]",
+                "current_schemas(include_implicit)",
+                "Current search path",
+            ),
+            (
+                "pg_typeof",
+                "regtype",
+                "pg_typeof(any)",
+                "Get data type of value",
+            ),
             ("version", "text", "version()", "PostgreSQL version string"),
             // === Row/Record Functions ===
-            ("row_to_json", "json", "row_to_json(record [, pretty])", "Convert row to JSON"),
-            ("row_number", "bigint", "row_number() OVER (...)", "Number of current row"),
+            (
+                "row_to_json",
+                "json",
+                "row_to_json(record [, pretty])",
+                "Convert row to JSON",
+            ),
+            (
+                "row_number",
+                "bigint",
+                "row_number() OVER (...)",
+                "Number of current row",
+            ),
             ("rank", "bigint", "rank() OVER (...)", "Rank with gaps"),
-            ("dense_rank", "bigint", "dense_rank() OVER (...)", "Rank without gaps"),
+            (
+                "dense_rank",
+                "bigint",
+                "dense_rank() OVER (...)",
+                "Rank without gaps",
+            ),
             ("ntile", "integer", "ntile(n) OVER (...)", "Bucket number"),
-            ("lag", "any", "lag(value [, offset [, default]]) OVER (...)", "Value from previous row"),
-            ("lead", "any", "lead(value [, offset [, default]]) OVER (...)", "Value from following row"),
-            ("first_value", "any", "first_value(value) OVER (...)", "First value in window"),
-            ("last_value", "any", "last_value(value) OVER (...)", "Last value in window"),
-            ("nth_value", "any", "nth_value(value, n) OVER (...)", "Nth value in window"),
+            (
+                "lag",
+                "any",
+                "lag(value [, offset [, default]]) OVER (...)",
+                "Value from previous row",
+            ),
+            (
+                "lead",
+                "any",
+                "lead(value [, offset [, default]]) OVER (...)",
+                "Value from following row",
+            ),
+            (
+                "first_value",
+                "any",
+                "first_value(value) OVER (...)",
+                "First value in window",
+            ),
+            (
+                "last_value",
+                "any",
+                "last_value(value) OVER (...)",
+                "Last value in window",
+            ),
+            (
+                "nth_value",
+                "any",
+                "nth_value(value, n) OVER (...)",
+                "Nth value in window",
+            ),
         ];
 
         self.functions.clear();

@@ -8,19 +8,21 @@
 use std::sync::Arc;
 
 use async_graphql::dynamic::Schema;
+use octofhir_auth::AuthResult;
 use octofhir_auth::middleware::AuthContext;
 use octofhir_auth::policy::cache::PolicyCache;
 use octofhir_auth::policy::engine::{DefaultDecision, PolicyEvaluator, PolicyEvaluatorConfig};
 use octofhir_auth::storage::PolicyStorage;
 use octofhir_auth::token::jwt::AccessTokenClaims;
 use octofhir_auth::types::client::{Client, GrantType};
-use octofhir_auth::AuthResult;
 use octofhir_fhir_model::provider::FhirVersion;
 use octofhir_fhirschema::{FhirSchemaModelProvider, get_schemas};
 use octofhir_graphql::{
     DynModelProvider, FhirSchemaBuilder, GraphQLContext, GraphQLContextBuilder, SchemaBuilderConfig,
 };
-use octofhir_search::{SearchConfig, SearchParameter, SearchParameterRegistry, SearchParameterType};
+use octofhir_search::{
+    SearchConfig, SearchParameter, SearchParameterRegistry, SearchParameterType,
+};
 use octofhir_storage::{
     DynStorage, FhirStorage, HistoryParams, HistoryResult, SearchParams, SearchResult,
     StorageError, StoredResource, Transaction,
@@ -96,6 +98,10 @@ impl FhirStorage for MockStorage {
         _params: &HistoryParams,
     ) -> Result<HistoryResult, StorageError> {
         Err(StorageError::internal("history not supported in mock"))
+    }
+
+    async fn system_history(&self, _params: &HistoryParams) -> Result<HistoryResult, StorageError> {
+        Err(StorageError::internal("system_history not supported in mock"))
     }
 
     async fn search(
@@ -900,10 +906,7 @@ async fn test_schema_has_reference_type() {
 
     // Verify expected fields
     let fields = type_info["fields"].as_array().expect("Should have fields");
-    let field_names: Vec<&str> = fields
-        .iter()
-        .map(|f| f["name"].as_str().unwrap())
-        .collect();
+    let field_names: Vec<&str> = fields.iter().map(|f| f["name"].as_str().unwrap()).collect();
 
     assert!(
         field_names.contains(&"reference"),
@@ -960,7 +963,10 @@ async fn test_schema_has_all_resources_union() {
     let possible_types = type_info["possibleTypes"]
         .as_array()
         .expect("Should have possibleTypes");
-    assert!(!possible_types.is_empty(), "AllResources should include resource types");
+    assert!(
+        !possible_types.is_empty(),
+        "AllResources should include resource types"
+    );
 
     let type_names: Vec<&str> = possible_types
         .iter()
@@ -1015,18 +1021,28 @@ async fn test_reference_type_has_resource_field_with_arguments() {
     );
 
     let data = response.data.into_json().expect("Should have data");
-    let fields = data["__type"]["fields"].as_array().expect("Should have fields");
+    let fields = data["__type"]["fields"]
+        .as_array()
+        .expect("Should have fields");
 
     // Find the resource field
     let resource_field = fields.iter().find(|f| f["name"] == "resource");
-    assert!(resource_field.is_some(), "Reference should have resource field");
+    assert!(
+        resource_field.is_some(),
+        "Reference should have resource field"
+    );
 
     let resource_field = resource_field.unwrap();
-    let args = resource_field["args"].as_array().expect("resource should have args");
+    let args = resource_field["args"]
+        .as_array()
+        .expect("resource should have args");
 
     // Verify optional argument
     let optional_arg = args.iter().find(|a| a["name"] == "optional");
-    assert!(optional_arg.is_some(), "resource should have optional argument");
+    assert!(
+        optional_arg.is_some(),
+        "resource should have optional argument"
+    );
 
     // Verify type argument
     let type_arg = args.iter().find(|a| a["name"] == "type");
@@ -1121,7 +1137,10 @@ async fn test_reference_loader_parses_references() {
     let result = context.resolve_reference("Patient/non-existent").await;
     assert!(result.is_some(), "Should return parsed reference");
     let resolved = result.unwrap();
-    assert!(resolved.resource.is_none(), "Resource should be None for missing");
+    assert!(
+        resolved.resource.is_none(),
+        "Resource should be None for missing"
+    );
 
     // Test contained reference
     let result = context.resolve_reference("#contained-med").await;
@@ -1235,12 +1254,11 @@ async fn test_reverse_reference_field_introspection() {
     );
 
     let data = response.data.into_json().expect("Should have data");
-    let fields = data["__type"]["fields"].as_array().expect("Should have fields");
+    let fields = data["__type"]["fields"]
+        .as_array()
+        .expect("Should have fields");
 
-    let field_names: Vec<&str> = fields
-        .iter()
-        .map(|f| f["name"].as_str().unwrap())
-        .collect();
+    let field_names: Vec<&str> = fields.iter().map(|f| f["name"].as_str().unwrap()).collect();
 
     // Should have reverse reference fields
     assert!(
@@ -1256,7 +1274,10 @@ async fn test_reverse_reference_field_introspection() {
     let subject_field = fields
         .iter()
         .find(|f| f["name"] == "ObservationList_subject");
-    assert!(subject_field.is_some(), "Should have ObservationList_subject field");
+    assert!(
+        subject_field.is_some(),
+        "Should have ObservationList_subject field"
+    );
 
     let subject_field = subject_field.unwrap();
     assert_eq!(
@@ -1556,7 +1577,10 @@ async fn test_chained_reference_resolution() {
 
     // Verify Organization (second level - chained)
     let org_resource = &patient_resource["managingOrganization"]["resource"];
-    assert!(!org_resource.is_null(), "Should resolve Organization in chain");
+    assert!(
+        !org_resource.is_null(),
+        "Should resolve Organization in chain"
+    );
     assert_eq!(org_resource["id"], "org-1");
     assert_eq!(org_resource["active"], true);
 }
@@ -1705,12 +1729,11 @@ async fn test_mutation_introspection() {
     );
 
     let data = response.data.into_json().expect("Should have data");
-    let fields = data["__type"]["fields"].as_array().expect("Should have fields");
+    let fields = data["__type"]["fields"]
+        .as_array()
+        .expect("Should have fields");
 
-    let field_names: Vec<&str> = fields
-        .iter()
-        .map(|f| f["name"].as_str().unwrap())
-        .collect();
+    let field_names: Vec<&str> = fields.iter().map(|f| f["name"].as_str().unwrap()).collect();
 
     // Should have CRUD mutations for Patient
     assert!(
@@ -1727,35 +1750,41 @@ async fn test_mutation_introspection() {
     );
 
     // Find PatientCreate and verify its arguments
-    let create_field = fields
-        .iter()
-        .find(|f| f["name"] == "PatientCreate");
+    let create_field = fields.iter().find(|f| f["name"] == "PatientCreate");
     assert!(create_field.is_some(), "Should have PatientCreate field");
 
     let create_field = create_field.unwrap();
     let args = create_field["args"].as_array().expect("Should have args");
     let arg_names: Vec<&str> = args.iter().map(|a| a["name"].as_str().unwrap()).collect();
 
-    assert!(arg_names.contains(&"res"), "PatientCreate should have 'res' argument");
+    assert!(
+        arg_names.contains(&"res"),
+        "PatientCreate should have 'res' argument"
+    );
 
     // Find PatientUpdate and verify its arguments
-    let update_field = fields
-        .iter()
-        .find(|f| f["name"] == "PatientUpdate");
+    let update_field = fields.iter().find(|f| f["name"] == "PatientUpdate");
     assert!(update_field.is_some(), "Should have PatientUpdate field");
 
     let update_field = update_field.unwrap();
     let args = update_field["args"].as_array().expect("Should have args");
     let arg_names: Vec<&str> = args.iter().map(|a| a["name"].as_str().unwrap()).collect();
 
-    assert!(arg_names.contains(&"id"), "PatientUpdate should have 'id' argument");
-    assert!(arg_names.contains(&"res"), "PatientUpdate should have 'res' argument");
-    assert!(arg_names.contains(&"ifMatch"), "PatientUpdate should have 'ifMatch' argument");
+    assert!(
+        arg_names.contains(&"id"),
+        "PatientUpdate should have 'id' argument"
+    );
+    assert!(
+        arg_names.contains(&"res"),
+        "PatientUpdate should have 'res' argument"
+    );
+    assert!(
+        arg_names.contains(&"ifMatch"),
+        "PatientUpdate should have 'ifMatch' argument"
+    );
 
     // Verify PatientDelete returns OperationOutcome
-    let delete_field = fields
-        .iter()
-        .find(|f| f["name"] == "PatientDelete");
+    let delete_field = fields.iter().find(|f| f["name"] == "PatientDelete");
     assert!(delete_field.is_some(), "Should have PatientDelete field");
 
     let delete_field = delete_field.unwrap();
@@ -1809,7 +1838,9 @@ async fn test_input_type_introspection() {
     assert_eq!(input_type["kind"], "INPUT_OBJECT");
 
     // Should have resource field
-    let fields = input_type["inputFields"].as_array().expect("Should have fields");
+    let fields = input_type["inputFields"]
+        .as_array()
+        .expect("Should have fields");
     let field_names: Vec<&str> = fields.iter().map(|f| f["name"].as_str().unwrap()).collect();
 
     assert!(
@@ -1985,7 +2016,8 @@ async fn test_access_control_allows_sufficient_scope() {
 
     // Create context with Patient read scope (note: .r is the SMART scope suffix for read)
     let auth_context = create_restricted_auth_context("user/Patient.r");
-    let context = build_test_context_with_auth(storage, registry.clone(), Some(auth_context), false);
+    let context =
+        build_test_context_with_auth(storage, registry.clone(), Some(auth_context), false);
 
     let query = r#"
         query {
@@ -2045,7 +2077,8 @@ async fn test_access_control_wildcard_scope_allows_all() {
 
     // Create context with wildcard scope
     let auth_context = create_restricted_auth_context("user/*.cruds");
-    let context = build_test_context_with_auth(storage, registry.clone(), Some(auth_context), false);
+    let context =
+        build_test_context_with_auth(storage, registry.clone(), Some(auth_context), false);
 
     let query = r#"
         query {
@@ -2163,7 +2196,7 @@ async fn test_access_control_error_includes_operation_outcome() {
 #[tokio::test]
 async fn test_schema_builds_with_converted_schemas() {
     use octofhir_fhir_model::provider::ModelProvider;
-    use octofhir_fhirschema::{translate, StructureDefinition};
+    use octofhir_fhirschema::{StructureDefinition, translate};
 
     // Path to FHIR package
     let package_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -2184,7 +2217,12 @@ async fn test_schema_builds_with_converted_schemas() {
         let entry = entry.unwrap();
         let path = entry.path();
         if path.is_file()
-            && path.file_name().unwrap().to_str().unwrap().starts_with("StructureDefinition-")
+            && path
+                .file_name()
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .starts_with("StructureDefinition-")
         {
             if let Ok(content) = std::fs::read_to_string(&path) {
                 if let Ok(sd) = serde_json::from_str::<StructureDefinition>(&content) {
@@ -2208,7 +2246,12 @@ async fn test_schema_builds_with_converted_schemas() {
             let entry = entry.unwrap();
             let path = entry.path();
             if path.is_file()
-                && path.file_name().unwrap().to_str().unwrap().starts_with("StructureDefinition-")
+                && path
+                    .file_name()
+                    .unwrap()
+                    .to_str()
+                    .unwrap()
+                    .starts_with("StructureDefinition-")
             {
                 if let Ok(content) = std::fs::read_to_string(&path) {
                     if let Ok(sd) = serde_json::from_str::<StructureDefinition>(&content) {
@@ -2237,7 +2280,10 @@ async fn test_schema_builds_with_converted_schemas() {
 
     // Get elements for Task
     let elements = provider.get_elements("Task").await.unwrap();
-    let backbone_count = elements.iter().filter(|e| e.element_type == "BackboneElement").count();
+    let backbone_count = elements
+        .iter()
+        .filter(|e| e.element_type == "BackboneElement")
+        .count();
     println!("Task backbone elements: {}", backbone_count);
     for elem in &elements {
         if elem.name == "input" || elem.name == "output" || elem.name == "restriction" {
@@ -2262,7 +2308,7 @@ async fn test_schema_builds_with_converted_schemas() {
 #[tokio::test]
 async fn debug_task_backbone_detection() {
     use octofhir_fhir_model::provider::ModelProvider;
-    use octofhir_fhirschema::{translate, StructureDefinition};
+    use octofhir_fhirschema::{StructureDefinition, translate};
 
     println!("\n=== EMBEDDED SCHEMAS ===");
     let embedded_schemas = get_schemas(octofhir_fhirschema::embedded::FhirVersion::R4).clone();
@@ -2272,7 +2318,10 @@ async fn debug_task_backbone_detection() {
         if let Some(elements) = &task_schema.elements {
             if let Some(input) = elements.get("input") {
                 println!("Embedded Task.input type_name: {:?}", input.type_name);
-                println!("Embedded Task.input has elements: {}", input.elements.is_some());
+                println!(
+                    "Embedded Task.input has elements: {}",
+                    input.elements.is_some()
+                );
             }
         }
     }
@@ -2298,12 +2347,14 @@ async fn debug_task_backbone_detection() {
         .join(".fhir/packages/hl7.fhir.r4.core-4.0.1/package/StructureDefinition-Task.json");
 
     if !task_sd_path.exists() {
-        println!("Task SD not found at {:?}, skipping converted test", task_sd_path);
+        println!(
+            "Task SD not found at {:?}, skipping converted test",
+            task_sd_path
+        );
         return;
     }
 
-    let task_sd_json = std::fs::read_to_string(&task_sd_path)
-        .expect("Failed to read Task SD");
+    let task_sd_json = std::fs::read_to_string(&task_sd_path).expect("Failed to read Task SD");
     let sd: StructureDefinition = serde_json::from_str(&task_sd_json).expect("Failed to parse");
     let converted_schema = translate(sd, None).expect("Failed to translate");
 

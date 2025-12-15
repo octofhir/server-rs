@@ -65,7 +65,7 @@ async fn start_server(
             .await;
     });
 
-    (format!("http://{addr}"), tx, server)
+    (format!("http://{addr}/fhir"), tx, server)
 }
 
 /// Helper to check if a resource exists

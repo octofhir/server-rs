@@ -1,210 +1,244 @@
-import type { FhirBundle, FhirResource, HttpRequestConfig, HttpResponse } from "./types";
+import type {
+	CapabilityStatement,
+	FhirBundle,
+	FhirResource,
+	HttpMethod,
+	HttpRequestConfig,
+	HttpResponse,
+} from "./types";
 import { authInterceptor } from "./authInterceptor";
 
+export class HttpError extends Error {
+	response: HttpResponse<unknown>;
+
+	constructor(message: string, response: HttpResponse<unknown>) {
+		super(message);
+		this.name = "HttpError";
+		this.response = response;
+	}
+}
+
 export class FhirClient {
-  private baseUrl: string;
-  private defaultTimeout: number;
-  private defaultHeaders: Record<string, string>;
+	private baseUrl: string;
+	private defaultTimeout: number;
+	private defaultHeaders: Record<string, string>;
 
-  constructor(baseUrl = "", timeout = 30000) {
-    this.baseUrl = baseUrl;
-    this.defaultTimeout = timeout;
-    this.defaultHeaders = {
-      Accept: "application/fhir+json",
-      "Content-Type": "application/fhir+json",
-    };
-  }
+	constructor(baseUrl = "", timeout = 30000) {
+		this.baseUrl = baseUrl;
+		this.defaultTimeout = timeout;
+		this.defaultHeaders = {
+			Accept: "application/fhir+json",
+			"Content-Type": "application/fhir+json",
+		};
+	}
 
-  private async request<T = any>(config: HttpRequestConfig): Promise<HttpResponse<T>> {
-    const { method, url, headers = {}, data, timeout = this.defaultTimeout } = config;
-    const fullUrl = url.startsWith("http") ? url : `${this.baseUrl}${url}`;
+	private async request<T = any>(
+		config: HttpRequestConfig,
+	): Promise<HttpResponse<T>> {
+		const {
+			method,
+			url,
+			headers = {},
+			data,
+			timeout = this.defaultTimeout,
+		} = config;
+		const fullUrl = url.startsWith("http") ? url : `${this.baseUrl}${url}`;
 
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), timeout);
+		const controller = new AbortController();
+		const timeoutId = setTimeout(() => controller.abort(), timeout);
 
-    try {
-      const response = await fetch(fullUrl, {
-        method,
-        credentials: "include", // Include cookies for auth
-        headers: {
-          ...this.defaultHeaders,
-          ...headers,
-        },
-        body: data ? JSON.stringify(data) : undefined,
-        signal: controller.signal,
-      });
+		// GET and HEAD requests cannot have a body
+		const shouldIncludeBody = method !== "GET" && method !== "HEAD";
 
-      clearTimeout(timeoutId);
+		try {
+			const response = await fetch(fullUrl, {
+				method,
+				credentials: "include", // Include cookies for auth
+				headers: {
+					...this.defaultHeaders,
+					...headers,
+				},
+				body: shouldIncludeBody && data ? JSON.stringify(data) : undefined,
+				signal: controller.signal,
+			});
 
-      // Check for auth errors (401/403) and notify interceptor
-      authInterceptor.handleResponse(response);
+			clearTimeout(timeoutId);
 
-      // Parse response headers
-      const responseHeaders: Record<string, string> = {};
-      response.headers.forEach((value, key) => {
-        responseHeaders[key] = value;
-      });
+			// Check for auth errors (401/403) and notify interceptor
+			authInterceptor.handleResponse(response);
 
-      // Parse response data
-      let responseData: T;
-      const contentType = response.headers.get("content-type");
+			// Parse response headers
+			const responseHeaders: Record<string, string> = {};
+			response.headers.forEach((value, key) => {
+				responseHeaders[key] = value;
+			});
 
-      if (
-        contentType?.includes("application/json") ||
-        contentType?.includes("application/fhir+json")
-      ) {
-        responseData = await response.json();
-      } else {
-        responseData = (await response.text()) as unknown as T;
-      }
+			// Parse response data
+			let responseData: T;
+			const contentType = response.headers.get("content-type");
 
-      const result: HttpResponse<T> = {
-        data: responseData,
-        status: response.status,
-        statusText: response.statusText,
-        headers: responseHeaders,
-        config,
-      };
+			if (
+				contentType?.includes("application/json") ||
+				contentType?.includes("application/fhir+json")
+			) {
+				responseData = await response.json();
+			} else {
+				responseData = (await response.text()) as unknown as T;
+			}
 
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-      }
+			const result: HttpResponse<T> = {
+				data: responseData,
+				status: response.status,
+				statusText: response.statusText,
+				headers: responseHeaders,
+				config,
+			};
 
-      return result;
-    } catch (error) {
-      clearTimeout(timeoutId);
+			if (!response.ok) {
+				throw new HttpError(
+					`HTTP ${response.status}: ${response.statusText}`,
+					result,
+				);
+			}
 
-      if (error instanceof Error && error.name === "AbortError") {
-        throw new Error("Request timeout");
-      }
+			return result;
+		} catch (error) {
+			clearTimeout(timeoutId);
 
-      throw error;
-    }
-  }
+			if (error instanceof Error && error.name === "AbortError") {
+				throw new Error("Request timeout");
+			}
 
-  // FHIR REST API methods
-  async read<T extends FhirResource = FhirResource>(resourceType: string, id: string): Promise<T> {
-    const response = await this.request<T>({
-      method: "GET",
-      url: `/${resourceType}/${id}`,
-    });
-    return response.data;
-  }
+			throw error;
+		}
+	}
 
-  async search<_T extends FhirResource = FhirResource>(
-    resourceType: string,
-    params: Record<string, string | number> = {}
-  ): Promise<FhirBundle> {
-    const searchParams = new URLSearchParams();
+	// FHIR REST API methods
+	async read<T extends FhirResource = FhirResource>(
+		resourceType: string,
+		id: string,
+	): Promise<T> {
+		const response = await this.request<T>({
+			method: "GET",
+			url: `/${resourceType}/${id}`,
+		});
+		return response.data;
+	}
 
-    Object.entries(params).forEach(([key, value]) => {
-      searchParams.set(key, String(value));
-    });
+	async search<_T extends FhirResource = FhirResource>(
+		resourceType: string,
+		params: Record<string, string | number> = {},
+	): Promise<FhirBundle> {
+		const searchParams = new URLSearchParams();
 
-    const queryString = searchParams.toString();
-    const url = `/${resourceType}${queryString ? `?${queryString}` : ""}`;
+		Object.entries(params).forEach(([key, value]) => {
+			searchParams.set(key, String(value));
+		});
 
-    const response = await this.request<FhirBundle>({
-      method: "GET",
-      url,
-    });
+		const queryString = searchParams.toString();
+		const url = `/${resourceType}${queryString ? `?${queryString}` : ""}`;
 
-    return response.data;
-  }
+		const response = await this.request<FhirBundle>({
+			method: "GET",
+			url,
+		});
 
-  async create<T extends FhirResource = FhirResource>(resource: T): Promise<T> {
-    const response = await this.request<T>({
-      method: "POST",
-      url: `/${resource.resourceType}`,
-      data: resource,
-    });
-    return response.data;
-  }
+		return response.data;
+	}
 
-  async update<T extends FhirResource = FhirResource>(resource: T): Promise<T> {
-    if (!resource.id) {
-      throw new Error("Resource must have an ID for update");
-    }
+	async create<T extends FhirResource = FhirResource>(resource: T): Promise<T> {
+		const response = await this.request<T>({
+			method: "POST",
+			url: `/${resource.resourceType}`,
+			data: resource,
+		});
+		return response.data;
+	}
 
-    const response = await this.request<T>({
-      method: "PUT",
-      url: `/${resource.resourceType}/${resource.id}`,
-      data: resource,
-    });
-    return response.data;
-  }
+	async update<T extends FhirResource = FhirResource>(resource: T): Promise<T> {
+		if (!resource.id) {
+			throw new Error("Resource must have an ID for update");
+		}
 
-  async delete(resourceType: string, id: string): Promise<void> {
-    await this.request({
-      method: "DELETE",
-      url: `/${resourceType}/${id}`,
-    });
-  }
+		const response = await this.request<T>({
+			method: "PUT",
+			url: `/${resource.resourceType}/${resource.id}`,
+			data: resource,
+		});
+		return response.data;
+	}
 
-  async getCapabilities(): Promise<FhirResource> {
-    const response = await this.request<FhirResource>({
-      method: "GET",
-      url: "/metadata",
-    });
-    return response.data;
-  }
+	async delete(resourceType: string, id: string): Promise<void> {
+		await this.request({
+			method: "DELETE",
+			url: `/${resourceType}/${id}`,
+		});
+	}
 
-  // Generic request method for custom operations
-  async customRequest<T = any>(
-    config: Omit<HttpRequestConfig, "url"> & { url: string }
-  ): Promise<HttpResponse<T>> {
-    return this.request<T>(config);
-  }
+	async getCapabilities(): Promise<CapabilityStatement> {
+		const response = await this.request<CapabilityStatement>({
+			method: "GET",
+			url: "/metadata",
+		});
+		return response.data;
+	}
 
-  // Raw request method for REST console with timing
-  async rawRequest<T = any>(
-    method: "GET" | "POST" | "PUT" | "DELETE" | "PATCH",
-    path: string,
-    body?: unknown
-  ): Promise<HttpResponse<T> & { responseTime: number }> {
-    const startTime = performance.now();
-    const response = await this.request<T>({
-      method,
-      url: path,
-      data: body,
-    });
-    const endTime = performance.now();
-    return {
-      ...response,
-      responseTime: endTime - startTime,
-    };
-  }
+	// Generic request method for custom operations
+	async customRequest<T = any>(
+		config: Omit<HttpRequestConfig, "url"> & { url: string },
+	): Promise<HttpResponse<T>> {
+		return this.request<T>(config);
+	}
 
-  // Bundle navigation helpers
-  async followLink(
-    bundle: FhirBundle,
-    relation: "first" | "prev" | "next" | "last"
-  ): Promise<FhirBundle | null> {
-    const link = bundle.link?.find((l) => l.relation === relation);
-    if (!link?.url) {
-      return null;
-    }
+	// Raw request method for REST console with timing
+	async rawRequest<T = any>(
+		method: HttpMethod,
+		path: string,
+		body?: unknown,
+	): Promise<HttpResponse<T> & { responseTime: number }> {
+		const startTime = performance.now();
+		const response = await this.request<T>({
+			method,
+			url: path,
+			data: body,
+		});
+		const endTime = performance.now();
+		return {
+			...response,
+			responseTime: endTime - startTime,
+		};
+	}
 
-    const response = await this.request<FhirBundle>({
-      method: "GET",
-      url: link.url,
-    });
+	// Bundle navigation helpers
+	async followLink(
+		bundle: FhirBundle,
+		relation: "first" | "prev" | "next" | "last",
+	): Promise<FhirBundle | null> {
+		const link = bundle.link?.find((l) => l.relation === relation);
+		if (!link?.url) {
+			return null;
+		}
 
-    return response.data;
-  }
+		const response = await this.request<FhirBundle>({
+			method: "GET",
+			url: link.url,
+		});
 
-  setBaseUrl(baseUrl: string): void {
-    this.baseUrl = baseUrl;
-  }
+		return response.data;
+	}
 
-  setTimeout(timeout: number): void {
-    this.defaultTimeout = timeout;
-  }
+	setBaseUrl(baseUrl: string): void {
+		this.baseUrl = baseUrl;
+	}
 
-  setDefaultHeaders(headers: Record<string, string>): void {
-    this.defaultHeaders = { ...this.defaultHeaders, ...headers };
-  }
+	setTimeout(timeout: number): void {
+		this.defaultTimeout = timeout;
+	}
+
+	setDefaultHeaders(headers: Record<string, string>): void {
+		this.defaultHeaders = { ...this.defaultHeaders, ...headers };
+	}
 }
 
 // Default instance
-export const fhirClient = new FhirClient();
+export const fhirClient = new FhirClient("/fhir");

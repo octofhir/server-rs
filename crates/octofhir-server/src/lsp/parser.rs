@@ -268,7 +268,16 @@ impl SqlParser {
             let after_from = &sql[from_pos + 4..];
 
             // Find the end of FROM clause (WHERE, ORDER BY, GROUP BY, HAVING, LIMIT, ;, or end)
-            let end_keywords = ["WHERE", "ORDER", "GROUP", "HAVING", "LIMIT", "UNION", "EXCEPT", "INTERSECT"];
+            let end_keywords = [
+                "WHERE",
+                "ORDER",
+                "GROUP",
+                "HAVING",
+                "LIMIT",
+                "UNION",
+                "EXCEPT",
+                "INTERSECT",
+            ];
             let mut end_pos = after_from.len();
 
             for kw in end_keywords {
@@ -350,7 +359,10 @@ impl SqlParser {
     }
 
     /// Detect alias.column access pattern (e.g., `p.` or `p.res`).
-    fn detect_alias_column_access(before_cursor: &str, tables: &[TableRef]) -> Option<CursorContext> {
+    fn detect_alias_column_access(
+        before_cursor: &str,
+        tables: &[TableRef],
+    ) -> Option<CursorContext> {
         let trimmed = before_cursor.trim();
 
         // Get the last token (what the user is typing)
@@ -656,7 +668,7 @@ impl SqlParser {
                 || after_trimmed == "''"  // Empty quotes from auto-closing
                 || after_trimmed.ends_with("->")
                 || after_trimmed.ends_with("->>")
-                || (quote_count == 2 && after_trimmed.ends_with("'"));  // Complete path, waiting for more
+                || (quote_count == 2 && after_trimmed.ends_with("'")); // Complete path, waiting for more
 
             if should_complete {
                 let quote_context = Self::analyze_quote_context(after_op);
@@ -918,7 +930,11 @@ impl SqlParser {
         // Check for schema.table pattern in FROM/JOIN clauses
         if matches!(
             last_keyword,
-            Some("FROM") | Some("JOIN") | Some("LEFT JOIN") | Some("RIGHT JOIN") | Some("INNER JOIN")
+            Some("FROM")
+                | Some("JOIN")
+                | Some("LEFT JOIN")
+                | Some("RIGHT JOIN")
+                | Some("INNER JOIN")
         ) {
             if let Some(schema_ctx) = Self::detect_schema_table_access(trimmed) {
                 return Some(schema_ctx);
@@ -1264,10 +1280,7 @@ mod tests {
         let sql = "SELECT resource #>> '{name,";
         let ctx = SqlParser::detect_context(sql, sql.len());
 
-        if let CursorContext::JsonbPath {
-            operator, path, ..
-        } = ctx
-        {
+        if let CursorContext::JsonbPath { operator, path, .. } = ctx {
             assert_eq!(operator, JsonbOperator::HashDoubleArrow);
             assert_eq!(path, vec!["name".to_string()]);
         } else {
@@ -1401,10 +1414,7 @@ mod tests {
 
         if let CursorContext::JsonbPath { column, path, .. } = ctx {
             assert_eq!(column, "resource");
-            assert_eq!(
-                path,
-                vec!["identifier".to_string(), "0".to_string()]
-            );
+            assert_eq!(path, vec!["identifier".to_string(), "0".to_string()]);
         } else {
             panic!("Expected JsonbPath context, got {:?}", ctx);
         }
@@ -1475,7 +1485,12 @@ mod tests {
         let sql = "SELECT resource->{name,0,given";
         let ctx = SqlParser::detect_context(sql, sql.len());
 
-        if let CursorContext::JsonbPath { path, quote_context, .. } = ctx {
+        if let CursorContext::JsonbPath {
+            path,
+            quote_context,
+            ..
+        } = ctx
+        {
             assert_eq!(path.len(), 3);
             assert_eq!(path[0], "name");
             assert_eq!(path[1], "0");
@@ -1513,7 +1528,12 @@ mod tests {
         let sql = "SELECT resource->>'";
         let ctx = SqlParser::detect_context(sql, sql.len());
 
-        if let CursorContext::JsonbPath { operator, quote_context, .. } = ctx {
+        if let CursorContext::JsonbPath {
+            operator,
+            quote_context,
+            ..
+        } = ctx
+        {
             assert_eq!(operator, JsonbOperator::DoubleArrow);
             assert!(quote_context.has_opening_quote);
             assert!(quote_context.cursor_inside_quotes);
@@ -1528,7 +1548,12 @@ mod tests {
         let sql = "SELECT resource->'name'->";
         let ctx = SqlParser::detect_context(sql, sql.len());
 
-        if let CursorContext::JsonbPath { path, quote_context, .. } = ctx {
+        if let CursorContext::JsonbPath {
+            path,
+            quote_context,
+            ..
+        } = ctx
+        {
             assert_eq!(path, vec!["name".to_string()]);
             // After the second operator, no quotes yet
             assert!(!quote_context.has_opening_quote);
@@ -1544,7 +1569,12 @@ mod tests {
         let sql = "SELECT * FROM patient WHERE resource->'name'->''";
         let ctx = SqlParser::detect_context(sql, sql.len());
 
-        if let CursorContext::JsonbPath { path, quote_context, .. } = ctx {
+        if let CursorContext::JsonbPath {
+            path,
+            quote_context,
+            ..
+        } = ctx
+        {
             assert_eq!(path, vec!["name".to_string()]);
             // Empty quotes '' should be treated as cursor inside quotes
             assert!(quote_context.has_opening_quote);

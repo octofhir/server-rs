@@ -52,9 +52,10 @@ async fn metadata_includes_loaded_packages_extension() {
         return;
     }
     let (base, shutdown_tx, handle) = start_server_with_packages().await;
+    let fhir_base = format!("{base}/fhir");
     let client = reqwest::Client::new();
     let resp = client
-        .get(format!("{base}/metadata"))
+        .get(format!("{fhir_base}/metadata"))
         .header("accept", HeaderValue::from_static("application/fhir+json"))
         .send()
         .await

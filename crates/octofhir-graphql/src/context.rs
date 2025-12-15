@@ -104,14 +104,15 @@ impl GraphQLContext {
     /// Loads a resource by type and ID using the DataLoader.
     ///
     /// Returns `None` if the resource does not exist.
-    pub async fn load_resource(
-        &self,
-        resource_type: &str,
-        id: &str,
-    ) -> Option<serde_json::Value> {
+    pub async fn load_resource(&self, resource_type: &str, id: &str) -> Option<serde_json::Value> {
         use crate::loaders::ResourceKey;
         let key = ResourceKey::new(resource_type, id);
-        self.loaders.resource_loader.load_one(key).await.ok().flatten()
+        self.loaders
+            .resource_loader
+            .load_one(key)
+            .await
+            .ok()
+            .flatten()
     }
 
     /// Resolves a FHIR reference string to a resource.
@@ -126,7 +127,12 @@ impl GraphQLContext {
     ) -> Option<crate::loaders::ResolvedReference> {
         use crate::loaders::ReferenceKey;
         let key = ReferenceKey::new(reference);
-        self.loaders.reference_loader.load_one(key).await.ok().flatten()
+        self.loaders
+            .reference_loader
+            .load_one(key)
+            .await
+            .ok()
+            .flatten()
     }
 
     /// Creates a new builder for GraphQLContext.

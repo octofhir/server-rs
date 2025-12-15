@@ -1,0 +1,45 @@
+[Unit]
+Description=OctoFHIR Server - High-performance FHIR R4B Server
+After=network.target postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=simple
+User=octofhir
+Group=octofhir
+WorkingDirectory=/opt/octofhir
+
+# Path to the compiled binary
+ExecStart=/opt/octofhir/bin/octofhir-server
+
+# Environment variables
+Environment="RUST_LOG=info"
+Environment="OCTOFHIR_CONFIG=/opt/octofhir/config/octofhir.toml"
+
+# Optional: Override specific config via env vars
+# Environment="OCTOFHIR__SERVER__PORT=8080"
+# Environment="OCTOFHIR__DATABASE__URL=postgres://postgres:postgres@localhost:5450/octofhir"
+
+# Restart policy
+Restart=always
+RestartSec=10
+
+# Security hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/octofhir/logs /opt/octofhir/data
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+
+# Resource limits (adjust as needed)
+LimitNOFILE=65536
+LimitNPROC=4096
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=octofhir
+
+[Install]
+WantedBy=multi-user.target

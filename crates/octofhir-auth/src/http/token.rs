@@ -233,29 +233,29 @@ fn extract_client_auth(headers: &HeaderMap, request: &TokenRequest) -> ClientAut
     // Try HTTP Basic Auth first
     if let Some(auth_header) = headers.get("authorization")
         && let Ok(auth_str) = auth_header.to_str()
-            && let Some(basic_creds) = auth_str.strip_prefix("Basic ")
-                && let Ok(decoded) =
-                    base64::engine::general_purpose::STANDARD.decode(basic_creds.trim())
-                    && let Ok(creds_str) = String::from_utf8(decoded)
-                        && let Some((client_id, client_secret)) = creds_str.split_once(':') {
-                            return ClientAuth::Basic {
-                                client_id: client_id.to_string(),
-                                client_secret: client_secret.to_string(),
-                            };
-                        }
+        && let Some(basic_creds) = auth_str.strip_prefix("Basic ")
+        && let Ok(decoded) = base64::engine::general_purpose::STANDARD.decode(basic_creds.trim())
+        && let Ok(creds_str) = String::from_utf8(decoded)
+        && let Some((client_id, client_secret)) = creds_str.split_once(':')
+    {
+        return ClientAuth::Basic {
+            client_id: client_id.to_string(),
+            client_secret: client_secret.to_string(),
+        };
+    }
 
     // Try client assertion (JWT)
     if let (Some(assertion_type), Some(assertion)) = (
         request.client_assertion_type.as_ref(),
         request.client_assertion.as_ref(),
-    )
-        && let Some(client_id) = request.client_id.as_ref() {
-            return ClientAuth::Assertion {
-                client_id: client_id.clone(),
-                assertion_type: assertion_type.clone(),
-                assertion: assertion.clone(),
-            };
-        }
+    ) && let Some(client_id) = request.client_id.as_ref()
+    {
+        return ClientAuth::Assertion {
+            client_id: client_id.clone(),
+            assertion_type: assertion_type.clone(),
+            assertion: assertion.clone(),
+        };
+    }
 
     // Try client_id + client_secret in body
     if let (Some(client_id), Some(client_secret)) =

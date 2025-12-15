@@ -468,7 +468,11 @@ pub async fn create_resource(
                         header::HeaderValue::from_static("application/fhir+json; charset=utf-8"),
                     );
 
-                    return Ok((StatusCode::OK, response_headers, Json(existing.resource.clone())));
+                    return Ok((
+                        StatusCode::OK,
+                        response_headers,
+                        Json(existing.resource.clone()),
+                    ));
                 }
                 _ => {
                     // Multiple matches - return 412 Precondition Failed
@@ -1071,7 +1075,13 @@ pub async fn update_resource(
         .map(parse_prefer_return);
 
     // Validate payload structure
-    if let Err(err) = envelope_from_json(&resource_type, &payload, IdPolicy::Update { path_id: id.clone() }) {
+    if let Err(err) = envelope_from_json(
+        &resource_type,
+        &payload,
+        IdPolicy::Update {
+            path_id: id.clone(),
+        },
+    ) {
         return Err(ApiError::bad_request(err));
     }
 
@@ -1104,7 +1114,9 @@ pub async fn update_resource(
                     // Last-Modified
                     let last_modified = httpdate::fmt_http_date(
                         std::time::UNIX_EPOCH
-                            + std::time::Duration::from_secs(stored.last_updated.unix_timestamp() as u64),
+                            + std::time::Duration::from_secs(
+                                stored.last_updated.unix_timestamp() as u64
+                            ),
                     );
                     if let Ok(val) = header::HeaderValue::from_str(&last_modified) {
                         response_headers.insert(header::LAST_MODIFIED, val);
@@ -1174,7 +1186,9 @@ pub async fn update_resource(
                     // Last-Modified
                     let last_modified = httpdate::fmt_http_date(
                         std::time::UNIX_EPOCH
-                            + std::time::Duration::from_secs(stored.last_updated.unix_timestamp() as u64),
+                            + std::time::Duration::from_secs(
+                                stored.last_updated.unix_timestamp() as u64
+                            ),
                     );
                     if let Ok(val) = header::HeaderValue::from_str(&last_modified) {
                         response_headers.insert(header::LAST_MODIFIED, val);
@@ -1310,7 +1324,9 @@ pub async fn conditional_update_resource(
                         // Last-Modified
                         let last_modified = httpdate::fmt_http_date(
                             std::time::UNIX_EPOCH
-                                + std::time::Duration::from_secs(stored.last_updated.unix_timestamp() as u64),
+                                + std::time::Duration::from_secs(
+                                    stored.last_updated.unix_timestamp() as u64,
+                                ),
                         );
                         if let Ok(val) = header::HeaderValue::from_str(&last_modified) {
                             response_headers.insert(header::LAST_MODIFIED, val);
@@ -1319,7 +1335,9 @@ pub async fn conditional_update_resource(
                         // Content-Type
                         response_headers.insert(
                             header::CONTENT_TYPE,
-                            header::HeaderValue::from_static("application/fhir+json; charset=utf-8"),
+                            header::HeaderValue::from_static(
+                                "application/fhir+json; charset=utf-8",
+                            ),
                         );
 
                         // Handle Prefer return preference
@@ -1360,7 +1378,13 @@ pub async fn conditional_update_resource(
                 }
 
                 // Validate and update the matched resource
-                if let Err(err) = envelope_from_json(&resource_type, &payload, IdPolicy::Update { path_id: id.clone() }) {
+                if let Err(err) = envelope_from_json(
+                    &resource_type,
+                    &payload,
+                    IdPolicy::Update {
+                        path_id: id.clone(),
+                    },
+                ) {
                     return Err(ApiError::bad_request(err));
                 }
 
@@ -1383,7 +1407,9 @@ pub async fn conditional_update_resource(
                         // Last-Modified
                         let last_modified = httpdate::fmt_http_date(
                             std::time::UNIX_EPOCH
-                                + std::time::Duration::from_secs(stored.last_updated.unix_timestamp() as u64),
+                                + std::time::Duration::from_secs(
+                                    stored.last_updated.unix_timestamp() as u64,
+                                ),
                         );
                         if let Ok(val) = header::HeaderValue::from_str(&last_modified) {
                             response_headers.insert(header::LAST_MODIFIED, val);
@@ -1392,7 +1418,9 @@ pub async fn conditional_update_resource(
                         // Content-Type
                         response_headers.insert(
                             header::CONTENT_TYPE,
-                            header::HeaderValue::from_static("application/fhir+json; charset=utf-8"),
+                            header::HeaderValue::from_static(
+                                "application/fhir+json; charset=utf-8",
+                            ),
                         );
 
                         // Handle Prefer return preference
@@ -1915,11 +1943,8 @@ pub async fn search_resource(
     let cfg = &state.search_cfg;
 
     // Parse query string to SearchParams
-    let search_params = octofhir_search::parse_query_string(
-        &raw_q,
-        cfg.default_count as u32,
-        cfg.max_count as u32,
-    );
+    let search_params =
+        octofhir_search::parse_query_string(&raw_q, cfg.default_count as u32, cfg.max_count as u32);
 
     // Execute search using the new FhirStorage-based implementation
     let result = octofhir_db_postgres::queries::execute_search(
@@ -1954,7 +1979,10 @@ pub async fn search_resource(
 
     let offset = search_params.offset.unwrap_or(0) as usize;
     let count = search_params.count.unwrap_or(10) as usize;
-    let total = result.total.map(|t| t as usize).unwrap_or(resources_json.len());
+    let total = result
+        .total
+        .map(|t| t as usize)
+        .unwrap_or(resources_json.len());
 
     // Build bundle with or without includes
     let bundle = if included_entries.is_empty() {
@@ -2012,11 +2040,8 @@ pub async fn search_resource_post(
     let cfg = &state.search_cfg;
 
     // Parse query string to SearchParams
-    let search_params = octofhir_search::parse_query_string(
-        &raw_q,
-        cfg.default_count as u32,
-        cfg.max_count as u32,
-    );
+    let search_params =
+        octofhir_search::parse_query_string(&raw_q, cfg.default_count as u32, cfg.max_count as u32);
 
     // Execute search using the new FhirStorage-based implementation
     let result = octofhir_db_postgres::queries::execute_search(
@@ -2051,7 +2076,10 @@ pub async fn search_resource_post(
 
     let offset = search_params.offset.unwrap_or(0) as usize;
     let count = search_params.count.unwrap_or(10) as usize;
-    let total = result.total.map(|t| t as usize).unwrap_or(resources_json.len());
+    let total = result
+        .total
+        .map(|t| t as usize)
+        .unwrap_or(resources_json.len());
 
     // Build bundle with or without includes
     let bundle = if included_entries.is_empty() {
@@ -2112,11 +2140,8 @@ pub async fn system_search(
     let mut total_count: usize = 0;
 
     // Parse search params once
-    let search_params = octofhir_search::parse_query_string(
-        &raw_q,
-        cfg.default_count as u32,
-        cfg.max_count as u32,
-    );
+    let search_params =
+        octofhir_search::parse_query_string(&raw_q, cfg.default_count as u32, cfg.max_count as u32);
 
     // Search each resource type using modern storage API
     for type_name in &types {
@@ -2240,8 +2265,7 @@ async fn resolve_includes_for_search(
 
                                 // Fetch the referenced resource using modern storage API
                                 if ref_type.parse::<ResourceType>().is_ok() {
-                                    if let Ok(Some(stored)) =
-                                        storage.read(&ref_type, &ref_id).await
+                                    if let Ok(Some(stored)) = storage.read(&ref_type, &ref_id).await
                                     {
                                         included_keys.insert(key);
                                         included.push(octofhir_api::IncludedResourceEntry {
@@ -2624,16 +2648,17 @@ pub async fn api_operations(
     let op_storage = PostgresOperationStorage::new(state.db_pool.as_ref().clone());
 
     // Get all operations from the operations registry table
-    let mut operations: Vec<OperationDefinition> = match (&params.category, &params.module, params.public) {
-        (Some(category), _, _) => op_storage.list_by_category(category).await,
-        (_, Some(module), _) => op_storage.list_by_module(module).await,
-        (_, _, Some(true)) => op_storage.list_public().await,
-        _ => op_storage.list_all().await,
-    }
-    .unwrap_or_else(|e| {
-        tracing::warn!(error = %e, "Failed to load operations from registry");
-        Vec::new()
-    });
+    let mut operations: Vec<OperationDefinition> =
+        match (&params.category, &params.module, params.public) {
+            (Some(category), _, _) => op_storage.list_by_category(category).await,
+            (_, Some(module), _) => op_storage.list_by_module(module).await,
+            (_, _, Some(true)) => op_storage.list_public().await,
+            _ => op_storage.list_all().await,
+        }
+        .unwrap_or_else(|e| {
+            tracing::warn!(error = %e, "Failed to load operations from registry");
+            Vec::new()
+        });
 
     // Load Gateway CustomOperations dynamically (to avoid duplication in database)
     let gateway_ops = load_gateway_operations(&state.storage).await;
@@ -2677,7 +2702,7 @@ async fn load_gateway_operations(
     storage: &octofhir_storage::DynStorage,
 ) -> Vec<octofhir_core::OperationDefinition> {
     use crate::gateway::types::{App, CustomOperation};
-    use octofhir_core::{categories, OperationDefinition};
+    use octofhir_core::{OperationDefinition, categories};
     use std::collections::HashMap;
 
     // Load all active Apps using modern storage API
@@ -2847,7 +2872,9 @@ pub async fn api_operation_patch(
             // If public flag was changed, refresh the public paths cache
             if body.public.is_some() {
                 if let Ok(all_operations) = storage.list_all().await {
-                    state.public_paths_cache.update_from_operations(&all_operations);
+                    state
+                        .public_paths_cache
+                        .update_from_operations(&all_operations);
                     tracing::info!(operation_id = %id, "Public paths cache refreshed after operation update");
                 }
             }
@@ -2900,11 +2927,9 @@ fn map_storage_error(e: StorageError) -> ApiError {
         StorageError::Deleted { resource_type, id } => {
             ApiError::gone(format!("{resource_type} with id '{id}' has been deleted"))
         }
-        StorageError::VersionConflict { expected, actual } => {
-            ApiError::precondition_failed(&format!(
-                "Version conflict: expected {expected}, got {actual}"
-            ))
-        }
+        StorageError::VersionConflict { expected, actual } => ApiError::precondition_failed(
+            &format!("Version conflict: expected {expected}, got {actual}"),
+        ),
         StorageError::InvalidResource { message } => ApiError::bad_request(message),
         other => ApiError::internal(other.to_string()),
     }
@@ -3872,11 +3897,8 @@ async fn process_get_search_entry(
 
     // Search using modern storage API
     let cfg = &state.search_cfg;
-    let search_params = octofhir_search::parse_query_string(
-        query,
-        cfg.default_count as u32,
-        cfg.max_count as u32,
-    );
+    let search_params =
+        octofhir_search::parse_query_string(query, cfg.default_count as u32, cfg.max_count as u32);
 
     let result = state
         .storage
@@ -3888,7 +3910,10 @@ async fn process_get_search_entry(
 
     let offset = search_params.offset.unwrap_or(0) as usize;
     let count = search_params.count.unwrap_or(10) as usize;
-    let total = result.total.map(|t| t as usize).unwrap_or(resources_json.len());
+    let total = result
+        .total
+        .map(|t| t as usize)
+        .unwrap_or(resources_json.len());
 
     // Build a searchset bundle for the response
     let search_bundle = octofhir_api::bundle_from_search(
@@ -4100,11 +4125,7 @@ pub async fn compartment_search(
         })?;
 
     // Check if the compartment resource exists
-    match state
-        .storage
-        .read(&compartment_type, &compartment_id)
-        .await
-    {
+    match state.storage.read(&compartment_type, &compartment_id).await {
         Ok(Some(_)) => {} // Resource exists
         Ok(None) => {
             return Err(ApiError::NotFound(format!(
@@ -4225,11 +4246,7 @@ pub async fn compartment_search_all(
         .map_err(|e| ApiError::NotFound(format!("Compartment not found: {}", e)))?;
 
     // Verify compartment resource exists
-    match state
-        .storage
-        .read(&compartment_type, &compartment_id)
-        .await
-    {
+    match state.storage.read(&compartment_type, &compartment_id).await {
         Ok(Some(_)) => {} // Resource exists
         Ok(None) => {
             return Err(ApiError::NotFound(format!(
@@ -4291,7 +4308,11 @@ pub async fn compartment_search_all(
 
         // Execute search using modern storage API
         let search_params = octofhir_search::parse_query_string(&query, 1000, 1000);
-        match state.storage.search(resource_type_str, &search_params).await {
+        match state
+            .storage
+            .search(resource_type_str, &search_params)
+            .await
+        {
             Ok(result) => {
                 total += result.entries.len();
 

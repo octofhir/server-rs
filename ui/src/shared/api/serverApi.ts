@@ -6,6 +6,7 @@ import type {
   OperationDefinition,
   OperationsResponse,
   OperationUpdateRequest,
+  RestConsoleResponse,
   SqlResponse,
   SqlValue,
 } from "./types";
@@ -128,6 +129,11 @@ class ServerApiClient {
     return response.data;
   }
 
+  async getRestConsoleMetadata(): Promise<RestConsoleResponse> {
+    const response = await this.request<RestConsoleResponse>("/api/__introspect/rest-console");
+    return response.data;
+  }
+
   /**
    * Execute a SQL query against the database.
    * Requires DB console to be enabled in server configuration.
@@ -194,7 +200,7 @@ class ServerApiClient {
     if (operationName) {
       body.operationName = operationName;
     }
-    const response = await this.request<GraphQLResponse>("/fhir/$graphql", {
+    const response = await this.request<GraphQLResponse>("/$graphql", {
       method: "POST",
       body: JSON.stringify(body),
     });

@@ -1,10 +1,9 @@
 use std::sync::{Arc, OnceLock, RwLock};
 
 use crate::config::{AppConfig, PackageSpec};
-use octofhir_canonical_manager::SearchParameterInfo;
 use octofhir_core::fhir::FhirVersion;
 use octofhir_db_postgres::PostgresPackageStore;
-use octofhir_search::parameters::{SearchParameter, SearchParameterType};
+use octofhir_search::loader::parse_search_parameter;
 use octofhir_search::registry::SearchParameterRegistry;
 use std::str::FromStr;
 
@@ -490,24 +489,6 @@ fn default_core_for(v: FhirVersion) -> (String, String) {
 // Search Parameter Registry Building
 // ============================================================================
 
-/// Convert a SearchParameterInfo from canonical manager to SearchParameter for search engine.
-fn convert_to_search_param(info: &SearchParameterInfo) -> Option<SearchParameter> {
-    let param_type = SearchParameterType::parse(&info.type_field)?;
-    let mut sp = SearchParameter::new(
-        &info.code,
-        info.url.as_deref().unwrap_or(""),
-        param_type,
-        info.base.clone(),
-    );
-    if let Some(expr) = &info.expression {
-        sp = sp.with_expression(expr);
-    }
-    if let Some(desc) = &info.description {
-        sp = sp.with_description(desc);
-    }
-    Some(sp)
-}
-
 /// Build a SearchParameterRegistry by loading ALL SearchParameter resources from the canonical manager.
 ///
 /// This function queries all SearchParameter resources from the canonical manager and registers
@@ -538,23 +519,20 @@ pub async fn build_search_registry(
     let mut skipped_count = 0;
 
     for resource_match in &search_results.resources {
-        match SearchParameterInfo::from_resource(&resource_match.resource) {
-            Ok(info) => {
-                if let Some(sp) = convert_to_search_param(&info) {
-                    registry.register(sp);
-                    loaded_count += 1;
-                } else {
-                    skipped_count += 1;
-                    tracing::debug!(
-                        code = %info.code,
-                        type_field = %info.type_field,
-                        "skipping SearchParameter with unknown type"
-                    );
-                }
+        match parse_search_parameter(&resource_match.resource.content) {
+            Ok(param) => {
+                registry.register(param);
+                loaded_count += 1;
             }
             Err(e) => {
                 skipped_count += 1;
-                tracing::debug!(error = %e, "failed to parse SearchParameter resource");
+                let url = resource_match
+                    .resource
+                    .content
+                    .get("url")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown");
+                tracing::warn!(url = %url, error = %e, "failed to parse SearchParameter resource");
             }
         }
     }

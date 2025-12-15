@@ -28,8 +28,8 @@ mod type_generator;
 
 pub use builder::{DynModelProvider, FhirSchemaBuilder, SchemaBuilderConfig};
 pub use input_types::{
-    create_json_scalar, create_operation_outcome_issue_type, create_operation_outcome_type,
-    InputTypeGenerator,
+    InputTypeGenerator, create_json_scalar, create_operation_outcome_issue_type,
+    create_operation_outcome_type,
 };
 pub use lazy::LazySchema;
 pub use resource_type::{fhir_type_to_graphql, is_complex_type, is_primitive_type};

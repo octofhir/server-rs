@@ -75,7 +75,11 @@ impl ParsedReference {
 
         // Validate resource type (should start with uppercase letter)
         if resource_type.is_empty()
-            || !resource_type.chars().next().map(|c| c.is_uppercase()).unwrap_or(false)
+            || !resource_type
+                .chars()
+                .next()
+                .map(|c| c.is_uppercase())
+                .unwrap_or(false)
         {
             return None;
         }
@@ -164,7 +168,8 @@ impl Loader<ReferenceKey> for ReferenceLoader {
     ) -> Result<HashMap<ReferenceKey, Self::Value>, Self::Error> {
         debug!(key_count = keys.len(), "Resolving references batch");
 
-        let mut results: HashMap<ReferenceKey, ResolvedReference> = HashMap::with_capacity(keys.len());
+        let mut results: HashMap<ReferenceKey, ResolvedReference> =
+            HashMap::with_capacity(keys.len());
 
         // Parse all references first
         let mut parsed_refs: Vec<(ReferenceKey, ParsedReference)> = Vec::with_capacity(keys.len());
@@ -215,7 +220,10 @@ impl Loader<ReferenceKey> for ReferenceLoader {
         // Group by resource type for batched loading
         let mut by_type: HashMap<&str, Vec<(&ReferenceKey, &ParsedReference)>> = HashMap::new();
         for (key, parsed) in &parsed_refs {
-            by_type.entry(&parsed.resource_type).or_default().push((key, parsed));
+            by_type
+                .entry(&parsed.resource_type)
+                .or_default()
+                .push((key, parsed));
         }
 
         // Fetch resources by type

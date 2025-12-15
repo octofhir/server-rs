@@ -50,9 +50,7 @@ pub fn map_graphql_to_fhir_operation(field_name: &str) -> Option<FhirOperation> 
 
     // Single resource read (e.g., "Patient", "Observation")
     // This is a simple heuristic - resource type names start with uppercase
-    if field_name.chars().next().is_some_and(|c| c.is_uppercase())
-        && !field_name.contains('_')
-    {
+    if field_name.chars().next().is_some_and(|c| c.is_uppercase()) && !field_name.contains('_') {
         return Some(FhirOperation::Read);
     }
 
@@ -211,10 +209,15 @@ pub fn build_policy_context(
 /// Returns the HTTP method equivalent for a FHIR operation.
 fn method_for_operation(operation: FhirOperation) -> String {
     match operation {
-        FhirOperation::Read | FhirOperation::VRead | FhirOperation::Search
-        | FhirOperation::SearchType | FhirOperation::SearchSystem
-        | FhirOperation::HistoryInstance | FhirOperation::HistoryType
-        | FhirOperation::HistorySystem | FhirOperation::Capabilities => "GET".to_string(),
+        FhirOperation::Read
+        | FhirOperation::VRead
+        | FhirOperation::Search
+        | FhirOperation::SearchType
+        | FhirOperation::SearchSystem
+        | FhirOperation::HistoryInstance
+        | FhirOperation::HistoryType
+        | FhirOperation::HistorySystem
+        | FhirOperation::Capabilities => "GET".to_string(),
         FhirOperation::Create => "POST".to_string(),
         FhirOperation::Update => "PUT".to_string(),
         FhirOperation::Patch => "PATCH".to_string(),
@@ -307,7 +310,9 @@ pub async fn evaluate_access_with_resource(
                 resource_type = %resource_type,
                 "Policy abstained, treating as denied"
             );
-            Err(deny_reason_to_graphql_error(DenyReason::no_matching_policy()))
+            Err(deny_reason_to_graphql_error(
+                DenyReason::no_matching_policy(),
+            ))
         }
     }
 }
@@ -395,7 +400,9 @@ fn json_to_graphql_value(json: &serde_json::Value) -> Value {
             }
         }
         serde_json::Value::String(s) => Value::String(s.clone()),
-        serde_json::Value::Array(arr) => Value::List(arr.iter().map(json_to_graphql_value).collect()),
+        serde_json::Value::Array(arr) => {
+            Value::List(arr.iter().map(json_to_graphql_value).collect())
+        }
         serde_json::Value::Object(obj) => {
             let map: async_graphql::indexmap::IndexMap<async_graphql::Name, Value> = obj
                 .iter()
@@ -475,7 +482,10 @@ mod tests {
 
     #[test]
     fn test_extract_resource_type() {
-        assert_eq!(extract_resource_type("Patient"), Some("Patient".to_string()));
+        assert_eq!(
+            extract_resource_type("Patient"),
+            Some("Patient".to_string())
+        );
         assert_eq!(
             extract_resource_type("PatientList"),
             Some("Patient".to_string())

@@ -45,11 +45,12 @@ async fn accepts_application_json_in_accept_header() {
 async fn accepts_application_json_content_type_on_post() {
     let (base, shutdown_tx, handle) = start_server().await;
     let client = reqwest::Client::new();
+    let fhir_base = format!("{base}/fhir");
 
     let payload = serde_json::json!({"resourceType":"Patient", "name": [{"family": "Test"}]});
 
     let resp = client
-        .post(format!("{base}/Patient"))
+        .post(format!("{fhir_base}/Patient"))
         .header("accept", "application/json")
         .header("content-type", "application/json")
         .json(&payload)

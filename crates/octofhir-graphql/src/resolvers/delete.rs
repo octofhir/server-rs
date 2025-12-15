@@ -2,8 +2,8 @@
 //!
 //! Handles `{Resource}Delete` mutations for deleting FHIR resources.
 
-use async_graphql::dynamic::{FieldFuture, ResolverContext};
 use async_graphql::Value;
+use async_graphql::dynamic::{FieldFuture, ResolverContext};
 use octofhir_auth::smart::scopes::FhirOperation;
 use tracing::{debug, trace, warn};
 

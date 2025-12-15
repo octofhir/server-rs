@@ -3,8 +3,8 @@
 //! Implements resolvers for queries like `PatientConnection(cursor: "abc")` that
 //! provide cursor-based pagination with navigation links.
 
-use async_graphql::dynamic::{FieldFuture, ResolverContext};
 use async_graphql::Value;
+use async_graphql::dynamic::{FieldFuture, ResolverContext};
 use octofhir_auth::smart::scopes::FhirOperation;
 use octofhir_storage::{SearchParams, TotalMode};
 use tracing::{debug, warn};
@@ -59,7 +59,9 @@ impl ConnectionResolver {
     /// Creates a resolver function for connection queries.
     ///
     /// This is used to create the `PatientConnection(...)` style query fields.
-    pub fn resolve(resource_type: String) -> impl Fn(ResolverContext<'_>) -> FieldFuture<'_> + Send + Sync + Clone {
+    pub fn resolve(
+        resource_type: String,
+    ) -> impl Fn(ResolverContext<'_>) -> FieldFuture<'_> + Send + Sync + Clone {
         move |ctx| {
             let resource_type = resource_type.clone();
             FieldFuture::new(async move {
@@ -179,7 +181,10 @@ impl ConnectionResolver {
                 let mut connection = async_graphql::indexmap::IndexMap::new();
                 connection.insert(make_name("count"), Value::Number((total as i64).into()));
                 connection.insert(make_name("offset"), Value::Number((offset as i64).into()));
-                connection.insert(make_name("pageSize"), Value::Number((page_size as i64).into()));
+                connection.insert(
+                    make_name("pageSize"),
+                    Value::Number((page_size as i64).into()),
+                );
                 connection.insert(make_name("edges"), Value::List(edges));
 
                 // Add navigation cursors

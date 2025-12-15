@@ -5,7 +5,7 @@
 
 use axum::{
     extract::{Query, State, WebSocketUpgrade},
-    http::{header::COOKIE, HeaderMap, StatusCode},
+    http::{HeaderMap, StatusCode, header::COOKIE},
     response::{IntoResponse, Response},
 };
 use futures_util::{SinkExt, StreamExt};
@@ -14,8 +14,8 @@ use serde::Deserialize;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tower::{Service, ServiceExt};
-use tower_lsp::jsonrpc::Request;
 use tower_lsp::LspService;
+use tower_lsp::jsonrpc::Request;
 
 use crate::server::AppState;
 
@@ -109,8 +109,9 @@ async fn handle_lsp_connection(
 
     // Create LSP service - use direct service calls, not Server::new with duplex streams
     tracing::debug!("Creating LSP service...");
-    let (service, _client_socket) =
-        LspService::new(|client| PostgresLspServer::new(client, db_pool, octofhir_provider.clone()));
+    let (service, _client_socket) = LspService::new(|client| {
+        PostgresLspServer::new(client, db_pool, octofhir_provider.clone())
+    });
 
     // Wrap service in Arc<Mutex> for shared access
     let service = Arc::new(Mutex::new(service));
@@ -125,7 +126,11 @@ async fn handle_lsp_connection(
             loop {
                 interval.tick().await;
                 let mut write = ws_write.lock().await;
-                if write.send(axum::extract::ws::Message::Ping(vec![].into())).await.is_err() {
+                if write
+                    .send(axum::extract::ws::Message::Ping(vec![].into()))
+                    .await
+                    .is_err()
+                {
                     break;
                 }
                 tracing::trace!("Sent WebSocket ping");
@@ -137,15 +142,13 @@ async fn handle_lsp_connection(
     while let Some(msg) = ws_read.next().await {
         let text = match msg {
             Ok(axum::extract::ws::Message::Text(t)) => t.to_string(),
-            Ok(axum::extract::ws::Message::Binary(b)) => {
-                match String::from_utf8(b.to_vec()) {
-                    Ok(s) => s,
-                    Err(e) => {
-                        tracing::debug!("Invalid UTF-8 in binary message: {}", e);
-                        continue;
-                    }
+            Ok(axum::extract::ws::Message::Binary(b)) => match String::from_utf8(b.to_vec()) {
+                Ok(s) => s,
+                Err(e) => {
+                    tracing::debug!("Invalid UTF-8 in binary message: {}", e);
+                    continue;
                 }
-            }
+            },
             Ok(axum::extract::ws::Message::Close(_)) => {
                 tracing::debug!("WebSocket close received");
                 break;
@@ -153,7 +156,9 @@ async fn handle_lsp_connection(
             Ok(axum::extract::ws::Message::Ping(_)) => {
                 // Respond to ping with pong
                 let mut write = ping_ws_write.lock().await;
-                let _ = write.send(axum::extract::ws::Message::Pong(vec![].into())).await;
+                let _ = write
+                    .send(axum::extract::ws::Message::Pong(vec![].into()))
+                    .await;
                 tracing::trace!("Received ping, sent pong");
                 continue;
             }
@@ -190,7 +195,9 @@ async fn handle_lsp_connection(
                 });
                 let mut write = ping_ws_write.lock().await;
                 let _ = write
-                    .send(axum::extract::ws::Message::Text(error_response.to_string().into()))
+                    .send(axum::extract::ws::Message::Text(
+                        error_response.to_string().into(),
+                    ))
                     .await;
                 continue;
             }
@@ -242,7 +249,9 @@ async fn handle_lsp_connection(
                         });
                         let mut write = ping_ws_write.lock().await;
                         let _ = write
-                            .send(axum::extract::ws::Message::Text(error_response.to_string().into()))
+                            .send(axum::extract::ws::Message::Text(
+                                error_response.to_string().into(),
+                            ))
                             .await;
                     }
                 }

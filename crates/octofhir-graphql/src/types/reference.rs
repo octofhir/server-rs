@@ -3,8 +3,8 @@
 //! This module provides the GraphQL implementation of the FHIR Reference type
 //! with lazy resource resolution via DataLoaders.
 
-use async_graphql::dynamic::{Field, FieldFuture, FieldValue, Object, TypeRef, Union};
 use async_graphql::Value;
+use async_graphql::dynamic::{Field, FieldFuture, FieldValue, Object, TypeRef, Union};
 use tracing::trace;
 
 use crate::context::GraphQLContext;
@@ -19,8 +19,8 @@ use crate::loaders::ReferenceKey;
 /// - `identifier`: Associated identifier (if any)
 /// - `resource`: Lazy-loaded resolved resource
 pub fn create_reference_type(resource_types: &[String]) -> Object {
-    let mut reference = Object::new("Reference")
-        .description("A reference from one resource to another");
+    let mut reference =
+        Object::new("Reference").description("A reference from one resource to another");
 
     // Standard Reference fields
     reference = reference.field(
@@ -112,7 +112,8 @@ fn create_resource_resolution_field() -> Field {
             // Get the reference string from parent
             let reference_str = if let Some(parent) = ctx.parent_value.as_value()
                 && let Value::Object(obj) = parent
-                && let Some(Value::String(ref_val)) = obj.get(&async_graphql::Name::new("reference"))
+                && let Some(Value::String(ref_val)) =
+                    obj.get(&async_graphql::Name::new("reference"))
             {
                 ref_val.clone()
             } else {
@@ -133,7 +134,9 @@ fn create_resource_resolution_field() -> Field {
                 .reference_loader
                 .load_one(key)
                 .await
-                .map_err(|e| async_graphql::Error::new(format!("Reference resolution failed: {e}")))?;
+                .map_err(|e| {
+                    async_graphql::Error::new(format!("Reference resolution failed: {e}"))
+                })?;
 
             match result {
                 Some(resolved) if resolved.resource.is_some() => {
@@ -154,7 +157,9 @@ fn create_resource_resolution_field() -> Field {
                     // Convert serde_json::Value to async_graphql::Value
                     let resource = resolved.resource.unwrap();
                     let graphql_value = json_to_graphql_value(&resource);
-                    Ok(Some(FieldValue::value(graphql_value).with_type(resource_type.clone())))
+                    Ok(Some(
+                        FieldValue::value(graphql_value).with_type(resource_type.clone()),
+                    ))
                 }
                 _ => {
                     // Resource not found

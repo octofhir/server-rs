@@ -198,6 +198,11 @@ impl OperationRegistry {
         self.by_code.len()
     }
 
+    /// Returns all registered operations (deduplicated by code).
+    pub fn all(&self) -> Vec<Arc<OperationDefinition>> {
+        self.by_code.values().cloned().collect()
+    }
+
     /// Returns true if no operations are registered.
     pub fn is_empty(&self) -> bool {
         self.by_code.is_empty()

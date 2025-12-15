@@ -27,7 +27,7 @@ pub struct OperationDefinition {
     /// HTTP method(s) this operation uses (GET, POST, PUT, DELETE, PATCH)
     pub methods: Vec<String>,
 
-    /// URL path pattern (e.g., "/{type}/{id}", "/fhir/$graphql")
+    /// URL path pattern (e.g., "/{type}/{id}", "/$graphql")
     pub path_pattern: String,
 
     /// Whether this operation is public (no auth required)
@@ -157,7 +157,10 @@ mod tests {
         assert_eq!(op.methods, vec!["GET"]);
         assert_eq!(op.path_pattern, "/{type}/{id}");
         assert_eq!(op.module, "octofhir-server");
-        assert_eq!(op.description, Some("Read a single FHIR resource by ID".to_string()));
+        assert_eq!(
+            op.description,
+            Some("Read a single FHIR resource by ID".to_string())
+        );
         assert!(!op.public);
     }
 

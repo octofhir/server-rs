@@ -60,7 +60,10 @@ impl InputTypeGenerator {
     ///
     /// Returns a vector of (type_name, InputObject) tuples.
     pub fn create_all_inputs(resource_types: &[String]) -> Vec<(String, InputObject)> {
-        debug!(count = resource_types.len(), "Generating resource input types");
+        debug!(
+            count = resource_types.len(),
+            "Generating resource input types"
+        );
 
         resource_types
             .iter()
@@ -87,78 +90,68 @@ pub fn create_json_scalar() -> async_graphql::dynamic::Scalar {
 /// - Operation failures
 /// - Delete confirmations
 pub fn create_operation_outcome_type() -> async_graphql::dynamic::Object {
-    use async_graphql::dynamic::{Field, FieldFuture, Object};
     use async_graphql::Value;
+    use async_graphql::dynamic::{Field, FieldFuture, Object};
 
     // OperationOutcomeIssue type
     let issue = Object::new("OperationOutcomeIssue")
         .description("A single issue in an OperationOutcome")
         .field(
             Field::new("severity", TypeRef::named_nn(TypeRef::STRING), |ctx| {
-                FieldFuture::new(async move {
-                    extract_field(&ctx, "severity")
-                })
+                FieldFuture::new(async move { extract_field(&ctx, "severity") })
             })
             .description("Severity of the issue: fatal | error | warning | information"),
         )
         .field(
             Field::new("code", TypeRef::named_nn(TypeRef::STRING), |ctx| {
-                FieldFuture::new(async move {
-                    extract_field(&ctx, "code")
-                })
+                FieldFuture::new(async move { extract_field(&ctx, "code") })
             })
             .description("Error or warning code"),
         )
         .field(
             Field::new("diagnostics", TypeRef::named(TypeRef::STRING), |ctx| {
-                FieldFuture::new(async move {
-                    extract_field(&ctx, "diagnostics")
-                })
+                FieldFuture::new(async move { extract_field(&ctx, "diagnostics") })
             })
             .description("Additional diagnostic information"),
         )
         .field(
             Field::new("location", TypeRef::named_list(TypeRef::STRING), |ctx| {
-                FieldFuture::new(async move {
-                    extract_field(&ctx, "location")
-                })
+                FieldFuture::new(async move { extract_field(&ctx, "location") })
             })
             .description("FHIRPath of element(s) related to the issue"),
         )
         .field(
             Field::new("expression", TypeRef::named_list(TypeRef::STRING), |ctx| {
-                FieldFuture::new(async move {
-                    extract_field(&ctx, "expression")
-                })
+                FieldFuture::new(async move { extract_field(&ctx, "expression") })
             })
             .description("FHIRPath expression of element(s) related to the issue"),
         );
 
     // OperationOutcome type
     Object::new("OperationOutcome")
-        .description("Information about the outcome of an operation, particularly errors and warnings")
+        .description(
+            "Information about the outcome of an operation, particularly errors and warnings",
+        )
         .field(
             Field::new("resourceType", TypeRef::named_nn(TypeRef::STRING), |_| {
-                FieldFuture::new(async move {
-                    Ok(Some(Value::String("OperationOutcome".to_string())))
-                })
+                FieldFuture::new(
+                    async move { Ok(Some(Value::String("OperationOutcome".to_string()))) },
+                )
             })
             .description("Resource type (always 'OperationOutcome')"),
         )
         .field(
             Field::new("id", TypeRef::named(TypeRef::STRING), |ctx| {
-                FieldFuture::new(async move {
-                    extract_field(&ctx, "id")
-                })
+                FieldFuture::new(async move { extract_field(&ctx, "id") })
             })
             .description("Logical id of this outcome"),
         )
         .field(
-            Field::new("issue", TypeRef::named_nn_list_nn("OperationOutcomeIssue"), |ctx| {
-                FieldFuture::new(async move {
-                    extract_field(&ctx, "issue")
-                })
-            })
+            Field::new(
+                "issue",
+                TypeRef::named_nn_list_nn("OperationOutcomeIssue"),
+                |ctx| FieldFuture::new(async move { extract_field(&ctx, "issue") }),
+            )
             .description("Issues that occurred during the operation"),
         );
 
@@ -173,41 +166,31 @@ pub fn create_operation_outcome_issue_type() -> async_graphql::dynamic::Object {
         .description("A single issue in an OperationOutcome")
         .field(
             Field::new("severity", TypeRef::named_nn(TypeRef::STRING), |ctx| {
-                FieldFuture::new(async move {
-                    extract_field(&ctx, "severity")
-                })
+                FieldFuture::new(async move { extract_field(&ctx, "severity") })
             })
             .description("Severity of the issue: fatal | error | warning | information"),
         )
         .field(
             Field::new("code", TypeRef::named_nn(TypeRef::STRING), |ctx| {
-                FieldFuture::new(async move {
-                    extract_field(&ctx, "code")
-                })
+                FieldFuture::new(async move { extract_field(&ctx, "code") })
             })
             .description("Error or warning code"),
         )
         .field(
             Field::new("diagnostics", TypeRef::named(TypeRef::STRING), |ctx| {
-                FieldFuture::new(async move {
-                    extract_field(&ctx, "diagnostics")
-                })
+                FieldFuture::new(async move { extract_field(&ctx, "diagnostics") })
             })
             .description("Additional diagnostic information"),
         )
         .field(
             Field::new("location", TypeRef::named_list(TypeRef::STRING), |ctx| {
-                FieldFuture::new(async move {
-                    extract_field(&ctx, "location")
-                })
+                FieldFuture::new(async move { extract_field(&ctx, "location") })
             })
             .description("FHIRPath of element(s) related to the issue"),
         )
         .field(
             Field::new("expression", TypeRef::named_list(TypeRef::STRING), |ctx| {
-                FieldFuture::new(async move {
-                    extract_field(&ctx, "expression")
-                })
+                FieldFuture::new(async move { extract_field(&ctx, "expression") })
             })
             .description("FHIRPath expression of element(s) related to the issue"),
         )

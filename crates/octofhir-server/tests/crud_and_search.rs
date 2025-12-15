@@ -66,6 +66,7 @@ async fn patient_crud_and_search_flow() {
     let config = create_config(&postgres_url);
     let (base, shutdown_tx, handle) = start_server(&config).await;
     let client = reqwest::Client::new();
+    let fhir_base = format!("{base}/fhir");
 
     // Create Patient
     let payload = json!({
@@ -75,7 +76,7 @@ async fn patient_crud_and_search_flow() {
         "identifier": [{"system": "http://sys", "value": "MRN-123"}],
     });
     let resp = client
-        .post(format!("{base}/Patient"))
+        .post(format!("{fhir_base}/Patient"))
         .header("accept", "application/fhir+json")
         .header("content-type", "application/fhir+json")
         .json(&payload)
@@ -88,7 +89,7 @@ async fn patient_crud_and_search_flow() {
 
     // Read Patient
     let resp = client
-        .get(format!("{base}/Patient/{id}"))
+        .get(format!("{fhir_base}/Patient/{id}"))
         .header("accept", "application/fhir+json")
         .send()
         .await
@@ -109,7 +110,7 @@ async fn patient_crud_and_search_flow() {
     let resp = client
         .put(format!(
             "{}/Patient/{}",
-            base,
+            fhir_base,
             updated["id"].as_str().unwrap()
         ))
         .header("accept", "application/fhir+json")
@@ -126,7 +127,7 @@ async fn patient_crud_and_search_flow() {
     let resp = client
         .delete(format!(
             "{}/Patient/{}",
-            base,
+            fhir_base,
             read_back["id"].as_str().unwrap()
         ))
         .header("accept", "application/fhir+json")
@@ -137,7 +138,7 @@ async fn patient_crud_and_search_flow() {
 
     // Reading after delete should produce 410 Gone (soft delete)
     let resp = client
-        .get(format!("{base}/Patient/{id}"))
+        .get(format!("{fhir_base}/Patient/{id}"))
         .header("accept", "application/fhir+json")
         .send()
         .await
@@ -154,11 +155,12 @@ async fn error_cases_invalid_resource_and_id_mismatch_and_delete_404() {
     let config = create_config(&postgres_url);
     let (base, shutdown_tx, handle) = start_server(&config).await;
     let client = reqwest::Client::new();
+    let fhir_base = format!("{base}/fhir");
 
     // POST invalid resourceType vs path
     let bad = json!({"resourceType": "Observation"});
     let resp = client
-        .post(format!("{base}/Patient"))
+        .post(format!("{fhir_base}/Patient"))
         .header("accept", "application/fhir+json")
         .header("content-type", "application/fhir+json")
         .json(&bad)
@@ -171,7 +173,7 @@ async fn error_cases_invalid_resource_and_id_mismatch_and_delete_404() {
     let payload =
         json!({"resourceType": "Patient", "active": true, "name": [{"family": "TestFamily"}]});
     let resp = client
-        .post(format!("{base}/Patient"))
+        .post(format!("{fhir_base}/Patient"))
         .header("accept", "application/fhir+json")
         .header("content-type", "application/fhir+json")
         .json(&payload)
@@ -186,7 +188,7 @@ async fn error_cases_invalid_resource_and_id_mismatch_and_delete_404() {
     let mism =
         json!({"resourceType": "Patient", "id": "DIFFERENT", "name": [{"family": "Mismatch"}]});
     let resp = client
-        .put(format!("{base}/Patient/{id}"))
+        .put(format!("{fhir_base}/Patient/{id}"))
         .header("accept", "application/fhir+json")
         .header("content-type", "application/fhir+json")
         .json(&mism)
@@ -199,7 +201,7 @@ async fn error_cases_invalid_resource_and_id_mismatch_and_delete_404() {
     // Use a valid UUID format that doesn't exist in the database
     let non_existent_uuid = "00000000-0000-0000-0000-000000000000";
     let resp = client
-        .delete(format!("{}/Patient/{}", base, non_existent_uuid))
+        .delete(format!("{}/Patient/{}", fhir_base, non_existent_uuid))
         .header("accept", "application/fhir+json")
         .send()
         .await

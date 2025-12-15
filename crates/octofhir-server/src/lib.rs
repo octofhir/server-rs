@@ -17,6 +17,7 @@ pub mod observability;
 pub mod operation_registry;
 pub mod operations;
 pub mod patch;
+pub mod rest_console;
 pub mod server;
 pub mod storage_adapter;
 pub mod validation;

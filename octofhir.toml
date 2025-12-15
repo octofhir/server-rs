@@ -248,7 +248,7 @@ lsp_enabled = true
 # =============================================================================
 
 [graphql]
-# Enable GraphQL endpoint at /fhir/$graphql
+# Enable GraphQL endpoint at /$graphql (and /fhir/{type}/{id}/$graphql for instance queries)
 enabled = true
 # Enable introspection queries (__schema, __type)
 # May want to disable in production for security
