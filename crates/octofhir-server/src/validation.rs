@@ -17,7 +17,11 @@ use std::sync::Arc;
 
 use octofhir_fhir_model::{ValidationProvider, provider::ModelProvider};
 use octofhir_fhirpath::FhirPathEngine;
-use octofhir_fhirschema::create_validation_provider_with_fhirpath;
+use octofhir_fhirschema::{
+    create_validation_provider_with_fhirpath,
+    validation::FhirSchemaValidator,
+    types::ValidationError as FhirSchemaValidationError,
+};
 use serde_json::Value as JsonValue;
 
 #[cfg(test)]
@@ -26,7 +30,7 @@ use octofhir_fhirschema::{
     embedded::get_schemas,
 };
 
-use crate::canonical;
+use crate::{canonical, model_provider::OctoFhirModelProvider};
 
 /// Validation outcome with detailed information
 #[derive(Debug, Clone)]
@@ -129,12 +133,14 @@ pub struct ValidationService {
     /// FHIRPath engine for advanced constraint evaluation
     #[allow(dead_code)]
     fhirpath_engine: Arc<FhirPathEngine>,
+    /// Direct validator for detailed error reporting
+    direct_validator: Arc<FhirSchemaValidator>,
 }
 
 impl ValidationService {
     /// Create a new validation service with FHIRPath constraint support
     pub async fn new(
-        model_provider: Arc<dyn ModelProvider + Send + Sync>,
+        model_provider: Arc<OctoFhirModelProvider>,
         fhirpath_engine: Arc<FhirPathEngine>,
     ) -> Result<Self, anyhow::Error> {
         // Create validation provider with FHIRPath evaluator
@@ -145,10 +151,18 @@ impl ValidationService {
         .await
         .map_err(|e| anyhow::anyhow!("Failed to create validation provider: {}", e))?;
 
+        // Create direct validator for detailed error reporting
+        let schemas = model_provider.inner().schemas().clone();
+        let direct_validator = Arc::new(FhirSchemaValidator::new(
+            schemas,
+            Some(fhirpath_engine.clone()),
+        ));
+
         Ok(Self {
             validation_provider,
             model_provider,
             fhirpath_engine,
+            direct_validator,
         })
     }
 
@@ -187,10 +201,17 @@ impl ValidationService {
                 .map_err(|e| anyhow::anyhow!("Failed to create FHIRPath engine: {}", e))?,
         );
 
+        // Create direct validator for detailed error reporting
+        let direct_validator = Arc::new(FhirSchemaValidator::new(
+            schemas.clone(),
+            Some(fhirpath_engine.clone()),
+        ));
+
         Ok(Self {
             validation_provider,
             model_provider: schema_provider,
             fhirpath_engine,
+            direct_validator,
         })
     }
 
@@ -210,28 +231,75 @@ impl ValidationService {
         self.validate_against_profile(resource, &profile_url).await
     }
 
+    /// Convert FHIR Schema validation error to ValidationIssue
+    fn convert_validation_error(error: &FhirSchemaValidationError) -> ValidationIssue {
+        let diagnostics = if let Some(msg) = &error.message {
+            msg.clone()
+        } else {
+            format!("Validation error: {}", error.error_type)
+        };
+
+        // Build a more detailed diagnostic message
+        let detailed_diagnostics = if let Some(expected) = &error.expected {
+            format!("{} (expected: {})", diagnostics, expected)
+        } else if let Some(got) = &error.got {
+            format!("{} (got: {})", diagnostics, got)
+        } else {
+            diagnostics
+        };
+
+        // Convert path to FHIRPath location string
+        let location = if !error.path.is_empty() {
+            Some(
+                error
+                    .path
+                    .iter()
+                    .map(|v| match v {
+                        JsonValue::String(s) => s.clone(),
+                        JsonValue::Number(n) => format!("[{}]", n),
+                        _ => v.to_string(),
+                    })
+                    .collect::<Vec<_>>()
+                    .join("."),
+            )
+        } else {
+            None
+        };
+
+        ValidationIssue {
+            severity: IssueSeverity::Error,
+            code: "invalid".to_string(),
+            diagnostics: detailed_diagnostics,
+            location,
+        }
+    }
+
     /// Validate a resource against a specific profile
     pub async fn validate_against_profile(
         &self,
         resource: &JsonValue,
         profile_url: &str,
     ) -> ValidationOutcome {
-        match self
-            .validation_provider
-            .validate(resource, profile_url)
-            .await
-        {
-            Ok(true) => ValidationOutcome::success(),
-            Ok(false) => ValidationOutcome {
+        // Use direct validator to get detailed error information
+        let validation_result = self
+            .direct_validator
+            .validate(resource, vec![profile_url.to_string()])
+            .await;
+
+        if validation_result.valid {
+            ValidationOutcome::success()
+        } else {
+            // Convert detailed FHIR Schema errors to ValidationIssues
+            let issues = validation_result
+                .errors
+                .iter()
+                .map(Self::convert_validation_error)
+                .collect();
+
+            ValidationOutcome {
                 valid: false,
-                issues: vec![ValidationIssue {
-                    severity: IssueSeverity::Error,
-                    code: "invalid".to_string(),
-                    diagnostics: format!("Resource does not conform to profile: {}", profile_url),
-                    location: None,
-                }],
-            },
-            Err(e) => ValidationOutcome::error(format!("Validation error: {}", e)),
+                issues,
+            }
         }
     }
 
@@ -279,4 +347,188 @@ pub fn validate_resource(resource_type: &str, body: &JsonValue) -> Result<(), St
         ));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use octofhir_fhirschema::FhirVersion;
+    use serde_json::json;
+
+    #[tokio::test]
+    async fn test_org1_constraint_no_name_or_identifier() {
+        // Constraint org-1: Organization must have at least name or identifier
+        let validation_service = ValidationService::new_structural_only(FhirVersion::R4B)
+            .await
+            .expect("Failed to create validation service");
+
+        let org_no_name_or_id = json!({
+            "resourceType": "Organization",
+            "active": true
+        });
+
+        let outcome = validation_service.validate(&org_no_name_or_id).await;
+
+        println!(
+            "Validation outcome for org without name/id: valid={}, issues={:?}",
+            outcome.valid, outcome.issues
+        );
+
+        // This should fail org-1 constraint
+        assert!(
+            !outcome.valid,
+            "Organization without name or identifier should be invalid"
+        );
+
+        // Check that the error mentions the constraint
+        let has_constraint_error = outcome.issues.iter().any(|issue| {
+            issue.diagnostics.contains("org-1")
+                || issue.diagnostics.contains("identifier")
+                || issue.diagnostics.contains("name")
+        });
+
+        if !has_constraint_error {
+            println!("WARNING: org-1 constraint not being checked!");
+            println!("Issues found: {:#?}", outcome.issues);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_org1_constraint_with_name() {
+        let validation_service = ValidationService::new_structural_only(FhirVersion::R4B)
+            .await
+            .expect("Failed to create validation service");
+
+        let org_with_name = json!({
+            "resourceType": "Organization",
+            "name": "Test Hospital",
+            "active": true
+        });
+
+        let outcome = validation_service.validate(&org_with_name).await;
+
+        println!(
+            "Validation outcome for org with name: valid={}, issues={:?}",
+            outcome.valid, outcome.issues
+        );
+
+        // This should pass org-1 constraint
+        if !outcome.valid {
+            println!("Organization with name failed validation:");
+            for issue in &outcome.issues {
+                println!("  - {}: {}", issue.code, issue.diagnostics);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_org3_constraint_telecom_home_use() {
+        // Constraint org-3: Organization contact telecom cannot use 'home'
+        let validation_service = ValidationService::new_structural_only(FhirVersion::R4B)
+            .await
+            .expect("Failed to create validation service");
+
+        let org_with_home_telecom = json!({
+            "resourceType": "Organization",
+            "name": "Test Hospital",
+            "contact": [{
+                "telecom": [{
+                    "system": "phone",
+                    "value": "555-1234",
+                    "use": "home"  // This violates org-3
+                }]
+            }]
+        });
+
+        let outcome = validation_service
+            .validate(&org_with_home_telecom)
+            .await;
+
+        println!(
+            "Validation outcome for org with home telecom: valid={}, issues={:?}",
+            outcome.valid, outcome.issues
+        );
+
+        // This should fail org-3 constraint
+        if outcome.valid {
+            println!("WARNING: org-3 constraint not being checked!");
+            println!("Organization with home telecom should be invalid");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_org4_constraint_address_home_use() {
+        // Constraint org-4: Organization contact address cannot use 'home'
+        let validation_service = ValidationService::new_structural_only(FhirVersion::R4B)
+            .await
+            .expect("Failed to create validation service");
+
+        let org_with_home_address = json!({
+            "resourceType": "Organization",
+            "name": "Test Hospital",
+            "contact": [{
+                "address": {
+                    "use": "home",  // This violates org-4
+                    "line": ["123 Main St"],
+                    "city": "Springfield"
+                }
+            }]
+        });
+
+        let outcome = validation_service.validate(&org_with_home_address).await;
+
+        println!(
+            "Validation outcome for org with home address: valid={}, issues={:?}",
+            outcome.valid, outcome.issues
+        );
+
+        // This should fail org-4 constraint
+        if outcome.valid {
+            println!("WARNING: org-4 constraint not being checked!");
+            println!("Organization with home address should be invalid");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_valid_organization() {
+        let validation_service = ValidationService::new_structural_only(FhirVersion::R4B)
+            .await
+            .expect("Failed to create validation service");
+
+        let valid_org = json!({
+            "resourceType": "Organization",
+            "identifier": [{
+                "system": "http://example.org/hospital-ids",
+                "value": "HOSP-001"
+            }],
+            "name": "Test Hospital",
+            "active": true,
+            "contact": [{
+                "telecom": [{
+                    "system": "phone",
+                    "value": "555-1234",
+                    "use": "work"  // work is allowed
+                }],
+                "address": {
+                    "use": "work",  // work is allowed
+                    "line": ["123 Main St"],
+                    "city": "Springfield"
+                }
+            }]
+        });
+
+        let outcome = validation_service.validate(&valid_org).await;
+
+        println!(
+            "Validation outcome for valid org: valid={}, issues={:?}",
+            outcome.valid, outcome.issues
+        );
+
+        if !outcome.valid {
+            println!("Valid organization failed validation:");
+            for issue in &outcome.issues {
+                println!("  - {}: {}", issue.code, issue.diagnostics);
+            }
+        }
+    }
 }

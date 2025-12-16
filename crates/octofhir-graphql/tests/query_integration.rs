@@ -454,17 +454,18 @@ async fn test_schema_has_search_parameters() {
     let sdl = schema.sdl();
 
     // Patient search parameters should be GraphQL-safe
+    // Search params now use list types for OR logic support: name: [String]
     assert!(
-        sdl.contains("name: String"),
-        "Should have name search param"
+        sdl.contains("name: [String]"),
+        "Should have name search param (list type for OR logic)"
     );
     assert!(
-        sdl.contains("birthdate: String"),
-        "Should have birthdate search param"
+        sdl.contains("birthdate: [String]"),
+        "Should have birthdate search param (list type for OR logic)"
     );
     assert!(
-        sdl.contains("gender: String"),
-        "Should have gender search param"
+        sdl.contains("gender: [String]"),
+        "Should have gender search param (list type for OR logic)"
     );
 
     // Common pagination params

@@ -14,6 +14,7 @@ mod fhir_resolver;
 mod handler;
 mod parser;
 mod schema_cache;
+pub mod semantic_analyzer;
 mod server;
 
 pub use completion_filter::{CompletionFilter, CompletionRelevanceData};

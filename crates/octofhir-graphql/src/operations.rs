@@ -18,7 +18,8 @@ impl OperationProvider for GraphQLOperationProvider {
                 "/$graphql",
                 modules::GRAPHQL,
             )
-            .with_description("Execute GraphQL queries against FHIR resources"),
+            .with_description("Execute GraphQL queries against FHIR resources")
+            .with_public(false),
             OperationDefinition::new(
                 "graphql.instance",
                 "GraphQL Instance Query",
@@ -27,7 +28,8 @@ impl OperationProvider for GraphQLOperationProvider {
                 "/fhir/{type}/{id}/$graphql",
                 modules::GRAPHQL,
             )
-            .with_description("Execute GraphQL queries against a specific FHIR resource instance"),
+            .with_description("Execute GraphQL queries against a specific FHIR resource instance")
+            .with_public(false),
         ]
     }
 

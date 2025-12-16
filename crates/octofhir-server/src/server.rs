@@ -350,43 +350,65 @@ async fn load_structure_definitions_from_packages() -> Vec<StructureDefinition> 
     tracing::debug!("Attempting to load StructureDefinitions from canonical manager");
     if let Some(manager) = crate::canonical::get_manager() {
         tracing::debug!("Canonical manager is available, querying for StructureDefinitions");
-        // Query for ALL StructureDefinitions in loaded packages
-        // IMPORTANT: Set high limit to get all SDs (FHIR has ~140 resources + ~200 types)
-        let query = SearchQuery {
-            resource_types: vec!["StructureDefinition".to_string()],
-            limit: Some(10000), // High limit to ensure we get ALL StructureDefinitions
-            ..Default::default()
-        };
 
-        match manager.search_engine().search(&query).await {
-            Ok(results) => {
-                let mut structure_definitions = Vec::new();
+        // Query for ALL StructureDefinitions with pagination
+        // The canonical manager has a max limit of 1000, so we need to paginate
+        const PAGE_SIZE: usize = 1000;
+        let mut offset = 0;
+        let mut structure_definitions = Vec::new();
 
-                for resource_match in results.resources {
-                    // Parse as StructureDefinition
-                    if let Ok(sd) = serde_json::from_value::<StructureDefinition>(
-                        resource_match.resource.content,
-                    ) {
-                        structure_definitions.push(sd);
-                    }
-                }
+        loop {
+            let query = SearchQuery {
+                resource_types: vec!["StructureDefinition".to_string()],
+                limit: Some(PAGE_SIZE),
+                offset: Some(offset),
+                ..Default::default()
+            };
 
-                if !structure_definitions.is_empty() {
-                    tracing::info!(
-                        "Loaded {} StructureDefinitions from canonical manager packages",
-                        structure_definitions.len()
+            match manager.search_engine().search(&query).await {
+                Ok(results) => {
+                    let page_count = results.resources.len();
+                    tracing::debug!(
+                        offset = offset,
+                        page_count = page_count,
+                        "fetched StructureDefinition page"
                     );
-                    return structure_definitions;
-                } else {
-                    tracing::warn!("Query returned 0 StructureDefinitions from canonical manager");
+
+                    for resource_match in results.resources {
+                        // Parse as StructureDefinition
+                        if let Ok(sd) = serde_json::from_value::<StructureDefinition>(
+                            resource_match.resource.content,
+                        ) {
+                            structure_definitions.push(sd);
+                        }
+                    }
+
+                    // If we got fewer results than the page size, we've reached the end
+                    if page_count < PAGE_SIZE {
+                        break;
+                    }
+
+                    offset += PAGE_SIZE;
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        offset = offset,
+                        error = %e,
+                        "Failed to query StructureDefinitions from canonical manager"
+                    );
+                    break;
                 }
             }
-            Err(e) => {
-                tracing::warn!(
-                    "Failed to query StructureDefinitions from canonical manager: {}",
-                    e
-                );
-            }
+        }
+
+        if !structure_definitions.is_empty() {
+            tracing::info!(
+                count = structure_definitions.len(),
+                "Loaded StructureDefinitions from canonical manager packages with pagination"
+            );
+            return structure_definitions;
+        } else {
+            tracing::warn!("Query returned 0 StructureDefinitions from canonical manager");
         }
     } else {
         tracing::debug!("Canonical manager not available");
@@ -835,6 +857,7 @@ pub async fn build_app(cfg: &AppConfig) -> Result<Router, anyhow::Error> {
             max_depth: cfg.graphql.max_depth,
             max_complexity: cfg.graphql.max_complexity,
             introspection_enabled: cfg.graphql.introspection,
+            subscriptions_enabled: cfg.graphql.subscriptions,
         };
 
         // Create the schema builder with shared search registry and model provider
@@ -1069,16 +1092,25 @@ fn build_router(state: AppState, body_limit: usize) -> Router {
     // Apply middleware stack (outer to inner: body limit -> trace -> compression/cors -> content negotiation -> authz -> auth -> request id -> handler)
     // Note: Layers wrap from outside-in, so first .layer() is closest to handler
     // Note: `.with_state(state)` consumes the AppState and returns Router<()>
+
+    // Only apply auth/authz middleware if auth is enabled
+    router = if state.auth_state.is_some() {
+        router
+            .layer(middleware::from_fn(app_middleware::request_id))
+            .layer(middleware::from_fn_with_state(
+                state.clone(),
+                app_middleware::authorization_middleware,
+            ))
+            .layer(middleware::from_fn_with_state(
+                state.clone(),
+                app_middleware::authentication_middleware,
+            ))
+    } else {
+        router
+            .layer(middleware::from_fn(app_middleware::request_id))
+    };
+
     let router: Router = router
-        .layer(middleware::from_fn(app_middleware::request_id))
-        .layer(middleware::from_fn_with_state(
-            state.clone(),
-            app_middleware::authorization_middleware,
-        ))
-        .layer(middleware::from_fn_with_state(
-            state.clone(),
-            app_middleware::authentication_middleware,
-        ))
         .layer(middleware::from_fn(app_middleware::content_negotiation))
         .layer(CompressionLayer::new())
         .layer(
@@ -1283,8 +1315,16 @@ async fn initialize_auth_state(
 ) -> Option<AuthState> {
     // Check if auth is enabled
     if !cfg.auth.enabled {
+        tracing::info!("Authentication is disabled in configuration");
         return None;
     }
+
+    tracing::info!(
+        algorithm = %cfg.auth.signing.algorithm,
+        has_private_key = cfg.auth.signing.private_key_pem.is_some(),
+        has_public_key = cfg.auth.signing.public_key_pem.is_some(),
+        "Initializing authentication module"
+    );
 
     // Parse signing algorithm
     let algorithm = match cfg.auth.signing.algorithm.as_str() {

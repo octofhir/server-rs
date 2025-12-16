@@ -52,6 +52,7 @@ pub mod loaders;
 pub mod operations;
 pub mod resolvers;
 pub mod schema;
+pub mod subscriptions;
 pub mod types;
 
 // Re-export main types
@@ -62,6 +63,9 @@ pub use handler::{graphql_handler, graphql_handler_get, instance_graphql_handler
 pub use loaders::{DataLoaders, ReferenceKey, ReferenceLoader, ResourceKey, ResourceLoader};
 pub use operations::GraphQLOperationProvider;
 pub use schema::{DynModelProvider, FhirSchemaBuilder, LazySchema, SchemaBuilderConfig};
+pub use subscriptions::{
+    ResourceChangeEvent, ResourceEventBroadcaster, ResourceEventType, build_subscription_type,
+};
 
 /// Result type for GraphQL operations.
 pub type Result<T> = std::result::Result<T, GraphQLError>;

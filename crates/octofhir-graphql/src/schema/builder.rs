@@ -14,10 +14,12 @@ use octofhir_fhir_model::provider::ModelProvider;
 use octofhir_search::{SearchParameterRegistry, SearchParameterType};
 use tracing::{debug, trace};
 
+use super::directives::log_fhir_directives_support;
 use super::input_types::{
     InputTypeGenerator, create_json_scalar, create_operation_outcome_issue_type,
 };
 use super::type_generator::FhirTypeGenerator;
+use crate::subscriptions::{ResourceEventBroadcaster, build_subscription_type, create_resource_change_event_type};
 use crate::error::GraphQLError;
 use crate::resolvers::{
     ConnectionResolver, CreateResolver, DeleteResolver, NestedReverseReferenceResolver,
@@ -54,6 +56,9 @@ pub struct SchemaBuilderConfig {
 
     /// Whether to enable introspection queries.
     pub introspection_enabled: bool,
+
+    /// Whether to enable subscriptions.
+    pub subscriptions_enabled: bool,
 }
 
 impl Default for SchemaBuilderConfig {
@@ -62,6 +67,7 @@ impl Default for SchemaBuilderConfig {
             max_depth: 15,
             max_complexity: 500,
             introspection_enabled: true,
+            subscriptions_enabled: false,
         }
     }
 }
@@ -98,6 +104,9 @@ pub struct FhirSchemaBuilder {
 
     /// Configuration options.
     config: SchemaBuilderConfig,
+
+    /// Optional event broadcaster for subscriptions.
+    event_broadcaster: Option<Arc<ResourceEventBroadcaster>>,
 }
 
 impl FhirSchemaBuilder {
@@ -115,7 +124,17 @@ impl FhirSchemaBuilder {
             search_registry,
             model_provider,
             config,
+            event_broadcaster: None,
         }
+    }
+
+    /// Sets the event broadcaster for subscriptions.
+    ///
+    /// When set, the schema will include subscription fields for resource changes.
+    #[must_use]
+    pub fn with_event_broadcaster(mut self, broadcaster: Arc<ResourceEventBroadcaster>) -> Self {
+        self.event_broadcaster = Some(broadcaster);
+        self
     }
 
     /// Builds the GraphQL schema.
@@ -124,10 +143,8 @@ impl FhirSchemaBuilder {
     /// - Custom FHIR scalars
     /// - FHIR resource and complex types with typed fields
     /// - Query root with resource read and search operations
-    /// - Mutation root with create/update/delete operations (stubbed)
-    ///
-    /// Note: Subscriptions are not included in Phase 1 as they require
-    /// special async-graphql handling with proper Subscription objects.
+    /// - Mutation root with create/update/delete operations
+    /// - Subscription root for real-time resource changes (when enabled)
     ///
     /// # Errors
     ///
@@ -135,11 +152,23 @@ impl FhirSchemaBuilder {
     pub async fn build(&self) -> Result<Schema, GraphQLError> {
         debug!("Starting GraphQL schema build");
 
-        // Create schema builder (no subscription for now - requires special handling)
-        let mut schema_builder = Schema::build("Query", Some("Mutation"), None);
+        // Determine if subscriptions should be enabled
+        let subscription_name = if self.config.subscriptions_enabled && self.event_broadcaster.is_some() {
+            Some("Subscription")
+        } else {
+            None
+        };
+
+        // Create schema builder
+        let mut schema_builder = Schema::build("Query", Some("Mutation"), subscription_name);
 
         // Register custom scalars
         schema_builder = self.register_scalars(schema_builder);
+
+        // Log FHIR GraphQL directives support
+        // Note: async-graphql dynamic schema doesn't support custom directive registration,
+        // so directives are handled via response transformation in the handler
+        log_fhir_directives_support();
 
         // Generate and register FHIR types using the type generator
         let mut type_generator = FhirTypeGenerator::new(self.model_provider.clone());
@@ -191,6 +220,25 @@ impl FhirSchemaBuilder {
         // Build Mutation type with create/update/delete operations
         let mutation = self.build_mutation_type();
         schema_builder = schema_builder.register(mutation);
+
+        // Build Subscription type if enabled and broadcaster is available
+        if self.config.subscriptions_enabled {
+            if let Some(ref broadcaster) = self.event_broadcaster {
+                debug!("Building subscription type for GraphQL schema");
+
+                // Register the ResourceChangeEvent type
+                let event_type = create_resource_change_event_type();
+                schema_builder = schema_builder.register(event_type);
+
+                // Build and register the Subscription type
+                let subscription = build_subscription_type(broadcaster.clone());
+                schema_builder = schema_builder.register(subscription);
+
+                debug!("Subscription type registered");
+            } else {
+                debug!("Subscriptions enabled but no event broadcaster provided, skipping");
+            }
+        }
 
         // Configure limits
         let mut schema_builder = schema_builder.limit_depth(self.config.max_depth);
@@ -700,6 +748,21 @@ impl FhirSchemaBuilder {
     }
 
     /// Adds search parameter arguments to a field.
+    ///
+    /// Maps FHIR search parameter types to appropriate GraphQL input types.
+    /// All search parameters accept either a single value or a list of values
+    /// for OR logic (per FHIR GraphQL spec).
+    ///
+    /// Type mapping:
+    /// - Number: String (allows prefixes like gt100, le50)
+    /// - Date: String (allows prefixes and ranges like ge2020-01-01)
+    /// - String: String
+    /// - Token: String (format: [system|]code)
+    /// - Reference: String (format: [ResourceType/]id or URL)
+    /// - Composite: String (format: param1$value1$param2$value2)
+    /// - Quantity: String (format: [prefix]number[|system|code])
+    /// - Uri: String
+    /// - Special: String
     fn add_search_arguments(&self, mut field: Field, resource_type: &str) -> Field {
         // Get all search parameters for this resource type
         let params = self.search_registry.get_all_for_type(resource_type);
@@ -709,36 +772,82 @@ impl FhirSchemaBuilder {
             // GraphQL doesn't allow hyphens in field names
             let graphql_name = param.code.replace('-', "_");
 
-            // Determine GraphQL type based on FHIR parameter type
-            let type_ref = match param.param_type {
-                SearchParameterType::Number => TypeRef::named(TypeRef::STRING),
-                SearchParameterType::Date => TypeRef::named(TypeRef::STRING),
-                SearchParameterType::String => TypeRef::named(TypeRef::STRING),
-                SearchParameterType::Token => TypeRef::named(TypeRef::STRING),
-                SearchParameterType::Reference => TypeRef::named(TypeRef::STRING),
-                SearchParameterType::Composite => TypeRef::named(TypeRef::STRING),
-                SearchParameterType::Quantity => TypeRef::named(TypeRef::STRING),
-                SearchParameterType::Uri => TypeRef::named(TypeRef::STRING),
-                SearchParameterType::Special => TypeRef::named(TypeRef::STRING),
+            // All FHIR search parameters use String type because:
+            // - Date/Number params support prefixes (ge, le, gt, lt, eq, ne, sa, eb, ap)
+            // - Token params use system|code format
+            // - Reference params can be relative or absolute URLs
+            // - Quantity params include value|system|code
+            //
+            // We use list type to support OR logic: gender: ["male", "female"]
+            // GraphQL coerces single values to lists automatically
+            let type_ref = TypeRef::named_list(TypeRef::STRING);
+
+            // Add description based on parameter type for better documentation
+            let description = match param.param_type {
+                SearchParameterType::Number => {
+                    format!("Search by {} (number). Supports prefixes: eq, ne, lt, le, gt, ge, sa, eb, ap", param.code)
+                }
+                SearchParameterType::Date => {
+                    format!("Search by {} (date/time). Supports prefixes and partial dates", param.code)
+                }
+                SearchParameterType::String => {
+                    format!("Search by {} (string). Supports :exact, :contains modifiers", param.code)
+                }
+                SearchParameterType::Token => {
+                    format!("Search by {} (token). Format: [system|]code", param.code)
+                }
+                SearchParameterType::Reference => {
+                    format!("Search by {} (reference). Format: [Type/]id or URL", param.code)
+                }
+                SearchParameterType::Composite => {
+                    format!("Search by {} (composite). Format: param1$value1$param2$value2", param.code)
+                }
+                SearchParameterType::Quantity => {
+                    format!("Search by {} (quantity). Format: [prefix]value[|system|code]", param.code)
+                }
+                SearchParameterType::Uri => {
+                    format!("Search by {} (URI)", param.code)
+                }
+                SearchParameterType::Special => {
+                    format!("Search by {} (special)", param.code)
+                }
             };
 
-            let input = InputValue::new(&graphql_name, type_ref);
+            let input = InputValue::new(&graphql_name, type_ref).description(description);
             field = field.argument(input);
         }
 
         // Add common pagination/control arguments
-        field = field.argument(InputValue::new("_count", TypeRef::named(TypeRef::INT)));
-        field = field.argument(InputValue::new("_offset", TypeRef::named(TypeRef::INT)));
-        field = field.argument(InputValue::new("_sort", TypeRef::named(TypeRef::STRING)));
-        field = field.argument(InputValue::new("_filter", TypeRef::named(TypeRef::STRING)));
+        field = field.argument(
+            InputValue::new("_count", TypeRef::named(TypeRef::INT))
+                .description("Maximum number of results to return"),
+        );
+        field = field.argument(
+            InputValue::new("_offset", TypeRef::named(TypeRef::INT))
+                .description("Number of results to skip"),
+        );
+        field = field.argument(
+            InputValue::new("_sort", TypeRef::named(TypeRef::STRING))
+                .description("Sort order. Prefix with - for descending. Example: -date,name"),
+        );
+        field = field.argument(
+            InputValue::new("_filter", TypeRef::named(TypeRef::STRING))
+                .description("FHIRPath filter expression for complex queries"),
+        );
+
+        // Add _total for controlling total count behavior
+        field = field.argument(
+            InputValue::new("_total", TypeRef::named(TypeRef::STRING))
+                .description("Total count mode: accurate, estimate, or none"),
+        );
 
         // Add _reference for reverse reference queries (FHIR GraphQL spec)
         // This specifies which reference search parameter to use when finding
         // resources that reference the focused resource
-        field = field.argument(InputValue::new(
-            "_reference",
-            TypeRef::named(TypeRef::STRING),
-        ));
+        field = field.argument(
+            InputValue::new("_reference", TypeRef::named(TypeRef::STRING))
+                .description("Reference parameter name for reverse reference queries"),
+        );
 
         field
     }

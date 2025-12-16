@@ -544,37 +544,57 @@ pub async fn build_search_registry(
 ) -> Result<SearchParameterRegistry, String> {
     let mut registry = SearchParameterRegistry::new();
 
-    // Query ALL SearchParameter resources from canonical manager
-    // The search method allows filtering by resource type
-    let search_results = manager
-        .search()
-        .await
-        .resource_type("SearchParameter")
-        .limit(10000) // Ensure we get all search parameters
-        .execute()
-        .await
-        .map_err(|e| format!("failed to query SearchParameter resources: {e}"))?;
-
+    // Query ALL SearchParameter resources from canonical manager with pagination
+    // The canonical manager has a max limit of 1000, so we need to paginate
+    const PAGE_SIZE: usize = 1000;
+    let mut offset = 0;
     let mut loaded_count = 0;
     let mut skipped_count = 0;
 
-    for resource_match in &search_results.resources {
-        match parse_search_parameter(&resource_match.resource.content) {
-            Ok(param) => {
-                registry.register(param);
-                loaded_count += 1;
-            }
-            Err(e) => {
-                skipped_count += 1;
-                let url = resource_match
-                    .resource
-                    .content
-                    .get("url")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("unknown");
-                tracing::warn!(url = %url, error = %e, "failed to parse SearchParameter resource");
+    loop {
+        let search_results = manager
+            .search()
+            .await
+            .resource_type("SearchParameter")
+            .limit(PAGE_SIZE)
+            .offset(offset)
+            .execute()
+            .await
+            .map_err(|e| format!("failed to query SearchParameter resources at offset {}: {e}", offset))?;
+
+        let page_count = search_results.resources.len();
+        tracing::debug!(
+            offset = offset,
+            page_count = page_count,
+            "fetched SearchParameter page"
+        );
+
+        // Process this page
+        for resource_match in &search_results.resources {
+            match parse_search_parameter(&resource_match.resource.content) {
+                Ok(param) => {
+                    registry.register(param);
+                    loaded_count += 1;
+                }
+                Err(e) => {
+                    skipped_count += 1;
+                    let url = resource_match
+                        .resource
+                        .content
+                        .get("url")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("unknown");
+                    tracing::warn!(url = %url, error = %e, "failed to parse SearchParameter resource");
+                }
             }
         }
+
+        // If we got fewer results than the page size, we've reached the end
+        if page_count < PAGE_SIZE {
+            break;
+        }
+
+        offset += PAGE_SIZE;
     }
 
     if registry.is_empty() {
@@ -585,7 +605,7 @@ pub async fn build_search_registry(
         loaded = loaded_count,
         skipped = skipped_count,
         total_in_registry = registry.len(),
-        "search parameter registry built from canonical manager"
+        "search parameter registry built from canonical manager with pagination"
     );
 
     Ok(registry)

@@ -1,6 +1,12 @@
 //! Integration tests for CRUD and search operations using testcontainers.
 //!
 //! These tests spin up a PostgreSQL container for each test to ensure isolation.
+//!
+//! **Requirements:**
+//! - Docker running
+//! - FHIR packages installed in `.fhir/` directory
+//!
+//! Run with: cargo test -p octofhir-server --test crud_and_search -- --ignored
 
 use octofhir_server::{AppConfig, PostgresStorageConfig, build_app};
 use serde_json::{Value, json};
@@ -61,6 +67,7 @@ async fn start_server(
 }
 
 #[tokio::test]
+#[ignore = "requires FHIR packages in .fhir/ directory"]
 async fn patient_crud_and_search_flow() {
     let (_container, postgres_url) = start_postgres().await;
     let config = create_config(&postgres_url);
@@ -150,6 +157,7 @@ async fn patient_crud_and_search_flow() {
 }
 
 #[tokio::test]
+#[ignore = "requires FHIR packages in .fhir/ directory"]
 async fn error_cases_invalid_resource_and_id_mismatch_and_delete_404() {
     let (_container, postgres_url) = start_postgres().await;
     let config = create_config(&postgres_url);

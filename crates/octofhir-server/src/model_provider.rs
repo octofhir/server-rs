@@ -71,6 +71,12 @@ impl OctoFhirModelProvider {
             }
         }
     }
+
+    /// Get access to the underlying FhirSchemaModelProvider
+    /// This is useful for creating validators and other components that need direct schema access
+    pub fn inner(&self) -> &FhirSchemaModelProvider {
+        &self.inner
+    }
 }
 
 // Implement ModelProvider trait by delegating all methods to inner

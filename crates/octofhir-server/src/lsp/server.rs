@@ -5,7 +5,7 @@
 //! accurate context detection.
 
 use dashmap::DashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::{
     CompletionItem, CompletionItemKind, CompletionOptions, CompletionParams, CompletionResponse,
@@ -35,12 +35,40 @@ struct FunctionCallContext {
     arg_start_offset: usize,
 }
 
+/// Document state for incremental parsing.
+///
+/// Each document maintains its text content, parsed tree-sitter AST, and version number.
+/// The tree is cached to enable incremental parsing on edits.
+#[derive(Debug, Clone)]
+struct DocumentState {
+    /// Full text content of the document
+    text: String,
+    /// Parsed tree-sitter AST (cached for incremental updates)
+    tree: Option<tree_sitter::Tree>,
+    /// Document version number for staleness detection
+    version: i32,
+}
+
+impl DocumentState {
+    /// Creates a new document state with the given text and version.
+    fn new(text: String, tree: Option<tree_sitter::Tree>, version: i32) -> Self {
+        Self { text, tree, version }
+    }
+}
+
 /// PostgreSQL Language Server with FHIR-aware JSONB path completion.
+///
+/// # Multi-User Support
+///
+/// Each WebSocket connection creates a NEW server instance, so documents are
+/// automatically isolated per session. No cross-user document conflicts possible.
 pub struct PostgresLspServer {
     /// LSP client for sending notifications
     client: Client,
-    /// Open document contents indexed by URI
-    documents: DashMap<Url, String>,
+    /// Open document states indexed by URI (with cached tree-sitter ASTs)
+    documents: DashMap<Url, DocumentState>,
+    /// Reusable tree-sitter parser (shared via Arc<Mutex> for incremental parsing)
+    parser: Arc<Mutex<tree_sitter::Parser>>,
     /// Database connection pool for schema introspection
     #[allow(dead_code)]
     db_pool: Arc<sqlx_postgres::PgPool>,
@@ -61,9 +89,17 @@ impl PostgresLspServer {
 
         // Create FhirResolver with model provider (which contains schemas)
         let fhir_resolver = Arc::new(FhirResolver::with_model_provider(octofhir_provider));
+
+        // Initialize tree-sitter parser with PostgreSQL grammar
+        let mut parser = tree_sitter::Parser::new();
+        parser
+            .set_language(&pgls_treesitter_grammar::LANGUAGE.into())
+            .expect("Failed to load PostgreSQL grammar");
+
         Self {
             client,
             documents: DashMap::new(),
+            parser: Arc::new(Mutex::new(parser)),
             db_pool,
             schema_cache,
             fhir_resolver,
@@ -738,6 +774,158 @@ impl PostgresLspServer {
             offset += line.len() + 1; // +1 for newline
         }
         offset.min(text.len())
+    }
+
+    /// Convert LSP TextDocumentContentChangeEvent to tree-sitter InputEdit.
+    ///
+    /// This enables incremental re-parsing by translating LSP edit events into the format
+    /// tree-sitter expects for updating its syntax tree.
+    ///
+    /// # Arguments
+    /// * `old_text` - The document text before the change
+    /// * `change` - The LSP change event with range and new text
+    ///
+    /// # Returns
+    /// `Some(InputEdit)` if the change has a range, `None` for full document replacements
+    fn lsp_change_to_tree_sitter_edit(
+        old_text: &str,
+        change: &tower_lsp::lsp_types::TextDocumentContentChangeEvent,
+    ) -> Option<tree_sitter::InputEdit> {
+        let range = change.range?;
+
+        // Calculate byte offsets for the edit
+        let start_byte = Self::position_to_offset(old_text, range.start);
+        let old_end_byte = Self::position_to_offset(old_text, range.end);
+        let new_end_byte = start_byte + change.text.len();
+
+        // Convert LSP positions to tree-sitter Points
+        let start_point = tree_sitter::Point {
+            row: range.start.line as usize,
+            column: range.start.character as usize,
+        };
+
+        let old_end_point = tree_sitter::Point {
+            row: range.end.line as usize,
+            column: range.end.character as usize,
+        };
+
+        // Calculate new end point after the edit
+        let new_end_point = if change.text.contains('\n') {
+            // Multi-line edit: count lines and get final line length
+            let lines: Vec<&str> = change.text.lines().collect();
+            let new_row = range.start.line as usize + lines.len() - 1;
+            let new_col = if lines.len() > 1 {
+                // Last line starts at column 0
+                lines.last().map(|l| l.len()).unwrap_or(0)
+            } else {
+                // Single line: add to start column
+                range.start.character as usize + change.text.len()
+            };
+            tree_sitter::Point {
+                row: new_row,
+                column: new_col,
+            }
+        } else {
+            // Single-line edit: just add text length to start column
+            tree_sitter::Point {
+                row: range.start.line as usize,
+                column: range.start.character as usize + change.text.len(),
+            }
+        };
+
+        Some(tree_sitter::InputEdit {
+            start_byte,
+            old_end_byte,
+            new_end_byte,
+            start_position: start_point,
+            old_end_position: old_end_point,
+            new_end_position: new_end_point,
+        })
+    }
+
+    /// Apply incremental changes to an existing tree and re-parse.
+    ///
+    /// This is the core incremental parsing method that reuses unchanged portions of the AST
+    /// by telling tree-sitter about edits via `tree.edit()` before re-parsing.
+    ///
+    /// # Arguments
+    /// * `old_tree` - The existing syntax tree before changes
+    /// * `old_text` - The document text before changes
+    /// * `changes` - Array of LSP change events (may contain multiple edits)
+    ///
+    /// # Returns
+    /// New syntax tree with changes applied, or None if parsing fails
+    fn apply_incremental_change(
+        &self,
+        old_tree: &tree_sitter::Tree,
+        old_text: &str,
+        changes: &[tower_lsp::lsp_types::TextDocumentContentChangeEvent],
+    ) -> Option<tree_sitter::Tree> {
+        let mut parser = self.parser.lock().unwrap();
+        let mut current_tree = old_tree.clone();
+        let mut current_text = old_text.to_string();
+
+        for change in changes {
+            // Full document sync (fallback when no range specified)
+            if change.range.is_none() {
+                // No range means full document replacement
+                current_text = change.text.clone();
+                // Parse from scratch (can't use incremental parsing)
+                return parser.parse(&current_text, None);
+            }
+
+            // Incremental sync: convert LSP change to tree-sitter edit
+            if let Some(edit) = Self::lsp_change_to_tree_sitter_edit(&current_text, change) {
+                // Tell tree-sitter about the edit so it can reuse unchanged nodes
+                current_tree.edit(&edit);
+
+                // Apply the text change to our string
+                let range = change.range.unwrap();
+                let start_byte = Self::position_to_offset(&current_text, range.start);
+                let end_byte = Self::position_to_offset(&current_text, range.end);
+
+                current_text.replace_range(start_byte..end_byte, &change.text);
+            }
+        }
+
+        // Re-parse with old tree for incremental parsing
+        // tree-sitter will reuse unchanged nodes from current_tree
+        parser.parse(&current_text, Some(&current_tree))
+    }
+
+    /// Parse text from scratch (for initial document open or when no cached tree exists).
+    ///
+    /// # Arguments
+    /// * `text` - The complete document text to parse
+    ///
+    /// # Returns
+    /// New syntax tree, or None if parsing fails
+    fn parse_from_scratch(&self, text: &str) -> Option<tree_sitter::Tree> {
+        let mut parser = self.parser.lock().unwrap();
+        parser.parse(text, None)
+    }
+
+    /// Get cached syntax tree or parse from scratch.
+    ///
+    /// This method tries to retrieve the cached tree from document state first.
+    /// If no cached tree exists, it parses the text from scratch.
+    ///
+    /// # Arguments
+    /// * `uri` - Document URI to look up cached tree
+    /// * `text` - Document text (used if no cached tree exists)
+    ///
+    /// # Returns
+    /// Syntax tree (cached or freshly parsed), or None if parsing fails
+    fn get_or_parse_tree(&self, uri: &tower_lsp::lsp_types::Url, text: &str) -> Option<tree_sitter::Tree> {
+        // Try to get cached tree from document state
+        if let Some(doc_state) = self.documents.get(uri) {
+            if let Some(tree) = &doc_state.tree {
+                return Some(tree.clone());
+            }
+        }
+
+        // No cached tree, parse from scratch
+        self.parse_from_scratch(text)
     }
 
     /// Get completions based on cursor context.
@@ -2232,24 +2420,126 @@ impl LanguageServer for PostgresLspServer {
     }
 
     async fn did_open(&self, params: DidOpenTextDocumentParams) {
+        let uri = params.text_document.uri;
+        let text = params.text_document.text;
+        let version = params.text_document.version;
+
         tracing::trace!(
-            uri = %params.text_document.uri,
+            uri = %uri,
             language = ?params.text_document.language_id,
-            text_len = params.text_document.text.len(),
+            text_len = text.len(),
+            version = version,
             "LSP did_open received"
         );
-        self.documents
-            .insert(params.text_document.uri, params.text_document.text);
+
+        // Parse the document from scratch (initial parse)
+        let tree = self.parse_from_scratch(&text);
+
+        tracing::debug!(
+            uri = %uri,
+            has_tree = tree.is_some(),
+            "Document opened and parsed"
+        );
+
+        // Create document state with parsed tree
+        let doc_state = DocumentState::new(text, tree, version);
+
+        self.documents.insert(uri, doc_state);
     }
 
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
+        let uri = params.text_document.uri;
+        let version = params.text_document.version;
+        let changes = params.content_changes;
+
         tracing::trace!(
-            uri = %params.text_document.uri,
+            uri = %uri,
+            version = version,
+            change_count = changes.len(),
             "LSP did_change received"
         );
-        if let Some(change) = params.content_changes.into_iter().next() {
-            self.documents.insert(params.text_document.uri, change.text);
+
+        // Get current document state (clone to release the DashMap lock)
+        let old_state = self.documents.get(&uri).map(|entry| (*entry).clone());
+
+        if let Some(old_state) = old_state {
+            // We have an existing document - try incremental parsing
+            let new_tree = if let Some(ref old_tree) = old_state.tree {
+                // Apply incremental changes
+                tracing::debug!(
+                    uri = %uri,
+                    "Using incremental parsing (reusing previous tree)"
+                );
+                self.apply_incremental_change(old_tree, &old_state.text, &changes)
+            } else {
+                // No cached tree, will parse from scratch
+                tracing::debug!(
+                    uri = %uri,
+                    "No cached tree, will parse from scratch"
+                );
+                None
+            };
+
+            // Apply text changes to build the new text
+            let mut new_text = old_state.text.clone();
+            for change in &changes {
+                if let Some(range) = change.range {
+                    // Incremental text change
+                    let start_byte = Self::position_to_offset(&new_text, range.start);
+                    let end_byte = Self::position_to_offset(&new_text, range.end);
+                    new_text.replace_range(start_byte..end_byte, &change.text);
+                } else {
+                    // Full document sync (no range means full replacement)
+                    new_text = change.text.clone();
+                }
+            }
+
+            // If no tree from incremental parse, parse from scratch
+            let final_tree = new_tree.or_else(|| {
+                tracing::debug!(
+                    uri = %uri,
+                    "Parsing from scratch (incremental parse unavailable)"
+                );
+                self.parse_from_scratch(&new_text)
+            });
+
+            // Update document state
+            let doc_state = DocumentState::new(new_text, final_tree, version);
+            self.documents.insert(uri, doc_state);
+        } else {
+            // Document not in cache, treat as did_open
+            tracing::warn!(
+                uri = %uri,
+                "Document not found in cache, treating did_change as did_open"
+            );
+
+            let text = changes
+                .first()
+                .map(|c| c.text.clone())
+                .unwrap_or_default();
+
+            let tree = self.parse_from_scratch(&text);
+            let doc_state = DocumentState::new(text, tree, version);
+
+            self.documents.insert(uri, doc_state);
         }
+    }
+
+    async fn did_close(&self, params: tower_lsp::lsp_types::DidCloseTextDocumentParams) {
+        let uri = params.text_document.uri;
+
+        tracing::trace!(
+            uri = %uri,
+            "LSP did_close received"
+        );
+
+        // Remove document and tree from cache
+        self.documents.remove(&uri);
+
+        tracing::debug!(
+            uri = %uri,
+            "Document closed and removed from cache"
+        );
     }
 
     async fn completion(&self, params: CompletionParams) -> Result<Option<CompletionResponse>> {
@@ -2263,18 +2553,18 @@ impl LanguageServer for PostgresLspServer {
             "LSP completion request received"
         );
 
-        let Some(text) = self.documents.get(uri) else {
+        let Some(doc_state) = self.documents.get(uri) else {
             tracing::debug!("LSP completion: document not found for URI");
             return Ok(None);
         };
 
         // Calculate byte offset from position
-        let offset = Self::position_to_offset(&text, position);
+        let offset = Self::position_to_offset(&doc_state.text, position);
 
         // Try tree-sitter based completions first (Supabase approach)
         // Returns None if tree-sitter can't handle this context (e.g., JSONB paths)
         tracing::trace!("Trying tree-sitter based completions first");
-        if let Some(items) = self.get_completions_with_treesitter(&text, offset).await {
+        if let Some(items) = self.get_completions_with_treesitter(&doc_state.text, offset).await {
             tracing::debug!(
                 item_count = items.len(),
                 "LSP completion using tree-sitter context (early return)"
@@ -2284,7 +2574,7 @@ impl LanguageServer for PostgresLspServer {
 
         // Fall back to regex-based parser for JSONB paths and other special cases
         tracing::trace!("Tree-sitter returned None, falling back to SqlParser");
-        let context = SqlParser::get_context(&text, position);
+        let context = SqlParser::get_context(&doc_state.text, position);
         tracing::debug!(
             ?context,
             line = position.line,
@@ -2295,7 +2585,7 @@ impl LanguageServer for PostgresLspServer {
         // Get completions based on context
         tracing::trace!("Getting completions for context");
         let items = self
-            .get_completions_for_context(&context, position, &text)
+            .get_completions_for_context(&context, position, &doc_state.text)
             .await;
 
         tracing::debug!(item_count = items.len(), "LSP completion returning items");
@@ -2307,12 +2597,12 @@ impl LanguageServer for PostgresLspServer {
         let uri = &params.text_document_position_params.text_document.uri;
         let position = params.text_document_position_params.position;
 
-        let Some(text) = self.documents.get(uri) else {
+        let Some(doc_state) = self.documents.get(uri) else {
             return Ok(None);
         };
 
         // Get context at position
-        let context = SqlParser::get_context(&text, position);
+        let context = SqlParser::get_context(&doc_state.text, position);
 
         // Generate hover based on context
         let hover_info = self.get_hover_for_context(&context).await;
@@ -3070,5 +3360,362 @@ mod tests {
             "Observation"
         );
         assert_eq!(PostgresLspServer::to_pascal_case("care_plan"), "CarePlan");
+    }
+
+    // ============================================================================
+    // LSP EDIT CONVERSION TESTS (Task 1.2)
+    // ============================================================================
+
+    #[test]
+    fn test_position_to_offset_start_of_document() {
+        let text = "SELECT * FROM users\nWHERE id = 1";
+        let pos = tower_lsp::lsp_types::Position {
+            line: 0,
+            character: 0,
+        };
+        assert_eq!(PostgresLspServer::position_to_offset(text, pos), 0);
+    }
+
+    #[test]
+    fn test_position_to_offset_start_of_second_line() {
+        let text = "SELECT * FROM users\nWHERE id = 1";
+        // Position at line 1, char 0 (start of "WHERE")
+        // Should be: "SELECT * FROM users\n".len() = 20
+        let pos = tower_lsp::lsp_types::Position {
+            line: 1,
+            character: 0,
+        };
+        assert_eq!(PostgresLspServer::position_to_offset(text, pos), 20);
+    }
+
+    #[test]
+    fn test_position_to_offset_middle_of_line() {
+        let text = "SELECT * FROM users";
+        let pos = tower_lsp::lsp_types::Position {
+            line: 0,
+            character: 7,
+        }; // After "SELECT "
+        assert_eq!(PostgresLspServer::position_to_offset(text, pos), 7);
+    }
+
+    #[test]
+    fn test_position_to_offset_with_utf8() {
+        let text = "SELECT '你好' FROM users"; // Chinese characters
+        let pos = tower_lsp::lsp_types::Position {
+            line: 0,
+            character: 8,
+        }; // After "SELECT '"
+        assert_eq!(PostgresLspServer::position_to_offset(text, pos), 8);
+    }
+
+    #[test]
+    fn test_lsp_change_to_tree_sitter_edit_simple_insertion() {
+        let old_text = "SELECT  FROM users";
+        let change = tower_lsp::lsp_types::TextDocumentContentChangeEvent {
+            range: Some(tower_lsp::lsp_types::Range {
+                start: tower_lsp::lsp_types::Position {
+                    line: 0,
+                    character: 7,
+                },
+                end: tower_lsp::lsp_types::Position {
+                    line: 0,
+                    character: 7,
+                },
+            }),
+            text: "*".to_string(),
+            range_length: None,
+        };
+
+        let edit = PostgresLspServer::lsp_change_to_tree_sitter_edit(old_text, &change).unwrap();
+
+        assert_eq!(edit.start_byte, 7);
+        assert_eq!(edit.old_end_byte, 7);
+        assert_eq!(edit.new_end_byte, 8); // 7 + "*".len()
+        assert_eq!(edit.start_position.row, 0);
+        assert_eq!(edit.start_position.column, 7);
+        assert_eq!(edit.new_end_position.row, 0);
+        assert_eq!(edit.new_end_position.column, 8);
+    }
+
+    #[test]
+    fn test_lsp_change_to_tree_sitter_edit_deletion() {
+        let old_text = "SELECT * FROM users";
+        let change = tower_lsp::lsp_types::TextDocumentContentChangeEvent {
+            range: Some(tower_lsp::lsp_types::Range {
+                start: tower_lsp::lsp_types::Position {
+                    line: 0,
+                    character: 7,
+                },
+                end: tower_lsp::lsp_types::Position {
+                    line: 0,
+                    character: 9,
+                }, // Delete "* "
+            }),
+            text: "".to_string(),
+            range_length: None,
+        };
+
+        let edit = PostgresLspServer::lsp_change_to_tree_sitter_edit(old_text, &change).unwrap();
+
+        assert_eq!(edit.start_byte, 7);
+        assert_eq!(edit.old_end_byte, 9);
+        assert_eq!(edit.new_end_byte, 7); // No new text
+        assert_eq!(edit.new_end_position.row, 0);
+        assert_eq!(edit.new_end_position.column, 7);
+    }
+
+    #[test]
+    fn test_lsp_change_to_tree_sitter_edit_multiline_insertion() {
+        let old_text = "SELECT *";
+        let change = tower_lsp::lsp_types::TextDocumentContentChangeEvent {
+            range: Some(tower_lsp::lsp_types::Range {
+                start: tower_lsp::lsp_types::Position {
+                    line: 0,
+                    character: 8,
+                },
+                end: tower_lsp::lsp_types::Position {
+                    line: 0,
+                    character: 8,
+                },
+            }),
+            text: "\nFROM users".to_string(),
+            range_length: None,
+        };
+
+        let edit = PostgresLspServer::lsp_change_to_tree_sitter_edit(old_text, &change).unwrap();
+
+        assert_eq!(edit.start_byte, 8);
+        assert_eq!(edit.old_end_byte, 8);
+        assert_eq!(edit.new_end_byte, 8 + "\nFROM users".len());
+        assert_eq!(edit.start_position.row, 0);
+        assert_eq!(edit.start_position.column, 8);
+        assert_eq!(edit.new_end_position.row, 1); // Moved to line 1
+        assert_eq!(edit.new_end_position.column, 10); // "FROM users".len()
+    }
+
+    #[test]
+    fn test_lsp_change_to_tree_sitter_edit_replacement() {
+        let old_text = "SELECT id FROM users";
+        let change = tower_lsp::lsp_types::TextDocumentContentChangeEvent {
+            range: Some(tower_lsp::lsp_types::Range {
+                start: tower_lsp::lsp_types::Position {
+                    line: 0,
+                    character: 7,
+                },
+                end: tower_lsp::lsp_types::Position {
+                    line: 0,
+                    character: 9,
+                }, // "id"
+            }),
+            text: "name".to_string(),
+            range_length: None,
+        };
+
+        let edit = PostgresLspServer::lsp_change_to_tree_sitter_edit(old_text, &change).unwrap();
+
+        assert_eq!(edit.start_byte, 7);
+        assert_eq!(edit.old_end_byte, 9);
+        assert_eq!(edit.new_end_byte, 7 + "name".len());
+        assert_eq!(edit.new_end_position.column, 7 + "name".len());
+    }
+
+    #[test]
+    fn test_lsp_change_to_tree_sitter_edit_full_document_replacement() {
+        let old_text = "SELECT *";
+        let change = tower_lsp::lsp_types::TextDocumentContentChangeEvent {
+            range: None, // No range = full document replacement
+            text: "SELECT name FROM users".to_string(),
+            range_length: None,
+        };
+
+        let edit = PostgresLspServer::lsp_change_to_tree_sitter_edit(old_text, &change);
+        assert!(edit.is_none()); // Should return None for full replacements
+    }
+
+    // ============================================================================
+    // Incremental Parsing Tests
+    // ============================================================================
+
+    // Helper to create a test parser (no full server needed for parsing tests)
+    fn create_test_parser() -> tree_sitter::Parser {
+        let mut parser = tree_sitter::Parser::new();
+        parser
+            .set_language(&pgls_treesitter_grammar::LANGUAGE.into())
+            .expect("Failed to load PostgreSQL grammar");
+        parser
+    }
+
+    #[test]
+    fn test_parse_from_scratch_basic() {
+        let mut parser = create_test_parser();
+        let text = "SELECT * FROM users WHERE id = 1";
+
+        let tree = parser.parse(text, None);
+        assert!(tree.is_some());
+
+        let tree = tree.unwrap();
+        assert_eq!(tree.root_node().kind(), "program");
+        assert!(!tree.root_node().has_error());
+    }
+
+    #[test]
+    fn test_incremental_vs_full_parse() {
+        let mut parser = create_test_parser();
+        let initial_text = "SELECT * FROM users WHERE id = 1";
+
+        // Parse initially
+        let mut tree1 = parser.parse(initial_text, None).unwrap();
+        assert_eq!(tree1.root_node().kind(), "program");
+
+        // Apply incremental change: insert " LIMIT 10" at the end
+        let change = tower_lsp::lsp_types::TextDocumentContentChangeEvent {
+            range: Some(tower_lsp::lsp_types::Range {
+                start: tower_lsp::lsp_types::Position {
+                    line: 0,
+                    character: 33,
+                },
+                end: tower_lsp::lsp_types::Position {
+                    line: 0,
+                    character: 33,
+                },
+            }),
+            text: " LIMIT 10".to_string(),
+            range_length: None,
+        };
+
+        let new_text = "SELECT * FROM users WHERE id = 1 LIMIT 10";
+
+        // Convert LSP change to tree-sitter edit
+        let edit = PostgresLspServer::lsp_change_to_tree_sitter_edit(initial_text, &change).unwrap();
+
+        // Apply edit to tree (incremental update)
+        tree1.edit(&edit);
+
+        // Incremental parse (reuses unchanged nodes from tree1)
+        let tree2_incremental = parser.parse(new_text, Some(&tree1));
+        assert!(tree2_incremental.is_some());
+
+        // Full parse for comparison (parse from scratch)
+        let tree2_full = parser.parse(new_text, None);
+        assert!(tree2_full.is_some());
+
+        // Both trees should have same root node kind
+        assert_eq!(
+            tree2_incremental.as_ref().map(|t| t.root_node().kind()),
+            tree2_full.as_ref().map(|t| t.root_node().kind())
+        );
+
+        // Both should be valid (no errors)
+        assert!(!tree2_incremental.unwrap().root_node().has_error());
+        assert!(!tree2_full.unwrap().root_node().has_error());
+    }
+
+    #[test]
+    fn test_multiple_incremental_edits() {
+        let mut parser = create_test_parser();
+        let text1 = "SELECT *";
+
+        let mut tree1 = parser.parse(text1, None).unwrap();
+        assert_eq!(tree1.root_node().kind(), "program");
+
+        // Edit 1: Add " FROM users"
+        let change1 = tower_lsp::lsp_types::TextDocumentContentChangeEvent {
+            range: Some(tower_lsp::lsp_types::Range {
+                start: tower_lsp::lsp_types::Position {
+                    line: 0,
+                    character: 8,
+                },
+                end: tower_lsp::lsp_types::Position {
+                    line: 0,
+                    character: 8,
+                },
+            }),
+            text: " FROM users".to_string(),
+            range_length: None,
+        };
+
+        let text2 = "SELECT * FROM users";
+        let edit1 = PostgresLspServer::lsp_change_to_tree_sitter_edit(text1, &change1).unwrap();
+        tree1.edit(&edit1);
+        let tree2 = parser.parse(text2, Some(&tree1)).unwrap();
+        assert_eq!(tree2.root_node().kind(), "program");
+
+        // Edit 2: Add " WHERE id = 1"
+        let change2 = tower_lsp::lsp_types::TextDocumentContentChangeEvent {
+            range: Some(tower_lsp::lsp_types::Range {
+                start: tower_lsp::lsp_types::Position {
+                    line: 0,
+                    character: 19,
+                },
+                end: tower_lsp::lsp_types::Position {
+                    line: 0,
+                    character: 19,
+                },
+            }),
+            text: " WHERE id = 1".to_string(),
+            range_length: None,
+        };
+
+        let text3 = "SELECT * FROM users WHERE id = 1";
+        let edit2 = PostgresLspServer::lsp_change_to_tree_sitter_edit(text2, &change2).unwrap();
+        let mut tree2_mut = tree2;
+        tree2_mut.edit(&edit2);
+        let tree3 = parser.parse(text3, Some(&tree2_mut)).unwrap();
+        assert_eq!(tree3.root_node().kind(), "program");
+    }
+
+    #[test]
+    fn test_full_document_replacement_fallback() {
+        let mut parser = create_test_parser();
+        let initial_text = "SELECT * FROM users";
+
+        let _tree1 = parser.parse(initial_text, None).unwrap();
+
+        // Full document replacement (no range) - should return None from converter
+        let change = tower_lsp::lsp_types::TextDocumentContentChangeEvent {
+            range: None, // No range = full replacement
+            text: "SELECT name FROM customers WHERE active = true".to_string(),
+            range_length: None,
+        };
+
+        // When range is None, we can't do incremental parsing
+        let edit = PostgresLspServer::lsp_change_to_tree_sitter_edit(initial_text, &change);
+        assert!(edit.is_none()); // Should return None for full replacements
+
+        // In this case, we just parse from scratch
+        let tree2 = parser.parse(&change.text, None).unwrap();
+        assert_eq!(tree2.root_node().kind(), "program");
+    }
+
+    #[test]
+    fn test_incremental_multiline_edit() {
+        let mut parser = create_test_parser();
+        let initial_text = "SELECT *";
+
+        let mut tree1 = parser.parse(initial_text, None).unwrap();
+
+        // Add multi-line content
+        let change = tower_lsp::lsp_types::TextDocumentContentChangeEvent {
+            range: Some(tower_lsp::lsp_types::Range {
+                start: tower_lsp::lsp_types::Position {
+                    line: 0,
+                    character: 8,
+                },
+                end: tower_lsp::lsp_types::Position {
+                    line: 0,
+                    character: 8,
+                },
+            }),
+            text: "\nFROM users\nWHERE id = 1".to_string(),
+            range_length: None,
+        };
+
+        let new_text = "SELECT *\nFROM users\nWHERE id = 1";
+        let edit = PostgresLspServer::lsp_change_to_tree_sitter_edit(initial_text, &change).unwrap();
+        tree1.edit(&edit);
+
+        let tree2 = parser.parse(new_text, Some(&tree1)).unwrap();
+        assert_eq!(tree2.root_node().kind(), "program");
+        assert!(!tree2.root_node().has_error());
     }
 }

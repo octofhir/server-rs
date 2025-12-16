@@ -46,6 +46,9 @@ lsp-types = "0.97"
 # PostgreSQL parser (libpg_query bindings)
 pg_query = "6.1"
 
+# SQL parser for semantic analysis
+sqlparser = "0.60"
+
 # Tree-sitter for SQL AST parsing
 tree-sitter = "0.26"
 tree-sitter-language = "0.1"
@@ -95,8 +98,8 @@ hostname = "0.4"
 json-patch = "4"
 
 # FHIRPath evaluation engine
-octofhir-fhirpath = { version = "0.4.31"}
-octofhir-fhirschema = { version = "0.3.9" }
+octofhir-fhirpath = { version = "0.4.31" }
+octofhir-fhirschema = { version = "0.3.10" }
 
 # Environment
 dotenvy = "0.15"

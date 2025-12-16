@@ -627,6 +627,12 @@ pub struct GraphQLConfig {
     #[serde(default = "default_graphql_introspection")]
     pub introspection: bool,
 
+    /// Enable GraphQL subscriptions for real-time resource changes
+    /// Requires WebSocket support
+    /// Default: false
+    #[serde(default = "default_graphql_subscriptions")]
+    pub subscriptions: bool,
+
     /// Maximum query depth to prevent deeply nested queries
     /// Default: 15
     #[serde(default = "default_graphql_max_depth")]
@@ -652,6 +658,10 @@ fn default_graphql_introspection() -> bool {
     true
 }
 
+fn default_graphql_subscriptions() -> bool {
+    false
+}
+
 fn default_graphql_max_depth() -> usize {
     15
 }
@@ -665,6 +675,7 @@ impl Default for GraphQLConfig {
         Self {
             enabled: default_graphql_enabled(),
             introspection: default_graphql_introspection(),
+            subscriptions: default_graphql_subscriptions(),
             max_depth: default_graphql_max_depth(),
             max_complexity: default_graphql_max_complexity(),
             resource_types: Vec::new(),

@@ -11,6 +11,8 @@ repository.workspace = true
 # GraphQL framework with dynamic schema support
 async-graphql = { version = "7", features = ["dynamic-schema", "dataloader"] }
 async-graphql-axum = "7"
+async-graphql-parser = "7"
+async-graphql-value = "7"
 
 # Local dependencies
 octofhir-storage = { path = "../octofhir-storage" }
@@ -57,6 +59,7 @@ axum = { workspace = true }
 # Async utilities
 async-trait = { workspace = true }
 futures-util = { workspace = true }
+async-stream = "0.3"
 
 [dev-dependencies]
 tokio-test = { workspace = true }

@@ -46,6 +46,7 @@ tree-sitter = { workspace = true }
 pgls-treesitter-grammar = { workspace = true }
 pgls-treesitter = { workspace = true }
 pgls-text-size = { workspace = true }
+sqlparser = { workspace = true }
 hyper = { workspace = true }
 tokio = { workspace = true }
 futures-util = { workspace = true }
@@ -118,3 +119,4 @@ reqwest = { version = "0.12", features = ["json"] }
 filetime = { workspace = true }
 testcontainers = "0.25"
 testcontainers-modules = { version = "0.13", features = ["postgres", "redis"] }
+sqlparser = { workspace = true, features = ["visitor"] }

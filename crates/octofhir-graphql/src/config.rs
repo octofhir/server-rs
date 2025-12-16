@@ -42,6 +42,12 @@ pub struct GraphQLConfig {
     #[serde(default = "default_introspection")]
     pub introspection: bool,
 
+    /// Enable GraphQL subscriptions for real-time resource changes.
+    /// Requires WebSocket support.
+    /// Default: false
+    #[serde(default = "default_subscriptions")]
+    pub subscriptions: bool,
+
     /// Batch query support.
     /// Allow multiple operations in a single request.
     /// Default: false
@@ -71,6 +77,10 @@ fn default_introspection() -> bool {
     true
 }
 
+fn default_subscriptions() -> bool {
+    false
+}
+
 fn default_batching() -> bool {
     false
 }
@@ -86,6 +96,7 @@ impl Default for GraphQLConfig {
             max_depth: default_max_depth(),
             max_complexity: default_max_complexity(),
             introspection: default_introspection(),
+            subscriptions: default_subscriptions(),
             batching: default_batching(),
             max_batch_size: default_max_batch_size(),
         }
@@ -118,6 +129,7 @@ impl GraphQLConfig {
             max_depth: self.max_depth,
             max_complexity: self.max_complexity,
             introspection_enabled: self.introspection,
+            subscriptions_enabled: self.subscriptions,
         }
     }
 }

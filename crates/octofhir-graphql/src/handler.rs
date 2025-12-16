@@ -98,13 +98,57 @@ impl From<Response> for GraphQLResponse {
             Some(data_json)
         };
 
+        // Convert errors to FHIR-compliant format with OperationOutcome
+        let errors: Vec<serde_json::Value> = resp
+            .errors
+            .into_iter()
+            .map(|e| {
+                // Extract location and path from async-graphql error
+                let locations = if !e.locations.is_empty() {
+                    Some(serde_json::to_value(&e.locations).unwrap_or(serde_json::Value::Null))
+                } else {
+                    None
+                };
+
+                let path = if !e.path.is_empty() {
+                    Some(serde_json::to_value(&e.path).unwrap_or(serde_json::Value::Null))
+                } else {
+                    None
+                };
+
+                // Create OperationOutcome for this error
+                let operation_outcome = serde_json::json!({
+                    "resourceType": "OperationOutcome",
+                    "issue": [{
+                        "severity": "error",
+                        "code": "invalid",
+                        "diagnostics": e.message.clone()
+                    }]
+                });
+
+                // Build error object with OperationOutcome in extensions.resource per FHIR spec
+                let mut error_obj = serde_json::json!({
+                    "message": e.message,
+                    "extensions": {
+                        "resource": operation_outcome
+                    }
+                });
+
+                // Add locations and path if present
+                if let Some(locs) = locations {
+                    error_obj["locations"] = locs;
+                }
+                if let Some(p) = path {
+                    error_obj["path"] = p;
+                }
+
+                error_obj
+            })
+            .collect();
+
         Self {
             data,
-            errors: resp
-                .errors
-                .into_iter()
-                .map(|e| serde_json::to_value(e).unwrap_or(serde_json::Value::Null))
-                .collect(),
+            errors,
             extensions: if resp.extensions.is_empty() {
                 None
             } else {
@@ -126,16 +170,20 @@ impl From<Response> for GraphQLResponse {
 /// defense-in-depth check to ensure the context is present.
 pub async fn graphql_handler(
     State(state): State<GraphQLState>,
-    Extension(auth_context): Extension<AuthContext>,
+    auth_context: Option<Extension<AuthContext>>,
     headers: HeaderMap,
     Json(request): Json<GraphQLRequest>,
 ) -> impl IntoResponse {
-    // AuthContext is guaranteed by middleware, but we log for debugging
-    debug!(
-        user = ?auth_context.user.as_ref().map(|u| &u.id),
-        client = %auth_context.client.client_id,
-        "Processing GraphQL request"
-    );
+    // AuthContext is optional when auth is disabled
+    if let Some(Extension(ref ctx)) = auth_context {
+        debug!(
+            user = ?ctx.user.as_ref().map(|u| &u.id),
+            client = %ctx.client.client_id,
+            "Processing GraphQL request"
+        );
+    } else {
+        debug!("Processing GraphQL request (auth disabled)");
+    }
 
     execute_graphql(
         state,
@@ -143,7 +191,7 @@ pub async fn graphql_handler(
         request,
         None,
         None,
-        Some(auth_context),
+        auth_context.map(|Extension(ctx)| ctx),
         None,
     )
     .await
@@ -159,7 +207,7 @@ pub async fn graphql_handler(
 /// Authentication is required for all GraphQL requests.
 pub async fn graphql_handler_get(
     State(state): State<GraphQLState>,
-    Extension(auth_context): Extension<AuthContext>,
+    auth_context: Option<Extension<AuthContext>>,
     headers: HeaderMap,
     Query(params): Query<GraphQLQueryParams>,
 ) -> impl IntoResponse {
@@ -171,11 +219,15 @@ pub async fn graphql_handler_get(
         }
     };
 
-    debug!(
-        user = ?auth_context.user.as_ref().map(|u| &u.id),
-        client = %auth_context.client.client_id,
-        "Processing GraphQL GET request"
-    );
+    if let Some(Extension(ref ctx)) = auth_context {
+        debug!(
+            user = ?ctx.user.as_ref().map(|u| &u.id),
+            client = %ctx.client.client_id,
+            "Processing GraphQL GET request"
+        );
+    } else {
+        debug!("Processing GraphQL GET request (auth disabled)");
+    }
 
     execute_graphql(
         state,
@@ -183,7 +235,7 @@ pub async fn graphql_handler_get(
         request,
         None,
         None,
-        Some(auth_context),
+        auth_context.map(|Extension(ctx)| ctx),
         None,
     )
     .await
@@ -201,18 +253,26 @@ pub async fn graphql_handler_get(
 /// and sets `AuthContext` in request extensions.
 pub async fn instance_graphql_handler(
     State(state): State<GraphQLState>,
-    Extension(auth_context): Extension<AuthContext>,
+    auth_context: Option<Extension<AuthContext>>,
     headers: HeaderMap,
     Path((resource_type, resource_id)): Path<(String, String)>,
     Json(request): Json<GraphQLRequest>,
 ) -> impl IntoResponse {
-    debug!(
-        user = ?auth_context.user.as_ref().map(|u| &u.id),
-        client = %auth_context.client.client_id,
-        resource_type = %resource_type,
-        resource_id = %resource_id,
-        "Processing instance GraphQL request"
-    );
+    if let Some(Extension(ref ctx)) = auth_context {
+        debug!(
+            user = ?ctx.user.as_ref().map(|u| &u.id),
+            client = %ctx.client.client_id,
+            resource_type = %resource_type,
+            resource_id = %resource_id,
+            "Processing instance GraphQL request"
+        );
+    } else {
+        debug!(
+            resource_type = %resource_type,
+            resource_id = %resource_id,
+            "Processing instance GraphQL request (auth disabled)"
+        );
+    }
 
     execute_graphql(
         state,
@@ -220,7 +280,7 @@ pub async fn instance_graphql_handler(
         request,
         Some(resource_type),
         Some(resource_id),
-        Some(auth_context),
+        auth_context.map(|Extension(ctx)| ctx),
         None,
     )
     .await
@@ -375,19 +435,17 @@ fn schema_initializing_response() -> impl IntoResponse {
         "errors": [{
             "message": "GraphQL schema is initializing, please retry",
             "extensions": {
-                "code": "SCHEMA_INITIALIZING"
+                "code": "SCHEMA_INITIALIZING",
+                "resource": {
+                    "resourceType": "OperationOutcome",
+                    "issue": [{
+                        "severity": "information",
+                        "code": "transient",
+                        "diagnostics": "GraphQL schema is still being built. Please retry in a few seconds."
+                    }]
+                }
             }
-        }],
-        "extensions": {
-            "operationOutcome": {
-                "resourceType": "OperationOutcome",
-                "issue": [{
-                    "severity": "information",
-                    "code": "transient",
-                    "diagnostics": "GraphQL schema is still being built. Please retry in a few seconds."
-                }]
-            }
-        }
+        }]
     });
 
     (
@@ -415,12 +473,10 @@ fn error_response(error: GraphQLError) -> impl IntoResponse {
         "errors": [{
             "message": error.to_string(),
             "extensions": {
-                "code": error.error_code()
+                "code": error.error_code(),
+                "resource": error.to_operation_outcome()
             }
-        }],
-        "extensions": {
-            "operationOutcome": error.to_operation_outcome()
-        }
+        }]
     });
 
     // Simple headers without retry-after for now (axum IntoResponse constraint)
