@@ -114,6 +114,26 @@ async fn build_registry_with_manager(cfg: &AppConfig) -> Result<CanonicalRegistr
     fcm_cfg.storage.packages_dir = base.join("packages");
     fcm_cfg.storage.cache_dir = base.join("cache");
 
+    tracing::info!(
+        base_dir = %base_dir,
+        packages_dir = %fcm_cfg.storage.packages_dir.display(),
+        cache_dir = %fcm_cfg.storage.cache_dir.display(),
+        "canonical manager directory configuration"
+    );
+
+    // Ensure required directories exist (including index dir mentioned in config comments)
+    let index_dir = base.join("index");
+    for dir in [&base, &fcm_cfg.storage.packages_dir, &fcm_cfg.storage.cache_dir, &index_dir] {
+        match std::fs::create_dir_all(dir) {
+            Ok(()) => {
+                tracing::debug!("created/verified directory: {:?}", dir);
+            }
+            Err(e) => {
+                tracing::error!("FAILED to create directory {:?}: {} (this may cause package installation to fail)", dir, e);
+            }
+        }
+    }
+
     // Collect installable specs (require id and version)
     let mut install_specs: Vec<(String, String)> = Vec::new();
     for item in &cfg.packages.load {
@@ -241,8 +261,28 @@ async fn build_registry_with_manager(cfg: &AppConfig) -> Result<CanonicalRegistr
             tracing::debug!(package = %key, "package already installed, skipping install");
             continue;
         }
-        if let Err(e) = manager.install_package(name, version).await {
-            tracing::error!("failed to install package {}@{}: {}", name, version, e);
+        tracing::info!(
+            package = %name,
+            version = %version,
+            "attempting to install package via canonical manager"
+        );
+        match manager.install_package(name, version).await {
+            Ok(()) => {
+                tracing::info!(
+                    package = %name,
+                    version = %version,
+                    "successfully installed package"
+                );
+            }
+            Err(e) => {
+                tracing::error!(
+                    package = %name,
+                    version = %version,
+                    error = %e,
+                    error_debug = ?e,
+                    "failed to install package (extraction succeeded but storage failed)"
+                );
+            }
         }
     }
     // Rebuild index so lists reflect installed packages

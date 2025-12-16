@@ -253,7 +253,7 @@ impl PackageStore for PostgresPackageStore {
         package: &ExtractedPackage,
     ) -> octofhir_canonical_manager::error::Result<()> {
         info!(
-            "Adding package {}@{} with {} resources",
+            "PostgreSQL storage: add_package called for {}@{} with {} resources",
             package.name,
             package.version,
             package.resources.len()
@@ -358,7 +358,7 @@ impl PackageStore for PostgresPackageStore {
         }
 
         info!(
-            "Successfully added package {}@{} with {} resources",
+            "PostgreSQL storage: successfully added package {}@{} with {} resources to database",
             package.name,
             package.version,
             package.resources.len()
@@ -692,7 +692,7 @@ impl SearchStorage for PostgresPackageStore {
         }
     }
 
-    async fn get_cache_entries(&self) -> Vec<ResourceIndex> {
+    async fn get_cache_entries(&self) -> HashMap<String, ResourceIndex> {
         debug!("Getting all cache entries");
 
         let sql = format!("{} WHERE url IS NOT NULL", Self::RESOURCE_SELECT);
@@ -701,7 +701,7 @@ impl SearchStorage for PostgresPackageStore {
             Ok(rows) => rows,
             Err(e) => {
                 warn!("Failed to get cache entries: {}", e);
-                return Vec::new();
+                return HashMap::new();
             }
         };
 
@@ -709,37 +709,13 @@ impl SearchStorage for PostgresPackageStore {
             .filter_map(|row| {
                 let url: Option<String> = row.get("url");
                 if url.is_some() && !url.as_ref().unwrap().is_empty() {
-                    Some(row_to_resource_index(row))
+                    let index = row_to_resource_index(row);
+                    Some((index.canonical_url.clone(), index))
                 } else {
                     None
                 }
             })
             .collect()
-    }
-
-    async fn find_by_type_and_package(
-        &self,
-        resource_type: &str,
-        package_name: &str,
-    ) -> octofhir_canonical_manager::error::Result<Vec<ResourceIndex>> {
-        debug!(
-            "Finding resources by type {} and package {}",
-            resource_type, package_name
-        );
-
-        let sql = format!(
-            "{} WHERE resource_type = $1 AND package_name = $2",
-            Self::RESOURCE_SELECT
-        );
-
-        let rows = query(&sql)
-            .bind(resource_type)
-            .bind(package_name)
-            .fetch_all(&self.pool)
-            .await
-            .map_err(db_error)?;
-
-        Ok(rows.iter().map(row_to_resource_index).collect())
     }
 
     async fn list_packages(&self) -> octofhir_canonical_manager::error::Result<Vec<PackageInfo>> {
