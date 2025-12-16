@@ -692,7 +692,7 @@ impl SearchStorage for PostgresPackageStore {
         }
     }
 
-    async fn get_cache_entries(&self) -> HashMap<String, ResourceIndex> {
+    async fn get_cache_entries(&self) -> Vec<ResourceIndex> {
         debug!("Getting all cache entries");
 
         let sql = format!("{} WHERE url IS NOT NULL", Self::RESOURCE_SELECT);
@@ -701,21 +701,45 @@ impl SearchStorage for PostgresPackageStore {
             Ok(rows) => rows,
             Err(e) => {
                 warn!("Failed to get cache entries: {}", e);
-                return HashMap::new();
+                return Vec::new();
             }
         };
 
-        let mut cache = HashMap::new();
-        for row in &rows {
-            let url: Option<String> = row.get("url");
-            if let Some(url) = url
-                && !url.is_empty()
-            {
-                cache.insert(url, row_to_resource_index(row));
-            }
-        }
+        rows.iter()
+            .filter_map(|row| {
+                let url: Option<String> = row.get("url");
+                if url.is_some() && !url.as_ref().unwrap().is_empty() {
+                    Some(row_to_resource_index(row))
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
 
-        cache
+    async fn find_by_type_and_package(
+        &self,
+        resource_type: &str,
+        package_name: &str,
+    ) -> octofhir_canonical_manager::error::Result<Vec<ResourceIndex>> {
+        debug!(
+            "Finding resources by type {} and package {}",
+            resource_type, package_name
+        );
+
+        let sql = format!(
+            "{} WHERE resource_type = $1 AND package_name = $2",
+            Self::RESOURCE_SELECT
+        );
+
+        let rows = query(&sql)
+            .bind(resource_type)
+            .bind(package_name)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(db_error)?;
+
+        Ok(rows.iter().map(row_to_resource_index).collect())
     }
 
     async fn list_packages(&self) -> octofhir_canonical_manager::error::Result<Vec<PackageInfo>> {

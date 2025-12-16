@@ -9,6 +9,10 @@ keywords.workspace = true
 categories.workspace = true
 description = "HTTP server implementation for OctoFHIR"
 
+[features]
+default = []
+vendored-openssl = ["reqwest/native-tls-vendored"]
+
 [[bin]]
 name = "octofhir-server"
 path = "src/main.rs"

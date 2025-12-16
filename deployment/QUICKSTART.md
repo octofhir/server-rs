@@ -28,8 +28,18 @@ mkdir -p /opt/octofhir/{config,bin,docker,data,logs,scripts,backups}
 **On your development machine:**
 
 ```bash
-# Build release binary
 cd /path/to/octofhir/server-rs
+
+# Option A: Build with vendored OpenSSL (recommended for portability)
+cargo build --release --features vendored-openssl
+
+# Option B: Build with system OpenSSL (requires development packages)
+# Ubuntu/Debian:
+#   apt-get install pkg-config libssl-dev libclang-dev
+# RHEL/CentOS:
+#   yum install pkg-config openssl-devel clang-devel
+# Alpine:
+#   apk add pkgconfig openssl-dev clang-dev
 cargo build --release
 
 # Transfer to server
