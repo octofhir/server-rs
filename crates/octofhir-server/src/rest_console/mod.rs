@@ -1,4 +1,4 @@
-use std::collections::{hash_map::DefaultHasher, HashMap};
+use std::collections::{HashMap, hash_map::DefaultHasher};
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
@@ -184,45 +184,60 @@ pub async fn build_payload(state: &RestConsoleState) -> RestConsoleResponse {
                 if resource_type == "Resource" {
                     // Generic operation - add for all resource types
                     for rt in registry.list_resource_types() {
-                        suggestions.instance_operations.push(AutocompleteSuggestion {
-                            id: format!("instance-op:{}:{}", rt, op.code),
+                        suggestions
+                            .instance_operations
+                            .push(AutocompleteSuggestion {
+                                id: format!("instance-op:{}:{}", rt, op.code),
+                                kind: SuggestionKind::InstanceOp,
+                                label: format!("${}", op.code),
+                                path_template: format!(
+                                    "{}/{{resourceType}}/{{id}}/${}",
+                                    BASE_PATH, op.code
+                                ),
+                                methods: vec![op.method.clone()],
+                                placeholders: vec!["resourceType".to_string(), "id".to_string()],
+                                description: Some(format!("{} for {} instance", op.code, rt)),
+                                metadata: SuggestionMetadata {
+                                    resource_type: Some(rt.to_string()),
+                                    affects_state: op.affects_state,
+                                    requires_body: op.body_required,
+                                    category: Some("Instance Operation".to_string()),
+                                },
+                            });
+                    }
+                } else {
+                    suggestions
+                        .instance_operations
+                        .push(AutocompleteSuggestion {
+                            id: format!("instance-op:{}:{}", resource_type, op.code),
                             kind: SuggestionKind::InstanceOp,
                             label: format!("${}", op.code),
-                            path_template: format!("{}/{{resourceType}}/{{id}}/${}", BASE_PATH, op.code),
+                            path_template: format!(
+                                "{}/{{resourceType}}/{{id}}/${}",
+                                BASE_PATH, op.code
+                            ),
                             methods: vec![op.method.clone()],
                             placeholders: vec!["resourceType".to_string(), "id".to_string()],
-                            description: Some(format!("{} for {} instance", op.code, rt)),
+                            description: Some(format!(
+                                "{} for {} instance",
+                                op.code, resource_type
+                            )),
                             metadata: SuggestionMetadata {
-                                resource_type: Some(rt.to_string()),
+                                resource_type: Some(resource_type.clone()),
                                 affects_state: op.affects_state,
                                 requires_body: op.body_required,
                                 category: Some("Instance Operation".to_string()),
                             },
                         });
-                    }
-                } else {
-                    suggestions.instance_operations.push(AutocompleteSuggestion {
-                        id: format!("instance-op:{}:{}", resource_type, op.code),
-                        kind: SuggestionKind::InstanceOp,
-                        label: format!("${}", op.code),
-                        path_template: format!("{}/{{resourceType}}/{{id}}/${}", BASE_PATH, op.code),
-                        methods: vec![op.method.clone()],
-                        placeholders: vec!["resourceType".to_string(), "id".to_string()],
-                        description: Some(format!("{} for {} instance", op.code, resource_type)),
-                        metadata: SuggestionMetadata {
-                            resource_type: Some(resource_type.clone()),
-                            affects_state: op.affects_state,
-                            requires_body: op.body_required,
-                            category: Some("Instance Operation".to_string()),
-                        },
-                    });
                 }
             }
         }
     }
 
     // Sort operations
-    suggestions.system_operations.sort_by(|a, b| a.label.cmp(&b.label));
+    suggestions
+        .system_operations
+        .sort_by(|a, b| a.label.cmp(&b.label));
     suggestions.type_operations.sort_by(|a, b| {
         let rt_cmp = a.metadata.resource_type.cmp(&b.metadata.resource_type);
         if rt_cmp == std::cmp::Ordering::Equal {
@@ -351,7 +366,10 @@ async fn load_all_operations_for_console(state: &RestConsoleState) -> Vec<Operat
         Vec::new()
     });
 
-    tracing::debug!(count = postgres_ops.len(), "Loaded operations from PostgreSQL");
+    tracing::debug!(
+        count = postgres_ops.len(),
+        "Loaded operations from PostgreSQL"
+    );
 
     for pg_op in postgres_ops {
         let metadata = OperationMetadata::from_core_definition(&pg_op);
@@ -496,9 +514,17 @@ fn compute_etag(payload: &RestConsoleResponse) -> String {
     payload.base_path.hash(&mut hasher);
     payload.api_version.hash(&mut hasher);
     payload.suggestions.resources.len().hash(&mut hasher);
-    payload.suggestions.system_operations.len().hash(&mut hasher);
+    payload
+        .suggestions
+        .system_operations
+        .len()
+        .hash(&mut hasher);
     payload.suggestions.type_operations.len().hash(&mut hasher);
-    payload.suggestions.instance_operations.len().hash(&mut hasher);
+    payload
+        .suggestions
+        .instance_operations
+        .len()
+        .hash(&mut hasher);
     payload.suggestions.api_endpoints.len().hash(&mut hasher);
 
     // Hash search params count per resource
@@ -666,15 +692,25 @@ impl OperationMetadata {
     }
 
     fn from_core_definition(op: &octofhir_core::OperationDefinition) -> Self {
-        let method = op.methods.first().cloned().unwrap_or_else(|| "GET".to_string());
+        let method = op
+            .methods
+            .first()
+            .cloned()
+            .unwrap_or_else(|| "GET".to_string());
         let templates = vec![op.path_pattern.clone()];
         let is_fhir_operation = op.path_pattern.contains('$');
 
         Self {
             code: op.name.clone(),
             method,
-            affects_state: op.methods.iter().any(|m| m == "POST" || m == "PUT" || m == "PATCH" || m == "DELETE"),
-            body_required: op.methods.iter().any(|m| m == "POST" || m == "PUT" || m == "PATCH"),
+            affects_state: op
+                .methods
+                .iter()
+                .any(|m| m == "POST" || m == "PUT" || m == "PATCH" || m == "DELETE"),
+            body_required: op
+                .methods
+                .iter()
+                .any(|m| m == "POST" || m == "PUT" || m == "PATCH"),
             system: is_fhir_operation && op.path_pattern.starts_with("/fhir/$"),
             type_level: is_fhir_operation && op.path_pattern.contains("/{type}/$"),
             instance: is_fhir_operation && op.path_pattern.contains("/{id}/$"),

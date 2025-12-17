@@ -18,11 +18,11 @@ use octofhir_storage::{
 
 use crate::schema::SchemaManager;
 
-/// Row type for history queries (id, txid, ts, resource, status).
-type HistoryRow = (Uuid, i64, DateTime<Utc>, Value, String);
+/// Row type for history queries (id, txid, created_at, updated_at, resource, status).
+type HistoryRow = (Uuid, i64, DateTime<Utc>, DateTime<Utc>, Value, String);
 
-/// Row type for system history queries (id, txid, ts, resource, status, resource_type).
-type SystemHistoryRow = (Uuid, i64, DateTime<Utc>, Value, String, Option<String>);
+/// Row type for system history queries (id, txid, created_at, updated_at, resource, status, resource_type).
+type SystemHistoryRow = (Uuid, i64, DateTime<Utc>, DateTime<Utc>, Value, String, Option<String>);
 
 /// Converts chrono DateTime to time OffsetDateTime.
 fn chrono_to_time(dt: DateTime<Utc>) -> OffsetDateTime {
@@ -91,7 +91,7 @@ pub async fn get_history(
     // Add ordering and pagination
     let full_sql = format!(
         r#"WITH all_versions AS ({sql})
-           SELECT id, txid, ts, resource, status
+           SELECT id, txid, created_at, updated_at, resource, status
            FROM all_versions
            ORDER BY txid DESC
            LIMIT {limit} OFFSET {offset}"#
@@ -113,16 +113,17 @@ pub async fn get_history(
     // Convert rows to history entries
     let entries: Vec<HistoryEntry> = rows
         .into_iter()
-        .map(|(row_id, txid, ts, resource, status)| {
-            let ts_time = chrono_to_time(ts);
+        .map(|(row_id, txid, created_at, updated_at, resource, status)| {
+            let created_at_time = chrono_to_time(created_at);
+            let updated_at_time = chrono_to_time(updated_at);
             HistoryEntry::new(
                 StoredResource {
                     id: row_id.to_string(),
                     version_id: txid.to_string(),
                     resource_type: resource_type.to_string(),
                     resource,
-                    last_updated: ts_time,
-                    created_at: ts_time,
+                    last_updated: updated_at_time,
+                    created_at: created_at_time,
                 },
                 status_to_method(&status),
             )
@@ -175,12 +176,12 @@ pub async fn get_system_history(
     let mut param_idx = 1;
 
     if since_chrono.is_some() {
-        where_conditions.push(format!("ts > ${param_idx}"));
+        where_conditions.push(format!("updated_at > ${param_idx}"));
         param_idx += 1;
     }
 
     if at_chrono.is_some() {
-        where_conditions.push(format!("ts <= ${param_idx}"));
+        where_conditions.push(format!("updated_at <= ${param_idx}"));
     }
 
     let where_clause = if where_conditions.is_empty() {
@@ -195,18 +196,18 @@ pub async fn get_system_history(
         let history_table = format!("{}_history", table);
         // Include resource_type from the JSONB resource field
         unions.push(format!(
-            r#"SELECT id, txid, ts, resource, status::text, resource->>'resourceType' as resource_type
+            r#"SELECT id, txid, created_at, updated_at, resource, status::text, resource->>'resourceType' as resource_type
                FROM "{table}" {where_clause}"#
         ));
         unions.push(format!(
-            r#"SELECT id, txid, ts, resource, status::text, resource->>'resourceType' as resource_type
+            r#"SELECT id, txid, created_at, updated_at, resource, status::text, resource->>'resourceType' as resource_type
                FROM "{history_table}" {where_clause}"#
         ));
     }
 
     let sql = format!(
         r#"WITH all_versions AS ({})
-           SELECT id, txid, ts, resource, status, resource_type
+           SELECT id, txid, created_at, updated_at, resource, status, resource_type
            FROM all_versions
            ORDER BY txid DESC
            LIMIT {limit} OFFSET {offset}"#,
@@ -225,8 +226,9 @@ pub async fn get_system_history(
     // Convert rows to history entries
     let entries: Vec<HistoryEntry> = rows
         .into_iter()
-        .map(|(row_id, txid, ts, resource, status, resource_type)| {
-            let ts_time = chrono_to_time(ts);
+        .map(|(row_id, txid, created_at, updated_at, resource, status, resource_type)| {
+            let created_at_time = chrono_to_time(created_at);
+            let updated_at_time = chrono_to_time(updated_at);
             let rt = resource_type.unwrap_or_else(|| "Unknown".to_string());
             HistoryEntry::new(
                 StoredResource {
@@ -234,8 +236,8 @@ pub async fn get_system_history(
                     version_id: txid.to_string(),
                     resource_type: rt,
                     resource,
-                    last_updated: ts_time,
-                    created_at: ts_time,
+                    last_updated: updated_at_time,
+                    created_at: created_at_time,
                 },
                 status_to_method(&status),
             )
@@ -268,13 +270,13 @@ fn build_union_query(
 
     let has_since = since.is_some();
     if has_since {
-        conditions.push(format!("ts > ${param_idx}"));
+        conditions.push(format!("updated_at > ${param_idx}"));
         param_idx += 1;
     }
 
     let has_at = at.is_some();
     if has_at {
-        conditions.push(format!("ts <= ${param_idx}"));
+        conditions.push(format!("updated_at <= ${param_idx}"));
     }
 
     let where_clause = if conditions.is_empty() {
@@ -284,9 +286,9 @@ fn build_union_query(
     };
 
     let sql = format!(
-        r#"SELECT id, txid, ts, resource, status::text FROM "{table}" {where_clause}
+        r#"SELECT id, txid, created_at, updated_at, resource, status::text FROM "{table}" {where_clause}
            UNION ALL
-           SELECT id, txid, ts, resource, status::text FROM "{history_table}" {where_clause}"#
+           SELECT id, txid, created_at, updated_at, resource, status::text FROM "{history_table}" {where_clause}"#
     );
 
     (sql, has_id, has_since, has_at)

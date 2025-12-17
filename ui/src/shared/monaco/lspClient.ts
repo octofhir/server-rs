@@ -42,10 +42,7 @@ type WorkerFactory = () => Worker;
 const workerMap: Record<string, WorkerFactory> = {
 	editor: () =>
 		new Worker(
-			new URL(
-				"monaco-editor/esm/vs/editor/editor.worker.js",
-				import.meta.url,
-			),
+			new URL("monaco-editor/esm/vs/editor/editor.worker.js", import.meta.url),
 			{ type: "module" },
 		),
 	typescript: () =>
@@ -95,7 +92,9 @@ export async function ensureMonacoServices(): Promise<void> {
 export function ensurePgLanguageRegistered(): void {
 	// Check if language is already registered in Monaco (not just our flag)
 	const existingLanguages = monaco.languages.getLanguages();
-	const alreadyRegistered = existingLanguages.some(l => l.id === PG_LANGUAGE_ID);
+	const alreadyRegistered = existingLanguages.some(
+		(l) => l.id === PG_LANGUAGE_ID,
+	);
 
 	if (languageRegistered || alreadyRegistered) {
 		languageRegistered = true;
@@ -139,7 +138,8 @@ export function ensurePgLanguageRegistered(): void {
 		],
 		onEnterRules: [
 			{
-				beforeText: /^\s*(?:SELECT|FROM|WHERE|JOIN|LEFT|RIGHT|INNER|GROUP|ORDER|HAVING)\b/i,
+				beforeText:
+					/^\s*(?:SELECT|FROM|WHERE|JOIN|LEFT|RIGHT|INNER|GROUP|ORDER|HAVING)\b/i,
 				action: { indentAction: monaco.languages.IndentAction.Indent },
 			},
 		],
@@ -160,9 +160,7 @@ export function buildPgLspUrl(pathOverride?: string): string {
 	return `${protocol}//${window.location.host}${path}`;
 }
 
-export async function startPgLsp(
-	getUrl: () => string,
-): Promise<() => void> {
+export async function startPgLsp(getUrl: () => string): Promise<() => void> {
 	if (activeConnection) {
 		return () => stopPgLsp();
 	}
@@ -227,6 +225,19 @@ interface LspHover {
 	range?: LspRange;
 }
 
+interface LspDiagnostic {
+	range: LspRange;
+	severity?: number;
+	code?: string | number;
+	source?: string;
+	message: string;
+}
+
+interface LspPublishDiagnosticsParams {
+	uri: string;
+	diagnostics: LspDiagnostic[];
+}
+
 interface PendingRequest {
 	resolve: (value: unknown) => void;
 	reject: (error: Error) => void;
@@ -252,8 +263,10 @@ class PgLspConnection {
 	private requestId = 0;
 	private readonly pendingRequests = new Map<number, PendingRequest>();
 	private readonly documents = new Map<string, TrackedDocument>();
-	private readonly notificationQueue: Array<{ method: string; params?: unknown }> =
-		[];
+	private readonly notificationQueue: Array<{
+		method: string;
+		params?: unknown;
+	}> = [];
 	private languageFeatureDisposables: monaco.IDisposable[] = [];
 	private shouldReconnect = true;
 
@@ -277,9 +290,7 @@ class PgLspConnection {
 		}
 		this.documents.clear();
 
-		this.rejectAllPendingRequests(
-			new Error("LSP connection disposed"),
-		);
+		this.rejectAllPendingRequests(new Error("LSP connection disposed"));
 
 		if (this.reconnectHandle !== undefined) {
 			clearTimeout(this.reconnectHandle);
@@ -321,7 +332,6 @@ class PgLspConnection {
 		if (this.disposed) return;
 
 		const url = this.urlFactory();
-		logDebug(`[pg-lsp] connecting ${url}`);
 
 		this.initialized = false;
 		this.readyPromise = new Promise((resolve, reject) => {
@@ -336,9 +346,7 @@ class PgLspConnection {
 			this.reconnectDelay = 1000;
 			this.sendInitialize().catch((error) => {
 				this.readyReject?.(
-					error instanceof Error
-						? error
-						: new Error(String(error)),
+					error instanceof Error ? error : new Error(String(error)),
 				);
 			});
 		};
@@ -353,18 +361,14 @@ class PgLspConnection {
 
 		socket.onclose = (event) => {
 			logDebug(
-				`[pg-lsp] socket closed ${event.code} ${
-					event.reason || ""
-				}`.trim(),
+				`[pg-lsp] socket closed ${event.code} ${event.reason || ""}`.trim(),
 			);
 			this.initialized = false;
 			this.socket = undefined;
 			this.notificationQueue.length = 0;
 			if (this.readyReject) {
 				this.readyReject(
-					new Error(
-						`LSP connection closed before ready (${event.code})`,
-					),
+					new Error(`LSP connection closed before ready (${event.code})`),
 				);
 			}
 			this.readyPromise = null;
@@ -401,6 +405,9 @@ class PgLspConnection {
 					},
 					hover: {
 						contentFormat: ["markdown", "plaintext"],
+					},
+					formatting: {
+						dynamicRegistration: false,
 					},
 				},
 			},
@@ -483,9 +490,7 @@ class PgLspConnection {
 		}
 
 		const text =
-			typeof data === "string"
-				? data
-				: textDecoder.decode(data as ArrayBuffer);
+			typeof data === "string" ? data : textDecoder.decode(data as ArrayBuffer);
 
 		logDebug("[pg-lsp] <= ", text);
 
@@ -506,8 +511,7 @@ class PgLspConnection {
 
 			if (message.error) {
 				const msg =
-					message.error.message ??
-					`LSP request ${pending.method} failed`;
+					message.error.message ?? `LSP request ${pending.method} failed`;
 				pending.reject(new Error(msg));
 			} else {
 				pending.resolve(message.result);
@@ -517,9 +521,7 @@ class PgLspConnection {
 
 		if (message.method === "window/logMessage") {
 			const params = message.params ?? {};
-			logDebug(
-				`[pg-lsp] server: ${params.message ?? "log message"}`,
-			);
+			logDebug(`[pg-lsp] server: ${params.message ?? "log message"}`);
 			return;
 		}
 
@@ -527,6 +529,57 @@ class PgLspConnection {
 			// Silently ignore window/showMessage notifications
 			return;
 		}
+
+		if (message.method === "textDocument/publishDiagnostics") {
+			this.handleDiagnostics(message.params);
+			return;
+		}
+	}
+
+	private handleDiagnostics(params: LspPublishDiagnosticsParams): void {
+		if (!params || !params.uri) {
+			logDebug("[pg-lsp] handleDiagnostics: no params or uri");
+			return;
+		}
+
+		const uri = params.uri;
+		const diagnostics = params.diagnostics || [];
+
+		// Find the model for this URI
+		const doc = this.documents.get(uri);
+		if (!doc || doc.model.isDisposed()) {
+			logDebug(`[pg-lsp] Document not found or disposed for uri: ${uri}`);
+			return;
+		}
+
+		// Convert LSP diagnostics to Monaco markers
+		const markers = diagnostics.map((diag) => {
+			// Convert LSP severity to Monaco severity
+			// LSP: Error=1, Warning=2, Information=3, Hint=4
+			// Monaco: Error=8, Warning=4, Info=2, Hint=1
+			let severity = monaco.MarkerSeverity.Error;
+			if (diag.severity === 2) {
+				severity = monaco.MarkerSeverity.Warning;
+			} else if (diag.severity === 3) {
+				severity = monaco.MarkerSeverity.Info;
+			} else if (diag.severity === 4) {
+				severity = monaco.MarkerSeverity.Hint;
+			}
+
+			return {
+				severity,
+				startLineNumber: diag.range.start.line + 1,
+				startColumn: diag.range.start.character + 1,
+				endLineNumber: diag.range.end.line + 1,
+				endColumn: diag.range.end.character + 1,
+				message: diag.message,
+				source: diag.source || "lsp",
+				code: diag.code ? String(diag.code) : undefined,
+			};
+		});
+
+		// Set markers on the model
+		monaco.editor.setModelMarkers(doc.model, "pg-lsp", markers);
 	}
 
 	private async sendRequest<T>(
@@ -556,11 +609,7 @@ class PgLspConnection {
 		return new Promise<T>((resolve, reject) => {
 			const timeoutId = window.setTimeout(() => {
 				this.pendingRequests.delete(id);
-				reject(
-					new Error(
-						`LSP request ${method} timed out after 15s`,
-					),
-				);
+				reject(new Error(`LSP request ${method} timed out after 15s`));
 			}, 15000);
 
 			this.pendingRequests.set(id, {
@@ -637,11 +686,20 @@ class PgLspConnection {
 		const completionProvider = monaco.languages.registerCompletionItemProvider(
 			PG_LANGUAGE_ID,
 			{
-				triggerCharacters: [".", ">", ":", " ", "(", "'", '"', "{", ",", "$", "["],
-				provideCompletionItems: async (
-					model,
-					position,
-				) => {
+				triggerCharacters: [
+					".",
+					">",
+					":",
+					" ",
+					"(",
+					"'",
+					'"',
+					"{",
+					",",
+					"$",
+					"[",
+				],
+				provideCompletionItems: async (model, position) => {
 					try {
 						const params = {
 							textDocument: {
@@ -649,21 +707,13 @@ class PgLspConnection {
 							},
 							position: toLspPosition(position),
 						};
-						const response =
-							await this.sendRequest<LspCompletionResponse>(
-								"textDocument/completion",
-								params,
-							);
-						return this.convertCompletionResponse(
-							response,
-							model,
-							position,
+						const response = await this.sendRequest<LspCompletionResponse>(
+							"textDocument/completion",
+							params,
 						);
+						return this.convertCompletionResponse(response, model, position);
 					} catch (error) {
-						console.error(
-							"[pg-lsp] completion failed:",
-							error,
-						);
+						logDebug("[pg-lsp] completion failed:", error);
 						return { suggestions: [] };
 					}
 				},
@@ -671,25 +721,56 @@ class PgLspConnection {
 		);
 		disposables.push(completionProvider);
 
-		const hoverProvider = monaco.languages.registerHoverProvider(PG_LANGUAGE_ID, {
-			provideHover: async (model, position) => {
-				try {
-					const params = {
-						textDocument: { uri: model.uri.toString() },
-						position: toLspPosition(position),
-					};
-					const hover = await this.sendRequest<LspHover>(
-						"textDocument/hover",
-						params,
-					);
-					return this.convertHover(hover);
-				} catch (error) {
-					console.error("[pg-lsp] hover failed:", error);
-					return null;
-				}
+		const hoverProvider = monaco.languages.registerHoverProvider(
+			PG_LANGUAGE_ID,
+			{
+				provideHover: async (model, position) => {
+					try {
+						const params = {
+							textDocument: { uri: model.uri.toString() },
+							position: toLspPosition(position),
+						};
+						const hover = await this.sendRequest<LspHover>(
+							"textDocument/hover",
+							params,
+						);
+						return this.convertHover(hover);
+					} catch (error) {
+						logDebug("[pg-lsp] hover failed:", error);
+						return null;
+					}
+				},
 			},
-		});
+		);
 		disposables.push(hoverProvider);
+
+		const formattingProvider =
+			monaco.languages.registerDocumentFormattingEditProvider(PG_LANGUAGE_ID, {
+				provideDocumentFormattingEdits: async (model, _options, _token) => {
+					try {
+						const params = {
+							textDocument: { uri: model.uri.toString() },
+							options: {
+								tabSize: _options.tabSize,
+								insertSpaces: _options.insertSpaces,
+							},
+						};
+						const edits = await this.sendRequest<LspTextEdit[]>(
+							"textDocument/formatting",
+							params,
+						);
+						if (!edits) return [];
+						return edits.map((edit) => ({
+							range: toMonacoRange(edit.range),
+							text: edit.newText,
+						}));
+					} catch (error) {
+						logDebug("[pg-lsp] formatting failed:", error);
+						return [];
+					}
+				},
+			});
+		disposables.push(formattingProvider);
 
 		return disposables;
 	}
@@ -699,9 +780,7 @@ class PgLspConnection {
 		model: monaco.editor.ITextModel,
 		position: monaco.Position,
 	): monaco.languages.CompletionList {
-		const items = Array.isArray(response)
-			? response
-			: response.items ?? [];
+		const items = Array.isArray(response) ? response : (response.items ?? []);
 
 		const suggestions = items.map((item) =>
 			this.toMonacoCompletion(item, model, position),

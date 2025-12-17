@@ -12,10 +12,19 @@ mod parser_comparison {
     /// Test cases for JSONB operator detection
     const TEST_CASES: &[(&str, &str)] = &[
         ("SELECT resource#>>'{path}' FROM users", "no spaces"),
-        ("SELECT resource #>> '{path}' FROM users", "spaces before operator"),
+        (
+            "SELECT resource #>> '{path}' FROM users",
+            "spaces before operator",
+        ),
         ("SELECT resource -> 'name' FROM users", "spaces around ->"),
-        ("SELECT resource->'name'->>'family' FROM users", "chained operators"),
-        ("SELECT resource #> '{name,given}' FROM users", "array path with spaces"),
+        (
+            "SELECT resource->'name'->>'family' FROM users",
+            "chained operators",
+        ),
+        (
+            "SELECT resource #> '{name,given}' FROM users",
+            "array path with spaces",
+        ),
         (
             "SELECT * FROM users WHERE resource->>'status' = 'active'",
             "JSONB in WHERE clause",
@@ -147,8 +156,7 @@ mod parser_comparison {
                                         println!("{}   Left: {}", indent, left_text);
                                     }
                                 }
-                                if let Some(right) = node.child_by_field_name("binary_expr_right")
-                                {
+                                if let Some(right) = node.child_by_field_name("binary_expr_right") {
                                     if let Ok(right_text) = right.utf8_text(source) {
                                         println!("{}   Right: {}", indent, right_text);
                                     }
@@ -184,10 +192,7 @@ mod parser_comparison {
         }
         let sqlparser_duration = start.elapsed();
         println!("sqlparser-rs: 1000 parses in {:?}", sqlparser_duration);
-        println!(
-            "  Average: {:?} per parse",
-            sqlparser_duration / 1000
-        );
+        println!("  Average: {:?} per parse", sqlparser_duration / 1000);
 
         // Benchmark tree-sitter
         let start = Instant::now();
@@ -200,18 +205,17 @@ mod parser_comparison {
         }
         let tree_sitter_duration = start.elapsed();
         println!("\ntree-sitter: 1000 parses in {:?}", tree_sitter_duration);
-        println!(
-            "  Average: {:?} per parse",
-            tree_sitter_duration / 1000
-        );
+        println!("  Average: {:?} per parse", tree_sitter_duration / 1000);
 
         // Compare
         println!("\n--- Results ---");
         if sqlparser_duration < tree_sitter_duration {
-            let speedup = tree_sitter_duration.as_nanos() as f64 / sqlparser_duration.as_nanos() as f64;
+            let speedup =
+                tree_sitter_duration.as_nanos() as f64 / sqlparser_duration.as_nanos() as f64;
             println!("✅ sqlparser-rs is {:.2}x FASTER", speedup);
         } else {
-            let speedup = sqlparser_duration.as_nanos() as f64 / tree_sitter_duration.as_nanos() as f64;
+            let speedup =
+                sqlparser_duration.as_nanos() as f64 / tree_sitter_duration.as_nanos() as f64;
             println!("✅ tree-sitter is {:.2}x FASTER", speedup);
         }
     }
@@ -247,7 +251,10 @@ mod parser_comparison {
             if let Some(tree) = parser.parse(sql, None) {
                 let has_error = tree.root_node().has_error();
                 if has_error {
-                    println!("  ⚠️  '{}' parsed with errors (still usable for completion)", sql);
+                    println!(
+                        "  ⚠️  '{}' parsed with errors (still usable for completion)",
+                        sql
+                    );
                 } else {
                     println!("  ✅ '{}' parsed successfully", sql);
                 }

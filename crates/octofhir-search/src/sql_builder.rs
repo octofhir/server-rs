@@ -638,7 +638,7 @@ impl FhirQueryBuilder {
             QueryMode::Count => "SELECT COUNT(*) as total".to_string(),
             QueryMode::IdsOnly => format!("SELECT {alias}.id"),
             QueryMode::Resources | QueryMode::ResourcesWithTotal => {
-                format!("{alias}.resource, {alias}.id, {alias}.txid, {alias}.ts")
+                format!("{alias}.resource, {alias}.id, {alias}.txid, {alias}.created_at, {alias}.updated_at")
             }
         };
 
@@ -890,7 +890,7 @@ impl FhirQueryBuilder {
             // This is a simplified include query - real implementation would
             // extract reference IDs from main query results
             let sql = format!(
-                "SELECT resource, id, txid, ts FROM {schema}.{target_table_escaped} WHERE id = ANY($1)"
+                "SELECT resource, id, txid, created_at, updated_at FROM {schema}.{target_table_escaped} WHERE id = ANY($1)"
             );
 
             queries.push(BuiltQuery {
@@ -916,7 +916,7 @@ impl FhirQueryBuilder {
 
             // This query finds resources that reference any of the main results
             let sql = format!(
-                "SELECT resource, id, txid, ts FROM {schema}.{source_table_escaped} \
+                "SELECT resource, id, txid, created_at, updated_at FROM {schema}.{source_table_escaped} \
                  WHERE ({ref_path}) = ANY($1)"
             );
 

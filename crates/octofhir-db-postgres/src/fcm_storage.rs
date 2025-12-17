@@ -174,6 +174,144 @@ impl PostgresPackageStore {
         format!("{:x}", hasher.finish())
     }
 
+    /// Load package from in-memory resources (for embedded internal package).
+    ///
+    /// This method is used for single-binary deployment where internal IGs are
+    /// embedded in the binary. It loads resources directly into the FCM schema
+    /// without requiring filesystem access.
+    ///
+    /// # Arguments
+    ///
+    /// * `name` - Package name (e.g., "octofhir.internal")
+    /// * `version` - Package version (e.g., "0.1.0")
+    /// * `fhir_version` - FHIR version from config (never hardcoded!)
+    /// * `resources` - Vector of (resource_type, content) tuples
+    #[instrument(skip(self, resources), fields(name = %name, version = %version, count = %resources.len()))]
+    pub async fn load_from_embedded(
+        &self,
+        name: &str,
+        version: &str,
+        fhir_version: &str,
+        resources: Vec<(String, Value)>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        info!(
+            "Loading embedded package {}@{} (FHIR {}) with {} resources",
+            name,
+            version,
+            fhir_version,
+            resources.len()
+        );
+
+        // Insert package metadata with priority 100 (higher than external packages)
+        query(
+            r#"
+            INSERT INTO fcm.packages (name, version, fhir_version, manifest_hash, resource_count, priority)
+            VALUES ($1, $2, $3, $4, $5, 100)
+            ON CONFLICT (name, version) DO UPDATE SET
+                fhir_version = EXCLUDED.fhir_version,
+                resource_count = EXCLUDED.resource_count,
+                priority = EXCLUDED.priority,
+                installed_at = NOW()
+            "#,
+        )
+        .bind(name)
+        .bind(version)
+        .bind(fhir_version)
+        .bind("embedded")
+        .bind(resources.len() as i32)
+        .execute(&self.pool)
+        .await?;
+
+        // Delete existing resources for this package (for re-installation)
+        query("DELETE FROM fcm.resources WHERE package_name = $1 AND package_version = $2")
+            .bind(name)
+            .bind(version)
+            .execute(&self.pool)
+            .await?;
+
+        // Insert all resources
+        for (resource_type, content) in &resources {
+            let sd_fields = Self::extract_sd_fields(&content);
+
+            // Extract standard FHIR resource fields
+            let resource_id = content
+                .get("id")
+                .and_then(|v| v.as_str())
+                .map(String::from);
+            let url = content
+                .get("url")
+                .and_then(|v| v.as_str())
+                .map(String::from);
+            let resource_version = content
+                .get("version")
+                .and_then(|v| v.as_str())
+                .map(String::from);
+
+            // Compute content hash
+            let content_str = serde_json::to_string(&content)?;
+            let content_hash = {
+                use std::collections::hash_map::DefaultHasher;
+                use std::hash::{Hash, Hasher};
+                let mut hasher = DefaultHasher::new();
+                content_str.hash(&mut hasher);
+                format!("{:016x}", hasher.finish())
+            };
+
+            query(
+                r#"
+                INSERT INTO fcm.resources (
+                    resource_type, resource_id, url, name, version,
+                    sd_kind, sd_derivation, sd_type, sd_base_definition, sd_abstract,
+                    sd_impose_profiles, sd_characteristics, sd_flavor,
+                    package_name, package_version, fhir_version, content_hash, content
+                ) VALUES (
+                    $1, $2, $3, $4, $5,
+                    $6, $7, $8, $9, $10,
+                    $11, $12, $13,
+                    $14, $15, $16, $17, $18
+                )
+                "#,
+            )
+            .bind(&resource_type)
+            .bind(&resource_id)
+            .bind(&url)
+            .bind(content.get("name").and_then(|v| v.as_str()))
+            .bind(&resource_version)
+            .bind(&sd_fields.kind)
+            .bind(&sd_fields.derivation)
+            .bind(&sd_fields.sd_type)
+            .bind(&sd_fields.base_definition)
+            .bind(sd_fields.is_abstract)
+            .bind(
+                sd_fields
+                    .impose_profiles
+                    .and_then(|v| serde_json::to_value(v).ok()),
+            )
+            .bind(
+                sd_fields
+                    .characteristics
+                    .and_then(|v| serde_json::to_value(v).ok()),
+            )
+            .bind(&sd_fields.flavor)
+            .bind(name)
+            .bind(version)
+            .bind(fhir_version)
+            .bind(&content_hash)
+            .bind(&content)
+            .execute(&self.pool)
+            .await?;
+        }
+
+        info!(
+            "Successfully loaded embedded package {}@{} with {} resources to FCM",
+            name,
+            version,
+            resources.len()
+        );
+
+        Ok(())
+    }
+
     /// Common SQL for selecting resource fields
     const RESOURCE_SELECT: &'static str = r#"
         SELECT

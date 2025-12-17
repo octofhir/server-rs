@@ -18,9 +18,8 @@ use std::sync::Arc;
 use octofhir_fhir_model::{ValidationProvider, provider::ModelProvider};
 use octofhir_fhirpath::FhirPathEngine;
 use octofhir_fhirschema::{
-    create_validation_provider_with_fhirpath,
+    create_validation_provider_with_fhirpath, types::ValidationError as FhirSchemaValidationError,
     validation::FhirSchemaValidator,
-    types::ValidationError as FhirSchemaValidationError,
 };
 use serde_json::Value as JsonValue;
 
@@ -440,9 +439,7 @@ mod tests {
             }]
         });
 
-        let outcome = validation_service
-            .validate(&org_with_home_telecom)
-            .await;
+        let outcome = validation_service.validate(&org_with_home_telecom).await;
 
         println!(
             "Validation outcome for org with home telecom: valid={}, issues={:?}",

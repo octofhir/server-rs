@@ -153,7 +153,7 @@ impl ArcUserStorage {
             .map_err(|e| AuthError::storage(format!("Invalid user ID: {}", e)))?;
 
         // Set timestamps from row metadata
-        user.updated_at = row.ts;
+        user.updated_at = row.updated_at;
 
         Ok(user)
     }

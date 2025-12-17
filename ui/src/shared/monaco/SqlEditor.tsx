@@ -1,6 +1,7 @@
 import { useRef, useEffect, useCallback } from "react";
 import Editor, { type OnMount, type OnChange } from "@monaco-editor/react";
 import type * as Monaco from "monaco-editor";
+import { useMantineColorScheme } from "@mantine/core";
 
 // Monaco config is imported at app entry point (@/shared/monaco/config)
 
@@ -15,12 +16,14 @@ import {
 } from "./lspClient";
 
 export interface SqlEditorProps {
-	/** Initial value of the editor */
+	/** Controlled value of the editor */
 	value?: string;
+	/** Uncontrolled initial value */
+	defaultValue?: string;
 	/** Callback when content changes */
 	onChange?: (value: string) => void;
 	/** Callback for Ctrl+Enter key combination */
-	onExecute?: () => void;
+	onExecute?: (value: string) => void;
 	/** Editor height (default: 100%) */
 	height?: string | number;
 	/** Whether the editor is read-only */
@@ -38,7 +41,8 @@ export interface SqlEditorProps {
  * Uses the same LSP client as the SolidJS version.
  */
 export function SqlEditor({
-	value = "",
+	value,
+	defaultValue = "",
 	onChange,
 	onExecute,
 	height = "100%",
@@ -51,6 +55,7 @@ export function SqlEditor({
 	const monacoRef = useRef<typeof Monaco | null>(null);
 	const disposeLspRef = useRef<(() => void) | null>(null);
 	const disposeModelBindingRef = useRef<(() => void) | null>(null);
+	const { colorScheme } = useMantineColorScheme();
 
 	// Setup Monaco and LSP when editor mounts
 	const handleEditorDidMount: OnMount = useCallback(
@@ -62,15 +67,18 @@ export function SqlEditor({
 			await ensureMonacoServices();
 			ensurePgLanguageRegistered();
 
-			// Add Ctrl+Enter command for execute
+			// Add Ctrl+Enter command for execute and forward current value
 			editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => {
-				onExecute?.();
+				const currentValue = editor.getValue?.() ?? "";
+				onExecute?.(currentValue);
 			});
 
 			// Start LSP connection if enabled
 			if (enableLsp) {
 				try {
-					disposeLspRef.current = await startPgLsp(() => buildPgLspUrl(lspPath));
+					disposeLspRef.current = await startPgLsp(() =>
+						buildPgLspUrl(lspPath),
+					);
 
 					// Bind model to LSP for completions and hover
 					const model = editor.getModel();
@@ -85,7 +93,7 @@ export function SqlEditor({
 			// Focus the editor
 			editor.focus();
 		},
-		[enableLsp, lspPath, onExecute]
+		[enableLsp, lspPath, onExecute],
 	);
 
 	// Handle value changes from React
@@ -93,7 +101,7 @@ export function SqlEditor({
 		(newValue) => {
 			onChange?.(newValue ?? "");
 		},
-		[onChange]
+		[onChange],
 	);
 
 	// Cleanup on unmount
@@ -105,13 +113,21 @@ export function SqlEditor({
 		};
 	}, []);
 
+	const editorValueProps =
+		value === undefined
+			? { defaultValue }
+			: { value };
+
+	// Determine theme based on color scheme
+	const editorTheme = colorScheme === "dark" ? "vs-dark" : "vs";
+
 	return (
 		<div className={className} style={{ height, width: "100%" }}>
 			<Editor
 				height="100%"
 				language={PG_LANGUAGE_ID}
-				theme="vs-dark"
-				value={value}
+				theme={editorTheme}
+				{...editorValueProps}
 				onChange={handleChange}
 				onMount={handleEditorDidMount}
 				options={{
@@ -121,11 +137,22 @@ export function SqlEditor({
 					renderLineHighlight: "line",
 					scrollBeyondLastLine: false,
 					fontSize: 14,
-					fontFamily: "var(--font-mono, 'JetBrains Mono', 'Fira Code', monospace)",
+					fontFamily:
+						"var(--font-mono, 'JetBrains Mono', 'Fira Code', monospace)",
 					tabSize: 2,
 					wordWrap: "on",
 					readOnly,
 					padding: { top: 8, bottom: 8 },
+					// Hover configuration - prevent overlay issues
+					hover: {
+						enabled: true,
+						delay: 300,
+						sticky: true,
+						above: false, // Show hover below cursor to avoid overlay
+					},
+					// Fix overflow widgets to prevent clipping
+					fixedOverflowWidgets: true,
+					// Suggestions
 					suggestOnTriggerCharacters: true,
 					quickSuggestions: {
 						other: true,
@@ -152,4 +179,3 @@ export function SqlEditor({
 		</div>
 	);
 }
-

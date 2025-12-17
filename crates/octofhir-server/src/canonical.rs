@@ -123,13 +123,22 @@ async fn build_registry_with_manager(cfg: &AppConfig) -> Result<CanonicalRegistr
 
     // Ensure required directories exist (including index dir mentioned in config comments)
     let index_dir = base.join("index");
-    for dir in [&base, &fcm_cfg.storage.packages_dir, &fcm_cfg.storage.cache_dir, &index_dir] {
+    for dir in [
+        &base,
+        &fcm_cfg.storage.packages_dir,
+        &fcm_cfg.storage.cache_dir,
+        &index_dir,
+    ] {
         match std::fs::create_dir_all(dir) {
             Ok(()) => {
                 tracing::debug!("created/verified directory: {:?}", dir);
             }
             Err(e) => {
-                tracing::error!("FAILED to create directory {:?}: {} (this may cause package installation to fail)", dir, e);
+                tracing::error!(
+                    "FAILED to create directory {:?}: {} (this may cause package installation to fail)",
+                    dir,
+                    e
+                );
             }
         }
     }
@@ -239,7 +248,7 @@ async fn build_registry_with_manager(cfg: &AppConfig) -> Result<CanonicalRegistr
         fcm_cfg,
         postgres_store.clone(),
         Arc::new(registry_client),
-        postgres_store,
+        postgres_store.clone(),
     )
     .await
     {
@@ -285,6 +294,54 @@ async fn build_registry_with_manager(cfg: &AppConfig) -> Result<CanonicalRegistr
             }
         }
     }
+
+    // Load embedded internal package via canonical manager
+    tracing::info!("Loading embedded internal package octofhir.internal@0.1.0");
+    let embedded_resources: Result<Vec<(String, serde_json::Value)>, String> =
+        crate::bootstrap::EMBEDDED_RESOURCES
+            .iter()
+            .map(|(filename, content)| {
+                let resource: serde_json::Value = serde_json::from_str(content)
+                    .map_err(|e| format!("Failed to parse {}: {}", filename, e))?;
+                let resource_type = resource["resourceType"]
+                    .as_str()
+                    .ok_or_else(|| format!("Missing resourceType in {}", filename))?
+                    .to_string();
+                Ok((resource_type, resource))
+            })
+            .collect();
+
+    match embedded_resources {
+        Ok(resources) => {
+            // Get FHIR version from config - never hardcode it!
+            let fhir_version = &cfg.fhir.version;
+
+            match postgres_store
+                .load_from_embedded("octofhir.internal", "0.1.0", fhir_version, resources)
+                .await
+            {
+                Ok(()) => {
+                    tracing::info!(
+                        "Successfully loaded internal package octofhir.internal@0.1.0 (FHIR {})",
+                        fhir_version
+                    );
+                }
+                Err(e) => {
+                    tracing::error!(
+                        "Failed to load embedded internal package: {}. Server may not function correctly.",
+                        e
+                    );
+                }
+            }
+        }
+        Err(e) => {
+            tracing::error!(
+                "Failed to parse embedded resources: {}. Server may not function correctly.",
+                e
+            );
+        }
+    }
+
     // Rebuild index so lists reflect installed packages
     if let Err(e) = manager.force_full_rebuild().await {
         tracing::warn!("failed to rebuild canonical index: {}", e);
@@ -560,7 +617,12 @@ pub async fn build_search_registry(
             .offset(offset)
             .execute()
             .await
-            .map_err(|e| format!("failed to query SearchParameter resources at offset {}: {e}", offset))?;
+            .map_err(|e| {
+                format!(
+                    "failed to query SearchParameter resources at offset {}: {e}",
+                    offset
+                )
+            })?;
 
         let page_count = search_results.resources.len();
         tracing::debug!(

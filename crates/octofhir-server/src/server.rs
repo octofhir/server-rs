@@ -131,18 +131,13 @@ pub struct OctofhirServer {
     app: Router,
 }
 
-/// Bootstraps conformance resources for PostgreSQL backend.
+/// Bootstraps auth resources and database tables.
 ///
 /// This function:
-/// 1. Creates conformance storage
-/// 2. Loads bootstrap resources from igs/octofhir-internal/
-/// 3. Syncs to canonical manager
-/// 4. Bootstraps auth resources (admin user, default UI client)
-/// 5. Starts hot-reload listener
+/// 1. Creates database tables for all FHIR resource types from FCM packages
+/// 2. Bootstraps auth resources (admin user, default UI client, access policy)
 async fn bootstrap_conformance_if_postgres(cfg: &AppConfig) -> Result<(), anyhow::Error> {
     use octofhir_auth_postgres::{ArcClientStorage, ArcUserStorage};
-    use octofhir_db_postgres::{HotReloadBuilder, PostgresConformanceStorage, sync_and_load};
-    use std::path::PathBuf;
 
     let pg_cfg = cfg.storage.postgres.as_ref().ok_or_else(|| {
         anyhow::anyhow!("PostgreSQL config is required for conformance bootstrap")
@@ -156,45 +151,6 @@ async fn bootstrap_conformance_if_postgres(cfg: &AppConfig) -> Result<(), anyhow
         .with_run_migrations(true);
 
     let pg_storage = octofhir_db_postgres::PostgresStorage::new(postgres_config).await?;
-    let conformance_storage = Arc::new(PostgresConformanceStorage::new(pg_storage.pool().clone()));
-
-    // Bootstrap conformance resources
-    match crate::bootstrap::bootstrap_conformance_resources(&conformance_storage).await {
-        Ok(stats) if stats.total() > 0 => {
-            tracing::info!(
-                structure_definitions = stats.structure_definitions,
-                value_sets = stats.value_sets,
-                code_systems = stats.code_systems,
-                "Bootstrapped conformance resources"
-            );
-        }
-        Ok(_) => {
-            tracing::debug!("Conformance resources already bootstrapped");
-        }
-        Err(e) => {
-            tracing::warn!(error = %e, "Failed to bootstrap conformance resources");
-        }
-    }
-
-    // Sync to canonical manager
-    let base_dir = PathBuf::from(cfg.packages.path.as_deref().unwrap_or(".fhir"));
-
-    let canonical_manager = crate::canonical::get_manager();
-
-    match sync_and_load(&conformance_storage, &base_dir, canonical_manager.as_ref()).await {
-        Ok(package_dir) => {
-            tracing::info!(
-                package_dir = %package_dir.display(),
-                "Synced internal conformance resources to canonical manager"
-            );
-        }
-        Err(e) => {
-            tracing::warn!(
-                error = %e,
-                "Failed to sync conformance resources to canonical manager"
-            );
-        }
-    }
 
     // Create database tables for all FHIR resource types from FCM packages
     // This includes all resource-kind and logical-kind StructureDefinitions
@@ -275,37 +231,6 @@ async fn bootstrap_conformance_if_postgres(cfg: &AppConfig) -> Result<(), anyhow
                     "Failed to bootstrap admin access policy"
                 );
             }
-        }
-    }
-
-    // Ensure we have a canonical manager (required)
-    let canonical_manager = if let Some(manager) = canonical_manager {
-        manager
-    } else {
-        // Create a default FcmConfig
-        let config = octofhir_canonical_manager::FcmConfig::default();
-        let manager = octofhir_canonical_manager::CanonicalManager::new(config)
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to create canonical manager: {}", e))?;
-        Arc::new(manager)
-    };
-
-    // Start hot-reload listener to monitor conformance changes
-    match HotReloadBuilder::new(pg_storage.pool().clone())
-        .with_conformance_storage(conformance_storage)
-        .with_canonical_manager(canonical_manager)
-        .with_base_dir(base_dir)
-        .start()
-    {
-        Ok(_handle) => {
-            tracing::info!("Hot-reload listener started for conformance resources");
-            // Handle is dropped here, but the task continues running in the background
-        }
-        Err(e) => {
-            tracing::warn!(
-                error = %e,
-                "Failed to start hot-reload listener"
-            );
         }
     }
 
@@ -423,9 +348,9 @@ pub async fn build_app(cfg: &AppConfig) -> Result<Router, anyhow::Error> {
     let body_limit = cfg.server.body_limit_bytes;
     let (storage, db_pool) = create_storage(cfg).await?;
 
-    // Bootstrap conformance resources
+    // Bootstrap database tables and auth resources
     if let Err(e) = bootstrap_conformance_if_postgres(cfg).await {
-        tracing::warn!(error = %e, "Failed to bootstrap conformance resources");
+        tracing::warn!(error = %e, "Failed to bootstrap database tables and auth resources");
     }
 
     // Build search parameter registry from canonical manager (REQUIRED)
@@ -1106,8 +1031,7 @@ fn build_router(state: AppState, body_limit: usize) -> Router {
                 app_middleware::authentication_middleware,
             ))
     } else {
-        router
-            .layer(middleware::from_fn(app_middleware::request_id))
+        router.layer(middleware::from_fn(app_middleware::request_id))
     };
 
     let router: Router = router

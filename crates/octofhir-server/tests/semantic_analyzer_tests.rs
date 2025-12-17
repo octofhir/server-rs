@@ -34,10 +34,7 @@ fn test_jsonb_hash_arrow() {
     let ctx = SemanticAnalyzer::analyze(sql).unwrap();
     assert!(ctx.jsonb_operator.is_some());
     let op_info = ctx.jsonb_operator.unwrap();
-    assert!(matches!(
-        op_info.operator,
-        Some(BinaryOperator::HashArrow)
-    ));
+    assert!(matches!(op_info.operator, Some(BinaryOperator::HashArrow)));
     assert_eq!(op_info.target(), "resource");
 }
 
@@ -57,7 +54,12 @@ fn test_jsonb_hash_long_arrow() {
 #[test]
 fn test_jsonb_with_spaces() {
     let sql = "SELECT resource #>> '{name}' FROM patient";
-    assert!(SemanticAnalyzer::analyze(sql).unwrap().jsonb_operator.is_some());
+    assert!(
+        SemanticAnalyzer::analyze(sql)
+            .unwrap()
+            .jsonb_operator
+            .is_some()
+    );
 }
 
 #[test]
@@ -79,7 +81,12 @@ fn test_jsonb_nested_path() {
 #[test]
 fn test_no_jsonb() {
     let sql = "SELECT id FROM patient";
-    assert!(SemanticAnalyzer::analyze(sql).unwrap().jsonb_operator.is_none());
+    assert!(
+        SemanticAnalyzer::analyze(sql)
+            .unwrap()
+            .jsonb_operator
+            .is_none()
+    );
 }
 
 // ============================================================================
@@ -94,7 +101,10 @@ fn test_jsonb_path_exists() {
     let func_info = ctx.jsonb_operator.unwrap();
     assert!(func_info.is_function());
     assert!(!func_info.is_operator());
-    assert_eq!(func_info.function_name.as_ref().unwrap(), "jsonb_path_exists");
+    assert_eq!(
+        func_info.function_name.as_ref().unwrap(),
+        "jsonb_path_exists"
+    );
     assert_eq!(func_info.target(), "resource");
     assert_eq!(func_info.path().unwrap(), "'$.name'");
 }
@@ -105,7 +115,10 @@ fn test_jsonb_path_query() {
     let ctx = SemanticAnalyzer::analyze(sql).unwrap();
     assert!(ctx.jsonb_operator.is_some());
     let func_info = ctx.jsonb_operator.unwrap();
-    assert_eq!(func_info.function_name.as_ref().unwrap(), "jsonb_path_query");
+    assert_eq!(
+        func_info.function_name.as_ref().unwrap(),
+        "jsonb_path_query"
+    );
     assert_eq!(func_info.target(), "resource");
 }
 
@@ -115,7 +128,10 @@ fn test_jsonb_extract_path() {
     let ctx = SemanticAnalyzer::analyze(sql).unwrap();
     assert!(ctx.jsonb_operator.is_some());
     let func_info = ctx.jsonb_operator.unwrap();
-    assert_eq!(func_info.function_name.as_ref().unwrap(), "jsonb_extract_path");
+    assert_eq!(
+        func_info.function_name.as_ref().unwrap(),
+        "jsonb_extract_path"
+    );
     assert_eq!(func_info.target(), "resource");
 }
 
@@ -125,7 +141,10 @@ fn test_jsonb_extract_path_text() {
     let ctx = SemanticAnalyzer::analyze(sql).unwrap();
     assert!(ctx.jsonb_operator.is_some());
     let func_info = ctx.jsonb_operator.unwrap();
-    assert_eq!(func_info.function_name.as_ref().unwrap(), "jsonb_extract_path_text");
+    assert_eq!(
+        func_info.function_name.as_ref().unwrap(),
+        "jsonb_extract_path_text"
+    );
 }
 
 #[test]
@@ -134,7 +153,10 @@ fn test_jsonb_array_elements() {
     let ctx = SemanticAnalyzer::analyze(sql).unwrap();
     assert!(ctx.jsonb_operator.is_some());
     let func_info = ctx.jsonb_operator.unwrap();
-    assert_eq!(func_info.function_name.as_ref().unwrap(), "jsonb_array_elements");
+    assert_eq!(
+        func_info.function_name.as_ref().unwrap(),
+        "jsonb_array_elements"
+    );
     assert_eq!(func_info.target(), "resource");
 }
 
@@ -153,7 +175,10 @@ fn test_jsonb_object_keys() {
     let ctx = SemanticAnalyzer::analyze(sql).unwrap();
     assert!(ctx.jsonb_operator.is_some());
     let func_info = ctx.jsonb_operator.unwrap();
-    assert_eq!(func_info.function_name.as_ref().unwrap(), "jsonb_object_keys");
+    assert_eq!(
+        func_info.function_name.as_ref().unwrap(),
+        "jsonb_object_keys"
+    );
 }
 
 #[test]
@@ -170,7 +195,10 @@ fn test_jsonb_function_in_where() {
     let ctx = SemanticAnalyzer::analyze(sql).unwrap();
     assert!(ctx.jsonb_operator.is_some());
     let func_info = ctx.jsonb_operator.unwrap();
-    assert_eq!(func_info.function_name.as_ref().unwrap(), "jsonb_path_exists");
+    assert_eq!(
+        func_info.function_name.as_ref().unwrap(),
+        "jsonb_path_exists"
+    );
 }
 
 #[test]
@@ -179,7 +207,10 @@ fn test_jsonb_path_query_array() {
     let ctx = SemanticAnalyzer::analyze(sql).unwrap();
     assert!(ctx.jsonb_operator.is_some());
     let func_info = ctx.jsonb_operator.unwrap();
-    assert_eq!(func_info.function_name.as_ref().unwrap(), "jsonb_path_query_array");
+    assert_eq!(
+        func_info.function_name.as_ref().unwrap(),
+        "jsonb_path_query_array"
+    );
 }
 
 #[test]
@@ -188,7 +219,10 @@ fn test_jsonb_path_query_first() {
     let ctx = SemanticAnalyzer::analyze(sql).unwrap();
     assert!(ctx.jsonb_operator.is_some());
     let func_info = ctx.jsonb_operator.unwrap();
-    assert_eq!(func_info.function_name.as_ref().unwrap(), "jsonb_path_query_first");
+    assert_eq!(
+        func_info.function_name.as_ref().unwrap(),
+        "jsonb_path_query_first"
+    );
 }
 
 // ============================================================================
@@ -226,7 +260,8 @@ fn test_no_jsonb_with_regular_function() {
 
 #[test]
 fn test_jsonb_complex_path() {
-    let sql = "SELECT jsonb_path_exists(resource, '$.name[*] ? (@ like_regex \"^J\")') FROM patient";
+    let sql =
+        "SELECT jsonb_path_exists(resource, '$.name[*] ? (@ like_regex \"^J\")') FROM patient";
     let ctx = SemanticAnalyzer::analyze(sql).unwrap();
     assert!(ctx.jsonb_operator.is_some());
     let func_info = ctx.jsonb_operator.unwrap();

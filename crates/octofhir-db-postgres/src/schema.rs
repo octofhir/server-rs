@@ -98,6 +98,7 @@ impl SchemaManager {
         self.create_resource_table(resource_type).await?;
         self.create_history_table(resource_type).await?;
         self.create_indexes(resource_type).await?;
+        self.create_update_trigger(resource_type).await?;
         self.create_history_trigger(resource_type).await?;
 
         // Add gateway notification trigger for App and CustomOperation resources
@@ -156,7 +157,8 @@ impl SchemaManager {
             CREATE TABLE "{table}" (
                 id TEXT PRIMARY KEY,
                 txid BIGINT NOT NULL REFERENCES _transaction(txid),
-                ts TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                 resource JSONB NOT NULL,
                 status resource_status NOT NULL DEFAULT 'created'
             )
@@ -187,7 +189,8 @@ impl SchemaManager {
             CREATE TABLE "{history_table}" (
                 id TEXT NOT NULL,
                 txid BIGINT NOT NULL,
-                ts TIMESTAMPTZ NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL,
+                updated_at TIMESTAMPTZ NOT NULL,
                 resource JSONB NOT NULL,
                 status resource_status NOT NULL,
                 PRIMARY KEY (id, txid)
@@ -227,9 +230,16 @@ impl SchemaManager {
             .await
             .map_err(PostgresError::from)?;
 
-        // Index on ts for time-based sorting and filtering
-        let ts_sql = format!(r#"CREATE INDEX IF NOT EXISTS "idx_{table}_ts" ON "{table}"(ts)"#);
-        sqlx_core::query::query(&ts_sql)
+        // Index on created_at for time-based queries
+        let created_at_sql = format!(r#"CREATE INDEX IF NOT EXISTS "idx_{table}_created_at" ON "{table}"(created_at)"#);
+        sqlx_core::query::query(&created_at_sql)
+            .execute(&self.pool)
+            .await
+            .map_err(PostgresError::from)?;
+
+        // Index on updated_at for time-based sorting and filtering
+        let updated_at_sql = format!(r#"CREATE INDEX IF NOT EXISTS "idx_{table}_updated_at" ON "{table}"(updated_at)"#);
+        sqlx_core::query::query(&updated_at_sql)
             .execute(&self.pool)
             .await
             .map_err(PostgresError::from)?;
@@ -242,11 +252,11 @@ impl SchemaManager {
             .await
             .map_err(PostgresError::from)?;
 
-        // History table index on timestamp for history queries
-        let history_ts_sql = format!(
-            r#"CREATE INDEX IF NOT EXISTS "idx_{history_table}_ts" ON "{history_table}"(ts)"#
+        // History table index on updated_at for history queries
+        let history_updated_at_sql = format!(
+            r#"CREATE INDEX IF NOT EXISTS "idx_{history_table}_updated_at" ON "{history_table}"(updated_at)"#
         );
-        sqlx_core::query::query(&history_ts_sql)
+        sqlx_core::query::query(&history_updated_at_sql)
             .execute(&self.pool)
             .await
             .map_err(PostgresError::from)?;
@@ -264,6 +274,36 @@ impl SchemaManager {
         Ok(())
     }
 
+    /// Creates the update timestamp trigger that automatically updates updated_at.
+    ///
+    /// Uses the shared `update_updated_at_column()` function created by migration.
+    #[instrument(skip(self))]
+    async fn create_update_trigger(&self, resource_type: &str) -> Result<()> {
+        let table = Self::table_name(resource_type);
+        let trigger_name = format!("{}_update_timestamp", table);
+
+        // Drop existing trigger first
+        let drop_sql = format!(r#"DROP TRIGGER IF EXISTS "{trigger_name}" ON "{table}""#);
+        sqlx_core::query::query(&drop_sql)
+            .execute(&self.pool)
+            .await
+            .map_err(PostgresError::from)?;
+
+        // Create the trigger using the shared function from migration
+        let create_sql = format!(
+            r#"CREATE TRIGGER "{trigger_name}"
+                BEFORE UPDATE ON "{table}"
+                FOR EACH ROW EXECUTE FUNCTION update_updated_at_column()"#
+        );
+        sqlx_core::query::query(&create_sql)
+            .execute(&self.pool)
+            .await
+            .map_err(PostgresError::from)?;
+
+        info!("Created update timestamp trigger for: {}", table);
+        Ok(())
+    }
+
     /// Creates the history trigger that archives rows before UPDATE/DELETE.
     #[instrument(skip(self))]
     async fn create_history_trigger(&self, resource_type: &str) -> Result<()> {
@@ -277,10 +317,10 @@ impl SchemaManager {
             RETURNS TRIGGER AS $$
             BEGIN
                 EXECUTE format(
-                    'INSERT INTO %I_history (id, txid, ts, resource, status)
-                     VALUES ($1, $2, $3, $4, $5)',
+                    'INSERT INTO %I_history (id, txid, created_at, updated_at, resource, status)
+                     VALUES ($1, $2, $3, $4, $5, $6)',
                     TG_TABLE_NAME
-                ) USING OLD.id, OLD.txid, OLD.ts, OLD.resource, OLD.status;
+                ) USING OLD.id, OLD.txid, OLD.created_at, OLD.updated_at, OLD.resource, OLD.status;
                 RETURN NEW;
             END;
             $$ LANGUAGE plpgsql;

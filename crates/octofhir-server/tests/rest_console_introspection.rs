@@ -13,9 +13,9 @@ use octofhir_search::{
     parameters::{SearchModifier, SearchParameter, SearchParameterType},
     registry::SearchParameterRegistry,
 };
-use octofhir_server::rest_console::{self, RestConsoleState};
 use octofhir_server::operations::definition::{OperationDefinition, OperationKind};
 use octofhir_server::operations::registry::OperationRegistry;
+use octofhir_server::rest_console::{self, RestConsoleState};
 use octofhir_storage::{
     DynStorage, FhirStorage, HistoryParams, HistoryResult, SearchParams, SearchResult,
     StorageError, StoredResource, Transaction,

@@ -86,12 +86,12 @@ pub async fn create(
     // Insert into table
     let table = SchemaManager::table_name(resource_type);
     let sql = format!(
-        r#"INSERT INTO "{table}" (id, txid, ts, resource, status)
-           VALUES ($1, $2, $3, $4, 'created')
-           RETURNING id, txid, ts"#
+        r#"INSERT INTO "{table}" (id, txid, created_at, updated_at, resource, status)
+           VALUES ($1, $2, $3, $3, $4, 'created')
+           RETURNING id, txid, created_at, updated_at"#
     );
 
-    let row: (String, i64, DateTime<Utc>) = query_as(&sql)
+    let row: (String, i64, DateTime<Utc>, DateTime<Utc>) = query_as(&sql)
         .bind(&id)
         .bind(txid)
         .bind(now)
@@ -107,15 +107,16 @@ pub async fn create(
             }
         })?;
 
-    let now_time = chrono_to_time(row.2);
+    let created_at_time = chrono_to_time(row.2);
+    let updated_at_time = chrono_to_time(row.3);
 
     Ok(StoredResource {
         id,
         version_id: row.1.to_string(),
         resource_type: resource_type.to_string(),
         resource,
-        last_updated: now_time,
-        created_at: now_time,
+        last_updated: updated_at_time,
+        created_at: created_at_time,
     })
 }
 
@@ -132,12 +133,12 @@ pub async fn read(
 
     // Query including status to detect deleted resources
     let sql = format!(
-        r#"SELECT id, txid, ts, resource, status::text
+        r#"SELECT id, txid, created_at, updated_at, resource, status::text
            FROM "{table}"
            WHERE id = $1"#
     );
 
-    let row: Option<(String, i64, DateTime<Utc>, Value, String)> = query_as(&sql)
+    let row: Option<(String, i64, DateTime<Utc>, DateTime<Utc>, Value, String)> = query_as(&sql)
         .bind(id)
         .fetch_optional(pool)
         .await
@@ -150,20 +151,37 @@ pub async fn read(
         })?;
 
     match row {
-        Some((row_id, txid, ts, resource, status)) => {
+        Some((row_id, txid, created_at, updated_at, mut resource, status)) => {
             // Check if the resource is soft-deleted
             if status == "deleted" {
                 return Err(StorageError::deleted(resource_type, id));
             }
 
-            let ts_time = chrono_to_time(ts);
+            let created_at_time = chrono_to_time(created_at);
+            let updated_at_time = chrono_to_time(updated_at);
+
+            // Merge timestamps into meta field
+            if let Some(meta) = resource.get_mut("meta") {
+                if let Some(meta_obj) = meta.as_object_mut() {
+                    meta_obj.insert("versionId".to_string(), serde_json::json!(txid.to_string()));
+                    meta_obj.insert("lastUpdated".to_string(), serde_json::json!(updated_at.to_rfc3339()));
+                    meta_obj.insert("createdAt".to_string(), serde_json::json!(created_at.to_rfc3339()));
+                }
+            } else {
+                resource["meta"] = serde_json::json!({
+                    "versionId": txid.to_string(),
+                    "lastUpdated": updated_at.to_rfc3339(),
+                    "createdAt": created_at.to_rfc3339()
+                });
+            }
+
             Ok(Some(StoredResource {
                 id: row_id,
                 version_id: txid.to_string(),
                 resource_type: resource_type.to_string(),
                 resource,
-                last_updated: ts_time,
-                created_at: ts_time, // Note: Would need separate column for true created_at
+                last_updated: updated_at_time,
+                created_at: created_at_time,
             }))
         }
         None => Ok(None),
@@ -237,16 +255,16 @@ pub async fn update(
     });
 
     // Update resource (trigger will archive old version to history)
+    // Note: updated_at is automatically updated by the update_updated_at_column() trigger
     let update_sql = format!(
         r#"UPDATE "{table}"
-           SET txid = $1, ts = $2, resource = $3, status = 'updated'
-           WHERE id = $4 AND status != 'deleted'
-           RETURNING id, txid, ts"#
+           SET txid = $1, resource = $2, status = 'updated'
+           WHERE id = $3 AND status != 'deleted'
+           RETURNING id, txid, created_at, updated_at"#
     );
 
-    let row: Option<(Uuid, i64, DateTime<Utc>)> = query_as(&update_sql)
+    let row: Option<(Uuid, i64, DateTime<Utc>, DateTime<Utc>)> = query_as(&update_sql)
         .bind(txid)
-        .bind(now)
         .bind(&resource)
         .bind(id_uuid)
         .fetch_optional(pool)
@@ -254,15 +272,16 @@ pub async fn update(
         .map_err(|e| StorageError::internal(format!("Failed to update resource: {e}")))?;
 
     match row {
-        Some((_, returned_txid, ts)) => {
-            let ts_time = chrono_to_time(ts);
+        Some((_, returned_txid, created_at, updated_at)) => {
+            let created_at_time = chrono_to_time(created_at);
+            let updated_at_time = chrono_to_time(updated_at);
             Ok(StoredResource {
                 id: id.to_string(),
                 version_id: returned_txid.to_string(),
                 resource_type: resource_type.to_string(),
                 resource,
-                last_updated: ts_time,
-                created_at: ts_time, // Note: Would need separate column for true created_at
+                last_updated: updated_at_time,
+                created_at: created_at_time,
             })
         }
         None => Err(StorageError::not_found(resource_type, id)),
@@ -288,9 +307,10 @@ pub async fn delete(pool: &PgPool, resource_type: &str, id: &str) -> Result<(), 
     // Create transaction for the delete operation
     let txid = create_transaction(pool).await?;
 
+    // Note: updated_at is automatically updated by the update_updated_at_column() trigger
     let sql = format!(
         r#"UPDATE "{table}"
-           SET txid = $1, ts = NOW(), status = 'deleted'
+           SET txid = $1, status = 'deleted'
            WHERE id = $2 AND status != 'deleted'"#
     );
 
@@ -337,12 +357,12 @@ pub async fn vread(
 
     // First check current table
     let current_sql = format!(
-        r#"SELECT id, txid, ts, resource
+        r#"SELECT id, txid, created_at, updated_at, resource
            FROM "{table}"
            WHERE id = $1 AND txid = $2"#
     );
 
-    let row: Option<(Uuid, i64, DateTime<Utc>, Value)> = query_as(&current_sql)
+    let row: Option<(Uuid, i64, DateTime<Utc>, DateTime<Utc>, Value)> = query_as(&current_sql)
         .bind(id_uuid)
         .bind(version_id)
         .fetch_optional(pool)
@@ -354,26 +374,27 @@ pub async fn vread(
             StorageError::internal(format!("Failed to read version: {e}"))
         })?;
 
-    if let Some((row_id, txid, ts, resource)) = row {
-        let ts_time = chrono_to_time(ts);
+    if let Some((row_id, txid, created_at, updated_at, resource)) = row {
+        let created_at_time = chrono_to_time(created_at);
+        let updated_at_time = chrono_to_time(updated_at);
         return Ok(Some(StoredResource {
             id: row_id.to_string(),
             version_id: txid.to_string(),
             resource_type: resource_type.to_string(),
             resource,
-            last_updated: ts_time,
-            created_at: ts_time,
+            last_updated: updated_at_time,
+            created_at: created_at_time,
         }));
     }
 
     // Check history table
     let history_sql = format!(
-        r#"SELECT id, txid, ts, resource
+        r#"SELECT id, txid, created_at, updated_at, resource
            FROM "{history_table}"
            WHERE id = $1 AND txid = $2"#
     );
 
-    let row: Option<(Uuid, i64, DateTime<Utc>, Value)> = query_as(&history_sql)
+    let row: Option<(Uuid, i64, DateTime<Utc>, DateTime<Utc>, Value)> = query_as(&history_sql)
         .bind(id_uuid)
         .bind(version_id)
         .fetch_optional(pool)
@@ -386,15 +407,16 @@ pub async fn vread(
         })?;
 
     match row {
-        Some((row_id, txid, ts, resource)) => {
-            let ts_time = chrono_to_time(ts);
+        Some((row_id, txid, created_at, updated_at, resource)) => {
+            let created_at_time = chrono_to_time(created_at);
+            let updated_at_time = chrono_to_time(updated_at);
             Ok(Some(StoredResource {
                 id: row_id.to_string(),
                 version_id: txid.to_string(),
                 resource_type: resource_type.to_string(),
                 resource,
-                last_updated: ts_time,
-                created_at: ts_time,
+                last_updated: updated_at_time,
+                created_at: created_at_time,
             }))
         }
         None => Ok(None),
@@ -454,12 +476,12 @@ pub async fn create_with_tx(
     // Insert into table
     let table = SchemaManager::table_name(resource_type);
     let sql = format!(
-        r#"INSERT INTO "{table}" (id, txid, ts, resource, status)
-           VALUES ($1, $2, $3, $4, 'created')
-           RETURNING id, txid, ts"#
+        r#"INSERT INTO "{table}" (id, txid, created_at, updated_at, resource, status)
+           VALUES ($1, $2, $3, $3, $4, 'created')
+           RETURNING id, txid, created_at, updated_at"#
     );
 
-    let row: (Uuid, i64, DateTime<Utc>) = query_as(&sql)
+    let row: (Uuid, i64, DateTime<Utc>, DateTime<Utc>) = query_as(&sql)
         .bind(id_uuid)
         .bind(txid)
         .bind(now)
@@ -474,15 +496,16 @@ pub async fn create_with_tx(
             }
         })?;
 
-    let now_time = chrono_to_time(row.2);
+    let created_at_time = chrono_to_time(row.2);
+    let updated_at_time = chrono_to_time(row.3);
 
     Ok(StoredResource {
         id,
         version_id: row.1.to_string(),
         resource_type: resource_type.to_string(),
         resource,
-        last_updated: now_time,
-        created_at: now_time,
+        last_updated: updated_at_time,
+        created_at: created_at_time,
     })
 }
 
@@ -529,16 +552,16 @@ pub async fn update_with_tx(
     });
 
     // Update resource (trigger will archive old version to history)
+    // Note: updated_at is automatically updated by the update_updated_at_column() trigger
     let update_sql = format!(
         r#"UPDATE "{table}"
-           SET txid = $1, ts = $2, resource = $3, status = 'updated'
-           WHERE id = $4 AND status != 'deleted'
-           RETURNING id, txid, ts"#
+           SET txid = $1, resource = $2, status = 'updated'
+           WHERE id = $3 AND status != 'deleted'
+           RETURNING id, txid, created_at, updated_at"#
     );
 
-    let row: Option<(Uuid, i64, DateTime<Utc>)> = query_as(&update_sql)
+    let row: Option<(Uuid, i64, DateTime<Utc>, DateTime<Utc>)> = query_as(&update_sql)
         .bind(txid)
-        .bind(now)
         .bind(&resource)
         .bind(id_uuid)
         .fetch_optional(&mut **tx)
@@ -546,15 +569,16 @@ pub async fn update_with_tx(
         .map_err(|e| StorageError::internal(format!("Failed to update resource: {e}")))?;
 
     match row {
-        Some((_, returned_txid, ts)) => {
-            let ts_time = chrono_to_time(ts);
+        Some((_, returned_txid, created_at, updated_at)) => {
+            let created_at_time = chrono_to_time(created_at);
+            let updated_at_time = chrono_to_time(updated_at);
             Ok(StoredResource {
                 id: id.to_string(),
                 version_id: returned_txid.to_string(),
                 resource_type: resource_type.to_string(),
                 resource,
-                last_updated: ts_time,
-                created_at: ts_time,
+                last_updated: updated_at_time,
+                created_at: created_at_time,
             })
         }
         None => Err(StorageError::not_found(resource_type, id)),
@@ -583,9 +607,10 @@ pub async fn delete_with_tx(
             .await
             .map_err(|e| StorageError::internal(format!("Failed to create transaction: {e}")))?;
 
+    // Note: updated_at is automatically updated by the update_updated_at_column() trigger
     let sql = format!(
         r#"UPDATE "{table}"
-           SET txid = $1, ts = NOW(), status = 'deleted'
+           SET txid = $1, status = 'deleted'
            WHERE id = $2 AND status != 'deleted'"#
     );
 
@@ -624,12 +649,12 @@ pub async fn read_with_tx(
 
     // Query including status to detect deleted resources
     let sql = format!(
-        r#"SELECT id, txid, ts, resource, status::text
+        r#"SELECT id, txid, created_at, updated_at, resource, status::text
            FROM "{table}"
            WHERE id = $1"#
     );
 
-    let row: Option<(Uuid, i64, DateTime<Utc>, Value, String)> = query_as(&sql)
+    let row: Option<(Uuid, i64, DateTime<Utc>, DateTime<Utc>, Value, String)> = query_as(&sql)
         .bind(id_uuid)
         .fetch_optional(&mut **tx)
         .await
@@ -641,20 +666,21 @@ pub async fn read_with_tx(
         })?;
 
     match row {
-        Some((row_id, txid, ts, resource, status)) => {
+        Some((row_id, txid, created_at, updated_at, resource, status)) => {
             // Check if the resource is soft-deleted
             if status == "deleted" {
                 return Err(StorageError::deleted(resource_type, id));
             }
 
-            let ts_time = chrono_to_time(ts);
+            let created_at_time = chrono_to_time(created_at);
+            let updated_at_time = chrono_to_time(updated_at);
             Ok(Some(StoredResource {
                 id: row_id.to_string(),
                 version_id: txid.to_string(),
                 resource_type: resource_type.to_string(),
                 resource,
-                last_updated: ts_time,
-                created_at: ts_time,
+                last_updated: updated_at_time,
+                created_at: created_at_time,
             }))
         }
         None => Ok(None),

@@ -1455,6 +1455,19 @@ impl SchemaCache {
         self.functions.get(name).map(|r| r.value().clone())
     }
 
+    /// Check if a table exists (case-insensitive).
+    pub fn table_exists(&self, name: &str) -> bool {
+        self.get_table_by_name(name).is_some()
+    }
+
+    /// Check if a function exists (case-insensitive).
+    pub fn function_exists(&self, name: &str) -> bool {
+        let name_lower = name.to_lowercase();
+        self.functions
+            .iter()
+            .any(|r| r.value().name.to_lowercase() == name_lower)
+    }
+
     /// Check if a table is a FHIR resource table.
     pub fn is_fhir_table(&self, table_name: &str) -> bool {
         self.tables

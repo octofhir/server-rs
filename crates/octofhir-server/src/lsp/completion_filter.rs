@@ -36,7 +36,9 @@ impl<'a> From<CompletionRelevanceData<'a>> for CompletionFilter<'a> {
 impl CompletionFilter<'_> {
     /// Check if this completion item is relevant in the given context.
     pub fn is_relevant(&self, ctx: &TreesitterContext) -> bool {
-        // Keywords are always potentially relevant
+        // NOTE: Keyword filtering is now performed in get_keyword_completions()
+        // which uses SQL context and existing clauses for context-aware filtering.
+        // This filter just allows keywords that have already passed that validation.
         if matches!(self.data, CompletionRelevanceData::Keyword(_)) {
             return true;
         }

@@ -23,8 +23,10 @@ pub struct IdentityProviderRow {
     pub id: String,
     /// Transaction ID (version).
     pub txid: i64,
-    /// Timestamp.
-    pub ts: OffsetDateTime,
+    /// Created timestamp.
+    pub created_at: OffsetDateTime,
+    /// Updated timestamp.
+    pub updated_at: OffsetDateTime,
     /// Full resource as JSONB.
     pub resource: serde_json::Value,
     /// Resource status (created, updated, deleted).
@@ -33,13 +35,14 @@ pub struct IdentityProviderRow {
 
 impl IdentityProviderRow {
     /// Create from database tuple.
-    fn from_tuple(row: (String, i64, OffsetDateTime, serde_json::Value, String)) -> Self {
+    fn from_tuple(row: (String, i64, OffsetDateTime, OffsetDateTime, serde_json::Value, String)) -> Self {
         Self {
             id: row.0,
             txid: row.1,
-            ts: row.2,
-            resource: row.3,
-            status: row.4,
+            created_at: row.2,
+            updated_at: row.3,
+            resource: row.4,
+            status: row.5,
         }
     }
 
@@ -90,9 +93,9 @@ impl<'a> IdentityProviderStorage<'a> {
     ///
     /// Returns an error if the database query fails.
     pub async fn find_by_id(&self, id: Uuid) -> StorageResult<Option<IdentityProviderRow>> {
-        let row: Option<(String, i64, OffsetDateTime, serde_json::Value, String)> = query_as(
+        let row: Option<(String, i64, OffsetDateTime, OffsetDateTime, serde_json::Value, String)> = query_as(
             r#"
-            SELECT id, txid, ts, resource, status::text
+            SELECT id, txid, created_at, updated_at, resource, status::text
             FROM identityprovider
             WHERE id = $1
               AND status != 'deleted'
@@ -111,9 +114,9 @@ impl<'a> IdentityProviderStorage<'a> {
     ///
     /// Returns an error if the database query fails.
     pub async fn find_by_name(&self, name: &str) -> StorageResult<Option<IdentityProviderRow>> {
-        let row: Option<(String, i64, OffsetDateTime, serde_json::Value, String)> = query_as(
+        let row: Option<(String, i64, OffsetDateTime, OffsetDateTime, serde_json::Value, String)> = query_as(
             r#"
-            SELECT id, txid, ts, resource, status::text
+            SELECT id, txid, created_at, updated_at, resource, status::text
             FROM identityprovider
             WHERE resource->>'name' = $1
               AND status != 'deleted'
@@ -132,9 +135,9 @@ impl<'a> IdentityProviderStorage<'a> {
     ///
     /// Returns an error if the database query fails.
     pub async fn find_by_issuer(&self, issuer: &str) -> StorageResult<Option<IdentityProviderRow>> {
-        let row: Option<(String, i64, OffsetDateTime, serde_json::Value, String)> = query_as(
+        let row: Option<(String, i64, OffsetDateTime, OffsetDateTime, serde_json::Value, String)> = query_as(
             r#"
-            SELECT id, txid, ts, resource, status::text
+            SELECT id, txid, created_at, updated_at, resource, status::text
             FROM identityprovider
             WHERE resource->>'issuer' = $1
               AND status != 'deleted'
@@ -153,9 +156,9 @@ impl<'a> IdentityProviderStorage<'a> {
     ///
     /// Returns an error if the database query fails.
     pub async fn list_active(&self) -> StorageResult<Vec<IdentityProviderRow>> {
-        let rows: Vec<(String, i64, OffsetDateTime, serde_json::Value, String)> = query_as(
+        let rows: Vec<(String, i64, OffsetDateTime, OffsetDateTime, serde_json::Value, String)> = query_as(
             r#"
-            SELECT id, txid, ts, resource, status::text
+            SELECT id, txid, created_at, updated_at, resource, status::text
             FROM identityprovider
             WHERE resource->>'active' = 'true'
               AND status != 'deleted'
@@ -181,9 +184,9 @@ impl<'a> IdentityProviderStorage<'a> {
         limit: i64,
         offset: i64,
     ) -> StorageResult<Vec<IdentityProviderRow>> {
-        let rows: Vec<(String, i64, OffsetDateTime, serde_json::Value, String)> = query_as(
+        let rows: Vec<(String, i64, OffsetDateTime, OffsetDateTime, serde_json::Value, String)> = query_as(
             r#"
-            SELECT id, txid, ts, resource, status::text
+            SELECT id, txid, created_at, updated_at, resource, status::text
             FROM identityprovider
             WHERE status != 'deleted'
             ORDER BY resource->>'name'
@@ -214,11 +217,11 @@ impl<'a> IdentityProviderStorage<'a> {
         resource: serde_json::Value,
     ) -> StorageResult<IdentityProviderRow> {
         let id_str = id.to_string();
-        let row: (String, i64, OffsetDateTime, serde_json::Value, String) = query_as(
+        let row: (String, i64, OffsetDateTime, OffsetDateTime, serde_json::Value, String) = query_as(
             r#"
-            INSERT INTO identityprovider (id, txid, ts, resource, status)
-            VALUES ($1, 1, NOW(), $2, 'created')
-            RETURNING id, txid, ts, resource, status::text
+            INSERT INTO identityprovider (id, txid, created_at, updated_at, resource, status)
+            VALUES ($1, 1, NOW(), NOW(), $2, 'created')
+            RETURNING id, txid, created_at, updated_at, resource, status::text
             "#,
         )
         .bind(&id_str)
@@ -252,16 +255,16 @@ impl<'a> IdentityProviderStorage<'a> {
         id: Uuid,
         resource: serde_json::Value,
     ) -> StorageResult<IdentityProviderRow> {
-        let row: Option<(String, i64, OffsetDateTime, serde_json::Value, String)> = query_as(
+        let row: Option<(String, i64, OffsetDateTime, OffsetDateTime, serde_json::Value, String)> = query_as(
             r#"
             UPDATE identityprovider
             SET resource = $2,
                 txid = txid + 1,
-                ts = NOW(),
+                updated_at = NOW(),
                 status = 'updated'
             WHERE id = $1
               AND status != 'deleted'
-            RETURNING id, txid, ts, resource, status::text
+            RETURNING id, txid, created_at, updated_at, resource, status::text
             "#,
         )
         .bind(id.to_string())
@@ -286,7 +289,7 @@ impl<'a> IdentityProviderStorage<'a> {
             UPDATE identityprovider
             SET status = 'deleted',
                 txid = txid + 1,
-                ts = NOW()
+                updated_at = NOW()
             WHERE id = $1
               AND status != 'deleted'
             "#,

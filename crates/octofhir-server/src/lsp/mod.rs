@@ -22,4 +22,4 @@ pub use fhir_resolver::{ElementInfo, FhirResolver};
 pub use handler::lsp_websocket_handler;
 pub use parser::{CursorContext, JsonbOperator, SqlParser};
 pub use schema_cache::{ColumnInfo, FunctionInfo, SchemaCache, TableInfo};
-pub use server::PostgresLspServer;
+pub use server::{JsonbCompletionContext, JsonbContext, JsonbDetectionResult, PostgresLspServer};

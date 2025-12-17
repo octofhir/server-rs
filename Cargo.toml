@@ -39,12 +39,9 @@ octofhir-storage = { path = "crates/octofhir-storage" }
 octofhir-canonical-manager = { version = "0.1.20", default-features = false }
 octofhir-fhir-model = { version = "0.1.7", features = ["http-client", "caching"] }
 
-# Tower LSP for SQL language server
-tower-lsp = "0.20.0"
+# async-lsp for SQL language server (better state management than tower-lsp)
+async-lsp = { version = "0.2", features = ["tokio"] }
 lsp-types = "0.97"
-
-# PostgreSQL parser (libpg_query bindings)
-pg_query = "6.1"
 
 # SQL parser for semantic analysis
 sqlparser = "0.60"

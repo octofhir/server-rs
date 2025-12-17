@@ -112,7 +112,7 @@ async fn execute_query(
     resource_type: &str,
 ) -> Result<Vec<StoredResource>, StorageError> {
     // Build dynamic query with parameters
-    // The query returns: resource, id, txid, ts
+    // The query returns: resource, id, txid, created_at, updated_at
     let mut sqlx_query = sqlx_core::query::query(&query.sql);
 
     // Bind parameters
@@ -129,7 +129,7 @@ async fn execute_query(
     }
 
     // Execute and map results
-    let rows: Vec<(Value, String, i64, DateTime<Utc>)> = query_as(&query.sql)
+    let rows: Vec<(Value, String, i64, DateTime<Utc>, DateTime<Utc>)> = query_as(&query.sql)
         .bind_all_params(&query.params)
         .fetch_all(pool)
         .await
@@ -147,15 +147,16 @@ async fn execute_query(
 
     let entries: Vec<StoredResource> = rows
         .into_iter()
-        .map(|(resource, id, txid, ts)| {
-            let ts_time = chrono_to_time(ts);
+        .map(|(resource, id, txid, created_at, updated_at)| {
+            let created_at_time = chrono_to_time(created_at);
+            let updated_at_time = chrono_to_time(updated_at);
             StoredResource {
                 id,
                 version_id: txid.to_string(),
                 resource_type: resource_type.to_string(),
                 resource,
-                last_updated: ts_time,
-                created_at: ts_time,
+                last_updated: updated_at_time,
+                created_at: created_at_time,
             }
         })
         .collect();
@@ -243,7 +244,7 @@ async fn resolve_include(
     // Query for included resources
     let placeholders: Vec<String> = (1..=reference_ids.len()).map(|i| format!("${i}")).collect();
     let sql = format!(
-        r#"SELECT resource, id, txid, ts FROM "{table}"
+        r#"SELECT resource, id, txid, created_at, updated_at FROM "{table}"
            WHERE id = ANY(ARRAY[{}]::text[])
            AND status != 'deleted'"#,
         placeholders.join(", ")
@@ -254,7 +255,7 @@ async fn resolve_include(
         query = query.bind(id);
     }
 
-    let rows: Vec<(Value, String, i64, DateTime<Utc>)> =
+    let rows: Vec<(Value, String, i64, DateTime<Utc>, DateTime<Utc>)> =
         query.fetch_all(pool).await.map_err(|e| {
             if e.to_string().contains("does not exist") {
                 return StorageError::internal(format!(
@@ -267,15 +268,16 @@ async fn resolve_include(
 
     let entries: Vec<StoredResource> = rows
         .into_iter()
-        .map(|(resource, id, txid, ts)| {
-            let ts_time = chrono_to_time(ts);
+        .map(|(resource, id, txid, created_at, updated_at)| {
+            let created_at_time = chrono_to_time(created_at);
+            let updated_at_time = chrono_to_time(updated_at);
             StoredResource {
                 id,
                 version_id: txid.to_string(),
                 resource_type: target_type.to_string(),
                 resource,
-                last_updated: ts_time,
-                created_at: ts_time,
+                last_updated: updated_at_time,
+                created_at: created_at_time,
             }
         })
         .collect();
@@ -316,7 +318,7 @@ async fn resolve_revinclude(
         .map(|i| format!("${i}"))
         .collect();
     let sql = format!(
-        r#"SELECT resource, id, txid, ts FROM "{table}"
+        r#"SELECT resource, id, txid, created_at, updated_at FROM "{table}"
            WHERE resource->'{param_name}'->>'reference' = ANY(ARRAY[{}]::text[])
            AND status != 'deleted'"#,
         placeholders.join(", ")
@@ -327,7 +329,7 @@ async fn resolve_revinclude(
         query = query.bind(ref_value);
     }
 
-    let rows: Vec<(Value, String, i64, DateTime<Utc>)> =
+    let rows: Vec<(Value, String, i64, DateTime<Utc>, DateTime<Utc>)> =
         query.fetch_all(pool).await.map_err(|e| {
             if e.to_string().contains("does not exist") {
                 return StorageError::internal(format!(
@@ -340,15 +342,16 @@ async fn resolve_revinclude(
 
     let entries: Vec<StoredResource> = rows
         .into_iter()
-        .map(|(resource, id, txid, ts)| {
-            let ts_time = chrono_to_time(ts);
+        .map(|(resource, id, txid, created_at, updated_at)| {
+            let created_at_time = chrono_to_time(created_at);
+            let updated_at_time = chrono_to_time(updated_at);
             StoredResource {
                 id,
                 version_id: txid.to_string(),
                 resource_type: source_type.to_string(),
                 resource,
-                last_updated: ts_time,
-                created_at: ts_time,
+                last_updated: updated_at_time,
+                created_at: created_at_time,
             }
         })
         .collect();
@@ -365,7 +368,7 @@ impl<'q> BindAllParams<'q>
     for sqlx_core::query_as::QueryAs<
         'q,
         sqlx_postgres::Postgres,
-        (Value, String, i64, DateTime<Utc>),
+        (Value, String, i64, DateTime<Utc>, DateTime<Utc>),
         sqlx_postgres::PgArguments,
     >
 {

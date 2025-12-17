@@ -46,11 +46,8 @@
 //! - [`migrations`]: Database migration management
 
 mod config;
-mod conformance;
-mod db_sync;
 mod error;
 mod fcm_storage;
-mod hot_reload;
 mod pool;
 mod query_analyzer;
 mod schema;
@@ -65,11 +62,8 @@ pub mod queries;
 
 // Re-export main types
 pub use config::PostgresConfig;
-pub use conformance::PostgresConformanceStorage;
-pub use db_sync::{ConformanceBundle, SyncStats, load_to_memory, sync_and_load, sync_to_directory};
 pub use error::{PostgresError, Result};
 pub use fcm_storage::PostgresPackageStore;
-pub use hot_reload::{HotReloadBuilder, HotReloadListener};
 pub use query_analyzer::{
     AnalyzerConfig, AnalyzerError, AnalyzerStatsSnapshot, BufferStats, IndexSuggestion, IndexUsage,
     QueryAnalysis, QueryAnalyzer, SeqScanInfo, SlowQueryRecord, SuggestionImpact,
@@ -106,13 +100,8 @@ pub async fn create_storage(
 /// ```
 pub mod prelude {
     pub use crate::config::PostgresConfig;
-    pub use crate::conformance::PostgresConformanceStorage;
-    pub use crate::db_sync::{
-        ConformanceBundle, SyncStats, load_to_memory, sync_and_load, sync_to_directory,
-    };
     pub use crate::error::{PostgresError, Result};
     pub use crate::fcm_storage::PostgresPackageStore;
-    pub use crate::hot_reload::{HotReloadBuilder, HotReloadListener};
     pub use crate::query_analyzer::{
         AnalyzerConfig, IndexSuggestion, QueryAnalysis, QueryAnalyzer,
     };

@@ -493,3 +493,17 @@ COMMENT ON TABLE fcm.resources IS 'Stores FHIR conformance resources (StructureD
 -- );
 --
 -- See SchemaManager for full implementation.
+
+-- ============================================================================
+-- SHARED TRIGGER FUNCTIONS FOR RESOURCE TABLES
+-- ============================================================================
+
+-- Shared function to update updated_at timestamp on resource updates
+-- Used by all dynamically created resource tables
+CREATE OR REPLACE FUNCTION update_updated_at_column()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = NOW();
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
