@@ -538,17 +538,26 @@ class PgLspConnection {
 
 	private handleDiagnostics(params: LspPublishDiagnosticsParams): void {
 		if (!params || !params.uri) {
-			logDebug("[pg-lsp] handleDiagnostics: no params or uri");
+			console.warn("[pg-lsp] handleDiagnostics: no params or uri");
 			return;
 		}
 
 		const uri = params.uri;
 		const diagnostics = params.diagnostics || [];
 
+		console.log(
+			`[pg-lsp] Received ${diagnostics.length} diagnostics for ${uri}`,
+			diagnostics,
+		);
+
 		// Find the model for this URI
 		const doc = this.documents.get(uri);
 		if (!doc || doc.model.isDisposed()) {
-			logDebug(`[pg-lsp] Document not found or disposed for uri: ${uri}`);
+			console.warn(
+				`[pg-lsp] Document not found or disposed for uri: ${uri}`,
+				"Available documents:",
+				Array.from(this.documents.keys()),
+			);
 			return;
 		}
 
@@ -578,8 +587,18 @@ class PgLspConnection {
 			};
 		});
 
+		console.log(
+			`[pg-lsp] Setting ${markers.length} markers on model ${uri}`,
+			markers,
+		);
+
 		// Set markers on the model
 		monaco.editor.setModelMarkers(doc.model, "pg-lsp", markers);
+
+		console.log(
+			`[pg-lsp] Markers set successfully. Total markers for model:`,
+			monaco.editor.getModelMarkers({ resource: doc.model.uri }),
+		);
 	}
 
 	private async sendRequest<T>(

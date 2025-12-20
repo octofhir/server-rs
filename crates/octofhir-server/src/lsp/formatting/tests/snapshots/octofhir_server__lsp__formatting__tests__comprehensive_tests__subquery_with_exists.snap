@@ -1,0 +1,9 @@
+---
+source: crates/octofhir-server/src/lsp/formatting/tests/comprehensive_tests.rs
+expression: formatted
+---
+SELECT *
+  FROM patient p
+ WHERE EXISTS (SELECT 1
+  FROM observation o
+ WHERE o.subject = p.id)

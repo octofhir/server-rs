@@ -45,7 +45,7 @@ tree-sitter = { workspace = true }
 pgls-treesitter-grammar = { workspace = true }
 pgls-treesitter = { workspace = true }
 pgls-text-size = { workspace = true }
-sqlparser = { workspace = true }
+pg_query = "6.1.1"  # PostgreSQL parser using actual PG source (replaces sqlparser)
 hyper = { workspace = true }
 tokio = { workspace = true }
 futures-util = { workspace = true }
@@ -111,7 +111,6 @@ dashmap = "6.1"  # Concurrent HashMap for L1 cache
 regex.workspace = true
 tokio-util = { version = "0.7.17", features = ["compat"] }
 futures = "0.3.31"
-sqlformat = "0.5.0"
 
 [dev-dependencies]
 tokio-test = { workspace = true }
@@ -121,4 +120,4 @@ reqwest = { version = "0.12", features = ["json"] }
 filetime = { workspace = true }
 testcontainers = "0.25"
 testcontainers-modules = { version = "0.13", features = ["postgres", "redis"] }
-sqlparser = { workspace = true, features = ["visitor"] }
+insta = "1.45.0"

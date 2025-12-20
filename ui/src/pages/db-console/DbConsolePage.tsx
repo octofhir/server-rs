@@ -14,7 +14,6 @@ import {
   UnstyledButton,
   Popover,
   Badge,
-  Box,
   ActionIcon,
   Tooltip,
   Menu,
@@ -30,37 +29,16 @@ import {
   IconBraces,
   IconDownload,
   IconClock,
-  IconTemplate,
   IconKeyboard,
+  IconCode,
 } from "@tabler/icons-react";
+import type * as monaco from "monaco-editor";
 import { SqlEditor } from "@/shared/monaco/SqlEditor";
 import { useSqlMutation } from "@/shared/api/hooks";
 import type { SqlValue, FhirOperationOutcome } from "@/shared/api/types";
 import { ApiResponseError } from "@/shared/api/serverApi";
-
-/** Query templates for common operations */
-const QUERY_TEMPLATES = [
-  {
-    label: "Select Patients",
-    query: "SELECT id, resource->>'name' as name, resource->>'birthDate' as birth_date\nFROM patient\nLIMIT 10;",
-  },
-  {
-    label: "Count Resources by Type",
-    query: "SELECT table_name as resource_type, \n  (xpath('/row/cnt/text()', \n    query_to_xml('SELECT COUNT(*) as cnt FROM ' || table_name, false, true, '')))[1]::text::int as count\nFROM information_schema.tables\nWHERE table_schema = 'public'\nORDER BY count DESC;",
-  },
-  {
-    label: "Recent Resources",
-    query: "SELECT id, resource_type, created_at, updated_at\nFROM (\n  SELECT id, 'Patient' as resource_type, created_at, updated_at FROM patient\n  UNION ALL\n  SELECT id, 'Observation' as resource_type, created_at, updated_at FROM observation\n) all_resources\nORDER BY updated_at DESC\nLIMIT 20;",
-  },
-  {
-    label: "EXPLAIN Query Plan",
-    query: "EXPLAIN ANALYZE\nSELECT * FROM patient WHERE id = 'example-id';",
-  },
-  {
-    label: "Search Parameters",
-    query: "SELECT code, type, expression, target\nFROM search_parameters\nWHERE resource_type = 'Patient'\nLIMIT 20;",
-  },
-];
+import { DiagnosticsPanel } from "@/widgets/diagnostics-panel";
+import { ExplainVisualization } from "@/widgets/explain-visualization";
 
 /** Export results to CSV */
 function exportToCSV(columns: string[], rows: SqlValue[][]): void {
@@ -137,9 +115,15 @@ export function DbConsolePage() {
   const queryRef = useRef(initialQuery);
   const [showErrorDetails, setShowErrorDetails] = useState(false);
   const [shortcutsOpened, { toggle: toggleShortcuts }] = useDisclosure(false);
+  const [resultsCollapsed, { toggle: toggleResults }] = useDisclosure(false);
+  const [editorHeight, setEditorHeight] = useState(300);
   const sqlMutation = useSqlMutation();
   const theme = useMantineTheme();
   const { colorScheme } = useMantineColorScheme();
+
+  // State for Monaco editor and model (for DiagnosticsPanel)
+  const [editorInstance, setEditorInstance] = useState<monaco.editor.IStandaloneCodeEditor | null>(null);
+  const [modelInstance, setModelInstance] = useState<monaco.editor.ITextModel | null>(null);
 
   // Query history stored in localStorage
   const [queryHistory, setQueryHistory] = useLocalStorage<string[]>({
@@ -166,16 +150,52 @@ export function DbConsolePage() {
     [sqlMutation, setQueryHistory],
   );
 
-  const handleLoadTemplate = useCallback((template: string) => {
-    queryRef.current = template;
-    handleExecute(template);
-  }, [handleExecute]);
+  const handleLoadQueryFromHistory = useCallback((query: string) => {
+    // Set the query in the editor without executing
+    if (editorInstance) {
+      editorInstance.setValue(query);
+      queryRef.current = query;
+      editorInstance.focus();
+    }
+  }, [editorInstance]);
 
   const handleExport = useCallback(() => {
     if (sqlMutation.data && sqlMutation.data.rowCount > 0) {
       exportToCSV(sqlMutation.data.columns, sqlMutation.data.rows);
     }
   }, [sqlMutation.data]);
+
+  const handleEditorMount = useCallback((editor: monaco.editor.IStandaloneCodeEditor, model: monaco.editor.ITextModel) => {
+    setEditorInstance(editor);
+    setModelInstance(model);
+  }, []);
+
+  const handleFormat = useCallback(() => {
+    if (editorInstance) {
+      editorInstance.getAction('editor.action.formatDocument')?.run();
+    }
+  }, [editorInstance]);
+
+  // Handle editor resize via drag
+  const handleMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    const startY = e.clientY;
+    const startHeight = editorHeight;
+
+    const handleMouseMove = (moveEvent: MouseEvent) => {
+      const delta = moveEvent.clientY - startY;
+      const newHeight = Math.max(200, Math.min(800, startHeight + delta));
+      setEditorHeight(newHeight);
+    };
+
+    const handleMouseUp = () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+  }, [editorHeight]);
 
   /** Check if this is an EXPLAIN result */
   const isExplain = useMemo(() => {
@@ -236,27 +256,6 @@ export function DbConsolePage() {
           </Text>
         </div>
         <Group gap="xs">
-          <Tooltip label="Query Templates">
-            <Menu shadow="md" width={280}>
-              <Menu.Target>
-                <ActionIcon variant="light" size="lg" color={theme.primaryColor}>
-                  <IconTemplate size={18} />
-                </ActionIcon>
-              </Menu.Target>
-              <Menu.Dropdown>
-                <Menu.Label>Query Templates</Menu.Label>
-                {QUERY_TEMPLATES.map((template) => (
-                  <Menu.Item
-                    key={template.label}
-                    onClick={() => handleLoadTemplate(template.query)}
-                  >
-                    {template.label}
-                  </Menu.Item>
-                ))}
-              </Menu.Dropdown>
-            </Menu>
-          </Tooltip>
-
           <Tooltip label="Query History">
             <Menu shadow="md" width={280}>
               <Menu.Target>
@@ -272,7 +271,7 @@ export function DbConsolePage() {
                   queryHistory.slice(0, 10).map((query) => (
                     <Menu.Item
                       key={query}
-                      onClick={() => handleLoadTemplate(query)}
+                      onClick={() => handleLoadQueryFromHistory(query)}
                       style={{
                         maxWidth: "260px",
                         whiteSpace: "nowrap",
@@ -309,6 +308,18 @@ export function DbConsolePage() {
             </ActionIcon>
           </Tooltip>
 
+          <Tooltip label="Format SQL (Shift+Alt+F)">
+            <ActionIcon
+              variant="light"
+              size="lg"
+              color={theme.primaryColor}
+              onClick={handleFormat}
+              disabled={!editorInstance}
+            >
+              <IconCode size={18} />
+            </ActionIcon>
+          </Tooltip>
+
           <Button onClick={() => handleExecute()} loading={sqlMutation.isPending} size="md">
             Execute (Ctrl+Enter)
           </Button>
@@ -322,6 +333,10 @@ export function DbConsolePage() {
             <Group gap="xs">
               <Badge variant="light" size="sm">Ctrl+Enter</Badge>
               <Text size="sm">Execute query</Text>
+            </Group>
+            <Group gap="xs">
+              <Badge variant="light" size="sm">Shift+Alt+F</Badge>
+              <Text size="sm">Format SQL</Text>
             </Group>
             <Group gap="xs">
               <Badge variant="light" size="sm">Ctrl+Space</Badge>
@@ -338,7 +353,13 @@ export function DbConsolePage() {
       <Paper
         withBorder
         p={0}
-        style={{ flex: "0 0 300px", overflow: "hidden" }}
+        style={{
+          flex: `0 0 ${editorHeight}px`,
+          overflow: "hidden",
+          display: "flex",
+          flexDirection: "column",
+          position: "relative"
+        }}
       >
         <Group
           px="sm"
@@ -356,48 +377,132 @@ export function DbConsolePage() {
           <Text size="xs" fw={500} c="dimmed">
             SQL Editor
           </Text>
+          <Text size="xs" c="dimmed">
+            Drag bottom edge to resize
+          </Text>
         </Group>
-        <div style={{ height: "260px" }}>
+        <div style={{ height: `${editorHeight - 40}px` }}>
           <SqlEditor
             defaultValue={initialQuery}
             onChange={handleQueryChange}
             onExecute={handleExecute}
+            onEditorMount={handleEditorMount}
             enableLsp
           />
         </div>
+        {/* Resize handle */}
+        <UnstyledButton
+          aria-label="Resize SQL editor (drag or use arrow keys)"
+          onMouseDown={handleMouseDown}
+          onKeyDown={(e) => {
+            if (e.key === "ArrowUp") {
+              setEditorHeight((prev) => Math.max(200, prev - 20));
+            } else if (e.key === "ArrowDown") {
+              setEditorHeight((prev) => Math.min(800, prev + 20));
+            }
+          }}
+          style={{
+            position: "absolute",
+            bottom: 0,
+            left: 0,
+            right: 0,
+            height: "4px",
+            cursor: "ns-resize",
+            backgroundColor: colorScheme === "dark"
+              ? theme.colors.dark[4]
+              : theme.colors.gray[3],
+            transition: "background-color 0.2s",
+            border: "none",
+            padding: 0,
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.backgroundColor = theme.colors[theme.primaryColor][6];
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.backgroundColor = colorScheme === "dark"
+              ? theme.colors.dark[4]
+              : theme.colors.gray[3];
+          }}
+        />
       </Paper>
+
+      {/* Diagnostics Panel */}
+      <DiagnosticsPanel
+        model={modelInstance}
+        editor={editorInstance}
+        defaultCollapsed={true}
+        height={180}
+      />
 
       <Paper
         withBorder
-        p="md"
+        p={0}
         style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column" }}
       >
-        <Group justify="space-between" mb="sm">
-          <Text fw={500}>Results</Text>
-          <Group gap="xs">
-            {sqlMutation.data && (
-              <>
-                <Text size="sm" c="dimmed">
-                  {sqlMutation.data.rowCount} rows in {sqlMutation.data.executionTimeMs}ms
-                </Text>
-                {sqlMutation.data.rowCount > 0 && (
-                  <Tooltip label="Export to CSV">
-                    <ActionIcon
-                      variant="light"
-                      size="sm"
-                      color={theme.primaryColor}
-                      onClick={handleExport}
-                    >
-                      <IconDownload size={16} />
-                    </ActionIcon>
-                  </Tooltip>
-                )}
-              </>
-            )}
+        {/* Results Header (Collapsible) */}
+        <UnstyledButton
+          onClick={toggleResults}
+          style={{
+            padding: "12px 16px",
+            backgroundColor: colorScheme === "dark"
+              ? theme.colors.dark[6]
+              : theme.colors.gray[0],
+            borderBottom: resultsCollapsed
+              ? "none"
+              : `1px solid ${colorScheme === "dark" ? theme.colors.dark[4] : theme.colors.gray[3]}`,
+          }}
+        >
+          <Group justify="space-between">
+            <Group gap="xs">
+              {resultsCollapsed ? (
+                <IconChevronRight size={16} />
+              ) : (
+                <IconChevronDown size={16} />
+              )}
+              <Text fw={500}>Results</Text>
+              {/* Show row count badge only for regular queries, not EXPLAIN */}
+              {sqlMutation.data && !isExplain && (
+                <Badge size="sm" variant="light">
+                  {sqlMutation.data.rowCount} rows
+                </Badge>
+              )}
+              {/* Show Query Plan badge for EXPLAIN queries */}
+              {sqlMutation.data && isExplain && (
+                <Badge size="sm" variant="light" color="violet">
+                  Query Plan
+                </Badge>
+              )}
+            </Group>
+            <Group gap="xs">
+              {sqlMutation.data && (
+                <>
+                  <Text size="sm" c="dimmed">
+                    {sqlMutation.data.executionTimeMs}ms
+                  </Text>
+                  {/* Hide export button for EXPLAIN queries */}
+                  {sqlMutation.data.rowCount > 0 && !isExplain && (
+                    <Tooltip label="Export to CSV">
+                      <ActionIcon
+                        variant="light"
+                        size="sm"
+                        color={theme.primaryColor}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleExport();
+                        }}
+                      >
+                        <IconDownload size={16} />
+                      </ActionIcon>
+                    </Tooltip>
+                  )}
+                </>
+              )}
+            </Group>
           </Group>
-        </Group>
+        </UnstyledButton>
 
-        <div style={{ flex: 1, overflow: "auto" }}>
+        <Collapse in={!resultsCollapsed}>
+          <div style={{ maxHeight: "calc(100vh - 600px)", overflow: "auto", padding: "16px" }}>
           {errorMessage && (
             <Stack gap="sm">
               <Alert icon={<IconAlertCircle size={16} />} color="red" title="Query Error">
@@ -437,25 +542,11 @@ export function DbConsolePage() {
             </Alert>
           )}
 
-          {/* EXPLAIN output - render as formatted code block */}
+          {/* EXPLAIN output - render as interactive tree visualization */}
           {sqlMutation.data && sqlMutation.data.rowCount > 0 && isExplain && (
-            <Box>
-              <Badge color="violet" size="sm" mb="sm">
-                Query Plan
-              </Badge>
-              <ScrollArea>
-                <Code
-                  block
-                  style={{
-                    whiteSpace: "pre",
-                    fontFamily: "var(--mantine-font-family-monospace)",
-                    fontSize: 13,
-                  }}
-                >
-                  {explainText}
-                </Code>
-              </ScrollArea>
-            </Box>
+            <ScrollArea>
+              <ExplainVisualization explainText={explainText} />
+            </ScrollArea>
           )}
 
           {/* Regular table results */}
@@ -483,7 +574,8 @@ export function DbConsolePage() {
               </Table>
             </ScrollArea>
           )}
-        </div>
+          </div>
+        </Collapse>
       </Paper>
     </Stack>
   );

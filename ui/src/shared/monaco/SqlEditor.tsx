@@ -34,6 +34,11 @@ export interface SqlEditorProps {
 	enableLsp?: boolean;
 	/** Optional override for the LSP websocket path */
 	lspPath?: string;
+	/** Callback when editor instance is available */
+	onEditorMount?: (
+		editor: Monaco.editor.IStandaloneCodeEditor,
+		model: Monaco.editor.ITextModel,
+	) => void;
 }
 
 /**
@@ -50,6 +55,7 @@ export function SqlEditor({
 	className,
 	enableLsp = true,
 	lspPath,
+	onEditorMount,
 }: SqlEditorProps) {
 	const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
 	const monacoRef = useRef<typeof Monaco | null>(null);
@@ -90,10 +96,16 @@ export function SqlEditor({
 				}
 			}
 
+			// Notify parent component that editor is ready
+			const model = editor.getModel();
+			if (model) {
+				onEditorMount?.(editor, model);
+			}
+
 			// Focus the editor
 			editor.focus();
 		},
-		[enableLsp, lspPath, onExecute],
+		[enableLsp, lspPath, onExecute, onEditorMount],
 	);
 
 	// Handle value changes from React

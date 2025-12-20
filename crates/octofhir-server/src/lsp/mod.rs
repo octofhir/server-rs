@@ -9,10 +9,18 @@
 //! for accurate SQL context detection, enabling intelligent clause-based filtering
 //! of completion suggestions.
 
+// New modular structure
+pub mod completion;
+pub mod diagnostics;
+pub mod formatting;
+pub mod hover;
+
+// Existing modules
 mod completion_filter;
 mod fhir_resolver;
 mod handler;
-mod parser;
+pub mod parser; // Now a module directory
+mod parser_legacy; // Temporarily keep old parser.rs
 mod schema_cache;
 pub mod semantic_analyzer;
 mod server;

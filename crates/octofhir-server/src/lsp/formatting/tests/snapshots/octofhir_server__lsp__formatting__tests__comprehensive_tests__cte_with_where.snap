@@ -1,0 +1,8 @@
+---
+source: crates/octofhir-server/src/lsp/formatting/tests/comprehensive_tests.rs
+expression: formatted
+---
+ WITH active_patients AS (SELECT *
+ FROM patient
+WHERE active = TRUE) SELECT *
+ FROM active_patients

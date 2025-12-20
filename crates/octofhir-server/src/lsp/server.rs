@@ -4,13 +4,14 @@
 //! Uses tree-sitter AST parsing from Supabase postgres-language-server for
 //! accurate context detection.
 
-use async_lsp::lsp_types::notification::{LogMessage, PublishDiagnostics};
+use async_lsp::lsp_types::notification::LogMessage;
 use async_lsp::lsp_types::{
     CompletionItem, CompletionItemKind, CompletionOptions, CompletionParams, CompletionResponse,
     DidChangeTextDocumentParams, DidOpenTextDocumentParams, Documentation, DocumentFormattingParams,
     Hover, HoverParams, HoverProviderCapability, InitializeParams, InitializeResult,
-    InsertTextFormat, LogMessageParams, MessageType, OneOf, PublishDiagnosticsParams,
-    ServerCapabilities, TextDocumentSyncCapability, TextDocumentSyncKind, TextEdit, Url,
+    LogMessageParams, MessageType, OneOf, ParameterInformation, ParameterLabel,
+    ServerCapabilities, SignatureHelp, SignatureHelpOptions, SignatureHelpParams,
+    SignatureInformation, TextDocumentSyncCapability, TextDocumentSyncKind, TextEdit, Url,
 };
 use async_lsp::{ClientSocket, LanguageClient, LanguageServer, ResponseError};
 use futures::future::BoxFuture;
@@ -18,24 +19,25 @@ use std::collections::HashMap;
 use std::ops::ControlFlow;
 use std::sync::{Arc, Mutex};
 
-use super::completion_filter::{CompletionFilter, CompletionRelevanceData};
+use super::completion::CompletionContext;
+use super::diagnostics::{publish_diagnostics, publish_sql_validation_diagnostics};
 use super::fhir_resolver::FhirResolver;
+use super::hover::HoverContext;
 use super::parser::CursorContext;
 use super::schema_cache::SchemaCache;
 
 // Tree-sitter imports for context-aware completions
-use pgls_text_size::TextSize;
-use pgls_treesitter::context::{TreeSitterContextParams, TreesitterContext};
+use pgls_treesitter::context::TreesitterContext;
 
 /// Context information about a function call detected at cursor position.
 #[derive(Debug, Clone)]
-struct FunctionCallContext {
+pub(crate) struct FunctionCallContext {
     /// Name of the function being called (e.g., "jsonb_path_exists")
-    function_name: String,
+    pub(crate) function_name: String,
     /// Index of the argument where cursor is positioned (0-based)
-    arg_index: usize,
+    pub(crate) arg_index: usize,
     /// Byte offset where the current argument starts
-    arg_start_offset: usize,
+    pub(crate) arg_start_offset: usize,
 }
 
 /// Context information for JSONB expression detected at cursor position.
@@ -50,21 +52,21 @@ struct FunctionCallContext {
 #[derive(Debug, Clone)]
 pub struct JsonbContext<'a> {
     /// The AST node representing the entire binary expression
-    expr_node: tree_sitter::Node<'a>,
+    pub(crate) expr_node: tree_sitter::Node<'a>,
     /// The JSONB operator (e.g., "->", "->>", "#>", "#>>")
     pub operator: String,
     /// Left operand node (typically the column reference)
-    left: Option<tree_sitter::Node<'a>>,
+    pub(crate) left: Option<tree_sitter::Node<'a>>,
     /// Right operand node (path segment or key), None if incomplete
-    right: Option<tree_sitter::Node<'a>>,
+    pub(crate) right: Option<tree_sitter::Node<'a>>,
     /// Byte offset of the cursor in the document
-    cursor_offset: usize,
+    pub(crate) cursor_offset: usize,
     /// Full path chain extracted from nested JSONB expressions
     /// Example: `resource->'name'->'given'` → `["resource", "name", "given"]`
     pub path_chain: Vec<String>,
     /// Whether the operator/operand combination is syntactically valid
     /// For example, `#>>` requires array operand, not single string
-    is_valid_syntax: bool,
+    pub(crate) is_valid_syntax: bool,
 }
 
 /// Result from hybrid JSONB detection combining tree-sitter and sqlparser-rs.
@@ -104,329 +106,10 @@ impl DocumentState {
     }
 }
 
-/// Publishes diagnostics for JSONB syntax errors.
-///
-/// This function walks through the entire AST looking for JSONB expressions
-/// with invalid operator/operand combinations and publishes diagnostics.
-///
-/// **Non-blocking:** This function spawns a background task to avoid blocking
-/// the LSP event loop.
-async fn publish_diagnostics(
-    client: ClientSocket,
-    uri: Url,
-    text: String,
-    tree: tree_sitter::Tree,
-) {
-    tracing::info!(uri = %uri, "Collecting diagnostics synchronously");
-
-    let mut diagnostics = Vec::new();
-    let root = tree.root_node();
-
-    // Walk the tree and find all JSONB expressions (synchronous, fast)
-    let mut visit_stack = vec![root];
-
-    while let Some(node) = visit_stack.pop() {
-        // Check if this is a binary expression with JSONB operator
-        if node.kind() == "binary_expression" {
-            if let Some(op_node) = node.child_by_field_name("binary_expr_operator") {
-                if op_node.kind() == "op_other" {
-                    if let Ok(op_text) = op_node.utf8_text(text.as_bytes()) {
-                        if matches!(op_text, "->" | "->>" | "#>" | "#>>") {
-                            let right = node.child_by_field_name("binary_expr_right");
-
-                            // Check if the syntax is valid
-                            if !is_valid_operand_for_jsonb_operator(op_text, right, &text) {
-                                // Invalid syntax - create diagnostic
-                                if let Some(right_node) = right {
-                                    let diagnostic =
-                                        create_jsonb_syntax_diagnostic(op_text, right_node, &text);
-                                    diagnostics.push(diagnostic);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // Add children to visit stack (depth-first traversal)
-        for i in 0..node.child_count() {
-            if let Some(child) = node.child(i as u32) {
-                visit_stack.push(child);
-            }
-        }
-    }
-
-    // Publish diagnostics to the client
-    tracing::info!(
-        uri = %uri,
-        diagnostic_count = diagnostics.len(),
-        "Publishing JSONB diagnostics to client"
-    );
-
-    for diag in &diagnostics {
-        tracing::info!(
-            severity = ?diag.severity,
-            range = ?diag.range,
-            message = %diag.message,
-            "Diagnostic detail"
-        );
-    }
-
-    // Publish via client notification
-    let _ = client.notify::<PublishDiagnostics>(PublishDiagnosticsParams {
-        uri,
-        diagnostics,
-        version: None,
-    });
-    tracing::info!("Diagnostics published");
-}
-
-/// Publishes SQL validation diagnostics for invalid SQL patterns.
-///
-/// This function analyzes the parsed SQL AST to detect common errors and publishes
-/// LSP diagnostics to provide real-time feedback to users. Currently detects:
-///
-/// - **Duplicate clauses**: Multiple WHERE, GROUP BY, HAVING, ORDER BY, LIMIT, or OFFSET clauses
-///
-/// Future enhancements could include:
-/// - Invalid column references
-/// - Missing tables in FROM
-/// - Type mismatches in comparisons
-///
-/// # Arguments
-///
-/// * `client` - The LSP client socket for publishing diagnostics
-/// * `uri` - The URI of the document being validated
-/// * `text` - The full text of the SQL document
-/// * `tree` - The parsed tree-sitter AST
-///
-/// # Diagnostics Published
-///
-/// - **WARNING**: Duplicate clauses (SQL will fail but intent unclear)
-///
-/// # Examples
-///
-/// ```rust,ignore
-/// // For SQL: "SELECT * FROM users WHERE id = 1 WHERE name = 'test'"
-/// // Publishes: WARNING at second WHERE with message "Duplicate WHERE clause..."
-/// ```
-async fn publish_sql_validation_diagnostics(
-    client: ClientSocket,
-    uri: Url,
-    text: String,
-    tree: tree_sitter::Tree,
-    schema_cache: Arc<SchemaCache>,
-) {
-    use async_lsp::lsp_types::{Diagnostic, DiagnosticSeverity, Range};
-    use std::collections::HashMap;
-
-    tracing::info!(uri = %uri, "Collecting SQL validation diagnostics");
-
-    let mut diagnostics = Vec::new();
-
-    // Track seen clauses: clause_name -> (first_start_byte, first_end_byte)
-    let mut seen_clauses: HashMap<String, (usize, usize)> = HashMap::new();
-
-    // Recursive function to walk AST and detect duplicate clauses
-    fn visit_for_duplicates(
-        node: tree_sitter::Node,
-        text: &str,
-        seen: &mut HashMap<String, (usize, usize)>,
-        diagnostics: &mut Vec<Diagnostic>,
-    ) {
-        // Check if this node represents a clause we want to track
-        let clause_name = match node.kind() {
-            "where" | "where_clause" => Some("WHERE"),
-            "group_by" | "group_by_clause" => Some("GROUP BY"),
-            "having" | "having_clause" => Some("HAVING"),
-            "order_by" | "order_by_clause" => Some("ORDER BY"),
-            "limit" | "limit_clause" => Some("LIMIT"),
-            "offset" | "offset_clause" => Some("OFFSET"),
-            _ => None,
-        };
-
-        if let Some(clause) = clause_name {
-            let start_byte = node.start_byte();
-            let end_byte = node.end_byte();
-
-            if let Some((first_start, _first_end)) = seen.get(clause) {
-                // Duplicate clause detected!
-                let start_pos = byte_offset_to_position(text, start_byte);
-                let end_pos = byte_offset_to_position(text, end_byte);
-                let first_line = byte_offset_to_position(text, *first_start).line + 1;
-
-                diagnostics.push(Diagnostic {
-                    range: Range {
-                        start: start_pos,
-                        end: end_pos,
-                    },
-                    severity: Some(DiagnosticSeverity::WARNING),
-                    code: None,
-                    source: Some("octofhir-lsp".into()),
-                    message: format!(
-                        "Duplicate {} clause. First occurrence at line {}. PostgreSQL only allows one {} clause per query.",
-                        clause, first_line, clause
-                    ),
-                    related_information: None,
-                    tags: None,
-                    code_description: None,
-                    data: None,
-                });
-            } else {
-                // First occurrence of this clause
-                seen.insert(clause.to_string(), (start_byte, end_byte));
-            }
-        }
-
-        // Recursively visit all children
-        let mut cursor = node.walk();
-        for child in node.children(&mut cursor) {
-            visit_for_duplicates(child, text, seen, diagnostics);
-        }
-    }
-
-    // Walk the AST to find duplicate clauses
-    visit_for_duplicates(tree.root_node(), &text, &mut seen_clauses, &mut diagnostics);
-
-    // Validate table names against schema cache
-    fn visit_for_table_names(
-        node: tree_sitter::Node,
-        text: &str,
-        schema_cache: &SchemaCache,
-        diagnostics: &mut Vec<Diagnostic>,
-    ) {
-        // Log ALL nodes we encounter to debug AST structure
-        if node.kind().contains("from") || node.kind().contains("relation") || node.kind().contains("table") {
-            tracing::info!("[TABLE DEBUG] Found node: kind='{}', text={:?}",
-                node.kind(),
-                node.utf8_text(text.as_bytes()).ok().and_then(|s| if s.len() < 100 { Some(s) } else { None })
-            );
-        }
-
-        // Check for table references - look for 'table_reference' nodes which contain table names
-        if node.kind() == "table_reference" {
-            if let Ok(table_name) = node.utf8_text(text.as_bytes()) {
-                let table_name = table_name.trim();
-
-                tracing::info!("[TABLE DEBUG] Checking table: '{}'", table_name);
-
-                // Skip if it contains a dot (schema-qualified names)
-                // Skip if it contains spaces or special chars (might be complex expression)
-                if !table_name.contains('.') && !table_name.contains(' ') && !table_name.contains('(') {
-                    // Check if table exists in schema cache
-                    if !schema_cache.table_exists(table_name) {
-                        tracing::info!("[TABLE DEBUG] Table '{}' NOT FOUND - creating diagnostic", table_name);
-
-                        let start_pos = byte_offset_to_position(text, node.start_byte());
-                        let end_pos = byte_offset_to_position(text, node.end_byte());
-
-                        diagnostics.push(Diagnostic {
-                            range: Range {
-                                start: start_pos,
-                                end: end_pos,
-                            },
-                            severity: Some(DiagnosticSeverity::ERROR),
-                            code: None,
-                            source: Some("octofhir-lsp".into()),
-                            message: format!(
-                                "Table '{}' does not exist in the database schema",
-                                table_name
-                            ),
-                            related_information: None,
-                            tags: None,
-                            code_description: None,
-                            data: None,
-                        });
-                    } else {
-                        tracing::info!("[TABLE DEBUG] Table '{}' exists - OK", table_name);
-                    }
-                }
-            }
-        }
-
-        // Recursively visit all children
-        let mut cursor = node.walk();
-        for child in node.children(&mut cursor) {
-            visit_for_table_names(child, text, schema_cache, diagnostics);
-        }
-    }
-
-    visit_for_table_names(tree.root_node(), &text, &schema_cache, &mut diagnostics);
-
-    // Validate function names against schema cache
-    fn visit_for_function_names(
-        node: tree_sitter::Node,
-        text: &str,
-        schema_cache: &SchemaCache,
-        diagnostics: &mut Vec<Diagnostic>,
-    ) {
-        // Check for function calls
-        if node.kind() == "function_call" || node.kind() == "invocation" {
-            // The first child is typically the function name
-            if let Some(name_node) = node.child(0) {
-                if matches!(name_node.kind(), "identifier" | "function_name") {
-                    if let Ok(func_name) = name_node.utf8_text(text.as_bytes()) {
-                        let func_name = func_name.trim();
-
-                        // Skip if it contains a dot (schema-qualified names)
-                        if func_name.contains('.') {
-                            return;
-                        }
-
-                        // Check if function exists in schema cache
-                        if !schema_cache.function_exists(func_name) {
-                            let start_pos = byte_offset_to_position(text, name_node.start_byte());
-                            let end_pos = byte_offset_to_position(text, name_node.end_byte());
-
-                            diagnostics.push(Diagnostic {
-                                range: Range {
-                                    start: start_pos,
-                                    end: end_pos,
-                                },
-                                severity: Some(DiagnosticSeverity::ERROR),
-                                code: None,
-                                source: Some("octofhir-lsp".into()),
-                                message: format!(
-                                    "Function '{}' does not exist. Check the function name or ensure it's defined in your database.",
-                                    func_name
-                                ),
-                                related_information: None,
-                                tags: None,
-                                code_description: None,
-                                data: None,
-                            });
-                        }
-                    }
-                }
-            }
-        }
-
-        // Recursively visit all children
-        let mut cursor = node.walk();
-        for child in node.children(&mut cursor) {
-            visit_for_function_names(child, text, schema_cache, diagnostics);
-        }
-    }
-
-    visit_for_function_names(tree.root_node(), &text, &schema_cache, &mut diagnostics);
-
-    // Publish diagnostics to LSP client
-    tracing::info!(
-        uri = %uri,
-        diagnostic_count = diagnostics.len(),
-        "Publishing SQL validation diagnostics to client"
-    );
-
-    let _ = client.notify::<PublishDiagnostics>(PublishDiagnosticsParams {
-        uri,
-        diagnostics,
-        version: None,
-    });
-    tracing::info!("SQL validation diagnostics published");
-}
+// Diagnostic functions moved to diagnostics module
 
 /// Checks if an operand is valid for a given JSONB operator.
+/// Used by JSONB expression detection logic.
 fn is_valid_operand_for_jsonb_operator(
     operator: &str,
     right_node: Option<tree_sitter::Node>,
@@ -460,64 +143,7 @@ fn is_valid_operand_for_jsonb_operator(
     }
 }
 
-/// Creates an LSP diagnostic for invalid JSONB operator/operand combination.
-fn create_jsonb_syntax_diagnostic(
-    operator: &str,
-    right_node: tree_sitter::Node,
-    _text: &str,
-) -> async_lsp::lsp_types::Diagnostic {
-    use async_lsp::lsp_types::{Diagnostic, DiagnosticSeverity, Position, Range};
-
-    let start_pos = Position {
-        line: right_node.start_position().row as u32,
-        character: right_node.start_position().column as u32,
-    };
-    let end_pos = Position {
-        line: right_node.end_position().row as u32,
-        character: right_node.end_position().column as u32,
-    };
-
-    let message = match operator {
-        "#>" | "#>>" => {
-            format!(
-                "Invalid operand for {} operator. Expected PostgreSQL array literal like '{{name,given}}' or ARRAY['name','given']",
-                operator
-            )
-        }
-        "->" | "->>" => {
-            format!(
-                "Invalid operand for {} operator. Expected a string literal, identifier, or number",
-                operator
-            )
-        }
-        _ => format!("Invalid operand for {} operator", operator),
-    };
-
-    Diagnostic {
-        range: Range {
-            start: start_pos,
-            end: end_pos,
-        },
-        severity: Some(DiagnosticSeverity::ERROR),
-        code: None,
-        code_description: None,
-        source: Some("octofhir-lsp".into()),
-        message,
-        related_information: None,
-        tags: None,
-        data: None,
-    }
-}
-
-/// Helper context for completion operations inside BoxFuture.
-///
-/// This struct holds Arc-cloned references to allow completion logic to work
-/// within 'static async blocks without requiring `&self`.
-#[derive(Clone)]
-struct CompletionContext {
-    schema_cache: Arc<SchemaCache>,
-    fhir_resolver: Arc<FhirResolver>,
-}
+// CompletionContext moved to completion module
 
 /// Unified context for JSONB completion generation.
 ///
@@ -547,1057 +173,8 @@ pub struct JsonbCompletionContext {
     pub operator: Option<String>,
 }
 
-/// Helper context for hover operations inside BoxFuture.
-///
-/// Similar to CompletionContext, holds Arc-cloned references for hover information.
-#[derive(Clone)]
-struct HoverContext {
-    schema_cache: Arc<SchemaCache>,
-    fhir_resolver: Arc<FhirResolver>,
-}
-
-impl HoverContext {
-    /// Create a new hover context from server state.
-    fn from_server(server: &PostgresLspServer) -> Self {
-        Self {
-            schema_cache: server.schema_cache.clone(),
-            fhir_resolver: server.fhir_resolver.clone(),
-        }
-    }
-
-    /// Get hover information for the position in the document.
-    async fn get_hover(
-        &self,
-        text: &str,
-        position: async_lsp::lsp_types::Position,
-    ) -> Option<async_lsp::lsp_types::Hover> {
-        use async_lsp::lsp_types::{Hover, HoverContents, MarkupContent, MarkupKind};
-
-        let offset = position_to_offset(text, position);
-
-        // Try tree-sitter based hover first
-        if let Some(hover) = self.get_tree_sitter_hover(text, offset).await {
-            return Some(hover);
-        }
-
-        // JSONB detection now uses hybrid AST approach (tree-sitter + sqlparser-rs)
-        // No regex fallback needed - AST handles all cases including incomplete SQL
-        // If tree-sitter fails to parse, return None instead of regex fallback
-        None
-    }
-
-    /// Get hover information using tree-sitter AST analysis.
-    async fn get_tree_sitter_hover(
-        &self,
-        text: &str,
-        offset: usize,
-    ) -> Option<async_lsp::lsp_types::Hover> {
-        use async_lsp::lsp_types::{Hover, HoverContents, MarkupContent, MarkupKind};
-
-        // Parse SQL with tree-sitter
-        let mut parser = tree_sitter::Parser::new();
-        if parser
-            .set_language(&pgls_treesitter_grammar::LANGUAGE.into())
-            .is_err()
-        {
-            return None;
-        }
-
-        let tree = parser.parse(text, None)?;
-        let root = tree.root_node();
-        let cursor_node = root.descendant_for_byte_range(offset, offset)?;
-
-        // Check for JSONB path hover (show FHIR element info)
-        if let Some(jsonb_hover) = self
-            .get_jsonb_path_hover(&cursor_node, text, offset, &tree)
-            .await
-        {
-            return Some(jsonb_hover);
-        }
-
-        // Check for table hover
-        if let Some(table_hover) = self.get_table_hover(&cursor_node, text).await {
-            return Some(table_hover);
-        }
-
-        // Check for column hover
-        if let Some(column_hover) = self.get_column_hover(&cursor_node, text, &tree).await {
-            return Some(column_hover);
-        }
-
-        // Check for function hover
-        if let Some(function_hover) = self.get_function_hover(&cursor_node, text).await {
-            return Some(function_hover);
-        }
-
-        None
-    }
-
-    /// Get hover for JSONB path expressions showing FHIR element information.
-    async fn get_jsonb_path_hover(
-        &self,
-        cursor_node: &tree_sitter::Node<'_>,
-        text: &str,
-        offset: usize,
-        tree: &tree_sitter::Tree,
-    ) -> Option<async_lsp::lsp_types::Hover> {
-        use async_lsp::lsp_types::{Hover, HoverContents, MarkupContent, MarkupKind};
-
-        // Detect JSONB operator context using robust finder
-        let jsonb_ctx = PostgresLspServer::find_jsonb_expression_robust(cursor_node, text, offset)?;
-
-        // Get table name from query
-        let ctx = TreesitterContext::new(TreeSitterContextParams {
-            position: TextSize::new(offset as u32),
-            text,
-            tree,
-        });
-        let mentioned_tables = CompletionContext::get_mentioned_table_names(&ctx);
-        let table_name = mentioned_tables.first()?;
-
-        // Get resource type from table
-        let resource_type = self
-            .schema_cache
-            .get_fhir_resource_type(table_name)
-            .unwrap_or_else(|| PostgresLspServer::to_pascal_case(table_name));
-
-        // Build FHIR path (filter out numeric segments from path_chain)
-        let fhir_path_segments: Vec<&String> = jsonb_ctx
-            .path_chain
-            .iter()
-            .skip(1) // Skip column name
-            .filter(|s| !s.chars().all(|c| c.is_ascii_digit()))
-            .collect();
-
-        let full_path = if fhir_path_segments.is_empty() {
-            resource_type.clone()
-        } else {
-            format!(
-                "{}.{}",
-                resource_type,
-                fhir_path_segments
-                    .iter()
-                    .map(|s| s.as_str())
-                    .collect::<Vec<_>>()
-                    .join(".")
-            )
-        };
-
-        // Get element info from FHIR resolver
-        let parent_path = if fhir_path_segments.len() > 1 {
-            fhir_path_segments[..fhir_path_segments.len() - 1]
-                .iter()
-                .map(|s| s.as_str())
-                .collect::<Vec<_>>()
-                .join(".")
-        } else {
-            String::new()
-        };
-
-        let children = self
-            .fhir_resolver
-            .get_children(&resource_type, &parent_path)
-            .await;
-        let current_element_name = fhir_path_segments.last().map(|s| s.as_str()).unwrap_or("");
-        let element = children.iter().find(|e| e.name == current_element_name)?;
-
-        let min_card = element.min;
-        let max_card_str = if element.max == 0 {
-            "*".to_string()
-        } else {
-            element.max.to_string()
-        };
-        let cardinality = format!("[{}..{}]", min_card, max_card_str);
-
-        let mut hover_text = format!("**{}**\n\n", full_path);
-        hover_text.push_str(&format!("Type: `{}`\n\n", element.type_code));
-        hover_text.push_str(&format!("Cardinality: `{}`\n\n", cardinality));
-
-        if let Some(short) = &element.short {
-            hover_text.push_str(&format!("{}\n\n", short));
-        }
-
-        if let Some(definition) = &element.definition {
-            hover_text.push_str(&format!("---\n\n{}\n", definition));
-        }
-
-        Some(Hover {
-            contents: HoverContents::Markup(MarkupContent {
-                kind: MarkupKind::Markdown,
-                value: hover_text,
-            }),
-            range: None,
-        })
-    }
-
-    /// Get hover for table names showing table metadata.
-    async fn get_table_hover(
-        &self,
-        cursor_node: &tree_sitter::Node<'_>,
-        text: &str,
-    ) -> Option<async_lsp::lsp_types::Hover> {
-        use async_lsp::lsp_types::{Hover, HoverContents, MarkupContent, MarkupKind};
-
-        // Check if cursor is on a table identifier
-        if !matches!(cursor_node.kind(), "table_identifier" | "any_identifier") {
-            return None;
-        }
-
-        let table_name = cursor_node.utf8_text(text.as_bytes()).ok()?;
-        let tables = self.schema_cache.get_tables();
-        let table = tables.iter().find(|t| t.name == table_name)?;
-
-        let mut hover_text = format!("**Table: {}.{}**\n\n", table.schema, table.name);
-        hover_text.push_str(&format!("Type: `{}`\n\n", table.table_type));
-
-        if table.is_fhir_table {
-            if let Some(resource_type) = &table.fhir_resource_type {
-                hover_text.push_str(&format!("FHIR Resource: `{}`\n\n", resource_type));
-            }
-        }
-
-        Some(Hover {
-            contents: HoverContents::Markup(MarkupContent {
-                kind: MarkupKind::Markdown,
-                value: hover_text,
-            }),
-            range: None,
-        })
-    }
-
-    /// Get hover for column names showing column metadata.
-    async fn get_column_hover(
-        &self,
-        cursor_node: &tree_sitter::Node<'_>,
-        text: &str,
-        tree: &tree_sitter::Tree,
-    ) -> Option<async_lsp::lsp_types::Hover> {
-        use async_lsp::lsp_types::{Hover, HoverContents, MarkupContent, MarkupKind};
-        use pgls_text_size::TextSize;
-        use pgls_treesitter::context::{TreeSitterContextParams, TreesitterContext};
-
-        // Check if cursor is on a column identifier
-        if !matches!(cursor_node.kind(), "column_identifier" | "any_identifier") {
-            return None;
-        }
-
-        let column_name = cursor_node.utf8_text(text.as_bytes()).ok()?;
-
-        // Get mentioned tables to find the column
-        let ctx = TreesitterContext::new(TreeSitterContextParams {
-            position: TextSize::new(cursor_node.start_byte() as u32),
-            text,
-            tree,
-        });
-        let mentioned_tables = CompletionContext::get_mentioned_table_names(&ctx);
-
-        for table_name in mentioned_tables {
-            let columns = self.schema_cache.get_columns(&table_name);
-            if let Some(col) = columns.iter().find(|c| c.name == column_name) {
-                let mut hover_text = format!("**Column: {}.{}**\n\n", col.table_name, col.name);
-                hover_text.push_str(&format!("Type: `{}`\n\n", col.data_type));
-                hover_text.push_str(&format!("Nullable: `{}`\n\n", col.is_nullable));
-
-                return Some(Hover {
-                    contents: HoverContents::Markup(MarkupContent {
-                        kind: MarkupKind::Markdown,
-                        value: hover_text,
-                    }),
-                    range: None,
-                });
-            }
-        }
-
-        None
-    }
-
-    /// Get hover for function names showing function signatures.
-    async fn get_function_hover(
-        &self,
-        cursor_node: &tree_sitter::Node<'_>,
-        text: &str,
-    ) -> Option<async_lsp::lsp_types::Hover> {
-        use async_lsp::lsp_types::{Hover, HoverContents, MarkupContent, MarkupKind};
-
-        // Check if cursor is on a function identifier
-        if !matches!(cursor_node.kind(), "function_identifier" | "any_identifier") {
-            return None;
-        }
-
-        let function_name = cursor_node.utf8_text(text.as_bytes()).ok()?;
-        let functions = self.schema_cache.get_functions();
-        let func = functions
-            .iter()
-            .find(|f| f.name.eq_ignore_ascii_case(function_name))?;
-
-        let mut hover_text = format!("**Function: {}**\n\n", func.name);
-        hover_text.push_str(&format!("```sql\n{}\n```\n\n", func.signature));
-
-        if PostgresLspServer::is_jsonb_function(&func.name.to_lowercase()) {
-            hover_text.push_str("*This function has FHIR-aware completions*\n\n");
-        }
-
-        Some(Hover {
-            contents: HoverContents::Markup(MarkupContent {
-                kind: MarkupKind::Markdown,
-                value: hover_text,
-            }),
-            range: None,
-        })
-    }
-
-    /// Get hover based on regex-parsed context (fallback).
-    async fn get_hover_for_context(
-        &self,
-        context: &CursorContext,
-        _text: &str,
-        _position: async_lsp::lsp_types::Position,
-    ) -> Option<async_lsp::lsp_types::Hover> {
-        use async_lsp::lsp_types::{Hover, HoverContents, MarkupContent, MarkupKind};
-
-        let hover_text = match context {
-            CursorContext::SelectColumns { .. } => "SELECT clause - choose columns to retrieve",
-            CursorContext::FromClause { .. } => "FROM clause - specify tables or views",
-            CursorContext::WhereClause { .. } => "WHERE clause - filter rows",
-            CursorContext::SchemaTableAccess { schema, .. } => {
-                return Some(Hover {
-                    contents: HoverContents::Markup(MarkupContent {
-                        kind: MarkupKind::Markdown,
-                        value: format!("**Schema: {}**\n\nChoose a table from this schema", schema),
-                    }),
-                    range: None,
-                });
-            }
-            _ => "SQL statement",
-        };
-
-        Some(Hover {
-            contents: HoverContents::Markup(MarkupContent {
-                kind: MarkupKind::Markdown,
-                value: hover_text.to_string(),
-            }),
-            range: None,
-        })
-    }
-}
-
-impl CompletionContext {
-    /// Create a new completion context from server state.
-    fn from_server(server: &PostgresLspServer) -> Self {
-        Self {
-            schema_cache: server.schema_cache.clone(),
-            fhir_resolver: server.fhir_resolver.clone(),
-        }
-    }
-
-    /// Get completions using tree-sitter parsing and schema introspection.
-    ///
-    /// This is the main completion entry point that delegates to specialized handlers.
-    async fn get_completions(
-        &self,
-        text: &str,
-        position: async_lsp::lsp_types::Position,
-    ) -> Vec<CompletionItem> {
-        let offset = position_to_offset(text, position);
-
-        // Try tree-sitter based completions first
-        if let Some(items) = self.get_tree_sitter_completions(text, offset).await {
-            return items;
-        }
-
-        // JSONB detection now uses hybrid AST approach (tree-sitter + sqlparser-rs)
-        // No regex fallback needed - AST handles all cases including incomplete SQL
-        // If tree-sitter fails to parse, return empty completions instead of regex fallback
-        vec![]
-    }
-
-    /// Get completions using tree-sitter AST analysis.
-    async fn get_tree_sitter_completions(
-        &self,
-        text: &str,
-        offset: usize,
-    ) -> Option<Vec<CompletionItem>> {
-        // Parse SQL with tree-sitter
-        let mut parser = tree_sitter::Parser::new();
-        if parser
-            .set_language(&pgls_treesitter_grammar::LANGUAGE.into())
-            .is_err()
-        {
-            tracing::warn!("Failed to load tree-sitter grammar");
-            return None;
-        }
-
-        let tree = parser.parse(text, None)?;
-        let root = tree.root_node();
-        let cursor_node = root.descendant_for_byte_range(offset, offset)?;
-
-        // Check for function call context (highest priority)
-        if let Some(func_completions) = self
-            .get_function_completions_if_in_call(&cursor_node, text, offset, &tree)
-            .await
-        {
-            return Some(func_completions);
-        }
-
-        // Check for JSONB path context
-        if let Some(jsonb_completions) = self
-            .get_jsonb_completions(&cursor_node, text, offset, &tree)
-            .await
-        {
-            return Some(jsonb_completions);
-        }
-
-        // General SQL completions with schema introspection
-        Some(self.get_schema_completions(text, &tree, offset).await)
-    }
-
-    /// Get completions for function arguments.
-    async fn get_function_completions_if_in_call(
-        &self,
-        cursor_node: &tree_sitter::Node<'_>,
-        text: &str,
-        offset: usize,
-        tree: &tree_sitter::Tree,
-    ) -> Option<Vec<CompletionItem>> {
-        // Detect if cursor is inside a function call
-        let func_ctx = PostgresLspServer::detect_function_call_context(cursor_node, text, offset)?;
-
-        tracing::debug!(
-            "Function call detected: name='{}', arg_index={}",
-            func_ctx.function_name,
-            func_ctx.arg_index
-        );
-
-        // Check if this is a JSONB function
-        let func_name_lower = func_ctx.function_name.to_lowercase();
-        if !PostgresLspServer::is_jsonb_function(&func_name_lower) {
-            return None;
-        }
-
-        // Provide completions based on argument index
-        let completions = match func_ctx.arg_index {
-            // First argument: JSONB column names
-            0 => self.get_jsonb_column_completions(tree, text),
-            // Second argument: JSONPath expressions
-            1 => {
-                self.get_jsonpath_expression_completions(
-                    tree,
-                    text,
-                    offset,
-                    func_ctx.arg_start_offset,
-                )
-                .await
-            }
-            // Other arguments: no specific completions
-            _ => Vec::new(),
-        };
-
-        Some(completions)
-    }
-
-    /// Get JSONB column completions for function arguments.
-    /// Helper to extract mentioned table names from TreesitterContext.
-    fn get_mentioned_table_names(ctx: &TreesitterContext) -> Vec<String> {
-        let mut tables = Vec::new();
-
-        // Get tables from mentioned_relations (no schema = None key)
-        if let Some(table_set) = ctx.get_mentioned_relations(&None) {
-            tables.extend(table_set.iter().cloned());
-        }
-
-        // Also check for tables with explicit schema
-        if let Some(table_set) = ctx.get_mentioned_relations(&Some("public".to_string())) {
-            tables.extend(table_set.iter().cloned());
-        }
-
-        tables
-    }
-
-    fn get_jsonb_column_completions(
-        &self,
-        tree: &tree_sitter::Tree,
-        text: &str,
-    ) -> Vec<CompletionItem> {
-        // Get all tables mentioned in the query
-        let ctx = TreesitterContext::new(TreeSitterContextParams {
-            position: TextSize::new(0),
-            text,
-            tree,
-        });
-        let mentioned_tables = Self::get_mentioned_table_names(&ctx);
-
-        let mut items = Vec::new();
-
-        // Add JSONB columns from mentioned tables
-        for table_name in &mentioned_tables {
-            for col in self.schema_cache.get_columns(table_name) {
-                // Only suggest JSONB columns
-                if col.data_type.to_lowercase().contains("jsonb") {
-                    items.push(CompletionItem {
-                        label: col.name.clone(),
-                        kind: Some(CompletionItemKind::FIELD),
-                        detail: Some(format!(
-                            "{}.{} ({})",
-                            col.table_name, col.name, col.data_type
-                        )),
-                        ..Default::default()
-                    });
-                }
-            }
-        }
-
-        items
-    }
-
-    /// Get JSONPath expression completions for function arguments.
-    async fn get_jsonpath_expression_completions(
-        &self,
-        _tree: &tree_sitter::Tree,
-        _text: &str,
-        _offset: usize,
-        _arg_start: usize,
-    ) -> Vec<CompletionItem> {
-        // Provide common JSONPath syntax examples
-        vec![
-            CompletionItem {
-                label: "$.path".to_string(),
-                kind: Some(CompletionItemKind::SNIPPET),
-                detail: Some("JSONPath: root element".to_string()),
-                ..Default::default()
-            },
-            CompletionItem {
-                label: "$.path[*]".to_string(),
-                kind: Some(CompletionItemKind::SNIPPET),
-                detail: Some("JSONPath: all array elements".to_string()),
-                ..Default::default()
-            },
-            CompletionItem {
-                label: "$.path.to.element".to_string(),
-                kind: Some(CompletionItemKind::SNIPPET),
-                detail: Some("JSONPath: nested element".to_string()),
-                ..Default::default()
-            },
-        ]
-    }
-
-    /// Detect if cursor is inside quotes and the quote context.
-    ///
-    /// Refactored to use the shared `find_string_node_at_cursor` helper for consistent behavior.
-    fn detect_quote_context(
-        cursor_node: &tree_sitter::Node<'_>,
-        text: &str,
-        offset: usize,
-    ) -> super::parser::JsonbQuoteContext {
-        // Use shared helper instead of inline logic
-        if let Some(string_node) =
-            PostgresLspServer::find_string_node_at_cursor(cursor_node, offset)
-        {
-            let start = string_node.start_byte();
-            let end = string_node.end_byte();
-            let node_text = &text[start..end];
-
-            let has_opening_quote = node_text.starts_with('\'') || node_text.starts_with('"');
-            let cursor_inside_quotes = has_opening_quote && offset > start && offset <= end;
-
-            return super::parser::JsonbQuoteContext {
-                has_opening_quote,
-                cursor_inside_quotes,
-                needs_quotes: !has_opening_quote,
-            };
-        }
-
-        // Default: not in quotes, needs quotes
-        super::parser::JsonbQuoteContext {
-            has_opening_quote: false,
-            cursor_inside_quotes: false,
-            needs_quotes: true,
-        }
-    }
-
-    /// Get JSONB path completions.
-    async fn get_jsonb_completions(
-        &self,
-        cursor_node: &tree_sitter::Node<'_>,
-        text: &str,
-        offset: usize,
-        tree: &tree_sitter::Tree,
-    ) -> Option<Vec<CompletionItem>> {
-        tracing::info!("=== get_jsonb_completions: START ===");
-
-        // Use the robust JSONB expression finder with validation
-        let jsonb_ctx =
-            match PostgresLspServer::find_jsonb_expression_robust(cursor_node, text, offset) {
-                Some(ctx) => ctx,
-                None => {
-                    tracing::info!(
-                        "=== get_jsonb_completions: find_jsonb_expression_robust returned None ==="
-                    );
-                    return None;
-                }
-            };
-
-        // Don't provide completions for invalid JSONB syntax
-        if !jsonb_ctx.is_valid_syntax {
-            tracing::debug!(
-                "Skipping completions for invalid JSONB syntax: operator={}, has_right={}",
-                jsonb_ctx.operator,
-                jsonb_ctx.right.is_some()
-            );
-            return None;
-        }
-
-        tracing::debug!(
-            "Found valid JSONB expression: operator={}, path={:?}",
-            jsonb_ctx.operator,
-            jsonb_ctx.path_chain
-        );
-
-        // Extract column name and path segments from the expression
-        let (column, path_segments) =
-            match PostgresLspServer::extract_jsonb_path(&jsonb_ctx.expr_node, text) {
-                Some(path) => path,
-                None => {
-                    tracing::info!(
-                        "=== get_jsonb_completions: extract_jsonb_path returned None ==="
-                    );
-                    return None;
-                }
-            };
-
-        tracing::debug!(
-            "Extracted JSONB path: column='{}', segments={:?}",
-            column,
-            path_segments
-        );
-
-        // Try to find the table name from the context
-        let root = tree.root_node();
-        let table = match PostgresLspServer::find_table_for_column(&root, text, &column) {
-            Some(t) => t,
-            None => {
-                tracing::info!(
-                    "=== get_jsonb_completions: find_table_for_column returned None ==="
-                );
-                return None;
-            }
-        };
-
-        tracing::info!(
-            "JSONB completion context: column='{}', table='{}', path_segments={:?}",
-            column,
-            table,
-            path_segments
-        );
-
-        // Detect actual quote context from cursor position
-        let quote_context = Self::detect_quote_context(cursor_node, text, offset);
-
-        tracing::debug!(
-            "Quote context: inside_quotes={}, has_opening={}, needs_quotes={}",
-            quote_context.cursor_inside_quotes,
-            quote_context.has_opening_quote,
-            quote_context.needs_quotes
-        );
-
-        // Extract partial path for filtering completions
-        let partial_filter =
-            PostgresLspServer::extract_partial_jsonb_path(&jsonb_ctx, text, cursor_node);
-
-        if let Some(partial) = &partial_filter {
-            tracing::debug!("Filtering completions with partial: '{}'", partial);
-        }
-
-        // Convert byte offset to LSP Position
-        let position = position_to_lsp_position(text, offset);
-
-        // Get FHIR path completions using the resolver
-        let mut completions = self
-            .get_fhir_path_completions_ctx(&table, &path_segments, &quote_context, position, text)
-            .await;
-
-        // Filter by partial input if we have it
-        if let Some(partial) = partial_filter {
-            if !partial.is_empty() {
-                completions.retain(|item| {
-                    item.label
-                        .to_lowercase()
-                        .starts_with(&partial.to_lowercase())
-                });
-                tracing::debug!(
-                    "Filtered to {} completions matching '{}'",
-                    completions.len(),
-                    partial
-                );
-            }
-        }
-
-        Some(completions)
-    }
-
-    /// Get schema-based completions (tables, columns, functions).
-    /// Get context-aware schema completions (tables, columns, functions, keywords).
-    ///
-    /// Uses tree-sitter context analysis to filter completions based on SQL clause
-    /// and node type, following the Supabase postgres-language-server approach.
-    async fn get_schema_completions(
-        &self,
-        text: &str,
-        tree: &tree_sitter::Tree,
-        offset: usize,
-    ) -> Vec<CompletionItem> {
-        use pgls_text_size::TextSize;
-        use pgls_treesitter::context::{TreeSitterContextParams, TreesitterContext};
-
-        // Create tree-sitter context for filtering
-        let ctx = TreesitterContext::new(TreeSitterContextParams {
-            position: TextSize::new(offset as u32),
-            text,
-            tree,
-        });
-
-        let mut items = Vec::new();
-
-        // Add filtered tables
-        let tables = self.schema_cache.get_tables();
-        for table in &tables {
-            let filter = CompletionFilter::from(CompletionRelevanceData::Table(table));
-            if filter.is_relevant(&ctx) {
-                items.push(Self::table_to_completion_item(table));
-            }
-        }
-
-        // Add filtered columns from mentioned tables
-        let mentioned_tables = Self::get_mentioned_table_names(&ctx);
-        for table_name in &mentioned_tables {
-            let columns = self.schema_cache.get_columns(table_name);
-            for col in &columns {
-                let filter = CompletionFilter::from(CompletionRelevanceData::Column(col));
-                if filter.is_relevant(&ctx) {
-                    items.push(Self::column_to_completion_item(col, None));
-                }
-            }
-        }
-
-        // Add filtered functions
-        let functions = self.schema_cache.get_functions();
-        for func in &functions {
-            let filter = CompletionFilter::from(CompletionRelevanceData::Function(func));
-            if filter.is_relevant(&ctx) {
-                items.push(Self::function_to_completion_item(func));
-            }
-        }
-
-        // Add context-appropriate SQL keywords
-        let keywords = Self::get_keywords_for_context(&ctx);
-        for kw in keywords {
-            let filter = CompletionFilter::from(CompletionRelevanceData::Keyword(kw));
-            if filter.is_relevant(&ctx) {
-                items.push(CompletionItem {
-                    label: kw.to_string(),
-                    kind: Some(CompletionItemKind::KEYWORD),
-                    ..Default::default()
-                });
-            }
-        }
-
-        tracing::debug!(
-            "Schema completions: {} items at offset {} (context: node={}, clause={:?})",
-            items.len(),
-            offset,
-            ctx.node_under_cursor.kind(),
-            ctx.wrapping_clause_type
-        );
-
-        items
-    }
-
-    /// Convert TableInfo to CompletionItem.
-    fn table_to_completion_item(table: &super::schema_cache::TableInfo) -> CompletionItem {
-        let detail = if table.is_fhir_table {
-            format!(
-                "FHIR {} ({}.{})",
-                table.fhir_resource_type.as_deref().unwrap_or("Resource"),
-                table.schema,
-                table.table_type
-            )
-        } else {
-            format!("{}.{}", table.schema, table.table_type)
-        };
-
-        let sort_prefix = if table.is_fhir_table {
-            "0"
-        } else if table.schema == "public" {
-            "1"
-        } else {
-            "2"
-        };
-
-        CompletionItem {
-            label: table.name.clone(),
-            kind: Some(CompletionItemKind::CLASS),
-            detail: Some(detail),
-            sort_text: Some(format!("{}{}", sort_prefix, table.name)),
-            ..Default::default()
-        }
-    }
-
-    /// Convert ColumnInfo to CompletionItem.
-    fn column_to_completion_item(
-        col: &super::schema_cache::ColumnInfo,
-        alias: Option<&str>,
-    ) -> CompletionItem {
-        let label = col.name.clone();
-        let detail = if let Some(alias) = alias {
-            format!("{}.{} ({})", alias, col.name, col.data_type)
-        } else {
-            format!("{}.{} ({})", col.table_name, col.name, col.data_type)
-        };
-
-        CompletionItem {
-            label,
-            kind: Some(CompletionItemKind::FIELD),
-            detail: Some(detail),
-            ..Default::default()
-        }
-    }
-
-    /// Convert FunctionInfo to CompletionItem.
-    fn function_to_completion_item(func: &super::schema_cache::FunctionInfo) -> CompletionItem {
-        use async_lsp::lsp_types::InsertTextFormat;
-
-        let insert_text = Self::generate_function_snippet(&func.name, &func.signature);
-        let is_jsonb_func = PostgresLspServer::is_jsonb_function(&func.name.to_lowercase());
-
-        let detail = if is_jsonb_func {
-            format!("{} [FHIR-aware]", func.signature)
-        } else {
-            func.signature.clone()
-        };
-
-        CompletionItem {
-            label: func.name.clone(),
-            kind: Some(CompletionItemKind::FUNCTION),
-            detail: Some(detail),
-            insert_text: Some(insert_text),
-            insert_text_format: Some(InsertTextFormat::SNIPPET),
-            ..Default::default()
-        }
-    }
-
-    /// Generate function snippet for LSP completion.
-    fn generate_function_snippet(name: &str, signature: &str) -> String {
-        // Extract argument count from signature
-        let arg_count = signature.matches(',').count() + 1;
-
-        if arg_count == 0 || signature.contains("()") {
-            format!("{}()", name)
-        } else {
-            let args: Vec<String> = (1..=arg_count)
-                .map(|i| format!("${{{}:arg{}}}", i, i))
-                .collect();
-            format!("{}({})", name, args.join(", "))
-        }
-    }
-
-    /// Get relevant SQL keywords for the current context.
-    fn get_keywords_for_context(ctx: &TreesitterContext) -> Vec<&'static str> {
-        use pgls_treesitter::context::WrappingClause;
-
-        match ctx.wrapping_clause_type.as_ref() {
-            Some(WrappingClause::Select) => vec![
-                "SELECT", "DISTINCT", "FROM", "WHERE", "GROUP BY", "HAVING", "ORDER BY", "LIMIT",
-                "OFFSET", "AS", "AND", "OR", "NOT", "IN", "LIKE",
-            ],
-            Some(WrappingClause::From) => vec![
-                "FROM",
-                "JOIN",
-                "LEFT JOIN",
-                "RIGHT JOIN",
-                "INNER JOIN",
-                "OUTER JOIN",
-                "CROSS JOIN",
-                "ON",
-                "USING",
-                // Allow transitioning to other clauses from FROM
-                "WHERE",
-                "GROUP BY",
-                "ORDER BY",
-                "LIMIT",
-                "OFFSET",
-            ],
-            Some(WrappingClause::Where) => vec![
-                "AND",
-                "OR",
-                "NOT",
-                "IN",
-                "LIKE",
-                "BETWEEN",
-                "IS NULL",
-                "IS NOT NULL",
-                "EXISTS",
-                // Allow transitioning to other clauses from WHERE
-                "GROUP BY",
-                "ORDER BY",
-                "LIMIT",
-                "OFFSET",
-            ],
-            Some(WrappingClause::Join { .. }) => vec!["JOIN", "ON", "USING", "AND", "OR"],
-            Some(WrappingClause::Insert) => vec!["INSERT INTO", "VALUES", "SELECT", "RETURNING"],
-            Some(WrappingClause::Update) => vec!["UPDATE", "SET", "WHERE", "RETURNING"],
-            Some(WrappingClause::Delete) => vec!["DELETE FROM", "WHERE", "RETURNING"],
-            // Handle DDL and other statement types
-            Some(WrappingClause::ColumnDefinitions)
-            | Some(WrappingClause::AlterTable)
-            | Some(WrappingClause::DropTable)
-            | Some(WrappingClause::DropColumn)
-            | Some(WrappingClause::AlterColumn)
-            | Some(WrappingClause::RenameColumn)
-            | Some(WrappingClause::SetStatement)
-            | Some(WrappingClause::AlterRole)
-            | Some(WrappingClause::DropRole)
-            | Some(WrappingClause::RevokeStatement)
-            | Some(WrappingClause::GrantStatement)
-            | Some(WrappingClause::CreatePolicy)
-            | Some(WrappingClause::AlterPolicy)
-            | Some(WrappingClause::DropPolicy)
-            | Some(WrappingClause::CheckOrUsingClause) => {
-                vec!["CREATE", "ALTER", "DROP", "GRANT", "REVOKE", "SET"]
-            }
-            None => vec![
-                "SELECT", "INSERT", "UPDATE", "DELETE", "FROM", "WHERE", "CREATE", "ALTER", "DROP",
-                "WITH",
-            ],
-        }
-    }
-
-    /// Get completions based on regex-parsed context.
-    async fn get_completions_for_context(
-        &self,
-        context: &CursorContext,
-        _text: &str,
-        _position: async_lsp::lsp_types::Position,
-    ) -> Vec<CompletionItem> {
-        // Basic context-based completions
-        let keywords = match context {
-            CursorContext::SelectColumns { .. } => {
-                vec!["SELECT", "FROM", "WHERE", "GROUP BY", "ORDER BY"]
-            }
-            CursorContext::FromClause { .. } => vec!["FROM", "JOIN", "LEFT JOIN", "INNER JOIN"],
-            CursorContext::WhereClause { .. } => vec!["WHERE", "AND", "OR", "IN", "LIKE"],
-            _ => vec!["SELECT", "FROM", "WHERE", "INSERT", "UPDATE", "DELETE"],
-        };
-
-        keywords
-            .into_iter()
-            .map(|kw| CompletionItem {
-                label: kw.to_string(),
-                kind: Some(CompletionItemKind::KEYWORD),
-                ..Default::default()
-            })
-            .collect()
-    }
-
-    /// Get FHIR path completions for JSONB columns.
-    async fn get_fhir_path_completions_ctx(
-        &self,
-        table: &str,
-        path: &[String],
-        quote_context: &super::parser::JsonbQuoteContext,
-        position: async_lsp::lsp_types::Position,
-        document_text: &str,
-    ) -> Vec<CompletionItem> {
-        // Try to get resource type from table name via schema cache
-        let resource_type = self
-            .schema_cache
-            .get_fhir_resource_type(table)
-            .unwrap_or_else(|| PostgresLspServer::to_pascal_case(table));
-
-        // Filter out numeric segments (array indices) from the path
-        // FHIR paths don't include array indices: identifier[0].system -> identifier.system
-        let fhir_path_segments: Vec<&String> = path
-            .iter()
-            .filter(|s| !s.chars().all(|c| c.is_ascii_digit()))
-            .collect();
-
-        // Build the parent path from existing path segments
-        let parent_path = if fhir_path_segments.is_empty() {
-            String::new()
-        } else {
-            fhir_path_segments
-                .iter()
-                .map(|s| s.as_str())
-                .collect::<Vec<_>>()
-                .join(".")
-        };
-
-        tracing::debug!(
-            "FHIR path completion: resource_type={}, parent_path='{}', raw_path={:?}",
-            resource_type,
-            parent_path,
-            path
-        );
-
-        // Get children from FHIR resolver
-        let children = self
-            .fhir_resolver
-            .get_children(&resource_type, &parent_path)
-            .await;
-
-        tracing::debug!(
-            "FHIR resolver returned {} children for {}.{}",
-            children.len(),
-            resource_type,
-            parent_path
-        );
-
-        // Convert to completion items
-        children
-            .into_iter()
-            .map(|elem| {
-                let kind = if elem.is_backbone {
-                    CompletionItemKind::STRUCT
-                } else if elem.is_array {
-                    CompletionItemKind::PROPERTY
-                } else {
-                    CompletionItemKind::FIELD
-                };
-
-                let cardinality = if elem.max == 0 {
-                    format!("{}..* (array)", elem.min)
-                } else if elem.max == 1 {
-                    format!("{}..1", elem.min)
-                } else {
-                    format!("{}..{}", elem.min, elem.max)
-                };
-
-                let detail = format!(
-                    "{}: {} [{}]",
-                    elem.short.as_deref().unwrap_or(""),
-                    elem.type_code,
-                    cardinality
-                );
-
-                let text_edit = PostgresLspServer::calculate_jsonb_text_edit(
-                    &elem.name,
-                    quote_context,
-                    position,
-                    document_text,
-                );
-
-                CompletionItem {
-                    label: elem.name.clone(),
-                    kind: Some(kind),
-                    detail: Some(detail),
-                    documentation: elem
-                        .definition
-                        .map(|d| async_lsp::lsp_types::Documentation::String(d)),
-                    text_edit: Some(async_lsp::lsp_types::CompletionTextEdit::Edit(text_edit)),
-                    ..Default::default()
-                }
-            })
-            .collect()
-    }
-}
+// CompletionContext moved to completion module
+// HoverContext moved to hover module
 
 /// Convert LSP Position to byte offset.
 fn position_to_offset(text: &str, position: async_lsp::lsp_types::Position) -> usize {
@@ -1693,12 +270,11 @@ pub struct PostgresLspServer {
     /// Reusable tree-sitter parser (shared via Arc<Mutex> for incremental parsing)
     parser: Arc<Mutex<tree_sitter::Parser>>,
     /// Database connection pool for schema introspection
-    #[allow(dead_code)]
     db_pool: Arc<sqlx_postgres::PgPool>,
     /// Schema cache for table/column information
-    schema_cache: Arc<SchemaCache>,
+    pub(crate) schema_cache: Arc<SchemaCache>,
     /// FHIR element resolver for path completions
-    fhir_resolver: Arc<FhirResolver>,
+    pub(crate) fhir_resolver: Arc<FhirResolver>,
 }
 
 impl PostgresLspServer {
@@ -1736,186 +312,7 @@ impl PostgresLspServer {
     ///
     /// Returns `None` if tree-sitter can't handle this context (e.g., JSONB paths)
     /// and the caller should fall back to the regex parser.
-    async fn get_completions_with_treesitter(
-        &self,
-        text: &str,
-        offset: usize,
-    ) -> Option<Vec<CompletionItem>> {
-        // Parse SQL with Supabase's PostgreSQL grammar
-        let mut parser = tree_sitter::Parser::new();
-        if parser
-            .set_language(&pgls_treesitter_grammar::LANGUAGE.into())
-            .is_err()
-        {
-            tracing::warn!("Failed to load tree-sitter grammar, falling back to regex parser");
-            return None;
-        }
-
-        let Some(tree) = parser.parse(text, None) else {
-            tracing::debug!("Tree-sitter parse failed");
-            return None;
-        };
-
-        // Find the node at cursor position
-        let root = tree.root_node();
-        let cursor_node = root.descendant_for_byte_range(offset, offset)?;
-
-        // HIGHEST PRIORITY: Check if cursor is inside a function call
-        if let Some(func_ctx) = Self::detect_function_call_context(&cursor_node, text, offset) {
-            tracing::debug!(
-                "Function call context: function='{}', arg_index={}",
-                func_ctx.function_name,
-                func_ctx.arg_index
-            );
-            return Some(
-                self.get_function_arg_completions(func_ctx, &tree, text, offset)
-                    .await,
-            );
-        }
-
-        // Check if we're in a JSONB path context using tree-sitter AST
-        if let Some(jsonb_completions) = self.get_jsonb_completions_from_ast(text, offset, &tree) {
-            tracing::debug!("Detected JSONB path context from tree-sitter AST");
-            return Some(jsonb_completions);
-        }
-
-        // Create context at cursor position for general SQL completions
-        let position = TextSize::new(offset as u32);
-        let ctx = TreesitterContext::new(TreeSitterContextParams {
-            position,
-            text,
-            tree: &tree,
-        });
-
-        // Get mentioned tables from the query for column filtering
-        let mentioned_tables = self.get_mentioned_table_names(&ctx);
-
-        let mut items = Vec::new();
-        let mut has_non_keyword_items = false;
-
-        // Add tables with filtering
-        for table in self.schema_cache.get_tables() {
-            let filter = CompletionFilter::from(CompletionRelevanceData::Table(&table));
-            if filter.is_relevant(&ctx) {
-                items.push(self.table_to_completion(&table));
-                has_non_keyword_items = true;
-            }
-        }
-
-        // Add columns with filtering - ONLY from mentioned tables in the query
-        if !mentioned_tables.is_empty() {
-            for table_name in &mentioned_tables {
-                for col in self.schema_cache.get_columns(table_name) {
-                    let filter = CompletionFilter::from(CompletionRelevanceData::Column(&col));
-                    if filter.is_relevant(&ctx) {
-                        items.push(self.column_to_completion(&col, None));
-                        has_non_keyword_items = true;
-                    }
-                }
-            }
-        }
-
-        // Add functions with filtering
-        for func in self.schema_cache.get_functions() {
-            let filter = CompletionFilter::from(CompletionRelevanceData::Function(&func));
-            if filter.is_relevant(&ctx) {
-                items.push(self.function_to_completion(&func));
-                has_non_keyword_items = true;
-            }
-        }
-
-        // Add schemas with filtering
-        for schema in self.schema_cache.get_schemas() {
-            let filter = CompletionFilter::from(CompletionRelevanceData::Schema(&schema.name));
-            if filter.is_relevant(&ctx) {
-                // User schemas get higher sort priority
-                let sort_text = if schema.is_user_schema {
-                    format!("0{}", schema.name)
-                } else {
-                    format!("1{}", schema.name)
-                };
-
-                items.push(CompletionItem {
-                    label: schema.name.clone(),
-                    kind: Some(CompletionItemKind::MODULE),
-                    detail: Some("Schema".to_string()),
-                    sort_text: Some(sort_text),
-                    ..Default::default()
-                });
-                has_non_keyword_items = true;
-            }
-        }
-
-        // Only add keywords if we have other relevant items
-        // This prevents keyword-only responses that block JSONB path detection
-        if has_non_keyword_items {
-            items.extend(self.get_keyword_completions(&tree, text, &cursor_node));
-        }
-
-        // Filter by prefix if there's a partial identifier at cursor
-        if let Some(ref identifier) = ctx.identifier_qualifiers.1 {
-            if !identifier.is_empty() {
-                let prefix_lower = identifier.to_lowercase();
-                items.retain(|item| item.label.to_lowercase().starts_with(&prefix_lower));
-            }
-        }
-
-        // Return None if no relevant items found - let regex parser handle it
-        if items.is_empty() {
-            return None;
-        }
-
-        Some(items)
-    }
-
-    /// Check if the cursor is in a JSONB path context (after ->, ->>, etc.)
-    fn is_jsonb_path_context(&self, text: &str, offset: usize) -> bool {
-        let before_cursor = &text[..offset.min(text.len())];
-
-        // Check for JSONB operators followed by optional quote
-        // Patterns: `->`, `->>`, `#>`, `#>>`, then optionally `'` and partial path
-        let jsonb_patterns = [
-            "->>'", "->'", "#>>'", "#>'", // With opening quote
-            "->>", "->", "#>>", "#>", // Without quote (might be typing)
-        ];
-
-        // Look for patterns near the end of the text before cursor
-        let check_len = 50.min(before_cursor.len());
-        let recent = &before_cursor[before_cursor.len() - check_len..];
-
-        for pattern in jsonb_patterns {
-            if recent.contains(pattern) {
-                // Found a JSONB operator - check if cursor is after it
-                if let Some(pos) = recent.rfind(pattern) {
-                    let after_op = &recent[pos + pattern.len()..];
-                    // If we're in quotes or right after the operator, it's JSONB context
-                    if after_op.is_empty()
-                        || after_op.starts_with('\'')
-                        || !after_op.contains(|c: char| c == ')' || c == ';' || c == ',')
-                    {
-                        return true;
-                    }
-                }
-            }
-        }
-
-        false
-    }
-
-    /// Find string literal node containing cursor (shared helper).
-    ///
-    /// This method searches for a string literal node (single or double quoted)
-    /// that contains the cursor position. It checks both the current node and
-    /// walks up the parent chain (max 5 levels) to find string nodes.
-    ///
-    /// # Arguments
-    /// * `cursor_node` - Tree-sitter node at or near cursor position
-    /// * `offset` - Cursor byte offset in the document
-    ///
-    /// # Returns
-    /// * `Some(Node)` - String literal node if cursor is inside one
-    /// * `None` - If cursor is not inside any string literal
-    fn find_string_node_at_cursor<'a>(
+    pub(crate) fn find_string_node_at_cursor<'a>(
         cursor_node: &tree_sitter::Node<'a>,
         offset: usize,
     ) -> Option<tree_sitter::Node<'a>> {
@@ -2009,781 +406,34 @@ impl PostgresLspServer {
     /// // Not in string: resource-> | → None
     /// // Empty string: resource->'|' → Some("")
     /// ```
-    pub fn extract_partial_jsonb_path(
-        jsonb_ctx: &JsonbContext,
-        text: &str,
-        cursor_node: &tree_sitter::Node,
-    ) -> Option<String> {
-        // 1. Check if cursor is in string
-        if !Self::is_cursor_in_string_literal(cursor_node, text, jsonb_ctx.cursor_offset) {
-            return None;
-        }
-
-        // 2. Find the string node
-        let string_node = Self::find_string_node_at_cursor(cursor_node, jsonb_ctx.cursor_offset)?;
-
-        // 3. Extract text from string start to cursor
-        let string_start = string_node.start_byte();
-        let cursor_offset = jsonb_ctx.cursor_offset;
-
-        if cursor_offset <= string_start {
-            return None;
-        }
-
-        let partial_text = &text[string_start..cursor_offset];
-
-        // 4. Clean up: remove quotes and braces
-        let cleaned = partial_text
-            .trim_start_matches('\'')
-            .trim_start_matches('"')
-            .trim_start_matches('{');
-
-        // 5. Handle array syntax: '{name,given,pre' -> 'pre'
-        //    Handle arrow syntax: 'given' -> 'given'
-        let partial = if cleaned.contains(',') {
-            // Array syntax - get last segment after comma
-            cleaned.split(',').last()?.trim().to_string()
-        } else {
-            // Arrow syntax - use entire cleaned string
-            cleaned.to_string()
-        };
-
-        Some(partial)
-    }
-
-    /// Try to find JSONB operator using sqlparser-rs (for complete SQL).
-    ///
-    /// This method uses the semantic analyzer from Phase 0 to detect JSONB operators
-    /// in complete SQL statements. It complements tree-sitter detection by validating
-    /// that the SQL is syntactically correct.
-    ///
-    /// # Arguments
-    /// * `text` - Full SQL text
-    ///
-    /// # Returns
-    /// * `Some(JsonbOperatorInfo)` - JSONB operator information if found
-    /// * `None` - If SQL doesn't parse or contains no JSONB operators
-    ///
-    /// # Note
-    /// sqlparser-rs requires complete, valid SQL. It will fail on incomplete statements
-    /// that are common during editing. Use tree-sitter for incomplete SQL.
-    pub fn find_jsonb_operator_sqlparser(
-        text: &str,
-    ) -> Option<super::semantic_analyzer::JsonbOperatorInfo> {
-        // Use the SemanticAnalyzer from Phase 0
-        let semantic_ctx = super::semantic_analyzer::SemanticAnalyzer::analyze(text)?;
-        semantic_ctx.jsonb_operator
-    }
-
-    /// Hybrid JSONB detection: try tree-sitter first, fallback to sqlparser-rs.
-    ///
-    /// This method implements a two-tier detection strategy:
-    /// 1. **Tree-sitter (primary)**: Works with incomplete SQL, handles arbitrary whitespace,
-    ///    provides rich AST context for completions
-    /// 2. **sqlparser-rs (fallback)**: Validates complete SQL, catches cases tree-sitter might miss
-    ///
-    /// # Arguments
-    /// * `tree` - Parsed tree-sitter AST
-    /// * `text` - Full SQL text
-    /// * `offset` - Cursor byte offset
-    ///
-    /// # Returns
-    /// * `Some(JsonbDetectionResult::TreeSitter)` - If tree-sitter detected JSONB context
-    /// * `Some(JsonbDetectionResult::SqlParser)` - If sqlparser-rs detected JSONB (fallback)
-    /// * `None` - If no JSONB context found by either parser
-    ///
-    /// # Examples
-    /// ```ignore
-    /// // Incomplete SQL - tree-sitter only
-    /// "SELECT resource #>> '{name}' FROM" → TreeSitter
-    ///
-    /// // Complete SQL - either parser may detect
-    /// "SELECT resource #>> '{name}' FROM patient" → TreeSitter or SqlParser
-    /// ```
-    pub fn find_jsonb_hybrid<'a>(
-        tree: &'a tree_sitter::Tree,
-        text: &str,
-        offset: usize,
-    ) -> Option<JsonbDetectionResult<'a>> {
-        // Try tree-sitter first (works with incomplete SQL)
-        let root = tree.root_node();
-        let cursor_node = root.descendant_for_byte_range(offset, offset)?;
-
-        if let Some(ts_ctx) = Self::find_jsonb_expression_robust(&cursor_node, text, offset) {
-            tracing::debug!(
-                "JSONB detected via tree-sitter: operator={}, path={:?}",
-                ts_ctx.operator,
-                ts_ctx.path_chain
-            );
-            return Some(JsonbDetectionResult::TreeSitter(ts_ctx));
-        }
-
-        // Fallback to sqlparser-rs for complete SQL
-        if let Some(sp_info) = Self::find_jsonb_operator_sqlparser(text) {
-            tracing::debug!(
-                "JSONB detected via sqlparser-rs: target={}",
-                sp_info.target()
-            );
-            return Some(JsonbDetectionResult::SqlParser(sp_info));
-        }
-
-        tracing::debug!("No JSONB context detected by either parser");
-        None
-    }
-
-    /// Get JSONB completions from sqlparser-rs detection.
-    ///
-    /// This is a simplified completion provider for when sqlparser-rs detects JSONB
-    /// operators but tree-sitter does not. It provides generic JSONB completions
-    /// since sqlparser-rs has less context than tree-sitter.
-    ///
-    /// # Arguments
-    /// * `info` - JSONB operator information from sqlparser-rs
-    ///
-    /// # Returns
-    /// Vector of generic JSONB completion items
-    ///
-    /// # Note
-    /// This is intentionally minimal - tree-sitter provides much better context
-    /// for JSONB completions. This fallback is mainly for validation.
-    async fn get_jsonb_completions_from_sqlparser(
-        &self,
-        info: &super::semantic_analyzer::JsonbOperatorInfo,
-    ) -> Vec<CompletionItem> {
-        tracing::debug!(
-            "Providing generic JSONB completions for sqlparser-rs detection: target={}",
-            info.target()
-        );
-
-        // Provide a generic completion item indicating JSONB context
-        vec![CompletionItem {
-            label: "JSONB path".to_string(),
-            kind: Some(CompletionItemKind::PROPERTY),
-            detail: Some(format!(
-                "JSONB {} on {}",
-                if info.is_operator() {
-                    "operator"
-                } else {
-                    "function"
-                },
-                info.target()
-            )),
-            documentation: Some(Documentation::String(
-                "JSONB path detected. Tree-sitter provides better completions for incomplete SQL."
-                    .to_string(),
-            )),
-            ..Default::default()
-        }]
-    }
-
-    /// Merge tree-sitter and sqlparser-rs contexts for intelligent completion generation.
-    ///
-    /// This method implements a smart merging strategy that prefers tree-sitter for
-    /// fine-grained context (AST nodes, partial text, cursor position) while using
-    /// sqlparser-rs for SQL validation and fallback table name extraction.
-    ///
-    /// # Arguments
-    /// * `ts_ctx` - Tree-sitter JSONB context (if detected)
-    /// * `sp_info` - sqlparser-rs JSONB operator info (if detected)
-    /// * `text` - Full SQL text
-    /// * `offset` - Cursor byte offset
-    /// * `cursor_node` - Tree-sitter node at cursor position
-    ///
-    /// # Returns
-    /// Merged `JsonbCompletionContext` with best information from both parsers
-    ///
-    /// # Strategy
-    /// - **Path chain**: Always from tree-sitter (most accurate)
-    /// - **Operator**: Prefer tree-sitter, fallback to sqlparser-rs
-    /// - **Partial text**: Extracted via tree-sitter AST
-    /// - **Table name**: Try tree-sitter first, then sqlparser-rs
-    /// - **SQL validation**: Only sqlparser-rs can validate
-    pub fn merge_jsonb_contexts(
-        ts_ctx: Option<&JsonbContext>,
-        sp_info: Option<&super::semantic_analyzer::JsonbOperatorInfo>,
-        text: &str,
-        offset: usize,
-        cursor_node: Option<&tree_sitter::Node>,
-    ) -> JsonbCompletionContext {
-        let mut context = JsonbCompletionContext {
-            jsonb_path: vec![],
-            in_jsonb_string: false,
-            partial_text: None,
-            table_name: None,
-            sql_valid: false,
-            operator: None,
-        };
-
-        // Prefer tree-sitter for fine-grained context
-        if let Some(ts_ctx) = ts_ctx {
-            context.jsonb_path = ts_ctx.path_chain.clone();
-            context.operator = Some(ts_ctx.operator.clone());
-
-            // Check if cursor is in string literal
-            if let Some(node) = cursor_node {
-                context.in_jsonb_string = Self::is_cursor_in_string_literal(node, text, offset);
-            }
-
-            // Extract partial path from tree-sitter
-            if let Some(node) = cursor_node {
-                context.partial_text = Self::extract_partial_jsonb_path(ts_ctx, text, node);
-            }
-
-            // Try to extract table name from path chain (first element is often column name)
-            if let Some(first) = context.jsonb_path.first() {
-                context.table_name = Some(first.clone());
-            }
-        }
-
-        // Use sqlparser-rs for SQL validation
-        if sp_info.is_some() {
-            context.sql_valid = true;
-
-            // If tree-sitter didn't provide table name, use sqlparser-rs
-            if context.table_name.is_none() {
-                context.table_name = sp_info.map(|info| info.target().to_string());
-            }
-        }
-
-        context
-    }
-
-    /// Generate smart JSONB path completions based on merged context.
-    ///
-    /// Provides context-aware completions that adapt to cursor position:
-    /// - **Inside string literal**: Suggest JSONB keys/paths
-    /// - **After operator**: Suggest starting a path (`'{}'`, array indices)
-    ///
-    /// # Arguments
-    /// * `context` - Merged JSONB completion context
-    ///
-    /// # Returns
-    /// Vector of relevant completion items
-    ///
-    /// # Examples
-    /// ```ignore
-    /// // Cursor in string: resource #>> '{name,gi|'
-    /// //   Suggests: "given" (filtered by partial "gi")
-    ///
-    /// // Cursor after operator: resource #>> |
-    /// //   Suggests: '{}' snippet, array index
-    /// ```
-    async fn generate_smart_completions(
-        &self,
-        context: &JsonbCompletionContext,
-    ) -> Vec<CompletionItem> {
-        let mut completions = Vec::new();
-
-        if context.in_jsonb_string {
-            // Cursor inside JSONB path string: suggest JSONB keys
-            tracing::debug!(
-                "Generating JSONB key completions for path: {:?}, partial: {:?}, table: {:?}",
-                context.jsonb_path,
-                context.partial_text,
-                context.table_name
-            );
-
-            // Note: Full FHIR integration would happen here
-            // For now, provide a placeholder completion
-            completions.push(CompletionItem {
-                label: "...".to_string(),
-                kind: Some(CompletionItemKind::PROPERTY),
-                detail: Some(format!(
-                    "JSONB path (partial: {})",
-                    context.partial_text.as_deref().unwrap_or("")
-                )),
-                documentation: Some(Documentation::String(format!(
-                    "Path chain: {:?}\nOperator: {}",
-                    context.jsonb_path,
-                    context.operator.as_deref().unwrap_or("unknown")
-                ))),
-                ..Default::default()
-            });
-        } else {
-            // Cursor after JSONB operator: suggest starting a path
-            tracing::debug!(
-                "Suggesting JSONB path start for operator: {:?}",
-                context.operator
-            );
-
-            // Suggest JSONB path snippet
-            completions.push(CompletionItem {
-                label: "'{}'".to_string(),
-                kind: Some(CompletionItemKind::SNIPPET),
-                insert_text: Some("'$1'".to_string()),
-                insert_text_format: Some(InsertTextFormat::SNIPPET),
-                detail: Some(format!(
-                    "JSONB path (operator: {})",
-                    context.operator.as_deref().unwrap_or("unknown")
-                )),
-                sort_text: Some("0".to_string()),
-                documentation: Some(Documentation::String(
-                    "Start a JSONB path expression".to_string(),
-                )),
-                ..Default::default()
-            });
-
-            // Add array index suggestion for -> operator
-            if context.operator.as_deref() == Some("->") {
-                completions.push(CompletionItem {
-                    label: "0".to_string(),
-                    kind: Some(CompletionItemKind::CONSTANT),
-                    detail: Some("Array index (first element)".to_string()),
-                    sort_text: Some("1".to_string()),
-                    ..Default::default()
-                });
-            }
-        }
-
-        completions
-    }
-
-    /// Extract JSONB path information from tree-sitter AST and provide completions.
-    ///
-    /// This method checks if the cursor is in a JSONB path context by analyzing the
-    /// tree-sitter AST for JSONB operators (`->`, `->>`, `#>`, `#>>`).
-    ///
-    /// If a JSONB context is detected, it extracts:
-    /// - The column being accessed (e.g., `resource`)
-    /// - The path segments (e.g., `['name', 'given']` from `resource->'name'->'given'`)
-    /// - The table context from the query
-    ///
-    /// Returns FHIR path completions if in JSONB context, None otherwise.
-    fn get_jsonb_completions_from_ast(
-        &self,
-        text: &str,
-        offset: usize,
-        tree: &tree_sitter::Tree,
-    ) -> Option<Vec<CompletionItem>> {
-        // Find the node at cursor position
-        let root = tree.root_node();
-        let cursor_node = root.descendant_for_byte_range(offset, offset)?;
-
-        // Use the robust JSONB expression finder with validation
-        let jsonb_ctx = Self::find_jsonb_expression_robust(&cursor_node, text, offset)?;
-
-        // Don't provide completions for invalid JSONB syntax
-        if !jsonb_ctx.is_valid_syntax {
-            tracing::debug!(
-                "Skipping completions for invalid JSONB syntax: operator={}, has_right={}",
-                jsonb_ctx.operator,
-                jsonb_ctx.right.is_some()
-            );
-            return None;
-        }
-
-        tracing::debug!(
-            "Found valid JSONB expression: operator={}, path={:?}",
-            jsonb_ctx.operator,
-            jsonb_ctx.path_chain
-        );
-
-        // Extract column name and path segments from the expression
-        let (column, path_segments) = Self::extract_jsonb_path(&jsonb_ctx.expr_node, text)?;
-
-        tracing::debug!(
-            "Extracted JSONB path: column='{}', segments={:?}",
-            column,
-            path_segments
-        );
-
-        // Try to find the table name from the context
-        let table = Self::find_table_for_column(&root, text, &column)?;
-
-        tracing::debug!("Resolved table for column '{}': '{}'", column, table);
-
-        // Create a synthetic quote context (tree-sitter handles quotes differently)
-        // For now, we'll assume we need to add quotes if typing a new segment
-        let quote_context = super::parser::JsonbQuoteContext {
-            has_opening_quote: false, // Will be determined during completion
-            cursor_inside_quotes: false,
-            needs_quotes: true,
-        };
-
-        // Convert to tower_lsp Position (tree-sitter uses byte offsets, LSP uses line/char)
-        let position = async_lsp::lsp_types::Position {
-            line: 0, // TODO: Calculate actual line/character from offset
-            character: offset as u32,
-        };
-
-        // Get FHIR path completions using the extracted information
-        let rt = tokio::runtime::Runtime::new().ok()?;
-        let completions = rt.block_on(self.get_fhir_path_completions(
-            &table,
-            &path_segments,
-            &quote_context,
-            position,
-            text,
-        ));
-
-        Some(completions)
-    }
-
-    /// Find a JSONB expression in the AST by walking up from the cursor node.
-    ///
-    /// Returns the node representing the JSONB expression if found.
-    fn find_jsonb_expression<'a>(
-        node: &tree_sitter::Node<'a>,
-        text: &str,
-    ) -> Option<tree_sitter::Node<'a>> {
-        let mut current = *node;
-
-        // Walk up the tree looking for nodes with JSONB operators
-        loop {
-            // Check if this node or its children contain JSONB operators
-            if Self::contains_jsonb_operator(&current, text) {
-                return Some(current);
-            }
-
-            // Move to parent
-            if let Some(parent) = current.parent() {
-                current = parent;
-            } else {
-                break;
-            }
-
-            // Stop if we've gone too far up (e.g., reached statement level)
-            if current.kind() == "statement" || current.kind() == "program" {
-                break;
-            }
-        }
-
-        None
-    }
-
-    /// Check if a node contains JSONB operators.
-    fn contains_jsonb_operator(node: &tree_sitter::Node, text: &str) -> bool {
-        // Check current node
-        if node.kind() == "op_other" {
-            if let Ok(op_text) = node.utf8_text(text.as_bytes()) {
-                if matches!(op_text, "->" | "->>" | "#>" | "#>>" | "@>" | "<@") {
-                    return true;
-                }
-            }
-        }
-
-        // Check immediate children
-        for i in 0..node.child_count() {
-            if let Some(child) = node.child(i as u32) {
-                if child.kind() == "op_other" {
-                    if let Ok(op_text) = child.utf8_text(text.as_bytes()) {
-                        if matches!(op_text, "->" | "->>" | "#>" | "#>>" | "@>" | "<@") {
-                            return true;
-                        }
-                    }
-                }
-            }
-        }
-
-        false
-    }
-
-    /// Extract full JSONB path chain from nested binary expressions.
-    ///
-    /// This method walks down the left side of chained JSONB operators to extract
-    /// the complete path from base column to final key.
-    ///
-    /// # Examples
-    /// - `resource->'name'->'given'` → `["resource", "name", "given"]`
-    /// - `data->'address'->0->'city'` → `["data", "address", "0", "city"]`
-    /// - `resource->'name'` → `["resource", "name"]`
-    ///
-    /// # Arguments
-    /// * `node` - The tree-sitter node representing the outermost JSONB expression
-    /// * `text` - The full SQL text
-    ///
-    /// # Returns
-    /// Vector of strings representing the full path chain, in order from base to leaf
-    fn extract_jsonb_path_chain(node: tree_sitter::Node, text: &str) -> Vec<String> {
-        let mut path = Vec::new();
-        let mut current = node;
-
-        // Walk down left side to find all chained operators
-        loop {
-            if current.kind() == "binary_expression" {
-                // Check if this is a JSONB operator
-                if let Some(op_node) = current.child_by_field_name("binary_expr_operator") {
-                    if op_node.kind() == "op_other" {
-                        let op_text = op_node.utf8_text(text.as_bytes()).ok();
-                        if matches!(op_text, Some("->" | "->>" | "#>" | "#>>")) {
-                            // Extract right operand (the key/path)
-                            if let Some(right) = current.child_by_field_name("binary_expr_right") {
-                                // Handle different types of right operands
-                                let right_text = match right.kind() {
-                                    "string" | "literal" => {
-                                        // String literal like 'name' or "name"
-                                        right.utf8_text(text.as_bytes()).ok().map(|s| {
-                                            s.trim_matches('\'').trim_matches('"').to_string()
-                                        })
-                                    }
-                                    "number" | "integer" => {
-                                        // Array index like 0 or 1
-                                        right.utf8_text(text.as_bytes()).ok().map(String::from)
-                                    }
-                                    _ => {
-                                        // For other node types, try to get the text
-                                        right.utf8_text(text.as_bytes()).ok().map(String::from)
-                                    }
-                                };
-
-                                if let Some(text) = right_text {
-                                    path.insert(0, text); // Insert at beginning for correct order
-                                }
-                            }
-
-                            // Continue with left side
-                            if let Some(left) = current.child_by_field_name("binary_expr_left") {
-                                current = left;
-                                continue;
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Base case: reached column name (e.g., "resource")
-            // Handle various node types for column references
-            if matches!(
-                current.kind(),
-                "identifier" | "object_reference" | "column_reference" | "any_identifier"
-            ) {
-                if let Ok(name) = current.utf8_text(text.as_bytes()) {
-                    path.insert(0, name.to_string());
-                }
-                break;
-            }
-
-            break;
-        }
-
-        path
-    }
-
-    /// Find JSONB expression at cursor using tree-sitter AST with enhanced robustness.
-    ///
-    /// This method improves upon `find_jsonb_expression` by:
-    /// - Handling arbitrary whitespace around operators
-    /// - Supporting incomplete expressions (cursor after operator, no right operand)
-    /// - Providing detailed context about operator and operands
-    /// - Working with chained JSONB operators
-    ///
-    /// # Arguments
-    /// * `node` - The tree-sitter node at cursor position
-    /// * `text` - The full SQL text
-    /// * `offset` - Cursor byte offset in the document
-    ///
-    /// # Returns
-    /// `Some(JsonbContext)` if a JSONB expression is found, `None` otherwise
-    pub fn find_jsonb_expression_robust<'a>(
-        node: &tree_sitter::Node<'a>,
-        text: &str,
-        offset: usize,
-    ) -> Option<JsonbContext<'a>> {
-        let mut current = *node;
-
-        loop {
-            // Check for binary_expression with JSONB operator
-            if current.kind() == "binary_expression" {
-                // Look for the operator node
-                if let Some(op_node) = current.child_by_field_name("binary_expr_operator") {
-                    if op_node.kind() == "op_other" {
-                        let op_text = op_node.utf8_text(text.as_bytes()).ok()?;
-
-                        // Match JSONB operators (not containment operators @>, <@)
-                        if matches!(op_text, "->" | "->>" | "#>" | "#>>") {
-                            // Extract full path chain for chained operators
-                            let path_chain = Self::extract_jsonb_path_chain(current, text);
-                            let right = current.child_by_field_name("binary_expr_right");
-
-                            // Validate operator/operand compatibility
-                            let is_valid_syntax =
-                                is_valid_operand_for_jsonb_operator(op_text, right, text);
-
-                            return Some(JsonbContext {
-                                expr_node: current,
-                                operator: op_text.to_string(),
-                                left: current.child_by_field_name("binary_expr_left"),
-                                right,
-                                cursor_offset: offset,
-                                path_chain,
-                                is_valid_syntax,
-                            });
-                        }
-                    }
-                }
-            }
-
-            // Handle incomplete expressions: cursor after operator with no right operand
-            // Example: "SELECT resource #>> " (user is about to type the path)
-            //
-            // In this case, the cursor node might be a whitespace or ERROR node immediately
-            // after the operator. We check if the previous sibling is a JSONB operator.
-            if let Some(prev) = current.prev_sibling() {
-                if prev.kind() == "op_other" {
-                    let op_text = prev.utf8_text(text.as_bytes()).ok()?;
-                    if matches!(op_text, "->" | "->>" | "#>" | "#>>") {
-                        // Found operator before cursor; look for the parent binary expression
-                        if let Some(parent) = current.parent() {
-                            if parent.kind() == "binary_expression" {
-                                // Extract path chain from what we have so far (incomplete)
-                                let path_chain = Self::extract_jsonb_path_chain(parent, text);
-
-                                // Incomplete expressions are considered valid (user is still typing)
-                                let is_valid_syntax = true;
-
-                                return Some(JsonbContext {
-                                    expr_node: parent,
-                                    operator: op_text.to_string(),
-                                    left: parent.child_by_field_name("binary_expr_left"),
-                                    right: None, // Incomplete - no right operand yet
-                                    cursor_offset: offset,
-                                    path_chain,
-                                    is_valid_syntax,
-                                });
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Also check if current node is the operator itself (cursor on operator)
-            if current.kind() == "op_other" {
-                let op_text = current.utf8_text(text.as_bytes()).ok()?;
-                if matches!(op_text, "->" | "->>" | "#>" | "#>>") {
-                    if let Some(parent) = current.parent() {
-                        if parent.kind() == "binary_expression" {
-                            // Extract full path chain
-                            let path_chain = Self::extract_jsonb_path_chain(parent, text);
-                            let right = parent.child_by_field_name("binary_expr_right");
-
-                            // Validate operator/operand compatibility
-                            let is_valid_syntax =
-                                is_valid_operand_for_jsonb_operator(op_text, right, text);
-
-                            return Some(JsonbContext {
-                                expr_node: parent,
-                                operator: op_text.to_string(),
-                                left: parent.child_by_field_name("binary_expr_left"),
-                                right,
-                                cursor_offset: offset,
-                                path_chain,
-                                is_valid_syntax,
-                            });
-                        }
-                    }
-                }
-            }
-
-            // Walk up the tree
-            current = match current.parent() {
-                Some(parent) => parent,
-                None => break,
-            };
-
-            // Stop at statement boundary to avoid going too far
-            if matches!(current.kind(), "statement" | "program") {
-                break;
-            }
-        }
-
-        None
-    }
-
-    /// Extract column name and path segments from a JSONB expression.
-    ///
-    /// Example: `resource->'name'->'given'` → ("resource", ["name", "given"])
-    fn extract_jsonb_path(node: &tree_sitter::Node, text: &str) -> Option<(String, Vec<String>)> {
-        tracing::info!(
-            "extract_jsonb_path: node kind='{}', text='{}'",
-            node.kind(),
-            node.utf8_text(text.as_bytes()).unwrap_or("???")
-        );
-
-        let mut path_segments = Vec::new();
-        let mut column_name = None;
-
-        // Traverse the expression tree to extract segments
-        Self::traverse_jsonb_expr(node, text, &mut column_name, &mut path_segments);
-
-        tracing::info!(
-            "extract_jsonb_path: column_name={:?}, path_segments={:?}",
-            column_name,
-            path_segments
-        );
-
-        let column = column_name?;
-        Some((column, path_segments))
-    }
-
-    /// Recursively traverse a JSONB expression to extract column and path segments.
-    fn traverse_jsonb_expr(
-        node: &tree_sitter::Node,
-        text: &str,
-        column_name: &mut Option<String>,
-        path_segments: &mut Vec<String>,
-    ) {
-        tracing::info!(
-            "traverse_jsonb_expr: node kind='{}', text='{}'",
-            node.kind(),
-            node.utf8_text(text.as_bytes()).unwrap_or("???")
-        );
-
-        // Base case: identifier (column name)
-        // PostgreSQL grammar uses "any_identifier" for identifiers
-        if node.kind() == "identifier"
-            || node.kind() == "column_reference"
-            || node.kind() == "any_identifier"
-        {
-            if column_name.is_none() {
-                if let Ok(name) = node.utf8_text(text.as_bytes()) {
-                    tracing::info!("traverse_jsonb_expr: Found column name '{}'", name);
-                    *column_name = Some(name.to_string());
-                }
-            }
-            return;
-        }
-
-        // String literal (path segment like 'name')
-        if node.kind() == "string" || node.kind() == "literal" {
-            if let Ok(segment) = node.utf8_text(text.as_bytes()) {
-                // Remove surrounding quotes
-                let cleaned = segment.trim_matches('\'').trim_matches('"');
-                if !cleaned.is_empty() {
-                    path_segments.push(cleaned.to_string());
-                }
-            }
-            return;
-        }
-
-        // Number (array index)
-        if node.kind() == "number" || node.kind() == "integer" {
-            if let Ok(num) = node.utf8_text(text.as_bytes()) {
-                path_segments.push(num.to_string());
-            }
-            return;
-        }
-
-        // Recurse into children
-        for i in 0..node.child_count() {
-            if let Some(child) = node.child(i as u32) {
-                // Skip operator nodes
-                if child.kind() != "op_other" {
-                    Self::traverse_jsonb_expr(&child, text, column_name, path_segments);
-                }
-            }
-        }
-    }
-
-    /// Find the table name for a given column by looking at the query context.
-    ///
-    /// Searches the FROM clause and JOINs to find which table contains the column.
-    fn find_table_for_column(
+    pub(crate) fn find_table_for_column(
         root: &tree_sitter::Node,
         text: &str,
-        _column: &str, // TODO: Use column to resolve correct table in multi-table queries
+        column: &str,
     ) -> Option<String> {
-        // Simple heuristic: find the first table in FROM clause
-        // In a more complex implementation, we'd resolve column -> table mapping
+        // Use TableResolver to handle aliases, CTEs, and subqueries
+        let mut parser = tree_sitter::Parser::new();
+        parser
+            .set_language(&pgls_treesitter_grammar::LANGUAGE.into())
+            .ok()?;
+        let tree = parser.parse(text, None)?;
+        let resolver = super::parser::TableResolver::resolve(text, &tree);
+
+        // Try to resolve column as table alias (e.g., "p" -> "patient")
+        if let Some(table) = resolver.get_table_name(column) {
+            tracing::debug!(
+                "Resolved column '{}' to table '{}' using TableResolver",
+                column,
+                table
+            );
+            return Some(table.to_string());
+        }
+
+        // Fallback: if column is not an alias, try first table
+        tracing::debug!(
+            "Column '{}' not found in aliases, falling back to first table",
+            column
+        );
         Self::find_first_table_in_from(root, text)
     }
 
@@ -2832,7 +482,7 @@ impl PostgresLspServer {
     /// - Finds the byte offset where the current argument starts
     ///
     /// Returns `None` if not inside a function call.
-    fn detect_function_call_context(
+    pub(crate) fn detect_function_call_context(
         node: &tree_sitter::Node,
         text: &str,
         cursor_offset: usize,
@@ -2961,6 +611,145 @@ impl PostgresLspServer {
         };
 
         Some((arg_index, arg_start_offset))
+    }
+
+    /// Find function call context at cursor position.
+    /// Wrapper around detect_function_call_context for cleaner API.
+    fn find_function_call_at_cursor(
+        tree: &tree_sitter::Tree,
+        text: &str,
+        offset: usize,
+    ) -> Option<FunctionCallContext> {
+        let root = tree.root_node();
+        let cursor_node = root.descendant_for_byte_range(offset, offset)?;
+        Self::detect_function_call_context(&cursor_node, text, offset)
+    }
+
+    /// Build signature help for a function with parameter information.
+    async fn build_signature_help(
+        func_info: &super::schema_cache::FunctionInfo,
+        active_param: usize,
+        function_name: &str,
+        _schema_cache: &Arc<SchemaCache>,
+        _fhir_resolver: &Arc<FhirResolver>,
+    ) -> SignatureHelp {
+        use async_lsp::lsp_types::MarkupContent;
+
+        // Parse parameters from signature
+        let params = Self::parse_function_parameters(&func_info.signature);
+
+        // Build parameter information
+        let mut parameters = Vec::new();
+        for (i, param) in params.iter().enumerate() {
+            let label_text = param.clone();
+
+            // Add FHIR-specific documentation for JSONB path parameters
+            let documentation = if Self::is_jsonb_function(function_name)
+                && i == 1
+                && (function_name.contains("path") || function_name == "jsonb_extract_path")
+            {
+                Some(Documentation::MarkupContent(MarkupContent {
+                    kind: async_lsp::lsp_types::MarkupKind::Markdown,
+                    value: "**FHIR Path Parameter**\n\nThis parameter accepts a JSONPath expression to navigate FHIR resource structure.\n\nExamples:\n- `'$.name'` - Access the name field\n- `'$.name.given[0]'` - Access first given name\n- `'$.identifier[?(@.system == \"ssn\")]'` - Filter identifiers".to_string(),
+                }))
+            } else {
+                None
+            };
+
+            parameters.push(ParameterInformation {
+                label: ParameterLabel::Simple(label_text),
+                documentation,
+            });
+        }
+
+        // Build function documentation
+        let mut doc_text = format!("**{}**\n\n", func_info.name);
+        doc_text.push_str(&format!("Returns: `{}`\n\n", func_info.return_type));
+
+        if !func_info.description.is_empty() {
+            doc_text.push_str(&format!("{}\n\n", func_info.description));
+        }
+
+        // Add FHIR-specific note for JSONB functions
+        if Self::is_jsonb_function(function_name) {
+            doc_text.push_str("---\n\n");
+            doc_text.push_str("**FHIR-Aware**: This function works with FHIR resource JSONB columns. The LSP provides intelligent path completions based on the FHIR schema.\n");
+        }
+
+        let signature_info = SignatureInformation {
+            label: func_info.signature.clone(),
+            documentation: Some(Documentation::MarkupContent(MarkupContent {
+                kind: async_lsp::lsp_types::MarkupKind::Markdown,
+                value: doc_text,
+            })),
+            parameters: Some(parameters),
+            active_parameter: Some(active_param as u32),
+        };
+
+        SignatureHelp {
+            signatures: vec![signature_info],
+            active_signature: Some(0),
+            active_parameter: Some(active_param as u32),
+        }
+    }
+
+    /// Parse function parameters from a signature string.
+    /// Examples:
+    /// - "jsonb_path_exists(target jsonb, path jsonpath)" -> ["target jsonb", "path jsonpath"]
+    /// - "count(*)" -> ["*"]
+    fn parse_function_parameters(signature: &str) -> Vec<String> {
+        // Extract the part between parentheses
+        let start = signature.find('(').map(|i| i + 1).unwrap_or(0);
+        let end = signature.rfind(')').unwrap_or(signature.len());
+
+        if start >= end {
+            return Vec::new();
+        }
+
+        let params_str = &signature[start..end];
+
+        // Handle empty params or special cases like count(*)
+        if params_str.trim().is_empty() {
+            return Vec::new();
+        }
+
+        if params_str.trim() == "*" {
+            return vec!["*".to_string()];
+        }
+
+        // Split by comma, but be careful with nested types
+        let mut params = Vec::new();
+        let mut current_param = String::new();
+        let mut bracket_depth = 0;
+
+        for ch in params_str.chars() {
+            match ch {
+                '[' | '(' => {
+                    bracket_depth += 1;
+                    current_param.push(ch);
+                }
+                ']' | ')' => {
+                    bracket_depth -= 1;
+                    current_param.push(ch);
+                }
+                ',' if bracket_depth == 0 => {
+                    if !current_param.trim().is_empty() {
+                        params.push(current_param.trim().to_string());
+                    }
+                    current_param.clear();
+                }
+                _ => {
+                    current_param.push(ch);
+                }
+            }
+        }
+
+        // Don't forget the last parameter
+        if !current_param.trim().is_empty() {
+            params.push(current_param.trim().to_string());
+        }
+
+        params
     }
 
     /// Get the names of tables mentioned in the query (from FROM clause, JOINs, etc.)
@@ -3740,7 +1529,7 @@ impl PostgresLspServer {
     }
 
     /// Calculate TextEdit for JSONB path completion with smart quote handling.
-    fn calculate_jsonb_text_edit(
+    pub(crate) fn calculate_jsonb_text_edit(
         element_name: &str,
         quote_context: &super::parser::JsonbQuoteContext,
         position: async_lsp::lsp_types::Position,
@@ -3956,27 +1745,32 @@ impl PostgresLspServer {
     ) -> Vec<CompletionItem> {
         let func_name_lower = ctx.function_name.to_lowercase();
 
-        tracing::debug!(
-            "Getting argument completions for function='{}', arg_index={}",
+        tracing::info!(
+            "=== FUNCTION ARG COMPLETION: function='{}', arg_index={}, cursor_offset={}, arg_start={}",
             func_name_lower,
-            ctx.arg_index
+            ctx.arg_index,
+            cursor_offset,
+            ctx.arg_start_offset
         );
 
         // Check if this is a JSONB function
         if !Self::is_jsonb_function(&func_name_lower) {
-            tracing::debug!("Not a JSONB function, returning empty");
+            tracing::info!("Not a JSONB function, returning empty");
             return Vec::new();
         }
 
-        match ctx.arg_index {
+        let result = match ctx.arg_index {
             // First argument: JSONB column completions
             0 => {
-                tracing::debug!("Providing JSONB column completions");
+                tracing::info!("Providing JSONB column completions for arg 0");
                 self.get_jsonb_column_completions(tree, text)
             }
             // Second argument: JSONPath expression completions
             1 => {
-                tracing::debug!("Providing JSONPath expression completions");
+                tracing::info!(
+                    "Providing JSONPath expression completions for arg 1, arg_text='{}'",
+                    &text[ctx.arg_start_offset..cursor_offset.min(text.len())]
+                );
                 self.get_jsonpath_expression_completions(
                     tree,
                     text,
@@ -3987,16 +1781,22 @@ impl PostgresLspServer {
             }
             // Other arguments: could add hints for vars, silent, etc. in the future
             _ => {
-                tracing::debug!("No completions for argument index {}", ctx.arg_index);
+                tracing::info!("No completions for argument index {}", ctx.arg_index);
                 Vec::new()
             }
-        }
+        };
+
+        tracing::info!(
+            "=== FUNCTION ARG COMPLETION DONE: returning {} items",
+            result.len()
+        );
+        result
     }
 
     /// Check if a function name is a JSONB function.
     ///
     /// Includes path query functions, manipulation functions, and other JSONB functions.
-    fn is_jsonb_function(name: &str) -> bool {
+    pub(crate) fn is_jsonb_function(name: &str) -> bool {
         let name_lower = name.to_lowercase();
         matches!(
             name_lower.as_str(),
@@ -4173,31 +1973,51 @@ impl PostgresLspServer {
             .descendant_for_byte_range(cursor_offset, cursor_offset)
             .unwrap_or(root);
 
-        let Some(column_name) = Self::extract_first_arg_column(&cursor_node, text) else {
-            tracing::debug!("Could not extract column from first arg");
-            return Vec::new();
-        };
+        let column_name = Self::extract_first_arg_column(&cursor_node, text);
 
-        tracing::debug!("Extracted column from first arg: {}", column_name);
+        tracing::debug!(
+            "Extracted column from first arg: {:?}",
+            column_name
+        );
 
-        // Find table that has this column
+        // Find table that has this column (if column name was extracted)
         let tables = Self::extract_tables_from_ast(&root, text);
+
+        if tables.is_empty() {
+            tracing::debug!("No tables found in FROM clause, cannot provide FHIR completions");
+            return Vec::new();
+        }
+
         let mut table_name = None;
 
-        for table in &tables {
-            let columns = self.schema_cache.get_columns(table);
-            if columns.iter().any(|c| c.name == column_name) {
-                table_name = Some(table.clone());
-                break;
+        // Try to resolve column to a specific table (if column name was provided)
+        if let Some(ref col) = column_name {
+            for table in &tables {
+                let columns = self.schema_cache.get_columns(table);
+                if columns.iter().any(|c| c.name == *col) {
+                    table_name = Some(table.clone());
+                    tracing::debug!("Resolved column '{}' to table '{}'", col, table);
+                    break;
+                }
             }
         }
 
-        let Some(table) = table_name else {
-            tracing::debug!("Could not resolve column '{}' to any table", column_name);
-            return Vec::new();
-        };
+        // Use resolved table or fall back to first table from FROM clause
+        let table = table_name.unwrap_or_else(|| {
+            let fallback = tables[0].clone();
+            tracing::debug!(
+                "Using fallback table '{}' from FROM clause (column: {:?})",
+                fallback,
+                column_name
+            );
+            fallback
+        });
 
-        tracing::debug!("Resolved column '{}' to table '{}'", column_name, table);
+        tracing::debug!(
+            "Final table for FHIR completions: '{}' (extracted column: {:?})",
+            table,
+            column_name
+        );
 
         // Get FHIR resource type from table
         let resource_type = self
@@ -4453,7 +2273,7 @@ impl PostgresLspServer {
     }
 
     /// Convert a table name to PascalCase for FHIR resource type matching.
-    fn to_pascal_case(s: &str) -> String {
+    pub(crate) fn to_pascal_case(s: &str) -> String {
         let mut result = String::new();
         let mut capitalize_next = true;
 
@@ -4805,6 +2625,11 @@ impl LanguageServer for PostgresLspServer {
                         ..Default::default()
                     }),
                     hover_provider: Some(HoverProviderCapability::Simple(true)),
+                    signature_help_provider: Some(SignatureHelpOptions {
+                        trigger_characters: Some(vec!["(".into(), ",".into()]),
+                        retrigger_characters: Some(vec![",".into()]),
+                        work_done_progress_options: Default::default(),
+                    }),
                     document_formatting_provider: Some(OneOf::Left(true)),
                     ..Default::default()
                 },
@@ -5128,6 +2953,71 @@ impl LanguageServer for PostgresLspServer {
         })
     }
 
+    fn signature_help(
+        &mut self,
+        params: SignatureHelpParams,
+    ) -> BoxFuture<'static, Result<Option<SignatureHelp>, Self::Error>> {
+        let uri = params
+            .text_document_position_params
+            .text_document
+            .uri
+            .clone();
+        let position = params.text_document_position_params.position;
+
+        // Clone document state and schema cache
+        let doc_state = self.documents.get(&uri).cloned();
+        let schema_cache = self.schema_cache.clone();
+        let fhir_resolver = self.fhir_resolver.clone();
+
+        Box::pin(async move {
+            let Some(doc_state) = doc_state else {
+                return Ok(None);
+            };
+
+            let text = &doc_state.text;
+            let Some(tree) = doc_state.tree.as_ref() else {
+                return Ok(None);
+            };
+
+            // Convert LSP position to byte offset
+            let offset = Self::position_to_offset(text, position);
+
+            // Find the function call context at the cursor
+            let Some(function_ctx) =
+                PostgresLspServer::find_function_call_at_cursor(tree, text, offset)
+            else {
+                return Ok(None);
+            };
+
+            tracing::debug!(
+                "Signature help: function={}, arg_index={}",
+                function_ctx.function_name,
+                function_ctx.arg_index
+            );
+
+            // Get function info from schema cache
+            let Some(func_info) = schema_cache.get_function(&function_ctx.function_name) else {
+                tracing::debug!(
+                    "Function '{}' not found in schema cache",
+                    function_ctx.function_name
+                );
+                return Ok(None);
+            };
+
+            // Build signature help
+            let signature = Self::build_signature_help(
+                &func_info,
+                function_ctx.arg_index,
+                &function_ctx.function_name,
+                &schema_cache,
+                &fhir_resolver,
+            )
+            .await;
+
+            Ok(Some(signature))
+        })
+    }
+
     fn formatting(
         &mut self,
         params: DocumentFormattingParams,
@@ -5141,12 +3031,16 @@ impl LanguageServer for PostgresLspServer {
                 return Ok(None);
             };
 
-            // Format the SQL using sqlformat
-            let formatted_text = sqlformat::format(
-                &doc_state.text,
-                &sqlformat::QueryParams::default(),
-                &sqlformat::FormatOptions::default(),
-            );
+            // Format the SQL using sqlstyle.guide mandatory rules
+            let formatter = super::formatting::SqlFormatter::new();
+            let formatted_text = match formatter.format(&doc_state.text) {
+                Ok(text) => text,
+                Err(e) => {
+                    tracing::warn!(error = %e, "Failed to format SQL");
+                    // Return None on formatting error (don't modify the document)
+                    return Ok(None);
+                }
+            };
 
             // Calculate the range to replace (entire document)
             let line_count = doc_state.text.lines().count() as u32;
@@ -5838,15 +3732,11 @@ impl PostgresLspServer {
     ) -> std::collections::HashSet<String> {
         use crate::lsp::semantic_analyzer::SemanticAnalyzer;
 
-        // Try sqlparser-rs first (better semantic analysis for complete SQL)
-        if let Ok(ast) =
-            sqlparser::parser::Parser::parse_sql(&sqlparser::dialect::PostgreSqlDialect {}, text)
-        {
-            let sp_clauses = SemanticAnalyzer::extract_clauses(&ast);
-
-            if !sp_clauses.is_empty() {
-                tracing::debug!("Detected clauses via sqlparser-rs: {:?}", sp_clauses);
-                return sp_clauses;
+        // Try pg_query first (better semantic analysis for complete SQL)
+        if let Some(context) = SemanticAnalyzer::analyze(text) {
+            if !context.existing_clauses.is_empty() {
+                tracing::debug!("Detected clauses via pg_query: {:?}", context.existing_clauses);
+                return context.existing_clauses;
             }
         }
 

@@ -1,0 +1,8 @@
+---
+source: crates/octofhir-server/src/lsp/formatting/tests/comprehensive_tests.rs
+expression: formatted
+---
+SELECT id
+  FROM patient
+ UNION SELECT id
+  FROM practitioner

@@ -1,0 +1,6 @@
+---
+source: crates/octofhir-server/src/lsp/formatting/tests/comprehensive_tests.rs
+expression: formatted
+---
+SELECT id, name, row_number() OVER (ORDER BY created_at)
+  FROM patient

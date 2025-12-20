@@ -1,0 +1,7 @@
+---
+source: crates/octofhir-server/src/lsp/formatting/tests/comprehensive_tests.rs
+expression: formatted
+---
+SELECT *
+  FROM test
+ WHERE data ? 'key' OR data ?| ARRAY['a', 'b'] OR data ?& ARRAY['x', 'y']

@@ -1,0 +1,6 @@
+---
+source: crates/octofhir-server/src/lsp/formatting/tests/comprehensive_tests.rs
+expression: formatted
+---
+UPDATE patient SET name = 'Jane Doe'
+ WHERE id = 1

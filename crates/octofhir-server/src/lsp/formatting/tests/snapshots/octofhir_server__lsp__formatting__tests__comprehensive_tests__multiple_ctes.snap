@@ -1,0 +1,10 @@
+---
+source: crates/octofhir-server/src/lsp/formatting/tests/comprehensive_tests.rs
+expression: formatted
+---
+WITH cte1 AS (SELECT *
+FROM patient), cte2 AS (SELECT *
+FROM observation) SELECT *
+FROM cte1
+     JOIN cte2
+     ON cte1.id = cte2.subject

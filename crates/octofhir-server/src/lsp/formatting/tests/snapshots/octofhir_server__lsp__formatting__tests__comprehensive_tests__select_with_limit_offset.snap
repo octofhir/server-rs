@@ -1,0 +1,8 @@
+---
+source: crates/octofhir-server/src/lsp/formatting/tests/comprehensive_tests.rs
+expression: formatted
+---
+SELECT *
+  FROM patient
+ LIMIT 10
+OFFSET 5
