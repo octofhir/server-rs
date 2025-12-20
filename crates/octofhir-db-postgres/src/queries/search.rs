@@ -113,7 +113,7 @@ async fn execute_query(
 ) -> Result<Vec<StoredResource>, StorageError> {
     // Build dynamic query with parameters
     // The query returns: resource, id, txid, created_at, updated_at
-    let mut sqlx_query = sqlx_core::query::query(&query.sql);
+    let mut sqlx_query = sqlx_core::query::query::<sqlx_postgres::Postgres>(&query.sql);
 
     // Bind parameters
     for param in &query.params {

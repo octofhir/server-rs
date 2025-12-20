@@ -882,6 +882,34 @@ impl SearchStorage for PostgresPackageStore {
     async fn list_packages(&self) -> octofhir_canonical_manager::error::Result<Vec<PackageInfo>> {
         PackageStore::list_packages(self).await
     }
+
+    async fn set_package_priority(
+        &self,
+        package_name: &str,
+        package_version: &str,
+        priority: i32,
+    ) -> octofhir_canonical_manager::error::Result<()> {
+        debug!(
+            "Setting priority {} for package {}@{}",
+            priority, package_name, package_version
+        );
+
+        query(
+            r#"
+            UPDATE fcm.packages
+            SET priority = $3
+            WHERE name = $1 AND version = $2
+            "#,
+        )
+        .bind(package_name)
+        .bind(package_version)
+        .bind(priority)
+        .execute(&self.pool)
+        .await
+        .map_err(db_error)?;
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
