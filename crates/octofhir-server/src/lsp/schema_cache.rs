@@ -26,6 +26,8 @@ pub struct TableInfo {
 /// Information about a database column.
 #[derive(Debug, Clone)]
 pub struct ColumnInfo {
+    /// Schema name this column belongs to
+    pub schema: String,
     /// Table name this column belongs to
     pub table_name: String,
     /// Column name
@@ -157,6 +159,7 @@ impl SchemaCache {
         self.refresh_schemas().await?;
         self.refresh_tables().await?;
         self.refresh_columns().await?;
+        self.refresh_functions().await?;
         self.refresh_policies().await?;
         self.refresh_roles().await?;
         self.refresh_types().await?;
@@ -243,9 +246,10 @@ impl SchemaCache {
 
     /// Refresh column information from information_schema.
     async fn refresh_columns(&self) -> Result<(), SqlxError> {
-        let rows = query_as::<_, (String, String, String, String, Option<String>)>(
+        let rows = query_as::<_, (String, String, String, String, String, Option<String>)>(
             r#"
             SELECT
+                table_schema,
                 table_name,
                 column_name,
                 data_type,
@@ -253,7 +257,7 @@ impl SchemaCache {
                 column_default
             FROM information_schema.columns
             WHERE table_schema NOT IN ('pg_catalog', 'information_schema')
-            ORDER BY table_name, ordinal_position
+            ORDER BY table_schema, table_name, ordinal_position
             "#,
         )
         .fetch_all(self.db_pool.as_ref())
@@ -261,8 +265,9 @@ impl SchemaCache {
 
         self.columns.clear();
 
-        for (table_name, column_name, data_type, is_nullable, default_value) in rows {
+        for (schema, table_name, column_name, data_type, is_nullable, default_value) in rows {
             let column = ColumnInfo {
+                schema: schema.clone(),
                 table_name: table_name.clone(),
                 name: column_name,
                 data_type,
@@ -272,7 +277,7 @@ impl SchemaCache {
             };
 
             self.columns
-                .entry(table_name)
+                .entry(Self::column_key(&schema, &table_name))
                 .or_insert_with(Vec::new)
                 .push(column);
         }
@@ -1227,8 +1232,6 @@ impl SchemaCache {
             ),
         ];
 
-        self.functions.clear();
-
         for (name, return_type, signature, description) in FUNCTIONS {
             self.functions.insert(
                 name.to_string(),
@@ -1240,6 +1243,52 @@ impl SchemaCache {
                 },
             );
         }
+    }
+
+    /// Refresh function information from pg_catalog.
+    async fn refresh_functions(&self) -> Result<(), SqlxError> {
+        let rows = query_as::<_, (String, String, String, String, Option<String>)>(
+            r#"
+            SELECT
+                n.nspname AS schema_name,
+                p.proname AS function_name,
+                pg_get_function_result(p.oid) AS return_type,
+                COALESCE(pg_get_function_identity_arguments(p.oid), '') AS args,
+                obj_description(p.oid, 'pg_proc') AS description
+            FROM pg_proc p
+            JOIN pg_namespace n ON n.oid = p.pronamespace
+            WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
+            ORDER BY n.nspname, p.proname
+            "#,
+        )
+        .fetch_all(self.db_pool.as_ref())
+        .await?;
+
+        self.functions.clear();
+
+        for (schema, name, return_type, args, description) in rows {
+            let args = args.trim();
+            let signature = if args.is_empty() {
+                format!("{}()", name)
+            } else {
+                format!("{}({})", name, args)
+            };
+
+            let info = FunctionInfo {
+                name: name.clone(),
+                return_type,
+                signature: format!("{}.{}", schema, signature),
+                description: description.unwrap_or_default(),
+            };
+
+            self.functions.insert(format!("{}.{}", schema, name), info);
+        }
+
+        tracing::info!(
+            total = self.functions.len(),
+            "LSP schema cache: loaded functions"
+        );
+        Ok(())
     }
 
     /// Detect if a table name corresponds to a FHIR resource.
@@ -1400,8 +1449,38 @@ impl SchemaCache {
 
     /// Get columns for a table.
     pub fn get_columns(&self, table_name: &str) -> Vec<ColumnInfo> {
+        if let Some((schema, table)) = Self::split_qualified_table(table_name) {
+            return self.get_columns_in_schema(schema, table);
+        }
+
+        if let Some(columns) = self.columns.get(&Self::column_key("public", table_name)) {
+            return columns.value().clone();
+        }
+
+        let table_lower = table_name.to_lowercase();
+        let mut matches = Vec::new();
+
+        for entry in self.columns.iter() {
+            if entry
+                .value()
+                .first()
+                .is_some_and(|column| column.table_name.to_lowercase() == table_lower)
+            {
+                matches.push(entry.value().clone());
+            }
+        }
+
+        if matches.len() == 1 {
+            matches.pop().unwrap_or_default()
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// Get columns for a table within a specific schema.
+    pub fn get_columns_in_schema(&self, schema: &str, table_name: &str) -> Vec<ColumnInfo> {
         self.columns
-            .get(table_name)
+            .get(&Self::column_key(schema, table_name))
             .map(|r| r.value().clone())
             .unwrap_or_default()
     }
@@ -1409,30 +1488,18 @@ impl SchemaCache {
     /// Get columns matching a prefix for a table.
     pub fn get_columns_matching(&self, table_name: &str, prefix: &str) -> Vec<ColumnInfo> {
         let prefix_lower = prefix.to_lowercase();
-        self.columns
-            .get(table_name)
-            .map(|r| {
-                r.value()
-                    .iter()
-                    .filter(|c| c.name.to_lowercase().starts_with(&prefix_lower))
-                    .cloned()
-                    .collect()
-            })
-            .unwrap_or_default()
+        self.get_columns(table_name)
+            .into_iter()
+            .filter(|c| c.name.to_lowercase().starts_with(&prefix_lower))
+            .collect()
     }
 
     /// Get JSONB columns for a table.
     pub fn get_jsonb_columns(&self, table_name: &str) -> Vec<ColumnInfo> {
-        self.columns
-            .get(table_name)
-            .map(|r| {
-                r.value()
-                    .iter()
-                    .filter(|c| c.data_type == "jsonb")
-                    .cloned()
-                    .collect()
-            })
-            .unwrap_or_default()
+        self.get_columns(table_name)
+            .into_iter()
+            .filter(|c| c.data_type == "jsonb")
+            .collect()
     }
 
     /// Get all JSONB functions.
@@ -1470,17 +1537,46 @@ impl SchemaCache {
 
     /// Check if a table is a FHIR resource table.
     pub fn is_fhir_table(&self, table_name: &str) -> bool {
-        self.tables
-            .iter()
-            .any(|r| r.value().name == table_name && r.value().is_fhir_table)
+        let (schema, table_name) = Self::split_qualified_table(table_name)
+            .map(|(schema, table)| (Some(schema), table))
+            .unwrap_or((None, table_name));
+
+        self.tables.iter().any(|r| {
+            r.value().name == table_name
+                && r.value().is_fhir_table
+                && schema.as_deref().map_or(true, |s| r.value().schema == s)
+        })
     }
 
     /// Get the FHIR resource type for a table.
     pub fn get_fhir_resource_type(&self, table_name: &str) -> Option<String> {
-        self.tables
-            .iter()
-            .find(|r| r.value().name == table_name)
-            .and_then(|r| r.value().fhir_resource_type.clone())
+        let (schema, table_name) = Self::split_qualified_table(table_name)
+            .map(|(schema, table)| (Some(schema), table))
+            .unwrap_or((None, table_name));
+
+        self.tables.iter().find_map(|r| {
+            if r.value().name == table_name
+                && schema.as_deref().map_or(true, |s| r.value().schema == s)
+            {
+                r.value().fhir_resource_type.clone()
+            } else {
+                None
+            }
+        })
+    }
+
+    fn column_key(schema: &str, table: &str) -> String {
+        format!("{}.{}", schema, table)
+    }
+
+    fn split_qualified_table(table_name: &str) -> Option<(&str, &str)> {
+        let mut parts = table_name.splitn(2, '.');
+        let schema = parts.next()?;
+        let table = parts.next()?;
+        if schema.is_empty() || table.is_empty() {
+            return None;
+        }
+        Some((schema, table))
     }
 
     // === Policy methods ===

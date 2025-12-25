@@ -8,6 +8,7 @@ import { MantineProvider } from "@mantine/core";
 import { Notifications } from "@mantine/notifications";
 import { HelmetProvider } from "react-helmet-async";
 import { theme } from "./theme";
+import { ThemeCssVars } from "./themeCssVars";
 import { AppRoutes } from "./routes";
 import { useAuthInterceptor } from "@/shared/api/hooks";
 
@@ -50,6 +51,7 @@ export function App() {
 			<HelmetProvider>
 				<QueryClientProvider client={queryClient}>
 					<MantineProvider theme={theme} defaultColorScheme="auto">
+						<ThemeCssVars />
 						<Notifications position="top-right" />
 						<BrowserRouter basename="/ui">
 							<AppContent />

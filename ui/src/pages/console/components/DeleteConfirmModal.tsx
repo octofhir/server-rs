@@ -1,4 +1,4 @@
-import { Button, Code, Group, Modal, Stack, Text } from "@mantine/core";
+import { Button, Code, Group, Modal, Stack, Text, useMantineTheme } from "@mantine/core";
 import { IconAlertTriangle } from "@tabler/icons-react";
 
 interface DeleteConfirmModalProps {
@@ -16,6 +16,8 @@ export function DeleteConfirmModal({
 	path,
 	resourceType,
 }: DeleteConfirmModalProps) {
+	const theme = useMantineTheme();
+
 	const handleConfirm = () => {
 		onConfirm();
 		onClose();
@@ -27,7 +29,7 @@ export function DeleteConfirmModal({
 			onClose={onClose}
 			title={
 				<Group gap="xs">
-					<IconAlertTriangle size={20} color="var(--mantine-color-red-6)" />
+					<IconAlertTriangle size={20} color={theme.colors.fire[6]} />
 					<Text fw={600}>Confirm Deletion</Text>
 				</Group>
 			}
@@ -65,7 +67,7 @@ export function DeleteConfirmModal({
 					<Button variant="default" onClick={onClose}>
 						Cancel
 					</Button>
-					<Button color="red" onClick={handleConfirm}>
+					<Button color="fire" onClick={handleConfirm}>
 						Delete Resource
 					</Button>
 				</Group>

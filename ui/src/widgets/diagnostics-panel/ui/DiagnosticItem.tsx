@@ -22,15 +22,15 @@ function SeverityIcon({ severity }: { severity: monaco.MarkerSeverity }) {
 
 	switch (severity) {
 		case 8: // monaco.MarkerSeverity.Error
-			return <IconAlertCircle size={size} color={theme.colors.red[6]} />;
+			return <IconAlertCircle size={size} color={theme.colors.fire[6]} />;
 		case 4: // monaco.MarkerSeverity.Warning
-			return <IconAlertTriangle size={size} color={theme.colors.yellow[6]} />;
+			return <IconAlertTriangle size={size} color={theme.colors.warm[6]} />;
 		case 2: // monaco.MarkerSeverity.Info
-			return <IconInfoCircle size={size} color={theme.colors.blue[6]} />;
+			return <IconInfoCircle size={size} color={theme.colors.primary[6]} />;
 		case 1: // monaco.MarkerSeverity.Hint
-			return <IconBulb size={size} color={theme.colors.gray[6]} />;
+			return <IconBulb size={size} color={theme.colors.deep[5]} />;
 		default:
-			return <IconInfoCircle size={size} color={theme.colors.gray[6]} />;
+			return <IconInfoCircle size={size} color={theme.colors.deep[5]} />;
 	}
 }
 
@@ -55,17 +55,14 @@ export function DiagnosticItem({ diagnostic, onClick }: DiagnosticItemProps) {
 				cursor: onClick ? "pointer" : "default",
 			}}
 			styles={{
-				root: {
-					"&:hover": onClick
-						? {
-								backgroundColor:
-									theme.colorScheme === "dark"
-										? theme.colors.dark[5]
-										: theme.colors.gray[1],
+					root: {
+						"&:hover": onClick
+							? {
+								backgroundColor: "var(--app-surface-3)",
 							}
-						: {},
-				},
-			}}
+							: {},
+					},
+				}}
 		>
 			<Group gap="xs" wrap="nowrap" align="flex-start">
 				<Box style={{ marginTop: 2 }}>

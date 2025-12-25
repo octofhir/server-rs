@@ -1,10 +1,12 @@
 import { useMutation } from "@tanstack/react-query";
+import { useUnit } from "effector-react";
 import { fhirClient, HttpError } from "@/shared/api/fhirClient";
-import { useConsoleStore } from "../state/consoleStore";
+import { $mode, setLastResponse } from "../state/consoleStore";
 import { validateConsoleRequest } from "../utils/requestValidator";
 import { notifications } from "@mantine/notifications";
 import { useHistory } from "./useHistory";
 import type { HttpMethod } from "@/shared/api";
+import { useUiSettings } from "@/shared";
 
 export interface SendRequestParams {
 	method: HttpMethod;
@@ -28,16 +30,21 @@ export interface RequestResponse {
 }
 
 export function useSendConsoleRequest() {
-	const setLastResponse = useConsoleStore((state) => state.setLastResponse);
-	const mode = useConsoleStore((state) => state.mode);
+	const { setLastResponse: setLastResponseEvent, mode } = useUnit({
+		setLastResponse,
+		mode: $mode,
+	});
 	const { addEntry } = useHistory();
+	const [settings] = useUiSettings();
 
 	return useMutation({
 		mutationFn: async (params: SendRequestParams): Promise<RequestResponse> => {
 			// 1. Validate request
-			const validation = validateConsoleRequest(params);
-			if (!validation.isValid) {
-				throw new Error(validation.errors.join(", "));
+			if (!settings.skipConsoleValidation) {
+				const validation = validateConsoleRequest(params);
+				if (!validation.isValid) {
+					throw new Error(validation.errors.join(", "));
+				}
 			}
 
 			// 2. Parse body if present
@@ -70,6 +77,11 @@ export function useSendConsoleRequest() {
 					params.method,
 					absolutePath,
 					parsedBody,
+					{
+						timeout: settings.requestTimeoutMs,
+						includeCredentials: !settings.allowAnonymousConsoleRequests,
+						headers: params.headers,
+					},
 				);
 
 				const endTime = performance.now();
@@ -130,7 +142,7 @@ export function useSendConsoleRequest() {
 
 		onSuccess: async (data, _variables) => {
 			// Update store with last response
-			setLastResponse({
+			setLastResponseEvent({
 				status: data.status,
 				statusText: data.statusText,
 				durationMs: data.durationMs,

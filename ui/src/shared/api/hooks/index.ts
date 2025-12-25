@@ -4,6 +4,8 @@ export {
 	useHealth,
 	useBuildInfo,
 	useResourceTypes,
+	useResourceTypesCategorized,
+	useJsonSchema,
 	useSqlMutation,
 	useGraphQLMutation,
 	useGraphQLSchema,
@@ -35,3 +37,25 @@ export {
 
 // Auth interceptor (global error handling)
 export { useAuthInterceptor } from "./useAuthInterceptor";
+
+// Package queries (FHIR package management)
+export {
+	packageKeys,
+	usePackages,
+	usePackageDetails,
+	usePackageResources,
+	usePackageResourceContent,
+	usePackageFhirSchema,
+	usePackageLookup,
+	usePackageSearch,
+	useInstallPackage,
+	useInstallPackageWithProgress,
+} from "./usePackageQueries";
+
+// Formatter configuration (LSP SQL formatting settings)
+export {
+	formatterKeys,
+	useFormatterConfig,
+	useSaveFormatterConfig,
+	useFormatterSettings,
+} from "./useFormatterConfig";

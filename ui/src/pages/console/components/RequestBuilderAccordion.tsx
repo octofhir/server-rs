@@ -2,7 +2,8 @@ import { Accordion, Group, Text, Badge } from "@mantine/core";
 import { QueryBuilder } from "./QueryBuilder";
 import { HeaderEditor } from "./HeaderEditor";
 import { BodyEditor } from "./BodyEditor";
-import { useConsoleStore } from "../state/consoleStore";
+import { useUnit } from "effector-react";
+import { $body, $customHeaders, $method, $queryParams, $searchParams } from "../state/consoleStore";
 import type { RestConsoleSearchParam } from "@/shared/api";
 
 interface RequestBuilderAccordionProps {
@@ -16,11 +17,13 @@ export function RequestBuilderAccordion({
 	resourceType,
 	hideQuery = false,
 }: RequestBuilderAccordionProps) {
-	const method = useConsoleStore((state) => state.method);
-	const searchParams = useConsoleStore((state) => state.searchParams);
-	const queryParams = useConsoleStore((state) => state.queryParams);
-	const customHeaders = useConsoleStore((state) => state.customHeaders);
-	const body = useConsoleStore((state) => state.body);
+	const { method, searchParams, queryParams, customHeaders, body } = useUnit({
+		method: $method,
+		searchParams: $searchParams,
+		queryParams: $queryParams,
+		customHeaders: $customHeaders,
+		body: $body,
+	});
 
 	const paramCount = searchParams.length + Object.keys(queryParams).length;
 	const customHeaderCount = Object.keys(customHeaders).length;

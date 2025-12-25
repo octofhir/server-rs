@@ -48,7 +48,6 @@ pub mod configuration;
 pub mod identity_provider;
 pub mod policy;
 pub mod state;
-pub mod user;
 
 pub use configuration::{
     ConfigState, delete_config_value, evaluate_feature, get_category_config, get_config_value,
@@ -60,9 +59,6 @@ pub use identity_provider::{
 };
 pub use policy::{PolicyState, policy_status, reload_policies};
 pub use state::{AdminState, CombinedAdminState};
-pub use user::{
-    create_user, delete_user, link_identity, read_user, search_users, unlink_identity, update_user,
-};
 
 use axum::Router;
 use axum::extract::FromRef;
@@ -99,14 +95,6 @@ where
                 .put(update_identity_provider)
                 .delete(delete_identity_provider),
         )
-        // User endpoints
-        .route("/User", get(search_users).post(create_user))
-        .route(
-            "/User/{id}",
-            get(read_user).put(update_user).delete(delete_user),
-        )
-        .route("/User/{id}/$link-identity", post(link_identity))
-        .route("/User/{id}/$unlink-identity", post(unlink_identity))
 }
 
 /// Creates the configuration management routes.

@@ -1,15 +1,18 @@
 import { TextInput } from "@mantine/core";
-import { useConsoleStore } from "../state/consoleStore";
+import { useUnit } from "effector-react";
+import { $rawPath, setRawPath } from "../state/consoleStore";
 
 export function RawPathInput() {
-	const rawPath = useConsoleStore((state) => state.rawPath);
-	const setRawPath = useConsoleStore((state) => state.setRawPath);
+	const { rawPath, setRawPath: setRawPathEvent } = useUnit({
+		rawPath: $rawPath,
+		setRawPath,
+	});
 
 	return (
 		<TextInput
 			placeholder="/fhir/Patient or /api/operations"
 			value={rawPath}
-			onChange={(e) => setRawPath(e.target.value)}
+			onChange={(e) => setRawPathEvent(e.target.value)}
 			size="md"
 			styles={{
 				input: {

@@ -12,10 +12,6 @@ members = [
     "crates/octofhir-server",
     "crates/octofhir-sof",
     "crates/octofhir-storage",
-    # PostgreSQL LSP tree-sitter crates (from Supabase postgres-language-server, MIT)
-    "crates/pgls-text-size",
-    "crates/pgls-treesitter-grammar",
-    "crates/pgls-treesitter",
 ]
 
 [workspace.package]
@@ -36,22 +32,20 @@ octofhir-core = { path = "crates/octofhir-core" }
 octofhir-graphql = { path = "crates/octofhir-graphql" }
 octofhir-sof = { path = "crates/octofhir-sof" }
 octofhir-storage = { path = "crates/octofhir-storage" }
-octofhir-canonical-manager = { version = "0.1.20", default-features = false }
+octofhir-canonical-manager = { version = "0.1.23", default-features = false }
 octofhir-fhir-model = { version = "0.1.7", features = ["http-client", "caching"] }
 
 # async-lsp for SQL language server (better state management than tower-lsp)
 async-lsp = { version = "0.2", features = ["tokio"] }
 lsp-types = "0.97"
 
-# SQL parser for semantic analysis
-sqlparser = "0.60"
-
-# Tree-sitter for SQL AST parsing
-tree-sitter = "0.26"
-tree-sitter-language = "0.1"
-pgls-treesitter-grammar = { path = "crates/pgls-treesitter-grammar" }
-pgls-treesitter = { path = "crates/pgls-treesitter" }
-pgls-text-size = { path = "crates/pgls-text-size" }
+# Mold SQL stack (from git main branch)
+mold_parser = { git = "https://github.com/octofhir/mold.git", branch = "main" }
+mold_syntax = { git = "https://github.com/octofhir/mold.git", branch = "main" }
+mold_hir = { git = "https://github.com/octofhir/mold.git", branch = "main" }
+mold_completion = { git = "https://github.com/octofhir/mold.git", branch = "main" }
+mold_format = { git = "https://github.com/octofhir/mold.git", branch = "main" }
+text-size = "1.1"
 
 # Test utilities
 filetime = "0.2"
@@ -94,9 +88,8 @@ hostname = "0.4"
 # JSON Patch (RFC 6902)
 json-patch = "4"
 
-# FHIRPath evaluation engine
-octofhir-fhirpath = { version = "0.4.31" }
-octofhir-fhirschema = { version = "0.3.10" }
+octofhir-fhirpath = { version = "0.4.33"}
+octofhir-fhirschema = { version = "0.3.11"}
 
 # Environment
 dotenvy = "0.15"

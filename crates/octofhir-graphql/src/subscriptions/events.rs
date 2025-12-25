@@ -246,7 +246,8 @@ mod tests {
         let broadcaster = ResourceEventBroadcaster::new();
         let mut receiver = broadcaster.subscribe();
 
-        let event = ResourceChangeEvent::created("Patient", "123", serde_json::json!({"id": "123"}));
+        let event =
+            ResourceChangeEvent::created("Patient", "123", serde_json::json!({"id": "123"}));
         broadcaster.send(event.clone());
 
         let received = receiver.recv().await.unwrap();

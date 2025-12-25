@@ -1,8 +1,0 @@
----
-source: crates/octofhir-server/src/lsp/formatting/tests/comprehensive_tests.rs
-expression: formatted
----
-  SELECT status, count(*)
-    FROM patient
-GROUP BY status
-  HAVING count(*) > 5

@@ -6,7 +6,7 @@
   "title": "External Identity Provider",
   "status": "active",
   "fhirVersion": "4.0.1",
-  "kind": "resource",
+  "kind": "logical",
   "abstract": false,
   "type": "IdentityProvider",
   "baseDefinition": "http://hl7.org/fhir/StructureDefinition/DomainResource",

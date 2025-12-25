@@ -723,7 +723,6 @@ impl OperationMetadata {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use octofhir_search::parameters::{SearchParameter, SearchParameterType};
 
     #[test]
     fn modifier_conversion_handles_all_variants() {

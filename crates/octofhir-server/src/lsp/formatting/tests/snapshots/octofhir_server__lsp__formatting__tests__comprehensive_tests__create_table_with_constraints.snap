@@ -1,5 +1,0 @@
----
-source: crates/octofhir-server/src/lsp/formatting/tests/comprehensive_tests.rs
-expression: formatted
----
-CREATE TABLE patient (id INT PRIMARY KEY, name TEXT NOT NULL, email TEXT UNIQUE)

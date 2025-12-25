@@ -1,10 +1,10 @@
 //! Debug test to check GraphQL schema generation for complex types
 
-use std::sync::Arc;
-use octofhir_fhir_model::provider::{ModelProvider, FhirVersion};
+use octofhir_fhir_model::provider::{FhirVersion, ModelProvider};
 use octofhir_fhirschema::{FhirSchemaModelProvider, get_schemas};
 use octofhir_graphql::{FhirSchemaBuilder, SchemaBuilderConfig};
-use octofhir_search::{SearchParameterRegistry, SearchParameter, SearchParameterType};
+use octofhir_search::{SearchParameter, SearchParameterRegistry, SearchParameterType};
+use std::sync::Arc;
 
 #[tokio::test]
 async fn debug_humanname_in_schema() {

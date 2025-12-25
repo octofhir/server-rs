@@ -11,6 +11,26 @@ export interface BuildInfo {
   uiVersion?: string;
 }
 
+// Resource type categorization
+export interface CategorizedResourceType {
+  name: string;
+  category: "fhir" | "system" | "custom";
+  url?: string;
+  package: string;
+}
+
+export interface CategoryCounts {
+  all: number;
+  fhir: number;
+  system: number;
+  custom: number;
+}
+
+export interface CategorizedResourceTypesResponse {
+  types: CategorizedResourceType[];
+  counts: CategoryCounts;
+}
+
 // FHIR types (minimal)
 export interface FhirResource {
   resourceType: string;
@@ -112,6 +132,51 @@ export interface LogoutResponse {
   message: string;
 }
 
+// User Management types
+export interface UserResource extends FhirResource {
+  resourceType: "User";
+  username: string;
+  password?: string;
+  email?: string;
+  fhirUser?: Reference;
+  active: boolean;
+  roles: string[];
+  lastLogin?: string;
+  mfaEnabled?: boolean;
+  identity: UserIdentityElement[];
+}
+
+export interface UserIdentityElement {
+  provider: Reference;
+  externalId: string;
+  email?: string;
+  linkedAt?: string;
+}
+
+export interface Reference {
+  reference?: string;
+  display?: string;
+}
+
+export interface LinkIdentityRequest {
+  provider_id: string;
+  external_id: string;
+  email?: string;
+}
+
+export interface UnlinkIdentityRequest {
+  provider_id: string;
+}
+
+export interface UserSearchParams {
+  email?: string;
+  username?: string;
+  active?: boolean;
+  "identity-provider"?: string;
+  _count?: number;
+  _offset?: number;
+}
+
 // Operation types
 export interface OperationDefinition {
   id: string;
@@ -143,6 +208,7 @@ export interface HttpRequestConfig {
   headers?: Record<string, string>;
   data?: any;
   timeout?: number;
+  credentials?: RequestCredentials;
 }
 
 export interface HttpResponse<T = any> {
@@ -206,3 +272,201 @@ export interface ModifierSuggestion {
   description?: string;
 }
 
+// Package management types
+export interface PackageInfo {
+  name: string;
+  version: string;
+  fhirVersion?: string;
+  resourceCount: number;
+  installedAt?: string;
+}
+
+export interface PackageListResponse {
+  packages: PackageInfo[];
+  serverFhirVersion: string;
+}
+
+export interface ResourceTypeSummary {
+  resourceType: string;
+  count: number;
+}
+
+export interface PackageDetailResponse {
+  name: string;
+  version: string;
+  fhirVersion?: string;
+  description?: string;
+  resourceCount: number;
+  installedAt?: string;
+  isCompatible: boolean;
+  resourceTypes: ResourceTypeSummary[];
+}
+
+export interface PackageResourceSummary {
+  id?: string;
+  url?: string;
+  name?: string;
+  version?: string;
+  resourceType: string;
+}
+
+export interface PackageResourcesResponse {
+  resources: PackageResourceSummary[];
+  total: number;
+}
+
+export interface PackageLookupResponse {
+  name: string;
+  versions: string[];
+  installedVersions: string[];
+}
+
+export interface PackageInstallRequest {
+  name: string;
+  version: string;
+}
+
+export interface PackageInstallResponse {
+  success: boolean;
+  name: string;
+  version: string;
+  fhirVersion: string;
+  resourceCount: number;
+  message: string;
+}
+
+// Package search types
+export interface PackageSearchResult {
+  name: string;
+  versions: string[];
+  description?: string;
+  latestVersion: string;
+}
+
+export interface PackageSearchResponse {
+  query: string;
+  packages: PackageSearchResult[];
+  total: number;
+}
+
+// Package install progress event types (SSE)
+export type InstallEventType =
+  | "started"
+  | "resolving_dependencies"
+  | "dependencies_resolved"
+  | "download_started"
+  | "download_progress"
+  | "download_completed"
+  | "extracting"
+  | "extracted"
+  | "indexing"
+  | "package_installed"
+  | "completed"
+  | "error"
+  | "skipped";
+
+export interface InstallEventStarted {
+  type: "started";
+  total_packages: number;
+}
+
+export interface InstallEventResolvingDependencies {
+  type: "resolving_dependencies";
+  package: string;
+  version: string;
+}
+
+export interface InstallEventDependenciesResolved {
+  type: "dependencies_resolved";
+  packages: string[];
+}
+
+export interface InstallEventDownloadStarted {
+  type: "download_started";
+  package: string;
+  version: string;
+  current: number;
+  total: number;
+  total_bytes?: number;
+}
+
+export interface InstallEventDownloadProgress {
+  type: "download_progress";
+  package: string;
+  version: string;
+  downloaded_bytes: number;
+  total_bytes?: number;
+  percent: number;
+}
+
+export interface InstallEventDownloadCompleted {
+  type: "download_completed";
+  package: string;
+  version: string;
+}
+
+export interface InstallEventExtracting {
+  type: "extracting";
+  package: string;
+  version: string;
+  current: number;
+  total: number;
+}
+
+export interface InstallEventExtracted {
+  type: "extracted";
+  package: string;
+  version: string;
+  resource_count: number;
+}
+
+export interface InstallEventIndexing {
+  type: "indexing";
+  package: string;
+  version: string;
+  current: number;
+  total: number;
+}
+
+export interface InstallEventPackageInstalled {
+  type: "package_installed";
+  package: string;
+  version: string;
+  resource_count: number;
+}
+
+export interface InstallEventCompleted {
+  type: "completed";
+  total_installed: number;
+  total_resources: number;
+  duration_ms: number;
+}
+
+export interface InstallEventError {
+  type: "error";
+  package?: string;
+  version?: string;
+  message: string;
+}
+
+export interface InstallEventSkipped {
+  type: "skipped";
+  package: string;
+  version: string;
+  reason: string;
+}
+
+export type InstallEvent =
+  | InstallEventStarted
+  | InstallEventResolvingDependencies
+  | InstallEventDependenciesResolved
+  | InstallEventDownloadStarted
+  | InstallEventDownloadProgress
+  | InstallEventDownloadCompleted
+  | InstallEventExtracting
+  | InstallEventExtracted
+  | InstallEventIndexing
+  | InstallEventPackageInstalled
+  | InstallEventCompleted
+  | InstallEventError
+  | InstallEventSkipped;

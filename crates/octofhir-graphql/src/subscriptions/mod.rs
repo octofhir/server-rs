@@ -20,5 +20,5 @@
 mod events;
 pub mod fields;
 
-pub use events::{ResourceChangeEvent, ResourceEventType, ResourceEventBroadcaster};
+pub use events::{ResourceChangeEvent, ResourceEventBroadcaster, ResourceEventType};
 pub use fields::{build_subscription_type, create_resource_change_event_type};

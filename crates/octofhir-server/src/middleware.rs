@@ -382,8 +382,8 @@ pub async fn request_id(mut req: Request<Body>, next: Next) -> Response {
     res
 }
 
-// Content negotiation middleware: accept FHIR JSON and plain JSON for Accept,
-// and require one of them for POST/PUT Content-Type.
+// Content negotiation middleware: accept FHIR JSON, plain JSON, and SSE for Accept,
+// and require JSON for POST/PUT Content-Type.
 pub async fn content_negotiation(req: Request<Body>, next: Next) -> Response {
     let accepts_hdr = req.headers().get("accept").and_then(|v| v.to_str().ok());
     let accept_ok = accepts_hdr
@@ -391,6 +391,7 @@ pub async fn content_negotiation(req: Request<Body>, next: Next) -> Response {
             let v = v.to_ascii_lowercase();
             v.contains("application/fhir+json")
                 || v.contains("application/json")
+                || v.contains("text/event-stream") // For SSE endpoints
                 || v.contains("*/*")
         })
         .unwrap_or(true); // if missing, treat as ok per HTTP defaults

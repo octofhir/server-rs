@@ -1,0 +1,7 @@
+.root {
+    transition: all 0.15s ease;
+}
+
+.root:active {
+    transform: scale(0.92);
+}

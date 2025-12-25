@@ -15,6 +15,7 @@ import {
 	Divider,
 	Breadcrumbs,
 	Anchor,
+	useMantineTheme,
 } from "@mantine/core";
 import {
 	IconAlertCircle,
@@ -41,12 +42,12 @@ const CATEGORY_ICONS: Record<string, typeof IconServer> = {
 };
 
 const CATEGORY_COLORS: Record<string, string> = {
-	fhir: "blue",
-	graphql: "grape",
-	system: "teal",
-	auth: "red",
-	ui: "orange",
-	api: "cyan",
+	fhir: "primary",
+	graphql: "deep",
+	system: "warm",
+	auth: "fire",
+	ui: "warm",
+	api: "gray",
 };
 
 const CATEGORY_LABELS: Record<string, string> = {
@@ -60,11 +61,11 @@ const CATEGORY_LABELS: Record<string, string> = {
 
 function MethodBadge({ method }: { method: string }) {
 	const colors: Record<string, string> = {
-		GET: "green",
-		POST: "blue",
-		PUT: "orange",
-		DELETE: "red",
-		PATCH: "yellow",
+		GET: "primary",
+		POST: "fire",
+		PUT: "deep",
+		DELETE: "fire",
+		PATCH: "warm",
 	};
 
 	return (
@@ -79,6 +80,7 @@ export function OperationDetailPage() {
 	const navigate = useNavigate();
 	const { data: operation, isLoading, error } = useOperation(id ?? "");
 	const updateMutation = useUpdateOperation();
+	const theme = useMantineTheme();
 
 	const [isPublic, setIsPublic] = useState(false);
 	const [description, setDescription] = useState("");
@@ -118,7 +120,7 @@ export function OperationDetailPage() {
 
 	if (!id) {
 		return (
-			<Alert icon={<IconAlertCircle size={16} />} color="red" variant="light">
+			<Alert icon={<IconAlertCircle size={16} />} color="fire" variant="light">
 				Operation ID is required
 			</Alert>
 		);
@@ -151,19 +153,19 @@ export function OperationDetailPage() {
 			)}
 
 			{error && (
-				<Alert icon={<IconAlertCircle size={16} />} color="red" variant="light">
+				<Alert icon={<IconAlertCircle size={16} />} color="fire" variant="light">
 					{error instanceof Error ? error.message : "Failed to load operation"}
 				</Alert>
 			)}
 
 			{operation && (
 				<>
-					<Paper withBorder p="lg">
+					<Paper p="lg" style={{ backgroundColor: "var(--app-surface-1)" }}>
 						<Stack gap="md">
 							<Group justify="space-between" align="flex-start">
 								<div>
 									<Group gap="sm" mb="xs">
-										<CategoryIcon size={24} color={`var(--mantine-color-${categoryColor}-6)`} />
+										<CategoryIcon size={24} color={theme.colors[categoryColor][6]} />
 										<Title order={3}>{operation.name}</Title>
 									</Group>
 									<Code size="sm">{operation.id}</Code>
@@ -173,11 +175,11 @@ export function OperationDetailPage() {
 										{categoryLabel}
 									</Badge>
 									{operation.public ? (
-										<Badge color="green" variant="light" leftSection={<IconLockOpen size={12} />}>
+										<Badge color="primary" variant="light" leftSection={<IconLockOpen size={12} />}>
 											Public
 										</Badge>
 									) : (
-										<Badge color="gray" variant="light" leftSection={<IconLock size={12} />}>
+										<Badge color="deep" variant="light" leftSection={<IconLock size={12} />}>
 											Protected
 										</Badge>
 									)}
@@ -213,7 +215,7 @@ export function OperationDetailPage() {
 						</Stack>
 					</Paper>
 
-					<Paper withBorder p="lg">
+					<Paper p="lg" style={{ backgroundColor: "var(--app-surface-2)" }}>
 						<Title order={4} mb="md">
 							Settings
 						</Title>
@@ -249,13 +251,13 @@ export function OperationDetailPage() {
 							)}
 
 							{updateMutation.isError && (
-								<Alert icon={<IconAlertCircle size={16} />} color="red" variant="light">
+								<Alert icon={<IconAlertCircle size={16} />} color="fire" variant="light">
 									{updateMutation.error instanceof Error ? updateMutation.error.message : "Failed to update operation"}
 								</Alert>
 							)}
 
 							{updateMutation.isSuccess && (
-								<Alert color="green" variant="light">
+								<Alert color="primary" variant="light">
 									Operation updated successfully
 								</Alert>
 							)}

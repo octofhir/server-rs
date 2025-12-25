@@ -6,12 +6,12 @@
   "title": "Access Policy",
   "status": "active",
   "fhirVersion": "4.0.1",
-  "kind": "resource",
+  "kind": "logical",
   "abstract": false,
   "type": "AccessPolicy",
   "baseDefinition": "http://hl7.org/fhir/StructureDefinition/DomainResource",
   "derivation": "specialization",
-  "description": "An access policy that defines authorization rules. Policies can use different engines (allow, deny, matcho, sql) and be linked to clients, users, or roles.",
+  "description": "An access policy that defines authorization rules. Policies can use different engines (allow, deny, quickjs) and be linked to clients, users, or roles via matchers.",
   "differential": {
     "element": [
       {
@@ -41,62 +41,61 @@
       {
         "id": "AccessPolicy.engine",
         "path": "AccessPolicy.engine",
-        "short": "Policy engine type",
-        "definition": "The engine used to evaluate this policy",
-        "comment": "Values: allow (always allow), deny (always deny), matcho (pattern matching), sql (SQL-based rules)",
+        "short": "Policy engine",
+        "definition": "The engine configuration for evaluating this policy",
+        "min": 1,
+        "max": "1",
+        "type": [{ "code": "BackboneElement" }]
+      },
+      {
+        "id": "AccessPolicy.engine.type",
+        "path": "AccessPolicy.engine.type",
+        "short": "Engine type",
+        "definition": "The type of engine to use for evaluation",
+        "comment": "Values: allow (always allow), deny (always deny), quickjs (JavaScript evaluation)",
         "min": 1,
         "max": "1",
         "type": [{ "code": "code" }]
       },
       {
-        "id": "AccessPolicy.link",
-        "path": "AccessPolicy.link",
-        "short": "Policy links",
-        "definition": "Links this policy to clients, users, or roles",
+        "id": "AccessPolicy.matcher",
+        "path": "AccessPolicy.matcher",
+        "short": "Matcher conditions",
+        "definition": "Conditions that determine when this policy applies. All specified fields must match (AND logic).",
         "min": 0,
-        "max": "*",
+        "max": "1",
         "type": [{ "code": "BackboneElement" }]
       },
       {
-        "id": "AccessPolicy.link.client",
-        "path": "AccessPolicy.link.client",
-        "short": "Linked client",
-        "definition": "Reference to a Client this policy applies to",
+        "id": "AccessPolicy.matcher.clients",
+        "path": "AccessPolicy.matcher.clients",
+        "short": "Client ID patterns",
+        "definition": "Client ID patterns to match (supports wildcards with '*')",
         "min": 0,
-        "max": "1",
-        "type": [
-          {
-            "code": "Reference",
-            "targetProfile": ["http://octofhir.io/StructureDefinition/Client"]
-          }
-        ]
-      },
-      {
-        "id": "AccessPolicy.link.user",
-        "path": "AccessPolicy.link.user",
-        "short": "Linked user",
-        "definition": "Reference to a User this policy applies to",
-        "min": 0,
-        "max": "1",
-        "type": [
-          {
-            "code": "Reference",
-            "targetProfile": ["http://octofhir.io/StructureDefinition/User"]
-          }
-        ]
-      },
-      {
-        "id": "AccessPolicy.link.role",
-        "path": "AccessPolicy.link.role",
-        "short": "Linked role",
-        "definition": "Role name this policy applies to",
-        "min": 0,
-        "max": "1",
+        "max": "*",
         "type": [{ "code": "string" }]
       },
       {
-        "id": "AccessPolicy.resourceType",
-        "path": "AccessPolicy.resourceType",
+        "id": "AccessPolicy.matcher.roles",
+        "path": "AccessPolicy.matcher.roles",
+        "short": "Required roles",
+        "definition": "User roles to match (any role matches)",
+        "min": 0,
+        "max": "*",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "AccessPolicy.matcher.userTypes",
+        "path": "AccessPolicy.matcher.userTypes",
+        "short": "User FHIR types",
+        "definition": "User FHIR resource types (e.g., 'Practitioner', 'Patient')",
+        "min": 0,
+        "max": "*",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "AccessPolicy.matcher.resourceTypes",
+        "path": "AccessPolicy.matcher.resourceTypes",
         "short": "Target resource types",
         "definition": "FHIR resource types this policy applies to (empty means all)",
         "min": 0,
@@ -104,19 +103,55 @@
         "type": [{ "code": "code" }]
       },
       {
-        "id": "AccessPolicy.matcho",
-        "path": "AccessPolicy.matcho",
-        "short": "Matcho pattern rules",
-        "definition": "Pattern matching rules for matcho engine",
+        "id": "AccessPolicy.matcher.operations",
+        "path": "AccessPolicy.matcher.operations",
+        "short": "FHIR operations",
+        "definition": "FHIR operations to match (e.g., 'read', 'create', 'search', '*')",
+        "min": 0,
+        "max": "*",
+        "type": [{ "code": "code" }]
+      },
+      {
+        "id": "AccessPolicy.matcher.operationIds",
+        "path": "AccessPolicy.matcher.operationIds",
+        "short": "Operation IDs",
+        "definition": "Specific operation IDs (e.g., 'fhir.read', 'graphql.query'). Supports wildcards.",
+        "min": 0,
+        "max": "*",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "AccessPolicy.matcher.paths",
+        "path": "AccessPolicy.matcher.paths",
+        "short": "Request paths",
+        "definition": "Request path patterns (glob syntax)",
+        "min": 0,
+        "max": "*",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "AccessPolicy.matcher.sourceIps",
+        "path": "AccessPolicy.matcher.sourceIps",
+        "short": "Source IPs",
+        "definition": "Source IP addresses in CIDR notation",
+        "min": 0,
+        "max": "*",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "AccessPolicy.engine.script",
+        "path": "AccessPolicy.engine.script",
+        "short": "JavaScript script",
+        "definition": "JavaScript code for 'quickjs' engine. Has access to 'user', 'client', 'request', and 'resource' context objects.",
         "min": 0,
         "max": "1",
         "type": [{ "code": "string" }]
       },
       {
-        "id": "AccessPolicy.sql",
-        "path": "AccessPolicy.sql",
-        "short": "SQL rule",
-        "definition": "SQL expression for sql engine",
+        "id": "AccessPolicy.denyMessage",
+        "path": "AccessPolicy.denyMessage",
+        "short": "Custom deny message",
+        "definition": "Custom message returned when access is denied by this policy",
         "min": 0,
         "max": "1",
         "type": [{ "code": "string" }]

@@ -1,4 +1,5 @@
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
+import { useUnit } from "effector-react";
 import { Helmet } from "react-helmet-async";
 import {
 	Alert,
@@ -6,11 +7,11 @@ import {
 	Button,
 	Grid,
 	Group,
-	Skeleton,
 	Stack,
 	Text,
 	Title,
-} from "@mantine/core";
+	Box,
+} from "@/shared/ui";
 import { useHotkeys } from "@mantine/hooks";
 import { IconAlertCircle, IconRefresh, IconHistory } from "@tabler/icons-react";
 import { ConsolePanel } from "./components/ConsolePanel";
@@ -24,7 +25,14 @@ import { HistoryPanel } from "./components/HistoryPanel";
 import { CommandPalette } from "./components/CommandPalette";
 import { useRestConsoleMeta } from "./hooks/useRestConsoleMeta";
 import { useSendConsoleRequest } from "./hooks/useSendConsoleRequest";
-import { useConsoleStore } from "./state/consoleStore";
+import {
+	$body,
+	$customHeaders,
+	$method,
+	$mode,
+	$rawPath,
+	setCommandPaletteOpen,
+} from "./state/consoleStore";
 
 export function RestConsolePage() {
 	const {
@@ -40,12 +48,21 @@ export function RestConsolePage() {
 	const baseUrl = useResolvedBaseUrl(meta?.base_path);
 
 	// Console state
-	const method = useConsoleStore((state) => state.method);
-	const mode = useConsoleStore((state) => state.mode);
-	const rawPath = useConsoleStore((state) => state.rawPath);
-	const body = useConsoleStore((state) => state.body);
-	const customHeaders = useConsoleStore((state) => state.customHeaders);
-	const setCommandPaletteOpen = useConsoleStore((state) => state.setCommandPaletteOpen);
+	const {
+		method,
+		mode,
+		rawPath,
+		body,
+		customHeaders,
+		setCommandPaletteOpen: openPalette,
+	} = useUnit({
+		method: $method,
+		mode: $mode,
+		rawPath: $rawPath,
+		body: $body,
+		customHeaders: $customHeaders,
+		setCommandPaletteOpen,
+	});
 
 	// Send request mutation
 	const sendMutation = useSendConsoleRequest();
@@ -53,160 +70,248 @@ export function RestConsolePage() {
 	// History drawer state
 	const [historyOpened, setHistoryOpened] = useState(false);
 
-	const handleSend = () => {
+	const handleSend = useCallback(() => {
 		sendMutation.mutate({
 			method,
 			path: rawPath,
 			body,
 			headers: customHeaders,
 		});
-	};
+	}, [sendMutation, method, rawPath, body, customHeaders]);
 
-	// Keyboard shortcuts
-	useHotkeys([
-		["mod+K", (e) => {
+	const handleOpenPalette = useCallback(
+		(e: KeyboardEvent) => {
 			e.preventDefault();
-			console.log("[RestConsolePage] Cmd+K pressed, opening palette");
-			setCommandPaletteOpen(true);
-		}],
-		["mod+Enter", handleSend]
-	]);
+			openPalette(true);
+		},
+		[openPalette],
+	);
+
+	// Keyboard shortcuts - memoized to prevent infinite re-renders
+	const hotkeys = useMemo(
+		() =>
+			[
+				["mod+K", handleOpenPalette],
+				["mod+Enter", handleSend],
+			] as const,
+		[handleOpenPalette, handleSend],
+	);
+
+	useHotkeys(hotkeys);
 
 	return (
-		<>
+		<Box className="page-enter" p="xl">
 			<Helmet>
 				<title>REST Console</title>
 			</Helmet>
-			<Stack gap="lg">
-				<header>
-					<Stack gap="xs">
-						<Group justify="space-between">
-							<Title order={2}>REST Console</Title>
-							<Button
-								variant="light"
-								leftSection={<IconHistory size={16} />}
-								onClick={() => setHistoryOpened(true)}
-								size="sm"
+
+			<Stack gap="xl">
+				<Box>
+					<Group justify="space-between" align="flex-end">
+						<Box>
+							<Title
+								order={1}
+								style={{ letterSpacing: "-0.03em", fontWeight: 700 }}
 							>
-								History
-							</Button>
-						</Group>
-						<Group gap="sm">
-							<Text c="dimmed" size="sm">
-								Build and execute FHIR REST requests with smart autocomplete.
-							</Text>
-							<Badge variant="outline" color="gray">
-								{baseUrl}
-							</Badge>
-						</Group>
-					</Stack>
-				</header>
+								REST Console
+							</Title>
+							<Group gap="sm" mt={4}>
+								<Text c="dimmed" size="lg">
+									Build and execute FHIR requests with smart autocomplete
+								</Text>
+								<Badge variant="dot" color="primary" radius="sm">
+									{baseUrl}
+								</Badge>
+							</Group>
+						</Box>
+						<Button
+							variant="light"
+							radius="md"
+							leftSection={<IconHistory size={18} />}
+							onClick={() => setHistoryOpened(true)}
+							size="md"
+						>
+							History
+						</Button>
+					</Group>
+				</Box>
 
 				{isError ? (
 					<Alert
-						icon={<IconAlertCircle size={16} />}
+						icon={<IconAlertCircle size={20} />}
 						color="red"
+						radius="md"
 						variant="light"
-						title="Unable to load metadata"
-						withCloseButton={false}
+						title="Connection Failed"
 					>
-						<Group gap="sm" align="flex-start">
+						<Group gap="sm">
 							<Text size="sm">
-								The REST console metadata endpoint is unavailable. Retry once the server is
-								reachable.
+								The metadata endpoint is unavailable. Please check if the server
+								is running.
 							</Text>
 							<Button
-								leftSection={<IconRefresh size={16} />}
-								variant="light"
+								leftSection={<IconRefresh size={14} />}
+								variant="subtle"
 								onClick={() => refetch()}
 								size="xs"
+								color="red"
 							>
-								Try again
+								Retry Connection
 							</Button>
 						</Group>
 					</Alert>
 				) : null}
 
-				<Grid gutter="lg">
-					<Grid.Col span={{ base: 12, md: 8 }}>
-						<ConsolePanel
-							title="Request Builder"
-							subtitle={mode === "smart" ? "Build your FHIR request with autocomplete" : "Enter raw path manually"}
+				<Grid gutter="xl">
+					<Grid.Col span={{ base: 12, lg: 8 }}>
+						<Box
+							style={{
+								display: "flex",
+								flexDirection: "column",
+								gap: "var(--mantine-spacing-md)",
+								height: "100%",
+							}}
 						>
-							<Stack gap="md">
-								<Group justify="space-between" align="flex-start">
-									<Group>
-										<MethodControl />
-										<ModeControl />
+							<ConsolePanel
+								title="Request Builder"
+								subtitle={
+									mode === "smart"
+										? "IDE-grade FHIR autocomplete"
+										: "Manual path override"
+								}
+							>
+								<Stack gap="xl">
+									<Group justify="space-between" align="center">
+										<Group gap="sm">
+											<MethodControl />
+											<Box
+												style={{
+													width: 1,
+													height: 24,
+													backgroundColor: "var(--app-border-subtle)",
+												}}
+											/>
+											<ModeControl />
+										</Group>
+										<Button
+											size="md"
+											radius="md"
+											variant="filled"
+											onClick={handleSend}
+											loading={sendMutation.isPending}
+											disabled={!rawPath}
+											style={{
+												boxShadow:
+													"0 8px 16px var(--mantine-color-primary-light-hover)",
+												paddingLeft: 24,
+												paddingRight: 24,
+											}}
+										>
+											Send Request
+										</Button>
 									</Group>
-									<Button
-										size="sm"
-										onClick={handleSend}
-										loading={sendMutation.isPending}
-										disabled={!rawPath}
+
+									<Box
+										p="md"
+										style={{
+											backgroundColor: "var(--app-surface-2)",
+											borderRadius: "var(--mantine-radius-md)",
+											border: "1px solid var(--app-border-subtle)",
+										}}
 									>
-										Send Request
-									</Button>
-								</Group>
+										{mode === "smart" ? (
+											<UnifiedPathBuilder
+												allSuggestions={allSuggestions}
+												searchParamsByResource={searchParamsByResource}
+												isLoading={isPending}
+											/>
+										) : (
+											<RawPathInput />
+										)}
+									</Box>
 
-								{mode === "smart" ? (
-									<UnifiedPathBuilder
-										allSuggestions={allSuggestions}
+									<RequestBuilderAccordion
 										searchParamsByResource={searchParamsByResource}
-										isLoading={isPending}
+										hideQuery
 									/>
-								) : (
-									<RawPathInput />
-								)}
-
-								<RequestBuilderAccordion
-									searchParamsByResource={searchParamsByResource}
-									hideQuery
-								/>
-							</Stack>
-						</ConsolePanel>
-					</Grid.Col>
-
-					<Grid.Col span={{ base: 12, md: 4 }}>
-						<ConsolePanel
-							title="Response"
-							subtitle={sendMutation.isPending ? "Executing..." : "Request results"}
-						>
-							<ResponseViewer
-								response={sendMutation.data}
-								isLoading={sendMutation.isPending}
-							/>
-						</ConsolePanel>
-
-						{!isPending && resourceTypes.length > 0 ? (
-							<ConsolePanel title="Server Info" subtitle="Loaded from metadata">
-								<Stack gap="xs">
-									<Group justify="space-between">
-										<Text size="sm" fw={500}>
-											Resource Types
-										</Text>
-										<Badge variant="light">{resourceTypes.length}</Badge>
-									</Group>
-									<Group justify="space-between">
-										<Text size="sm" fw={500}>
-											FHIR Version
-										</Text>
-										<Badge variant="light">{meta?.fhir_version || "R4B"}</Badge>
-									</Group>
-									<Text size="xs" c="dimmed">
-										Search parameters loaded from{" "}
-										{Object.keys(searchParamsByResource).length} resources
-									</Text>
 								</Stack>
 							</ConsolePanel>
-						) : null}
+						</Box>
+					</Grid.Col>
+
+					<Grid.Col span={{ base: 12, lg: 4 }}>
+						<Stack gap="xl">
+							<ConsolePanel
+								title="Response"
+								subtitle={
+									sendMutation.isPending
+										? "Executing..."
+										: "Instant feedback loop"
+								}
+							>
+								<ResponseViewer
+									response={sendMutation.data}
+									isLoading={sendMutation.isPending}
+								/>
+							</ConsolePanel>
+
+							{!isPending && resourceTypes.length > 0 ? (
+								<ConsolePanel
+									title="Server Metadata"
+									subtitle="Live endpoint info"
+								>
+									<Stack gap="md">
+										<Box
+											p="md"
+											style={{
+												backgroundColor: "var(--app-surface-2)",
+												borderRadius: "var(--mantine-radius-md)",
+												border: "1px solid var(--app-border-subtle)",
+											}}
+										>
+											<Group justify="space-between" mb="xs">
+												<Text size="sm" fw={600} c="dimmed">
+													RESOURCE TYPES
+												</Text>
+												<Badge variant="light" color="primary" radius="sm">
+													{resourceTypes.length}
+												</Badge>
+											</Group>
+											<Group justify="space-between">
+												<Text size="sm" fw={600} c="dimmed">
+													FHIR VERSION
+												</Text>
+												<Badge variant="light" color="warm" radius="sm">
+													{meta?.fhir_version || "R4B"}
+												</Badge>
+											</Group>
+										</Box>
+
+										<Group gap={6} align="center">
+											<IconAlertCircle
+												size={14}
+												style={{ color: "var(--app-accent-primary)" }}
+											/>
+											<Text size="xs" c="dimmed">
+												Smart index contains{" "}
+												{Object.keys(searchParamsByResource).length} cached
+												resources
+											</Text>
+										</Group>
+									</Stack>
+								</ConsolePanel>
+							) : null}
+						</Stack>
 					</Grid.Col>
 				</Grid>
 			</Stack>
 
 			<CommandPalette />
-			<HistoryPanel opened={historyOpened} onClose={() => setHistoryOpened(false)} />
-		</>
+			<HistoryPanel
+				opened={historyOpened}
+				onClose={() => setHistoryOpened(false)}
+			/>
+		</Box>
 	);
 }
 

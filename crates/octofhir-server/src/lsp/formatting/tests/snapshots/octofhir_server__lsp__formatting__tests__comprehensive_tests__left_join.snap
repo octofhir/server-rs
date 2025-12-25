@@ -1,8 +1,0 @@
----
-source: crates/octofhir-server/src/lsp/formatting/tests/comprehensive_tests.rs
-expression: formatted
----
-SELECT *
-  FROM patient
-       LEFT JOIN observation
-       ON patient.id = observation.subject

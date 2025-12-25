@@ -22,6 +22,8 @@ import {
 	Text,
 	TextInput,
 	useCombobox,
+	useMantineColorScheme,
+	useMantineTheme,
 } from "@mantine/core";
 import { useHotkeys } from "@mantine/hooks";
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
@@ -32,7 +34,22 @@ import type {
 	RestConsoleSearchParam,
 } from "@/shared/api";
 import { buildPathPreview, cryptoRandomId } from "@/shared/utils/pathTokens";
-import { useConsoleStore, type ConsoleSearchParamToken } from "../state/consoleStore";
+import { useUnit } from "effector-react";
+import {
+	$interaction,
+	$method,
+	$operation,
+	$resourceId,
+	$resourceType,
+	$searchParams,
+	sendDraftRequest,
+	setInteraction,
+	setOperation,
+	setResourceId,
+	setResourceType,
+	setSearchParams,
+	type ConsoleSearchParamToken,
+} from "../state/consoleStore";
 import type { PathComposerMetadata, PathSuggestion } from "../utils/pathComposer";
 import {
 	collectOperationDescriptors,
@@ -56,18 +73,35 @@ export function PathComposer({
 	searchParamsByResource,
 	isLoading,
 }: PathComposerProps) {
-	const method = useConsoleStore((state) => state.method);
-	const resourceType = useConsoleStore((state) => state.resourceType);
-	const resourceId = useConsoleStore((state) => state.resourceId);
-	const interaction = useConsoleStore((state) => state.interaction);
-	const operation = useConsoleStore((state) => state.operation);
-	const searchParams = useConsoleStore((state) => state.searchParams);
-	const setResourceType = useConsoleStore((state) => state.setResourceType);
-	const setResourceId = useConsoleStore((state) => state.setResourceId);
-	const setInteraction = useConsoleStore((state) => state.setInteraction);
-	const setOperation = useConsoleStore((state) => state.setOperation);
-	const setSearchParams = useConsoleStore((state) => state.setSearchParams);
-	const sendDraftRequest = useConsoleStore((state) => state.sendDraftRequest);
+	const { colorScheme } = useMantineColorScheme();
+	const theme = useMantineTheme();
+	const {
+		method,
+		resourceType,
+		resourceId,
+		interaction,
+		operation,
+		searchParams,
+		setResourceType: setResourceTypeEvent,
+		setResourceId: setResourceIdEvent,
+		setInteraction: setInteractionEvent,
+		setOperation: setOperationEvent,
+		setSearchParams: setSearchParamsEvent,
+		sendDraftRequest: sendDraftRequestEvent,
+	} = useUnit({
+		method: $method,
+		resourceType: $resourceType,
+		resourceId: $resourceId,
+		interaction: $interaction,
+		operation: $operation,
+		searchParams: $searchParams,
+		setResourceType,
+		setResourceId,
+		setInteraction,
+		setOperation,
+		setSearchParams,
+		sendDraftRequest,
+	});
 
 	const [resourceQuery, setResourceQuery] = useState(resourceType ?? "");
 	const [operationQuery, setOperationQuery] = useState("");
@@ -215,6 +249,8 @@ export function PathComposer({
 		: validationErrors;
 
 	const activeParam = searchParams.find((param) => param.id === activeParamId) ?? null;
+	const activeParamBorder =
+		colorScheme === "dark" ? theme.colors.primary[4] : theme.colors.primary[6];
 
 	const activeParamMeta = useMemo(
 		() => getSearchParamMetadata(resourceType, activeParam?.code ?? "", composerMetadata),
@@ -228,7 +264,7 @@ export function PathComposer({
 
 	const handleSend = () => {
 		if (validationErrors.length === 0) {
-			sendDraftRequest();
+			sendDraftRequestEvent();
 		}
 	};
 
@@ -277,13 +313,13 @@ export function PathComposer({
 	};
 
 	const updateSearchParam = (id: string, patch: Partial<ConsoleSearchParamToken>) => {
-		setSearchParams(
+		setSearchParamsEvent(
 			searchParams.map((param) => (param.id === id ? { ...param, ...patch } : param)),
 		);
 	};
 
 	const removeSearchParam = (id: string) => {
-		setSearchParams(searchParams.filter((param) => param.id !== id));
+		setSearchParamsEvent(searchParams.filter((param) => param.id !== id));
 		if (activeParamId === id) {
 			setActiveParamId(null);
 		}
@@ -300,7 +336,7 @@ export function PathComposer({
 			resourceType,
 			fromMetadata: true,
 		};
-		setSearchParams([...searchParams, newToken]);
+		setSearchParamsEvent([...searchParams, newToken]);
 		setActiveParamId(newToken.id);
 		setSearchParamQuery("");
 	};
@@ -325,6 +361,7 @@ export function PathComposer({
 						width: "min(480px, 90vw)",
 						margin: "auto",
 						marginTop: "15vh",
+						backgroundColor: "var(--app-surface-1)",
 					}}
 				>
 					<Text fw={600} mb="xs">
@@ -336,9 +373,9 @@ export function PathComposer({
 							const suggestion = slashOptionMap.get(optionId);
 							if (suggestion) {
 								runSlashAction(suggestion, {
-									setResourceType,
-									setOperation,
-									setInteraction,
+									setResourceType: setResourceTypeEvent,
+									setOperation: setOperationEvent,
+									setInteraction: setInteractionEvent,
 								});
 							}
 							closeSlashPalette();
@@ -407,13 +444,13 @@ export function PathComposer({
 				</Group>
 
 				<Group gap="xs" align="flex-end">
-					<Badge color="gray" variant="light">
+					<Badge color="warm" variant="light">
 						{basePath}
 					</Badge>
 					<Combobox
 						store={resourceCombobox}
 						onOptionSubmit={(value) => {
-							setResourceType(value);
+							setResourceTypeEvent(value);
 							setResourceQuery(value);
 							resourceCombobox.closeDropdown();
 						}}
@@ -430,10 +467,10 @@ export function PathComposer({
 								onFocus={() => resourceCombobox.openDropdown()}
 								onBlur={() => {
 									if (resourceQuery.trim() === "") {
-										setResourceType(undefined);
+										setResourceTypeEvent(undefined);
 										return;
 									}
-									setResourceType(resourceQuery.trim());
+									setResourceTypeEvent(resourceQuery.trim());
 								}}
 								error={resourceError}
 								rightSection={isLoading ? <Loader size="xs" /> : undefined}
@@ -462,12 +499,14 @@ export function PathComposer({
 						label="Resource ID"
 						placeholder="Required for read/update/delete"
 						value={resourceId ?? ""}
-						onChange={(event) => setResourceId(event.currentTarget.value || undefined)}
+						onChange={(event) =>
+							setResourceIdEvent(event.currentTarget.value || undefined)
+						}
 					/>
 					<Combobox
 						store={interactionCombobox}
 						onOptionSubmit={(value) => {
-							setInteraction(value);
+							setInteractionEvent(value);
 							setInteractionQuery("");
 							interactionCombobox.closeDropdown();
 						}}
@@ -484,11 +523,11 @@ export function PathComposer({
 								onFocus={() => interactionCombobox.openDropdown()}
 								onBlur={() => {
 									if (!interactionQuery.trim()) {
-										setInteraction(null);
+										setInteractionEvent(null);
 										setInteractionQuery("");
 										return;
 									}
-									setInteraction(interactionQuery.trim());
+									setInteractionEvent(interactionQuery.trim());
 									setInteractionQuery("");
 								}}
 							/>
@@ -512,7 +551,7 @@ export function PathComposer({
 					<Combobox
 						store={operationCombobox}
 						onOptionSubmit={(value) => {
-							setOperation(value);
+							setOperationEvent(value);
 							setOperationQuery("");
 							operationCombobox.closeDropdown();
 						}}
@@ -529,14 +568,14 @@ export function PathComposer({
 								onFocus={() => operationCombobox.openDropdown()}
 								onBlur={() => {
 									if (!operationQuery.trim()) {
-										setOperation(undefined);
+										setOperationEvent(undefined);
 										setOperationQuery("");
 										return;
 									}
 									const next = operationQuery.startsWith("$")
 										? operationQuery.trim()
 										: `$${operationQuery.trim()}`;
-									setOperation(next);
+									setOperationEvent(next);
 									setOperationQuery("");
 								}}
 							/>
@@ -590,7 +629,7 @@ export function PathComposer({
 											cursor: "pointer",
 											borderColor:
 												param.id === activeParamId
-													? "var(--mantine-color-blue-outline)"
+													? activeParamBorder
 													: undefined,
 										}}
 									>
@@ -639,7 +678,11 @@ export function PathComposer({
 					</Combobox>
 
 					{activeParam ? (
-						<Paper withBorder p="sm" radius="md">
+						<Paper
+							p="sm"
+							radius="md"
+							style={{ backgroundColor: "var(--app-surface-2)" }}
+						>
 							<Stack gap="sm">
 								<Text size="sm" fw={500}>
 									Editing {renderSearchParamLabel(activeParam)}
@@ -687,7 +730,7 @@ export function PathComposer({
 				</Stack>
 
 				{otherErrors.length > 0 ? (
-					<Alert color="red" variant="light">
+					<Alert color="fire" variant="light">
 						<Stack gap={4}>
 							{otherErrors.map((error) => (
 								<Text key={error} size="sm">
@@ -830,7 +873,7 @@ function SuggestionRow({ suggestion }: { suggestion: PathSuggestion }) {
 				) : null}
 			</div>
 			{suggestion.badge ? (
-				<Badge size="xs" variant="light" color="blue">
+				<Badge size="xs" variant="light" color="primary">
 					{suggestion.badge}
 				</Badge>
 			) : null}

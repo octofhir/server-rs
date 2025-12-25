@@ -1,0 +1,34 @@
+.root {
+    position: relative;
+    border-radius: var(--mantine-radius-md);
+    overflow: hidden;
+    border: 1px solid var(--app-border-subtle);
+    backgroundColor: var(--app-surface-2);
+}
+
+.copyButton {
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    zIndex: 5;
+}
+
+.code {
+    white-space: pre-wrap;
+    word-break: break-word;
+    background-color: transparent;
+    color: var(--app-text-primary);
+    font-size: var(--mantine-font-size-sm);
+    line-height: 1.6;
+    font-family: var(--mantine-font-family-monospace);
+}
+
+.indicator {
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 4px;
+    background: var(--app-brand-gradient);
+    opacity: 0.6;
+}

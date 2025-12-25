@@ -1,5 +1,6 @@
 import { useState, useCallback } from "react";
-import { useConsoleStore } from "../../state/consoleStore";
+import { useUnit } from "effector-react";
+import { setCommandPaletteOpen } from "../../state/consoleStore";
 import type { ConsoleCommand } from "../types";
 
 /**
@@ -51,20 +52,18 @@ export interface UseConsoleCommandsReturn {
  * ```
  */
 export function useConsoleCommands(): UseConsoleCommandsReturn {
-	const setCommandPaletteOpen = useConsoleStore(
-		(state) => state.setCommandPaletteOpen,
-	);
+	const setCommandPaletteOpenEvent = useUnit(setCommandPaletteOpen);
 
 	// Custom command registry (for future extensibility)
 	const [customCommands, setCustomCommands] = useState<ConsoleCommand[]>([]);
 
 	const openPalette = useCallback(() => {
-		setCommandPaletteOpen(true);
-	}, [setCommandPaletteOpen]);
+		setCommandPaletteOpenEvent(true);
+	}, [setCommandPaletteOpenEvent]);
 
 	const closePalette = useCallback(() => {
-		setCommandPaletteOpen(false);
-	}, [setCommandPaletteOpen]);
+		setCommandPaletteOpenEvent(false);
+	}, [setCommandPaletteOpenEvent]);
 
 	const registerAction = useCallback((command: ConsoleCommand) => {
 		setCustomCommands((prev) => {

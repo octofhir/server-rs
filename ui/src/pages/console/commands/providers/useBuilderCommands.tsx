@@ -1,6 +1,7 @@
 import { useMemo } from "react";
+import { useUnit } from "effector-react";
 import { IconSwitch, IconRefresh, IconCode, IconWand } from "@tabler/icons-react";
-import { useConsoleStore } from "../../state/consoleStore";
+import { $method, $mode, resetDraft } from "../../state/consoleStore";
 import type { ConsoleCommand } from "../types";
 import type { HttpMethod } from "@/shared/api";
 
@@ -9,11 +10,11 @@ import type { HttpMethod } from "@/shared/api";
  * @returns Array of builder-related commands
  */
 export function useBuilderCommands(): ConsoleCommand[] {
-  const method = useConsoleStore((state) => state.method);
-  const mode = useConsoleStore((state) => state.mode);
-  const setMethod = useConsoleStore((state) => state.setMethod);
-  const setMode = useConsoleStore((state) => state.setMode);
-  const resetDraft = useConsoleStore((state) => state.resetDraft);
+  const { method, mode, resetDraft: resetDraftEvent } = useUnit({
+    method: $method,
+    mode: $mode,
+    resetDraft,
+  });
 
   return useMemo(() => {
     const commands: ConsoleCommand[] = [];
@@ -75,7 +76,7 @@ export function useBuilderCommands(): ConsoleCommand[] {
       keywords: ["reset", "clear", "clean"],
       icon: <IconRefresh size={16} />,
       execute: (ctx) => {
-        resetDraft();
+        resetDraftEvent();
         ctx.closePalette();
         ctx.trackEvent?.("rest_console.command_palette.action", {
           action: "reset_builder",
@@ -84,5 +85,5 @@ export function useBuilderCommands(): ConsoleCommand[] {
     });
 
     return commands;
-  }, [method, mode, resetDraft]);
+  }, [method, mode, resetDraftEvent]);
 }

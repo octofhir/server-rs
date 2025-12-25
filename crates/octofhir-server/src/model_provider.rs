@@ -1,46 +1,225 @@
-//! Server-wide model provider wrapper that extends FhirSchemaModelProvider
-//! with server-specific methods (LSP, validation, etc.)
+//! Server-wide model provider with database-backed on-demand schema loading.
+//!
+//! This implementation loads FHIR schemas from the database on-demand using an LRU cache,
+//! rather than loading all schemas into memory at startup. This reduces memory usage
+//! and startup time for servers with large numbers of profiles.
+
+use std::sync::Arc;
 
 use async_trait::async_trait;
+use moka::future::Cache;
 use octofhir_fhir_model::error::Result as ModelResult;
 use octofhir_fhir_model::provider::{
     ChoiceTypeInfo, ElementInfo, FhirVersion, ModelProvider, TypeInfo,
 };
-use octofhir_fhirschema::FhirSchemaModelProvider;
+use octofhir_fhirschema::types::FhirSchema;
+use sqlx_postgres::PgPool;
+use tracing::{debug, warn};
 
-/// Server-wide model provider that wraps FhirSchemaModelProvider
-/// and adds server-specific methods for LSP, validation, etc.
+use octofhir_db_postgres::PostgresPackageStore;
+
+/// FHIR to FHIRPath type mapping - essential for type conversion
+const TYPE_MAPPING: &[(&str, &str)] = &[
+    ("boolean", "Boolean"),
+    ("integer", "Integer"),
+    ("string", "String"),
+    ("decimal", "Decimal"),
+    ("uri", "String"),
+    ("url", "String"),
+    ("canonical", "String"),
+    ("base64Binary", "String"),
+    ("instant", "DateTime"),
+    ("date", "Date"),
+    ("dateTime", "DateTime"),
+    ("time", "Time"),
+    ("code", "String"),
+    ("oid", "String"),
+    ("id", "String"),
+    ("markdown", "String"),
+    ("unsignedInt", "Integer"),
+    ("positiveInt", "Integer"),
+    ("uuid", "String"),
+    ("xhtml", "String"),
+    ("Quantity", "Quantity"),
+    ("SimpleQuantity", "Quantity"),
+    ("Money", "Quantity"),
+    ("Duration", "Quantity"),
+    ("Age", "Quantity"),
+    ("Distance", "Quantity"),
+    ("Count", "Quantity"),
+    ("Any", "Any"),
+];
+
+/// Server-wide model provider with database-backed on-demand schema loading.
+///
+/// Schemas are loaded from the `fcm.fhirschemas` table on-demand and cached
+/// using an LRU cache (moka). This reduces memory usage compared to loading
+/// all schemas at startup.
 #[derive(Debug)]
 pub struct OctoFhirModelProvider {
-    inner: FhirSchemaModelProvider,
+    /// Database connection pool
+    pool: PgPool,
+    /// LRU cache for schemas by name (e.g., "Patient", "Observation")
+    cache: Cache<String, Arc<FhirSchema>>,
+    /// LRU cache for schemas by canonical URL (for meta.profile validation)
+    url_cache: Cache<String, Arc<FhirSchema>>,
+    /// FHIR version this provider serves
+    fhir_version: FhirVersion,
+    /// FHIR version string for database queries (e.g., "4.0.1", "4.3.0")
+    fhir_version_str: String,
+    /// Type mapping for FHIR to FHIRPath conversion
+    type_mapping: std::collections::HashMap<String, String>,
+    /// Reverse mapping for FHIRPath to FHIR types
+    reverse_type_mapping: std::collections::HashMap<String, String>,
 }
 
 impl OctoFhirModelProvider {
-    /// Create new OctoFhir model provider wrapping a FhirSchemaModelProvider
-    pub fn new(provider: FhirSchemaModelProvider) -> Self {
-        Self { inner: provider }
+    /// Create a new model provider with database-backed schema loading.
+    ///
+    /// # Arguments
+    /// * `pool` - PostgreSQL connection pool
+    /// * `fhir_version` - FHIR version to serve
+    /// * `cache_size` - Maximum number of schemas to keep in cache
+    pub fn new(pool: PgPool, fhir_version: FhirVersion, cache_size: u64) -> Self {
+        let type_mapping: std::collections::HashMap<String, String> = TYPE_MAPPING
+            .iter()
+            .map(|(fhir, fhirpath)| (fhir.to_string(), fhirpath.to_string()))
+            .collect();
+
+        let reverse_type_mapping: std::collections::HashMap<String, String> = TYPE_MAPPING
+            .iter()
+            .map(|(fhir, fhirpath)| (fhirpath.to_string(), fhir.to_string()))
+            .collect();
+
+        // Use short version names to match what's stored in the database
+        // The canonical manager stores with cfg.fhir.version (e.g., "R4", "R4B")
+        let fhir_version_str = match &fhir_version {
+            FhirVersion::R4 => "R4".to_string(),
+            FhirVersion::R4B => "R4B".to_string(),
+            FhirVersion::R5 => "R5".to_string(),
+            FhirVersion::R6 => "R6".to_string(),
+            FhirVersion::Custom { version } => version.clone(),
+        };
+
+        Self {
+            pool,
+            cache: Cache::new(cache_size),
+            url_cache: Cache::new(cache_size),
+            fhir_version,
+            fhir_version_str,
+            type_mapping,
+            reverse_type_mapping,
+        }
+    }
+
+    /// Get access to the database pool
+    pub fn pool(&self) -> &PgPool {
+        &self.pool
+    }
+
+    /// Get the FHIR version string for database queries
+    pub fn fhir_version_str(&self) -> &str {
+        &self.fhir_version_str
+    }
+
+    /// Get a schema by name (e.g., "Patient", "Observation").
+    ///
+    /// Checks the cache first, then loads from database if not found.
+    pub async fn get_schema(&self, name: &str) -> Option<Arc<FhirSchema>> {
+        // Check cache first
+        if let Some(schema) = self.cache.get(name).await {
+            return Some(schema);
+        }
+
+        // Load from database
+        let store = PostgresPackageStore::new(self.pool.clone());
+        match store
+            .get_fhirschema_by_name(name, &self.fhir_version_str)
+            .await
+        {
+            Ok(Some(record)) => {
+                // Deserialize the schema from JSON
+                match serde_json::from_value::<FhirSchema>(record.content) {
+                    Ok(schema) => {
+                        let schema = Arc::new(schema);
+                        // Cache by name
+                        self.cache.insert(name.to_string(), schema.clone()).await;
+                        // Also cache by URL for URL lookups
+                        self.url_cache
+                            .insert(schema.url.clone(), schema.clone())
+                            .await;
+                        Some(schema)
+                    }
+                    Err(e) => {
+                        warn!("Failed to deserialize FhirSchema for {}: {}", name, e);
+                        None
+                    }
+                }
+            }
+            Ok(None) => {
+                debug!("Schema not found in database: {}", name);
+                None
+            }
+            Err(e) => {
+                warn!("Database error loading schema {}: {}", name, e);
+                None
+            }
+        }
+    }
+
+    /// Get a schema by canonical URL (for meta.profile validation).
+    ///
+    /// e.g., "http://hl7.org/fhir/StructureDefinition/Patient"
+    pub async fn get_schema_by_url(&self, url: &str) -> Option<Arc<FhirSchema>> {
+        // Check URL cache first
+        if let Some(schema) = self.url_cache.get(url).await {
+            return Some(schema);
+        }
+
+        // Load from database
+        let store = PostgresPackageStore::new(self.pool.clone());
+        match store
+            .get_fhirschema_by_url(url, &self.fhir_version_str)
+            .await
+        {
+            Ok(Some(record)) => {
+                match serde_json::from_value::<FhirSchema>(record.content) {
+                    Ok(schema) => {
+                        let schema = Arc::new(schema);
+                        // Cache by URL
+                        self.url_cache.insert(url.to_string(), schema.clone()).await;
+                        // Also cache by name
+                        self.cache.insert(schema.name.clone(), schema.clone()).await;
+                        Some(schema)
+                    }
+                    Err(e) => {
+                        warn!("Failed to deserialize FhirSchema for URL {}: {}", url, e);
+                        None
+                    }
+                }
+            }
+            Ok(None) => {
+                debug!("Schema not found by URL: {}", url);
+                None
+            }
+            Err(e) => {
+                warn!("Database error loading schema by URL {}: {}", url, e);
+                None
+            }
+        }
     }
 
     /// Check if an element is a choice type variant and return the base element name.
-    /// E.g., for Patient type and "deceasedBoolean" element, returns Some("deceased")
-    /// Uses the same logic as FhirSchemaModelProvider.get_element_type()
     ///
-    /// # Arguments
-    /// * `type_name` - The FHIR resource or complex type name (e.g., "Patient")
-    /// * `element_name` - The element name to check (e.g., "deceasedBoolean")
-    ///
-    /// # Returns
-    /// * `Some(base_name)` if the element is a choice variant (e.g., "deceased")
-    /// * `None` if the element is not a choice variant
-    pub fn get_choice_base_name(&self, type_name: &str, element_name: &str) -> Option<String> {
-        // Access schemas via the public accessor method
-        let schemas = self.inner.schemas();
-        let schema = schemas.get(type_name)?;
+    /// E.g., for Patient type and "deceasedBoolean" element, returns Some("deceased").
+    /// This is now async since the schema must be loaded on demand.
+    pub async fn get_choice_base_name(
+        &self,
+        type_name: &str,
+        element_name: &str,
+    ) -> Option<String> {
+        let schema = self.get_schema(type_name).await?;
         let elements = schema.elements.as_ref()?;
-
-        // In FhirSchema, choice type information is stored in the `choice_of` field
-        // - Variant fields (e.g., "deceasedBoolean") have `choice_of: Some("deceased")`
-        // - Base fields (e.g., "deceased") have `choices: Some([...])` and `choice_of: None`
 
         // Look up the element in the schema
         if let Some(element) = elements.get(element_name) {
@@ -53,37 +232,75 @@ impl OctoFhirModelProvider {
         None
     }
 
-    /// Debug helper to print choice type information for a type
-    #[allow(dead_code)]
-    pub fn debug_choice_types(&self, type_name: &str) {
-        let schemas = self.inner.schemas();
-        if let Some(schema) = schemas.get(type_name) {
-            if let Some(elements) = &schema.elements {
-                println!("\nAll elements in {} schema:", type_name);
-                for (name, elem) in elements {
-                    if name.contains("deceased") || name.contains("multipleBirth") {
-                        println!("  {} ->", name);
-                        println!("    type_name: {:?}", elem.type_name);
-                        println!("    choices: {:?}", elem.choices);
-                        println!("    choice_of: {:?}", elem.choice_of);
-                    }
-                }
-            }
-        }
+    /// Map FHIR type to FHIRPath type
+    fn map_fhir_type(&self, fhir_type: &str) -> String {
+        self.type_mapping
+            .get(fhir_type)
+            .cloned()
+            .unwrap_or_else(|| fhir_type.to_string())
     }
 
-    /// Get access to the underlying FhirSchemaModelProvider
-    /// This is useful for creating validators and other components that need direct schema access
-    pub fn inner(&self) -> &FhirSchemaModelProvider {
-        &self.inner
+    /// Get backbone element's nested elements by parent type and path.
+    async fn get_backbone_elements_by_path(
+        &self,
+        parent_type: &str,
+        element_path: &str,
+    ) -> Option<std::collections::HashMap<String, octofhir_fhirschema::types::FhirSchemaElement>>
+    {
+        let schema = self.get_schema(parent_type).await?;
+        let mut current_elements = schema.elements.as_ref()?.clone();
+
+        // Navigate through the path
+        for part in element_path.split('.') {
+            let element = current_elements.get(part)?;
+            current_elements = element.elements.as_ref()?.clone();
+        }
+
+        Some(current_elements)
     }
 }
 
-// Implement ModelProvider trait by delegating all methods to inner
 #[async_trait]
 impl ModelProvider for OctoFhirModelProvider {
     async fn get_type(&self, type_name: &str) -> ModelResult<Option<TypeInfo>> {
-        self.inner.get_type(type_name).await
+        if let Some(schema) = self.get_schema(type_name).await {
+            let mapped_type = if let Some(mapped) = self.type_mapping.get(&schema.name) {
+                mapped.clone()
+            } else if schema.kind == "resource" || schema.kind == "complex-type" {
+                "Any".to_string()
+            } else {
+                self.map_fhir_type(&schema.name)
+            };
+
+            Ok(Some(TypeInfo {
+                type_name: mapped_type,
+                singleton: Some(true),
+                is_empty: Some(false),
+                namespace: Some("FHIR".to_string()),
+                name: Some(schema.name.clone()),
+            }))
+        } else {
+            // Check if it's a primitive type in our mapping
+            if let Some(mapped) = self.type_mapping.get(type_name) {
+                Ok(Some(TypeInfo {
+                    type_name: mapped.clone(),
+                    singleton: Some(true),
+                    is_empty: Some(false),
+                    namespace: Some("System".to_string()),
+                    name: Some(type_name.to_string()),
+                }))
+            } else if self.reverse_type_mapping.contains_key(type_name) {
+                Ok(Some(TypeInfo {
+                    type_name: type_name.to_string(),
+                    singleton: Some(true),
+                    is_empty: Some(false),
+                    namespace: Some("System".to_string()),
+                    name: Some(type_name.to_string()),
+                }))
+            } else {
+                Ok(None)
+            }
+        }
     }
 
     async fn get_element_type(
@@ -91,49 +308,247 @@ impl ModelProvider for OctoFhirModelProvider {
         parent_type: &TypeInfo,
         property_name: &str,
     ) -> ModelResult<Option<TypeInfo>> {
-        self.inner
-            .get_element_type(parent_type, property_name)
-            .await
+        if let Some(type_name) = &parent_type.name {
+            // Check if this is a backbone element path
+            let elements = if type_name.contains('.') {
+                let parts: Vec<&str> = type_name.splitn(2, '.').collect();
+                if parts.len() == 2 {
+                    self.get_backbone_elements_by_path(parts[0], parts[1]).await
+                } else {
+                    None
+                }
+            } else {
+                self.get_schema(type_name)
+                    .await
+                    .and_then(|schema| schema.elements.clone())
+            };
+
+            let Some(elements) = elements else {
+                return Ok(None);
+            };
+
+            // Try direct property name match
+            if let Some(element) = elements.get(property_name) {
+                // Check if this is a backbone element
+                if element.elements.is_some() {
+                    let backbone_path = format!("{}.{}", type_name, property_name);
+                    return Ok(Some(TypeInfo {
+                        type_name: "Any".to_string(),
+                        singleton: Some(element.max == Some(1)),
+                        is_empty: Some(false),
+                        namespace: Some("FHIR".to_string()),
+                        name: Some(backbone_path),
+                    }));
+                }
+
+                // Regular element with type_name
+                if let Some(element_type_name) = &element.type_name {
+                    let mapped_type = self.map_fhir_type(element_type_name);
+                    return Ok(Some(TypeInfo {
+                        type_name: mapped_type,
+                        singleton: Some(element.max == Some(1)),
+                        is_empty: Some(false),
+                        namespace: Some("FHIR".to_string()),
+                        name: Some(element_type_name.clone()),
+                    }));
+                }
+            }
+
+            // Handle choice navigation (e.g., value[x] -> valueString)
+            for (element_name, element) in &elements {
+                if element_name.ends_with("[x]") {
+                    let base_name = element_name.trim_end_matches("[x]");
+                    if let Some(type_suffix) = property_name.strip_prefix(base_name) {
+                        if !type_suffix.is_empty() {
+                            let mut chars = type_suffix.chars();
+                            if let Some(first_char) = chars.next() {
+                                let schema_type =
+                                    format!("{}{}", first_char.to_lowercase(), chars.as_str());
+
+                                if let Some(choices) = &element.choices {
+                                    if choices.contains(&schema_type) {
+                                        let mapped_type = self.map_fhir_type(&schema_type);
+                                        return Ok(Some(TypeInfo {
+                                            type_name: mapped_type,
+                                            singleton: Some(element.max == Some(1)),
+                                            is_empty: Some(false),
+                                            namespace: if schema_type
+                                                .chars()
+                                                .next()
+                                                .unwrap()
+                                                .is_uppercase()
+                                            {
+                                                Some("FHIR".to_string())
+                                            } else {
+                                                Some("System".to_string())
+                                            },
+                                            name: Some(schema_type),
+                                        }));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Ok(None)
     }
 
     fn of_type(&self, type_info: &TypeInfo, target_type: &str) -> Option<TypeInfo> {
-        self.inner.of_type(type_info, target_type)
+        // Direct type match
+        if type_info.type_name == target_type {
+            return Some(type_info.clone());
+        }
+
+        // Name match
+        if let Some(ref name) = type_info.name {
+            if name == target_type {
+                return Some(type_info.clone());
+            }
+        }
+
+        // Note: is_type_derived_from is sync, but we can't make it async here
+        // For now, rely on direct matches. Full hierarchy check would need
+        // to be done separately.
+        None
     }
 
     fn get_element_names(&self, parent_type: &TypeInfo) -> Vec<String> {
-        self.inner.get_element_names(parent_type)
+        // This is a sync method but schema loading is async
+        // We can't do async lookup here, so return empty
+        // Callers should use get_elements() which is async for complete element info
+        let _ = parent_type;
+        Vec::new()
     }
 
     async fn get_children_type(&self, parent_type: &TypeInfo) -> ModelResult<Option<TypeInfo>> {
-        self.inner.get_children_type(parent_type).await
+        if parent_type.singleton.unwrap_or(true) {
+            Ok(None)
+        } else {
+            Ok(Some(TypeInfo {
+                type_name: parent_type.type_name.clone(),
+                singleton: Some(true),
+                is_empty: Some(false),
+                namespace: parent_type.namespace.clone(),
+                name: parent_type.name.clone(),
+            }))
+        }
     }
 
     async fn get_elements(&self, type_name: &str) -> ModelResult<Vec<ElementInfo>> {
-        self.inner.get_elements(type_name).await
+        let mut element_infos = Vec::new();
+        let mut seen_names = std::collections::HashSet::new();
+
+        // Collect elements from the type hierarchy
+        let mut current_type = Some(type_name.to_string());
+        while let Some(ref type_to_check) = current_type {
+            if let Some(schema) = self.get_schema(type_to_check).await {
+                if let Some(elements) = &schema.elements {
+                    for (name, element) in elements {
+                        if !seen_names.contains(name) {
+                            seen_names.insert(name.clone());
+
+                            let element_type = if element.elements.is_some() {
+                                "BackboneElement".to_string()
+                            } else {
+                                element
+                                    .type_name
+                                    .as_ref()
+                                    .unwrap_or(&"Any".to_string())
+                                    .clone()
+                            };
+
+                            element_infos.push(ElementInfo {
+                                name: name.clone(),
+                                element_type,
+                                documentation: element.short.clone(),
+                            });
+                        }
+                    }
+                }
+
+                // Move to parent type
+                current_type = schema
+                    .base
+                    .as_ref()
+                    .and_then(|base_url| base_url.rsplit('/').next().map(|s| s.to_string()));
+            } else {
+                current_type = None;
+            }
+        }
+
+        Ok(element_infos)
     }
 
     async fn get_resource_types(&self) -> ModelResult<Vec<String>> {
-        self.inner.get_resource_types().await
+        let store = PostgresPackageStore::new(self.pool.clone());
+        // Include both "resource" and "logical" kinds, but exclude profiles
+        match store
+            .list_fhirschema_names_by_kinds_excluding_profiles(
+                &["resource", "logical"],
+                &self.fhir_version_str,
+            )
+            .await
+        {
+            Ok(names) => Ok(names),
+            Err(e) => {
+                warn!("Failed to get resource types from database: {}", e);
+                Ok(Vec::new())
+            }
+        }
     }
 
     async fn get_complex_types(&self) -> ModelResult<Vec<String>> {
-        self.inner.get_complex_types().await
+        let store = PostgresPackageStore::new(self.pool.clone());
+        match store
+            .list_fhirschema_names_by_type("complex-type", &self.fhir_version_str)
+            .await
+        {
+            Ok(names) => Ok(names),
+            Err(e) => {
+                warn!("Failed to get complex types from database: {}", e);
+                Ok(Vec::new())
+            }
+        }
     }
 
     async fn get_primitive_types(&self) -> ModelResult<Vec<String>> {
-        self.inner.get_primitive_types().await
+        // Primitive types are from our type mapping
+        let primitive_types: Vec<String> = self
+            .type_mapping
+            .keys()
+            .filter(|&name| {
+                !matches!(
+                    name.as_str(),
+                    "Quantity"
+                        | "SimpleQuantity"
+                        | "Money"
+                        | "Duration"
+                        | "Age"
+                        | "Distance"
+                        | "Count"
+                        | "Any"
+                )
+            })
+            .cloned()
+            .collect();
+        Ok(primitive_types)
     }
 
     async fn resource_type_exists(&self, resource_type: &str) -> ModelResult<bool> {
-        self.inner.resource_type_exists(resource_type).await
+        Ok(self.get_schema(resource_type).await.is_some())
     }
 
     async fn get_fhir_version(&self) -> ModelResult<FhirVersion> {
-        self.inner.get_fhir_version().await
+        Ok(self.fhir_version.clone())
     }
 
     fn is_type_derived_from(&self, derived_type: &str, base_type: &str) -> bool {
-        self.inner.is_type_derived_from(derived_type, base_type)
+        // This is a sync method but schema loading is async
+        // Can only do direct equality check here
+        // Full hierarchy check requires async check_type_derived()
+        derived_type == base_type
     }
 
     async fn get_choice_types(
@@ -141,16 +556,42 @@ impl ModelProvider for OctoFhirModelProvider {
         parent_type: &str,
         property_name: &str,
     ) -> ModelResult<Option<Vec<ChoiceTypeInfo>>> {
-        self.inner
-            .get_choice_types(parent_type, property_name)
-            .await
+        if let Some(schema) = self.get_schema(parent_type).await {
+            if let Some(elements) = &schema.elements {
+                // Look for choice element (property_name[x])
+                let choice_key = format!("{}[x]", property_name);
+                if let Some(element) = elements.get(&choice_key) {
+                    if let Some(choices) = &element.choices {
+                        let choice_infos: Vec<ChoiceTypeInfo> = choices
+                            .iter()
+                            .map(|type_name| {
+                                // Convert to PascalCase suffix
+                                let suffix = type_name
+                                    .chars()
+                                    .next()
+                                    .map(|c| c.to_uppercase().to_string())
+                                    .unwrap_or_default()
+                                    + &type_name.chars().skip(1).collect::<String>();
+                                ChoiceTypeInfo {
+                                    suffix,
+                                    type_name: type_name.clone(),
+                                }
+                            })
+                            .collect();
+                        return Ok(Some(choice_infos));
+                    }
+                }
+            }
+        }
+        Ok(None)
     }
 
-    async fn get_union_types(&self, type_info: &TypeInfo) -> ModelResult<Option<Vec<TypeInfo>>> {
-        self.inner.get_union_types(type_info).await
+    async fn get_union_types(&self, _type_info: &TypeInfo) -> ModelResult<Option<Vec<TypeInfo>>> {
+        // Union types not currently supported
+        Ok(None)
     }
 
-    fn is_union_type(&self, type_info: &TypeInfo) -> bool {
-        self.inner.is_union_type(type_info)
+    fn is_union_type(&self, _type_info: &TypeInfo) -> bool {
+        false
     }
 }

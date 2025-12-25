@@ -1,7 +1,0 @@
----
-source: crates/octofhir-server/src/lsp/formatting/tests/comprehensive_tests.rs
-expression: formatted
----
-  SELECT *
-    FROM patient
-ORDER BY name ASC, id DESC

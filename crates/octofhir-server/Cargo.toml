@@ -41,13 +41,15 @@ tower-http = { workspace = true }
 async-lsp = { workspace = true }
 
 # PostgreSQL Language Server
-tree-sitter = { workspace = true }
-pgls-treesitter-grammar = { workspace = true }
-pgls-treesitter = { workspace = true }
-pgls-text-size = { workspace = true }
-pg_query = "6.1.1"  # PostgreSQL parser using actual PG source (replaces sqlparser)
+mold_parser = { workspace = true }
+mold_syntax = { workspace = true }
+mold_hir = { workspace = true }
+mold_completion = { workspace = true }
+mold_format = { workspace = true }
+text-size = { workspace = true }
 hyper = { workspace = true }
 tokio = { workspace = true }
+tokio-stream = "0.1"
 futures-util = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -108,6 +110,7 @@ deadpool-redis = "0.18"
 redis = { version = "0.27", features = ["tokio-comp", "connection-manager"] }
 rmp-serde = "1.3"  # MessagePack for efficient serialization
 dashmap = "6.1"  # Concurrent HashMap for L1 cache
+moka = { version = "0.12", features = ["future"] }  # LRU cache for lazy schema loading
 regex.workspace = true
 tokio-util = { version = "0.7.17", features = ["compat"] }
 futures = "0.3.31"

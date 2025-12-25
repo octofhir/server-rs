@@ -10,8 +10,16 @@ import {
 	Combobox,
 	useCombobox,
 } from "@mantine/core";
-import { useConsoleStore } from "../state/consoleStore";
-import { parseQueryString, mergeSearchParamsAndQuery } from "../utils/queryParser";
+import { useUnit } from "effector-react";
+import {
+	$queryParams,
+	$searchParams,
+	setQueryParams,
+} from "../state/consoleStore";
+import {
+	parseQueryString,
+	mergeSearchParamsAndQuery,
+} from "../utils/queryParser";
 import type { RestConsoleSearchParam } from "@/shared/api";
 
 interface QueryBuilderProps {
@@ -21,10 +29,24 @@ interface QueryBuilderProps {
 
 type QueryBuilderMode = "builder" | "raw";
 
-export function QueryBuilder({ searchParamsByResource, resourceType }: QueryBuilderProps) {
-	const searchParams = useConsoleStore((state) => state.searchParams);
-	const queryParams = useConsoleStore((state) => state.queryParams);
-	const setQueryParams = useConsoleStore((state) => state.setQueryParams);
+const MODE_OPTIONS = [
+	{ label: "Builder", value: "builder" },
+	{ label: "Raw", value: "raw" },
+] as const;
+
+export function QueryBuilder({
+	searchParamsByResource,
+	resourceType,
+}: QueryBuilderProps) {
+	const {
+		searchParams,
+		queryParams,
+		setQueryParams: setQueryParamsEvent,
+	} = useUnit({
+		searchParams: $searchParams,
+		queryParams: $queryParams,
+		setQueryParams,
+	});
 
 	const [mode, setMode] = useState<QueryBuilderMode>("builder");
 	const [inputValue, setInputValue] = useState("");
@@ -91,7 +113,10 @@ export function QueryBuilder({ searchParamsByResource, resourceType }: QueryBuil
 				}));
 		}
 
-		if (currentToken.type === "modifier" || currentToken.type === "modifier-or-value") {
+		if (
+			currentToken.type === "modifier" ||
+			currentToken.type === "modifier-or-value"
+		) {
 			// Extract param name and suggest modifiers
 			const paramName = currentToken.value.split(":")[0];
 			const param = availableParams.find((p) => p.code === paramName);
@@ -112,49 +137,58 @@ export function QueryBuilder({ searchParamsByResource, resourceType }: QueryBuil
 		return [];
 	}, [currentToken, availableParams]);
 
-	const handleInputChange = useCallback((value: string) => {
-		setInputValue(value);
-		combobox.openDropdown();
-		combobox.updateSelectedOptionIndex("active");
-	}, [combobox]);
+	const handleInputChange = useCallback(
+		(value: string) => {
+			setInputValue(value);
+			combobox.openDropdown();
+			combobox.updateSelectedOptionIndex("active");
+		},
+		[combobox],
+	);
 
-	const handleSuggestionSelect = useCallback((value: string) => {
-		// Insert suggestion at cursor position
-		const beforeCursor = inputValue.slice(0, cursorPosition);
-		const afterCursor = inputValue.slice(cursorPosition);
+	const handleSuggestionSelect = useCallback(
+		(value: string) => {
+			// Insert suggestion at cursor position
+			const beforeCursor = inputValue.slice(0, cursorPosition);
+			const afterCursor = inputValue.slice(cursorPosition);
 
-		const lastAmpersand = beforeCursor.lastIndexOf("&");
-		const tokenStart = lastAmpersand === -1 ? 0 : lastAmpersand + 1;
+			const lastAmpersand = beforeCursor.lastIndexOf("&");
+			const tokenStart = lastAmpersand === -1 ? 0 : lastAmpersand + 1;
 
-		let newValue: string;
-		if (currentToken.type === "param") {
-			// Replace param name, add colon for modifier
-			newValue = `${inputValue.slice(0, tokenStart)}${value}:${afterCursor}`;
-		} else if (currentToken.type === "modifier") {
-			// Replace modifier, add equals
-			const paramName = currentToken.value.split(":")[0];
-			newValue = `${inputValue.slice(0, tokenStart)}${paramName}:${value}=${afterCursor}`;
-		} else {
-			// Default: just insert value
-			newValue = inputValue.slice(0, tokenStart) + value + afterCursor;
-		}
+			let newValue: string;
+			if (currentToken.type === "param") {
+				// Replace param name, add colon for modifier
+				newValue = `${inputValue.slice(0, tokenStart)}${value}:${afterCursor}`;
+			} else if (currentToken.type === "modifier") {
+				// Replace modifier, add equals
+				const paramName = currentToken.value.split(":")[0];
+				newValue = `${inputValue.slice(0, tokenStart)}${paramName}:${value}=${afterCursor}`;
+			} else {
+				// Default: just insert value
+				newValue = inputValue.slice(0, tokenStart) + value + afterCursor;
+			}
 
-		setInputValue(newValue);
-		setCursorPosition(newValue.length);
-		combobox.closeDropdown();
-	}, [inputValue, cursorPosition, currentToken, combobox]);
+			setInputValue(newValue);
+			setCursorPosition(newValue.length);
+			combobox.closeDropdown();
+		},
+		[inputValue, cursorPosition, currentToken, combobox],
+	);
 
 	const handleBlur = useCallback(() => {
 		// Parse and sync to store
 		const parsed = parseQueryString(inputValue);
-		setQueryParams(parsed);
+		setQueryParamsEvent(parsed);
 		combobox.closeDropdown();
-	}, [inputValue, setQueryParams, combobox]);
+	}, [inputValue, setQueryParamsEvent, combobox]);
 
-	const handleRawChange = useCallback((value: string) => {
-		const parsed = parseQueryString(value);
-		setQueryParams(parsed);
-	}, [setQueryParams]);
+	const handleRawChange = useCallback(
+		(value: string) => {
+			const parsed = parseQueryString(value);
+			setQueryParamsEvent(parsed);
+		},
+		[setQueryParamsEvent],
+	);
 
 	return (
 		<Stack gap="xs">
@@ -164,10 +198,7 @@ export function QueryBuilder({ searchParamsByResource, resourceType }: QueryBuil
 				</Text>
 				<SegmentedControl
 					size="xs"
-					data={[
-						{ label: "Builder", value: "builder" },
-						{ label: "Raw", value: "raw" },
-					]}
+					data={MODE_OPTIONS}
 					value={mode}
 					onChange={(value) => setMode(value as QueryBuilderMode)}
 				/>
@@ -186,8 +217,12 @@ export function QueryBuilder({ searchParamsByResource, resourceType }: QueryBuil
 							onChange={(e) => handleInputChange(e.target.value)}
 							onFocus={() => combobox.openDropdown()}
 							onBlur={handleBlur}
-							onClick={(e) => setCursorPosition(e.currentTarget.selectionStart || 0)}
-							onKeyUp={(e) => setCursorPosition(e.currentTarget.selectionStart || 0)}
+							onClick={(e) =>
+								setCursorPosition(e.currentTarget.selectionStart || 0)
+							}
+							onKeyUp={(e) =>
+								setCursorPosition(e.currentTarget.selectionStart || 0)
+							}
 							size="sm"
 						/>
 					</Combobox.Target>
@@ -196,7 +231,10 @@ export function QueryBuilder({ searchParamsByResource, resourceType }: QueryBuil
 						<Combobox.Options>
 							{suggestions.length > 0 ? (
 								suggestions.map((suggestion) => (
-									<Combobox.Option value={suggestion.value} key={suggestion.value}>
+									<Combobox.Option
+										value={suggestion.value}
+										key={suggestion.value}
+									>
 										<Group justify="space-between">
 											<div>
 												<Text size="sm">{suggestion.label}</Text>

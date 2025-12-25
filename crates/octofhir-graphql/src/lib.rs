@@ -62,7 +62,9 @@ pub use error::GraphQLError;
 pub use handler::{graphql_handler, graphql_handler_get, instance_graphql_handler};
 pub use loaders::{DataLoaders, ReferenceKey, ReferenceLoader, ResourceKey, ResourceLoader};
 pub use operations::GraphQLOperationProvider;
-pub use schema::{DynModelProvider, FhirSchemaBuilder, LazySchema, SchemaBuilderConfig};
+pub use schema::{
+    DynModelProvider, FhirSchemaBuilder, InMemoryModelProvider, LazySchema, SchemaBuilderConfig,
+};
 pub use subscriptions::{
     ResourceChangeEvent, ResourceEventBroadcaster, ResourceEventType, build_subscription_type,
 };

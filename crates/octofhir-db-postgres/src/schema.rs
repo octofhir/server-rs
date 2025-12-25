@@ -231,14 +231,18 @@ impl SchemaManager {
             .map_err(PostgresError::from)?;
 
         // Index on created_at for time-based queries
-        let created_at_sql = format!(r#"CREATE INDEX IF NOT EXISTS "idx_{table}_created_at" ON "{table}"(created_at)"#);
+        let created_at_sql = format!(
+            r#"CREATE INDEX IF NOT EXISTS "idx_{table}_created_at" ON "{table}"(created_at)"#
+        );
         sqlx_core::query::query(&created_at_sql)
             .execute(&self.pool)
             .await
             .map_err(PostgresError::from)?;
 
         // Index on updated_at for time-based sorting and filtering
-        let updated_at_sql = format!(r#"CREATE INDEX IF NOT EXISTS "idx_{table}_updated_at" ON "{table}"(updated_at)"#);
+        let updated_at_sql = format!(
+            r#"CREATE INDEX IF NOT EXISTS "idx_{table}_updated_at" ON "{table}"(updated_at)"#
+        );
         sqlx_core::query::query(&updated_at_sql)
             .execute(&self.pool)
             .await
@@ -312,13 +316,19 @@ impl SchemaManager {
 
         // Create the archive function if it doesn't exist
         // This function copies the OLD row to the history table
+        // Uses ON CONFLICT to overwrite existing history records (handles idempotent upserts)
         let fn_sql = r#"
             CREATE OR REPLACE FUNCTION archive_to_history()
             RETURNS TRIGGER AS $$
             BEGIN
                 EXECUTE format(
                     'INSERT INTO %I_history (id, txid, created_at, updated_at, resource, status)
-                     VALUES ($1, $2, $3, $4, $5, $6)',
+                     VALUES ($1, $2, $3, $4, $5, $6)
+                     ON CONFLICT (id, txid) DO UPDATE SET
+                         created_at = EXCLUDED.created_at,
+                         updated_at = EXCLUDED.updated_at,
+                         resource = EXCLUDED.resource,
+                         status = EXCLUDED.status',
                     TG_TABLE_NAME
                 ) USING OLD.id, OLD.txid, OLD.created_at, OLD.updated_at, OLD.resource, OLD.status;
                 RETURN NEW;

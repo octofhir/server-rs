@@ -35,7 +35,16 @@ pub struct SessionRow {
 
 impl SessionRow {
     /// Create from database tuple.
-    fn from_tuple(row: (String, i64, OffsetDateTime, OffsetDateTime, serde_json::Value, String)) -> Self {
+    fn from_tuple(
+        row: (
+            String,
+            i64,
+            OffsetDateTime,
+            OffsetDateTime,
+            serde_json::Value,
+            String,
+        ),
+    ) -> Self {
         Self {
             id: row.0,
             txid: row.1,
@@ -72,7 +81,14 @@ impl<'a> SessionStorage<'a> {
     ///
     /// Returns an error if the database query fails.
     pub async fn find_by_code(&self, code: &str) -> StorageResult<Option<SessionRow>> {
-        let row: Option<(String, i64, OffsetDateTime, OffsetDateTime, serde_json::Value, String)> = query_as(
+        let row: Option<(
+            String,
+            i64,
+            OffsetDateTime,
+            OffsetDateTime,
+            serde_json::Value,
+            String,
+        )> = query_as(
             r#"
             SELECT id, txid, created_at, updated_at, resource, status::text
             FROM session
@@ -93,7 +109,14 @@ impl<'a> SessionStorage<'a> {
     ///
     /// Returns an error if the database query fails.
     pub async fn find_by_id(&self, id: Uuid) -> StorageResult<Option<SessionRow>> {
-        let row: Option<(String, i64, OffsetDateTime, OffsetDateTime, serde_json::Value, String)> = query_as(
+        let row: Option<(
+            String,
+            i64,
+            OffsetDateTime,
+            OffsetDateTime,
+            serde_json::Value,
+            String,
+        )> = query_as(
             r#"
             SELECT id, txid, created_at, updated_at, resource, status::text
             FROM session
@@ -115,7 +138,14 @@ impl<'a> SessionStorage<'a> {
     /// Returns an error if the database insert fails.
     pub async fn create(&self, id: Uuid, resource: serde_json::Value) -> StorageResult<SessionRow> {
         let id_str = id.to_string();
-        let row: (String, i64, OffsetDateTime, OffsetDateTime, serde_json::Value, String) = query_as(
+        let row: (
+            String,
+            i64,
+            OffsetDateTime,
+            OffsetDateTime,
+            serde_json::Value,
+            String,
+        ) = query_as(
             r#"
             INSERT INTO session (id, txid, created_at, updated_at, resource, status)
             VALUES ($1, 1, NOW(), NOW(), $2, 'created')
@@ -144,7 +174,14 @@ impl<'a> SessionStorage<'a> {
     ///
     /// Returns an error if the session doesn't exist or the database update fails.
     pub async fn mark_used(&self, id: Uuid) -> StorageResult<SessionRow> {
-        let row: Option<(String, i64, OffsetDateTime, OffsetDateTime, serde_json::Value, String)> = query_as(
+        let row: Option<(
+            String,
+            i64,
+            OffsetDateTime,
+            OffsetDateTime,
+            serde_json::Value,
+            String,
+        )> = query_as(
             r#"
             UPDATE session
             SET resource = jsonb_set(resource, '{used}', 'true'),
@@ -247,7 +284,14 @@ impl<'a> SessionStorage<'a> {
     ///
     /// Returns an error if the session doesn't exist or the database update fails.
     pub async fn update(&self, id: Uuid, resource: serde_json::Value) -> StorageResult<SessionRow> {
-        let row: Option<(String, i64, OffsetDateTime, OffsetDateTime, serde_json::Value, String)> = query_as(
+        let row: Option<(
+            String,
+            i64,
+            OffsetDateTime,
+            OffsetDateTime,
+            serde_json::Value,
+            String,
+        )> = query_as(
             r#"
             UPDATE session
             SET resource = $2,

@@ -1,7 +1,0 @@
----
-source: crates/octofhir-server/src/lsp/formatting/tests/comprehensive_tests.rs
-expression: formatted
----
-WITH cte AS (SELECT *
-FROM patient) SELECT *
-FROM cte

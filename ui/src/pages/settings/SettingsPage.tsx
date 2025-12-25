@@ -1,4 +1,3 @@
-import { useState } from "react";
 import {
 	Stack,
 	Title,
@@ -9,9 +8,14 @@ import {
 	Button,
 	NumberInput,
 	Select,
+	Switch,
 	useMantineColorScheme,
+	Loader,
+	ScrollArea,
 } from "@mantine/core";
-import { useHealth } from "@/shared/api/hooks";
+import { useHealth, useFormatterSettings } from "@/shared/api/hooks";
+import { useUiSettings } from "@/shared";
+import { FormatterSettings } from "@/shared/settings/FormatterSettings";
 
 const themeOptions = [
 	{ value: "light", label: "Light" },
@@ -22,12 +26,17 @@ const themeOptions = [
 export function SettingsPage() {
 	const { data: health, refetch, isRefetching } = useHealth({ refetchInterval: false });
 	const { colorScheme, setColorScheme } = useMantineColorScheme();
-	const [timeout, setTimeout] = useState(30000);
+	const [settings, setSettings] = useUiSettings();
+	const {
+		config: formatterConfig,
+		isLoading: formatterLoading,
+		saveConfig: saveFormatterConfig,
+	} = useFormatterSettings();
 
 	const statusColor = {
-		ok: "green",
-		degraded: "yellow",
-		down: "red",
+		ok: "primary",
+		degraded: "warm",
+		down: "fire",
 	}[health?.status ?? "down"];
 
 	const handleTestConnection = () => {
@@ -35,13 +44,19 @@ export function SettingsPage() {
 	};
 
 	return (
-		<Stack gap="lg">
-			<div>
-				<Title order={2}>Settings</Title>
-				<Text c="dimmed">Configure server settings and preferences</Text>
-			</div>
+		<ScrollArea h="100%" type="auto" offsetScrollbars>
+			<Stack gap="lg" pb="xl">
+				<div>
+					<Title order={2}>Settings</Title>
+					<Text c="dimmed">Configure server settings and preferences</Text>
+				</div>
 
-			<Card shadow="sm" padding="lg" radius="md" withBorder>
+			<Card
+				shadow="sm"
+				padding="lg"
+				radius="md"
+				style={{ backgroundColor: "var(--app-surface-1)" }}
+			>
 				<Title order={4} mb="md">
 					Connection
 				</Title>
@@ -66,8 +81,13 @@ export function SettingsPage() {
 				<NumberInput
 					label="Request Timeout (ms)"
 					description="How long to wait before a request is aborted"
-					value={timeout}
-					onChange={(val) => setTimeout(Number(val) || 30000)}
+					value={settings.requestTimeoutMs}
+					onChange={(val) =>
+						setSettings((current) => ({
+							...current,
+							requestTimeoutMs: Number(val) || 30000,
+						}))
+					}
 					min={1000}
 					max={120000}
 					step={1000}
@@ -75,7 +95,12 @@ export function SettingsPage() {
 				/>
 			</Card>
 
-			<Card shadow="sm" padding="lg" radius="md" withBorder>
+			<Card
+				shadow="sm"
+				padding="lg"
+				radius="md"
+				style={{ backgroundColor: "var(--app-surface-1)" }}
+			>
 				<Title order={4} mb="md">
 					Appearance
 				</Title>
@@ -89,7 +114,94 @@ export function SettingsPage() {
 					w={300}
 				/>
 			</Card>
-		</Stack>
+
+			<Card
+				shadow="sm"
+				padding="lg"
+				radius="md"
+				style={{ backgroundColor: "var(--app-surface-1)" }}
+			>
+				<Title order={4} mb="md">
+					SQL Formatter
+				</Title>
+				<Text c="dimmed" size="sm" mb="md">
+					Configure SQL formatting options for the DB Console editor.
+				</Text>
+
+				{formatterLoading ? (
+					<Group>
+						<Loader size="sm" />
+						<Text size="sm" c="dimmed">Loading formatter settings...</Text>
+					</Group>
+				) : (
+					<FormatterSettings
+						value={formatterConfig}
+						onChange={saveFormatterConfig}
+					/>
+				)}
+			</Card>
+
+			<Card
+				shadow="sm"
+				padding="lg"
+				radius="md"
+				style={{ backgroundColor: "var(--app-surface-1)" }}
+			>
+				<Title order={4} mb="md">
+					Console
+				</Title>
+
+				<Stack gap="md">
+					<Switch
+						label="Skip request validation"
+						description="Allows sending malformed paths or missing parameters."
+						checked={settings.skipConsoleValidation}
+						onChange={(event) =>
+							setSettings((current) => ({
+								...current,
+								skipConsoleValidation: event.currentTarget.checked,
+							}))
+						}
+					/>
+					<Switch
+						label="Allow anonymous REST console requests"
+						description="Send requests without cookies/credentials."
+						checked={settings.allowAnonymousConsoleRequests}
+						onChange={(event) =>
+							setSettings((current) => ({
+								...current,
+								allowAnonymousConsoleRequests: event.currentTarget.checked,
+							}))
+						}
+					/>
+				</Stack>
+			</Card>
+
+			<Card
+				shadow="sm"
+				padding="lg"
+				radius="md"
+				style={{ backgroundColor: "var(--app-surface-1)" }}
+			>
+				<Title order={4} mb="md">
+					Authentication
+				</Title>
+
+				<Stack gap="md">
+					<Switch
+						label="Disable auto-logout on 401/403"
+						description="Keeps the UI state when the session expires."
+						checked={settings.disableAuthAutoLogout}
+						onChange={(event) =>
+							setSettings((current) => ({
+								...current,
+								disableAuthAutoLogout: event.currentTarget.checked,
+							}))
+						}
+					/>
+				</Stack>
+			</Card>
+			</Stack>
+		</ScrollArea>
 	);
 }
-

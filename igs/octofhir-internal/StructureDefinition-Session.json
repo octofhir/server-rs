@@ -6,7 +6,7 @@
   "title": "Authorization Session",
   "status": "active",
   "fhirVersion": "4.0.1",
-  "kind": "resource",
+  "kind": "logical",
   "abstract": false,
   "type": "Session",
   "baseDefinition": "http://hl7.org/fhir/StructureDefinition/DomainResource",
@@ -57,12 +57,12 @@
         "type": [{ "code": "uri" }]
       },
       {
-        "id": "Session.scopes",
-        "path": "Session.scopes",
+        "id": "Session.scope",
+        "path": "Session.scope",
         "short": "Authorized scopes",
-        "definition": "Scopes the user authorized",
+        "definition": "Space-separated list of scopes the user authorized",
         "min": 0,
-        "max": "*",
+        "max": "1",
         "type": [{ "code": "string" }]
       },
       {
@@ -111,6 +111,24 @@
         "type": [{ "code": "string" }]
       },
       {
+        "id": "Session.aud",
+        "path": "Session.aud",
+        "short": "Audience",
+        "definition": "Audience URL (FHIR server base URL)",
+        "min": 1,
+        "max": "1",
+        "type": [{ "code": "uri" }]
+      },
+      {
+        "id": "Session.createdAt",
+        "path": "Session.createdAt",
+        "short": "Creation time",
+        "definition": "When this session was created",
+        "min": 1,
+        "max": "1",
+        "type": [{ "code": "instant" }]
+      },
+      {
         "id": "Session.expiresAt",
         "path": "Session.expiresAt",
         "short": "Expiration time",
@@ -120,13 +138,13 @@
         "type": [{ "code": "instant" }]
       },
       {
-        "id": "Session.used",
-        "path": "Session.used",
-        "short": "Code used",
-        "definition": "Whether the authorization code has been exchanged",
-        "min": 1,
+        "id": "Session.consumedAt",
+        "path": "Session.consumedAt",
+        "short": "Consumption time",
+        "definition": "When the authorization code was exchanged for tokens (null if not yet consumed)",
+        "min": 0,
         "max": "1",
-        "type": [{ "code": "boolean" }]
+        "type": [{ "code": "instant" }]
       }
     ]
   }

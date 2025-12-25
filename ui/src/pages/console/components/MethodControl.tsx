@@ -1,6 +1,7 @@
 import { SegmentedControl } from "@mantine/core";
 import type { HttpMethod } from "@/shared/api";
-import { useConsoleStore } from "../state/consoleStore";
+import { useUnit } from "effector-react";
+import { $method, setMethod } from "../state/consoleStore";
 
 const METHOD_OPTIONS: Array<{ label: string; value: HttpMethod }> = [
 	{ label: "GET", value: "GET" },
@@ -12,16 +13,19 @@ const METHOD_OPTIONS: Array<{ label: string; value: HttpMethod }> = [
 	{ label: "OPTIONS", value: "OPTIONS" },
 ];
 
-export function MethodControl() {
-	const method = useConsoleStore((state) => state.method);
-	const setMethod = useConsoleStore((state) => state.setMethod);
+export const MethodControl = () => {
+	const { method, setMethod: setMethodEvent } = useUnit({
+		method: $method,
+		setMethod,
+	});
 
 	return (
 		<SegmentedControl
+			key="method-control"
 			fullWidth
 			value={method}
-			onChange={(value) => setMethod(value as HttpMethod)}
+			onChange={(value) => setMethodEvent(value as HttpMethod)}
 			data={METHOD_OPTIONS}
 		/>
 	);
-}
+};

@@ -1,0 +1,38 @@
+{
+  "resourceType": "CodeSystem",
+  "id": "operation-outcome-type",
+  "url": "http://octofhir.io/CodeSystem/operation-outcome-type",
+  "name": "OperationOutcomeType",
+  "title": "Operation Outcome Type Code System",
+  "status": "active",
+  "content": "complete",
+  "description": "Extended codes for OperationOutcome.issue.details to provide more specific error categorization",
+  "caseSensitive": true,
+  "concept": [
+    {
+      "code": "non-existent-resource",
+      "display": "Non-existent Resource",
+      "definition": "A Reference points to a resource that does not exist in the database"
+    },
+    {
+      "code": "contained-not-found",
+      "display": "Contained Resource Not Found",
+      "definition": "A contained reference (#id) points to a contained resource that does not exist within the resource"
+    },
+    {
+      "code": "bundle-entry-not-found",
+      "display": "Bundle Entry Not Found",
+      "definition": "A reference within a Bundle points to a fullUrl or urn:uuid that does not exist in the Bundle entries"
+    },
+    {
+      "code": "invalid-reference-type",
+      "display": "Invalid Reference Type",
+      "definition": "The resourceType in a Reference does not match the allowed types defined in the element's targetProfile"
+    },
+    {
+      "code": "reference-error",
+      "display": "Reference Error",
+      "definition": "Generic reference validation error"
+    }
+  ]
+}

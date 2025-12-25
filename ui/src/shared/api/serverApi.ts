@@ -1,11 +1,19 @@
 import type {
   BuildInfo,
+  CategorizedResourceTypesResponse,
   GraphQLResponse,
   HealthResponse,
   HttpResponse,
   OperationDefinition,
   OperationsResponse,
   OperationUpdateRequest,
+  PackageDetailResponse,
+  PackageInstallRequest,
+  PackageInstallResponse,
+  PackageListResponse,
+  PackageLookupResponse,
+  PackageResourcesResponse,
+  PackageSearchResponse,
   RestConsoleResponse,
   SqlResponse,
   SqlValue,
@@ -126,6 +134,28 @@ class ServerApiClient {
 
   async getResourceTypes(): Promise<string[]> {
     const response = await this.request<string[]>("/api/resource-types");
+    return response.data;
+  }
+
+  /**
+   * Get resource types with category information for UI grouping.
+   * Categories: fhir, system, custom
+   */
+  async getResourceTypesCategorized(): Promise<CategorizedResourceTypesResponse> {
+    const response = await this.request<CategorizedResourceTypesResponse>(
+      "/api/resource-types-categorized"
+    );
+    return response.data;
+  }
+
+  /**
+   * Get JSON Schema for a FHIR resource type.
+   * Used for Monaco editor autocomplete and validation.
+   */
+  async getJsonSchema(resourceType: string): Promise<unknown> {
+    const response = await this.request<unknown>(
+      `/api/json-schema/${encodeURIComponent(resourceType)}`
+    );
     return response.data;
   }
 
@@ -321,6 +351,189 @@ class ServerApiClient {
       body: JSON.stringify(update),
     });
     return response.data;
+  }
+
+  // ============ Package Management API ============
+
+  /**
+   * List all installed FHIR packages.
+   */
+  async getPackages(): Promise<PackageListResponse> {
+    const response = await this.request<PackageListResponse>("/api/packages");
+    return response.data;
+  }
+
+  /**
+   * Get details for a specific package.
+   */
+  async getPackageDetails(name: string, version: string): Promise<PackageDetailResponse> {
+    const response = await this.request<PackageDetailResponse>(
+      `/api/packages/${encodeURIComponent(name)}/${encodeURIComponent(version)}`,
+    );
+    return response.data;
+  }
+
+  /**
+   * List resources in a package with optional filtering.
+   */
+  async getPackageResources(
+    name: string,
+    version: string,
+    params?: { resourceType?: string; limit?: number; offset?: number },
+  ): Promise<PackageResourcesResponse> {
+    const queryParams = new URLSearchParams();
+    if (params?.resourceType) queryParams.set("resource_type", params.resourceType);
+    if (params?.limit) queryParams.set("limit", String(params.limit));
+    if (params?.offset) queryParams.set("offset", String(params.offset));
+    const queryString = queryParams.toString();
+    const url = `/api/packages/${encodeURIComponent(name)}/${encodeURIComponent(version)}/resources${queryString ? `?${queryString}` : ""}`;
+    const response = await this.request<PackageResourcesResponse>(url);
+    return response.data;
+  }
+
+  /**
+   * Get full content of a specific resource from a package.
+   */
+  async getPackageResourceContent(name: string, version: string, resourceUrl: string): Promise<unknown> {
+    const response = await this.request<unknown>(
+      `/api/packages/${encodeURIComponent(name)}/${encodeURIComponent(version)}/resources/${encodeURIComponent(resourceUrl)}`,
+    );
+    return response.data;
+  }
+
+  /**
+   * Get FHIRSchema for a resource from a package.
+   */
+  async getPackageFhirSchema(name: string, version: string, resourceUrl: string): Promise<unknown> {
+    const response = await this.request<unknown>(
+      `/api/packages/${encodeURIComponent(name)}/${encodeURIComponent(version)}/fhirschema/${encodeURIComponent(resourceUrl)}`,
+    );
+    return response.data;
+  }
+
+  /**
+   * Lookup available versions for a package from the FHIR registry.
+   */
+  async lookupPackage(name: string): Promise<PackageLookupResponse> {
+    const response = await this.request<PackageLookupResponse>(
+      `/api/packages/lookup/${encodeURIComponent(name)}`,
+    );
+    return response.data;
+  }
+
+  /**
+   * Search for packages in the FHIR registry.
+   * Supports partial matching (ILIKE) - spaces in the query are treated as wildcards.
+   */
+  async searchPackages(query: string): Promise<PackageSearchResponse> {
+    const response = await this.request<PackageSearchResponse>(
+      `/api/packages/search?q=${encodeURIComponent(query)}`,
+    );
+    return response.data;
+  }
+
+  /**
+   * Install a package from the FHIR registry.
+   */
+  async installPackage(request: PackageInstallRequest): Promise<PackageInstallResponse> {
+    const response = await this.request<PackageInstallResponse>("/api/packages/install", {
+      method: "POST",
+      body: JSON.stringify(request),
+    });
+    return response.data;
+  }
+
+  /**
+   * Install a package from the FHIR registry with SSE progress streaming.
+   * Returns an EventSource that emits InstallEvent objects.
+   *
+   * @param request - Package name and version to install
+   * @param onEvent - Callback for each progress event
+   * @param onError - Callback for errors
+   * @param onComplete - Callback when installation completes
+   * @returns A function to abort the installation
+   *
+   * @example
+   * const abort = serverApi.installPackageWithProgress(
+   *   { name: "hl7.fhir.us.core", version: "6.1.0" },
+   *   (event) => console.log("Progress:", event),
+   *   (error) => console.error("Error:", error),
+   *   () => console.log("Complete!")
+   * );
+   * // To abort: abort();
+   */
+  installPackageWithProgress(
+    request: PackageInstallRequest,
+    onEvent: (event: import("./types").InstallEvent) => void,
+    onError?: (error: Error) => void,
+    onComplete?: () => void,
+  ): () => void {
+    const controller = new AbortController();
+    const url = `${this.baseUrl}/api/packages/install/stream`;
+
+    // Use fetch with streaming response
+    fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "text/event-stream",
+      },
+      body: JSON.stringify(request),
+      signal: controller.signal,
+      credentials: "include",
+    })
+      .then(async (response) => {
+        if (!response.ok) {
+          const errorText = await response.text();
+          throw new Error(`HTTP ${response.status}: ${errorText}`);
+        }
+
+        const reader = response.body?.getReader();
+        if (!reader) {
+          throw new Error("No response body");
+        }
+
+        const decoder = new TextDecoder();
+        let buffer = "";
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+
+          // Parse SSE events from buffer
+          const lines = buffer.split("\n");
+          buffer = lines.pop() || ""; // Keep incomplete line in buffer
+
+          for (const line of lines) {
+            if (line.startsWith("data: ")) {
+              try {
+                const data = JSON.parse(line.slice(6));
+                onEvent(data as import("./types").InstallEvent);
+
+                // Check if this is the final event
+                if (data.type === "completed" || data.type === "error") {
+                  onComplete?.();
+                  return;
+                }
+              } catch {
+                // Ignore parse errors for non-JSON lines
+              }
+            }
+          }
+        }
+
+        onComplete?.();
+      })
+      .catch((error) => {
+        if (error.name !== "AbortError") {
+          onError?.(error);
+        }
+      });
+
+    // Return abort function
+    return () => controller.abort();
   }
 
   setBaseUrl(baseUrl: string): void {

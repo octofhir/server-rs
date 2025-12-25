@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use async_graphql::dynamic::Schema;
 use tokio::sync::{Mutex, RwLock};
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use super::FhirSchemaBuilder;
 use crate::error::GraphQLError;
@@ -46,6 +46,18 @@ pub enum SchemaState {
 /// // Force rebuild on next access
 /// lazy_schema.invalidate().await;
 /// ```
+///
+/// # External Build Pattern
+///
+/// For early schema building, use `new_empty()` and `set_schema()`:
+///
+/// ```ignore
+/// let lazy_schema = Arc::new(LazySchema::new_empty());
+///
+/// // In background task:
+/// let schema = build_schema_externally().await?;
+/// lazy_schema.set_schema(Arc::new(schema)).await;
+/// ```
 pub struct LazySchema {
     /// The cached schema (None if not built yet or invalidated).
     schema: RwLock<Option<Arc<Schema>>>,
@@ -56,8 +68,8 @@ pub struct LazySchema {
     /// Current state of the schema.
     state: RwLock<SchemaState>,
 
-    /// The schema builder.
-    builder: Arc<FhirSchemaBuilder>,
+    /// The schema builder (optional - None for external build pattern).
+    builder: Option<Arc<FhirSchemaBuilder>>,
 
     /// Last build error message (for diagnostics).
     last_error: RwLock<Option<String>>,
@@ -71,9 +83,45 @@ impl LazySchema {
             schema: RwLock::new(None),
             build_lock: Mutex::new(()),
             state: RwLock::new(SchemaState::Uninitialized),
-            builder: Arc::new(builder),
+            builder: Some(Arc::new(builder)),
             last_error: RwLock::new(None),
         }
+    }
+
+    /// Creates an empty lazy schema for external build pattern.
+    ///
+    /// Use this when the schema will be built externally and set via `set_schema()`.
+    /// The schema will be in `Building` state until `set_schema()` is called.
+    #[must_use]
+    pub fn new_empty() -> Self {
+        Self {
+            schema: RwLock::new(None),
+            build_lock: Mutex::new(()),
+            state: RwLock::new(SchemaState::Building),
+            builder: None,
+            last_error: RwLock::new(None),
+        }
+    }
+
+    /// Sets the schema directly (for external build pattern).
+    ///
+    /// This is used when the schema is built externally (e.g., in a background task
+    /// with bulk-loaded schemas) rather than on-demand.
+    pub async fn set_schema(&self, schema: Arc<Schema>) {
+        let _guard = self.build_lock.lock().await;
+        *self.schema.write().await = Some(schema);
+        *self.state.write().await = SchemaState::Ready;
+        *self.last_error.write().await = None;
+        info!("GraphQL schema set externally");
+    }
+
+    /// Sets an error state (for external build pattern).
+    ///
+    /// Call this if the external build fails.
+    pub async fn set_error(&self, error: String) {
+        let _guard = self.build_lock.lock().await;
+        *self.state.write().await = SchemaState::Failed;
+        *self.last_error.write().await = Some(error);
     }
 
     /// Returns the current state of the schema.
@@ -126,12 +174,21 @@ impl LazySchema {
             }
         }
 
+        // Check if we have a builder (external build pattern has no builder)
+        let builder = match &self.builder {
+            Some(b) => b.clone(),
+            None => {
+                // External build pattern - schema should be set via set_schema()
+                return Err(GraphQLError::SchemaInitializing);
+            }
+        };
+
         // Mark as building
         *self.state.write().await = SchemaState::Building;
         info!("Building GraphQL schema...");
 
         // Build the schema
-        match self.builder.build().await {
+        match builder.build().await {
             Ok(schema) => {
                 let schema = Arc::new(schema);
                 *self.schema.write().await = Some(Arc::clone(&schema));
@@ -187,12 +244,57 @@ impl LazySchema {
             }
         }
 
+        // Check if we have a builder (external build pattern has no builder)
+        let builder = match &self.builder {
+            Some(b) => b.clone(),
+            None => {
+                // External build pattern - schema is being built externally
+                // Release the build lock and poll until ready or failed
+                drop(_guard);
+
+                // Poll with increasing backoff until schema is ready or build fails
+                // Max wait: ~30 seconds (100ms * 10 + 200ms * 10 + 500ms * 10 + ... )
+                let backoffs = [
+                    100, 100, 200, 200, 500, 500, 1000, 1000, 2000, 2000, 5000, 5000, 5000, 5000,
+                    5000,
+                ];
+
+                for (i, &delay_ms) in backoffs.iter().enumerate() {
+                    tokio::time::sleep(tokio::time::Duration::from_millis(delay_ms)).await;
+
+                    // Check if schema is now ready
+                    {
+                        let schema = self.schema.read().await;
+                        if let Some(ref s) = *schema {
+                            debug!("External schema build completed after {} polls", i + 1);
+                            return Ok(Arc::clone(s));
+                        }
+                    }
+
+                    // Check if build failed
+                    let state = *self.state.read().await;
+                    if state == SchemaState::Failed {
+                        if let Some(err) = self.last_error.read().await.as_ref() {
+                            return Err(GraphQLError::SchemaBuildFailed(err.clone()));
+                        }
+                        return Err(GraphQLError::SchemaBuildFailed(
+                            "External schema build failed".to_string(),
+                        ));
+                    }
+                }
+
+                // Timeout waiting for external build
+                warn!("Timeout waiting for external GraphQL schema build");
+                return Err(GraphQLError::SchemaInitializing);
+            }
+        };
+
         // Mark as building
         *self.state.write().await = SchemaState::Building;
         info!("Building GraphQL schema (wait mode)...");
 
         // Build the schema
-        match self.builder.build().await {
+        match builder.build().await {
             Ok(schema) => {
                 let schema = Arc::new(schema);
                 *self.schema.write().await = Some(Arc::clone(&schema));

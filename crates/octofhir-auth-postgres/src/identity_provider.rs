@@ -35,7 +35,16 @@ pub struct IdentityProviderRow {
 
 impl IdentityProviderRow {
     /// Create from database tuple.
-    fn from_tuple(row: (String, i64, OffsetDateTime, OffsetDateTime, serde_json::Value, String)) -> Self {
+    fn from_tuple(
+        row: (
+            String,
+            i64,
+            OffsetDateTime,
+            OffsetDateTime,
+            serde_json::Value,
+            String,
+        ),
+    ) -> Self {
         Self {
             id: row.0,
             txid: row.1,
@@ -93,7 +102,14 @@ impl<'a> IdentityProviderStorage<'a> {
     ///
     /// Returns an error if the database query fails.
     pub async fn find_by_id(&self, id: Uuid) -> StorageResult<Option<IdentityProviderRow>> {
-        let row: Option<(String, i64, OffsetDateTime, OffsetDateTime, serde_json::Value, String)> = query_as(
+        let row: Option<(
+            String,
+            i64,
+            OffsetDateTime,
+            OffsetDateTime,
+            serde_json::Value,
+            String,
+        )> = query_as(
             r#"
             SELECT id, txid, created_at, updated_at, resource, status::text
             FROM identityprovider
@@ -114,7 +130,14 @@ impl<'a> IdentityProviderStorage<'a> {
     ///
     /// Returns an error if the database query fails.
     pub async fn find_by_name(&self, name: &str) -> StorageResult<Option<IdentityProviderRow>> {
-        let row: Option<(String, i64, OffsetDateTime, OffsetDateTime, serde_json::Value, String)> = query_as(
+        let row: Option<(
+            String,
+            i64,
+            OffsetDateTime,
+            OffsetDateTime,
+            serde_json::Value,
+            String,
+        )> = query_as(
             r#"
             SELECT id, txid, created_at, updated_at, resource, status::text
             FROM identityprovider
@@ -135,7 +158,14 @@ impl<'a> IdentityProviderStorage<'a> {
     ///
     /// Returns an error if the database query fails.
     pub async fn find_by_issuer(&self, issuer: &str) -> StorageResult<Option<IdentityProviderRow>> {
-        let row: Option<(String, i64, OffsetDateTime, OffsetDateTime, serde_json::Value, String)> = query_as(
+        let row: Option<(
+            String,
+            i64,
+            OffsetDateTime,
+            OffsetDateTime,
+            serde_json::Value,
+            String,
+        )> = query_as(
             r#"
             SELECT id, txid, created_at, updated_at, resource, status::text
             FROM identityprovider
@@ -156,7 +186,14 @@ impl<'a> IdentityProviderStorage<'a> {
     ///
     /// Returns an error if the database query fails.
     pub async fn list_active(&self) -> StorageResult<Vec<IdentityProviderRow>> {
-        let rows: Vec<(String, i64, OffsetDateTime, OffsetDateTime, serde_json::Value, String)> = query_as(
+        let rows: Vec<(
+            String,
+            i64,
+            OffsetDateTime,
+            OffsetDateTime,
+            serde_json::Value,
+            String,
+        )> = query_as(
             r#"
             SELECT id, txid, created_at, updated_at, resource, status::text
             FROM identityprovider
@@ -184,7 +221,14 @@ impl<'a> IdentityProviderStorage<'a> {
         limit: i64,
         offset: i64,
     ) -> StorageResult<Vec<IdentityProviderRow>> {
-        let rows: Vec<(String, i64, OffsetDateTime, OffsetDateTime, serde_json::Value, String)> = query_as(
+        let rows: Vec<(
+            String,
+            i64,
+            OffsetDateTime,
+            OffsetDateTime,
+            serde_json::Value,
+            String,
+        )> = query_as(
             r#"
             SELECT id, txid, created_at, updated_at, resource, status::text
             FROM identityprovider
@@ -217,7 +261,14 @@ impl<'a> IdentityProviderStorage<'a> {
         resource: serde_json::Value,
     ) -> StorageResult<IdentityProviderRow> {
         let id_str = id.to_string();
-        let row: (String, i64, OffsetDateTime, OffsetDateTime, serde_json::Value, String) = query_as(
+        let row: (
+            String,
+            i64,
+            OffsetDateTime,
+            OffsetDateTime,
+            serde_json::Value,
+            String,
+        ) = query_as(
             r#"
             INSERT INTO identityprovider (id, txid, created_at, updated_at, resource, status)
             VALUES ($1, 1, NOW(), NOW(), $2, 'created')
@@ -255,7 +306,14 @@ impl<'a> IdentityProviderStorage<'a> {
         id: Uuid,
         resource: serde_json::Value,
     ) -> StorageResult<IdentityProviderRow> {
-        let row: Option<(String, i64, OffsetDateTime, OffsetDateTime, serde_json::Value, String)> = query_as(
+        let row: Option<(
+            String,
+            i64,
+            OffsetDateTime,
+            OffsetDateTime,
+            serde_json::Value,
+            String,
+        )> = query_as(
             r#"
             UPDATE identityprovider
             SET resource = $2,

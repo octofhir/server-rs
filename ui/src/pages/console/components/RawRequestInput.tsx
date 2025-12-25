@@ -1,9 +1,12 @@
 import { Stack, Text, TextInput } from "@mantine/core";
-import { useConsoleStore } from "../state/consoleStore";
+import { useUnit } from "effector-react";
+import { $rawPath, setRawPath } from "../state/consoleStore";
 
 export function RawRequestInput() {
-	const rawPath = useConsoleStore((state) => state.rawPath);
-	const setRawPath = useConsoleStore((state) => state.setRawPath);
+	const { rawPath, setRawPath: setRawPathEvent } = useUnit({
+		rawPath: $rawPath,
+		setRawPath,
+	});
 
 	return (
 		<Stack gap="xs">
@@ -13,7 +16,7 @@ export function RawRequestInput() {
 			<TextInput
 				placeholder="/fhir/Patient?name=John&_count=10"
 				value={rawPath}
-				onChange={(e) => setRawPath(e.target.value)}
+				onChange={(e) => setRawPathEvent(e.target.value)}
 				size="sm"
 			/>
 			<Text size="xs" c="dimmed">

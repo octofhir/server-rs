@@ -35,7 +35,16 @@ pub struct UserRow {
 
 impl UserRow {
     /// Create from database tuple.
-    fn from_tuple(row: (String, i64, OffsetDateTime, OffsetDateTime, serde_json::Value, String)) -> Self {
+    fn from_tuple(
+        row: (
+            String,
+            i64,
+            OffsetDateTime,
+            OffsetDateTime,
+            serde_json::Value,
+            String,
+        ),
+    ) -> Self {
         Self {
             id: row.0,
             txid: row.1,
@@ -72,7 +81,14 @@ impl<'a> UserStorage<'a> {
     ///
     /// Returns an error if the database query fails.
     pub async fn find_by_id(&self, id: Uuid) -> StorageResult<Option<UserRow>> {
-        let row: Option<(String, i64, OffsetDateTime, OffsetDateTime, serde_json::Value, String)> = query_as(
+        let row: Option<(
+            String,
+            i64,
+            OffsetDateTime,
+            OffsetDateTime,
+            serde_json::Value,
+            String,
+        )> = query_as(
             r#"
             SELECT id, txid, created_at, updated_at, resource, status::text
             FROM "user"
@@ -93,7 +109,14 @@ impl<'a> UserStorage<'a> {
     ///
     /// Returns an error if the database query fails.
     pub async fn find_by_username(&self, username: &str) -> StorageResult<Option<UserRow>> {
-        let row: Option<(String, i64, OffsetDateTime, OffsetDateTime, serde_json::Value, String)> = query_as(
+        let row: Option<(
+            String,
+            i64,
+            OffsetDateTime,
+            OffsetDateTime,
+            serde_json::Value,
+            String,
+        )> = query_as(
             r#"
             SELECT id, txid, created_at, updated_at, resource, status::text
             FROM "user"
@@ -114,7 +137,14 @@ impl<'a> UserStorage<'a> {
     ///
     /// Returns an error if the database query fails.
     pub async fn find_by_email(&self, email: &str) -> StorageResult<Option<UserRow>> {
-        let row: Option<(String, i64, OffsetDateTime, OffsetDateTime, serde_json::Value, String)> = query_as(
+        let row: Option<(
+            String,
+            i64,
+            OffsetDateTime,
+            OffsetDateTime,
+            serde_json::Value,
+            String,
+        )> = query_as(
             r#"
             SELECT id, txid, created_at, updated_at, resource, status::text
             FROM "user"
@@ -135,7 +165,14 @@ impl<'a> UserStorage<'a> {
     ///
     /// Returns an error if the database query fails.
     pub async fn find_by_fhir_user(&self, fhir_user: &str) -> StorageResult<Option<UserRow>> {
-        let row: Option<(String, i64, OffsetDateTime, OffsetDateTime, serde_json::Value, String)> = query_as(
+        let row: Option<(
+            String,
+            i64,
+            OffsetDateTime,
+            OffsetDateTime,
+            serde_json::Value,
+            String,
+        )> = query_as(
             r#"
             SELECT id, txid, created_at, updated_at, resource, status::text
             FROM "user"
@@ -169,7 +206,14 @@ impl<'a> UserStorage<'a> {
             "external_subject": external_subject
         }]);
 
-        let row: Option<(String, i64, OffsetDateTime, OffsetDateTime, serde_json::Value, String)> = query_as(
+        let row: Option<(
+            String,
+            i64,
+            OffsetDateTime,
+            OffsetDateTime,
+            serde_json::Value,
+            String,
+        )> = query_as(
             r#"
             SELECT id, txid, created_at, updated_at, resource, status::text
             FROM "user"
@@ -191,7 +235,14 @@ impl<'a> UserStorage<'a> {
     /// Returns an error if the database insert fails.
     pub async fn create(&self, id: Uuid, resource: serde_json::Value) -> StorageResult<UserRow> {
         let id_str = id.to_string();
-        let row: (String, i64, OffsetDateTime, OffsetDateTime, serde_json::Value, String) = query_as(
+        let row: (
+            String,
+            i64,
+            OffsetDateTime,
+            OffsetDateTime,
+            serde_json::Value,
+            String,
+        ) = query_as(
             r#"
             INSERT INTO "user" (id, txid, created_at, updated_at, resource, status)
             VALUES ($1, 1, NOW(), NOW(), $2, 'created')
@@ -220,7 +271,14 @@ impl<'a> UserStorage<'a> {
     ///
     /// Returns an error if the user doesn't exist or the database update fails.
     pub async fn update(&self, id: Uuid, resource: serde_json::Value) -> StorageResult<UserRow> {
-        let row: Option<(String, i64, OffsetDateTime, OffsetDateTime, serde_json::Value, String)> = query_as(
+        let row: Option<(
+            String,
+            i64,
+            OffsetDateTime,
+            OffsetDateTime,
+            serde_json::Value,
+            String,
+        )> = query_as(
             r#"
             UPDATE "user"
             SET resource = $2,
@@ -247,7 +305,14 @@ impl<'a> UserStorage<'a> {
     ///
     /// Returns an error if the user doesn't exist or the database update fails.
     pub async fn update_last_login(&self, id: Uuid) -> StorageResult<UserRow> {
-        let row: Option<(String, i64, OffsetDateTime, OffsetDateTime, serde_json::Value, String)> = query_as(
+        let row: Option<(
+            String,
+            i64,
+            OffsetDateTime,
+            OffsetDateTime,
+            serde_json::Value,
+            String,
+        )> = query_as(
             r#"
             UPDATE "user"
             SET resource = jsonb_set(resource, '{lastLogin}', to_jsonb(NOW()::text)),
@@ -300,7 +365,14 @@ impl<'a> UserStorage<'a> {
     ///
     /// Returns an error if the database query fails.
     pub async fn list(&self, limit: i64, offset: i64) -> StorageResult<Vec<UserRow>> {
-        let rows: Vec<(String, i64, OffsetDateTime, OffsetDateTime, serde_json::Value, String)> = query_as(
+        let rows: Vec<(
+            String,
+            i64,
+            OffsetDateTime,
+            OffsetDateTime,
+            serde_json::Value,
+            String,
+        )> = query_as(
             r#"
             SELECT id, txid, created_at, updated_at, resource, status::text
             FROM "user"

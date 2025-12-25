@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef, useCallback } from "react";
+import { useState, useMemo, useRef, useCallback, useEffect } from "react";
 import {
   Stack,
   Title,
@@ -17,8 +17,6 @@ import {
   ActionIcon,
   Tooltip,
   Menu,
-  useMantineColorScheme,
-  useMantineTheme,
 } from "@mantine/core";
 import { useDisclosure, useLocalStorage } from "@mantine/hooks";
 import {
@@ -31,14 +29,17 @@ import {
   IconClock,
   IconKeyboard,
   IconCode,
+  IconSettings,
 } from "@tabler/icons-react";
 import type * as monaco from "monaco-editor";
 import { SqlEditor } from "@/shared/monaco/SqlEditor";
-import { useSqlMutation } from "@/shared/api/hooks";
+import { useSqlMutation, useFormatterSettings } from "@/shared/api/hooks";
 import type { SqlValue, FhirOperationOutcome } from "@/shared/api/types";
 import { ApiResponseError } from "@/shared/api/serverApi";
 import { DiagnosticsPanel } from "@/widgets/diagnostics-panel";
 import { ExplainVisualization } from "@/widgets/explain-visualization";
+import { setLspFormatterConfig } from "@/shared/monaco/lspClient";
+import { FormatterSettings } from "@/shared/settings/FormatterSettings";
 
 /** Export results to CSV */
 function exportToCSV(columns: string[], rows: SqlValue[][]): void {
@@ -116,14 +117,20 @@ export function DbConsolePage() {
   const [showErrorDetails, setShowErrorDetails] = useState(false);
   const [shortcutsOpened, { toggle: toggleShortcuts }] = useDisclosure(false);
   const [resultsCollapsed, { toggle: toggleResults }] = useDisclosure(false);
+  const [formatterOpened, { toggle: toggleFormatter, close: closeFormatter }] = useDisclosure(false);
   const [editorHeight, setEditorHeight] = useState(300);
   const sqlMutation = useSqlMutation();
-  const theme = useMantineTheme();
-  const { colorScheme } = useMantineColorScheme();
-
   // State for Monaco editor and model (for DiagnosticsPanel)
   const [editorInstance, setEditorInstance] = useState<monaco.editor.IStandaloneCodeEditor | null>(null);
   const [modelInstance, setModelInstance] = useState<monaco.editor.ITextModel | null>(null);
+
+  // Formatter configuration
+  const { config: formatterConfig, saveConfig: saveFormatterConfig } = useFormatterSettings();
+
+  // Sync formatter config to LSP client when it changes
+  useEffect(() => {
+    setLspFormatterConfig(formatterConfig);
+  }, [formatterConfig]);
 
   // Query history stored in localStorage
   const [queryHistory, setQueryHistory] = useLocalStorage<string[]>({
@@ -222,7 +229,7 @@ export function DbConsolePage() {
     }
     if (typeof value === "boolean") {
       return (
-        <Badge size="xs" color={value ? "green" : "gray"}>
+        <Badge size="xs" color={value ? "primary" : "deep"}>
           {value.toString()}
         </Badge>
       );
@@ -259,7 +266,7 @@ export function DbConsolePage() {
           <Tooltip label="Query History">
             <Menu shadow="md" width={280}>
               <Menu.Target>
-                <ActionIcon variant="light" size="lg" color={theme.primaryColor}>
+                <ActionIcon variant="light" size="lg" color="warm">
                   <IconClock size={18} />
                 </ActionIcon>
               </Menu.Target>
@@ -301,7 +308,7 @@ export function DbConsolePage() {
             <ActionIcon
               variant="light"
               size="lg"
-              color={theme.primaryColor}
+              color="warm"
               onClick={toggleShortcuts}
             >
               <IconKeyboard size={18} />
@@ -312,7 +319,7 @@ export function DbConsolePage() {
             <ActionIcon
               variant="light"
               size="lg"
-              color={theme.primaryColor}
+              color="warm"
               onClick={handleFormat}
               disabled={!editorInstance}
             >
@@ -320,7 +327,38 @@ export function DbConsolePage() {
             </ActionIcon>
           </Tooltip>
 
-          <Button onClick={() => handleExecute()} loading={sqlMutation.isPending} size="md">
+          <Popover
+            opened={formatterOpened}
+            onClose={closeFormatter}
+            position="bottom-end"
+            width={320}
+            shadow="md"
+          >
+            <Popover.Target>
+              <Tooltip label="Formatter Settings">
+                <ActionIcon
+                  variant="light"
+                  size="lg"
+                  color="warm"
+                  onClick={toggleFormatter}
+                >
+                  <IconSettings size={18} />
+                </ActionIcon>
+              </Tooltip>
+            </Popover.Target>
+            <Popover.Dropdown>
+              <Text size="sm" fw={500} mb="sm">
+                SQL Formatter Settings
+              </Text>
+              <FormatterSettings
+                value={formatterConfig}
+                onChange={saveFormatterConfig}
+                compact
+              />
+            </Popover.Dropdown>
+          </Popover>
+
+          <Button onClick={() => handleExecute()} loading={sqlMutation.isPending}>
             Execute (Ctrl+Enter)
           </Button>
         </Group>
@@ -328,7 +366,7 @@ export function DbConsolePage() {
 
       {/* Keyboard shortcuts help */}
       <Collapse in={shortcutsOpened}>
-        <Alert icon={<IconKeyboard size={16} />} title="Keyboard Shortcuts" color="blue">
+        <Alert icon={<IconKeyboard size={16} />} title="Keyboard Shortcuts" color="primary">
           <Stack gap="xs">
             <Group gap="xs">
               <Badge variant="light" size="sm">Ctrl+Enter</Badge>
@@ -351,28 +389,21 @@ export function DbConsolePage() {
       </Collapse>
 
       <Paper
-        withBorder
         p={0}
         style={{
           flex: `0 0 ${editorHeight}px`,
           overflow: "hidden",
           display: "flex",
           flexDirection: "column",
-          position: "relative"
+          position: "relative",
+          backgroundColor: "var(--app-surface-1)",
         }}
       >
         <Group
           px="sm"
           py="xs"
           justify="space-between"
-          style={{
-            backgroundColor: colorScheme === "dark"
-              ? theme.colors.dark[6]
-              : theme.colors.gray[0],
-            borderBottom: `1px solid ${colorScheme === "dark"
-              ? theme.colors.dark[4]
-              : theme.colors.gray[3]}`,
-          }}
+          style={{ backgroundColor: "var(--app-surface-2)" }}
         >
           <Text size="xs" fw={500} c="dimmed">
             SQL Editor
@@ -408,20 +439,16 @@ export function DbConsolePage() {
             right: 0,
             height: "4px",
             cursor: "ns-resize",
-            backgroundColor: colorScheme === "dark"
-              ? theme.colors.dark[4]
-              : theme.colors.gray[3],
+            backgroundColor: "var(--app-border-subtle)",
             transition: "background-color 0.2s",
             border: "none",
             padding: 0,
           }}
           onMouseEnter={(e) => {
-            e.currentTarget.style.backgroundColor = theme.colors[theme.primaryColor][6];
+            e.currentTarget.style.backgroundColor = "var(--app-accent-warm)";
           }}
           onMouseLeave={(e) => {
-            e.currentTarget.style.backgroundColor = colorScheme === "dark"
-              ? theme.colors.dark[4]
-              : theme.colors.gray[3];
+            e.currentTarget.style.backgroundColor = "var(--app-border-subtle)";
           }}
         />
       </Paper>
@@ -435,21 +462,21 @@ export function DbConsolePage() {
       />
 
       <Paper
-        withBorder
         p={0}
-        style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column" }}
+        style={{
+          flex: 1,
+          overflow: "hidden",
+          display: "flex",
+          flexDirection: "column",
+          backgroundColor: "var(--app-surface-1)",
+        }}
       >
         {/* Results Header (Collapsible) */}
         <UnstyledButton
           onClick={toggleResults}
           style={{
             padding: "12px 16px",
-            backgroundColor: colorScheme === "dark"
-              ? theme.colors.dark[6]
-              : theme.colors.gray[0],
-            borderBottom: resultsCollapsed
-              ? "none"
-              : `1px solid ${colorScheme === "dark" ? theme.colors.dark[4] : theme.colors.gray[3]}`,
+            backgroundColor: "var(--app-surface-2)",
           }}
         >
           <Group justify="space-between">
@@ -468,7 +495,7 @@ export function DbConsolePage() {
               )}
               {/* Show Query Plan badge for EXPLAIN queries */}
               {sqlMutation.data && isExplain && (
-                <Badge size="sm" variant="light" color="violet">
+                <Badge size="sm" variant="light" color="deep">
                   Query Plan
                 </Badge>
               )}
@@ -485,7 +512,7 @@ export function DbConsolePage() {
                       <ActionIcon
                         variant="light"
                         size="sm"
-                        color={theme.primaryColor}
+                        color="warm"
                         onClick={(e) => {
                           e.stopPropagation();
                           handleExport();
@@ -505,7 +532,7 @@ export function DbConsolePage() {
           <div style={{ maxHeight: "calc(100vh - 600px)", overflow: "auto", padding: "16px" }}>
           {errorMessage && (
             <Stack gap="sm">
-              <Alert icon={<IconAlertCircle size={16} />} color="red" title="Query Error">
+              <Alert icon={<IconAlertCircle size={16} />} color="fire" title="Query Error">
                 {errorMessage}
               </Alert>
               {operationOutcome && (
@@ -537,7 +564,7 @@ export function DbConsolePage() {
           )}
 
           {sqlMutation.data?.rowCount === 0 && (
-            <Alert icon={<IconInfoCircle size={16} />} color="blue">
+            <Alert icon={<IconInfoCircle size={16} />} color="primary">
               Query executed successfully. No rows returned.
             </Alert>
           )}
@@ -552,7 +579,7 @@ export function DbConsolePage() {
           {/* Regular table results */}
           {sqlMutation.data && sqlMutation.data.rowCount > 0 && !isExplain && (
             <ScrollArea>
-              <Table striped highlightOnHover withTableBorder>
+              <Table striped highlightOnHover>
                 <Table.Thead>
                   <Table.Tr>
                     {sqlMutation.data.columns.map((col) => (

@@ -638,7 +638,9 @@ impl FhirQueryBuilder {
             QueryMode::Count => "SELECT COUNT(*) as total".to_string(),
             QueryMode::IdsOnly => format!("SELECT {alias}.id"),
             QueryMode::Resources | QueryMode::ResourcesWithTotal => {
-                format!("{alias}.resource, {alias}.id, {alias}.txid, {alias}.created_at, {alias}.updated_at")
+                format!(
+                    "{alias}.resource, {alias}.id, {alias}.txid, {alias}.created_at, {alias}.updated_at"
+                )
             }
         };
 

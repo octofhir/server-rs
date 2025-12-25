@@ -41,6 +41,13 @@ pub struct UserResource {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub password_hash: Option<String>,
 
+    /// Plaintext password (write-only).
+    ///
+    /// Used for setting the password during create/update.
+    /// This field is never serialized back to the client.
+    #[serde(default, skip_serializing)]
+    pub password: Option<String>,
+
     /// Email address.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub email: Option<String>,
@@ -82,6 +89,7 @@ impl Default for UserResource {
             id: None,
             username: String::new(),
             password_hash: None,
+            password: None,
             email: None,
             fhir_user: None,
             active: true,

@@ -1,7 +1,0 @@
----
-source: crates/octofhir-server/src/lsp/formatting/tests/comprehensive_tests.rs
-expression: formatted
----
-SELECT *
-  FROM test
- WHERE id = ANY(ARRAY[1, 2, 3]) AND status <> ALL(ARRAY['deleted', 'archived'])

@@ -1,8 +1,0 @@
----
-source: crates/octofhir-server/src/lsp/formatting/tests/comprehensive_tests.rs
-expression: formatted
----
-   SELECT id
-     FROM patient
-INTERSECT SELECT patient_id
-     FROM observation

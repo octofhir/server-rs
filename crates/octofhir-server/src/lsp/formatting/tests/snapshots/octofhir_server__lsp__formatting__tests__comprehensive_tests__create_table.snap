@@ -1,5 +1,0 @@
----
-source: crates/octofhir-server/src/lsp/formatting/tests/comprehensive_tests.rs
-expression: formatted
----
-CREATE TABLE test (id INT, name TEXT)

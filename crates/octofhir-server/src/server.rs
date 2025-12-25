@@ -8,7 +8,6 @@ use axum::{
     middleware,
     routing::{get, post},
 };
-use octofhir_auth::config::CookieConfig;
 use octofhir_auth::middleware::AuthState;
 use octofhir_auth::policy::{
     PolicyCache, PolicyChangeNotifier, PolicyEvaluator, PolicyEvaluatorConfig, PolicyReloadService,
@@ -24,16 +23,17 @@ use crate::middleware::AuthorizationState;
 use crate::model_provider::OctoFhirModelProvider;
 use octofhir_fhir_model::provider::{FhirVersion, ModelProvider};
 use octofhir_fhirpath::FhirPathEngine;
-use octofhir_fhirschema::FhirSchemaModelProvider;
-use octofhir_fhirschema::embedded::{FhirVersion as SchemaFhirVersion, get_schemas};
-use octofhir_fhirschema::types::StructureDefinition;
+// Note: FhirSchemas are now loaded on-demand from the database
+// The model provider uses an LRU cache to avoid repeated DB queries
+use octofhir_db_postgres::PostgresPackageStore;
 use octofhir_graphql::handler::{GraphQLContextTemplate, GraphQLState};
-use octofhir_graphql::{FhirSchemaBuilder, LazySchema, SchemaBuilderConfig};
+use octofhir_graphql::{FhirSchemaBuilder, InMemoryModelProvider, LazySchema, SchemaBuilderConfig};
 use time::Duration;
-use tower_http::{compression::CompressionLayer, cors::CorsLayer, trace::TraceLayer};
+use tower_http::{compression::CompressionLayer, trace::TraceLayer};
 
 use crate::operation_registry::OperationStorage;
 use crate::operations::{DynOperationHandler, OperationRegistry, register_core_operations};
+use crate::reference_resolver::StorageReferenceResolver;
 use crate::validation::ValidationService;
 
 use crate::{config::AppConfig, handlers, middleware as app_middleware};
@@ -86,6 +86,10 @@ pub struct AppState {
     pub graphql_state: Option<GraphQLState>,
     /// Cache of public operation paths for authentication middleware
     pub public_paths_cache: crate::middleware::PublicPathsCache,
+    /// Cache for JSON Schema conversions (FhirSchema -> JSON Schema)
+    pub json_schema_cache: Arc<dashmap::DashMap<String, serde_json::Value>>,
+    /// Configuration manager for runtime config and feature flags
+    pub config_manager: Option<Arc<octofhir_config::ConfigurationManager>>,
 }
 
 // =============================================================================
@@ -123,6 +127,23 @@ impl FromRef<AppState> for GraphQLState {
             .graphql_state
             .clone()
             .expect("GraphQLState not initialized in AppState")
+    }
+}
+
+impl FromRef<AppState> for crate::admin::AdminState {
+    fn from_ref(state: &AppState) -> Self {
+        crate::admin::AdminState::new(state.db_pool.clone())
+    }
+}
+
+impl FromRef<AppState> for crate::admin::ConfigState {
+    fn from_ref(state: &AppState) -> Self {
+        crate::admin::ConfigState::new(
+            state
+                .config_manager
+                .clone()
+                .expect("ConfigurationManager not initialized in AppState"),
+        )
     }
 }
 
@@ -266,83 +287,6 @@ async fn create_storage(
     Ok((Arc::new(pg_storage), Arc::new(pool)))
 }
 
-/// Loads FHIR StructureDefinitions from the canonical manager's packages.
-/// Returns StructureDefinitions if packages are loaded, empty Vec otherwise.
-async fn load_structure_definitions_from_packages() -> Vec<StructureDefinition> {
-    use octofhir_canonical_manager::search::SearchQuery;
-
-    // Try to get StructureDefinitions from canonical manager
-    tracing::debug!("Attempting to load StructureDefinitions from canonical manager");
-    if let Some(manager) = crate::canonical::get_manager() {
-        tracing::debug!("Canonical manager is available, querying for StructureDefinitions");
-
-        // Query for ALL StructureDefinitions with pagination
-        // The canonical manager has a max limit of 1000, so we need to paginate
-        const PAGE_SIZE: usize = 1000;
-        let mut offset = 0;
-        let mut structure_definitions = Vec::new();
-
-        loop {
-            let query = SearchQuery {
-                resource_types: vec!["StructureDefinition".to_string()],
-                limit: Some(PAGE_SIZE),
-                offset: Some(offset),
-                ..Default::default()
-            };
-
-            match manager.search_engine().search(&query).await {
-                Ok(results) => {
-                    let page_count = results.resources.len();
-                    tracing::debug!(
-                        offset = offset,
-                        page_count = page_count,
-                        "fetched StructureDefinition page"
-                    );
-
-                    for resource_match in results.resources {
-                        // Parse as StructureDefinition
-                        if let Ok(sd) = serde_json::from_value::<StructureDefinition>(
-                            resource_match.resource.content,
-                        ) {
-                            structure_definitions.push(sd);
-                        }
-                    }
-
-                    // If we got fewer results than the page size, we've reached the end
-                    if page_count < PAGE_SIZE {
-                        break;
-                    }
-
-                    offset += PAGE_SIZE;
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        offset = offset,
-                        error = %e,
-                        "Failed to query StructureDefinitions from canonical manager"
-                    );
-                    break;
-                }
-            }
-        }
-
-        if !structure_definitions.is_empty() {
-            tracing::info!(
-                count = structure_definitions.len(),
-                "Loaded StructureDefinitions from canonical manager packages with pagination"
-            );
-            return structure_definitions;
-        } else {
-            tracing::warn!("Query returned 0 StructureDefinitions from canonical manager");
-        }
-    } else {
-        tracing::debug!("Canonical manager not available");
-    }
-
-    tracing::debug!("Returning empty StructureDefinition list");
-    Vec::new()
-}
-
 /// Builds the application router with the given configuration.
 pub async fn build_app(cfg: &AppConfig) -> Result<Router, anyhow::Error> {
     let body_limit = cfg.server.body_limit_bytes;
@@ -381,7 +325,7 @@ pub async fn build_app(cfg: &AppConfig) -> Result<Router, anyhow::Error> {
     let search_cfg = EngineSearchConfig::new(search_registry)
         .with_counts(cfg.search.default_count, cfg.search.max_count);
 
-    // Initialize FHIRPath engine with schema-aware model provider
+    // Parse FHIR version early - used by both model provider and GraphQL
     let fhir_version = match cfg.fhir.version.as_str() {
         "R4" | "4.0" | "4.0.1" => FhirVersion::R4,
         "R4B" | "4.3" | "4.3.0" => FhirVersion::R4B,
@@ -390,113 +334,147 @@ pub async fn build_app(cfg: &AppConfig) -> Result<Router, anyhow::Error> {
         _ => FhirVersion::R4, // Default to R4
     };
 
-    // Convert to schema version for embedded schemas (fallback)
-    let schema_version = match fhir_version {
-        FhirVersion::R4 => SchemaFhirVersion::R4,
-        FhirVersion::R4B => SchemaFhirVersion::R4B,
-        FhirVersion::R5 => SchemaFhirVersion::R5,
-        FhirVersion::R6 => SchemaFhirVersion::R6,
-        _ => SchemaFhirVersion::R4,
-    };
+    // Start GraphQL schema build EARLY in background to improve startup time
+    // The schema will be building while other components initialize
+    let lazy_schema = if cfg.graphql.enabled {
+        let schema_builder_config = SchemaBuilderConfig {
+            max_depth: cfg.graphql.max_depth,
+            max_complexity: cfg.graphql.max_complexity,
+            introspection_enabled: cfg.graphql.introspection,
+            subscriptions_enabled: cfg.graphql.subscriptions,
+        };
 
-    // Decide schema source based on config:
-    // - If packages are configured -> use DynamicSchemaProvider with StructureDefinitions from packages
-    // - If only FHIR version is set -> use embedded schemas
-    let has_packages_configured = !cfg.packages.load.is_empty();
+        // Create lazy schema holder - will be populated by background task
+        let lazy_schema = Arc::new(LazySchema::new_empty());
 
-    let octofhir_provider = if has_packages_configured {
-        // Load StructureDefinitions from canonical manager packages
-        let structure_definitions = load_structure_definitions_from_packages().await;
+        // Start background task to bulk-load schemas and build GraphQL schema
+        {
+            let lazy_schema_clone = lazy_schema.clone();
+            let pool = db_pool.as_ref().clone();
+            let fhir_version_str = cfg.fhir.version.clone();
+            let search_registry = search_cfg.registry.clone();
+            let config = schema_builder_config;
+            let fhir_version_enum = fhir_version.clone();
 
-        if !structure_definitions.is_empty() {
-            // Convert StructureDefinitions to FhirSchemas
-            tracing::info!(
-                "Converting {} StructureDefinitions to FhirSchema format",
-                structure_definitions.len()
-            );
+            tokio::spawn(async move {
+                let total_start = std::time::Instant::now();
+                tracing::info!("Starting early background GraphQL schema build...");
 
-            let mut schemas = std::collections::HashMap::new();
-            for sd in structure_definitions {
-                match octofhir_fhirschema::translate(sd.clone(), None) {
-                    Ok(schema) => {
-                        schemas.insert(schema.name.clone(), schema);
+                // Step 1: Bulk load all schemas from database
+                let step_start = std::time::Instant::now();
+                let store = PostgresPackageStore::new(pool);
+                let records = match store
+                    .bulk_load_fhirschemas_for_graphql(&fhir_version_str)
+                    .await
+                {
+                    Ok(records) => {
+                        tracing::info!(
+                            schema_count = records.len(),
+                            elapsed_ms = step_start.elapsed().as_millis(),
+                            "Step 1/4: Bulk loaded schemas from database"
+                        );
+                        records
                     }
                     Err(e) => {
-                        tracing::warn!(
-                            "Failed to convert StructureDefinition '{}' to FhirSchema: {}",
-                            &sd.url,
-                            e
-                        );
+                        tracing::error!(error = %e, "Failed to bulk load schemas for GraphQL");
+                        return;
+                    }
+                };
+
+                // Step 2: Deserialize schemas
+                let step_start = std::time::Instant::now();
+                let mut schemas = Vec::with_capacity(records.len());
+                let mut deserialize_errors = 0;
+                for record in records {
+                    match serde_json::from_value(record.content) {
+                        Ok(schema) => schemas.push(schema),
+                        Err(e) => {
+                            deserialize_errors += 1;
+                            tracing::warn!(
+                                url = %record.url,
+                                error = %e,
+                                "Failed to deserialize schema, skipping"
+                            );
+                        }
                     }
                 }
-            }
+                tracing::info!(
+                    schema_count = schemas.len(),
+                    errors = deserialize_errors,
+                    elapsed_ms = step_start.elapsed().as_millis(),
+                    "Step 2/4: Deserialized schemas"
+                );
 
-            let schema_count = schemas.len();
-            tracing::info!(
-                "Converted to {} FhirSchemas (FHIR version: {:?})",
-                schema_count,
-                cfg.fhir.version
-            );
+                // Step 3: Create in-memory provider
+                let step_start = std::time::Instant::now();
+                let memory_provider =
+                    Arc::new(InMemoryModelProvider::new(schemas, fhir_version_enum));
+                tracing::info!(
+                    schema_count = memory_provider.schema_count(),
+                    elapsed_ms = step_start.elapsed().as_millis(),
+                    "Step 3/4: Created in-memory model provider"
+                );
 
-            if schema_count == 0 {
-                return Err(anyhow::anyhow!(
-                    "Failed to convert StructureDefinitions to FhirSchemas - conversion resulted in 0 schemas. Cannot start server without schemas."
-                ));
-            }
+                // Step 4: Build GraphQL schema
+                let step_start = std::time::Instant::now();
+                let schema_builder =
+                    FhirSchemaBuilder::new(search_registry, memory_provider, config);
 
-            tracing::info!(
-                "✓ Model provider initialized successfully with {} schemas from packages",
-                schema_count
-            );
-            let provider = FhirSchemaModelProvider::new(schemas, fhir_version);
-            let octofhir_provider = Arc::new(OctoFhirModelProvider::new(provider));
-            octofhir_provider.clone()
-        } else {
-            // Packages configured but failed to load - fallback to embedded
-            tracing::warn!(
-                "Packages configured but no StructureDefinitions loaded, falling back to embedded schemas"
-            );
-            let schemas = get_schemas(schema_version).clone();
-            let schema_count = schemas.len();
+                match schema_builder.build().await {
+                    Ok(schema) => {
+                        let build_elapsed = step_start.elapsed();
+                        lazy_schema_clone.set_schema(Arc::new(schema)).await;
+                        tracing::info!(
+                            elapsed_ms = build_elapsed.as_millis(),
+                            "Step 4/4: Built GraphQL schema"
+                        );
+                        tracing::info!(
+                            total_elapsed_ms = total_start.elapsed().as_millis(),
+                            "GraphQL schema build completed successfully"
+                        );
+                    }
+                    Err(e) => {
+                        let error_msg = e.to_string();
+                        tracing::error!(
+                            error = %error_msg,
+                            elapsed_ms = step_start.elapsed().as_millis(),
+                            "GraphQL schema build failed"
+                        );
+                        lazy_schema_clone.set_error(error_msg).await;
+                    }
+                }
 
-            if schema_count == 0 {
-                return Err(anyhow::anyhow!(
-                    "Embedded schemas are empty for version {:?}. Cannot start server without schemas.",
-                    schema_version
-                ));
-            }
-
-            let provider = FhirSchemaModelProvider::new(schemas, fhir_version);
-            tracing::info!(
-                "✓ Model provider initialized with {} embedded schemas (fallback, FHIR version: {:?})",
-                schema_count,
-                cfg.fhir.version
-            );
-            let octofhir_provider = Arc::new(OctoFhirModelProvider::new(provider));
-            octofhir_provider.clone()
-        }
-    } else {
-        // No packages configured - use embedded schemas for the configured FHIR version
-        tracing::info!("No packages configured, using embedded schemas");
-        let schemas = get_schemas(schema_version).clone();
-        let schema_count = schemas.len();
-
-        if schema_count == 0 {
-            return Err(anyhow::anyhow!(
-                "Embedded schemas are empty for version {:?}. Cannot start server without schemas.",
-                schema_version
-            ));
+                // memory_provider is dropped here, freeing the bulk-loaded schema memory
+                tracing::debug!("Released in-memory model provider (schema data freed)");
+            });
         }
 
-        let provider = FhirSchemaModelProvider::new(schemas, fhir_version);
         tracing::info!(
-            "✓ Model provider initialized with {} embedded schemas (FHIR version: {:?})",
-            schema_count,
-            cfg.fhir.version
+            introspection = cfg.graphql.introspection,
+            max_depth = cfg.graphql.max_depth,
+            max_complexity = cfg.graphql.max_complexity,
+            "GraphQL schema build started early in background"
         );
-        let octofhir_provider = Arc::new(OctoFhirModelProvider::new(provider));
-        octofhir_provider.clone()
+
+        Some(lazy_schema)
+    } else {
+        tracing::info!("GraphQL disabled");
+        None
     };
+
+    // Create on-demand model provider - schemas loaded from database as needed
+    // The database stores pre-converted FHIRSchemas which are loaded on-demand
+    // with an LRU cache for frequently accessed schemas.
+    let octofhir_provider = Arc::new(OctoFhirModelProvider::new(
+        db_pool.as_ref().clone(),
+        fhir_version,
+        500, // LRU cache size
+    ));
+
+    tracing::info!(
+        "✓ Model provider initialized with on-demand schema loading (FHIR version: {:?})",
+        cfg.fhir.version
+    );
 
     // Use Arc<OctoFhirModelProvider> directly for all components
     let model_provider = octofhir_provider;
@@ -562,11 +540,26 @@ pub async fn build_app(cfg: &AppConfig) -> Result<Router, anyhow::Error> {
     );
 
     // Initialize ValidationService with FHIRPath constraint support
-    let validation_service =
+    let mut validation_service =
         ValidationService::new(model_provider.clone(), fhirpath_engine.clone())
             .await
             .map_err(|e| anyhow::anyhow!("Failed to initialize validation service: {}", e))?;
-    tracing::info!("Validation service initialized with FHIRPath constraint support");
+
+    // Add reference resolver for existence validation unless disabled in config
+    if !cfg.validation.skip_reference_validation {
+        let reference_resolver = Arc::new(StorageReferenceResolver::new(
+            storage.clone(),
+            cfg.base_url(),
+        ));
+        validation_service = validation_service.with_reference_resolver(reference_resolver);
+        tracing::info!("Validation service initialized with reference existence validation");
+    } else {
+        tracing::info!("Validation service initialized (reference validation disabled)");
+    }
+
+    // Create public paths cache for authentication middleware
+    // This is created early so it can be shared with the gateway reload listener
+    let public_paths_cache = crate::middleware::PublicPathsCache::new();
 
     // Initialize gateway router and load initial routes
     let gateway_router = Arc::new(crate::gateway::GatewayRouter::new());
@@ -579,11 +572,13 @@ pub async fn build_app(cfg: &AppConfig) -> Result<Router, anyhow::Error> {
         }
     }
 
-    // Start gateway hot-reload listener
+    // Start gateway hot-reload listener with public paths cache
+    // so it can update the cache when CustomOperations change
     match crate::gateway::GatewayReloadBuilder::new()
         .with_pool(db_pool.as_ref().clone())
         .with_gateway_router(gateway_router.clone())
         .with_storage(storage.clone())
+        .with_public_paths_cache(public_paths_cache.clone())
         .start()
     {
         Ok(_handle) => {
@@ -749,52 +744,36 @@ pub async fn build_app(cfg: &AppConfig) -> Result<Router, anyhow::Error> {
         tracing::warn!("Authentication disabled - no auth configuration found");
     }
 
-    // Create public paths cache for authentication middleware (will be populated after bootstrap)
-    let public_paths_cache = crate::middleware::PublicPathsCache::new();
-
     // Bootstrap operations registry
     match crate::bootstrap::bootstrap_operations(db_pool.as_ref(), &cfg).await {
         Ok(count) => {
             tracing::info!(count, "Operations registry bootstrapped");
 
-            // Populate public paths cache from operations registry
+            // Populate public paths cache from operations registry (static operations)
             let op_storage =
                 crate::operation_registry::PostgresOperationStorage::new((*db_pool).clone());
             if let Ok(all_operations) = op_storage.list_all().await {
                 public_paths_cache.update_from_operations(&all_operations);
-                let (exact, prefix) = public_paths_cache.len();
-                tracing::info!(
-                    exact_paths = exact,
-                    prefix_paths = prefix,
-                    "Public paths cache populated"
-                );
             }
+
+            // Also update cache with gateway CustomOperations
+            let gateway_ops = crate::handlers::load_gateway_operations(&storage).await;
+            public_paths_cache.update_from_operations(&gateway_ops);
+
+            let (exact, prefix) = public_paths_cache.len();
+            tracing::info!(
+                exact_paths = exact,
+                prefix_paths = prefix,
+                "Public paths cache populated (static + gateway operations)"
+            );
         }
         Err(e) => {
             tracing::warn!(error = %e, "Failed to bootstrap operations registry");
         }
     }
 
-    // Initialize GraphQL state if enabled
-    let graphql_state = if cfg.graphql.enabled {
-        // Create schema builder config from GraphQL config
-        let schema_builder_config = SchemaBuilderConfig {
-            max_depth: cfg.graphql.max_depth,
-            max_complexity: cfg.graphql.max_complexity,
-            introspection_enabled: cfg.graphql.introspection,
-            subscriptions_enabled: cfg.graphql.subscriptions,
-        };
-
-        // Create the schema builder with shared search registry and model provider
-        let schema_builder = FhirSchemaBuilder::new(
-            search_cfg.registry.clone(),
-            model_provider.clone(),
-            schema_builder_config,
-        );
-
-        // Create lazy schema for on-demand initialization
-        let lazy_schema = Arc::new(LazySchema::new(schema_builder));
-
+    // Create GraphQL state if enabled (schema build was started early)
+    let graphql_state = if let Some(lazy_schema) = lazy_schema {
         // Create PostgresStorage from the pool for GraphQL
         // GraphQL uses the new FhirStorage trait, not the legacy Storage trait
         let graphql_storage: octofhir_storage::DynStorage =
@@ -808,36 +787,15 @@ pub async fn build_app(cfg: &AppConfig) -> Result<Router, anyhow::Error> {
         };
 
         let state = GraphQLState {
-            lazy_schema: lazy_schema.clone(),
+            lazy_schema,
             context_template,
         };
 
-        // Trigger schema build in background (don't block server startup)
-        {
-            let schema = lazy_schema.clone();
-            tokio::spawn(async move {
-                tracing::info!("Starting background GraphQL schema build...");
-                match schema.get_or_build_wait().await {
-                    Ok(_) => {
-                        tracing::info!("Background GraphQL schema build completed successfully");
-                    }
-                    Err(e) => {
-                        tracing::error!(error = %e, "Background GraphQL schema build failed");
-                    }
-                }
-            });
-        }
-
-        tracing::info!(
-            introspection = cfg.graphql.introspection,
-            max_depth = cfg.graphql.max_depth,
-            max_complexity = cfg.graphql.max_complexity,
-            "GraphQL enabled - schema building in background"
-        );
+        // Schema build was already started early, no need to trigger again
+        tracing::info!("GraphQL state initialized (schema build started early)");
 
         Some(state)
     } else {
-        tracing::info!("GraphQL disabled");
         None
     };
 
@@ -863,6 +821,8 @@ pub async fn build_app(cfg: &AppConfig) -> Result<Router, anyhow::Error> {
         auth_state,
         graphql_state,
         public_paths_cache,
+        json_schema_cache: Arc::new(dashmap::DashMap::new()),
+        config_manager: None,
     };
 
     Ok(build_router(state, body_limit))
@@ -889,6 +849,14 @@ fn build_router(state: AppState, body_limit: usize) -> Router {
         .route("/api/build-info", get(handlers::api_build_info))
         .route("/api/resource-types", get(handlers::api_resource_types))
         .route(
+            "/api/resource-types-categorized",
+            get(handlers::api_resource_types_categorized),
+        )
+        .route(
+            "/api/json-schema/{resource_type}",
+            get(handlers::api_json_schema),
+        )
+        .route(
             "/api/__introspect/rest-console",
             get(crate::rest_console::introspect),
         )
@@ -905,6 +873,50 @@ fn build_router(state: AppState, body_limit: usize) -> Router {
         )
         // PostgreSQL LSP WebSocket endpoint (authenticated)
         .route("/api/pg-lsp", get(crate::lsp::lsp_websocket_handler))
+        // Package Management API
+        .route("/api/packages", get(handlers::api_packages_list))
+        .route(
+            "/api/packages/{name}/{version}",
+            get(handlers::api_packages_get),
+        )
+        .route(
+            "/api/packages/{name}/{version}/resources",
+            get(handlers::api_packages_resources),
+        )
+        .route(
+            "/api/packages/{name}/{version}/resources/{url}",
+            get(handlers::api_packages_resource_content),
+        )
+        .route(
+            "/api/packages/{name}/{version}/fhirschema/{url}",
+            get(handlers::api_packages_fhirschema),
+        )
+        .route(
+            "/api/packages/lookup/{name}",
+            get(handlers::api_packages_lookup),
+        )
+        .route("/api/packages/search", get(handlers::api_packages_search))
+        .route(
+            "/api/packages/install",
+            axum::routing::post(handlers::api_packages_install),
+        )
+        .route(
+            "/api/packages/install/stream",
+            axum::routing::post(handlers::api_packages_install_stream),
+        )
+        // Admin routes (nested under /admin)
+        .nest(
+            "/admin",
+            if state.auth_state.is_some() && state.config_manager.is_some() {
+                Router::new()
+                    .merge(crate::admin::admin_routes())
+                    .merge(crate::admin::config_routes())
+            } else if state.auth_state.is_some() {
+                crate::admin::admin_routes()
+            } else {
+                Router::new()
+            },
+        )
         // Embedded UI under /ui
         .route("/ui", get(handlers::ui_index))
         .route("/ui/{*path}", get(handlers::ui_static));
@@ -1186,49 +1198,6 @@ async fn shutdown_signal() {
     // Wait for Ctrl+C
     let _ = tokio::signal::ctrl_c().await;
     tracing::info!("shutdown signal received");
-}
-
-/// Initialize the authentication state if auth is enabled.
-///
-/// Build CORS layer with appropriate settings for cookie-based auth.
-///
-/// When cookies are enabled:
-/// - Allow credentials
-/// - Mirror the Origin header (for development compatibility)
-/// - Allow common HTTP methods
-///
-/// When cookies are disabled:
-/// - Use permissive CORS (any origin, any method)
-fn build_cors_layer(cookie_config: &CookieConfig) -> CorsLayer {
-    use axum::http::{Method, header};
-
-    if cookie_config.enabled {
-        // When cookie auth is enabled, we need to:
-        // 1. Allow credentials
-        // 2. Use specific origin (not wildcard) - mirror the Origin header for development
-        CorsLayer::new()
-            .allow_credentials(true)
-            .allow_origin(tower_http::cors::AllowOrigin::mirror_request())
-            .allow_methods([
-                Method::GET,
-                Method::POST,
-                Method::PUT,
-                Method::PATCH,
-                Method::DELETE,
-                Method::OPTIONS,
-            ])
-            .allow_headers([
-                header::AUTHORIZATION,
-                header::CONTENT_TYPE,
-                header::ACCEPT,
-                header::ORIGIN,
-                header::COOKIE,
-            ])
-            .expose_headers([header::SET_COOKIE])
-    } else {
-        // Permissive CORS when cookie auth is disabled
-        CorsLayer::permissive()
-    }
 }
 
 /// Returns `Some(AuthState)` if auth is enabled and initialization succeeds,

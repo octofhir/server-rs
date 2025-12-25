@@ -24,19 +24,21 @@ mod builder;
 mod directives;
 mod input_types;
 mod lazy;
+mod memory_provider;
 mod resource_type;
 mod type_generator;
 
 pub use builder::{DynModelProvider, FhirSchemaBuilder, SchemaBuilderConfig};
 pub use directives::{
-    apply_flatten_to_object, apply_slice_to_list, extract_directives_from_field,
-    log_fhir_directives_support, names as directive_names, transform_response_value,
-    FieldDirectives, FHIR_DIRECTIVES_SDL,
+    FHIR_DIRECTIVES_SDL, FieldDirectives, apply_flatten_to_object, apply_slice_to_list,
+    extract_directives_from_field, log_fhir_directives_support, names as directive_names,
+    transform_response_value,
 };
 pub use input_types::{
     InputTypeGenerator, create_json_scalar, create_operation_outcome_issue_type,
     create_operation_outcome_type,
 };
 pub use lazy::LazySchema;
+pub use memory_provider::InMemoryModelProvider;
 pub use resource_type::{fhir_type_to_graphql, is_complex_type, is_primitive_type};
 pub use type_generator::{FhirTypeGenerator, TypeRegistry};

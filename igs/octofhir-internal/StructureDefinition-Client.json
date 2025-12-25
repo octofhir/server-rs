@@ -6,7 +6,7 @@
   "title": "OAuth 2.0 Client",
   "status": "active",
   "fhirVersion": "4.0.1",
-  "kind": "resource",
+  "kind": "logical",
   "abstract": false,
   "type": "Client",
   "baseDefinition": "http://hl7.org/fhir/StructureDefinition/DomainResource",
@@ -137,6 +137,26 @@
         "min": 0,
         "max": "*",
         "type": [{ "code": "uri" }]
+      },
+      {
+        "id": "Client.jwks",
+        "path": "Client.jwks",
+        "short": "Inline JWKS",
+        "definition": "Inline JWKS (JSON Web Key Set) for backend service clients using private_key_jwt authentication. Contains the client's public keys used to verify JWT assertions.",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "string" }],
+        "comment": "Either jwks or jwksUri should be provided for asymmetric client authentication, not both"
+      },
+      {
+        "id": "Client.jwksUri",
+        "path": "Client.jwksUri",
+        "short": "JWKS URI",
+        "definition": "URI to fetch the client's JWKS dynamically. Used when the client rotates keys and provides them via a URL.",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "uri" }],
+        "comment": "Either jwks or jwksUri should be provided for asymmetric client authentication, not both"
       }
     ]
   }

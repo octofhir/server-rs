@@ -1,7 +1,9 @@
 import { useMemo } from "react";
 import { GraphiQL } from "graphiql";
 import { createGraphiQLFetcher } from "@graphiql/toolkit";
+import { useMantineColorScheme } from "@mantine/core";
 import "graphiql/style.css";
+import { useUiSettings } from "@/shared";
 
 const DEFAULT_QUERY = `# Welcome to the OctoFHIR GraphQL Console!
 #
@@ -26,6 +28,8 @@ query {
 const graphQLEndpoint = `${window.location.origin}/$graphql`;
 
 export function GraphQLConsolePage() {
+	const { colorScheme } = useMantineColorScheme();
+	const [settings] = useUiSettings();
 	const fetcher = useMemo(
 		() =>
 			createGraphiQLFetcher({
@@ -33,14 +37,20 @@ export function GraphQLConsolePage() {
 				fetch: (input: RequestInfo | URL, init?: RequestInit) =>
 					fetch(input, {
 						...init,
-						credentials: "include",
+						credentials: settings.allowAnonymousConsoleRequests ? "omit" : "include",
 					}),
 			}),
-		[],
+		[settings.allowAnonymousConsoleRequests],
 	);
 
+	// GraphiQL v5+ uses CSS classes for theming
+	const themeClass = colorScheme === "dark" ? "graphiql-dark" : "graphiql-light";
+
 	return (
-		<div style={{ flex: 1, minHeight: 0 }}>
+		<div
+			className={themeClass}
+			style={{ flex: 1, minHeight: 0, backgroundColor: "var(--app-surface-1)" }}
+		>
 			<GraphiQL
 				fetcher={fetcher}
 				defaultQuery={DEFAULT_QUERY}

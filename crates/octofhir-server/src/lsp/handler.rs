@@ -173,7 +173,7 @@ async fn handle_lsp_connection(
     // Read LSP responses (with headers) from MainLoop, strip headers, send raw JSON to WebSocket
     let client_to_ws = {
         let mut ws_write = ws_write;
-        let mut mainloop_output = mainloop_to_ws_read;
+        let mainloop_output = mainloop_to_ws_read;
         tokio::spawn(async move {
             use tokio::io::AsyncBufReadExt;
             tracing::debug!("MainLoop to WS bridge task started");

@@ -7,8 +7,6 @@ import {
   Tabs,
   Text,
   UnstyledButton,
-  useMantineColorScheme,
-  useMantineTheme,
 } from "@mantine/core";
 import { IconChevronDown, IconChevronUp } from "@tabler/icons-react";
 import type * as monaco from "monaco-editor";
@@ -43,8 +41,6 @@ export function DiagnosticsPanel({
   defaultCollapsed = false,
   height = 200,
 }: DiagnosticsPanelProps) {
-  const theme = useMantineTheme();
-  const { colorScheme } = useMantineColorScheme();
   const [collapsed, setCollapsed] = useState(defaultCollapsed);
   const [activeTab, setActiveTab] = useState<DiagnosticTab>("all");
 
@@ -114,11 +110,11 @@ export function DiagnosticsPanel({
 
   return (
     <Paper
-      withBorder
       style={{
         overflow: "hidden",
         display: "flex",
         flexDirection: "column",
+        backgroundColor: "var(--app-surface-1)",
       }}
     >
       {/* Header */}
@@ -126,10 +122,7 @@ export function DiagnosticsPanel({
         onClick={toggleCollapsed}
         style={{
           padding: "8px 12px",
-          backgroundColor: colorScheme === "dark" ? theme.colors.dark[6] : theme.colors.gray[0],
-          borderBottom: collapsed
-            ? "none"
-            : `1px solid ${colorScheme === "dark" ? theme.colors.dark[4] : theme.colors.gray[3]}`,
+          backgroundColor: "var(--app-surface-2)",
         }}
       >
         <Group justify="space-between">
@@ -146,22 +139,22 @@ export function DiagnosticsPanel({
           </Group>
           <Group gap="xs">
             {diagnostics.errors.length > 0 && (
-              <Badge size="sm" color="red" variant="light">
+              <Badge size="sm" color="fire" variant="light">
                 {diagnostics.errors.length} errors
               </Badge>
             )}
             {diagnostics.warnings.length > 0 && (
-              <Badge size="sm" color="yellow" variant="light">
+              <Badge size="sm" color="warm" variant="light">
                 {diagnostics.warnings.length} warnings
               </Badge>
             )}
             {diagnostics.info.length > 0 && (
-              <Badge size="sm" color="blue" variant="light">
+              <Badge size="sm" color="primary" variant="light">
                 {diagnostics.info.length} info
               </Badge>
             )}
             {diagnostics.hints.length > 0 && (
-              <Badge size="sm" color="gray" variant="light">
+              <Badge size="sm" color="deep" variant="light">
                 {diagnostics.hints.length} hints
               </Badge>
             )}
@@ -183,7 +176,6 @@ export function DiagnosticsPanel({
             },
             list: {
               padding: "8px 12px",
-              borderBottom: `1px solid ${colorScheme === "dark" ? theme.colors.dark[4] : theme.colors.gray[3]}`,
             },
             panel: {
               flex: 1,
@@ -204,7 +196,7 @@ export function DiagnosticsPanel({
             <Tabs.Tab value="errors" disabled={diagnostics.errors.length === 0}>
               Errors
               {diagnostics.errors.length > 0 && (
-                <Badge size="xs" ml={6} color="red" variant="light">
+                <Badge size="xs" ml={6} color="fire" variant="light">
                   {diagnostics.errors.length}
                 </Badge>
               )}
@@ -212,7 +204,7 @@ export function DiagnosticsPanel({
             <Tabs.Tab value="warnings" disabled={diagnostics.warnings.length === 0}>
               Warnings
               {diagnostics.warnings.length > 0 && (
-                <Badge size="xs" ml={6} color="yellow" variant="light">
+                <Badge size="xs" ml={6} color="warm" variant="light">
                   {diagnostics.warnings.length}
                 </Badge>
               )}
@@ -220,7 +212,7 @@ export function DiagnosticsPanel({
             <Tabs.Tab value="info" disabled={diagnostics.info.length === 0}>
               Info
               {diagnostics.info.length > 0 && (
-                <Badge size="xs" ml={6} color="blue" variant="light">
+                <Badge size="xs" ml={6} color="primary" variant="light">
                   {diagnostics.info.length}
                 </Badge>
               )}
@@ -228,7 +220,7 @@ export function DiagnosticsPanel({
             <Tabs.Tab value="hints" disabled={diagnostics.hints.length === 0}>
               Hints
               {diagnostics.hints.length > 0 && (
-                <Badge size="xs" ml={6} color="gray" variant="light">
+                <Badge size="xs" ml={6} color="deep" variant="light">
                   {diagnostics.hints.length}
                 </Badge>
               )}

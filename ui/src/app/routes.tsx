@@ -13,7 +13,8 @@ import { ResourceBrowserPage } from "@/pages/resource-browser";
 import { RestConsolePage } from "@/pages/console";
 import { OperationsPage, OperationDetailPage } from "@/pages/operations";
 import { AppsPage } from "@/pages/apps";
-import { ClientsPage, UsersPage, AccessPoliciesPage } from "@/pages/auth";
+import { ClientsPage, UsersPage, AccessPoliciesPage, IdentityProvidersPage } from "@/pages/auth";
+import { PackagesPage, PackageDetailPage } from "@/pages/packages";
 
 // Placeholder component for pages during migration
 function PlaceholderPage({ name, description }: { name: string; description?: string }) {
@@ -51,12 +52,17 @@ export function AppRoutes() {
       <Route path="/login" element={<LoginPage />} />
 
       {/* Protected routes - require authentication */}
-      <Route element={<ProtectedLayout />}>
-        {/* Main */}
-        <Route index element={<DashboardPage />} />
-        <Route path="/resources" element={<ResourceBrowserPage />} />
-        <Route path="/resources/:type" element={<ResourceBrowserPage />} />
-        <Route path="/console" element={<RestConsolePage />} />
+		<Route element={<ProtectedLayout />}>
+			{/* Main */}
+			<Route index element={<DashboardPage />} />
+			<Route path="/resources" element={<ResourceBrowserPage />} />
+			<Route path="/resources/:type" element={<ResourceBrowserPage />} />
+			<Route path="/resources/:type/:id" element={<ResourceBrowserPage />} />
+			<Route path="/console" element={<RestConsolePage />} />
+
+        {/* Packages */}
+        <Route path="/packages" element={<PackagesPage />} />
+        <Route path="/packages/:name/:version" element={<PackageDetailPage />} />
 
         {/* Admin */}
         <Route path="/operations" element={<OperationsPage />} />
@@ -64,6 +70,7 @@ export function AppRoutes() {
         <Route path="/apps" element={<AppsPage />} />
 
         {/* Auth */}
+        <Route path="/auth/providers" element={<IdentityProvidersPage />} />
         <Route path="/auth/clients" element={<ClientsPage />} />
         <Route path="/auth/users" element={<UsersPage />} />
         <Route path="/auth/policies" element={<AccessPoliciesPage />} />

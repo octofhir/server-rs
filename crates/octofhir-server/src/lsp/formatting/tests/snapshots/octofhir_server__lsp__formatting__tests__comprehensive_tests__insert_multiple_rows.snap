@@ -1,5 +1,0 @@
----
-source: crates/octofhir-server/src/lsp/formatting/tests/comprehensive_tests.rs
-expression: formatted
----
-INSERT INTO patient (id, name) VALUES (1, 'John'), (2, 'Jane'), (3, 'Bob')

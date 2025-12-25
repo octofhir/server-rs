@@ -22,7 +22,15 @@ use crate::schema::SchemaManager;
 type HistoryRow = (Uuid, i64, DateTime<Utc>, DateTime<Utc>, Value, String);
 
 /// Row type for system history queries (id, txid, created_at, updated_at, resource, status, resource_type).
-type SystemHistoryRow = (Uuid, i64, DateTime<Utc>, DateTime<Utc>, Value, String, Option<String>);
+type SystemHistoryRow = (
+    Uuid,
+    i64,
+    DateTime<Utc>,
+    DateTime<Utc>,
+    Value,
+    String,
+    Option<String>,
+);
 
 /// Converts chrono DateTime to time OffsetDateTime.
 fn chrono_to_time(dt: DateTime<Utc>) -> OffsetDateTime {
@@ -226,22 +234,24 @@ pub async fn get_system_history(
     // Convert rows to history entries
     let entries: Vec<HistoryEntry> = rows
         .into_iter()
-        .map(|(row_id, txid, created_at, updated_at, resource, status, resource_type)| {
-            let created_at_time = chrono_to_time(created_at);
-            let updated_at_time = chrono_to_time(updated_at);
-            let rt = resource_type.unwrap_or_else(|| "Unknown".to_string());
-            HistoryEntry::new(
-                StoredResource {
-                    id: row_id.to_string(),
-                    version_id: txid.to_string(),
-                    resource_type: rt,
-                    resource,
-                    last_updated: updated_at_time,
-                    created_at: created_at_time,
-                },
-                status_to_method(&status),
-            )
-        })
+        .map(
+            |(row_id, txid, created_at, updated_at, resource, status, resource_type)| {
+                let created_at_time = chrono_to_time(created_at);
+                let updated_at_time = chrono_to_time(updated_at);
+                let rt = resource_type.unwrap_or_else(|| "Unknown".to_string());
+                HistoryEntry::new(
+                    StoredResource {
+                        id: row_id.to_string(),
+                        version_id: txid.to_string(),
+                        resource_type: rt,
+                        resource,
+                        last_updated: updated_at_time,
+                        created_at: created_at_time,
+                    },
+                    status_to_method(&status),
+                )
+            },
+        )
         .collect();
 
     let total = entries.len() as u32;

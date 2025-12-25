@@ -58,6 +58,16 @@ Supported HTTP methods: GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS
 - `fhirpath`: Evaluate FHIRPath expression
 - `handler`: Invoke registered custom handler
 
+### Operation Outcome Types CodeSystem
+
+Extended codes for `OperationOutcome.issue.details` to provide specific error categorization:
+
+- `non-existent-resource`: A Reference points to a resource that does not exist in the database
+- `contained-not-found`: A contained reference (#id) does not exist within the resource
+- `bundle-entry-not-found`: A Bundle reference (urn:uuid or fullUrl) does not exist in entries
+- `invalid-reference-type`: The resourceType in a Reference is not allowed by targetProfile
+- `reference-error`: Generic reference validation error
+
 ## Usage
 
 ### Database Storage

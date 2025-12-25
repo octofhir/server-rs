@@ -9,7 +9,8 @@ import {
 	Badge,
 	Group,
 } from "@mantine/core";
-import { useConsoleStore } from "../state/consoleStore";
+import { useUnit } from "effector-react";
+import { $method, $rawPath, setRawPath } from "../state/consoleStore";
 import type { AutocompleteSuggestion, RestConsoleSearchParam } from "@/shared/api";
 
 interface UnifiedPathBuilderProps {
@@ -31,7 +32,11 @@ export function UnifiedPathBuilder({
 	searchParamsByResource,
 	isLoading,
 }: UnifiedPathBuilderProps) {
-	const method = useConsoleStore((state) => state.method);
+	const { method, rawPath, setRawPath: setRawPathEvent } = useUnit({
+		method: $method,
+		rawPath: $rawPath,
+		setRawPath,
+	});
 	const [path, setPath] = useState("/fhir/");
 	const [cursorPosition, setCursorPosition] = useState(6);
 
@@ -386,24 +391,25 @@ export function UnifiedPathBuilder({
 			combobox.closeDropdown();
 
 			// Update store
-			useConsoleStore.getState().setRawPath(newPath);
+			setRawPathEvent(newPath);
 		},
-		[path, cursorPosition, context, combobox],
+		[path, cursorPosition, context, combobox, setRawPathEvent],
 	);
 
 	// Sync with store on mount
 	useEffect(() => {
-		const rawPath = useConsoleStore.getState().rawPath;
-		if (rawPath) {
+		if (rawPath && rawPath !== path) {
 			setPath(rawPath);
 			setCursorPosition(rawPath.length);
 		}
-	}, []);
+	}, [rawPath, path]);
 
 	// Sync store on path change
 	useEffect(() => {
-		useConsoleStore.getState().setRawPath(path);
-	}, [path]);
+		if (path !== rawPath) {
+			setRawPathEvent(path);
+		}
+	}, [path, rawPath, setRawPathEvent]);
 
 	return (
 		<Stack gap="xs">

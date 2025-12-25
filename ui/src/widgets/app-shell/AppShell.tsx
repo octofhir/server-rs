@@ -1,18 +1,22 @@
+import { useEffect, useState } from "react";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
 import {
 	AppShell as MantineAppShell,
+	useMantineColorScheme,
+} from "@mantine/core";
+import {
+	Badge,
+	ActionIcon,
 	Burger,
 	Group,
 	NavLink,
 	Text,
-	Badge,
 	Tooltip,
-	ActionIcon,
-	useMantineColorScheme,
 	Box,
 	Stack,
 	Divider,
-} from "@mantine/core";
+	Menu,
+} from "@/shared/ui";
 import { useDisclosure } from "@mantine/hooks";
 import {
 	IconHome,
@@ -30,8 +34,21 @@ import {
 	IconUsers,
 	IconKey,
 	IconShield,
+	IconPackage,
+	IconWorld,
 } from "@tabler/icons-react";
+import { useUnit } from "effector-react";
 import { useHealth, useAuth, useBuildInfo } from "@/shared/api/hooks";
+import {
+	$tabs,
+	openTab,
+	openNewTabForPath,
+	openTabForPath,
+	renameTab,
+	resolveTabFromPath,
+	togglePinTab,
+} from "@/shared/state/appTabsStore";
+import { AppTabsBar } from "./AppTabsBar";
 
 interface NavItem {
 	label: string;
@@ -39,6 +56,8 @@ interface NavItem {
 	description: string;
 	icon: typeof IconHome;
 }
+const logoUrl = `${import.meta.env.BASE_URL}logo.png`;
+
 
 const mainNavigation: NavItem[] = [
 	{
@@ -61,6 +80,15 @@ const mainNavigation: NavItem[] = [
 	},
 ];
 
+const packagesNavigation: NavItem[] = [
+	{
+		label: "Packages",
+		path: "/packages",
+		description: "Manage FHIR packages",
+		icon: IconPackage,
+	},
+];
+
 const adminNavigation: NavItem[] = [
 	{
 		label: "Operations",
@@ -77,6 +105,12 @@ const adminNavigation: NavItem[] = [
 ];
 
 const authNavigation: NavItem[] = [
+	{
+		label: "Identity Providers",
+		path: "/auth/providers",
+		description: "External auth providers",
+		icon: IconWorld,
+	},
 	{
 		label: "Clients",
 		path: "/auth/clients",
@@ -151,6 +185,7 @@ function ThemeToggle() {
 				size="lg"
 				onClick={() => toggleColorScheme()}
 				aria-label="Toggle color scheme"
+				style={{ color: "var(--app-header-fg)" }}
 			>
 				{colorScheme === "dark" ? <IconSun size={18} /> : <IconMoon size={18} />}
 			</ActionIcon>
@@ -164,6 +199,36 @@ export function AppShell() {
 	const navigate = useNavigate();
 	const { logout, user } = useAuth();
 	const { data: buildInfo } = useBuildInfo();
+	const {
+		tabs,
+		openTab: openTabEvent,
+		openTabForPath: openTabForPathEvent,
+		openNewTabForPath: openNewTabForPathEvent,
+		renameTab: renameTabEvent,
+		togglePinTab: togglePinTabEvent,
+	} = useUnit({
+		tabs: $tabs,
+		openTab,
+		openTabForPath,
+		openNewTabForPath,
+		renameTab,
+		togglePinTab,
+	});
+	const [menuState, setMenuState] = useState<{
+		x: number;
+		y: number;
+		item: NavItem;
+	} | null>(null);
+
+	useEffect(() => {
+		openTabForPathEvent({ pathname: location.pathname });
+	}, [location.pathname, openTabForPathEvent]);
+
+	useEffect(() => {
+		if (tabs.length === 0) {
+			openTabForPathEvent({ pathname: "/" });
+		}
+	}, [tabs.length, openTabForPathEvent]);
 
 	const isActive = (path: string) => {
 		if (path === "/") {
@@ -182,44 +247,176 @@ export function AppShell() {
 			<NavLink
 				key={item.path}
 				label={item.label}
-				description={item.description}
-				leftSection={<item.icon size={18} />}
+				leftSection={<item.icon size={14} stroke={1.5} />}
 				active={isActive(item.path)}
 				onClick={() => {
+					openTabForPathEvent({ pathname: item.path, titleOverride: item.label });
 					navigate(item.path);
 					close();
 				}}
-				style={{ borderRadius: "var(--mantine-radius-sm)" }}
+				onContextMenu={(event: React.MouseEvent) => {
+					event.preventDefault();
+					setMenuState({
+						x: event.clientX,
+						y: event.clientY,
+						item,
+					});
+				}}
+				variant="subtle"
+				styles={{
+					root: {
+						borderRadius: "var(--mantine-radius-sm)",
+						paddingTop: 4,
+						paddingBottom: 4,
+						minHeight: 28,
+						"&[data-active]": {
+							backgroundColor: "var(--app-surface-3)",
+							color: "var(--app-text-primary)",
+						},
+						"&:hover:not([data-active])": {
+							backgroundColor: "var(--app-header-hover-bg)",
+						}
+					},
+					label: {
+						fontSize: "12px",
+						fontWeight: 500,
+						transition: "color 150ms ease",
+					},
+					section: {
+						marginRight: 8,
+						opacity: 0.8,
+					}
+				}}
 			/>
 		));
 
+	const handleMenuClose = () => setMenuState(null);
+
+	const handleOpenNewTab = () => {
+		if (!menuState) return;
+		openNewTabForPathEvent({
+			pathname: menuState.item.path,
+			titleOverride: menuState.item.label,
+		});
+		handleMenuClose();
+	};
+
+	const handleRenameTab = () => {
+		if (!menuState) return;
+		const normalized = menuState.item.path.replace(/\/+$/, "") || "/";
+		const resolved = resolveTabFromPath(normalized);
+		const candidate =
+			tabs.find((tab) => tab.path === normalized && !tab.customTitle) ??
+			(resolved?.groupKey
+				? tabs.find((tab) => tab.groupKey === resolved.groupKey && !tab.customTitle)
+				: undefined);
+		if (!candidate) {
+			if (!resolved) return;
+			openTabEvent(resolved);
+			const nextTitle = window.prompt("Rename tab", resolved.title);
+			if (nextTitle && nextTitle.trim()) {
+				renameTabEvent({ id: resolved.id, title: nextTitle.trim() });
+			}
+			handleMenuClose();
+			return;
+		}
+		const nextTitle = window.prompt("Rename tab", candidate.title);
+		if (nextTitle && nextTitle.trim()) {
+			renameTabEvent({ id: candidate.id, title: nextTitle.trim() });
+		}
+		handleMenuClose();
+	};
+
+	const handleTogglePin = () => {
+		if (!menuState) return;
+		const normalized = menuState.item.path.replace(/\/+$/, "") || "/";
+		const resolved = resolveTabFromPath(normalized);
+		const candidate =
+			tabs.find((tab) => tab.path === normalized && !tab.customTitle) ??
+			(resolved?.groupKey
+				? tabs.find((tab) => tab.groupKey === resolved.groupKey && !tab.customTitle)
+				: undefined);
+		if (candidate) {
+			togglePinTabEvent(candidate.id);
+		} else {
+			if (resolved) {
+				openTabEvent({ ...resolved, pinned: true });
+			}
+		}
+		handleMenuClose();
+	};
+
 	return (
 		<MantineAppShell
-			header={{ height: 56 }}
+			header={{ height: 48 }}
 			navbar={{
-				width: 280,
+				width: 240,
 				breakpoint: "sm",
 				collapsed: { mobile: !opened },
 			}}
-			padding="md"
+			padding="0" // Set to 0 because we handle padding in pages
 		>
-			<MantineAppShell.Header>
+			<MantineAppShell.Header
+				style={{
+					background: "var(--app-header-bg)",
+					color: "var(--app-header-fg)",
+					backdropFilter: "blur(var(--app-glass-blur))",
+					borderBottom: "1px solid var(--app-glass-border)",
+					zIndex: 100,
+				}}
+			>
 				<Group h="100%" px="md" justify="space-between">
 					<Group>
-						<Burger opened={opened} onClick={toggle} hiddenFrom="sm" size="sm" />
+						<Burger
+							opened={opened}
+							onClick={toggle}
+							hiddenFrom="sm"
+							size="sm"
+							color="var(--app-header-fg)"
+						/>
 						<Group gap="xs">
-							<Text size="xl">🐙</Text>
-							<Text fw={600} size="lg">
+							<Box
+								style={{
+									background: "var(--app-brand-gradient)",
+									padding: "3px",
+									borderRadius: "6px",
+									display: "flex",
+									alignItems: "center",
+									justifyContent: "center",
+								}}
+							>
+								<Box
+									component="img"
+									src={logoUrl}
+									alt="OctoFHIR logo"
+									w={18}
+									h={18}
+								/>
+							</Box>
+							<Text fw={700} size="md" style={{ color: "var(--app-header-fg)", letterSpacing: "-0.02em" }}>
 								OctoFHIR
 							</Text>
 						</Group>
 					</Group>
-					<Group>
+					<Group gap="sm">
 						<HealthBadge />
 						<ThemeToggle />
 						{user && (
 							<Tooltip label={`Logged in as ${user.preferred_username || user.sub}`}>
-								<ActionIcon variant="subtle" size="lg" onClick={handleLogout}>
+								<ActionIcon
+									variant="subtle"
+									size="lg"
+									onClick={handleLogout}
+									style={{ color: "var(--app-header-fg)" }}
+									styles={{
+										root: {
+											borderRadius: "10px",
+											"&:hover": {
+												backgroundColor: "var(--app-header-hover-bg)",
+											},
+										},
+									}}
+								>
 									<IconLogout size={18} />
 								</ActionIcon>
 							</Tooltip>
@@ -228,31 +425,68 @@ export function AppShell() {
 				</Group>
 			</MantineAppShell.Header>
 
-			<MantineAppShell.Navbar p="md" style={{ display: "flex", flexDirection: "column" }}>
-				<Box style={{ flex: 1, overflowY: "auto", overflowX: "hidden" }}>
-					<Stack gap="xs">
-						<Text size="xs" fw={500} c="dimmed" tt="uppercase">
+			<MantineAppShell.Navbar
+				p="xs"
+				style={{
+					display: "flex",
+					flexDirection: "column",
+					backgroundColor: "var(--app-glass-bg)",
+					backdropFilter: "blur(var(--app-glass-blur))",
+					borderRight: "1px solid var(--app-glass-border)",
+					transition: "all 0.2s ease",
+				}}
+			>
+				{menuState && (
+					<Menu opened onClose={handleMenuClose} withinPortal position="bottom-start">
+						<Menu.Target>
+							<Box
+								style={{
+									position: "fixed",
+									left: menuState.x,
+									top: menuState.y,
+									width: 1,
+									height: 1,
+								}}
+							/>
+						</Menu.Target>
+						<Menu.Dropdown style={{ borderRadius: "12px", border: "1px solid var(--app-border-subtle)" }}>
+							<Menu.Item leftSection={<IconCode size={14} />} onClick={handleOpenNewTab}>Open in new tab</Menu.Item>
+							<Menu.Item leftSection={<IconSettings size={14} />} onClick={handleRenameTab}>Rename tab</Menu.Item>
+							<Menu.Item leftSection={<IconApps size={14} />} onClick={handleTogglePin}>Pin/Unpin tab</Menu.Item>
+						</Menu.Dropdown>
+					</Menu>
+				)}
+				<Box style={{ flex: 1, overflowY: "auto", overflowX: "hidden" }} className="custom-scrollbar">
+					<Stack gap={4}>
+						<Text size="11px" fw={600} c="dimmed" tt="uppercase" px="xs" mt="xs" style={{ letterSpacing: "0.05em" }}>
 							Main
 						</Text>
 						{renderNavItems(mainNavigation)}
 
-						<Divider my="sm" />
+						<Divider my={4} styles={{ root: { opacity: 0.3 } }} />
 
-						<Text size="xs" fw={500} c="dimmed" tt="uppercase">
+						<Text size="11px" fw={600} c="dimmed" tt="uppercase" px="xs" style={{ letterSpacing: "0.05em" }}>
+							Packages
+						</Text>
+						{renderNavItems(packagesNavigation)}
+
+						<Divider my={4} styles={{ root: { opacity: 0.3 } }} />
+
+						<Text size="11px" fw={600} c="dimmed" tt="uppercase" px="xs" style={{ letterSpacing: "0.05em" }}>
 							Admin
 						</Text>
 						{renderNavItems(adminNavigation)}
 
-						<Divider my="sm" />
+						<Divider my={4} styles={{ root: { opacity: 0.3 } }} />
 
-						<Text size="xs" fw={500} c="dimmed" tt="uppercase">
+						<Text size="11px" fw={600} c="dimmed" tt="uppercase" px="xs" style={{ letterSpacing: "0.05em" }}>
 							Auth
 						</Text>
 						{renderNavItems(authNavigation)}
 
-						<Divider my="sm" />
+						<Divider my={4} styles={{ root: { opacity: 0.3 } }} />
 
-						<Text size="xs" fw={500} c="dimmed" tt="uppercase">
+						<Text size="11px" fw={600} c="dimmed" tt="uppercase" px="xs" style={{ letterSpacing: "0.05em" }}>
 							Tools
 						</Text>
 						{renderNavItems(toolsNavigation)}
@@ -260,22 +494,22 @@ export function AppShell() {
 				</Box>
 
 				<Box pt="md" style={{ flexShrink: 0 }}>
-					<Divider mb="sm" />
-					<Stack gap={2} align="center">
-						<Text size="xs" c="dimmed">
+					<Divider mb="sm" styles={{ root: { opacity: 0.5 } }} />
+					<Stack gap={4} align="center">
+						<Text size="xs" fw={500} c="dimmed">
 							FHIR R4 Server
 						</Text>
 						{buildInfo && (
-							<>
-								<Text size="xs" c="dimmed">
+							<Group gap={4} justify="center">
+								<Badge variant="dot" size="xs" color="primary">
 									v{buildInfo.serverVersion}
-								</Text>
+								</Badge>
 								{buildInfo.commit && (
-									<Text size="xs" c="dimmed" style={{ fontFamily: "var(--mantine-font-family-monospace)" }}>
+									<Text size="xs" c="dimmed" style={{ fontFamily: "var(--mantine-font-family-monospace)", opacity: 0.6 }}>
 										{buildInfo.commit.substring(0, 7)}
 									</Text>
 								)}
-							</>
+							</Group>
 						)}
 					</Stack>
 				</Box>
@@ -285,10 +519,12 @@ export function AppShell() {
 				style={{
 					display: "flex",
 					flexDirection: "column",
-					height: "calc(100vh - 56px)",
+					height: "calc(100vh - 48px)",
+					backgroundColor: "var(--app-surface-1)",
 				}}
 			>
-				<Box style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "auto" }}>
+				<AppTabsBar />
+				<Box style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
 					<Outlet />
 				</Box>
 			</MantineAppShell.Main>

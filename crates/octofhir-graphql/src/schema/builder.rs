@@ -19,11 +19,13 @@ use super::input_types::{
     InputTypeGenerator, create_json_scalar, create_operation_outcome_issue_type,
 };
 use super::type_generator::FhirTypeGenerator;
-use crate::subscriptions::{ResourceEventBroadcaster, build_subscription_type, create_resource_change_event_type};
 use crate::error::GraphQLError;
 use crate::resolvers::{
     ConnectionResolver, CreateResolver, DeleteResolver, NestedReverseReferenceResolver,
     ReadResolver, SearchResolver, UpdateResolver,
+};
+use crate::subscriptions::{
+    ResourceEventBroadcaster, build_subscription_type, create_resource_change_event_type,
 };
 use crate::types::{create_all_resources_union, create_reference_type};
 
@@ -153,11 +155,12 @@ impl FhirSchemaBuilder {
         debug!("Starting GraphQL schema build");
 
         // Determine if subscriptions should be enabled
-        let subscription_name = if self.config.subscriptions_enabled && self.event_broadcaster.is_some() {
-            Some("Subscription")
-        } else {
-            None
-        };
+        let subscription_name =
+            if self.config.subscriptions_enabled && self.event_broadcaster.is_some() {
+                Some("Subscription")
+            } else {
+                None
+            };
 
         // Create schema builder
         let mut schema_builder = Schema::build("Query", Some("Mutation"), subscription_name);
@@ -785,25 +788,43 @@ impl FhirSchemaBuilder {
             // Add description based on parameter type for better documentation
             let description = match param.param_type {
                 SearchParameterType::Number => {
-                    format!("Search by {} (number). Supports prefixes: eq, ne, lt, le, gt, ge, sa, eb, ap", param.code)
+                    format!(
+                        "Search by {} (number). Supports prefixes: eq, ne, lt, le, gt, ge, sa, eb, ap",
+                        param.code
+                    )
                 }
                 SearchParameterType::Date => {
-                    format!("Search by {} (date/time). Supports prefixes and partial dates", param.code)
+                    format!(
+                        "Search by {} (date/time). Supports prefixes and partial dates",
+                        param.code
+                    )
                 }
                 SearchParameterType::String => {
-                    format!("Search by {} (string). Supports :exact, :contains modifiers", param.code)
+                    format!(
+                        "Search by {} (string). Supports :exact, :contains modifiers",
+                        param.code
+                    )
                 }
                 SearchParameterType::Token => {
                     format!("Search by {} (token). Format: [system|]code", param.code)
                 }
                 SearchParameterType::Reference => {
-                    format!("Search by {} (reference). Format: [Type/]id or URL", param.code)
+                    format!(
+                        "Search by {} (reference). Format: [Type/]id or URL",
+                        param.code
+                    )
                 }
                 SearchParameterType::Composite => {
-                    format!("Search by {} (composite). Format: param1$value1$param2$value2", param.code)
+                    format!(
+                        "Search by {} (composite). Format: param1$value1$param2$value2",
+                        param.code
+                    )
                 }
                 SearchParameterType::Quantity => {
-                    format!("Search by {} (quantity). Format: [prefix]value[|system|code]", param.code)
+                    format!(
+                        "Search by {} (quantity). Format: [prefix]value[|system|code]",
+                        param.code
+                    )
                 }
                 SearchParameterType::Uri => {
                     format!("Search by {} (URI)", param.code)

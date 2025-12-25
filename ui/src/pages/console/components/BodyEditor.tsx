@@ -1,9 +1,11 @@
 import { Suspense, useState } from "react";
+import { useUnit } from "effector-react";
 import { Stack, Group, Text, Button, Alert, Skeleton } from "@mantine/core";
 import { IconAlertCircle } from "@tabler/icons-react";
 import { JsonEditor } from "@/shared/monaco";
-import { useConsoleStore } from "../state/consoleStore";
+import { $body, setBody } from "../state/consoleStore";
 import { generateTemplate } from "../utils/templateGenerator";
+import { useJsonSchema } from "@/shared/api/hooks";
 
 interface BodyEditorProps {
 	resourceType?: string;
@@ -11,9 +13,9 @@ interface BodyEditorProps {
 }
 
 export function BodyEditor({ resourceType, method }: BodyEditorProps) {
-	const body = useConsoleStore((state) => state.body);
-	const setBody = useConsoleStore((state) => state.setBody);
+	const { body, setBody: setBodyEvent } = useUnit({ body: $body, setBody });
 	const [validationError, setValidationError] = useState<string>();
+	const { data: jsonSchema } = useJsonSchema(resourceType);
 
 	const showBodyEditor = ["POST", "PUT", "PATCH"].includes(method);
 	const canInsertTemplate = resourceType && showBodyEditor;
@@ -21,13 +23,13 @@ export function BodyEditor({ resourceType, method }: BodyEditorProps) {
 	const handleInsertTemplate = () => {
 		if (!resourceType) return;
 		const template = generateTemplate(resourceType);
-		setBody(template);
+		setBodyEvent(template);
 	};
 
 	const handleFormat = () => {
 		try {
 			const parsed = JSON.parse(body);
-			setBody(JSON.stringify(parsed, null, 2));
+			setBodyEvent(JSON.stringify(parsed, null, 2));
 			setValidationError(undefined);
 		} catch (error) {
 			setValidationError(error instanceof Error ? error.message : "Invalid JSON");
@@ -63,14 +65,16 @@ export function BodyEditor({ resourceType, method }: BodyEditorProps) {
 			<Suspense fallback={<Skeleton height={300} />}>
 				<JsonEditor
 					value={body}
-					onChange={setBody}
+					onChange={setBodyEvent}
 					height={300}
 					onValidationError={setValidationError}
+					schema={jsonSchema as object | undefined}
+					resourceType={resourceType}
 				/>
 			</Suspense>
 
 			{validationError && (
-				<Alert color="red" icon={<IconAlertCircle size={16} />}>
+				<Alert color="fire" icon={<IconAlertCircle size={16} />}>
 					{validationError}
 				</Alert>
 			)}

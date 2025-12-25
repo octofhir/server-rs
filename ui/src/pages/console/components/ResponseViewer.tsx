@@ -1,6 +1,22 @@
-import { Alert, Badge, Group, Paper, Stack, Text, Skeleton, Tabs, Table } from "@mantine/core";
+import {
+	Alert,
+	Anchor,
+	Badge,
+	Group,
+	Paper,
+	ScrollArea,
+	Skeleton,
+	Stack,
+	Table,
+	Tabs,
+	Text,
+} from "@mantine/core";
 import { IconAlertCircle, IconCheck, IconX } from "@tabler/icons-react";
+import { useUnit } from "effector-react";
+import { useNavigate } from "react-router-dom";
 import { JsonViewer } from "@/shared/ui-react/JsonViewer";
+import type { FhirBundle, FhirResource } from "@/shared/api";
+import { buildResourceTabPath, openTabForPath } from "@/shared/state/appTabsStore";
 import type { RequestResponse } from "../hooks/useSendConsoleRequest";
 
 interface ResponseViewerProps {
@@ -27,7 +43,20 @@ function isFhirOperationOutcome(body: unknown): body is FhirOperationOutcome {
 	);
 }
 
+function isFhirBundle(body: unknown): body is FhirBundle {
+	return (
+		typeof body === "object" &&
+		body !== null &&
+		"resourceType" in body &&
+		body.resourceType === "Bundle"
+	);
+}
+
 export function ResponseViewer({ response, isLoading }: ResponseViewerProps) {
+	// Hooks must be called unconditionally at the top
+	const openTabForPathEvent = useUnit(openTabForPath);
+	const navigate = useNavigate();
+
 	if (isLoading) {
 		return (
 			<Stack gap="md">
@@ -51,14 +80,29 @@ export function ResponseViewer({ response, isLoading }: ResponseViewerProps) {
 	const isError = response.status >= 400;
 	const isOperationOutcome = isFhirOperationOutcome(response.body);
 
+	const bundle = isFhirBundle(response.body) ? response.body : null;
+	const bundleEntries = bundle?.entry ?? [];
+	const resourceEntries = bundleEntries.filter(
+		(entry): entry is { resource: FhirResource; fullUrl?: string } =>
+			Boolean(entry.resource && entry.resource.resourceType),
+	);
+	const hasResultEntries = resourceEntries.length > 0;
+	const defaultTab = hasResultEntries ? "results" : "body";
+
+	const handleOpenResource = (resourceType: string, resourceId: string) => {
+		const path = buildResourceTabPath(resourceType, resourceId);
+		openTabForPathEvent({ pathname: path, titleOverride: `${resourceType}/${resourceId}` });
+		navigate(path);
+	};
+
 	return (
 		<Stack gap="md">
 			{/* Status header */}
-			<Paper withBorder p="sm">
+			<Paper p="sm" style={{ backgroundColor: "var(--app-surface-2)" }}>
 				<Group justify="space-between">
 					<Group gap="sm">
 						<Badge
-							color={isSuccess ? "green" : isError ? "red" : "yellow"}
+							color={isSuccess ? "primary" : isError ? "fire" : "warm"}
 							leftSection={
 								isSuccess ? (
 									<IconCheck size={14} />
@@ -82,7 +126,7 @@ export function ResponseViewer({ response, isLoading }: ResponseViewerProps) {
 
 			{/* OperationOutcome extraction */}
 			{isError && isOperationOutcome && (
-				<Alert color="red" icon={<IconAlertCircle size={16} />} title="FHIR Error">
+				<Alert color="fire" icon={<IconAlertCircle size={16} />} title="FHIR Error">
 					{response.body.issue?.[0]?.diagnostics || "An error occurred"}
 					{response.body.issue?.[0]?.severity && (
 						<Text size="xs" mt="xs">
@@ -93,11 +137,65 @@ export function ResponseViewer({ response, isLoading }: ResponseViewerProps) {
 			)}
 
 			{/* Response tabs */}
-			<Tabs defaultValue="body" variant="outline">
+			<Tabs defaultValue={defaultTab} variant="outline">
 				<Tabs.List>
+					{hasResultEntries && <Tabs.Tab value="results">Results</Tabs.Tab>}
 					<Tabs.Tab value="body">Response Body</Tabs.Tab>
 					<Tabs.Tab value="headers">Headers</Tabs.Tab>
 				</Tabs.List>
+
+				{hasResultEntries && (
+					<Tabs.Panel value="results" pt="md">
+						<ScrollArea.Autosize mah={320} type="auto">
+							<Table striped highlightOnHover>
+								<Table.Thead>
+									<Table.Tr>
+										<Table.Th>Type</Table.Th>
+										<Table.Th>ID</Table.Th>
+										<Table.Th>Full URL</Table.Th>
+									</Table.Tr>
+								</Table.Thead>
+								<Table.Tbody>
+									{resourceEntries.map((entry, index) => {
+										const resource = entry.resource;
+										const key = resource.id ?? entry.fullUrl ?? `entry-${index}`;
+										return (
+											<Table.Tr key={key}>
+												<Table.Td>
+													<Text size="sm" fw={500}>
+														{resource.resourceType}
+													</Text>
+												</Table.Td>
+												<Table.Td>
+													{resource.id ? (
+														<Anchor
+															component="button"
+															type="button"
+															onClick={() =>
+																handleOpenResource(resource.resourceType, resource.id)
+															}
+														>
+															{resource.id}
+														</Anchor>
+													) : (
+														<Text size="sm" c="dimmed">
+															-
+														</Text>
+													)}
+												</Table.Td>
+												<Table.Td>
+													<Text size="sm" c="dimmed" lineClamp={1}>
+														{entry.fullUrl ?? "-"}
+													</Text>
+												</Table.Td>
+											</Table.Tr>
+										);
+									})}
+								</Table.Tbody>
+							</Table>
+						</ScrollArea.Autosize>
+					</Tabs.Panel>
+				)}
 
 				<Tabs.Panel value="body" pt="md">
 					{response.body ? (

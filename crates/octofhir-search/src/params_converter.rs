@@ -13,7 +13,7 @@ use crate::sql_builder::{
     SqlBuilder, SqlBuilderError, SqlValue, fhirpath_to_jsonb_path,
 };
 use crate::types::dispatch_search;
-use octofhir_storage::{SearchParams, SortParam, TotalMode};
+use octofhir_storage::{SearchParams, TotalMode};
 use url::form_urlencoded;
 
 /// Control parameters that don't generate search conditions.

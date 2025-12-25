@@ -11,23 +11,18 @@
 //! - `FhirSchemaValidationProvider` for structural schema validation
 //! - `FhirPathEvaluator` (via FhirPathEngine) for constraint evaluation
 //!
-//! These are wired together using the shared traits from `octofhir-fhir-model`.
+//! Schemas are loaded on-demand from the database when validation is requested.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
-use octofhir_fhir_model::{ValidationProvider, provider::ModelProvider};
 use octofhir_fhirpath::FhirPathEngine;
 use octofhir_fhirschema::{
-    create_validation_provider_with_fhirpath, types::ValidationError as FhirSchemaValidationError,
-    validation::FhirSchemaValidator,
+    reference::ReferenceResolver, types::FhirSchema,
+    types::ValidationError as FhirSchemaValidationError, validation::FhirSchemaValidator,
 };
 use serde_json::Value as JsonValue;
-
-#[cfg(test)]
-use octofhir_fhirschema::{
-    FhirSchemaModelProvider, FhirSchemaValidationProvider, FhirVersion, ValidationContext,
-    embedded::get_schemas,
-};
+use tracing::warn;
 
 use crate::{canonical, model_provider::OctoFhirModelProvider};
 
@@ -73,7 +68,25 @@ impl ValidationOutcome {
                     "diagnostics": i.diagnostics,
                 });
                 if let Some(loc) = &i.location {
-                    issue["location"] = serde_json::json!([loc]);
+                    issue["expression"] = serde_json::json!([loc]);
+                }
+                // Add details for reference errors
+                if i.code.starts_with("REF") || i.code == "FS1013" {
+                    let detail_code = if i.code == "REF1001" {
+                        "non-existent-resource"
+                    } else if i.code == "REF1002" {
+                        "contained-not-found"
+                    } else if i.code == "FS1013" {
+                        "invalid-reference-type"
+                    } else {
+                        "reference-error"
+                    };
+                    issue["details"] = serde_json::json!({
+                        "coding": [{
+                            "system": "http://octofhir.io/CodeSystem/operation-outcome-type",
+                            "code": detail_code
+                        }]
+                    });
                 }
                 issue
             }).collect::<Vec<_>>()
@@ -122,96 +135,141 @@ impl IssueSeverity {
 /// Comprehensive FHIR validation service
 ///
 /// Combines structural schema validation with FHIRPath constraint evaluation.
+/// Schemas are loaded on-demand from the database when validation is requested.
 #[derive(Clone)]
 pub struct ValidationService {
-    /// Validation provider for schema + constraint validation
-    validation_provider: Arc<dyn ValidationProvider>,
-    /// Model provider for type information
-    #[allow(dead_code)]
-    model_provider: Arc<dyn ModelProvider + Send + Sync>,
+    /// Model provider for type information and on-demand schema loading
+    model_provider: Arc<OctoFhirModelProvider>,
     /// FHIRPath engine for advanced constraint evaluation
-    #[allow(dead_code)]
     fhirpath_engine: Arc<FhirPathEngine>,
-    /// Direct validator for detailed error reporting
-    direct_validator: Arc<FhirSchemaValidator>,
+    /// Optional reference resolver for existence validation
+    reference_resolver: Option<Arc<dyn ReferenceResolver>>,
+}
+
+/// Check if a type is a primitive FHIR type
+fn is_primitive_type(type_name: &str) -> bool {
+    matches!(
+        type_name,
+        "boolean"
+            | "integer"
+            | "string"
+            | "decimal"
+            | "uri"
+            | "url"
+            | "canonical"
+            | "base64Binary"
+            | "instant"
+            | "date"
+            | "dateTime"
+            | "time"
+            | "code"
+            | "oid"
+            | "id"
+            | "markdown"
+            | "unsignedInt"
+            | "positiveInt"
+            | "uuid"
+            | "xhtml"
+    )
 }
 
 impl ValidationService {
-    /// Create a new validation service with FHIRPath constraint support
+    /// Create a new validation service with FHIRPath constraint support.
+    ///
+    /// Schemas are loaded on-demand from the model provider when validation
+    /// is requested, rather than pre-loading all schemas at construction.
     pub async fn new(
         model_provider: Arc<OctoFhirModelProvider>,
         fhirpath_engine: Arc<FhirPathEngine>,
     ) -> Result<Self, anyhow::Error> {
-        // Create validation provider with FHIRPath evaluator
-        let validation_provider = create_validation_provider_with_fhirpath(
-            model_provider.clone(),
-            fhirpath_engine.clone(),
-        )
-        .await
-        .map_err(|e| anyhow::anyhow!("Failed to create validation provider: {}", e))?;
-
-        // Create direct validator for detailed error reporting
-        let schemas = model_provider.inner().schemas().clone();
-        let direct_validator = Arc::new(FhirSchemaValidator::new(
-            schemas,
-            Some(fhirpath_engine.clone()),
-        ));
-
         Ok(Self {
-            validation_provider,
             model_provider,
             fhirpath_engine,
-            direct_validator,
+            reference_resolver: None,
         })
     }
 
-    /// Create a validation service without FHIRPath constraint evaluation
-    /// (structural validation only)
+    /// Add a reference resolver for existence validation.
     ///
-    /// **NOTE:** This method creates its own model provider and should only
-    /// be used in tests. In production, use `new()` with the shared provider
-    /// from AppState.
-    #[cfg(test)]
-    pub async fn new_structural_only(fhir_version: FhirVersion) -> Result<Self, anyhow::Error> {
-        let schemas = get_schemas(fhir_version);
-        let model_fhir_version = match fhir_version {
-            FhirVersion::R4 => octofhir_fhir_model::FhirVersion::R4,
-            FhirVersion::R4B => octofhir_fhir_model::FhirVersion::R4B,
-            FhirVersion::R5 => octofhir_fhir_model::FhirVersion::R5,
-            FhirVersion::R6 => octofhir_fhir_model::FhirVersion::R6,
-        };
+    /// When a reference resolver is provided, the validator will check that
+    /// referenced resources actually exist in the storage.
+    pub fn with_reference_resolver(mut self, resolver: Arc<dyn ReferenceResolver>) -> Self {
+        self.reference_resolver = Some(resolver);
+        self
+    }
 
-        let schema_provider = Arc::new(FhirSchemaModelProvider::new(
-            schemas.clone(),
-            model_fhir_version,
-        ));
+    /// Load schemas needed for validating a resource type and its type hierarchy.
+    ///
+    /// This loads the schema for the given resource type and all its base types
+    /// (Resource, DomainResource, etc.) to ensure complete validation.
+    async fn load_schemas_for_validation(
+        &self,
+        resource_type: &str,
+    ) -> HashMap<String, FhirSchema> {
+        let mut schemas = HashMap::new();
+        let mut types_to_load = vec![resource_type.to_string()];
+        let mut loaded = std::collections::HashSet::new();
 
-        let validation_context = ValidationContext::default();
-        let validation_provider = Arc::new(FhirSchemaValidationProvider::new(
-            schema_provider.clone(),
-            validation_context,
-        ));
+        while let Some(type_name) = types_to_load.pop() {
+            if loaded.contains(&type_name) {
+                continue;
+            }
+            loaded.insert(type_name.clone());
 
-        // Create FHIRPath engine
-        let registry = Arc::new(octofhir_fhirpath::create_function_registry());
-        let fhirpath_engine = Arc::new(
-            FhirPathEngine::new(registry, schema_provider.clone())
-                .await
-                .map_err(|e| anyhow::anyhow!("Failed to create FHIRPath engine: {}", e))?,
-        );
+            if let Some(schema) = self.model_provider.get_schema(&type_name).await {
+                // Add base type to load list
+                if let Some(base_url) = &schema.base {
+                    if let Some(base_name) = base_url.rsplit('/').next() {
+                        if !loaded.contains(base_name) {
+                            types_to_load.push(base_name.to_string());
+                        }
+                    }
+                }
 
-        // Create direct validator for detailed error reporting
-        let direct_validator = Arc::new(FhirSchemaValidator::new(
-            schemas.clone(),
-            Some(fhirpath_engine.clone()),
-        ));
+                // Load element types recursively
+                if let Some(elements) = &schema.elements {
+                    for element in elements.values() {
+                        if let Some(elem_type) = &element.type_name {
+                            if !loaded.contains(elem_type) && !is_primitive_type(elem_type) {
+                                types_to_load.push(elem_type.clone());
+                            }
+                        }
+                    }
+                }
 
-        Ok(Self {
-            validation_provider,
-            model_provider: schema_provider,
-            fhirpath_engine,
-            direct_validator,
-        })
+                schemas.insert(schema.name.clone(), (*schema).clone());
+            }
+        }
+
+        schemas
+    }
+
+    /// Load a specific profile schema by URL for profile validation.
+    async fn load_profile_schema(&self, profile_url: &str) -> Option<FhirSchema> {
+        self.model_provider
+            .get_schema_by_url(profile_url)
+            .await
+            .map(|s| (*s).clone())
+    }
+
+    /// Create a validator with the loaded schemas for a specific validation request.
+    async fn create_validator_for_resource(
+        &self,
+        resource_type: &str,
+    ) -> Option<FhirSchemaValidator> {
+        let schemas = self.load_schemas_for_validation(resource_type).await;
+        if schemas.is_empty() {
+            warn!("No schemas loaded for resource type: {}", resource_type);
+            return None;
+        }
+        let mut validator = FhirSchemaValidator::new(schemas, Some(self.fhirpath_engine.clone()));
+
+        // Add reference resolver if configured
+        if let Some(resolver) = &self.reference_resolver {
+            validator = validator.with_reference_resolver(resolver.clone());
+        }
+
+        Some(validator)
     }
 
     /// Validate a resource against its base schema
@@ -224,10 +282,36 @@ impl ValidationService {
             }
         };
 
-        // Build the base profile URL
-        let profile_url = format!("http://hl7.org/fhir/StructureDefinition/{}", resource_type);
+        // Create validator with on-demand loaded schemas
+        let validator = match self.create_validator_for_resource(resource_type).await {
+            Some(v) => v,
+            None => {
+                return ValidationOutcome::error(format!(
+                    "Unable to load schemas for resource type: {}",
+                    resource_type
+                ));
+            }
+        };
 
-        self.validate_against_profile(resource, &profile_url).await
+        // Validate against the resource type schema
+        let validation_result = validator
+            .validate(resource, vec![resource_type.to_string()])
+            .await;
+
+        if validation_result.valid {
+            ValidationOutcome::success()
+        } else {
+            let issues = validation_result
+                .errors
+                .iter()
+                .map(Self::convert_validation_error)
+                .collect();
+
+            ValidationOutcome {
+                valid: false,
+                issues,
+            }
+        }
     }
 
     /// Convert FHIR Schema validation error to ValidationIssue
@@ -273,22 +357,50 @@ impl ValidationService {
         }
     }
 
-    /// Validate a resource against a specific profile
+    /// Validate a resource against a specific profile URL
+    ///
+    /// The profile is loaded from the database by its canonical URL
+    /// (as specified in meta.profile).
     pub async fn validate_against_profile(
         &self,
         resource: &JsonValue,
         profile_url: &str,
     ) -> ValidationOutcome {
-        // Use direct validator to get detailed error information
-        let validation_result = self
-            .direct_validator
+        // Extract resource type for loading base schemas
+        let resource_type = match resource.get("resourceType").and_then(|v| v.as_str()) {
+            Some(rt) => rt,
+            None => {
+                return ValidationOutcome::error("Missing resourceType".to_string());
+            }
+        };
+
+        // Load schemas including the profile
+        let mut schemas = self.load_schemas_for_validation(resource_type).await;
+
+        // Also load the profile schema by URL if different from base
+        if let Some(profile_schema) = self.load_profile_schema(profile_url).await {
+            schemas.insert(profile_schema.name.clone(), profile_schema);
+        } else {
+            warn!("Profile not found: {}", profile_url);
+            return ValidationOutcome::error(format!("Profile not found: {}", profile_url));
+        }
+
+        // Create validator with loaded schemas
+        let mut validator = FhirSchemaValidator::new(schemas, Some(self.fhirpath_engine.clone()));
+
+        // Add reference resolver if configured
+        if let Some(resolver) = &self.reference_resolver {
+            validator = validator.with_reference_resolver(resolver.clone());
+        }
+
+        // Validate against the profile
+        let validation_result = validator
             .validate(resource, vec![profile_url.to_string()])
             .await;
 
         if validation_result.valid {
             ValidationOutcome::success()
         } else {
-            // Convert detailed FHIR Schema errors to ValidationIssues
             let issues = validation_result
                 .errors
                 .iter()
@@ -346,186 +458,4 @@ pub fn validate_resource(resource_type: &str, body: &JsonValue) -> Result<(), St
         ));
     }
     Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use octofhir_fhirschema::FhirVersion;
-    use serde_json::json;
-
-    #[tokio::test]
-    async fn test_org1_constraint_no_name_or_identifier() {
-        // Constraint org-1: Organization must have at least name or identifier
-        let validation_service = ValidationService::new_structural_only(FhirVersion::R4B)
-            .await
-            .expect("Failed to create validation service");
-
-        let org_no_name_or_id = json!({
-            "resourceType": "Organization",
-            "active": true
-        });
-
-        let outcome = validation_service.validate(&org_no_name_or_id).await;
-
-        println!(
-            "Validation outcome for org without name/id: valid={}, issues={:?}",
-            outcome.valid, outcome.issues
-        );
-
-        // This should fail org-1 constraint
-        assert!(
-            !outcome.valid,
-            "Organization without name or identifier should be invalid"
-        );
-
-        // Check that the error mentions the constraint
-        let has_constraint_error = outcome.issues.iter().any(|issue| {
-            issue.diagnostics.contains("org-1")
-                || issue.diagnostics.contains("identifier")
-                || issue.diagnostics.contains("name")
-        });
-
-        if !has_constraint_error {
-            println!("WARNING: org-1 constraint not being checked!");
-            println!("Issues found: {:#?}", outcome.issues);
-        }
-    }
-
-    #[tokio::test]
-    async fn test_org1_constraint_with_name() {
-        let validation_service = ValidationService::new_structural_only(FhirVersion::R4B)
-            .await
-            .expect("Failed to create validation service");
-
-        let org_with_name = json!({
-            "resourceType": "Organization",
-            "name": "Test Hospital",
-            "active": true
-        });
-
-        let outcome = validation_service.validate(&org_with_name).await;
-
-        println!(
-            "Validation outcome for org with name: valid={}, issues={:?}",
-            outcome.valid, outcome.issues
-        );
-
-        // This should pass org-1 constraint
-        if !outcome.valid {
-            println!("Organization with name failed validation:");
-            for issue in &outcome.issues {
-                println!("  - {}: {}", issue.code, issue.diagnostics);
-            }
-        }
-    }
-
-    #[tokio::test]
-    async fn test_org3_constraint_telecom_home_use() {
-        // Constraint org-3: Organization contact telecom cannot use 'home'
-        let validation_service = ValidationService::new_structural_only(FhirVersion::R4B)
-            .await
-            .expect("Failed to create validation service");
-
-        let org_with_home_telecom = json!({
-            "resourceType": "Organization",
-            "name": "Test Hospital",
-            "contact": [{
-                "telecom": [{
-                    "system": "phone",
-                    "value": "555-1234",
-                    "use": "home"  // This violates org-3
-                }]
-            }]
-        });
-
-        let outcome = validation_service.validate(&org_with_home_telecom).await;
-
-        println!(
-            "Validation outcome for org with home telecom: valid={}, issues={:?}",
-            outcome.valid, outcome.issues
-        );
-
-        // This should fail org-3 constraint
-        if outcome.valid {
-            println!("WARNING: org-3 constraint not being checked!");
-            println!("Organization with home telecom should be invalid");
-        }
-    }
-
-    #[tokio::test]
-    async fn test_org4_constraint_address_home_use() {
-        // Constraint org-4: Organization contact address cannot use 'home'
-        let validation_service = ValidationService::new_structural_only(FhirVersion::R4B)
-            .await
-            .expect("Failed to create validation service");
-
-        let org_with_home_address = json!({
-            "resourceType": "Organization",
-            "name": "Test Hospital",
-            "contact": [{
-                "address": {
-                    "use": "home",  // This violates org-4
-                    "line": ["123 Main St"],
-                    "city": "Springfield"
-                }
-            }]
-        });
-
-        let outcome = validation_service.validate(&org_with_home_address).await;
-
-        println!(
-            "Validation outcome for org with home address: valid={}, issues={:?}",
-            outcome.valid, outcome.issues
-        );
-
-        // This should fail org-4 constraint
-        if outcome.valid {
-            println!("WARNING: org-4 constraint not being checked!");
-            println!("Organization with home address should be invalid");
-        }
-    }
-
-    #[tokio::test]
-    async fn test_valid_organization() {
-        let validation_service = ValidationService::new_structural_only(FhirVersion::R4B)
-            .await
-            .expect("Failed to create validation service");
-
-        let valid_org = json!({
-            "resourceType": "Organization",
-            "identifier": [{
-                "system": "http://example.org/hospital-ids",
-                "value": "HOSP-001"
-            }],
-            "name": "Test Hospital",
-            "active": true,
-            "contact": [{
-                "telecom": [{
-                    "system": "phone",
-                    "value": "555-1234",
-                    "use": "work"  // work is allowed
-                }],
-                "address": {
-                    "use": "work",  // work is allowed
-                    "line": ["123 Main St"],
-                    "city": "Springfield"
-                }
-            }]
-        });
-
-        let outcome = validation_service.validate(&valid_org).await;
-
-        println!(
-            "Validation outcome for valid org: valid={}, issues={:?}",
-            outcome.valid, outcome.issues
-        );
-
-        if !outcome.valid {
-            println!("Valid organization failed validation:");
-            for issue in &outcome.issues {
-                println!("  - {}: {}", issue.code, issue.diagnostics);
-            }
-        }
-    }
 }

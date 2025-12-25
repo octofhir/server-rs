@@ -408,6 +408,11 @@ pub struct ValidationSettings {
     /// Default: false (disabled for security)
     #[serde(default = "default_allow_skip_validation")]
     pub allow_skip_validation: bool,
+
+    /// Skip reference validation (both type checking and existence checking)
+    /// Default: false (reference validation is enabled)
+    #[serde(default)]
+    pub skip_reference_validation: bool,
 }
 
 fn default_allow_skip_validation() -> bool {
@@ -418,6 +423,7 @@ impl Default for ValidationSettings {
     fn default() -> Self {
         Self {
             allow_skip_validation: default_allow_skip_validation(),
+            skip_reference_validation: false,
         }
     }
 }

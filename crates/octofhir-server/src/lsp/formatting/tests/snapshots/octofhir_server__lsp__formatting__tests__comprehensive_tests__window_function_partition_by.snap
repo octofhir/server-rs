@@ -1,7 +1,0 @@
----
-source: crates/octofhir-server/src/lsp/formatting/tests/comprehensive_tests.rs
-expression: formatted
----
-  SELECT id, name, status, row_number() OVER (PARTITION BY status
-ORDER BY created_at)
-    FROM patient

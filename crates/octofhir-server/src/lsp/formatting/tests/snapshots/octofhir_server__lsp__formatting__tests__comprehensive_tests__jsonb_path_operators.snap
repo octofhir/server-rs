@@ -1,6 +1,0 @@
----
-source: crates/octofhir-server/src/lsp/formatting/tests/comprehensive_tests.rs
-expression: formatted
----
-SELECT data #> '{a,b}', data #>> '{x,y}'
-  FROM test

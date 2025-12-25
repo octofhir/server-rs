@@ -164,14 +164,15 @@ pub async fn read(
             if let Some(meta) = resource.get_mut("meta") {
                 if let Some(meta_obj) = meta.as_object_mut() {
                     meta_obj.insert("versionId".to_string(), serde_json::json!(txid.to_string()));
-                    meta_obj.insert("lastUpdated".to_string(), serde_json::json!(updated_at.to_rfc3339()));
-                    meta_obj.insert("createdAt".to_string(), serde_json::json!(created_at.to_rfc3339()));
+                    meta_obj.insert(
+                        "lastUpdated".to_string(),
+                        serde_json::json!(updated_at.to_rfc3339()),
+                    );
                 }
             } else {
                 resource["meta"] = serde_json::json!({
                     "versionId": txid.to_string(),
-                    "lastUpdated": updated_at.to_rfc3339(),
-                    "createdAt": created_at.to_rfc3339()
+                    "lastUpdated": updated_at.to_rfc3339()
                 });
             }
 
@@ -214,17 +215,13 @@ pub async fn update(
 
     let table = SchemaManager::table_name(resource_type);
 
-    // Parse ID as UUID
-    let id_uuid = Uuid::parse_str(id)
-        .map_err(|e| StorageError::invalid_resource(format!("Invalid UUID format: {e}")))?;
-
     // Check version if If-Match provided
     if let Some(expected_version) = if_match {
         let version_sql =
             format!(r#"SELECT txid FROM "{table}" WHERE id = $1 AND status != 'deleted'"#);
 
         let current_version: Option<i64> = query_scalar(&version_sql)
-            .bind(id_uuid)
+            .bind(id)
             .fetch_optional(pool)
             .await
             .map_err(|e| StorageError::internal(format!("Failed to check version: {e}")))?;
@@ -263,16 +260,16 @@ pub async fn update(
            RETURNING id, txid, created_at, updated_at"#
     );
 
-    let row: Option<(Uuid, i64, DateTime<Utc>, DateTime<Utc>)> = query_as(&update_sql)
+    let row: Option<(String, i64, DateTime<Utc>, DateTime<Utc>)> = query_as(&update_sql)
         .bind(txid)
         .bind(&resource)
-        .bind(id_uuid)
+        .bind(id)
         .fetch_optional(pool)
         .await
         .map_err(|e| StorageError::internal(format!("Failed to update resource: {e}")))?;
 
     match row {
-        Some((_, returned_txid, created_at, updated_at)) => {
+        Some((_returned_id, returned_txid, created_at, updated_at)) => {
             let created_at_time = chrono_to_time(created_at);
             let updated_at_time = chrono_to_time(updated_at);
             Ok(StoredResource {
@@ -298,12 +295,6 @@ pub async fn update(
 pub async fn delete(pool: &PgPool, resource_type: &str, id: &str) -> Result<(), StorageError> {
     let table = SchemaManager::table_name(resource_type);
 
-    // Parse ID as UUID - if invalid format, delete is idempotent (nothing to delete)
-    let id_uuid = match Uuid::parse_str(id) {
-        Ok(u) => u,
-        Err(_) => return Ok(()), // Invalid ID format means nothing to delete
-    };
-
     // Create transaction for the delete operation
     let txid = create_transaction(pool).await?;
 
@@ -316,7 +307,7 @@ pub async fn delete(pool: &PgPool, resource_type: &str, id: &str) -> Result<(), 
 
     let _result = query(&sql)
         .bind(txid)
-        .bind(id_uuid)
+        .bind(id)
         .execute(pool)
         .await
         .map_err(|e| {
@@ -344,12 +335,6 @@ pub async fn vread(
     let table = SchemaManager::table_name(resource_type);
     let history_table = format!("{}_history", table);
 
-    // Parse ID as UUID - if invalid format, resource doesn't exist
-    let id_uuid = match Uuid::parse_str(id) {
-        Ok(u) => u,
-        Err(_) => return Ok(None), // Invalid ID format means resource not found
-    };
-
     // Parse version as i64
     let version_id: i64 = version
         .parse()
@@ -362,8 +347,8 @@ pub async fn vread(
            WHERE id = $1 AND txid = $2"#
     );
 
-    let row: Option<(Uuid, i64, DateTime<Utc>, DateTime<Utc>, Value)> = query_as(&current_sql)
-        .bind(id_uuid)
+    let row: Option<(String, i64, DateTime<Utc>, DateTime<Utc>, Value)> = query_as(&current_sql)
+        .bind(id)
         .bind(version_id)
         .fetch_optional(pool)
         .await
@@ -378,7 +363,7 @@ pub async fn vread(
         let created_at_time = chrono_to_time(created_at);
         let updated_at_time = chrono_to_time(updated_at);
         return Ok(Some(StoredResource {
-            id: row_id.to_string(),
+            id: row_id,
             version_id: txid.to_string(),
             resource_type: resource_type.to_string(),
             resource,
@@ -394,8 +379,8 @@ pub async fn vread(
            WHERE id = $1 AND txid = $2"#
     );
 
-    let row: Option<(Uuid, i64, DateTime<Utc>, DateTime<Utc>, Value)> = query_as(&history_sql)
-        .bind(id_uuid)
+    let row: Option<(String, i64, DateTime<Utc>, DateTime<Utc>, Value)> = query_as(&history_sql)
+        .bind(id)
         .bind(version_id)
         .fetch_optional(pool)
         .await
@@ -411,7 +396,7 @@ pub async fn vread(
             let created_at_time = chrono_to_time(created_at);
             let updated_at_time = chrono_to_time(updated_at);
             Ok(Some(StoredResource {
-                id: row_id.to_string(),
+                id: row_id,
                 version_id: txid.to_string(),
                 resource_type: resource_type.to_string(),
                 resource,
@@ -452,10 +437,6 @@ pub async fn create_with_tx(
         .map(String::from)
         .unwrap_or_else(|| Uuid::new_v4().to_string());
 
-    // Parse ID as UUID
-    let id_uuid = Uuid::parse_str(&id)
-        .map_err(|e| StorageError::invalid_resource(format!("Invalid UUID format: {e}")))?;
-
     // Create transaction for this operation (within the outer transaction)
     let txid: i64 =
         query_scalar("INSERT INTO _transaction (status) VALUES ('committed') RETURNING txid")
@@ -481,8 +462,8 @@ pub async fn create_with_tx(
            RETURNING id, txid, created_at, updated_at"#
     );
 
-    let row: (Uuid, i64, DateTime<Utc>, DateTime<Utc>) = query_as(&sql)
-        .bind(id_uuid)
+    let row: (String, i64, DateTime<Utc>, DateTime<Utc>) = query_as(&sql)
+        .bind(&id)
         .bind(txid)
         .bind(now)
         .bind(&resource)
@@ -531,10 +512,6 @@ pub async fn update_with_tx(
 
     let table = SchemaManager::table_name(resource_type);
 
-    // Parse ID as UUID
-    let id_uuid = Uuid::parse_str(id)
-        .map_err(|e| StorageError::invalid_resource(format!("Invalid UUID format: {e}")))?;
-
     // Create new transaction for this version (within the outer transaction)
     let txid: i64 =
         query_scalar("INSERT INTO _transaction (status) VALUES ('committed') RETURNING txid")
@@ -560,16 +537,16 @@ pub async fn update_with_tx(
            RETURNING id, txid, created_at, updated_at"#
     );
 
-    let row: Option<(Uuid, i64, DateTime<Utc>, DateTime<Utc>)> = query_as(&update_sql)
+    let row: Option<(String, i64, DateTime<Utc>, DateTime<Utc>)> = query_as(&update_sql)
         .bind(txid)
         .bind(&resource)
-        .bind(id_uuid)
+        .bind(id)
         .fetch_optional(&mut **tx)
         .await
         .map_err(|e| StorageError::internal(format!("Failed to update resource: {e}")))?;
 
     match row {
-        Some((_, returned_txid, created_at, updated_at)) => {
+        Some((_returned_id, returned_txid, created_at, updated_at)) => {
             let created_at_time = chrono_to_time(created_at);
             let updated_at_time = chrono_to_time(updated_at);
             Ok(StoredResource {
@@ -594,12 +571,6 @@ pub async fn delete_with_tx(
 ) -> Result<(), StorageError> {
     let table = SchemaManager::table_name(resource_type);
 
-    // Parse ID as UUID - if invalid format, delete is idempotent (nothing to delete)
-    let id_uuid = match Uuid::parse_str(id) {
-        Ok(u) => u,
-        Err(_) => return Ok(()), // Invalid ID format means nothing to delete
-    };
-
     // Create transaction for the delete operation (within the outer transaction)
     let txid: i64 =
         query_scalar("INSERT INTO _transaction (status) VALUES ('committed') RETURNING txid")
@@ -616,7 +587,7 @@ pub async fn delete_with_tx(
 
     let _result = query(&sql)
         .bind(txid)
-        .bind(id_uuid)
+        .bind(id)
         .execute(&mut **tx)
         .await
         .map_err(|e| {
@@ -641,12 +612,6 @@ pub async fn read_with_tx(
 ) -> Result<Option<StoredResource>, StorageError> {
     let table = SchemaManager::table_name(resource_type);
 
-    // Parse ID as UUID - if invalid format, resource doesn't exist
-    let id_uuid = match Uuid::parse_str(id) {
-        Ok(u) => u,
-        Err(_) => return Ok(None),
-    };
-
     // Query including status to detect deleted resources
     let sql = format!(
         r#"SELECT id, txid, created_at, updated_at, resource, status::text
@@ -654,8 +619,8 @@ pub async fn read_with_tx(
            WHERE id = $1"#
     );
 
-    let row: Option<(Uuid, i64, DateTime<Utc>, DateTime<Utc>, Value, String)> = query_as(&sql)
-        .bind(id_uuid)
+    let row: Option<(String, i64, DateTime<Utc>, DateTime<Utc>, Value, String)> = query_as(&sql)
+        .bind(id)
         .fetch_optional(&mut **tx)
         .await
         .map_err(|e| {
@@ -675,7 +640,7 @@ pub async fn read_with_tx(
             let created_at_time = chrono_to_time(created_at);
             let updated_at_time = chrono_to_time(updated_at);
             Ok(Some(StoredResource {
-                id: row_id.to_string(),
+                id: row_id,
                 version_id: txid.to_string(),
                 resource_type: resource_type.to_string(),
                 resource,

@@ -10,15 +10,48 @@ import {
 } from "@mantine/core";
 import { Combobox, useCombobox } from "@mantine/core";
 import { IconSearch } from "@tabler/icons-react";
-import { useConsoleStore } from "../../state/consoleStore";
+import { useUnit } from "effector-react";
+import {
+	$commandPaletteOpen,
+	$method,
+	$mode,
+	$rawPath,
+	setBody,
+	setCommandPaletteOpen,
+	setCustomHeaders,
+	setMethod,
+	setMode,
+	setRawPath,
+} from "../../state/consoleStore";
 import { useBuilderCommands, useHistoryCommands } from "../../commands/providers";
 import { filterAndSortCommands } from "../../commands/fuzzySearch";
 import type { ConsoleCommand, CommandContext } from "../../commands/types";
 import { CommandList } from "./CommandList";
 
 export function CommandPalette() {
-	const opened = useConsoleStore((state) => state.commandPaletteOpen);
-	const setOpened = useConsoleStore((state) => state.setCommandPaletteOpen);
+	const {
+		opened,
+		setOpened,
+		method,
+		mode,
+		rawPath,
+		setMethod: setMethodEvent,
+		setRawPath: setRawPathEvent,
+		setBody: setBodyEvent,
+		setMode: setModeEvent,
+		setCustomHeaders: setCustomHeadersEvent,
+	} = useUnit({
+		opened: $commandPaletteOpen,
+		setOpened: setCommandPaletteOpen,
+		method: $method,
+		mode: $mode,
+		rawPath: $rawPath,
+		setMethod,
+		setRawPath,
+		setBody,
+		setMode,
+		setCustomHeaders,
+	});
 	const [query, setQuery] = useState("");
 	const inputRef = useRef<HTMLInputElement>(null);
 
@@ -62,23 +95,33 @@ export function CommandPalette() {
 	}, [filteredCommands]);
 
 	// Create command execution context
-	const commandContext = useMemo((): CommandContext => {
-		const store = useConsoleStore.getState();
-		return {
-			setMethod: store.setMethod,
-			setRawPath: store.setRawPath,
-			setBody: store.setBody,
-			setMode: store.setMode,
-			setCustomHeaders: store.setCustomHeaders,
-			currentMethod: store.method,
-			currentMode: store.mode,
-			currentPath: store.rawPath,
+	const commandContext = useMemo(
+		(): CommandContext => ({
+			setMethod: setMethodEvent,
+			setRawPath: setRawPathEvent,
+			setBody: setBodyEvent,
+			setMode: setModeEvent,
+			setCustomHeaders: setCustomHeadersEvent,
+			currentMethod: method,
+			currentMode: mode,
+			currentPath: rawPath,
 			closePalette: () => setOpened(false),
 			trackEvent: (event, metadata) => {
 				console.debug("[Analytics]", event, metadata);
 			},
-		};
-	}, [setOpened]);
+		}),
+		[
+			setMethodEvent,
+			setRawPathEvent,
+			setBodyEvent,
+			setModeEvent,
+			setCustomHeadersEvent,
+			method,
+			mode,
+			rawPath,
+			setOpened,
+		],
+	);
 
 	const handleExecute = (command: ConsoleCommand) => {
 		command.execute(commandContext);

@@ -1,20 +1,35 @@
 import { Stack, Group, Text, TextInput, ActionIcon, Button, Alert } from "@mantine/core";
 import { IconX, IconPlus, IconLock } from "@tabler/icons-react";
-import { useConsoleStore } from "../state/consoleStore";
+import { useUnit } from "effector-react";
+import {
+	$customHeaders,
+	$defaultHeaders,
+	addCustomHeader,
+	removeCustomHeader,
+	updateCustomHeader,
+} from "../state/consoleStore";
 import { validateHeaders } from "../utils/headerUtils";
 
 export function HeaderEditor() {
-	const defaultHeaders = useConsoleStore((state) => state.defaultHeaders);
-	const customHeaders = useConsoleStore((state) => state.customHeaders);
-	const addCustomHeader = useConsoleStore((state) => state.addCustomHeader);
-	const removeCustomHeader = useConsoleStore((state) => state.removeCustomHeader);
-	const updateCustomHeader = useConsoleStore((state) => state.updateCustomHeader);
+	const {
+		defaultHeaders,
+		customHeaders,
+		addCustomHeader: addCustomHeaderEvent,
+		removeCustomHeader: removeCustomHeaderEvent,
+		updateCustomHeader: updateCustomHeaderEvent,
+	} = useUnit({
+		defaultHeaders: $defaultHeaders,
+		customHeaders: $customHeaders,
+		addCustomHeader,
+		removeCustomHeader,
+		updateCustomHeader,
+	});
 
 	const allHeaders = { ...defaultHeaders, ...customHeaders };
 	const errors = validateHeaders(allHeaders);
 
 	const handleAddHeader = () => {
-		addCustomHeader("", "");
+		addCustomHeaderEvent({ key: "", value: "" });
 	};
 
 	return (
@@ -54,18 +69,35 @@ export function HeaderEditor() {
 						<TextInput
 							placeholder="Header-Name"
 							value={key}
-							onChange={(e) => updateCustomHeader(key, e.target.value, value)}
+							onChange={(e) =>
+								updateCustomHeaderEvent({
+									oldKey: key,
+									newKey: e.target.value,
+									value,
+								})
+							}
 							size="xs"
 							style={{ flex: 1 }}
 						/>
 						<TextInput
 							placeholder="value"
 							value={value}
-							onChange={(e) => updateCustomHeader(key, key, e.target.value)}
+							onChange={(e) =>
+								updateCustomHeaderEvent({
+									oldKey: key,
+									newKey: key,
+									value: e.target.value,
+								})
+							}
 							size="xs"
 							style={{ flex: 2 }}
 						/>
-						<ActionIcon variant="subtle" onClick={() => removeCustomHeader(key)} size="sm" color="red">
+						<ActionIcon
+							variant="subtle"
+							onClick={() => removeCustomHeaderEvent(key)}
+							size="sm"
+							color="fire"
+						>
 							<IconX size={14} />
 						</ActionIcon>
 					</Group>
@@ -74,7 +106,7 @@ export function HeaderEditor() {
 
 			{/* Validation warnings */}
 			{errors.length > 0 && (
-				<Alert color="yellow" title="Validation warnings">
+				<Alert color="warm" title="Validation warnings">
 					{errors.map((error, i) => (
 						<Text key={i} size="xs">
 							{error}

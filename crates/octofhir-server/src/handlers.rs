@@ -1,3 +1,4 @@
+use crate::bootstrap::ADMIN_ACCESS_POLICY_ID;
 use crate::mapping::{IdPolicy, envelope_from_json, json_from_envelope};
 use crate::operation_registry::{OperationStorage, PostgresOperationStorage};
 use crate::patch::{apply_fhirpath_patch, apply_json_patch};
@@ -13,9 +14,10 @@ use axum::{
 use include_dir::{Dir, include_dir};
 use mime_guess::MimeGuess;
 use octofhir_api::ApiError;
-use octofhir_core::{CoreError, ResourceType};
+use octofhir_core::ResourceType;
+use octofhir_fhir_model::ModelProvider;
 use octofhir_storage::{FhirStorage, StorageError}; // For begin_transaction method and error mapping
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::HashMap;
 
@@ -387,6 +389,33 @@ fn count_summary_capability_statement(cs: &Value) -> Value {
     })
 }
 
+/// Preprocess resource payload before storage (e.g. hashing passwords).
+async fn preprocess_payload(resource_type: &str, payload: &mut Value) -> Result<(), ApiError> {
+    if resource_type == "User" {
+        if let Some(obj) = payload.as_object_mut() {
+            if let Some(password) = obj.get("password").and_then(|v| v.as_str()) {
+                let hashed = crate::bootstrap::hash_password(password)
+                    .map_err(|e| ApiError::internal(format!("Failed to hash password: {}", e)))?;
+                obj.insert("passwordHash".to_string(), Value::String(hashed));
+                obj.remove("password");
+            }
+        }
+    } else if resource_type == "Client" {
+        if let Some(obj) = payload.as_object_mut() {
+            if let Some(secret) = obj.get("clientSecret").and_then(|v| v.as_str()) {
+                // Only hash if it doesn't look like a bcrypt hash already
+                if !secret.starts_with("$2b$") {
+                    let hashed = crate::bootstrap::hash_password(secret).map_err(|e| {
+                        ApiError::internal(format!("Failed to hash client secret: {}", e))
+                    })?;
+                    obj.insert("clientSecret".to_string(), Value::String(hashed));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 // ---- CRUD & Search placeholders ----
 
 pub async fn create_resource(
@@ -421,6 +450,9 @@ pub async fn create_resource(
             "Validation skipped via X-Skip-Validation header"
         );
     }
+
+    let mut payload = payload;
+    preprocess_payload(&resource_type, &mut payload).await?;
 
     // Handle conditional create (If-None-Exist)
     if let Some(condition) = headers.get("If-None-Exist")
@@ -764,7 +796,7 @@ pub async fn instance_history(
     let _g = span.enter();
 
     // Parse resource type
-    let rt: ResourceType = match resource_type.parse() {
+    let _rt: ResourceType = match resource_type.parse() {
         Ok(rt) => rt,
         Err(_) => {
             return Err(ApiError::bad_request(format!(
@@ -1053,7 +1085,7 @@ pub async fn update_resource(
         );
     }
 
-    let rt = match resource_type.parse::<ResourceType>() {
+    let _rt = match resource_type.parse::<ResourceType>() {
         Ok(rt) => rt,
         Err(_) => {
             return Err(ApiError::bad_request(format!(
@@ -1061,6 +1093,13 @@ pub async fn update_resource(
             )));
         }
     };
+
+    // Protect the default admin access policy from modification
+    if resource_type == "AccessPolicy" && id == ADMIN_ACCESS_POLICY_ID {
+        return Err(ApiError::forbidden(
+            "The default admin access policy cannot be modified",
+        ));
+    }
 
     // Extract If-Match header for version checking
     let if_match = headers
@@ -1073,6 +1112,9 @@ pub async fn update_resource(
         .get("Prefer")
         .and_then(|h| h.to_str().ok())
         .map(parse_prefer_return);
+
+    let mut payload = payload;
+    preprocess_payload(&resource_type, &mut payload).await?;
 
     // Validate payload structure
     if let Err(err) = envelope_from_json(
@@ -1250,7 +1292,7 @@ pub async fn conditional_update_resource(
     let _g = span.enter();
 
     // Validate resource type
-    let rt = match resource_type.parse::<ResourceType>() {
+    let _rt = match resource_type.parse::<ResourceType>() {
         Ok(rt) => rt,
         Err(_) => {
             return Err(ApiError::bad_request(format!(
@@ -1367,6 +1409,13 @@ pub async fn conditional_update_resource(
                 let existing = &result.entries[0];
                 let id = existing.id.clone();
 
+                // Protect the default admin access policy from modification
+                if resource_type == "AccessPolicy" && id == ADMIN_ACCESS_POLICY_ID {
+                    return Err(ApiError::forbidden(
+                        "The default admin access policy cannot be modified",
+                    ));
+                }
+
                 // Check If-Match if provided
                 if let Some(ref expected_version) = if_match {
                     if expected_version != &existing.version_id {
@@ -1468,6 +1517,14 @@ pub async fn delete_resource(
             "Unknown resourceType '{resource_type}'"
         )));
     }
+
+    // Protect the default admin access policy from deletion
+    if resource_type == "AccessPolicy" && id == ADMIN_ACCESS_POLICY_ID {
+        return Err(ApiError::forbidden(
+            "The default admin access policy cannot be deleted",
+        ));
+    }
+
     match state.storage.delete(&resource_type, &id).await {
         Ok(_) => Ok(StatusCode::NO_CONTENT),
         Err(e) => Err(map_storage_error(e)),
@@ -1511,6 +1568,15 @@ pub async fn conditional_delete_resource(
             1 => {
                 // One match - delete that resource
                 let resource_to_delete = &result.entries[0];
+
+                // Protect the default admin access policy from deletion
+                if resource_type == "AccessPolicy" && resource_to_delete.id == ADMIN_ACCESS_POLICY_ID
+                {
+                    return Err(ApiError::forbidden(
+                        "The default admin access policy cannot be deleted",
+                    ));
+                }
+
                 match state
                     .storage
                     .delete(&resource_type, &resource_to_delete.id)
@@ -1547,6 +1613,13 @@ pub async fn patch_resource(
         return Err(ApiError::bad_request(format!(
             "Unknown resourceType '{resource_type}'"
         )));
+    }
+
+    // Protect the default admin access policy from modification
+    if resource_type == "AccessPolicy" && id == ADMIN_ACCESS_POLICY_ID {
+        return Err(ApiError::forbidden(
+            "The default admin access policy cannot be modified",
+        ));
     }
 
     // Check Content-Type header to determine patch format
@@ -2560,70 +2633,141 @@ pub async fn api_build_info() -> impl IntoResponse {
 }
 
 /// GET /api/resource-types - List available FHIR resource types
-pub async fn api_resource_types() -> impl IntoResponse {
-    let mut resource_types = Vec::new();
-
-    // Try to get resource types from canonical manager
-    if let Some(manager) = crate::canonical::get_manager() {
-        let query = octofhir_canonical_manager::search::SearchQuery {
-            text: None,
-            resource_types: vec!["StructureDefinition".to_string()],
-            packages: vec![],
-            canonical_pattern: None,
-            version_constraints: vec![],
-            limit: Some(1000),
-            offset: Some(0),
-        };
-
-        match manager.search_engine().search(&query).await {
-            Ok(results) => {
-                for resource_match in results.resources {
-                    let content = &resource_match.resource.content;
-
-                    // Only include base resource types (not profiles)
-                    if let (Some(kind), Some(derivation), Some(resource_type)) = (
-                        content.get("kind").and_then(|v| v.as_str()),
-                        content.get("derivation").and_then(|v| v.as_str()),
-                        content.get("type").and_then(|v| v.as_str()),
-                    ) && kind == "resource"
-                        && derivation == "specialization"
-                        && !resource_types.contains(&resource_type.to_string())
-                    {
-                        resource_types.push(resource_type.to_string());
-                    }
-                }
-            }
-            Err(e) => {
-                tracing::warn!(
-                    "Failed to query canonical manager for resource types: {}",
-                    e
-                );
-            }
+pub async fn api_resource_types(State(state): State<crate::server::AppState>) -> impl IntoResponse {
+    match state.model_provider.get_resource_types().await {
+        Ok(mut resource_types) => {
+            resource_types.sort();
+            (StatusCode::OK, Json(resource_types))
+        }
+        Err(err) => {
+            tracing::error!("Failed to load resource types: {}", err);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(Vec::<String>::new()),
+            )
         }
     }
+}
 
-    // Fallback to common FHIR resource types if canonical manager fails
-    if resource_types.is_empty() {
-        resource_types = vec![
-            "Patient".to_string(),
-            "Practitioner".to_string(),
-            "Organization".to_string(),
-            "Observation".to_string(),
-            "DiagnosticReport".to_string(),
-            "Medication".to_string(),
-            "MedicationRequest".to_string(),
-            "Procedure".to_string(),
-            "Condition".to_string(),
-            "Encounter".to_string(),
-            "AllergyIntolerance".to_string(),
-            "Immunization".to_string(),
-        ];
+/// Categorized resource type for UI grouping
+#[derive(Debug, Clone, Serialize)]
+pub struct CategorizedResourceType {
+    pub name: String,
+    pub category: String,
+    pub url: Option<String>,
+    pub package: String,
+}
+
+/// Counts per category for UI segmented control
+#[derive(Debug, Clone, Serialize)]
+pub struct CategoryCounts {
+    pub all: usize,
+    pub fhir: usize,
+    pub system: usize,
+    pub custom: usize,
+}
+
+/// Response for categorized resource types
+#[derive(Debug, Clone, Serialize)]
+pub struct CategorizedResourceTypesResponse {
+    pub types: Vec<CategorizedResourceType>,
+    pub counts: CategoryCounts,
+}
+
+/// GET /api/resource-types-categorized - List resource types with category info
+pub async fn api_resource_types_categorized(
+    State(state): State<crate::server::AppState>,
+) -> impl IntoResponse {
+    use octofhir_db_postgres::PostgresPackageStore;
+
+    let store = PostgresPackageStore::new(state.db_pool.as_ref().clone());
+    let fhir_version = state.model_provider.fhir_version_str();
+
+    match store
+        .list_fhirschema_names_with_package(&["resource", "logical"], fhir_version)
+        .await
+    {
+        Ok(schema_infos) => {
+            let mut types: Vec<CategorizedResourceType> = schema_infos
+                .into_iter()
+                .map(|info| {
+                    let category = if info.package_name.starts_with("hl7.fhir.") {
+                        "fhir"
+                    } else if info.package_name == "octofhir.internal" {
+                        "system"
+                    } else {
+                        "custom"
+                    };
+                    let package = format!("{}@{}", info.package_name, info.package_version);
+                    CategorizedResourceType {
+                        name: info.name,
+                        category: category.to_string(),
+                        url: info.url,
+                        package,
+                    }
+                })
+                .collect();
+            types.sort_by(|a, b| a.name.cmp(&b.name));
+
+            // Calculate counts per category
+            let counts = CategoryCounts {
+                all: types.len(),
+                fhir: types.iter().filter(|t| t.category == "fhir").count(),
+                system: types.iter().filter(|t| t.category == "system").count(),
+                custom: types.iter().filter(|t| t.category == "custom").count(),
+            };
+
+            (
+                StatusCode::OK,
+                Json(CategorizedResourceTypesResponse { types, counts }),
+            )
+        }
+        Err(err) => {
+            tracing::error!("Failed to load categorized resource types: {}", err);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(CategorizedResourceTypesResponse {
+                    types: vec![],
+                    counts: CategoryCounts {
+                        all: 0,
+                        fhir: 0,
+                        system: 0,
+                        custom: 0,
+                    },
+                }),
+            )
+        }
+    }
+}
+
+/// GET /api/json-schema/{resource_type} - Get JSON Schema for a resource type
+pub async fn api_json_schema(
+    State(state): State<crate::server::AppState>,
+    Path(resource_type): Path<String>,
+) -> Result<Json<Value>, ApiError> {
+    // Check cache first
+    if let Some(cached) = state.json_schema_cache.get(&resource_type) {
+        return Ok(Json(cached.clone()));
     }
 
-    // Sort alphabetically for consistency
-    resource_types.sort();
+    // Get FhirSchema from model provider
+    let fhir_schema = state
+        .model_provider
+        .get_schema(&resource_type)
+        .await
+        .ok_or_else(|| {
+            ApiError::NotFound(format!("Schema not found for resource type: {}", resource_type))
+        })?;
 
-    (StatusCode::OK, Json(resource_types))
+    // Convert to JSON Schema
+    let json_schema = crate::json_schema::convert_fhir_to_json_schema(&fhir_schema);
+
+    // Cache the result
+    state
+        .json_schema_cache
+        .insert(resource_type, json_schema.clone());
+
+    Ok(Json(json_schema))
 }
 
 /// Query parameters for operations list
@@ -2697,8 +2841,11 @@ pub async fn api_operations(
     (StatusCode::OK, Json(response))
 }
 
-/// Load Gateway CustomOperations and convert them to OperationDefinitions
-async fn load_gateway_operations(
+/// Load Gateway CustomOperations and convert them to OperationDefinitions.
+///
+/// This function is public to allow the gateway reload listener to update
+/// the public paths cache when CustomOperations change.
+pub async fn load_gateway_operations(
     storage: &octofhir_storage::DynStorage,
 ) -> Vec<octofhir_core::OperationDefinition> {
     use crate::gateway::types::{App, CustomOperation};
@@ -2800,7 +2947,7 @@ async fn load_gateway_operations(
             app.id.clone().unwrap_or_else(|| "gateway".to_string()),
         )
         .with_description(description)
-        .with_public(false); // Gateway operations typically require auth
+        .with_public(custom_op.public);
 
         operations.push(op_def);
     }
@@ -2897,25 +3044,6 @@ pub async fn api_operation_patch(
 }
 
 // ---- Error mapping helpers ----
-fn map_core_error(e: CoreError) -> ApiError {
-    match e {
-        CoreError::ResourceNotFound { resource_type, id } => {
-            ApiError::not_found(format!("{resource_type} with id '{id}' not found"))
-        }
-        CoreError::ResourceConflict { resource_type, id } => {
-            ApiError::conflict(format!("{resource_type} with id '{id}' already exists"))
-        }
-        CoreError::ResourceDeleted { resource_type, id } => {
-            ApiError::gone(format!("{resource_type} with id '{id}' has been deleted"))
-        }
-        CoreError::InvalidResource { message } => ApiError::bad_request(message),
-        CoreError::InvalidResourceType(s) => {
-            ApiError::bad_request(format!("Invalid resource type: {s}"))
-        }
-        other => ApiError::internal(other.to_string()),
-    }
-}
-
 fn map_storage_error(e: StorageError) -> ApiError {
     match e {
         StorageError::NotFound { resource_type, id } => {
@@ -3548,6 +3676,13 @@ async fn process_put_entry(
             )));
         }
 
+        // Protect the default admin access policy from modification
+        if resource_type == "AccessPolicy" && id == ADMIN_ACCESS_POLICY_ID {
+            return Err(ApiError::forbidden(
+                "The default admin access policy cannot be modified",
+            ));
+        }
+
         // Check if resource exists using modern storage API
         let existing = state
             .storage
@@ -3658,6 +3793,13 @@ async fn process_put_entry(
                 // Update existing
                 let existing = &result.entries[0];
 
+                // Protect the default admin access policy from modification
+                if resource_type == "AccessPolicy" && existing.id == ADMIN_ACCESS_POLICY_ID {
+                    return Err(ApiError::forbidden(
+                        "The default admin access policy cannot be modified",
+                    ));
+                }
+
                 // Ensure id and resourceType are set
                 resource["id"] = json!(existing.id.clone());
                 resource["resourceType"] = json!(resource_type);
@@ -3705,6 +3847,13 @@ async fn process_delete_entry(
                 "Unknown resource type: {}",
                 resource_type
             )));
+        }
+
+        // Protect the default admin access policy from deletion
+        if resource_type == "AccessPolicy" && id == ADMIN_ACCESS_POLICY_ID {
+            return Err(ApiError::forbidden(
+                "The default admin access policy cannot be deleted",
+            ));
         }
 
         // Delete using modern storage API
@@ -3765,6 +3914,14 @@ async fn process_delete_entry(
             }
             1 => {
                 let id = &result.entries[0].id;
+
+                // Protect the default admin access policy from deletion
+                if resource_type == "AccessPolicy" && id == ADMIN_ACCESS_POLICY_ID {
+                    return Err(ApiError::forbidden(
+                        "The default admin access policy cannot be deleted",
+                    ));
+                }
+
                 let _ = state
                     .storage
                     .delete(resource_type, id)
@@ -3963,6 +4120,13 @@ async fn process_patch_entry(
             )));
         }
 
+        // Protect the default admin access policy from modification
+        if resource_type == "AccessPolicy" && id == ADMIN_ACCESS_POLICY_ID {
+            return Err(ApiError::forbidden(
+                "The default admin access policy cannot be modified",
+            ));
+        }
+
         // Get existing resource using modern storage API
         let existing = state
             .storage
@@ -4104,7 +4268,7 @@ pub async fn compartment_search(
     );
 
     // Parse resource type
-    let rt = resource_type
+    let _rt = resource_type
         .parse::<ResourceType>()
         .map_err(|_| ApiError::BadRequest(format!("Invalid resource type: {}", resource_type)))?;
 
@@ -4502,4 +4666,750 @@ pub fn create_async_accepted_response(
     }
 
     (StatusCode::ACCEPTED, headers, Json(response))
+}
+
+// ==================== Package Management API ====================
+
+/// Response type for package list
+#[derive(Serialize)]
+pub struct PackageListResponse {
+    pub packages: Vec<PackageInfo>,
+    #[serde(rename = "serverFhirVersion")]
+    pub server_fhir_version: String,
+}
+
+/// Package information summary
+#[derive(Serialize)]
+pub struct PackageInfo {
+    pub name: String,
+    pub version: String,
+    #[serde(rename = "fhirVersion")]
+    pub fhir_version: Option<String>,
+    #[serde(rename = "resourceCount")]
+    pub resource_count: usize,
+    #[serde(rename = "installedAt")]
+    pub installed_at: Option<String>,
+}
+
+/// Package detail response
+#[derive(Serialize)]
+pub struct PackageDetailResponse {
+    pub name: String,
+    pub version: String,
+    #[serde(rename = "fhirVersion")]
+    pub fhir_version: Option<String>,
+    pub description: Option<String>,
+    #[serde(rename = "resourceCount")]
+    pub resource_count: usize,
+    #[serde(rename = "installedAt")]
+    pub installed_at: Option<String>,
+    #[serde(rename = "isCompatible")]
+    pub is_compatible: bool,
+    #[serde(rename = "resourceTypes")]
+    pub resource_types: Vec<ResourceTypeSummary>,
+}
+
+/// Summary of resources by type
+#[derive(Serialize)]
+pub struct ResourceTypeSummary {
+    #[serde(rename = "resourceType")]
+    pub resource_type: String,
+    pub count: usize,
+}
+
+/// Package resource summary
+#[derive(Serialize)]
+pub struct PackageResourceSummary {
+    pub id: Option<String>,
+    pub url: Option<String>,
+    pub name: Option<String>,
+    pub version: Option<String>,
+    #[serde(rename = "resourceType")]
+    pub resource_type: String,
+}
+
+/// Package resources list response
+#[derive(Serialize)]
+pub struct PackageResourcesResponse {
+    pub resources: Vec<PackageResourceSummary>,
+    pub total: usize,
+}
+
+/// Query parameters for package resources
+#[derive(Debug, Clone, Default, serde::Deserialize)]
+pub struct PackageResourcesQuery {
+    /// Filter by resource type
+    #[serde(rename = "resourceType")]
+    pub resource_type: Option<String>,
+    /// Limit results
+    pub limit: Option<usize>,
+    /// Offset for pagination
+    pub offset: Option<usize>,
+}
+
+/// GET /api/packages - List all installed packages
+pub async fn api_packages_list(State(state): State<crate::server::AppState>) -> impl IntoResponse {
+    use octofhir_canonical_manager::traits::PackageStore;
+    use octofhir_db_postgres::PostgresPackageStore;
+
+    let store = PostgresPackageStore::new(state.db_pool.as_ref().clone());
+
+    match store.list_packages().await {
+        Ok(packages) => {
+            let package_infos: Vec<PackageInfo> = packages
+                .into_iter()
+                .map(|p| PackageInfo {
+                    name: p.name,
+                    version: p.version,
+                    fhir_version: Some(p.fhir_version),
+                    resource_count: p.resource_count,
+                    installed_at: Some(p.installed_at.to_rfc3339()),
+                })
+                .collect();
+
+            (
+                StatusCode::OK,
+                Json(PackageListResponse {
+                    packages: package_infos,
+                    server_fhir_version: state.fhir_version.clone(),
+                }),
+            )
+        }
+        Err(e) => {
+            tracing::error!("Failed to list packages: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(PackageListResponse {
+                    packages: Vec::new(),
+                    server_fhir_version: state.fhir_version.clone(),
+                }),
+            )
+        }
+    }
+}
+
+/// GET /api/packages/:name/:version - Get package details
+pub async fn api_packages_get(
+    State(state): State<crate::server::AppState>,
+    Path((name, version)): Path<(String, String)>,
+) -> Result<Json<PackageDetailResponse>, ApiError> {
+    use sqlx_core::query::query;
+    use sqlx_core::row::Row;
+
+    // Get package info
+    let row = query(
+        r#"
+        SELECT name, version, fhir_version, resource_count, installed_at
+        FROM fcm.packages
+        WHERE name = $1 AND version = $2
+        "#,
+    )
+    .bind(&name)
+    .bind(&version)
+    .fetch_optional(state.db_pool.as_ref())
+    .await
+    .map_err(|e| ApiError::Internal(format!("Database error: {}", e)))?;
+
+    let Some(pkg_row) = row else {
+        return Err(ApiError::NotFound(format!(
+            "Package not found: {}@{}",
+            name, version
+        )));
+    };
+
+    let fhir_version: Option<String> = pkg_row.get("fhir_version");
+    let resource_count: i32 = pkg_row.get("resource_count");
+    let installed_at: chrono::DateTime<chrono::Utc> = pkg_row.get("installed_at");
+
+    // Get resource type summary
+    let type_rows = query(
+        r#"
+        SELECT resource_type, COUNT(*) as count
+        FROM fcm.resources
+        WHERE package_name = $1 AND package_version = $2
+        GROUP BY resource_type
+        ORDER BY resource_type
+        "#,
+    )
+    .bind(&name)
+    .bind(&version)
+    .fetch_all(state.db_pool.as_ref())
+    .await
+    .map_err(|e| ApiError::Internal(format!("Database error: {}", e)))?;
+
+    let resource_types: Vec<ResourceTypeSummary> = type_rows
+        .iter()
+        .map(|row| {
+            let count: i64 = row.get("count");
+            ResourceTypeSummary {
+                resource_type: row.get("resource_type"),
+                count: count as usize,
+            }
+        })
+        .collect();
+
+    // Check FHIR version compatibility
+    let is_compatible = fhir_version
+        .as_ref()
+        .map(|fv| {
+            let server_major = extract_fhir_major_version(&state.fhir_version);
+            let pkg_major = extract_fhir_major_version(fv);
+            server_major == pkg_major
+        })
+        .unwrap_or(true);
+
+    Ok(Json(PackageDetailResponse {
+        name,
+        version,
+        fhir_version,
+        description: None, // TODO: Add description to package manifest
+        resource_count: resource_count as usize,
+        installed_at: Some(installed_at.to_rfc3339()),
+        is_compatible,
+        resource_types,
+    }))
+}
+
+/// Extract major FHIR version (e.g., "4.0.1" -> "R4", "5.0.0" -> "R5")
+fn extract_fhir_major_version(version: &str) -> &str {
+    match version {
+        v if v.starts_with("4.0") => "R4",
+        v if v.starts_with("4.3") => "R4B",
+        v if v.starts_with("5.") => "R5",
+        v if v.starts_with("6.") => "R6",
+        "R4" | "R4B" | "R5" | "R6" => version,
+        _ => "unknown",
+    }
+}
+
+/// GET /api/packages/:name/:version/resources - List package resources
+pub async fn api_packages_resources(
+    State(state): State<crate::server::AppState>,
+    Path((name, version)): Path<(String, String)>,
+    Query(params): Query<PackageResourcesQuery>,
+) -> Result<Json<PackageResourcesResponse>, ApiError> {
+    use sqlx_core::query::query;
+    use sqlx_core::row::Row;
+
+    let limit = params.limit.unwrap_or(100).min(1000);
+    let offset = params.offset.unwrap_or(0);
+
+    // Build query with optional filter
+    let (sql, bind_type) = if let Some(ref rt) = params.resource_type {
+        (
+            r#"
+            SELECT resource_type, resource_id, url, name, version
+            FROM fcm.resources
+            WHERE package_name = $1 AND package_version = $2 AND resource_type = $3
+            ORDER BY resource_type, name, url
+            LIMIT $4 OFFSET $5
+            "#,
+            Some(rt.clone()),
+        )
+    } else {
+        (
+            r#"
+            SELECT resource_type, resource_id, url, name, version
+            FROM fcm.resources
+            WHERE package_name = $1 AND package_version = $2
+            ORDER BY resource_type, name, url
+            LIMIT $3 OFFSET $4
+            "#,
+            None,
+        )
+    };
+
+    let rows = if let Some(rt) = bind_type {
+        query(sql)
+            .bind(&name)
+            .bind(&version)
+            .bind(rt)
+            .bind(limit as i64)
+            .bind(offset as i64)
+            .fetch_all(state.db_pool.as_ref())
+            .await
+    } else {
+        query(sql)
+            .bind(&name)
+            .bind(&version)
+            .bind(limit as i64)
+            .bind(offset as i64)
+            .fetch_all(state.db_pool.as_ref())
+            .await
+    }
+    .map_err(|e| ApiError::Internal(format!("Database error: {}", e)))?;
+
+    let resources: Vec<PackageResourceSummary> = rows
+        .iter()
+        .map(|row| PackageResourceSummary {
+            id: row.get("resource_id"),
+            url: row.get("url"),
+            name: row.get("name"),
+            version: row.get("version"),
+            resource_type: row.get("resource_type"),
+        })
+        .collect();
+
+    // Get total count
+    let count_sql = if params.resource_type.is_some() {
+        "SELECT COUNT(*) FROM fcm.resources WHERE package_name = $1 AND package_version = $2 AND resource_type = $3"
+    } else {
+        "SELECT COUNT(*) FROM fcm.resources WHERE package_name = $1 AND package_version = $2"
+    };
+
+    let total: i64 = if let Some(ref rt) = params.resource_type {
+        sqlx_core::query_scalar::query_scalar(count_sql)
+            .bind(&name)
+            .bind(&version)
+            .bind(rt)
+            .fetch_one(state.db_pool.as_ref())
+            .await
+            .unwrap_or(0)
+    } else {
+        sqlx_core::query_scalar::query_scalar(count_sql)
+            .bind(&name)
+            .bind(&version)
+            .fetch_one(state.db_pool.as_ref())
+            .await
+            .unwrap_or(0)
+    };
+
+    Ok(Json(PackageResourcesResponse {
+        resources,
+        total: total as usize,
+    }))
+}
+
+/// GET /api/packages/:name/:version/resources/:url - Get resource content by URL
+pub async fn api_packages_resource_content(
+    State(state): State<crate::server::AppState>,
+    Path((name, version, url)): Path<(String, String, String)>,
+) -> Result<Json<Value>, ApiError> {
+    use sqlx_core::query::query;
+    use sqlx_core::row::Row;
+
+    // URL is encoded in the path, decode it
+    let decoded_url = urlencoding::decode(&url)
+        .map_err(|e| ApiError::BadRequest(format!("Invalid URL encoding: {}", e)))?;
+
+    let row = query(
+        r#"
+        SELECT content
+        FROM fcm.resources
+        WHERE package_name = $1 AND package_version = $2 AND url = $3
+        "#,
+    )
+    .bind(&name)
+    .bind(&version)
+    .bind(decoded_url.as_ref())
+    .fetch_optional(state.db_pool.as_ref())
+    .await
+    .map_err(|e| ApiError::Internal(format!("Database error: {}", e)))?;
+
+    match row {
+        Some(r) => {
+            let content: Value = r.get("content");
+            Ok(Json(content))
+        }
+        None => Err(ApiError::NotFound(format!(
+            "Resource not found: {} in {}@{}",
+            decoded_url, name, version
+        ))),
+    }
+}
+
+/// GET /api/packages/:name/:version/fhirschema/:url - Get FHIRSchema for a resource
+pub async fn api_packages_fhirschema(
+    State(state): State<crate::server::AppState>,
+    Path((name, version, url)): Path<(String, String, String)>,
+) -> Result<Json<Value>, ApiError> {
+    use octofhir_db_postgres::PostgresPackageStore;
+
+    let store = PostgresPackageStore::new(state.db_pool.as_ref().clone());
+
+    // URL is encoded in the path, decode it
+    let decoded_url = urlencoding::decode(&url)
+        .map_err(|e| ApiError::BadRequest(format!("Invalid URL encoding: {}", e)))?;
+
+    // Try to get the FHIRSchema from the database
+    match store
+        .get_fhirschema_from_package(&decoded_url, &name, &version)
+        .await
+    {
+        Ok(Some(schema)) => Ok(Json(schema.content)),
+        Ok(None) => {
+            // Schema not found - could convert on-demand here, but for now return 404
+            Err(ApiError::NotFound(format!(
+                "FHIRSchema not found for {} in {}@{}. Schema may need to be converted.",
+                decoded_url, name, version
+            )))
+        }
+        Err(e) => Err(ApiError::Internal(format!("Database error: {}", e))),
+    }
+}
+
+// ============================================================================
+// Package Installation API
+// ============================================================================
+
+/// Request body for package installation
+#[derive(Debug, Deserialize)]
+pub struct PackageInstallRequest {
+    /// Package name (e.g., "hl7.fhir.us.core")
+    pub name: String,
+    /// Package version (e.g., "6.1.0")
+    pub version: String,
+}
+
+/// Information about an installed dependency package
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct InstalledDependencyInfo {
+    pub name: String,
+    pub version: String,
+    pub fhir_version: String,
+    pub resource_count: usize,
+}
+
+/// Response for successful package installation
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PackageInstallResponse {
+    pub success: bool,
+    pub name: String,
+    pub version: String,
+    pub fhir_version: String,
+    pub resource_count: usize,
+    /// Dependencies that were also installed
+    pub dependencies_installed: Vec<InstalledDependencyInfo>,
+    pub message: String,
+}
+
+/// POST /api/packages/install - Install a package at runtime
+///
+/// This endpoint allows installing FHIR packages without restarting the server.
+/// The package will be downloaded from the FHIR package registry, installed,
+/// and the search registry will be rebuilt.
+///
+/// # Request Body
+/// ```json
+/// {
+///   "name": "hl7.fhir.us.core",
+///   "version": "6.1.0"
+/// }
+/// ```
+///
+/// # Response
+/// Returns installation status and package details on success.
+pub async fn api_packages_install(
+    State(state): State<crate::server::AppState>,
+    Json(request): Json<PackageInstallRequest>,
+) -> Result<Json<PackageInstallResponse>, ApiError> {
+    use crate::canonical::install_package_parallel_runtime;
+
+    // Validate input
+    if request.name.trim().is_empty() {
+        return Err(ApiError::BadRequest("Package name is required".to_string()));
+    }
+    if request.version.trim().is_empty() {
+        return Err(ApiError::BadRequest(
+            "Package version is required".to_string(),
+        ));
+    }
+
+    // Get server FHIR version from config
+    let server_fhir_version = &state.config.fhir.version;
+
+    tracing::info!(
+        package = %request.name,
+        version = %request.version,
+        server_fhir_version = %server_fhir_version,
+        "API request to install package"
+    );
+
+    // Install the package with parallel download/extraction
+    match install_package_parallel_runtime(&request.name, &request.version, server_fhir_version)
+        .await
+    {
+        Ok(result) => {
+            let deps_count = result.dependencies_installed.len();
+            tracing::info!(
+                package = %result.name,
+                version = %result.version,
+                fhir_version = %result.fhir_version,
+                resource_count = result.resource_count,
+                dependencies = deps_count,
+                "Package installed successfully via API"
+            );
+
+            let deps_info: Vec<InstalledDependencyInfo> = result
+                .dependencies_installed
+                .into_iter()
+                .map(|d| InstalledDependencyInfo {
+                    name: d.name,
+                    version: d.version,
+                    fhir_version: d.fhir_version,
+                    resource_count: d.resource_count,
+                })
+                .collect();
+
+            let message = if deps_count > 0 {
+                format!(
+                    "Package installed with {} resources and {} dependencies.",
+                    result.resource_count, deps_count
+                )
+            } else {
+                format!(
+                    "Package installed with {} resources.",
+                    result.resource_count
+                )
+            };
+
+            Ok(Json(PackageInstallResponse {
+                success: true,
+                name: result.name,
+                version: result.version,
+                fhir_version: result.fhir_version,
+                resource_count: result.resource_count,
+                dependencies_installed: deps_info,
+                message,
+            }))
+        }
+        Err(e) => {
+            tracing::error!(
+                package = %request.name,
+                version = %request.version,
+                error = %e,
+                "Failed to install package via API"
+            );
+
+            // Check if it's a FHIR version mismatch (user error) or internal error
+            if e.contains("FHIR version mismatch") || e.contains("failed to fetch package metadata")
+            {
+                Err(ApiError::BadRequest(e))
+            } else {
+                Err(ApiError::Internal(e))
+            }
+        }
+    }
+}
+
+// ============================================================================
+// Package Install with SSE Progress
+// ============================================================================
+
+/// POST /api/packages/install/stream - Install package with SSE progress streaming
+///
+/// This endpoint installs a FHIR package and streams progress events via Server-Sent Events (SSE).
+/// The client receives real-time updates about the installation progress including:
+/// - Dependency resolution
+/// - Download progress for each package
+/// - Extraction and indexing progress
+/// - Final completion or error status
+///
+/// # Request Body
+/// ```json
+/// {
+///   "name": "hl7.fhir.us.core",
+///   "version": "6.1.0"
+/// }
+/// ```
+///
+/// # Response
+/// Server-Sent Events stream with JSON payloads:
+/// ```
+/// data: {"type":"started","total_packages":3}
+/// data: {"type":"download_started","package":"hl7.fhir.r4.core","version":"4.0.1","current":1,"total":3}
+/// data: {"type":"download_progress","package":"hl7.fhir.r4.core","version":"4.0.1","downloaded_bytes":1024,"total_bytes":5000,"percent":20}
+/// data: {"type":"completed","total_installed":3,"total_resources":1500,"duration_ms":5000}
+/// ```
+pub async fn api_packages_install_stream(
+    Json(request): Json<PackageInstallRequest>,
+) -> Result<
+    axum::response::sse::Sse<
+        impl futures::stream::Stream<
+            Item = Result<axum::response::sse::Event, std::convert::Infallible>,
+        >,
+    >,
+    ApiError,
+> {
+    use axum::response::sse::{Event, KeepAlive, Sse};
+    use futures::stream::StreamExt;
+    use tokio_stream::wrappers::UnboundedReceiverStream;
+
+    // Validate input
+    if request.name.trim().is_empty() {
+        return Err(ApiError::BadRequest("Package name is required".to_string()));
+    }
+    if request.version.trim().is_empty() {
+        return Err(ApiError::BadRequest(
+            "Package version is required".to_string(),
+        ));
+    }
+
+    tracing::info!(
+        package = %request.name,
+        version = %request.version,
+        "API request to install package with SSE progress"
+    );
+
+    // Start installation with progress
+    let receiver =
+        crate::canonical::install_package_runtime_with_progress(&request.name, &request.version)
+            .await
+            .map_err(|e| ApiError::Internal(e))?;
+
+    // Convert receiver to SSE stream
+    let stream = UnboundedReceiverStream::new(receiver).map(|event| {
+        let json = serde_json::to_string(&event).unwrap_or_else(|_| "{}".to_string());
+        Ok::<_, std::convert::Infallible>(Event::default().data(json))
+    });
+
+    Ok(Sse::new(stream).keep_alive(KeepAlive::default()))
+}
+
+// ============================================================================
+// Package Registry Lookup API
+// ============================================================================
+
+/// Response for package version lookup
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PackageLookupResponse {
+    /// Package name
+    pub name: String,
+    /// Available versions (sorted by semver, newest first)
+    pub versions: Vec<String>,
+    /// Whether this package is already installed (any version)
+    pub installed_versions: Vec<String>,
+}
+
+/// GET /api/packages/lookup/:name - Lookup available versions for a package
+///
+/// This endpoint queries the FHIR package registry to find available versions
+/// of a specific package. It also indicates which versions are already installed.
+///
+/// # Path Parameters
+/// * `name` - Package name (e.g., "hl7.fhir.us.core")
+///
+/// # Response
+/// Returns available versions and installation status.
+pub async fn api_packages_lookup(
+    State(state): State<crate::server::AppState>,
+    Path(name): Path<String>,
+) -> Result<Json<PackageLookupResponse>, ApiError> {
+    use crate::canonical::lookup_package_versions;
+    use octofhir_canonical_manager::traits::PackageStore;
+    use octofhir_db_postgres::PostgresPackageStore;
+
+    tracing::info!(package = %name, "API request to lookup package versions");
+
+    // Lookup available versions from registry
+    let versions = lookup_package_versions(&name).await.map_err(|e| {
+        if e.contains("not found") || e.contains("PackageNotFound") {
+            ApiError::NotFound(format!("Package '{}' not found in registry", name))
+        } else {
+            ApiError::Internal(e)
+        }
+    })?;
+
+    // Check which versions are already installed
+    let store = PostgresPackageStore::new(state.db_pool.as_ref().clone());
+    let installed_versions = match store.list_packages().await {
+        Ok(packages) => packages
+            .into_iter()
+            .filter(|p| p.name == name)
+            .map(|p| p.version)
+            .collect(),
+        Err(_) => vec![],
+    };
+
+    Ok(Json(PackageLookupResponse {
+        name,
+        versions,
+        installed_versions,
+    }))
+}
+
+// ============================================================================
+// Package Registry Search API
+// ============================================================================
+
+/// Search result for a package from the registry
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PackageSearchResult {
+    /// Package name
+    pub name: String,
+    /// Available versions (sorted by semver, newest first)
+    pub versions: Vec<String>,
+    /// Package description
+    pub description: Option<String>,
+    /// Latest version
+    pub latest_version: String,
+}
+
+/// Response for package search
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PackageSearchResponse {
+    /// Search query that was used
+    pub query: String,
+    /// Matching packages
+    pub packages: Vec<PackageSearchResult>,
+    /// Total number of results
+    pub total: usize,
+}
+
+/// GET /api/packages/search?q=... - Search for packages in the registry
+///
+/// This endpoint searches the FHIR package registry (fs.get-ig.org) for packages
+/// matching the query string. The search supports partial matching (ILIKE) -
+/// spaces in the query are treated as wildcards for fuzzy matching.
+///
+/// # Query Parameters
+/// * `q` - Search query string (e.g., "us core", "hl7.fhir")
+///
+/// # Response
+/// Returns list of matching packages with their versions and descriptions.
+pub async fn api_packages_search(
+    Query(params): Query<std::collections::HashMap<String, String>>,
+) -> Result<Json<PackageSearchResponse>, ApiError> {
+    use crate::canonical::search_registry_packages;
+
+    let query = params
+        .get("q")
+        .map(|s| s.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    if query.len() < 2 {
+        return Err(ApiError::BadRequest(
+            "Search query must be at least 2 characters".to_string(),
+        ));
+    }
+
+    tracing::info!(query = %query, "API request to search packages");
+
+    let results = search_registry_packages(&query).await.map_err(|e| {
+        tracing::error!(query = %query, error = %e, "Failed to search packages");
+        ApiError::Internal(e)
+    })?;
+
+    let total = results.len();
+    let packages: Vec<PackageSearchResult> = results
+        .into_iter()
+        .map(|r| PackageSearchResult {
+            name: r.name,
+            versions: r.versions,
+            description: r.description,
+            latest_version: r.latest_version,
+        })
+        .collect();
+
+    Ok(Json(PackageSearchResponse {
+        query,
+        packages,
+        total,
+    }))
 }

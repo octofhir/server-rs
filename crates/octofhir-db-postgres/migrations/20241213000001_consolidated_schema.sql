@@ -45,7 +45,8 @@ CREATE TABLE IF NOT EXISTS _configuration (
     updated_by TEXT,
     CONSTRAINT valid_category CHECK (category IN (
         'server', 'search', 'auth', 'terminology', 'features',
-        'cache', 'logging', 'otel', 'storage', 'redis', 'validation', 'fhir', 'packages'
+        'cache', 'logging', 'otel', 'storage', 'redis', 'validation', 'fhir', 'packages',
+        'db_console'
     ))
 );
 
@@ -284,6 +285,29 @@ CREATE INDEX IF NOT EXISTS idx_fcm_resource_priority_lookup ON fcm.resources(url
     INCLUDE (resource_type, sd_flavor);
 CREATE INDEX IF NOT EXISTS idx_fcm_resource_url_pattern ON fcm.resources(url text_pattern_ops);
 
+-- FHIRSchemas table - stores pre-converted FHIRSchemas for on-demand loading
+CREATE TABLE IF NOT EXISTS fcm.fhirschemas (
+    id SERIAL PRIMARY KEY,
+    url TEXT NOT NULL,                    -- Canonical URL of source StructureDefinition
+    version TEXT,                         -- StructureDefinition version
+    package_name TEXT NOT NULL,           -- Source package
+    package_version TEXT NOT NULL,        -- Source package version
+    fhir_version TEXT NOT NULL,           -- FHIR version (R4, R4B, R5, R6)
+    schema_type TEXT NOT NULL,            -- 'resource' | 'complex-type' | 'extension' | etc.
+    content JSONB NOT NULL,               -- The FHIRSchema JSON
+    content_hash TEXT NOT NULL,           -- Hash for cache invalidation
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(url, package_name, package_version),
+    FOREIGN KEY(package_name, package_version)
+        REFERENCES fcm.packages(name, version) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_fcm_fhirschemas_url ON fcm.fhirschemas(url);
+CREATE INDEX IF NOT EXISTS idx_fcm_fhirschemas_url_fhir ON fcm.fhirschemas(url, fhir_version);
+CREATE INDEX IF NOT EXISTS idx_fcm_fhirschemas_package ON fcm.fhirschemas(package_name, package_version);
+CREATE INDEX IF NOT EXISTS idx_fcm_fhirschemas_type ON fcm.fhirschemas(schema_type);
+CREATE INDEX IF NOT EXISTS idx_fcm_fhirschemas_content_hash ON fcm.fhirschemas(content_hash);
+
 -- FCM Triggers
 CREATE OR REPLACE FUNCTION fcm.extract_search_fields()
 RETURNS TRIGGER AS $func$
@@ -458,6 +482,319 @@ SELECT 'cache.redis.enabled', 'features', 'false'::jsonb, 'Use Redis as cache ba
 WHERE NOT EXISTS (SELECT 1 FROM _configuration WHERE key = 'cache.redis.enabled');
 
 -- ============================================================================
+-- FHIR REFERENCE HELPER FUNCTIONS
+-- ============================================================================
+--
+-- These functions parse FHIR references for use in SQL JOINs.
+-- They return NULL for non-local references (contained, URN, external),
+-- allowing JOINs to naturally filter them out.
+--
+-- Supported formats:
+--   Relative:   "Patient/123"              -> type='Patient', id='123'
+--   Versioned:  "Patient/123/_history/1"   -> type='Patient', id='123'
+--   Absolute:   "http://localhost:8888/fhir/Patient/123"
+--               (only if URL matches octofhir.base_url setting)
+--
+-- Returns NULL for:
+--   Contained:  "#contained-id"
+--   URN:        "urn:uuid:xxx", "urn:oid:xxx"
+--   External:   URLs not matching local base_url
+--   Invalid:    Malformed references
+--
+-- Usage Example:
+--   SELECT o.resource, p.resource
+--   FROM observation o
+--   JOIN patient p
+--     ON p.id = fhir_ref_id(o.resource->'subject'->>'reference')
+--   WHERE fhir_ref_type(o.resource->'subject'->>'reference') = 'Patient'
+--     AND o.status != 'deleted';
+--
+-- For absolute URL support, set the base URL:
+--   SET octofhir.base_url = 'http://localhost:8888/fhir';
+--
+-- ============================================================================
+
+-- Extract the resource ID from a FHIR reference string.
+-- Returns NULL for non-local/non-resolvable references.
+CREATE OR REPLACE FUNCTION fhir_ref_id(reference TEXT)
+RETURNS TEXT
+LANGUAGE plpgsql
+IMMUTABLE
+PARALLEL SAFE
+AS $$
+DECLARE
+    base_url TEXT;
+    path TEXT;
+    parts TEXT[];
+    type_part TEXT;
+    id_part TEXT;
+BEGIN
+    -- Handle NULL or empty input
+    IF reference IS NULL OR reference = '' THEN
+        RETURN NULL;
+    END IF;
+
+    -- Skip contained references (#id)
+    IF reference LIKE '#%' THEN
+        RETURN NULL;
+    END IF;
+
+    -- Skip URN references (urn:uuid:xxx, urn:oid:xxx)
+    IF reference LIKE 'urn:%' THEN
+        RETURN NULL;
+    END IF;
+
+    -- Determine the path to parse
+    IF reference LIKE '%://%' THEN
+        -- Absolute URL - check if local
+        BEGIN
+            base_url := current_setting('octofhir.base_url', true);
+        EXCEPTION WHEN OTHERS THEN
+            base_url := NULL;
+        END;
+
+        IF base_url IS NULL OR base_url = '' THEN
+            -- No base URL configured - treat all absolute URLs as external
+            RETURN NULL;
+        END IF;
+
+        -- Normalize: remove trailing slash from base_url
+        base_url := rtrim(base_url, '/');
+
+        -- Check if reference starts with our base URL
+        IF NOT (reference LIKE base_url || '/%' OR reference = base_url) THEN
+            -- External reference
+            RETURN NULL;
+        END IF;
+
+        -- Extract path after base URL
+        path := substring(reference FROM length(base_url) + 2);
+    ELSE
+        -- Relative reference
+        path := reference;
+    END IF;
+
+    -- Remove leading slash if present
+    path := ltrim(path, '/');
+
+    -- Split path into parts
+    parts := string_to_array(path, '/');
+
+    -- Validate: need at least Type/id
+    IF array_length(parts, 1) < 2 THEN
+        RETURN NULL;
+    END IF;
+
+    type_part := parts[1];
+    id_part := parts[2];
+
+    -- Validate resource type (must start with uppercase letter)
+    IF type_part IS NULL OR type_part = ''
+       OR NOT (substring(type_part FROM 1 FOR 1) ~ '[A-Z]') THEN
+        RETURN NULL;
+    END IF;
+
+    -- Validate ID (must not be empty, and not be _history)
+    IF id_part IS NULL OR id_part = '' OR id_part = '_history' THEN
+        RETURN NULL;
+    END IF;
+
+    RETURN id_part;
+END;
+$$;
+
+-- Extract the resource type from a FHIR reference string.
+-- Returns NULL for non-local/non-resolvable references.
+CREATE OR REPLACE FUNCTION fhir_ref_type(reference TEXT)
+RETURNS TEXT
+LANGUAGE plpgsql
+IMMUTABLE
+PARALLEL SAFE
+AS $$
+DECLARE
+    base_url TEXT;
+    path TEXT;
+    parts TEXT[];
+    type_part TEXT;
+    id_part TEXT;
+BEGIN
+    -- Handle NULL or empty input
+    IF reference IS NULL OR reference = '' THEN
+        RETURN NULL;
+    END IF;
+
+    -- Skip contained references (#id)
+    IF reference LIKE '#%' THEN
+        RETURN NULL;
+    END IF;
+
+    -- Skip URN references (urn:uuid:xxx, urn:oid:xxx)
+    IF reference LIKE 'urn:%' THEN
+        RETURN NULL;
+    END IF;
+
+    -- Determine the path to parse
+    IF reference LIKE '%://%' THEN
+        -- Absolute URL - check if local
+        BEGIN
+            base_url := current_setting('octofhir.base_url', true);
+        EXCEPTION WHEN OTHERS THEN
+            base_url := NULL;
+        END;
+
+        IF base_url IS NULL OR base_url = '' THEN
+            -- No base URL configured - treat all absolute URLs as external
+            RETURN NULL;
+        END IF;
+
+        -- Normalize: remove trailing slash from base_url
+        base_url := rtrim(base_url, '/');
+
+        -- Check if reference starts with our base URL
+        IF NOT (reference LIKE base_url || '/%' OR reference = base_url) THEN
+            -- External reference
+            RETURN NULL;
+        END IF;
+
+        -- Extract path after base URL
+        path := substring(reference FROM length(base_url) + 2);
+    ELSE
+        -- Relative reference
+        path := reference;
+    END IF;
+
+    -- Remove leading slash if present
+    path := ltrim(path, '/');
+
+    -- Split path into parts
+    parts := string_to_array(path, '/');
+
+    -- Validate: need at least Type/id
+    IF array_length(parts, 1) < 2 THEN
+        RETURN NULL;
+    END IF;
+
+    type_part := parts[1];
+    id_part := parts[2];
+
+    -- Validate resource type (must start with uppercase letter)
+    IF type_part IS NULL OR type_part = ''
+       OR NOT (substring(type_part FROM 1 FOR 1) ~ '[A-Z]') THEN
+        RETURN NULL;
+    END IF;
+
+    -- Validate ID (must not be empty, and not be _history)
+    IF id_part IS NULL OR id_part = '' OR id_part = '_history' THEN
+        RETURN NULL;
+    END IF;
+
+    RETURN type_part;
+END;
+$$;
+
+-- Parse a FHIR reference into (resource_type, resource_id).
+-- More efficient than calling fhir_ref_type and fhir_ref_id separately.
+-- Returns (NULL, NULL) for non-local references.
+CREATE OR REPLACE FUNCTION fhir_ref_parse(reference TEXT)
+RETURNS TABLE(resource_type TEXT, resource_id TEXT)
+LANGUAGE plpgsql
+IMMUTABLE
+PARALLEL SAFE
+AS $$
+DECLARE
+    base_url TEXT;
+    path TEXT;
+    parts TEXT[];
+    type_part TEXT;
+    id_part TEXT;
+BEGIN
+    -- Handle NULL or empty input
+    IF reference IS NULL OR reference = '' THEN
+        RETURN QUERY SELECT NULL::TEXT, NULL::TEXT;
+        RETURN;
+    END IF;
+
+    -- Skip contained references (#id)
+    IF reference LIKE '#%' THEN
+        RETURN QUERY SELECT NULL::TEXT, NULL::TEXT;
+        RETURN;
+    END IF;
+
+    -- Skip URN references (urn:uuid:xxx, urn:oid:xxx)
+    IF reference LIKE 'urn:%' THEN
+        RETURN QUERY SELECT NULL::TEXT, NULL::TEXT;
+        RETURN;
+    END IF;
+
+    -- Determine the path to parse
+    IF reference LIKE '%://%' THEN
+        -- Absolute URL - check if local
+        BEGIN
+            base_url := current_setting('octofhir.base_url', true);
+        EXCEPTION WHEN OTHERS THEN
+            base_url := NULL;
+        END;
+
+        IF base_url IS NULL OR base_url = '' THEN
+            RETURN QUERY SELECT NULL::TEXT, NULL::TEXT;
+            RETURN;
+        END IF;
+
+        base_url := rtrim(base_url, '/');
+
+        IF NOT (reference LIKE base_url || '/%' OR reference = base_url) THEN
+            RETURN QUERY SELECT NULL::TEXT, NULL::TEXT;
+            RETURN;
+        END IF;
+
+        path := substring(reference FROM length(base_url) + 2);
+    ELSE
+        path := reference;
+    END IF;
+
+    path := ltrim(path, '/');
+    parts := string_to_array(path, '/');
+
+    IF array_length(parts, 1) < 2 THEN
+        RETURN QUERY SELECT NULL::TEXT, NULL::TEXT;
+        RETURN;
+    END IF;
+
+    type_part := parts[1];
+    id_part := parts[2];
+
+    IF type_part IS NULL OR type_part = ''
+       OR NOT (substring(type_part FROM 1 FOR 1) ~ '[A-Z]') THEN
+        RETURN QUERY SELECT NULL::TEXT, NULL::TEXT;
+        RETURN;
+    END IF;
+
+    IF id_part IS NULL OR id_part = '' OR id_part = '_history' THEN
+        RETURN QUERY SELECT NULL::TEXT, NULL::TEXT;
+        RETURN;
+    END IF;
+
+    RETURN QUERY SELECT type_part, id_part;
+END;
+$$;
+
+COMMENT ON FUNCTION fhir_ref_id(TEXT) IS
+'Extract the resource ID from a FHIR reference string.
+Returns NULL for non-local references (contained, URN, external URLs).
+Example: fhir_ref_id(''Patient/123'') returns ''123''';
+
+COMMENT ON FUNCTION fhir_ref_type(TEXT) IS
+'Extract the resource type from a FHIR reference string.
+Returns NULL for non-local references (contained, URN, external URLs).
+Example: fhir_ref_type(''Patient/123'') returns ''Patient''';
+
+COMMENT ON FUNCTION fhir_ref_parse(TEXT) IS
+'Parse a FHIR reference into (resource_type, resource_id).
+More efficient than calling fhir_ref_type and fhir_ref_id separately.
+Returns (NULL, NULL) for non-local references.
+Example: SELECT * FROM fhir_ref_parse(''Patient/123'')';
+
+-- ============================================================================
 -- COMMENTS
 -- ============================================================================
 
@@ -467,6 +804,7 @@ COMMENT ON TABLE async_jobs IS 'Tracks asynchronous FHIR operations for Prefer: 
 COMMENT ON TABLE operations IS 'Registry of all server operations for UI display and policy targeting';
 COMMENT ON TABLE fcm.packages IS 'Stores metadata for installed FHIR packages (Implementation Guides)';
 COMMENT ON TABLE fcm.resources IS 'Stores FHIR conformance resources (StructureDefinition, ValueSet, etc.) with JSONB content';
+COMMENT ON TABLE fcm.fhirschemas IS 'Pre-converted FHIRSchemas from StructureDefinitions for on-demand loading';
 
 -- ============================================================================
 -- SCHEMA NOTES

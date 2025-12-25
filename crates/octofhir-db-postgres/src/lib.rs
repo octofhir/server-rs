@@ -63,7 +63,7 @@ pub mod queries;
 // Re-export main types
 pub use config::PostgresConfig;
 pub use error::{PostgresError, Result};
-pub use fcm_storage::PostgresPackageStore;
+pub use fcm_storage::{FhirSchemaInfo, FhirSchemaRecord, PostgresPackageStore};
 pub use query_analyzer::{
     AnalyzerConfig, AnalyzerError, AnalyzerStatsSnapshot, BufferStats, IndexSuggestion, IndexUsage,
     QueryAnalysis, QueryAnalyzer, SeqScanInfo, SlowQueryRecord, SuggestionImpact,
@@ -101,7 +101,7 @@ pub async fn create_storage(
 pub mod prelude {
     pub use crate::config::PostgresConfig;
     pub use crate::error::{PostgresError, Result};
-    pub use crate::fcm_storage::PostgresPackageStore;
+    pub use crate::fcm_storage::{FhirSchemaInfo, FhirSchemaRecord, PostgresPackageStore};
     pub use crate::query_analyzer::{
         AnalyzerConfig, IndexSuggestion, QueryAnalysis, QueryAnalyzer,
     };

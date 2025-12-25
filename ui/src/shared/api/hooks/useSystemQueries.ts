@@ -8,6 +8,8 @@ export const systemKeys = {
 	health: () => [...systemKeys.all, "health"] as const,
 	buildInfo: () => [...systemKeys.all, "buildInfo"] as const,
 	resourceTypes: () => [...systemKeys.all, "resourceTypes"] as const,
+	resourceTypesCategorized: () => [...systemKeys.all, "resourceTypesCategorized"] as const,
+	jsonSchema: (resourceType: string) => [...systemKeys.all, "jsonSchema", resourceType] as const,
 	operations: () => [...systemKeys.all, "operations"] as const,
 	operationsFiltered: (filters?: { category?: string; module?: string; public?: boolean }) =>
 		[...systemKeys.operations(), filters] as const,
@@ -49,6 +51,37 @@ export function useResourceTypes() {
 		queryKey: systemKeys.resourceTypes(),
 		queryFn: () => serverApi.getResourceTypes(),
 		staleTime: 1000 * 60 * 30, // 30 minutes
+	});
+}
+
+/**
+ * Hook to fetch resource types with category information.
+ * Categories: fhir, system, custom
+ */
+export function useResourceTypesCategorized() {
+	return useQuery({
+		queryKey: systemKeys.resourceTypesCategorized(),
+		queryFn: () => serverApi.getResourceTypesCategorized(),
+		staleTime: 1000 * 60 * 30, // 30 minutes
+	});
+}
+
+/**
+ * Hook to fetch JSON Schema for a FHIR resource type.
+ * Used for Monaco editor autocomplete and validation.
+ */
+export function useJsonSchema(resourceType: string | undefined) {
+	return useQuery({
+		queryKey: systemKeys.jsonSchema(resourceType ?? ""),
+		queryFn: async () => {
+			if (!resourceType) {
+				throw new Error("resourceType is required");
+			}
+			return serverApi.getJsonSchema(resourceType);
+		},
+		enabled: !!resourceType,
+		staleTime: 1000 * 60 * 60, // 1 hour - schemas are stable
+		gcTime: 1000 * 60 * 60 * 24, // 24 hours
 	});
 }
 

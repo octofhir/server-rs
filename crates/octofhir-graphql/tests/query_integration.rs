@@ -101,7 +101,9 @@ impl FhirStorage for MockStorage {
     }
 
     async fn system_history(&self, _params: &HistoryParams) -> Result<HistoryResult, StorageError> {
-        Err(StorageError::internal("system_history not supported in mock"))
+        Err(StorageError::internal(
+            "system_history not supported in mock",
+        ))
     }
 
     async fn search(

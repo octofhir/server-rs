@@ -11,8 +11,7 @@ import {
 	Button,
 	Alert,
 	Box,
-	useMantineColorScheme,
-} from "@mantine/core";
+} from "@/shared/ui";
 import { IconAlertCircle } from "@tabler/icons-react";
 import { useAuth } from "@/shared/api/hooks";
 
@@ -20,13 +19,12 @@ export function LoginPage() {
 	const navigate = useNavigate();
 	const location = useLocation();
 	const { login, loginError, isLoggingIn, refetch } = useAuth();
-	const { colorScheme } = useMantineColorScheme();
-
 	const [username, setUsername] = useState("");
 	const [password, setPassword] = useState("");
 
 	// Get the redirect path from location state, default to dashboard
-	const from = (location.state as { from?: { pathname: string } })?.from?.pathname || "/";
+	const from =
+		(location.state as { from?: { pathname: string } })?.from?.pathname || "/";
 
 	const handleSubmit = async (e: React.FormEvent) => {
 		e.preventDefault();
@@ -47,25 +45,36 @@ export function LoginPage() {
 
 	const isFormValid = username.trim() !== "" && password.trim() !== "";
 
-	// Use appropriate background for light/dark mode
-	const bgColor = colorScheme === "dark" ? "var(--mantine-color-dark-8)" : "var(--mantine-color-gray-0)";
+	const bgColor = "var(--app-login-bg)";
+	const panelBackground = "var(--app-login-panel-bg)";
+
+	const logoUrl = `${import.meta.env.BASE_URL}logo.png`;
 
 	return (
-		<Center h="100vh" bg={bgColor}>
-			<Box w={400} mx="auto">
-				<Stack align="center" mb="xl">
-					<Text size="3rem">🐙</Text>
+		<Center h="100vh" style={{ background: bgColor }}>
+			<Box w={420} mx="auto" px="md">
+				<Stack align="center" mb="lg">
+					<img src={logoUrl} alt="OctoFHIR logo" width={88} height={88} />
 					<Title order={1}>OctoFHIR</Title>
-					<Text c="dimmed">Sign in to continue</Text>
+					<Text size="sm" c="dimmed">
+						Server Console
+					</Text>
 				</Stack>
 
-				<Card shadow="sm" padding="xl" radius="md" withBorder>
+				<Card
+					padding="xl"
+					radius="lg"
+					style={{
+						backgroundColor: panelBackground,
+						backdropFilter: "blur(8px)",
+					}}
+				>
 					<form onSubmit={handleSubmit}>
 						<Stack gap="md">
 							{loginError && (
 								<Alert
 									icon={<IconAlertCircle size={16} />}
-									color="red"
+									color="fire"
 									variant="light"
 								>
 									{loginError instanceof Error
@@ -77,6 +86,7 @@ export function LoginPage() {
 							<TextInput
 								label="Username"
 								placeholder="Enter your username"
+								size="sm"
 								value={username}
 								onChange={(e) => setUsername(e.currentTarget.value)}
 								autoComplete="username"
@@ -87,6 +97,7 @@ export function LoginPage() {
 							<PasswordInput
 								label="Password"
 								placeholder="Enter your password"
+								size="sm"
 								value={password}
 								onChange={(e) => setPassword(e.currentTarget.value)}
 								autoComplete="current-password"
@@ -103,15 +114,13 @@ export function LoginPage() {
 							>
 								Sign in
 							</Button>
+							<Text size="xs" c="dimmed" ta="center">
+								Use your server credentials to continue
+							</Text>
 						</Stack>
 					</form>
 				</Card>
-
-				<Text ta="center" c="dimmed" size="sm" mt="md">
-					FHIR R4B Server Console
-				</Text>
 			</Box>
 		</Center>
 	);
 }
-

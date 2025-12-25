@@ -4,6 +4,9 @@
 //! This module provides a PostgreSQL backend for storing FHIR packages and resources
 //! from Implementation Guides, enabling efficient querying and resolution of
 //! canonical URLs in a server environment.
+//!
+//! Also provides storage for pre-converted FHIRSchemas to enable on-demand loading
+//! and reduce memory usage by using an LRU cache backed by the database.
 
 use std::path::PathBuf;
 
@@ -42,6 +45,45 @@ struct SdFields {
     impose_profiles: Option<Vec<String>>,
     characteristics: Option<Vec<String>>,
     flavor: Option<String>,
+}
+
+/// Stored FHIRSchema record from the database.
+///
+/// Represents a pre-converted FHIRSchema that can be loaded on-demand
+/// to reduce memory usage compared to loading all schemas at startup.
+#[derive(Debug, Clone)]
+pub struct FhirSchemaRecord {
+    /// Canonical URL of the source StructureDefinition
+    pub url: String,
+    /// StructureDefinition version
+    pub version: Option<String>,
+    /// Source package name
+    pub package_name: String,
+    /// Source package version
+    pub package_version: String,
+    /// FHIR version (R4, R4B, R5, R6)
+    pub fhir_version: String,
+    /// Schema type: 'resource', 'complex-type', 'extension', 'primitive-type', 'logical'
+    pub schema_type: String,
+    /// The FHIRSchema JSON content
+    pub content: Value,
+    /// Hash for cache invalidation
+    pub content_hash: String,
+}
+
+/// Summary information for a FHIRSchema.
+///
+/// Used for resource type listings with package info.
+#[derive(Debug, Clone)]
+pub struct FhirSchemaInfo {
+    /// Name of the resource type
+    pub name: String,
+    /// Canonical URL of the resource
+    pub url: Option<String>,
+    /// Source package name
+    pub package_name: String,
+    /// Source package version
+    pub package_version: String,
 }
 
 /// Helper function to convert sqlx error to FcmError
@@ -234,10 +276,7 @@ impl PostgresPackageStore {
             let sd_fields = Self::extract_sd_fields(&content);
 
             // Extract standard FHIR resource fields
-            let resource_id = content
-                .get("id")
-                .and_then(|v| v.as_str())
-                .map(String::from);
+            let resource_id = content.get("id").and_then(|v| v.as_str()).map(String::from);
             let url = content
                 .get("url")
                 .and_then(|v| v.as_str())
@@ -379,6 +418,724 @@ impl PostgresPackageStore {
             created_count
         );
         Ok(created_count)
+    }
+
+    // ==================== FHIRSchema Storage Methods ====================
+
+    /// Store a FHIRSchema in the database.
+    ///
+    /// This method stores a pre-converted FHIRSchema for on-demand loading.
+    /// Uses upsert semantics - if a schema with the same URL and package exists,
+    /// it will be updated if the content hash differs.
+    ///
+    /// # Arguments
+    ///
+    /// * `url` - Canonical URL of the source StructureDefinition
+    /// * `version` - StructureDefinition version
+    /// * `package_name` - Source package name
+    /// * `package_version` - Source package version
+    /// * `fhir_version` - FHIR version (e.g., "4.0.1", "4.3.0", "5.0.0")
+    /// * `schema_type` - Type of schema: "resource", "complex-type", "extension", etc.
+    /// * `content` - The FHIRSchema JSON content
+    #[instrument(skip(self, content), fields(url = %url, package = %format!("{}@{}", package_name, package_version)))]
+    pub async fn store_fhirschema(
+        &self,
+        url: &str,
+        version: Option<&str>,
+        package_name: &str,
+        package_version: &str,
+        fhir_version: &str,
+        schema_type: &str,
+        content: &Value,
+    ) -> Result<(), FcmError> {
+        // Compute content hash for cache invalidation
+        let content_str = serde_json::to_string(content).unwrap_or_default();
+        let content_hash = {
+            use std::collections::hash_map::DefaultHasher;
+            use std::hash::{Hash, Hasher};
+            let mut hasher = DefaultHasher::new();
+            content_str.hash(&mut hasher);
+            format!("{:016x}", hasher.finish())
+        };
+
+        debug!(
+            "Storing FHIRSchema for {} (type: {}, hash: {})",
+            url, schema_type, content_hash
+        );
+
+        query(
+            r#"
+            INSERT INTO fcm.fhirschemas (
+                url, version, package_name, package_version, fhir_version,
+                schema_type, content, content_hash
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            ON CONFLICT (url, package_name, package_version) DO UPDATE SET
+                version = EXCLUDED.version,
+                fhir_version = EXCLUDED.fhir_version,
+                schema_type = EXCLUDED.schema_type,
+                content = EXCLUDED.content,
+                content_hash = EXCLUDED.content_hash,
+                created_at = NOW()
+            WHERE fcm.fhirschemas.content_hash != EXCLUDED.content_hash
+            "#,
+        )
+        .bind(url)
+        .bind(version)
+        .bind(package_name)
+        .bind(package_version)
+        .bind(fhir_version)
+        .bind(schema_type)
+        .bind(content)
+        .bind(&content_hash)
+        .execute(&self.pool)
+        .await
+        .map_err(db_error)?;
+
+        Ok(())
+    }
+
+    /// Store multiple FHIRSchemas in a batch for better performance.
+    ///
+    /// Uses a single transaction for all inserts.
+    #[instrument(skip(self, schemas), fields(count = schemas.len()))]
+    pub async fn store_fhirschemas_batch(
+        &self,
+        schemas: &[(
+            &str,         // url
+            Option<&str>, // version
+            &str,         // package_name
+            &str,         // package_version
+            &str,         // fhir_version
+            &str,         // schema_type
+            &Value,       // content
+        )],
+    ) -> Result<usize, FcmError> {
+        if schemas.is_empty() {
+            return Ok(0);
+        }
+
+        info!("Storing {} FHIRSchemas in batch", schemas.len());
+
+        let mut stored = 0;
+        for (url, version, package_name, package_version, fhir_version, schema_type, content) in
+            schemas
+        {
+            self.store_fhirschema(
+                url,
+                *version,
+                package_name,
+                package_version,
+                fhir_version,
+                schema_type,
+                content,
+            )
+            .await?;
+            stored += 1;
+        }
+
+        info!("Successfully stored {} FHIRSchemas", stored);
+        Ok(stored)
+    }
+
+    /// Get a FHIRSchema by canonical URL.
+    ///
+    /// Returns the first matching schema, preferring higher-priority packages.
+    /// If multiple packages contain the same URL, the one with highest priority is returned.
+    #[instrument(skip(self))]
+    pub async fn get_fhirschema(&self, url: &str) -> Result<Option<FhirSchemaRecord>, FcmError> {
+        debug!("Getting FHIRSchema for URL: {}", url);
+
+        let row = query(
+            r#"
+            SELECT
+                s.url, s.version, s.package_name, s.package_version,
+                s.fhir_version, s.schema_type, s.content, s.content_hash
+            FROM fcm.fhirschemas s
+            JOIN fcm.packages p ON s.package_name = p.name AND s.package_version = p.version
+            WHERE s.url = $1
+            ORDER BY p.priority DESC, s.created_at DESC
+            LIMIT 1
+            "#,
+        )
+        .bind(url)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(db_error)?;
+
+        Ok(row.map(|r| FhirSchemaRecord {
+            url: r.get("url"),
+            version: r.get("version"),
+            package_name: r.get("package_name"),
+            package_version: r.get("package_version"),
+            fhir_version: r.get("fhir_version"),
+            schema_type: r.get("schema_type"),
+            content: r.get("content"),
+            content_hash: r.get("content_hash"),
+        }))
+    }
+
+    /// Get a FHIRSchema by canonical URL and FHIR version.
+    ///
+    /// Useful when the server needs a schema for a specific FHIR version.
+    #[instrument(skip(self))]
+    pub async fn get_fhirschema_for_fhir_version(
+        &self,
+        url: &str,
+        fhir_version: &str,
+    ) -> Result<Option<FhirSchemaRecord>, FcmError> {
+        debug!(
+            "Getting FHIRSchema for URL: {} (FHIR {})",
+            url, fhir_version
+        );
+
+        let row = query(
+            r#"
+            SELECT
+                s.url, s.version, s.package_name, s.package_version,
+                s.fhir_version, s.schema_type, s.content, s.content_hash
+            FROM fcm.fhirschemas s
+            JOIN fcm.packages p ON s.package_name = p.name AND s.package_version = p.version
+            WHERE s.url = $1 AND s.fhir_version = $2
+            ORDER BY p.priority DESC, s.created_at DESC
+            LIMIT 1
+            "#,
+        )
+        .bind(url)
+        .bind(fhir_version)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(db_error)?;
+
+        Ok(row.map(|r| FhirSchemaRecord {
+            url: r.get("url"),
+            version: r.get("version"),
+            package_name: r.get("package_name"),
+            package_version: r.get("package_version"),
+            fhir_version: r.get("fhir_version"),
+            schema_type: r.get("schema_type"),
+            content: r.get("content"),
+            content_hash: r.get("content_hash"),
+        }))
+    }
+
+    /// Get a FHIRSchema by canonical URL from a specific package.
+    #[instrument(skip(self))]
+    pub async fn get_fhirschema_from_package(
+        &self,
+        url: &str,
+        package_name: &str,
+        package_version: &str,
+    ) -> Result<Option<FhirSchemaRecord>, FcmError> {
+        debug!(
+            "Getting FHIRSchema for URL: {} from {}@{}",
+            url, package_name, package_version
+        );
+
+        let row = query(
+            r#"
+            SELECT
+                url, version, package_name, package_version,
+                fhir_version, schema_type, content, content_hash
+            FROM fcm.fhirschemas
+            WHERE url = $1 AND package_name = $2 AND package_version = $3
+            "#,
+        )
+        .bind(url)
+        .bind(package_name)
+        .bind(package_version)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(db_error)?;
+
+        Ok(row.map(|r| FhirSchemaRecord {
+            url: r.get("url"),
+            version: r.get("version"),
+            package_name: r.get("package_name"),
+            package_version: r.get("package_version"),
+            fhir_version: r.get("fhir_version"),
+            schema_type: r.get("schema_type"),
+            content: r.get("content"),
+            content_hash: r.get("content_hash"),
+        }))
+    }
+
+    /// List all FHIRSchemas for a specific package.
+    #[instrument(skip(self))]
+    pub async fn list_fhirschemas_for_package(
+        &self,
+        package_name: &str,
+        package_version: &str,
+    ) -> Result<Vec<FhirSchemaRecord>, FcmError> {
+        debug!(
+            "Listing FHIRSchemas for package {}@{}",
+            package_name, package_version
+        );
+
+        let rows = query(
+            r#"
+            SELECT
+                url, version, package_name, package_version,
+                fhir_version, schema_type, content, content_hash
+            FROM fcm.fhirschemas
+            WHERE package_name = $1 AND package_version = $2
+            ORDER BY schema_type, url
+            "#,
+        )
+        .bind(package_name)
+        .bind(package_version)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(db_error)?;
+
+        Ok(rows
+            .iter()
+            .map(|r| FhirSchemaRecord {
+                url: r.get("url"),
+                version: r.get("version"),
+                package_name: r.get("package_name"),
+                package_version: r.get("package_version"),
+                fhir_version: r.get("fhir_version"),
+                schema_type: r.get("schema_type"),
+                content: r.get("content"),
+                content_hash: r.get("content_hash"),
+            })
+            .collect())
+    }
+
+    /// List all FHIRSchemas of a specific type (resource, complex-type, etc.).
+    #[instrument(skip(self))]
+    pub async fn list_fhirschemas_by_type(
+        &self,
+        schema_type: &str,
+    ) -> Result<Vec<FhirSchemaRecord>, FcmError> {
+        debug!("Listing FHIRSchemas of type: {}", schema_type);
+
+        let rows = query(
+            r#"
+            SELECT
+                s.url, s.version, s.package_name, s.package_version,
+                s.fhir_version, s.schema_type, s.content, s.content_hash
+            FROM fcm.fhirschemas s
+            JOIN fcm.packages p ON s.package_name = p.name AND s.package_version = p.version
+            WHERE s.schema_type = $1
+            ORDER BY p.priority DESC, s.url
+            "#,
+        )
+        .bind(schema_type)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(db_error)?;
+
+        Ok(rows
+            .iter()
+            .map(|r| FhirSchemaRecord {
+                url: r.get("url"),
+                version: r.get("version"),
+                package_name: r.get("package_name"),
+                package_version: r.get("package_version"),
+                fhir_version: r.get("fhir_version"),
+                schema_type: r.get("schema_type"),
+                content: r.get("content"),
+                content_hash: r.get("content_hash"),
+            })
+            .collect())
+    }
+
+    /// Get the count of FHIRSchemas in the database.
+    #[instrument(skip(self))]
+    pub async fn count_fhirschemas(&self) -> Result<i64, FcmError> {
+        let count: i64 = query_scalar("SELECT COUNT(*) FROM fcm.fhirschemas")
+            .fetch_one(&self.pool)
+            .await
+            .map_err(db_error)?;
+
+        Ok(count)
+    }
+
+    /// Delete all FHIRSchemas for a specific package.
+    ///
+    /// This is called automatically via CASCADE when the package is deleted,
+    /// but can be called explicitly for partial updates.
+    #[instrument(skip(self))]
+    pub async fn delete_fhirschemas_for_package(
+        &self,
+        package_name: &str,
+        package_version: &str,
+    ) -> Result<u64, FcmError> {
+        info!(
+            "Deleting FHIRSchemas for package {}@{}",
+            package_name, package_version
+        );
+
+        let result =
+            query("DELETE FROM fcm.fhirschemas WHERE package_name = $1 AND package_version = $2")
+                .bind(package_name)
+                .bind(package_version)
+                .execute(&self.pool)
+                .await
+                .map_err(db_error)?;
+
+        let deleted = result.rows_affected();
+        info!(
+            "Deleted {} FHIRSchemas for package {}@{}",
+            deleted, package_name, package_version
+        );
+
+        Ok(deleted)
+    }
+
+    /// Check if a FHIRSchema exists by URL (useful for cache warming decisions).
+    #[instrument(skip(self))]
+    pub async fn fhirschema_exists(&self, url: &str) -> Result<bool, FcmError> {
+        let exists: bool =
+            query_scalar("SELECT EXISTS(SELECT 1 FROM fcm.fhirschemas WHERE url = $1)")
+                .bind(url)
+                .fetch_one(&self.pool)
+                .await
+                .map_err(db_error)?;
+
+        Ok(exists)
+    }
+
+    /// Get a FHIRSchema by type name (e.g., "Patient", "Observation").
+    ///
+    /// This looks up the schema by the `name` field in the FHIRSchema content.
+    /// Used by the model provider for on-demand schema loading.
+    #[instrument(skip(self))]
+    pub async fn get_fhirschema_by_name(
+        &self,
+        name: &str,
+        fhir_version: &str,
+    ) -> Result<Option<FhirSchemaRecord>, FcmError> {
+        debug!(
+            "Getting FHIRSchema by name: {} (FHIR {})",
+            name, fhir_version
+        );
+
+        let row = query(
+            r#"
+            SELECT
+                s.url, s.version, s.package_name, s.package_version,
+                s.fhir_version, s.schema_type, s.content, s.content_hash
+            FROM fcm.fhirschemas s
+            JOIN fcm.packages p ON s.package_name = p.name AND s.package_version = p.version
+            WHERE s.content->>'name' = $1 AND s.fhir_version = $2
+            ORDER BY p.priority DESC, s.created_at DESC
+            LIMIT 1
+            "#,
+        )
+        .bind(name)
+        .bind(fhir_version)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(db_error)?;
+
+        Ok(row.map(|r| FhirSchemaRecord {
+            url: r.get("url"),
+            version: r.get("version"),
+            package_name: r.get("package_name"),
+            package_version: r.get("package_version"),
+            fhir_version: r.get("fhir_version"),
+            schema_type: r.get("schema_type"),
+            content: r.get("content"),
+            content_hash: r.get("content_hash"),
+        }))
+    }
+
+    /// Get a FHIRSchema by canonical URL (for meta.profile validation).
+    ///
+    /// This is an alias for get_fhirschema_for_fhir_version that makes
+    /// the use case clearer - validating resources against profiles
+    /// specified in meta.profile.
+    #[instrument(skip(self))]
+    pub async fn get_fhirschema_by_url(
+        &self,
+        url: &str,
+        fhir_version: &str,
+    ) -> Result<Option<FhirSchemaRecord>, FcmError> {
+        self.get_fhirschema_for_fhir_version(url, fhir_version)
+            .await
+    }
+
+    /// List all FHIRSchema names of a specific type (resource, complex-type, etc.).
+    ///
+    /// Returns just the names (from content->'name'), not full records.
+    /// Used by ModelProvider for get_resource_types(), get_complex_types(), etc.
+    #[instrument(skip(self))]
+    pub async fn list_fhirschema_names_by_type(
+        &self,
+        schema_type: &str,
+        fhir_version: &str,
+    ) -> Result<Vec<String>, FcmError> {
+        debug!(
+            "Listing FHIRSchema names of type: {} (FHIR {})",
+            schema_type, fhir_version
+        );
+
+        // Use DISTINCT to avoid duplicates when same schema exists in multiple packages
+        // Order by priority to get highest priority first, then take distinct names
+        let names: Vec<String> = query_scalar(
+            r#"
+            SELECT DISTINCT ON (s.content->>'name') s.content->>'name' as name
+            FROM fcm.fhirschemas s
+            JOIN fcm.packages p ON s.package_name = p.name AND s.package_version = p.version
+            WHERE s.schema_type = $1 AND s.fhir_version = $2
+            ORDER BY s.content->>'name', p.priority DESC
+            "#,
+        )
+        .bind(schema_type)
+        .bind(fhir_version)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(db_error)?;
+
+        Ok(names)
+    }
+
+    /// List FHIRSchema names for multiple types, excluding profiles.
+    ///
+    /// Returns just the names (from content->'name'), not full records.
+    /// Filters out profiles (derivation = 'constraint') to only return base definitions.
+    /// Used by ModelProvider for UI resource type lists.
+    #[instrument(skip(self))]
+    pub async fn list_fhirschema_names_by_kinds_excluding_profiles(
+        &self,
+        schema_types: &[&str],
+        fhir_version: &str,
+    ) -> Result<Vec<String>, FcmError> {
+        debug!(
+            "Listing FHIRSchema names of types: {:?} (FHIR {}), excluding profiles",
+            schema_types, fhir_version
+        );
+
+        // Use DISTINCT to avoid duplicates when same schema exists in multiple packages
+        // Order by priority to get highest priority first, then take distinct names
+        // Filter out profiles (derivation = 'constraint')
+        let names: Vec<String> = query_scalar(
+            r#"
+            SELECT DISTINCT ON (s.content->>'name') s.content->>'name' as name
+            FROM fcm.fhirschemas s
+            JOIN fcm.packages p ON s.package_name = p.name AND s.package_version = p.version
+            WHERE s.schema_type = ANY($1)
+              AND s.fhir_version = $2
+              AND (s.content->>'derivation' IS NULL OR s.content->>'derivation' != 'constraint')
+            ORDER BY s.content->>'name', p.priority DESC
+            "#,
+        )
+        .bind(schema_types)
+        .bind(fhir_version)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(db_error)?;
+
+        Ok(names)
+    }
+
+    /// List FHIRSchema names with their source package for categorization.
+    ///
+    /// Returns tuples of (name, package_name) for resource type categorization.
+    /// Used by the Resource Browser UI to group resources by source.
+    ///
+    /// Categorization:
+    /// - `fhir`: package_name starts with `hl7.fhir.`
+    /// - `system`: package_name is `octofhir-internal`
+    /// - `custom`: all other packages
+    #[instrument(skip(self))]
+    pub async fn list_fhirschema_names_with_package(
+        &self,
+        schema_types: &[&str],
+        fhir_version: &str,
+    ) -> Result<Vec<FhirSchemaInfo>, FcmError> {
+        debug!(
+            "Listing FHIRSchema names with packages of types: {:?} (FHIR {})",
+            schema_types, fhir_version
+        );
+
+        let rows = query(
+            r#"
+            SELECT DISTINCT ON (s.content->>'name')
+                s.content->>'name' as name,
+                s.content->>'url' as url,
+                s.package_name,
+                s.package_version
+            FROM fcm.fhirschemas s
+            JOIN fcm.packages p ON s.package_name = p.name AND s.package_version = p.version
+            WHERE s.schema_type = ANY($1)
+              AND s.fhir_version = $2
+              AND (s.content->>'derivation' IS NULL OR s.content->>'derivation' != 'constraint')
+            ORDER BY s.content->>'name', p.priority DESC
+            "#,
+        )
+        .bind(schema_types)
+        .bind(fhir_version)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(db_error)?;
+
+        let results: Vec<FhirSchemaInfo> = rows
+            .iter()
+            .filter_map(|r| {
+                let name: Option<String> = r.get("name");
+                let url: Option<String> = r.get("url");
+                let package_name: String = r.get("package_name");
+                let package_version: String = r.get("package_version");
+                name.map(|n| FhirSchemaInfo {
+                    name: n,
+                    url,
+                    package_name,
+                    package_version,
+                })
+            })
+            .collect();
+
+        Ok(results)
+    }
+
+    /// Bulk load all FHIRSchemas for a FHIR version.
+    ///
+    /// Loads all resource and complex-type schemas needed for GraphQL schema building.
+    /// Returns the full FhirSchemaRecord with content for each schema.
+    ///
+    /// This is optimized for the initial GraphQL schema build where all schemas
+    /// need to be processed. After building, the returned data can be dropped
+    /// to free memory.
+    #[instrument(skip(self))]
+    pub async fn bulk_load_fhirschemas_for_graphql(
+        &self,
+        fhir_version: &str,
+    ) -> Result<Vec<FhirSchemaRecord>, FcmError> {
+        debug!(
+            "Bulk loading FHIRSchemas for GraphQL (FHIR {})",
+            fhir_version
+        );
+
+        // Load all schemas of types needed for GraphQL: resource, complex-type, logical
+        // Join with packages to respect priority ordering (higher priority packages first)
+        // Use DISTINCT ON to deduplicate by schema name, keeping highest priority
+        let rows = query(
+            r#"
+            SELECT DISTINCT ON (s.content->>'name')
+                s.url, s.version, s.package_name, s.package_version,
+                s.fhir_version, s.schema_type, s.content, s.content_hash
+            FROM fcm.fhirschemas s
+            JOIN fcm.packages p ON s.package_name = p.name AND s.package_version = p.version
+            WHERE s.fhir_version = $1
+              AND s.schema_type IN ('resource', 'complex-type', 'logical')
+            ORDER BY s.content->>'name', p.priority DESC
+            "#,
+        )
+        .bind(fhir_version)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(db_error)?;
+
+        let records: Vec<FhirSchemaRecord> = rows
+            .iter()
+            .map(|r| FhirSchemaRecord {
+                url: r.get("url"),
+                version: r.get("version"),
+                package_name: r.get("package_name"),
+                package_version: r.get("package_version"),
+                fhir_version: r.get("fhir_version"),
+                schema_type: r.get("schema_type"),
+                content: r.get("content"),
+                content_hash: r.get("content_hash"),
+            })
+            .collect();
+
+        info!(
+            "Bulk loaded {} FHIRSchemas for GraphQL (FHIR {})",
+            records.len(),
+            fhir_version
+        );
+
+        Ok(records)
+    }
+
+    /// Find resources of a specific type from a specific package.
+    ///
+    /// Returns the raw JSON content of matching resources.
+    #[instrument(skip(self))]
+    pub async fn find_resources_by_package_and_type(
+        &self,
+        package_name: &str,
+        package_version: &str,
+        resource_type: &str,
+    ) -> Result<Vec<Value>, FcmError> {
+        debug!(
+            "Finding {} resources from {}@{}",
+            resource_type, package_name, package_version
+        );
+
+        let rows: Vec<Value> = query_scalar(
+            r#"
+            SELECT content
+            FROM fcm.resources
+            WHERE package_name = $1
+              AND package_version = $2
+              AND resource_type = $3
+            "#,
+        )
+        .bind(package_name)
+        .bind(package_version)
+        .bind(resource_type)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(db_error)?;
+
+        debug!(
+            "Found {} {} resources from {}@{}",
+            rows.len(),
+            resource_type,
+            package_name,
+            package_version
+        );
+
+        Ok(rows)
+    }
+
+    /// Get FHIRSchema URLs that are missing for a package.
+    ///
+    /// Compares the StructureDefinitions in fcm.resources with the
+    /// FHIRSchemas in fcm.fhirschemas to find which ones need conversion.
+    #[instrument(skip(self))]
+    pub async fn find_missing_fhirschemas(
+        &self,
+        package_name: &str,
+        package_version: &str,
+    ) -> Result<Vec<String>, FcmError> {
+        debug!(
+            "Finding missing FHIRSchemas for package {}@{}",
+            package_name, package_version
+        );
+
+        let urls: Vec<String> = query_scalar(
+            r#"
+            SELECT r.url
+            FROM fcm.resources r
+            LEFT JOIN fcm.fhirschemas s
+                ON r.url = s.url
+                AND r.package_name = s.package_name
+                AND r.package_version = s.package_version
+            WHERE r.package_name = $1
+              AND r.package_version = $2
+              AND r.resource_type = 'StructureDefinition'
+              AND r.url IS NOT NULL
+              AND s.url IS NULL
+            ORDER BY r.url
+            "#,
+        )
+        .bind(package_name)
+        .bind(package_version)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(db_error)?;
+
+        debug!(
+            "Found {} StructureDefinitions without FHIRSchemas",
+            urls.len()
+        );
+        Ok(urls)
     }
 }
 
@@ -557,7 +1314,7 @@ impl PackageStore for PostgresPackageStore {
 
         let rows = query(
             r#"
-            SELECT name, version, installed_at, resource_count
+            SELECT name, version, fhir_version, installed_at, resource_count
             FROM fcm.packages
             ORDER BY name, version
             "#,
@@ -573,6 +1330,9 @@ impl PackageStore for PostgresPackageStore {
                 PackageInfo {
                     name: row.get("name"),
                     version: row.get("version"),
+                    fhir_version: row
+                        .get::<Option<String>, _>("fhir_version")
+                        .unwrap_or_else(|| "4.0.1".to_string()),
                     installed_at: row.get("installed_at"),
                     resource_count: count as usize,
                 }

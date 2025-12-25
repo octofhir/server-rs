@@ -45,7 +45,16 @@ pub struct ClientRow {
 
 impl ClientRow {
     /// Create from database tuple.
-    fn from_tuple(row: (String, i64, OffsetDateTime, OffsetDateTime, serde_json::Value, String)) -> Self {
+    fn from_tuple(
+        row: (
+            String,
+            i64,
+            OffsetDateTime,
+            OffsetDateTime,
+            serde_json::Value,
+            String,
+        ),
+    ) -> Self {
         Self {
             id: row.0,
             txid: row.1,
@@ -84,7 +93,14 @@ impl<'a> ClientStorage<'a> {
     ///
     /// Returns an error if the database query fails.
     pub async fn find_by_client_id(&self, client_id: &str) -> StorageResult<Option<ClientRow>> {
-        let row: Option<(String, i64, OffsetDateTime, OffsetDateTime, serde_json::Value, String)> = query_as(
+        let row: Option<(
+            String,
+            i64,
+            OffsetDateTime,
+            OffsetDateTime,
+            serde_json::Value,
+            String,
+        )> = query_as(
             r#"
             SELECT id, txid, created_at, updated_at, resource, status::text::text
             FROM client
@@ -105,7 +121,14 @@ impl<'a> ClientStorage<'a> {
     ///
     /// Returns an error if the database query fails.
     pub async fn find_by_id(&self, id: Uuid) -> StorageResult<Option<ClientRow>> {
-        let row: Option<(String, i64, OffsetDateTime, OffsetDateTime, serde_json::Value, String)> = query_as(
+        let row: Option<(
+            String,
+            i64,
+            OffsetDateTime,
+            OffsetDateTime,
+            serde_json::Value,
+            String,
+        )> = query_as(
             r#"
             SELECT id, txid, created_at, updated_at, resource, status::text
             FROM client
@@ -129,7 +152,14 @@ impl<'a> ClientStorage<'a> {
     /// - A client with the same ID already exists
     pub async fn create(&self, id: Uuid, resource: serde_json::Value) -> StorageResult<ClientRow> {
         let id_str = id.to_string();
-        let row: (String, i64, OffsetDateTime, OffsetDateTime, serde_json::Value, String) = query_as(
+        let row: (
+            String,
+            i64,
+            OffsetDateTime,
+            OffsetDateTime,
+            serde_json::Value,
+            String,
+        ) = query_as(
             r#"
             INSERT INTO client (id, txid, created_at, updated_at, resource, status)
             VALUES ($1, 1, NOW(), NOW(), $2, 'created')
@@ -162,7 +192,14 @@ impl<'a> ClientStorage<'a> {
     /// - The client doesn't exist
     /// - The database update fails
     pub async fn update(&self, id: Uuid, resource: serde_json::Value) -> StorageResult<ClientRow> {
-        let row: Option<(String, i64, OffsetDateTime, OffsetDateTime, serde_json::Value, String)> = query_as(
+        let row: Option<(
+            String,
+            i64,
+            OffsetDateTime,
+            OffsetDateTime,
+            serde_json::Value,
+            String,
+        )> = query_as(
             r#"
             UPDATE client
             SET resource = $2,
@@ -220,7 +257,14 @@ impl<'a> ClientStorage<'a> {
     ///
     /// Returns an error if the database query fails.
     pub async fn list(&self, limit: i64, offset: i64) -> StorageResult<Vec<ClientRow>> {
-        let rows: Vec<(String, i64, OffsetDateTime, OffsetDateTime, serde_json::Value, String)> = query_as(
+        let rows: Vec<(
+            String,
+            i64,
+            OffsetDateTime,
+            OffsetDateTime,
+            serde_json::Value,
+            String,
+        )> = query_as(
             r#"
             SELECT id, txid, created_at, updated_at, resource, status::text
             FROM client

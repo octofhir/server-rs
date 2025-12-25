@@ -1,6 +1,0 @@
----
-source: crates/octofhir-server/src/lsp/formatting/tests/comprehensive_tests.rs
-expression: formatted
----
-SELECT id, CASE WHEN active THEN 'Active' ELSE 'Inactive' END
-  FROM patient

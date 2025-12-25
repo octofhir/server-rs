@@ -10,7 +10,8 @@ import {
 	Button,
 	Loader,
 	ThemeIcon,
-} from "@mantine/core";
+	Box,
+} from "@/shared/ui";
 import {
 	IconFolder,
 	IconTerminal,
@@ -21,7 +22,7 @@ import {
 	IconCode,
 	IconServer,
 } from "@tabler/icons-react";
-import { useHealth, useCapabilities } from "@/shared/api/hooks";
+import { useHealth, useResourceTypes } from "@/shared/api/hooks";
 
 interface QuickAction {
 	title: string;
@@ -37,165 +38,248 @@ const quickActions: QuickAction[] = [
 		description: "View and search FHIR resources",
 		href: "/resources",
 		icon: IconFolder,
-		color: "blue",
+		color: "primary",
 	},
 	{
 		title: "REST Console",
 		description: "Test FHIR API endpoints",
 		href: "/console",
 		icon: IconTerminal,
-		color: "green",
+		color: "deep",
 	},
 	{
 		title: "DB Console",
 		description: "Execute SQL queries",
 		href: "/db-console",
 		icon: IconDatabase,
-		color: "orange",
+		color: "warm",
 	},
 	{
 		title: "GraphQL",
 		description: "GraphQL query console",
 		href: "/graphql",
 		icon: IconCode,
-		color: "grape",
+		color: "primary",
 	},
 	{
 		title: "API Gateway",
 		description: "Manage custom endpoints",
 		href: "/gateway",
 		icon: IconServer,
-		color: "cyan",
+		color: "fire",
 	},
 	{
 		title: "System Logs",
 		description: "View server activity logs",
 		href: "/logs",
 		icon: IconActivity,
-		color: "pink",
+		color: "warm",
 	},
 	{
 		title: "Capability Statement",
 		description: "View server metadata",
 		href: "/metadata",
 		icon: IconFileDescription,
-		color: "indigo",
+		color: "deep",
 	},
 	{
 		title: "Settings",
 		description: "Configure server settings",
 		href: "/settings",
 		icon: IconSettings,
-		color: "gray",
+		color: "deep",
 	},
 ];
-
-function StatusCard() {
-	const { data: health, isLoading } = useHealth();
-
-	const statusColor = {
-		ok: "green",
-		degraded: "yellow",
-		down: "red",
-	}[health?.status ?? "down"];
-
-	return (
-		<Card shadow="sm" padding="lg" radius="md" withBorder>
-			<Group justify="space-between" mb="xs">
-				<Text fw={500}>Server Status</Text>
-				<ThemeIcon variant="light" color={statusColor} size="lg">
-					<IconActivity size={18} />
-				</ThemeIcon>
-			</Group>
-			{isLoading ? (
-				<Loader size="sm" />
-			) : (
-				<Badge color={statusColor} variant="light" size="lg">
-					{health?.status ?? "Unknown"}
-				</Badge>
-			)}
-		</Card>
-	);
-}
-
-function ResourceTypesCard() {
-	const { data: capabilities, isLoading } = useCapabilities();
-
-	// Extract resource count from capability statement
-	const resourceCount = (capabilities as any)?.rest?.[0]?.resource?.length ?? 0;
-
-	return (
-		<Card shadow="sm" padding="lg" radius="md" withBorder>
-			<Group justify="space-between" mb="xs">
-				<Text fw={500}>Resource Types</Text>
-				<ThemeIcon variant="light" color="blue" size="lg">
-					<IconFolder size={18} />
-				</ThemeIcon>
-			</Group>
-			{isLoading ? (
-				<Loader size="sm" />
-			) : (
-				<Group gap="xs">
-					<Text size="xl" fw={700}>
-						{resourceCount}
-					</Text>
-					<Text size="sm" c="dimmed">
-						available types
-					</Text>
-				</Group>
-			)}
-		</Card>
-	);
-}
 
 export function DashboardPage() {
 	const navigate = useNavigate();
 
 	return (
-		<Stack gap="lg">
-			<div>
-				<Title order={2}>Dashboard</Title>
-				<Text c="dimmed">Welcome to OctoFHIR Server Console</Text>
-			</div>
+		<Box p="xl" className="page-enter">
+			<Stack gap="xl">
+				<Box>
+					<Title order={1} style={{ letterSpacing: "-0.03em", fontWeight: 700 }}>
+						Dashboard
+					</Title>
+					<Text c="dimmed" size="lg">
+						Welcome to OctoFHIR Server Console
+					</Text>
+				</Box>
 
-			<SimpleGrid cols={{ base: 1, sm: 2 }}>
-				<StatusCard />
-				<ResourceTypesCard />
-			</SimpleGrid>
+				<SimpleGrid cols={{ base: 1, sm: 2 }} spacing="lg">
+					<StatusCard />
+					<ResourceTypesCard />
+				</SimpleGrid>
 
-			<div>
-				<Title order={3} mb="md">
-					Quick Actions
-				</Title>
-				<SimpleGrid cols={{ base: 1, sm: 2, lg: 4 }}>
-					{quickActions.map((action) => (
-						<Card
-							key={action.href}
-							shadow="sm"
-							padding="lg"
-							radius="md"
-							withBorder
-						>
-							<ThemeIcon variant="light" color={action.color} size="xl" mb="md">
-								<action.icon size={24} />
-							</ThemeIcon>
-							<Text fw={500} mb="xs">
-								{action.title}
-							</Text>
-							<Text size="sm" c="dimmed" mb="md">
-								{action.description}
-							</Text>
-							<Button
-								variant="light"
-								size="xs"
+				<Box>
+					<Group justify="space-between" mb="lg">
+						<Title order={3} style={{ letterSpacing: "-0.02em" }}>
+							Quick Actions
+						</Title>
+						<Badge variant="light" size="lg" radius="sm">
+							Frequently Used
+						</Badge>
+					</Group>
+					<SimpleGrid cols={{ base: 1, sm: 2, lg: 4 }} spacing="lg">
+						{quickActions.map((action) => (
+							<Card
+								key={action.href}
+								withBorder
+								padding="xl"
+								radius="lg"
+								className="dashboard-action-card"
+								style={{
+									backgroundColor: "var(--app-surface-1)",
+									cursor: "pointer",
+									transition: "all 0.2s ease",
+								}}
 								onClick={() => navigate(action.href)}
 							>
-								Open
-							</Button>
-						</Card>
-					))}
-				</SimpleGrid>
-			</div>
-		</Stack>
+								<ThemeIcon
+									variant="light"
+									color={action.color}
+									size={52}
+									radius="md"
+									mb="lg"
+									style={{
+										boxShadow: `0 8px 16px var(--mantine-color-${action.color}-light-hover)`,
+									}}
+								>
+									<action.icon size={28} />
+								</ThemeIcon>
+								<Text fw={600} size="lg" mb="xs" style={{ letterSpacing: "-0.01em" }}>
+									{action.title}
+								</Text>
+								<Text size="sm" c="dimmed" mb="md" style={{ lineHeight: 1.5 }}>
+									{action.description}
+								</Text>
+								<Button
+									variant="subtle"
+									color={action.color}
+									size="sm"
+									rightSection={<IconActivity size={14} />}
+									p={0}
+									style={{ width: "fit-content" }}
+								>
+									Open Tool
+								</Button>
+							</Card>
+						))}
+					</SimpleGrid>
+				</Box>
+			</Stack>
+
+			<style dangerouslySetInnerHTML={{
+				__html: `
+				.dashboard-action-card:hover {
+					transform: translateY(-4px);
+					box-shadow: var(--mantine-shadow-md);
+					border-color: var(--app-accent-primary);
+				}
+			`}} />
+		</Box>
+	);
+}
+
+function StatusCard() {
+	const { data: health, isLoading } = useHealth();
+
+	const statusColor = {
+		ok: "primary",
+		degraded: "warm",
+		down: "fire",
+	}[health?.status ?? "down"];
+
+	return (
+		<Card
+			withBorder
+			padding="xl"
+			radius="lg"
+			style={{
+				backgroundColor: "var(--app-surface-1)",
+				position: "relative",
+				overflow: "hidden"
+			}}
+		>
+			<Box
+				style={{
+					position: "absolute",
+					top: 0,
+					left: 0,
+					right: 0,
+					height: 4,
+					background: `var(--mantine-color-${statusColor}-filled)`
+				}}
+			/>
+			<Group justify="space-between" align="flex-start" mb="md">
+				<div>
+					<Text size="sm" fw={600} c="dimmed" tt="uppercase" style={{ letterSpacing: "0.05em" }} mb={4}>
+						Server Status
+					</Text>
+					{isLoading ? (
+						<Loader size="sm" variant="dots" />
+					) : (
+						<Title order={2} style={{ color: `var(--mantine-color-${statusColor}-filled)` }}>
+							{health?.status?.toUpperCase() ?? "UNKNOWN"}
+						</Title>
+					)}
+				</div>
+				<ThemeIcon variant="light" color={statusColor} size={48} radius="md">
+					<IconServer size={24} />
+				</ThemeIcon>
+			</Group>
+			<Text size="xs" c="dimmed">
+				Last check: {new Date().toLocaleTimeString()}
+			</Text>
+		</Card>
+	);
+}
+
+function ResourceTypesCard() {
+	const { data: resourceTypes = [], isLoading } = useResourceTypes();
+	const resourceCount = resourceTypes.length;
+
+	return (
+		<Card
+			withBorder
+			padding="xl"
+			radius="lg"
+			style={{
+				backgroundColor: "var(--app-surface-1)",
+				position: "relative",
+				overflow: "hidden"
+			}}
+		>
+			<Box
+				style={{
+					position: "absolute",
+					top: 0,
+					left: 0,
+					right: 0,
+					height: 4,
+					background: "var(--app-brand-gradient)"
+				}}
+			/>
+			<Group justify="space-between" align="flex-start" mb="md">
+				<div>
+					<Text size="sm" fw={600} c="dimmed" tt="uppercase" style={{ letterSpacing: "0.05em" }} mb={4}>
+						FHIR Resources
+					</Text>
+					{isLoading ? (
+						<Loader size="sm" variant="dots" />
+					) : (
+						<Title order={2} style={{ letterSpacing: "-0.02em" }}>
+							{resourceCount} Types
+						</Title>
+					)}
+				</div>
+				<ThemeIcon variant="light" color="primary" size={48} radius="md">
+					<IconDatabase size={24} />
+				</ThemeIcon>
+			</Group>
+			<Text size="xs" c="dimmed">
+				Available in current schema
+			</Text>
+		</Card>
 	);
 }

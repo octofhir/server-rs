@@ -1,9 +1,9 @@
 //! GraphQL subscription field definitions.
 
+use async_graphql::Value;
 use async_graphql::dynamic::{
     InputValue, Object, Subscription, SubscriptionField, SubscriptionFieldFuture, TypeRef,
 };
-use async_graphql::Value;
 use async_stream::stream;
 use std::sync::Arc;
 use tokio::sync::broadcast;
@@ -37,9 +37,7 @@ pub fn build_subscription_type(broadcaster: Arc<ResourceEventBroadcaster>) -> Su
 }
 
 /// Creates the `resourceCreated` subscription field.
-fn create_resource_created_field(
-    broadcaster: Arc<ResourceEventBroadcaster>,
-) -> SubscriptionField {
+fn create_resource_created_field(broadcaster: Arc<ResourceEventBroadcaster>) -> SubscriptionField {
     SubscriptionField::new(
         "resourceCreated",
         TypeRef::named_nn("ResourceChangeEvent"),
@@ -76,9 +74,7 @@ fn create_resource_created_field(
 }
 
 /// Creates the `resourceUpdated` subscription field.
-fn create_resource_updated_field(
-    broadcaster: Arc<ResourceEventBroadcaster>,
-) -> SubscriptionField {
+fn create_resource_updated_field(broadcaster: Arc<ResourceEventBroadcaster>) -> SubscriptionField {
     SubscriptionField::new(
         "resourceUpdated",
         TypeRef::named_nn("ResourceChangeEvent"),
@@ -115,9 +111,7 @@ fn create_resource_updated_field(
 }
 
 /// Creates the `resourceDeleted` subscription field.
-fn create_resource_deleted_field(
-    broadcaster: Arc<ResourceEventBroadcaster>,
-) -> SubscriptionField {
+fn create_resource_deleted_field(broadcaster: Arc<ResourceEventBroadcaster>) -> SubscriptionField {
     SubscriptionField::new(
         "resourceDeleted",
         TypeRef::named_nn("ResourceChangeEvent"),
@@ -154,9 +148,7 @@ fn create_resource_deleted_field(
 }
 
 /// Creates the `resourceChanged` subscription field that receives all events.
-fn create_resource_changed_field(
-    broadcaster: Arc<ResourceEventBroadcaster>,
-) -> SubscriptionField {
+fn create_resource_changed_field(broadcaster: Arc<ResourceEventBroadcaster>) -> SubscriptionField {
     SubscriptionField::new(
         "resourceChanged",
         TypeRef::named_nn("ResourceChangeEvent"),
@@ -186,7 +178,8 @@ fn create_resource_changed_field(
                     "Starting resourceChanged subscription"
                 );
 
-                let stream = create_filtered_stream(receiver, resource_type_filter, event_type_filter);
+                let stream =
+                    create_filtered_stream(receiver, resource_type_filter, event_type_filter);
 
                 Ok(stream)
             })
@@ -388,22 +381,18 @@ pub fn create_resource_change_event_type() -> Object {
             .description("Resource ID"),
         )
         .field(
-            async_graphql::dynamic::Field::new(
-                "resource",
-                TypeRef::named("FhirResource"),
-                |ctx| {
-                    async_graphql::dynamic::FieldFuture::new(async move {
-                        if let Some(parent) = ctx.parent_value.as_value() {
-                            if let Value::Object(obj) = parent {
-                                if let Some(v) = obj.get("resource") {
-                                    return Ok(Some(v.clone()));
-                                }
+            async_graphql::dynamic::Field::new("resource", TypeRef::named("FhirResource"), |ctx| {
+                async_graphql::dynamic::FieldFuture::new(async move {
+                    if let Some(parent) = ctx.parent_value.as_value() {
+                        if let Value::Object(obj) = parent {
+                            if let Some(v) = obj.get("resource") {
+                                return Ok(Some(v.clone()));
                             }
                         }
-                        Ok(None)
-                    })
-                },
-            )
+                    }
+                    Ok(None)
+                })
+            })
             .description("The resource data (null for deletions)"),
         )
         .field(

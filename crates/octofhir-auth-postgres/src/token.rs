@@ -35,7 +35,16 @@ pub struct TokenRow {
 
 impl TokenRow {
     /// Create from database tuple.
-    fn from_tuple(row: (String, i64, OffsetDateTime, OffsetDateTime, serde_json::Value, String)) -> Self {
+    fn from_tuple(
+        row: (
+            String,
+            i64,
+            OffsetDateTime,
+            OffsetDateTime,
+            serde_json::Value,
+            String,
+        ),
+    ) -> Self {
         Self {
             id: row.0,
             txid: row.1,
@@ -72,7 +81,14 @@ impl<'a> TokenStorage<'a> {
     ///
     /// Returns an error if the database query fails.
     pub async fn find_by_token_hash(&self, token_hash: &str) -> StorageResult<Option<TokenRow>> {
-        let row: Option<(String, i64, OffsetDateTime, OffsetDateTime, serde_json::Value, String)> = query_as(
+        let row: Option<(
+            String,
+            i64,
+            OffsetDateTime,
+            OffsetDateTime,
+            serde_json::Value,
+            String,
+        )> = query_as(
             r#"
             SELECT id, txid, created_at, updated_at, resource, status::text
             FROM refreshtoken
@@ -93,7 +109,14 @@ impl<'a> TokenStorage<'a> {
     ///
     /// Returns an error if the database query fails.
     pub async fn find_by_id(&self, id: Uuid) -> StorageResult<Option<TokenRow>> {
-        let row: Option<(String, i64, OffsetDateTime, OffsetDateTime, serde_json::Value, String)> = query_as(
+        let row: Option<(
+            String,
+            i64,
+            OffsetDateTime,
+            OffsetDateTime,
+            serde_json::Value,
+            String,
+        )> = query_as(
             r#"
             SELECT id, txid, created_at, updated_at, resource, status::text
             FROM refreshtoken
@@ -115,7 +138,14 @@ impl<'a> TokenStorage<'a> {
     /// Returns an error if the database insert fails.
     pub async fn create(&self, id: Uuid, resource: serde_json::Value) -> StorageResult<TokenRow> {
         let id_str = id.to_string();
-        let row: (String, i64, OffsetDateTime, OffsetDateTime, serde_json::Value, String) = query_as(
+        let row: (
+            String,
+            i64,
+            OffsetDateTime,
+            OffsetDateTime,
+            serde_json::Value,
+            String,
+        ) = query_as(
             r#"
             INSERT INTO refreshtoken (id, txid, created_at, updated_at, resource, status)
             VALUES ($1, 1, NOW(), NOW(), $2, 'created')
@@ -147,7 +177,14 @@ impl<'a> TokenStorage<'a> {
     ///
     /// Returns an error if the token doesn't exist or the database update fails.
     pub async fn update_last_used(&self, id: Uuid) -> StorageResult<TokenRow> {
-        let row: Option<(String, i64, OffsetDateTime, OffsetDateTime, serde_json::Value, String)> = query_as(
+        let row: Option<(
+            String,
+            i64,
+            OffsetDateTime,
+            OffsetDateTime,
+            serde_json::Value,
+            String,
+        )> = query_as(
             r#"
             UPDATE refreshtoken
             SET resource = jsonb_set(resource, '{lastUsedAt}', to_jsonb(NOW()::text)),
@@ -350,7 +387,14 @@ impl<'a> TokenStorage<'a> {
     ///
     /// Returns an error if the database query fails.
     pub async fn list_by_user(&self, user_id: Uuid) -> StorageResult<Vec<TokenRow>> {
-        let rows: Vec<(String, i64, OffsetDateTime, OffsetDateTime, serde_json::Value, String)> = query_as(
+        let rows: Vec<(
+            String,
+            i64,
+            OffsetDateTime,
+            OffsetDateTime,
+            serde_json::Value,
+            String,
+        )> = query_as(
             r#"
             SELECT id, txid, created_at, updated_at, resource, status::text
             FROM refreshtoken

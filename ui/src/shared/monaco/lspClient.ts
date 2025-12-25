@@ -4,6 +4,7 @@ import {
 	conf as sqlConfiguration,
 	language as sqlLanguage,
 } from "monaco-editor/esm/vs/basic-languages/sql/sql";
+import type { FormatterConfig } from "../settings/formatterTypes";
 
 const DEFAULT_LSP_PATH = "/api/pg-lsp";
 const PG_SPECIFIC_KEYWORDS = [
@@ -34,6 +35,7 @@ const textDecoder = new TextDecoder();
 let monacoReady: Promise<void> | undefined;
 let languageRegistered = false;
 let activeConnection: PgLspConnection | undefined;
+let currentFormatterConfig: FormatterConfig | undefined;
 
 export const PG_LANGUAGE_ID = "pgsql";
 
@@ -191,6 +193,25 @@ export function bindModelToLanguageServer(
 		return () => {};
 	}
 	return activeConnection.bindModel(model);
+}
+
+/**
+ * Set the formatter configuration to use for LSP formatting requests.
+ * This config is passed in the options of textDocument/formatting requests.
+ *
+ * @param config - The formatter configuration to use
+ */
+export function setLspFormatterConfig(config: FormatterConfig | undefined): void {
+	currentFormatterConfig = config;
+}
+
+/**
+ * Get the current formatter configuration.
+ *
+ * @returns The current formatter configuration or undefined
+ */
+export function getLspFormatterConfig(): FormatterConfig | undefined {
+	return currentFormatterConfig;
 }
 
 type LspPosition = { line: number; character: number };
@@ -767,12 +788,22 @@ class PgLspConnection {
 			monaco.languages.registerDocumentFormattingEditProvider(PG_LANGUAGE_ID, {
 				provideDocumentFormattingEdits: async (model, _options, _token) => {
 					try {
+						// Build formatting options with custom formatter config
+						const options: Record<string, unknown> = {
+							tabSize: _options.tabSize,
+							insertSpaces: _options.insertSpaces,
+						};
+
+						// Add custom formatter config if set
+						if (currentFormatterConfig) {
+							// Spread the formatter config properties into options
+							// The server will extract these based on the 'style' field
+							Object.assign(options, currentFormatterConfig);
+						}
+
 						const params = {
 							textDocument: { uri: model.uri.toString() },
-							options: {
-								tabSize: _options.tabSize,
-								insertSpaces: _options.insertSpaces,
-							},
+							options,
 						};
 						const edits = await this.sendRequest<LspTextEdit[]>(
 							"textDocument/formatting",

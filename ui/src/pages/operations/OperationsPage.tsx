@@ -43,12 +43,12 @@ const CATEGORY_ICONS: Record<string, typeof IconServer> = {
 };
 
 const CATEGORY_COLORS: Record<string, string> = {
-	fhir: "blue",
-	graphql: "grape",
-	system: "teal",
-	auth: "red",
-	ui: "orange",
-	api: "cyan",
+	fhir: "primary",
+	graphql: "deep",
+	system: "warm",
+	auth: "fire",
+	ui: "warm",
+	api: "deep",
 };
 
 const CATEGORY_LABELS: Record<string, string> = {
@@ -60,17 +60,23 @@ const CATEGORY_LABELS: Record<string, string> = {
 	api: "Custom API",
 };
 
+const ACCESS_FILTER_OPTIONS = [
+	{ label: "All", value: "all" },
+	{ label: "Public", value: "public" },
+	{ label: "Protected", value: "protected" },
+] as const;
+
 interface GroupedOperations {
 	[category: string]: OperationDefinition[];
 }
 
 function MethodBadge({ method }: { method: string }) {
 	const colors: Record<string, string> = {
-		GET: "green",
-		POST: "blue",
-		PUT: "orange",
-		DELETE: "red",
-		PATCH: "yellow",
+		GET: "primary",
+		POST: "warm",
+		PUT: "deep",
+		DELETE: "fire",
+		PATCH: "warm",
 	};
 
 	return (
@@ -117,9 +123,9 @@ function OperationRow({
 			<Table.Td>
 				<Tooltip label={operation.public ? "Public (no auth required)" : "Protected (requires auth)"}>
 					{operation.public ? (
-						<IconLockOpen size={16} color="var(--mantine-color-green-6)" />
+						<IconLockOpen size={16} style={{ color: "var(--app-accent-primary)" }} />
 					) : (
-						<IconLock size={16} color="var(--mantine-color-gray-5)" />
+						<IconLock size={16} style={{ color: "var(--app-accent-warm)" }} />
 					)}
 				</Tooltip>
 			</Table.Td>
@@ -234,7 +240,7 @@ export function OperationsPage() {
 				</Text>
 			</div>
 
-			<Paper withBorder p="md">
+			<Paper p="md" style={{ backgroundColor: "var(--app-surface-2)" }}>
 				<Group gap="md">
 					<TextInput
 						placeholder="Search operations..."
@@ -246,11 +252,7 @@ export function OperationsPage() {
 					<SegmentedControl
 						value={filterAccess}
 						onChange={setFilterAccess}
-						data={[
-							{ label: "All", value: "all" },
-							{ label: "Public", value: "public" },
-							{ label: "Protected", value: "protected" },
-						]}
+						data={ACCESS_FILTER_OPTIONS}
 					/>
 				</Group>
 			</Paper>
@@ -265,7 +267,7 @@ export function OperationsPage() {
 			)}
 
 			{error && (
-				<Alert icon={<IconAlertCircle size={16} />} color="red" variant="light">
+				<Alert icon={<IconAlertCircle size={16} />} color="fire" variant="light">
 					{error instanceof Error ? error.message : "Failed to load operations"}
 				</Alert>
 			)}
@@ -284,7 +286,7 @@ export function OperationsPage() {
 					</Group>
 
 					{categories.length === 0 ? (
-						<Paper withBorder p="xl">
+						<Paper p="xl" style={{ backgroundColor: "var(--app-surface-2)" }}>
 							<Text ta="center" c="dimmed">
 								No operations match your filters
 							</Text>

@@ -1,9 +1,9 @@
 //! Debug test to check why complex types have no elements
 
-use std::sync::Arc;
+use octofhir_fhir_model::provider::FhirVersion;
 use octofhir_fhir_model::provider::ModelProvider;
 use octofhir_fhirschema::{FhirSchemaModelProvider, get_schemas};
-use octofhir_fhir_model::provider::FhirVersion;
+use std::sync::Arc;
 
 #[tokio::test]
 async fn debug_complex_type_elements() {
@@ -14,7 +14,10 @@ async fn debug_complex_type_elements() {
 
     // Check what complex types are available
     let complex_types = provider.get_complex_types().await.unwrap();
-    println!("\n=== Complex types available ({}) ===", complex_types.len());
+    println!(
+        "\n=== Complex types available ({}) ===",
+        complex_types.len()
+    );
     for (i, ct) in complex_types.iter().take(10).enumerate() {
         println!("{}: {}", i + 1, ct);
     }

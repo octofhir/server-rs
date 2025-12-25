@@ -92,6 +92,10 @@ pub const EMBEDDED_RESOURCES: &[(&str, &str)] = &[
         "ValueSet-identity-provider-types.json",
         include_str!("../../../igs/octofhir-internal/ValueSet-identity-provider-types.json"),
     ),
+    (
+        "ValueSet-operation-outcome-type.json",
+        include_str!("../../../igs/octofhir-internal/ValueSet-operation-outcome-type.json"),
+    ),
     // CodeSystems
     (
         "CodeSystem-http-methods.json",
@@ -104,6 +108,10 @@ pub const EMBEDDED_RESOURCES: &[(&str, &str)] = &[
     (
         "CodeSystem-identity-provider-types.json",
         include_str!("../../../igs/octofhir-internal/CodeSystem-identity-provider-types.json"),
+    ),
+    (
+        "CodeSystem-operation-outcome-type.json",
+        include_str!("../../../igs/octofhir-internal/CodeSystem-operation-outcome-type.json"),
     ),
 ];
 
@@ -199,7 +207,7 @@ pub async fn bootstrap_admin_user<S: UserStorage>(
 }
 
 /// Hash a password using bcrypt.
-fn hash_password(password: &str) -> Result<String, Box<dyn std::error::Error>> {
+pub fn hash_password(password: &str) -> Result<String, Box<dyn std::error::Error>> {
     use bcrypt::{DEFAULT_COST, hash};
     let hashed = hash(password, DEFAULT_COST)?;
     Ok(hashed)

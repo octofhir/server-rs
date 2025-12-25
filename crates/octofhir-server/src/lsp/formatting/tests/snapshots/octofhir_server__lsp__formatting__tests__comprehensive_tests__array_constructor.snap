@@ -1,5 +1,0 @@
----
-source: crates/octofhir-server/src/lsp/formatting/tests/comprehensive_tests.rs
-expression: formatted
----
-SELECT ARRAY[1, 2, 3, 4, 5] AS numbers

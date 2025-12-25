@@ -41,6 +41,7 @@ export class FhirClient {
 			headers = {},
 			data,
 			timeout = this.defaultTimeout,
+			credentials = "include",
 		} = config;
 		const fullUrl = url.startsWith("http") ? url : `${this.baseUrl}${url}`;
 
@@ -53,7 +54,7 @@ export class FhirClient {
 		try {
 			const response = await fetch(fullUrl, {
 				method,
-				credentials: "include", // Include cookies for auth
+				credentials,
 				headers: {
 					...this.defaultHeaders,
 					...headers,
@@ -195,12 +196,16 @@ export class FhirClient {
 		method: HttpMethod,
 		path: string,
 		body?: unknown,
+		options?: { timeout?: number; includeCredentials?: boolean; headers?: Record<string, string> },
 	): Promise<HttpResponse<T> & { responseTime: number }> {
 		const startTime = performance.now();
 		const response = await this.request<T>({
 			method,
 			url: path,
 			data: body,
+			timeout: options?.timeout,
+			headers: options?.headers,
+			credentials: options?.includeCredentials === false ? "omit" : "include",
 		});
 		const endTime = performance.now();
 		return {

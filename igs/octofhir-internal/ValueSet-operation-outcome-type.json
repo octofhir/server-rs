@@ -1,0 +1,16 @@
+{
+  "resourceType": "ValueSet",
+  "id": "operation-outcome-type",
+  "url": "http://octofhir.io/ValueSet/operation-outcome-type",
+  "name": "OperationOutcomeType",
+  "title": "Operation Outcome Types",
+  "status": "active",
+  "description": "Extended codes for OperationOutcome.issue.details",
+  "compose": {
+    "include": [
+      {
+        "system": "http://octofhir.io/CodeSystem/operation-outcome-type"
+      }
+    ]
+  }
+}

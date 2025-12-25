@@ -48,6 +48,10 @@ pub struct CustomOperation {
     /// Whether this operation is active.
     pub active: bool,
 
+    /// Whether this operation is public (no authentication required).
+    #[serde(default)]
+    pub public: bool,
+
     /// Proxy configuration (for type="proxy").
     #[serde(skip_serializing_if = "Option::is_none")]
     pub proxy: Option<ProxyConfig>,

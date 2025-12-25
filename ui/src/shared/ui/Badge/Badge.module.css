@@ -1,0 +1,9 @@
+.root {
+    font-weight: 700;
+    text-transform: none;
+    letter-spacing: 0.02em;
+}
+
+.root[data-variant='dot'] {
+    padding: 0 8px;
+}

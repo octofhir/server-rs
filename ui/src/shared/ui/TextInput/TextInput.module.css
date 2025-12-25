@@ -1,0 +1,17 @@
+.input {
+    background-color: var(--app-surface-2);
+    border: 1px solid var(--app-glass-border);
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+
+.input:focus {
+    border-color: var(--mantine-color-primary-filled);
+    box-shadow: 0 0 0 2px var(--mantine-color-primary-light-hover);
+}
+
+.label {
+    font-weight: 600;
+    margin-bottom: 4px;
+    font-size: var(--mantine-font-size-xs);
+    color: var(--app-text-secondary);
+}

@@ -1,5 +1,5 @@
-import { create } from "zustand";
-import { persist, createJSONStorage } from "zustand/middleware";
+import { createEvent, createStore, sample } from "effector";
+import { persist } from "effector-storage/local";
 import type { HttpMethod } from "@/shared/api";
 import { buildPathTokens } from "@/shared/utils/pathTokens";
 import type { ConsoleSearchParamToken } from "./searchParams";
@@ -23,226 +23,170 @@ export interface ConsoleRequestEntry {
 	requestedAt: string;
 }
 
-export interface ConsoleStoreState {
-	method: HttpMethod;
-	mode: ConsoleMode;
-	pathTokens: string[];
-	resourceType?: string;
-	resourceId?: string;
-	interaction?: string | null;
-	operation?: string;
-	searchParams: ConsoleSearchParamToken[];
-	body: string;
-	headers: Record<string, string>;
-	queryParams: Record<string, string>;
-	lastResponse: ConsoleResponseSnapshot | null;
-	requests: ConsoleRequestEntry[];
-	// RC-04: Raw mode and extended headers
-	rawPath: string;
-	defaultHeaders: Record<string, string>;
-	customHeaders: Record<string, string>;
-	// RC-06: Command palette
-	commandPaletteOpen: boolean;
-	setMethod: (method: HttpMethod) => void;
-	setMode: (mode: ConsoleMode) => void;
-	setPathTokens: (tokens: string[]) => void;
-	setResourceType: (resourceType?: string) => void;
-	setResourceId: (resourceId?: string) => void;
-	setInteraction: (interaction?: string | null) => void;
-	setOperation: (operation?: string) => void;
-	setSearchParams: (params: ConsoleSearchParamToken[]) => void;
-	setBody: (body: string) => void;
-	setHeaders: (headers: Record<string, string>) => void;
-	setQueryParams: (params: Record<string, string>) => void;
-	setLastResponse: (response: ConsoleResponseSnapshot | null) => void;
-	sendDraftRequest: () => void;
-	resetDraft: () => void;
-	// RC-04: New actions
-	setRawPath: (path: string) => void;
-	setDefaultHeaders: (headers: Record<string, string>) => void;
-	setCustomHeaders: (headers: Record<string, string>) => void;
-	addCustomHeader: (key: string, value: string) => void;
-	removeCustomHeader: (key: string) => void;
-	updateCustomHeader: (oldKey: string, newKey: string, value: string) => void;
-	mergeAllHeaders: () => Record<string, string>;
-	// RC-06: Command palette actions
-	setCommandPaletteOpen: (open: boolean) => void;
-}
-
 const DEFAULT_FHIR_HEADERS = {
 	Accept: "application/fhir+json",
 	"Content-Type": "application/fhir+json",
 };
 
-const initialState = {
-	method: "GET" as HttpMethod,
-	mode: "smart" as ConsoleMode,
-	pathTokens: buildPathTokens({
-		resourceType: undefined,
-		resourceId: undefined,
-		interaction: null,
-		operation: undefined,
-		searchParams: [],
-	}),
-	resourceType: undefined as string | undefined,
-	resourceId: undefined as string | undefined,
-	interaction: null as string | null,
-	operation: undefined as string | undefined,
-	searchParams: [] as ConsoleSearchParamToken[],
-	body: "",
-	headers: {} as Record<string, string>,
-	queryParams: {} as Record<string, string>,
-	lastResponse: null as ConsoleResponseSnapshot | null,
-	requests: [] as ConsoleRequestEntry[],
-	// RC-04: New state fields
-	rawPath: "",
-	defaultHeaders: DEFAULT_FHIR_HEADERS,
-	customHeaders: {} as Record<string, string>,
-	// RC-06: Command palette
-	commandPaletteOpen: false,
-};
+const initialTokens = buildPathTokens({
+	resourceType: undefined,
+	resourceId: undefined,
+	interaction: null,
+	operation: undefined,
+	searchParams: [],
+});
 
-const storage = typeof window !== "undefined"
-	? createJSONStorage(() => localStorage)
-	: undefined;
+export const setMethod = createEvent<HttpMethod>();
+export const setMode = createEvent<ConsoleMode>();
+export const setPathTokens = createEvent<string[]>();
+export const setResourceType = createEvent<string | undefined>();
+export const setResourceId = createEvent<string | undefined>();
+export const setInteraction = createEvent<string | null | undefined>();
+export const setOperation = createEvent<string | undefined>();
+export const setSearchParams = createEvent<ConsoleSearchParamToken[]>();
+export const setBody = createEvent<string>();
+export const setHeaders = createEvent<Record<string, string>>();
+export const setQueryParams = createEvent<Record<string, string>>();
+export const setLastResponse = createEvent<ConsoleResponseSnapshot | null>();
+export const sendDraftRequest = createEvent();
+export const resetDraft = createEvent();
+export const setRawPath = createEvent<string>();
+export const setDefaultHeaders = createEvent<Record<string, string>>();
+export const setCustomHeaders = createEvent<Record<string, string>>();
+export const addCustomHeader = createEvent<{ key: string; value: string }>();
+export const removeCustomHeader = createEvent<string>();
+export const updateCustomHeader = createEvent<{
+	oldKey: string;
+	newKey: string;
+	value: string;
+}>();
+export const setCommandPaletteOpen = createEvent<boolean>();
 
-export const useConsoleStore = create<ConsoleStoreState>()(
-	persist(
-		(set, get) => ({
-			...initialState,
-			setMethod: (method) => set({ method }),
-			setMode: (mode) => set({ mode }),
-			setPathTokens: (tokens) => set({ pathTokens: tokens }),
-			setResourceType: (resourceType) =>
-				set((state) => ({
-					resourceType,
-					pathTokens: buildPathTokens({
-						resourceType,
-						resourceId: state.resourceId,
-						interaction: state.interaction,
-						operation: state.operation,
-						searchParams: state.searchParams,
-					}),
-				})),
-			setResourceId: (resourceId) =>
-				set((state) => ({
-					resourceId,
-					pathTokens: buildPathTokens({
-						resourceType: state.resourceType,
-						resourceId,
-						interaction: state.interaction,
-						operation: state.operation,
-						searchParams: state.searchParams,
-					}),
-				})),
-			setInteraction: (interaction) =>
-				set((state) => ({
-					interaction: interaction ?? null,
-					pathTokens: buildPathTokens({
-						resourceType: state.resourceType,
-						resourceId: state.resourceId,
-						interaction: interaction ?? null,
-						operation: state.operation,
-						searchParams: state.searchParams,
-					}),
-				})),
-			setOperation: (operation) =>
-				set((state) => ({
-					operation,
-					pathTokens: buildPathTokens({
-						resourceType: state.resourceType,
-						resourceId: state.resourceId,
-						interaction: state.interaction,
-						operation,
-						searchParams: state.searchParams,
-					}),
-				})),
-			setSearchParams: (params) =>
-				set((state) => ({
-					searchParams: params,
-					pathTokens: buildPathTokens({
-						resourceType: state.resourceType,
-						resourceId: state.resourceId,
-						interaction: state.interaction,
-						operation: state.operation,
-						searchParams: params,
-					}),
-				})),
-			setBody: (body) => set({ body }),
-			setHeaders: (headers) => set({ headers }),
-			setQueryParams: (params) => set({ queryParams: params }),
-			setLastResponse: (response) => set({ lastResponse: response }),
-			sendDraftRequest: () => {
-				if (typeof window !== "undefined") {
-					console.debug("REST console send stub", new Date().toISOString());
-				}
-			},
-			resetDraft: () =>
-				set({
-					method: "GET",
-					pathTokens: buildPathTokens({
-						resourceType: undefined,
-						resourceId: undefined,
-						interaction: null,
-						operation: undefined,
-						searchParams: [],
-					}),
-					resourceType: undefined,
-					resourceId: undefined,
-					interaction: null,
-					operation: undefined,
-					searchParams: [],
-					body: "",
-					headers: {},
-					queryParams: {},
-					rawPath: "",
-					customHeaders: {},
-				}),
-			// RC-04: New action implementations
-			setRawPath: (path) => set({ rawPath: path }),
-			setDefaultHeaders: (headers) => set({ defaultHeaders: headers }),
-			setCustomHeaders: (headers) => set({ customHeaders: headers }),
-			addCustomHeader: (key, value) =>
-				set((state) => ({
-					customHeaders: { ...state.customHeaders, [key]: value },
-				})),
-			removeCustomHeader: (key) =>
-				set((state) => {
-					const { [key]: _, ...rest } = state.customHeaders;
-					return { customHeaders: rest };
-				}),
-			updateCustomHeader: (oldKey, newKey, value) =>
-				set((state) => {
-					const { [oldKey]: _, ...rest } = state.customHeaders;
-					return { customHeaders: { ...rest, [newKey]: value } };
-				}),
-			mergeAllHeaders: (): Record<string, string> => {
-				const state = get();
-				return { ...state.defaultHeaders, ...state.customHeaders };
-			},
-			// RC-06: Command palette action
-			setCommandPaletteOpen: (open) => set({ commandPaletteOpen: open }),
-		}),
-		{
-			name: "octofhir.console",
-			version: 1,
-			storage,
-			partialize: (state) => ({
-				method: state.method,
-				mode: state.mode,
-				pathTokens: state.pathTokens,
-				resourceType: state.resourceType,
-				resourceId: state.resourceId,
-				interaction: state.interaction,
-				operation: state.operation,
-				searchParams: state.searchParams,
-				body: state.body,
-				headers: state.headers,
-				queryParams: state.queryParams,
-				// RC-04: Persist new fields
-				rawPath: state.rawPath,
-				customHeaders: state.customHeaders,
-			}),
-		},
-	),
+export const $method = createStore<HttpMethod>("GET")
+	.on(setMethod, (_, method) => method)
+	.reset(resetDraft);
+
+export const $mode = createStore<ConsoleMode>("smart").on(
+	setMode,
+	(_, mode) => mode,
 );
+
+export const $pathTokens = createStore<string[]>(initialTokens)
+	.on(setPathTokens, (_, tokens) => tokens)
+	.reset(resetDraft);
+
+export const $resourceType = createStore<string | undefined>(undefined, {
+	skipVoid: false,
+})
+	.on(setResourceType, (_, value) => value)
+	.reset(resetDraft);
+
+export const $resourceId = createStore<string | undefined>(undefined, {
+	skipVoid: false,
+})
+	.on(setResourceId, (_, value) => value)
+	.reset(resetDraft);
+
+export const $interaction = createStore<string | null>(null)
+	.on(setInteraction, (_, value) => value ?? null)
+	.reset(resetDraft);
+
+export const $operation = createStore<string | undefined>(undefined, {
+	skipVoid: false,
+})
+	.on(setOperation, (_, value) => value)
+	.reset(resetDraft);
+
+export const $searchParams = createStore<ConsoleSearchParamToken[]>([])
+	.on(setSearchParams, (_, params) => params)
+	.reset(resetDraft);
+
+export const $body = createStore<string>("")
+	.on(setBody, (_, body) => body)
+	.reset(resetDraft);
+
+export const $headers = createStore<Record<string, string>>({})
+	.on(setHeaders, (_, headers) => headers)
+	.reset(resetDraft);
+
+export const $queryParams = createStore<Record<string, string>>({})
+	.on(setQueryParams, (_, params) => params)
+	.reset(resetDraft);
+
+export const $lastResponse = createStore<ConsoleResponseSnapshot | null>(
+	null,
+).on(setLastResponse, (_, response) => response);
+
+export const $requests = createStore<ConsoleRequestEntry[]>([]);
+
+export const $rawPath = createStore<string>("")
+	.on(setRawPath, (_, path) => path)
+	.reset(resetDraft);
+
+export const $defaultHeaders = createStore<Record<string, string>>(
+	DEFAULT_FHIR_HEADERS,
+).on(setDefaultHeaders, (_, headers) => headers);
+
+export const $customHeaders = createStore<Record<string, string>>({})
+	.on(setCustomHeaders, (_, headers) => headers)
+	.on(addCustomHeader, (state, { key, value }) => ({ ...state, [key]: value }))
+	.on(removeCustomHeader, (state, key) => {
+		const { [key]: _, ...rest } = state;
+		return rest;
+	})
+	.on(updateCustomHeader, (state, { oldKey, newKey, value }) => {
+		const { [oldKey]: _, ...rest } = state;
+		return { ...rest, [newKey]: value };
+	})
+	.reset(resetDraft);
+
+export const $commandPaletteOpen = createStore<boolean>(false).on(
+	setCommandPaletteOpen,
+	(_, open) => open,
+);
+
+sample({
+	source: {
+		resourceType: $resourceType,
+		resourceId: $resourceId,
+		interaction: $interaction,
+		operation: $operation,
+		searchParams: $searchParams,
+	},
+	clock: [
+		setResourceType,
+		setResourceId,
+		setInteraction,
+		setOperation,
+		setSearchParams,
+	],
+	fn: ({ resourceType, resourceId, interaction, operation, searchParams }) =>
+		buildPathTokens({
+			resourceType,
+			resourceId,
+			interaction,
+			operation,
+			searchParams,
+		}),
+	target: setPathTokens,
+});
+
+sendDraftRequest.watch(() => {
+	if (typeof window !== "undefined") {
+		console.debug("REST console send stub", new Date().toISOString());
+	}
+});
+
+persist({ store: $method, key: "octofhir.console.method" });
+persist({ store: $mode, key: "octofhir.console.mode" });
+persist({ store: $pathTokens, key: "octofhir.console.pathTokens" });
+persist({ store: $resourceType, key: "octofhir.console.resourceType" });
+persist({ store: $resourceId, key: "octofhir.console.resourceId" });
+persist({ store: $interaction, key: "octofhir.console.interaction" });
+persist({ store: $operation, key: "octofhir.console.operation" });
+persist({ store: $searchParams, key: "octofhir.console.searchParams" });
+persist({ store: $body, key: "octofhir.console.body" });
+persist({ store: $headers, key: "octofhir.console.headers" });
+persist({ store: $queryParams, key: "octofhir.console.queryParams" });
+persist({ store: $rawPath, key: "octofhir.console.rawPath" });
+persist({ store: $customHeaders, key: "octofhir.console.customHeaders" });

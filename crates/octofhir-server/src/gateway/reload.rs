@@ -12,6 +12,7 @@ use tokio::time::sleep;
 use tracing::{debug, error, info, instrument, warn};
 
 use super::GatewayRouter;
+use crate::middleware::PublicPathsCache;
 use octofhir_storage::DynStorage;
 
 /// Channel for gateway resource change notifications.
@@ -36,6 +37,7 @@ pub struct GatewayReloadListener {
     pool: PgPool,
     gateway_router: Arc<GatewayRouter>,
     storage: DynStorage,
+    public_paths_cache: Option<PublicPathsCache>,
 }
 
 impl GatewayReloadListener {
@@ -45,7 +47,14 @@ impl GatewayReloadListener {
             pool,
             gateway_router,
             storage,
+            public_paths_cache: None,
         }
+    }
+
+    /// Sets the public paths cache for updating when routes change.
+    pub fn with_public_paths_cache(mut self, cache: PublicPathsCache) -> Self {
+        self.public_paths_cache = Some(cache);
+        self
     }
 
     /// Starts the hot-reload listener in the background.
@@ -117,6 +126,19 @@ impl GatewayReloadListener {
                     match self.gateway_router.reload_routes(&self.storage).await {
                         Ok(count) => {
                             info!(count = count, "Gateway routes reloaded successfully");
+
+                            // Update public paths cache with gateway operations
+                            if let Some(ref cache) = self.public_paths_cache {
+                                let gateway_ops =
+                                    crate::handlers::load_gateway_operations(&self.storage).await;
+                                cache.update_from_operations(&gateway_ops);
+                                let (exact, prefix) = cache.len();
+                                debug!(
+                                    exact_paths = exact,
+                                    prefix_paths = prefix,
+                                    "Public paths cache updated with gateway operations"
+                                );
+                            }
                         }
                         Err(e) => {
                             error!(
@@ -143,6 +165,7 @@ pub struct GatewayReloadBuilder {
     pool: Option<PgPool>,
     gateway_router: Option<Arc<GatewayRouter>>,
     storage: Option<DynStorage>,
+    public_paths_cache: Option<PublicPathsCache>,
 }
 
 impl GatewayReloadBuilder {
@@ -152,6 +175,7 @@ impl GatewayReloadBuilder {
             pool: None,
             gateway_router: None,
             storage: None,
+            public_paths_cache: None,
         }
     }
 
@@ -173,6 +197,12 @@ impl GatewayReloadBuilder {
         self
     }
 
+    /// Sets the public paths cache for updating when routes change.
+    pub fn with_public_paths_cache(mut self, cache: PublicPathsCache) -> Self {
+        self.public_paths_cache = Some(cache);
+        self
+    }
+
     /// Starts the hot-reload listener.
     ///
     /// Returns a handle to the spawned task.
@@ -181,8 +211,11 @@ impl GatewayReloadBuilder {
         let gateway_router = self.gateway_router.ok_or("Gateway router is required")?;
         let storage = self.storage.ok_or("Storage is required")?;
 
-        let listener = Arc::new(GatewayReloadListener::new(pool, gateway_router, storage));
-        Ok(listener.start())
+        let mut listener = GatewayReloadListener::new(pool, gateway_router, storage);
+        if let Some(cache) = self.public_paths_cache {
+            listener = listener.with_public_paths_cache(cache);
+        }
+        Ok(Arc::new(listener).start())
     }
 }
 

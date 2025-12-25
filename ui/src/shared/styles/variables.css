@@ -1,10 +1,10 @@
 :root {
   /* Colors - Light theme (Linear-inspired) */
-  --primary-color: #5e6ad2;
-  --primary-hover: #4e5bc2;
-  --primary-light: #8b92e8;
-  --primary-subtle: rgba(94, 106, 210, 0.08);
-  --secondary-color: #6b7280;
+  --primary-color: #3b52a5;
+  --primary-hover: #314387;
+  --primary-light: #7084cc;
+  --primary-subtle: rgba(59, 82, 165, 0.08);
+  --secondary-color: #524c95;
   --success-color: #2da44e;
   --success-subtle: rgba(45, 164, 78, 0.1);
   --warning-color: #d29922;
@@ -116,10 +116,10 @@
 /* Support both data-theme and Mantine's color scheme */
 [data-theme="dark"],
 [data-mantine-color-scheme="dark"] {
-  --primary-color: #7983d6;
-  --primary-hover: #8b92e8;
-  --primary-light: #5e6ad2;
-  --primary-subtle: rgba(121, 131, 214, 0.15);
+  --primary-color: #7084cc;
+  --primary-hover: #9dabdc;
+  --primary-light: #4b64be;
+  --primary-subtle: rgba(112, 132, 204, 0.15);
 
   --bg-color: #161618;
   --bg-secondary: #1c1c1f;

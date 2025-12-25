@@ -97,6 +97,98 @@ impl OperationProvider for UiOperationProvider {
             )
             .with_description("Retrieve metadata for the UI REST console")
             .with_public(false),
+            // Admin Configuration API
+            OperationDefinition::new(
+                "admin.config.list",
+                "List Configuration",
+                categories::UI,
+                vec!["GET".to_string()],
+                "/admin/config",
+                modules::SERVER,
+            )
+            .with_description("List all configuration entries"),
+            OperationDefinition::new(
+                "admin.config.reload",
+                "Reload Configuration",
+                categories::UI,
+                vec!["POST".to_string()],
+                "/admin/config/$reload",
+                modules::SERVER,
+            )
+            .with_description("Reload configuration from all sources"),
+            OperationDefinition::new(
+                "admin.config.get_category",
+                "Get Category Config",
+                categories::UI,
+                vec!["GET".to_string()],
+                "/admin/config/{category}",
+                modules::SERVER,
+            )
+            .with_description("Get configuration for a category"),
+            OperationDefinition::new(
+                "admin.config.get",
+                "Get Config Value",
+                categories::UI,
+                vec!["GET".to_string()],
+                "/admin/config/{category}/{key}",
+                modules::SERVER,
+            )
+            .with_description("Get a specific configuration value"),
+            OperationDefinition::new(
+                "admin.config.set",
+                "Set Config Value",
+                categories::UI,
+                vec!["PUT".to_string()],
+                "/admin/config/{category}/{key}",
+                modules::SERVER,
+            )
+            .with_description("Set a configuration value"),
+            OperationDefinition::new(
+                "admin.config.delete",
+                "Delete Config Value",
+                categories::UI,
+                vec!["DELETE".to_string()],
+                "/admin/config/{category}/{key}",
+                modules::SERVER,
+            )
+            .with_description("Delete (reset) a configuration value"),
+            // Admin Feature Flags API
+            OperationDefinition::new(
+                "admin.features.list",
+                "List Feature Flags",
+                categories::UI,
+                vec!["GET".to_string()],
+                "/admin/features",
+                modules::SERVER,
+            )
+            .with_description("List all feature flags"),
+            OperationDefinition::new(
+                "admin.features.get",
+                "Get Feature Flag",
+                categories::UI,
+                vec!["GET".to_string()],
+                "/admin/features/{name}",
+                modules::SERVER,
+            )
+            .with_description("Get a specific feature flag"),
+            OperationDefinition::new(
+                "admin.features.toggle",
+                "Toggle Feature Flag",
+                categories::UI,
+                vec!["PUT".to_string()],
+                "/admin/features/{name}",
+                modules::SERVER,
+            )
+            .with_description("Toggle a feature flag on/off"),
+            OperationDefinition::new(
+                "admin.features.evaluate",
+                "Evaluate Feature Flag",
+                categories::UI,
+                vec!["POST".to_string()],
+                "/admin/features/{name}/$evaluate",
+                modules::SERVER,
+            )
+            .with_description("Evaluate a feature flag for a context"),
         ]
     }
 

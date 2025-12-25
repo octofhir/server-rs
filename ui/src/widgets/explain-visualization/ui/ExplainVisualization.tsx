@@ -8,7 +8,6 @@ import {
 	UnstyledButton,
 	Code,
 	useMantineTheme,
-	useMantineColorScheme,
 } from "@mantine/core";
 import {
 	IconChevronRight,
@@ -181,26 +180,26 @@ function parseExplainText(text: string): { nodes: ExplainNode[]; metadata: Expla
 function getOperationColor(operation: string): string {
 	const op = operation.toLowerCase();
 
-	// Expensive operations (red)
-	if (op.includes("seq scan") || op.includes("sequential scan")) return "red";
+	// Expensive operations
+	if (op.includes("seq scan") || op.includes("sequential scan")) return "fire";
 
-	// Index operations (green)
-	if (op.includes("index") && op.includes("scan")) return "green";
+	// Index operations
+	if (op.includes("index") && op.includes("scan")) return "primary";
 
-	// Join operations (blue)
-	if (op.includes("join") || op.includes("nested loop")) return "blue";
+	// Join operations
+	if (op.includes("join") || op.includes("nested loop")) return "deep";
 
-	// Sort operations (yellow)
-	if (op.includes("sort") || op.includes("order")) return "yellow";
+	// Sort operations
+	if (op.includes("sort") || op.includes("order")) return "warm";
 
-	// Aggregate operations (violet)
-	if (op.includes("aggregate") || op.includes("group")) return "violet";
+	// Aggregate operations
+	if (op.includes("aggregate") || op.includes("group")) return "deep";
 
-	// Filter/condition operations (cyan)
-	if (op.includes("filter") || op.includes("cond")) return "cyan";
+	// Filter/condition operations
+	if (op.includes("filter") || op.includes("cond")) return "primary";
 
 	// Default (gray)
-	return "gray";
+	return "deep";
 }
 
 /**
@@ -223,7 +222,6 @@ function getOperationIcon(operation: string) {
  */
 function ExplainTreeNode({ node }: { node: ExplainNode }) {
 	const theme = useMantineTheme();
-	const { colorScheme } = useMantineColorScheme();
 	const [expanded, setExpanded] = useState(true);
 
 	const hasChildren = node.children.length > 0;
@@ -243,10 +241,7 @@ function ExplainTreeNode({ node }: { node: ExplainNode }) {
 					root: {
 						"&:hover": hasChildren
 							? {
-									backgroundColor:
-										colorScheme === "dark"
-											? theme.colors.dark[6]
-											: theme.colors.gray[1],
+									backgroundColor: "var(--app-surface-3)",
 								}
 							: {},
 					},
@@ -286,15 +281,15 @@ function ExplainTreeNode({ node }: { node: ExplainNode }) {
 					{/* Actual time (from EXPLAIN ANALYZE) */}
 					{node.actualTime && (
 						<Group gap={4}>
-							<Text size="xs" c="teal">
+							<Text size="xs" c="primary">
 								actual={node.actualTime.startup.toFixed(2)}..
 								{node.actualTime.total.toFixed(2)}
 							</Text>
-							<Text size="xs" c="teal">
+							<Text size="xs" c="primary">
 								rows={node.actualRows}
 							</Text>
 							{node.loops && node.loops > 1 && (
-								<Text size="xs" c="teal">
+								<Text size="xs" c="primary">
 									loops={node.loops}
 								</Text>
 							)}
@@ -355,7 +350,6 @@ export function ExplainVisualization({
 	explainText,
 }: ExplainVisualizationProps) {
 	const theme = useMantineTheme();
-	const { colorScheme } = useMantineColorScheme();
 
 	const { nodes, metadata } = useMemo(() => parseExplainText(explainText), [explainText]);
 
@@ -364,10 +358,7 @@ export function ExplainVisualization({
 			<Box
 				p="md"
 				style={{
-					backgroundColor:
-						colorScheme === "dark"
-							? theme.colors.dark[6]
-							: theme.colors.gray[0],
+					backgroundColor: "var(--app-surface-2)",
 					borderRadius: theme.radius.md,
 				}}
 			>
@@ -384,7 +375,7 @@ export function ExplainVisualization({
 	return (
 		<Box>
 			<Group gap="xs" mb="md">
-				<Badge color="violet" size="sm">
+				<Badge color="deep" size="sm">
 					Query Plan
 				</Badge>
 				<Text size="xs" c="dimmed">
@@ -394,10 +385,7 @@ export function ExplainVisualization({
 			<Box
 				p="sm"
 				style={{
-					backgroundColor:
-						colorScheme === "dark"
-							? theme.colors.dark[6]
-							: theme.colors.gray[0],
+					backgroundColor: "var(--app-surface-2)",
 					borderRadius: theme.radius.md,
 				}}
 			>
@@ -413,15 +401,19 @@ export function ExplainVisualization({
 
 			{/* Display metadata (Planning Time, Execution Time, etc.) */}
 			{(metadata.planningTime || metadata.executionTime || metadata.totalRuntime || metadata.triggers) && (
-				<Box mt="md" p="md" style={{
-					backgroundColor: colorScheme === "dark" ? theme.colors.dark[6] : theme.colors.gray[0],
-					borderRadius: theme.radius.md,
-				}}>
+				<Box
+					mt="md"
+					p="md"
+					style={{
+						backgroundColor: "var(--app-surface-2)",
+						borderRadius: theme.radius.md,
+					}}
+				>
 					<Stack gap="sm">
 						{metadata.planningTime !== undefined && (
 							<Group gap="xs">
 								<Text size="sm" fw={600} c="dimmed">Planning Time:</Text>
-								<Text size="lg" fw={700} c={colorScheme === "dark" ? "blue.4" : "blue.7"}>
+								<Text size="lg" fw={700} c="primary">
 									{metadata.planningTime.toFixed(3)} ms
 								</Text>
 							</Group>
@@ -429,7 +421,7 @@ export function ExplainVisualization({
 						{metadata.executionTime !== undefined && (
 							<Group gap="xs">
 								<Text size="sm" fw={600} c="dimmed">Execution Time:</Text>
-								<Text size="lg" fw={700} c={colorScheme === "dark" ? "teal.4" : "teal.7"}>
+								<Text size="lg" fw={700} c="warm">
 									{metadata.executionTime.toFixed(3)} ms
 								</Text>
 							</Group>
@@ -437,7 +429,7 @@ export function ExplainVisualization({
 						{metadata.totalRuntime !== undefined && (
 							<Group gap="xs">
 								<Text size="sm" fw={600} c="dimmed">Total Runtime:</Text>
-								<Text size="md" fw={600} c={colorScheme === "dark" ? "violet.4" : "violet.7"}>
+								<Text size="md" fw={600} c="fire">
 									{metadata.totalRuntime.toFixed(3)} ms
 								</Text>
 							</Group>

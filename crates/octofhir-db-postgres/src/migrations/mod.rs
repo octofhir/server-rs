@@ -37,7 +37,7 @@ fn build_migrations() -> Vec<Migration> {
             migration_type: MigrationType::Simple,
             sql: Cow::Borrowed(sql),
             checksum: Cow::Borrowed(&[]), // Empty checksum for embedded migrations
-            no_tx: false, // Run in transaction
+            no_tx: false,                 // Run in transaction
         })
         .collect()
 }

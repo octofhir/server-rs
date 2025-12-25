@@ -13,8 +13,18 @@ export function ConsolePanel({
 	children,
 	...paperProps
 }: ConsolePanelProps) {
+	const { style, ...rest } = paperProps;
+
 	return (
-		<Paper withBorder p="md" radius="md" {...paperProps}>
+		<Paper
+			p="md"
+			radius="md"
+			style={{
+				backgroundColor: "var(--app-surface-1)",
+				...(style ?? {}),
+			}}
+			{...rest}
+		>
 			<Stack gap="xs">
 				<div>
 					<Text fw={600}>{title}</Text>

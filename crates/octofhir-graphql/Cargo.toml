@@ -25,6 +25,9 @@ octofhir-api = { path = "../octofhir-api" }
 octofhir-fhir-model = { workspace = true }
 octofhir-fhirschema = { workspace = true }
 
+# FHIRPath engine for directive evaluation
+octofhir-fhirpath = { workspace = true }
+
 # Core dependencies
 tokio = { workspace = true }
 serde = { workspace = true }
