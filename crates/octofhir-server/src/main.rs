@@ -84,23 +84,25 @@ async fn main() {
     // Create shared config for hot-reload
     let shared_config = Arc::new(RwLock::new(cfg.clone()));
 
-    // Initialize unified configuration manager
+    // Initialize unified configuration manager (required)
     let config_manager = match init_config_manager(&config_path).await {
-        Ok(m) => Some(m),
+        Ok(m) => m,
         Err(e) => {
-            tracing::warn!(error = %e, "Configuration manager initialization failed, hot-reload disabled");
-            None
+            eprintln!("Configuration manager initialization failed: {e}");
+            std::process::exit(2);
         }
     };
 
     // Start config watcher
-    if let Some(ref manager) = config_manager {
-        manager.start_watching(shared_config.clone()).await;
-        tracing::info!("Hot-reload enabled");
-    }
+    config_manager.start_watching(shared_config.clone()).await;
+    tracing::info!("Hot-reload enabled");
 
     // Build and run server
-    let server = match ServerBuilder::new().with_config(cfg).build().await {
+    let server = match ServerBuilder::new(config_manager.inner_arc())
+        .with_config(cfg)
+        .build()
+        .await
+    {
         Ok(s) => s,
         Err(e) => {
             eprintln!("Server initialization failed: {e}");

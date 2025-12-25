@@ -288,7 +288,10 @@ async fn create_storage(
 }
 
 /// Builds the application router with the given configuration.
-pub async fn build_app(cfg: &AppConfig) -> Result<Router, anyhow::Error> {
+pub async fn build_app(
+    cfg: &AppConfig,
+    config_manager: Arc<octofhir_config::ConfigurationManager>,
+) -> Result<Router, anyhow::Error> {
     let body_limit = cfg.server.body_limit_bytes;
     let (storage, db_pool) = create_storage(cfg).await?;
 
@@ -822,7 +825,7 @@ pub async fn build_app(cfg: &AppConfig) -> Result<Router, anyhow::Error> {
         graphql_state,
         public_paths_cache,
         json_schema_cache: Arc::new(dashmap::DashMap::new()),
-        config_manager: None,
+        config_manager: Some(config_manager),
     };
 
     Ok(build_router(state, body_limit))
@@ -1144,14 +1147,16 @@ fn build_oauth_routes(state: &AppState) -> Option<Router> {
 pub struct ServerBuilder {
     addr: SocketAddr,
     config: AppConfig,
+    config_manager: Arc<octofhir_config::ConfigurationManager>,
 }
 
 impl ServerBuilder {
-    pub fn new() -> Self {
+    pub fn new(config_manager: Arc<octofhir_config::ConfigurationManager>) -> Self {
         let cfg = AppConfig::default();
         Self {
             addr: cfg.addr(),
             config: cfg,
+            config_manager,
         }
     }
 
@@ -1168,18 +1173,12 @@ impl ServerBuilder {
 
     /// Builds the server asynchronously.
     pub async fn build(self) -> Result<OctofhirServer, anyhow::Error> {
-        let app = build_app(&self.config).await?;
+        let app = build_app(&self.config, self.config_manager).await?;
 
         Ok(OctofhirServer {
             addr: self.addr,
             app,
         })
-    }
-}
-
-impl Default for ServerBuilder {
-    fn default() -> Self {
-        Self::new()
     }
 }
 

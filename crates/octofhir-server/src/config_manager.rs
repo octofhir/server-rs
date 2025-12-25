@@ -119,6 +119,11 @@ impl ServerConfigManager {
         &self.inner
     }
 
+    /// Get the underlying configuration manager as an Arc.
+    pub fn inner_arc(&self) -> Arc<ConfigurationManager> {
+        self.inner.clone()
+    }
+
     /// Subscribe to configuration change events.
     pub fn subscribe(&self) -> broadcast::Receiver<ConfigChangeEvent> {
         self.inner.subscribe()
