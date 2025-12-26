@@ -8,6 +8,7 @@ use std::hash::Hash;
 use std::sync::Arc;
 
 use async_graphql::dataloader::Loader;
+use octofhir_core::fhir_reference::parse_reference_simple;
 use octofhir_storage::DynStorage;
 use tracing::{debug, instrument, trace};
 
@@ -37,29 +38,36 @@ impl ResourceKey {
     /// Returns `None` if the reference format is invalid.
     #[must_use]
     pub fn from_reference(reference: &str) -> Option<Self> {
-        // Handle relative references like "Patient/123"
-        let parts: Vec<&str> = reference.split('/').collect();
-        if parts.len() >= 2 {
-            // Take the last two parts for "Type/id" or longer URLs
-            let type_index = parts.len() - 2;
-            let id_index = parts.len() - 1;
+        // For absolute URLs, extract the last two path segments for backwards compatibility.
+        // This treats all absolute URLs as potentially local, matching the old behavior.
+        if reference.contains("://") {
+            let parts: Vec<&str> = reference.split('/').collect();
+            if parts.len() >= 2 {
+                let type_index = parts.len() - 2;
+                let id_index = parts.len() - 1;
 
-            let resource_type = parts[type_index];
-            let id = parts[id_index];
+                let resource_type = parts[type_index];
+                let id = parts[id_index];
 
-            // Validate resource type starts with uppercase (FHIR convention)
-            if !resource_type.is_empty()
-                && resource_type
-                    .chars()
-                    .next()
-                    .map(|c| c.is_uppercase())
-                    .unwrap_or(false)
-                && !id.is_empty()
-            {
-                return Some(Self::new(resource_type, id));
+                // Validate resource type starts with uppercase
+                if !resource_type.is_empty()
+                    && resource_type
+                        .chars()
+                        .next()
+                        .map(|c| c.is_uppercase())
+                        .unwrap_or(false)
+                    && !id.is_empty()
+                {
+                    return Some(Self::new(resource_type, id));
+                }
             }
+            return None;
         }
-        None
+
+        // For relative references, use the shared implementation
+        parse_reference_simple(reference, None)
+            .ok()
+            .map(|(resource_type, id)| Self::new(resource_type, id))
     }
 }
 

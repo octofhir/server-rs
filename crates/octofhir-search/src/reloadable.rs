@@ -6,7 +6,7 @@
 //! # Usage
 //!
 //! ```ignore
-//! use octofhir_search::reloadable::ReloadableSearchConfig;
+//! use octofhir_search::reloadable::{ReloadableSearchConfig, SearchConfig};
 //! use octofhir_config::ConfigurationManager;
 //!
 //! // Create reloadable config
@@ -18,7 +18,7 @@
 //!
 //! // Use in search operations
 //! let config = search_config.config().await;
-//! SearchEngine::execute(storage, resource_type, query, &config).await?;
+//! // Use config.registry to look up search parameters
 //! ```
 
 use std::sync::Arc;
@@ -27,10 +27,59 @@ use tracing::{debug, info};
 
 use octofhir_canonical_manager::CanonicalManager;
 
-use crate::engine::SearchConfig;
 use crate::loader::{LoaderError, load_search_parameters};
-use crate::query_cache::QueryCache;
+use crate::query_cache::{CacheStatsSnapshot, QueryCache};
 use crate::registry::SearchParameterRegistry;
+
+/// Search configuration with dynamic parameter registry.
+///
+/// The registry is loaded from the FHIR canonical manager and contains all
+/// search parameters from loaded packages (e.g., hl7.fhir.r4.core).
+#[derive(Debug, Clone)]
+pub struct SearchConfig {
+    pub default_count: usize,
+    pub max_count: usize,
+    /// Search parameter registry loaded from canonical manager (REQUIRED)
+    pub registry: Arc<SearchParameterRegistry>,
+    /// Optional query cache for performance optimization
+    pub cache: Option<Arc<QueryCache>>,
+}
+
+impl SearchConfig {
+    /// Create a new search config with the given registry.
+    pub fn new(registry: Arc<SearchParameterRegistry>) -> Self {
+        Self {
+            default_count: 10,
+            max_count: 100,
+            registry,
+            cache: None,
+        }
+    }
+
+    /// Create with custom count settings.
+    pub fn with_counts(mut self, default_count: usize, max_count: usize) -> Self {
+        self.default_count = default_count;
+        self.max_count = max_count;
+        self
+    }
+
+    /// Enable query caching with the given capacity.
+    pub fn with_cache(mut self, capacity: usize) -> Self {
+        self.cache = Some(Arc::new(QueryCache::new(capacity)));
+        self
+    }
+
+    /// Enable query caching with a provided cache instance.
+    pub fn with_shared_cache(mut self, cache: Arc<QueryCache>) -> Self {
+        self.cache = Some(cache);
+        self
+    }
+
+    /// Get cache statistics if caching is enabled.
+    pub fn cache_stats(&self) -> Option<CacheStatsSnapshot> {
+        self.cache.as_ref().map(|c| c.stats())
+    }
+}
 
 /// Configuration options for search behavior.
 #[derive(Debug, Clone)]

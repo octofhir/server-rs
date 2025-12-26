@@ -52,6 +52,9 @@ axum = { workspace = true }
 # Admin API types
 octofhir-api = { path = "../octofhir-api" }
 
+# Core types
+octofhir-core = { path = "../octofhir-core" }
+
 [dev-dependencies]
 tokio-test = { workspace = true }
 criterion = { version = "0.5", features = ["async_tokio"] }

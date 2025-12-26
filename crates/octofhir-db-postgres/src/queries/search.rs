@@ -5,6 +5,7 @@
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
+use octofhir_core::fhir_reference::parse_reference_simple;
 use serde_json::Value;
 use sqlx_core::query_as::query_as;
 use sqlx_core::query_scalar::query_scalar;
@@ -222,9 +223,9 @@ async fn resolve_include(
         // Try to extract reference from the resource
         if let Some(ref_value) = result.resource.get(param_name) {
             if let Some(reference) = ref_value.get("reference").and_then(|r| r.as_str()) {
-                // Reference format: "Type/id"
-                if let Some(id) = reference.split('/').last() {
-                    reference_ids.push(id.to_string());
+                // Use the shared reference parser to extract the ID
+                if let Ok((_, id)) = parse_reference_simple(reference, None) {
+                    reference_ids.push(id);
                 }
             }
         }

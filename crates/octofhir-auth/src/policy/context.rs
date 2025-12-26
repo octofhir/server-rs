@@ -22,6 +22,7 @@
 use std::collections::HashMap;
 use std::net::IpAddr;
 
+use octofhir_core::fhir_reference::parse_reference_simple;
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 
@@ -122,10 +123,11 @@ impl UserIdentity {
 
 /// Parse a FHIR reference like "Practitioner/123" into (type, id).
 fn parse_fhir_reference(reference: &str) -> (Option<String>, Option<String>) {
-    let parts: Vec<&str> = reference.split('/').collect();
-    match parts.as_slice() {
-        [resource_type, id] => (Some((*resource_type).to_string()), Some((*id).to_string())),
-        _ => (None, None),
+    // Use the shared implementation from octofhir-core.
+    // Note: We pass None for base_url since fhirUser is typically a simple relative reference.
+    match parse_reference_simple(reference, None) {
+        Ok((resource_type, id)) => (Some(resource_type), Some(id)),
+        Err(_) => (None, None),
     }
 }
 

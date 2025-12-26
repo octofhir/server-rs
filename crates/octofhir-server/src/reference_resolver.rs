@@ -4,6 +4,7 @@
 //! whether referenced resources exist in the FHIR storage.
 
 use async_trait::async_trait;
+use octofhir_core::fhir_reference::{parse_reference, FhirReference};
 use octofhir_fhirschema::reference::{
     ReferenceError, ReferenceResolutionResult, ReferenceResolver, ReferenceResult,
 };
@@ -34,55 +35,8 @@ impl StorageReferenceResolver {
     /// - Contained references (#id)
     /// - urn:uuid: or urn:oid: references
     /// - External server references
-    fn parse_reference(&self, reference: &str) -> Option<(String, String)> {
-        // Skip contained references
-        if reference.starts_with('#') {
-            return None;
-        }
-
-        // Skip urn:uuid: and urn:oid: references
-        if reference.starts_with("urn:") {
-            return None;
-        }
-
-        // Handle absolute URLs
-        let path = if reference.starts_with(&self.base_url) {
-            // Same server - strip base URL
-            reference[self.base_url.len()..].trim_start_matches('/')
-        } else if reference.contains("://") {
-            // Different server - cannot validate
-            return None;
-        } else {
-            // Relative reference
-            reference
-        };
-
-        // Parse "ResourceType/id" or "ResourceType/id/_history/version"
-        let parts: Vec<&str> = path.split('/').collect();
-
-        if parts.len() >= 2 {
-            let (type_idx, id_idx) = if parts.len() >= 4 && parts.get(2) == Some(&"_history") {
-                (0, 1) // ResourceType/id/_history/version
-            } else {
-                (0, 1) // ResourceType/id
-            };
-
-            let resource_type = parts.get(type_idx)?;
-            let id = parts.get(id_idx)?;
-
-            // Validate resource type looks valid (starts with capital letter)
-            if resource_type
-                .chars()
-                .next()
-                .map(|c| c.is_ascii_uppercase())
-                .unwrap_or(false)
-                && !id.is_empty()
-            {
-                return Some((resource_type.to_string(), id.to_string()));
-            }
-        }
-
-        None
+    fn parse_reference(&self, reference: &str) -> Option<FhirReference> {
+        parse_reference(reference, Some(&self.base_url)).ok()
     }
 }
 
@@ -102,18 +56,23 @@ impl ReferenceResolver for StorageReferenceResolver {
         &self,
         reference: &str,
     ) -> ReferenceResult<ReferenceResolutionResult> {
-        let (resource_type, id) = match self.parse_reference(reference) {
-            Some((rt, id)) => (rt, id),
+        let parsed = match self.parse_reference(reference) {
+            Some(r) => r,
             None => {
                 // Cannot parse or external reference - skip validation
                 return Ok(ReferenceResolutionResult::skipped());
             }
         };
 
-        let exists = self.resource_exists(&resource_type, &id).await?;
+        let exists = self
+            .resource_exists(&parsed.resource_type, &parsed.id)
+            .await?;
 
         if exists {
-            Ok(ReferenceResolutionResult::found(resource_type, id))
+            Ok(ReferenceResolutionResult::found(
+                parsed.resource_type,
+                parsed.id,
+            ))
         } else {
             Ok(ReferenceResolutionResult::not_found())
         }

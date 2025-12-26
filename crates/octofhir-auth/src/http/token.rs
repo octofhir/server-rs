@@ -46,9 +46,11 @@ use uuid::Uuid;
 
 use crate::config::CookieConfig;
 use crate::error::AuthError;
+use crate::federation::ClientJwksCache;
+use crate::oauth::client_assertion::ClientAssertionConfig;
 use crate::oauth::token::{TokenError, TokenErrorCode, TokenRequest, TokenResponse};
 use crate::storage::session::SessionStorage;
-use crate::storage::{ClientStorage, RefreshTokenStorage, RevokedTokenStorage, UserStorage};
+use crate::storage::{ClientStorage, JtiStorage, RefreshTokenStorage, RevokedTokenStorage, UserStorage};
 use crate::token::jwt::{AccessTokenClaims, JwtService};
 use crate::token::service::{TokenConfig, TokenService};
 use crate::types::{Client, GrantType};
@@ -64,6 +66,12 @@ pub struct TokenState {
     user_storage: Option<Arc<dyn UserStorage>>,
     /// Cookie configuration for browser-based auth.
     cookie_config: CookieConfig,
+    /// JTI storage for client assertion replay prevention (optional).
+    jti_storage: Option<Arc<dyn JtiStorage>>,
+    /// JWKS cache for client assertion validation (optional).
+    jwks_cache: Option<Arc<ClientJwksCache>>,
+    /// Token endpoint URL for audience validation.
+    token_endpoint_url: Option<String>,
 }
 
 impl TokenState {
@@ -89,6 +97,9 @@ impl TokenState {
             client_storage,
             user_storage: None,
             cookie_config: CookieConfig::default(),
+            jti_storage: None,
+            jwks_cache: None,
+            token_endpoint_url: None,
         }
     }
 
@@ -102,6 +113,9 @@ impl TokenState {
             client_storage,
             user_storage: None,
             cookie_config: CookieConfig::default(),
+            jti_storage: None,
+            jwks_cache: None,
+            token_endpoint_url: None,
         }
     }
 
@@ -116,6 +130,27 @@ impl TokenState {
     #[must_use]
     pub fn with_cookie_config(mut self, cookie_config: CookieConfig) -> Self {
         self.cookie_config = cookie_config;
+        self
+    }
+
+    /// Sets JTI storage for client assertion replay prevention.
+    #[must_use]
+    pub fn with_jti_storage(mut self, jti_storage: Arc<dyn JtiStorage>) -> Self {
+        self.jti_storage = Some(jti_storage);
+        self
+    }
+
+    /// Sets JWKS cache for client assertion validation.
+    #[must_use]
+    pub fn with_jwks_cache(mut self, jwks_cache: Arc<ClientJwksCache>) -> Self {
+        self.jwks_cache = Some(jwks_cache);
+        self
+    }
+
+    /// Sets the token endpoint URL for client assertion audience validation.
+    #[must_use]
+    pub fn with_token_endpoint_url(mut self, url: impl Into<String>) -> Self {
+        self.token_endpoint_url = Some(url.into());
         self
     }
 }
@@ -152,7 +187,7 @@ pub async fn token_handler(
     let client_auth = extract_client_auth(&headers, &request);
 
     // Look up and authenticate the client
-    let client = match authenticate_client(&state.client_storage, client_auth, &mut request).await {
+    let client = match authenticate_client(&state, client_auth, &mut request).await {
         Ok(client) => client,
         Err(e) => {
             warn!(error = %e, "Client authentication failed");
@@ -279,70 +314,200 @@ fn extract_client_auth(headers: &HeaderMap, request: &TokenRequest) -> ClientAut
 
 /// Authenticate the client based on provided credentials.
 async fn authenticate_client(
-    client_storage: &Arc<dyn ClientStorage>,
+    state: &TokenState,
     auth: ClientAuth,
     request: &mut TokenRequest,
 ) -> Result<crate::types::Client, AuthError> {
-    let (client_id, secret) = match auth {
+    match auth {
         ClientAuth::Basic {
             client_id,
             client_secret,
         } => {
             // Set client_id on request for downstream processing
             request.client_id = Some(client_id.clone());
-            (client_id, Some(client_secret))
+            authenticate_with_secret(state, &client_id, &client_secret).await
         }
         ClientAuth::Body {
             client_id,
             client_secret,
-        } => (client_id, Some(client_secret)),
+        } => authenticate_with_secret(state, &client_id, &client_secret).await,
         ClientAuth::Assertion {
             client_id,
             assertion_type,
             assertion,
         } => {
-            // TODO: Implement client assertion validation
-            // For now, just look up the client
-            debug!(
-                client_id = %client_id,
-                assertion_type = %assertion_type,
-                "Client assertion authentication not fully implemented"
-            );
-            let _ = assertion; // Suppress unused warning
-            (client_id, None)
+            authenticate_with_assertion(state, &client_id, &assertion_type, &assertion).await
         }
-        ClientAuth::Public { client_id } => (client_id, None),
-        ClientAuth::None => {
-            return Err(AuthError::invalid_client("No client credentials provided"));
-        }
-    };
+        ClientAuth::Public { client_id } => authenticate_public_client(state, &client_id).await,
+        ClientAuth::None => Err(AuthError::invalid_client("No client credentials provided")),
+    }
+}
 
-    // Look up the client
-    let client = client_storage
-        .find_by_client_id(&client_id)
+/// Authenticate a client using client_id and client_secret.
+async fn authenticate_with_secret(
+    state: &TokenState,
+    client_id: &str,
+    client_secret: &str,
+) -> Result<Client, AuthError> {
+    let client = state
+        .client_storage
+        .find_by_client_id(client_id)
         .await?
         .ok_or_else(|| AuthError::invalid_client("Unknown client"))?;
 
-    // Check if client is active
     if !client.active {
         return Err(AuthError::invalid_client("Client is inactive"));
     }
 
-    // Verify secret for confidential clients
+    if !client.confidential {
+        return Err(AuthError::invalid_client(
+            "Public clients cannot use client secret authentication",
+        ));
+    }
+
+    let valid = state
+        .client_storage
+        .verify_secret(client_id, client_secret)
+        .await?;
+
+    if !valid {
+        return Err(AuthError::invalid_client("Invalid client secret"));
+    }
+
+    Ok(client)
+}
+
+/// Authenticate a public client (no secret required).
+async fn authenticate_public_client(state: &TokenState, client_id: &str) -> Result<Client, AuthError> {
+    let client = state
+        .client_storage
+        .find_by_client_id(client_id)
+        .await?
+        .ok_or_else(|| AuthError::invalid_client("Unknown client"))?;
+
+    if !client.active {
+        return Err(AuthError::invalid_client("Client is inactive"));
+    }
+
     if client.confidential {
-        let provided_secret = secret.ok_or_else(|| {
-            AuthError::invalid_client("Client secret required for confidential client")
-        })?;
+        return Err(AuthError::invalid_client(
+            "Confidential clients must provide client credentials",
+        ));
+    }
 
-        // Verify using storage (allows for hashed secrets)
-        let valid = client_storage
-            .verify_secret(&client_id, &provided_secret)
-            .await?;
+    Ok(client)
+}
 
-        if !valid {
-            return Err(AuthError::invalid_client("Invalid client secret"));
+/// Authenticate a client using JWT client assertion (private_key_jwt).
+///
+/// This validates the JWT assertion per RFC 7523:
+/// - Verifies the assertion type is jwt-bearer
+/// - Validates JWT signature against client's JWKS
+/// - Checks iss, sub, aud, exp claims
+/// - Prevents replay attacks via JTI tracking
+async fn authenticate_with_assertion(
+    state: &TokenState,
+    client_id: &str,
+    assertion_type: &str,
+    assertion: &str,
+) -> Result<Client, AuthError> {
+    use crate::oauth::client_assertion::{
+        ClientAssertionValidator, extract_algorithm, extract_key_id,
+    };
+
+    // 1. Validate assertion type
+    if assertion_type != "urn:ietf:params:oauth:client-assertion-type:jwt-bearer" {
+        return Err(AuthError::invalid_request(format!(
+            "Unsupported client_assertion_type: {}",
+            assertion_type
+        )));
+    }
+
+    // 2. Check required dependencies are configured
+    let token_endpoint = state.token_endpoint_url.as_ref().ok_or_else(|| {
+        AuthError::internal("Token endpoint URL not configured for assertion validation")
+    })?;
+
+    let jwks_cache = state.jwks_cache.as_ref().ok_or_else(|| {
+        AuthError::internal("JWKS cache not configured for assertion validation")
+    })?;
+
+    // 3. Look up client
+    let client = state
+        .client_storage
+        .find_by_client_id(client_id)
+        .await?
+        .ok_or_else(|| AuthError::invalid_client("Unknown client"))?;
+
+    if !client.active {
+        return Err(AuthError::invalid_client("Client is inactive"));
+    }
+
+    // 4. Extract algorithm and key ID from JWT header
+    let algorithm = extract_algorithm(assertion)?;
+    let kid = extract_key_id(assertion)?;
+
+    // 5. Get decoding key from client's JWKS
+    let decoding_key = if let Some(ref jwks) = client.jwks {
+        // Use inline JWKS
+        jwks_cache.get_decoding_key_from_inline(jwks, kid.as_deref(), algorithm)?
+    } else if let Some(ref jwks_uri) = client.jwks_uri {
+        // Fetch from JWKS URI
+        jwks_cache
+            .get_decoding_key(jwks_uri, kid.as_deref(), algorithm)
+            .await?
+    } else {
+        return Err(AuthError::invalid_client(
+            "Client has no JWKS or JWKS URI configured for private_key_jwt authentication",
+        ));
+    };
+
+    // 6. Create validator and validate claims (without JTI check)
+    let config = ClientAssertionConfig::new(token_endpoint);
+
+    // Use a dummy JTI storage just for the validator type - we'll check JTI separately
+    struct DummyJtiStorage;
+    #[async_trait::async_trait]
+    impl crate::storage::JtiStorage for DummyJtiStorage {
+        async fn mark_used(&self, _jti: &str, _expires_at: OffsetDateTime) -> crate::AuthResult<bool> {
+            Ok(true) // Dummy - we handle JTI separately
+        }
+        async fn is_used(&self, _jti: &str) -> crate::AuthResult<bool> {
+            Ok(false)
+        }
+        async fn cleanup_expired(&self) -> crate::AuthResult<u64> {
+            Ok(0)
         }
     }
+
+    let validator = ClientAssertionValidator::new(config, Arc::new(DummyJtiStorage));
+    let claims = validator.validate_without_jti(assertion, client_id, &decoding_key, algorithm)?;
+
+    // 7. Check JTI for replay prevention (if JTI storage is configured)
+    if let Some(jti_storage) = &state.jti_storage {
+        let expires_at = OffsetDateTime::from_unix_timestamp(claims.exp)
+            .map_err(|_| AuthError::invalid_client("Invalid exp timestamp"))?;
+
+        let is_new = jti_storage.mark_used(&claims.jti, expires_at).await?;
+        if !is_new {
+            return Err(AuthError::invalid_client(
+                "Assertion jti already used (possible replay attack)",
+            ));
+        }
+    } else {
+        // JTI storage not configured - log warning but continue
+        // This is less secure but allows assertion validation without JTI tracking
+        warn!(
+            client_id = %client_id,
+            jti = %claims.jti,
+            "JTI storage not configured - replay prevention disabled"
+        );
+    }
+
+    info!(
+        client_id = %client_id,
+        "Client authenticated via private_key_jwt"
+    );
 
     Ok(client)
 }

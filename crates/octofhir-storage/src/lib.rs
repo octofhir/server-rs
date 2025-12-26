@@ -53,7 +53,6 @@
 //! ```
 
 mod error;
-pub mod legacy;
 mod traits;
 mod types;
 

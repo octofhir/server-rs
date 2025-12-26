@@ -21,7 +21,6 @@ pub mod patch;
 pub mod reference_resolver;
 pub mod rest_console;
 pub mod server;
-pub mod storage_adapter;
 pub mod validation;
 
 pub use admin::{AdminState, CombinedAdminState, admin_routes};

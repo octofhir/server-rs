@@ -7,6 +7,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use async_graphql::dataloader::Loader;
+use octofhir_core::fhir_reference::{parse_reference, UnresolvableReference};
 use octofhir_storage::DynStorage;
 use tracing::{debug, instrument, trace, warn};
 
@@ -44,58 +45,61 @@ impl ParsedReference {
             return None;
         }
 
-        // Handle contained references
-        if let Some(contained_id) = reference.strip_prefix('#') {
-            if contained_id.is_empty() {
-                return None;
-            }
-            return Some(Self {
-                resource_type: String::new(),
-                id: contained_id.to_string(),
-                is_absolute: false,
-                is_contained: true,
-                original: reference.to_string(),
-            });
-        }
-
         // Check if it's an absolute URL
         let is_absolute = reference.starts_with("http://") || reference.starts_with("https://");
 
-        // Split by '/' and take last two parts (Type/id)
-        let parts: Vec<&str> = reference.split('/').collect();
-        if parts.len() < 2 {
-            return None;
+        // Try to parse using the shared implementation
+        match parse_reference(reference, None) {
+            Ok(fhir_ref) => Some(Self {
+                resource_type: fhir_ref.resource_type,
+                id: fhir_ref.id,
+                is_absolute,
+                is_contained: false,
+                original: reference.to_string(),
+            }),
+            Err(UnresolvableReference::Contained(contained_id)) => {
+                // Handle contained references (#id)
+                Some(Self {
+                    resource_type: String::new(),
+                    id: contained_id,
+                    is_absolute: false,
+                    is_contained: true,
+                    original: reference.to_string(),
+                })
+            }
+            Err(UnresolvableReference::External(_)) if is_absolute => {
+                // For GraphQL, we still want to parse external absolute URLs
+                // by extracting the last two path segments (Type/id).
+                let parts: Vec<&str> = reference.split('/').collect();
+                if parts.len() >= 2 {
+                    let type_index = parts.len() - 2;
+                    let id_index = parts.len() - 1;
+
+                    let resource_type = parts[type_index];
+                    let id = parts[id_index];
+
+                    // Validate resource type starts with uppercase
+                    if !resource_type.is_empty()
+                        && resource_type
+                            .chars()
+                            .next()
+                            .map(|c| c.is_uppercase())
+                            .unwrap_or(false)
+                        && !id.is_empty()
+                    {
+                        return Some(Self {
+                            resource_type: resource_type.to_string(),
+                            id: id.to_string(),
+                            is_absolute: true,
+                            is_contained: false,
+                            original: reference.to_string(),
+                        });
+                    }
+                }
+                None
+            }
+            Err(_) => None,
         }
-
-        let type_index = parts.len() - 2;
-        let id_index = parts.len() - 1;
-
-        let resource_type = parts[type_index];
-        let id = parts[id_index];
-
-        // Validate resource type (should start with uppercase letter)
-        if resource_type.is_empty()
-            || !resource_type
-                .chars()
-                .next()
-                .map(|c| c.is_uppercase())
-                .unwrap_or(false)
-        {
-            return None;
-        }
-
-        // Validate ID is not empty
-        if id.is_empty() {
-            return None;
-        }
-
-        Some(Self {
-            resource_type: resource_type.to_string(),
-            id: id.to_string(),
-            is_absolute,
-            is_contained: false,
-            original: reference.to_string(),
-        })
     }
 
     /// Returns the reference as a relative reference string.

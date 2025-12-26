@@ -239,7 +239,7 @@ fn build_nested_chain(
 
     Ok(format!(
         "EXISTS (SELECT 1 FROM {target_table} {alias} WHERE \
-         {alias}.id::text = substring({ref_source}->>'reference' from '[^/]+$') \
+         {alias}.id::text = fhir_ref_id({ref_source}->>'reference') \
          AND {alias}.status != 'deleted' \
          AND {inner_condition})"
     ))

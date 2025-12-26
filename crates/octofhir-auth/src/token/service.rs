@@ -31,6 +31,7 @@ use crate::oauth::token::{TokenRequest, TokenResponse};
 use crate::storage::refresh_token::RefreshTokenStorage;
 use crate::storage::revoked_token::RevokedTokenStorage;
 use crate::storage::session::SessionStorage;
+use crate::storage::user::UserStorage;
 use crate::token::introspection::{IntrospectionRequest, IntrospectionResponse};
 use crate::token::jwt::{AccessTokenClaims, IdTokenClaims, JwtService};
 use crate::token::revocation::{RevocationRequest, TokenTypeHint};
@@ -50,6 +51,9 @@ pub struct TokenService {
 
     /// Revoked access token storage.
     revoked_token_storage: Arc<dyn RevokedTokenStorage>,
+
+    /// User storage for loading fhir_user (optional).
+    user_storage: Option<Arc<dyn UserStorage>>,
 
     /// Service configuration.
     config: TokenConfig,
@@ -152,7 +156,40 @@ impl TokenService {
             session_storage,
             refresh_token_storage,
             revoked_token_storage,
+            user_storage: None,
             config,
+        }
+    }
+
+    /// Sets the user storage for loading fhir_user claims.
+    ///
+    /// When set, the service will look up the user's fhir_user field
+    /// and include it in access tokens and ID tokens.
+    #[must_use]
+    pub fn with_user_storage(mut self, user_storage: Arc<dyn UserStorage>) -> Self {
+        self.user_storage = Some(user_storage);
+        self
+    }
+
+    /// Helper to load fhir_user from user storage if available.
+    async fn load_fhir_user(&self, user_id: Option<Uuid>) -> Option<String> {
+        let user_id = user_id?;
+        let user_storage = self.user_storage.as_ref()?;
+
+        match user_storage.find_by_id(user_id).await {
+            Ok(Some(user)) => user.fhir_user,
+            Ok(None) => {
+                tracing::debug!(user_id = %user_id, "User not found for fhir_user lookup");
+                None
+            }
+            Err(e) => {
+                tracing::warn!(
+                    user_id = %user_id,
+                    error = %e,
+                    "Failed to load user for fhir_user lookup"
+                );
+                None
+            }
         }
     }
 
@@ -274,6 +311,9 @@ impl TokenService {
             .map(Duration::seconds)
             .unwrap_or(self.config.refresh_token_lifetime);
 
+        // Load fhir_user from user storage if available
+        let fhir_user = self.load_fhir_user(session.user_id).await;
+
         // Build access token claims
         let access_claims = AccessTokenClaims {
             iss: self.config.issuer.clone(),
@@ -292,7 +332,7 @@ impl TokenService {
                 .launch_context
                 .as_ref()
                 .and_then(|c| c.encounter.clone()),
-            fhir_user: None, // TODO: Load from user store
+            fhir_user: fhir_user.clone(),
         };
 
         // Encode access token
@@ -341,7 +381,7 @@ impl TokenService {
 
         // Generate ID token if openid scope
         if session.scope.split_whitespace().any(|s| s == "openid") {
-            let id_token = self.generate_id_token(session, client)?;
+            let id_token = self.generate_id_token(session, client, fhir_user)?;
             response = response.with_id_token(id_token);
         }
 
@@ -386,6 +426,7 @@ impl TokenService {
         &self,
         session: &AuthorizationSession,
         client: &Client,
+        fhir_user: Option<String>,
     ) -> AuthResult<String> {
         let now = OffsetDateTime::now_utc();
 
@@ -396,7 +437,7 @@ impl TokenService {
             exp: (now + self.config.id_token_lifetime).unix_timestamp(),
             iat: now.unix_timestamp(),
             nonce: session.nonce.clone(),
-            fhir_user: None, // TODO: Load from user store
+            fhir_user,
         };
 
         self.jwt_service
@@ -602,6 +643,9 @@ impl TokenService {
             .map(Duration::seconds)
             .unwrap_or(self.config.access_token_lifetime);
 
+        // Load fhir_user from user storage if available
+        let fhir_user = self.load_fhir_user(stored_token.user_id).await;
+
         // Build access token claims with preserved launch context
         let access_claims = AccessTokenClaims {
             iss: self.config.issuer.clone(),
@@ -623,7 +667,7 @@ impl TokenService {
                 .launch_context
                 .as_ref()
                 .and_then(|c| c.encounter.clone()),
-            fhir_user: None, // TODO: Load from user store
+            fhir_user,
         };
 
         // Encode access token

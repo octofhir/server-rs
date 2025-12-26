@@ -59,18 +59,34 @@ pub async fn lsp_websocket_handler(
         .ok_or(LspError::Unauthorized)?;
 
     // Decode and validate JWT
-    let _claims = auth_state
+    let token_data = auth_state
         .jwt_service
         .decode::<AccessTokenClaims>(&token)
         .map_err(|e| {
             tracing::warn!(error = %e, "LSP auth failed: invalid token");
             LspError::Unauthorized
         })?;
+    let claims = token_data.claims;
 
-    // TODO: Check db_console:access permission from claims/policies
-    // For now, any valid token grants access
+    // Check db_console permission from claims
+    // Allowed if user has:
+    // - system/*.* scope (full system access)
+    // - system/*.read scope (system read access)
+    // - user/*.* scope (full user access)
+    // - db_console scope (explicit db console access)
+    if !has_db_console_permission(&claims) {
+        tracing::warn!(
+            client_id = %claims.client_id,
+            scope = %claims.scope,
+            "LSP auth failed: insufficient permissions for DB console"
+        );
+        return Err(LspError::Forbidden);
+    }
 
-    tracing::debug!("LSP WebSocket connection authenticated - upgrading to WebSocket");
+    tracing::debug!(
+        client_id = %claims.client_id,
+        "LSP WebSocket connection authenticated - upgrading to WebSocket"
+    );
 
     // Upgrade to WebSocket
     Ok(ws.on_upgrade(move |socket| {
@@ -298,10 +314,38 @@ async fn handle_lsp_connection(
     tracing::info!("LSP WebSocket connection closed");
 }
 
+/// Check if the access token has permission to use the DB console.
+///
+/// Allowed scopes:
+/// - `system/*.*` or `system/*.read` - system-level access
+/// - `user/*.*` - user-level full access
+/// - `db_console` - explicit DB console permission
+/// - Any `admin/*` scope - admin access
+fn has_db_console_permission(claims: &AccessTokenClaims) -> bool {
+    let scope = &claims.scope;
+
+    // Check for specific scope patterns that grant DB console access
+    for s in scope.split_whitespace() {
+        if matches!(
+            s,
+            "system/*.*" | "system/*.read" | "user/*.*" | "db_console" | "admin/*"
+        ) {
+            return true;
+        }
+        // Also check for admin-like patterns
+        if s.starts_with("admin/") || s.starts_with("system/") {
+            return true;
+        }
+    }
+
+    false
+}
+
 /// LSP handler errors.
 #[derive(Debug)]
 pub enum LspError {
     Unauthorized,
+    Forbidden,
     AuthNotConfigured,
 }
 
@@ -311,6 +355,11 @@ impl IntoResponse for LspError {
             LspError::Unauthorized => (
                 StatusCode::UNAUTHORIZED,
                 "Invalid or missing authentication token",
+            )
+                .into_response(),
+            LspError::Forbidden => (
+                StatusCode::FORBIDDEN,
+                "Insufficient permissions for DB console access",
             )
                 .into_response(),
             LspError::AuthNotConfigured => (

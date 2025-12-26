@@ -17,6 +17,7 @@
 //! user.validate()?;
 //! ```
 
+use octofhir_core::fhir_reference::parse_reference;
 use serde::{Deserialize, Serialize};
 
 /// User FHIR resource for authentication.
@@ -256,17 +257,13 @@ impl UserResource {
 
     /// Validates fhirUser reference format and type.
     fn validate_fhir_user_reference(&self, reference: &str) -> Result<(), ValidationError> {
-        // Should be ResourceType/id format
-        let parts: Vec<&str> = reference.split('/').collect();
-        if parts.len() < 2 {
-            return Err(ValidationError::InvalidField(
-                "fhirUser.reference",
-                "Must be ResourceType/id format",
-            ));
-        }
+        // Use the shared reference parser
+        let parsed = parse_reference(reference, None).map_err(|_| {
+            ValidationError::InvalidField("fhirUser.reference", "Must be ResourceType/id format")
+        })?;
 
-        let resource_type = parts[parts.len() - 2];
-        match resource_type {
+        // Validate the resource type is one of the allowed types
+        match parsed.resource_type.as_str() {
             "Practitioner" | "Patient" | "RelatedPerson" | "Person" => Ok(()),
             _ => Err(ValidationError::InvalidField(
                 "fhirUser.reference",

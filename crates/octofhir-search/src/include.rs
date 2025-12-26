@@ -7,6 +7,7 @@
 //! - `:iterate`: Follow chains of references
 
 use crate::registry::SearchParameterRegistry;
+use octofhir_core::fhir_reference::parse_reference_simple;
 use std::collections::HashSet;
 
 /// A parsed _include or _revinclude parameter.
@@ -187,7 +188,7 @@ pub fn build_include_query(
         "SELECT id, txid, ts, resource_type, resource, status \
          FROM {target_table} \
          WHERE id::text IN (\
-             SELECT substring({ref_path}->>'reference' from '[^/]+$') \
+             SELECT fhir_ref_id({ref_path}->>'reference') \
              FROM {source_table} \
              WHERE id::text IN ({placeholders})\
          ) AND status != 'deleted'",
@@ -370,24 +371,31 @@ fn get_reference_at_path(resource: &serde_json::Value, path: &str) -> Option<Str
 /// Parse a FHIR reference value into (type, id).
 ///
 /// Handles formats: "Patient/123", "http://example.org/fhir/Patient/123"
+///
+/// Note: This function treats all absolute URLs as local since it doesn't have
+/// access to the server's base URL. For proper base URL validation, use
+/// `octofhir_core::fhir_reference::parse_reference()` directly with the base URL.
 pub fn parse_reference_value(reference: &str) -> Option<(String, String)> {
-    // Handle absolute URLs by extracting the last two path segments
-    let local_ref = if reference.contains("://") {
-        // Get "Type/id" from "http://example.org/fhir/Type/id"
+    // For backwards compatibility, treat absolute URLs as local by extracting
+    // the last two path segments (Type/id). This matches the old behavior.
+    // For more robust handling with base_url validation, callers should use
+    // parse_reference() directly from octofhir_core::fhir_reference.
+    if reference.contains("://") {
+        // Extract Type/id from the end of the URL
         let (prefix, id) = reference.rsplit_once('/')?;
         let (_, rtype) = prefix.rsplit_once('/')?;
-        format!("{rtype}/{id}")
-    } else {
-        reference.to_string()
-    };
-
-    // Split Type/id
-    let (rtype, rid) = local_ref.split_once('/')?;
-    if rtype.is_empty() || rid.is_empty() {
-        return None;
+        if rtype.is_empty() || id.is_empty() {
+            return None;
+        }
+        // Validate resource type starts with uppercase
+        if !rtype.chars().next().map(|c| c.is_ascii_uppercase()).unwrap_or(false) {
+            return None;
+        }
+        return Some((rtype.to_string(), id.to_string()));
     }
 
-    Some((rtype.to_string(), rid.to_string()))
+    // For relative references, delegate to the shared implementation
+    parse_reference_simple(reference, None).ok()
 }
 
 /// Plan for executing includes with iteration.
@@ -470,10 +478,10 @@ pub fn generate_include_queries(
             "SELECT id, txid, ts, resource_type, resource, status \
              FROM {target_table} \
              WHERE id::text IN (\
-                 SELECT substring({ref_path}->>'reference' from '[^/]+$') \
+                 SELECT fhir_ref_id({ref_path}->>'reference') \
                  FROM {source_table} \
                  WHERE id::text IN ({placeholders}) \
-                 AND {ref_path}->>'reference' LIKE '{target_type}/%'\
+                 AND fhir_ref_type({ref_path}->>'reference') = '{target_type}'\
              ) AND status != 'deleted'"
         );
 

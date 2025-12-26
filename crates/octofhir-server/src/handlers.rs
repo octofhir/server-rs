@@ -14,6 +14,7 @@ use axum::{
 use include_dir::{Dir, include_dir};
 use mime_guess::MimeGuess;
 use octofhir_api::ApiError;
+use octofhir_core::fhir_reference::parse_reference_simple;
 use octofhir_core::ResourceType;
 use octofhir_fhir_model::ModelProvider;
 use octofhir_storage::{FhirStorage, StorageError}; // For begin_transaction method and error mapping
@@ -2450,25 +2451,25 @@ fn extract_refs_from_value(value: &Value, refs: &mut Vec<(String, String)>) {
 
 /// Parse a FHIR reference string into (type, id)
 fn parse_reference_string(reference: &str) -> Option<(String, String)> {
-    // Handle absolute URLs
-    let local_ref = if reference.contains("://") {
+    // For backwards compatibility, handle absolute URLs by extracting the last two path segments.
+    // This matches the old behavior where all absolute URLs were treated as potentially local.
+    if reference.contains("://") {
         let parts: Vec<&str> = reference.rsplitn(3, '/').collect();
         if parts.len() >= 2 {
-            format!("{}/{}", parts[1], parts[0])
-        } else {
-            return None;
+            let rtype = parts[1];
+            let rid = parts[0];
+            if !rtype.is_empty() && !rid.is_empty() {
+                // Validate resource type starts with uppercase
+                if rtype.chars().next().map(|c| c.is_ascii_uppercase()).unwrap_or(false) {
+                    return Some((rtype.to_string(), rid.to_string()));
+                }
+            }
         }
-    } else {
-        reference.to_string()
-    };
-
-    // Split Type/id
-    let (rtype, rid) = local_ref.split_once('/')?;
-    if rtype.is_empty() || rid.is_empty() {
         return None;
     }
 
-    Some((rtype.to_string(), rid.to_string()))
+    // For relative references, use the shared implementation
+    parse_reference_simple(reference, None).ok()
 }
 
 /// Apply _summary and _elements result parameters to a bundle

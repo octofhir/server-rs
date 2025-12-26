@@ -156,13 +156,13 @@ pub fn build_list_search(
     base_type: &str,
 ) -> Result<(), SqlBuilderError> {
     let p = builder.add_text_param(list_id);
-    let type_p = builder.add_text_param(format!("{base_type}/%"));
+    let type_p = builder.add_text_param(base_type.to_string());
 
     builder.add_condition(format!(
         "EXISTS (SELECT 1 FROM list l, jsonb_array_elements(l.resource->'entry') AS entry \
          WHERE l.id::text = ${p} AND l.status != 'deleted' \
-         AND entry->'item'->>'reference' LIKE ${type_p} \
-         AND substring(entry->'item'->>'reference' from '[^/]+$') = {}.id::text)",
+         AND fhir_ref_type(entry->'item'->>'reference') = ${type_p} \
+         AND fhir_ref_id(entry->'item'->>'reference') = {}.id::text)",
         builder.resource_column()
     ));
 

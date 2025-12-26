@@ -4092,6 +4092,7 @@ dependencies = [
  "jsonwebtoken",
  "num_cpus",
  "octofhir-api",
+ "octofhir-core",
  "p384",
  "rand 0.8.5",
  "regex",

@@ -1,7 +1,6 @@
 pub mod chaining;
 pub mod common;
 pub mod config_watcher;
-pub mod engine;
 pub mod include;
 pub mod loader;
 pub mod parameters;
@@ -16,7 +15,6 @@ pub mod terminology;
 pub mod types;
 
 pub use common::register_common_parameters;
-pub use engine::{EngineError, SearchConfig, SearchEngine};
 pub use loader::{LoaderError, load_search_parameters, parse_search_parameter};
 pub use parameters::{
     SearchModifier, SearchParameter, SearchParameterDefinition, SearchParameterType,
@@ -25,7 +23,7 @@ pub use parameters::{
 pub use parser::{ParsedParameters, SearchParameterParser};
 pub use registry::SearchParameterRegistry;
 pub use sql_builder::{
-    // New fluent query builder
+    // Fluent query builder
     BuiltQuery,
     ChainJoin,
     FhirQueryBuilder,
@@ -38,7 +36,7 @@ pub use sql_builder::{
     SearchCondition,
     SortOrder,
     SortSpec,
-    // Legacy SQL builder
+    // SQL builder utilities
     SqlBuilder,
     SqlBuilderError,
     SqlParam,
@@ -70,7 +68,7 @@ pub use query_cache::{
     CacheError, CacheStatsSnapshot, ParamPosition, ParamValueType, PreparedQuery, QueryCache,
     QueryCacheKey, QueryParamKey,
 };
-pub use reloadable::{ReloadableSearchConfig, SearchOptions};
+pub use reloadable::{ReloadableSearchConfig, SearchConfig, SearchOptions};
 pub use reverse_chaining::{
     ReverseChainParameter, ReverseChainingError, build_reverse_chain_search,
     is_reverse_chain_parameter, parse_reverse_chain,

@@ -778,7 +778,6 @@ pub async fn build_app(
     // Create GraphQL state if enabled (schema build was started early)
     let graphql_state = if let Some(lazy_schema) = lazy_schema {
         // Create PostgresStorage from the pool for GraphQL
-        // GraphQL uses the new FhirStorage trait, not the legacy Storage trait
         let graphql_storage: octofhir_storage::DynStorage =
             Arc::new(PostgresStorage::from_pool(db_pool.as_ref().clone()));
 
