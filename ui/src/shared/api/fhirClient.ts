@@ -245,5 +245,93 @@ export class FhirClient {
 	}
 }
 
-// Default instance
-export const fhirClient = new FhirClient("/fhir");
+// Internal resources (User, Role, Client, etc.) are accessed at root level without /fhir prefix
+// Regular FHIR resources (Patient, Observation, etc.) are still under /fhir
+const INTERNAL_RESOURCES = new Set([
+	"User",
+	"Role",
+	"Client",
+	"AccessPolicy",
+	"IdentityProvider",
+	"CustomOperation",
+	"Session",
+	"RefreshToken",
+	"RevokedToken",
+	"App",
+]);
+
+// Create a custom client that routes internal resources to root and others to /fhir
+class OctoFhirClient extends FhirClient {
+	private getBaseUrlForResource(resourceType: string): string {
+		return INTERNAL_RESOURCES.has(resourceType) ? "" : "/fhir";
+	}
+
+	async read<T extends FhirResource = FhirResource>(
+		resourceType: string,
+		id: string,
+	): Promise<T> {
+		const baseUrl = this.getBaseUrlForResource(resourceType);
+		const response = await this.customRequest<T>({
+			method: "GET",
+			url: `${baseUrl}/${resourceType}/${id}`,
+		});
+		return response.data;
+	}
+
+	async search<_T extends FhirResource = FhirResource>(
+		resourceType: string,
+		params: Record<string, string | number> = {},
+	): Promise<FhirBundle> {
+		const baseUrl = this.getBaseUrlForResource(resourceType);
+		const searchParams = new URLSearchParams();
+
+		Object.entries(params).forEach(([key, value]) => {
+			searchParams.set(key, String(value));
+		});
+
+		const queryString = searchParams.toString();
+		const url = `${baseUrl}/${resourceType}${queryString ? `?${queryString}` : ""}`;
+
+		const response = await this.customRequest<FhirBundle>({
+			method: "GET",
+			url,
+		});
+
+		return response.data;
+	}
+
+	async create<T extends FhirResource = FhirResource>(resource: T): Promise<T> {
+		const baseUrl = this.getBaseUrlForResource(resource.resourceType);
+		const response = await this.customRequest<T>({
+			method: "POST",
+			url: `${baseUrl}/${resource.resourceType}`,
+			data: resource,
+		});
+		return response.data;
+	}
+
+	async update<T extends FhirResource = FhirResource>(resource: T): Promise<T> {
+		if (!resource.id) {
+			throw new Error("Resource must have an ID for update");
+		}
+
+		const baseUrl = this.getBaseUrlForResource(resource.resourceType);
+		const response = await this.customRequest<T>({
+			method: "PUT",
+			url: `${baseUrl}/${resource.resourceType}/${resource.id}`,
+			data: resource,
+		});
+		return response.data;
+	}
+
+	async delete(resourceType: string, id: string): Promise<void> {
+		const baseUrl = this.getBaseUrlForResource(resourceType);
+		await this.customRequest({
+			method: "DELETE",
+			url: `${baseUrl}/${resourceType}/${id}`,
+		});
+	}
+}
+
+// Default instance - uses custom routing logic
+export const fhirClient = new OctoFhirClient("");

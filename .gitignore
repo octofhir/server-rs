@@ -41,3 +41,5 @@ config/local.toml
 
 .fhir
 *.pem
+k6-private
+.k6-secret

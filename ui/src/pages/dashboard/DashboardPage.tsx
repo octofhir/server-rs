@@ -95,14 +95,14 @@ export function DashboardPage() {
 	const navigate = useNavigate();
 
 	return (
-		<Box p="xl" className="page-enter">
+		<Box p="xl" className="page-enter" style={{ height: "100%", overflow: "auto" }}>
 			<Stack gap="xl">
 				<Box>
 					<Title order={1} style={{ letterSpacing: "-0.03em", fontWeight: 700 }}>
 						Dashboard
 					</Title>
 					<Text c="dimmed" size="lg">
-						Welcome to OctoFHIR Server Console
+						Welcome to Abyxon Server Console
 					</Text>
 				</Box>
 

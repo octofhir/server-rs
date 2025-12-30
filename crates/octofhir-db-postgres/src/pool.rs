@@ -23,7 +23,8 @@ pub async fn create_pool(config: &PostgresConfig) -> Result<PgPool> {
 
     let mut options = PgPoolOptions::new()
         .max_connections(config.pool_size)
-        .acquire_timeout(Duration::from_millis(config.connect_timeout_ms));
+        .acquire_timeout(Duration::from_millis(config.connect_timeout_ms))
+        .test_before_acquire(false);
 
     if let Some(idle_timeout) = config.idle_timeout_ms {
         options = options.idle_timeout(Duration::from_millis(idle_timeout));

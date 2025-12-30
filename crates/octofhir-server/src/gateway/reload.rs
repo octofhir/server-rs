@@ -12,7 +12,7 @@ use tokio::time::sleep;
 use tracing::{debug, error, info, instrument, warn};
 
 use super::GatewayRouter;
-use crate::middleware::PublicPathsCache;
+use crate::operation_registry::OperationRegistryService;
 use octofhir_storage::DynStorage;
 
 /// Channel for gateway resource change notifications.
@@ -37,7 +37,7 @@ pub struct GatewayReloadListener {
     pool: PgPool,
     gateway_router: Arc<GatewayRouter>,
     storage: DynStorage,
-    public_paths_cache: Option<PublicPathsCache>,
+    operation_registry: Option<Arc<OperationRegistryService>>,
 }
 
 impl GatewayReloadListener {
@@ -47,13 +47,13 @@ impl GatewayReloadListener {
             pool,
             gateway_router,
             storage,
-            public_paths_cache: None,
+            operation_registry: None,
         }
     }
 
-    /// Sets the public paths cache for updating when routes change.
-    pub fn with_public_paths_cache(mut self, cache: PublicPathsCache) -> Self {
-        self.public_paths_cache = Some(cache);
+    /// Sets the operation registry for updating when routes change.
+    pub fn with_operation_registry(mut self, registry: Arc<OperationRegistryService>) -> Self {
+        self.operation_registry = Some(registry);
         self
     }
 
@@ -127,17 +127,17 @@ impl GatewayReloadListener {
                         Ok(count) => {
                             info!(count = count, "Gateway routes reloaded successfully");
 
-                            // Update public paths cache with gateway operations
-                            if let Some(ref cache) = self.public_paths_cache {
-                                let gateway_ops =
-                                    crate::handlers::load_gateway_operations(&self.storage).await;
-                                cache.update_from_operations(&gateway_ops);
-                                let (exact, prefix) = cache.len();
-                                debug!(
-                                    exact_paths = exact,
-                                    prefix_paths = prefix,
-                                    "Public paths cache updated with gateway operations"
-                                );
+                            // Re-sync operations to update in-memory indexes
+                            // This is needed because gateway CustomOperations may have changed
+                            if let Some(ref registry) = self.operation_registry {
+                                match registry.sync_operations(false).await {
+                                    Ok(_) => {
+                                        debug!("Operation registry indexes updated");
+                                    }
+                                    Err(e) => {
+                                        warn!(error = %e, "Failed to update operation registry indexes");
+                                    }
+                                }
                             }
                         }
                         Err(e) => {
@@ -165,7 +165,7 @@ pub struct GatewayReloadBuilder {
     pool: Option<PgPool>,
     gateway_router: Option<Arc<GatewayRouter>>,
     storage: Option<DynStorage>,
-    public_paths_cache: Option<PublicPathsCache>,
+    operation_registry: Option<Arc<OperationRegistryService>>,
 }
 
 impl GatewayReloadBuilder {
@@ -175,7 +175,7 @@ impl GatewayReloadBuilder {
             pool: None,
             gateway_router: None,
             storage: None,
-            public_paths_cache: None,
+            operation_registry: None,
         }
     }
 
@@ -197,9 +197,9 @@ impl GatewayReloadBuilder {
         self
     }
 
-    /// Sets the public paths cache for updating when routes change.
-    pub fn with_public_paths_cache(mut self, cache: PublicPathsCache) -> Self {
-        self.public_paths_cache = Some(cache);
+    /// Sets the operation registry for updating when routes change.
+    pub fn with_operation_registry(mut self, registry: Arc<OperationRegistryService>) -> Self {
+        self.operation_registry = Some(registry);
         self
     }
 
@@ -212,8 +212,8 @@ impl GatewayReloadBuilder {
         let storage = self.storage.ok_or("Storage is required")?;
 
         let mut listener = GatewayReloadListener::new(pool, gateway_router, storage);
-        if let Some(cache) = self.public_paths_cache {
-            listener = listener.with_public_paths_cache(cache);
+        if let Some(registry) = self.operation_registry {
+            listener = listener.with_operation_registry(registry);
         }
         Ok(Arc::new(listener).start())
     }

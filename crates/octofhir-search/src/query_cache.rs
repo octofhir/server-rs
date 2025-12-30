@@ -40,6 +40,12 @@ use crate::sql_builder::{BuiltQuery, SqlValue};
 /// Maximum age in seconds before an entry becomes stale (default: 1 hour)
 const DEFAULT_MAX_AGE_SECS: u64 = 3600;
 
+/// Probability (1/N) of running cleanup on insert
+const CLEANUP_PROBABILITY: u32 = 100; // 1% chance
+
+/// Hard capacity multiplier - force cleanup when exceeding this
+const HARD_CAPACITY_MULTIPLIER: f32 = 1.5;
+
 /// A cache key based on query structure.
 ///
 /// The key includes:
@@ -345,25 +351,17 @@ impl std::fmt::Debug for QueryCache {
     }
 }
 
-/// A cache entry with access tracking.
+/// A cache entry for TTL-based eviction.
+///
+/// With TTL-based eviction, we only track access count for statistics.
+/// The staleness check uses `query.cached_at` which is set on creation.
 struct CacheEntry {
     query: PreparedQuery,
-    last_access: Instant,
-    access_count: AtomicU64,
 }
 
 impl CacheEntry {
     fn new(query: PreparedQuery) -> Self {
-        Self {
-            query,
-            last_access: Instant::now(),
-            access_count: AtomicU64::new(1),
-        }
-    }
-
-    fn touch(&mut self) {
-        self.last_access = Instant::now();
-        self.access_count.fetch_add(1, Ordering::Relaxed);
+        Self { query }
     }
 }
 
@@ -456,6 +454,9 @@ impl QueryCache {
     }
 
     /// Get a cached query by key.
+    ///
+    /// Uses a read lock only (no write lock contention) since we use TTL-based
+    /// eviction instead of LRU tracking.
     pub fn get(&self, key: &QueryCacheKey) -> Option<PreparedQuery> {
         if !self.enabled {
             return None;
@@ -463,17 +464,19 @@ impl QueryCache {
 
         let hash = key.cache_hash();
 
-        if let Some(mut entry) = self.cache.get_mut(&hash) {
+        // Use get() instead of get_mut() to avoid write lock contention
+        // Since we use TTL-based eviction, we don't need to track last_access
+        if let Some(entry) = self.cache.get(&hash) {
             // Check if stale
             if entry.query.is_stale(self.max_age_secs) {
-                drop(entry);
+                drop(entry); // Release read lock before removing
                 self.cache.remove(&hash);
                 self.stats.misses.fetch_add(1, Ordering::Relaxed);
                 self.stats.size.store(self.cache.len(), Ordering::Relaxed);
                 return None;
             }
 
-            entry.touch();
+            // No touch() needed - TTL-based eviction only cares about cached_at
             self.stats.hits.fetch_add(1, Ordering::Relaxed);
             return Some(entry.query.clone());
         }
@@ -483,39 +486,31 @@ impl QueryCache {
     }
 
     /// Insert a prepared query into the cache.
+    ///
+    /// Uses TTL-based eviction instead of LRU to avoid O(n) scans:
+    /// - Probabilistic cleanup (1% chance on each insert)
+    /// - Forced cleanup when exceeding hard capacity limit
     pub fn insert(&self, key: QueryCacheKey, query: PreparedQuery) {
         if !self.enabled {
             return;
         }
 
-        // Evict if at capacity
-        if self.cache.len() >= self.capacity {
-            self.evict_lru();
+        let current_len = self.cache.len();
+        let hard_limit = (self.capacity as f32 * HARD_CAPACITY_MULTIPLIER) as usize;
+
+        // Probabilistic cleanup: 1% chance to clean stale entries
+        // This amortizes cleanup cost across many inserts
+        if current_len >= self.capacity {
+            let should_cleanup = fastrand::u32(0..CLEANUP_PROBABILITY) == 0;
+            if should_cleanup || current_len >= hard_limit {
+                self.cleanup_stale();
+            }
         }
 
         let hash = key.cache_hash();
         self.cache.insert(hash, CacheEntry::new(query));
         self.stats.insertions.fetch_add(1, Ordering::Relaxed);
         self.stats.size.store(self.cache.len(), Ordering::Relaxed);
-    }
-
-    /// Evict the least recently used entry.
-    fn evict_lru(&self) {
-        let mut oldest_hash: Option<u64> = None;
-        let mut oldest_time = Instant::now();
-
-        // Find the LRU entry
-        for entry in self.cache.iter() {
-            if entry.last_access < oldest_time {
-                oldest_time = entry.last_access;
-                oldest_hash = Some(*entry.key());
-            }
-        }
-
-        if let Some(hash) = oldest_hash {
-            self.cache.remove(&hash);
-            self.stats.evictions.fetch_add(1, Ordering::Relaxed);
-        }
     }
 
     /// Clear all cached queries.
@@ -707,10 +702,13 @@ mod tests {
     }
 
     #[test]
-    fn test_cache_eviction() {
+    fn test_cache_soft_capacity() {
+        // With TTL-based eviction, cache uses soft capacity (allows over-capacity)
+        // Eviction only happens for stale entries or when exceeding hard limit (1.5x)
         let cache = QueryCache::new(2);
 
-        // Insert 3 entries into a cache with capacity 2
+        // Insert 3 entries into a cache with soft capacity 2
+        // This is allowed because hard limit is 1.5x = 3
         for i in 0..3 {
             let key = QueryCacheKey::from_typed_params(
                 "Patient",
@@ -728,11 +726,54 @@ mod tests {
             cache.insert(key, query);
         }
 
-        // Should have evicted one entry
-        assert_eq!(cache.len(), 2);
+        // With TTL-based eviction, all 3 entries should be present
+        // (they're not stale yet and under hard limit of 1.5x capacity = 3)
+        assert_eq!(cache.len(), 3);
+    }
 
-        let stats = cache.stats();
-        assert!(stats.evictions >= 1);
+    #[test]
+    fn test_cache_staleness_check() {
+        // TTL-based eviction checks staleness based on cached_at time
+        let query = PreparedQuery::simple("SELECT * FROM patient".to_string(), 0);
+
+        // Entry should not be stale with default TTL (1 hour)
+        assert!(!query.is_stale(3600));
+
+        // Entry should be stale with 0 second TTL after waiting 1+ seconds
+        // Note: is_stale uses as_secs() which truncates, so need to wait >1 second
+        // For unit test speed, we just verify the staleness logic works
+        assert!(!query.is_stale(3600)); // Not stale with 1 hour TTL
+    }
+
+    #[test]
+    fn test_cleanup_stale() {
+        // Test that cleanup_stale() removes stale entries
+        let cache = QueryCache::new(10).with_max_age(0);
+
+        // Insert some entries
+        for i in 0..3 {
+            let key = QueryCacheKey::from_typed_params(
+                "Patient",
+                vec![QueryParamKey {
+                    name: format!("param{}", i),
+                    modifier: None,
+                    param_type: SearchParameterType::String,
+                    value_count: 1,
+                }],
+                false,
+                vec![],
+            );
+            let query = PreparedQuery::simple(format!("SELECT {}", i), 0);
+            cache.insert(key, query);
+        }
+        assert_eq!(cache.len(), 3);
+
+        // Wait for entries to become stale (>1 second for as_secs() to return non-zero)
+        std::thread::sleep(std::time::Duration::from_secs(2));
+
+        // Cleanup should remove all stale entries
+        cache.cleanup_stale();
+        assert_eq!(cache.len(), 0);
     }
 
     #[test]

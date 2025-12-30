@@ -7,9 +7,12 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 /// A cached entry with TTL support.
+///
+/// The data is wrapped in `Arc` to allow cheap cloning on cache hits,
+/// avoiding expensive copies of potentially large FHIR bundles.
 #[derive(Clone, Debug)]
 pub struct CachedEntry {
-    pub data: Vec<u8>,
+    pub data: Arc<Vec<u8>>,
     pub cached_at: Instant,
     pub ttl: Duration,
 }
@@ -18,7 +21,7 @@ impl CachedEntry {
     /// Create a new cached entry.
     pub fn new(data: Vec<u8>, ttl: Duration) -> Self {
         Self {
-            data,
+            data: Arc::new(data),
             cached_at: Instant::now(),
             ttl,
         }
@@ -79,18 +82,32 @@ impl CacheBackend {
     /// 3. Return None if not found
     ///
     /// If found in L2, the value is promoted to L1.
-    pub async fn get(&self, key: &str) -> Option<Vec<u8>> {
+    ///
+    /// Returns `Arc<Vec<u8>>` for zero-copy access to cached data.
+    pub async fn get(&self, key: &str) -> Option<Arc<Vec<u8>>> {
         match self {
-            CacheBackend::Local(map) => map
-                .get(key)
-                .filter(|entry| !entry.is_expired())
-                .map(|entry| entry.data.clone()),
+            CacheBackend::Local(map) => {
+                let result = map
+                    .get(key)
+                    .filter(|entry| !entry.is_expired())
+                    .map(|entry| Arc::clone(&entry.data));
+
+                // Record cache metrics
+                if result.is_some() {
+                    crate::metrics::record_cache_hit("L1");
+                } else {
+                    crate::metrics::record_cache_miss();
+                }
+
+                result
+            }
             CacheBackend::Redis { redis, local } => {
                 // 1. Check L1 (local DashMap)
                 if let Some(entry) = local.get(key) {
                     if !entry.is_expired() {
                         tracing::debug!(key = %key, "cache hit (L1)");
-                        return Some(entry.data.clone());
+                        crate::metrics::record_cache_hit("L1");
+                        return Some(Arc::clone(&entry.data));
                     } else {
                         // Remove expired entry
                         drop(entry);
@@ -103,26 +120,29 @@ impl CacheBackend {
                     Ok(mut conn) => match conn.get::<_, Option<Vec<u8>>>(key).await {
                         Ok(Some(data)) => {
                             tracing::debug!(key = %key, "cache hit (L2)");
+                            crate::metrics::record_cache_hit("L2");
 
-                            // Promote to L1 (use default TTL for L1)
-                            local.insert(
-                                key.to_string(),
-                                CachedEntry::new(data.clone(), Duration::from_secs(3600)),
-                            );
+                            // Wrap in Arc and promote to L1 (use default TTL for L1)
+                            let entry = CachedEntry::new(data, Duration::from_secs(3600));
+                            let data_arc = Arc::clone(&entry.data);
+                            local.insert(key.to_string(), entry);
 
-                            Some(data)
+                            Some(data_arc)
                         }
                         Ok(None) => {
                             tracing::debug!(key = %key, "cache miss");
+                            crate::metrics::record_cache_miss();
                             None
                         }
                         Err(e) => {
                             tracing::warn!(key = %key, error = %e, "Redis GET error");
+                            crate::metrics::record_cache_miss();
                             None
                         }
                     },
                     Err(e) => {
                         tracing::warn!(error = %e, "Failed to get Redis connection");
+                        crate::metrics::record_cache_miss();
                         None
                     }
                 }
@@ -144,8 +164,12 @@ impl CacheBackend {
                 map.insert(key.to_string(), CachedEntry::new(value, ttl));
             }
             CacheBackend::Redis { redis, local } => {
+                // Create entry and clone Arc for Redis write (no full data clone)
+                let entry = CachedEntry::new(value, ttl);
+                let data_for_redis = Arc::clone(&entry.data);
+
                 // Store in L1
-                local.insert(key.to_string(), CachedEntry::new(value.clone(), ttl));
+                local.insert(key.to_string(), entry);
 
                 // Store in L2 (Redis) with TTL - fire and forget
                 let redis = redis.clone();
@@ -153,7 +177,7 @@ impl CacheBackend {
                 let ttl_secs = ttl.as_secs();
                 tokio::spawn(async move {
                     if let Ok(mut conn) = redis.get().await {
-                        if let Err(e) = conn.set_ex::<_, _, ()>(&key, value, ttl_secs).await {
+                        if let Err(e) = conn.set_ex::<_, _, ()>(&key, &*data_for_redis, ttl_secs).await {
                             tracing::warn!(key = %key, error = %e, "Redis SET error");
                         } else {
                             tracing::debug!(key = %key, ttl_secs = %ttl_secs, "cache set (L1+L2)");

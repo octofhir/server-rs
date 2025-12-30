@@ -89,6 +89,9 @@ fn build_missing_condition(
 }
 
 /// Build a SQL condition for date comparison.
+///
+/// Note: Parameters are bound as text strings and must be explicitly cast to
+/// timestamptz in the SQL to ensure proper type comparison.
 fn build_date_condition(
     builder: &mut SqlBuilder,
     jsonb_path: &str,
@@ -105,7 +108,7 @@ fn build_date_condition(
             let p1 = builder.add_timestamp_param(&start_str);
             let p2 = builder.add_timestamp_param(&end_str);
             format!(
-                "(({jsonb_path})::timestamptz >= ${p1} AND ({jsonb_path})::timestamptz < ${p2})"
+                "(({jsonb_path})::timestamptz >= ${p1}::timestamptz AND ({jsonb_path})::timestamptz < ${p2}::timestamptz)"
             )
         }
 
@@ -114,44 +117,44 @@ fn build_date_condition(
             let p1 = builder.add_timestamp_param(&start_str);
             let p2 = builder.add_timestamp_param(&end_str);
             format!(
-                "NOT (({jsonb_path})::timestamptz >= ${p1} AND ({jsonb_path})::timestamptz < ${p2})"
+                "NOT (({jsonb_path})::timestamptz >= ${p1}::timestamptz AND ({jsonb_path})::timestamptz < ${p2}::timestamptz)"
             )
         }
 
         SearchPrefix::Gt => {
             // Resource value is after parameter range
             let p = builder.add_timestamp_param(&end_str);
-            format!("({jsonb_path})::timestamptz >= ${p}")
+            format!("({jsonb_path})::timestamptz >= ${p}::timestamptz")
         }
 
         SearchPrefix::Lt => {
             // Resource value is before parameter range
             let p = builder.add_timestamp_param(&start_str);
-            format!("({jsonb_path})::timestamptz < ${p}")
+            format!("({jsonb_path})::timestamptz < ${p}::timestamptz")
         }
 
         SearchPrefix::Ge => {
             // Resource value >= parameter start
             let p = builder.add_timestamp_param(&start_str);
-            format!("({jsonb_path})::timestamptz >= ${p}")
+            format!("({jsonb_path})::timestamptz >= ${p}::timestamptz")
         }
 
         SearchPrefix::Le => {
             // Resource value < parameter end
             let p = builder.add_timestamp_param(&end_str);
-            format!("({jsonb_path})::timestamptz < ${p}")
+            format!("({jsonb_path})::timestamptz < ${p}::timestamptz")
         }
 
         SearchPrefix::Sa => {
             // Starts after - same as gt for point-in-time
             let p = builder.add_timestamp_param(&end_str);
-            format!("({jsonb_path})::timestamptz >= ${p}")
+            format!("({jsonb_path})::timestamptz >= ${p}::timestamptz")
         }
 
         SearchPrefix::Eb => {
             // Ends before - same as lt for point-in-time
             let p = builder.add_timestamp_param(&start_str);
-            format!("({jsonb_path})::timestamptz < ${p}")
+            format!("({jsonb_path})::timestamptz < ${p}::timestamptz")
         }
 
         SearchPrefix::Ap => {
@@ -164,7 +167,7 @@ fn build_date_condition(
             let p1 = builder.add_timestamp_param(format_datetime(&approx_start));
             let p2 = builder.add_timestamp_param(format_datetime(&approx_end));
             format!(
-                "(({jsonb_path})::timestamptz >= ${p1} AND ({jsonb_path})::timestamptz < ${p2})"
+                "(({jsonb_path})::timestamptz >= ${p1}::timestamptz AND ({jsonb_path})::timestamptz < ${p2}::timestamptz)"
             )
         }
     };
@@ -338,6 +341,9 @@ pub fn build_period_search(
 }
 
 /// Build a SQL condition for Period comparison.
+///
+/// Note: Parameters are bound as text strings and must be explicitly cast to
+/// timestamptz in the SQL to ensure proper type comparison.
 fn build_period_condition(
     builder: &mut SqlBuilder,
     jsonb_path: &str,
@@ -356,8 +362,8 @@ fn build_period_condition(
             let p1 = builder.add_timestamp_param(&start_str);
             let p2 = builder.add_timestamp_param(&end_str);
             format!(
-                "(({start_path} IS NULL OR ({start_path})::timestamptz < ${p2}) AND \
-                 ({end_path} IS NULL OR ({end_path})::timestamptz >= ${p1}))"
+                "(({start_path} IS NULL OR ({start_path})::timestamptz < ${p2}::timestamptz) AND \
+                 ({end_path} IS NULL OR ({end_path})::timestamptz >= ${p1}::timestamptz))"
             )
         }
 
@@ -365,36 +371,36 @@ fn build_period_condition(
             let p1 = builder.add_timestamp_param(&start_str);
             let p2 = builder.add_timestamp_param(&end_str);
             format!(
-                "NOT (({start_path} IS NULL OR ({start_path})::timestamptz < ${p2}) AND \
-                 ({end_path} IS NULL OR ({end_path})::timestamptz >= ${p1}))"
+                "NOT (({start_path} IS NULL OR ({start_path})::timestamptz < ${p2}::timestamptz) AND \
+                 ({end_path} IS NULL OR ({end_path})::timestamptz >= ${p1}::timestamptz))"
             )
         }
 
         SearchPrefix::Gt | SearchPrefix::Sa => {
             // Period starts after search range
             let p = builder.add_timestamp_param(&end_str);
-            format!("({start_path})::timestamptz >= ${p}")
+            format!("({start_path})::timestamptz >= ${p}::timestamptz")
         }
 
         SearchPrefix::Lt | SearchPrefix::Eb => {
             // Period ends before search range
             let p = builder.add_timestamp_param(&start_str);
-            format!("({end_path} IS NOT NULL AND ({end_path})::timestamptz < ${p})")
+            format!("({end_path} IS NOT NULL AND ({end_path})::timestamptz < ${p}::timestamptz)")
         }
 
         SearchPrefix::Ge => {
             let p = builder.add_timestamp_param(&start_str);
             format!(
-                "(({start_path})::timestamptz >= ${p} OR \
-                 ({end_path} IS NOT NULL AND ({end_path})::timestamptz >= ${p}))"
+                "(({start_path})::timestamptz >= ${p}::timestamptz OR \
+                 ({end_path} IS NOT NULL AND ({end_path})::timestamptz >= ${p}::timestamptz))"
             )
         }
 
         SearchPrefix::Le => {
             let p = builder.add_timestamp_param(&end_str);
             format!(
-                "(({start_path} IS NULL OR ({start_path})::timestamptz < ${p}) AND \
-                 ({end_path} IS NULL OR ({end_path})::timestamptz < ${p}))"
+                "(({start_path} IS NULL OR ({start_path})::timestamptz < ${p}::timestamptz) AND \
+                 ({end_path} IS NULL OR ({end_path})::timestamptz < ${p}::timestamptz))"
             )
         }
 
@@ -407,8 +413,8 @@ fn build_period_condition(
             let p1 = builder.add_timestamp_param(format_datetime(&approx_start));
             let p2 = builder.add_timestamp_param(format_datetime(&approx_end));
             format!(
-                "(({start_path} IS NULL OR ({start_path})::timestamptz < ${p2}) AND \
-                 ({end_path} IS NULL OR ({end_path})::timestamptz >= ${p1}))"
+                "(({start_path} IS NULL OR ({start_path})::timestamptz < ${p2}::timestamptz) AND \
+                 ({end_path} IS NULL OR ({end_path})::timestamptz >= ${p1}::timestamptz))"
             )
         }
     };

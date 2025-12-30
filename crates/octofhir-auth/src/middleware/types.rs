@@ -4,6 +4,7 @@
 //! extracted from Bearer tokens.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use uuid::Uuid;
 
@@ -65,10 +66,13 @@ impl UserContext {
 /// This struct is extracted from requests by the `BearerAuth` extractor
 /// and contains all authentication/authorization information needed to
 /// process the request.
+///
+/// The `token_claims` field is wrapped in `Arc` to allow cheap cloning
+/// when caching or passing across async boundaries.
 #[derive(Debug, Clone)]
 pub struct AuthContext {
-    /// Validated access token claims.
-    pub token_claims: AccessTokenClaims,
+    /// Validated access token claims (wrapped in Arc for cheap cloning).
+    pub token_claims: Arc<AccessTokenClaims>,
 
     /// OAuth client that the token was issued to.
     pub client: Client,
@@ -225,8 +229,8 @@ mod tests {
     use super::*;
     use crate::types::GrantType;
 
-    fn create_test_claims() -> AccessTokenClaims {
-        AccessTokenClaims {
+    fn create_test_claims() -> Arc<AccessTokenClaims> {
+        Arc::new(AccessTokenClaims {
             iss: "https://auth.example.com".to_string(),
             sub: "user123".to_string(),
             aud: vec!["https://fhir.example.com".to_string()],
@@ -238,7 +242,8 @@ mod tests {
             patient: Some("Patient/123".to_string()),
             encounter: None,
             fhir_user: Some("Practitioner/456".to_string()),
-        }
+            sid: None,
+        })
     }
 
     fn create_test_client() -> Client {

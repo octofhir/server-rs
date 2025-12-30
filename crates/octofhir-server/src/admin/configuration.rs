@@ -225,14 +225,51 @@ pub async fn get_config_value(
             description: None,
             is_secret: octofhir_config::secrets::is_secret_key(&key),
         })),
-        Ok(None) => Err(ApiError::not_found(format!(
-            "Configuration not found: {}.{}",
-            category, key
-        ))),
+        Ok(None) => {
+            // Return default values for known config keys
+            if let Some(default_value) = get_default_config_value(&category, &key) {
+                return Ok(Json(ConfigEntryResponse {
+                    key: key.clone(),
+                    category,
+                    value: default_value,
+                    description: None,
+                    is_secret: false,
+                }));
+            }
+            Err(ApiError::not_found(format!(
+                "Configuration not found: {}.{}",
+                category, key
+            )))
+        }
         Err(e) => Err(ApiError::internal(format!(
             "Failed to get configuration: {}",
             e
         ))),
+    }
+}
+
+/// Get default value for known configuration keys.
+fn get_default_config_value(category: &str, key: &str) -> Option<serde_json::Value> {
+    match (category, key) {
+        ("db_console", "formatter") => {
+            // Default SqlStyle formatter config
+            Some(serde_json::json!({
+                "style": "sql_style",
+                "keywordCase": "upper",
+                "identifierCase": "lower",
+                "indentSpaces": 4,
+                "useTabs": false,
+                "maxWidth": 88,
+                "riverAlignment": true,
+                "newlineBeforeLogical": true,
+                "spacesAroundOperators": true,
+                "commaStyle": "trailing",
+                "parenthesesSpacing": false,
+                "alignSelectItems": true,
+                "riverWidth": 10
+            }))
+        }
+        _ => None,
     }
 }
 

@@ -189,6 +189,17 @@ impl OperationProvider for UiOperationProvider {
                 modules::SERVER,
             )
             .with_description("Evaluate a feature flag for a context"),
+            // Admin Audit API
+            OperationDefinition::new(
+                "admin.audit.analytics",
+                "Audit Analytics",
+                categories::UI,
+                vec!["GET".to_string()],
+                "/admin/audit/$analytics",
+                modules::SERVER,
+            )
+            .with_description("Get audit event analytics and aggregations")
+            .with_public(false),
         ]
     }
 

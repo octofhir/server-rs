@@ -63,12 +63,10 @@ pub enum HierarchyDirection {
 }
 
 /// Configuration for terminology service integration.
+///
+/// Terminology is always enabled - this config controls the server URL and cache settings.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TerminologyConfig {
-    /// Enable terminology service integration
-    #[serde(default = "default_enabled")]
-    pub enabled: bool,
-
     /// URL of the terminology server (default: https://tx.fhir.org/r4)
     #[serde(default = "default_server_url")]
     pub server_url: String,
@@ -76,10 +74,6 @@ pub struct TerminologyConfig {
     /// Cache TTL in seconds (default: 3600 = 1 hour)
     #[serde(default = "default_cache_ttl")]
     pub cache_ttl_secs: u64,
-}
-
-fn default_enabled() -> bool {
-    true
 }
 
 fn default_server_url() -> String {
@@ -93,7 +87,6 @@ fn default_cache_ttl() -> u64 {
 impl Default for TerminologyConfig {
     fn default() -> Self {
         Self {
-            enabled: default_enabled(),
             server_url: default_server_url(),
             cache_ttl_secs: default_cache_ttl(),
         }
@@ -103,9 +96,6 @@ impl Default for TerminologyConfig {
 /// Errors from terminology operations.
 #[derive(Debug, Error)]
 pub enum TerminologyError {
-    #[error("Terminology service is disabled")]
-    Disabled,
-
     #[error("Failed to create HTTP client: {0}")]
     HttpClientError(String),
 
@@ -251,7 +241,7 @@ impl HybridTerminologyProvider {
         })
     }
 
-    /// Build expansion from compose section (simplified).
+    /// Build expansion from compose section.
     async fn build_expansion_from_compose(
         &self,
         compose: &serde_json::Value,
@@ -279,13 +269,22 @@ impl HybridTerminologyProvider {
                             });
                         }
                     }
+                } else if let Some(ref sys) = system {
+                    // No explicit concept list - load all codes from the CodeSystem
+                    if let Some(cs_concepts) = self.load_codesystem_concepts(sys).await {
+                        for concept in cs_concepts {
+                            concepts.push(ValueSetConcept {
+                                code: concept.code,
+                                system: Some(sys.clone()),
+                                display: concept.display,
+                            });
+                        }
+                    }
                 }
 
-                // Note: For full expansion, we'd need to handle:
+                // Note: For full expansion, we'd also need to handle:
                 // - filter criteria
                 // - valueSet references
-                // - CodeSystem lookups
-                // This is a simplified implementation that only handles explicit concepts.
             }
         }
 
@@ -299,6 +298,47 @@ impl HybridTerminologyProvider {
             parameters: Vec::new(),
             timestamp: None,
         })
+    }
+
+    /// Load all concepts from a CodeSystem by URL.
+    async fn load_codesystem_concepts(&self, system_url: &str) -> Option<Vec<ValueSetConcept>> {
+        let resolved = self.canonical_manager.resolve(system_url).await.ok()?;
+
+        if resolved.resource.resource_type != "CodeSystem" {
+            return None;
+        }
+
+        let codesystem = &resolved.resource.content;
+        let concept_arr = codesystem.get("concept")?.as_array()?;
+
+        let mut concepts = Vec::new();
+        self.collect_concepts_recursive(concept_arr, &mut concepts);
+        Some(concepts)
+    }
+
+    /// Recursively collect concepts from a CodeSystem hierarchy.
+    fn collect_concepts_recursive(
+        &self,
+        concept_arr: &[serde_json::Value],
+        concepts: &mut Vec<ValueSetConcept>,
+    ) {
+        for concept in concept_arr {
+            if let Some(code) = concept.get("code").and_then(|c| c.as_str()) {
+                concepts.push(ValueSetConcept {
+                    code: code.to_string(),
+                    system: None, // System will be set by caller
+                    display: concept
+                        .get("display")
+                        .and_then(|d| d.as_str())
+                        .map(String::from),
+                });
+            }
+
+            // Handle nested concepts
+            if let Some(children) = concept.get("concept").and_then(|c| c.as_array()) {
+                self.collect_concepts_recursive(children, concepts);
+            }
+        }
     }
 
     /// Try to validate code against local ValueSet.
@@ -327,6 +367,46 @@ impl HybridTerminologyProvider {
         });
 
         Some(found)
+    }
+
+    /// Try to validate code against local CodeSystem.
+    ///
+    /// This checks if the code exists in a locally loaded CodeSystem,
+    /// avoiding expensive remote calls to tx.fhir.org.
+    async fn validate_code_local(&self, code: &str, system: &str) -> Option<bool> {
+        // Try to resolve the CodeSystem by URL
+        let resolved = self.canonical_manager.resolve(system).await.ok()?;
+
+        // Verify it's a CodeSystem
+        if resolved.resource.resource_type != "CodeSystem" {
+            return None;
+        }
+
+        let codesystem = &resolved.resource.content;
+        let concept_arr = codesystem.get("concept")?.as_array()?;
+
+        // Check recursively if the code exists
+        let found = self.find_code_in_concepts(concept_arr, code);
+        Some(found)
+    }
+
+    /// Recursively search for a code in a concept hierarchy.
+    fn find_code_in_concepts(&self, concept_arr: &[serde_json::Value], target_code: &str) -> bool {
+        for concept in concept_arr {
+            if let Some(code) = concept.get("code").and_then(|c| c.as_str()) {
+                if code == target_code {
+                    return true;
+                }
+            }
+
+            // Check nested concepts
+            if let Some(children) = concept.get("concept").and_then(|c| c.as_array()) {
+                if self.find_code_in_concepts(children, target_code) {
+                    return true;
+                }
+            }
+        }
+        false
     }
 
     /// Expand a ValueSet for search operations with optimal strategy selection.
@@ -579,7 +659,24 @@ impl TerminologyProvider for HybridTerminologyProvider {
         system: &str,
         version: Option<&str>,
     ) -> octofhir_fhir_model::error::Result<bool> {
-        // Delegate to remote (cached provider handles caching)
+        // 1. Try local validation first (fast, no network)
+        // Note: version is ignored for local validation as we use the loaded package version
+        if let Some(result) = self.validate_code_local(code, system).await {
+            tracing::debug!(
+                system = %system,
+                code = %code,
+                result = result,
+                "Validated code against local CodeSystem"
+            );
+            return Ok(result);
+        }
+
+        // 2. Fall back to cached remote (CachedTerminologyProvider handles caching)
+        tracing::debug!(
+            system = %system,
+            code = %code,
+            "Falling back to remote terminology server"
+        );
         self.remote.validate_code(code, system, version).await
     }
 
@@ -682,7 +779,6 @@ mod tests {
     #[test]
     fn test_terminology_config_defaults() {
         let config = TerminologyConfig::default();
-        assert!(config.enabled);
         assert_eq!(config.server_url, "https://tx.fhir.org/r4");
         assert_eq!(config.cache_ttl_secs, 3600);
     }

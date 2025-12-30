@@ -24,6 +24,12 @@ uuid = { workspace = true }
 # Password hashing
 bcrypt = "0.16"
 
+# Random generation
+rand = "0.8"
+
+# Encoding
+hex = "0.4"
+
 # Database (use sqlx-core and sqlx-postgres to avoid sqlite conflict)
 sqlx-core = { version = "0.8.6", default-features = false, features = [
     "_rt-tokio",

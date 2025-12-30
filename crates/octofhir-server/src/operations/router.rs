@@ -44,7 +44,7 @@ pub async fn system_operation_handler(
     let code = operation.trim_start_matches('$');
 
     // Check if the operation is defined at system level
-    let op_def = state.operation_registry.get_system_operation(code);
+    let op_def = state.fhir_operations.get_system_operation(code);
 
     if op_def.is_none() {
         return Err(ApiError::not_found(format!(
@@ -85,7 +85,7 @@ pub async fn type_operation_handler(
 
     // Check if the operation is defined at type level for this resource type
     let op_def = state
-        .operation_registry
+        .fhir_operations
         .get_type_operation(&resource_type, code);
 
     if op_def.is_none() {
@@ -139,7 +139,7 @@ pub async fn instance_operation_handler(
 
     // Check if the operation is defined at instance level for this resource type
     let op_def = state
-        .operation_registry
+        .fhir_operations
         .get_instance_operation(&resource_type, code);
 
     if op_def.is_none() {
@@ -281,7 +281,7 @@ async fn system_operation_handler_internal(
 ) -> Result<impl IntoResponse, ApiError> {
     let code = operation.trim_start_matches('$');
 
-    let op_def = state.operation_registry.get_system_operation(code);
+    let op_def = state.fhir_operations.get_system_operation(code);
     if op_def.is_none() {
         return Err(ApiError::not_found(format!(
             "Operation ${} not found at system level",
@@ -316,7 +316,7 @@ async fn type_operation_handler_internal(
     let code = operation.trim_start_matches('$');
 
     let op_def = state
-        .operation_registry
+        .fhir_operations
         .get_type_operation(&resource_type, code);
     if op_def.is_none() {
         return Err(ApiError::not_found(format!(

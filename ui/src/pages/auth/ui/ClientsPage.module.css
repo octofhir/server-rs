@@ -1,0 +1,32 @@
+.pageRoot {
+    flex: 1;
+    min-height: 0;
+    animation: fadeIn 0.2s ease-out;
+}
+
+.tableContainer {
+    padding: var(--mantine-spacing-md);
+}
+
+.clientIdCell {
+    display: flex;
+    align-items: center;
+    gap: var(--mantine-spacing-xs);
+}
+
+.clientIdText {
+    font-family: var(--mantine-font-family-monospace);
+    font-size: var(--mantine-font-size-xs);
+    color: var(--app-text-secondary);
+}
+
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(4px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}

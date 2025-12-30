@@ -19,8 +19,12 @@
 //! If Redis is unavailable or disabled, the system automatically falls back
 //! to L1-only mode (local cache per instance).
 
+pub mod auth;
 pub mod backend;
+pub mod jwt;
 pub mod pubsub;
 
+pub use auth::{AuthContextCache, CacheStats, LocalAuthCache, NoOpAuthCache, create_auth_cache};
 pub use backend::{CacheBackend, CachedEntry};
+pub use jwt::{JwtCacheStats, JwtVerificationCache};
 pub use pubsub::{CacheInvalidationListener, publish_invalidation};

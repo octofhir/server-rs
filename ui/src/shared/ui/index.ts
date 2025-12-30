@@ -28,4 +28,5 @@ export * from "./Grid";
 export * from "./Table";
 export * from "./Tabs";
 export * from "./Select";
+export * from "./ErrorBoundary";
 export * from "./utils";

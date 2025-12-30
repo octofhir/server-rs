@@ -100,7 +100,7 @@ export function RestConsolePage() {
 	useHotkeys(hotkeys);
 
 	return (
-		<Box className="page-enter" p="xl">
+		<Box className="page-enter" p="xl" style={{ height: "100%", overflow: "auto" }}>
 			<Helmet>
 				<title>REST Console</title>
 			</Helmet>

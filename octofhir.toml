@@ -73,8 +73,6 @@ sample_ratio = 0.0
 # =============================================================================
 
 [auth]
-# Enable the authentication module
-enabled = true
 # Issuer URL for tokens (should match your server's public URL)
 issuer = "http://localhost:8888"
 
@@ -117,7 +115,8 @@ supported_scopes = [
 
 [auth.signing]
 # JWT signing algorithm: RS256, RS384, or ES384
-algorithm = "ES384"
+# RS384 recommended for SMART on FHIR (faster than ES384, same security level)
+algorithm = "RS384"
 # Key rotation period in days
 key_rotation_days = 90
 # Number of old keys to retain for validation
@@ -153,22 +152,62 @@ keys_to_keep = 3
 # """
 #
 # Optional: Set a stable key ID (recommended when using fixed keys)
-kid = "production-key-2024"
+kid = "dev-rs384-key-2024"
 
 private_key_pem = """
 -----BEGIN PRIVATE KEY-----
-MIG2AgEAMBAGByqGSM49AgEGBSuBBAAiBIGeMIGbAgEBBDDlHNrNl0aERfdGTnY5
-lyrffnjnOl/HJrT8IZIAqJ2bpJLsSjOjEHjiBnJObKnKaAihZANiAAQ+PY3EVCK7
-ju3cLV0ngCgy9XSXX9L+A7EfDg/OTMk4gchL6mhDdpHe6pVsdqVeJvTxbbJPLdCU
-Yg1KcVPNzZ78n3tZ6mQ0gih7J3tdwe7y26xQIzYH9a3YOx7QOdEEfx4=
+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
+s2/3NHMCpWMgbDMTc4gCvQ==
 -----END PRIVATE KEY-----
 """
 
 public_key_pem = """
 -----BEGIN PUBLIC KEY-----
-MHYwEAYHKoZIzj0CAQYFK4EEACIDYgAEPj2NxFQiu47t3C1dJ4AoMvV0l1/S/gOx
-Hw4PzkzJOIHIS+poQ3aR3uqVbHalXib08W2yTy3QlGINSnFTzc2e/J97WepkNIIo
-eyd7XcHu8tusUCM2B/Wt2Dse0DnRBH8e
+MIIBojANBgkqhkiG9w0BAQEFAAOCAY8AMIIBigKCAYEA3If+vBz3iNSdXi5oYJVX
+/eJjcDw3xF7rJiJOocHmopxF/jj7SoS6aJRFkOvbV0eaVAJrKY7UGo6kXNPgXHp2
+0cTpzLtgp6D9sxJMmmdlFI1IHslKRY6RBsVeFNqdB3/0YVwE4oJH2LwL5Ri98XOt
+GyKe6IcTDGYBKjwFh3FJwlpHoGKGfEpYIMdr6vQ1HlkIZcTcJ51dTvNaJ+Hbi4ke
+YYCJYDDaftlepLZ4v13az0HVWygLzKDgpRObl401QVtCWw3f95p50Frax4Gwz3Cd
+WOU09m7h7ob49CuEfzS59iRsfYHEuDho6hLzYysImnb2ymjFWF5GbUpK+/gXucbJ
+L1zhoWXdcbi6jy59zzH1QR2YsXT+Ajd1JPHnZOpvIqgzjbCURdhllbnvh1FOK9Ea
+cfVJD41kWY5LtbNUZPqzFa8dkJ/UYnNCZ960UO7/Q2KjbekbMzsEDsFSRqsKtdQW
+N7NX+uwIu7552bYOe6hakPDbgGdVi9nfKIsMxv1RTxKVAgMBAAE=
 -----END PUBLIC KEY-----
 """
 
@@ -202,13 +241,6 @@ auth_requests_per_minute = 30
 max_failed_attempts = 5
 lockout_duration = "5m"
 
-[auth.audit]
-# Audit logging settings
-log_successful_auth = true
-log_failed_auth = true
-log_access_decisions = true
-log_token_operations = true
-
 # =============================================================================
 # Redis Cache Configuration (for horizontal scaling)
 # =============================================================================
@@ -222,6 +254,18 @@ url = "redis://localhost:6380"
 pool_size = 10
 # Connection timeout in milliseconds
 timeout_ms = 5000
+
+# =============================================================================
+# Terminology Server Configuration
+# =============================================================================
+
+[terminology]
+# Remote terminology server for code validation and ValueSet expansion
+# Defaults to tx.fhir.org if not specified
+# server_url = "https://tx.fhir.org/r4"
+
+# Cache TTL for terminology responses (default: 3600 = 1 hour)
+# cache_ttl_secs = 3600
 
 [cache]
 # Terminology cache TTL in seconds (1 hour)
@@ -271,3 +315,34 @@ max_complexity = 500
 username = "admin"
 password = "admin123"
 email = "admin@octofhir.io"
+
+# =============================================================================
+# SQL on FHIR Configuration (ViewDefinition Editor)
+# =============================================================================
+
+[sql_on_fhir]
+# Enable SQL on FHIR feature
+# When enabled:
+# - Installs SQL on FHIR IG package (hl7.fhir.uv.sql-on-fhir)
+# - Enables ViewDefinition CRUD operations via FHIR API
+# - Enables $run operation to execute ViewDefinitions
+# - Enables $export operation for CSV/Parquet/NDJSON export
+enabled = true
+
+# =============================================================================
+# Audit Trail Configuration
+# =============================================================================
+
+[audit]
+# Enable audit trail logging (creates AuditEvent resources)
+enabled = false
+# Log FHIR resource operations (create, read, update, delete, search)
+log_fhir_operations = true
+# Log authentication events (login, logout, failed attempts)
+log_auth_events = true
+# Log read operations (GET requests) - can generate high volume
+log_read_operations = true
+# Log search operations - can generate high volume
+log_search_operations = true
+# Resource types to exclude from audit logging (to avoid loops)
+exclude_resource_types = ["AuditEvent"]

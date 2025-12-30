@@ -38,14 +38,28 @@ impl CacheInvalidationListener {
     /// This spawns a background task that:
     /// 1. Subscribes to the "cache:invalidate" channel
     /// 2. Removes keys from L1 cache when invalidation events are received
-    /// 3. Automatically reconnects if the connection is lost
+    /// 3. Automatically reconnects with exponential backoff if the connection is lost
     pub async fn start(self) {
         tokio::spawn(async move {
+            let mut backoff = Duration::from_secs(1);
+            const MAX_BACKOFF: Duration = Duration::from_secs(300); // 5 minutes max
+
             loop {
-                if let Err(e) = self.run().await {
-                    tracing::error!("Cache invalidation listener error: {}", e);
-                    tracing::info!("Reconnecting in 5 seconds...");
-                    tokio::time::sleep(Duration::from_secs(5)).await;
+                match self.run().await {
+                    Ok(()) => {
+                        // Connection closed gracefully, reset backoff
+                        backoff = Duration::from_secs(1);
+                    }
+                    Err(e) => {
+                        tracing::error!(
+                            error = %e,
+                            backoff_secs = backoff.as_secs(),
+                            "Cache invalidation listener error, reconnecting..."
+                        );
+                        tokio::time::sleep(backoff).await;
+                        // Exponential backoff with max limit
+                        backoff = (backoff * 2).min(MAX_BACKOFF);
+                    }
                 }
             }
         });

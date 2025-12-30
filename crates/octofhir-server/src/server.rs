@@ -1,7 +1,9 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::sync::Arc;
 
+use anyhow::Context;
+use arc_swap::ArcSwap;
 use axum::{
     Router,
     extract::FromRef,
@@ -31,22 +33,41 @@ use octofhir_graphql::{FhirSchemaBuilder, InMemoryModelProvider, LazySchema, Sch
 use time::Duration;
 use tower_http::{compression::CompressionLayer, trace::TraceLayer};
 
-use crate::operation_registry::OperationStorage;
-use crate::operations::{DynOperationHandler, OperationRegistry, register_core_operations};
+use crate::operation_registry::OperationRegistryService;
+use crate::operations::{DynOperationHandler, OperationRegistry, register_core_operations_full};
 use crate::reference_resolver::StorageReferenceResolver;
 use crate::validation::ValidationService;
 
+use crate::audit::AuditService;
+use crate::cache::AuthContextCache;
 use crate::{config::AppConfig, handlers, middleware as app_middleware};
 use octofhir_db_postgres::PostgresConfig;
 use octofhir_db_postgres::PostgresStorage;
-use octofhir_search::SearchConfig as EngineSearchConfig;
+use octofhir_fhir_model::terminology::TerminologyProvider;
+use octofhir_fhirschema::TerminologyProviderAdapter;
+use octofhir_search::{HybridTerminologyProvider, SearchConfig as EngineSearchConfig};
 use octofhir_storage::DynStorage;
 
 /// Shared model provider type for FHIRPath evaluation
 pub type SharedModelProvider = Arc<dyn ModelProvider + Send + Sync>;
 
+/// Application state shared across all requests.
+///
+/// Wrapped in Arc for cheap cloning - a single Arc::clone instead of
+/// cloning 25+ individual Arc fields on every request.
 #[derive(Clone)]
-pub struct AppState {
+pub struct AppState(pub Arc<AppStateInner>);
+
+impl std::ops::Deref for AppState {
+    type Target = AppStateInner;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+/// Inner application state containing all shared server resources.
+pub struct AppStateInner {
     pub storage: DynStorage,
     pub search_cfg: EngineSearchConfig,
     pub fhir_version: String,
@@ -57,7 +78,7 @@ pub struct AppState {
     /// Model provider for validation, FHIRPath, LSP, and all server features
     pub model_provider: Arc<OctoFhirModelProvider>,
     /// Registry of available FHIR operations loaded from packages
-    pub operation_registry: Arc<OperationRegistry>,
+    pub fhir_operations: Arc<OperationRegistry>,
     /// Map of operation handlers by operation code
     pub operation_handlers: Arc<HashMap<String, DynOperationHandler>>,
     /// Validation service for FHIR resource validation with FHIRPath constraints
@@ -81,15 +102,25 @@ pub struct AppState {
     /// Policy reload service for hot-reload
     pub policy_reload_service: Arc<PolicyReloadService>,
     /// Authentication state for token validation
-    pub auth_state: Option<AuthState>,
+    pub auth_state: AuthState,
     /// GraphQL state for GraphQL handlers
     pub graphql_state: Option<GraphQLState>,
-    /// Cache of public operation paths for authentication middleware
-    pub public_paths_cache: crate::middleware::PublicPathsCache,
+    /// Operation registry (source of truth for public paths, middleware lookups)
+    pub operation_registry: Arc<OperationRegistryService>,
+    /// Cache for authenticated contexts (reduces DB queries per request)
+    pub auth_cache: Arc<dyn AuthContextCache>,
+    /// Cache for JWT verification (reduces signature verification overhead)
+    pub jwt_cache: Arc<crate::cache::JwtVerificationCache>,
     /// Cache for JSON Schema conversions (FhirSchema -> JSON Schema)
     pub json_schema_cache: Arc<dashmap::DashMap<String, serde_json::Value>>,
+    /// Cached resource types for fast validation
+    pub resource_type_set: Arc<ArcSwap<HashSet<String>>>,
+    /// Cached CapabilityStatement (built at startup)
+    pub capability_statement: Arc<serde_json::Value>,
     /// Configuration manager for runtime config and feature flags
     pub config_manager: Option<Arc<octofhir_config::ConfigurationManager>>,
+    /// Audit service for creating FHIR AuditEvent resources
+    pub audit_service: Arc<AuditService>,
 }
 
 // =============================================================================
@@ -98,26 +129,27 @@ pub struct AppState {
 
 impl FromRef<AppState> for crate::middleware::ExtendedAuthState {
     fn from_ref(state: &AppState) -> Self {
-        let auth_state = state
-            .auth_state
-            .clone()
-            .expect("AuthState not initialized in AppState");
-        crate::middleware::ExtendedAuthState::new(auth_state, state.public_paths_cache.clone())
+        crate::middleware::ExtendedAuthState::new(
+            state.auth_state.clone(),
+            state.operation_registry.clone(),
+            state.auth_cache.clone(),
+            state.jwt_cache.clone(),
+        )
     }
 }
 
 impl FromRef<AppState> for AuthState {
     fn from_ref(state: &AppState) -> Self {
-        state
-            .auth_state
-            .clone()
-            .expect("AuthState not initialized in AppState")
+        state.auth_state.clone()
     }
 }
 
 impl FromRef<AppState> for AuthorizationState {
     fn from_ref(state: &AppState) -> Self {
-        AuthorizationState::new(state.policy_evaluator.clone())
+        AuthorizationState::new(
+            state.policy_evaluator.clone(),
+            state.operation_registry.clone(),
+        )
     }
 }
 
@@ -193,65 +225,63 @@ async fn bootstrap_conformance_if_postgres(cfg: &AppConfig) -> Result<(), anyhow
 
     // Bootstrap auth resources (admin user, default UI client)
     // Tables are automatically created when StructureDefinitions are loaded above
-    if cfg.auth.enabled {
-        let pool = Arc::new(pg_storage.pool().clone());
+    let pool = Arc::new(pg_storage.pool().clone());
 
-        // Bootstrap default UI client
-        let client_storage = ArcClientStorage::new(pool.clone());
-        let issuer = &cfg.auth.issuer;
-        match crate::bootstrap::bootstrap_default_ui_client(&client_storage, issuer).await {
+    // Bootstrap default UI client
+    let client_storage = ArcClientStorage::new(pool.clone());
+    let issuer = &cfg.auth.issuer;
+    match crate::bootstrap::bootstrap_default_ui_client(&client_storage, issuer).await {
+        Ok(true) => {
+            tracing::info!("Default UI client bootstrapped successfully");
+        }
+        Ok(false) => {
+            tracing::debug!("Default UI client already exists");
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "Failed to bootstrap default UI client");
+        }
+    }
+
+    // Bootstrap admin user if configured
+    if let Some(ref admin_config) = cfg.bootstrap.admin_user {
+        let user_storage = ArcUserStorage::new(pool.clone());
+        match crate::bootstrap::bootstrap_admin_user(&user_storage, admin_config).await {
             Ok(true) => {
-                tracing::info!("Default UI client bootstrapped successfully");
+                tracing::info!(
+                    username = %admin_config.username,
+                    "Admin user bootstrapped successfully"
+                );
             }
             Ok(false) => {
-                tracing::debug!("Default UI client already exists");
-            }
-            Err(e) => {
-                tracing::warn!(error = %e, "Failed to bootstrap default UI client");
-            }
-        }
-
-        // Bootstrap admin user if configured
-        if let Some(ref admin_config) = cfg.bootstrap.admin_user {
-            let user_storage = ArcUserStorage::new(pool.clone());
-            match crate::bootstrap::bootstrap_admin_user(&user_storage, admin_config).await {
-                Ok(true) => {
-                    tracing::info!(
-                        username = %admin_config.username,
-                        "Admin user bootstrapped successfully"
-                    );
-                }
-                Ok(false) => {
-                    tracing::debug!(
-                        username = %admin_config.username,
-                        "Admin user already exists"
-                    );
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        error = %e,
-                        username = %admin_config.username,
-                        "Failed to bootstrap admin user"
-                    );
-                }
-            }
-        }
-
-        // Bootstrap admin access policy
-        let policy_storage = PostgresPolicyStorageAdapter::new(pool);
-        match crate::bootstrap::bootstrap_admin_access_policy(&policy_storage).await {
-            Ok(true) => {
-                tracing::info!("Admin access policy bootstrapped successfully");
-            }
-            Ok(false) => {
-                tracing::debug!("Admin access policy already exists");
+                tracing::debug!(
+                    username = %admin_config.username,
+                    "Admin user already exists"
+                );
             }
             Err(e) => {
                 tracing::warn!(
                     error = %e,
-                    "Failed to bootstrap admin access policy"
+                    username = %admin_config.username,
+                    "Failed to bootstrap admin user"
                 );
             }
+        }
+    }
+
+    // Bootstrap admin access policy
+    let policy_storage = PostgresPolicyStorageAdapter::new(pool);
+    match crate::bootstrap::bootstrap_admin_access_policy(&policy_storage).await {
+        Ok(true) => {
+            tracing::info!("Admin access policy bootstrapped successfully");
+        }
+        Ok(false) => {
+            tracing::debug!("Admin access policy already exists");
+        }
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                "Failed to bootstrap admin access policy"
+            );
         }
     }
 
@@ -482,18 +512,51 @@ pub async fn build_app(
     // Use Arc<OctoFhirModelProvider> directly for all components
     let model_provider = octofhir_provider;
 
+    // Create HybridTerminologyProvider for terminology operations
+    // This is shared across FhirPath, validation, $expand, and $validate-code
+    // Terminology is always enabled - uses local packages first, then remote server with caching
+    let terminology_provider: Option<Arc<dyn TerminologyProvider>> =
+        match crate::canonical::get_manager() {
+            Some(manager) => {
+                match HybridTerminologyProvider::new(manager, &cfg.terminology) {
+                    Ok(provider) => {
+                        tracing::info!(
+                            server_url = %cfg.terminology.server_url,
+                            cache_ttl = cfg.terminology.cache_ttl_secs,
+                            "Terminology service initialized (local packages + remote server with caching)"
+                        );
+                        Some(Arc::new(provider))
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = %e, "Failed to create terminology provider, terminology operations will be limited");
+                        None
+                    }
+                }
+            }
+            None => {
+                tracing::warn!("Canonical manager not available, terminology operations will be limited");
+                None
+            }
+        };
+
     // Create FHIRPath function registry and engine
     let registry = Arc::new(octofhir_fhirpath::create_function_registry());
-    let fhirpath_engine = Arc::new(
+    let mut fhirpath_engine =
         FhirPathEngine::new(registry, model_provider.clone())
             .await
-            .map_err(|e| anyhow::anyhow!("Failed to initialize FHIRPath engine: {}", e))?,
-    );
+            .map_err(|e| anyhow::anyhow!("Failed to initialize FHIRPath engine: {}", e))?;
 
+    // Add terminology provider to FhirPath engine for memberOf, validateVS, etc.
+    if let Some(ref provider) = terminology_provider {
+        fhirpath_engine = fhirpath_engine.with_terminology_provider(provider.clone());
+        tracing::info!("FHIRPath engine configured with terminology provider");
+    }
+
+    let fhirpath_engine = Arc::new(fhirpath_engine);
     tracing::info!("FHIRPath engine initialized successfully with schema-aware model provider");
 
     // Load operation definitions from canonical manager
-    let operation_registry = match crate::operations::load_operations().await {
+    let fhir_operations = match crate::operations::load_operations().await {
         Ok(mut registry) => {
             tracing::info!(
                 count = registry.len(),
@@ -512,6 +575,32 @@ pub async fn build_app(
                 affects_state: false,
             });
             tracing::info!("Registered $validate at system level");
+            // Register $run for ViewDefinition (SQL on FHIR)
+            registry.register(crate::operations::OperationDefinition {
+                code: "run".to_string(),
+                url: "http://hl7.org/fhir/uv/sql-on-fhir/OperationDefinition/ViewDefinition-run".to_string(),
+                kind: crate::operations::OperationKind::Operation,
+                system: false,
+                type_level: true,
+                instance: true,
+                resource: vec!["ViewDefinition".to_string()],
+                parameters: vec![],
+                affects_state: false,
+            });
+            tracing::info!("Registered $run for ViewDefinition");
+            // Register $sql for ViewDefinition (SQL generation)
+            registry.register(crate::operations::OperationDefinition {
+                code: "sql".to_string(),
+                url: "http://hl7.org/fhir/uv/sql-on-fhir/OperationDefinition/ViewDefinition-sql".to_string(),
+                kind: crate::operations::OperationKind::Operation,
+                system: false,
+                type_level: true,
+                instance: true,
+                resource: vec!["ViewDefinition".to_string()],
+                parameters: vec![],
+                affects_state: false,
+            });
+            tracing::info!("Registered $sql for ViewDefinition");
             Arc::new(registry)
         }
         Err(e) => {
@@ -529,40 +618,78 @@ pub async fn build_app(
                 parameters: vec![],
                 affects_state: false,
             });
+            // Register $run for ViewDefinition (SQL on FHIR)
+            registry.register(crate::operations::OperationDefinition {
+                code: "run".to_string(),
+                url: "http://hl7.org/fhir/uv/sql-on-fhir/OperationDefinition/ViewDefinition-run".to_string(),
+                kind: crate::operations::OperationKind::Operation,
+                system: false,
+                type_level: true,
+                instance: true,
+                resource: vec!["ViewDefinition".to_string()],
+                parameters: vec![],
+                affects_state: false,
+            });
+            // Register $sql for ViewDefinition (SQL generation)
+            registry.register(crate::operations::OperationDefinition {
+                code: "sql".to_string(),
+                url: "http://hl7.org/fhir/uv/sql-on-fhir/OperationDefinition/ViewDefinition-sql".to_string(),
+                kind: crate::operations::OperationKind::Operation,
+                system: false,
+                type_level: true,
+                instance: true,
+                resource: vec!["ViewDefinition".to_string()],
+                parameters: vec![],
+                affects_state: false,
+            });
             Arc::new(registry)
         }
     };
 
     // Register core operation handlers
     let operation_handlers: Arc<HashMap<String, DynOperationHandler>> = Arc::new(
-        register_core_operations(fhirpath_engine.clone(), model_provider.clone()),
+        register_core_operations_full(
+            fhirpath_engine.clone(),
+            model_provider.clone(),
+            cfg.bulk_export.clone(),
+            cfg.sql_on_fhir.clone(),
+        ),
     );
     tracing::info!(
         count = operation_handlers.len(),
         "Registered operation handlers"
     );
 
-    // Initialize ValidationService with FHIRPath constraint support
-    let mut validation_service =
-        ValidationService::new(model_provider.clone(), fhirpath_engine.clone())
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to initialize validation service: {}", e))?;
+    // Initialize ValidationService with shared validator (single instance per server)
+    // Prepare optional reference resolver
+    let reference_resolver: Option<Arc<dyn octofhir_fhirschema::reference::ReferenceResolver>> =
+        if !cfg.validation.skip_reference_validation {
+            tracing::info!("Validation service with reference existence validation");
+            Some(Arc::new(StorageReferenceResolver::new(
+                storage.clone(),
+                cfg.base_url(),
+            )))
+        } else {
+            tracing::info!("Validation service (reference validation disabled)");
+            None
+        };
 
-    // Add reference resolver for existence validation unless disabled in config
-    if !cfg.validation.skip_reference_validation {
-        let reference_resolver = Arc::new(StorageReferenceResolver::new(
-            storage.clone(),
-            cfg.base_url(),
-        ));
-        validation_service = validation_service.with_reference_resolver(reference_resolver);
-        tracing::info!("Validation service initialized with reference existence validation");
-    } else {
-        tracing::info!("Validation service initialized (reference validation disabled)");
-    }
+    // Prepare optional terminology service
+    let terminology_service: Option<Arc<dyn octofhir_fhirschema::terminology::TerminologyService>> =
+        if let Some(ref provider) = terminology_provider {
+            tracing::info!("Validation service with terminology binding validation");
+            Some(Arc::new(TerminologyProviderAdapter::new(provider.clone())))
+        } else {
+            None
+        };
 
-    // Create public paths cache for authentication middleware
-    // This is created early so it can be shared with the gateway reload listener
-    let public_paths_cache = crate::middleware::PublicPathsCache::new();
+    // Create validation service with shared validator
+    let validation_service = ValidationService::with_options(
+        model_provider.clone(),
+        fhirpath_engine.clone(),
+        reference_resolver,
+        terminology_service,
+    );
 
     // Initialize gateway router and load initial routes
     let gateway_router = Arc::new(crate::gateway::GatewayRouter::new());
@@ -574,27 +701,7 @@ pub async fn build_app(
             tracing::warn!(error = %e, "Failed to load initial gateway routes");
         }
     }
-
-    // Start gateway hot-reload listener with public paths cache
-    // so it can update the cache when CustomOperations change
-    match crate::gateway::GatewayReloadBuilder::new()
-        .with_pool(db_pool.as_ref().clone())
-        .with_gateway_router(gateway_router.clone())
-        .with_storage(storage.clone())
-        .with_public_paths_cache(public_paths_cache.clone())
-        .start()
-    {
-        Ok(_handle) => {
-            tracing::info!("Gateway hot-reload listener started");
-            // Handle is dropped here, but the task continues running
-        }
-        Err(e) => {
-            tracing::warn!(
-                error = %e,
-                "Failed to start gateway hot-reload listener"
-            );
-        }
-    }
+    // Note: Gateway hot-reload listener is started later after operation_registry is initialized
 
     // Initialize custom handler registry
     let handler_registry = Arc::new(crate::gateway::HandlerRegistry::new());
@@ -637,6 +744,38 @@ pub async fn build_app(
     let _cleanup_handle = async_job_manager.clone().start_cleanup_task();
     tracing::info!("Async job cleanup task started");
     // Note: _cleanup_handle is dropped here but the task continues running in the background
+
+    // Start background cleanup task for expired bulk export files
+    if cfg.bulk_export.enabled {
+        let export_path = cfg.bulk_export.export_path.clone();
+        let retention_hours = cfg.bulk_export.retention_hours;
+        let _export_cleanup_handle = tokio::spawn(async move {
+            let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(3600)); // Run every hour
+            loop {
+                interval.tick().await;
+                match crate::operations::cleanup_expired_exports(&export_path, retention_hours)
+                    .await
+                {
+                    Ok(deleted) if deleted > 0 => {
+                        tracing::info!(
+                            deleted = deleted,
+                            retention_hours = retention_hours,
+                            "Cleaned up expired bulk export directories"
+                        );
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = %e, "Failed to clean up expired bulk exports");
+                    }
+                    _ => {}
+                }
+            }
+        });
+        tracing::info!(
+            export_path = %cfg.bulk_export.export_path,
+            retention_hours = cfg.bulk_export.retention_hours,
+            "Bulk export cleanup task started"
+        );
+    }
 
     // Initialize policy evaluation components
     let policy_storage = Arc::new(PostgresPolicyStorageAdapter::new(db_pool.clone()));
@@ -713,67 +852,51 @@ pub async fn build_app(
     ));
     tracing::info!("Policy evaluator initialized");
 
-    // Initialize auth state if auth is enabled
-    let auth_state = initialize_auth_state(&cfg, db_pool.clone()).await;
-    if auth_state.is_some() {
-        tracing::info!("Authentication enabled");
+    // Initialize auth state (mandatory)
+    let auth_state = initialize_auth_state(&cfg, db_pool.clone())
+        .await
+        .context("Failed to initialize authentication")?;
+    tracing::info!("Authentication initialized");
 
-        // Bootstrap admin user if configured
-        if let Some(ref admin_config) = cfg.bootstrap.admin_user {
-            let user_storage = octofhir_auth_postgres::ArcUserStorage::new(db_pool.clone());
-            match crate::bootstrap::bootstrap_admin_user(&user_storage, admin_config).await {
-                Ok(true) => {
-                    tracing::info!(
-                        username = %admin_config.username,
-                        "Admin user bootstrapped successfully"
-                    );
-                }
-                Ok(false) => {
-                    tracing::debug!(
-                        username = %admin_config.username,
-                        "Admin user already exists, skipping bootstrap"
-                    );
-                }
-                Err(e) => {
-                    tracing::error!(
-                        error = %e,
-                        username = %admin_config.username,
-                        "Failed to bootstrap admin user"
-                    );
-                }
+    // Bootstrap admin user if configured
+    if let Some(ref admin_config) = cfg.bootstrap.admin_user {
+        let user_storage = octofhir_auth_postgres::ArcUserStorage::new(db_pool.clone());
+        match crate::bootstrap::bootstrap_admin_user(&user_storage, admin_config).await {
+            Ok(true) => {
+                tracing::info!(
+                    username = %admin_config.username,
+                    "Admin user bootstrapped successfully"
+                );
+            }
+            Ok(false) => {
+                tracing::debug!(
+                    username = %admin_config.username,
+                    "Admin user already exists, skipping bootstrap"
+                );
+            }
+            Err(e) => {
+                tracing::error!(
+                    error = %e,
+                    username = %admin_config.username,
+                    "Failed to bootstrap admin user"
+                );
             }
         }
-    } else {
-        tracing::warn!("Authentication disabled - no auth configuration found");
     }
 
-    // Bootstrap operations registry
-    match crate::bootstrap::bootstrap_operations(db_pool.as_ref(), &cfg).await {
-        Ok(count) => {
-            tracing::info!(count, "Operations registry bootstrapped");
-
-            // Populate public paths cache from operations registry (static operations)
-            let op_storage =
-                crate::operation_registry::PostgresOperationStorage::new((*db_pool).clone());
-            if let Ok(all_operations) = op_storage.list_all().await {
-                public_paths_cache.update_from_operations(&all_operations);
-            }
-
-            // Also update cache with gateway CustomOperations
-            let gateway_ops = crate::handlers::load_gateway_operations(&storage).await;
-            public_paths_cache.update_from_operations(&gateway_ops);
-
-            let (exact, prefix) = public_paths_cache.len();
-            tracing::info!(
-                exact_paths = exact,
-                prefix_paths = prefix,
-                "Public paths cache populated (static + gateway operations)"
-            );
+    // Bootstrap operations registry (source of truth for public paths)
+    let operation_registry = match crate::bootstrap::bootstrap_operations(db_pool.as_ref(), &cfg).await {
+        Ok(registry) => {
+            tracing::info!("Operations registry bootstrapped with in-memory indexes");
+            registry
         }
         Err(e) => {
-            tracing::warn!(error = %e, "Failed to bootstrap operations registry");
+            tracing::warn!(error = %e, "Failed to bootstrap operations registry, using empty registry");
+            // Create an empty registry as fallback
+            let op_storage = Arc::new(crate::operation_registry::PostgresOperationStorage::new((*db_pool).clone()));
+            Arc::new(OperationRegistryService::new(op_storage))
         }
-    }
+    };
 
     // Create GraphQL state if enabled (schema build was started early)
     let graphql_state = if let Some(lazy_schema) = lazy_schema {
@@ -801,14 +924,109 @@ pub async fn build_app(
         None
     };
 
-    let state = AppState {
+    // Initialize audit service
+    let audit_service = Arc::new(AuditService::new(
+        storage.clone(),
+        cfg.audit.enabled,
+        cfg.audit.clone(),
+    ));
+    if cfg.audit.enabled {
+        tracing::info!(
+            log_fhir = cfg.audit.log_fhir_operations,
+            log_auth = cfg.audit.log_auth_events,
+            log_reads = cfg.audit.log_read_operations,
+            log_searches = cfg.audit.log_search_operations,
+            "Audit service initialized"
+        );
+    } else {
+        tracing::info!("Audit service disabled");
+    }
+
+    // Initialize auth context cache (60 second TTL)
+    let auth_cache = crate::cache::create_auth_cache(std::time::Duration::from_secs(60));
+    tracing::info!("Auth context cache initialized with 60s TTL");
+
+    // Initialize JWT verification cache (30 second TTL, 10k max entries)
+    // Short TTL for security, max size prevents DoS via token flooding
+    let jwt_cache = Arc::new(crate::cache::JwtVerificationCache::default_ttl());
+    tracing::info!("JWT verification cache initialized with 30s TTL, 10k max entries");
+
+    // Spawn background cache cleanup task (runs every 60 seconds)
+    {
+        let auth_cache_for_cleanup = auth_cache.clone();
+        let jwt_cache_for_cleanup = jwt_cache.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+            loop {
+                interval.tick().await;
+                let auth_removed = auth_cache_for_cleanup.cleanup_expired();
+                let jwt_removed = jwt_cache_for_cleanup.cleanup_expired();
+                if auth_removed > 0 || jwt_removed > 0 {
+                    tracing::debug!(
+                        auth_removed,
+                        jwt_removed,
+                        "Cache cleanup completed"
+                    );
+                }
+            }
+        });
+        tracing::info!("Background cache cleanup task started (60s interval)");
+    }
+
+    let resource_types = model_provider.get_resource_types().await.unwrap_or_default();
+    let resource_type_set = Arc::new(ArcSwap::from_pointee(
+        resource_types.iter().cloned().collect::<HashSet<String>>(),
+    ));
+    tracing::info!(
+        resource_types = resource_type_set.load().len(),
+        "Resource types loaded for validation"
+    );
+
+    // Build CapabilityStatement at startup (cached for /metadata requests)
+    let capability_statement = Arc::new(
+        handlers::build_capability_statement(
+            &cfg.fhir.version,
+            &cfg.base_url(),
+            &db_pool,
+            &resource_types,
+        )
+        .await,
+    );
+    tracing::info!("CapabilityStatement built and cached");
+
+    // Start gateway hot-reload listener now that operation_registry is available
+    let gateway_reload_pool = db_pool.as_ref().clone();
+    let gateway_reload_router = gateway_router.clone();
+    let gateway_reload_storage = storage.clone();
+    let gateway_reload_ops = operation_registry.clone();
+    tokio::spawn(async move {
+        use crate::gateway::GatewayReloadBuilder;
+        match GatewayReloadBuilder::new()
+            .with_pool(gateway_reload_pool)
+            .with_gateway_router(gateway_reload_router)
+            .with_storage(gateway_reload_storage)
+            .with_operation_registry(gateway_reload_ops)
+            .start()
+        {
+            Ok(_handle) => {
+                tracing::info!("Gateway hot-reload listener started");
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "Failed to start gateway hot-reload listener");
+            }
+        }
+    });
+
+    // Create AppState wrapped in Arc for cheap cloning across all middleware/handlers
+    // This is a single Arc::clone per request instead of cloning 25+ individual fields
+    let state = AppState(Arc::new(AppStateInner {
         storage,
         search_cfg,
         fhir_version: cfg.fhir.version.clone(),
         base_url: cfg.base_url(),
         fhirpath_engine,
         model_provider,
-        operation_registry,
+        fhir_operations,
         operation_handlers,
         validation_service,
         gateway_router: (*gateway_router).clone(),
@@ -822,12 +1040,64 @@ pub async fn build_app(
         policy_reload_service,
         auth_state,
         graphql_state,
-        public_paths_cache,
+        operation_registry,
+        auth_cache,
+        jwt_cache,
         json_schema_cache: Arc::new(dashmap::DashMap::new()),
+        resource_type_set,
+        capability_statement,
         config_manager: Some(config_manager),
-    };
+        audit_service,
+    }));
+
+    // Configure async job executor to handle bulk export and ViewDefinition export jobs
+    let state_for_executor = state.clone();
+    let executor: crate::async_jobs::JobExecutor = Arc::new(move |job_id: uuid::Uuid, request_type: String, _method: String, _url: String, body: Option<serde_json::Value>| {
+        let state = state_for_executor.clone();
+        Box::pin(async move {
+            match request_type.as_str() {
+                "bulk_export" => {
+                    // Extract job parameters from body
+                    let body = body.ok_or_else(|| "Missing job parameters".to_string())?;
+
+                    // Execute the bulk export
+                    crate::operations::execute_bulk_export(state, job_id, body).await
+                },
+                "viewdefinition_export" => {
+                    // Extract job parameters from body
+                    let body = body.ok_or_else(|| "Missing job parameters".to_string())?;
+
+                    // Execute the ViewDefinition export
+                    crate::operations::execute_viewdefinition_export(state, job_id, body).await
+                },
+                _ => Err(format!("Unknown job type: {}", request_type))
+            }
+        }) as std::pin::Pin<Box<dyn std::future::Future<Output = Result<serde_json::Value, String>> + Send>>
+    });
+
+    state.async_job_manager.set_executor(executor);
+    tracing::info!("Async job executor configured for bulk export and ViewDefinition export");
 
     Ok(build_router(state, body_limit))
+}
+
+/// Creates routes for internal administrative resources.
+///
+/// These routes handle FHIR CRUD operations for internal resources like
+/// User, Role, Client, AccessPolicy, IdentityProvider, and CustomOperation.
+/// They are served at the root level (e.g., /User, /Role) rather than under /fhir.
+fn internal_resource_routes() -> Router<AppState> {
+    Router::new()
+        .route(
+            "/{resource_type}",
+            get(handlers::internal_search_resource).post(handlers::internal_create_resource),
+        )
+        .route(
+            "/{resource_type}/{id}",
+            get(handlers::internal_read_resource)
+                .put(handlers::internal_update_resource)
+                .delete(handlers::internal_delete_resource),
+        )
 }
 
 fn build_router(state: AppState, body_limit: usize) -> Router {
@@ -843,12 +1113,13 @@ fn build_router(state: AppState, body_limit: usize) -> Router {
         .route("/", get(handlers::root))
         .route("/healthz", get(handlers::healthz))
         .route("/readyz", get(handlers::readyz))
-        .route("/metadata", get(handlers::metadata))
+        .route("/metrics", get(handlers::metrics))
         // Browser favicon shortcut
         .route("/favicon.ico", get(handlers::favicon))
         // API endpoints for UI (before gateway fallback)
         .route("/api/health", get(handlers::api_health))
         .route("/api/build-info", get(handlers::api_build_info))
+        .route("/api/settings", get(handlers::api_settings))
         .route("/api/resource-types", get(handlers::api_resource_types))
         .route(
             "/api/resource-types-categorized",
@@ -873,8 +1144,11 @@ fn build_router(state: AppState, body_limit: usize) -> Router {
             "/api/$sql",
             axum::routing::post(crate::operations::sql::sql_operation),
         )
-        // PostgreSQL LSP WebSocket endpoint (authenticated)
-        .route("/api/pg-lsp", get(crate::lsp::lsp_websocket_handler))
+        // LSP WebSocket endpoints (authenticated)
+        .route("/api/lsp/pg", get(crate::lsp::pg_lsp_websocket_handler))
+        .route("/api/lsp/fhirpath", get(crate::lsp::fhirpath_lsp_websocket_handler))
+        // Log stream WebSocket endpoint (authenticated, admin scope required)
+        .route("/api/logs/stream", get(crate::log_stream::log_stream_handler))
         // Package Management API
         .route("/api/packages", get(handlers::api_packages_list))
         .route(
@@ -906,17 +1180,22 @@ fn build_router(state: AppState, body_limit: usize) -> Router {
             "/api/packages/install/stream",
             axum::routing::post(handlers::api_packages_install_stream),
         )
+        // Internal resource routes (User, Role, Client, etc.) without /fhir prefix
+        // These routes handle FHIR CRUD operations for internal administrative resources
+        // Routes are merged at root level to use parameterized handlers
+        .merge(internal_resource_routes())
         // Admin routes (nested under /admin)
         .nest(
             "/admin",
-            if state.auth_state.is_some() && state.config_manager.is_some() {
+            if state.config_manager.is_some() {
                 Router::new()
                     .merge(crate::admin::admin_routes())
                     .merge(crate::admin::config_routes())
-            } else if state.auth_state.is_some() {
-                crate::admin::admin_routes()
+                    .merge(crate::admin::audit_routes())
             } else {
                 Router::new()
+                    .merge(crate::admin::admin_routes())
+                    .merge(crate::admin::audit_routes())
             },
         )
         // Embedded UI under /ui
@@ -932,6 +1211,11 @@ fn build_router(state: AppState, body_limit: usize) -> Router {
         .route(
             "/_async-status/{job_id}/result",
             get(handlers::async_job_result),
+        )
+        // Bulk export file serving (Bulk Data Access IG)
+        .route(
+            "/_bulk-files/{job_id}/{filename}",
+            get(handlers::bulk_export_file),
         )
         // System search: GET /?_type=... or POST /_search
         .route("/_search", axum::routing::post(handlers::system_search))
@@ -1033,20 +1317,22 @@ fn build_router(state: AppState, body_limit: usize) -> Router {
     // Note: `.with_state(state)` consumes the AppState and returns Router<()>
 
     // Only apply auth/authz middleware if auth is enabled
-    router = if state.auth_state.is_some() {
-        router
-            .layer(middleware::from_fn(app_middleware::request_id))
-            .layer(middleware::from_fn_with_state(
-                state.clone(),
-                app_middleware::authorization_middleware,
-            ))
-            .layer(middleware::from_fn_with_state(
-                state.clone(),
-                app_middleware::authentication_middleware,
-            ))
-    } else {
-        router.layer(middleware::from_fn(app_middleware::request_id))
-    };
+    // Apply middleware stack (auth is mandatory)
+    router = router
+        // Audit middleware runs closest to handler, after auth context is set
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            app_middleware::audit_middleware,
+        ))
+        .layer(middleware::from_fn(app_middleware::request_id))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            app_middleware::authorization_middleware,
+        ))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            app_middleware::authentication_middleware,
+        ));
 
     let router: Router = router
         .layer(middleware::from_fn(app_middleware::content_negotiation))
@@ -1055,9 +1341,17 @@ fn build_router(state: AppState, body_limit: usize) -> Router {
             TraceLayer::new_for_http()
                 .make_span_with(|req: &axum::http::Request<_>| {
                     use tracing::field::Empty;
-                    // Skip creating a span for browser favicon and health check requests to avoid noisy logs
+                    // Skip creating a span for noisy infrastructure endpoints
                     let path = req.uri().path();
-                    if path == "/favicon.ico" || path == "/api/health" || path == "/healthz" {
+                    if matches!(
+                        path,
+                        "/healthz"
+                            | "/readyz"
+                            | "/livez"
+                            | "/metrics"
+                            | "/favicon.ico"
+                            | "/api/health"
+                    ) {
                         return tracing::span!(tracing::Level::TRACE, "noop");
                     }
                     let method = req.method().clone();
@@ -1101,6 +1395,8 @@ fn build_router(state: AppState, body_limit: usize) -> Router {
                     },
                 ),
         )
+        // Metrics middleware - tracks all requests before any other processing
+        .layer(middleware::from_fn(app_middleware::metrics_middleware))
         .with_state(state)
         .layer(axum::extract::DefaultBodyLimit::max(body_limit));
 
@@ -1116,9 +1412,9 @@ fn build_router(state: AppState, body_limit: usize) -> Router {
     router
 }
 
-/// Build OAuth routes if auth is enabled.
+/// Build OAuth routes.
 fn build_oauth_routes(state: &AppState) -> Option<Router> {
-    let auth_state = state.auth_state.as_ref()?;
+    let auth_state = &state.auth_state;
 
     // Create OAuth state using the JWT service from auth state
     let oauth_state =
@@ -1198,18 +1494,13 @@ async fn shutdown_signal() {
     tracing::info!("shutdown signal received");
 }
 
-/// Returns `Some(AuthState)` if auth is enabled and initialization succeeds,
-/// or `None` if auth is disabled.
+/// Initializes authentication state.
+///
+/// Returns an error if auth initialization fails.
 async fn initialize_auth_state(
     cfg: &AppConfig,
     db_pool: Arc<sqlx_postgres::PgPool>,
-) -> Option<AuthState> {
-    // Check if auth is enabled
-    if !cfg.auth.enabled {
-        tracing::info!("Authentication is disabled in configuration");
-        return None;
-    }
-
+) -> anyhow::Result<AuthState> {
     tracing::info!(
         algorithm = %cfg.auth.signing.algorithm,
         has_private_key = cfg.auth.signing.private_key_pem.is_some(),
@@ -1223,8 +1514,7 @@ async fn initialize_auth_state(
         "RS384" => SigningAlgorithm::RS384,
         "ES384" => SigningAlgorithm::ES384,
         other => {
-            tracing::error!(algorithm = other, "Unsupported signing algorithm");
-            return None;
+            anyhow::bail!("Unsupported signing algorithm: {}", other);
         }
     };
 
@@ -1241,42 +1531,25 @@ async fn initialize_auth_state(
             .clone()
             .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
-        match SigningKeyPair::from_pem(kid.clone(), algorithm, private_pem, public_pem) {
-            Ok(key) => {
-                tracing::info!(
-                    algorithm = %algorithm,
-                    kid = %kid,
-                    "Loaded JWT signing key from configuration"
-                );
-                key
-            }
-            Err(e) => {
-                tracing::error!(
-                    error = %e,
-                    "Failed to load JWT signing key from configuration"
-                );
-                return None;
-            }
-        }
+        let key = SigningKeyPair::from_pem(kid.clone(), algorithm, private_pem, public_pem)
+            .map_err(|e| anyhow::anyhow!("Failed to load JWT signing key from configuration: {}", e))?;
+        tracing::info!(
+            algorithm = %algorithm,
+            kid = %kid,
+            "Loaded JWT signing key from configuration"
+        );
+        key
     } else {
         // Generate new signing key pair
         let key = match algorithm {
             SigningAlgorithm::RS256 | SigningAlgorithm::RS384 => {
-                match SigningKeyPair::generate_rsa(algorithm) {
-                    Ok(key) => key,
-                    Err(e) => {
-                        tracing::error!(error = %e, "Failed to generate RSA signing key");
-                        return None;
-                    }
-                }
+                SigningKeyPair::generate_rsa(algorithm)
+                    .map_err(|e| anyhow::anyhow!("Failed to generate RSA signing key: {}", e))?
             }
-            SigningAlgorithm::ES384 => match SigningKeyPair::generate_ec() {
-                Ok(key) => key,
-                Err(e) => {
-                    tracing::error!(error = %e, "Failed to generate EC signing key");
-                    return None;
-                }
-            },
+            SigningAlgorithm::ES384 => {
+                SigningKeyPair::generate_ec()
+                    .map_err(|e| anyhow::anyhow!("Failed to generate EC signing key: {}", e))?
+            }
         };
 
         tracing::warn!(
@@ -1297,7 +1570,7 @@ async fn initialize_auth_state(
     let revoked_token_storage = Arc::new(ArcRevokedTokenStorage::new(db_pool.clone()));
     let user_storage = Arc::new(ArcUserStorage::new(db_pool));
 
-    Some(
+    Ok(
         AuthState::new(
             jwt_service,
             client_storage,

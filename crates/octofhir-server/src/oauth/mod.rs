@@ -14,9 +14,13 @@
 use std::sync::Arc;
 
 use axum::{
-    Router,
+    Form, Router,
+    extract::State,
+    http::{HeaderMap, StatusCode},
+    response::Response,
     routing::{get, post},
 };
+use octofhir_auth::oauth::token::TokenRequest;
 use octofhir_auth::token::jwt::JwtService;
 use octofhir_auth::token::service::TokenConfig;
 use octofhir_auth::{
@@ -30,6 +34,7 @@ use octofhir_auth_postgres::{
 use time::Duration;
 use url::Url;
 
+use crate::audit::AuditService;
 use crate::server::AppState;
 
 /// OAuth state containing all auth-related storage.
@@ -39,6 +44,14 @@ pub struct OAuthState {
     pub logout_state: LogoutState,
     pub jwks_state: JwksState,
     pub smart_config_state: SmartConfigState,
+    pub audit_service: Arc<AuditService>,
+}
+
+/// Combined state for auditing token handler.
+#[derive(Clone)]
+pub struct AuditingTokenState {
+    pub token_state: TokenState,
+    pub audit_service: Arc<AuditService>,
 }
 
 impl OAuthState {
@@ -46,11 +59,6 @@ impl OAuthState {
     pub fn from_app_state(app_state: &AppState, jwt_service: Arc<JwtService>) -> Option<Self> {
         // Get config
         let config = &app_state.config;
-
-        if !config.auth.enabled {
-            return None;
-        }
-
         let db_pool = app_state.db_pool.clone();
 
         // Create storage adapters
@@ -102,6 +110,7 @@ impl OAuthState {
             logout_state,
             jwks_state,
             smart_config_state,
+            audit_service: app_state.audit_service.clone(),
         })
     }
 }
@@ -111,11 +120,119 @@ impl OAuthState {
 /// These routes use application/x-www-form-urlencoded for token requests
 /// and application/json for responses.
 pub fn oauth_routes(state: OAuthState) -> Router {
+    let auditing_state = AuditingTokenState {
+        token_state: state.token_state.clone(),
+        audit_service: state.audit_service.clone(),
+    };
+
     Router::new()
-        // Token endpoint - accepts x-www-form-urlencoded, returns JSON
-        .route("/auth/token", post(token_handler))
-        .with_state(state.token_state.clone())
+        // Token endpoint with audit logging - accepts x-www-form-urlencoded, returns JSON
+        .route("/auth/token", post(auditing_token_handler))
+        .with_state(auditing_state)
         .merge(logout_route(state.logout_state))
+}
+
+/// Token handler with audit logging.
+///
+/// Wraps the standard token handler and logs authentication events as FHIR AuditEvents.
+async fn auditing_token_handler(
+    State(state): State<AuditingTokenState>,
+    headers: HeaderMap,
+    form: Form<TokenRequest>,
+) -> Response {
+    use crate::audit::{AuditAction, AuditOutcome, AuditSource};
+    use std::net::IpAddr;
+
+    // Extract info for audit logging before consuming the form
+    let grant_type = form.grant_type.clone();
+    let client_id = form.client_id.clone();
+    let username = form.username.clone();
+
+    // Extract source IP from headers
+    let source_ip: Option<IpAddr> = headers
+        .get("x-forwarded-for")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.split(',').next().unwrap_or(s).trim().parse().ok())
+        .or_else(|| {
+            headers
+                .get("x-real-ip")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|s| s.parse().ok())
+        });
+
+    let user_agent = headers
+        .get("user-agent")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+
+    // Extract request ID from headers
+    let request_id = headers
+        .get("x-request-id")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+
+    // Call the actual token handler
+    let response = token_handler(State(state.token_state.clone()), headers, form).await;
+
+    // Check response status for audit outcome
+    let status = response.status();
+    let (audit_outcome, outcome_desc) = if status.is_success() {
+        (AuditOutcome::Success, "Authentication successful")
+    } else if status == StatusCode::UNAUTHORIZED {
+        (AuditOutcome::SeriousFailure, "Authentication failed: invalid credentials")
+    } else if status == StatusCode::BAD_REQUEST {
+        (AuditOutcome::MinorFailure, "Authentication failed: invalid request")
+    } else {
+        (AuditOutcome::SeriousFailure, "Authentication failed")
+    };
+
+    // Determine the action based on grant type and outcome
+    let action = match (grant_type.as_str(), &audit_outcome) {
+        ("password", AuditOutcome::Success) => AuditAction::UserLogin,
+        ("password", _) => AuditAction::UserLoginFailed,
+        ("client_credentials", _) => AuditAction::ClientAuth,
+        _ => AuditAction::ClientAuth, // authorization_code, refresh_token, etc.
+    };
+
+    // Build audit source
+    let source = AuditSource {
+        ip_address: source_ip,
+        user_agent,
+        site: Some("OctoFHIR".to_string()),
+    };
+
+    // Log the audit event asynchronously (fire and forget)
+    let audit_service = state.audit_service.clone();
+    let username_clone = username.clone();
+    let client_id_clone = client_id.clone();
+
+    tokio::spawn(async move {
+        if let Err(e) = audit_service
+            .log_auth_event(
+                action,
+                audit_outcome,
+                Some(outcome_desc),
+                None, // user_id (we don't have it from the token request)
+                username_clone.as_deref(),
+                client_id_clone.as_deref(),
+                &source,
+                request_id.as_deref(),
+                None, // session_id (not available at token creation time)
+            )
+            .await
+        {
+            tracing::warn!(error = %e, "Failed to create auth audit event");
+        } else {
+            tracing::debug!(
+                grant_type = %grant_type,
+                client_id = ?client_id,
+                ?action,
+                "Auth audit event created"
+            );
+        }
+    });
+
+    response
 }
 
 /// Creates logout route for browser-based authentication.

@@ -1,9 +1,26 @@
 use std::{env, path::PathBuf, sync::Arc};
 
+// Use mimalloc as the global allocator for better performance
+// Provides ~10-20% improvement in allocation-heavy workloads
+#[cfg(feature = "mimalloc")]
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 use octofhir_server::config::loader::load_config;
 use octofhir_server::config_manager::ServerConfigManager;
 use octofhir_server::{ServerBuilder, shutdown_tracing};
 use tokio::sync::RwLock;
+
+const STARTUP_BANNER: &str = r#"
+       db         88888888ba  8b        d8  8b        d8  ,ad8888ba,    888b      88
+      d88b        88      "8b  Y8,    ,8P    Y8,    ,8P  d8"'    `"8b   8888b     88
+     d8'`8b       88      ,8P   Y8,  ,8P      `8b  d8'  d8'        `8b  88 `8b    88
+    d8'  `8b      88aaaaaa8P'    "8aa8"         Y88P    88          88  88  `8b   88
+   d8YaaaaY8b     88""""""8b,     `88'          d88b    88          88  88   `8b  88
+  d8""""""""8b    88      `8b      88         ,8P  Y8,  Y8,        ,8P  88    `8b 88
+ d8'        `8b   88      a8P      88        d8'    `8b  Y8a.    .a8P   88     `8888
+d8'          `8b  88888888P"       88       8P        Y8  `"Y8888Y"'    88      `888
+"#;
 
 /// How the configuration path was determined.
 #[derive(Debug, Clone, Copy)]
@@ -28,6 +45,8 @@ impl std::fmt::Display for ConfigSource {
 
 #[tokio::main]
 async fn main() {
+    println!("{STARTUP_BANNER}");
+
     // Load .env file if present (before anything else)
     // This allows environment variables to be set from .env for local development
     if let Err(e) = dotenvy::dotenv() {
@@ -40,6 +59,9 @@ async fn main() {
 
     // Initialize tracing early with the default level
     octofhir_server::observability::init_tracing();
+
+    // Initialize Prometheus metrics
+    octofhir_server::metrics::init_metrics();
 
     // Parse config path from CLI, environment, or use default
     let (config_path, source) = resolve_config_path();

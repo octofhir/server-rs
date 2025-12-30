@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback, useEffect } from "react";
+import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import {
 	TextInput,
 	Stack,
@@ -11,7 +11,10 @@ import {
 } from "@mantine/core";
 import { useUnit } from "effector-react";
 import { $method, $rawPath, setRawPath } from "../state/consoleStore";
-import type { AutocompleteSuggestion, RestConsoleSearchParam } from "@/shared/api";
+import type {
+	AutocompleteSuggestion,
+	RestConsoleSearchParam,
+} from "@/shared/api";
 
 interface UnifiedPathBuilderProps {
 	allSuggestions: AutocompleteSuggestion[];
@@ -32,7 +35,11 @@ export function UnifiedPathBuilder({
 	searchParamsByResource,
 	isLoading,
 }: UnifiedPathBuilderProps) {
-	const { method, rawPath, setRawPath: setRawPathEvent } = useUnit({
+	const {
+		method,
+		rawPath,
+		setRawPath: setRawPathEvent,
+	} = useUnit({
 		method: $method,
 		rawPath: $rawPath,
 		setRawPath,
@@ -45,9 +52,10 @@ export function UnifiedPathBuilder({
 	});
 
 	// Extract resource types from suggestions
-	const resourceTypes = useMemo(() =>
-		allSuggestions.filter(s => s.kind === "resource").map(s => s.label),
-		[allSuggestions]
+	const resourceTypes = useMemo(
+		() =>
+			allSuggestions.filter((s) => s.kind === "resource").map((s) => s.label),
+		[allSuggestions],
 	);
 
 	// Parse current path and determine context
@@ -78,7 +86,8 @@ export function UnifiedPathBuilder({
 		// Parse path segments
 		const segments = relativePath.split("/").filter(Boolean);
 		const currentSegment = segments[segments.length - 1] || "";
-		const hasTrailingSlash = beforeCursor.endsWith("/") && !beforeCursor.endsWith("fhir/");
+		const hasTrailingSlash =
+			beforeCursor.endsWith("/") && !beforeCursor.endsWith("fhir/");
 
 		if (segments.length === 0) {
 			return { type: "resource-type" as const, value: currentSegment };
@@ -98,7 +107,10 @@ export function UnifiedPathBuilder({
 
 			if (isComplete) {
 				// Suggest next steps: /{id}, /$operation, or ?query
-				return { type: "next-after-resource" as const, resourceType: segments[0] };
+				return {
+					type: "next-after-resource" as const,
+					resourceType: segments[0],
+				};
 			}
 
 			// After resource type: could be ID, $operation, or ?query
@@ -107,7 +119,11 @@ export function UnifiedPathBuilder({
 				return { type: "resource-id" as const, value: "" };
 			}
 			if (char === "$" || currentSegment.startsWith("$")) {
-				return { type: "type-operation" as const, resourceType: segments[0], value: currentSegment };
+				return {
+					type: "type-operation" as const,
+					resourceType: segments[0],
+					value: currentSegment,
+				};
 			}
 			return { type: "resource-type" as const, value: currentSegment };
 		}
@@ -142,14 +158,28 @@ export function UnifiedPathBuilder({
 	const suggestions = useMemo((): Suggestion[] => {
 		if (context.type === "root") {
 			return [
-				{ value: "/fhir", label: "/fhir", description: "FHIR API base path", badge: "fhir" },
-				{ value: "/api", label: "/api", description: "Internal API endpoints", badge: "api" },
+				{
+					value: "/fhir",
+					label: "/fhir",
+					description: "FHIR API base path",
+					badge: "fhir",
+				},
+				{
+					value: "/api",
+					label: "/api",
+					description: "Internal API endpoints",
+					badge: "api",
+				},
 			];
 		}
 
 		if (context.type === "api-endpoint") {
 			return allSuggestions
-				.filter((s) => s.kind === "api-endpoint" && s.label.toLowerCase().includes(context.value.toLowerCase()))
+				.filter(
+					(s) =>
+						s.kind === "api-endpoint" &&
+						s.label.toLowerCase().includes(context.value.toLowerCase()),
+				)
 				.map((s) => ({
 					value: s.path_template,
 					label: s.label,
@@ -180,14 +210,15 @@ export function UnifiedPathBuilder({
 
 			// Add type-level operations
 			const typeOps = allSuggestions
-				.filter((s) =>
-					s.kind === "type-op" &&
-					s.metadata.resource_type === resourceType
+				.filter(
+					(s) =>
+						s.kind === "type-op" && s.metadata.resource_type === resourceType,
 				)
 				.map((s) => ({
 					value: s.path_template.replace("{resourceType}", resourceType),
 					label: s.label,
-					description: s.description || `${s.methods.join(", ")} - Type operation`,
+					description:
+						s.description || `${s.methods.join(", ")} - Type operation`,
 					badge: "type-op",
 					insertValue: s.label, // Just the operation part like "/$validate"
 				}));
@@ -199,14 +230,16 @@ export function UnifiedPathBuilder({
 			// Suggest what comes after resource ID
 			const { resourceType } = context;
 			const instanceOps = allSuggestions
-				.filter((s) =>
-					s.kind === "instance-op" &&
-					s.metadata.resource_type === resourceType
+				.filter(
+					(s) =>
+						s.kind === "instance-op" &&
+						s.metadata.resource_type === resourceType,
 				)
 				.map((s) => ({
 					value: s.label, // e.g. "/$everything"
 					label: s.label,
-					description: s.description || `${s.methods.join(", ")} - Instance operation`,
+					description:
+						s.description || `${s.methods.join(", ")} - Instance operation`,
 					badge: "instance-op",
 					insertValue: s.label,
 				}));
@@ -217,7 +250,11 @@ export function UnifiedPathBuilder({
 		if (context.type === "resource-type") {
 			// Suggest resource types + system operations
 			const resourceSuggestions = allSuggestions
-				.filter((s) => s.kind === "resource" && s.label.toLowerCase().includes(context.value.toLowerCase()))
+				.filter(
+					(s) =>
+						s.kind === "resource" &&
+						s.label.toLowerCase().includes(context.value.toLowerCase()),
+				)
 				.slice(0, 20)
 				.map((s) => ({
 					value: s.label,
@@ -228,11 +265,16 @@ export function UnifiedPathBuilder({
 
 			// Add system operations (like /$convert, /$export)
 			const systemOps = allSuggestions
-				.filter((s) => s.kind === "system-op" && s.label.toLowerCase().includes(context.value.toLowerCase()))
+				.filter(
+					(s) =>
+						s.kind === "system-op" &&
+						s.label.toLowerCase().includes(context.value.toLowerCase()),
+				)
 				.map((s) => ({
 					value: s.label,
 					label: s.label,
-					description: s.description || `${s.methods.join(", ")} - System operation`,
+					description:
+						s.description || `${s.methods.join(", ")} - System operation`,
 					badge: "system-op",
 				}));
 
@@ -250,16 +292,23 @@ export function UnifiedPathBuilder({
 			];
 		}
 
-		if (context.type === "type-operation" || context.type === "instance-operation") {
-			const resourceType = "resourceType" in context ? context.resourceType : undefined;
+		if (
+			context.type === "type-operation" ||
+			context.type === "instance-operation"
+		) {
+			const resourceType =
+				"resourceType" in context ? context.resourceType : undefined;
 
 			if (context.type === "type-operation") {
 				// Type-level operations: filter by resource type and type_level flag
 				const typeOps = allSuggestions
-					.filter((s) =>
-						s.kind === "type-op" &&
-						s.metadata.resource_type === resourceType &&
-						s.label.toLowerCase().includes(context.value.replace("$", "").toLowerCase())
+					.filter(
+						(s) =>
+							s.kind === "type-op" &&
+							s.metadata.resource_type === resourceType &&
+							s.label
+								.toLowerCase()
+								.includes(context.value.replace("$", "").toLowerCase()),
 					)
 					.map((s) => ({
 						value: s.label,
@@ -272,10 +321,13 @@ export function UnifiedPathBuilder({
 			} else {
 				// Instance-level operations: filter by resource type and instance flag
 				const instanceOps = allSuggestions
-					.filter((s) =>
-						s.kind === "instance-op" &&
-						s.metadata.resource_type === resourceType &&
-						s.label.toLowerCase().includes(context.value.replace("$", "").toLowerCase())
+					.filter(
+						(s) =>
+							s.kind === "instance-op" &&
+							s.metadata.resource_type === resourceType &&
+							s.label
+								.toLowerCase()
+								.includes(context.value.replace("$", "").toLowerCase()),
 					)
 					.map((s) => ({
 						value: s.label,
@@ -290,15 +342,19 @@ export function UnifiedPathBuilder({
 
 		if (context.type === "query-param") {
 			const resourceType = extractResourceType(path);
-			const params = resourceType ? searchParamsByResource[resourceType] || [] : [];
+			const params = resourceType
+				? searchParamsByResource[resourceType] || []
+				: [];
 
 			return params
-				.filter((p) => p.code.toLowerCase().includes(context.value.toLowerCase()))
+				.filter((p) =>
+					p.code.toLowerCase().includes(context.value.toLowerCase()),
+				)
 				.slice(0, 15)
 				.map((p) => ({
 					value: p.code,
 					label: p.code,
-					description: p.search_type,
+					description: p.type,
 					badge: "param",
 					insertValue: `${p.code}=`,
 				}));
@@ -307,12 +363,16 @@ export function UnifiedPathBuilder({
 		if (context.type === "query-modifier") {
 			const paramName = context.paramName;
 			const resourceType = extractResourceType(path);
-			const params = resourceType ? searchParamsByResource[resourceType] || [] : [];
+			const params = resourceType
+				? searchParamsByResource[resourceType] || []
+				: [];
 			const param = params.find((p) => p.code === paramName);
 
 			if (param?.modifiers?.length) {
 				return param.modifiers
-					.filter((mod) => mod.code.toLowerCase().includes(context.value.toLowerCase()))
+					.filter((mod) =>
+						mod.code.toLowerCase().includes(context.value.toLowerCase()),
+					)
 					.map((mod) => ({
 						value: mod.code,
 						label: `:${mod.code}`,
@@ -354,7 +414,10 @@ export function UnifiedPathBuilder({
 				// Replace current path with API endpoint
 				newPath = suggestion.value + afterCursor;
 				newCursorPos = suggestion.value.length;
-			} else if (context.type === "next-after-resource" || context.type === "next-after-id") {
+			} else if (
+				context.type === "next-after-resource" ||
+				context.type === "next-after-id"
+			) {
 				// Append suggestion to current path
 				const insertValue = suggestion.insertValue || suggestion.value;
 				newPath = beforeCursor + insertValue + afterCursor;
@@ -366,7 +429,10 @@ export function UnifiedPathBuilder({
 				segments[segments.length - 1] = suggestion.value;
 				newPath = baseUrl + segments.join("/") + afterCursor;
 				newCursorPos = (baseUrl + segments.join("/")).length;
-			} else if (context.type === "query-param" || context.type === "query-modifier") {
+			} else if (
+				context.type === "query-param" ||
+				context.type === "query-modifier"
+			) {
 				// Replace current token in query string
 				const queryStart = beforeCursor.indexOf("?");
 				const beforeQuery = beforeCursor.slice(0, queryStart + 1);
@@ -396,20 +462,30 @@ export function UnifiedPathBuilder({
 		[path, cursorPosition, context, combobox, setRawPathEvent],
 	);
 
-	// Sync with store on mount
+	// Track if we're syncing from store to prevent reverse sync loop
+	const isSyncingFromStore = useRef(false);
+
+	// Sync from store when rawPath changes externally
+	// biome-ignore lint/correctness/useExhaustiveDependencies: intentionally omit path to prevent sync loop
 	useEffect(() => {
 		if (rawPath && rawPath !== path) {
+			isSyncingFromStore.current = true;
 			setPath(rawPath);
 			setCursorPosition(rawPath.length);
+			// Reset flag after state update
+			requestAnimationFrame(() => {
+				isSyncingFromStore.current = false;
+			});
 		}
-	}, [rawPath, path]);
+	}, [rawPath]);
 
-	// Sync store on path change
+	// Sync to store when local path changes (but not during store sync)
+	// biome-ignore lint/correctness/useExhaustiveDependencies: intentionally omit rawPath/setRawPathEvent to prevent sync loop
 	useEffect(() => {
-		if (path !== rawPath) {
+		if (!isSyncingFromStore.current && path !== rawPath) {
 			setRawPathEvent(path);
 		}
-	}, [path, rawPath, setRawPathEvent]);
+	}, [path]);
 
 	return (
 		<Stack gap="xs">
@@ -463,7 +539,10 @@ export function UnifiedPathBuilder({
 								<Combobox.Empty>No suggestions</Combobox.Empty>
 							) : (
 								suggestions.map((suggestion) => (
-									<Combobox.Option key={suggestion.value} value={suggestion.value}>
+									<Combobox.Option
+										key={suggestion.value}
+										value={suggestion.value}
+									>
 										<Group justify="space-between" gap="xs">
 											<Stack gap={0}>
 												<Text size="sm" fw={500}>
@@ -489,7 +568,8 @@ export function UnifiedPathBuilder({
 				</Combobox.Dropdown>
 			</Combobox>
 			<Text size="xs" c="dimmed">
-				Type to build your FHIR path with autocomplete. Context: <code>{context.type}</code>
+				Type to build your FHIR path with autocomplete. Context:{" "}
+				<code>{context.type}</code>
 			</Text>
 		</Stack>
 	);
@@ -517,13 +597,17 @@ function parseQueryContext(relativePath: string, queryStart: number) {
 	}
 
 	// Typing value (no suggestions for now)
-	return { type: "query-value" as const, value: lastToken.slice(equalsIndex + 1) };
+	return {
+		type: "query-value" as const,
+		value: lastToken.slice(equalsIndex + 1),
+	};
 }
 
 function extractResourceType(path: string): string | undefined {
 	const relativePath = path.replace(/^\/fhir\/?/, "");
 	const queryStart = relativePath.indexOf("?");
-	const pathOnly = queryStart === -1 ? relativePath : relativePath.slice(0, queryStart);
+	const pathOnly =
+		queryStart === -1 ? relativePath : relativePath.slice(0, queryStart);
 	const segments = pathOnly.split("/").filter(Boolean);
 	return segments[0];
 }

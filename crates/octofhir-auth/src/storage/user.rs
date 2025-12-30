@@ -342,6 +342,19 @@ pub trait UserStorage: Send + Sync {
     ///
     /// Returns an error if the storage operation fails.
     async fn list(&self, limit: i64, offset: i64) -> AuthResult<Vec<User>>;
+
+    /// Update a user's last login timestamp.
+    ///
+    /// # Arguments
+    ///
+    /// * `user_id` - The user ID
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The user doesn't exist
+    /// - The storage operation fails
+    async fn update_last_login(&self, user_id: Uuid) -> AuthResult<()>;
 }
 
 // =============================================================================

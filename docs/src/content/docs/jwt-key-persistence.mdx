@@ -11,27 +11,62 @@ By default, OctoFHIR generates a new JWT signing key pair on each server startup
 
 For production deployments, you should provide persistent JWT signing keys via configuration to maintain token validity across server restarts.
 
+## Signing Algorithm Selection
+
+OctoFHIR supports three JWT signing algorithms. Choose based on your requirements:
+
+| Algorithm | Type | Key Size | Security | Verify Speed | SMART on FHIR | Recommendation |
+|-----------|------|----------|----------|--------------|---------------|----------------|
+| **RS384** | RSA | 3072-bit | 128 bits | 🚀 Fast | ✅ Preferred | **Recommended** |
+| **RS256** | RSA | 2048-bit | 112 bits | 🚀 Fast | ✅ Compatible | Good for compatibility |
+| **ES384** | ECDSA | P-384 | 192 bits | 🐢 Slow | ✅ Preferred | Smaller tokens, slower |
+
+### Why RS384 is Recommended
+
+- **Fast verification**: RSA verification uses small public exponent (65537), making it ~10x faster than ECDSA
+- **SMART on FHIR compliant**: RS384 is listed as a preferred algorithm in the SMART specification
+- **Sufficient security**: 128-bit security level is more than adequate for short-lived JWT tokens
+- **Wide compatibility**: Supported by all JWT libraries and clients
+
+### When to Use ES384
+
+- You need the smallest possible token size (EC signatures are ~96 bytes vs ~384 bytes for RSA)
+- You have low request volume and verification speed doesn't matter
+- Your infrastructure already uses P-384 keys
+
+### Performance Impact
+
+In high-throughput scenarios, ES384 can consume 20-30% of CPU time on signature verification alone.
+Switching to RS384 can significantly reduce this overhead.
+
 ## Quick Start
 
-### 1. Generate RSA Keys (for RS256 or RS384)
+### 1. Generate RSA Keys (for RS256 or RS384) — Recommended
 
 ```bash
-# Generate a 2048-bit RSA private key
-openssl genrsa -out jwt_private.pem 2048
+# Generate a 3072-bit RSA private key (for RS384, provides 128-bit security)
+openssl genpkey -algorithm RSA -out jwt_private.pem -pkeyopt rsa_keygen_bits:3072
 
 # Extract the public key
 openssl rsa -in jwt_private.pem -pubout -out jwt_public.pem
+
+# For RS256, you can use 2048-bit keys (112-bit security, still secure)
+# openssl genpkey -algorithm RSA -out jwt_private.pem -pkeyopt rsa_keygen_bits:2048
 ```
 
 ### 2. Generate EC Keys (for ES384)
 
 ```bash
-# Generate a P-384 EC private key
-openssl ecparam -name secp384r1 -genkey -noout -out jwt_private.pem
+# Generate a P-384 EC private key (PKCS#8 format)
+openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-384 -out jwt_private.pem
 
 # Extract the public key
 openssl ec -in jwt_private.pem -pubout -out jwt_public.pem
 ```
+
+:::note
+Keys are generated in PKCS#8 format (`-----BEGIN PRIVATE KEY-----`), which is required by OctoFHIR.
+:::
 
 ### 3. Configure OctoFHIR
 

@@ -151,6 +151,13 @@ impl<'a> ClientStorage<'a> {
     /// - The database insert fails
     /// - A client with the same ID already exists
     pub async fn create(&self, id: Uuid, resource: serde_json::Value) -> StorageResult<ClientRow> {
+        // Create transaction record first (required by foreign key constraint)
+        let txid: i64 = sqlx_core::query_scalar::query_scalar(
+            "INSERT INTO _transaction (status) VALUES ('committed') RETURNING txid",
+        )
+        .fetch_one(self.pool)
+        .await?;
+
         let id_str = id.to_string();
         let row: (
             String,
@@ -162,11 +169,12 @@ impl<'a> ClientStorage<'a> {
         ) = query_as(
             r#"
             INSERT INTO client (id, txid, created_at, updated_at, resource, status)
-            VALUES ($1, 1, NOW(), NOW(), $2, 'created')
+            VALUES ($1, $2, NOW(), NOW(), $3, 'created')
             RETURNING id, txid, created_at, updated_at, resource, status::text
             "#,
         )
         .bind(&id_str)
+        .bind(txid)
         .bind(&resource)
         .fetch_one(self.pool)
         .await
@@ -184,7 +192,7 @@ impl<'a> ClientStorage<'a> {
 
     /// Update an existing client.
     ///
-    /// Increments the transaction ID (version) on each update.
+    /// Creates a new transaction record for versioning.
     ///
     /// # Errors
     ///
@@ -192,6 +200,13 @@ impl<'a> ClientStorage<'a> {
     /// - The client doesn't exist
     /// - The database update fails
     pub async fn update(&self, id: Uuid, resource: serde_json::Value) -> StorageResult<ClientRow> {
+        // Create transaction record first (required by foreign key constraint)
+        let txid: i64 = sqlx_core::query_scalar::query_scalar(
+            "INSERT INTO _transaction (status) VALUES ('committed') RETURNING txid",
+        )
+        .fetch_one(self.pool)
+        .await?;
+
         let row: Option<(
             String,
             i64,
@@ -203,7 +218,7 @@ impl<'a> ClientStorage<'a> {
             r#"
             UPDATE client
             SET resource = $2,
-                txid = txid + 1,
+                txid = $3,
                 updated_at = NOW(),
                 status = 'updated'
             WHERE id = $1
@@ -213,6 +228,7 @@ impl<'a> ClientStorage<'a> {
         )
         .bind(id.to_string())
         .bind(&resource)
+        .bind(txid)
         .fetch_optional(self.pool)
         .await?;
 
@@ -230,17 +246,25 @@ impl<'a> ClientStorage<'a> {
     /// - The client doesn't exist
     /// - The database update fails
     pub async fn delete(&self, id: Uuid) -> StorageResult<()> {
+        // Create transaction record first (required by foreign key constraint)
+        let txid: i64 = sqlx_core::query_scalar::query_scalar(
+            "INSERT INTO _transaction (status) VALUES ('committed') RETURNING txid",
+        )
+        .fetch_one(self.pool)
+        .await?;
+
         let result = query(
             r#"
             UPDATE client
             SET status = 'deleted',
-                txid = txid + 1,
+                txid = $2,
                 updated_at = NOW()
             WHERE id = $1
               AND status != 'deleted'
             "#,
         )
         .bind(id.to_string())
+        .bind(txid)
         .execute(self.pool)
         .await?;
 
@@ -464,5 +488,58 @@ impl ClientStorageTrait for PostgresClientStorage<'_> {
             }
             None => Ok(false),
         }
+    }
+
+    async fn regenerate_secret(&self, client_id: &str) -> AuthResult<(Client, String)> {
+        // Find existing client
+        let existing = self
+            .storage()
+            .find_by_client_id(client_id)
+            .await
+            .map_err(Self::map_storage_error)?
+            .ok_or_else(|| {
+                AuthError::invalid_client(format!("Client '{}' not found", client_id))
+            })?;
+
+        let mut client: Client = serde_json::from_value(existing.resource.clone()).map_err(|e| {
+            AuthError::storage(format!("Failed to deserialize client: {}", e))
+        })?;
+
+        // Verify client is confidential
+        if !client.confidential {
+            return Err(AuthError::invalid_client(
+                "Cannot regenerate secret for public clients".to_string(),
+            ));
+        }
+
+        // Generate new secret (32 bytes = 256 bits, hex encoded = 64 chars)
+        let mut bytes = [0u8; 32];
+        rand::Rng::fill(&mut rand::thread_rng(), &mut bytes);
+        let plain_secret = hex::encode(bytes);
+
+        // Hash with bcrypt
+        let hashed_secret = bcrypt::hash(&plain_secret, bcrypt::DEFAULT_COST).map_err(|e| {
+            AuthError::storage(format!("Failed to hash secret: {}", e))
+        })?;
+
+        // Update client with new secret hash
+        client.client_secret = Some(hashed_secret);
+
+        let resource = serde_json::to_value(&client)
+            .map_err(|e| AuthError::storage(format!("Failed to serialize client: {}", e)))?;
+
+        let id = Uuid::parse_str(&existing.id)
+            .map_err(|e| AuthError::storage(format!("Invalid client ID: {}", e)))?;
+
+        let row = self
+            .storage()
+            .update(id, resource)
+            .await
+            .map_err(Self::map_storage_error)?;
+
+        let updated_client: Client = serde_json::from_value(row.resource)
+            .map_err(|e| AuthError::storage(format!("Failed to deserialize client: {}", e)))?;
+
+        Ok((updated_client, plain_secret))
     }
 }

@@ -65,6 +65,47 @@ export default defineConfig({
         changeOrigin: true,
         ws: true,
       },
+      // Internal resources (not under /fhir prefix)
+      "/User": {
+        target: "http://localhost:8888",
+        changeOrigin: true,
+      },
+      "/Role": {
+        target: "http://localhost:8888",
+        changeOrigin: true,
+      },
+      "/Client": {
+        target: "http://localhost:8888",
+        changeOrigin: true,
+      },
+      "/AccessPolicy": {
+        target: "http://localhost:8888",
+        changeOrigin: true,
+      },
+      "/IdentityProvider": {
+        target: "http://localhost:8888",
+        changeOrigin: true,
+      },
+      "/CustomOperation": {
+        target: "http://localhost:8888",
+        changeOrigin: true,
+      },
+      "/Session": {
+        target: "http://localhost:8888",
+        changeOrigin: true,
+      },
+      "/RefreshToken": {
+        target: "http://localhost:8888",
+        changeOrigin: true,
+      },
+      "/RevokedToken": {
+        target: "http://localhost:8888",
+        changeOrigin: true,
+      },
+      "/App": {
+        target: "http://localhost:8888",
+        changeOrigin: true,
+      },
     },
   },
   css: {

@@ -171,10 +171,11 @@ where
             return Err(AuthError::unauthorized("Empty Bearer token"));
         }
 
-        // 3. Decode and validate JWT
+        // 3. Decode and validate JWT (using spawn_blocking to avoid blocking async runtime)
         let claims = auth_state
             .jwt_service
-            .decode::<AccessTokenClaims>(&token)
+            .decode_async::<AccessTokenClaims>(token)
+            .await
             .map_err(|e| {
                 tracing::debug!(error = %e, "Failed to decode token");
                 AuthError::invalid_token(e.to_string())
@@ -217,11 +218,11 @@ where
         // 8. Load user context if subject is a valid UUID
         let user = load_user_context(&auth_state, &claims).await?;
 
-        // 9. Build auth context
+        // 9. Build auth context (wrap claims in Arc for cheap cloning)
         let auth_context = AuthContext {
             patient: claims.patient.clone(),
             encounter: claims.encounter.clone(),
-            token_claims: claims,
+            token_claims: Arc::new(claims),
             client,
             user,
         };

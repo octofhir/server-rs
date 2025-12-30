@@ -96,10 +96,15 @@ impl SchemaManager {
         // Create table and related objects
         info!("Creating schema for resource type: {}", resource_type);
         self.create_resource_table(resource_type).await?;
-        self.create_history_table(resource_type).await?;
         self.create_indexes(resource_type).await?;
         self.create_update_trigger(resource_type).await?;
-        self.create_history_trigger(resource_type).await?;
+
+        // Skip history tables/triggers for internal resources (auth, app config)
+        // They don't need FHIR-style versioning
+        if !Self::is_internal_resource(&table) {
+            self.create_history_table(resource_type).await?;
+            self.create_history_trigger(resource_type).await?;
+        }
 
         // Add gateway notification trigger for App and CustomOperation resources
         if Self::is_gateway_resource(&table) {
@@ -123,6 +128,24 @@ impl SchemaManager {
     /// Returns true if this resource type requires policy notifications.
     fn is_policy_resource(table: &str) -> bool {
         table == "accesspolicy"
+    }
+
+    /// Returns true if this is an internal resource that should not have history tables.
+    /// These resources are managed differently and don't need FHIR-style versioning.
+    fn is_internal_resource(table: &str) -> bool {
+        matches!(
+            table,
+            "user"
+                | "client"
+                | "session"
+                | "accesspolicy"
+                | "refreshtoken"
+                | "revokedtoken"
+                | "identityprovider"
+                | "role"
+                | "app"
+                | "customoperation"
+        )
     }
 
     /// Checks if a table exists in the database.

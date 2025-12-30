@@ -8,6 +8,28 @@ pub struct SystemOperationProvider;
 impl OperationProvider for SystemOperationProvider {
     fn get_operations(&self) -> Vec<OperationDefinition> {
         vec![
+            // Root endpoint
+            OperationDefinition::new(
+                "system.root",
+                "Root",
+                categories::SYSTEM,
+                vec!["GET".to_string()],
+                "/",
+                modules::SERVER,
+            )
+            .with_description("Server root endpoint")
+            .with_public(true),
+            // Favicon
+            OperationDefinition::new(
+                "system.favicon",
+                "Favicon",
+                categories::SYSTEM,
+                vec!["GET".to_string()],
+                "/favicon.ico",
+                modules::SERVER,
+            )
+            .with_description("Browser favicon")
+            .with_public(true),
             // Public operations
             OperationDefinition::new(
                 "system.metadata",
@@ -69,6 +91,17 @@ impl OperationProvider for SystemOperationProvider {
                 modules::SERVER,
             )
             .with_description("OpenID Connect configuration")
+            .with_public(true),
+            // Observability endpoints
+            OperationDefinition::new(
+                "system.metrics",
+                "Prometheus Metrics",
+                categories::SYSTEM,
+                vec!["GET".to_string()],
+                "/metrics",
+                modules::SERVER,
+            )
+            .with_description("Prometheus metrics for monitoring")
             .with_public(true),
         ]
     }

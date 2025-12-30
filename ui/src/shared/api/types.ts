@@ -138,12 +138,65 @@ export interface UserResource extends FhirResource {
   username: string;
   password?: string;
   email?: string;
+  name?: string;
   fhirUser?: Reference;
   active: boolean;
   roles: string[];
+  status?: "active" | "inactive" | "locked";
   lastLogin?: string;
   mfaEnabled?: boolean;
   identity: UserIdentityElement[];
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+// User Session types
+export interface UserSession {
+  id: string;
+  userId: string;
+  clientId?: string;
+  clientName?: string;
+  ipAddress?: string;
+  userAgent?: string;
+  createdAt: string;
+  expiresAt: string;
+  lastActivity?: string;
+  isCurrent?: boolean;
+}
+
+// Role Management types
+export interface RoleResource extends FhirResource {
+  resourceType: "Role";
+  name: string;
+  description?: string;
+  permissions: string[];
+  isSystem?: boolean;
+  active: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+// Permission types
+export interface Permission {
+  code: string;
+  display: string;
+  category: string;
+  description?: string;
+}
+
+// Bundle type for list responses
+export interface Bundle<T extends FhirResource = FhirResource> {
+  resourceType: "Bundle";
+  type: string;
+  total?: number;
+  link?: Array<{
+    relation: string;
+    url: string;
+  }>;
+  entry?: Array<{
+    resource: T;
+    fullUrl?: string;
+  }>;
 }
 
 export interface UserIdentityElement {
@@ -470,3 +523,180 @@ export type InstallEvent =
   | InstallEventCompleted
   | InstallEventError
   | InstallEventSkipped;
+
+// System Logs types
+export type LogLevel = "trace" | "debug" | "info" | "warn" | "error";
+
+export interface LogEntry {
+  id: string;
+  timestamp: string;
+  level: LogLevel;
+  target: string;
+  message: string;
+  fields?: Record<string, unknown>;
+  span?: {
+    name: string;
+    target: string;
+  };
+}
+
+export interface LogFilters {
+  levels: LogLevel[];
+  search?: string;
+  target?: string;
+  startTime?: string;
+  endTime?: string;
+}
+
+export interface LogStreamConfig {
+  maxEntries?: number;
+  filters?: LogFilters;
+}
+
+// Audit Trail types - Simplified view of FHIR R4 AuditEvent
+// Maps to standard FHIR AuditEvent resource
+
+// FHIR R4 AuditEvent action codes
+export type AuditActionCode = "C" | "R" | "U" | "D" | "E"; // Create, Read, Update, Delete, Execute
+
+// Custom action subtypes for more detail
+export type AuditAction =
+  | "user.login"
+  | "user.logout"
+  | "user.login_failed"
+  | "resource.create"
+  | "resource.read"
+  | "resource.update"
+  | "resource.delete"
+  | "resource.search"
+  | "policy.evaluate"
+  | "client.auth"
+  | "client.create"
+  | "client.update"
+  | "client.delete"
+  | "config.change"
+  | "system.startup"
+  | "system.shutdown";
+
+// FHIR R4 AuditEvent outcome codes: 0=Success, 4=Minor failure, 8=Serious failure, 12=Major failure
+export type AuditOutcomeCode = "0" | "4" | "8" | "12";
+export type AuditOutcome = "success" | "failure" | "partial";
+
+// Simplified AuditEvent for UI (derived from FHIR AuditEvent)
+export interface AuditEvent {
+  resourceType: "AuditEvent";
+  id: string;
+  timestamp: string; // Maps to recorded
+  action: AuditAction;
+  actionCode?: AuditActionCode; // FHIR action code
+  outcome: AuditOutcome;
+  outcomeCode?: AuditOutcomeCode; // FHIR outcome code
+  outcomeDescription?: string;
+
+  // Actor (who performed the action) - from agent[]
+  actor: {
+    type: "user" | "client" | "system";
+    id?: string;
+    name?: string;
+    reference?: string;
+  };
+
+  // Source (where the request came from) - from source
+  source: {
+    ipAddress?: string;
+    userAgent?: string;
+    site?: string;
+    observer?: string;
+  };
+
+  // Target (what was affected) - from entity[]
+  target?: {
+    resourceType?: string;
+    resourceId?: string;
+    reference?: string;
+    query?: string;
+  };
+
+  // Changes (for updates) - extension or entity.detail
+  changes?: {
+    before?: Record<string, unknown>;
+    after?: Record<string, unknown>;
+    diff?: Array<{
+      path: string;
+      op: "add" | "remove" | "replace";
+      oldValue?: unknown;
+      newValue?: unknown;
+    }>;
+  };
+
+  // Additional context - from extension
+  context?: {
+    requestId?: string;
+    sessionId?: string;
+    clientId?: string;
+    policyId?: string;
+    duration?: number;
+    [key: string]: unknown;
+  };
+}
+
+export interface AuditEventFilters {
+  _content?: string; // FHIR search
+  action?: AuditActionCode; // FHIR action param
+  subtype?: string; // Custom action type
+  outcome?: AuditOutcomeCode;
+  agent?: string; // actor reference
+  "agent-type"?: string;
+  entity?: string; // resource reference
+  "entity-type"?: string;
+  date?: string; // ge/le prefixed
+  address?: string; // source IP
+  _count?: number;
+  _offset?: number;
+}
+
+// Simplified filters for UI
+export interface AuditEventUIFilters {
+  search?: string;
+  action?: AuditAction[];
+  outcome?: AuditOutcome[];
+  actorType?: ("user" | "client" | "system")[];
+  actorId?: string;
+  resourceType?: string;
+  resourceId?: string;
+  startTime?: string;
+  endTime?: string;
+  ipAddress?: string;
+}
+
+export interface AuditEventListResponse {
+  events: AuditEvent[];
+  total: number;
+  hasMore: boolean;
+  nextCursor?: string;
+}
+
+export interface AuditAnalytics {
+  activityOverTime: Array<{
+    timestamp: string;
+    count: number;
+    breakdown: Partial<Record<AuditAction, number>>;
+  }>;
+  topUsers: Array<{
+    userId: string;
+    userName?: string;
+    count: number;
+  }>;
+  topResources: Array<{
+    resourceType: string;
+    resourceId?: string;
+    count: number;
+  }>;
+  outcomeBreakdown: Partial<Record<AuditOutcome, number>>;
+  actionBreakdown: Partial<Record<AuditAction, number>>;
+  failedAttempts: Array<{
+    action: AuditAction;
+    count: number;
+    lastAttempt: string;
+  }>;
+}

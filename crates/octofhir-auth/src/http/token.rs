@@ -576,6 +576,15 @@ async fn password_grant(
         "Password authentication successful"
     );
 
+    // Update last login timestamp
+    if let Err(e) = user_storage.update_last_login(user.id).await {
+        tracing::warn!(
+            user_id = %user.id,
+            error = %e,
+            "Failed to update last login timestamp"
+        );
+    }
+
     // 7. Validate scope (use requested or default)
     let scope = request.scope.as_deref().unwrap_or("openid");
 
@@ -605,6 +614,7 @@ async fn password_grant(
         patient: None,
         encounter: None,
         fhir_user: user.fhir_user.clone(),
+        sid: None, // No session for password grant
     };
 
     // Encode access token using the token service's JWT service

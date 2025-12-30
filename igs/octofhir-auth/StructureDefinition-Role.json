@@ -1,0 +1,88 @@
+{
+  "resourceType": "StructureDefinition",
+  "id": "Role",
+  "url": "http://octofhir.io/StructureDefinition/Role",
+  "name": "Role",
+  "title": "Authorization Role",
+  "status": "active",
+  "fhirVersion": "4.0.1",
+  "kind": "logical",
+  "abstract": false,
+  "type": "Role",
+  "baseDefinition": "http://hl7.org/fhir/StructureDefinition/DomainResource",
+  "derivation": "specialization",
+  "description": "An authorization role that defines a set of permissions. Roles can be assigned to users for access control.",
+  "differential": {
+    "element": [
+      {
+        "id": "Role",
+        "path": "Role",
+        "short": "Authorization role",
+        "definition": "Defines an authorization role with a set of permissions."
+      },
+      {
+        "id": "Role.name",
+        "path": "Role.name",
+        "short": "Role name",
+        "definition": "Unique name identifier for the role",
+        "min": 1,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "Role.description",
+        "path": "Role.description",
+        "short": "Role description",
+        "definition": "Human-readable description of the role's purpose",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "Role.permissions",
+        "path": "Role.permissions",
+        "short": "Granted permissions",
+        "definition": "List of permission codes granted by this role",
+        "min": 0,
+        "max": "*",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "Role.isSystem",
+        "path": "Role.isSystem",
+        "short": "System role flag",
+        "definition": "Whether this is a built-in system role that cannot be deleted",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "boolean" }]
+      },
+      {
+        "id": "Role.active",
+        "path": "Role.active",
+        "short": "Is role active",
+        "definition": "Whether this role is currently active and can be assigned",
+        "min": 1,
+        "max": "1",
+        "type": [{ "code": "boolean" }]
+      },
+      {
+        "id": "Role.createdAt",
+        "path": "Role.createdAt",
+        "short": "Creation timestamp",
+        "definition": "When the role was created",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "instant" }]
+      },
+      {
+        "id": "Role.updatedAt",
+        "path": "Role.updatedAt",
+        "short": "Last update timestamp",
+        "definition": "When the role was last updated",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "instant" }]
+      }
+    ]
+  }
+}

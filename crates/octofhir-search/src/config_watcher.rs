@@ -234,7 +234,7 @@ impl ConfigWatcher {
                         let mut attempts = 0;
                         loop {
                             attempts += 1;
-                            match load_toml_config(&changed_path) {
+                            match load_toml_config(&changed_path).await {
                                 Ok(new_config) => {
                                     info!("Successfully loaded new terminology configuration");
                                     callback(new_config);
@@ -282,8 +282,8 @@ impl ConfigWatcher {
 }
 
 /// Load terminology configuration from a TOML file.
-fn load_toml_config(path: &Path) -> Result<TerminologyConfig, WatcherError> {
-    let content = std::fs::read_to_string(path)?;
+async fn load_toml_config(path: &Path) -> Result<TerminologyConfig, WatcherError> {
+    let content = tokio::fs::read_to_string(path).await?;
 
     // Try to parse as a full config with [terminology] section
     if let Ok(full_config) = toml::from_str::<toml::Value>(&content) {
@@ -337,7 +337,6 @@ impl ReloadableTerminologyProvider {
     ) -> Result<(), crate::terminology::TerminologyError> {
         info!(
             server_url = %new_config.server_url,
-            enabled = new_config.enabled,
             cache_ttl = new_config.cache_ttl_secs,
             "Reloading terminology provider with new configuration"
         );
@@ -445,51 +444,47 @@ mod tests {
         assert!(!config.reload_on_create);
     }
 
-    #[test]
-    fn test_load_toml_config_direct() {
+    #[tokio::test]
+    async fn test_load_toml_config_direct() {
         let mut file = NamedTempFile::new().unwrap();
         writeln!(
             file,
             r#"
-enabled = true
 server_url = "https://test.example.com/r4"
 cache_ttl_secs = 7200
 "#
         )
         .unwrap();
 
-        let config = load_toml_config(file.path()).unwrap();
-        assert!(config.enabled);
+        let config = load_toml_config(file.path()).await.unwrap();
         assert_eq!(config.server_url, "https://test.example.com/r4");
         assert_eq!(config.cache_ttl_secs, 7200);
     }
 
-    #[test]
-    fn test_load_toml_config_with_section() {
+    #[tokio::test]
+    async fn test_load_toml_config_with_section() {
         let mut file = NamedTempFile::new().unwrap();
         writeln!(
             file,
             r#"
 [terminology]
-enabled = false
 server_url = "https://other.example.com/r4"
 cache_ttl_secs = 1800
 "#
         )
         .unwrap();
 
-        let config = load_toml_config(file.path()).unwrap();
-        assert!(!config.enabled);
+        let config = load_toml_config(file.path()).await.unwrap();
         assert_eq!(config.server_url, "https://other.example.com/r4");
         assert_eq!(config.cache_ttl_secs, 1800);
     }
 
-    #[test]
-    fn test_load_toml_config_invalid() {
+    #[tokio::test]
+    async fn test_load_toml_config_invalid() {
         let mut file = NamedTempFile::new().unwrap();
         writeln!(file, "this is not valid toml {{{{").unwrap();
 
-        let result = load_toml_config(file.path());
+        let result = load_toml_config(file.path()).await;
         assert!(result.is_err());
     }
 

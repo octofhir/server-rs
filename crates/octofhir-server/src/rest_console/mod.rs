@@ -53,7 +53,7 @@ impl FromRef<AppState> for RestConsoleState {
     fn from_ref(state: &AppState) -> Self {
         Self::new(
             state.search_cfg.registry.clone(),
-            state.operation_registry.clone(),
+            state.fhir_operations.clone(),
             state.fhir_version.clone(),
             state.db_pool.clone(),
             state.storage.clone(),

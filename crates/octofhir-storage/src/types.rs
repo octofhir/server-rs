@@ -26,6 +26,27 @@ pub struct StoredResource {
     pub created_at: OffsetDateTime,
 }
 
+/// A FHIR resource stored with raw JSON string for zero-copy serialization.
+///
+/// This is an optimized version of `StoredResource` that keeps the resource
+/// as a raw JSON string, avoiding the overhead of parsing JSONB into a full
+/// JSON tree when the resource will just be serialized again in the response.
+#[derive(Debug, Clone)]
+pub struct RawStoredResource {
+    /// The resource ID.
+    pub id: String,
+    /// The version ID of this specific version.
+    pub version_id: String,
+    /// The FHIR resource type (e.g., "Patient", "Observation").
+    pub resource_type: String,
+    /// The full resource content as raw JSON string.
+    pub resource_json: String,
+    /// When this version was last updated.
+    pub last_updated: OffsetDateTime,
+    /// When the resource was originally created.
+    pub created_at: OffsetDateTime,
+}
+
 impl StoredResource {
     /// Creates a new `StoredResource`.
     #[must_use]
@@ -100,6 +121,42 @@ impl SearchResult {
     pub fn with_has_more(mut self, has_more: bool) -> Self {
         self.has_more = has_more;
         self
+    }
+
+    /// Returns the number of entries in this result.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// Returns true if there are no entries.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+}
+
+/// Result of a search operation with raw JSON resources.
+///
+/// This is an optimized version of `SearchResult` that keeps resources
+/// as raw JSON strings for zero-copy serialization in HTTP responses.
+#[derive(Debug, Clone, Default)]
+pub struct RawSearchResult {
+    /// The matching resources with raw JSON.
+    pub entries: Vec<RawStoredResource>,
+    /// Included resources from _include/_revinclude (different resource types).
+    pub included: Vec<RawStoredResource>,
+    /// Total count of matching resources, if requested and available.
+    pub total: Option<u32>,
+    /// Whether there are more results available beyond this page.
+    pub has_more: bool,
+}
+
+impl RawSearchResult {
+    /// Creates a new empty `RawSearchResult`.
+    #[must_use]
+    pub fn empty() -> Self {
+        Self::default()
     }
 
     /// Returns the number of entries in this result.

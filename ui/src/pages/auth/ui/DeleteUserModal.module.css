@@ -1,0 +1,28 @@
+.userInfo {
+	padding: var(--mantine-spacing-md);
+	background: var(--mantine-color-gray-0);
+	border-radius: var(--mantine-radius-md);
+	border: 1px solid var(--mantine-color-gray-3);
+}
+
+[data-mantine-color-scheme="dark"] .userInfo {
+	background: var(--mantine-color-dark-6);
+	border-color: var(--mantine-color-dark-4);
+}
+
+.label {
+	font-size: var(--mantine-font-size-xs);
+	color: var(--app-text-secondary);
+	text-transform: uppercase;
+	letter-spacing: 0.5px;
+	margin-bottom: 2px;
+}
+
+.value {
+	font-size: var(--mantine-font-size-sm);
+	font-weight: 500;
+}
+
+.warningAlert {
+	border: none;
+}

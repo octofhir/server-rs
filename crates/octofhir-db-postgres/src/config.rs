@@ -26,7 +26,10 @@ impl Default for PostgresConfig {
     fn default() -> Self {
         Self {
             url: "postgres://localhost/octofhir".into(),
-            pool_size: 10,
+            // 20 connections is a good default for production workloads
+            // with moderate concurrency. Adjust based on PostgreSQL max_connections
+            // and expected concurrent request load.
+            pool_size: 20,
             connect_timeout_ms: 5000,
             idle_timeout_ms: Some(300_000), // 5 minutes
             run_migrations: true,
@@ -81,7 +84,7 @@ mod tests {
     fn test_default_config() {
         let config = PostgresConfig::default();
         assert_eq!(config.url, "postgres://localhost/octofhir");
-        assert_eq!(config.pool_size, 10);
+        assert_eq!(config.pool_size, 20);
         assert_eq!(config.connect_timeout_ms, 5000);
         assert_eq!(config.idle_timeout_ms, Some(300_000));
         assert!(config.run_migrations);

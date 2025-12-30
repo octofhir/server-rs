@@ -1,8 +1,10 @@
-# OctoFHIR Server
+# Abyxon
 
-> **Note:** This project is under active development and not yet production-ready.
+> **Note:** This project is under active development and not yet production-ready. Status: Accepted.
 
-A high-performance FHIR R4B server in Rust.
+Core FHIR server of the OctoFHIR ecosystem, built in Rust.
+
+![Abyxon logo](logo.png)
 
 ## Quick Start
 

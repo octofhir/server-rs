@@ -307,6 +307,9 @@ CREATE INDEX IF NOT EXISTS idx_fcm_fhirschemas_url_fhir ON fcm.fhirschemas(url, 
 CREATE INDEX IF NOT EXISTS idx_fcm_fhirschemas_package ON fcm.fhirschemas(package_name, package_version);
 CREATE INDEX IF NOT EXISTS idx_fcm_fhirschemas_type ON fcm.fhirschemas(schema_type);
 CREATE INDEX IF NOT EXISTS idx_fcm_fhirschemas_content_hash ON fcm.fhirschemas(content_hash);
+-- Index for schema lookup by name (extracted from JSONB content)
+-- Used by ModelProvider::get_schema() for on-demand schema loading
+CREATE INDEX IF NOT EXISTS idx_fcm_fhirschemas_name_fhir ON fcm.fhirschemas((content->>'name'), fhir_version);
 
 -- FCM Triggers
 CREATE OR REPLACE FUNCTION fcm.extract_search_fields()

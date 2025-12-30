@@ -107,4 +107,26 @@ pub trait ClientStorage: Send + Sync {
     /// - The client doesn't exist
     /// - The storage operation fails
     async fn verify_secret(&self, client_id: &str, secret: &str) -> AuthResult<bool>;
+
+    /// Regenerate a client's secret.
+    ///
+    /// Generates a new random secret, hashes it with BCrypt, and stores the hash.
+    /// Returns the plaintext secret for one-time display to the user.
+    ///
+    /// # Arguments
+    ///
+    /// * `client_id` - The OAuth client_id
+    ///
+    /// # Returns
+    ///
+    /// A tuple of (updated client, plaintext secret). The plaintext secret should
+    /// be displayed once to the user and never stored.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The client doesn't exist
+    /// - The client is not confidential (public clients have no secrets)
+    /// - The storage operation fails
+    async fn regenerate_secret(&self, client_id: &str) -> AuthResult<(Client, String)>;
 }

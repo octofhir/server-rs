@@ -3,21 +3,18 @@ import {
 	Stack,
 	Title,
 	Text,
-	Paper,
 	Group,
-	Button,
-	TextInput,
 	Table,
 	Badge,
-	ActionIcon,
 	Menu,
-	Modal,
 	PasswordInput,
 	Checkbox,
 	MultiSelect,
 	Switch,
 	NumberInput,
 	Textarea,
+	CopyButton,
+	Tooltip,
 } from "@mantine/core";
 import { useDisclosure, useDebouncedValue } from "@mantine/hooks";
 import { useForm } from "@mantine/form";
@@ -28,26 +25,65 @@ import {
 	IconEdit,
 	IconTrash,
 	IconAppWindow,
+	IconRefresh,
+	IconCopy,
+	IconCheck,
 } from "@tabler/icons-react";
-import { useClients, useCreateClient, useUpdateClient, useDeleteClient, type ClientResource } from "../lib/useClients";
+import { Card } from "@/shared/ui/Card/Card";
+import { Modal } from "@/shared/ui/Modal/Modal";
+import { Button } from "@/shared/ui/Button/Button";
+import { TextInput } from "@/shared/ui/TextInput/TextInput";
+import { ActionIcon } from "@/shared/ui/ActionIcon/ActionIcon";
+import {
+	useClients,
+	useCreateClient,
+	useUpdateClient,
+	useDeleteClient,
+	useRegenerateSecret,
+	type ClientResource,
+	type RegenerateSecretResponse,
+} from "../lib/useClients";
+import { SecretDisplayModal } from "./SecretDisplayModal";
+import { DeleteClientModal } from "./DeleteClientModal";
+import classes from "./ClientsPage.module.css";
 
 export function ClientsPage() {
 	const [search, setSearch] = useState("");
 	const [debouncedSearch] = useDebouncedValue(search, 500);
 	const [opened, { open, close }] = useDisclosure(false);
 	const [editingClient, setEditingClient] = useState<ClientResource | null>(null);
+	const [deleteTarget, setDeleteTarget] = useState<ClientResource | null>(null);
+	const [secretData, setSecretData] = useState<RegenerateSecretResponse | null>(null);
+	const [isNewClientSecret, setIsNewClientSecret] = useState(false);
 
 	const { data, isLoading } = useClients({ search: debouncedSearch });
 	const deleteClient = useDeleteClient();
+	const regenerateSecret = useRegenerateSecret();
 
 	const handleEdit = (client: ClientResource) => {
 		setEditingClient(client);
 		open();
 	};
 
-	const handleDelete = (id: string) => {
-		if (confirm("Are you sure you want to delete this client?")) {
-			deleteClient.mutate(id);
+	const handleDeleteClick = (client: ClientResource) => {
+		setDeleteTarget(client);
+	};
+
+	const handleDeleteConfirm = () => {
+		if (deleteTarget?.id) {
+			deleteClient.mutate(deleteTarget.id, {
+				onSuccess: () => setDeleteTarget(null),
+			});
+		}
+	};
+
+	const handleRegenerateSecret = async (client: ClientResource) => {
+		try {
+			const result = await regenerateSecret.mutateAsync(client.clientId);
+			setSecretData(result);
+			setIsNewClientSecret(false);
+		} catch {
+			// Error handled by hook
 		}
 	};
 
@@ -56,10 +92,19 @@ export function ClientsPage() {
 		close();
 	};
 
+	const handleSecretModalClose = () => {
+		setSecretData(null);
+	};
+
+	const handleClientCreated = (clientId: string, secret: string) => {
+		setSecretData({ clientId, clientSecret: secret });
+		setIsNewClientSecret(true);
+	};
+
 	const clients = data?.entry?.map((e) => e.resource) || [];
 
 	return (
-		<Stack gap="md" style={{ flex: 1, minHeight: 0 }}>
+		<Stack gap="md" className={classes.pageRoot}>
 			<Group justify="space-between">
 				<div>
 					<Title order={2}>Clients</Title>
@@ -72,7 +117,7 @@ export function ClientsPage() {
 				</Button>
 			</Group>
 
-			<Paper p="md" withBorder>
+			<Card className={classes.tableContainer}>
 				<Group mb="md">
 					<TextInput
 						placeholder="Search by name..."
@@ -114,9 +159,33 @@ export function ClientsPage() {
 												<Text size="sm" fw={500}>
 													{client.name}
 												</Text>
-												<Text size="xs" c="dimmed">
-													{client.clientId}
-												</Text>
+												<div className={classes.clientIdCell}>
+													<Text className={classes.clientIdText}>
+														{client.clientId}
+													</Text>
+													<CopyButton value={client.clientId} timeout={2000}>
+														{({ copied, copy }) => (
+															<Tooltip
+																label={copied ? "Copied!" : "Copy Client ID"}
+																withArrow
+																position="right"
+															>
+																<ActionIcon
+																	variant="subtle"
+																	size="xs"
+																	color={copied ? "teal" : "gray"}
+																	onClick={copy}
+																>
+																	{copied ? (
+																		<IconCheck size={12} />
+																	) : (
+																		<IconCopy size={12} />
+																	)}
+																</ActionIcon>
+															</Tooltip>
+														)}
+													</CopyButton>
+												</div>
 											</div>
 										</Group>
 									</Table.Td>
@@ -159,10 +228,19 @@ export function ClientsPage() {
 												>
 													Edit
 												</Menu.Item>
+												{client.confidential && (
+													<Menu.Item
+														leftSection={<IconRefresh size={14} />}
+														onClick={() => handleRegenerateSecret(client)}
+													>
+														Regenerate Secret
+													</Menu.Item>
+												)}
+												<Menu.Divider />
 												<Menu.Item
 													leftSection={<IconTrash size={14} />}
 													color="red"
-													onClick={() => handleDelete(client.id!)}
+													onClick={() => handleDeleteClick(client)}
 												>
 													Delete
 												</Menu.Item>
@@ -174,13 +252,33 @@ export function ClientsPage() {
 						)}
 					</Table.Tbody>
 				</Table>
-			</Paper>
+			</Card>
 
 			<ClientModal
 				opened={opened}
 				onClose={handleClose}
 				client={editingClient}
+				onSecretCreated={handleClientCreated}
 			/>
+
+			<DeleteClientModal
+				opened={!!deleteTarget}
+				onClose={() => setDeleteTarget(null)}
+				onConfirm={handleDeleteConfirm}
+				clientName={deleteTarget?.name ?? ""}
+				clientId={deleteTarget?.clientId ?? ""}
+				isDeleting={deleteClient.isPending}
+			/>
+
+			{secretData && (
+				<SecretDisplayModal
+					opened={!!secretData}
+					onClose={handleSecretModalClose}
+					clientId={secretData.clientId}
+					clientSecret={secretData.clientSecret}
+					isNewClient={isNewClientSecret}
+				/>
+			)}
 		</Stack>
 	);
 }
@@ -196,10 +294,12 @@ function ClientModal({
 	opened,
 	onClose,
 	client,
+	onSecretCreated,
 }: {
 	opened: boolean;
 	onClose: () => void;
 	client: ClientResource | null;
+	onSecretCreated: (clientId: string, secret: string) => void;
 }) {
 	const create = useCreateClient();
 	const update = useUpdateClient();
@@ -220,11 +320,15 @@ function ClientModal({
 			refreshTokenLifetime: 2592000,
 			pkceRequired: true,
 			allowedOrigins: [] as string[],
+			jwksUri: "",
 		},
 		validate: {
-			clientId: (value) => (value.length < 3 ? "Client ID must be at least 3 characters" : null),
-			name: (value) => (value.length < 3 ? "Name must be at least 3 characters" : null),
-			grantTypes: (value) => (value.length === 0 ? "Select at least one grant type" : null),
+			clientId: (value) =>
+				value.length < 3 ? "Client ID must be at least 3 characters" : null,
+			name: (value) =>
+				value.length < 3 ? "Name must be at least 3 characters" : null,
+			grantTypes: (value) =>
+				value.length === 0 ? "Select at least one grant type" : null,
 		},
 	});
 
@@ -232,7 +336,7 @@ function ClientModal({
 		if (client) {
 			form.setValues({
 				clientId: client.clientId,
-				clientSecret: "", // Hide secret
+				clientSecret: "",
 				name: client.name,
 				description: client.description || "",
 				grantTypes: client.grantTypes || [],
@@ -244,6 +348,7 @@ function ClientModal({
 				refreshTokenLifetime: client.refreshTokenLifetime || 2592000,
 				pkceRequired: client.pkceRequired ?? true,
 				allowedOrigins: client.allowedOrigins || [],
+				jwksUri: client.jwksUri || "",
 			});
 		} else {
 			form.reset();
@@ -251,10 +356,15 @@ function ClientModal({
 	}, [client]);
 
 	const handleSubmit = async (values: typeof form.values) => {
-		const payload: any = {
+		const payload: Record<string, unknown> = {
 			resourceType: "Client",
 			...values,
 		};
+
+		// Remove empty jwksUri
+		if (!values.jwksUri) {
+			delete payload.jwksUri;
+		}
 
 		if (isEditing) {
 			if (!values.clientSecret) {
@@ -264,12 +374,17 @@ function ClientModal({
 
 		try {
 			if (isEditing && client?.id) {
-				await update.mutateAsync({ ...payload, id: client.id });
+				await update.mutateAsync({ ...payload, id: client.id } as ClientResource);
+				onClose();
 			} else {
-				await create.mutateAsync(payload);
+				const result = await create.mutateAsync(payload as Partial<ClientResource>);
+				onClose();
+				// If confidential client was created and we have a secret, show it
+				if (values.confidential && values.clientSecret) {
+					onSecretCreated(result.clientId, values.clientSecret);
+				}
 			}
-			onClose();
-		} catch (e) {
+		} catch {
 			// Handled by hook
 		}
 	};
@@ -305,7 +420,11 @@ function ClientModal({
 					<Group grow>
 						<PasswordInput
 							label={isEditing ? "New Client Secret" : "Client Secret"}
-							placeholder={isEditing ? "Leave blank to keep current" : "Required for confidential clients"}
+							placeholder={
+								isEditing
+									? "Leave blank to keep current"
+									: "Required for confidential clients"
+							}
 							{...form.getInputProps("clientSecret")}
 						/>
 						<Stack gap={0} pt="xs">
@@ -331,9 +450,7 @@ function ClientModal({
 						searchable
 						creatable
 						getCreateLabel={(query) => `+ Add ${query}`}
-						onCreate={(query) => {
-							return query;
-						}}
+						onCreate={(query) => query}
 						{...form.getInputProps("redirectUris")}
 					/>
 
@@ -344,10 +461,15 @@ function ClientModal({
 						searchable
 						creatable
 						getCreateLabel={(query) => `+ Add ${query}`}
-						onCreate={(query) => {
-							return query;
-						}}
+						onCreate={(query) => query}
 						{...form.getInputProps("allowedOrigins")}
+					/>
+
+					<TextInput
+						label="JWKS URL"
+						placeholder="https://example.com/.well-known/jwks.json"
+						description="For private_key_jwt authentication"
+						{...form.getInputProps("jwksUri")}
 					/>
 
 					<Group grow>

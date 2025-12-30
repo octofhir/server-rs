@@ -29,6 +29,7 @@
 //! ```
 
 use std::fmt;
+use std::sync::Arc;
 
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use jsonwebtoken::{
@@ -306,6 +307,10 @@ pub struct AccessTokenClaims {
     /// User's FHIR resource reference (e.g., "Practitioner/123").
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fhir_user: Option<String>,
+
+    /// Session ID (for audit trail and session tracking).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sid: Option<String>,
 }
 
 impl AccessTokenClaims {
@@ -333,6 +338,7 @@ pub struct AccessTokenClaimsBuilder {
     patient: Option<String>,
     encounter: Option<String>,
     fhir_user: Option<String>,
+    sid: Option<String>,
 }
 
 impl AccessTokenClaimsBuilder {
@@ -354,6 +360,7 @@ impl AccessTokenClaimsBuilder {
             patient: None,
             encounter: None,
             fhir_user: None,
+            sid: None,
         }
     }
 
@@ -399,6 +406,13 @@ impl AccessTokenClaimsBuilder {
         self
     }
 
+    /// Sets the session ID.
+    #[must_use]
+    pub fn session_id(mut self, session_id: impl Into<String>) -> Self {
+        self.sid = Some(session_id.into());
+        self
+    }
+
     /// Builds the access token claims.
     #[must_use]
     pub fn build(self) -> AccessTokenClaims {
@@ -414,6 +428,7 @@ impl AccessTokenClaimsBuilder {
             patient: self.patient,
             encounter: self.encounter,
             fhir_user: self.fhir_user,
+            sid: self.sid,
         }
     }
 }
@@ -752,11 +767,16 @@ impl SigningKeyPair {
 /// Service for encoding and decoding JWT tokens.
 ///
 /// This service is thread-safe (`Send + Sync`) and can be shared across
-/// async tasks.
+/// async tasks. For high-throughput scenarios, use the `*_async` methods
+/// which run crypto operations in a blocking thread pool via `spawn_blocking`.
 pub struct JwtService {
     signing_key: SigningKeyPair,
     issuer: String,
 }
+
+// Make JwtService Send + Sync
+unsafe impl Send for JwtService {}
+unsafe impl Sync for JwtService {}
 
 impl JwtService {
     /// Creates a new JWT service.
@@ -811,6 +831,59 @@ impl JwtService {
         validation.validate_aud = false;
 
         decode(token, &self.signing_key.decoding_key, &validation).map_err(JwtError::from)
+    }
+
+    /// Encodes claims into a JWT string asynchronously.
+    ///
+    /// This version uses `spawn_blocking` to run the CPU-intensive RSA/ECDSA
+    /// signing operation on a dedicated thread pool, avoiding blocking the
+    /// async runtime.
+    ///
+    /// # Errors
+    /// Returns an error if encoding fails or if the blocking task panics.
+    pub async fn encode_async<T: Serialize + Send + 'static>(
+        self: &Arc<Self>,
+        claims: T,
+    ) -> Result<String, JwtError> {
+        let service = Arc::clone(self);
+        tokio::task::spawn_blocking(move || service.encode(&claims))
+            .await
+            .map_err(|e| JwtError::encoding_error(format!("Blocking task failed: {e}")))?
+    }
+
+    /// Decodes and validates a JWT string asynchronously.
+    ///
+    /// This version uses `spawn_blocking` to run the CPU-intensive RSA/ECDSA
+    /// signature verification on a dedicated thread pool, avoiding blocking
+    /// the async runtime.
+    ///
+    /// # Errors
+    /// Returns an error if decoding/validation fails or if the blocking task panics.
+    pub async fn decode_async<T: DeserializeOwned + Send + 'static>(
+        self: &Arc<Self>,
+        token: String,
+    ) -> Result<TokenData<T>, JwtError> {
+        let service = Arc::clone(self);
+        tokio::task::spawn_blocking(move || service.decode::<T>(&token))
+            .await
+            .map_err(|e| JwtError::decoding_error(format!("Blocking task failed: {e}")))?
+    }
+
+    /// Decodes a JWT without validating expiration, asynchronously.
+    ///
+    /// This version uses `spawn_blocking` to run the CPU-intensive RSA/ECDSA
+    /// signature verification on a dedicated thread pool.
+    ///
+    /// # Errors
+    /// Returns an error if decoding fails or if the blocking task panics.
+    pub async fn decode_allow_expired_async<T: DeserializeOwned + Send + 'static>(
+        self: &Arc<Self>,
+        token: String,
+    ) -> Result<TokenData<T>, JwtError> {
+        let service = Arc::clone(self);
+        tokio::task::spawn_blocking(move || service.decode_allow_expired::<T>(&token))
+            .await
+            .map_err(|e| JwtError::decoding_error(format!("Blocking task failed: {e}")))?
     }
 
     /// Returns the current signing key ID.

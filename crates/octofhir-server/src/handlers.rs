@@ -20,7 +20,8 @@ use octofhir_fhir_model::ModelProvider;
 use octofhir_storage::{FhirStorage, StorageError}; // For begin_transaction method and error mapping
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 /// Check if validation should be skipped based on X-Skip-Validation header and config
 fn should_skip_validation(headers: &HeaderMap, config: &crate::config::ValidationSettings) -> bool {
@@ -80,6 +81,40 @@ pub async fn readyz() -> impl IntoResponse {
     (StatusCode::OK, Json(HealthResponse { status: "ready" }))
 }
 
+/// Prometheus metrics endpoint.
+///
+/// Returns metrics in Prometheus text format for scraping.
+pub async fn metrics(State(state): State<crate::server::AppState>) -> impl IntoResponse {
+    // Update database pool metrics before rendering
+    let pool_options = state.db_pool.options();
+    let pool_size = state.db_pool.size();
+    let pool_idle = state.db_pool.num_idle();
+
+    crate::metrics::record_db_pool_stats(
+        pool_options.get_max_connections(),
+        pool_idle as u32,
+        pool_size - pool_idle as u32,
+    );
+
+    // Render Prometheus metrics
+    match crate::metrics::render_metrics() {
+        Some(output) => (
+            StatusCode::OK,
+            [(
+                header::CONTENT_TYPE,
+                "text/plain; version=0.0.4; charset=utf-8",
+            )],
+            output,
+        )
+            .into_response(),
+        None => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Metrics not initialized",
+        )
+            .into_response(),
+    }
+}
+
 /// Query parameters for capabilities endpoint
 #[derive(Debug, Clone, Default, serde::Deserialize)]
 pub struct CapabilitiesParams {
@@ -88,15 +123,42 @@ pub struct CapabilitiesParams {
     pub summary: Option<String>,
 }
 
+/// Return cached CapabilityStatement with optional summary transformations.
+///
+/// The CapabilityStatement is built once at server startup and cached in AppState.
+/// This handler just returns the cached value with optional summary transformations.
 pub async fn metadata(
     State(state): State<crate::server::AppState>,
     Query(params): Query<CapabilitiesParams>,
 ) -> impl IntoResponse {
+    // Use cached CapabilityStatement (built at startup)
+    let body = (*state.capability_statement).clone();
+
+    // Handle _summary parameter
+    let response = match params.summary.as_deref() {
+        Some("true") => summarize_capability_statement(&body),
+        Some("text") => text_summary_capability_statement(&body),
+        Some("data") => data_summary_capability_statement(&body),
+        Some("count") => count_summary_capability_statement(&body),
+        _ => body, // "false" or no summary
+    };
+
+    (StatusCode::OK, Json(response))
+}
+
+/// Build the CapabilityStatement at server startup.
+///
+/// This function is called once during initialization and the result is cached in AppState.
+/// This avoids building the CapabilityStatement on every /metadata request.
+pub async fn build_capability_statement(
+    fhir_version: &str,
+    base_url: &str,
+    db_pool: &sqlx_postgres::PgPool,
+    resource_types: &[String],
+) -> Value {
     use octofhir_api::{CapabilityStatementBuilder, SearchParam};
 
     // Build base CapabilityStatement per spec
-    // Determine FHIR version from app state (from config)
-    let fhir_version_str = state.fhir_version.clone();
     let mut builder = CapabilityStatementBuilder::new_json_r4b()
         .status("active")
         .kind("instance")
@@ -104,108 +166,125 @@ pub async fn metadata(
         .add_format("application/json");
 
     // Apply FHIR version field
-    builder = builder.fhir_version(match fhir_version_str.as_str() {
+    builder = builder.fhir_version(match fhir_version {
         "R4" | "4.0.1" => "4.0.1",
         "R5" | "5.0.0" => "5.0.0",
         "R6" | "6.0.0" => "6.0.0",
         _ => "4.3.0",
     });
 
-    // Reflect capabilities from canonical manager search parameters when available
-    // Core FHIR resources advertised (commonly used clinical and administrative resources)
-    let resource_types = [
-        // Foundation
-        "CapabilityStatement",
-        "OperationDefinition",
-        "StructureDefinition",
-        "ValueSet",
-        "CodeSystem",
-        "Bundle",
-        // Clinical
-        "Patient",
-        "Observation",
-        "Condition",
-        "Procedure",
-        "DiagnosticReport",
-        "MedicationRequest",
-        "Medication",
-        "AllergyIntolerance",
-        "Immunization",
-        "CarePlan",
-        "CareTeam",
-        "Goal",
-        // Administrative
-        "Practitioner",
-        "PractitionerRole",
-        "Organization",
-        "Location",
-        "Encounter",
-        "EpisodeOfCare",
-        "Appointment",
-        "Schedule",
-        "Slot",
-        // Financial
-        "Coverage",
-        "Claim",
-        "ClaimResponse",
-        // Documents
-        "DocumentReference",
-        "Composition",
-        "Binary",
-    ];
-
-    // Optionally augment with canonical manager data when available
+    // Fetch all search parameters and StructureDefinitions once (bulk queries)
     let manager = crate::canonical::get_manager();
-    for rt in resource_types.iter() {
-        // Start with manager-provided params if any; then extend with our known supported params
-        let mut mapped: Vec<SearchParam> = if let Some(mgr) = &manager {
-            match mgr.get_search_parameters(rt).await {
-                Ok(params) if !params.is_empty() => params
-                    .into_iter()
-                    .map(|p| SearchParam {
-                        name: p.code,
-                        type_: p.type_field,
-                        documentation: p.description,
-                    })
-                    .collect(),
-                _ => Vec::new(),
-            }
-        } else {
-            Vec::new()
-        };
-        // Common params per FHIR spec and manager-provided params from packages (no hardcoded resource params)
-        mapped.extend(octofhir_api::common_search_params());
 
-        // Profiles for resource (StructureDefinition.type == rt)
-        let mut base_profile: Option<String> = None;
-        let mut supported_profiles: Vec<String> = Vec::new();
-        if let Some(mgr) = &manager {
-            let query = octofhir_canonical_manager::search::SearchQuery {
-                text: None,
-                resource_types: vec!["StructureDefinition".to_string()],
-                packages: vec![],
-                canonical_pattern: None,
-                version_constraints: vec![],
-                limit: Some(2000),
-                offset: Some(0),
-            };
-            if let Ok(results) = mgr.search_engine().search(&query).await {
-                for rm in results.resources {
+    // Build maps for search params and profiles grouped by resource type
+    let mut search_params_by_type: std::collections::HashMap<String, Vec<SearchParam>> =
+        std::collections::HashMap::new();
+    let mut base_profiles: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
+    let mut supported_profiles: std::collections::HashMap<String, Vec<String>> =
+        std::collections::HashMap::new();
+
+    if let Some(mgr) = &manager {
+        // Fetch ALL SearchParameter resources at once (paginated)
+        const PAGE_SIZE: usize = 1000;
+        let mut offset = 0;
+        loop {
+            if let Ok(results) = mgr
+                .search()
+                .await
+                .resource_type("SearchParameter")
+                .limit(PAGE_SIZE)
+                .offset(offset)
+                .execute()
+                .await
+            {
+                let page_count = results.resources.len();
+                for rm in &results.resources {
                     let content = &rm.resource.content;
-                    if content.get("type").and_then(|v| v.as_str()) == Some(rt)
+                    // Get the base resource types this search param applies to
+                    if let Some(base) = content.get("base").and_then(|v| v.as_array()) {
+                        let code = content.get("code").and_then(|v| v.as_str()).unwrap_or("");
+                        let type_ = content.get("type").and_then(|v| v.as_str()).unwrap_or("");
+                        let description = content
+                            .get("description")
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string());
+
+                        for base_type in base {
+                            if let Some(rt) = base_type.as_str() {
+                                search_params_by_type
+                                    .entry(rt.to_string())
+                                    .or_default()
+                                    .push(SearchParam {
+                                        name: code.to_string(),
+                                        type_: type_.to_string(),
+                                        documentation: description.clone(),
+                                    });
+                            }
+                        }
+                    }
+                }
+                if page_count < PAGE_SIZE {
+                    break;
+                }
+                offset += PAGE_SIZE;
+            } else {
+                break;
+            }
+        }
+
+        // Fetch ALL StructureDefinition resources at once (paginated)
+        let mut offset = 0;
+        loop {
+            if let Ok(results) = mgr
+                .search()
+                .await
+                .resource_type("StructureDefinition")
+                .limit(PAGE_SIZE)
+                .offset(offset)
+                .execute()
+                .await
+            {
+                let page_count = results.resources.len();
+                for rm in &results.resources {
+                    let content = &rm.resource.content;
+                    if let Some(rt) = content.get("type").and_then(|v| v.as_str())
                         && let Some(url) = content.get("url").and_then(|v| v.as_str())
                     {
                         match content.get("derivation").and_then(|v| v.as_str()) {
-                            Some("specialization") => base_profile = Some(url.to_string()),
-                            Some("constraint") => supported_profiles.push(url.to_string()),
+                            Some("specialization") => {
+                                base_profiles.insert(rt.to_string(), url.to_string());
+                            }
+                            Some("constraint") => {
+                                supported_profiles
+                                    .entry(rt.to_string())
+                                    .or_default()
+                                    .push(url.to_string());
+                            }
                             _ => {}
                         }
                     }
                 }
+                if page_count < PAGE_SIZE {
+                    break;
+                }
+                offset += PAGE_SIZE;
+            } else {
+                break;
             }
         }
+    }
 
-        let resource = octofhir_api::CapabilityStatementRestResource::new(*rt)
+    // Build resources using pre-fetched data
+    for rt in resource_types.iter() {
+        // Get search params for this resource type, add common params
+        let mut mapped: Vec<SearchParam> = search_params_by_type
+            .get(rt)
+            .cloned()
+            .unwrap_or_default();
+        mapped.extend(octofhir_api::common_search_params());
+
+        let resource = octofhir_api::CapabilityStatementRestResource::new(rt)
             .with_interactions(
                 &[
                     "read",
@@ -219,15 +298,13 @@ pub async fn metadata(
                 ][..],
             )
             .with_search_params(mapped)
-            .with_profile(base_profile)
-            .with_supported_profiles(supported_profiles);
+            .with_profile(base_profiles.get(rt).cloned())
+            .with_supported_profiles(supported_profiles.get(rt).cloned().unwrap_or_default());
         builder = builder.add_resource_struct(resource);
     }
 
     // Add extended operations from the operation registry to CapabilityStatement
-    // Only include actual FHIR extended operations ($graphql, $validate, $everything)
-    // Basic CRUD operations (read, create, update, delete) are already in `interaction` field
-    let op_storage = PostgresOperationStorage::new((*state.db_pool).clone());
+    let op_storage = PostgresOperationStorage::new(db_pool.clone());
     if let Ok(operations) = op_storage.list_all().await {
         // Extended operations to advertise (not basic CRUD)
         let extended_ops = [
@@ -248,7 +325,7 @@ pub async fn metadata(
                     .unwrap_or_else(|| format!("${}", op.id));
 
                 // Use a URN for the definition since these are server-specific operations
-                let definition = format!("urn:octofhir:operation:{}", op.id);
+                let definition = format!("urn:abyxon:operation:{}", op.id);
 
                 builder = builder.add_operation(op_name, definition);
             }
@@ -258,7 +335,6 @@ pub async fn metadata(
     let cs = builder.build();
 
     // Add software section consistent with spec
-    // Insert via serde_json patch to avoid remodeling types
     let mut body = serde_json::to_value(&cs).unwrap_or_else(|_| {
         json!({
             "resourceType": "CapabilityStatement",
@@ -269,12 +345,12 @@ pub async fn metadata(
             "rest": [{"mode": "server"}]
         })
     });
-    body["software"] = json!({ "name": "OctoFHIR Server", "version": env!("CARGO_PKG_VERSION") });
+    body["software"] = json!({ "name": "Abyxon", "version": env!("CARGO_PKG_VERSION") });
 
     // Add implementation section
     body["implementation"] = json!({
-        "description": "OctoFHIR FHIR Server",
-        "url": &state.base_url
+        "description": "Abyxon FHIR Server",
+        "url": base_url
     });
 
     // Add security section to rest
@@ -295,13 +371,13 @@ pub async fn metadata(
         });
     }
 
-    // Reflect loaded canonical packages via an extension (Phase 8)
+    // Reflect loaded canonical packages via an extension
     if let Some(pkgs) = crate::canonical::with_registry(|r| {
         r.list()
             .iter()
             .map(|p| {
                 json!({
-                    "url": "urn:octofhir:loaded-package",
+                    "url": "urn:abyxon:loaded-package",
                     "extension": [
                         {"url": "id", "valueString": p.id},
                         {"url": "version", "valueString": p.version.clone().unwrap_or_default()},
@@ -320,16 +396,7 @@ pub async fn metadata(
         }
     }
 
-    // Handle _summary parameter
-    let response = match params.summary.as_deref() {
-        Some("true") => summarize_capability_statement(&body),
-        Some("text") => text_summary_capability_statement(&body),
-        Some("data") => data_summary_capability_statement(&body),
-        Some("count") => count_summary_capability_statement(&body),
-        _ => body, // "false" or no summary
-    };
-
-    (StatusCode::OK, Json(response))
+    body
 }
 
 /// Return minimal summary of CapabilityStatement (_summary=true)
@@ -419,17 +486,18 @@ async fn preprocess_payload(resource_type: &str, payload: &mut Value) -> Result<
 
 // ---- CRUD & Search placeholders ----
 
+#[tracing::instrument(name = "fhir.create", skip_all, fields(resource_type = %resource_type))]
 pub async fn create_resource(
     State(state): State<crate::server::AppState>,
     Path(resource_type): Path<String>,
     headers: HeaderMap,
     Json(payload): Json<Value>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let span = tracing::info_span!("fhir.create", resource_type = %resource_type);
-    let _g = span.enter();
-
     // Basic structural validation (resourceType match)
-    if let Err(e) = crate::validation::validate_resource(&resource_type, &payload) {
+    let resource_types = state.resource_type_set.load();
+    if let Err(e) =
+        crate::validation::validate_resource(&resource_type, &payload, resource_types.as_ref())
+    {
         return Err(ApiError::bad_request(format!("Validation failed: {e}")));
     }
 
@@ -670,14 +738,12 @@ fn parse_fhir_instant(value: &str) -> Result<time::OffsetDateTime, ApiError> {
     )))
 }
 
+#[tracing::instrument(name = "fhir.read", skip_all, fields(resource_type = %resource_type, id = %id))]
 pub async fn read_resource(
     State(state): State<crate::server::AppState>,
     Path((resource_type, id)): Path<(String, String)>,
     headers: HeaderMap,
 ) -> Result<impl IntoResponse, ApiError> {
-    let span = tracing::info_span!("fhir.read", resource_type = %resource_type, id = %id);
-    let _g = span.enter();
-
     match state.storage.read(&resource_type, &id).await {
         Ok(Some(stored)) => {
             // Get version_id for ETag
@@ -734,13 +800,11 @@ pub async fn read_resource(
 }
 
 /// GET /[type]/[id]/_history/[vid] - Read a specific version of a resource
+#[tracing::instrument(name = "fhir.vread", skip_all, fields(resource_type = %resource_type, id = %id, version_id = %version_id))]
 pub async fn vread_resource(
     State(state): State<crate::server::AppState>,
     Path((resource_type, id, version_id)): Path<(String, String, String)>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let span = tracing::info_span!("fhir.vread", resource_type = %resource_type, id = %id, version_id = %version_id);
-    let _g = span.enter();
-
     // Use vread to get the specific version from storage (including history)
     match state.storage.vread(&resource_type, &id, &version_id).await {
         Ok(Some(stored)) => {
@@ -783,6 +847,7 @@ pub async fn vread_resource(
 // ---- History Handlers ----
 
 /// Instance history: GET /{type}/{id}/_history
+#[tracing::instrument(name = "fhir.history.instance", skip_all, fields(resource_type = %resource_type, id = %id))]
 pub async fn instance_history(
     State(state): State<crate::server::AppState>,
     Path((resource_type, id)): Path<(String, String)>,
@@ -791,10 +856,6 @@ pub async fn instance_history(
     use octofhir_api::{HistoryBundleEntry, HistoryBundleMethod, bundle_from_history};
     use octofhir_storage::HistoryParams;
     use time::format_description::well_known::Rfc3339;
-
-    let span =
-        tracing::info_span!("fhir.history.instance", resource_type = %resource_type, id = %id);
-    let _g = span.enter();
 
     // Parse resource type
     let _rt: ResourceType = match resource_type.parse() {
@@ -858,7 +919,7 @@ pub async fn instance_history(
                 octofhir_storage::HistoryMethod::Delete => HistoryBundleMethod::Delete,
             };
             HistoryBundleEntry {
-                resource: entry.resource.resource,
+                resource: octofhir_api::RawJson::from(entry.resource.resource),
                 id: entry.resource.id,
                 resource_type: entry.resource.resource_type,
                 version_id: entry.resource.version_id,
@@ -892,6 +953,7 @@ pub async fn instance_history(
 }
 
 /// Type history: GET /{type}/_history
+#[tracing::instrument(name = "fhir.history.type", skip_all, fields(resource_type = %resource_type))]
 pub async fn type_history(
     State(state): State<crate::server::AppState>,
     Path(resource_type): Path<String>,
@@ -900,9 +962,6 @@ pub async fn type_history(
     use octofhir_api::{HistoryBundleEntry, HistoryBundleMethod, bundle_from_history};
     use octofhir_storage::HistoryParams;
     use time::format_description::well_known::Rfc3339;
-
-    let span = tracing::info_span!("fhir.history.type", resource_type = %resource_type);
-    let _g = span.enter();
 
     // Validate resource type
     let _rt: ResourceType = match resource_type.parse() {
@@ -945,7 +1004,7 @@ pub async fn type_history(
                 octofhir_storage::HistoryMethod::Delete => HistoryBundleMethod::Delete,
             };
             HistoryBundleEntry {
-                resource: entry.resource.resource,
+                resource: octofhir_api::RawJson::from(entry.resource.resource),
                 id: entry.resource.id,
                 resource_type: entry.resource.resource_type,
                 version_id: entry.resource.version_id,
@@ -979,6 +1038,7 @@ pub async fn type_history(
 }
 
 /// System history: GET /_history
+#[tracing::instrument(name = "fhir.history.system", skip_all)]
 pub async fn system_history(
     State(state): State<crate::server::AppState>,
     Query(params): Query<HistoryQueryParams>,
@@ -986,9 +1046,6 @@ pub async fn system_history(
     use octofhir_api::{HistoryBundleEntry, HistoryBundleMethod, bundle_from_system_history};
     use octofhir_storage::HistoryParams;
     use time::format_description::well_known::Rfc3339;
-
-    let span = tracing::info_span!("fhir.history.system");
-    let _g = span.enter();
 
     // Build history params
     let mut history_params = HistoryParams::new();
@@ -1021,7 +1078,7 @@ pub async fn system_history(
                 octofhir_storage::HistoryMethod::Delete => HistoryBundleMethod::Delete,
             };
             HistoryBundleEntry {
-                resource: entry.resource.resource,
+                resource: octofhir_api::RawJson::from(entry.resource.resource),
                 id: entry.resource.id,
                 resource_type: entry.resource.resource_type,
                 version_id: entry.resource.version_id,
@@ -1052,17 +1109,18 @@ pub async fn system_history(
     Ok((StatusCode::OK, response_headers, Json(bundle)))
 }
 
+#[tracing::instrument(name = "fhir.update", skip_all, fields(resource_type = %resource_type, id = %id))]
 pub async fn update_resource(
     State(state): State<crate::server::AppState>,
     Path((resource_type, id)): Path<(String, String)>,
     headers: HeaderMap,
     Json(payload): Json<Value>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let span = tracing::info_span!("fhir.update", resource_type = %resource_type, id = %id);
-    let _g = span.enter();
-
     // Basic structural validation (resourceType match)
-    if let Err(e) = crate::validation::validate_resource(&resource_type, &payload) {
+    let resource_types = state.resource_type_set.load();
+    if let Err(e) =
+        crate::validation::validate_resource(&resource_type, &payload, resource_types.as_ref())
+    {
         return Err(ApiError::bad_request(format!("Validation failed: {e}")));
     }
 
@@ -1126,6 +1184,11 @@ pub async fn update_resource(
         },
     ) {
         return Err(ApiError::bad_request(err));
+    }
+
+    // Inject id from URL path into payload (storage layer requires id in JSON)
+    if let Some(obj) = payload.as_object_mut() {
+        obj.insert("id".to_string(), Value::String(id.clone()));
     }
 
     // Check if resource exists
@@ -1282,6 +1345,7 @@ fn parse_etag(header: &str) -> String {
 }
 
 /// PUT /[type]?[search params] - Conditional update based on search criteria
+#[tracing::instrument(name = "fhir.conditional_update", skip_all, fields(resource_type = %resource_type))]
 pub async fn conditional_update_resource(
     State(state): State<crate::server::AppState>,
     Path(resource_type): Path<String>,
@@ -1289,9 +1353,6 @@ pub async fn conditional_update_resource(
     headers: HeaderMap,
     Json(payload): Json<Value>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let span = tracing::info_span!("fhir.conditional_update", resource_type = %resource_type);
-    let _g = span.enter();
-
     // Validate resource type
     let _rt = match resource_type.parse::<ResourceType>() {
         Ok(rt) => rt,
@@ -1311,7 +1372,10 @@ pub async fn conditional_update_resource(
     }
 
     // Basic structural validation (resourceType match)
-    if let Err(e) = crate::validation::validate_resource(&resource_type, &payload) {
+    let resource_types = state.resource_type_set.load();
+    if let Err(e) =
+        crate::validation::validate_resource(&resource_type, &payload, resource_types.as_ref())
+    {
         return Err(ApiError::bad_request(format!("Validation failed: {e}")));
     }
 
@@ -1506,12 +1570,11 @@ pub async fn conditional_update_resource(
     }
 }
 
+#[tracing::instrument(name = "fhir.delete", skip_all, fields(resource_type = %resource_type, id = %id))]
 pub async fn delete_resource(
     State(state): State<crate::server::AppState>,
     Path((resource_type, id)): Path<(String, String)>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let span = tracing::info_span!("fhir.delete", resource_type = %resource_type, id = %id);
-    let _g = span.enter();
     // Validate resource type
     if resource_type.parse::<ResourceType>().is_err() {
         return Err(ApiError::bad_request(format!(
@@ -1533,14 +1596,12 @@ pub async fn delete_resource(
 }
 
 /// DELETE /[type]?[search params] - Conditional delete based on search criteria
+#[tracing::instrument(name = "fhir.conditional_delete", skip_all, fields(resource_type = %resource_type))]
 pub async fn conditional_delete_resource(
     State(state): State<crate::server::AppState>,
     Path(resource_type): Path<String>,
     RawQuery(raw): RawQuery,
 ) -> Result<impl IntoResponse, ApiError> {
-    let span = tracing::info_span!("fhir.conditional_delete", resource_type = %resource_type);
-    let _g = span.enter();
-
     // Validate resource type
     if resource_type.parse::<ResourceType>().is_err() {
         return Err(ApiError::bad_request(format!(
@@ -1600,15 +1661,13 @@ pub async fn conditional_delete_resource(
 }
 
 /// PATCH /[type]/[id] - Patch a resource using JSON Patch (RFC 6902)
+#[tracing::instrument(name = "fhir.patch", skip_all, fields(resource_type = %resource_type, id = %id))]
 pub async fn patch_resource(
     State(state): State<crate::server::AppState>,
     Path((resource_type, id)): Path<(String, String)>,
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<impl IntoResponse, ApiError> {
-    let span = tracing::info_span!("fhir.patch", resource_type = %resource_type, id = %id);
-    let _g = span.enter();
-
     // Validate resource type
     if resource_type.parse::<ResourceType>().is_err() {
         return Err(ApiError::bad_request(format!(
@@ -1688,7 +1747,12 @@ pub async fn patch_resource(
     };
 
     // Basic structural validation (resourceType match)
-    if let Err(e) = crate::validation::validate_resource(&resource_type, &patched_json) {
+    let resource_types = state.resource_type_set.load();
+    if let Err(e) = crate::validation::validate_resource(
+        &resource_type,
+        &patched_json,
+        resource_types.as_ref(),
+    ) {
         return Err(ApiError::bad_request(format!("Validation failed: {e}")));
     }
 
@@ -1775,6 +1839,7 @@ pub async fn patch_resource(
 }
 
 /// PATCH /[type]?[search params] - Conditional patch based on search criteria
+#[tracing::instrument(name = "fhir.conditional_patch", skip_all, fields(resource_type = %resource_type))]
 pub async fn conditional_patch_resource(
     State(state): State<crate::server::AppState>,
     Path(resource_type): Path<String>,
@@ -1782,9 +1847,6 @@ pub async fn conditional_patch_resource(
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<impl IntoResponse, ApiError> {
-    let span = tracing::info_span!("fhir.conditional_patch", resource_type = %resource_type);
-    let _g = span.enter();
-
     // Validate resource type
     if resource_type.parse::<ResourceType>().is_err() {
         return Err(ApiError::bad_request(format!(
@@ -1874,8 +1936,12 @@ pub async fn conditional_patch_resource(
                 };
 
                 // Basic structural validation (resourceType match)
-                if let Err(e) = crate::validation::validate_resource(&resource_type, &patched_json)
-                {
+                let resource_types = state.resource_type_set.load();
+                if let Err(e) = crate::validation::validate_resource(
+                    &resource_type,
+                    &patched_json,
+                    resource_types.as_ref(),
+                ) {
                     return Err(ApiError::bad_request(format!("Validation failed: {e}")));
                 }
 
@@ -1997,15 +2063,13 @@ pub struct SearchResultParams {
     pub revinclude: Option<String>,
 }
 
+#[tracing::instrument(name = "fhir.search", skip_all, fields(resource_type = %resource_type))]
 pub async fn search_resource(
     State(state): State<crate::server::AppState>,
     Path(resource_type): Path<String>,
     Query(params): Query<HashMap<String, String>>,
     RawQuery(raw): RawQuery,
 ) -> Result<impl IntoResponse, ApiError> {
-    let span = tracing::info_span!("fhir.search", resource_type = %resource_type);
-    let _g = span.enter();
-
     // Validate resource type
     if resource_type.parse::<ResourceType>().is_err() {
         return Err(ApiError::bad_request(format!(
@@ -2020,8 +2084,13 @@ pub async fn search_resource(
     let search_params =
         octofhir_search::parse_query_string(&raw_q, cfg.default_count as u32, cfg.max_count as u32);
 
-    // Execute search using the new FhirStorage-based implementation
-    let result = octofhir_db_postgres::queries::execute_search(
+    // Strip result params from query suffix for pagination links
+    let suffix = build_query_suffix_for_links(&raw_q);
+    let offset = search_params.offset.unwrap_or(0) as usize;
+    let count = search_params.count.unwrap_or(10) as usize;
+
+    // Execute search with raw JSON optimization
+    let result = octofhir_db_postgres::queries::execute_search_raw(
         &state.db_pool,
         &resource_type,
         &search_params,
@@ -2030,73 +2099,56 @@ pub async fn search_resource(
     .await
     .map_err(|e| ApiError::bad_request(e.to_string()))?;
 
-    // Strip result params from query suffix for pagination links
-    let suffix = build_query_suffix_for_links(&raw_q);
+    let total = result.total.map(|t| t as usize).unwrap_or(result.entries.len());
 
-    // Convert StoredResource entries to JSON values
-    // Separate main results from included resources (different resource types)
-    let mut resources_json: Vec<Value> = Vec::new();
-    let mut included_entries: Vec<octofhir_api::IncludedResourceEntry> = Vec::new();
+    // Convert main entries to RawJson
+    let (resources, ids): (Vec<_>, Vec<_>) = result
+        .entries
+        .into_iter()
+        .map(|e| (octofhir_api::RawJson::from_string(e.resource_json), e.id))
+        .unzip();
 
-    for entry in result.entries {
-        if entry.resource_type == resource_type {
-            resources_json.push(entry.resource);
-        } else {
-            // This is an included resource (from _include/_revinclude)
-            included_entries.push(octofhir_api::IncludedResourceEntry {
-                resource: entry.resource,
-                resource_type: entry.resource_type,
-                id: entry.id,
-            });
-        }
+    // Convert included entries
+    let included: Vec<octofhir_api::RawIncludedEntry> = result
+        .included
+        .into_iter()
+        .map(|e| octofhir_api::RawIncludedEntry {
+            resource: octofhir_api::RawJson::from_string(e.resource_json),
+            resource_type: e.resource_type,
+            id: e.id,
+        })
+        .collect();
+
+    let bundle = octofhir_api::bundle_from_search_raw(
+        total,
+        resources,
+        ids,
+        included,
+        &state.base_url,
+        &resource_type,
+        offset,
+        count,
+        suffix.as_deref(),
+    );
+
+    // Apply _summary and _elements filters if present
+    let has_result_params = params.contains_key("_summary") || params.contains_key("_elements");
+    if has_result_params {
+        let bundle_value = apply_result_params(bundle, &params)?;
+        return Ok((StatusCode::OK, Json(bundle_value)).into_response());
     }
 
-    let offset = search_params.offset.unwrap_or(0) as usize;
-    let count = search_params.count.unwrap_or(10) as usize;
-    let total = result
-        .total
-        .map(|t| t as usize)
-        .unwrap_or(resources_json.len());
-
-    // Build bundle with or without includes
-    let bundle = if included_entries.is_empty() {
-        octofhir_api::bundle_from_search(
-            total,
-            resources_json,
-            &state.base_url,
-            &resource_type,
-            offset,
-            count,
-            suffix.as_deref(),
-        )
-    } else {
-        octofhir_api::bundle_from_search_with_includes(
-            total,
-            resources_json,
-            included_entries,
-            &state.base_url,
-            &resource_type,
-            offset,
-            count,
-            suffix.as_deref(),
-        )
-    };
-
-    // Apply _summary and _elements filters
-    let bundle_value = apply_result_params(bundle, &params)?;
-
-    Ok((StatusCode::OK, Json(bundle_value)))
+    // Return Bundle directly - RawJson entries serialize efficiently via RawValue
+    Ok((StatusCode::OK, Json(bundle)).into_response())
 }
 
 /// POST /[type]/_search - Search via POST with form-encoded parameters
+#[tracing::instrument(name = "fhir.search.post", skip_all, fields(resource_type = %resource_type))]
 pub async fn search_resource_post(
     State(state): State<crate::server::AppState>,
     Path(resource_type): Path<String>,
     axum::Form(params): axum::Form<HashMap<String, String>>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let span = tracing::info_span!("fhir.search.post", resource_type = %resource_type);
-    let _g = span.enter();
-
     // Validate resource type
     if resource_type.parse::<ResourceType>().is_err() {
         return Err(ApiError::bad_request(format!(
@@ -2117,8 +2169,13 @@ pub async fn search_resource_post(
     let search_params =
         octofhir_search::parse_query_string(&raw_q, cfg.default_count as u32, cfg.max_count as u32);
 
-    // Execute search using the new FhirStorage-based implementation
-    let result = octofhir_db_postgres::queries::execute_search(
+    // Strip result params from query suffix for pagination links
+    let suffix = build_query_suffix_for_links(&raw_q);
+    let offset = search_params.offset.unwrap_or(0) as usize;
+    let count = search_params.count.unwrap_or(10) as usize;
+
+    // Execute search with raw JSON optimization
+    let result = octofhir_db_postgres::queries::execute_search_raw(
         &state.db_pool,
         &resource_type,
         &search_params,
@@ -2127,73 +2184,56 @@ pub async fn search_resource_post(
     .await
     .map_err(|e| ApiError::bad_request(e.to_string()))?;
 
-    // Strip result params from query suffix for pagination links
-    let suffix = build_query_suffix_for_links(&raw_q);
+    let total = result.total.map(|t| t as usize).unwrap_or(result.entries.len());
 
-    // Convert StoredResource entries to JSON values
-    // Separate main results from included resources (different resource types)
-    let mut resources_json: Vec<Value> = Vec::new();
-    let mut included_entries: Vec<octofhir_api::IncludedResourceEntry> = Vec::new();
+    // Convert main entries to RawJson
+    let (resources, ids): (Vec<_>, Vec<_>) = result
+        .entries
+        .into_iter()
+        .map(|e| (octofhir_api::RawJson::from_string(e.resource_json), e.id))
+        .unzip();
 
-    for entry in result.entries {
-        if entry.resource_type == resource_type {
-            resources_json.push(entry.resource);
-        } else {
-            // This is an included resource (from _include/_revinclude)
-            included_entries.push(octofhir_api::IncludedResourceEntry {
-                resource: entry.resource,
-                resource_type: entry.resource_type,
-                id: entry.id,
-            });
-        }
+    // Convert included entries
+    let included: Vec<octofhir_api::RawIncludedEntry> = result
+        .included
+        .into_iter()
+        .map(|e| octofhir_api::RawIncludedEntry {
+            resource: octofhir_api::RawJson::from_string(e.resource_json),
+            resource_type: e.resource_type,
+            id: e.id,
+        })
+        .collect();
+
+    let bundle = octofhir_api::bundle_from_search_raw(
+        total,
+        resources,
+        ids,
+        included,
+        &state.base_url,
+        &resource_type,
+        offset,
+        count,
+        suffix.as_deref(),
+    );
+
+    // Apply _summary and _elements filters if present
+    let has_result_params = params.contains_key("_summary") || params.contains_key("_elements");
+    if has_result_params {
+        let bundle_value = apply_result_params(bundle, &params)?;
+        return Ok((StatusCode::OK, Json(bundle_value)).into_response());
     }
 
-    let offset = search_params.offset.unwrap_or(0) as usize;
-    let count = search_params.count.unwrap_or(10) as usize;
-    let total = result
-        .total
-        .map(|t| t as usize)
-        .unwrap_or(resources_json.len());
-
-    // Build bundle with or without includes
-    let bundle = if included_entries.is_empty() {
-        octofhir_api::bundle_from_search(
-            total,
-            resources_json,
-            &state.base_url,
-            &resource_type,
-            offset,
-            count,
-            suffix.as_deref(),
-        )
-    } else {
-        octofhir_api::bundle_from_search_with_includes(
-            total,
-            resources_json,
-            included_entries,
-            &state.base_url,
-            &resource_type,
-            offset,
-            count,
-            suffix.as_deref(),
-        )
-    };
-
-    // Apply _summary and _elements filters
-    let bundle_value = apply_result_params(bundle, &params)?;
-
-    Ok((StatusCode::OK, Json(bundle_value)))
+    // Return Bundle directly - RawJson entries serialize efficiently via RawValue
+    Ok((StatusCode::OK, Json(bundle)).into_response())
 }
 
 /// GET / or GET /?_type=Patient,Observation - System-level search
+#[tracing::instrument(name = "fhir.search.system", skip_all)]
 pub async fn system_search(
     State(state): State<crate::server::AppState>,
     Query(params): Query<HashMap<String, String>>,
     RawQuery(raw): RawQuery,
 ) -> Result<impl IntoResponse, ApiError> {
-    let span = tracing::info_span!("fhir.search.system");
-    let _g = span.enter();
-
     // Get _type parameter - required for system search
     let types_param = params.get("_type").ok_or_else(|| {
         ApiError::bad_request("System search requires _type parameter to specify resource types")
@@ -2343,7 +2383,7 @@ async fn resolve_includes_for_search(
                                     {
                                         included_keys.insert(key);
                                         included.push(octofhir_api::IncludedResourceEntry {
-                                            resource: stored.resource,
+                                            resource: stored.resource.into(),
                                             resource_type: ref_type,
                                             id: ref_id,
                                         });
@@ -2381,7 +2421,7 @@ async fn resolve_includes_for_search(
                                 if !included_keys.contains(&key) {
                                     included_keys.insert(key);
                                     included.push(octofhir_api::IncludedResourceEntry {
-                                        resource: entry.resource,
+                                        resource: entry.resource.into(),
                                         resource_type: entry.resource_type,
                                         id: entry.id,
                                     });
@@ -2633,6 +2673,50 @@ pub async fn api_build_info() -> impl IntoResponse {
     (StatusCode::OK, Json(response))
 }
 
+/// Server settings response for UI feature detection
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServerSettingsResponse {
+    /// FHIR version configured
+    pub fhir_version: String,
+    /// Feature flags
+    pub features: ServerFeatures,
+}
+
+/// Feature flags for the server
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServerFeatures {
+    /// SQL on FHIR (ViewDefinition editor, $run operation)
+    pub sql_on_fhir: bool,
+    /// GraphQL API
+    pub graphql: bool,
+    /// Bulk Data Export ($export)
+    pub bulk_export: bool,
+    /// DB Console (SQL execution)
+    pub db_console: bool,
+    /// Authentication enabled
+    pub auth: bool,
+}
+
+/// GET /api/settings - Server settings and feature flags for UI
+pub async fn api_settings(State(state): State<crate::server::AppState>) -> impl IntoResponse {
+    let config = &state.config;
+
+    let response = ServerSettingsResponse {
+        fhir_version: state.fhir_version.clone(),
+        features: ServerFeatures {
+            sql_on_fhir: config.sql_on_fhir.enabled,
+            graphql: config.graphql.enabled,
+            bulk_export: config.bulk_export.enabled,
+            db_console: config.db_console.enabled,
+            auth: true,
+        },
+    };
+
+    (StatusCode::OK, Json(response))
+}
+
 /// GET /api/resource-types - List available FHIR resource types
 pub async fn api_resource_types(State(state): State<crate::server::AppState>) -> impl IntoResponse {
     match state.model_provider.get_resource_types().await {
@@ -2694,7 +2778,9 @@ pub async fn api_resource_types_categorized(
                 .map(|info| {
                     let category = if info.package_name.starts_with("hl7.fhir.") {
                         "fhir"
-                    } else if info.package_name == "octofhir.internal" {
+                    } else if info.package_name.starts_with("octofhir-")
+                        || info.package_name.starts_with("octofhir.")
+                    {
                         "system"
                     } else {
                         "custom"
@@ -2999,7 +3085,7 @@ pub struct OperationPatchRequest {
 /// This is useful for administrators to make operations public/private
 /// without restarting the server.
 ///
-/// After updating, the public paths cache is refreshed to reflect changes.
+/// OperationRegistryService automatically updates in-memory indexes when public flag changes.
 pub async fn api_operation_patch(
     State(state): State<crate::server::AppState>,
     Path(id): Path<String>,
@@ -3007,9 +3093,31 @@ pub async fn api_operation_patch(
 ) -> impl IntoResponse {
     use crate::operation_registry::{OperationStorage, OperationUpdate, PostgresOperationStorage};
 
+    // If only updating public flag, use the registry service which also updates in-memory indexes
+    if body.description.is_none() && body.public.is_some() {
+        match state.operation_registry.set_operation_public(&id, body.public.unwrap()).await {
+            Ok(Some(op)) => {
+                tracing::info!(operation_id = %id, public = body.public.unwrap(), "Operation public flag updated");
+                return (StatusCode::OK, Json(serde_json::to_value(op).unwrap()));
+            }
+            Ok(None) => {
+                let error_response = serde_json::json!({
+                    "error": format!("Operation '{}' not found", id)
+                });
+                return (StatusCode::NOT_FOUND, Json(error_response));
+            }
+            Err(e) => {
+                let error_response = serde_json::json!({
+                    "error": format!("Failed to update operation: {}", e)
+                });
+                return (StatusCode::INTERNAL_SERVER_ERROR, Json(error_response));
+            }
+        }
+    }
+
+    // For other updates (description), use direct storage update
     let storage = PostgresOperationStorage::new(state.db_pool.as_ref().clone());
 
-    // Build update from request
     let update = OperationUpdate {
         public: body.public,
         description: body.description,
@@ -3017,16 +3125,12 @@ pub async fn api_operation_patch(
 
     match storage.update(&id, update).await {
         Ok(Some(op)) => {
-            // If public flag was changed, refresh the public paths cache
+            // If public flag was also changed, re-sync registry to update in-memory indexes
             if body.public.is_some() {
-                if let Ok(all_operations) = storage.list_all().await {
-                    state
-                        .public_paths_cache
-                        .update_from_operations(&all_operations);
-                    tracing::info!(operation_id = %id, "Public paths cache refreshed after operation update");
+                if let Err(e) = state.operation_registry.sync_operations(false).await {
+                    tracing::warn!(error = %e, "Failed to sync operation registry after update");
                 }
             }
-
             (StatusCode::OK, Json(serde_json::to_value(op).unwrap()))
         }
         Ok(None) => {
@@ -3124,14 +3228,12 @@ pub async fn ui_static(Path(path): Path<String>) -> Response {
 // ============================================================================
 
 /// POST / - Process transaction or batch bundle
+#[tracing::instrument(name = "fhir.bundle", skip_all)]
 pub async fn transaction_handler(
     State(state): State<crate::server::AppState>,
     headers: HeaderMap,
     Json(bundle): Json<Value>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let span = tracing::info_span!("fhir.bundle");
-    let _g = span.enter();
-
     // Check for Prefer: respond-async header
     let prefer_async = headers
         .get("prefer")
@@ -4542,6 +4644,15 @@ pub async fn async_job_status(
             _ => ApiError::Internal(format!("Failed to get job status: {}", e)),
         })?;
 
+    // For bulk export jobs that are completed, return the manifest directly
+    if job.request_type == "bulk_export"
+        && job.status == crate::async_jobs::AsyncJobStatus::Completed
+    {
+        if let Some(result) = job.result {
+            return Ok((StatusCode::OK, Json(result)).into_response());
+        }
+    }
+
     // Build response based on job status
     let response = json!({
         "jobId": job.id,
@@ -4563,7 +4674,25 @@ pub async fn async_job_status(
         crate::async_jobs::AsyncJobStatus::Cancelled => StatusCode::GONE,
     };
 
-    Ok((status_code, Json(response)))
+    // Add X-Progress header for in-progress jobs (FHIR Bulk Data spec)
+    let mut headers = axum::http::HeaderMap::new();
+    if job.status == crate::async_jobs::AsyncJobStatus::InProgress
+        || job.status == crate::async_jobs::AsyncJobStatus::Queued
+    {
+        let progress_pct = (job.progress * 100.0).round() as u32;
+        if let Ok(progress_value) = axum::http::HeaderValue::from_str(&format!(
+            "Processing: {}% complete",
+            progress_pct
+        )) {
+            headers.insert("X-Progress", progress_value);
+        }
+        // Also add Retry-After header to suggest when to poll again (in seconds)
+        if let Ok(retry_value) = axum::http::HeaderValue::from_str("10") {
+            headers.insert(axum::http::header::RETRY_AFTER, retry_value);
+        }
+    }
+
+    Ok((status_code, headers, Json(response)).into_response())
 }
 
 /// GET /_async-status/{job-id}/result
@@ -4667,6 +4796,60 @@ pub fn create_async_accepted_response(
     }
 
     (StatusCode::ACCEPTED, headers, Json(response))
+}
+
+// ==================== Bulk Export File Serving ====================
+
+/// GET /fhir/_bulk-files/{job_id}/{filename}
+///
+/// Serve NDJSON files from bulk export jobs. Returns the file content
+/// with appropriate content type.
+pub async fn bulk_export_file(
+    State(state): State<crate::server::AppState>,
+    Path((job_id, filename)): Path<(String, String)>,
+) -> Result<impl IntoResponse, ApiError> {
+    use std::path::PathBuf;
+    use tokio::fs;
+
+    // Validate job_id is a valid UUID to prevent path traversal
+    let _uuid = uuid::Uuid::parse_str(&job_id)
+        .map_err(|_| ApiError::BadRequest("Invalid job ID format".to_string()))?;
+
+    // Validate filename doesn't contain path traversal attempts
+    if filename.contains("..") || filename.contains('/') || filename.contains('\\') {
+        return Err(ApiError::BadRequest("Invalid filename".to_string()));
+    }
+
+    // Construct the file path
+    let export_path = &state.config.bulk_export.export_path;
+    let file_path = PathBuf::from(export_path).join(&job_id).join(&filename);
+
+    // Check if file exists and is within the export directory
+    if !file_path.exists() {
+        return Err(ApiError::NotFound(format!(
+            "Export file not found: {}",
+            filename
+        )));
+    }
+
+    // Read the file
+    let contents = fs::read(&file_path)
+        .await
+        .map_err(|e| ApiError::Internal(format!("Failed to read export file: {}", e)))?;
+
+    // Build response with NDJSON content type
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        header::CONTENT_TYPE,
+        header::HeaderValue::from_static("application/fhir+ndjson"),
+    );
+    headers.insert(
+        header::CONTENT_DISPOSITION,
+        header::HeaderValue::from_str(&format!("attachment; filename=\"{}\"", filename))
+            .unwrap_or_else(|_| header::HeaderValue::from_static("attachment")),
+    );
+
+    Ok((StatusCode::OK, headers, contents))
 }
 
 // ==================== Package Management API ====================
@@ -5062,6 +5245,24 @@ pub struct PackageInstallRequest {
     pub version: String,
 }
 
+async fn refresh_resource_type_cache(state: &crate::server::AppState) {
+    match state.model_provider.get_resource_types().await {
+        Ok(resource_types) => {
+            let count = resource_types.len();
+            let new_set: HashSet<String> = resource_types.into_iter().collect();
+            state.resource_type_set.store(Arc::new(new_set));
+            state.model_provider.invalidate_schema_caches();
+            tracing::info!(resource_types = count, "Resource type cache refreshed");
+        }
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                "Failed to refresh resource type cache after package install"
+            );
+        }
+    }
+}
+
 /// Information about an installed dependency package
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -5142,6 +5343,8 @@ pub async fn api_packages_install(
                 dependencies = deps_count,
                 "Package installed successfully via API"
             );
+
+            refresh_resource_type_cache(&state).await;
 
             let deps_info: Vec<InstalledDependencyInfo> = result
                 .dependencies_installed
@@ -5225,6 +5428,7 @@ pub async fn api_packages_install(
 /// data: {"type":"completed","total_installed":3,"total_resources":1500,"duration_ms":5000}
 /// ```
 pub async fn api_packages_install_stream(
+    State(state): State<crate::server::AppState>,
     Json(request): Json<PackageInstallRequest>,
 ) -> Result<
     axum::response::sse::Sse<
@@ -5261,7 +5465,17 @@ pub async fn api_packages_install_stream(
             .map_err(|e| ApiError::Internal(e))?;
 
     // Convert receiver to SSE stream
-    let stream = UnboundedReceiverStream::new(receiver).map(|event| {
+    let refresh_state = state.clone();
+    let stream = UnboundedReceiverStream::new(receiver).map(move |event| {
+        if matches!(
+            event,
+            octofhir_canonical_manager::InstallEvent::Completed { .. }
+        ) {
+            let refresh_state = refresh_state.clone();
+            tokio::spawn(async move {
+                refresh_resource_type_cache(&refresh_state).await;
+            });
+        }
         let json = serde_json::to_string(&event).unwrap_or_else(|_| "{}".to_string());
         Ok::<_, std::convert::Infallible>(Event::default().data(json))
     });
@@ -5413,4 +5627,122 @@ pub async fn api_packages_search(
         packages,
         total,
     }))
+}
+
+// =============================================================================
+// Internal Resource Handlers
+// =============================================================================
+
+/// Internal resource types that are served at the root level (not under /fhir).
+/// These are administrative resources defined in the octofhir-auth IG.
+const INTERNAL_RESOURCE_TYPES: &[&str] = &[
+    "User",
+    "Role",
+    "Client",
+    "AccessPolicy",
+    "IdentityProvider",
+    "CustomOperation",
+    "App",
+];
+
+/// Check if a resource type is an internal resource type.
+fn is_internal_resource_type(resource_type: &str) -> bool {
+    INTERNAL_RESOURCE_TYPES.contains(&resource_type)
+}
+
+/// GET /{resource_type} - Search internal resources.
+///
+/// This handler validates that the resource type is an internal resource type
+/// before delegating to the standard search handler.
+pub async fn internal_search_resource(
+    state: State<crate::server::AppState>,
+    Path(resource_type): Path<String>,
+    query: Query<HashMap<String, String>>,
+    raw: RawQuery,
+) -> Result<impl IntoResponse, ApiError> {
+    if !is_internal_resource_type(&resource_type) {
+        return Err(ApiError::not_found(format!(
+            "Resource type '{}' is not available at this path",
+            resource_type
+        )));
+    }
+
+    search_resource(state, Path(resource_type), query, raw).await
+}
+
+/// POST /{resource_type} - Create internal resource.
+///
+/// This handler validates that the resource type is an internal resource type
+/// before delegating to the standard create handler.
+pub async fn internal_create_resource(
+    state: State<crate::server::AppState>,
+    Path(resource_type): Path<String>,
+    headers: HeaderMap,
+    payload: Json<Value>,
+) -> Result<impl IntoResponse, ApiError> {
+    if !is_internal_resource_type(&resource_type) {
+        return Err(ApiError::not_found(format!(
+            "Resource type '{}' is not available at this path",
+            resource_type
+        )));
+    }
+
+    create_resource(state, Path(resource_type), headers, payload).await
+}
+
+/// GET /{resource_type}/{id} - Read internal resource.
+///
+/// This handler validates that the resource type is an internal resource type
+/// before delegating to the standard read handler.
+pub async fn internal_read_resource(
+    state: State<crate::server::AppState>,
+    Path((resource_type, id)): Path<(String, String)>,
+    headers: HeaderMap,
+) -> Result<impl IntoResponse, ApiError> {
+    if !is_internal_resource_type(&resource_type) {
+        return Err(ApiError::not_found(format!(
+            "Resource type '{}' is not available at this path",
+            resource_type
+        )));
+    }
+
+    read_resource(state, Path((resource_type, id)), headers).await
+}
+
+/// PUT /{resource_type}/{id} - Update internal resource.
+///
+/// This handler validates that the resource type is an internal resource type
+/// before delegating to the standard update handler.
+pub async fn internal_update_resource(
+    state: State<crate::server::AppState>,
+    Path((resource_type, id)): Path<(String, String)>,
+    headers: HeaderMap,
+    payload: Json<Value>,
+) -> Result<impl IntoResponse, ApiError> {
+    if !is_internal_resource_type(&resource_type) {
+        return Err(ApiError::not_found(format!(
+            "Resource type '{}' is not available at this path",
+            resource_type
+        )));
+    }
+
+    update_resource(state, Path((resource_type, id)), headers, payload).await
+}
+
+/// DELETE /{resource_type}/{id} - Delete internal resource.
+///
+/// This handler validates that the resource type is an internal resource type
+/// before delegating to the standard delete handler.
+pub async fn internal_delete_resource(
+    state: State<crate::server::AppState>,
+    Path((resource_type, id)): Path<(String, String)>,
+) -> Result<impl IntoResponse, ApiError> {
+    if !is_internal_resource_type(&resource_type) {
+        return Err(ApiError::not_found(format!(
+            "Resource type '{}' is not available at this path",
+            resource_type
+        )));
+    }
+
+    delete_resource(state, Path((resource_type, id))).await
 }

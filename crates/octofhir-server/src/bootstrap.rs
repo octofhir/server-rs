@@ -38,82 +38,94 @@ pub const ADMIN_ACCESS_POLICY_ID: &str = "00000000-0000-0000-0000-000000000001";
 /// Default admin access policy name
 pub const ADMIN_ACCESS_POLICY_NAME: &str = "Admin Full Access";
 
-/// Embedded internal IG resources
-/// These are compiled into the binary for single-binary distribution
-pub const EMBEDDED_RESOURCES: &[(&str, &str)] = &[
-    // StructureDefinitions - Gateway
-    (
-        "StructureDefinition-App.json",
-        include_str!("../../../igs/octofhir-internal/StructureDefinition-App.json"),
-    ),
-    (
-        "StructureDefinition-CustomOperation.json",
-        include_str!("../../../igs/octofhir-internal/StructureDefinition-CustomOperation.json"),
-    ),
-    // StructureDefinitions - Auth
-    (
-        "StructureDefinition-Client.json",
-        include_str!("../../../igs/octofhir-internal/StructureDefinition-Client.json"),
-    ),
+/// Embedded octofhir-auth IG resources
+/// Authentication and authorization resources
+pub const EMBEDDED_AUTH_RESOURCES: &[(&str, &str)] = &[
     (
         "StructureDefinition-User.json",
-        include_str!("../../../igs/octofhir-internal/StructureDefinition-User.json"),
-    ),
-    (
-        "StructureDefinition-AccessPolicy.json",
-        include_str!("../../../igs/octofhir-internal/StructureDefinition-AccessPolicy.json"),
+        include_str!("../../../igs/octofhir-auth/StructureDefinition-User.json"),
     ),
     (
         "StructureDefinition-Session.json",
-        include_str!("../../../igs/octofhir-internal/StructureDefinition-Session.json"),
+        include_str!("../../../igs/octofhir-auth/StructureDefinition-Session.json"),
+    ),
+    (
+        "StructureDefinition-Client.json",
+        include_str!("../../../igs/octofhir-auth/StructureDefinition-Client.json"),
+    ),
+    (
+        "StructureDefinition-AccessPolicy.json",
+        include_str!("../../../igs/octofhir-auth/StructureDefinition-AccessPolicy.json"),
+    ),
+    (
+        "StructureDefinition-Role.json",
+        include_str!("../../../igs/octofhir-auth/StructureDefinition-Role.json"),
     ),
     (
         "StructureDefinition-RefreshToken.json",
-        include_str!("../../../igs/octofhir-internal/StructureDefinition-RefreshToken.json"),
+        include_str!("../../../igs/octofhir-auth/StructureDefinition-RefreshToken.json"),
     ),
     (
         "StructureDefinition-RevokedToken.json",
-        include_str!("../../../igs/octofhir-internal/StructureDefinition-RevokedToken.json"),
+        include_str!("../../../igs/octofhir-auth/StructureDefinition-RevokedToken.json"),
     ),
     (
         "StructureDefinition-IdentityProvider.json",
-        include_str!("../../../igs/octofhir-internal/StructureDefinition-IdentityProvider.json"),
-    ),
-    // ValueSets
-    (
-        "ValueSet-http-methods.json",
-        include_str!("../../../igs/octofhir-internal/ValueSet-http-methods.json"),
-    ),
-    (
-        "ValueSet-operation-types.json",
-        include_str!("../../../igs/octofhir-internal/ValueSet-operation-types.json"),
-    ),
-    (
-        "ValueSet-identity-provider-types.json",
-        include_str!("../../../igs/octofhir-internal/ValueSet-identity-provider-types.json"),
-    ),
-    (
-        "ValueSet-operation-outcome-type.json",
-        include_str!("../../../igs/octofhir-internal/ValueSet-operation-outcome-type.json"),
-    ),
-    // CodeSystems
-    (
-        "CodeSystem-http-methods.json",
-        include_str!("../../../igs/octofhir-internal/CodeSystem-http-methods.json"),
-    ),
-    (
-        "CodeSystem-operation-types.json",
-        include_str!("../../../igs/octofhir-internal/CodeSystem-operation-types.json"),
+        include_str!("../../../igs/octofhir-auth/StructureDefinition-IdentityProvider.json"),
     ),
     (
         "CodeSystem-identity-provider-types.json",
-        include_str!("../../../igs/octofhir-internal/CodeSystem-identity-provider-types.json"),
+        include_str!("../../../igs/octofhir-auth/CodeSystem-identity-provider-types.json"),
+    ),
+    (
+        "ValueSet-identity-provider-types.json",
+        include_str!("../../../igs/octofhir-auth/ValueSet-identity-provider-types.json"),
+    ),
+];
+
+/// Embedded octofhir-app IG resources
+/// Application-level resources (operations, apps)
+pub const EMBEDDED_APP_RESOURCES: &[(&str, &str)] = &[
+    (
+        "StructureDefinition-App.json",
+        include_str!("../../../igs/octofhir-app/StructureDefinition-App.json"),
+    ),
+    (
+        "StructureDefinition-CustomOperation.json",
+        include_str!("../../../igs/octofhir-app/StructureDefinition-CustomOperation.json"),
+    ),
+    (
+        "ValueSet-http-methods.json",
+        include_str!("../../../igs/octofhir-app/ValueSet-http-methods.json"),
+    ),
+    (
+        "ValueSet-operation-types.json",
+        include_str!("../../../igs/octofhir-app/ValueSet-operation-types.json"),
+    ),
+    (
+        "ValueSet-operation-outcome-type.json",
+        include_str!("../../../igs/octofhir-app/ValueSet-operation-outcome-type.json"),
+    ),
+    (
+        "CodeSystem-http-methods.json",
+        include_str!("../../../igs/octofhir-app/CodeSystem-http-methods.json"),
+    ),
+    (
+        "CodeSystem-operation-types.json",
+        include_str!("../../../igs/octofhir-app/CodeSystem-operation-types.json"),
     ),
     (
         "CodeSystem-operation-outcome-type.json",
-        include_str!("../../../igs/octofhir-internal/CodeSystem-operation-outcome-type.json"),
+        include_str!("../../../igs/octofhir-app/CodeSystem-operation-outcome-type.json"),
     ),
 ];
+
+/// Embedded SQL on FHIR compatibility resources
+/// Backports abstract types from R4B/R5 needed for SQL on FHIR ViewDefinition support
+pub const EMBEDDED_SOF_COMPAT_RESOURCES: &[(&str, &str)] = &[(
+    "StructureDefinition-CanonicalResource.json",
+    include_str!("../../../igs/octofhir-auth/StructureDefinition-CanonicalResource.json"),
+)];
 
 /// Bootstraps admin user from configuration.
 ///
@@ -368,11 +380,11 @@ pub async fn bootstrap_admin_access_policy<S: PolicyStorage>(
 ///
 /// # Returns
 ///
-/// Returns the number of operations synced.
+/// Returns the initialized OperationRegistryService with synced operations.
 pub async fn bootstrap_operations(
     pool: &PgPool,
     config: &AppConfig,
-) -> Result<usize, Box<dyn std::error::Error>> {
+) -> Result<Arc<OperationRegistryService>, Box<dyn std::error::Error>> {
     info!("Bootstrapping operations registry");
 
     // Create storage adapter
@@ -394,23 +406,21 @@ pub async fn bootstrap_operations(
         providers.push(Arc::new(GraphQLOperationProvider));
     }
 
-    // Add Auth provider if enabled
-    if config.auth.enabled {
-        providers.push(Arc::new(AuthOperationProvider));
-    }
+    // Add Auth provider (always enabled)
+    providers.push(Arc::new(AuthOperationProvider));
 
     // Note: Gateway CustomOperations are NOT stored in the operations table
     // to avoid duplication. They are loaded dynamically by the /api/operations endpoint.
 
     // Create registry service
-    let registry = OperationRegistryService::with_providers(op_storage, providers);
+    let registry = Arc::new(OperationRegistryService::with_providers(op_storage, providers));
 
-    // Sync operations to database
+    // Sync operations to database (also rebuilds in-memory indexes)
     let count = registry
         .sync_operations(true)
         .await
         .map_err(|e| format!("Failed to sync operations: {}", e))?;
 
     info!(count, "Operations synced to database");
-    Ok(count)
+    Ok(registry)
 }

@@ -172,10 +172,11 @@ fn extract_token_from_cookie(headers: &HeaderMap, cookie_config: &CookieConfig) 
 
 /// Revoke the token and return its JTI.
 async fn revoke_token(state: &LogoutState, token: &str) -> Result<String, String> {
-    // Decode the token to get its JTI
+    // Decode the token to get its JTI (using spawn_blocking to avoid blocking async runtime)
     let claims = state
         .jwt_service
-        .decode::<AccessTokenClaims>(token)
+        .decode_async::<AccessTokenClaims>(token.to_string())
+        .await
         .map_err(|e| format!("Failed to decode token: {}", e))?
         .claims;
 

@@ -1,20 +1,255 @@
 ---
 title: Deployment
-head: []
+description: Deploy OctoFHIR server using Docker
 ---
 
-CI:
+import { Tabs, TabItem } from '@astrojs/starlight/components';
 
-- GitHub Actions workflow runs format, clippy, and tests on PRs and `main`.
+## Docker Deployment
 
-Docs (GitHub Pages):
+OctoFHIR is distributed as a Docker image via GitHub Container Registry.
 
-- The docs are an Astro + Starlight site in `/docs`.
-- Build locally with `npm i && npm run build`.
-- Deployment workflow can publish to GitHub Pages under `server-rs` path.
-- Ensure repository Pages is configured to use GitHub Actions.
+### Pull the Image
 
-Server runtime:
+```bash
+docker pull ghcr.io/octofhir/octofhir-server:latest
+```
 
-- Configure `octofhir.toml` and environment variables.
-- Optional: set `OTEL_EXPORTER_OTLP_ENDPOINT` to export traces.
+### Quick Start with Docker Compose
+
+Create a `docker-compose.yml`:
+
+```yaml
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: octofhir
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  octofhir:
+    image: ghcr.io/octofhir/octofhir-server:latest
+    ports:
+      - "8888:8888"
+    environment:
+      # Database connection
+      OCTOFHIR__STORAGE__POSTGRES__HOST: postgres
+      OCTOFHIR__STORAGE__POSTGRES__PORT: 5432
+      OCTOFHIR__STORAGE__POSTGRES__USER: postgres
+      OCTOFHIR__STORAGE__POSTGRES__PASSWORD: postgres
+      OCTOFHIR__STORAGE__POSTGRES__DATABASE: octofhir
+      # Admin credentials (change in production!)
+      OCTOFHIR__BOOTSTRAP__ADMIN_USER__USERNAME: admin
+      OCTOFHIR__BOOTSTRAP__ADMIN_USER__PASSWORD: your-secure-password
+      OCTOFHIR__BOOTSTRAP__ADMIN_USER__EMAIL: admin@example.com
+      # Auth issuer (set to your public URL)
+      OCTOFHIR__AUTH__ISSUER: https://fhir.example.com
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - fhir_packages:/opt/octofhir/data/.fhir
+
+volumes:
+  postgres_data:
+  fhir_packages:
+```
+
+Start the services:
+
+```bash
+docker compose up -d
+```
+
+The server will be available at `http://localhost:8888`.
+
+### Configuration via Environment Variables
+
+All configuration options can be set via environment variables using the `OCTOFHIR__` prefix with double underscores for nested keys:
+
+| Environment Variable | Description | Default |
+|---------------------|-------------|---------|
+| `OCTOFHIR__SERVER__PORT` | Server port | `8888` |
+| `OCTOFHIR__STORAGE__POSTGRES__HOST` | PostgreSQL host | `postgres` |
+| `OCTOFHIR__STORAGE__POSTGRES__PORT` | PostgreSQL port | `5432` |
+| `OCTOFHIR__STORAGE__POSTGRES__USER` | PostgreSQL user | `postgres` |
+| `OCTOFHIR__STORAGE__POSTGRES__PASSWORD` | PostgreSQL password | `postgres` |
+| `OCTOFHIR__STORAGE__POSTGRES__DATABASE` | Database name | `octofhir` |
+| `OCTOFHIR__STORAGE__POSTGRES__URL` | Full connection URL (overrides individual settings) | - |
+| `OCTOFHIR__FHIR__VERSION` | FHIR version (R4, R4B, R5, R6) | `R4` |
+| `OCTOFHIR__AUTH__ISSUER` | OAuth issuer URL | `http://localhost:8888` |
+| `OCTOFHIR__BOOTSTRAP__ADMIN_USER__USERNAME` | Initial admin username | `admin` |
+| `OCTOFHIR__BOOTSTRAP__ADMIN_USER__PASSWORD` | Initial admin password | `admin` |
+| `OCTOFHIR__REDIS__ENABLED` | Enable Redis cache | `false` |
+| `OCTOFHIR__REDIS__URL` | Redis URL | `redis://redis:6379` |
+| `RUST_LOG` | Log level | `info` |
+
+### Custom Configuration File
+
+Mount a custom configuration file:
+
+```bash
+docker run -d \
+  -p 8888:8888 \
+  -v ./octofhir.toml:/opt/octofhir/config/octofhir.toml:ro \
+  -v octofhir-data:/opt/octofhir/data \
+  ghcr.io/octofhir/octofhir-server:latest
+```
+
+### Production Recommendations
+
+#### Security
+
+1. **Change default credentials** immediately after deployment
+2. **Use HTTPS** via a reverse proxy (nginx, Traefik, Caddy)
+3. **Set proper issuer URL** matching your public domain
+4. **Generate production JWT keys** (see [JWT Key Persistence](/jwt-key-persistence))
+
+#### Database
+
+1. Use a managed PostgreSQL service or properly configured instance
+2. Enable connection pooling (PgBouncer) for high traffic
+3. Regular backups and point-in-time recovery
+
+#### Scaling
+
+For horizontal scaling, enable Redis:
+
+```yaml
+environment:
+  OCTOFHIR__REDIS__ENABLED: "true"
+  OCTOFHIR__REDIS__URL: redis://redis:6379
+```
+
+### Health Check
+
+The server exposes a health check endpoint:
+
+```bash
+curl http://localhost:8888/healthz
+```
+
+### Building from Source
+
+If you need to build the image locally:
+
+```bash
+# Clone the repository
+git clone https://github.com/octofhir/server-rs.git
+cd server-rs
+
+# Build the image
+just docker-build
+
+# Or manually
+docker build -t octofhir-server .
+```
+
+Available just commands:
+
+| Command | Description |
+|---------|-------------|
+| `just docker-build` | Build Docker image with git tag |
+| `just docker-build-fresh` | Build without cache |
+| `just docker-push` | Push to GitHub Container Registry |
+| `just docker-release` | Build and push |
+| `just docker-run` | Run locally with docker-compose postgres |
+| `just docker-login` | Login to GHCR |
+
+## CI/CD
+
+### GitHub Actions
+
+The repository includes GitHub Actions workflows for:
+
+- Running tests on PRs and main branch
+- Building and publishing Docker images on releases
+- Deploying documentation to GitHub Pages
+
+### Manual Release
+
+```bash
+# Login to GitHub Container Registry
+export GITHUB_TOKEN=your_token
+export GITHUB_ACTOR=your_username
+just docker-login
+
+# Build and push
+just docker-release
+```
+
+## Kubernetes
+
+Example deployment manifest:
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: octofhir
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: octofhir
+  template:
+    metadata:
+      labels:
+        app: octofhir
+    spec:
+      containers:
+      - name: octofhir
+        image: ghcr.io/octofhir/octofhir-server:latest
+        ports:
+        - containerPort: 8888
+        env:
+        - name: OCTOFHIR__STORAGE__POSTGRES__URL
+          valueFrom:
+            secretKeyRef:
+              name: octofhir-secrets
+              key: database-url
+        - name: OCTOFHIR__AUTH__ISSUER
+          value: "https://fhir.example.com"
+        - name: OCTOFHIR__REDIS__ENABLED
+          value: "true"
+        - name: OCTOFHIR__REDIS__URL
+          value: "redis://redis:6379"
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 8888
+          initialDelaySeconds: 60
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: 8888
+          initialDelaySeconds: 10
+          periodSeconds: 5
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "2000m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: octofhir
+spec:
+  selector:
+    app: octofhir
+  ports:
+  - port: 80
+    targetPort: 8888
+```

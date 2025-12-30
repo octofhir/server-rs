@@ -1,0 +1,34 @@
+.statCard {
+  background: var(--app-surface-1);
+  transition: transform 150ms ease, box-shadow 150ms ease;
+}
+
+.statCard:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--mantine-shadow-md);
+}
+
+.chartCard {
+  background: var(--app-surface-1);
+}
+
+.timeline {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 80px;
+  padding: var(--mantine-spacing-xs) 0;
+}
+
+.timelineBar {
+  flex: 1;
+  background: var(--mantine-primary-color-filled);
+  border-radius: var(--mantine-radius-xs) var(--mantine-radius-xs) 0 0;
+  min-width: 4px;
+  transition: opacity 150ms ease;
+  cursor: pointer;
+}
+
+.timelineBar:hover {
+  opacity: 0.8;
+}

@@ -40,6 +40,7 @@
 //! }
 //! ```
 
+pub mod bulk;
 pub mod definition;
 pub mod everything;
 pub mod handler;
@@ -48,12 +49,19 @@ pub mod meta;
 pub mod params;
 pub mod registry;
 pub mod router;
+pub mod sof;
 pub mod sql;
+pub mod terminology;
 pub mod validate;
 
 // Re-export main types for convenience
+pub use bulk::{
+    cleanup_expired_exports, execute_bulk_export, BulkExportJob, BulkExportLevel,
+    BulkExportManifest, BulkExportStatus, ExportOperation,
+};
 pub use definition::{OperationDefinition, OperationKind, OperationParameter, ParameterUse};
 pub use everything::EverythingOperation;
+pub use terminology::{ExpandOperation, ValidateCodeOperation};
 pub use handler::{DynOperationHandler, OperationError, OperationHandler};
 pub use loader::{LoadError, load_operations};
 pub use meta::{MetaAddOperation, MetaDeleteOperation, MetaOperation};
@@ -63,6 +71,9 @@ pub use router::{
     instance_operation_handler, is_operation, merged_root_get_handler, merged_root_post_handler,
     merged_type_get_handler, merged_type_post_handler, system_operation_handler,
     type_operation_handler,
+};
+pub use sof::{
+    execute_viewdefinition_export, ViewDefinitionRunOperation, ViewDefinitionSqlOperation,
 };
 pub use validate::{Issue, Severity, ValidateOperation};
 
@@ -80,11 +91,15 @@ use octofhir_fhirpath::FhirPathEngine;
 /// - `$meta-add` - Add metadata elements
 /// - `$meta-delete` - Remove metadata elements
 /// - `$everything` - Retrieve complete record for Patient, Encounter, or Group
+/// - `$export` - Bulk data export (system, patient, group, ViewDefinition level)
+/// - `$run` - Execute ViewDefinition synchronously (SQL on FHIR)
+/// - `$sql` - Generate SQL from ViewDefinition (SQL on FHIR)
 ///
 /// # Arguments
 ///
 /// * `fhirpath_engine` - The FHIRPath engine for validation constraints
 /// * `model_provider` - The schema provider for type information
+/// * `bulk_export_config` - Configuration for bulk export operations
 ///
 /// # Returns
 ///
@@ -92,6 +107,34 @@ use octofhir_fhirpath::FhirPathEngine;
 pub fn register_core_operations(
     fhirpath_engine: Arc<FhirPathEngine>,
     model_provider: SharedModelProvider,
+) -> HashMap<String, DynOperationHandler> {
+    register_core_operations_with_config(
+        fhirpath_engine,
+        model_provider,
+        crate::config::BulkExportConfig::default(),
+    )
+}
+
+/// Registers core operations with explicit bulk export configuration.
+pub fn register_core_operations_with_config(
+    fhirpath_engine: Arc<FhirPathEngine>,
+    model_provider: SharedModelProvider,
+    bulk_export_config: crate::config::BulkExportConfig,
+) -> HashMap<String, DynOperationHandler> {
+    register_core_operations_full(
+        fhirpath_engine,
+        model_provider,
+        bulk_export_config,
+        crate::config::SqlOnFhirConfig::default(),
+    )
+}
+
+/// Registers core operations with all configuration options.
+pub fn register_core_operations_full(
+    fhirpath_engine: Arc<FhirPathEngine>,
+    model_provider: SharedModelProvider,
+    bulk_export_config: crate::config::BulkExportConfig,
+    sql_on_fhir_config: crate::config::SqlOnFhirConfig,
 ) -> HashMap<String, DynOperationHandler> {
     let mut handlers: HashMap<String, DynOperationHandler> = HashMap::new();
 
@@ -113,6 +156,41 @@ pub fn register_core_operations(
     handlers.insert(
         "everything".to_string(),
         Arc::new(EverythingOperation::new()),
+    );
+
+    // Terminology operations
+    handlers.insert("expand".to_string(), Arc::new(ExpandOperation::new()));
+    handlers.insert(
+        "validate-code".to_string(),
+        Arc::new(ValidateCodeOperation::new()),
+    );
+
+    // $export operation (Bulk Data Access + ViewDefinition/SQL on FHIR)
+    // The unified ExportOperation handles:
+    // - /$export (system level)
+    // - /Patient/$export (patient level)
+    // - /Group/{id}/$export (group level)
+    // - /ViewDefinition/$export (SQL on FHIR type level)
+    // - /ViewDefinition/{id}/$export (SQL on FHIR instance level)
+    if bulk_export_config.enabled || sql_on_fhir_config.enabled {
+        handlers.insert(
+            "export".to_string(),
+            Arc::new(ExportOperation::with_sql_on_fhir(
+                bulk_export_config,
+                sql_on_fhir_config.enabled,
+            )),
+        );
+    }
+
+    // SQL on FHIR operations ($run, $sql on ViewDefinition)
+    // Always register - the handlers check if feature is enabled
+    handlers.insert(
+        "run".to_string(),
+        Arc::new(ViewDefinitionRunOperation::new(sql_on_fhir_config.enabled)),
+    );
+    handlers.insert(
+        "sql".to_string(),
+        Arc::new(ViewDefinitionSqlOperation::new(sql_on_fhir_config.enabled)),
     );
 
     handlers

@@ -33,6 +33,14 @@ pub struct ViewDefinition {
     /// Description of the view's purpose.
     pub description: Option<String>,
 
+    /// Target FHIR profiles this view executes against.
+    #[serde(default)]
+    pub profile: Vec<String>,
+
+    /// Applicable FHIR versions for this view.
+    #[serde(default)]
+    pub fhir_version: Vec<String>,
+
     /// The columns and nested selects to include in the view.
     #[serde(default)]
     pub select: Vec<SelectColumn>,
@@ -74,6 +82,10 @@ pub struct SelectColumn {
     /// Like forEach, but includes a row with nulls if the array is empty.
     pub for_each_or_null: Option<String>,
 
+    /// Recursive FHIRPath expressions for hierarchical data traversal.
+    #[serde(default)]
+    pub repeat: Vec<String>,
+
     /// Union of multiple select clauses.
     pub union_all: Option<Vec<SelectColumn>>,
 }
@@ -97,6 +109,21 @@ pub struct Column {
 
     /// Human-readable description of the column.
     pub description: Option<String>,
+
+    /// Metadata key-value pairs for implementation directives.
+    #[serde(default)]
+    pub tag: Vec<Tag>,
+}
+
+/// A metadata tag for columns with key-value pairs.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Tag {
+    /// Tag name/key.
+    pub name: String,
+
+    /// Tag value.
+    pub value: Option<String>,
 }
 
 /// A where clause for filtering rows.
@@ -104,6 +131,9 @@ pub struct Column {
 pub struct WhereClause {
     /// FHIRPath expression that must evaluate to true for the row to be included.
     pub path: String,
+
+    /// Human-readable explanation of the constraint.
+    pub description: Option<String>,
 }
 
 /// A constant value that can be referenced in FHIRPath expressions.

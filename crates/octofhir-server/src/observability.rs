@@ -1,5 +1,6 @@
 // Tracing and OpenTelemetry initialization (with reloadable log level)
 use crate::config::OtelConfig;
+use crate::log_stream::{LogBroadcastLayer, init_log_broadcast};
 use std::sync::OnceLock;
 use tracing_subscriber::{EnvFilter, fmt, prelude::*, reload};
 
@@ -27,9 +28,15 @@ pub fn init_tracing_with_level(level: &str) {
     let (reload_layer, handle) = reload::Layer::new(base_filter);
     let _ = LOG_RELOAD_HANDLE.set(handle);
 
+    // Initialize log broadcast for WebSocket streaming
+    let log_sender = init_log_broadcast();
+    let log_broadcast_layer = LogBroadcastLayer::new(log_sender)
+        .with_min_level(tracing::Level::DEBUG);
+
     let _ = tracing_subscriber::registry()
         .with(reload_layer)
         .with(fmt::layer())
+        .with(log_broadcast_layer)
         .try_init();
 }
 

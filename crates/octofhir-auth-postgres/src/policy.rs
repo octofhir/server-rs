@@ -412,6 +412,7 @@ impl PostgresPolicyStorageAdapter {
             StorageError::Serialization(e) => {
                 octofhir_auth::AuthError::storage(format!("Serialization error: {}", e))
             }
+            StorageError::Internal(msg) => octofhir_auth::AuthError::storage(msg),
         }
     }
 }

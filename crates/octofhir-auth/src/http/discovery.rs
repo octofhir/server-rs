@@ -71,7 +71,7 @@ mod tests {
 
         let state = SmartConfigState::new(config.clone(), base_url.clone());
 
-        assert_eq!(state.config.enabled, config.enabled);
+        assert_eq!(state.config.issuer, config.issuer);
         assert_eq!(state.base_url.as_str(), "https://fhir.example.com/");
     }
 }

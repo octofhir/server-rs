@@ -13,6 +13,7 @@ use octofhir_fhir_model::provider::{
     ChoiceTypeInfo, ElementInfo, FhirVersion, ModelProvider, TypeInfo,
 };
 use octofhir_fhirschema::types::FhirSchema;
+use octofhir_fhirschema::SchemaProvider;
 use sqlx_postgres::PgPool;
 use tracing::{debug, warn};
 
@@ -60,9 +61,9 @@ pub struct OctoFhirModelProvider {
     /// Database connection pool
     pool: PgPool,
     /// LRU cache for schemas by name (e.g., "Patient", "Observation")
-    cache: Cache<String, Arc<FhirSchema>>,
+    cache: Cache<String, Option<Arc<FhirSchema>>>,
     /// LRU cache for schemas by canonical URL (for meta.profile validation)
-    url_cache: Cache<String, Arc<FhirSchema>>,
+    url_cache: Cache<String, Option<Arc<FhirSchema>>>,
     /// FHIR version this provider serves
     fhir_version: FhirVersion,
     /// FHIR version string for database queries (e.g., "4.0.1", "4.3.0")
@@ -122,49 +123,54 @@ impl OctoFhirModelProvider {
         &self.fhir_version_str
     }
 
+    /// Clear cached schemas to allow newly installed packages to be visible.
+    pub fn invalidate_schema_caches(&self) {
+        self.cache.invalidate_all();
+        self.url_cache.invalidate_all();
+    }
+
     /// Get a schema by name (e.g., "Patient", "Observation").
     ///
     /// Checks the cache first, then loads from database if not found.
     pub async fn get_schema(&self, name: &str) -> Option<Arc<FhirSchema>> {
         // Check cache first
-        if let Some(schema) = self.cache.get(name).await {
+        if let Some(schema) = self.cache.get(name).await.flatten() {
             return Some(schema);
         }
 
-        // Load from database
-        let store = PostgresPackageStore::new(self.pool.clone());
-        match store
-            .get_fhirschema_by_name(name, &self.fhir_version_str)
-            .await
-        {
-            Ok(Some(record)) => {
-                // Deserialize the schema from JSON
-                match serde_json::from_value::<FhirSchema>(record.content) {
-                    Ok(schema) => {
-                        let schema = Arc::new(schema);
-                        // Cache by name
-                        self.cache.insert(name.to_string(), schema.clone()).await;
-                        // Also cache by URL for URL lookups
-                        self.url_cache
-                            .insert(schema.url.clone(), schema.clone())
-                            .await;
-                        Some(schema)
+        let name_key = name.to_string();
+        let fhir_version_str = self.fhir_version_str.clone();
+        let pool = self.pool.clone();
+        let url_cache = self.url_cache.clone();
+
+        self.cache
+            .get_with(name_key.clone(), async move {
+                let store = PostgresPackageStore::new(pool);
+                match store.get_fhirschema_by_name(&name_key, &fhir_version_str).await {
+                    Ok(Some(record)) => match serde_json::from_value::<FhirSchema>(record.content) {
+                        Ok(schema) => {
+                            let schema = Arc::new(schema);
+                            url_cache
+                                .insert(schema.url.clone(), Some(schema.clone()))
+                                .await;
+                            Some(schema)
+                        }
+                        Err(e) => {
+                            warn!("Failed to deserialize FhirSchema for {}: {}", name_key, e);
+                            None
+                        }
+                    },
+                    Ok(None) => {
+                        debug!("Schema not found in database: {}", name_key);
+                        None
                     }
                     Err(e) => {
-                        warn!("Failed to deserialize FhirSchema for {}: {}", name, e);
+                        warn!("Database error loading schema {}: {}", name_key, e);
                         None
                     }
                 }
-            }
-            Ok(None) => {
-                debug!("Schema not found in database: {}", name);
-                None
-            }
-            Err(e) => {
-                warn!("Database error loading schema {}: {}", name, e);
-                None
-            }
-        }
+            })
+            .await
     }
 
     /// Get a schema by canonical URL (for meta.profile validation).
@@ -172,41 +178,43 @@ impl OctoFhirModelProvider {
     /// e.g., "http://hl7.org/fhir/StructureDefinition/Patient"
     pub async fn get_schema_by_url(&self, url: &str) -> Option<Arc<FhirSchema>> {
         // Check URL cache first
-        if let Some(schema) = self.url_cache.get(url).await {
+        if let Some(schema) = self.url_cache.get(url).await.flatten() {
             return Some(schema);
         }
 
-        // Load from database
-        let store = PostgresPackageStore::new(self.pool.clone());
-        match store
-            .get_fhirschema_by_url(url, &self.fhir_version_str)
-            .await
-        {
-            Ok(Some(record)) => {
-                match serde_json::from_value::<FhirSchema>(record.content) {
-                    Ok(schema) => {
-                        let schema = Arc::new(schema);
-                        // Cache by URL
-                        self.url_cache.insert(url.to_string(), schema.clone()).await;
-                        // Also cache by name
-                        self.cache.insert(schema.name.clone(), schema.clone()).await;
-                        Some(schema)
+        let url_key = url.to_string();
+        let fhir_version_str = self.fhir_version_str.clone();
+        let pool = self.pool.clone();
+        let name_cache = self.cache.clone();
+
+        self.url_cache
+            .get_with(url_key.clone(), async move {
+                let store = PostgresPackageStore::new(pool);
+                match store.get_fhirschema_by_url(&url_key, &fhir_version_str).await {
+                    Ok(Some(record)) => match serde_json::from_value::<FhirSchema>(record.content) {
+                        Ok(schema) => {
+                            let schema = Arc::new(schema);
+                            name_cache
+                                .insert(schema.name.clone(), Some(schema.clone()))
+                                .await;
+                            Some(schema)
+                        }
+                        Err(e) => {
+                            warn!("Failed to deserialize FhirSchema for URL {}: {}", url_key, e);
+                            None
+                        }
+                    },
+                    Ok(None) => {
+                        debug!("Schema not found by URL: {}", url_key);
+                        None
                     }
                     Err(e) => {
-                        warn!("Failed to deserialize FhirSchema for URL {}: {}", url, e);
+                        warn!("Database error loading schema by URL {}: {}", url_key, e);
                         None
                     }
                 }
-            }
-            Ok(None) => {
-                debug!("Schema not found by URL: {}", url);
-                None
-            }
-            Err(e) => {
-                warn!("Database error loading schema by URL {}: {}", url, e);
-                None
-            }
-        }
+            })
+            .await
     }
 
     /// Check if an element is a choice type variant and return the base element name.
@@ -241,6 +249,9 @@ impl OctoFhirModelProvider {
     }
 
     /// Get backbone element's nested elements by parent type and path.
+    ///
+    /// Returns a reference to the nested elements HashMap without cloning during navigation.
+    /// Only clones at the end when returning the result.
     async fn get_backbone_elements_by_path(
         &self,
         parent_type: &str,
@@ -248,15 +259,16 @@ impl OctoFhirModelProvider {
     ) -> Option<std::collections::HashMap<String, octofhir_fhirschema::types::FhirSchemaElement>>
     {
         let schema = self.get_schema(parent_type).await?;
-        let mut current_elements = schema.elements.as_ref()?.clone();
+        let mut current_elements = schema.elements.as_ref()?;
 
-        // Navigate through the path
+        // Navigate through the path using references (no cloning during navigation)
         for part in element_path.split('.') {
             let element = current_elements.get(part)?;
-            current_elements = element.elements.as_ref()?.clone();
+            current_elements = element.elements.as_ref()?;
         }
 
-        Some(current_elements)
+        // Only clone at the end when we need to return
+        Some(current_elements.clone())
     }
 }
 
@@ -593,5 +605,22 @@ impl ModelProvider for OctoFhirModelProvider {
 
     fn is_union_type(&self, _type_info: &TypeInfo) -> bool {
         false
+    }
+}
+
+/// SchemaProvider implementation for lazy schema loading in validation.
+///
+/// This allows the FhirSchemaValidator to load schemas on-demand from the
+/// model provider's Moka LRU cache, avoiding the need to pre-load all schemas.
+#[async_trait]
+impl SchemaProvider for OctoFhirModelProvider {
+    async fn get_schema(&self, name: &str) -> Option<Arc<FhirSchema>> {
+        // Delegate to the existing get_schema method
+        OctoFhirModelProvider::get_schema(self, name).await
+    }
+
+    async fn get_schema_by_url(&self, url: &str) -> Option<Arc<FhirSchema>> {
+        // Delegate to the existing get_schema_by_url method
+        OctoFhirModelProvider::get_schema_by_url(self, url).await
     }
 }

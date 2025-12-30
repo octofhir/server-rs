@@ -1,0 +1,50 @@
+.container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--app-surface-1);
+  border-left: 1px solid var(--app-border-subtle);
+}
+
+.scrollArea {
+  flex: 1;
+  min-height: 0; /* Required for flex child scrolling */
+}
+
+.header {
+  padding-bottom: var(--mantine-spacing-sm);
+}
+
+.detailRow {
+  min-height: 32px;
+}
+
+.detailLabel {
+  min-width: 100px;
+  flex-shrink: 0;
+}
+
+.detailValue {
+  word-break: break-word;
+}
+
+.diffItem {
+  background: var(--app-surface-2);
+}
+
+.diffOld {
+  background: rgba(250, 82, 82, 0.1);
+  border: 1px solid rgba(250, 82, 82, 0.2);
+  border-radius: var(--mantine-radius-sm);
+}
+
+.diffNew {
+  background: rgba(64, 192, 87, 0.1);
+  border: 1px solid rgba(64, 192, 87, 0.2);
+  border-radius: var(--mantine-radius-sm);
+}
+
+.diffArrow {
+  flex-shrink: 0;
+  margin-top: var(--mantine-spacing-xl);
+}

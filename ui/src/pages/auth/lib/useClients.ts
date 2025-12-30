@@ -19,6 +19,13 @@ export interface ClientResource extends FhirResource {
 	refreshTokenLifetime?: number;
 	pkceRequired?: boolean;
 	allowedOrigins: string[];
+	jwksUri?: string;
+}
+
+// Response from regenerate secret endpoint
+export interface RegenerateSecretResponse {
+	clientId: string;
+	clientSecret: string;
 }
 
 // Query keys
@@ -63,7 +70,9 @@ export function useCreateClient() {
 
 	return useMutation({
 		mutationFn: async (client: Partial<ClientResource>) => {
-			const response = await fhirClient.create(client as any);
+			// Strip 'id' from body - server assigns the ID for new resources
+			const { id: _id, ...body } = client;
+			const response = await fhirClient.create(body as Partial<ClientResource>);
 			return response as ClientResource;
 		},
 		onSuccess: () => {
@@ -90,7 +99,8 @@ export function useUpdateClient() {
 	return useMutation({
 		mutationFn: async (client: ClientResource) => {
 			if (!client.id) throw new Error("Client resource ID required for update");
-			const response = await fhirClient.update(client as any);
+			// Use fhirClient.update which handles routing correctly
+			const response = await fhirClient.update(client);
 			return response as ClientResource;
 		},
 		onSuccess: (data) => {
@@ -130,6 +140,40 @@ export function useDeleteClient() {
 		onError: (error: Error) => {
 			notifications.show({
 				title: "Failed to delete client",
+				message: error.message,
+				color: "red",
+			});
+		},
+	});
+}
+
+export function useRegenerateSecret() {
+	const queryClient = useQueryClient();
+
+	return useMutation({
+		mutationFn: async (clientId: string): Promise<RegenerateSecretResponse> => {
+			const response = await fetch(`/admin/clients/${clientId}/regenerate-secret`, {
+				method: "POST",
+				credentials: "include",
+				headers: {
+					"Content-Type": "application/json",
+					Accept: "application/json",
+				},
+			});
+
+			if (!response.ok) {
+				const error = await response.json().catch(() => ({ message: response.statusText }));
+				throw new Error(error.message || `HTTP ${response.status}`);
+			}
+
+			return response.json();
+		},
+		onSuccess: () => {
+			queryClient.invalidateQueries({ queryKey: clientKeys.lists() });
+		},
+		onError: (error: Error) => {
+			notifications.show({
+				title: "Failed to regenerate secret",
 				message: error.message,
 				color: "red",
 			});

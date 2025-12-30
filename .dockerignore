@@ -1,0 +1,44 @@
+# Build artifacts
+target/
+ui/node_modules/
+ui/dist/
+docs/node_modules/
+docs/dist/
+
+# IDE and editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Git
+.git/
+.gitignore
+
+# Development files
+*.md
+!README.md
+.env
+.env.*
+*.pem
+.k6-secret
+
+# Test and benchmark data
+k6/
+k6-private/
+flamegraph*.svg
+coverage/
+
+# Local development
+.fhir/
+.claude/
+internal-docs/
+deployment/
+scripts/
+tasks/
+
+# Temporary files
+*.log
+*.tmp
+tmp/

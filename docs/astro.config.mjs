@@ -7,17 +7,17 @@ export default defineConfig({
   base: '/server-rs/',
   integrations: [
     starlight({
-      title: 'OctoFHIR Server (Rust)',
-      description: 'Rust-first, async-first minimal FHIR server',
+      title: 'Abyxon',
+      description: 'Core FHIR server of the OctoFHIR ecosystem, built in Rust',
       social: [
           { label: 'Boosty', icon: 'external', href: 'https://boosty.to/octoshikari'},
           { label: 'Github', icon: 'github', href: 'https://github.com/octofhir/server-rs'},
 
       ],
       logo: {
-        src: './src/assets/logo.svg',
-        alt: 'OctoFHIR',
-        dark: './src/assets/logo-dark.svg'
+        src: '/logo.png',
+        alt: 'Abyxon',
+        dark: '/logo-dark.png'
       },
       customCss: ['./src/styles/custom.css'],
       head: [
@@ -44,6 +44,7 @@ export default defineConfig({
           ]
         },
         { label: 'API Reference', link: 'api-reference/' },
+        { label: 'Bulk Data Export', link: 'bulk-export/' },
         { label: 'Development', link: 'development/' },
         { label: 'Deployment', link: 'deployment/' },
       ],

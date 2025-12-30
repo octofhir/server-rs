@@ -7,24 +7,26 @@
 //!
 //! # Architecture
 //!
-//! The ValidationService combines:
-//! - `FhirSchemaValidationProvider` for structural schema validation
-//! - `FhirPathEvaluator` (via FhirPathEngine) for constraint evaluation
+//! The ValidationService uses a single shared `FhirSchemaValidator` instance
+//! that lazily loads schemas via the `SchemaProvider` trait. This avoids
+//! creating new validators per request, significantly improving performance.
 //!
-//! Schemas are loaded on-demand from the database when validation is requested.
+//! Schemas are loaded on-demand from the `OctoFhirModelProvider` which has
+//! an internal Moka LRU cache for efficient schema reuse.
 
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use octofhir_fhirpath::FhirPathEngine;
 use octofhir_fhirschema::{
-    reference::ReferenceResolver, types::FhirSchema,
-    types::ValidationError as FhirSchemaValidationError, validation::FhirSchemaValidator,
+    reference::ReferenceResolver,
+    terminology::TerminologyService,
+    types::ValidationError as FhirSchemaValidationError,
+    types::ValidationResult,
+    validation::FhirValidator,
 };
 use serde_json::Value as JsonValue;
-use tracing::warn;
 
-use crate::{canonical, model_provider::OctoFhirModelProvider};
+use crate::model_provider::OctoFhirModelProvider;
 
 /// Validation outcome with detailed information
 #[derive(Debug, Clone)]
@@ -134,142 +136,60 @@ impl IssueSeverity {
 
 /// Comprehensive FHIR validation service
 ///
-/// Combines structural schema validation with FHIRPath constraint evaluation.
-/// Schemas are loaded on-demand from the database when validation is requested.
+/// Uses `FhirValidator` with pre-compiled schemas for high-performance validation.
+/// Schemas are lazily compiled on first use and cached by the `SchemaCompiler`.
 #[derive(Clone)]
 pub struct ValidationService {
-    /// Model provider for type information and on-demand schema loading
-    model_provider: Arc<OctoFhirModelProvider>,
-    /// FHIRPath engine for advanced constraint evaluation
-    fhirpath_engine: Arc<FhirPathEngine>,
-    /// Optional reference resolver for existence validation
-    reference_resolver: Option<Arc<dyn ReferenceResolver>>,
-}
-
-/// Check if a type is a primitive FHIR type
-fn is_primitive_type(type_name: &str) -> bool {
-    matches!(
-        type_name,
-        "boolean"
-            | "integer"
-            | "string"
-            | "decimal"
-            | "uri"
-            | "url"
-            | "canonical"
-            | "base64Binary"
-            | "instant"
-            | "date"
-            | "dateTime"
-            | "time"
-            | "code"
-            | "oid"
-            | "id"
-            | "markdown"
-            | "unsignedInt"
-            | "positiveInt"
-            | "uuid"
-            | "xhtml"
-    )
+    /// Shared validator instance with pre-compiled schemas
+    validator: Arc<FhirValidator>,
 }
 
 impl ValidationService {
-    /// Create a new validation service with FHIRPath constraint support.
+    /// Create a new validation service with a shared validator.
     ///
-    /// Schemas are loaded on-demand from the model provider when validation
-    /// is requested, rather than pre-loading all schemas at construction.
-    pub async fn new(
+    /// Uses `FhirValidator` with `SchemaCompiler` for high-performance
+    /// pre-compiled schema validation. Schemas are compiled on first use
+    /// and cached for subsequent validations.
+    pub fn new(
         model_provider: Arc<OctoFhirModelProvider>,
         fhirpath_engine: Arc<FhirPathEngine>,
-    ) -> Result<Self, anyhow::Error> {
-        Ok(Self {
+    ) -> Self {
+        let validator = FhirValidator::new_with_fhirpath(
             model_provider,
             fhirpath_engine,
-            reference_resolver: None,
-        })
+        );
+
+        Self {
+            validator: Arc::new(validator),
+        }
     }
 
-    /// Add a reference resolver for existence validation.
+    /// Create a new validation service with additional configuration.
     ///
-    /// When a reference resolver is provided, the validator will check that
-    /// referenced resources actually exist in the storage.
-    pub fn with_reference_resolver(mut self, resolver: Arc<dyn ReferenceResolver>) -> Self {
-        self.reference_resolver = Some(resolver);
-        self
-    }
+    /// This builder-style constructor allows adding reference resolver and
+    /// terminology service to the shared validator.
+    pub fn with_options(
+        model_provider: Arc<OctoFhirModelProvider>,
+        fhirpath_engine: Arc<FhirPathEngine>,
+        reference_resolver: Option<Arc<dyn ReferenceResolver>>,
+        terminology_service: Option<Arc<dyn TerminologyService>>,
+    ) -> Self {
+        let mut validator = FhirValidator::new_with_fhirpath(
+            model_provider,
+            fhirpath_engine,
+        );
 
-    /// Load schemas needed for validating a resource type and its type hierarchy.
-    ///
-    /// This loads the schema for the given resource type and all its base types
-    /// (Resource, DomainResource, etc.) to ensure complete validation.
-    async fn load_schemas_for_validation(
-        &self,
-        resource_type: &str,
-    ) -> HashMap<String, FhirSchema> {
-        let mut schemas = HashMap::new();
-        let mut types_to_load = vec![resource_type.to_string()];
-        let mut loaded = std::collections::HashSet::new();
-
-        while let Some(type_name) = types_to_load.pop() {
-            if loaded.contains(&type_name) {
-                continue;
-            }
-            loaded.insert(type_name.clone());
-
-            if let Some(schema) = self.model_provider.get_schema(&type_name).await {
-                // Add base type to load list
-                if let Some(base_url) = &schema.base {
-                    if let Some(base_name) = base_url.rsplit('/').next() {
-                        if !loaded.contains(base_name) {
-                            types_to_load.push(base_name.to_string());
-                        }
-                    }
-                }
-
-                // Load element types recursively
-                if let Some(elements) = &schema.elements {
-                    for element in elements.values() {
-                        if let Some(elem_type) = &element.type_name {
-                            if !loaded.contains(elem_type) && !is_primitive_type(elem_type) {
-                                types_to_load.push(elem_type.clone());
-                            }
-                        }
-                    }
-                }
-
-                schemas.insert(schema.name.clone(), (*schema).clone());
-            }
+        if let Some(resolver) = reference_resolver {
+            validator = validator.with_reference_resolver(resolver);
         }
 
-        schemas
-    }
-
-    /// Load a specific profile schema by URL for profile validation.
-    async fn load_profile_schema(&self, profile_url: &str) -> Option<FhirSchema> {
-        self.model_provider
-            .get_schema_by_url(profile_url)
-            .await
-            .map(|s| (*s).clone())
-    }
-
-    /// Create a validator with the loaded schemas for a specific validation request.
-    async fn create_validator_for_resource(
-        &self,
-        resource_type: &str,
-    ) -> Option<FhirSchemaValidator> {
-        let schemas = self.load_schemas_for_validation(resource_type).await;
-        if schemas.is_empty() {
-            warn!("No schemas loaded for resource type: {}", resource_type);
-            return None;
-        }
-        let mut validator = FhirSchemaValidator::new(schemas, Some(self.fhirpath_engine.clone()));
-
-        // Add reference resolver if configured
-        if let Some(resolver) = &self.reference_resolver {
-            validator = validator.with_reference_resolver(resolver.clone());
+        if let Some(terminology) = terminology_service {
+            validator = validator.with_terminology_service(terminology);
         }
 
-        Some(validator)
+        Self {
+            validator: Arc::new(validator),
+        }
     }
 
     /// Validate a resource against its base schema
@@ -282,26 +202,21 @@ impl ValidationService {
             }
         };
 
-        // Create validator with on-demand loaded schemas
-        let validator = match self.create_validator_for_resource(resource_type).await {
-            Some(v) => v,
-            None => {
-                return ValidationOutcome::error(format!(
-                    "Unable to load schemas for resource type: {}",
-                    resource_type
-                ));
-            }
-        };
-
-        // Validate against the resource type schema
-        let validation_result = validator
+        // Validate using shared validator (schemas loaded lazily via SchemaProvider)
+        let validation_result = self
+            .validator
             .validate(resource, vec![resource_type.to_string()])
             .await;
 
-        if validation_result.valid {
+        Self::convert_result(validation_result)
+    }
+
+    /// Convert ValidationResult to ValidationOutcome
+    fn convert_result(result: ValidationResult) -> ValidationOutcome {
+        if result.valid {
             ValidationOutcome::success()
         } else {
-            let issues = validation_result
+            let issues = result
                 .errors
                 .iter()
                 .map(Self::convert_validation_error)
@@ -359,59 +274,20 @@ impl ValidationService {
 
     /// Validate a resource against a specific profile URL
     ///
-    /// The profile is loaded from the database by its canonical URL
-    /// (as specified in meta.profile).
+    /// The profile is loaded lazily via the SchemaProvider when needed.
     pub async fn validate_against_profile(
         &self,
         resource: &JsonValue,
         profile_url: &str,
     ) -> ValidationOutcome {
-        // Extract resource type for loading base schemas
-        let resource_type = match resource.get("resourceType").and_then(|v| v.as_str()) {
-            Some(rt) => rt,
-            None => {
-                return ValidationOutcome::error("Missing resourceType".to_string());
-            }
-        };
-
-        // Load schemas including the profile
-        let mut schemas = self.load_schemas_for_validation(resource_type).await;
-
-        // Also load the profile schema by URL if different from base
-        if let Some(profile_schema) = self.load_profile_schema(profile_url).await {
-            schemas.insert(profile_schema.name.clone(), profile_schema);
-        } else {
-            warn!("Profile not found: {}", profile_url);
-            return ValidationOutcome::error(format!("Profile not found: {}", profile_url));
-        }
-
-        // Create validator with loaded schemas
-        let mut validator = FhirSchemaValidator::new(schemas, Some(self.fhirpath_engine.clone()));
-
-        // Add reference resolver if configured
-        if let Some(resolver) = &self.reference_resolver {
-            validator = validator.with_reference_resolver(resolver.clone());
-        }
-
-        // Validate against the profile
-        let validation_result = validator
+        // Validate using shared validator with profile URL
+        // The validator will lazily load the profile schema via SchemaProvider
+        let validation_result = self
+            .validator
             .validate(resource, vec![profile_url.to_string()])
             .await;
 
-        if validation_result.valid {
-            ValidationOutcome::success()
-        } else {
-            let issues = validation_result
-                .errors
-                .iter()
-                .map(Self::convert_validation_error)
-                .collect();
-
-            ValidationOutcome {
-                valid: false,
-                issues,
-            }
-        }
+        Self::convert_result(validation_result)
     }
 
     /// Validate a resource against multiple profiles
@@ -420,30 +296,24 @@ impl ValidationService {
         resource: &JsonValue,
         profile_urls: &[String],
     ) -> ValidationOutcome {
-        let mut all_issues = Vec::new();
-        let mut all_valid = true;
+        // Validate using shared validator with all profile URLs
+        // The validator will lazily load all profile schemas via SchemaProvider
+        let validation_result = self
+            .validator
+            .validate(resource, profile_urls.to_vec())
+            .await;
 
-        for profile_url in profile_urls {
-            let outcome = self.validate_against_profile(resource, profile_url).await;
-            if !outcome.valid {
-                all_valid = false;
-            }
-            all_issues.extend(outcome.issues);
-        }
-
-        ValidationOutcome {
-            valid: all_valid,
-            issues: all_issues,
-        }
+        Self::convert_result(validation_result)
     }
 }
 
-/// Placeholder for resource validation that can access the canonical registry.
+/// Placeholder for resource validation using cached resource types.
 /// This will evolve to real profile/StructureDefinition validation.
-pub fn validate_resource(resource_type: &str, body: &JsonValue) -> Result<(), String> {
-    // Demonstrate registry access for acceptance: read packages for potential rules
-    let _pkg_count = canonical::with_registry(|r| r.list().len()).unwrap_or(0);
-
+pub fn validate_resource(
+    resource_type: &str,
+    body: &JsonValue,
+    known_resource_types: &std::collections::HashSet<String>,
+) -> Result<(), String> {
     // Minimal shape checks for MVP
     let obj = body
         .as_object()
@@ -457,5 +327,14 @@ pub fn validate_resource(resource_type: &str, body: &JsonValue) -> Result<(), St
             "resourceType '{rt}' does not match path '{resource_type}'"
         ));
     }
+
+    if !known_resource_types.is_empty() && !known_resource_types.contains(rt) {
+        return Err(format!("Unknown resourceType '{rt}'"));
+    }
+
+    if known_resource_types.is_empty() && !octofhir_core::fhir::is_valid_resource_type_name(rt) {
+        return Err(format!("Invalid resourceType '{rt}'"));
+    }
+
     Ok(())
 }

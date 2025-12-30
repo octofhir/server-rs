@@ -30,10 +30,28 @@
         "type": [{ "code": "string" }]
       },
       {
+        "id": "User.name",
+        "path": "User.name",
+        "short": "Display name",
+        "definition": "Human-readable display name for the user",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "User.password",
+        "path": "User.password",
+        "short": "Password (write-only)",
+        "definition": "User password for authentication. Only used during create/update, never returned in responses.",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
         "id": "User.passwordHash",
         "path": "User.passwordHash",
         "short": "Hashed password",
-        "definition": "BCrypt-hashed password",
+        "definition": "BCrypt-hashed password (internal use only)",
         "min": 0,
         "max": "1",
         "type": [{ "code": "string" }]
@@ -77,6 +95,15 @@
         "type": [{ "code": "boolean" }]
       },
       {
+        "id": "User.mfaEnabled",
+        "path": "User.mfaEnabled",
+        "short": "MFA enabled",
+        "definition": "Whether multi-factor authentication is enabled for this user",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "boolean" }]
+      },
+      {
         "id": "User.roles",
         "path": "User.roles",
         "short": "User roles",
@@ -109,6 +136,15 @@
         "path": "User.updatedAt",
         "short": "Last update timestamp",
         "definition": "When the user account was last updated",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "instant" }]
+      },
+      {
+        "id": "User.lastLoginAt",
+        "path": "User.lastLoginAt",
+        "short": "Last login timestamp",
+        "definition": "When the user last successfully authenticated",
         "min": 0,
         "max": "1",
         "type": [{ "code": "instant" }]

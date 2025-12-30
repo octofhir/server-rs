@@ -35,7 +35,7 @@ class AuthApiClient {
 			client_id: this.clientId,
 			username,
 			password,
-			scope: "openid", // Request openid scope for userinfo endpoint
+			scope: "openid offline_access user/*.cruds system/*.cruds",
 		});
 
 		const response = await fetch(url, {

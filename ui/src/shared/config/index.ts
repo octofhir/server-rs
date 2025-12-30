@@ -1,5 +1,5 @@
 export const APP_CONFIG = {
-  name: "OctoFHIR Server UI",
+  name: "Abyxon Server UI",
   version: "0.1.0",
   healthPollInterval: 15000,
   maxHistoryItems: 20,

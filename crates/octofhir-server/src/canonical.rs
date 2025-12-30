@@ -1,13 +1,13 @@
 use std::sync::{Arc, OnceLock, RwLock};
 
 use crate::config::{AppConfig, PackageSpec};
+use arc_swap::ArcSwap;
 use octofhir_core::fhir::FhirVersion;
 use octofhir_db_postgres::PostgresPackageStore;
+use octofhir_fhirschema::types::StructureDefinition;
 use octofhir_search::loader::parse_search_parameter;
 use octofhir_search::registry::SearchParameterRegistry;
 use std::str::FromStr;
-
-use octofhir_fhirschema::types::StructureDefinition;
 
 /// Information about a loaded canonical package.
 #[derive(Debug, Clone)]
@@ -15,6 +15,7 @@ pub struct LoadedPackage {
     pub id: String,
     pub version: Option<String>,
     pub path: Option<String>,
+    pub url: Option<String>,
 }
 
 /// Minimal, internal registry abstraction. This intentionally hides the
@@ -45,8 +46,27 @@ impl CanonicalRegistry {
 
 static REGISTRY: OnceLock<Arc<RwLock<CanonicalRegistry>>> = OnceLock::new();
 
+/// Lock-free manager access using ArcSwap for high-performance reads.
+/// This avoids RwLock contention in the hot path of terminology lookups.
+static MANAGER: OnceLock<ArcSwap<Option<Arc<octofhir_canonical_manager::CanonicalManager>>>> =
+    OnceLock::new();
+
 pub fn set_registry(reg: Arc<RwLock<CanonicalRegistry>>) {
+    // Initialize the lock-free manager cache from the registry
+    if let Ok(guard) = reg.read() {
+        let manager_opt = guard.manager.clone();
+        let _ = MANAGER.get_or_init(|| ArcSwap::from_pointee(manager_opt));
+    }
     let _ = REGISTRY.set(reg);
+}
+
+/// Update the lock-free manager cache. Called when rebuilding the registry.
+fn update_manager_cache(manager: Option<Arc<octofhir_canonical_manager::CanonicalManager>>) {
+    if let Some(swap) = MANAGER.get() {
+        swap.store(Arc::new(manager));
+    } else {
+        let _ = MANAGER.get_or_init(|| ArcSwap::from_pointee(manager));
+    }
 }
 
 pub fn get_registry() -> Option<&'static Arc<RwLock<CanonicalRegistry>>> {
@@ -73,6 +93,8 @@ pub async fn init_from_config_async(
 /// If a global registry is not yet set, this initializes it.
 pub async fn rebuild_from_config_async(cfg: &AppConfig) -> Result<(), String> {
     let new_val = build_registry_with_manager(cfg).await?;
+    // Update lock-free manager cache first
+    update_manager_cache(new_val.manager.clone());
     if let Some(global) = get_registry() {
         if let Ok(mut guard) = global.write() {
             *guard = new_val;
@@ -95,7 +117,18 @@ fn build_registry(cfg: &AppConfig) -> CanonicalRegistry {
 }
 
 /// Get a clone of the underlying canonical manager, if available.
-pub fn get_manager() -> Option<std::sync::Arc<octofhir_canonical_manager::CanonicalManager>> {
+///
+/// Uses lock-free ArcSwap for high-performance reads without RwLock contention.
+/// This is critical for terminology lookups which happen on every validation.
+pub fn get_manager() -> Option<Arc<octofhir_canonical_manager::CanonicalManager>> {
+    // Fast path: use lock-free ArcSwap
+    if let Some(swap) = MANAGER.get() {
+        let guard = swap.load();
+        if let Some(ref manager) = **guard {
+            return Some(Arc::clone(manager));
+        }
+    }
+    // Fallback: check registry (for initialization edge cases)
     get_registry().and_then(|arc| arc.read().ok().and_then(|g| g.manager.clone()))
 }
 
@@ -131,7 +164,7 @@ async fn build_registry_with_manager(cfg: &AppConfig) -> Result<CanonicalRegistr
         &fcm_cfg.storage.cache_dir,
         &index_dir,
     ] {
-        match std::fs::create_dir_all(dir) {
+        match tokio::fs::create_dir_all(dir).await {
             Ok(()) => {
                 tracing::debug!("created/verified directory: {:?}", dir);
             }
@@ -146,13 +179,13 @@ async fn build_registry_with_manager(cfg: &AppConfig) -> Result<CanonicalRegistr
     }
 
     // Collect installable specs (require id and version)
-    let mut install_specs: Vec<(String, String)> = Vec::new();
+    let mut install_specs: Vec<LoadedPackage> = Vec::new();
     for item in &cfg.packages.load {
         match normalize_spec(item) {
             Ok(pkg) => {
                 if let (id, Some(ver)) = (pkg.id.clone(), pkg.version.clone()) {
                     fcm_cfg.add_package(&id, &ver, Some(1));
-                    install_specs.push((id, ver));
+                    install_specs.push(pkg);
                 } else {
                     tracing::warn!("skipping package without version for canonical manager");
                 }
@@ -175,7 +208,65 @@ async fn build_registry_with_manager(cfg: &AppConfig) -> Result<CanonicalRegistr
             core_ver
         );
         fcm_cfg.add_package(&core_id, &core_ver, Some(1));
-        install_specs.push((core_id, core_ver));
+        install_specs.push(LoadedPackage {
+            id: core_id,
+            version: Some(core_ver),
+            path: None,
+            url: None,
+        });
+    }
+
+    // Add SQL on FHIR package when feature is enabled
+    if cfg.sql_on_fhir.enabled {
+        let sof_id = "hl7.fhir.uv.sql-on-fhir".to_string();
+        let sof_ver = "2.0.0-ballot".to_string();
+        let sof_url = Some("https://build.fhir.org/ig/FHIR/sql-on-fhir-v2/package.tgz".to_string());
+
+        // Check if not already in the list
+        let already_added = install_specs
+            .iter()
+            .any(|pkg| pkg.id == sof_id);
+        if !already_added {
+            tracing::info!(
+                "SQL on FHIR enabled; adding package {}@{} from URL",
+                sof_id,
+                sof_ver
+            );
+            // Note: We don't call fcm_cfg.add_package for URL-based packages
+            // since they're not in the registry
+            install_specs.push(LoadedPackage {
+                id: sof_id,
+                version: Some(sof_ver),
+                path: None,
+                url: sof_url,
+            });
+        }
+    }
+
+    // Auto-load HL7 terminology package for the FHIR version
+    // This provides local ValueSets/CodeSystems and prevents remote calls to tx.fhir.org
+    {
+        let (term_id, term_ver) = default_terminology_for(desired);
+
+        // Check if not already in the list
+        let already_added = install_specs
+            .iter()
+            .any(|pkg| pkg.id == term_id);
+        if !already_added {
+            tracing::info!(
+                "Auto-loading terminology package {}@{} for FHIR {}",
+                term_id,
+                term_ver,
+                display_fhir(desired)
+            );
+            fcm_cfg.add_package(&term_id, &term_ver, Some(1));
+            install_specs.push(LoadedPackage {
+                id: term_id,
+                version: Some(term_ver),
+                path: None,
+                url: None,
+            });
+        }
     }
 
     // Initialize PostgreSQL storage FIRST to check for already-installed packages
@@ -207,18 +298,27 @@ async fn build_registry_with_manager(cfg: &AppConfig) -> Result<CanonicalRegistr
         };
 
     // Filter out already-installed packages from preflight check
+    // Skip preflight for URL-based packages as they don't come from registry
     let packages_to_validate: Vec<(String, String)> = install_specs
         .iter()
-        .filter(|(name, version)| {
-            let key = format!("{}@{}", name, version);
-            if installed_packages.contains(&key) {
-                tracing::info!(package = %key, "package already installed, skipping preflight");
-                false
+        .filter(|pkg| {
+            if pkg.url.is_some() {
+                // Skip validation for URL-based packages
+                return false;
+            }
+            if let Some(ref version) = pkg.version {
+                let key = format!("{}@{}", pkg.id, version);
+                if installed_packages.contains(&key) {
+                    tracing::info!(package = %key, "package already installed, skipping preflight");
+                    false
+                } else {
+                    true
+                }
             } else {
-                true
+                false
             }
         })
-        .cloned()
+        .map(|pkg| (pkg.id.clone(), pkg.version.clone().unwrap()))
         .collect();
 
     // Only do network preflight for packages that aren't already installed
@@ -239,7 +339,7 @@ async fn build_registry_with_manager(cfg: &AppConfig) -> Result<CanonicalRegistr
         );
     } else {
         tracing::info!(
-            packages = %install_specs.iter().map(|(n,v)| format!("{n}@{v}")).collect::<Vec<_>>().join(", "),
+            packages = %install_specs.iter().filter_map(|pkg| pkg.version.as_ref().map(|v| format!("{}@{}", pkg.id, v))).collect::<Vec<_>>().join(", "),
             count = install_specs.len(),
             "all packages already installed, skipping preflight"
         );
@@ -269,31 +369,47 @@ async fn build_registry_with_manager(cfg: &AppConfig) -> Result<CanonicalRegistr
     let fhir_version_str = &cfg.fhir.version;
 
     // Collect packages to install (filter out already installed)
-    let packages_to_install: Vec<(String, String)> = install_specs
+    let packages_to_install: Vec<&LoadedPackage> = install_specs
         .iter()
-        .filter(|(name, version)| {
-            let key = format!("{}@{}", name, version);
-            if installed_packages.contains(&key) {
-                tracing::debug!(package = %key, "package already installed, skipping install");
-                false
+        .filter(|pkg| {
+            if let Some(ref version) = pkg.version {
+                let key = format!("{}@{}", pkg.id, version);
+                if installed_packages.contains(&key) {
+                    tracing::debug!(package = %key, "package already installed, skipping install");
+                    false
+                } else {
+                    true
+                }
             } else {
-                true
+                false
             }
         })
-        .cloned()
         .collect();
 
     // Install packages - manager handles dependencies internally
-    // Note: Each install_package call still handles its own deps sequentially.
-    // A future optimization could expose parallel dep resolution from canonical-manager.
+    // Use batch installation with PackageSpec to support URL-based packages
     let mut successfully_installed: Vec<(String, String)> = Vec::new();
-    for (name, version) in &packages_to_install {
+    for pkg in &packages_to_install {
+        let name = &pkg.id;
+        let version = pkg.version.as_ref().unwrap();
+
         tracing::info!(
             package = %name,
             version = %version,
+            url = ?pkg.url,
             "attempting to install package via canonical manager"
         );
-        match manager.install_package(name, version).await {
+
+        // Create PackageSpec with URL if available
+        let spec = octofhir_canonical_manager::PackageSpec {
+            name: name.clone(),
+            version: version.clone(),
+            priority: 1,
+            url: pkg.url.clone(),
+        };
+
+        // Use install_packages_batch for consistency
+        match manager.install_packages_batch(vec![spec]).await {
             Ok(()) => {
                 tracing::info!(
                     package = %name,
@@ -319,28 +435,46 @@ async fn build_registry_with_manager(cfg: &AppConfig) -> Result<CanonicalRegistr
         count = install_specs.len(),
         "converting schemas for all packages"
     );
-    for (name, version) in &install_specs {
-        if let Err(e) = convert_and_store_package_schemas(
-            postgres_store.as_ref(),
-            name,
-            version,
-            fhir_version_str,
-        )
-        .await
-        {
-            tracing::warn!(
-                package = %name,
-                version = %version,
-                error = %e,
-                "failed to convert schemas for package"
-            );
+    for pkg in &install_specs {
+        if let Some(ref version) = pkg.version {
+            if let Err(e) = convert_and_store_package_schemas(
+                postgres_store.as_ref(),
+                &pkg.id,
+                version,
+                fhir_version_str,
+            )
+            .await
+            {
+                tracing::warn!(
+                    package = %pkg.id,
+                    version = %version,
+                    error = %e,
+                    "failed to convert schemas for package"
+                );
+            }
         }
     }
 
-    // Load embedded internal package via canonical manager
-    tracing::info!("Loading embedded internal package octofhir.internal@0.1.0");
-    let embedded_resources: Result<Vec<(String, serde_json::Value)>, String> =
-        crate::bootstrap::EMBEDDED_RESOURCES
+    // Load embedded packages: octofhir-auth and octofhir-app
+    // These packages are split for better organization: auth resources vs app resources
+    let fhir_version = &cfg.fhir.version;
+
+    // Helper function to load an embedded package
+    async fn load_embedded_package(
+        postgres_store: &PostgresPackageStore,
+        package_name: &str,
+        package_version: &str,
+        fhir_version: &str,
+        resources_list: &[(&str, &str)],
+    ) -> bool {
+        tracing::info!(
+            package = package_name,
+            version = package_version,
+            fhir_version = fhir_version,
+            "Loading embedded package"
+        );
+
+        let embedded_resources: Result<Vec<(String, serde_json::Value)>, String> = resources_list
             .iter()
             .map(|(filename, content)| {
                 let resource: serde_json::Value = serde_json::from_str(content)
@@ -353,61 +487,97 @@ async fn build_registry_with_manager(cfg: &AppConfig) -> Result<CanonicalRegistr
             })
             .collect();
 
-    match embedded_resources {
-        Ok(resources) => {
-            // Get FHIR version from config - never hardcode it!
-            let fhir_version = &cfg.fhir.version;
+        match embedded_resources {
+            Ok(resources) => {
+                let loaded_ok = {
+                    match postgres_store
+                        .load_from_embedded(package_name, package_version, fhir_version, resources)
+                        .await
+                    {
+                        Ok(()) => {
+                            tracing::info!(
+                                package = package_name,
+                                version = package_version,
+                                fhir_version = fhir_version,
+                                "Successfully loaded embedded package"
+                            );
+                            true
+                        }
+                        Err(e) => {
+                            tracing::error!(
+                                package = package_name,
+                                version = package_version,
+                                error = %e,
+                                "Failed to load embedded package"
+                            );
+                            false
+                        }
+                    }
+                };
 
-            // Load embedded package and process result before any further awaits
-            // (Box<dyn Error> is not Send, so we must not hold it across await boundaries)
-            // Use a block to ensure the Result is dropped before the next await
-            let loaded_ok = {
-                match postgres_store
-                    .load_from_embedded("octofhir.internal", "0.1.0", fhir_version, resources)
+                // Convert and store FHIRSchemas
+                if loaded_ok {
+                    if let Err(e) = convert_and_store_package_schemas(
+                        postgres_store,
+                        package_name,
+                        package_version,
+                        fhir_version,
+                    )
                     .await
-                {
-                    Ok(()) => {
-                        tracing::info!(
-                            "Successfully loaded internal package octofhir.internal@0.1.0 (FHIR {})",
-                            fhir_version
+                    {
+                        tracing::warn!(
+                            package = package_name,
+                            version = package_version,
+                            error = %e,
+                            "Failed to convert schemas for embedded package"
                         );
-                        true
-                    }
-                    Err(e) => {
-                        tracing::error!(
-                            "Failed to load embedded internal package: {}. Server may not function correctly.",
-                            e
-                        );
-                        false
                     }
                 }
-            };
 
-            // Convert and store FHIRSchemas for the internal package (separate await)
-            if loaded_ok {
-                if let Err(e) = convert_and_store_package_schemas(
-                    postgres_store.as_ref(),
-                    "octofhir.internal",
-                    "0.1.0",
-                    fhir_version,
-                )
-                .await
-                {
-                    tracing::warn!(
-                        package = "octofhir.internal",
-                        version = "0.1.0",
-                        error = %e,
-                        "failed to convert schemas for internal package"
-                    );
-                }
+                loaded_ok
+            }
+            Err(e) => {
+                tracing::error!(
+                    package = package_name,
+                    error = %e,
+                    "Failed to parse embedded resources"
+                );
+                false
             }
         }
-        Err(e) => {
-            tracing::error!(
-                "Failed to parse embedded resources: {}. Server may not function correctly.",
-                e
-            );
-        }
+    }
+
+    // Load octofhir-auth package
+    load_embedded_package(
+        &postgres_store,
+        "octofhir-auth",
+        "0.1.0",
+        fhir_version,
+        crate::bootstrap::EMBEDDED_AUTH_RESOURCES,
+    )
+    .await;
+
+    // Load octofhir-app package
+    load_embedded_package(
+        &postgres_store,
+        "octofhir-app",
+        "0.1.0",
+        fhir_version,
+        crate::bootstrap::EMBEDDED_APP_RESOURCES,
+    )
+    .await;
+
+    // Load CanonicalResource for R4 when SQL on FHIR is enabled
+    // CanonicalResource is an R4B/R5 abstract type that ViewDefinition depends on
+    if cfg.sql_on_fhir.enabled && fhir_version == "R4" {
+        load_embedded_package(
+            &postgres_store,
+            "octofhir-sof-compat",
+            "0.1.0",
+            fhir_version,
+            crate::bootstrap::EMBEDDED_SOF_COMPAT_RESOURCES,
+        )
+        .await;
     }
 
     // Populate our registry view from manager
@@ -421,6 +591,7 @@ async fn build_registry_with_manager(cfg: &AppConfig) -> Result<CanonicalRegistr
                     id: p.name,
                     version: Some(p.version),
                     path: None,
+                    url: None,
                 });
             }
         }
@@ -442,6 +613,7 @@ async fn create_fcm_postgres_pool(
     let pool = PgPoolOptions::new()
         .max_connections(pg_cfg.pool_size)
         .acquire_timeout(Duration::from_millis(pg_cfg.connect_timeout_ms))
+        .test_before_acquire(false)
         .idle_timeout(pg_cfg.idle_timeout_ms.map(Duration::from_millis))
         .connect(&pg_cfg.connection_url())
         .await
@@ -639,14 +811,15 @@ fn determine_schema_type(sd: &StructureDefinition) -> String {
 fn normalize_spec(spec: &PackageSpec) -> Result<LoadedPackage, String> {
     match spec {
         PackageSpec::Simple(s) => parse_simple_spec(s),
-        PackageSpec::Table { id, version, path } => {
-            if id.as_deref().unwrap_or("").is_empty() && path.as_deref().unwrap_or("").is_empty() {
-                return Err("package table requires either 'id' or 'path'".into());
+        PackageSpec::Table { id, version, path, url } => {
+            if id.as_deref().unwrap_or("").is_empty() && path.as_deref().unwrap_or("").is_empty() && url.is_none() {
+                return Err("package table requires either 'id', 'path', or 'url'".into());
             }
             Ok(LoadedPackage {
                 id: id.clone().unwrap_or_default(),
                 version: version.clone(),
                 path: path.clone(),
+                url: url.clone(),
             })
         }
     }
@@ -665,6 +838,7 @@ fn parse_simple_spec(s: &str) -> Result<LoadedPackage, String> {
         id,
         version,
         path: None,
+        url: None,
     })
 }
 
@@ -823,6 +997,19 @@ fn default_core_for(v: FhirVersion) -> (String, String) {
         FhirVersion::R4B => ("hl7.fhir.r4b.core".to_string(), "4.3.0".to_string()),
         FhirVersion::R5 => ("hl7.fhir.r5.core".to_string(), "5.0.0".to_string()),
         FhirVersion::R6 => ("hl7.fhir.r6.core".to_string(), "6.0.0".to_string()),
+    }
+}
+
+/// Returns the default HL7 terminology package for a given FHIR version.
+/// These packages contain standard ValueSets and CodeSystems used by FHIR core.
+/// Loading them locally prevents remote calls to tx.fhir.org for common terminology.
+fn default_terminology_for(v: FhirVersion) -> (String, String) {
+    match v {
+        FhirVersion::R4 => ("hl7.terminology.r4".to_string(), "7.0.1".to_string()),
+        FhirVersion::R4B => ("hl7.terminology.r4b".to_string(), "6.0.2".to_string()),
+        FhirVersion::R5 => ("hl7.terminology.r5".to_string(), "7.0.1".to_string()),
+        // R6 doesn't have its own terminology package yet, use R5
+        FhirVersion::R6 => ("hl7.terminology.r5".to_string(), "7.0.1".to_string()),
     }
 }
 
@@ -989,6 +1176,7 @@ pub async fn install_package_parallel_runtime(
         name: name.to_string(),
         version: version.to_string(),
         priority: 1,
+        url: None,
     };
 
     manager
@@ -1083,6 +1271,7 @@ async fn update_global_registry_with_package(name: &str, version: &str) -> bool 
                     id: name.to_string(),
                     version: Some(version.to_string()),
                     path: None,
+                    url: None,
                 });
             }
             return true;

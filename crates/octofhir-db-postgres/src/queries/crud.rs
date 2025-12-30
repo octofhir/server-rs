@@ -71,29 +71,42 @@ pub async fn create(
         octofhir_core::generate_id()
     };
 
-    // Create transaction for this operation
-    let txid = create_transaction(pool).await?;
     let now = Utc::now();
 
-    // Build resource with id and meta fields
+    // Build resource with id (meta.versionId will be set after we get txid)
     let mut resource = resource.clone();
     resource["id"] = serde_json::json!(id);
-    resource["meta"] = serde_json::json!({
-        "versionId": txid.to_string(),
-        "lastUpdated": now.to_rfc3339()
-    });
 
-    // Insert into table
+    // Insert into table with CTE for transaction creation (single query instead of two)
+    // This combines the transaction creation and resource insertion atomically
+    // We use jsonb_set to add meta.versionId and meta.lastUpdated in the SQL
     let table = SchemaManager::table_name(resource_type);
     let sql = format!(
-        r#"INSERT INTO "{table}" (id, txid, created_at, updated_at, resource, status)
-           VALUES ($1, $2, $3, $3, $4, 'created')
-           RETURNING id, txid, created_at, updated_at"#
+        r#"WITH new_tx AS (
+               INSERT INTO _transaction (status) VALUES ('committed') RETURNING txid
+           )
+           INSERT INTO "{table}" (id, txid, created_at, updated_at, resource, status)
+           SELECT
+               $1,
+               new_tx.txid,
+               $2,
+               $2,
+               jsonb_set(
+                   jsonb_set($3::jsonb, '{{meta}}', '{{}}'::jsonb, true),
+                   '{{meta}}',
+                   jsonb_build_object(
+                       'versionId', new_tx.txid::text,
+                       'lastUpdated', to_char($2 AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+                   ),
+                   true
+               ),
+               'created'
+           FROM new_tx
+           RETURNING id, txid, created_at, updated_at, resource"#
     );
 
-    let row: (String, i64, DateTime<Utc>, DateTime<Utc>) = query_as(&sql)
+    let row: (String, i64, DateTime<Utc>, DateTime<Utc>, Value) = query_as(&sql)
         .bind(&id)
-        .bind(txid)
         .bind(now)
         .bind(&resource)
         .fetch_one(pool)
@@ -106,6 +119,9 @@ pub async fn create(
                 StorageError::internal(format!("Failed to create resource: {e}"))
             }
         })?;
+
+    // Use the resource returned from DB (with meta already set)
+    let resource = row.4;
 
     let created_at_time = chrono_to_time(row.2);
     let updated_at_time = chrono_to_time(row.3);
@@ -214,74 +230,119 @@ pub async fn update(
         .map_err(|e| StorageError::internal(format!("Schema error: {e}")))?;
 
     let table = SchemaManager::table_name(resource_type);
-
-    // Check version if If-Match provided
-    if let Some(expected_version) = if_match {
-        let version_sql =
-            format!(r#"SELECT txid FROM "{table}" WHERE id = $1 AND status != 'deleted'"#);
-
-        let current_version: Option<i64> = query_scalar(&version_sql)
-            .bind(id)
-            .fetch_optional(pool)
-            .await
-            .map_err(|e| StorageError::internal(format!("Failed to check version: {e}")))?;
-
-        match current_version {
-            Some(v) if v.to_string() != expected_version => {
-                return Err(StorageError::version_conflict(
-                    expected_version,
-                    v.to_string(),
-                ));
-            }
-            None => {
-                return Err(StorageError::not_found(resource_type, id));
-            }
-            _ => {}
-        }
-    }
-
-    // Create new transaction for this version
-    let txid = create_transaction(pool).await?;
     let now = Utc::now();
 
-    // Build updated resource with new meta
-    let mut resource = resource.clone();
-    resource["meta"] = serde_json::json!({
-        "versionId": txid.to_string(),
-        "lastUpdated": now.to_rfc3339()
-    });
+    // Clone resource for the update (meta is set in SQL)
+    let resource = resource.clone();
 
-    // Update resource (trigger will archive old version to history)
-    // Note: updated_at is automatically updated by the update_updated_at_column() trigger
-    let update_sql = format!(
-        r#"UPDATE "{table}"
-           SET txid = $1, resource = $2, status = 'updated'
-           WHERE id = $3 AND status != 'deleted'
-           RETURNING id, txid, created_at, updated_at"#
-    );
+    // Single query with CTE: create transaction + update resource + set meta atomically
+    // Version check is done in the WHERE clause if if_match is provided
+    let (update_sql, has_version_check) = if let Some(expected_version) = if_match {
+        // Parse expected version as i64
+        let expected_txid: i64 = expected_version.parse().map_err(|_| {
+            StorageError::invalid_resource(format!("Invalid version format: {expected_version}"))
+        })?;
 
-    let row: Option<(String, i64, DateTime<Utc>, DateTime<Utc>)> = query_as(&update_sql)
-        .bind(txid)
-        .bind(&resource)
+        (
+            format!(
+                r#"WITH new_tx AS (
+                       INSERT INTO _transaction (status) VALUES ('committed') RETURNING txid
+                   ),
+                   current AS (
+                       SELECT id, txid, created_at FROM "{table}"
+                       WHERE id = $1 AND status != 'deleted'
+                   )
+                   UPDATE "{table}" t
+                   SET txid = new_tx.txid,
+                       resource = jsonb_set(
+                           jsonb_set($2::jsonb, '{{meta}}', '{{}}'::jsonb, true),
+                           '{{meta}}',
+                           jsonb_build_object(
+                               'versionId', new_tx.txid::text,
+                               'lastUpdated', to_char($3 AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+                           ),
+                           true
+                       ),
+                       status = 'updated'
+                   FROM new_tx, current
+                   WHERE t.id = $1
+                     AND t.status != 'deleted'
+                     AND t.txid = {expected_txid}
+                   RETURNING t.id, new_tx.txid, t.created_at, t.updated_at, t.resource,
+                             (SELECT txid FROM current) as old_txid"#
+            ),
+            true,
+        )
+    } else {
+        (
+            format!(
+                r#"WITH new_tx AS (
+                       INSERT INTO _transaction (status) VALUES ('committed') RETURNING txid
+                   )
+                   UPDATE "{table}" t
+                   SET txid = new_tx.txid,
+                       resource = jsonb_set(
+                           jsonb_set($2::jsonb, '{{meta}}', '{{}}'::jsonb, true),
+                           '{{meta}}',
+                           jsonb_build_object(
+                               'versionId', new_tx.txid::text,
+                               'lastUpdated', to_char($3 AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+                           ),
+                           true
+                       ),
+                       status = 'updated'
+                   FROM new_tx
+                   WHERE t.id = $1 AND t.status != 'deleted'
+                   RETURNING t.id, new_tx.txid, t.created_at, t.updated_at, t.resource, 0::bigint as old_txid"#
+            ),
+            false,
+        )
+    };
+
+    let row: Option<(String, i64, DateTime<Utc>, DateTime<Utc>, Value, i64)> = query_as(&update_sql)
         .bind(id)
+        .bind(&resource)
+        .bind(now)
         .fetch_optional(pool)
         .await
         .map_err(|e| StorageError::internal(format!("Failed to update resource: {e}")))?;
 
     match row {
-        Some((_returned_id, returned_txid, created_at, updated_at)) => {
+        Some((_returned_id, returned_txid, created_at, updated_at, updated_resource, _old_txid)) => {
             let created_at_time = chrono_to_time(created_at);
             let updated_at_time = chrono_to_time(updated_at);
             Ok(StoredResource {
                 id: id.to_string(),
                 version_id: returned_txid.to_string(),
                 resource_type: resource_type.to_string(),
-                resource,
+                resource: updated_resource,
                 last_updated: updated_at_time,
                 created_at: created_at_time,
             })
         }
-        None => Err(StorageError::not_found(resource_type, id)),
+        None => {
+            // If version check was used and no row returned, need to determine why
+            if has_version_check {
+                // Check if resource exists with different version
+                let check_sql =
+                    format!(r#"SELECT txid FROM "{table}" WHERE id = $1 AND status != 'deleted'"#);
+                let current: Option<i64> = query_scalar(&check_sql)
+                    .bind(id)
+                    .fetch_optional(pool)
+                    .await
+                    .map_err(|e| StorageError::internal(format!("Failed to check resource: {e}")))?;
+
+                match current {
+                    Some(v) => Err(StorageError::version_conflict(
+                        if_match.unwrap_or(""),
+                        v.to_string(),
+                    )),
+                    None => Err(StorageError::not_found(resource_type, id)),
+                }
+            } else {
+                Err(StorageError::not_found(resource_type, id))
+            }
+        }
     }
 }
 

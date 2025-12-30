@@ -54,8 +54,12 @@ export function LoginPage() {
 		<Center h="100vh" style={{ background: bgColor }}>
 			<Box w={420} mx="auto" px="md">
 				<Stack align="center" mb="lg">
-					<img src={logoUrl} alt="OctoFHIR logo" width={88} height={88} />
-					<Title order={1}>OctoFHIR</Title>
+					<img
+						src={logoUrl}
+						alt="Abyxon logo"
+						height={180}
+						style={{ width: "auto" }}
+					/>
 					<Text size="sm" c="dimmed">
 						Server Console
 					</Text>

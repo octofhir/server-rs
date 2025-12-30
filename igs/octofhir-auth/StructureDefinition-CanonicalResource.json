@@ -1,0 +1,164 @@
+{
+  "resourceType": "StructureDefinition",
+  "id": "CanonicalResource",
+  "url": "http://hl7.org/fhir/StructureDefinition/CanonicalResource",
+  "name": "CanonicalResource",
+  "title": "Canonical Resource",
+  "status": "active",
+  "fhirVersion": "4.0.1",
+  "kind": "resource",
+  "abstract": true,
+  "type": "CanonicalResource",
+  "baseDefinition": "http://hl7.org/fhir/StructureDefinition/DomainResource",
+  "derivation": "specialization",
+  "description": "Abstract base type for canonical resources. Backported from R4B/R5 for SQL on FHIR ViewDefinition support.",
+  "differential": {
+    "element": [
+      {
+        "id": "CanonicalResource",
+        "path": "CanonicalResource",
+        "short": "Common supertype for canonical resources",
+        "definition": "A resource that has a canonical URL and can be published."
+      },
+      {
+        "id": "CanonicalResource.url",
+        "path": "CanonicalResource.url",
+        "short": "Canonical identifier for this resource",
+        "definition": "An absolute URI that is used to identify this resource when it is referenced.",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "uri" }]
+      },
+      {
+        "id": "CanonicalResource.identifier",
+        "path": "CanonicalResource.identifier",
+        "short": "Additional identifier for the resource",
+        "definition": "A formal identifier that is used to identify this resource.",
+        "min": 0,
+        "max": "*",
+        "type": [{ "code": "Identifier" }]
+      },
+      {
+        "id": "CanonicalResource.version",
+        "path": "CanonicalResource.version",
+        "short": "Business version of the resource",
+        "definition": "The identifier that is used to identify this version of the resource.",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "CanonicalResource.name",
+        "path": "CanonicalResource.name",
+        "short": "Name for this resource (computer friendly)",
+        "definition": "A natural language name identifying the resource.",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "CanonicalResource.title",
+        "path": "CanonicalResource.title",
+        "short": "Name for this resource (human friendly)",
+        "definition": "A short, descriptive, user-friendly title for the resource.",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "CanonicalResource.status",
+        "path": "CanonicalResource.status",
+        "short": "draft | active | retired | unknown",
+        "definition": "The status of this resource.",
+        "min": 1,
+        "max": "1",
+        "type": [{ "code": "code" }],
+        "binding": {
+          "strength": "required",
+          "valueSet": "http://hl7.org/fhir/ValueSet/publication-status"
+        }
+      },
+      {
+        "id": "CanonicalResource.experimental",
+        "path": "CanonicalResource.experimental",
+        "short": "For testing purposes, not real usage",
+        "definition": "A Boolean value to indicate that this resource is authored for testing purposes.",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "boolean" }]
+      },
+      {
+        "id": "CanonicalResource.date",
+        "path": "CanonicalResource.date",
+        "short": "Date last changed",
+        "definition": "The date (and optionally time) when the resource was published.",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "dateTime" }]
+      },
+      {
+        "id": "CanonicalResource.publisher",
+        "path": "CanonicalResource.publisher",
+        "short": "Name of the publisher",
+        "definition": "The name of the organization or individual that published the resource.",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "CanonicalResource.contact",
+        "path": "CanonicalResource.contact",
+        "short": "Contact details for the publisher",
+        "definition": "Contact details to assist a user in finding and communicating with the publisher.",
+        "min": 0,
+        "max": "*",
+        "type": [{ "code": "ContactDetail" }]
+      },
+      {
+        "id": "CanonicalResource.description",
+        "path": "CanonicalResource.description",
+        "short": "Natural language description of the resource",
+        "definition": "A free text natural language description of the resource.",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "markdown" }]
+      },
+      {
+        "id": "CanonicalResource.useContext",
+        "path": "CanonicalResource.useContext",
+        "short": "The context that the content is intended to support",
+        "definition": "The content was developed with a focus and intent of supporting the contexts.",
+        "min": 0,
+        "max": "*",
+        "type": [{ "code": "UsageContext" }]
+      },
+      {
+        "id": "CanonicalResource.jurisdiction",
+        "path": "CanonicalResource.jurisdiction",
+        "short": "Intended jurisdiction for resource",
+        "definition": "A legal or geographic region in which the resource is intended to be used.",
+        "min": 0,
+        "max": "*",
+        "type": [{ "code": "CodeableConcept" }]
+      },
+      {
+        "id": "CanonicalResource.purpose",
+        "path": "CanonicalResource.purpose",
+        "short": "Why this resource is defined",
+        "definition": "Explanation of why this resource is needed.",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "markdown" }]
+      },
+      {
+        "id": "CanonicalResource.copyright",
+        "path": "CanonicalResource.copyright",
+        "short": "Use and/or publishing restrictions",
+        "definition": "A copyright statement relating to the resource.",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "markdown" }]
+      }
+    ]
+  }
+}

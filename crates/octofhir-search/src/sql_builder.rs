@@ -1184,13 +1184,55 @@ impl SqlBuilder {
 ///
 /// This is a simplified conversion that handles common patterns.
 /// More complex paths may need the full FHIRPath engine.
+///
+/// Handles FHIRPath union expressions like:
+/// - `Patient.birthDate | Person.birthDate | RelatedPerson.birthDate`
+/// - `(ActivityDefinition.useContext.value as CodeableConcept)`
 pub fn fhirpath_to_jsonb_path(expression: &str, resource_type: &str) -> Vec<String> {
+    // Handle union expressions (|) by finding the matching resource type or using the first one
+    let expr = if expression.contains('|') {
+        // Split by | and find the one matching our resource type, or use the first
+        expression
+            .split('|')
+            .map(|s| s.trim())
+            .find(|s| {
+                s.starts_with(&format!("{resource_type}."))
+                    || s.starts_with("Resource.")
+                    || s.starts_with("DomainResource.")
+            })
+            .or_else(|| expression.split('|').next().map(|s| s.trim()))
+            .unwrap_or(expression)
+    } else {
+        expression
+    };
+
+    // Handle `as Type` casting - extract just the path before 'as'
+    let expr = if let Some(idx) = expr.find(" as ") {
+        let path_part = &expr[..idx];
+        // Remove surrounding parentheses if present
+        path_part.trim().trim_start_matches('(').trim_end_matches(')')
+    } else {
+        expr
+    };
+
     // Remove resource type prefix if present
-    let expr = expression
+    // Also handle case where we selected a union alternative with a different prefix
+    let expr = expr
         .strip_prefix(&format!("{resource_type}."))
-        .or_else(|| expression.strip_prefix("Resource."))
-        .or_else(|| expression.strip_prefix("DomainResource."))
-        .unwrap_or(expression);
+        .or_else(|| expr.strip_prefix("Resource."))
+        .or_else(|| expr.strip_prefix("DomainResource."))
+        .or_else(|| {
+            // Try to strip any ResourceType. prefix (for union fallback cases)
+            if let Some(idx) = expr.find('.') {
+                let potential_type = &expr[..idx];
+                // If it looks like a resource type (starts with uppercase), strip it
+                if potential_type.chars().next().is_some_and(|c| c.is_ascii_uppercase()) {
+                    return Some(&expr[idx + 1..]);
+                }
+            }
+            None
+        })
+        .unwrap_or(expr);
 
     // Split by '.' and handle special cases
     expr.split('.')
@@ -1246,6 +1288,46 @@ mod tests {
 
         let path = fhirpath_to_jsonb_path("Patient.identifier", "Patient");
         assert_eq!(path, vec!["identifier"]);
+    }
+
+    #[test]
+    fn test_fhirpath_to_jsonb_path_union() {
+        // Union expressions with matching resource type
+        let path = fhirpath_to_jsonb_path(
+            "Patient.birthDate | Person.birthDate | RelatedPerson.birthDate",
+            "Patient",
+        );
+        assert_eq!(path, vec!["birthDate"]);
+
+        // Union expressions with different resource type - should use matching one
+        let path = fhirpath_to_jsonb_path(
+            "Patient.birthDate | Person.birthDate | RelatedPerson.birthDate",
+            "Person",
+        );
+        assert_eq!(path, vec!["birthDate"]);
+
+        // Union expressions where we fall back to first when no match
+        let path = fhirpath_to_jsonb_path(
+            "Patient.name | Practitioner.name | Organization.name",
+            "Unknown",
+        );
+        assert_eq!(path, vec!["name"]);
+    }
+
+    #[test]
+    fn test_fhirpath_to_jsonb_path_as_cast() {
+        // Handle `as Type` casting
+        let path = fhirpath_to_jsonb_path(
+            "(ActivityDefinition.useContext.value as CodeableConcept)",
+            "ActivityDefinition",
+        );
+        assert_eq!(path, vec!["useContext", "value"]);
+
+        let path = fhirpath_to_jsonb_path(
+            "Observation.value as Quantity",
+            "Observation",
+        );
+        assert_eq!(path, vec!["value"]);
     }
 
     #[test]

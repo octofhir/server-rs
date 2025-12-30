@@ -47,6 +47,9 @@ urlencoding = "2.1.3"
 notify = { workspace = true }
 toml = { workspace = true }
 
+# Fast random number generation for probabilistic cache cleanup
+fastrand = "2.1"
+
 [dev-dependencies]
 tokio-test = { workspace = true }
 tempfile = { workspace = true }

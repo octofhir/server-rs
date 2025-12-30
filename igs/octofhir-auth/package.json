@@ -1,0 +1,13 @@
+{
+  "name": "octofhir.auth",
+  "version": "0.1.0",
+  "fhirVersion": "4.0.1",
+  "type": "fhir.ig",
+  "description": "OctoFHIR authentication and authorization resources (User, Session, Client, AccessPolicy, Role)",
+  "author": "OctoFHIR Team",
+  "url": "http://octofhir.io/ig/octofhir.auth",
+  "license": "MIT OR Apache-2.0",
+  "dependencies": {
+    "hl7.fhir.r4.core": "4.0.1"
+  }
+}

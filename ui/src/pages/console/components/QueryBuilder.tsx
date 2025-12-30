@@ -32,7 +32,7 @@ type QueryBuilderMode = "builder" | "raw";
 const MODE_OPTIONS = [
 	{ label: "Builder", value: "builder" },
 	{ label: "Raw", value: "raw" },
-] as const;
+];
 
 export function QueryBuilder({
 	searchParamsByResource,
@@ -109,7 +109,7 @@ export function QueryBuilder({
 					value: param.code,
 					label: param.code,
 					description: param.description,
-					badge: param.search_type,
+					badge: param.type,
 				}));
 		}
 
@@ -123,7 +123,7 @@ export function QueryBuilder({
 
 			if (param?.modifiers?.length) {
 				return param.modifiers
-					.filter((mod) => mod.toLowerCase().includes(query))
+					.filter((mod) => mod.code.toLowerCase().includes(query))
 					.map((mod) => ({
 						value: mod,
 						label: mod,

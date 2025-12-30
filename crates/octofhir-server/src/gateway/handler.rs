@@ -24,7 +24,7 @@ use crate::server::AppState;
 /// And return a Result with Response or GatewayError.
 pub type HandlerFn = Arc<
     dyn Fn(
-            Arc<AppState>,
+            AppState,
             CustomOperation,
             Request<Body>,
         ) -> Pin<Box<dyn Future<Output = Result<Response, GatewayError>> + Send>>
@@ -97,7 +97,7 @@ impl Default for HandlerRegistry {
 /// 2. Looks up the handler in the registry
 /// 3. Invokes the handler with the request
 pub async fn handle_handler(
-    state: Arc<AppState>,
+    state: AppState,
     operation: &CustomOperation,
     request: Request<Body>,
 ) -> Result<Response, GatewayError> {

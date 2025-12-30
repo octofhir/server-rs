@@ -374,15 +374,19 @@ impl PostgresPackageStore {
     pub async fn ensure_resource_tables(&self) -> Result<usize, FcmError> {
         info!("Ensuring database tables for all FHIR resource types from FCM");
 
-        // Query FCM for all resource-kind StructureDefinitions
+        // Query FCM for all resource-kind and logical-kind StructureDefinitions
+        // Use 'name' instead of 'sd_type' because for logical models (like ViewDefinition),
+        // sd_type contains the canonical URL, not the simple type name.
+        // Exclude profiles (sd_derivation = 'constraint') as they use the same table as their base.
         let resource_types: Vec<String> = query_scalar(
             r#"
-            SELECT DISTINCT sd_type
+            SELECT DISTINCT name
             FROM fcm.resources
             WHERE resource_type = 'StructureDefinition'
               AND (sd_kind = 'resource' OR sd_kind = 'logical')
-              AND sd_type IS NOT NULL
-            ORDER BY sd_type
+              AND (sd_derivation IS NULL OR sd_derivation = 'specialization')
+              AND name IS NOT NULL
+            ORDER BY name
             "#,
         )
         .fetch_all(&self.pool)

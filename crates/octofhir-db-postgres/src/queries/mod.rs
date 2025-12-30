@@ -13,4 +13,4 @@ pub use crud::{create, delete, read, update, vread};
 pub use history::{get_history, get_system_history};
 
 // Re-export search operations
-pub use search::execute_search;
+pub use search::{execute_search, execute_search_raw};

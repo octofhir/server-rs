@@ -5,7 +5,7 @@ import { useMantineColorScheme } from "@mantine/core";
 import "graphiql/style.css";
 import { useUiSettings } from "@/shared";
 
-const DEFAULT_QUERY = `# Welcome to the OctoFHIR GraphQL Console!
+const DEFAULT_QUERY = `# Welcome to the Abyxon GraphQL Console!
 #
 # GraphiQL is an in-browser tool for writing, validating, and
 # testing GraphQL queries.

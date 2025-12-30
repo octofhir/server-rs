@@ -71,7 +71,7 @@ impl FileSource {
     }
 
     /// Read and parse the configuration file
-    fn read_config(&self) -> Result<PartialConfig, ConfigError> {
+    async fn read_config(&self) -> Result<PartialConfig, ConfigError> {
         let path = &self.config.path;
 
         if !path.exists() {
@@ -79,7 +79,7 @@ impl FileSource {
             return Ok(PartialConfig::new());
         }
 
-        let content = std::fs::read_to_string(path).map_err(ConfigError::Io)?;
+        let content = tokio::fs::read_to_string(path).await.map_err(ConfigError::Io)?;
 
         PartialConfig::from_toml(&content)
     }
@@ -96,7 +96,7 @@ impl ConfigSource for FileSource {
     }
 
     async fn load(&self) -> Result<PartialConfig, ConfigError> {
-        self.read_config()
+        self.read_config().await
     }
 
     async fn watch(&self, tx: mpsc::Sender<ConfigChangeEvent>) -> Result<WatchHandle, ConfigError> {
@@ -203,7 +203,7 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let config_path = temp_dir.path().join("test.toml");
 
-        std::fs::write(
+        tokio::fs::write(
             &config_path,
             r#"
 [server]
@@ -213,6 +213,7 @@ port = 9090
 default_count = 25
 "#,
         )
+        .await
         .unwrap();
 
         let source = FileSource::from_path(&config_path);
@@ -237,13 +238,14 @@ default_count = 25
         let config_path = temp_dir.path().join("watch-test.toml");
 
         // Create initial file
-        std::fs::write(
+        tokio::fs::write(
             &config_path,
             r#"
 [server]
 port = 8080
 "#,
         )
+        .await
         .unwrap();
 
         let source = FileSource::new(FileWatcherConfig {
@@ -259,13 +261,14 @@ port = 8080
         tokio::time::sleep(Duration::from_millis(200)).await;
 
         // Modify the file
-        std::fs::write(
+        tokio::fs::write(
             &config_path,
             r#"
 [server]
 port = 9090
 "#,
         )
+        .await
         .unwrap();
 
         // Wait for event with timeout

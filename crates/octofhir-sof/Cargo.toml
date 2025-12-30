@@ -1,13 +1,13 @@
 [package]
 name = "octofhir-sof"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
 description = "SQL on FHIR implementation for OctoFHIR"
 license = "MIT OR Apache-2.0"
 
 [dependencies]
 # FHIR
-octofhir-fhirpath = "0.4"
+octofhir-fhirpath = { workspace = true }
 
 # Database
 sqlx-core = { version = "0.8.6", default-features = false, features = [

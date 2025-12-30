@@ -230,14 +230,15 @@ fn get_i64_attr(attrs: &HashMap<String, Value>, key: &str) -> Option<i64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
     use uuid::Uuid;
 
     use crate::middleware::types::{AuthContext, UserContext};
     use crate::token::jwt::AccessTokenClaims;
     use crate::types::{Client, GrantType};
 
-    fn create_test_claims(scope: &str) -> AccessTokenClaims {
-        AccessTokenClaims {
+    fn create_test_claims(scope: &str) -> Arc<AccessTokenClaims> {
+        Arc::new(AccessTokenClaims {
             iss: "https://auth.example.com".to_string(),
             sub: "user-123".to_string(),
             aud: vec!["https://fhir.example.com".to_string()],
@@ -249,7 +250,8 @@ mod tests {
             patient: None,
             encounter: None,
             fhir_user: Some("Practitioner/456".to_string()),
-        }
+            sid: None,
+        })
     }
 
     fn create_test_client() -> Client {

@@ -333,6 +333,7 @@ impl TokenService {
                 .as_ref()
                 .and_then(|c| c.encounter.clone()),
             fhir_user: fhir_user.clone(),
+            sid: Some(session.id.to_string()),
         };
 
         // Encode access token
@@ -518,6 +519,7 @@ impl TokenService {
             patient: None,   // No patient context for backend services
             encounter: None, // No encounter context
             fhir_user: None, // No user context
+            sid: None,       // No session for client credentials
         };
 
         // Encode access token
@@ -668,6 +670,7 @@ impl TokenService {
                 .as_ref()
                 .and_then(|c| c.encounter.clone()),
             fhir_user,
+            sid: None, // No active session for refresh token grants
         };
 
         // Encode access token
@@ -2620,6 +2623,7 @@ mod tests {
             patient: None,
             encounter: None,
             fhir_user: None,
+            sid: None,
         };
 
         let expired_token = service.jwt_service.encode(&expired_claims).unwrap();

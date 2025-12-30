@@ -348,6 +348,7 @@ fn create_test_auth_context() -> AuthContext {
         patient: None,
         encounter: None,
         fhir_user: Some("Practitioner/test-user".to_string()),
+        sid: None,
     };
 
     // Create test client
@@ -1904,6 +1905,7 @@ fn create_restricted_auth_context(scope: &str) -> AuthContext {
         patient: None,
         encounter: None,
         fhir_user: Some("Practitioner/test-user".to_string()),
+        sid: None,
     };
 
     let client = Client {

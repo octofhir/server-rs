@@ -1,0 +1,73 @@
+.container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.stack {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.header {
+  padding: var(--mantine-spacing-lg) var(--mantine-spacing-xl);
+  background: var(--app-glass-bg);
+  backdrop-filter: blur(var(--app-glass-blur));
+  border-bottom: 1px solid var(--app-glass-border);
+  flex-shrink: 0;
+}
+
+.tabs {
+  flex-shrink: 0;
+}
+
+.tabsList {
+  padding: 0 var(--mantine-spacing-xl);
+  background: var(--app-surface-1);
+  border-bottom: 1px solid var(--app-border-subtle);
+}
+
+.content {
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+}
+
+.listContainer {
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  transition: flex 200ms ease;
+}
+
+.listContainer[data-has-detail="true"] {
+  flex: 0 0 55%;
+}
+
+.detailContainer {
+  flex: 0 0 45%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-left: 1px solid var(--app-border-subtle);
+}
+
+.detailHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: var(--mantine-spacing-sm) var(--mantine-spacing-md);
+  background: var(--app-surface-1);
+  border-bottom: 1px solid var(--app-border-subtle);
+  flex-shrink: 0;
+}
+
+.analyticsContainer {
+  flex: 1;
+  overflow: auto;
+  background: var(--app-surface-2);
+}

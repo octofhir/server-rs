@@ -122,13 +122,14 @@ impl Default for AsyncJobConfig {
 }
 
 /// Job executor function type
-/// Takes job request details and returns result or error
+/// Takes job ID and request details and returns result or error
 pub type JobExecutor = Arc<
     dyn Fn(
-            String,
-            String,
-            String,
-            Option<serde_json::Value>,
+            Uuid,                        // job_id
+            String,                      // request_type
+            String,                      // method
+            String,                      // url
+            Option<serde_json::Value>,   // body
         ) -> std::pin::Pin<
             Box<dyn std::future::Future<Output = Result<serde_json::Value, String>> + Send>,
         > + Send
@@ -140,7 +141,7 @@ pub type JobExecutor = Arc<
 pub struct AsyncJobManager {
     db_pool: Arc<PgPool>,
     config: Arc<AsyncJobConfig>,
-    executor: Option<JobExecutor>,
+    executor: Arc<std::sync::RwLock<Option<JobExecutor>>>,
 }
 
 impl AsyncJobManager {
@@ -149,14 +150,20 @@ impl AsyncJobManager {
         Self {
             db_pool,
             config: Arc::new(config),
-            executor: None,
+            executor: Arc::new(std::sync::RwLock::new(None)),
         }
     }
 
     /// Set the job executor function
-    pub fn with_executor(mut self, executor: JobExecutor) -> Self {
-        self.executor = Some(executor);
+    pub fn with_executor(self, executor: JobExecutor) -> Self {
+        *self.executor.write().unwrap() = Some(executor);
         self
+    }
+
+    /// Set the job executor function after construction
+    /// This allows setting the executor after the manager has been created and shared
+    pub fn set_executor(&self, executor: JobExecutor) {
+        *self.executor.write().unwrap() = Some(executor);
     }
 
     /// Submit a new async job
@@ -196,7 +203,7 @@ impl AsyncJobManager {
         );
 
         // Spawn background execution if executor is configured
-        if let Some(executor) = &self.executor {
+        if let Some(executor) = self.executor.read().unwrap().as_ref() {
             let manager = self.clone();
             let exec = executor.clone();
             let req_type = request.request_type.clone();
@@ -233,7 +240,7 @@ impl AsyncJobManager {
         tracing::info!(job_id = %job_id, "Starting job execution");
 
         // Execute the job
-        let result = executor(request_type, method, url, body).await;
+        let result = executor(job_id, request_type, method, url, body).await;
 
         // Update job based on result
         match result {

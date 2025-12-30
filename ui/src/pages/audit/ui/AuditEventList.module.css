@@ -1,0 +1,46 @@
+.container {
+  flex: 1;
+  overflow: auto;
+}
+
+.table {
+  table-layout: fixed;
+}
+
+.thead {
+  position: sticky;
+  top: 0;
+  background: var(--app-surface-1);
+  z-index: 10;
+}
+
+.thead th {
+  font-weight: 600;
+  font-size: var(--mantine-font-size-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--mantine-color-dimmed);
+  border-bottom: 1px solid var(--app-border-subtle);
+}
+
+.row {
+  cursor: pointer;
+  transition: background-color 150ms ease;
+}
+
+.row:hover {
+  background-color: var(--app-surface-2);
+}
+
+.row[data-selected="true"] {
+  background-color: var(--mantine-primary-color-light);
+}
+
+.row td {
+  padding: var(--mantine-spacing-sm) var(--mantine-spacing-md);
+  border-bottom: 1px solid var(--app-border-subtle);
+}
+
+.loadMore {
+  min-height: 48px;
+}

@@ -477,6 +477,22 @@ mod tests {
                 .map(|(_, s)| s == secret)
                 .unwrap_or(false))
         }
+
+        async fn regenerate_secret(&self, client_id: &str) -> AuthResult<(Client, String)> {
+            let mut clients = self.clients.write().unwrap();
+            if let Some((client, _)) = clients.get(client_id) {
+                let new_secret = "new-test-secret".to_string();
+                let mut updated = client.clone();
+                updated.client_secret = Some(new_secret.clone());
+                clients.insert(client_id.to_string(), (updated.clone(), new_secret.clone()));
+                Ok((updated, new_secret))
+            } else {
+                Err(crate::error::AuthError::invalid_client(format!(
+                    "Client not found: {}",
+                    client_id
+                )))
+            }
+        }
     }
 
     fn create_public_client() -> Client {

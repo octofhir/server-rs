@@ -6,7 +6,7 @@ import {
 } from "monaco-editor/esm/vs/basic-languages/sql/sql";
 import type { FormatterConfig } from "../settings/formatterTypes";
 
-const DEFAULT_LSP_PATH = "/api/pg-lsp";
+const DEFAULT_LSP_PATH = "/api/lsp/pg";
 const PG_SPECIFIC_KEYWORDS = [
 	"jsonb_each",
 	"jsonb_array_elements",

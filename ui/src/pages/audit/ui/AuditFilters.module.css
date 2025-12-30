@@ -1,0 +1,28 @@
+.container {
+  padding: var(--mantine-spacing-sm) var(--mantine-spacing-md);
+  background: var(--app-surface-1);
+  border-bottom: 1px solid var(--app-border-subtle);
+}
+
+.filtersRow {
+  min-height: 40px;
+}
+
+.searchInput {
+  flex: 0 0 260px;
+}
+
+.filterButton {
+  flex-shrink: 0;
+}
+
+.spacer {
+  flex: 1;
+}
+
+.divider {
+  width: 1px;
+  height: 24px;
+  background: var(--app-border-subtle);
+  margin: 0 var(--mantine-spacing-xs);
+}

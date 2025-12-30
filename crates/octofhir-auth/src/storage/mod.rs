@@ -9,6 +9,7 @@
 //! - Revoked access token tracking
 //! - User sessions
 //! - User management
+//! - Role management
 //! - AccessPolicy resources
 //! - SMART launch contexts
 //!
@@ -24,6 +25,7 @@ pub mod launch_context;
 pub mod policy;
 pub mod refresh_token;
 pub mod revoked_token;
+pub mod role;
 pub mod session;
 pub mod user;
 
@@ -33,5 +35,6 @@ pub use launch_context::LaunchContextStorage;
 pub use policy::{PolicySearchParams, PolicyStorage};
 pub use refresh_token::RefreshTokenStorage;
 pub use revoked_token::RevokedTokenStorage;
+pub use role::{Permission, Role, RoleStorage, default_permissions};
 pub use session::SessionStorage;
 pub use user::{User, UserStorage};

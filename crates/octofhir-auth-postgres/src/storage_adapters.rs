@@ -77,6 +77,11 @@ impl ClientStorageTrait for ArcClientStorage {
         let storage = PostgresClientStorage::new(&self.pool);
         storage.verify_secret(client_id, secret).await
     }
+
+    async fn regenerate_secret(&self, client_id: &str) -> AuthResult<(Client, String)> {
+        let storage = PostgresClientStorage::new(&self.pool);
+        storage.regenerate_secret(client_id).await
+    }
 }
 
 // =============================================================================
@@ -281,6 +286,15 @@ impl UserStorageTrait for ArcUserStorage {
             .map_err(|e| AuthError::storage(e.to_string()))?;
 
         rows.into_iter().map(Self::row_to_user).collect()
+    }
+
+    async fn update_last_login(&self, user_id: Uuid) -> AuthResult<()> {
+        let storage = UserStorage::new(&self.pool);
+        storage
+            .update_last_login(user_id)
+            .await
+            .map(|_| ()) // Discard the returned UserRow
+            .map_err(|e| AuthError::storage(e.to_string()))
     }
 }
 

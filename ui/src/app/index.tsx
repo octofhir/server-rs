@@ -11,6 +11,7 @@ import { theme } from "./theme";
 import { ThemeCssVars } from "./themeCssVars";
 import { AppRoutes } from "./routes";
 import { useAuthInterceptor } from "@/shared/api/hooks";
+import { ErrorBoundary } from "@/shared/ui";
 
 // Import Mantine styles
 import "@mantine/core/styles.css";
@@ -51,11 +52,13 @@ export function App() {
 			<HelmetProvider>
 				<QueryClientProvider client={queryClient}>
 					<MantineProvider theme={theme} defaultColorScheme="auto">
-						<ThemeCssVars />
-						<Notifications position="top-right" />
-						<BrowserRouter basename="/ui">
-							<AppContent />
-						</BrowserRouter>
+						<ErrorBoundary>
+							<ThemeCssVars />
+							<Notifications position="top-right" />
+							<BrowserRouter basename="/ui">
+								<AppContent />
+							</BrowserRouter>
+						</ErrorBoundary>
 					</MantineProvider>
 				</QueryClientProvider>
 			</HelmetProvider>

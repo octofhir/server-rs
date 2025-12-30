@@ -23,7 +23,7 @@ use tower::ServiceBuilder;
 
 use crate::server::AppState;
 
-use super::PostgresLspServer;
+use super::pg_server::PostgresLspServer;
 
 /// Query parameters for LSP WebSocket connection.
 #[derive(Debug, Deserialize)]
@@ -35,16 +35,13 @@ pub struct LspQueryParams {
 /// WebSocket handler for PostgreSQL LSP.
 ///
 /// Allows authentication via the `token` query parameter or the HttpOnly auth cookie.
-pub async fn lsp_websocket_handler(
+pub async fn pg_lsp_websocket_handler(
     ws: WebSocketUpgrade,
     State(state): State<AppState>,
     Query(params): Query<LspQueryParams>,
     headers: HeaderMap,
 ) -> Result<Response, LspError> {
-    let auth_state = state
-        .auth_state
-        .as_ref()
-        .ok_or(LspError::AuthNotConfigured)?;
+    let auth_state = &state.auth_state;
 
     // Prefer explicit query token, but fall back to the auth cookie for UI sessions.
     let token = params
@@ -91,7 +88,7 @@ pub async fn lsp_websocket_handler(
     // Upgrade to WebSocket
     Ok(ws.on_upgrade(move |socket| {
         tracing::debug!("WebSocket upgrade completed, calling handle_lsp_connection");
-        handle_lsp_connection(socket, state.db_pool, state.model_provider.clone())
+        handle_lsp_connection(socket, state.db_pool.clone(), state.model_provider.clone())
     }))
 }
 

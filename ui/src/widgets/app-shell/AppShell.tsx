@@ -16,6 +16,7 @@ import {
 	Stack,
 	Divider,
 	Menu,
+	ErrorBoundary,
 } from "@/shared/ui";
 import { useDisclosure } from "@mantine/hooks";
 import {
@@ -36,6 +37,8 @@ import {
 	IconShield,
 	IconPackage,
 	IconWorld,
+	IconFileText,
+	IconTable,
 } from "@tabler/icons-react";
 import { useUnit } from "effector-react";
 import { useHealth, useAuth, useBuildInfo } from "@/shared/api/hooks";
@@ -102,6 +105,12 @@ const adminNavigation: NavItem[] = [
 		description: "Manage applications",
 		icon: IconApps,
 	},
+	{
+		label: "Audit Trail",
+		path: "/audit",
+		description: "Track system activity",
+		icon: IconShield,
+	},
 ];
 
 const authNavigation: NavItem[] = [
@@ -124,6 +133,12 @@ const authNavigation: NavItem[] = [
 		icon: IconUsers,
 	},
 	{
+		label: "Roles",
+		path: "/auth/roles",
+		description: "Manage roles & permissions",
+		icon: IconShield,
+	},
+	{
 		label: "Access Policies",
 		path: "/auth/policies",
 		description: "Access control policies",
@@ -143,6 +158,18 @@ const toolsNavigation: NavItem[] = [
 		path: "/graphql",
 		description: "GraphQL Query Console",
 		icon: IconCode,
+	},
+	{
+		label: "ViewDefinition",
+		path: "/viewdefinition",
+		description: "SQL on FHIR ViewDefinition Editor",
+		icon: IconTable,
+	},
+	{
+		label: "System Logs",
+		path: "/logs",
+		description: "Real-time server logs",
+		icon: IconFileText,
 	},
 	{
 		label: "Settings",
@@ -376,25 +403,14 @@ export function AppShell() {
 						/>
 						<Group gap="xs">
 							<Box
-								style={{
-									background: "var(--app-brand-gradient)",
-									padding: "3px",
-									borderRadius: "6px",
-									display: "flex",
-									alignItems: "center",
-									justifyContent: "center",
-								}}
-							>
-								<Box
-									component="img"
-									src={logoUrl}
-									alt="OctoFHIR logo"
-									w={18}
-									h={18}
-								/>
-							</Box>
+								component="img"
+								src={logoUrl}
+								alt="Abyxon logo"
+								h={32}
+								style={{ width: "auto" }}
+							/>
 							<Text fw={700} size="md" style={{ color: "var(--app-header-fg)", letterSpacing: "-0.02em" }}>
-								OctoFHIR
+								Abyxon
 							</Text>
 						</Group>
 					</Group>
@@ -525,7 +541,9 @@ export function AppShell() {
 			>
 				<AppTabsBar />
 				<Box style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-					<Outlet />
+					<ErrorBoundary layout resetKey={location.pathname}>
+						<Outlet />
+					</ErrorBoundary>
 				</Box>
 			</MantineAppShell.Main>
 		</MantineAppShell>

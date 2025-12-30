@@ -1,0 +1,54 @@
+/* Container - full height layout */
+.container {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  background: var(--app-surface-1);
+}
+
+/* Header with glassmorphism */
+.header {
+  background: var(--app-glass-bg);
+  border-bottom: 1px solid var(--app-glass-border);
+  backdrop-filter: blur(var(--app-glass-blur));
+  -webkit-backdrop-filter: blur(var(--app-glass-blur));
+  z-index: 10;
+}
+
+/* 3-panel layout */
+.content {
+  display: flex;
+  flex: 1;
+  gap: 0;
+  overflow: hidden;
+  min-height: 0;
+}
+
+/* Editor panel (center) */
+.editor {
+  flex: 1;
+  overflow: auto;
+  padding: var(--mantine-spacing-md);
+  border-right: 1px solid var(--app-border-subtle);
+}
+
+/* Preview panel (right) */
+.preview {
+  flex: 1;
+  overflow: auto;
+  padding: var(--mantine-spacing-md);
+  background: var(--app-surface-2);
+}
+
+/* Responsive adjustments */
+@media (max-width: 1200px) {
+  .content {
+    flex-direction: column;
+  }
+
+  .editor,
+  .preview {
+    border-right: none;
+    border-bottom: 1px solid var(--app-border-subtle);
+  }
+}

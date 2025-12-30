@@ -1,0 +1,288 @@
+---
+title: Bulk Data Export
+description: Export large datasets using the FHIR Bulk Data Access ($export) API
+---
+
+OctoFHIR implements the [FHIR Bulk Data Access IG](http://hl7.org/fhir/uv/bulkdata/) for exporting large datasets in NDJSON format. This is useful for analytics, data warehousing, and system migrations.
+
+## Overview
+
+Bulk export follows the FHIR Asynchronous Request Pattern:
+
+1. Client initiates export with `$export` operation
+2. Server returns `202 Accepted` with status URL
+3. Client polls status endpoint until complete
+4. Client downloads NDJSON files from manifest
+
+## Export Levels
+
+### System Export
+
+Export all resources on the server:
+
+```bash
+GET /$export
+Prefer: respond-async
+Accept: application/fhir+json
+```
+
+### Patient Export
+
+Export all patient compartment data:
+
+```bash
+GET /Patient/$export
+Prefer: respond-async
+Accept: application/fhir+json
+```
+
+### Group Export
+
+Export data for members of a specific group:
+
+```bash
+GET /Group/{id}/$export
+Prefer: respond-async
+Accept: application/fhir+json
+```
+
+## Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `_outputFormat` | string | Must be `application/fhir+ndjson` (default) |
+| `_since` | instant | Only resources updated since this timestamp |
+| `_type` | string | Comma-separated list of resource types to export |
+| `_typeFilter` | string | FHIR search queries per type |
+
+### Examples
+
+Export only Patient and Observation resources:
+
+```bash
+GET /$export?_type=Patient,Observation
+```
+
+Export resources modified after a specific date:
+
+```bash
+GET /$export?_since=2024-01-01T00:00:00Z
+```
+
+Export with type-specific filters:
+
+```bash
+GET /$export?_type=Observation&_typeFilter=Observation?code=8867-4
+```
+
+## Response Flow
+
+### 1. Initiate Export
+
+```bash
+GET /$export?_type=Patient,Observation
+Prefer: respond-async
+Accept: application/fhir+json
+```
+
+**Response: 202 Accepted**
+
+```
+HTTP/1.1 202 Accepted
+Content-Location: http://server/fhir/_async-status/550e8400-e29b-41d4-a716-446655440000
+```
+
+### 2. Check Status
+
+Poll the status URL until the export completes:
+
+```bash
+GET /_async-status/550e8400-e29b-41d4-a716-446655440000
+```
+
+**Response (In Progress): 202 Accepted**
+
+```json
+{
+  "status": "in_progress",
+  "progress": 0.45,
+  "message": "Exporting Observation resources..."
+}
+```
+
+**Response (Complete): 200 OK**
+
+```json
+{
+  "transactionTime": "2024-01-15T14:30:00Z",
+  "request": "http://server/fhir/$export?_type=Patient,Observation",
+  "requiresAccessToken": true,
+  "output": [
+    {
+      "type": "Patient",
+      "url": "http://server/fhir/_bulk-files/550e8400.../Patient.ndjson",
+      "count": 1500
+    },
+    {
+      "type": "Observation",
+      "url": "http://server/fhir/_bulk-files/550e8400.../Observation.ndjson",
+      "count": 45000
+    }
+  ],
+  "error": []
+}
+```
+
+### 3. Download Files
+
+Download each NDJSON file from the manifest:
+
+```bash
+GET /_bulk-files/550e8400.../Patient.ndjson
+Authorization: Bearer {token}
+```
+
+**Response:**
+
+```
+{"resourceType":"Patient","id":"1","name":[{"family":"Smith"}]}
+{"resourceType":"Patient","id":"2","name":[{"family":"Jones"}]}
+{"resourceType":"Patient","id":"3","name":[{"family":"Williams"}]}
+```
+
+### 4. Cancel Export (Optional)
+
+To cancel an in-progress export:
+
+```bash
+DELETE /_async-status/550e8400-e29b-41d4-a716-446655440000
+```
+
+**Response: 204 No Content**
+
+## Configuration
+
+Configure bulk export in `octofhir.toml`:
+
+```toml
+[bulk_export]
+# Enable/disable bulk export (default: true)
+enabled = true
+
+# Directory for export files (default: "./exports")
+export_path = "./exports"
+
+# Maximum concurrent export jobs (default: 5)
+max_concurrent_jobs = 5
+
+# File retention before cleanup, in hours (default: 24)
+retention_hours = 24
+
+# Split files after this many resources (default: 100000)
+max_resources_per_file = 100000
+
+# Database query batch size (default: 1000)
+batch_size = 1000
+
+# Default resource types if _type not specified (empty = all types)
+default_resource_types = []
+```
+
+## NDJSON Format
+
+Each output file contains one JSON resource per line (Newline Delimited JSON):
+
+```json
+{"resourceType":"Patient","id":"1","name":[{"family":"Smith","given":["John"]}]}
+{"resourceType":"Patient","id":"2","name":[{"family":"Jones","given":["Jane"]}]}
+```
+
+### File Splitting
+
+Large exports are automatically split into multiple files when `max_resources_per_file` is exceeded:
+
+```
+Patient.ndjson       # First 100,000 patients
+Patient.1.ndjson     # Next 100,000 patients
+Patient.2.ndjson     # Remaining patients
+```
+
+## Supported Resource Types
+
+By default, bulk export includes these common resource types:
+
+- **Clinical**: Patient, Observation, Condition, Procedure, DiagnosticReport
+- **Medications**: MedicationRequest, Medication
+- **Encounters**: Encounter, CarePlan, CareTeam
+- **Allergies/Immunizations**: AllergyIntolerance, Immunization
+- **Administrative**: Organization, Practitioner, PractitionerRole, Location
+- **Documents**: DocumentReference, Provenance
+
+Use the `_type` parameter to limit to specific types.
+
+## Error Handling
+
+### Export Errors
+
+If errors occur during export, they appear in the `error` array of the manifest:
+
+```json
+{
+  "output": [...],
+  "error": [
+    {
+      "type": "OperationOutcome",
+      "url": "http://server/fhir/_bulk-files/550e8400.../errors.ndjson"
+    }
+  ]
+}
+```
+
+### Common Error Codes
+
+| HTTP Status | Meaning |
+|-------------|---------|
+| 202 | Export accepted/in progress |
+| 200 | Export complete |
+| 400 | Invalid parameters |
+| 404 | Job not found |
+| 410 | Job cancelled |
+| 500 | Export failed |
+
+## Best Practices
+
+### For Large Exports
+
+1. **Use `_type` parameter** to limit resource types
+2. **Use `_since` parameter** for incremental exports
+3. **Monitor progress** by polling status endpoint
+4. **Download files promptly** before retention expires
+
+### For Incremental Exports
+
+Track the `transactionTime` from each export manifest and use it as the `_since` parameter for the next export:
+
+```bash
+# First export
+GET /$export?_type=Patient
+# Returns transactionTime: 2024-01-15T14:30:00Z
+
+# Next incremental export
+GET /$export?_type=Patient&_since=2024-01-15T14:30:00Z
+```
+
+### Security Considerations
+
+- Export files require authentication to download
+- Files are automatically cleaned up after `retention_hours`
+- Consider network bandwidth for large exports
+- Use `_type` to avoid exporting sensitive data
+
+## Limitations
+
+Current implementation notes:
+
+- Only `application/fhir+ndjson` output format is supported
+- Group export requires the Group resource to exist
+- S3/cloud storage backend not yet implemented
+- Compression (gzip) not yet supported

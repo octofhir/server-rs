@@ -13,8 +13,11 @@ import { ResourceBrowserPage } from "@/pages/resource-browser";
 import { RestConsolePage } from "@/pages/console";
 import { OperationsPage, OperationDetailPage } from "@/pages/operations";
 import { AppsPage } from "@/pages/apps";
-import { ClientsPage, UsersPage, AccessPoliciesPage, IdentityProvidersPage } from "@/pages/auth";
+import { ClientsPage, UsersPage, UserDetailPage, RolesPage, AccessPoliciesPage, IdentityProvidersPage } from "@/pages/auth";
 import { PackagesPage, PackageDetailPage } from "@/pages/packages";
+import { LogsViewerPage } from "@/pages/logs";
+import { AuditTrailPage } from "@/pages/audit";
+import { ViewDefinitionPage } from "@/pages/viewdefinition";
 
 // Placeholder component for pages during migration
 function PlaceholderPage({ name, description }: { name: string; description?: string }) {
@@ -29,9 +32,6 @@ function PlaceholderPage({ name, description }: { name: string; description?: st
 }
 
 // Placeholder pages (will be replaced with actual components)
-const LogsPage = () => (
-  <PlaceholderPage name="System Logs" description="View server activity logs" />
-);
 const CapabilityStatementPage = () => (
   <PlaceholderPage name="Capability Statement" description="FHIR server metadata" />
 );
@@ -73,6 +73,8 @@ export function AppRoutes() {
         <Route path="/auth/providers" element={<IdentityProvidersPage />} />
         <Route path="/auth/clients" element={<ClientsPage />} />
         <Route path="/auth/users" element={<UsersPage />} />
+        <Route path="/auth/users/:id" element={<UserDetailPage />} />
+        <Route path="/auth/roles" element={<RolesPage />} />
         <Route path="/auth/policies" element={<AccessPoliciesPage />} />
 
         {/* Tools */}
@@ -81,8 +83,10 @@ export function AppRoutes() {
         <Route path="/settings" element={<SettingsPage />} />
 
         {/* Other */}
-        <Route path="/logs" element={<LogsPage />} />
+        <Route path="/logs" element={<LogsViewerPage />} />
+        <Route path="/audit" element={<AuditTrailPage />} />
         <Route path="/metadata" element={<CapabilityStatementPage />} />
+        <Route path="/viewdefinition" element={<ViewDefinitionPage />} />
       </Route>
     </Routes>
   );

@@ -48,7 +48,7 @@ export function useSendConsoleRequest() {
 			}
 
 			// 2. Parse body if present
-			let parsedBody: unknown = undefined;
+			let parsedBody: unknown ;
 			if (params.body && params.body.trim() !== "") {
 				try {
 					parsedBody = JSON.parse(params.body);

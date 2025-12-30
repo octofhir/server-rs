@@ -40,9 +40,18 @@ pub struct AppConfig {
     /// GraphQL configuration
     #[serde(default)]
     pub graphql: GraphQLConfig,
+    /// Bulk export configuration ($export)
+    #[serde(default)]
+    pub bulk_export: BulkExportConfig,
     /// Bootstrap configuration (initial admin user, default data)
     #[serde(default)]
     pub bootstrap: BootstrapConfig,
+    /// Audit trail configuration
+    #[serde(default)]
+    pub audit: AuditConfig,
+    /// SQL on FHIR configuration (ViewDefinition editor, $run/$export operations)
+    #[serde(default)]
+    pub sql_on_fhir: SqlOnFhirConfig,
 }
 
 // Default derived via field defaults
@@ -98,12 +107,10 @@ impl AppConfig {
                 return Err("storage.postgres.pool_size must be > 0".into());
             }
         }
-        // Auth validation
-        if self.auth.enabled {
-            self.auth
-                .validate()
-                .map_err(|e| format!("auth config error: {e}"))?;
-        }
+        // Auth validation (always required)
+        self.auth
+            .validate()
+            .map_err(|e| format!("auth config error: {e}"))?;
         Ok(())
     }
 
@@ -393,11 +400,16 @@ pub struct PackagesConfig {
 pub enum PackageSpec {
     /// Shorthand: "package_id#version" or just "package_id"
     Simple(String),
-    /// Expanded form for clarity or filesystem path loading
+    /// Expanded form for clarity, filesystem path loading, or URL-based downloads
     Table {
         id: Option<String>,
         version: Option<String>,
         path: Option<String>,
+        /// Optional direct URL to download the package tarball from.
+        /// If provided, this URL will be used instead of querying the registry.
+        /// Useful for packages not in the registry or CI builds.
+        /// Example: "https://build.fhir.org/ig/FHIR/sql-on-fhir-v2/package.tgz"
+        url: Option<String>,
     },
 }
 
@@ -689,6 +701,87 @@ impl Default for GraphQLConfig {
     }
 }
 
+/// Bulk Data Export configuration (FHIR Bulk Data Access IG)
+///
+/// Configures the $export operation for system-level, patient-level,
+/// and group-level bulk data exports in NDJSON format.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BulkExportConfig {
+    /// Enable bulk export functionality
+    /// Default: true
+    #[serde(default = "default_bulk_export_enabled")]
+    pub enabled: bool,
+
+    /// Directory path for storing export files
+    /// Default: "./exports" (relative to working directory)
+    #[serde(default = "default_bulk_export_path")]
+    pub export_path: String,
+
+    /// Maximum concurrent export jobs
+    /// Default: 5
+    #[serde(default = "default_bulk_export_max_concurrent")]
+    pub max_concurrent_jobs: usize,
+
+    /// Export file retention period in hours
+    /// Files older than this will be cleaned up
+    /// Default: 24 hours
+    #[serde(default = "default_bulk_export_retention_hours")]
+    pub retention_hours: u64,
+
+    /// Maximum resources per NDJSON file before splitting
+    /// Default: 100000
+    #[serde(default = "default_bulk_export_max_resources_per_file")]
+    pub max_resources_per_file: usize,
+
+    /// Batch size for streaming resources from database
+    /// Default: 1000
+    #[serde(default = "default_bulk_export_batch_size")]
+    pub batch_size: usize,
+
+    /// Default resource types to export if _type parameter not specified
+    /// If empty, exports all available resource types
+    #[serde(default)]
+    pub default_resource_types: Vec<String>,
+}
+
+fn default_bulk_export_enabled() -> bool {
+    true
+}
+
+fn default_bulk_export_path() -> String {
+    "./exports".to_string()
+}
+
+fn default_bulk_export_max_concurrent() -> usize {
+    5
+}
+
+fn default_bulk_export_retention_hours() -> u64 {
+    24
+}
+
+fn default_bulk_export_max_resources_per_file() -> usize {
+    100_000
+}
+
+fn default_bulk_export_batch_size() -> usize {
+    1000
+}
+
+impl Default for BulkExportConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_bulk_export_enabled(),
+            export_path: default_bulk_export_path(),
+            max_concurrent_jobs: default_bulk_export_max_concurrent(),
+            retention_hours: default_bulk_export_retention_hours(),
+            max_resources_per_file: default_bulk_export_max_resources_per_file(),
+            batch_size: default_bulk_export_batch_size(),
+            default_resource_types: Vec::new(),
+        }
+    }
+}
+
 /// Bootstrap configuration for initial server setup
 ///
 /// Configures admin user creation on first startup.
@@ -721,6 +814,98 @@ pub struct AdminUserConfig {
     /// Admin email address (optional)
     #[serde(default)]
     pub email: Option<String>,
+}
+
+/// Audit trail configuration
+///
+/// Controls automatic creation of FHIR AuditEvent resources for
+/// tracking system activity.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AuditConfig {
+    /// Enable audit logging
+    /// Default: true
+    #[serde(default = "default_audit_enabled")]
+    pub enabled: bool,
+
+    /// Log FHIR resource operations (create, read, update, delete, search)
+    /// Default: true
+    #[serde(default = "default_audit_log_fhir")]
+    pub log_fhir_operations: bool,
+
+    /// Log authentication events (login, logout, failed attempts)
+    /// Default: true
+    #[serde(default = "default_audit_log_auth")]
+    pub log_auth_events: bool,
+
+    /// Log read operations (GET requests)
+    /// Can be disabled to reduce audit volume
+    /// Default: false
+    #[serde(default)]
+    pub log_read_operations: bool,
+
+    /// Log search operations
+    /// Can be disabled to reduce audit volume
+    /// Default: false
+    #[serde(default)]
+    pub log_search_operations: bool,
+
+    /// Resource types to exclude from audit logging
+    /// Example: ["AuditEvent"] to avoid infinite loops
+    #[serde(default = "default_audit_exclude_types")]
+    pub exclude_resource_types: Vec<String>,
+}
+
+fn default_audit_enabled() -> bool {
+    true
+}
+
+fn default_audit_log_fhir() -> bool {
+    true
+}
+
+fn default_audit_log_auth() -> bool {
+    true
+}
+
+fn default_audit_exclude_types() -> Vec<String> {
+    vec!["AuditEvent".to_string()]
+}
+
+impl Default for AuditConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_audit_enabled(),
+            log_fhir_operations: default_audit_log_fhir(),
+            log_auth_events: default_audit_log_auth(),
+            log_read_operations: false,
+            log_search_operations: false,
+            exclude_resource_types: default_audit_exclude_types(),
+        }
+    }
+}
+
+/// SQL on FHIR configuration for ViewDefinition editor and operations
+///
+/// Configures the SQL on FHIR feature which enables:
+/// - ViewDefinition resource CRUD operations
+/// - $run operation to execute ViewDefinitions and get tabular results
+/// - $export operation to export results in various formats (CSV, Parquet, NDJSON)
+///
+/// When enabled, the SQL on FHIR IG package (`hl7.fhir.uv.sql-on-fhir`) is installed,
+/// which creates the `viewdefinition` table dynamically via FCM.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SqlOnFhirConfig {
+    /// Enable SQL on FHIR feature
+    /// When true, installs the SQL on FHIR package and enables ViewDefinition operations
+    /// Default: false
+    #[serde(default)]
+    pub enabled: bool,
+}
+
+impl Default for SqlOnFhirConfig {
+    fn default() -> Self {
+        Self { enabled: false }
+    }
 }
 
 pub mod loader {

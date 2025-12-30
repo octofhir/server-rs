@@ -570,6 +570,22 @@ mod tests {
         async fn verify_secret(&self, _client_id: &str, _secret: &str) -> AuthResult<bool> {
             Ok(true)
         }
+
+        async fn regenerate_secret(&self, client_id: &str) -> AuthResult<(Client, String)> {
+            let mut clients = self.clients.write().unwrap();
+            if let Some(client) = clients.get(client_id).cloned() {
+                let new_secret = "new-test-secret".to_string();
+                let mut updated = client;
+                updated.client_secret = Some(new_secret.clone());
+                clients.insert(client_id.to_string(), updated.clone());
+                Ok((updated, new_secret))
+            } else {
+                Err(crate::error::AuthError::invalid_client(format!(
+                    "Client not found: {}",
+                    client_id
+                )))
+            }
+        }
     }
 
     /// Mock session storage for testing.

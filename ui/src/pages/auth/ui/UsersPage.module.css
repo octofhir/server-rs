@@ -1,0 +1,122 @@
+.pageRoot {
+	flex: 1;
+	min-height: 0;
+	animation: fadeIn 0.2s ease-out;
+}
+
+.tableContainer {
+	padding: var(--mantine-spacing-md);
+}
+
+.filterBar {
+	display: flex;
+	gap: var(--mantine-spacing-sm);
+	align-items: center;
+	flex-wrap: wrap;
+}
+
+.searchInput {
+	flex: 1;
+	min-width: 200px;
+}
+
+.userCell {
+	display: flex;
+	align-items: center;
+	gap: var(--mantine-spacing-sm);
+}
+
+.avatar {
+	width: 36px;
+	height: 36px;
+	border-radius: 50%;
+	background: var(--mantine-color-indigo-light);
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	color: var(--mantine-color-indigo-filled);
+	font-weight: 600;
+	font-size: var(--mantine-font-size-sm);
+}
+
+.userInfo {
+	display: flex;
+	flex-direction: column;
+}
+
+.userName {
+	font-weight: 500;
+	font-size: var(--mantine-font-size-sm);
+}
+
+.userEmail {
+	font-size: var(--mantine-font-size-xs);
+	color: var(--app-text-secondary);
+}
+
+.lastLogin {
+	font-size: var(--mantine-font-size-xs);
+	color: var(--app-text-secondary);
+}
+
+.bulkActions {
+	display: flex;
+	gap: var(--mantine-spacing-sm);
+	padding: var(--mantine-spacing-sm) var(--mantine-spacing-md);
+	background: var(--mantine-color-indigo-light);
+	border-radius: var(--mantine-radius-md);
+	margin-bottom: var(--mantine-spacing-md);
+	align-items: center;
+}
+
+.selectedCount {
+	font-size: var(--mantine-font-size-sm);
+	font-weight: 500;
+	color: var(--mantine-color-indigo-filled);
+}
+
+.passwordStrength {
+	display: flex;
+	gap: 4px;
+	margin-top: 4px;
+}
+
+.strengthBar {
+	height: 4px;
+	flex: 1;
+	border-radius: 2px;
+	background: var(--mantine-color-gray-3);
+	transition: background-color 0.2s ease;
+}
+
+.strengthBar[data-active="true"][data-strength="weak"] {
+	background: var(--mantine-color-red-6);
+}
+
+.strengthBar[data-active="true"][data-strength="fair"] {
+	background: var(--mantine-color-orange-6);
+}
+
+.strengthBar[data-active="true"][data-strength="good"] {
+	background: var(--mantine-color-yellow-6);
+}
+
+.strengthBar[data-active="true"][data-strength="strong"] {
+	background: var(--mantine-color-green-6);
+}
+
+.strengthLabel {
+	font-size: var(--mantine-font-size-xs);
+	margin-top: 4px;
+}
+
+@keyframes fadeIn {
+	from {
+		opacity: 0;
+		transform: translateY(4px);
+	}
+	to {
+		opacity: 1;
+		transform: translateY(0);
+	}
+}

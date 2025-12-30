@@ -443,13 +443,14 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let config_path = temp_dir.path().join("test.toml");
 
-        std::fs::write(
+        tokio::fs::write(
             &config_path,
             r#"
 [server]
 port = 9090
 "#,
         )
+        .await
         .unwrap();
 
         let manager = ConfigurationManager::builder()

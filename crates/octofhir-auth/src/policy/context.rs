@@ -820,6 +820,8 @@ pub enum ContextError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
+
     use crate::token::jwt::AccessTokenClaims;
     use crate::types::GrantType;
     use uuid::Uuid;
@@ -828,8 +830,8 @@ mod tests {
     // Test Helpers
     // -------------------------------------------------------------------------
 
-    fn create_test_claims() -> AccessTokenClaims {
-        AccessTokenClaims {
+    fn create_test_claims() -> Arc<AccessTokenClaims> {
+        Arc::new(AccessTokenClaims {
             iss: "https://auth.example.com".to_string(),
             sub: "user123".to_string(),
             aud: vec!["https://fhir.example.com".to_string()],
@@ -841,7 +843,8 @@ mod tests {
             patient: Some("Patient/123".to_string()),
             encounter: None,
             fhir_user: Some("Practitioner/456".to_string()),
-        }
+            sid: None,
+        })
     }
 
     fn create_test_client() -> Client {

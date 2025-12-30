@@ -3,14 +3,14 @@ import type { HttpMethod } from "@/shared/api";
 import { useUnit } from "effector-react";
 import { $method, setMethod } from "../state/consoleStore";
 
-const METHOD_OPTIONS: Array<{ label: string; value: HttpMethod }> = [
-	{ label: "GET", value: "GET" },
-	{ label: "POST", value: "POST" },
-	{ label: "PUT", value: "PUT" },
-	{ label: "PATCH", value: "PATCH" },
-	{ label: "DELETE", value: "DELETE" },
-	{ label: "HEAD", value: "HEAD" },
-	{ label: "OPTIONS", value: "OPTIONS" },
+const METHOD_OPTIONS = [
+	"GET",
+	"POST",
+	"PUT",
+	"PATCH",
+	"DELETE",
+	"HEAD",
+	"OPTIONS",
 ];
 
 export const MethodControl = () => {
@@ -21,7 +21,6 @@ export const MethodControl = () => {
 
 	return (
 		<SegmentedControl
-			key="method-control"
 			fullWidth
 			value={method}
 			onChange={(value) => setMethodEvent(value as HttpMethod)}

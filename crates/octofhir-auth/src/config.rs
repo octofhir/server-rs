@@ -17,7 +17,6 @@ use std::time::Duration;
 ///
 /// ```toml
 /// [auth]
-/// enabled = true
 /// issuer = "https://fhir.example.com"
 ///
 /// [auth.oauth]
@@ -27,10 +26,6 @@ use std::time::Duration;
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(default)]
 pub struct AuthConfig {
-    /// Enable/disable the auth module entirely.
-    /// When disabled, all requests are unauthenticated.
-    pub enabled: bool,
-
     /// Server issuer URL (used in token `iss` claim).
     /// This should be the public base URL of the FHIR server.
     pub issuer: String,
@@ -63,7 +58,6 @@ pub struct AuthConfig {
 impl Default for AuthConfig {
     fn default() -> Self {
         Self {
-            enabled: true,
             issuer: "http://localhost:8080".to_string(),
             oauth: OAuthConfig::default(),
             smart: SmartConfig::default(),
@@ -638,7 +632,7 @@ mod tests {
     #[test]
     fn test_default_config() {
         let config = AuthConfig::default();
-        assert!(config.enabled);
+        assert!(config.cookie.enabled);
         assert_eq!(config.issuer, "http://localhost:8080");
         assert!(config.oauth.refresh_token_rotation);
         assert_eq!(config.signing.algorithm, "RS384");
@@ -772,8 +766,8 @@ mod tests {
         let config = AuthConfig::default();
         let json = serde_json::to_string(&config).unwrap();
         let parsed: AuthConfig = serde_json::from_str(&json).unwrap();
-        assert_eq!(config.enabled, parsed.enabled);
         assert_eq!(config.issuer, parsed.issuer);
         assert_eq!(config.signing.algorithm, parsed.signing.algorithm);
+        assert_eq!(config.cookie.enabled, parsed.cookie.enabled);
     }
 }

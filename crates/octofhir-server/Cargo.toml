@@ -10,8 +10,9 @@ categories.workspace = true
 description = "HTTP server implementation for OctoFHIR"
 
 [features]
-default = []
+default = ["mimalloc"]
 vendored-openssl = ["reqwest/native-tls-vendored"]
+mimalloc = ["dep:mimalloc"]
 
 [[bin]]
 name = "octofhir-server"
@@ -32,6 +33,7 @@ octofhir-auth = { path = "../octofhir-auth" }
 octofhir-auth-postgres = { path = "../octofhir-auth-postgres" }
 octofhir-canonical-manager = { workspace = true }
 octofhir-graphql = { path = "../octofhir-graphql" }
+octofhir-sof = { path = "../octofhir-sof" }
 async-trait = { workspace = true }
 
 # Workspace dependencies
@@ -110,10 +112,18 @@ deadpool-redis = "0.18"
 redis = { version = "0.27", features = ["tokio-comp", "connection-manager"] }
 rmp-serde = "1.3"  # MessagePack for efficient serialization
 dashmap = "6.1"  # Concurrent HashMap for L1 cache
+arc-swap = "1.7"  # Lock-free atomic pointer swapping for hot paths
 moka = { version = "0.12", features = ["future"] }  # LRU cache for lazy schema loading
 regex.workspace = true
 tokio-util = { version = "0.7.17", features = ["compat"] }
+
+# Prometheus metrics
+metrics = "0.24"
+metrics-exporter-prometheus = "0.16"
 futures = "0.3.31"
+
+# High-performance allocator (optional, enabled by default)
+mimalloc = { version = "0.1", default-features = false, optional = true }
 
 [dev-dependencies]
 tokio-test = { workspace = true }
