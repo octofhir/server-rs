@@ -15,9 +15,9 @@ export default defineConfig({
 
       ],
       logo: {
-        src: '/logo.png',
+        src: './src/assets/logo.png',
         alt: 'Abyxon',
-        dark: '/logo-dark.png'
+        dark: './src/assets/logo-dark.png'
       },
       customCss: ['./src/styles/custom.css'],
       head: [
