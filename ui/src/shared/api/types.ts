@@ -231,6 +231,11 @@ export interface UserSearchParams {
 }
 
 // Operation types
+export interface AppReference {
+  id: string;
+  name: string;
+}
+
 export interface OperationDefinition {
   id: string;
   name: string;
@@ -240,6 +245,7 @@ export interface OperationDefinition {
   path_pattern: string;
   public: boolean;
   module: string;
+  app?: AppReference;
 }
 
 export interface OperationsResponse {

@@ -1,4 +1,5 @@
 use crate::bootstrap::ADMIN_ACCESS_POLICY_ID;
+use crate::gateway::{App, PathValidationError, validate_app_operations};
 use crate::mapping::{IdPolicy, envelope_from_json, json_from_envelope};
 use crate::operation_registry::{OperationStorage, PostgresOperationStorage};
 use crate::patch::{apply_fhirpath_patch, apply_json_patch};
@@ -320,7 +321,7 @@ pub async fn build_capability_statement(
                 let op_name = op
                     .id
                     .split('.')
-                    .last()
+                    .next_back()
                     .map(|s| format!("${}", s))
                     .unwrap_or_else(|| format!("${}", op.id));
 
@@ -460,27 +461,99 @@ fn count_summary_capability_statement(cs: &Value) -> Value {
 /// Preprocess resource payload before storage (e.g. hashing passwords).
 async fn preprocess_payload(resource_type: &str, payload: &mut Value) -> Result<(), ApiError> {
     if resource_type == "User" {
-        if let Some(obj) = payload.as_object_mut() {
-            if let Some(password) = obj.get("password").and_then(|v| v.as_str()) {
-                let hashed = crate::bootstrap::hash_password(password)
+        if let Some(obj) = payload.as_object_mut()
+            && let Some(password) = obj.get("password").and_then(|v| v.as_str()) {
+                let hashed = octofhir_auth::hash_password(password)
                     .map_err(|e| ApiError::internal(format!("Failed to hash password: {}", e)))?;
                 obj.insert("passwordHash".to_string(), Value::String(hashed));
                 obj.remove("password");
             }
-        }
     } else if resource_type == "Client" {
-        if let Some(obj) = payload.as_object_mut() {
-            if let Some(secret) = obj.get("clientSecret").and_then(|v| v.as_str()) {
-                // Only hash if it doesn't look like a bcrypt hash already
-                if !secret.starts_with("$2b$") {
-                    let hashed = crate::bootstrap::hash_password(secret).map_err(|e| {
+        if let Some(obj) = payload.as_object_mut()
+            && let Some(secret) = obj.get("clientSecret").and_then(|v| v.as_str()) {
+                // Only hash if it doesn't look like an Argon2 hash already
+                if !secret.starts_with("$argon2id$") {
+                    let hashed = octofhir_auth::hash_password(secret).map_err(|e| {
                         ApiError::internal(format!("Failed to hash client secret: {}", e))
                     })?;
                     obj.insert("clientSecret".to_string(), Value::String(hashed));
                 }
             }
+    } else if resource_type == "App"
+        && let Some(obj) = payload.as_object_mut()
+            && let Some(secret) = obj.get("secret").and_then(|v| v.as_str()) {
+                // Only hash if it doesn't look like an Argon2 hash already
+                if !secret.starts_with("$argon2id$") {
+                    let hashed = octofhir_auth::hash_app_secret(secret).map_err(|e| {
+                        ApiError::internal(format!("Failed to hash app secret: {}", e))
+                    })?;
+                    obj.insert("secret".to_string(), Value::String(hashed));
+                }
+            }
+    Ok(())
+}
+
+/// Validate a FHIRPath expression for syntax correctness.
+fn validate_fhirpath_expression(expression: &str) -> Result<(), ApiError> {
+    use octofhir_fhirpath::parse;
+
+    let result = parse(expression);
+    if !result.success {
+        let error_msg = result
+            .error_message
+            .unwrap_or_else(|| "Unknown parse error".to_string());
+        return Err(ApiError::bad_request(format!(
+            "Invalid FHIRPath expression: {}",
+            error_msg
+        )));
+    }
+
+    Ok(())
+}
+
+/// Postprocess resource after successful storage (e.g., trigger registry updates).
+///
+/// This function is called after a resource has been successfully created or updated.
+/// It performs resource-type-specific actions such as:
+/// - SearchParameter: Validate FHIRPath and reload search parameter registry
+/// - Future: Other resource types may trigger specific actions
+async fn postprocess_resource(
+    resource_type: &str,
+    _resource_id: &str,
+    payload: &Value,
+    state: &crate::server::AppState,
+) -> Result<(), ApiError> {
+    // Handle SearchParameter resource type
+    if resource_type == "SearchParameter" {
+        // 1. Validate FHIRPath expression if present
+        if let Some(expression) = payload.get("expression").and_then(|v| v.as_str()) {
+            validate_fhirpath_expression(expression)?;
+        }
+
+        // 2. Parse and incrementally update registry (NO FULL RELOAD!)
+        match octofhir_search::parse_search_parameter(payload) {
+            Ok(param) => {
+                // Get current search config and update registry
+                let config = state.search_config.config();
+                config.registry.upsert(param);
+
+                // Clear query cache for this specific parameter
+                if let Some(cache) = &config.cache {
+                    cache.clear();
+                }
+
+                tracing::info!(
+                    code = payload.get("code").and_then(|v| v.as_str()),
+                    "Search parameter registered incrementally"
+                );
+            }
+            Err(e) => {
+                tracing::error!(error = %e, "Failed to parse SearchParameter for incremental update");
+                // Don't fail the request - resource is already saved
+            }
         }
     }
+
     Ok(())
 }
 
@@ -606,6 +679,10 @@ pub async fn create_resource(
         Ok(stored) => {
             let id = stored.id.clone();
             let version_id = stored.version_id.clone();
+
+            // NEW: Postprocess resource (triggers, notifications, registry updates)
+            postprocess_resource(&resource_type, &id, &payload, &state).await?;
+
             let mut response_headers = HeaderMap::new();
 
             // Location header
@@ -1197,18 +1274,20 @@ pub async fn update_resource(
     match existing {
         Ok(Some(existing_stored)) => {
             // Resource exists - check If-Match if provided
-            if let Some(ref expected_version) = if_match {
-                if expected_version != &existing_stored.version_id {
+            if let Some(ref expected_version) = if_match
+                && expected_version != &existing_stored.version_id {
                     return Err(ApiError::conflict(format!(
                         "Version conflict: expected {}, but current is {}",
                         expected_version, existing_stored.version_id
                     )));
                 }
-            }
 
             // Update existing resource using FhirStorage
             match state.storage.update(&payload, if_match.as_deref()).await {
                 Ok(stored) => {
+                    // NEW: Postprocess resource
+                    postprocess_resource(&resource_type, &id, &payload, &state).await?;
+
                     let mut response_headers = HeaderMap::new();
 
                     // ETag
@@ -1275,6 +1354,9 @@ pub async fn update_resource(
             // Create new resource with provided ID using FhirStorage
             match state.storage.create(&payload).await {
                 Ok(stored) => {
+                    // NEW: Postprocess resource
+                    postprocess_resource(&resource_type, &id, &payload, &state).await?;
+
                     let mut response_headers = HeaderMap::new();
 
                     // Location header (for create)
@@ -1482,14 +1564,13 @@ pub async fn conditional_update_resource(
                 }
 
                 // Check If-Match if provided
-                if let Some(ref expected_version) = if_match {
-                    if expected_version != &existing.version_id {
+                if let Some(ref expected_version) = if_match
+                    && expected_version != &existing.version_id {
                         return Err(ApiError::conflict(format!(
                             "Version conflict: expected {}, but current is {}",
                             expected_version, existing.version_id
                         )));
                     }
-                }
 
                 // Validate and update the matched resource
                 if let Err(err) = envelope_from_json(
@@ -1589,8 +1670,37 @@ pub async fn delete_resource(
         ));
     }
 
+    // For SearchParameter, read it first to get the URL for registry removal
+    let search_param_url: Option<String> = if resource_type == "SearchParameter" {
+        match state.storage.read(&resource_type, &id).await {
+            Ok(Some(stored)) => stored
+                .resource
+                .get("url")
+                .and_then(|v| v.as_str())
+                .map(String::from),
+            _ => None,
+        }
+    } else {
+        None
+    };
+
     match state.storage.delete(&resource_type, &id).await {
-        Ok(_) => Ok(StatusCode::NO_CONTENT),
+        Ok(_) => {
+            // NEW: Handle SearchParameter deletion - remove from registry
+            if resource_type == "SearchParameter"
+                && let Some(url) = search_param_url {
+                    let config = state.search_config.config();
+                    if config.registry.remove_by_url(&url) {
+                        // Clear query cache
+                        if let Some(cache) = &config.cache {
+                            cache.clear();
+                        }
+                        tracing::info!(url = %url, "Search parameter removed from registry");
+                    }
+                }
+
+            Ok(StatusCode::NO_CONTENT)
+        }
         Err(e) => Err(map_storage_error(e)),
     }
 }
@@ -1719,14 +1829,13 @@ pub async fn patch_resource(
         .ok_or_else(|| ApiError::not_found(format!("{resource_type} with id '{id}' not found")))?;
 
     // Check If-Match if provided
-    if let Some(ref expected_version) = if_match {
-        if expected_version != &existing.version_id {
+    if let Some(ref expected_version) = if_match
+        && expected_version != &existing.version_id {
             return Err(ApiError::conflict(format!(
                 "Version conflict: expected {}, but current is {}",
                 expected_version, existing.version_id
             )));
         }
-    }
 
     // Get current resource JSON for patching
     let current_json = existing.resource.clone();
@@ -1908,14 +2017,13 @@ pub async fn conditional_patch_resource(
                 let id = existing.id.clone();
 
                 // Check If-Match if provided
-                if let Some(ref expected_version) = if_match {
-                    if expected_version != &existing.version_id {
+                if let Some(ref expected_version) = if_match
+                    && expected_version != &existing.version_id {
                         return Err(ApiError::conflict(format!(
                             "Version conflict: expected {}, but current is {}",
                             expected_version, existing.version_id
                         )));
                     }
-                }
 
                 // Get current resource JSON for patching
                 let current_json = existing.resource.clone();
@@ -2078,7 +2186,7 @@ pub async fn search_resource(
     }
 
     let raw_q = raw.unwrap_or_default();
-    let cfg = &state.search_cfg;
+    let cfg = state.search_config.config();
 
     // Parse query string to SearchParams
     let search_params =
@@ -2163,7 +2271,7 @@ pub async fn search_resource_post(
         .collect::<Vec<_>>()
         .join("&");
 
-    let cfg = &state.search_cfg;
+    let cfg = state.search_config.config();
 
     // Parse query string to SearchParams
     let search_params =
@@ -2248,7 +2356,7 @@ pub async fn system_search(
     }
 
     let raw_q = raw.unwrap_or_default();
-    let cfg = &state.search_cfg;
+    let cfg = state.search_config.config();
 
     let mut all_resources: Vec<Value> = Vec::new();
     let mut total_count: usize = 0;
@@ -2365,11 +2473,10 @@ async fn resolve_includes_for_search(
                         {
                             for (ref_type, ref_id) in refs {
                                 // Skip if target type filter doesn't match
-                                if let Some(tt) = target_type {
-                                    if ref_type != tt {
+                                if let Some(tt) = target_type
+                                    && ref_type != tt {
                                         continue;
                                     }
-                                }
 
                                 // Skip duplicates
                                 let key = (ref_type.clone(), ref_id.clone());
@@ -2378,8 +2485,8 @@ async fn resolve_includes_for_search(
                                 }
 
                                 // Fetch the referenced resource using modern storage API
-                                if ref_type.parse::<ResourceType>().is_ok() {
-                                    if let Ok(Some(stored)) = storage.read(&ref_type, &ref_id).await
+                                if ref_type.parse::<ResourceType>().is_ok()
+                                    && let Ok(Some(stored)) = storage.read(&ref_type, &ref_id).await
                                     {
                                         included_keys.insert(key);
                                         included.push(octofhir_api::IncludedResourceEntry {
@@ -2388,7 +2495,6 @@ async fn resolve_includes_for_search(
                                             id: ref_id,
                                         });
                                     }
-                                }
                             }
                         }
                     }
@@ -2900,23 +3006,20 @@ pub async fn api_operations(
         .into_iter()
         .filter(|op| {
             // Category filter
-            if let Some(ref cat) = params.category {
-                if &op.category != cat {
+            if let Some(ref cat) = params.category
+                && &op.category != cat {
                     return false;
                 }
-            }
             // Module filter
-            if let Some(ref module) = params.module {
-                if &op.module != module {
+            if let Some(ref module) = params.module
+                && &op.module != module {
                     return false;
                 }
-            }
             // Public filter
-            if let Some(public) = params.public {
-                if op.public != public {
+            if let Some(public) = params.public
+                && op.public != public {
                     return false;
                 }
-            }
             true
         })
         .collect();
@@ -2948,7 +3051,7 @@ pub async fn load_gateway_operations(
             .entries
             .into_iter()
             .filter_map(|stored| serde_json::from_value(stored.resource).ok())
-            .filter(|app: &App| app.active)
+            .filter(|app: &App| app.is_active())
             .collect(),
         Err(e) => {
             tracing::warn!(error = %e, "Failed to load Apps for gateway operations");
@@ -3001,7 +3104,11 @@ pub async fn load_gateway_operations(
         };
 
         // Build full path by combining app base path and operation path
-        let full_path = format!("{}{}", app.base_path, custom_op.path);
+        let full_path = if let Some(base_path) = &app.base_path {
+            format!("{}{}", base_path, custom_op.path)
+        } else {
+            custom_op.path.clone()
+        };
 
         // Create operation ID from app name and operation ID
         let operation_id = format!(
@@ -3126,11 +3233,10 @@ pub async fn api_operation_patch(
     match storage.update(&id, update).await {
         Ok(Some(op)) => {
             // If public flag was also changed, re-sync registry to update in-memory indexes
-            if body.public.is_some() {
-                if let Err(e) = state.operation_registry.sync_operations(false).await {
+            if body.public.is_some()
+                && let Err(e) = state.operation_registry.sync_operations(false).await {
                     tracing::warn!(error = %e, "Failed to sync operation registry after update");
                 }
-            }
             (StatusCode::OK, Json(serde_json::to_value(op).unwrap()))
         }
         Ok(None) => {
@@ -3161,7 +3267,7 @@ fn map_storage_error(e: StorageError) -> ApiError {
             ApiError::gone(format!("{resource_type} with id '{id}' has been deleted"))
         }
         StorageError::VersionConflict { expected, actual } => ApiError::precondition_failed(
-            &format!("Version conflict: expected {expected}, got {actual}"),
+            format!("Version conflict: expected {expected}, got {actual}"),
         ),
         StorageError::InvalidResource { message } => ApiError::bad_request(message),
         other => ApiError::internal(other.to_string()),
@@ -3802,14 +3908,13 @@ async fn process_put_entry(
         });
 
         // Handle If-Match version check
-        if let (Some(expected_version), Some(existing_stored)) = (&if_match, &existing) {
-            if expected_version != &existing_stored.version_id {
+        if let (Some(expected_version), Some(existing_stored)) = (&if_match, &existing)
+            && expected_version != &existing_stored.version_id {
                 return Err(ApiError::conflict(format!(
                     "Version mismatch: expected {}, found {}",
                     expected_version, existing_stored.version_id
                 )));
             }
-        }
 
         // Ensure id and resourceType are set
         resource["id"] = json!(id);
@@ -3960,7 +4065,7 @@ async fn process_delete_entry(
         }
 
         // Delete using modern storage API
-        let _ = state
+        state
             .storage
             .delete(resource_type, id)
             .await
@@ -4025,7 +4130,7 @@ async fn process_delete_entry(
                     ));
                 }
 
-                let _ = state
+                state
                     .storage
                     .delete(resource_type, id)
                     .await
@@ -4156,7 +4261,7 @@ async fn process_get_search_entry(
     }
 
     // Search using modern storage API
-    let cfg = &state.search_cfg;
+    let cfg = state.search_config.config();
     let search_params =
         octofhir_search::parse_query_string(query, cfg.default_count as u32, cfg.max_count as u32);
 
@@ -4647,11 +4752,9 @@ pub async fn async_job_status(
     // For bulk export jobs that are completed, return the manifest directly
     if job.request_type == "bulk_export"
         && job.status == crate::async_jobs::AsyncJobStatus::Completed
-    {
-        if let Some(result) = job.result {
+        && let Some(result) = job.result {
             return Ok((StatusCode::OK, Json(result)).into_response());
         }
-    }
 
     // Build response based on job status
     let response = json!({
@@ -5462,7 +5565,7 @@ pub async fn api_packages_install_stream(
     let receiver =
         crate::canonical::install_package_runtime_with_progress(&request.name, &request.version)
             .await
-            .map_err(|e| ApiError::Internal(e))?;
+            .map_err(ApiError::Internal)?;
 
     // Convert receiver to SSE stream
     let refresh_state = state.clone();
@@ -5643,11 +5746,93 @@ const INTERNAL_RESOURCE_TYPES: &[&str] = &[
     "IdentityProvider",
     "CustomOperation",
     "App",
+    "AuthSession",
 ];
 
 /// Check if a resource type is an internal resource type.
 fn is_internal_resource_type(resource_type: &str) -> bool {
     INTERNAL_RESOURCE_TYPES.contains(&resource_type)
+}
+
+/// Validates App operations for path conflicts.
+///
+/// Fetches other Apps from database and validates that the new/updated App
+/// doesn't have operations that conflict with system paths or other Apps.
+async fn validate_app_payload(
+    state: &crate::server::AppState,
+    payload: &Value,
+    exclude_id: Option<&str>,
+) -> Result<(), ApiError> {
+    // Parse the App from payload
+    let app: App = serde_json::from_value(payload.clone()).map_err(|e| {
+        ApiError::bad_request(format!("Invalid App payload: {}", e))
+    })?;
+
+    // Fetch all other Apps for conflict checking
+    let other_apps = fetch_other_apps(state, exclude_id).await?;
+
+    // Validate operations
+    if let Err(errors) = validate_app_operations(&app, &other_apps) {
+        return Err(app_validation_errors_to_api_error(errors));
+    }
+
+    Ok(())
+}
+
+/// Fetches all Apps from the database, optionally excluding one by ID.
+async fn fetch_other_apps(
+    state: &crate::server::AppState,
+    exclude_id: Option<&str>,
+) -> Result<Vec<App>, ApiError> {
+    use octofhir_storage::SearchParams;
+
+    // Search for all App resources
+    let params = SearchParams::new().with_count(1000);
+    let search_result = state
+        .storage
+        .search("App", &params)
+        .await
+        .map_err(|e| ApiError::internal(format!("Failed to fetch Apps: {}", e)))?;
+
+    let mut apps = Vec::new();
+    for stored in &search_result.entries {
+        if let Ok(app) = serde_json::from_value::<App>(stored.resource.clone()) {
+            // Exclude the App being updated
+            if let Some(exclude) = exclude_id
+                && app.id.as_deref() == Some(exclude) {
+                    continue;
+                }
+            apps.push(app);
+        }
+    }
+
+    Ok(apps)
+}
+
+/// Converts App validation errors to an ApiError with OperationOutcome.
+fn app_validation_errors_to_api_error(errors: Vec<PathValidationError>) -> ApiError {
+    let issues: Vec<Value> = errors
+        .iter()
+        .enumerate()
+        .map(|(i, e)| {
+            json!({
+                "severity": "error",
+                "code": "business-rule",
+                "diagnostics": e.to_string(),
+                "expression": [format!("App.operations[{}].path", i)]
+            })
+        })
+        .collect();
+
+    let outcome = json!({
+        "resourceType": "OperationOutcome",
+        "issue": issues
+    });
+
+    ApiError::unprocessable_entity(
+        format!("{} validation error(s) in App operations", errors.len()),
+        Some(outcome),
+    )
 }
 
 /// GET /{resource_type} - Search internal resources.
@@ -5687,7 +5872,29 @@ pub async fn internal_create_resource(
         )));
     }
 
-    create_resource(state, Path(resource_type), headers, payload).await
+    // Validate App operations for path conflicts
+    if resource_type == "App" {
+        validate_app_payload(&state, &payload, None).await?;
+    }
+
+    let response = create_resource(state.clone(), Path(resource_type.clone()), headers, payload.clone()).await?;
+
+    // Reconcile operations if this is an App resource
+    if resource_type == "App"
+        && let Err(e) = reconcile_app_operations(&state, &payload).await {
+            // Rollback: delete the App we just created
+            if let Some(app_id) = payload.get("id").and_then(|v| v.as_str()) {
+                let _ = state.storage.delete("App", app_id).await;
+                tracing::error!(
+                    error = %e,
+                    app_id = %app_id,
+                    "Failed to reconcile operations, rolled back App creation"
+                );
+            }
+            return Err(ApiError::internal(format!("Failed to reconcile operations: {}", e)));
+        }
+
+    Ok(response)
 }
 
 /// GET /{resource_type}/{id} - Read internal resource.
@@ -5726,7 +5933,36 @@ pub async fn internal_update_resource(
         )));
     }
 
-    update_resource(state, Path((resource_type, id)), headers, payload).await
+    // Validate App operations for path conflicts
+    if resource_type == "App" {
+        validate_app_payload(&state, &payload, Some(&id)).await?;
+    }
+
+    // Store old App state for rollback
+    let old_app = if resource_type == "App" {
+        state.storage.read("App", &id).await.ok().flatten()
+    } else {
+        None
+    };
+
+    let response = update_resource(state.clone(), Path((resource_type.clone(), id.clone())), headers, payload.clone()).await?;
+
+    // Reconcile operations if this is an App resource
+    if resource_type == "App"
+        && let Err(e) = reconcile_app_operations(&state, &payload).await {
+            // Rollback: restore old App state
+            if let Some(old_resource) = old_app {
+                let _ = state.storage.update(&old_resource.resource, None).await;
+                tracing::error!(
+                    error = %e,
+                    app_id = %id,
+                    "Failed to reconcile operations, rolled back App update"
+                );
+            }
+            return Err(ApiError::internal(format!("Failed to reconcile operations: {}", e)));
+        }
+
+    Ok(response)
 }
 
 /// DELETE /{resource_type}/{id} - Delete internal resource.
@@ -5745,4 +5981,136 @@ pub async fn internal_delete_resource(
     }
 
     delete_resource(state, Path((resource_type, id))).await
+}
+
+/// Helper function to reconcile App-derived resources (operations, subscriptions, and provisioned resources).
+///
+/// Calls reconciliation functions from the reconcile module to synchronize:
+/// - CustomOperation resources based on App.operations[]
+/// - AppSubscription resources based on App.subscriptions[]
+/// - Provisioned resources based on App.resources (Client, AccessPolicy, etc.)
+async fn reconcile_app_operations(
+    state: &crate::server::AppState,
+    app_payload: &Value,
+) -> Result<(), ApiError> {
+    use std::collections::HashMap;
+    use crate::gateway::types::App;
+    use crate::reconcile::{reconcile_operations, reconcile_resources, reconcile_subscriptions};
+
+    // Deserialize App from payload
+    let app: App = serde_json::from_value(app_payload.clone())
+        .map_err(|e| ApiError::bad_request(format!("Invalid App resource: {}", e)))?;
+
+    let app_id = app
+        .id
+        .as_ref()
+        .ok_or_else(|| ApiError::internal("App has no ID"))?;
+
+    // Reconcile operations
+    reconcile_operations(&state.storage, app_id, &app.name, &app.endpoint, &app.operations)
+        .await?;
+
+    // Reconcile subscriptions
+    reconcile_subscriptions(&state.storage, app_id, &app.name, &app.subscriptions)
+        .await?;
+
+    // Reconcile provisioned resources (if present)
+    if let Some(resources_json) = &app.resources {
+        let resources: HashMap<String, HashMap<String, Value>> =
+            serde_json::from_str(resources_json)
+                .map_err(|e| ApiError::bad_request(format!("Invalid App.resources JSON: {}", e)))?;
+
+        reconcile_resources(&state.storage, app_id, &resources).await?;
+
+        // Trigger policy cache reload if AccessPolicy resources were reconciled
+        if resources.contains_key("AccessPolicy") {
+            tracing::info!(app_id = %app_id, "Triggering policy cache reload after AccessPolicy reconciliation");
+            state.policy_reload_service.trigger_reload();
+        }
+    }
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[tokio::test]
+    async fn test_preprocess_app_secret_plaintext() {
+        let resource_type = "App";
+        let mut payload = json!({
+            "resourceType": "App",
+            "id": "test-app",
+            "name": "Test App",
+            "secret": "app_test_secret_1234567890abcdef1234567890abcdef1234567890abcdef12"
+        });
+
+        preprocess_payload(resource_type, &mut payload).await.unwrap();
+
+        let secret = payload["secret"].as_str().unwrap();
+        // Should be hashed (Argon2id format)
+        assert!(secret.starts_with("$argon2id$"), "Secret should be hashed with Argon2id");
+        assert_ne!(secret, "app_test_secret_1234567890abcdef1234567890abcdef1234567890abcdef12", "Secret should not be plaintext");
+    }
+
+    #[tokio::test]
+    async fn test_preprocess_app_secret_already_hashed() {
+        let resource_type = "App";
+        let original_hash = "$argon2id$v=19$m=19456,t=2,p=1$abcdef$1234567890";
+        let mut payload = json!({
+            "resourceType": "App",
+            "id": "test-app",
+            "name": "Test App",
+            "secret": original_hash
+        });
+
+        preprocess_payload(resource_type, &mut payload).await.unwrap();
+
+        let secret = payload["secret"].as_str().unwrap();
+        // Should remain unchanged if already hashed
+        assert_eq!(secret, original_hash, "Already hashed secret should not be re-hashed");
+    }
+
+    #[tokio::test]
+    async fn test_preprocess_app_no_secret() {
+        let resource_type = "App";
+        let mut payload = json!({
+            "resourceType": "App",
+            "id": "test-app",
+            "name": "Test App"
+        });
+
+        // Should not fail if no secret field
+        preprocess_payload(resource_type, &mut payload).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_preprocess_app_secret_verification() {
+        let resource_type = "App";
+        let original_secret = "app_my_secret_key_1234567890abcdef1234567890abcdef1234567890abc";
+        let mut payload = json!({
+            "resourceType": "App",
+            "id": "test-app",
+            "name": "Test App",
+            "secret": original_secret
+        });
+
+        preprocess_payload(resource_type, &mut payload).await.unwrap();
+
+        let hashed_secret = payload["secret"].as_str().unwrap();
+
+        // Verify that the original secret can be verified against the hash
+        assert!(
+            octofhir_auth::verify_app_secret(original_secret, hashed_secret).unwrap(),
+            "Original secret should verify against the hash"
+        );
+
+        // Verify that wrong secret doesn't match
+        assert!(
+            !octofhir_auth::verify_app_secret("wrong_secret", hashed_secret).unwrap(),
+            "Wrong secret should not verify"
+        );
+    }
 }

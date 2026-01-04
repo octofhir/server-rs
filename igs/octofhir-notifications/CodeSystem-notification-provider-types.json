@@ -1,0 +1,36 @@
+{
+  "resourceType": "CodeSystem",
+  "id": "notification-provider-types",
+  "url": "http://octofhir.io/CodeSystem/notification-provider-types",
+  "name": "NotificationProviderTypes",
+  "title": "Notification Provider Types",
+  "status": "active",
+  "content": "complete",
+  "concept": [
+    {
+      "code": "email",
+      "display": "Email",
+      "definition": "Email notification provider (SMTP, SendGrid, etc.)"
+    },
+    {
+      "code": "sms",
+      "display": "SMS",
+      "definition": "SMS notification provider (Twilio, etc.)"
+    },
+    {
+      "code": "telegram",
+      "display": "Telegram",
+      "definition": "Telegram bot notification provider"
+    },
+    {
+      "code": "webhook",
+      "display": "Webhook",
+      "definition": "HTTP webhook notification provider"
+    },
+    {
+      "code": "push",
+      "display": "Push",
+      "definition": "Push notification provider (FCM, APNS, etc.)"
+    }
+  ]
+}

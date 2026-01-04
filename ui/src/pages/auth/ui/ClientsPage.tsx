@@ -313,6 +313,7 @@ function ClientModal({
 			description: "",
 			grantTypes: ["authorization_code", "refresh_token"] as string[],
 			redirectUris: [] as string[],
+			postLogoutRedirectUris: [] as string[],
 			scopes: [] as string[],
 			confidential: false,
 			active: true,
@@ -341,6 +342,7 @@ function ClientModal({
 				description: client.description || "",
 				grantTypes: client.grantTypes || [],
 				redirectUris: client.redirectUris || [],
+				postLogoutRedirectUris: client.postLogoutRedirectUris || [],
 				scopes: client.scopes || [],
 				confidential: client.confidential,
 				active: client.active,
@@ -452,6 +454,18 @@ function ClientModal({
 						getCreateLabel={(query) => `+ Add ${query}`}
 						onCreate={(query) => query}
 						{...form.getInputProps("redirectUris")}
+					/>
+
+					<MultiSelect
+						label="Post-Logout Redirect URIs"
+						placeholder="Add URI and press Enter"
+						description="Allowed URIs to redirect after logout"
+						data={form.values.postLogoutRedirectUris}
+						searchable
+						creatable
+						getCreateLabel={(query) => `+ Add ${query}`}
+						onCreate={(query) => query}
+						{...form.getInputProps("postLogoutRedirectUris")}
 					/>
 
 					<MultiSelect

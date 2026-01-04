@@ -44,7 +44,7 @@ pub struct RefreshToken {
 
     /// User ID that authorized this token (None for client credentials).
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub user_id: Option<Uuid>,
+    pub user_id: Option<String>,
 
     /// Granted scopes (space-separated).
     pub scope: String,
@@ -236,7 +236,7 @@ mod tests {
             id: Uuid::new_v4(),
             token_hash: RefreshToken::hash_token("test-token"),
             client_id: "test-client".to_string(),
-            user_id: Some(Uuid::new_v4()),
+            user_id: Some(Uuid::new_v4().to_string()),
             scope: "openid offline_access".to_string(),
             launch_context: None,
             created_at: OffsetDateTime::now_utc(),

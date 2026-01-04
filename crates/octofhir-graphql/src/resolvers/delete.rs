@@ -50,7 +50,7 @@ impl DeleteResolver {
                     .ok_or_else(|| async_graphql::Error::new("Missing required argument 'id'"))?;
 
                 // Evaluate access control
-                evaluate_access(gql_ctx, FhirOperation::Delete, &resource_type, Some(&id)).await?;
+                evaluate_access(gql_ctx, FhirOperation::Delete, &resource_type, Some(id)).await?;
 
                 trace!(
                     resource_type = %resource_type,
@@ -61,7 +61,7 @@ impl DeleteResolver {
                 // Delete via storage
                 gql_ctx
                     .storage
-                    .delete(&resource_type, &id)
+                    .delete(&resource_type, id)
                     .await
                     .map_err(|e| {
                         warn!(error = %e, resource_type = %resource_type, id = %id, "Delete failed");
@@ -75,7 +75,7 @@ impl DeleteResolver {
                 );
 
                 // Return OperationOutcome indicating success
-                let outcome = create_success_outcome(&resource_type, &id);
+                let outcome = create_success_outcome(&resource_type, id);
                 Ok(Some(outcome))
             })
         }

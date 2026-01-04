@@ -53,6 +53,9 @@ pub struct AuthConfig {
 
     /// Cookie configuration for browser-based authentication.
     pub cookie: CookieConfig,
+
+    /// SSO session configuration.
+    pub session: SessionConfig,
 }
 
 impl Default for AuthConfig {
@@ -67,6 +70,7 @@ impl Default for AuthConfig {
             rate_limiting: RateLimitingConfig::default(),
             audit: AuditConfig::default(),
             cookie: CookieConfig::default(),
+            session: SessionConfig::default(),
         }
     }
 }
@@ -449,6 +453,43 @@ impl Default for CookieConfig {
             same_site: "lax".to_string(), // Lax allows cookies on top-level navigation
             path: "/".to_string(),
             domain: None,
+        }
+    }
+}
+
+/// SSO session configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionConfig {
+    /// Idle timeout - session extends on each activity (sliding window)
+    #[serde(with = "humantime_serde")]
+    pub idle_timeout: std::time::Duration,
+
+    /// Absolute timeout - maximum session lifetime regardless of activity
+    #[serde(with = "humantime_serde")]
+    pub absolute_timeout: std::time::Duration,
+
+    /// Maximum concurrent sessions per user
+    pub max_concurrent_sessions: u32,
+
+    /// Session cookie name
+    pub cookie_name: String,
+
+    /// Cookie secure flag (HTTPS only)
+    pub cookie_secure: bool,
+
+    /// Cookie SameSite policy
+    pub cookie_same_site: String,
+}
+
+impl Default for SessionConfig {
+    fn default() -> Self {
+        Self {
+            idle_timeout: std::time::Duration::from_secs(1800), // 30 minutes
+            absolute_timeout: std::time::Duration::from_secs(28800), // 8 hours
+            max_concurrent_sessions: 10,
+            cookie_name: "octofhir_sso".to_string(),
+            cookie_secure: true,
+            cookie_same_site: "Lax".to_string(),
         }
     }
 }

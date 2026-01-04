@@ -39,6 +39,7 @@ import {
 	IconWorld,
 	IconFileText,
 	IconTable,
+	IconDevices,
 } from "@tabler/icons-react";
 import { useUnit } from "effector-react";
 import { useHealth, useAuth, useBuildInfo } from "@/shared/api/hooks";
@@ -131,6 +132,12 @@ const authNavigation: NavItem[] = [
 		path: "/auth/users",
 		description: "User accounts",
 		icon: IconUsers,
+	},
+	{
+		label: "Sessions",
+		path: "/auth/sessions",
+		description: "Active login sessions",
+		icon: IconDevices,
 	},
 	{
 		label: "Roles",

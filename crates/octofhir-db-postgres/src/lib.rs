@@ -48,6 +48,7 @@
 mod config;
 mod error;
 mod fcm_storage;
+mod notification_storage;
 mod pool;
 mod query_analyzer;
 mod schema;
@@ -68,6 +69,7 @@ pub use query_analyzer::{
     AnalyzerConfig, AnalyzerError, AnalyzerStatsSnapshot, BufferStats, IndexSuggestion, IndexUsage,
     QueryAnalysis, QueryAnalyzer, SeqScanInfo, SlowQueryRecord, SuggestionImpact,
 };
+pub use notification_storage::PostgresNotificationStorage;
 pub use schema::SchemaManager;
 pub use storage::PostgresStorage;
 

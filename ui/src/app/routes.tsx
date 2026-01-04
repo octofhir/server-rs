@@ -12,8 +12,9 @@ import { GraphQLConsolePage } from "@/pages/graphql-console";
 import { ResourceBrowserPage } from "@/pages/resource-browser";
 import { RestConsolePage } from "@/pages/console";
 import { OperationsPage, OperationDetailPage } from "@/pages/operations";
-import { AppsPage } from "@/pages/apps";
+import { AppsPage, AppDetailPage } from "@/pages/apps";
 import { ClientsPage, UsersPage, UserDetailPage, RolesPage, AccessPoliciesPage, IdentityProvidersPage } from "@/pages/auth";
+import { SessionsPage } from "@/pages/sessions";
 import { PackagesPage, PackageDetailPage } from "@/pages/packages";
 import { LogsViewerPage } from "@/pages/logs";
 import { AuditTrailPage } from "@/pages/audit";
@@ -68,6 +69,7 @@ export function AppRoutes() {
         <Route path="/operations" element={<OperationsPage />} />
         <Route path="/operations/:id" element={<OperationDetailPage />} />
         <Route path="/apps" element={<AppsPage />} />
+        <Route path="/apps/:id" element={<AppDetailPage />} />
 
         {/* Auth */}
         <Route path="/auth/providers" element={<IdentityProvidersPage />} />
@@ -76,6 +78,7 @@ export function AppRoutes() {
         <Route path="/auth/users/:id" element={<UserDetailPage />} />
         <Route path="/auth/roles" element={<RolesPage />} />
         <Route path="/auth/policies" element={<AccessPoliciesPage />} />
+        <Route path="/auth/sessions" element={<SessionsPage />} />
 
         {/* Tools */}
         <Route path="/db-console" element={<DbConsolePage />} />

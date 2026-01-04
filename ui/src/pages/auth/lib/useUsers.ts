@@ -1,5 +1,6 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { notifications } from "@mantine/notifications";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+
 import { fhirClient } from "@/shared/api/fhirClient";
 import type { Bundle, UserResource, UserSession } from "@/shared/api/types";
 
@@ -17,7 +18,7 @@ export interface UserFilterParams {
 export const userKeys = {
 	all: ["users"] as const,
 	lists: () => [...userKeys.all, "list"] as const,
-	list: (params: Record<string, unknown>) => [...userKeys.lists(), params] as const,
+	list: (params: UserFilterParams) => [...userKeys.lists(), params] as const,
 	details: () => [...userKeys.all, "detail"] as const,
 	detail: (id: string) => [...userKeys.details(), id] as const,
 	sessions: (userId: string) => [...userKeys.all, "sessions", userId] as const,
@@ -28,13 +29,13 @@ export function useUsers(params: UserFilterParams = {}) {
 	return useQuery({
 		queryKey: userKeys.list(params),
 		queryFn: async () => {
-			const searchParams: Record<string, unknown> = {};
+			const searchParams: Record<string, string | number> = {};
 			if (params.count) searchParams._count = params.count;
 			if (params.offset) searchParams._offset = params.offset;
 			if (params.search) searchParams.username = params.search;
 			if (params.role) searchParams.role = params.role;
 			if (params.status) searchParams.status = params.status;
-			if (params.active !== undefined) searchParams.active = params.active;
+			if (params.active !== undefined) searchParams.active = params.active.toString();
 
 			const response = await fhirClient.search("User", searchParams);
 			return response as Bundle<UserResource>;
@@ -133,18 +134,18 @@ export function useDeleteUser() {
 	});
 }
 
-// Password reset mutation (still uses admin endpoint for security)
+// Password reset mutation
 export function useResetPassword() {
 	return useMutation({
 		mutationFn: async ({ userId, newPassword }: { userId: string; newPassword: string }) => {
-			const response = await fetch(`/admin/users/${userId}/reset-password`, {
+			const response = await fetch(`/User/${userId}/$reset-password`, {
 				method: "POST",
 				credentials: "include",
 				headers: {
 					"Content-Type": "application/json",
 					Accept: "application/json",
 				},
-				body: JSON.stringify({ password: newPassword }),
+				body: JSON.stringify({ newPassword }),
 			});
 
 			if (!response.ok) {
@@ -171,25 +172,34 @@ export function useResetPassword() {
 	});
 }
 
-// User sessions (admin endpoints)
+// User sessions - uses FHIR search on AuthSession resource
 export function useUserSessions(userId: string | null) {
 	return useQuery({
 		queryKey: userKeys.sessions(userId || ""),
 		queryFn: async () => {
 			if (!userId) throw new Error("User ID required");
-			const response = await fetch(`/admin/users/${userId}/sessions`, {
-				credentials: "include",
-				headers: {
-					Accept: "application/json",
-				},
+			const response = await fhirClient.search("AuthSession", {
+				subject: `User/${userId}`,
+				status: "active",
 			});
 
-			if (!response.ok) {
-				const error = await response.json().catch(() => ({ message: response.statusText }));
-				throw new Error(error.message || `HTTP ${response.status}`);
-			}
+			// Transform AuthSession resources to UserSession format
+			const sessions: UserSession[] = (response.entry || []).map((entry) => {
+				const resource = entry.resource;
+				return {
+					id: resource.id || "",
+					userId: resource.subject?.reference?.replace("User/", "") || userId,
+					clientId: resource.client?.reference?.replace("Client/", ""),
+					clientName: resource.client?.display,
+					ipAddress: resource.ipAddress,
+					userAgent: resource.userAgent,
+					createdAt: resource.meta?.lastUpdated || resource.createdAt || "",
+					expiresAt: resource.expiresAt || "",
+					lastActivity: resource.lastActivity,
+				};
+			});
 
-			return response.json() as Promise<UserSession[]>;
+			return sessions;
 		},
 		enabled: !!userId,
 	});
@@ -200,18 +210,8 @@ export function useRevokeSession() {
 
 	return useMutation({
 		mutationFn: async ({ userId, sessionId }: { userId: string; sessionId: string }) => {
-			const response = await fetch(`/admin/users/${userId}/sessions/${sessionId}`, {
-				method: "DELETE",
-				credentials: "include",
-				headers: {
-					Accept: "application/json",
-				},
-			});
-
-			if (!response.ok) {
-				const error = await response.json().catch(() => ({ message: response.statusText }));
-				throw new Error(error.message || `HTTP ${response.status}`);
-			}
+			await fhirClient.delete("AuthSession", sessionId);
+			return { userId };
 		},
 		onSuccess: (_, variables) => {
 			queryClient.invalidateQueries({ queryKey: userKeys.sessions(variables.userId) });
@@ -260,5 +260,23 @@ export function useBulkUpdateUsers() {
 				color: "red",
 			});
 		},
+	});
+}
+
+// Search for FHIR resources (Practitioner or Patient) by name
+export function useSearchResources(resourceType: "Practitioner" | "Patient", search: string) {
+	return useQuery({
+		queryKey: ["resources", resourceType, search],
+		queryFn: async () => {
+			if (!search || search.length < 2) {
+				return { entry: [] };
+			}
+			const response = await fhirClient.search(resourceType, {
+				name: search,
+				_count: 10,
+			});
+			return response as Bundle;
+		},
+		enabled: search.length >= 2,
 	});
 }

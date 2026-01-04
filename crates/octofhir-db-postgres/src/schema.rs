@@ -138,6 +138,7 @@ impl SchemaManager {
             "user"
                 | "client"
                 | "session"
+                | "authsession" // SSO sessions - no history needed
                 | "accesspolicy"
                 | "refreshtoken"
                 | "revokedtoken"
@@ -145,6 +146,10 @@ impl SchemaManager {
                 | "role"
                 | "app"
                 | "customoperation"
+                | "appsubscription"
+                | "notificationlog"
+                | "notificationprovider"
+                | "notificationtemplate"
         )
     }
 
@@ -234,7 +239,6 @@ impl SchemaManager {
     #[instrument(skip(self))]
     async fn create_indexes(&self, resource_type: &str) -> Result<()> {
         let table = Self::table_name(resource_type);
-        let history_table = format!("{}_history", table);
 
         // GIN index for JSONB search (enables efficient @>, ?, ?& operators)
         let gin_sql = format!(
@@ -279,23 +283,28 @@ impl SchemaManager {
             .await
             .map_err(PostgresError::from)?;
 
-        // History table index on updated_at for history queries
-        let history_updated_at_sql = format!(
-            r#"CREATE INDEX IF NOT EXISTS "idx_{history_table}_updated_at" ON "{history_table}"(updated_at)"#
-        );
-        sqlx_core::query::query(&history_updated_at_sql)
-            .execute(&self.pool)
-            .await
-            .map_err(PostgresError::from)?;
+        // Skip history table indexes for internal resources
+        if !Self::is_internal_resource(&table) {
+            let history_table = format!("{}_history", table);
 
-        // History table index on id for resource-specific history
-        let history_id_sql = format!(
-            r#"CREATE INDEX IF NOT EXISTS "idx_{history_table}_id" ON "{history_table}"(id)"#
-        );
-        sqlx_core::query::query(&history_id_sql)
-            .execute(&self.pool)
-            .await
-            .map_err(PostgresError::from)?;
+            // History table index on updated_at for history queries
+            let history_updated_at_sql = format!(
+                r#"CREATE INDEX IF NOT EXISTS "idx_{history_table}_updated_at" ON "{history_table}"(updated_at)"#
+            );
+            sqlx_core::query::query(&history_updated_at_sql)
+                .execute(&self.pool)
+                .await
+                .map_err(PostgresError::from)?;
+
+            // History table index on id for resource-specific history
+            let history_id_sql = format!(
+                r#"CREATE INDEX IF NOT EXISTS "idx_{history_table}_id" ON "{history_table}"(id)"#
+            );
+            sqlx_core::query::query(&history_id_sql)
+                .execute(&self.pool)
+                .await
+                .map_err(PostgresError::from)?;
+        }
 
         info!("Created indexes for: {}", table);
         Ok(())

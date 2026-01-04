@@ -217,14 +217,42 @@ impl AuthorizationService {
             ));
         }
 
-        // 5. Validate PKCE method (must be S256)
-        let _method = PkceChallengeMethod::parse(&request.code_challenge_method).map_err(|e| {
-            AuthError::invalid_request(format!("Invalid PKCE challenge method: {}", e))
-        })?;
+        // 5. Validate PKCE based on client type (RFC 8252, RFC 9207)
+        if !client.confidential {
+            // Public client: PKCE is REQUIRED (RFC 8252)
+            if request.code_challenge.is_none() || request.code_challenge_method.is_none() {
+                return Err(AuthError::invalid_request(
+                    "PKCE (code_challenge and code_challenge_method) is required for public clients",
+                ));
+            }
+        } else {
+            // Confidential client: PKCE is RECOMMENDED but optional (RFC 9207)
+            if request.code_challenge.is_none() && request.code_challenge_method.is_none() {
+                tracing::warn!(
+                    client_id = %request.client_id,
+                    "Confidential client is not using PKCE (recommended per RFC 9207)"
+                );
+            }
+        }
 
-        // 6. Validate PKCE challenge format
-        let _challenge = PkceChallenge::new(request.code_challenge.clone())
-            .map_err(|e| AuthError::invalid_request(format!("Invalid PKCE challenge: {}", e)))?;
+        // 6. Validate PKCE if provided
+        if let Some(ref method) = request.code_challenge_method {
+            let _method = PkceChallengeMethod::parse(method).map_err(|e| {
+                AuthError::invalid_request(format!("Invalid PKCE challenge method: {}", e))
+            })?;
+        }
+
+        if let Some(ref challenge) = request.code_challenge {
+            let _challenge = PkceChallenge::new(challenge.clone())
+                .map_err(|e| AuthError::invalid_request(format!("Invalid PKCE challenge: {}", e)))?;
+        }
+
+        // Ensure both PKCE parameters are provided together if one is provided
+        if request.code_challenge.is_some() != request.code_challenge_method.is_some() {
+            return Err(AuthError::invalid_request(
+                "Both code_challenge and code_challenge_method must be provided together",
+            ));
+        }
 
         // 7. Validate state entropy
         self.validate_state_entropy(&request.state)?;
@@ -266,8 +294,8 @@ impl AuthorizationService {
             redirect_uri: request.redirect_uri.clone(),
             scope: request.scope.clone(),
             state: request.state.clone(),
-            code_challenge: request.code_challenge.clone(),
-            code_challenge_method: request.code_challenge_method.clone(),
+            code_challenge: request.code_challenge.clone(), // Already Option<String>
+            code_challenge_method: request.code_challenge_method.clone(), // Already Option<String>
             user_id: None,
             launch_context,
             nonce: request.nonce.clone(),
@@ -643,11 +671,11 @@ mod tests {
             Ok(session.clone())
         }
 
-        async fn update_user(&self, id: Uuid, user_id: Uuid) -> AuthResult<()> {
+        async fn update_user(&self, id: Uuid, user_id: &str) -> AuthResult<()> {
             let mut sessions = self.sessions.write().unwrap();
             for session in sessions.values_mut() {
                 if session.id == id {
-                    session.user_id = Some(user_id);
+                    session.user_id = Some(user_id.to_string());
                     return Ok(());
                 }
             }
@@ -692,6 +720,7 @@ mod tests {
             description: None,
             grant_types: vec![GrantType::AuthorizationCode, GrantType::RefreshToken],
             redirect_uris: vec!["https://app.example.com/callback".to_string()],
+            post_logout_redirect_uris: vec![],
             scopes: vec![], // Empty means all scopes allowed
             confidential: false,
             active: true,
@@ -714,8 +743,8 @@ mod tests {
             redirect_uri: "https://app.example.com/callback".to_string(),
             scope: "openid patient/*.read".to_string(),
             state: "abcdefghijklmnopqrstuvwxyz".to_string(), // 26 chars = ~156 bits
-            code_challenge: challenge.into_inner(),
-            code_challenge_method: "S256".to_string(),
+            code_challenge: Some(challenge.into_inner()),
+            code_challenge_method: Some("S256".to_string()),
             aud: "https://fhir.example.com/r4".to_string(),
             launch: None,
             nonce: None,
@@ -834,7 +863,7 @@ mod tests {
         client_storage.add_client(create_test_client());
 
         let mut request = create_test_request();
-        request.code_challenge_method = "plain".to_string();
+        request.code_challenge_method = Some("plain".to_string());
 
         let result = service.authorize(&request).await;
         assert!(matches!(result, Err(AuthError::InvalidRequest { .. })));
@@ -846,7 +875,7 @@ mod tests {
         client_storage.add_client(create_test_client());
 
         let mut request = create_test_request();
-        request.code_challenge = "not-valid-base64!!!".to_string();
+        request.code_challenge = Some("not-valid-base64!!!".to_string());
 
         let result = service.authorize(&request).await;
         assert!(matches!(result, Err(AuthError::InvalidRequest { .. })));
@@ -989,8 +1018,8 @@ mod tests {
             redirect_uri: "https://app.example.com/callback".to_string(),
             scope: "patient/Patient.rs openid".to_string(),
             state: "test-state".to_string(),
-            code_challenge: "test-challenge".to_string(),
-            code_challenge_method: "S256".to_string(),
+            code_challenge: Some("test-challenge".to_string()),
+            code_challenge_method: Some("S256".to_string()),
             user_id: None,
             launch_context: None,
             nonce: None,
@@ -1016,8 +1045,8 @@ mod tests {
             redirect_uri: "https://app.example.com/callback".to_string(),
             scope: "launch/patient patient/Patient.rs".to_string(),
             state: "test-state".to_string(),
-            code_challenge: "test-challenge".to_string(),
-            code_challenge_method: "S256".to_string(),
+            code_challenge: Some("test-challenge".to_string()),
+            code_challenge_method: Some("S256".to_string()),
             user_id: None,
             launch_context: Some(crate::oauth::session::LaunchContext {
                 patient: Some("patient-123".to_string()),
@@ -1050,8 +1079,8 @@ mod tests {
             redirect_uri: "https://app.example.com/callback".to_string(),
             scope: "launch/patient patient/Patient.rs".to_string(),
             state: "test-state".to_string(),
-            code_challenge: "test-challenge".to_string(),
-            code_challenge_method: "S256".to_string(),
+            code_challenge: Some("test-challenge".to_string()),
+            code_challenge_method: Some("S256".to_string()),
             user_id: None,
             launch_context: None, // No context set
             nonce: None,
@@ -1077,8 +1106,8 @@ mod tests {
             redirect_uri: "https://app.example.com/callback".to_string(),
             scope: "launch/encounter patient/Encounter.rs".to_string(),
             state: "test-state".to_string(),
-            code_challenge: "test-challenge".to_string(),
-            code_challenge_method: "S256".to_string(),
+            code_challenge: Some("test-challenge".to_string()),
+            code_challenge_method: Some("S256".to_string()),
             user_id: None,
             launch_context: Some(crate::oauth::session::LaunchContext {
                 patient: Some("patient-123".to_string()), // Has patient but no encounter

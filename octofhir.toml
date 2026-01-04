@@ -241,6 +241,30 @@ auth_requests_per_minute = 30
 max_failed_attempts = 5
 lockout_duration = "5m"
 
+[auth.cookie]
+# Cookie-based authentication for browser clients
+enabled = true
+name = "octofhir_token"
+secure = false  # Set to true in production with HTTPS
+http_only = true
+same_site = "lax"  # "lax" allows cross-site navigation, "none" requires secure=true
+path = "/"
+# domain is optional - defaults to current domain
+
+[auth.session]
+# SSO session management for persistent authentication across OAuth flows
+# Idle timeout: session extends on each activity (sliding window)
+idle_timeout = "30m"
+# Absolute timeout: maximum session lifetime regardless of activity
+absolute_timeout = "8h"
+# Maximum concurrent sessions per user (prevents session accumulation)
+max_concurrent_sessions = 10
+# Session cookie name
+cookie_name = "octofhir_sso"
+# Cookie security (should match auth.cookie.secure in production)
+cookie_secure = false  # Set to true in production with HTTPS
+cookie_same_site = "Lax"
+
 # =============================================================================
 # Redis Cache Configuration (for horizontal scaling)
 # =============================================================================
@@ -315,6 +339,13 @@ max_complexity = 500
 username = "admin"
 password = "admin123"
 email = "admin@octofhir.io"
+
+[bootstrap.backend_client]
+client_id = "backend"
+client_secret = "dev-secret-2024"
+scopes = ["system/*.cruds"]
+name = "Backend Service"
+description = "Backend service client"
 
 # =============================================================================
 # SQL on FHIR Configuration (ViewDefinition Editor)

@@ -1,0 +1,15 @@
+{
+  "resourceType": "ValueSet",
+  "id": "notification-provider-types",
+  "url": "http://octofhir.io/ValueSet/notification-provider-types",
+  "name": "NotificationProviderTypesValueSet",
+  "title": "Notification Provider Types",
+  "status": "active",
+  "compose": {
+    "include": [
+      {
+        "system": "http://octofhir.io/CodeSystem/notification-provider-types"
+      }
+    ]
+  }
+}

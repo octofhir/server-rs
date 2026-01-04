@@ -16,11 +16,13 @@ OctoFHIR implements **SMART on FHIR** authorization based on OAuth 2.0 and OpenI
 
 | Endpoint | Description |
 |----------|-------------|
-| `GET /auth/authorize` | Authorization endpoint (user consent) |
+| `GET /auth/authorize` | Authorization endpoint (interactive user login & consent) |
+| `POST /auth/authorize` | Authorization form submission (login/consent actions) |
 | `POST /auth/token` | Token endpoint (exchange codes, refresh tokens) |
 | `POST /auth/revoke` | Token revocation (RFC 7009) |
 | `POST /auth/introspect` | Token introspection (RFC 7662) |
-| `GET /userinfo` | OpenID Connect UserInfo endpoint |
+| `GET /auth/userinfo` | OpenID Connect UserInfo endpoint |
+| `POST /auth/logout` | Browser-based logout (revokes token, clears cookie) |
 
 ## Supported Grant Types
 
@@ -30,11 +32,19 @@ OctoFHIR implements **SMART on FHIR** authorization based on OAuth 2.0 and OpenI
 
 ## Client Types
 
-| Type | Authentication | Use Case |
-|------|---------------|----------|
-| Public | PKCE only | Browser apps, mobile apps |
-| Confidential (symmetric) | `client_secret` | Server-side apps |
-| Confidential (asymmetric) | `private_key_jwt` | Bulk Data, secure backends |
+| Type | Authentication | PKCE Requirement | Use Case |
+|------|---------------|------------------|----------|
+| Public | PKCE only | **Required** (RFC 8252) | Browser apps, mobile apps |
+| Confidential (symmetric) | `client_secret` | Recommended (RFC 9207) | Server-side apps |
+| Confidential (asymmetric) | `private_key_jwt` | Recommended (RFC 9207) | Bulk Data, secure backends |
+
+### PKCE Requirements
+
+OctoFHIR enforces PKCE requirements according to OAuth 2.0 security best practices:
+
+- **Public clients** (`confidential: false`): PKCE is **REQUIRED**. Authorization requests without `code_challenge` and `code_challenge_method` will be rejected.
+- **Confidential clients** (`confidential: true`): PKCE is **RECOMMENDED** but optional. A warning is logged if PKCE is not used.
+- Only `S256` challenge method is supported (SHA-256). The `plain` method is forbidden per SMART on FHIR security requirements.
 
 ## SMART Scopes
 
@@ -131,3 +141,51 @@ curl -X POST http://localhost:8888/auth/token \
   -d "grant_type=client_credentials" \
   -d "scope=system/Patient.rs"
 ```
+
+## Interactive Authorization Flow
+
+The `/auth/authorize` endpoint provides a server-rendered user interface for authentication and consent. This enables standard OAuth 2.0 authorization code flow with a user-friendly login experience.
+
+### Flow Steps
+
+1. **Initial Request** - Client redirects user to `/auth/authorize` with OAuth parameters
+2. **Authentication** - User sees a login form and enters credentials
+3. **Consent** - After successful login, user sees requested scopes and can approve/deny
+4. **Authorization Code** - User is redirected back to client with authorization code
+5. **Token Exchange** - Client exchanges code for access token at `/auth/token`
+
+### Features
+
+- **Server-rendered UI** with modern glassmorphism design matching OctoFHIR's aesthetics
+- **Session management** via secure HTTP-only cookies
+- **Consent tracking** - remembers user's previous consent decisions
+- **PKCE validation** - enforced based on client type (public vs confidential)
+- **Error handling** - user-friendly error pages with detailed diagnostics
+
+### Authorization Request Parameters
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `response_type` | Yes | Must be `code` |
+| `client_id` | Yes | Client identifier |
+| `redirect_uri` | Yes | Must match registered redirect URI |
+| `scope` | Yes | Requested scopes (space-separated) |
+| `state` | Yes | CSRF protection (min 122 bits entropy) |
+| `code_challenge` | Conditional | Required for public clients |
+| `code_challenge_method` | Conditional | Must be `S256` if provided |
+| `aud` | Yes (SMART) | FHIR server base URL |
+| `launch` | Optional | EHR launch context identifier |
+| `nonce` | Optional | OpenID Connect replay protection |
+
+### Session Cookie
+
+The authorization flow uses a session cookie (`oauth_session`) to track the user's authentication state:
+
+- **Name**: `oauth_session`
+- **Path**: `/auth`
+- **Lifetime**: 10 minutes
+- **Attributes**: `HttpOnly`, `SameSite=Lax`, `Secure` (in production)
+
+### User Consent Storage
+
+User consent decisions are stored in the database (`octofhir_auth.user_consents` table). When a user approves access for a client with specific scopes, subsequent authorization requests with the same scopes skip the consent screen for better UX.

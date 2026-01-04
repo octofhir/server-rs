@@ -1,0 +1,28 @@
+{
+  "resourceType": "CodeSystem",
+  "id": "app-status",
+  "url": "http://octofhir.io/CodeSystem/app-status",
+  "name": "AppStatus",
+  "title": "App Status Code System",
+  "status": "active",
+  "content": "complete",
+  "description": "Status values for App resources",
+  "caseSensitive": true,
+  "concept": [
+    {
+      "code": "active",
+      "display": "Active",
+      "definition": "The app is active and all its operations are available"
+    },
+    {
+      "code": "inactive",
+      "display": "Inactive",
+      "definition": "The app is inactive and its operations are disabled"
+    },
+    {
+      "code": "suspended",
+      "display": "Suspended",
+      "definition": "The app is temporarily suspended (e.g., due to policy violation)"
+    }
+  ]
+}

@@ -22,6 +22,7 @@ octofhir-fhir-model = { workspace = true }
 
 # Workspace dependencies
 dashmap = { workspace = true }
+arc-swap = { workspace = true }
 async-trait = { workspace = true }
 tokio = { workspace = true }
 serde = { workspace = true }

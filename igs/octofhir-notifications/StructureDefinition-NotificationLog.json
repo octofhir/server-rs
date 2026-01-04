@@ -1,0 +1,123 @@
+{
+  "resourceType": "StructureDefinition",
+  "id": "NotificationLog",
+  "url": "http://octofhir.io/StructureDefinition/NotificationLog",
+  "name": "NotificationLog",
+  "title": "Notification Log",
+  "status": "active",
+  "fhirVersion": "4.0.1",
+  "kind": "logical",
+  "abstract": false,
+  "type": "NotificationLog",
+  "baseDefinition": "http://hl7.org/fhir/StructureDefinition/DomainResource",
+  "derivation": "specialization",
+  "description": "Log entry for a sent or attempted notification.",
+  "differential": {
+    "element": [
+      {
+        "id": "NotificationLog",
+        "path": "NotificationLog",
+        "short": "Notification log entry",
+        "definition": "Records the status and details of a notification send attempt."
+      },
+      {
+        "id": "NotificationLog.channel",
+        "path": "NotificationLog.channel",
+        "short": "Notification channel",
+        "definition": "Channel used: email, sms, telegram, webhook, push",
+        "min": 1,
+        "max": "1",
+        "type": [{ "code": "code" }],
+        "binding": {
+          "strength": "required",
+          "valueSet": "http://octofhir.io/ValueSet/notification-provider-types"
+        }
+      },
+      {
+        "id": "NotificationLog.provider",
+        "path": "NotificationLog.provider",
+        "short": "Provider reference",
+        "definition": "Reference to the NotificationProvider used",
+        "min": 1,
+        "max": "1",
+        "type": [{ "code": "Reference", "targetProfile": ["http://octofhir.io/StructureDefinition/NotificationProvider"] }]
+      },
+      {
+        "id": "NotificationLog.template",
+        "path": "NotificationLog.template",
+        "short": "Template reference",
+        "definition": "Reference to the NotificationTemplate used",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "Reference", "targetProfile": ["http://octofhir.io/StructureDefinition/NotificationTemplate"] }]
+      },
+      {
+        "id": "NotificationLog.status",
+        "path": "NotificationLog.status",
+        "short": "Notification status",
+        "definition": "Current status: pending, sending, sent, failed, cancelled",
+        "min": 1,
+        "max": "1",
+        "type": [{ "code": "code" }],
+        "binding": {
+          "strength": "required",
+          "valueSet": "http://octofhir.io/ValueSet/notification-status"
+        }
+      },
+      {
+        "id": "NotificationLog.recipient",
+        "path": "NotificationLog.recipient",
+        "short": "Recipient info",
+        "definition": "Recipient information as JSON (email, phone, chat_id, webhook_url)",
+        "min": 1,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "NotificationLog.scheduledAt",
+        "path": "NotificationLog.scheduledAt",
+        "short": "Scheduled time",
+        "definition": "When the notification was scheduled to be sent",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "instant" }]
+      },
+      {
+        "id": "NotificationLog.sentAt",
+        "path": "NotificationLog.sentAt",
+        "short": "Sent time",
+        "definition": "When the notification was actually sent",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "instant" }]
+      },
+      {
+        "id": "NotificationLog.error",
+        "path": "NotificationLog.error",
+        "short": "Error message",
+        "definition": "Error message if the notification failed",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "NotificationLog.retryCount",
+        "path": "NotificationLog.retryCount",
+        "short": "Retry count",
+        "definition": "Number of retry attempts made",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "integer" }]
+      },
+      {
+        "id": "NotificationLog.trigger",
+        "path": "NotificationLog.trigger",
+        "short": "Trigger reference",
+        "definition": "Reference to what triggered this notification (Subscription, etc.)",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "Reference" }]
+      }
+    ]
+  }
+}

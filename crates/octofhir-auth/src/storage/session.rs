@@ -152,7 +152,7 @@ pub trait SessionStorage: Send + Sync {
     /// # Errors
     ///
     /// Returns an error if the session is not found or the update fails.
-    async fn update_user(&self, id: Uuid, user_id: Uuid) -> AuthResult<()>;
+    async fn update_user(&self, id: Uuid, user_id: &str) -> AuthResult<()>;
 
     /// Updates the session with launch context.
     ///

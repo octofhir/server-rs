@@ -9,29 +9,7 @@
   "compose": {
     "include": [
       {
-        "system": "http://octofhir.io/CodeSystem/operation-types",
-        "concept": [
-          {
-            "code": "proxy",
-            "display": "Proxy",
-            "definition": "Forward requests to an external service"
-          },
-          {
-            "code": "sql",
-            "display": "SQL Query",
-            "definition": "Execute a SQL query against the database"
-          },
-          {
-            "code": "fhirpath",
-            "display": "FHIRPath",
-            "definition": "Evaluate a FHIRPath expression"
-          },
-          {
-            "code": "handler",
-            "display": "Custom Handler",
-            "definition": "Invoke a registered custom handler function"
-          }
-        ]
+        "system": "http://octofhir.io/CodeSystem/operation-types"
       }
     ]
   }

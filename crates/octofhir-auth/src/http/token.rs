@@ -39,6 +39,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use base64::Engine;
+use serde_json::json;
 use tracing::{debug, info, warn};
 
 use time::{Duration, OffsetDateTime};
@@ -72,6 +73,8 @@ pub struct TokenState {
     jwks_cache: Option<Arc<ClientJwksCache>>,
     /// Token endpoint URL for audience validation.
     token_endpoint_url: Option<String>,
+    /// FHIR storage for creating AuthSession resources (optional).
+    fhir_storage: Option<Arc<dyn octofhir_storage::FhirStorage>>,
 }
 
 impl TokenState {
@@ -100,6 +103,7 @@ impl TokenState {
             jti_storage: None,
             jwks_cache: None,
             token_endpoint_url: None,
+            fhir_storage: None,
         }
     }
 
@@ -113,6 +117,7 @@ impl TokenState {
             client_storage,
             user_storage: None,
             cookie_config: CookieConfig::default(),
+            fhir_storage: None,
             jti_storage: None,
             jwks_cache: None,
             token_endpoint_url: None,
@@ -151,6 +156,13 @@ impl TokenState {
     #[must_use]
     pub fn with_token_endpoint_url(mut self, url: impl Into<String>) -> Self {
         self.token_endpoint_url = Some(url.into());
+        self
+    }
+
+    /// Sets FHIR storage for creating AuthSession resources during password grant.
+    #[must_use]
+    pub fn with_fhir_storage(mut self, fhir_storage: Arc<dyn octofhir_storage::FhirStorage>) -> Self {
+        self.fhir_storage = Some(fhir_storage);
         self
     }
 }
@@ -564,7 +576,7 @@ async fn password_grant(
     }
 
     // 6. Verify password
-    let password_valid = user_storage.verify_password(user.id, password).await?;
+    let password_valid = user_storage.verify_password(&user.id, password).await?;
     if !password_valid {
         return Err(AuthError::invalid_grant("Invalid username or password"));
     }
@@ -577,7 +589,7 @@ async fn password_grant(
     );
 
     // Update last login timestamp
-    if let Err(e) = user_storage.update_last_login(user.id).await {
+    if let Err(e) = user_storage.update_last_login(&user.id).await {
         tracing::warn!(
             user_id = %user.id,
             error = %e,
@@ -598,15 +610,57 @@ async fn password_grant(
         }
     }
 
-    // 8. Generate access token
+    // 8. Create AuthSession if FHIR storage is available
     let now = OffsetDateTime::now_utc();
     let access_lifetime = Duration::hours(1); // Default 1 hour for password grant
+    let expires_at = now + access_lifetime;
 
+    let session_id = if let Some(fhir_storage) = &state.fhir_storage {
+        // Create AuthSession resource
+        let auth_session = json!({
+            "resourceType": "AuthSession",
+            "status": "active",
+            "subject": {
+                "reference": format!("User/{}", user.id)
+            },
+            "client": {
+                "reference": format!("Client/{}", client.client_id),
+                "display": client.name.clone()
+            },
+            "createdAt": now.format(&time::format_description::well_known::Rfc3339).unwrap(),
+            "lastActivityAt": now.format(&time::format_description::well_known::Rfc3339).unwrap(),
+            "expiresAt": expires_at.format(&time::format_description::well_known::Rfc3339).unwrap(),
+        });
+
+        match fhir_storage.create(&auth_session).await {
+            Ok(stored) => {
+                info!(
+                    user_id = %user.id,
+                    session_id = %stored.id,
+                    client_id = %client.client_id,
+                    "Created AuthSession for password grant"
+                );
+                Some(stored.id)
+            }
+            Err(e) => {
+                warn!(
+                    user_id = %user.id,
+                    error = %e,
+                    "Failed to create AuthSession - continuing without session tracking"
+                );
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    // 9. Generate access token
     let access_claims = AccessTokenClaims {
         iss: state.token_service.issuer().to_string(),
         sub: user.id.to_string(),
         aud: vec![state.token_service.audience().to_string()],
-        exp: (now + access_lifetime).unix_timestamp(),
+        exp: expires_at.unix_timestamp(),
         iat: now.unix_timestamp(),
         jti: Uuid::new_v4().to_string(),
         scope: scope.to_string(),
@@ -614,7 +668,7 @@ async fn password_grant(
         patient: None,
         encounter: None,
         fhir_user: user.fhir_user.clone(),
-        sid: None, // No session for password grant
+        sid: session_id.clone(),
     };
 
     // Encode access token using the token service's JWT service
@@ -623,14 +677,14 @@ async fn password_grant(
         .encode_access_token(&access_claims)
         .map_err(|e| AuthError::internal(format!("Failed to encode access token: {}", e)))?;
 
-    // 9. Build response
+    // 10. Build response
     let mut response = TokenResponse::new(
         access_token,
         access_lifetime.whole_seconds() as u64,
         scope.to_string(),
     );
 
-    // 10. Issue refresh token if:
+    // 11. Issue refresh token if:
     //     - offline_access scope is requested, OR
     //     - client has refresh_token grant type allowed
     let has_offline_access = scope.split_whitespace().any(|s| s == "offline_access");
@@ -639,7 +693,7 @@ async fn password_grant(
     if has_offline_access || client_supports_refresh {
         let refresh_token = state
             .token_service
-            .issue_refresh_token_for_user(user.id, client, scope)
+            .issue_refresh_token_for_user(&user.id, client, scope)
             .await?;
 
         info!(

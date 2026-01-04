@@ -16,6 +16,9 @@ import {
 	Tooltip,
 	Code,
 	Accordion,
+	Select,
+	Anchor,
+	ScrollArea,
 } from "@mantine/core";
 import {
 	IconAlertCircle,
@@ -89,9 +92,11 @@ function MethodBadge({ method }: { method: string }) {
 function OperationRow({
 	operation,
 	onView,
+	onNavigateToApp,
 }: {
 	operation: OperationDefinition;
 	onView: (id: string) => void;
+	onNavigateToApp: (appId: string) => void;
 }) {
 	return (
 		<Table.Tr key={operation.id}>
@@ -121,6 +126,19 @@ function OperationRow({
 				<Code size="xs">{operation.path_pattern}</Code>
 			</Table.Td>
 			<Table.Td>
+				{operation.app ? (
+					<Anchor
+						size="sm"
+						onClick={() => onNavigateToApp(operation.app?.id ?? "")}
+						style={{ cursor: "pointer" }}
+					>
+						{operation.app.name}
+					</Anchor>
+				) : (
+					<Text size="sm" c="dimmed">—</Text>
+				)}
+			</Table.Td>
+			<Table.Td>
 				<Tooltip label={operation.public ? "Public (no auth required)" : "Protected (requires auth)"}>
 					{operation.public ? (
 						<IconLockOpen size={16} style={{ color: "var(--app-accent-primary)" }} />
@@ -144,10 +162,12 @@ function CategorySection({
 	category,
 	operations,
 	onViewOperation,
+	onNavigateToApp,
 }: {
 	category: string;
 	operations: OperationDefinition[];
 	onViewOperation: (id: string) => void;
+	onNavigateToApp: (appId: string) => void;
 }) {
 	const Icon = CATEGORY_ICONS[category] ?? IconApi;
 	const color = CATEGORY_COLORS[category] ?? "gray";
@@ -172,13 +192,19 @@ function CategorySection({
 							<Table.Th>Name</Table.Th>
 							<Table.Th>Methods</Table.Th>
 							<Table.Th>Path</Table.Th>
+							<Table.Th>App</Table.Th>
 							<Table.Th>Access</Table.Th>
 							<Table.Th w={50} />
 						</Table.Tr>
 					</Table.Thead>
 					<Table.Tbody>
 						{operations.map((op) => (
-							<OperationRow key={op.id} operation={op} onView={onViewOperation} />
+							<OperationRow
+								key={op.id}
+								operation={op}
+								onView={onViewOperation}
+								onNavigateToApp={onNavigateToApp}
+							/>
 						))}
 					</Table.Tbody>
 				</Table>
@@ -191,7 +217,23 @@ export function OperationsPage() {
 	const navigate = useNavigate();
 	const [search, setSearch] = useState("");
 	const [filterAccess, setFilterAccess] = useState<string>("all");
+	const [filterApp, setFilterApp] = useState<string | null>(null);
 	const { data, isLoading, error } = useOperations();
+
+	// Extract unique apps for the filter dropdown
+	const appOptions = useMemo(() => {
+		if (!data?.operations) return [];
+		const apps = new Map<string, string>();
+		for (const op of data.operations) {
+			if (op.app) {
+				apps.set(op.app.id, op.app.name);
+			}
+		}
+		return Array.from(apps.entries()).map(([id, name]) => ({
+			value: id,
+			label: name,
+		}));
+	}, [data]);
 
 	const filteredAndGrouped = useMemo(() => {
 		if (!data?.operations) return {} as GroupedOperations;
@@ -204,7 +246,8 @@ export function OperationsPage() {
 				op.id.toLowerCase().includes(searchLower) ||
 				op.name.toLowerCase().includes(searchLower) ||
 				op.description?.toLowerCase().includes(searchLower) ||
-				op.path_pattern.toLowerCase().includes(searchLower);
+				op.path_pattern.toLowerCase().includes(searchLower) ||
+				op.app?.name.toLowerCase().includes(searchLower);
 
 			// Access filter
 			const matchesAccess =
@@ -212,7 +255,10 @@ export function OperationsPage() {
 				(filterAccess === "public" && op.public) ||
 				(filterAccess === "protected" && !op.public);
 
-			return matchesSearch && matchesAccess;
+			// App filter
+			const matchesApp = !filterApp || op.app?.id === filterApp;
+
+			return matchesSearch && matchesAccess && matchesApp;
 		});
 
 		// Group by category
@@ -222,13 +268,17 @@ export function OperationsPage() {
 			acc[cat].push(op);
 			return acc;
 		}, {} as GroupedOperations);
-	}, [data, search, filterAccess]);
+	}, [data, search, filterAccess, filterApp]);
 
 	const totalFiltered = Object.values(filteredAndGrouped).flat().length;
 	const categories = Object.keys(filteredAndGrouped).sort();
 
 	const handleViewOperation = (id: string) => {
 		navigate(`/operations/${encodeURIComponent(id)}`);
+	};
+
+	const handleNavigateToApp = (appId: string) => {
+		navigate(`/apps/${appId}`);
 	};
 
 	return (
@@ -249,6 +299,16 @@ export function OperationsPage() {
 						onChange={(e) => setSearch(e.currentTarget.value)}
 						style={{ flex: 1 }}
 					/>
+					{appOptions.length > 0 && (
+						<Select
+							placeholder="All Apps"
+							clearable
+							data={appOptions}
+							value={filterApp}
+							onChange={setFilterApp}
+							w={180}
+						/>
+					)}
 					<SegmentedControl
 						value={filterAccess}
 						onChange={setFilterAccess}
@@ -292,6 +352,7 @@ export function OperationsPage() {
 							</Text>
 						</Paper>
 					) : (
+						<ScrollArea style={{ flex: 1 }} offsetScrollbars>
 						<Accordion multiple defaultValue={categories}>
 							{categories.map((category) => (
 								<CategorySection
@@ -299,9 +360,11 @@ export function OperationsPage() {
 									category={category}
 									operations={filteredAndGrouped[category]}
 									onViewOperation={handleViewOperation}
+									onNavigateToApp={handleNavigateToApp}
 								/>
 							))}
 						</Accordion>
+					</ScrollArea>
 					)}
 				</>
 			)}

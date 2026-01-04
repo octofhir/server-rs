@@ -5,11 +5,20 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Reference to an App that provides this operation.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AppReference {
+    /// App resource ID
+    pub id: String,
+    /// Human-readable name
+    pub name: String,
+}
+
 /// Definition of a server operation
 ///
 /// Operations represent discrete API endpoints or functionalities
 /// that can be targeted by access policies and displayed in the UI.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct OperationDefinition {
     /// Unique operation ID (e.g., "fhir.read", "graphql.query", "system.metadata")
     pub id: String,
@@ -36,21 +45,10 @@ pub struct OperationDefinition {
 
     /// Module that provides this operation (e.g., "octofhir-server", "octofhir-graphql", app ID)
     pub module: String,
-}
 
-impl Default for OperationDefinition {
-    fn default() -> Self {
-        Self {
-            id: String::new(),
-            name: String::new(),
-            description: None,
-            category: String::new(),
-            methods: Vec::new(),
-            path_pattern: String::new(),
-            public: false,
-            module: String::new(),
-        }
-    }
+    /// App that provides this operation (for gateway operations)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub app: Option<AppReference>,
 }
 
 impl OperationDefinition {
@@ -72,6 +70,7 @@ impl OperationDefinition {
             path_pattern: path_pattern.into(),
             public: false,
             module: module.into(),
+            app: None,
         }
     }
 
@@ -84,6 +83,12 @@ impl OperationDefinition {
     /// Mark as public (no auth required)
     pub fn with_public(mut self, public: bool) -> Self {
         self.public = public;
+        self
+    }
+
+    /// Set the App reference (for gateway operations)
+    pub fn with_app(mut self, app: AppReference) -> Self {
+        self.app = Some(app);
         self
     }
 }
@@ -120,6 +125,9 @@ pub mod categories {
 
     /// Custom API gateway operations
     pub const API: &str = "api";
+
+    /// Notification operations
+    pub const NOTIFICATIONS: &str = "notifications";
 }
 
 /// Well-known module identifiers
@@ -132,6 +140,9 @@ pub mod modules {
 
     /// Auth module
     pub const AUTH: &str = "octofhir-auth";
+
+    /// Notifications module
+    pub const NOTIFICATIONS: &str = "octofhir-notifications";
 }
 
 #[cfg(test)]

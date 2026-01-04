@@ -13,6 +13,7 @@ octofhir-core = { workspace = true }
 octofhir-storage = { workspace = true }
 octofhir-search = { path = "../octofhir-search" }
 octofhir-canonical-manager = { workspace = true }
+octofhir-notifications = { path = "../octofhir-notifications" }
 
 # Async
 async-trait = { workspace = true }

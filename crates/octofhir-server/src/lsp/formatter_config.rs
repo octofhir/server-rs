@@ -417,8 +417,8 @@ impl LspFormatterConfig {
         }
 
         // Check if there's a "style" key
-        if let Some(style_prop) = options.properties.get("style") {
-            if let FormattingProperty::String(style_str) = style_prop {
+        if let Some(style_prop) = options.properties.get("style")
+            && let FormattingProperty::String(style_str) = style_prop {
                 match style_str.as_str() {
                     "compact" => return LspFormatterConfig::Compact,
                     "pg_formatter" => {
@@ -454,7 +454,6 @@ impl LspFormatterConfig {
                     _ => {}
                 }
             }
-        }
 
         // Try to parse the entire properties as a config
         let json_obj: serde_json::Map<String, serde_json::Value> = options

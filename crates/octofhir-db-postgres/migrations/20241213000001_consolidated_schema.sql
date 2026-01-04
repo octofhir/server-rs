@@ -178,6 +178,8 @@ CREATE TABLE IF NOT EXISTS operations (
     path_pattern TEXT NOT NULL,
     public BOOLEAN NOT NULL DEFAULT false,
     module TEXT NOT NULL,
+    app_id TEXT,
+    app_name TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -185,6 +187,7 @@ CREATE TABLE IF NOT EXISTS operations (
 CREATE INDEX IF NOT EXISTS idx_operations_category ON operations(category);
 CREATE INDEX IF NOT EXISTS idx_operations_module ON operations(module);
 CREATE INDEX IF NOT EXISTS idx_operations_public ON operations(public);
+CREATE INDEX IF NOT EXISTS idx_operations_app_id ON operations(app_id);
 
 CREATE OR REPLACE FUNCTION update_operations_updated_at()
 RETURNS TRIGGER AS $$
@@ -400,6 +403,49 @@ BEGIN
     WHERE created_at < NOW() - INTERVAL '1 hour';
 END;
 $func$ LANGUAGE plpgsql;
+
+-- ============================================================================
+-- AUTH SCHEMA (OAuth 2.0 / SMART on FHIR)
+-- ============================================================================
+
+CREATE SCHEMA IF NOT EXISTS octofhir_auth;
+
+-- SMART launch context storage (EHR launch flow)
+CREATE TABLE IF NOT EXISTS octofhir_auth.smart_launch_context (
+    launch_id VARCHAR(64) PRIMARY KEY,
+    context_data JSONB NOT NULL,
+    expires_at TIMESTAMPTZ NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_smart_launch_context_expires
+    ON octofhir_auth.smart_launch_context(expires_at);
+
+-- OAuth authorize flow sessions (temporary, tracks login/consent flow before code issuance)
+CREATE TABLE IF NOT EXISTS octofhir_auth.authorize_sessions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id TEXT,
+    authorization_request JSONB NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    expires_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_authorize_sessions_expires
+    ON octofhir_auth.authorize_sessions(expires_at);
+
+-- User consent records (persistent, for skipping consent on repeat authorization)
+CREATE TABLE IF NOT EXISTS octofhir_auth.user_consents (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id TEXT NOT NULL,
+    client_id TEXT NOT NULL,
+    scopes TEXT[] NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE(user_id, client_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_consents_user_client
+    ON octofhir_auth.user_consents(user_id, client_id);
 
 -- ============================================================================
 -- GATEWAY NOTIFICATION FUNCTIONS

@@ -176,8 +176,8 @@ pub async fn userinfo_handler(
         response.fhir_user = user.fhir_user.clone();
     }
 
-    // 5. Include profile claims from user attributes
-    response.name = get_string_attr(&user.attributes, "name");
+    // 5. Include profile claims - prefer attributes, fallback to direct user fields
+    response.name = get_string_attr(&user.attributes, "name").or_else(|| user.name.clone());
     response.given_name = get_string_attr(&user.attributes, "given_name");
     response.family_name = get_string_attr(&user.attributes, "family_name");
     response.middle_name = get_string_attr(&user.attributes, "middle_name");
@@ -190,8 +190,8 @@ pub async fn userinfo_handler(
     response.zoneinfo = get_string_attr(&user.attributes, "zoneinfo");
     response.locale = get_string_attr(&user.attributes, "locale");
 
-    // 6. Include email claims from user attributes
-    response.email = get_string_attr(&user.attributes, "email");
+    // 6. Include email claims - prefer attributes, fallback to user.email
+    response.email = get_string_attr(&user.attributes, "email").or_else(|| user.email.clone());
     response.email_verified = get_bool_attr(&user.attributes, "email_verified");
 
     // 7. Include phone claims from user attributes
@@ -231,7 +231,6 @@ fn get_i64_attr(attrs: &HashMap<String, Value>, key: &str) -> Option<i64> {
 mod tests {
     use super::*;
     use std::sync::Arc;
-    use uuid::Uuid;
 
     use crate::middleware::types::{AuthContext, UserContext};
     use crate::token::jwt::AccessTokenClaims;
@@ -262,6 +261,7 @@ mod tests {
             description: None,
             grant_types: vec![GrantType::AuthorizationCode],
             redirect_uris: vec!["https://app.example.com/callback".to_string()],
+            post_logout_redirect_uris: vec![],
             scopes: vec![],
             confidential: false,
             active: true,
@@ -292,8 +292,10 @@ mod tests {
         attributes.insert("email_verified".to_string(), Value::Bool(true));
 
         UserContext {
-            id: Uuid::new_v4(),
+            id: uuid::Uuid::new_v4().to_string(),
             username: "jsmith".to_string(),
+            name: Some("Dr. Jane Smith".to_string()),
+            email: Some("jane.smith@example.com".to_string()),
             fhir_user: Some("Practitioner/789".to_string()),
             roles: vec!["practitioner".to_string()],
             attributes,

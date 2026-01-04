@@ -12,7 +12,7 @@ use crate::registry::SearchParameterRegistry;
 /// These parameters are available for all resource types as defined
 /// in the FHIR specification. They are registered with base "Resource"
 /// so they apply universally.
-pub fn register_common_parameters(registry: &mut SearchParameterRegistry) {
+pub fn register_common_parameters(registry: &SearchParameterRegistry) {
     // _id - logical id of the resource
     registry.register(
         SearchParameter::new(
@@ -116,8 +116,8 @@ mod tests {
 
     #[test]
     fn test_register_common_parameters() {
-        let mut registry = SearchParameterRegistry::new();
-        register_common_parameters(&mut registry);
+        let registry = SearchParameterRegistry::new();
+        register_common_parameters(&registry);
 
         // Check that common parameters are registered
         assert!(registry.get("Patient", "_id").is_some());
@@ -134,8 +134,8 @@ mod tests {
 
     #[test]
     fn test_common_parameter_expressions() {
-        let mut registry = SearchParameterRegistry::new();
-        register_common_parameters(&mut registry);
+        let registry = SearchParameterRegistry::new();
+        register_common_parameters(&registry);
 
         let id_param = registry.get("Patient", "_id").unwrap();
         assert_eq!(id_param.expression.as_deref(), Some("Resource.id"));

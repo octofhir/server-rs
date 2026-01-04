@@ -393,17 +393,17 @@ impl HybridTerminologyProvider {
     /// Recursively search for a code in a concept hierarchy.
     fn find_code_in_concepts(&self, concept_arr: &[serde_json::Value], target_code: &str) -> bool {
         for concept in concept_arr {
-            if let Some(code) = concept.get("code").and_then(|c| c.as_str()) {
-                if code == target_code {
-                    return true;
-                }
+            if let Some(code) = concept.get("code").and_then(|c| c.as_str())
+                && code == target_code
+            {
+                return true;
             }
 
             // Check nested concepts
-            if let Some(children) = concept.get("concept").and_then(|c| c.as_array()) {
-                if self.find_code_in_concepts(children, target_code) {
-                    return true;
-                }
+            if let Some(children) = concept.get("concept").and_then(|c| c.as_array())
+                && self.find_code_in_concepts(children, target_code)
+            {
+                return true;
             }
         }
         false

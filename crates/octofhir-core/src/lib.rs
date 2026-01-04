@@ -14,6 +14,6 @@ pub use id::{IdError, generate_id, validate_id};
 pub use monitoring::{
     HealthCheck, HealthStatus, MemoryStats, MetricsCollector, ResourceStats, SystemMetrics,
 };
-pub use operations::{OperationDefinition, OperationProvider, categories, modules};
+pub use operations::{AppReference, OperationDefinition, OperationProvider, categories, modules};
 pub use resource::{ResourceEnvelope, ResourceMeta, ResourceStatus};
 pub use time::{FhirDateTime, now_utc};

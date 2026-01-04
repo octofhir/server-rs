@@ -1,0 +1,12 @@
+{
+  "resourceType": "SearchParameter",
+  "id": "AuthSession-status",
+  "url": "http://octofhir.org/fhir/SearchParameter/AuthSession-status",
+  "name": "AuthSessionStatus",
+  "status": "active",
+  "description": "Search AuthSession by status (active, expired, revoked)",
+  "code": "status",
+  "base": ["AuthSession"],
+  "type": "token",
+  "expression": "AuthSession.status"
+}

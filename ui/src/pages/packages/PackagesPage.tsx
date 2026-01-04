@@ -545,7 +545,7 @@ export function PackagesPage() {
 
 	const handleViewPackage = (name: string, version: string) => {
 		navigate(
-			`/ packages / ${encodeURIComponent(name)}/${encodeURIComponent(version)}`,
+			`/packages/${encodeURIComponent(name)}/${encodeURIComponent(version)}`,
 		);
 	};
 

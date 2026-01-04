@@ -58,6 +58,30 @@ enabled = false
 # See auth module documentation for full configuration
 
 # ============================================
+# BOOTSTRAP CONFIGURATION (Initial Setup)
+# ============================================
+# Bootstrap an admin user on first startup
+# [bootstrap.admin_user]
+# username = "admin"
+# password = "changeme"  # Use env var OCTOFHIR__BOOTSTRAP__ADMIN_USER__PASSWORD instead
+# email = "admin@example.com"
+
+# Bootstrap a backend service client for machine-to-machine authentication
+# This creates a confidential OAuth client with client_credentials grant type
+# [bootstrap.backend_client]
+# client_id = "octofhir-backend"  # Default: "octofhir-backend"
+# # client_secret = "your-secret-here"  # Optional - auto-generated if omitted
+# scopes = ["system/*.cruds"]  # Default: ["system/*.cruds"]
+# name = "OctoFHIR Backend Service"  # Optional
+# description = "Backend service for automated workflows"  # Optional
+#
+# IMPORTANT: If client_secret is NOT provided, a secure random secret will be
+# auto-generated and logged ONCE on first startup. Save it immediately!
+#
+# For security, use environment variables for secrets:
+# OCTOFHIR__BOOTSTRAP__BACKEND_CLIENT__CLIENT_SECRET=your-secret-here
+
+# ============================================
 # TERMINOLOGY SERVICE CONFIGURATION
 # ============================================
 # Configuration for external terminology services (ValueSet expansion, code validation, etc.)

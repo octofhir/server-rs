@@ -11,106 +11,325 @@
   "type": "App",
   "baseDefinition": "http://hl7.org/fhir/StructureDefinition/DomainResource",
   "derivation": "specialization",
-  "description": "An App groups custom operations under a common base path and configuration. Used for API Gateway functionality.",
+  "description": "App Manifest for registering applications with OctoFHIR Gateway. Supports inline operations, subscriptions, and resource provisioning.",
   "differential": {
     "element": [
       {
         "id": "App",
         "path": "App",
-        "short": "API Gateway application definition",
-        "definition": "Defines an application grouping for custom operations with a common base path and configuration."
+        "short": "Application manifest for OctoFHIR Gateway",
+        "definition": "Defines an application with its operations, subscriptions, and required resources."
       },
       {
         "id": "App.name",
         "path": "App.name",
         "short": "Name of the application",
-        "definition": "Human-readable name for the application",
         "min": 1,
         "max": "1",
-        "type": [
-          {
-            "code": "string"
-          }
-        ]
+        "type": [{ "code": "string" }]
       },
       {
         "id": "App.description",
         "path": "App.description",
         "short": "Description of the application",
-        "definition": "Detailed description of what this application provides",
         "min": 0,
         "max": "1",
-        "type": [
-          {
-            "code": "string"
-          }
-        ]
+        "type": [{ "code": "string" }]
       },
       {
-        "id": "App.basePath",
-        "path": "App.basePath",
-        "short": "Base URL path",
-        "definition": "Base path for all operations in this app (e.g., /api/v1/custom)",
-        "comment": "This path is prepended to all CustomOperation paths",
-        "min": 1,
-        "max": "1",
-        "type": [
-          {
-            "code": "string"
-          }
-        ]
-      },
-      {
-        "id": "App.active",
-        "path": "App.active",
-        "short": "Whether the app is active",
-        "definition": "If false, all operations under this app are disabled",
-        "min": 1,
-        "max": "1",
-        "type": [
-          {
-            "code": "boolean"
-          }
-        ]
-      },
-      {
-        "id": "App.authentication",
-        "path": "App.authentication",
-        "short": "Authentication configuration",
-        "definition": "Authentication requirements for this app",
+        "id": "App.apiVersion",
+        "path": "App.apiVersion",
+        "short": "Manifest API version",
+        "definition": "Version of the App Manifest format (currently 1)",
         "min": 0,
         "max": "1",
-        "type": [
-          {
-            "code": "BackboneElement"
-          }
-        ]
+        "type": [{ "code": "integer" }]
       },
       {
-        "id": "App.authentication.type",
-        "path": "App.authentication.type",
+        "id": "App.status",
+        "path": "App.status",
+        "short": "App status",
+        "definition": "Current status: active, inactive, suspended",
+        "min": 1,
+        "max": "1",
+        "type": [{ "code": "code" }],
+        "binding": {
+          "strength": "required",
+          "valueSet": "http://octofhir.io/ValueSet/app-status"
+        }
+      },
+      {
+        "id": "App.secret",
+        "path": "App.secret",
+        "short": "App secret for authentication",
+        "definition": "Secret key used for App authentication. Required. Never returned in responses after creation.",
+        "min": 1,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "App.endpoint",
+        "path": "App.endpoint",
+        "short": "Backend endpoint configuration",
+        "definition": "Configuration for proxying requests to App backend",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "BackboneElement" }]
+      },
+      {
+        "id": "App.endpoint.url",
+        "path": "App.endpoint.url",
+        "short": "Backend URL",
+        "definition": "URL of the App backend (e.g., http://portal-backend:3000/api/operations)",
+        "min": 1,
+        "max": "1",
+        "type": [{ "code": "url" }]
+      },
+      {
+        "id": "App.endpoint.timeout",
+        "path": "App.endpoint.timeout",
+        "short": "Timeout in seconds",
+        "definition": "Request timeout (default: 30)",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "integer" }]
+      },
+      {
+        "id": "App.operations",
+        "path": "App.operations",
+        "short": "Inline operation definitions",
+        "definition": "Operations provided by this app. Server auto-reconciles CustomOperations.",
+        "min": 0,
+        "max": "*",
+        "type": [{ "code": "BackboneElement" }]
+      },
+      {
+        "id": "App.operations.id",
+        "path": "App.operations.id",
+        "short": "Operation ID",
+        "definition": "Unique identifier for this operation within the app",
+        "min": 1,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "App.operations.method",
+        "path": "App.operations.method",
+        "short": "HTTP method",
+        "min": 1,
+        "max": "1",
+        "type": [{ "code": "code" }],
+        "binding": {
+          "strength": "required",
+          "valueSet": "http://octofhir.io/ValueSet/http-methods"
+        }
+      },
+      {
+        "id": "App.operations.path",
+        "path": "App.operations.path",
+        "short": "URL path segments",
+        "definition": "Path as array of segments: ['psychportal', 'appointments', ':id']",
+        "min": 1,
+        "max": "*",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "App.operations.public",
+        "path": "App.operations.public",
+        "short": "Public operation",
+        "definition": "If true, no authentication required",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "boolean" }]
+      },
+      {
+        "id": "App.operations.policy",
+        "path": "App.operations.policy",
+        "short": "Access policy",
+        "definition": "Access control configuration for this operation",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "BackboneElement" }]
+      },
+      {
+        "id": "App.operations.policy.authType",
+        "path": "App.operations.policy.authType",
         "short": "Authentication type",
-        "definition": "Type of authentication required (e.g., bearer, basic, apiKey)",
-        "min": 1,
+        "definition": "Authentication method: 'forward' (OAuth token, default) or 'app' (X-App-Secret header)",
+        "comment": "Forward auth uses standard OAuth bearer tokens from the Authorization header. App auth requires the X-App-Secret header with the app's secret for machine-to-machine authentication.",
+        "min": 0,
         "max": "1",
-        "type": [
-          {
-            "code": "code"
-          }
-        ]
+        "type": [{ "code": "code" }],
+        "binding": {
+          "strength": "required",
+          "valueSet": "http://octofhir.io/ValueSet/auth-types"
+        }
       },
       {
-        "id": "App.authentication.required",
-        "path": "App.authentication.required",
-        "short": "Whether authentication is required",
-        "definition": "If true, requests without valid authentication are rejected",
+        "id": "App.operations.policy.roles",
+        "path": "App.operations.policy.roles",
+        "short": "Required roles",
+        "definition": "User must have one of these roles",
+        "min": 0,
+        "max": "*",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "App.operations.policy.scopes",
+        "path": "App.operations.policy.scopes",
+        "short": "Required SMART scopes",
+        "definition": "Token must have one of these scopes (supports wildcards)",
+        "min": 0,
+        "max": "*",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "App.operations.policy.compartment",
+        "path": "App.operations.policy.compartment",
+        "short": "Compartment restriction",
+        "definition": "Restrict to user's compartment: patient, practitioner",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "code" }]
+      },
+      {
+        "id": "App.operations.policy.script",
+        "path": "App.operations.policy.script",
+        "short": "Custom policy script",
+        "definition": "QuickJS script for complex access control",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "App.operations.includeRawBody",
+        "path": "App.operations.includeRawBody",
+        "short": "Include raw request body bytes",
+        "definition": "Whether to include raw request body bytes (base64-encoded) in AppOperationRequest. Useful for binary data, file uploads, or when the app needs the original bytes.",
+        "comment": "When true, the raw body will be base64-encoded and included in the rawBody field of AppOperationRequest. This allows App backends to access the original request bytes for binary data processing, signature verification, or other scenarios where the parsed JSON is insufficient.",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "boolean" }]
+      },
+      {
+        "id": "App.subscriptions",
+        "path": "App.subscriptions",
+        "short": "Event subscriptions",
+        "definition": "Subscriptions to FHIR resource events",
+        "min": 0,
+        "max": "*",
+        "type": [{ "code": "BackboneElement" }]
+      },
+      {
+        "id": "App.subscriptions.id",
+        "path": "App.subscriptions.id",
+        "short": "Subscription ID",
         "min": 1,
         "max": "1",
-        "type": [
-          {
-            "code": "boolean"
-          }
-        ]
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "App.subscriptions.trigger",
+        "path": "App.subscriptions.trigger",
+        "short": "Event trigger",
+        "min": 1,
+        "max": "1",
+        "type": [{ "code": "BackboneElement" }]
+      },
+      {
+        "id": "App.subscriptions.trigger.resourceType",
+        "path": "App.subscriptions.trigger.resourceType",
+        "short": "Resource type to watch",
+        "min": 1,
+        "max": "1",
+        "type": [{ "code": "code" }]
+      },
+      {
+        "id": "App.subscriptions.trigger.event",
+        "path": "App.subscriptions.trigger.event",
+        "short": "Event type",
+        "definition": "create, update, delete",
+        "min": 1,
+        "max": "1",
+        "type": [{ "code": "code" }]
+      },
+      {
+        "id": "App.subscriptions.trigger.fhirpath",
+        "path": "App.subscriptions.trigger.fhirpath",
+        "short": "Filter expression",
+        "definition": "FHIRPath condition (e.g., 'status != %previous.status')",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "App.subscriptions.channel",
+        "path": "App.subscriptions.channel",
+        "short": "Webhook channel",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "BackboneElement" }]
+      },
+      {
+        "id": "App.subscriptions.channel.type",
+        "path": "App.subscriptions.channel.type",
+        "short": "Channel type",
+        "definition": "webhook",
+        "min": 1,
+        "max": "1",
+        "type": [{ "code": "code" }]
+      },
+      {
+        "id": "App.subscriptions.channel.endpoint",
+        "path": "App.subscriptions.channel.endpoint",
+        "short": "Webhook URL",
+        "min": 1,
+        "max": "1",
+        "type": [{ "code": "url" }]
+      },
+      {
+        "id": "App.subscriptions.notification",
+        "path": "App.subscriptions.notification",
+        "short": "Notification config",
+        "definition": "Send notification instead of webhook",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "BackboneElement" }]
+      },
+      {
+        "id": "App.subscriptions.notification.provider",
+        "path": "App.subscriptions.notification.provider",
+        "short": "Notification provider reference",
+        "definition": "Reference to NotificationProvider (e.g., 'NotificationProvider/sendgrid')",
+        "min": 1,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "App.subscriptions.notification.channel",
+        "path": "App.subscriptions.notification.channel",
+        "short": "Notification channel",
+        "definition": "email, telegram, webhook",
+        "min": 1,
+        "max": "*",
+        "type": [{ "code": "code" }]
+      },
+      {
+        "id": "App.subscriptions.notification.template",
+        "path": "App.subscriptions.notification.template",
+        "short": "Template ID",
+        "min": 1,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "App.resources",
+        "path": "App.resources",
+        "short": "Resources to provision",
+        "definition": "JSON-encoded map of resources to create: {Client: {...}, AccessPolicy: {...}}",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "string" }]
       }
     ]
   }

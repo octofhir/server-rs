@@ -317,13 +317,12 @@ impl LanguageServer for PostgresLspServer {
         let uri = params.text_document.uri;
         let version = params.text_document.version;
 
-        if let Some(state) = self.documents.get_mut(&uri) {
-            if let Some(change) = params.content_changes.into_iter().last() {
+        if let Some(state) = self.documents.get_mut(&uri)
+            && let Some(change) = params.content_changes.into_iter().last() {
                 state.text = change.text.clone();
                 state.version = version;
                 self.publish_diagnostics(uri, version, change.text);
             }
-        }
 
         std::ops::ControlFlow::Continue(())
     }
@@ -365,11 +364,10 @@ impl LanguageServer for PostgresLspServer {
                 )));
             };
 
-            if schema_cache.get_tables().is_empty() || schema_cache.get_functions().is_empty() {
-                if let Err(err) = schema_cache.refresh().await {
+            if (schema_cache.get_tables().is_empty() || schema_cache.get_functions().is_empty())
+                && let Err(err) = schema_cache.refresh().await {
                     tracing::warn!(error = %err, "Failed to refresh LSP schema cache");
                 }
-            }
 
             // Preload FHIR schemas for all known tables (async, before synchronous completion)
             model_snapshot.preload_fhir_schemas(&schema_cache).await;

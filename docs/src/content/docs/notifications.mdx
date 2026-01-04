@@ -1,0 +1,492 @@
+---
+title: Notifications
+head: []
+---
+
+OctoFHIR provides a **real-time notification system** for delivering events to clients via multiple channels.
+
+## Overview
+
+The notification system enables:
+- **Real-time updates** when FHIR resources change
+- **Multiple delivery channels** (WebSocket, Server-Sent Events, Webhooks)
+- **Filtered subscriptions** based on resource type and search criteria
+- **Reliable delivery** with retry logic and dead-letter queues
+
+## Notification Channels
+
+### WebSocket
+
+Real-time bidirectional communication for interactive applications.
+
+```javascript
+const ws = new WebSocket('ws://localhost:8888/notifications/ws?token=ACCESS_TOKEN');
+
+ws.onopen = () => {
+  // Subscribe to Patient create events
+  ws.send(JSON.stringify({
+    type: 'subscribe',
+    resourceType: 'Patient',
+    events: ['create', 'update']
+  }));
+};
+
+ws.onmessage = (event) => {
+  const notification = JSON.parse(event.data);
+  console.log('New patient:', notification.resource);
+};
+```
+
+### Server-Sent Events (SSE)
+
+One-way streaming for browser applications.
+
+```javascript
+const eventSource = new EventSource(
+  'http://localhost:8888/notifications/events?token=ACCESS_TOKEN'
+);
+
+eventSource.addEventListener('patient-created', (event) => {
+  const patient = JSON.parse(event.data);
+  console.log('New patient:', patient);
+});
+
+eventSource.addEventListener('observation-created', (event) => {
+  const observation = JSON.parse(event.data);
+  updateDashboard(observation);
+});
+```
+
+### Webhooks
+
+HTTP callbacks for server-to-server integration.
+
+Register a webhook subscription:
+
+```bash
+POST /Subscription
+Authorization: Bearer <token>
+Content-Type: application/fhir+json
+
+{
+  "resourceType": "Subscription",
+  "status": "active",
+  "reason": "Monitor new Observations",
+  "criteria": "Observation?code=85354-9",
+  "channel": {
+    "type": "rest-hook",
+    "endpoint": "https://my-app.example.com/webhook",
+    "payload": "application/fhir+json",
+    "header": ["Authorization: Bearer webhook-secret"]
+  }
+}
+```
+
+## Notification Format
+
+All notifications follow a consistent structure:
+
+```json
+{
+  "id": "550e8400-e29b-41d4-a716-446655440000",
+  "timestamp": "2026-01-03T14:00:00Z",
+  "event": "create",
+  "resourceType": "Patient",
+  "resourceId": "123",
+  "versionId": "1",
+  "resource": {
+    "resourceType": "Patient",
+    "id": "123",
+    ...
+  },
+  "subscription": "Subscription/my-sub"
+}
+```
+
+### Event Types
+
+- `create` - New resource created
+- `update` - Resource updated
+- `delete` - Resource deleted
+- `vread` - Resource version accessed (if configured)
+
+## FHIR Subscriptions
+
+OctoFHIR implements **FHIR R5 Subscriptions** with R4 backward compatibility.
+
+### Creating a Subscription
+
+```json
+{
+  "resourceType": "Subscription",
+  "status": "active",
+  "reason": "Monitor high blood pressure readings",
+  "criteria": "Observation?code=85354-9&value-quantity=gt140",
+  "channel": {
+    "type": "rest-hook",
+    "endpoint": "https://alerts.example.com/high-bp",
+    "payload": "application/fhir+json"
+  },
+  "filterBy": [
+    {
+      "resourceType": "Observation",
+      "filterParameter": "code",
+      "value": "85354-9"
+    }
+  ]
+}
+```
+
+### Subscription Status
+
+- **`requested`** - Awaiting activation
+- **`active`** - Processing events
+- **`error`** - Failed delivery (check `SubscriptionStatus`)
+- **`off`** - Manually disabled
+
+### Heartbeat & Status
+
+OctoFHIR sends heartbeat notifications to verify webhook endpoints:
+
+```json
+{
+  "resourceType": "SubscriptionStatus",
+  "subscription": "Subscription/my-sub",
+  "status": "active",
+  "type": "heartbeat",
+  "eventsSinceSubscriptionStart": "123",
+  "notificationEvent": []
+}
+```
+
+Check subscription status:
+
+```bash
+GET /Subscription/my-sub/$status
+Authorization: Bearer <token>
+```
+
+## Filtering & Criteria
+
+### Search-based Filtering
+
+Use FHIR search parameters in `criteria`:
+
+```json
+{
+  "criteria": "Observation?patient=Patient/123&date=gt2026-01-01"
+}
+```
+
+### Topic-based Filtering (R5)
+
+Subscribe to predefined topics:
+
+```json
+{
+  "resourceType": "Subscription",
+  "topic": "http://example.org/topics/new-lab-results",
+  "filterBy": [
+    {
+      "filterParameter": "patient",
+      "value": "Patient/123"
+    }
+  ]
+}
+```
+
+## Notification Operations
+
+### `$events`
+
+Get notification stream for current user:
+
+```bash
+GET /Patient/$events?_since=2026-01-01T00:00:00Z
+Authorization: Bearer <token>
+```
+
+Returns SSE stream of Patient events.
+
+### `$events-history`
+
+Query historical notifications:
+
+```bash
+GET /Observation/$events-history?_count=100&_since=2026-01-01
+Authorization: Bearer <token>
+```
+
+Returns Bundle of past notifications.
+
+### `$notify`
+
+Manually trigger a notification (admin only):
+
+```bash
+POST /Patient/123/$notify
+Authorization: Bearer <admin-token>
+
+{
+  "recipients": ["user-123"],
+  "message": "Patient record updated"
+}
+```
+
+## Delivery Guarantees
+
+### Webhook Retry Policy
+
+Failed webhook deliveries are retried with exponential backoff:
+
+1. **Immediate** - First attempt
+2. **+10 seconds** - Second attempt
+3. **+30 seconds** - Third attempt
+4. **+60 seconds** - Fourth attempt
+5. **Dead letter queue** - After 4 failures
+
+### At-Least-Once Delivery
+
+WebSocket and SSE connections may receive duplicate notifications during reconnection. Clients should:
+- Track processed notification IDs
+- Implement idempotent handlers
+- Handle out-of-order delivery
+
+### Exactly-Once (Webhook)
+
+Webhooks include a `X-Notification-Id` header for deduplication:
+
+```http
+POST /webhook HTTP/1.1
+Host: my-app.example.com
+Content-Type: application/fhir+json
+X-Notification-Id: 550e8400-e29b-41d4-a716-446655440000
+X-Subscription-Id: Subscription/my-sub
+
+{...}
+```
+
+## Security & Authorization
+
+### Access Control
+
+Notifications respect user permissions:
+- Users only receive events for resources they can access
+- Search criteria must be authorized
+- Webhook endpoints must use HTTPS in production
+
+### Token-based Auth
+
+WebSocket and SSE endpoints require an access token:
+
+```javascript
+// Query parameter
+const ws = new WebSocket('ws://localhost:8888/notifications/ws?token=ACCESS_TOKEN');
+
+// Header (recommended)
+const eventSource = new EventSource('http://localhost:8888/notifications/events', {
+  headers: {
+    'Authorization': 'Bearer ACCESS_TOKEN'
+  }
+});
+```
+
+### Webhook Security
+
+Secure webhook endpoints with:
+
+1. **Signature verification** - Validate `X-Signature` header
+2. **IP allowlisting** - Restrict to OctoFHIR server IPs
+3. **HTTPS only** - Prevent eavesdropping
+4. **Shared secrets** - Include bearer tokens in `channel.header`
+
+## Performance & Scalability
+
+### Connection Limits
+
+Default limits (configurable in `octofhir.toml`):
+
+- **WebSocket connections**: 10,000 per server
+- **SSE connections**: 5,000 per server
+- **Active subscriptions**: 100,000 per server
+
+### Pub/Sub Architecture
+
+OctoFHIR uses **Redis Pub/Sub** for horizontal scaling:
+
+```toml
+[notifications]
+enabled = true
+redis_url = "redis://localhost:6380"
+max_websocket_connections = 10000
+max_sse_connections = 5000
+heartbeat_interval_seconds = 30
+```
+
+Multiple server instances share notification load through Redis.
+
+### Message Queue
+
+PostgreSQL-backed queue for reliable webhook delivery:
+
+```sql
+-- Notification queue schema
+CREATE TABLE octofhir_notifications.queue (
+  id UUID PRIMARY KEY,
+  subscription_id TEXT NOT NULL,
+  payload JSONB NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL,
+  next_retry_at TIMESTAMPTZ,
+  retry_count INT DEFAULT 0,
+  status TEXT NOT NULL  -- pending, processing, delivered, failed
+);
+```
+
+## Monitoring & Observability
+
+### Metrics
+
+OctoFHIR exposes Prometheus metrics:
+
+```
+# Active WebSocket connections
+octofhir_notifications_websocket_connections 1234
+
+# Total notifications sent
+octofhir_notifications_sent_total{channel="webhook"} 567890
+
+# Failed webhook deliveries
+octofhir_notifications_failed_total{subscription="my-sub"} 5
+
+# Notification processing latency
+octofhir_notifications_latency_seconds{quantile="0.99"} 0.150
+```
+
+### Audit Logging
+
+Notification events are logged to `AuditEvent`:
+
+```json
+{
+  "resourceType": "AuditEvent",
+  "type": {
+    "code": "rest",
+    "display": "RESTful Operation"
+  },
+  "subtype": [
+    {
+      "code": "notification",
+      "display": "Notification Sent"
+    }
+  ],
+  "action": "R",
+  "recorded": "2026-01-03T14:00:00Z",
+  "outcome": "0",
+  "outcomeDesc": "Webhook delivered successfully",
+  "agent": [
+    {
+      "type": {
+        "coding": [{"code": "110153", "display": "Source Role ID"}]
+      },
+      "who": {
+        "identifier": {
+          "value": "octofhir-notifications-service"
+        }
+      }
+    }
+  ],
+  "entity": [
+    {
+      "what": {"reference": "Subscription/my-sub"}
+    },
+    {
+      "what": {"reference": "Patient/123"}
+    }
+  ]
+}
+```
+
+## Configuration
+
+Notification settings in `octofhir.toml`:
+
+```toml
+[notifications]
+enabled = true
+redis_url = "redis://localhost:6380"
+
+[notifications.websocket]
+enabled = true
+max_connections = 10000
+heartbeat_interval_seconds = 30
+max_message_size_bytes = 1048576  # 1MB
+
+[notifications.sse]
+enabled = true
+max_connections = 5000
+heartbeat_interval_seconds = 30
+
+[notifications.webhook]
+enabled = true
+timeout_seconds = 10
+max_retries = 4
+retry_backoff_seconds = [10, 30, 60, 120]
+max_concurrent_deliveries = 100
+
+[notifications.queue]
+worker_count = 4
+poll_interval_seconds = 1
+retention_days = 30
+```
+
+## Examples
+
+### Real-time Dashboard
+
+```javascript
+// Monitor vital signs in real-time
+const eventSource = new EventSource(
+  'http://localhost:8888/Observation/$events?code=85354-9,8867-4&token=' + token
+);
+
+eventSource.addEventListener('observation-created', (event) => {
+  const obs = JSON.parse(event.data);
+  updateVitalSignsChart(obs);
+
+  if (obs.valueQuantity.value > 140) {
+    showAlert('High Blood Pressure!');
+  }
+});
+```
+
+### Care Coordination
+
+```json
+{
+  "resourceType": "Subscription",
+  "reason": "Notify care team of new lab results",
+  "criteria": "Observation?category=laboratory&status=final",
+  "channel": {
+    "type": "rest-hook",
+    "endpoint": "https://care-team.example.com/lab-results",
+    "payload": "application/fhir+json"
+  }
+}
+```
+
+### Mobile App Sync
+
+```javascript
+// WebSocket for real-time sync
+const ws = new WebSocket('ws://localhost:8888/notifications/ws?token=' + token);
+
+ws.onmessage = (event) => {
+  const notification = JSON.parse(event.data);
+
+  // Update local database
+  db.upsert(notification.resourceType, notification.resource);
+
+  // Refresh UI
+  refreshResourceList(notification.resourceType);
+};
+```

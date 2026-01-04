@@ -22,6 +22,7 @@
 //! ```
 
 use std::sync::Arc;
+use arc_swap::ArcSwap;
 use tokio::sync::RwLock;
 use tracing::{debug, info};
 
@@ -104,12 +105,12 @@ impl Default for SearchOptions {
 
 /// A reloadable search configuration wrapper.
 ///
-/// Holds a `SearchConfig` behind a `RwLock` allowing for dynamic updates
-/// to the search parameter registry and configuration options.
+/// Holds a `SearchConfig` behind an `ArcSwap` allowing for lock-free reads
+/// and dynamic updates to the search parameter registry and configuration options.
 #[derive(Clone)]
 pub struct ReloadableSearchConfig {
-    /// Inner config protected by RwLock for safe concurrent access
-    inner: Arc<RwLock<SearchConfig>>,
+    /// Inner config with atomic pointer swap (lock-free reads!)
+    inner: Arc<ArcSwap<SearchConfig>>,
     /// Current options
     options: Arc<RwLock<SearchOptions>>,
     /// Shared query cache (survives reloads)
@@ -149,7 +150,7 @@ impl ReloadableSearchConfig {
         };
 
         Ok(Self {
-            inner: Arc::new(RwLock::new(config)),
+            inner: Arc::new(ArcSwap::from_pointee(config)),
             options: Arc::new(RwLock::new(options)),
             cache,
         })
@@ -171,17 +172,18 @@ impl ReloadableSearchConfig {
         };
 
         Self {
-            inner: Arc::new(RwLock::new(config)),
+            inner: Arc::new(ArcSwap::from_pointee(config)),
             options: Arc::new(RwLock::new(options)),
             cache,
         }
     }
 
-    /// Get a snapshot of the current search configuration.
+    /// Get a snapshot of the current search configuration (LOCK-FREE!).
     ///
-    /// Returns a clone of the current config for use in search operations.
-    pub async fn config(&self) -> SearchConfig {
-        self.inner.read().await.clone()
+    /// Returns an Arc to the current config for use in search operations.
+    /// This operation is extremely fast (single atomic load) and never blocks.
+    pub fn config(&self) -> Arc<SearchConfig> {
+        self.inner.load_full()
     }
 
     /// Reload the search parameter registry from the canonical manager.
@@ -189,20 +191,31 @@ impl ReloadableSearchConfig {
     /// This rebuilds the registry from scratch, useful when:
     /// - FHIR packages are added or updated
     /// - Search configuration changes require a fresh registry
+    ///
+    /// Uses atomic pointer swap - old readers continue with old config, new readers get new config.
+    /// This operation does NOT block concurrent readers!
     pub async fn reload_registry(
         &self,
         canonical_manager: &CanonicalManager,
     ) -> Result<(), LoaderError> {
         info!("Reloading search parameter registry");
 
-        // Load new registry
+        // Load new registry (happens in background, doesn't block readers)
         let new_registry = Arc::new(load_search_parameters(canonical_manager).await?);
 
-        // Update the config with the new registry
-        {
-            let mut config = self.inner.write().await;
-            config.registry = new_registry;
-        }
+        // Get current config
+        let current = self.inner.load_full();
+
+        // Create new config with new registry
+        let new_config = SearchConfig {
+            default_count: current.default_count,
+            max_count: current.max_count,
+            registry: new_registry,
+            cache: self.cache.clone(),
+        };
+
+        // Atomic swap - old readers continue with old config, new readers get new config
+        self.inner.store(Arc::new(new_config));
 
         // Clear query cache on registry reload (cached queries may reference old params)
         if let Some(cache) = &self.cache {
@@ -217,6 +230,7 @@ impl ReloadableSearchConfig {
     /// Update search options (count limits).
     ///
     /// Updates the default and max count settings without reloading the registry.
+    /// Uses atomic swap to update configuration without blocking readers.
     pub async fn update_options(&self, new_options: SearchOptions) {
         info!(
             default_count = new_options.default_count,
@@ -224,16 +238,23 @@ impl ReloadableSearchConfig {
             "Updating search options"
         );
 
+        // Update options
         {
             let mut options = self.options.write().await;
             *options = new_options.clone();
         }
 
-        {
-            let mut config = self.inner.write().await;
-            config.default_count = new_options.default_count;
-            config.max_count = new_options.max_count;
-        }
+        // Get current config and create new one with updated options
+        let current = self.inner.load_full();
+        let new_config = SearchConfig {
+            default_count: new_options.default_count,
+            max_count: new_options.max_count,
+            registry: current.registry.clone(),
+            cache: self.cache.clone(),
+        };
+
+        // Atomic swap
+        self.inner.store(Arc::new(new_config));
     }
 
     /// Get current options.
@@ -286,7 +307,7 @@ mod tests {
 
         let config = ReloadableSearchConfig::with_registry(registry, options);
 
-        let snapshot = config.config().await;
+        let snapshot = config.config();
         assert_eq!(snapshot.default_count, 20);
         assert_eq!(snapshot.max_count, 200);
     }
@@ -307,7 +328,7 @@ mod tests {
             })
             .await;
 
-        let snapshot = config.config().await;
+        let snapshot = config.config();
         assert_eq!(snapshot.default_count, 50);
         assert_eq!(snapshot.max_count, 500);
     }

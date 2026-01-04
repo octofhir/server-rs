@@ -83,8 +83,8 @@ fn remove_meta_from_resource(resource: &mut Value, meta_to_delete: &Value) {
     let meta = resource.get_mut("meta").unwrap();
 
     // Remove profiles
-    if let Some(profiles_to_remove) = meta_to_delete["profile"].as_array() {
-        if let Some(existing) = meta["profile"].as_array() {
+    if let Some(profiles_to_remove) = meta_to_delete["profile"].as_array()
+        && let Some(existing) = meta["profile"].as_array() {
             let filtered: Vec<Value> = existing
                 .iter()
                 .filter(|p| !profiles_to_remove.contains(p))
@@ -92,11 +92,10 @@ fn remove_meta_from_resource(resource: &mut Value, meta_to_delete: &Value) {
                 .collect();
             meta["profile"] = json!(filtered);
         }
-    }
 
     // Remove tags (match by system+code)
-    if let Some(tags_to_remove) = meta_to_delete["tag"].as_array() {
-        if let Some(existing) = meta["tag"].as_array() {
+    if let Some(tags_to_remove) = meta_to_delete["tag"].as_array()
+        && let Some(existing) = meta["tag"].as_array() {
             let filtered: Vec<Value> = existing
                 .iter()
                 .filter(|t| {
@@ -108,11 +107,10 @@ fn remove_meta_from_resource(resource: &mut Value, meta_to_delete: &Value) {
                 .collect();
             meta["tag"] = json!(filtered);
         }
-    }
 
     // Remove security labels (match by system+code)
-    if let Some(security_to_remove) = meta_to_delete["security"].as_array() {
-        if let Some(existing) = meta["security"].as_array() {
+    if let Some(security_to_remove) = meta_to_delete["security"].as_array()
+        && let Some(existing) = meta["security"].as_array() {
             let filtered: Vec<Value> = existing
                 .iter()
                 .filter(|s| {
@@ -124,7 +122,6 @@ fn remove_meta_from_resource(resource: &mut Value, meta_to_delete: &Value) {
                 .collect();
             meta["security"] = json!(filtered);
         }
-    }
 }
 
 /// Extracts meta from a resource and builds a clean meta Value for the response.

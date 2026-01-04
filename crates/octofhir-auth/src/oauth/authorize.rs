@@ -46,7 +46,7 @@ use std::fmt;
 ///   &code_challenge_method=S256
 ///   &aud=https://fhir.example.com/r4
 /// ```
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuthorizationRequest {
     /// Must be "code" for authorization code flow.
     pub response_type: String,
@@ -69,11 +69,15 @@ pub struct AuthorizationRequest {
 
     /// PKCE code challenge.
     /// Base64url-encoded SHA-256 hash of the code verifier.
-    pub code_challenge: String,
+    /// Required for public clients, optional for confidential clients.
+    #[serde(default)]
+    pub code_challenge: Option<String>,
 
     /// PKCE code challenge method.
     /// Must be "S256" (plain is not supported per SMART on FHIR requirements).
-    pub code_challenge_method: String,
+    /// Required for public clients, optional for confidential clients.
+    #[serde(default)]
+    pub code_challenge_method: Option<String>,
 
     /// FHIR server base URL (audience).
     /// Required for SMART on FHIR to identify which FHIR server the
@@ -300,9 +304,9 @@ mod tests {
         assert_eq!(request.state, "abc123xyz");
         assert_eq!(
             request.code_challenge,
-            "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"
+            Some("E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM".to_string())
         );
-        assert_eq!(request.code_challenge_method, "S256");
+        assert_eq!(request.code_challenge_method, Some("S256".to_string()));
         assert_eq!(request.aud, "https://fhir.example.com/r4");
         assert!(request.launch.is_none());
         assert!(request.nonce.is_none());

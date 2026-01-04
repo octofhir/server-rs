@@ -3,12 +3,78 @@ import { notifications } from "@mantine/notifications";
 import { fhirClient } from "@/shared/api/fhirClient";
 import type { Bundle, FhirResource } from "@/shared/api/types";
 
+/** Operation policy configuration */
+export interface OperationPolicy {
+	roles?: string[];
+	scopes?: string[];
+	requireAuth?: boolean;
+	requireFhirUser?: boolean;
+	compartment?: string;
+	script?: string;
+}
+
+/** Path segment - either a static string or a parameter object */
+export type PathSegment = string | { name: string };
+
+/** Inline operation definition */
+export interface InlineOperation {
+	id: string;
+	method: string;
+	path: PathSegment[];
+	public?: boolean;
+	policy?: OperationPolicy;
+}
+
+/** Subscription trigger configuration */
+export interface SubscriptionTrigger {
+	resourceType: string;
+	event: "create" | "update" | "delete";
+	fhirpath?: string;
+}
+
+/** Subscription channel configuration */
+export interface SubscriptionChannel {
+	type: string;
+	endpoint: string;
+}
+
+/** Notification configuration */
+export interface NotificationDef {
+	provider?: string;
+	channel: string | string[];
+	template: string;
+	recipient?: { fhirpath: string };
+	delay?: { relativeTo: string; offset: string };
+}
+
+/** Inline subscription definition */
+export interface InlineSubscription {
+	id: string;
+	trigger: SubscriptionTrigger;
+	channel?: SubscriptionChannel;
+	notification?: NotificationDef;
+}
+
+/** App endpoint configuration */
+export interface AppEndpoint {
+	url: string;
+	timeout?: number;
+}
+
 export interface AppResource extends FhirResource {
 	resourceType: "App";
 	name: string;
 	description?: string;
-	basePath: string;
-	active: boolean;
+	apiVersion?: number;
+	status?: "active" | "inactive" | "suspended";
+	secret?: string;
+	endpoint?: AppEndpoint;
+	operations?: InlineOperation[];
+	subscriptions?: InlineSubscription[];
+	resources?: string;
+	// Deprecated fields for backward compatibility
+	basePath?: string;
+	active?: boolean;
 	authentication?: {
 		type: string;
 		required: boolean;

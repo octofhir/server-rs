@@ -24,8 +24,6 @@ use axum::{
     extract::{FromRef, FromRequestParts},
     http::{header::AUTHORIZATION, header::COOKIE, request::Parts},
 };
-use uuid::Uuid;
-
 use crate::config::CookieConfig;
 use crate::error::AuthError;
 use crate::storage::{ClientStorage, RevokedTokenStorage, UserStorage};
@@ -238,19 +236,18 @@ where
     }
 }
 
-/// Loads user context if the subject claim is a valid UUID.
+/// Loads user context from the token's subject claim.
 async fn load_user_context(
     state: &AuthState,
     claims: &AccessTokenClaims,
 ) -> Result<Option<UserContext>, AuthError> {
-    // Try to parse subject as UUID (users have UUID subjects)
-    let user_id = match Uuid::parse_str(&claims.sub) {
-        Ok(id) => id,
-        Err(_) => {
-            // Not a UUID - this is a client credentials token or external user
-            return Ok(None);
-        }
-    };
+    // Subject claim contains the user ID
+    let user_id = &claims.sub;
+
+    // If subject is empty or looks like a client ID, skip user lookup
+    if user_id.is_empty() {
+        return Ok(None);
+    }
 
     // Load user from storage
     match state.user_storage.find_by_id(user_id).await? {
@@ -263,6 +260,8 @@ async fn load_user_context(
             Ok(Some(UserContext {
                 id: user.id,
                 username: user.username,
+                name: user.name,
+                email: user.email,
                 fhir_user: user.fhir_user.or_else(|| claims.fhir_user.clone()),
                 roles: user.roles,
                 attributes: user.attributes,

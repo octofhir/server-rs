@@ -1,0 +1,16 @@
+{
+  "resourceType": "ValueSet",
+  "id": "app-status",
+  "url": "http://octofhir.io/ValueSet/app-status",
+  "name": "AppStatus",
+  "title": "App Status",
+  "status": "active",
+  "description": "Status values for App resources",
+  "compose": {
+    "include": [
+      {
+        "system": "http://octofhir.io/CodeSystem/app-status"
+      }
+    ]
+  }
+}

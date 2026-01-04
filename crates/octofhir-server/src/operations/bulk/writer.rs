@@ -278,10 +278,10 @@ pub async fn cleanup_expired_exports(
 
         if entry.file_type().await?.is_dir() {
             // Check directory modification time
-            if let Ok(metadata) = entry.metadata().await {
-                if let Ok(modified) = metadata.modified() {
-                    if let Ok(age) = now.duration_since(modified) {
-                        if age > max_age {
+            if let Ok(metadata) = entry.metadata().await
+                && let Ok(modified) = metadata.modified()
+                    && let Ok(age) = now.duration_since(modified)
+                        && age > max_age {
                             tracing::info!(
                                 path = %path.display(),
                                 age_hours = age.as_secs() / 3600,
@@ -290,9 +290,6 @@ pub async fn cleanup_expired_exports(
                             fs::remove_dir_all(&path).await?;
                             cleaned += 1;
                         }
-                    }
-                }
-            }
         }
     }
 

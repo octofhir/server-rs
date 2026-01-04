@@ -111,6 +111,26 @@ impl AppConfig {
         self.auth
             .validate()
             .map_err(|e| format!("auth config error: {e}"))?;
+
+        // Validate backend client config if provided
+        if let Some(ref backend_client) = self.bootstrap.backend_client {
+            if backend_client.client_id.is_empty() {
+                return Err("bootstrap.backend_client.client_id cannot be empty".into());
+            }
+            if backend_client.scopes.is_empty() {
+                return Err("bootstrap.backend_client.scopes cannot be empty".into());
+            }
+            // Enforce system/* scopes for backend services
+            for scope in &backend_client.scopes {
+                if !scope.starts_with("system/") {
+                    return Err(format!(
+                        "Backend client scope '{}' must start with 'system/' (backend services only support system-level access)",
+                        scope
+                    ));
+                }
+            }
+        }
+
         Ok(())
     }
 
@@ -314,6 +334,10 @@ pub struct SearchSettings {
     pub default_count: usize,
     #[serde(default = "default_search_max")]
     pub max_count: usize,
+    /// Query cache capacity for search parameter registry
+    /// Default: 1000
+    #[serde(default = "default_search_cache_capacity")]
+    pub cache_capacity: usize,
 }
 fn default_search_default() -> usize {
     10
@@ -321,11 +345,15 @@ fn default_search_default() -> usize {
 fn default_search_max() -> usize {
     100
 }
+fn default_search_cache_capacity() -> usize {
+    1000
+}
 impl Default for SearchSettings {
     fn default() -> Self {
         Self {
             default_count: default_search_default(),
             max_count: default_search_max(),
+            cache_capacity: default_search_cache_capacity(),
         }
     }
 }
@@ -790,18 +818,19 @@ impl Default for BulkExportConfig {
 /// - OCTOFHIR__BOOTSTRAP__ADMIN_USER__PASSWORD
 /// - OCTOFHIR__BOOTSTRAP__ADMIN_USER__EMAIL
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct BootstrapConfig {
     /// Admin user configuration
     /// If set, creates an admin user on first startup (if not already exists)
     #[serde(default)]
     pub admin_user: Option<AdminUserConfig>,
+
+    /// Backend service client configuration
+    /// If set, creates a confidential OAuth client for backend services on first startup
+    #[serde(default)]
+    pub backend_client: Option<BackendClientConfig>,
 }
 
-impl Default for BootstrapConfig {
-    fn default() -> Self {
-        Self { admin_user: None }
-    }
-}
 
 /// Configuration for bootstrapping an admin user
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -814,6 +843,42 @@ pub struct AdminUserConfig {
     /// Admin email address (optional)
     #[serde(default)]
     pub email: Option<String>,
+    /// FHIR user reference (e.g., "Practitioner/admin")
+    #[serde(default)]
+    pub fhir_user: Option<String>,
+}
+
+/// Configuration for bootstrapping a backend service client
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BackendClientConfig {
+    /// Backend client ID (default: "octofhir-backend")
+    #[serde(default = "default_backend_client_id")]
+    pub client_id: String,
+
+    /// Client secret (optional - will be auto-generated if not provided)
+    /// For security, prefer using OCTOFHIR__BOOTSTRAP__BACKEND_CLIENT__CLIENT_SECRET env var
+    #[serde(default)]
+    pub client_secret: Option<String>,
+
+    /// OAuth scopes (default: ["system/*.cruds"])
+    #[serde(default = "default_backend_scopes")]
+    pub scopes: Vec<String>,
+
+    /// Human-readable name (optional)
+    #[serde(default)]
+    pub name: Option<String>,
+
+    /// Description (optional)
+    #[serde(default)]
+    pub description: Option<String>,
+}
+
+fn default_backend_client_id() -> String {
+    "octofhir-backend".to_string()
+}
+
+fn default_backend_scopes() -> Vec<String> {
+    vec!["system/*.cruds".to_string()]
 }
 
 /// Audit trail configuration
@@ -894,6 +959,7 @@ impl Default for AuditConfig {
 /// When enabled, the SQL on FHIR IG package (`hl7.fhir.uv.sql-on-fhir`) is installed,
 /// which creates the `viewdefinition` table dynamically via FCM.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct SqlOnFhirConfig {
     /// Enable SQL on FHIR feature
     /// When true, installs the SQL on FHIR package and enables ViewDefinition operations
@@ -902,11 +968,6 @@ pub struct SqlOnFhirConfig {
     pub enabled: bool,
 }
 
-impl Default for SqlOnFhirConfig {
-    fn default() -> Self {
-        Self { enabled: false }
-    }
-}
 
 pub mod loader {
     use super::AppConfig;

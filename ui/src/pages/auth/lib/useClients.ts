@@ -12,6 +12,7 @@ export interface ClientResource extends FhirResource {
 	description?: string;
 	grantTypes: string[];
 	redirectUris: string[];
+	postLogoutRedirectUris: string[];
 	scopes: string[];
 	confidential: boolean;
 	active: boolean;

@@ -203,7 +203,7 @@ impl RoleBuilder {
 
     /// Sets whether this is a system role.
     #[must_use]
-    pub fn is_system(mut self, is_system: bool) -> Self {
+    pub fn system(mut self, is_system: bool) -> Self {
         self.role.is_system = is_system;
         self
     }
@@ -438,7 +438,7 @@ mod tests {
             .description("Healthcare practitioner role")
             .add_permission("resource:read")
             .add_permission("resource:create")
-            .is_system(false)
+            .system(false)
             .active(true)
             .build();
 

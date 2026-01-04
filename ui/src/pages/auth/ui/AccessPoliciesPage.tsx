@@ -1,23 +1,25 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import {
-	Stack,
-	Title,
-	Text,
-	Paper,
-	Group,
-	Button,
-	TextInput,
-	Table,
-	Badge,
 	ActionIcon,
+	Badge,
+	Box,
+	Code,
+	Collapse,
+	Divider,
+	Group,
 	Menu,
 	Modal,
 	MultiSelect,
-	Textarea,
-	Divider,
+	NumberInput,
+	Paper,
 	Select,
-	Box,
-	ScrollArea,
+	Stack,
+	Switch,
+	Table,
+	Text,
+	Textarea,
+	TextInput,
+	Title,
 } from "@mantine/core";
 import { useDisclosure, useDebouncedValue } from "@mantine/hooks";
 import { useForm } from "@mantine/form";
@@ -28,11 +30,27 @@ import {
 	IconEdit,
 	IconTrash,
 	IconShieldCheck,
-	IconCirclePlus,
+	IconChevronDown,
+	IconChevronRight,
+	IconCode,
+	IconCheck,
+	IconX,
 } from "@tabler/icons-react";
-import { useAccessPolicies, useCreateAccessPolicy, useUpdateAccessPolicy, useDeleteAccessPolicy, type AccessPolicyResource, type AccessPolicyRule } from "../lib/useAccessPolicies";
+import {
+	useAccessPolicies,
+	useCreateAccessPolicy,
+	useUpdateAccessPolicy,
+	useDeleteAccessPolicy,
+	type AccessPolicyResource,
+	type MatcherElement,
+	type EngineElement,
+	VALID_OPERATIONS,
+	VALID_USER_TYPES,
+} from "../lib/useAccessPolicies";
 import { useClients } from "../lib/useClients";
 import { useResourceTypes } from "@/shared/api/hooks";
+import { Button } from "@/shared/ui/Button/Button";
+import { PolicyScriptEditor } from "@/shared/monaco/PolicyScriptEditor";
 
 export function AccessPoliciesPage() {
 	const [search, setSearch] = useState("");
@@ -67,7 +85,7 @@ export function AccessPoliciesPage() {
 				<div>
 					<Title order={2}>Access Policies</Title>
 					<Text c="dimmed" size="sm">
-						Define fine-grained access control rules
+						Define fine-grained access control rules with matchers and custom scripts
 					</Text>
 				</div>
 				<Button leftSection={<IconPlus size={16} />} onClick={open}>
@@ -90,19 +108,20 @@ export function AccessPoliciesPage() {
 					<Table.Thead>
 						<Table.Tr>
 							<Table.Th>Name</Table.Th>
-							<Table.Th>Roles</Table.Th>
-							<Table.Th>Rules</Table.Th>
+							<Table.Th>Engine</Table.Th>
+							<Table.Th>Priority</Table.Th>
+							<Table.Th>Status</Table.Th>
 							<Table.Th style={{ width: 50 }} />
 						</Table.Tr>
 					</Table.Thead>
 					<Table.Tbody>
 						{isLoading ? (
 							<Table.Tr>
-								<Table.Td colSpan={4}>Loading...</Table.Td>
+								<Table.Td colSpan={5}>Loading...</Table.Td>
 							</Table.Tr>
 						) : policies.length === 0 ? (
 							<Table.Tr>
-								<Table.Td colSpan={4} style={{ textAlign: "center" }}>
+								<Table.Td colSpan={5} style={{ textAlign: "center" }}>
 									No policies found
 								</Table.Td>
 							</Table.Tr>
@@ -123,17 +142,18 @@ export function AccessPoliciesPage() {
 										</Group>
 									</Table.Td>
 									<Table.Td>
-										<Group gap={4}>
-											{policy.roles?.map((role) => (
-												<Badge key={role} size="sm" variant="outline">
-													{role}
-												</Badge>
-											))}
-											{!policy.roles?.length && <Text size="xs" c="dimmed">Any</Text>}
-										</Group>
+										<EngineTypeBadge type={policy.engine?.type} />
 									</Table.Td>
 									<Table.Td>
-										<Text size="sm">{policy.rules?.length || 0} rules</Text>
+										<Text size="sm">{policy.priority ?? 100}</Text>
+									</Table.Td>
+									<Table.Td>
+										<Badge
+											color={policy.active !== false ? "green" : "gray"}
+											variant="light"
+										>
+											{policy.active !== false ? "Active" : "Inactive"}
+										</Badge>
 									</Table.Td>
 									<Table.Td>
 										<Menu position="bottom-end" withinPortal>
@@ -152,7 +172,7 @@ export function AccessPoliciesPage() {
 												<Menu.Item
 													leftSection={<IconTrash size={14} />}
 													color="red"
-													onClick={() => handleDelete(policy.id!)}
+													onClick={() => policy.id && handleDelete(policy.id)}
 												>
 													Delete
 												</Menu.Item>
@@ -166,13 +186,53 @@ export function AccessPoliciesPage() {
 				</Table>
 			</Paper>
 
-			<PolicyModal
-				opened={opened}
-				onClose={handleClose}
-				policy={editingPolicy}
-			/>
+			<PolicyModal opened={opened} onClose={handleClose} policy={editingPolicy} />
 		</Stack>
 	);
+}
+
+function EngineTypeBadge({ type }: { type?: string }) {
+	switch (type) {
+		case "allow":
+			return (
+				<Badge color="green" variant="light" leftSection={<IconCheck size={12} />}>
+					Allow
+				</Badge>
+			);
+		case "deny":
+			return (
+				<Badge color="red" variant="light" leftSection={<IconX size={12} />}>
+					Deny
+				</Badge>
+			);
+		case "quickjs":
+			return (
+				<Badge color="blue" variant="light" leftSection={<IconCode size={12} />}>
+					QuickJS Script
+				</Badge>
+			);
+		default:
+			return <Badge color="gray">Unknown</Badge>;
+	}
+}
+
+interface PolicyFormValues {
+	name: string;
+	description: string;
+	active: boolean;
+	priority: number;
+	engineType: "allow" | "deny" | "quickjs";
+	script: string;
+	denyMessage: string;
+	// Matcher fields
+	clients: string[];
+	roles: string[];
+	userTypes: string[];
+	resourceTypes: string[];
+	operations: string[];
+	operationIds: string[];
+	paths: string[];
+	sourceIps: string[];
 }
 
 function PolicyModal({
@@ -188,47 +248,72 @@ function PolicyModal({
 	const update = useUpdateAccessPolicy();
 	const { data: clientsData } = useClients({ count: 100 });
 	const { data: resourceTypes } = useResourceTypes();
-	
+	const [matcherExpanded, { toggle: toggleMatcher }] = useDisclosure(false);
+
 	const isEditing = !!policy;
 
-	const form = useForm({
+	const form = useForm<PolicyFormValues>({
 		initialValues: {
 			name: "",
 			description: "",
-			roles: [] as string[],
-			clients: [] as string[],
-			rules: [] as AccessPolicyRule[],
+			active: true,
+			priority: 100,
+			engineType: "allow",
+			script: "",
+			denyMessage: "",
+			clients: [],
+			roles: [],
+			userTypes: [],
+			resourceTypes: [],
+			operations: [],
+			operationIds: [],
+			paths: [],
+			sourceIps: [],
 		},
 		validate: {
 			name: (value) => (value.length < 3 ? "Name must be at least 3 characters" : null),
+			script: (value, values) =>
+				values.engineType === "quickjs" && !value.trim()
+					? "Script is required for QuickJS engine"
+					: null,
+			priority: (value) =>
+				value < 0 || value > 1000 ? "Priority must be between 0 and 1000" : null,
 		},
 	});
 
-	useMemo(() => {
+	// Reset form when policy changes
+	// biome-ignore lint/correctness/useExhaustiveDependencies: form methods are stable
+	useEffect(() => {
 		if (policy) {
 			form.setValues({
 				name: policy.name,
 				description: policy.description || "",
-				roles: policy.roles || [],
-				clients: policy.clients || [],
-				rules: policy.rules || [],
+				active: policy.active !== false,
+				priority: policy.priority ?? 100,
+				engineType: policy.engine?.type || "allow",
+				script: policy.engine?.script || "",
+				denyMessage: policy.denyMessage || "",
+				clients: policy.matcher?.clients || [],
+				roles: policy.matcher?.roles || [],
+				userTypes: policy.matcher?.userTypes || [],
+				resourceTypes: policy.matcher?.resourceTypes || [],
+				operations: policy.matcher?.operations || [],
+				operationIds: policy.matcher?.operationIds || [],
+				paths: policy.matcher?.paths || [],
+				sourceIps: policy.matcher?.sourceIps || [],
 			});
 		} else {
 			form.reset();
-			// Add one default rule
-			form.insertListItem("rules", {
-				resourceTypes: ["*"],
-				operations: ["read"],
-				allow: true,
-			});
 		}
 	}, [policy]);
 
 	const clientOptions = useMemo(() => {
-		return clientsData?.entry?.map(e => ({
-			label: e.resource.name,
-			value: e.resource.clientId
-		})) || [];
+		return (
+			clientsData?.entry?.map((e) => ({
+				label: e.resource.name,
+				value: e.resource.clientId,
+			})) || []
+		);
 	}, [clientsData]);
 
 	const typeOptions = useMemo(() => {
@@ -236,23 +321,65 @@ function PolicyModal({
 		return ["*", ...types];
 	}, [resourceTypes]);
 
-	const handleSubmit = async (values: typeof form.values) => {
-		const payload: any = {
-			resourceType: "AccessPolicy",
-			...values,
+	const operationOptions = VALID_OPERATIONS.map((op) => ({ label: op, value: op }));
+	const userTypeOptions = VALID_USER_TYPES.map((ut) => ({ label: ut, value: ut }));
+
+	const handleSubmit = async (values: PolicyFormValues) => {
+		// Build matcher object (only include non-empty arrays)
+		const matcher: MatcherElement = {};
+		if (values.clients.length > 0) matcher.clients = values.clients;
+		if (values.roles.length > 0) matcher.roles = values.roles;
+		if (values.userTypes.length > 0) matcher.userTypes = values.userTypes;
+		if (values.resourceTypes.length > 0) matcher.resourceTypes = values.resourceTypes;
+		if (values.operations.length > 0) matcher.operations = values.operations;
+		if (values.operationIds.length > 0) matcher.operationIds = values.operationIds;
+		if (values.paths.length > 0) matcher.paths = values.paths;
+		if (values.sourceIps.length > 0) matcher.sourceIps = values.sourceIps;
+
+		// Build engine object
+		const engine: EngineElement = {
+			type: values.engineType,
 		};
+		if (values.engineType === "quickjs") {
+			engine.script = values.script;
+		}
+
+		const payload: Partial<AccessPolicyResource> = {
+			resourceType: "AccessPolicy",
+			name: values.name,
+			description: values.description || undefined,
+			active: values.active,
+			priority: values.priority,
+			engine,
+			denyMessage: values.denyMessage || undefined,
+		};
+
+		// Only include matcher if it has any fields
+		if (Object.keys(matcher).length > 0) {
+			payload.matcher = matcher;
+		}
 
 		try {
 			if (isEditing && policy?.id) {
-				await update.mutateAsync({ ...payload, id: policy.id });
+				await update.mutateAsync({ ...payload, id: policy.id } as AccessPolicyResource);
 			} else {
 				await create.mutateAsync(payload);
 			}
 			onClose();
-		} catch (e) {
+		} catch {
 			// Handled by hook
 		}
 	};
+
+	const hasMatcherValues =
+		form.values.clients.length > 0 ||
+		form.values.roles.length > 0 ||
+		form.values.userTypes.length > 0 ||
+		form.values.resourceTypes.length > 0 ||
+		form.values.operations.length > 0 ||
+		form.values.operationIds.length > 0 ||
+		form.values.paths.length > 0 ||
+		form.values.sourceIps.length > 0;
 
 	return (
 		<Modal
@@ -263,106 +390,197 @@ function PolicyModal({
 		>
 			<form onSubmit={form.onSubmit(handleSubmit)}>
 				<Stack gap="md">
-					<TextInput
-						label="Policy Name"
-						required
-						{...form.getInputProps("name")}
-					/>
-
-					<Textarea
-						label="Description"
-						{...form.getInputProps("description")}
-					/>
-
+					{/* Basic Info */}
 					<Group grow>
-						<MultiSelect
-							label="Target Roles"
-							placeholder="e.g. admin, practitioner"
-							data={["admin", "practitioner", "patient"]}
-							searchable
-							creatable
-							getCreateLabel={(query) => `+ Add ${query}`}
-							onCreate={(query) => query}
-							{...form.getInputProps("roles")}
-						/>
-						<MultiSelect
-							label="Target Clients"
-							placeholder="Select clients"
-							data={clientOptions}
-							searchable
-							{...form.getInputProps("clients")}
+						<TextInput label="Policy Name" required {...form.getInputProps("name")} />
+						<NumberInput
+							label="Priority"
+							description="Lower = evaluated first (0-1000)"
+							min={0}
+							max={1000}
+							{...form.getInputProps("priority")}
 						/>
 					</Group>
 
-					<Divider label="Rules" labelPosition="center" />
+					<Textarea
+						label="Description"
+						placeholder="What does this policy do?"
+						{...form.getInputProps("description")}
+					/>
 
-					<Box>
-						<Stack gap="sm">
-							{form.values.rules.map((_, index) => (
-								<Paper key={index} withBorder p="sm" style={{ backgroundColor: "var(--app-surface-2)" }}>
-									<Stack gap="xs">
-										<Group justify="space-between">
-											<Text size="xs" fw={700}>Rule #{index + 1}</Text>
-											<ActionIcon 
-												variant="subtle" 
-												color="red" 
-												size="sm"
-												onClick={() => form.removeListItem("rules", index)}
-												disabled={form.values.rules.length === 1}
-											>
-												<IconTrash size={14} />
-											</ActionIcon>
-										</Group>
-										
-										<Group grow align="flex-start">
-											<MultiSelect
-												label="Resource Types"
-												data={typeOptions}
-												searchable
-												{...form.getInputProps(`rules.${index}.resourceTypes`)}
-											/>
-											<MultiSelect
-												label="Operations"
-												data={["*", "read", "write", "create", "update", "delete", "search", "history", "$operation"]}
-												searchable
-												{...form.getInputProps(`rules.${index}.operations`)}
-											/>
-										</Group>
-										
-										<Group grow align="flex-end">
-											<Select
-												label="Effect"
-												data={[
-													{ label: "Allow", value: "true" },
-													{ label: "Deny", value: "false" },
-												]}
-												value={String(form.values.rules[index].allow)}
-												onChange={(val) => form.setFieldValue(`rules.${index}.allow`, val === "true")}
-											/>
-											<TextInput
-												label="Condition (FHIRPath)"
-												placeholder="e.g. %user.id = %resource.patient.id"
-												{...form.getInputProps(`rules.${index}.condition`)}
-											/>
-										</Group>
-									</Stack>
-								</Paper>
-							))}
+					<Switch
+						label="Active"
+						description="Inactive policies are not evaluated"
+						{...form.getInputProps("active", { type: "checkbox" })}
+					/>
+
+					<Divider label="Engine" labelPosition="center" />
+
+					{/* Engine Configuration */}
+					<Select
+						label="Engine Type"
+						description="How access decisions are made"
+						data={[
+							{ label: "Allow - Always allow access", value: "allow" },
+							{ label: "Deny - Always deny access", value: "deny" },
+							{ label: "QuickJS - Custom JavaScript policy", value: "quickjs" },
+						]}
+						{...form.getInputProps("engineType")}
+					/>
+
+					{form.values.engineType === "quickjs" && (
+						<Box>
+							<Text size="sm" fw={500} mb={4}>
+								Policy Script <span style={{ color: "var(--mantine-color-red-6)" }}>*</span>
+							</Text>
+							<Text size="xs" c="dimmed" mb="xs">
+								Write JavaScript to evaluate access. Use{" "}
+								<Code>allow()</Code>, <Code>deny(reason)</Code>,{" "}
+								<Code>abstain()</Code>. Press Ctrl+Space for autocomplete.
+							</Text>
+							<Paper withBorder style={{ overflow: "hidden", borderRadius: 8 }}>
+								<PolicyScriptEditor
+									value={form.values.script}
+									onChange={(val) => form.setFieldValue("script", val)}
+									height={200}
+								/>
+							</Paper>
+							{form.errors.script && (
+								<Text size="xs" c="red" mt={4}>
+									{form.errors.script}
+								</Text>
+							)}
+						</Box>
+					)}
+
+					{(form.values.engineType === "deny" || form.values.engineType === "quickjs") && (
+						<TextInput
+							label="Deny Message"
+							placeholder="Custom message when access is denied"
+							{...form.getInputProps("denyMessage")}
+						/>
+					)}
+
+					<Divider
+						label={
+							<Group
+								gap="xs"
+								style={{ cursor: "pointer" }}
+								onClick={toggleMatcher}
+							>
+								{matcherExpanded ? (
+									<IconChevronDown size={16} />
+								) : (
+									<IconChevronRight size={16} />
+								)}
+								<span>
+									Matcher{" "}
+									{hasMatcherValues && (
+										<Badge size="xs" variant="light" ml={4}>
+											Configured
+										</Badge>
+									)}
+								</span>
+							</Group>
+						}
+						labelPosition="center"
+					/>
+
+					<Text size="xs" c="dimmed">
+						Define when this policy applies. All specified conditions must match (AND logic).
+						Leave empty to match all requests.
+					</Text>
+
+					<Collapse in={matcherExpanded}>
+						<Stack gap="md" pt="xs">
+							<Group grow align="flex-start">
+								<MultiSelect
+									label="Roles"
+									description="User must have any of these roles"
+									placeholder="e.g. admin, practitioner"
+									data={["admin", "practitioner", "patient", "nurse"]}
+									searchable
+									creatable
+									getCreateLabel={(query) => `+ Add "${query}"`}
+									onCreate={(query) => query}
+									{...form.getInputProps("roles")}
+								/>
+								<MultiSelect
+									label="Clients"
+									description="OAuth client IDs (supports * wildcard)"
+									placeholder="Select or add clients"
+									data={clientOptions}
+									searchable
+									creatable
+									getCreateLabel={(query) => `+ Add "${query}"`}
+									onCreate={(query) => query}
+									{...form.getInputProps("clients")}
+								/>
+							</Group>
+
+							<Group grow align="flex-start">
+								<MultiSelect
+									label="User Types"
+									description="User's FHIR resource type"
+									data={userTypeOptions}
+									searchable
+									{...form.getInputProps("userTypes")}
+								/>
+								<MultiSelect
+									label="Resource Types"
+									description="Target FHIR resource types"
+									data={typeOptions}
+									searchable
+									{...form.getInputProps("resourceTypes")}
+								/>
+							</Group>
+
+							<MultiSelect
+								label="Operations"
+								description="FHIR operations to match"
+								data={operationOptions}
+								searchable
+								{...form.getInputProps("operations")}
+							/>
+
+							<Group grow align="flex-start">
+								<MultiSelect
+									label="Operation IDs"
+									description="Specific operation IDs (e.g. fhir.read, graphql.query)"
+									placeholder="Add operation ID"
+									data={form.values.operationIds}
+									searchable
+									creatable
+									getCreateLabel={(query) => `+ Add "${query}"`}
+									onCreate={(query) => query}
+									{...form.getInputProps("operationIds")}
+								/>
+								<MultiSelect
+									label="Paths"
+									description="Request path patterns (glob syntax)"
+									placeholder="e.g. /Patient/*, /admin/*"
+									data={form.values.paths}
+									searchable
+									creatable
+									getCreateLabel={(query) => `+ Add "${query}"`}
+									onCreate={(query) => query}
+									{...form.getInputProps("paths")}
+								/>
+							</Group>
+
+							<MultiSelect
+								label="Source IPs"
+								description="Client IP addresses in CIDR notation"
+								placeholder="e.g. 192.168.1.0/24, 10.0.0.0/8"
+								data={form.values.sourceIps}
+								searchable
+								creatable
+								getCreateLabel={(query) => `+ Add "${query}"`}
+								onCreate={(query) => query}
+								{...form.getInputProps("sourceIps")}
+							/>
 						</Stack>
-						
-						<Button 
-							variant="subtle" 
-							leftSection={<IconCirclePlus size={16} />} 
-							mt="sm"
-							onClick={() => form.insertListItem("rules", {
-								resourceTypes: ["*"],
-								operations: ["read"],
-								allow: true,
-							})}
-						>
-							Add Rule
-						</Button>
-					</Box>
+					</Collapse>
 
 					<Group justify="flex-end" mt="md">
 						<Button variant="light" onClick={onClose}>

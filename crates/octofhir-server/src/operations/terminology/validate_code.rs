@@ -200,9 +200,9 @@ impl ValidateCodeOperation {
             let concept_display = found.get("display").and_then(|v| v.as_str());
 
             // If display was provided, validate it matches
-            if let Some(expected_display) = display {
-                if let Some(actual_display) = concept_display {
-                    if actual_display != expected_display {
+            if let Some(expected_display) = display
+                && let Some(actual_display) = concept_display
+                    && actual_display != expected_display {
                         return Ok(ValidateCodeResult {
                             result: true, // Code is valid, but display doesn't match
                             message: Some(format!(
@@ -212,8 +212,6 @@ impl ValidateCodeOperation {
                             display: Some(actual_display.to_string()),
                         });
                     }
-                }
-            }
 
             Ok(ValidateCodeResult::valid(
                 concept_display.map(String::from),
@@ -292,16 +290,15 @@ impl ValidateCodeOperation {
 
             if entry_code == code {
                 // Check system if provided
-                if let Some(expected_system) = system {
-                    if entry_system != Some(expected_system) {
+                if let Some(expected_system) = system
+                    && entry_system != Some(expected_system) {
                         continue; // System doesn't match, keep looking
                     }
-                }
 
                 // Found matching code (and system if provided)
-                if let Some(expected_display) = display {
-                    if let Some(actual_display) = entry_display {
-                        if actual_display != expected_display {
+                if let Some(expected_display) = display
+                    && let Some(actual_display) = entry_display
+                        && actual_display != expected_display {
                             return Ok(ValidateCodeResult {
                                 result: true,
                                 message: Some(format!(
@@ -311,8 +308,6 @@ impl ValidateCodeOperation {
                                 display: Some(actual_display.to_string()),
                             });
                         }
-                    }
-                }
 
                 return Ok(ValidateCodeResult::valid(
                     entry_display.map(String::from),
@@ -369,11 +364,10 @@ impl ValidateCodeOperation {
                 let include_system = include.get("system").and_then(|v| v.as_str());
 
                 // If system is specified in params, it must match include's system
-                if let Some(expected_system) = system {
-                    if include_system != Some(expected_system) {
+                if let Some(expected_system) = system
+                    && include_system != Some(expected_system) {
                         continue;
                     }
-                }
 
                 // Check explicit concept list
                 if let Some(concepts) = include.get("concept").and_then(|v| v.as_array()) {
@@ -383,9 +377,9 @@ impl ValidateCodeOperation {
 
                         if concept_code == Some(code) {
                             // Found the code
-                            if let Some(expected_display) = display {
-                                if let Some(actual_display) = concept_display {
-                                    if actual_display != expected_display {
+                            if let Some(expected_display) = display
+                                && let Some(actual_display) = concept_display
+                                    && actual_display != expected_display {
                                         return Ok(ValidateCodeResult {
                                             result: true,
                                             message: Some(format!(
@@ -395,8 +389,6 @@ impl ValidateCodeOperation {
                                             display: Some(actual_display.to_string()),
                                         });
                                     }
-                                }
-                            }
                             return Ok(ValidateCodeResult::valid(
                                 concept_display.map(String::from),
                             ));
@@ -420,9 +412,9 @@ impl ValidateCodeOperation {
                                     let concept_display =
                                         found.get("display").and_then(|v| v.as_str());
 
-                                    if let Some(expected_display) = display {
-                                        if let Some(actual_display) = concept_display {
-                                            if actual_display != expected_display {
+                                    if let Some(expected_display) = display
+                                        && let Some(actual_display) = concept_display
+                                            && actual_display != expected_display {
                                                 return Ok(ValidateCodeResult {
                                                     result: true,
                                                     message: Some(format!(
@@ -432,8 +424,6 @@ impl ValidateCodeOperation {
                                                     display: Some(actual_display.to_string()),
                                                 });
                                             }
-                                        }
-                                    }
                                     return Ok(ValidateCodeResult::valid(
                                         concept_display.map(String::from),
                                     ));
@@ -468,11 +458,10 @@ impl ValidateCodeOperation {
             }
 
             // Check nested concepts
-            if let Some(children) = concept.get("concept").and_then(|v| v.as_array()) {
-                if let Some(found) = self.find_concept_in_hierarchy(children, code) {
+            if let Some(children) = concept.get("concept").and_then(|v| v.as_array())
+                && let Some(found) = self.find_concept_in_hierarchy(children, code) {
                     return Some(found);
                 }
-            }
         }
         None
     }

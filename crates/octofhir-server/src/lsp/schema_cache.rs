@@ -278,7 +278,7 @@ impl SchemaCache {
 
             self.columns
                 .entry(Self::column_key(&schema, &table_name))
-                .or_insert_with(Vec::new)
+                .or_default()
                 .push(column);
         }
 
@@ -1544,7 +1544,7 @@ impl SchemaCache {
         self.tables.iter().any(|r| {
             r.value().name == table_name
                 && r.value().is_fhir_table
-                && schema.as_deref().map_or(true, |s| r.value().schema == s)
+                && schema.is_none_or(|s| r.value().schema == s)
         })
     }
 
@@ -1556,7 +1556,7 @@ impl SchemaCache {
 
         self.tables.iter().find_map(|r| {
             if r.value().name == table_name
-                && schema.as_deref().map_or(true, |s| r.value().schema == s)
+                && schema.is_none_or(|s| r.value().schema == s)
             {
                 r.value().fhir_resource_type.clone()
             } else {
@@ -1570,9 +1570,9 @@ impl SchemaCache {
     }
 
     fn split_qualified_table(table_name: &str) -> Option<(&str, &str)> {
-        let mut parts = table_name.splitn(2, '.');
-        let schema = parts.next()?;
-        let table = parts.next()?;
+        let (schema, table) = table_name.split_once('.')?;
+        
+        
         if schema.is_empty() || table.is_empty() {
             return None;
         }

@@ -172,7 +172,7 @@ impl TokenService {
     }
 
     /// Helper to load fhir_user from user storage if available.
-    async fn load_fhir_user(&self, user_id: Option<Uuid>) -> Option<String> {
+    async fn load_fhir_user(&self, user_id: Option<&str>) -> Option<String> {
         let user_id = user_id?;
         let user_storage = self.user_storage.as_ref()?;
 
@@ -277,16 +277,25 @@ impl TokenService {
             ));
         }
 
-        // 7. Verify PKCE
-        let challenge = PkceChallenge::new(session.code_challenge.clone())
-            .map_err(|e| AuthError::invalid_grant(format!("Invalid PKCE challenge: {}", e)))?;
+        // 7. Verify PKCE if present in session
+        if let Some(ref challenge_str) = session.code_challenge {
+            let challenge = PkceChallenge::new(challenge_str.clone())
+                .map_err(|e| AuthError::invalid_grant(format!("Invalid PKCE challenge: {}", e)))?;
 
-        let verifier = PkceVerifier::new(code_verifier.clone())
-            .map_err(|e| AuthError::invalid_grant(format!("Invalid PKCE verifier: {}", e)))?;
+            let verifier = PkceVerifier::new(code_verifier.clone())
+                .map_err(|e| AuthError::invalid_grant(format!("Invalid PKCE verifier: {}", e)))?;
 
-        challenge
-            .verify(&verifier)
-            .map_err(|_| AuthError::PkceVerificationFailed)?;
+            challenge
+                .verify(&verifier)
+                .map_err(|_| AuthError::PkceVerificationFailed)?;
+        } else {
+            // No PKCE in session (confidential client), code_verifier should not be provided
+            if !code_verifier.is_empty() {
+                return Err(AuthError::invalid_grant(
+                    "code_verifier provided but session was created without PKCE",
+                ));
+            }
+        }
 
         // 8. Generate tokens
         self.generate_tokens(&session, client).await
@@ -312,12 +321,12 @@ impl TokenService {
             .unwrap_or(self.config.refresh_token_lifetime);
 
         // Load fhir_user from user storage if available
-        let fhir_user = self.load_fhir_user(session.user_id).await;
+        let fhir_user = self.load_fhir_user(session.user_id.as_deref()).await;
 
         // Build access token claims
         let access_claims = AccessTokenClaims {
             iss: self.config.issuer.clone(),
-            sub: session.user_id.map(|u| u.to_string()).unwrap_or_default(),
+            sub: session.user_id.clone().unwrap_or_default(),
             aud: vec![session.aud.clone()],
             exp: (now + access_lifetime).unix_timestamp(),
             iat: now.unix_timestamp(),
@@ -407,7 +416,7 @@ impl TokenService {
             id: Uuid::new_v4(),
             token_hash,
             client_id: client.client_id.clone(),
-            user_id: session.user_id,
+            user_id: session.user_id.clone(),
             scope: session.scope.clone(),
             launch_context: session.launch_context.clone(),
             created_at: now,
@@ -433,7 +442,7 @@ impl TokenService {
 
         let claims = IdTokenClaims {
             iss: self.config.issuer.clone(),
-            sub: session.user_id.map(|u| u.to_string()).unwrap_or_default(),
+            sub: session.user_id.clone().unwrap_or_default(),
             aud: client.client_id.clone(),
             exp: (now + self.config.id_token_lifetime).unix_timestamp(),
             iat: now.unix_timestamp(),
@@ -646,14 +655,14 @@ impl TokenService {
             .unwrap_or(self.config.access_token_lifetime);
 
         // Load fhir_user from user storage if available
-        let fhir_user = self.load_fhir_user(stored_token.user_id).await;
+        let fhir_user = self.load_fhir_user(stored_token.user_id.as_deref()).await;
 
         // Build access token claims with preserved launch context
         let access_claims = AccessTokenClaims {
             iss: self.config.issuer.clone(),
             sub: stored_token
                 .user_id
-                .map(|u| u.to_string())
+                .clone()
                 .unwrap_or_else(|| stored_token.client_id.clone()),
             aud: vec![self.config.audience.clone()],
             exp: (now + access_lifetime).unix_timestamp(),
@@ -1214,7 +1223,7 @@ impl TokenService {
     /// Returns an error if storing the refresh token fails.
     pub async fn issue_refresh_token_for_user(
         &self,
-        user_id: Uuid,
+        user_id: &str,
         client: &Client,
         scope: &str,
     ) -> AuthResult<String> {
@@ -1235,7 +1244,7 @@ impl TokenService {
             id: Uuid::new_v4(),
             token_hash,
             client_id: client.client_id.clone(),
-            user_id: Some(user_id),
+            user_id: Some(user_id.to_string()),
             scope: scope.to_string(),
             launch_context: None,
             created_at: now,
@@ -1316,11 +1325,11 @@ mod tests {
             Ok(session.clone())
         }
 
-        async fn update_user(&self, id: Uuid, user_id: Uuid) -> AuthResult<()> {
+        async fn update_user(&self, id: Uuid, user_id: &str) -> AuthResult<()> {
             let mut sessions = self.sessions.write().unwrap();
             for session in sessions.values_mut() {
                 if session.id == id {
-                    session.user_id = Some(user_id);
+                    session.user_id = Some(user_id.to_string());
                     return Ok(());
                 }
             }
@@ -1414,11 +1423,11 @@ mod tests {
             Ok(count)
         }
 
-        async fn revoke_by_user(&self, user_id: Uuid) -> AuthResult<u64> {
+        async fn revoke_by_user(&self, user_id: &str) -> AuthResult<u64> {
             let mut tokens = self.tokens.write().unwrap();
             let mut count = 0u64;
             for token in tokens.values_mut() {
-                if token.user_id == Some(user_id) && token.revoked_at.is_none() {
+                if token.user_id.as_deref() == Some(user_id) && token.revoked_at.is_none() {
                     token.revoked_at = Some(OffsetDateTime::now_utc());
                     count += 1;
                 }
@@ -1433,13 +1442,13 @@ mod tests {
             Ok((before - tokens.len()) as u64)
         }
 
-        async fn list_by_user(&self, user_id: Uuid) -> AuthResult<Vec<RefreshToken>> {
+        async fn list_by_user(&self, user_id: &str) -> AuthResult<Vec<RefreshToken>> {
             Ok(self
                 .tokens
                 .read()
                 .unwrap()
                 .values()
-                .filter(|t| t.user_id == Some(user_id) && t.is_valid())
+                .filter(|t| t.user_id.as_deref() == Some(user_id) && t.is_valid())
                 .cloned()
                 .collect())
         }
@@ -1489,6 +1498,7 @@ mod tests {
             description: None,
             grant_types: vec![GrantType::AuthorizationCode],
             redirect_uris: vec!["https://app.example.com/callback".to_string()],
+            post_logout_redirect_uris: vec![],
             scopes: vec![],
             confidential: false,
             active: true,
@@ -1513,9 +1523,9 @@ mod tests {
             redirect_uri: "https://app.example.com/callback".to_string(),
             scope: "openid patient/*.read".to_string(),
             state: "test-state".to_string(),
-            code_challenge: challenge.into_inner(),
-            code_challenge_method: "S256".to_string(),
-            user_id: Some(Uuid::new_v4()),
+            code_challenge: Some(challenge.into_inner()),
+            code_challenge_method: Some("S256".to_string()),
+            user_id: Some(Uuid::new_v4().to_string()),
             launch_context: None,
             nonce: Some("test-nonce".to_string()),
             aud: "https://fhir.example.com/r4".to_string(),
@@ -1867,6 +1877,7 @@ mod tests {
             description: None,
             grant_types: vec![GrantType::AuthorizationCode, GrantType::RefreshToken],
             redirect_uris: vec!["https://app.example.com/callback".to_string()],
+            post_logout_redirect_uris: vec![],
             scopes: vec![],
             confidential: false,
             active: true,
@@ -1889,7 +1900,7 @@ mod tests {
             id: Uuid::new_v4(),
             token_hash: RefreshToken::hash_token(token_value),
             client_id: client_id.to_string(),
-            user_id: Some(Uuid::new_v4()),
+            user_id: Some(Uuid::new_v4().to_string()),
             scope: scope.to_string(),
             launch_context: None,
             created_at: now,
@@ -2025,7 +2036,7 @@ mod tests {
             id: Uuid::new_v4(),
             token_hash: RefreshToken::hash_token(token_value),
             client_id: client.client_id.clone(),
-            user_id: Some(Uuid::new_v4()),
+            user_id: Some(Uuid::new_v4().to_string()),
             scope: "openid".to_string(),
             launch_context: None,
             created_at: now - Duration::days(100),
@@ -2065,7 +2076,7 @@ mod tests {
             id: Uuid::new_v4(),
             token_hash: RefreshToken::hash_token(token_value),
             client_id: client.client_id.clone(),
-            user_id: Some(Uuid::new_v4()),
+            user_id: Some(Uuid::new_v4().to_string()),
             scope: "openid".to_string(),
             launch_context: None,
             created_at: now,
@@ -2197,7 +2208,7 @@ mod tests {
             id: Uuid::new_v4(),
             token_hash: RefreshToken::hash_token(token_value),
             client_id: client.client_id.clone(),
-            user_id: Some(Uuid::new_v4()),
+            user_id: Some(Uuid::new_v4().to_string()),
             scope: "openid launch/patient patient/*.read".to_string(),
             launch_context: Some(LaunchContext {
                 patient: Some("Patient/123".to_string()),
@@ -2742,7 +2753,7 @@ mod tests {
             id: Uuid::new_v4(),
             token_hash: RefreshToken::hash_token(token_value),
             client_id: client.client_id.clone(),
-            user_id: Some(Uuid::new_v4()),
+            user_id: Some(Uuid::new_v4().to_string()),
             scope: "openid".to_string(),
             launch_context: None,
             created_at: now - Duration::days(100),
@@ -2772,7 +2783,7 @@ mod tests {
             id: Uuid::new_v4(),
             token_hash: RefreshToken::hash_token(token_value),
             client_id: client.client_id.clone(),
-            user_id: Some(Uuid::new_v4()),
+            user_id: Some(Uuid::new_v4().to_string()),
             scope: "openid".to_string(),
             launch_context: None,
             created_at: now,

@@ -10,14 +10,16 @@ use axum::{
     middleware,
     routing::{get, post},
 };
+use octofhir_auth::extractors::BasicAuthState;
 use octofhir_auth::middleware::AuthState;
 use octofhir_auth::policy::{
     PolicyCache, PolicyChangeNotifier, PolicyEvaluator, PolicyEvaluatorConfig, PolicyReloadService,
     ReloadConfig,
 };
+use octofhir_auth::storage::BasicAuthStorage;
 use octofhir_auth::token::jwt::{JwtService, SigningAlgorithm, SigningKeyPair};
 use octofhir_auth_postgres::{
-    ArcClientStorage, ArcRevokedTokenStorage, ArcUserStorage, PolicyListener,
+    ArcBasicAuthStorage, ArcClientStorage, ArcRevokedTokenStorage, ArcUserStorage, PolicyListener,
     PostgresPolicyStorageAdapter,
 };
 
@@ -45,7 +47,7 @@ use octofhir_db_postgres::PostgresConfig;
 use octofhir_db_postgres::PostgresStorage;
 use octofhir_fhir_model::terminology::TerminologyProvider;
 use octofhir_fhirschema::TerminologyProviderAdapter;
-use octofhir_search::{HybridTerminologyProvider, SearchConfig as EngineSearchConfig};
+use octofhir_search::{HybridTerminologyProvider, ReloadableSearchConfig};
 use octofhir_storage::DynStorage;
 
 /// Shared model provider type for FHIRPath evaluation
@@ -69,7 +71,7 @@ impl std::ops::Deref for AppState {
 /// Inner application state containing all shared server resources.
 pub struct AppStateInner {
     pub storage: DynStorage,
-    pub search_cfg: EngineSearchConfig,
+    pub search_config: ReloadableSearchConfig,
     pub fhir_version: String,
     /// Base URL for the server, used in links and responses
     pub base_url: String,
@@ -121,6 +123,12 @@ pub struct AppStateInner {
     pub config_manager: Option<Arc<octofhir_config::ConfigurationManager>>,
     /// Audit service for creating FHIR AuditEvent resources
     pub audit_service: Arc<AuditService>,
+    /// Basic authentication storage (Client and App authentication via HTTP Basic Auth)
+    pub basic_auth_storage: Arc<dyn BasicAuthStorage>,
+    /// Notification queue storage (optional, for notification operations)
+    pub notification_queue: Option<Arc<dyn octofhir_notifications::NotificationQueueStorage>>,
+    /// PostgreSQL package store for FHIR Implementation Guide resources
+    pub package_store: Arc<octofhir_db_postgres::PostgresPackageStore>,
 }
 
 // =============================================================================
@@ -176,6 +184,12 @@ impl FromRef<AppState> for crate::admin::ConfigState {
                 .clone()
                 .expect("ConfigurationManager not initialized in AppState"),
         )
+    }
+}
+
+impl FromRef<AppState> for BasicAuthState {
+    fn from_ref(state: &AppState) -> Self {
+        BasicAuthState::new(state.basic_auth_storage.clone())
     }
 }
 
@@ -268,6 +282,90 @@ async fn bootstrap_conformance_if_postgres(cfg: &AppConfig) -> Result<(), anyhow
         }
     }
 
+    // Bootstrap backend service client if configured
+    if let Some(ref backend_config) = cfg.bootstrap.backend_client {
+        let client_storage = ArcClientStorage::new(pool.clone());
+        match crate::bootstrap::bootstrap_backend_client(&client_storage, backend_config).await {
+            Ok((true, Some(plaintext_secret))) => {
+                // Auto-generated secret - log it prominently
+                tracing::warn!(
+                    client_id = %backend_config.client_id,
+                    "================================================"
+                );
+                tracing::warn!(
+                    client_id = %backend_config.client_id,
+                    "Backend service client created with AUTO-GENERATED secret"
+                );
+                tracing::warn!(
+                    client_id = %backend_config.client_id,
+                    "Client ID: {}",
+                    backend_config.client_id
+                );
+                tracing::warn!(
+                    client_id = %backend_config.client_id,
+                    "Client Secret: {}",
+                    plaintext_secret
+                );
+                tracing::warn!(
+                    client_id = %backend_config.client_id,
+                    "SAVE THIS SECRET - IT WILL NOT BE SHOWN AGAIN"
+                );
+                tracing::warn!(
+                    client_id = %backend_config.client_id,
+                    "================================================"
+                );
+            }
+            Ok((true, None)) => {
+                tracing::info!(
+                    client_id = %backend_config.client_id,
+                    "Backend service client bootstrapped with configured secret"
+                );
+            }
+            Ok((false, _)) => {
+                tracing::debug!(
+                    client_id = %backend_config.client_id,
+                    "Backend service client already exists"
+                );
+            }
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    client_id = %backend_config.client_id,
+                    "Failed to bootstrap backend service client"
+                );
+            }
+        }
+
+        // Bootstrap backend access policy for the backend client
+        let policy_storage = PostgresPolicyStorageAdapter::new(pool.clone());
+        match crate::bootstrap::bootstrap_backend_access_policy(
+            &policy_storage,
+            &backend_config.client_id,
+        )
+        .await
+        {
+            Ok(true) => {
+                tracing::info!(
+                    client_id = %backend_config.client_id,
+                    "Backend access policy bootstrapped successfully"
+                );
+            }
+            Ok(false) => {
+                tracing::debug!(
+                    client_id = %backend_config.client_id,
+                    "Backend access policy already exists"
+                );
+            }
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    client_id = %backend_config.client_id,
+                    "Failed to bootstrap backend access policy"
+                );
+            }
+        }
+    }
+
     // Bootstrap admin access policy
     let policy_storage = PostgresPolicyStorageAdapter::new(pool);
     match crate::bootstrap::bootstrap_admin_access_policy(&policy_storage).await {
@@ -325,38 +423,36 @@ pub async fn build_app(
     let body_limit = cfg.server.body_limit_bytes;
     let (storage, db_pool) = create_storage(cfg).await?;
 
+    // Create PostgreSQL package store for FHIR package management
+    let package_store = Arc::new(octofhir_db_postgres::PostgresPackageStore::new(
+        (*db_pool).clone(),
+    ));
+
     // Bootstrap database tables and auth resources
     if let Err(e) = bootstrap_conformance_if_postgres(cfg).await {
         tracing::warn!(error = %e, "Failed to bootstrap database tables and auth resources");
     }
 
-    // Build search parameter registry from canonical manager (REQUIRED)
-    let search_registry = match crate::canonical::get_manager() {
-        Some(manager) => match crate::canonical::build_search_registry(&manager).await {
-            Ok(registry) => {
-                tracing::info!(
-                    params_loaded = registry.len(),
-                    "Search parameter registry built from canonical manager"
-                );
-                Arc::new(registry)
-            }
-            Err(e) => {
-                return Err(anyhow::anyhow!(
-                    "Failed to build search parameter registry: {}. Server cannot start without search parameters.",
-                    e
-                ));
-            }
-        },
+    // Build reloadable search config with lock-free reads
+    use octofhir_search::SearchOptions;
+    let search_options = SearchOptions {
+        default_count: cfg.search.default_count,
+        max_count: cfg.search.max_count,
+        cache_capacity: cfg.search.cache_capacity,
+    };
+
+    let search_config = match crate::canonical::get_manager() {
+        Some(manager) => ReloadableSearchConfig::new(&manager, search_options)
+            .await
+            .map_err(|e| {
+                anyhow::anyhow!("Failed to create reloadable search config: {}", e)
+            })?,
         None => {
             return Err(anyhow::anyhow!(
-                "Canonical manager not available. Server cannot start without search parameters."
+                "Canonical manager required for search config"
             ));
         }
     };
-
-    // Build search engine config using counts from AppConfig and registry
-    let search_cfg = EngineSearchConfig::new(search_registry)
-        .with_counts(cfg.search.default_count, cfg.search.max_count);
 
     // Parse FHIR version early - used by both model provider and GraphQL
     let fhir_version = match cfg.fhir.version.as_str() {
@@ -385,7 +481,7 @@ pub async fn build_app(
             let lazy_schema_clone = lazy_schema.clone();
             let pool = db_pool.as_ref().clone();
             let fhir_version_str = cfg.fhir.version.clone();
-            let search_registry = search_cfg.registry.clone();
+            let search_registry = search_config.config().registry.clone();
             let config = schema_builder_config;
             let fhir_version_enum = fhir_version.clone();
 
@@ -846,14 +942,14 @@ pub async fn build_app(
         PolicyEvaluatorConfig {
             evaluate_scopes_first: false, // Policies first, then scope check
             quickjs_enabled: cfg.auth.policy.quickjs_enabled,
-            quickjs_config: cfg.auth.policy.quickjs.clone().into(),
+            quickjs_config: cfg.auth.policy.quickjs.clone(),
             ..PolicyEvaluatorConfig::default()
         },
     ));
     tracing::info!("Policy evaluator initialized");
 
     // Initialize auth state (mandatory)
-    let auth_state = initialize_auth_state(&cfg, db_pool.clone())
+    let auth_state = initialize_auth_state(cfg, db_pool.clone())
         .await
         .context("Failed to initialize authentication")?;
     tracing::info!("Authentication initialized");
@@ -885,7 +981,7 @@ pub async fn build_app(
     }
 
     // Bootstrap operations registry (source of truth for public paths)
-    let operation_registry = match crate::bootstrap::bootstrap_operations(db_pool.as_ref(), &cfg).await {
+    let operation_registry = match crate::bootstrap::bootstrap_operations(db_pool.as_ref(), cfg).await {
         Ok(registry) => {
             tracing::info!("Operations registry bootstrapped with in-memory indexes");
             registry
@@ -907,7 +1003,7 @@ pub async fn build_app(
         // Create context template with shared dependencies
         let context_template = GraphQLContextTemplate {
             storage: graphql_storage,
-            search_config: search_cfg.clone(),
+            search_config: (*search_config.config()).clone(),
             policy_evaluator: policy_evaluator.clone(),
         };
 
@@ -973,6 +1069,40 @@ pub async fn build_app(
         tracing::info!("Background cache cleanup task started (60s interval)");
     }
 
+    // Spawn background SSO session cleanup task (runs every hour)
+    {
+        let storage_for_cleanup = storage.clone();
+        tokio::spawn(async move {
+            use octofhir_auth::storage::sso_session::SsoSessionStorage;
+            use octofhir_auth_postgres::PostgresSsoSessionStorage;
+
+            let sso_storage = PostgresSsoSessionStorage::new(storage_for_cleanup);
+
+            // Run every hour (3600 seconds)
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(3600));
+            loop {
+                interval.tick().await;
+
+                match sso_storage.cleanup_expired_sessions().await {
+                    Ok(removed) => {
+                        if removed > 0 {
+                            tracing::info!(
+                                sessions_removed = removed,
+                                "SSO session cleanup completed"
+                            );
+                        } else {
+                            tracing::debug!("SSO session cleanup: no expired sessions found");
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!(error = %e, "Failed to cleanup expired SSO sessions");
+                    }
+                }
+            }
+        });
+        tracing::info!("Background SSO session cleanup task started (1h interval)");
+    }
+
     let resource_types = model_provider.get_resource_types().await.unwrap_or_default();
     let resource_type_set = Arc::new(ArcSwap::from_pointee(
         resource_types.iter().cloned().collect::<HashSet<String>>(),
@@ -1017,11 +1147,20 @@ pub async fn build_app(
         }
     });
 
+    // Create basic auth storage (unified Client and App authentication)
+    let basic_auth_storage = Arc::new(ArcBasicAuthStorage::new(db_pool.clone()));
+
+    // Create notification queue storage
+    let notification_queue: Arc<dyn octofhir_notifications::NotificationQueueStorage> =
+        Arc::new(octofhir_db_postgres::PostgresNotificationStorage::new(
+            db_pool.as_ref().clone(),
+        ));
+
     // Create AppState wrapped in Arc for cheap cloning across all middleware/handlers
     // This is a single Arc::clone per request instead of cloning 25+ individual fields
     let state = AppState(Arc::new(AppStateInner {
         storage,
-        search_cfg,
+        search_config,
         fhir_version: cfg.fhir.version.clone(),
         base_url: cfg.base_url(),
         fhirpath_engine,
@@ -1048,6 +1187,9 @@ pub async fn build_app(
         capability_statement,
         config_manager: Some(config_manager),
         audit_service,
+        basic_auth_storage,
+        notification_queue: Some(notification_queue),
+        package_store,
     }));
 
     // Configure async job executor to handle bulk export and ViewDefinition export jobs
@@ -1088,6 +1230,9 @@ pub async fn build_app(
 /// They are served at the root level (e.g., /User, /Role) rather than under /fhir.
 fn internal_resource_routes() -> Router<AppState> {
     Router::new()
+        // User-specific operations
+        .route("/User/{id}/$reset-password", post(crate::admin::reset_user_password))
+        // Generic CRUD for internal resources
         .route(
             "/{resource_type}",
             get(handlers::internal_search_resource).post(handlers::internal_create_resource),
@@ -1149,6 +1294,8 @@ fn build_router(state: AppState, body_limit: usize) -> Router {
         .route("/api/lsp/fhirpath", get(crate::lsp::fhirpath_lsp_websocket_handler))
         // Log stream WebSocket endpoint (authenticated, admin scope required)
         .route("/api/logs/stream", get(crate::log_stream::log_stream_handler))
+        // System API (for App integrations)
+        .nest("/api/system", crate::routes::system::system_routes())
         // Package Management API
         .route("/api/packages", get(handlers::api_packages_list))
         .route(
@@ -1197,6 +1344,14 @@ fn build_router(state: AppState, body_limit: usize) -> Router {
                     .merge(crate::admin::admin_routes())
                     .merge(crate::admin::audit_routes())
             },
+        )
+        // API routes (nested under /api)
+        .nest(
+            "/api",
+            Router::new()
+                .merge(crate::routes::canonical::canonical_routes())
+                // Allow larger uploads (50MB) for canonical package upload
+                .layer(axum::extract::DefaultBodyLimit::max(50 * 1024 * 1024))
         )
         // Embedded UI under /ui
         .route("/ui", get(handlers::ui_index))
@@ -1334,9 +1489,11 @@ fn build_router(state: AppState, body_limit: usize) -> Router {
             app_middleware::authentication_middleware,
         ));
 
+    // Apply dynamic CORS middleware that validates origins
     let router: Router = router
         .layer(middleware::from_fn(app_middleware::content_negotiation))
         .layer(CompressionLayer::new())
+        .layer(middleware::from_fn(app_middleware::dynamic_cors_middleware))
         .layer(
             TraceLayer::new_for_http()
                 .make_span_with(|req: &axum::http::Request<_>| {
@@ -1403,13 +1560,13 @@ fn build_router(state: AppState, body_limit: usize) -> Router {
     // Merge OAuth routes if auth is enabled
     // OAuth routes have their own state and are not subject to FHIR content negotiation
     // Note: OAuth routes intentionally bypass auth middleware as they're public
-    let router = if let Some(oauth) = oauth_routes {
+    
+
+    if let Some(oauth) = oauth_routes {
         router.merge(oauth)
     } else {
         router
-    };
-
-    router
+    }
 }
 
 /// Build OAuth routes.
@@ -1425,9 +1582,10 @@ fn build_oauth_routes(state: &AppState) -> Option<Router> {
     let jwks_router = crate::oauth::jwks_route(oauth_state.jwks_state.clone());
     let smart_config_router = crate::oauth::smart_config_route(oauth_state.smart_config_state);
     let userinfo_router = crate::oauth::userinfo_route(auth_state.clone());
+    let authorize_router = crate::oauth::authorize_route(oauth_state.authorize_state);
 
     tracing::info!(
-        "OAuth routes enabled: /auth/token, /auth/logout, /auth/userinfo, /auth/jwks, /.well-known/smart-configuration"
+        "OAuth routes enabled: /auth/token, /auth/logout, /auth/authorize, /auth/userinfo, /auth/jwks, /.well-known/smart-configuration"
     );
 
     Some(
@@ -1435,7 +1593,10 @@ fn build_oauth_routes(state: &AppState) -> Option<Router> {
             .merge(oauth_router)
             .merge(jwks_router)
             .merge(smart_config_router)
-            .merge(userinfo_router),
+            .merge(userinfo_router)
+            .merge(authorize_router)
+            // Apply CORS middleware to OAuth routes to allow cross-origin requests
+            .layer(middleware::from_fn(app_middleware::dynamic_cors_middleware)),
     )
 }
 

@@ -143,8 +143,8 @@ fn create_resource_resolution_field() -> Field {
                     let resource_type = &resolved.parsed.resource_type;
 
                     // Apply type filter if specified
-                    if let Some(ref filter) = type_filter {
-                        if resource_type != filter {
+                    if let Some(ref filter) = type_filter
+                        && resource_type != filter {
                             trace!(
                                 expected = %filter,
                                 actual = %resource_type,
@@ -152,7 +152,6 @@ fn create_resource_resolution_field() -> Field {
                             );
                             return Ok(None);
                         }
-                    }
 
                     // Convert serde_json::Value to async_graphql::Value
                     let resource = resolved.resource.unwrap();

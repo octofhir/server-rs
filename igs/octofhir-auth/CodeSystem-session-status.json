@@ -1,0 +1,31 @@
+{
+  "resourceType": "CodeSystem",
+  "id": "session-status",
+  "url": "http://octofhir.io/CodeSystem/session-status",
+  "name": "SessionStatus",
+  "title": "Session Status",
+  "status": "active",
+  "experimental": false,
+  "date": "2025-01-03",
+  "description": "Status codes for authentication sessions",
+  "caseSensitive": true,
+  "valueSet": "http://octofhir.io/ValueSet/session-status",
+  "content": "complete",
+  "concept": [
+    {
+      "code": "active",
+      "display": "Active",
+      "definition": "The session is currently active and can be used for authentication"
+    },
+    {
+      "code": "expired",
+      "display": "Expired",
+      "definition": "The session has expired due to idle timeout or absolute timeout"
+    },
+    {
+      "code": "revoked",
+      "display": "Revoked",
+      "definition": "The session was explicitly revoked by the user or administrator"
+    }
+  ]
+}

@@ -1,0 +1,83 @@
+{
+  "resourceType": "StructureDefinition",
+  "id": "NotificationTemplate",
+  "url": "http://octofhir.io/StructureDefinition/NotificationTemplate",
+  "name": "NotificationTemplate",
+  "title": "Notification Template",
+  "status": "active",
+  "fhirVersion": "4.0.1",
+  "kind": "logical",
+  "abstract": false,
+  "type": "NotificationTemplate",
+  "baseDefinition": "http://hl7.org/fhir/StructureDefinition/DomainResource",
+  "derivation": "specialization",
+  "description": "Template for notification content with variable substitution support.",
+  "differential": {
+    "element": [
+      {
+        "id": "NotificationTemplate",
+        "path": "NotificationTemplate",
+        "short": "Notification template",
+        "definition": "Defines a notification template with subject, body, and variable placeholders."
+      },
+      {
+        "id": "NotificationTemplate.name",
+        "path": "NotificationTemplate.name",
+        "short": "Template name",
+        "definition": "Unique identifier name for this template",
+        "min": 1,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "NotificationTemplate.channel",
+        "path": "NotificationTemplate.channel",
+        "short": "Notification channel",
+        "definition": "Channel this template is for: email, sms, telegram, webhook, push",
+        "min": 1,
+        "max": "1",
+        "type": [{ "code": "code" }],
+        "binding": {
+          "strength": "required",
+          "valueSet": "http://octofhir.io/ValueSet/notification-provider-types"
+        }
+      },
+      {
+        "id": "NotificationTemplate.subject",
+        "path": "NotificationTemplate.subject",
+        "short": "Subject line",
+        "definition": "Subject line template (for email)",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "NotificationTemplate.body",
+        "path": "NotificationTemplate.body",
+        "short": "Message body",
+        "definition": "Message body template with {{variable}} placeholders",
+        "min": 1,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "NotificationTemplate.contentType",
+        "path": "NotificationTemplate.contentType",
+        "short": "Content type",
+        "definition": "Content type: text/plain, text/html, application/json",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "code" }]
+      },
+      {
+        "id": "NotificationTemplate.active",
+        "path": "NotificationTemplate.active",
+        "short": "Is template active",
+        "definition": "Whether this template is currently active",
+        "min": 1,
+        "max": "1",
+        "type": [{ "code": "boolean" }]
+      }
+    ]
+  }
+}

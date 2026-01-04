@@ -1,0 +1,199 @@
+{
+  "resourceType": "StructureDefinition",
+  "id": "AppSubscription",
+  "url": "http://octofhir.io/StructureDefinition/AppSubscription",
+  "name": "AppSubscription",
+  "title": "App Subscription Resource",
+  "status": "active",
+  "fhirVersion": "4.0.1",
+  "kind": "logical",
+  "abstract": false,
+  "type": "AppSubscription",
+  "baseDefinition": "http://hl7.org/fhir/StructureDefinition/DomainResource",
+  "derivation": "specialization",
+  "description": "AppSubscription defines event subscriptions for Apps. Automatically created from App.subscriptions[] during reconciliation.",
+  "differential": {
+    "element": [
+      {
+        "id": "AppSubscription",
+        "path": "AppSubscription",
+        "short": "Event subscription for an App",
+        "definition": "Defines an event subscription that triggers webhooks or notifications when FHIR resources are created, updated, or deleted."
+      },
+      {
+        "id": "AppSubscription.app",
+        "path": "AppSubscription.app",
+        "short": "Reference to parent App",
+        "definition": "Reference to the App that owns this subscription",
+        "min": 1,
+        "max": "1",
+        "type": [
+          {
+            "code": "Reference",
+            "targetProfile": ["http://octofhir.io/StructureDefinition/App"]
+          }
+        ]
+      },
+      {
+        "id": "AppSubscription.trigger",
+        "path": "AppSubscription.trigger",
+        "short": "Event trigger configuration",
+        "definition": "Configuration for which events trigger this subscription",
+        "min": 1,
+        "max": "1",
+        "type": [{ "code": "BackboneElement" }]
+      },
+      {
+        "id": "AppSubscription.trigger.resourceType",
+        "path": "AppSubscription.trigger.resourceType",
+        "short": "FHIR resource type to watch",
+        "definition": "The type of FHIR resource to monitor (e.g., 'Appointment', 'Patient')",
+        "min": 1,
+        "max": "1",
+        "type": [{ "code": "code" }]
+      },
+      {
+        "id": "AppSubscription.trigger.event",
+        "path": "AppSubscription.trigger.event",
+        "short": "Event type",
+        "definition": "Type of event: create, update, delete",
+        "min": 1,
+        "max": "1",
+        "type": [{ "code": "code" }],
+        "binding": {
+          "strength": "required",
+          "valueSet": "http://octofhir.io/ValueSet/subscription-events"
+        }
+      },
+      {
+        "id": "AppSubscription.trigger.fhirpath",
+        "path": "AppSubscription.trigger.fhirpath",
+        "short": "FHIRPath filter expression",
+        "definition": "Optional FHIRPath expression to filter events (e.g., 'status != %previous.status')",
+        "comment": "The FHIRPath expression is evaluated against the resource. Use %previous to access the previous version in update events.",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "AppSubscription.channel",
+        "path": "AppSubscription.channel",
+        "short": "Webhook channel configuration",
+        "definition": "Configuration for webhook delivery of events",
+        "comment": "Either channel or notification must be specified, but not both",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "BackboneElement" }]
+      },
+      {
+        "id": "AppSubscription.channel.type",
+        "path": "AppSubscription.channel.type",
+        "short": "Channel type",
+        "definition": "Type of channel (typically 'webhook')",
+        "min": 1,
+        "max": "1",
+        "type": [{ "code": "code" }]
+      },
+      {
+        "id": "AppSubscription.channel.endpoint",
+        "path": "AppSubscription.channel.endpoint",
+        "short": "Webhook endpoint URL",
+        "definition": "URL to send webhook POST requests to when events trigger",
+        "min": 1,
+        "max": "1",
+        "type": [{ "code": "url" }]
+      },
+      {
+        "id": "AppSubscription.notification",
+        "path": "AppSubscription.notification",
+        "short": "Notification configuration",
+        "definition": "Configuration for sending notifications instead of webhooks",
+        "comment": "Either channel or notification must be specified, but not both",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "BackboneElement" }]
+      },
+      {
+        "id": "AppSubscription.notification.provider",
+        "path": "AppSubscription.notification.provider",
+        "short": "Notification provider reference",
+        "definition": "Reference to NotificationProvider resource (e.g., 'NotificationProvider/twilio')",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "AppSubscription.notification.channel",
+        "path": "AppSubscription.notification.channel",
+        "short": "Notification channel(s)",
+        "definition": "Channel type(s) for notifications: email, sms, telegram, etc. Can be a single string or array",
+        "min": 1,
+        "max": "*",
+        "type": [{ "code": "code" }]
+      },
+      {
+        "id": "AppSubscription.notification.template",
+        "path": "AppSubscription.notification.template",
+        "short": "Template identifier",
+        "definition": "Identifier for the notification template to use",
+        "min": 1,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "AppSubscription.notification.recipient",
+        "path": "AppSubscription.notification.recipient",
+        "short": "Recipient configuration",
+        "definition": "Configuration for determining notification recipients",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "BackboneElement" }]
+      },
+      {
+        "id": "AppSubscription.notification.recipient.fhirpath",
+        "path": "AppSubscription.notification.recipient.fhirpath",
+        "short": "FHIRPath to resolve recipient",
+        "definition": "FHIRPath expression to extract recipient from the resource (e.g., 'participant.actor.where(resolve().resourceType = \"Patient\")')",
+        "min": 1,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "AppSubscription.notification.delay",
+        "path": "AppSubscription.notification.delay",
+        "short": "Delay configuration",
+        "definition": "Configuration for scheduled/delayed notifications",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "BackboneElement" }]
+      },
+      {
+        "id": "AppSubscription.notification.delay.relativeTo",
+        "path": "AppSubscription.notification.delay.relativeTo",
+        "short": "Field to calculate delay from",
+        "definition": "Resource field to use as reference point (e.g., 'start', 'end')",
+        "min": 1,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "AppSubscription.notification.delay.offset",
+        "path": "AppSubscription.notification.delay.offset",
+        "short": "ISO 8601 duration offset",
+        "definition": "Duration offset in ISO 8601 format (e.g., '-PT24H' for 24 hours before, 'PT1H' for 1 hour after)",
+        "min": 1,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "AppSubscription.active",
+        "path": "AppSubscription.active",
+        "short": "Whether subscription is active",
+        "definition": "If false, this subscription will not trigger events",
+        "min": 1,
+        "max": "1",
+        "type": [{ "code": "boolean" }]
+      }
+    ]
+  }
+}

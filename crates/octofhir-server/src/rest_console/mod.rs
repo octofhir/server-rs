@@ -52,7 +52,7 @@ impl RestConsoleState {
 impl FromRef<AppState> for RestConsoleState {
     fn from_ref(state: &AppState) -> Self {
         Self::new(
-            state.search_cfg.registry.clone(),
+            state.search_config.config().registry.clone(),
             state.fhir_operations.clone(),
             state.fhir_version.clone(),
             state.db_pool.clone(),
@@ -91,7 +91,7 @@ pub async fn build_payload(state: &RestConsoleState) -> RestConsoleResponse {
 
     // Build resource suggestions
     for resource_type in registry.list_resource_types() {
-        let params = registry.get_all_for_type(resource_type);
+        let params = registry.get_all_for_type(&resource_type);
         let param_count = params.len();
 
         suggestions.resources.push(AutocompleteSuggestion {
@@ -307,7 +307,7 @@ pub async fn build_payload(state: &RestConsoleState) -> RestConsoleResponse {
     // Build search params by resource
     let mut search_params: HashMap<String, Vec<SearchParamSuggestion>> = HashMap::new();
     for resource_type in registry.list_resource_types() {
-        let params = registry.get_all_for_type(resource_type);
+        let params = registry.get_all_for_type(&resource_type);
         let mut param_suggestions: Vec<SearchParamSuggestion> = params
             .into_iter()
             .map(|param| SearchParamSuggestion {
@@ -424,7 +424,7 @@ async fn load_gateway_custom_operations(
             .entries
             .into_iter()
             .filter_map(|stored| serde_json::from_value(stored.resource).ok())
-            .filter(|app: &App| app.active)
+            .filter(|app: &App| app.is_active())
             .collect(),
         Err(e) => {
             tracing::warn!(error = %e, "Failed to load Apps for Gateway operations");
@@ -470,7 +470,11 @@ async fn load_gateway_custom_operations(
             None => continue,
         };
 
-        let full_path = format!("{}{}", app.base_path, custom_op.path);
+        let full_path = if let Some(base_path) = &app.base_path {
+            format!("{}{}", base_path, custom_op.path)
+        } else {
+            custom_op.path.clone()
+        };
 
         let operation_id = format!(
             "gateway.{}.{}",

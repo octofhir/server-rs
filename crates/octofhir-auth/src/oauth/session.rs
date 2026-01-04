@@ -55,15 +55,19 @@ pub struct AuthorizationSession {
     pub state: String,
 
     /// PKCE code challenge from the authorization request.
-    pub code_challenge: String,
+    /// Required for public clients, optional for confidential clients.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub code_challenge: Option<String>,
 
-    /// PKCE challenge method (always "S256").
-    pub code_challenge_method: String,
+    /// PKCE challenge method (always "S256" when present).
+    /// Required for public clients, optional for confidential clients.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub code_challenge_method: Option<String>,
 
     /// User ID after successful authentication.
     /// None until user authenticates.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub user_id: Option<Uuid>,
+    pub user_id: Option<String>,
 
     /// SMART on FHIR launch context.
     /// Contains patient, encounter, and other context from EHR launch.
@@ -344,7 +348,7 @@ mod tests {
         let mut session = create_test_session(now + Duration::minutes(10), None);
         assert!(!session.is_authenticated());
 
-        session.user_id = Some(Uuid::new_v4());
+        session.user_id = Some(Uuid::new_v4().to_string());
         assert!(session.is_authenticated());
     }
 
@@ -422,8 +426,8 @@ mod tests {
             redirect_uri: "https://app.example.com/callback".to_string(),
             scope: "openid patient/*.read".to_string(),
             state: "test-state".to_string(),
-            code_challenge: "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM".to_string(),
-            code_challenge_method: "S256".to_string(),
+            code_challenge: Some("E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM".to_string()),
+            code_challenge_method: Some("S256".to_string()),
             user_id: None,
             launch_context: None,
             nonce: None,

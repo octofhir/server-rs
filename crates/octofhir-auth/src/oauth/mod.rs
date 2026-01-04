@@ -39,6 +39,7 @@
 //! ```
 
 pub mod authorize;
+pub mod authorize_session;
 pub mod client_assertion;
 pub mod client_auth;
 pub mod pkce;
@@ -70,6 +71,9 @@ pub use service::{AuthorizationConfig, AuthorizationService};
 
 // Session types
 pub use session::{AuthorizationSession, FhirContextItem, LaunchContext};
+
+// Authorize flow session types (login/consent UI flow)
+pub use authorize_session::AuthorizeSession;
 
 // Token endpoint types
 pub use token::{TokenError, TokenErrorCode, TokenRequest, TokenResponse};

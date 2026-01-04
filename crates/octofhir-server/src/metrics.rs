@@ -201,9 +201,8 @@ fn normalize_path(path: &str) -> String {
                     normalized.push("{vid}".to_string());
                 } else if prev == "_async-status" {
                     normalized.push("{job_id}".to_string());
-                } else if is_resource_type(prev) {
-                    normalized.push("{id}".to_string());
                 } else {
+                    // Resource type or anything else gets an {id} placeholder
                     normalized.push("{id}".to_string());
                 }
             } else {
@@ -246,68 +245,6 @@ fn is_likely_id(s: &str) -> bool {
     false
 }
 
-/// Check if a string is a known FHIR resource type.
-fn is_resource_type(s: &str) -> bool {
-    // Check for PascalCase (first letter uppercase, rest mixed)
-    if s.is_empty() {
-        return false;
-    }
-
-    let first = s.chars().next().unwrap();
-    if !first.is_ascii_uppercase() {
-        return false;
-    }
-
-    // Common resource types
-    matches!(
-        s,
-        "Patient"
-            | "Observation"
-            | "Condition"
-            | "Encounter"
-            | "Practitioner"
-            | "Organization"
-            | "Medication"
-            | "MedicationRequest"
-            | "DiagnosticReport"
-            | "Procedure"
-            | "Immunization"
-            | "AllergyIntolerance"
-            | "CarePlan"
-            | "CareTeam"
-            | "Claim"
-            | "ClaimResponse"
-            | "Coverage"
-            | "Device"
-            | "DocumentReference"
-            | "Goal"
-            | "Location"
-            | "Media"
-            | "PractitionerRole"
-            | "Provenance"
-            | "Questionnaire"
-            | "QuestionnaireResponse"
-            | "RelatedPerson"
-            | "ServiceRequest"
-            | "Specimen"
-            | "Task"
-            | "ValueSet"
-            | "CodeSystem"
-            | "StructureDefinition"
-            | "CapabilityStatement"
-            | "OperationDefinition"
-            | "SearchParameter"
-            | "Bundle"
-            | "Binary"
-            | "AuditEvent"
-            | "Consent"
-            | "Group"
-            | "HealthcareService"
-            | "Schedule"
-            | "Slot"
-            | "Subscription"
-    ) || s.chars().next().unwrap().is_ascii_uppercase()
-}
 
 #[cfg(test)]
 mod tests {

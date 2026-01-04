@@ -401,14 +401,13 @@ async fn resolve_include(
 
     for result in main_results {
         // Try to extract reference from the resource
-        if let Some(ref_value) = result.resource.get(param_name) {
-            if let Some(reference) = ref_value.get("reference").and_then(|r| r.as_str()) {
+        if let Some(ref_value) = result.resource.get(param_name)
+            && let Some(reference) = ref_value.get("reference").and_then(|r| r.as_str()) {
                 // Use the shared reference parser to extract the ID
                 if let Ok((_, id)) = parse_reference_simple(reference, None) {
                     reference_ids.push(id);
                 }
             }
-        }
     }
 
     if reference_ids.is_empty() {

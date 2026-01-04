@@ -87,14 +87,13 @@ fn extract_cookie_token(headers: &HeaderMap, cookie_name: &str) -> Option<String
 
     for cookie in cookie_header.split(';') {
         let cookie = cookie.trim();
-        if let Some((name, value)) = cookie.split_once('=') {
-            if name.trim() == cookie_name {
+        if let Some((name, value)) = cookie.split_once('=')
+            && name.trim() == cookie_name {
                 let value = value.trim();
                 if !value.is_empty() {
                     return Some(value.to_string());
                 }
             }
-        }
     }
 
     None
@@ -140,22 +139,17 @@ async fn handle_fhirpath_lsp_connection(
                 tracing::debug!("FHIRPath LSP received: {}", text);
                 if let Some(response) =
                     process_lsp_message(&text, &handlers, &response_tx).await
-                {
-                    if response_tx.send(response).is_err() {
+                    && response_tx.send(response).is_err() {
                         break;
                     }
-                }
             }
             Ok(axum::extract::ws::Message::Binary(data)) => {
-                if let Ok(text) = String::from_utf8(data.to_vec()) {
-                    if let Some(response) =
+                if let Ok(text) = String::from_utf8(data.to_vec())
+                    && let Some(response) =
                         process_lsp_message(&text, &handlers, &response_tx).await
-                    {
-                        if response_tx.send(response).is_err() {
+                        && response_tx.send(response).is_err() {
                             break;
                         }
-                    }
-                }
             }
             Ok(axum::extract::ws::Message::Close(_)) => {
                 tracing::debug!("FHIRPath LSP WebSocket close received");

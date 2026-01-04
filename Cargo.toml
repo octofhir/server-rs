@@ -8,6 +8,7 @@ members = [
     "crates/octofhir-core",
     "crates/octofhir-db-postgres",
     "crates/octofhir-graphql",
+    "crates/octofhir-notifications",
     "crates/octofhir-search",
     "crates/octofhir-server",
     "crates/octofhir-sof",
@@ -65,6 +66,7 @@ hyper = { version = "1", features = ["full"] }
 
 # Storage and concurrency
 dashmap = "6.1"  # For some auxiliary maps if needed
+arc-swap = "1.7"  # Lock-free atomic pointer swapping
 uuid = { version = "1.0", features = ["v4", "serde"] }
 
 # Time handling

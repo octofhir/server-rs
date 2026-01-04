@@ -8,7 +8,6 @@
 //! - [`PostgresClientStorage`] - Implements the `ClientStorage` trait from `octofhir-auth`
 
 use async_trait::async_trait;
-use bcrypt::verify;
 use sqlx_core::query::query;
 use sqlx_core::query_as::query_as;
 use time::OffsetDateTime;
@@ -483,8 +482,19 @@ impl ClientStorageTrait for PostgresClientStorage<'_> {
 
         match &client.client_secret {
             Some(hash) => {
-                // BCrypt verify returns Result<bool, BcryptError>
-                Ok(verify(secret, hash).unwrap_or(false))
+                // Verify using Argon2
+                use argon2::{
+                    password_hash::{PasswordHash, PasswordVerifier},
+                    Argon2,
+                };
+
+                let parsed_hash = match PasswordHash::new(hash) {
+                    Ok(h) => h,
+                    Err(_) => return Ok(false),
+                };
+
+                let result = Argon2::default().verify_password(secret.as_bytes(), &parsed_hash);
+                Ok(result.is_ok())
             }
             None => Ok(false),
         }
@@ -517,10 +527,18 @@ impl ClientStorageTrait for PostgresClientStorage<'_> {
         rand::Rng::fill(&mut rand::thread_rng(), &mut bytes);
         let plain_secret = hex::encode(bytes);
 
-        // Hash with bcrypt
-        let hashed_secret = bcrypt::hash(&plain_secret, bcrypt::DEFAULT_COST).map_err(|e| {
-            AuthError::storage(format!("Failed to hash secret: {}", e))
-        })?;
+        // Hash with Argon2id
+        use argon2::{
+            password_hash::{rand_core::OsRng, PasswordHasher, SaltString},
+            Argon2,
+        };
+
+        let salt = SaltString::generate(&mut OsRng);
+        let argon2 = Argon2::default();
+        let hash = argon2
+            .hash_password(plain_secret.as_bytes(), &salt)
+            .map_err(|e| AuthError::storage(format!("Failed to hash secret: {}", e)))?;
+        let hashed_secret = hash.to_string();
 
         // Update client with new secret hash
         client.client_secret = Some(hashed_secret);

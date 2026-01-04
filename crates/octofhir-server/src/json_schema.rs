@@ -106,11 +106,10 @@ pub fn convert_fhir_to_json_schema(fhir_schema: &FhirSchema) -> Value {
             }
 
             // Check if required
-            if element.min.unwrap_or(0) >= 1 {
-                if element.choice_of.is_none() && element.choices.is_none() {
+            if element.min.unwrap_or(0) >= 1
+                && element.choice_of.is_none() && element.choices.is_none() {
                     required_props.push(name.clone());
                 }
-            }
         }
     }
 
@@ -163,11 +162,10 @@ fn convert_element_to_schema(
         let mut arr = Map::new();
         arr.insert("type".to_string(), json!("array"));
         arr.insert("items".to_string(), base_schema);
-        if let Some(min) = element.min {
-            if min > 0 {
+        if let Some(min) = element.min
+            && min > 0 {
                 arr.insert("minItems".to_string(), json!(min));
             }
-        }
         if let Some(max) = element.max {
             arr.insert("maxItems".to_string(), json!(max));
         }
@@ -177,15 +175,14 @@ fn convert_element_to_schema(
     };
 
     // Add description
-    if let Some(ref short) = element.short {
-        if let Value::Object(ref mut map) = schema {
+    if let Some(ref short) = element.short
+        && let Value::Object(ref mut map) = schema {
             map.insert("description".to_string(), json!(short));
         }
-    }
 
     // Add reference targets to description
-    if let Some(ref refers) = element.refers {
-        if !refers.is_empty() {
+    if let Some(ref refers) = element.refers
+        && !refers.is_empty() {
             let targets: Vec<&str> = refers
                 .iter()
                 .filter_map(|r| r.rsplit('/').next())
@@ -203,7 +200,6 @@ fn convert_element_to_schema(
                 map.insert("description".to_string(), json!(new_desc));
             }
         }
-    }
 
     schema
 }

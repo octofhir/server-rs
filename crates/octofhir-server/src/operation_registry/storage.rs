@@ -3,7 +3,7 @@
 //! PostgreSQL storage for operations registry.
 
 use async_trait::async_trait;
-use octofhir_core::OperationDefinition;
+use octofhir_core::{AppReference, OperationDefinition};
 use sqlx_core::error::Error as SqlxError;
 use sqlx_core::query::query;
 use sqlx_core::row::Row;
@@ -89,6 +89,14 @@ impl PostgresOperationStorage {
         let methods_json: serde_json::Value = row.try_get("methods")?;
         let methods: Vec<String> = serde_json::from_value(methods_json)?;
 
+        // Build AppReference if app_id is present
+        let app_id: Option<String> = row.try_get("app_id")?;
+        let app_name: Option<String> = row.try_get("app_name")?;
+        let app = match (app_id, app_name) {
+            (Some(id), Some(name)) => Some(AppReference { id, name }),
+            _ => None,
+        };
+
         Ok(OperationDefinition {
             id: row.try_get("id")?,
             name: row.try_get("name")?,
@@ -98,6 +106,7 @@ impl PostgresOperationStorage {
             path_pattern: row.try_get("path_pattern")?,
             public: row.try_get("public")?,
             module: row.try_get("module")?,
+            app,
         })
     }
 }
@@ -113,11 +122,15 @@ impl OperationStorage for PostgresOperationStorage {
 
         for op in operations {
             let methods_json = serde_json::to_value(&op.methods)?;
+            let (app_id, app_name) = match &op.app {
+                Some(app) => (Some(app.id.clone()), Some(app.name.clone())),
+                None => (None, None),
+            };
 
             query(
                 r#"
-                INSERT INTO operations (id, name, description, category, methods, path_pattern, public, module)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                INSERT INTO operations (id, name, description, category, methods, path_pattern, public, module, app_id, app_name)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
                 ON CONFLICT (id) DO UPDATE SET
                     name = EXCLUDED.name,
                     description = EXCLUDED.description,
@@ -126,6 +139,8 @@ impl OperationStorage for PostgresOperationStorage {
                     path_pattern = EXCLUDED.path_pattern,
                     public = EXCLUDED.public,
                     module = EXCLUDED.module,
+                    app_id = EXCLUDED.app_id,
+                    app_name = EXCLUDED.app_name,
                     updated_at = NOW()
                 "#,
             )
@@ -137,6 +152,8 @@ impl OperationStorage for PostgresOperationStorage {
             .bind(&op.path_pattern)
             .bind(op.public)
             .bind(&op.module)
+            .bind(&app_id)
+            .bind(&app_name)
             .execute(&mut *tx)
             .await?;
         }
@@ -148,7 +165,7 @@ impl OperationStorage for PostgresOperationStorage {
     async fn list_all(&self) -> Result<Vec<OperationDefinition>, OperationStorageError> {
         let rows = query(
             r#"
-            SELECT id, name, description, category, methods, path_pattern, public, module
+            SELECT id, name, description, category, methods, path_pattern, public, module, app_id, app_name
             FROM operations
             ORDER BY category, id
             "#,
@@ -165,7 +182,7 @@ impl OperationStorage for PostgresOperationStorage {
     ) -> Result<Vec<OperationDefinition>, OperationStorageError> {
         let rows = query(
             r#"
-            SELECT id, name, description, category, methods, path_pattern, public, module
+            SELECT id, name, description, category, methods, path_pattern, public, module, app_id, app_name
             FROM operations
             WHERE category = $1
             ORDER BY id
@@ -184,7 +201,7 @@ impl OperationStorage for PostgresOperationStorage {
     ) -> Result<Vec<OperationDefinition>, OperationStorageError> {
         let rows = query(
             r#"
-            SELECT id, name, description, category, methods, path_pattern, public, module
+            SELECT id, name, description, category, methods, path_pattern, public, module, app_id, app_name
             FROM operations
             WHERE module = $1
             ORDER BY id
@@ -200,7 +217,7 @@ impl OperationStorage for PostgresOperationStorage {
     async fn list_public(&self) -> Result<Vec<OperationDefinition>, OperationStorageError> {
         let rows = query(
             r#"
-            SELECT id, name, description, category, methods, path_pattern, public, module
+            SELECT id, name, description, category, methods, path_pattern, public, module, app_id, app_name
             FROM operations
             WHERE public = true
             ORDER BY category, id
@@ -215,7 +232,7 @@ impl OperationStorage for PostgresOperationStorage {
     async fn get(&self, id: &str) -> Result<Option<OperationDefinition>, OperationStorageError> {
         let row = query(
             r#"
-            SELECT id, name, description, category, methods, path_pattern, public, module
+            SELECT id, name, description, category, methods, path_pattern, public, module, app_id, app_name
             FROM operations
             WHERE id = $1
             "#,
@@ -268,7 +285,7 @@ impl OperationStorage for PostgresOperationStorage {
         }
 
         let sql = format!(
-            "UPDATE operations SET {} WHERE id = $1 RETURNING id, name, description, category, methods, path_pattern, public, module",
+            "UPDATE operations SET {} WHERE id = $1 RETURNING id, name, description, category, methods, path_pattern, public, module, app_id, app_name",
             set_clauses.join(", ")
         );
 

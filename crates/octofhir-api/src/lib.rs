@@ -64,7 +64,7 @@ impl Serialize for RawJson {
         // Validate and serialize as raw JSON using RawValue
         // RawValue validates structure without building the full tree
         let raw = serde_json::value::RawValue::from_string(self.0.to_string())
-            .map_err(|e| S::Error::custom(e))?;
+            .map_err(S::Error::custom)?;
         raw.serialize(serializer)
     }
 }
@@ -848,6 +848,7 @@ pub struct RawIncludedEntry {
 /// Create a search bundle from raw JSON resources (optimized path).
 ///
 /// Uses `RawJson` to avoid re-parsing JSON during serialization.
+#[allow(clippy::too_many_arguments)]
 pub fn bundle_from_search_raw(
     total: usize,
     resources: Vec<RawJson>,

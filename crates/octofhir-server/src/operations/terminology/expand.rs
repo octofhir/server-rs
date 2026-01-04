@@ -319,11 +319,10 @@ impl ExpandOperation {
                 }
 
                 let mut designations = Vec::new();
-                if params.include_designations {
-                    if let Some(desigs) = concept.get("designation").and_then(|v| v.as_array()) {
+                if params.include_designations
+                    && let Some(desigs) = concept.get("designation").and_then(|v| v.as_array()) {
                         designations = desigs.clone();
                     }
-                }
 
                 codes.push(ExpansionCode {
                     system: system.to_string(),
@@ -358,9 +357,9 @@ impl ExpandOperation {
                                 ..Default::default()
                             };
                             let expanded_result = Box::pin(self.expand_value_set(&imported_vs, &sub_params)).await;
-                            if let Ok(expanded) = expanded_result {
-                                if let Some(expansion) = expanded.get("expansion") {
-                                    if let Some(contains) =
+                            if let Ok(expanded) = expanded_result
+                                && let Some(expansion) = expanded.get("expansion")
+                                    && let Some(contains) =
                                         expansion.get("contains").and_then(|v| v.as_array())
                                     {
                                         for contained in contains {
@@ -393,8 +392,6 @@ impl ExpandOperation {
                                             });
                                         }
                                     }
-                                }
-                            }
                         }
                         Err(e) => {
                             tracing::warn!(url = %url, error = %e, "Failed to import ValueSet");
@@ -437,11 +434,10 @@ impl ExpandOperation {
                 }
 
                 let mut designations = Vec::new();
-                if params.include_designations {
-                    if let Some(desigs) = concept.get("designation").and_then(|v| v.as_array()) {
+                if params.include_designations
+                    && let Some(desigs) = concept.get("designation").and_then(|v| v.as_array()) {
                         designations = desigs.clone();
                     }
-                }
 
                 codes.push(ExpansionCode {
                     system: system.to_string(),
@@ -509,11 +505,10 @@ impl ExpandOperation {
 
         if !excluded.contains(&(system.to_string(), code.to_string())) {
             let mut designations = Vec::new();
-            if params.include_designations {
-                if let Some(desigs) = concept.get("designation").and_then(|v| v.as_array()) {
+            if params.include_designations
+                && let Some(desigs) = concept.get("designation").and_then(|v| v.as_array()) {
                     designations = desigs.clone();
                 }
-            }
 
             codes.push(ExpansionCode {
                 system: system.to_string(),
@@ -528,15 +523,14 @@ impl ExpandOperation {
         }
 
         // Process children if not excluding nested
-        if !params.exclude_nested {
-            if let Some(children) = concept.get("concept").and_then(|v| v.as_array()) {
+        if !params.exclude_nested
+            && let Some(children) = concept.get("concept").and_then(|v| v.as_array()) {
                 for child in children {
                     self.collect_concept_and_children(
                         child, system, version, excluded, codes, params,
                     );
                 }
             }
-        }
     }
 
     /// Collect nested concepts from a parent concept.
@@ -630,11 +624,10 @@ impl ExpandOperation {
         // Check parent property if available
         if let Some(props) = concept.get("property").and_then(|v| v.as_array()) {
             for prop in props {
-                if prop.get("code").and_then(|v| v.as_str()) == Some("parent") {
-                    if prop.get("valueCode").and_then(|v| v.as_str()) == Some(ancestor_code) {
+                if prop.get("code").and_then(|v| v.as_str()) == Some("parent")
+                    && prop.get("valueCode").and_then(|v| v.as_str()) == Some(ancestor_code) {
                         return true;
                     }
-                }
             }
         }
 
@@ -651,11 +644,10 @@ impl ExpandOperation {
         // Check parent property
         if let Some(props) = concept.get("property").and_then(|v| v.as_array()) {
             for prop in props {
-                if prop.get("code").and_then(|v| v.as_str()) == Some("parent") {
-                    if prop.get("valueCode").and_then(|v| v.as_str()) == Some(ancestor_code) {
+                if prop.get("code").and_then(|v| v.as_str()) == Some("parent")
+                    && prop.get("valueCode").and_then(|v| v.as_str()) == Some(ancestor_code) {
                         return true;
                     }
-                }
             }
         }
 

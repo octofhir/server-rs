@@ -355,8 +355,8 @@ impl<'a> TokenStorage<'a> {
         Ok(result.rows_affected())
     }
 
-    /// Revoke all tokens for a user by UUID.
-    pub async fn revoke_by_user(&self, user_id: Uuid) -> StorageResult<u64> {
+    /// Revoke all tokens for a user by ID.
+    pub async fn revoke_by_user(&self, user_id: &str) -> StorageResult<u64> {
         let result = query(
             r#"
             UPDATE refreshtoken
@@ -369,7 +369,7 @@ impl<'a> TokenStorage<'a> {
               AND (resource->>'revoked')::boolean IS NOT TRUE
             "#,
         )
-        .bind(user_id.to_string())
+        .bind(user_id)
         .execute(self.pool)
         .await?;
 
@@ -386,7 +386,7 @@ impl<'a> TokenStorage<'a> {
     /// # Errors
     ///
     /// Returns an error if the database query fails.
-    pub async fn list_by_user(&self, user_id: Uuid) -> StorageResult<Vec<TokenRow>> {
+    pub async fn list_by_user(&self, user_id: &str) -> StorageResult<Vec<TokenRow>> {
         let rows: Vec<(
             String,
             i64,
@@ -405,7 +405,7 @@ impl<'a> TokenStorage<'a> {
             ORDER BY created_at DESC
             "#,
         )
-        .bind(user_id.to_string())
+        .bind(user_id)
         .fetch_all(self.pool)
         .await?;
 

@@ -6,8 +6,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use uuid::Uuid;
-
 use crate::token::jwt::AccessTokenClaims;
 use crate::types::Client;
 
@@ -22,10 +20,16 @@ use crate::types::Client;
 #[derive(Debug, Clone)]
 pub struct UserContext {
     /// User's unique identifier.
-    pub id: Uuid,
+    pub id: String,
 
     /// Username for display/logging.
     pub username: String,
+
+    /// Full name of the user (display name).
+    pub name: Option<String>,
+
+    /// Email address.
+    pub email: Option<String>,
 
     /// Reference to user's FHIR resource (e.g., "Practitioner/123").
     pub fhir_user: Option<String>,
@@ -254,6 +258,7 @@ mod tests {
             description: None,
             grant_types: vec![GrantType::AuthorizationCode],
             redirect_uris: vec!["https://app.example.com/callback".to_string()],
+            post_logout_redirect_uris: vec![],
             scopes: vec![],
             confidential: false,
             active: true,
@@ -268,8 +273,10 @@ mod tests {
 
     fn create_test_user_context() -> UserContext {
         UserContext {
-            id: Uuid::new_v4(),
+            id: uuid::Uuid::new_v4().to_string(),
             username: "testuser".to_string(),
+            name: Some("Test User".to_string()),
+            email: Some("test@example.com".to_string()),
             fhir_user: Some("Practitioner/789".to_string()),
             roles: vec!["practitioner".to_string(), "admin".to_string()],
             attributes: HashMap::new(),

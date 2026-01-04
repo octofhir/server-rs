@@ -1,0 +1,15 @@
+{
+  "resourceType": "ValueSet",
+  "id": "notification-status",
+  "url": "http://octofhir.io/ValueSet/notification-status",
+  "name": "NotificationStatusValueSet",
+  "title": "Notification Status",
+  "status": "active",
+  "compose": {
+    "include": [
+      {
+        "system": "http://octofhir.io/CodeSystem/notification-status"
+      }
+    ]
+  }
+}

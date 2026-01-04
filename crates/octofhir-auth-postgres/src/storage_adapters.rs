@@ -9,21 +9,27 @@ use async_trait::async_trait;
 use time::OffsetDateTime;
 use uuid::Uuid;
 
+use octofhir_auth::oauth::authorize_session::AuthorizeSession;
 use octofhir_auth::oauth::session::{AuthorizationSession, LaunchContext};
 use octofhir_auth::storage::{
-    ClientStorage as ClientStorageTrait, RefreshTokenStorage as RefreshTokenStorageTrait,
+    AuthorizeSessionStorage as AuthorizeSessionStorageTrait, BasicAuthStorage,
+    ClientStorage as ClientStorageTrait, ConsentStorage as ConsentStorageTrait,
+    RefreshTokenStorage as RefreshTokenStorageTrait,
     RevokedTokenStorage as RevokedTokenStorageTrait, SessionStorage as SessionStorageTrait, User,
-    UserStorage as UserStorageTrait,
+    UserConsent, UserStorage as UserStorageTrait,
 };
-use octofhir_auth::types::{Client, RefreshToken};
-use octofhir_auth::{AuthError, AuthResult};
+use octofhir_auth::types::{BasicAuthEntity, Client, RefreshToken};
+use octofhir_auth::{verify_app_secret, AuthError, AuthResult};
 
-use crate::PgPool;
+use crate::app::AppStorage;
+use crate::authorize_session::AuthorizeSessionStorage;
 use crate::client::PostgresClientStorage;
+use crate::consent::ConsentStorage;
 use crate::revoked_token::RevokedTokenStorage;
 use crate::session::SessionStorage;
 use crate::token::TokenStorage;
 use crate::user::{UserRow, UserStorage};
+use crate::PgPool;
 
 // =============================================================================
 // Arc-Owning Client Storage
@@ -153,11 +159,11 @@ impl ArcUserStorage {
         let mut user: User = serde_json::from_value(row.resource.clone())
             .map_err(|e| AuthError::storage(format!("Failed to deserialize user: {}", e)))?;
 
-        // Ensure the ID matches the row ID (parse from String to Uuid)
-        user.id = Uuid::parse_str(&row.id)
-            .map_err(|e| AuthError::storage(format!("Invalid user ID: {}", e)))?;
+        // Use the ID from the row directly (it's already a String)
+        user.id = row.id;
 
-        // Set timestamps from row metadata
+        // Set timestamps from row metadata (not stored in JSON)
+        user.created_at = row.created_at;
         user.updated_at = row.updated_at;
 
         Ok(user)
@@ -171,10 +177,10 @@ impl ArcUserStorage {
 
 #[async_trait]
 impl UserStorageTrait for ArcUserStorage {
-    async fn find_by_id(&self, id: Uuid) -> AuthResult<Option<User>> {
+    async fn find_by_id(&self, id: &str) -> AuthResult<Option<User>> {
         let storage = UserStorage::new(&self.pool);
         let row = storage
-            .find_by_id(id)
+            .find_by_id_str(id)
             .await
             .map_err(|e| AuthError::storage(e.to_string()))?;
 
@@ -231,7 +237,7 @@ impl UserStorageTrait for ArcUserStorage {
         let storage = UserStorage::new(&self.pool);
         let resource = Self::user_to_json(user);
         storage
-            .create(user.id, resource)
+            .create_str(&user.id, resource)
             .await
             .map_err(|e| AuthError::storage(e.to_string()))?;
         Ok(())
@@ -241,40 +247,76 @@ impl UserStorageTrait for ArcUserStorage {
         let storage = UserStorage::new(&self.pool);
         let resource = Self::user_to_json(user);
         storage
-            .update(user.id, resource)
+            .update_str(&user.id, resource)
             .await
             .map_err(|e| AuthError::storage(e.to_string()))?;
         Ok(())
     }
 
-    async fn delete(&self, id: Uuid) -> AuthResult<()> {
+    async fn delete(&self, id: &str) -> AuthResult<()> {
         let storage = UserStorage::new(&self.pool);
         storage
-            .delete(id)
+            .delete_str(id)
             .await
             .map_err(|e| AuthError::storage(e.to_string()))
     }
 
-    async fn verify_password(&self, user_id: Uuid, password: &str) -> AuthResult<bool> {
+    async fn verify_password(&self, user_id: &str, password: &str) -> AuthResult<bool> {
         // First, get the user to access their password hash
+        tracing::debug!(user_id = %user_id, "verify_password: fetching user");
         let user = self.find_by_id(user_id).await?;
 
         match user {
             Some(u) => {
+                tracing::debug!(
+                    user_id = %user_id,
+                    username = %u.username,
+                    has_password_hash = u.password_hash.is_some(),
+                    hash_len = u.password_hash.as_ref().map(|h| h.len()),
+                    hash_prefix = ?u.password_hash.as_ref().map(|h| h.chars().take(30).collect::<String>()),
+                    "verify_password: user found"
+                );
                 match u.password_hash {
                     Some(hash) => {
-                        // Verify using bcrypt
-                        bcrypt::verify(password, &hash).map_err(|e| {
-                            AuthError::storage(format!("Password verification failed: {}", e))
-                        })
+                        // Verify using Argon2
+                        use argon2::{
+                            password_hash::{PasswordHash, PasswordVerifier},
+                            Argon2,
+                        };
+
+                        let parsed_hash = match PasswordHash::new(&hash) {
+                            Ok(h) => h,
+                            Err(e) => {
+                                tracing::error!(
+                                    user_id = %user_id,
+                                    error = %e,
+                                    hash_preview = ?hash.chars().take(50).collect::<String>(),
+                                    "verify_password: invalid hash format"
+                                );
+                                return Err(AuthError::storage(format!("Invalid password hash format: {}", e)));
+                            }
+                        };
+
+                        let result = Argon2::default().verify_password(password.as_bytes(), &parsed_hash);
+                        let verified = result.is_ok();
+                        tracing::debug!(
+                            user_id = %user_id,
+                            verified = verified,
+                            "verify_password: argon2 verification complete"
+                        );
+                        Ok(verified)
                     }
                     None => {
                         // User has no password (federated/SSO user)
+                        tracing::warn!(user_id = %user_id, "verify_password: user has no password hash (SSO user?)");
                         Ok(false)
                     }
                 }
             }
-            None => Err(AuthError::storage(format!("User {} not found", user_id))),
+            None => {
+                tracing::error!(user_id = %user_id, "verify_password: user not found");
+                Err(AuthError::storage(format!("User {} not found", user_id)))
+            }
         }
     }
 
@@ -288,10 +330,10 @@ impl UserStorageTrait for ArcUserStorage {
         rows.into_iter().map(Self::row_to_user).collect()
     }
 
-    async fn update_last_login(&self, user_id: Uuid) -> AuthResult<()> {
+    async fn update_last_login(&self, user_id: &str) -> AuthResult<()> {
         let storage = UserStorage::new(&self.pool);
         storage
-            .update_last_login(user_id)
+            .update_last_login_str(user_id)
             .await
             .map(|_| ()) // Discard the returned UserRow
             .map_err(|e| AuthError::storage(e.to_string()))
@@ -395,7 +437,7 @@ impl SessionStorageTrait for ArcSessionStorage {
         Ok(consumed_session)
     }
 
-    async fn update_user(&self, id: Uuid, user_id: Uuid) -> AuthResult<()> {
+    async fn update_user(&self, id: Uuid, user_id: &str) -> AuthResult<()> {
         let storage = SessionStorage::new(&self.pool);
 
         // Get current session
@@ -408,7 +450,7 @@ impl SessionStorageTrait for ArcSessionStorage {
         // Update with user_id
         let mut session: AuthorizationSession = serde_json::from_value(row.resource)
             .map_err(|e| AuthError::storage(format!("Failed to deserialize session: {}", e)))?;
-        session.user_id = Some(user_id);
+        session.user_id = Some(user_id.to_string());
 
         let resource = serde_json::to_value(&session)
             .map_err(|e| AuthError::storage(format!("Failed to serialize session: {}", e)))?;
@@ -547,7 +589,7 @@ impl RefreshTokenStorageTrait for ArcRefreshTokenStorage {
             .map_err(|e| AuthError::storage(e.to_string()))
     }
 
-    async fn revoke_by_user(&self, user_id: Uuid) -> AuthResult<u64> {
+    async fn revoke_by_user(&self, user_id: &str) -> AuthResult<u64> {
         let storage = TokenStorage::new(&self.pool);
         storage
             .revoke_by_user(user_id)
@@ -563,7 +605,7 @@ impl RefreshTokenStorageTrait for ArcRefreshTokenStorage {
             .map_err(|e| AuthError::storage(e.to_string()))
     }
 
-    async fn list_by_user(&self, user_id: Uuid) -> AuthResult<Vec<RefreshToken>> {
+    async fn list_by_user(&self, user_id: &str) -> AuthResult<Vec<RefreshToken>> {
         let storage = TokenStorage::new(&self.pool);
         let rows = storage
             .list_by_user(user_id)
@@ -571,5 +613,219 @@ impl RefreshTokenStorageTrait for ArcRefreshTokenStorage {
             .map_err(|e| AuthError::storage(e.to_string()))?;
 
         rows.into_iter().map(Self::row_to_token).collect()
+    }
+}
+
+// =============================================================================
+// Arc-Owning Basic Auth Storage (Universal Client/App)
+// =============================================================================
+
+/// Arc-owning PostgreSQL basic auth storage adapter.
+///
+/// This adapter provides unified authentication for both Clients and Apps.
+/// It searches both storages and verifies the provided secret.
+#[derive(Clone)]
+pub struct ArcBasicAuthStorage {
+    pool: Arc<PgPool>,
+}
+
+impl ArcBasicAuthStorage {
+    /// Create a new Arc-owning basic auth storage.
+    #[must_use]
+    pub fn new(pool: Arc<PgPool>) -> Self {
+        Self { pool }
+    }
+}
+
+#[async_trait]
+impl BasicAuthStorage for ArcBasicAuthStorage {
+    async fn authenticate(&self, entity_id: &str, secret: &str) -> AuthResult<Option<BasicAuthEntity>> {
+        // Try to find Client first
+        let client_storage = PostgresClientStorage::new(&self.pool);
+        if let Some(client) = client_storage.find_by_client_id(entity_id).await? {
+            // Verify client secret
+            let is_valid = client_storage.verify_secret(entity_id, secret).await?;
+            if is_valid {
+                return Ok(Some(BasicAuthEntity::Client(client)));
+            }
+        }
+
+        // Try to find App
+        let app_storage = AppStorage::new(&self.pool);
+        if let Some((app, secret_hash)) = app_storage
+            .find_by_id_with_secret(entity_id)
+            .await
+            .map_err(|e| AuthError::storage(e.to_string()))?
+            && let Some(hash) = secret_hash
+        {
+            // Verify app secret
+            let is_valid = verify_app_secret(secret, &hash)
+                .map_err(|e| AuthError::internal(format!("Failed to verify app secret: {}", e)))?;
+            if is_valid {
+                return Ok(Some(BasicAuthEntity::App(app)));
+            }
+        }
+
+        // Not found or invalid credentials
+        Ok(None)
+    }
+}
+
+// =============================================================================
+// Arc-Owning Authorize Session Storage
+// =============================================================================
+
+/// Arc-owning PostgreSQL authorize session storage adapter.
+///
+/// This wrapper owns an `Arc<PgPool>` instead of borrowing, allowing it
+/// to be used as `Arc<dyn AuthorizeSessionStorage>` in handlers.
+#[derive(Clone)]
+pub struct ArcAuthorizeSessionStorage {
+    pool: Arc<PgPool>,
+}
+
+impl ArcAuthorizeSessionStorage {
+    /// Create a new Arc-owning authorize session storage.
+    #[must_use]
+    pub fn new(pool: Arc<PgPool>) -> Self {
+        Self { pool }
+    }
+}
+
+#[async_trait]
+impl AuthorizeSessionStorageTrait for ArcAuthorizeSessionStorage {
+    async fn create(&self, session: &AuthorizeSession) -> AuthResult<()> {
+        let storage = AuthorizeSessionStorage::new(&self.pool);
+        let authorization_request = serde_json::to_value(&session.authorization_request)
+            .map_err(|e| AuthError::storage(format!("Failed to serialize request: {}", e)))?;
+        storage
+            .create(session.id, authorization_request, session.expires_at)
+            .await
+            .map_err(|e| AuthError::storage(e.to_string()))
+    }
+
+    async fn find_by_id(&self, id: Uuid) -> AuthResult<Option<AuthorizeSession>> {
+        let storage = AuthorizeSessionStorage::new(&self.pool);
+        let row = storage
+            .find_by_id(id)
+            .await
+            .map_err(|e| AuthError::storage(e.to_string()))?;
+
+        match row {
+            Some(r) => {
+                let authorization_request = serde_json::from_value(r.authorization_request)
+                    .map_err(|e| {
+                        AuthError::storage(format!("Failed to deserialize request: {}", e))
+                    })?;
+                Ok(Some(AuthorizeSession {
+                    id: r.id,
+                    user_id: r.user_id,
+                    authorization_request,
+                    created_at: r.created_at,
+                    expires_at: r.expires_at,
+                }))
+            }
+            None => Ok(None),
+        }
+    }
+
+    async fn update_user(&self, id: Uuid, user_id: &str) -> AuthResult<()> {
+        let storage = AuthorizeSessionStorage::new(&self.pool);
+        storage
+            .update_user(id, user_id)
+            .await
+            .map_err(|e| AuthError::storage(e.to_string()))
+    }
+
+    async fn delete(&self, id: Uuid) -> AuthResult<()> {
+        let storage = AuthorizeSessionStorage::new(&self.pool);
+        storage
+            .delete(id)
+            .await
+            .map_err(|e| AuthError::storage(e.to_string()))
+    }
+
+    async fn cleanup_expired(&self) -> AuthResult<u64> {
+        let storage = AuthorizeSessionStorage::new(&self.pool);
+        storage
+            .cleanup_expired()
+            .await
+            .map_err(|e| AuthError::storage(e.to_string()))
+    }
+}
+
+// =============================================================================
+// Arc-Owning Consent Storage
+// =============================================================================
+
+/// Arc-owning PostgreSQL consent storage adapter.
+///
+/// This wrapper owns an `Arc<PgPool>` instead of borrowing, allowing it
+/// to be used as `Arc<dyn ConsentStorage>` in handlers.
+#[derive(Clone)]
+pub struct ArcConsentStorage {
+    pool: Arc<PgPool>,
+}
+
+impl ArcConsentStorage {
+    /// Create a new Arc-owning consent storage.
+    #[must_use]
+    pub fn new(pool: Arc<PgPool>) -> Self {
+        Self { pool }
+    }
+}
+
+#[async_trait]
+impl ConsentStorageTrait for ArcConsentStorage {
+    async fn has_consent(
+        &self,
+        user_id: &str,
+        client_id: &str,
+        scopes: &[&str],
+    ) -> AuthResult<bool> {
+        let storage = ConsentStorage::new(&self.pool);
+        storage
+            .has_consent(user_id, client_id, scopes)
+            .await
+            .map_err(|e| AuthError::storage(e.to_string()))
+    }
+
+    async fn save_consent(
+        &self,
+        user_id: &str,
+        client_id: &str,
+        scopes: &[String],
+    ) -> AuthResult<()> {
+        let storage = ConsentStorage::new(&self.pool);
+        storage
+            .save_consent(user_id, client_id, scopes)
+            .await
+            .map_err(|e| AuthError::storage(e.to_string()))
+    }
+
+    async fn revoke_consent(&self, user_id: &str, client_id: &str) -> AuthResult<()> {
+        let storage = ConsentStorage::new(&self.pool);
+        storage
+            .revoke_consent(user_id, client_id)
+            .await
+            .map_err(|e| AuthError::storage(e.to_string()))
+    }
+
+    async fn list_consents(&self, user_id: &str) -> AuthResult<Vec<UserConsent>> {
+        let storage = ConsentStorage::new(&self.pool);
+        let rows = storage
+            .list_consents(user_id)
+            .await
+            .map_err(|e| AuthError::storage(e.to_string()))?;
+
+        Ok(rows
+            .into_iter()
+            .map(|r| UserConsent {
+                client_id: r.client_id,
+                scopes: r.scopes,
+                created_at: r.created_at,
+                updated_at: r.updated_at,
+            })
+            .collect())
     }
 }

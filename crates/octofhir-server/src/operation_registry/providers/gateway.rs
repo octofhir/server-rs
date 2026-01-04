@@ -4,7 +4,7 @@
 
 use std::collections::HashMap;
 
-use octofhir_core::{OperationDefinition, OperationProvider, categories};
+use octofhir_core::{AppReference, OperationDefinition, OperationProvider, categories};
 use octofhir_storage::{DynStorage, SearchParams};
 use tracing::{debug, warn};
 
@@ -42,7 +42,7 @@ impl GatewayOperationProvider {
             .entries
             .into_iter()
             .filter_map(|stored| serde_json::from_value(stored.resource).ok())
-            .filter(|app: &App| app.active)
+            .filter(|app: &App| app.is_active())
             .collect();
 
         debug!(count = apps.len(), "Loaded active Apps");
@@ -103,7 +103,11 @@ impl GatewayOperationProvider {
             };
 
             // Build full path by combining app base path and operation path
-            let full_path = format!("{}{}", app.base_path, custom_op.path);
+            let full_path = if let Some(base_path) = &app.base_path {
+                format!("{}{}", base_path, custom_op.path)
+            } else {
+                custom_op.path.clone()
+            };
 
             // Create operation ID from app name and operation path
             let operation_id = format!(
@@ -122,7 +126,7 @@ impl GatewayOperationProvider {
                 custom_op.method, full_path, custom_op.operation_type
             );
 
-            // Create OperationDefinition
+            // Create OperationDefinition with App reference
             let op_def = OperationDefinition::new(
                 operation_id,
                 format!(
@@ -136,7 +140,11 @@ impl GatewayOperationProvider {
                 app.id.clone().unwrap_or_else(|| "gateway".to_string()),
             )
             .with_description(description)
-            .with_public(false); // Gateway operations typically require auth
+            .with_public(custom_op.public)
+            .with_app(AppReference {
+                id: app.id.clone().unwrap_or_default(),
+                name: app.name.clone(),
+            });
 
             operations.push(op_def);
         }

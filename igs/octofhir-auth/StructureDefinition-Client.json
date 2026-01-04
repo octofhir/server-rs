@@ -76,6 +76,15 @@
         "type": [{ "code": "uri" }]
       },
       {
+        "id": "Client.postLogoutRedirectUris",
+        "path": "Client.postLogoutRedirectUris",
+        "short": "Allowed post-logout redirect URIs",
+        "definition": "List of allowed redirect URIs for OIDC RP-initiated logout. Per OpenID Connect RP-Initiated Logout 1.0, the OP MUST NOT perform post-logout redirection if the URI does not exactly match a registered value.",
+        "min": 0,
+        "max": "*",
+        "type": [{ "code": "uri" }]
+      },
+      {
         "id": "Client.scopes",
         "path": "Client.scopes",
         "short": "Allowed scopes",

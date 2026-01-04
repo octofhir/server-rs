@@ -115,11 +115,10 @@ impl UserResource {
         if self.username.len() > 100 {
             return Err("Username must be 100 characters or less".to_string());
         }
-        if let Some(ref email) = self.email {
-            if !email.contains('@') {
+        if let Some(ref email) = self.email
+            && !email.contains('@') {
                 return Err("Invalid email format".to_string());
             }
-        }
         Ok(())
     }
 }
@@ -359,8 +358,8 @@ pub async fn create_user(
     }
 
     // Check for duplicate email
-    if let Some(ref email) = user.email {
-        if storage
+    if let Some(ref email) = user.email
+        && storage
             .find_by_email(email)
             .await
             .map_err(|e| ApiError::internal(e.to_string()))?
@@ -368,7 +367,6 @@ pub async fn create_user(
         {
             return Err(ApiError::conflict("User with this email already exists"));
         }
-    }
 
     // Generate ID and set it
     let id = Uuid::new_v4();
@@ -445,8 +443,8 @@ pub async fn update_user(
         .get("email")
         .and_then(|v| v.as_str())
         .unwrap_or("");
-    if let Some(ref email) = user.email {
-        if email != existing_email
+    if let Some(ref email) = user.email
+        && email != existing_email
             && storage
                 .find_by_email(email)
                 .await
@@ -455,7 +453,6 @@ pub async fn update_user(
         {
             return Err(ApiError::conflict("User with this email already exists"));
         }
-    }
 
     // Set the ID from the path
     user.id = Some(id.clone());
@@ -508,13 +505,13 @@ pub async fn delete_user(
     // Revoke all user sessions before deletion
     let token_storage = TokenStorage::new(&state.pool);
     let _revoked = token_storage
-        .revoke_by_user(uuid)
+        .revoke_by_user(&id)
         .await
         .map_err(|e| ApiError::internal(e.to_string()))?;
 
     // Delete from storage
     storage
-        .delete(uuid)
+        .delete_str(&id)
         .await
         .map_err(|e| ApiError::internal(e.to_string()))?;
 
@@ -542,7 +539,7 @@ pub async fn get_user_sessions(
     // Get user's active tokens (which represent sessions)
     let token_storage = TokenStorage::new(&state.pool);
     let tokens = token_storage
-        .list_by_user(uuid)
+        .list_by_user(&id)
         .await
         .map_err(|e| ApiError::internal(e.to_string()))?;
 
@@ -638,7 +635,7 @@ pub async fn revoke_all_user_sessions(
     // Revoke all sessions
     let token_storage = TokenStorage::new(&state.pool);
     let revoked = token_storage
-        .revoke_by_user(uuid)
+        .revoke_by_user(&id)
         .await
         .map_err(|e| ApiError::internal(e.to_string()))?;
 
@@ -674,8 +671,8 @@ pub async fn reset_user_password(
         .map_err(|e| ApiError::internal(e.to_string()))?
         .ok_or_else(|| ApiError::not_found(format!("User/{}", id)))?;
 
-    // Hash the new password
-    let password_hash = bcrypt::hash(&request.new_password, bcrypt::DEFAULT_COST)
+    // Hash the new password using Argon2id
+    let password_hash = crate::bootstrap::hash_password(&request.new_password)
         .map_err(|e| ApiError::internal(format!("Failed to hash password: {}", e)))?;
 
     // Update the user with new password hash
@@ -703,7 +700,7 @@ pub async fn reset_user_password(
     // Optionally revoke all existing sessions
     let token_storage = TokenStorage::new(&state.pool);
     let revoked = token_storage
-        .revoke_by_user(uuid)
+        .revoke_by_user(&id)
         .await
         .map_err(|e| ApiError::internal(e.to_string()))?;
 
@@ -770,10 +767,10 @@ pub async fn bulk_update_users(
                     obj.insert("active".to_string(), serde_json::json!(false));
                 }
                 // Also revoke sessions for deactivated users
-                let _ = token_storage.revoke_by_user(uuid).await;
+                let _ = token_storage.revoke_by_user(id_str).await;
             }
             BulkAction::RevokeSessions => {
-                if let Err(e) = token_storage.revoke_by_user(uuid).await {
+                if let Err(e) = token_storage.revoke_by_user(id_str).await {
                     error_count += 1;
                     errors.push(format!("Error revoking sessions for {}: {}", id_str, e));
                     continue;

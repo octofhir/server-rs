@@ -65,11 +65,10 @@ pub fn extract_directives_from_field(
             names::SINGLETON => result.singleton = true,
             names::SLICE => {
                 // Extract the fhirpath argument using the helper method
-                if let Some(value) = directive.get_argument("fhirpath") {
-                    if let async_graphql_value::Value::String(s) = &value.node {
+                if let Some(value) = directive.get_argument("fhirpath")
+                    && let async_graphql_value::Value::String(s) = &value.node {
                         result.slice_fhirpath = Some(s.clone());
                     }
-                }
             }
             _ => {} // Ignore unknown directives
         }
@@ -91,15 +90,15 @@ pub fn transform_response_value(value: Value, directives: &FieldDirectives) -> V
     };
 
     // Apply @singleton: ensure value is not a list
-    let value = if directives.singleton {
-        apply_singleton_directive(value)
-    } else {
-        value
-    };
+    
 
     // Note: @flatten and @slice require access to the parent context
     // and are handled at a higher level in the response transformation
-    value
+    if directives.singleton {
+        apply_singleton_directive(value)
+    } else {
+        value
+    }
 }
 
 /// Applies the @first directive: returns only the first element of a list.
@@ -148,6 +147,7 @@ pub trait SliceFhirPathEvaluator: Send + Sync {
 }
 
 /// Default FHIRPath evaluator that uses the octofhir-fhirpath engine.
+#[allow(dead_code)]
 pub struct DefaultSliceEvaluator {
     engine: Arc<FhirPathEngine>,
     model_provider: Arc<dyn ModelProvider + Send + Sync>,
@@ -155,6 +155,7 @@ pub struct DefaultSliceEvaluator {
 
 impl DefaultSliceEvaluator {
     /// Create a new evaluator with the given engine and model provider.
+    #[allow(dead_code)]
     pub fn new(
         engine: Arc<FhirPathEngine>,
         model_provider: Arc<dyn ModelProvider + Send + Sync>,
@@ -281,6 +282,7 @@ pub async fn apply_slice_to_list(
 /// Synchronous fallback for apply_slice_to_list when no evaluator is available.
 ///
 /// This uses index-based naming as the fallback mechanism.
+#[allow(dead_code)]
 pub fn apply_slice_to_list_sync(
     list: Vec<serde_json::Value>,
     _fhirpath: &str,

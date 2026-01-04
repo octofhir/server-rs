@@ -48,12 +48,16 @@ reqwest = { version = "0.11", features = ["json"] }
 
 # HTTP handlers
 axum = { workspace = true }
+axum-extra = { version = "0.10", features = ["cookie"] }
+cookie = { version = "0.18", features = ["percent-encode"] }
 
 # Admin API types
 octofhir-api = { path = "../octofhir-api" }
 
 # Core types
 octofhir-core = { path = "../octofhir-core" }
+octofhir-storage = { path = "../octofhir-storage" }
+argon2 = { version = "0.5.3", features = ["std"] }
 
 [dev-dependencies]
 tokio-test = { workspace = true }

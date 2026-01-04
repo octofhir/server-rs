@@ -97,6 +97,16 @@ impl OperationProvider for AuthOperationProvider {
                 modules::AUTH,
             )
             .with_description("OAuth consent page"),
+            // User management operations
+            OperationDefinition::new(
+                "user.reset-password",
+                "$reset-password",
+                categories::AUTH,
+                vec!["POST".to_string()],
+                "/User/{id}/$reset-password",
+                modules::AUTH,
+            )
+            .with_description("Reset user password (admin operation)"),
         ]
     }
 

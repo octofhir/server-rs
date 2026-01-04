@@ -159,10 +159,8 @@ pub fn parse_reference(
     }
 
     // Skip contained references (#id)
-    if reference.starts_with('#') {
-        return Err(UnresolvableReference::Contained(
-            reference[1..].to_string(),
-        ));
+    if let Some(contained_id) = reference.strip_prefix('#') {
+        return Err(UnresolvableReference::Contained(contained_id.to_string()));
     }
 
     // Skip URN references (urn:uuid:xxx, urn:oid:xxx)
@@ -176,9 +174,8 @@ pub fn parse_reference(
         match base_url {
             Some(base) => {
                 let normalized_base = base.trim_end_matches('/');
-                if reference.starts_with(normalized_base) {
+                if let Some(suffix) = reference.strip_prefix(normalized_base) {
                     // Same server - strip base URL
-                    let suffix = &reference[normalized_base.len()..];
                     suffix.trim_start_matches('/')
                 } else {
                     // Different server - cannot resolve

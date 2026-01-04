@@ -10,7 +10,7 @@ mod storage;
 
 pub use providers::{
     AuthOperationProvider, FhirOperationProvider, GatewayOperationProvider,
-    SystemOperationProvider, UiOperationProvider,
+    NotificationsOperationProvider, SystemOperationProvider, UiOperationProvider,
 };
 pub use registry::OperationRegistryService;
 pub use storage::{OperationStorage, OperationUpdate, PostgresOperationStorage};

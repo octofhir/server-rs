@@ -370,15 +370,15 @@ impl ModelProvider for OctoFhirModelProvider {
             for (element_name, element) in &elements {
                 if element_name.ends_with("[x]") {
                     let base_name = element_name.trim_end_matches("[x]");
-                    if let Some(type_suffix) = property_name.strip_prefix(base_name) {
-                        if !type_suffix.is_empty() {
+                    if let Some(type_suffix) = property_name.strip_prefix(base_name)
+                        && !type_suffix.is_empty() {
                             let mut chars = type_suffix.chars();
                             if let Some(first_char) = chars.next() {
                                 let schema_type =
                                     format!("{}{}", first_char.to_lowercase(), chars.as_str());
 
-                                if let Some(choices) = &element.choices {
-                                    if choices.contains(&schema_type) {
+                                if let Some(choices) = &element.choices
+                                    && choices.contains(&schema_type) {
                                         let mapped_type = self.map_fhir_type(&schema_type);
                                         return Ok(Some(TypeInfo {
                                             type_name: mapped_type,
@@ -397,10 +397,8 @@ impl ModelProvider for OctoFhirModelProvider {
                                             name: Some(schema_type),
                                         }));
                                     }
-                                }
                             }
                         }
-                    }
                 }
             }
         }
@@ -414,11 +412,10 @@ impl ModelProvider for OctoFhirModelProvider {
         }
 
         // Name match
-        if let Some(ref name) = type_info.name {
-            if name == target_type {
+        if let Some(ref name) = type_info.name
+            && name == target_type {
                 return Some(type_info.clone());
             }
-        }
 
         // Note: is_type_derived_from is sync, but we can't make it async here
         // For now, rely on direct matches. Full hierarchy check would need
@@ -568,12 +565,12 @@ impl ModelProvider for OctoFhirModelProvider {
         parent_type: &str,
         property_name: &str,
     ) -> ModelResult<Option<Vec<ChoiceTypeInfo>>> {
-        if let Some(schema) = self.get_schema(parent_type).await {
-            if let Some(elements) = &schema.elements {
+        if let Some(schema) = self.get_schema(parent_type).await
+            && let Some(elements) = &schema.elements {
                 // Look for choice element (property_name[x])
                 let choice_key = format!("{}[x]", property_name);
-                if let Some(element) = elements.get(&choice_key) {
-                    if let Some(choices) = &element.choices {
+                if let Some(element) = elements.get(&choice_key)
+                    && let Some(choices) = &element.choices {
                         let choice_infos: Vec<ChoiceTypeInfo> = choices
                             .iter()
                             .map(|type_name| {
@@ -592,9 +589,7 @@ impl ModelProvider for OctoFhirModelProvider {
                             .collect();
                         return Ok(Some(choice_infos));
                     }
-                }
             }
-        }
         Ok(None)
     }
 

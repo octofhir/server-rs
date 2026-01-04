@@ -27,10 +27,15 @@
 //! - [`audit`] - Security event audit logging
 //! - [`storage`] - Storage traits for auth-related data
 //! - [`http`] - Axum HTTP handlers for OAuth endpoints
+//! - [`app_secret`] - App secret generation and verification
+//! - [`extractors`] - Axum extractors for authentication
 
+pub mod app_secret;
 pub mod audit;
 pub mod config;
+pub mod device;
 pub mod error;
+pub mod extractors;
 pub mod federation;
 pub mod http;
 pub mod middleware;
@@ -41,13 +46,16 @@ pub mod storage;
 pub mod token;
 pub mod types;
 
+pub use app_secret::{generate_app_secret, hash_app_secret, hash_password, verify_app_secret, verify_password};
 pub use config::{AuthConfig, ConfigError};
 pub use error::{AuthError, ErrorCategory};
+pub use extractors::{BasicAuth, BasicAuthError, BasicAuthState};
 pub use http::{
-    Bundle, BundleEntry, CreateLaunchRequest, CreateLaunchResponse, IdpSearchParams, JwksState,
-    LaunchState, LinkIdentityRequest, LogoutState, SmartConfigState, TokenState,
-    UnlinkIdentityRequest, UserInfoResponse, UserSearchParams, create_launch_handler,
-    introspect_handler, jwks_handler, logout_handler, revoke_handler, smart_configuration_handler,
+    AuthorizeFormData, AuthorizeState, Bundle, BundleEntry, CreateLaunchRequest,
+    CreateLaunchResponse, IdpSearchParams, JwksState, LaunchState, LinkIdentityRequest, LogoutState,
+    OidcLogoutParams, SmartConfigState, TokenState, UnlinkIdentityRequest, UserInfoResponse,
+    UserSearchParams, authorize_get, authorize_post, create_launch_handler, introspect_handler,
+    jwks_handler, logout_handler, oidc_logout_handler, revoke_handler, smart_configuration_handler,
     token_handler, userinfo_handler,
 };
 pub use middleware::{
@@ -68,10 +76,11 @@ pub use smart::{
     add_smart_security, generate_launch_id,
 };
 pub use storage::{
-    ClientStorage, JtiStorage, LaunchContextStorage, PolicySearchParams, PolicyStorage,
-    RefreshTokenStorage, RevokedTokenStorage, SessionStorage, User, UserStorage,
+    AuthorizeSessionStorage, BasicAuthStorage, ClientStorage, ConsentStorage, JtiStorage,
+    LaunchContextStorage, PolicySearchParams, PolicyStorage, RefreshTokenStorage,
+    RevokedTokenStorage, SessionStorage, SsoSessionStorage, User, UserConsent, UserStorage,
 };
-pub use types::{Client, ClientValidationError, GrantType, RefreshToken};
+pub use types::{AppRecord, BasicAuthEntity, Client, ClientValidationError, GrantType, RefreshToken};
 
 /// Type alias for authentication/authorization results.
 pub type AuthResult<T> = Result<T, AuthError>;
@@ -83,13 +92,16 @@ pub type AuthResult<T> = Result<T, AuthError>;
 /// ```
 pub mod prelude {
     pub use crate::AuthResult;
+    pub use crate::app_secret::{generate_app_secret, hash_app_secret, verify_app_secret};
     pub use crate::config::{AuthConfig, ConfigError};
     pub use crate::error::{AuthError, ErrorCategory};
+    pub use crate::extractors::{BasicAuth, BasicAuthError, BasicAuthState};
     pub use crate::http::{
-        Bundle, BundleEntry, CreateLaunchRequest, CreateLaunchResponse, IdpSearchParams, JwksState,
-        LaunchState, LinkIdentityRequest, SmartConfigState, TokenState, UnlinkIdentityRequest,
-        UserInfoResponse, UserSearchParams, create_launch_handler, introspect_handler,
-        jwks_handler, revoke_handler, smart_configuration_handler, token_handler, userinfo_handler,
+        AuthorizeFormData, AuthorizeState, Bundle, BundleEntry, CreateLaunchRequest,
+        CreateLaunchResponse, IdpSearchParams, JwksState, LaunchState, LinkIdentityRequest,
+        SmartConfigState, TokenState, UnlinkIdentityRequest, UserInfoResponse, UserSearchParams,
+        authorize_get, authorize_post, create_launch_handler, introspect_handler, jwks_handler,
+        revoke_handler, smart_configuration_handler, token_handler, userinfo_handler,
     };
     pub use crate::middleware::{
         AdminAuth, AuthContext, AuthState, BearerAuth, OptionalBearerAuth, UserContext,
@@ -110,8 +122,9 @@ pub mod prelude {
         add_smart_security, generate_launch_id,
     };
     pub use crate::storage::{
-        ClientStorage, JtiStorage, LaunchContextStorage, PolicySearchParams, PolicyStorage,
-        RefreshTokenStorage, RevokedTokenStorage, SessionStorage, User, UserStorage,
+        AuthorizeSessionStorage, BasicAuthStorage, ClientStorage, ConsentStorage, JtiStorage,
+        LaunchContextStorage, PolicySearchParams, PolicyStorage, RefreshTokenStorage,
+        RevokedTokenStorage, SessionStorage, SsoSessionStorage, User, UserConsent, UserStorage,
     };
-    pub use crate::types::{Client, ClientValidationError, GrantType, RefreshToken};
+    pub use crate::types::{AppRecord, Client, ClientValidationError, GrantType, RefreshToken};
 }

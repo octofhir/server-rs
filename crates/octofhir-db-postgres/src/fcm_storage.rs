@@ -273,7 +273,7 @@ impl PostgresPackageStore {
 
         // Insert all resources
         for (resource_type, content) in &resources {
-            let sd_fields = Self::extract_sd_fields(&content);
+            let sd_fields = Self::extract_sd_fields(content);
 
             // Extract standard FHIR resource fields
             let resource_id = content.get("id").and_then(|v| v.as_str()).map(String::from);
@@ -311,7 +311,7 @@ impl PostgresPackageStore {
                 )
                 "#,
             )
-            .bind(&resource_type)
+            .bind(resource_type)
             .bind(&resource_id)
             .bind(&url)
             .bind(content.get("name").and_then(|v| v.as_str()))
@@ -336,7 +336,7 @@ impl PostgresPackageStore {
             .bind(version)
             .bind(fhir_version)
             .bind(&content_hash)
-            .bind(&content)
+            .bind(content)
             .execute(&self.pool)
             .await?;
         }

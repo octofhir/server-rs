@@ -200,7 +200,7 @@ impl FhirSchemaBuilder {
         self.add_reverse_reference_fields(&mut fhir_types);
 
         // Register all generated types
-        for (type_name, _object) in &fhir_types {
+        for type_name in fhir_types.keys() {
             trace!(type_name = %type_name, "Registering FHIR type");
         }
         for (_type_name, object) in fhir_types {
@@ -436,7 +436,7 @@ impl FhirSchemaBuilder {
 
         // Also register connection types for internal resource types
         for resource_type in INTERNAL_RESOURCE_TYPES {
-            if !resource_types.contains(resource_type) {
+            if !resource_types.iter().any(|t| t == resource_type) {
                 builder = self.register_connection_type_for(builder, resource_type);
             }
         }
@@ -457,13 +457,11 @@ impl FhirSchemaBuilder {
             .field(
                 Field::new("resource", TypeRef::named_nn(resource_type), |ctx| {
                     FieldFuture::new(async move {
-                        if let Some(parent) = ctx.parent_value.as_value() {
-                            if let Value::Object(obj) = parent {
-                                if let Some(resource) = obj.get("resource") {
+                        if let Some(parent) = ctx.parent_value.as_value()
+                            && let Value::Object(obj) = parent
+                                && let Some(resource) = obj.get("resource") {
                                     return Ok(Some(resource.clone()));
                                 }
-                            }
-                        }
                         Ok(None)
                     })
                 })
@@ -472,13 +470,11 @@ impl FhirSchemaBuilder {
             .field(
                 Field::new("mode", TypeRef::named(TypeRef::STRING), |ctx| {
                     FieldFuture::new(async move {
-                        if let Some(parent) = ctx.parent_value.as_value() {
-                            if let Value::Object(obj) = parent {
-                                if let Some(mode) = obj.get("mode") {
+                        if let Some(parent) = ctx.parent_value.as_value()
+                            && let Value::Object(obj) = parent
+                                && let Some(mode) = obj.get("mode") {
                                     return Ok(Some(mode.clone()));
                                 }
-                            }
-                        }
                         Ok(None)
                     })
                 })
@@ -487,13 +483,11 @@ impl FhirSchemaBuilder {
             .field(
                 Field::new("score", TypeRef::named(TypeRef::FLOAT), |ctx| {
                     FieldFuture::new(async move {
-                        if let Some(parent) = ctx.parent_value.as_value() {
-                            if let Value::Object(obj) = parent {
-                                if let Some(score) = obj.get("score") {
+                        if let Some(parent) = ctx.parent_value.as_value()
+                            && let Value::Object(obj) = parent
+                                && let Some(score) = obj.get("score") {
                                     return Ok(Some(score.clone()));
                                 }
-                            }
-                        }
                         Ok(None)
                     })
                 })
@@ -514,13 +508,11 @@ impl FhirSchemaBuilder {
             .field(
                 Field::new("count", TypeRef::named(TypeRef::INT), |ctx| {
                     FieldFuture::new(async move {
-                        if let Some(parent) = ctx.parent_value.as_value() {
-                            if let Value::Object(obj) = parent {
-                                if let Some(count) = obj.get("count") {
+                        if let Some(parent) = ctx.parent_value.as_value()
+                            && let Value::Object(obj) = parent
+                                && let Some(count) = obj.get("count") {
                                     return Ok(Some(count.clone()));
                                 }
-                            }
-                        }
                         Ok(None)
                     })
                 })
@@ -529,13 +521,11 @@ impl FhirSchemaBuilder {
             .field(
                 Field::new("offset", TypeRef::named(TypeRef::INT), |ctx| {
                     FieldFuture::new(async move {
-                        if let Some(parent) = ctx.parent_value.as_value() {
-                            if let Value::Object(obj) = parent {
-                                if let Some(offset) = obj.get("offset") {
+                        if let Some(parent) = ctx.parent_value.as_value()
+                            && let Value::Object(obj) = parent
+                                && let Some(offset) = obj.get("offset") {
                                     return Ok(Some(offset.clone()));
                                 }
-                            }
-                        }
                         Ok(None)
                     })
                 })
@@ -544,13 +534,11 @@ impl FhirSchemaBuilder {
             .field(
                 Field::new("pageSize", TypeRef::named(TypeRef::INT), |ctx| {
                     FieldFuture::new(async move {
-                        if let Some(parent) = ctx.parent_value.as_value() {
-                            if let Value::Object(obj) = parent {
-                                if let Some(size) = obj.get("pageSize") {
+                        if let Some(parent) = ctx.parent_value.as_value()
+                            && let Value::Object(obj) = parent
+                                && let Some(size) = obj.get("pageSize") {
                                     return Ok(Some(size.clone()));
                                 }
-                            }
-                        }
                         Ok(None)
                     })
                 })
@@ -559,13 +547,11 @@ impl FhirSchemaBuilder {
             .field(
                 Field::new("edges", edge_type_ref, |ctx| {
                     FieldFuture::new(async move {
-                        if let Some(parent) = ctx.parent_value.as_value() {
-                            if let Value::Object(obj) = parent {
-                                if let Some(edges) = obj.get("edges") {
+                        if let Some(parent) = ctx.parent_value.as_value()
+                            && let Value::Object(obj) = parent
+                                && let Some(edges) = obj.get("edges") {
                                     return Ok(Some(edges.clone()));
                                 }
-                            }
-                        }
                         Ok(Some(Value::List(vec![])))
                     })
                 })
@@ -574,13 +560,11 @@ impl FhirSchemaBuilder {
             .field(
                 Field::new("first", TypeRef::named(TypeRef::STRING), |ctx| {
                     FieldFuture::new(async move {
-                        if let Some(parent) = ctx.parent_value.as_value() {
-                            if let Value::Object(obj) = parent {
-                                if let Some(cursor) = obj.get("first") {
+                        if let Some(parent) = ctx.parent_value.as_value()
+                            && let Value::Object(obj) = parent
+                                && let Some(cursor) = obj.get("first") {
                                     return Ok(Some(cursor.clone()));
                                 }
-                            }
-                        }
                         Ok(None)
                     })
                 })
@@ -589,13 +573,11 @@ impl FhirSchemaBuilder {
             .field(
                 Field::new("previous", TypeRef::named(TypeRef::STRING), |ctx| {
                     FieldFuture::new(async move {
-                        if let Some(parent) = ctx.parent_value.as_value() {
-                            if let Value::Object(obj) = parent {
-                                if let Some(cursor) = obj.get("previous") {
+                        if let Some(parent) = ctx.parent_value.as_value()
+                            && let Value::Object(obj) = parent
+                                && let Some(cursor) = obj.get("previous") {
                                     return Ok(Some(cursor.clone()));
                                 }
-                            }
-                        }
                         Ok(None)
                     })
                 })
@@ -604,13 +586,11 @@ impl FhirSchemaBuilder {
             .field(
                 Field::new("next", TypeRef::named(TypeRef::STRING), |ctx| {
                     FieldFuture::new(async move {
-                        if let Some(parent) = ctx.parent_value.as_value() {
-                            if let Value::Object(obj) = parent {
-                                if let Some(cursor) = obj.get("next") {
+                        if let Some(parent) = ctx.parent_value.as_value()
+                            && let Value::Object(obj) = parent
+                                && let Some(cursor) = obj.get("next") {
                                     return Ok(Some(cursor.clone()));
                                 }
-                            }
-                        }
                         Ok(None)
                     })
                 })
@@ -619,13 +599,11 @@ impl FhirSchemaBuilder {
             .field(
                 Field::new("last", TypeRef::named(TypeRef::STRING), |ctx| {
                     FieldFuture::new(async move {
-                        if let Some(parent) = ctx.parent_value.as_value() {
-                            if let Value::Object(obj) = parent {
-                                if let Some(cursor) = obj.get("last") {
+                        if let Some(parent) = ctx.parent_value.as_value()
+                            && let Value::Object(obj) = parent
+                                && let Some(cursor) = obj.get("last") {
                                     return Ok(Some(cursor.clone()));
                                 }
-                            }
-                        }
                         Ok(None)
                     })
                 })
@@ -677,7 +655,7 @@ impl FhirSchemaBuilder {
         // These are OctoFHIR-specific resources that may not have search parameters
         for resource_type in INTERNAL_RESOURCE_TYPES {
             // Skip if already added from search registry
-            if !resource_types.contains(resource_type) {
+            if !resource_types.iter().any(|t| t.as_str() == *resource_type) {
                 debug!(resource_type = %resource_type, "Adding internal resource query fields");
                 query = self.add_resource_query_fields(query, resource_type);
             }
@@ -941,7 +919,7 @@ impl FhirSchemaBuilder {
 
         // Also register input types for internal resource types (User, Client, AccessPolicy, etc.)
         for resource_type in INTERNAL_RESOURCE_TYPES {
-            if !resource_types.contains(resource_type) {
+            if !resource_types.iter().any(|t| t == resource_type) {
                 let input = InputTypeGenerator::create_resource_input(resource_type);
                 trace!(resource_type = %resource_type, "Registering internal resource input type");
                 builder = builder.register(input);
@@ -982,7 +960,7 @@ impl FhirSchemaBuilder {
         // Also add mutations for internal resource types (User, Client, AccessPolicy, etc.)
         for resource_type in INTERNAL_RESOURCE_TYPES {
             // Skip if already added from search registry
-            if !resource_types.contains(resource_type) {
+            if !resource_types.iter().any(|t| t == resource_type) {
                 debug!(resource_type = %resource_type, "Adding internal resource mutation fields");
                 mutation = self.add_resource_mutation_fields(mutation, resource_type);
             }

@@ -60,14 +60,13 @@ impl ExportOperation {
             .map(|s| s.to_string());
 
         // Validate output format if specified
-        if let Some(ref fmt) = output_format {
-            if fmt != NDJSON_CONTENT_TYPE && fmt != "ndjson" {
+        if let Some(ref fmt) = output_format
+            && fmt != NDJSON_CONTENT_TYPE && fmt != "ndjson" {
                 return Err(OperationError::InvalidParameters(format!(
                     "Unsupported _outputFormat: {}. Only {} is supported.",
                     fmt, NDJSON_CONTENT_TYPE
                 )));
             }
-        }
 
         let since = params
             .get("_since")
@@ -184,8 +183,8 @@ impl ExportOperation {
 
         for param in parameters {
             let name = param.get("name").and_then(|n| n.as_str());
-            if name == Some("viewDefinition") {
-                if let Some(resource) = param.get("resource") {
+            if name == Some("viewDefinition")
+                && let Some(resource) = param.get("resource") {
                     return ViewDefinition::from_json(resource).map_err(|e| {
                         OperationError::InvalidParameters(format!(
                             "Invalid ViewDefinition: {}",
@@ -193,7 +192,6 @@ impl ExportOperation {
                         ))
                     });
                 }
-            }
         }
 
         Err(OperationError::InvalidParameters(

@@ -141,7 +141,7 @@ pub trait RefreshTokenStorage: Send + Sync {
     /// # Errors
     ///
     /// Returns an error if the operation fails.
-    async fn revoke_by_user(&self, user_id: Uuid) -> AuthResult<u64>;
+    async fn revoke_by_user(&self, user_id: &str) -> AuthResult<u64>;
 
     /// Deletes expired and revoked tokens.
     ///
@@ -173,5 +173,5 @@ pub trait RefreshTokenStorage: Send + Sync {
     /// # Errors
     ///
     /// Returns an error if the operation fails.
-    async fn list_by_user(&self, user_id: Uuid) -> AuthResult<Vec<RefreshToken>>;
+    async fn list_by_user(&self, user_id: &str) -> AuthResult<Vec<RefreshToken>>;
 }

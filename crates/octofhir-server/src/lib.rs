@@ -1,4 +1,5 @@
 pub mod admin;
+pub mod app_platform;
 pub mod async_jobs;
 pub mod audit;
 pub mod bootstrap;
@@ -21,8 +22,10 @@ pub mod observability;
 pub mod operation_registry;
 pub mod operations;
 pub mod patch;
+pub mod reconcile;
 pub mod reference_resolver;
 pub mod rest_console;
+pub mod routes;
 pub mod server;
 pub mod terminology_service;
 pub mod validation;

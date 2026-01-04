@@ -214,17 +214,21 @@ fn convert_to_parsed_param(key: &str, values: &[String]) -> ParsedParam {
 
 /// Extract prefix from a value string.
 fn extract_prefix(value: &str) -> (Option<SearchPrefix>, &str) {
-    if value.len() >= 2 {
-        let p2 = &value[..2];
-        if let Some(prefix) = SearchPrefix::parse(p2) {
-            return (Some(prefix), &value[2..]);
+    // Use character iteration to safely handle multi-byte UTF-8 characters.
+    // FHIR prefixes are ASCII only (eq, ne, gt, lt, ge, le, sa, eb, ap).
+    let mut chars = value.chars();
+    if let Some(c1) = chars.next() {
+        if let Some(c2) = chars.next() {
+            // Try 2-character prefix first
+            if c1.is_ascii_lowercase() && c2.is_ascii_lowercase() {
+                let prefix_str: String = [c1, c2].iter().collect();
+                if let Some(prefix) = SearchPrefix::parse(&prefix_str) {
+                    // Safe to slice: we know c1 and c2 are ASCII (1 byte each)
+                    return (Some(prefix), &value[2..]);
+                }
+            }
         }
-    }
-    if !value.is_empty() {
-        let p1 = &value[..1];
-        if let Some(prefix) = SearchPrefix::parse(p1) {
-            return (Some(prefix), &value[1..]);
-        }
+        // No 2-char prefix currently exists that's single-char, but keep for safety
     }
     (None, value)
 }
@@ -256,48 +260,48 @@ fn handle_chained_param(
             );
 
             // For simple single-level chains like "patient.name"
-            if let Some(first_link) = chained.chain.first() {
-                if let Some(target_type) = &first_link.target_type {
-                    // Build the reference path
-                    let expr = &first_link.expression;
-                    let path_segments = fhirpath_to_jsonb_path(expr, "");
-                    if let Ok(ref_path) = JsonbPath::new(path_segments) {
-                        // Note: We can't modify builder here because of borrow issues
-                        // Instead, build the chain condition using EXISTS subquery
-                        let target_lower = target_type.to_lowercase();
-                        let final_param_def = registry.get(target_type, &chained.final_param);
+            if let Some(first_link) = chained.chain.first()
+                && let Some(target_type) = &first_link.target_type
+            {
+                // Build the reference path
+                let expr = &first_link.expression;
+                let path_segments = fhirpath_to_jsonb_path(expr, "");
+                if let Ok(ref_path) = JsonbPath::new(path_segments) {
+                    // Note: We can't modify builder here because of borrow issues
+                    // Instead, build the chain condition using EXISTS subquery
+                    let target_lower = target_type.to_lowercase();
+                    let final_param_def = registry.get(target_type, &chained.final_param);
 
-                        if let Some(param_def) = final_param_def {
-                            if let Some(final_expr) = &param_def.expression {
-                                let final_path = fhirpath_to_jsonb_path(final_expr, target_type);
-                                let final_accessor = if final_path.is_empty() {
-                                    "target.resource".to_string()
+                    if let Some(param_def) = final_param_def
+                        && let Some(final_expr) = &param_def.expression
+                    {
+                        let final_path = fhirpath_to_jsonb_path(final_expr, target_type);
+                        let final_accessor = if final_path.is_empty() {
+                            "target.resource".to_string()
+                        } else {
+                            let mut acc = "target.resource".to_string();
+                            for (i, seg) in final_path.iter().enumerate() {
+                                if i == final_path.len() - 1 {
+                                    acc = format!("{acc}->>'{seg}'");
                                 } else {
-                                    let mut acc = "target.resource".to_string();
-                                    for (i, seg) in final_path.iter().enumerate() {
-                                        if i == final_path.len() - 1 {
-                                            acc = format!("{acc}->>'{seg}'");
-                                        } else {
-                                            acc = format!("{acc}->'{seg}'");
-                                        }
-                                    }
-                                    acc
-                                };
-
-                                // Build the chained condition
-                                let ref_accessor = ref_path.to_accessor("r.resource", true);
-                                let param_num = sql_builder.add_text_param(&chained.value);
-
-                                let condition = format!(
-                                    "EXISTS (SELECT 1 FROM \"public\".\"{target_lower}\" AS target \
-                                     WHERE ({ref_accessor}) = CONCAT('{target_type}/', target.id) \
-                                     AND target.status != 'deleted' \
-                                     AND LOWER({final_accessor}) LIKE LOWER(${param_num} || '%'))"
-                                );
-
-                                sql_builder.add_condition(condition);
+                                    acc = format!("{acc}->'{seg}'");
+                                }
                             }
-                        }
+                            acc
+                        };
+
+                        // Build the chained condition
+                        let ref_accessor = ref_path.to_accessor("r.resource", true);
+                        let param_num = sql_builder.add_text_param(&chained.value);
+
+                        let condition = format!(
+                            "EXISTS (SELECT 1 FROM \"public\".\"{target_lower}\" AS target \
+                             WHERE ({ref_accessor}) = CONCAT('{target_type}/', target.id) \
+                             AND target.status != 'deleted' \
+                             AND LOWER({final_accessor}) LIKE LOWER(${param_num} || '%'))"
+                        );
+
+                        sql_builder.add_condition(condition);
                     }
                 }
             }

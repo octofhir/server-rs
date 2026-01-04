@@ -41,10 +41,10 @@ pub async fn load_search_parameters(
 ) -> Result<SearchParameterRegistry, LoaderError> {
     use octofhir_canonical_manager::search::SearchQuery;
 
-    let mut registry = SearchParameterRegistry::new();
+    let registry = SearchParameterRegistry::new();
 
     // Register built-in common parameters first
-    register_common_parameters(&mut registry);
+    register_common_parameters(&registry);
 
     // Query for all SearchParameter resources
     // IMPORTANT: Set high limit to get all search parameters (FHIR R4 has ~1000 search parameters)

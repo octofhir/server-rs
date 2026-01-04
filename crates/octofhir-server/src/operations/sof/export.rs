@@ -85,8 +85,8 @@ impl ViewDefinitionExportOperation {
 
         for param in parameters {
             let name = param.get("name").and_then(|n| n.as_str());
-            if name == Some("viewDefinition") {
-                if let Some(resource) = param.get("resource") {
+            if name == Some("viewDefinition")
+                && let Some(resource) = param.get("resource") {
                     return ViewDefinition::from_json(resource).map_err(|e| {
                         OperationError::InvalidParameters(format!(
                             "Invalid ViewDefinition: {}",
@@ -94,7 +94,6 @@ impl ViewDefinitionExportOperation {
                         ))
                     });
                 }
-            }
         }
 
         Err(OperationError::InvalidParameters(

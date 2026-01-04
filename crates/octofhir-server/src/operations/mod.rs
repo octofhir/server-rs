@@ -40,12 +40,14 @@
 //! }
 //! ```
 
+pub mod auth_session;
 pub mod bulk;
 pub mod definition;
 pub mod everything;
 pub mod handler;
 pub mod loader;
 pub mod meta;
+pub mod notifications;
 pub mod params;
 pub mod registry;
 pub mod router;
@@ -191,6 +193,24 @@ pub fn register_core_operations_full(
     handlers.insert(
         "sql".to_string(),
         Arc::new(ViewDefinitionSqlOperation::new(sql_on_fhir_config.enabled)),
+    );
+
+    // Notification operations
+    handlers.insert(
+        "resend".to_string(),
+        Arc::new(notifications::ResendOperation),
+    );
+    handlers.insert(
+        "resend-all".to_string(),
+        Arc::new(notifications::ResendAllOperation),
+    );
+    handlers.insert(
+        "stats".to_string(),
+        Arc::new(notifications::StatsOperation),
+    );
+    handlers.insert(
+        "cancel".to_string(),
+        Arc::new(notifications::CancelOperation),
     );
 
     handlers

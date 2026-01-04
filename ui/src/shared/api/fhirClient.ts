@@ -258,6 +258,7 @@ const INTERNAL_RESOURCES = new Set([
 	"RefreshToken",
 	"RevokedToken",
 	"App",
+	"AuthSession",
 ]);
 
 // Create a custom client that routes internal resources to root and others to /fhir

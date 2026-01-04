@@ -75,12 +75,23 @@ impl<'a> UserStorage<'a> {
         Self { pool }
     }
 
-    /// Find a user by its ID.
+    /// Find a user by its ID (UUID).
     ///
     /// # Errors
     ///
     /// Returns an error if the database query fails.
     pub async fn find_by_id(&self, id: Uuid) -> StorageResult<Option<UserRow>> {
+        self.find_by_id_str(&id.to_string()).await
+    }
+
+    /// Find a user by its ID (string).
+    ///
+    /// This method accepts any string ID, supporting both UUIDs and custom IDs.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the database query fails.
+    pub async fn find_by_id_str(&self, id: &str) -> StorageResult<Option<UserRow>> {
         let row: Option<(
             String,
             i64,
@@ -96,7 +107,7 @@ impl<'a> UserStorage<'a> {
               AND status != 'deleted'
             "#,
         )
-        .bind(id.to_string())
+        .bind(id)
         .fetch_optional(self.pool)
         .await?;
 
@@ -228,13 +239,22 @@ impl<'a> UserStorage<'a> {
         Ok(row.map(UserRow::from_tuple))
     }
 
-    /// Create a new user.
+    /// Create a new user (UUID version).
     ///
     /// # Errors
     ///
     /// Returns an error if the database insert fails.
     pub async fn create(&self, id: Uuid, resource: serde_json::Value) -> StorageResult<UserRow> {
-        let id_str = id.to_string();
+        self.create_str(&id.to_string(), resource).await
+    }
+
+    /// Create a new user (string ID version).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the database insert fails.
+    pub async fn create_str(&self, id: &str, resource: serde_json::Value) -> StorageResult<UserRow> {
+        let id_str = id;
         let row: (
             String,
             i64,
@@ -265,12 +285,21 @@ impl<'a> UserStorage<'a> {
         Ok(UserRow::from_tuple(row))
     }
 
-    /// Update an existing user.
+    /// Update an existing user (UUID version).
     ///
     /// # Errors
     ///
     /// Returns an error if the user doesn't exist or the database update fails.
     pub async fn update(&self, id: Uuid, resource: serde_json::Value) -> StorageResult<UserRow> {
+        self.update_str(&id.to_string(), resource).await
+    }
+
+    /// Update an existing user (string ID version).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the user doesn't exist or the database update fails.
+    pub async fn update_str(&self, id: &str, resource: serde_json::Value) -> StorageResult<UserRow> {
         let row: Option<(
             String,
             i64,
@@ -290,7 +319,7 @@ impl<'a> UserStorage<'a> {
             RETURNING id, txid, created_at, updated_at, resource, status::text
             "#,
         )
-        .bind(id.to_string())
+        .bind(id)
         .bind(&resource)
         .fetch_optional(self.pool)
         .await?;
@@ -299,12 +328,21 @@ impl<'a> UserStorage<'a> {
             .ok_or_else(|| StorageError::not_found(format!("User {}", id)))
     }
 
-    /// Update last login timestamp.
+    /// Update last login timestamp (UUID version).
     ///
     /// # Errors
     ///
     /// Returns an error if the user doesn't exist or the database update fails.
     pub async fn update_last_login(&self, id: Uuid) -> StorageResult<UserRow> {
+        self.update_last_login_str(&id.to_string()).await
+    }
+
+    /// Update last login timestamp (string ID version).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the user doesn't exist or the database update fails.
+    pub async fn update_last_login_str(&self, id: &str) -> StorageResult<UserRow> {
         let row: Option<(
             String,
             i64,
@@ -324,7 +362,7 @@ impl<'a> UserStorage<'a> {
             RETURNING id, txid, created_at, updated_at, resource, status::text
             "#,
         )
-        .bind(id.to_string())
+        .bind(id)
         .fetch_optional(self.pool)
         .await?;
 
@@ -332,12 +370,21 @@ impl<'a> UserStorage<'a> {
             .ok_or_else(|| StorageError::not_found(format!("User {}", id)))
     }
 
-    /// Delete a user (soft delete).
+    /// Delete a user (soft delete, UUID version).
     ///
     /// # Errors
     ///
     /// Returns an error if the user doesn't exist or the database update fails.
     pub async fn delete(&self, id: Uuid) -> StorageResult<()> {
+        self.delete_str(&id.to_string()).await
+    }
+
+    /// Delete a user (soft delete, string ID version).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the user doesn't exist or the database update fails.
+    pub async fn delete_str(&self, id: &str) -> StorageResult<()> {
         let result = query(
             r#"
             UPDATE "user"
@@ -348,7 +395,7 @@ impl<'a> UserStorage<'a> {
               AND status != 'deleted'
             "#,
         )
-        .bind(id.to_string())
+        .bind(id)
         .execute(self.pool)
         .await?;
 

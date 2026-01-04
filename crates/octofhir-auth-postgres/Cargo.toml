@@ -10,7 +10,7 @@ repository.workspace = true
 [dependencies]
 # Internal
 octofhir-auth = { workspace = true }
-
+octofhir-storage = { workspace = true }
 # Workspace dependencies
 async-trait = { workspace = true }
 serde = { workspace = true }
@@ -22,7 +22,7 @@ tracing = { workspace = true }
 uuid = { workspace = true }
 
 # Password hashing
-bcrypt = "0.16"
+argon2 = { version = "0.5.3", features = ["std"] }
 
 # Random generation
 rand = "0.8"

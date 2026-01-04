@@ -11,7 +11,7 @@
   "type": "CustomOperation",
   "baseDefinition": "http://hl7.org/fhir/StructureDefinition/DomainResource",
   "derivation": "specialization",
-  "description": "A CustomOperation defines a custom API endpoint with configurable behavior (proxy, SQL, FHIRPath, or custom handler).",
+  "description": "A CustomOperation defines a custom API endpoint with configurable behavior (proxy, SQL, FHIRPath, app backend, or custom handler).",
   "differential": {
     "element": [
       {
@@ -30,9 +30,7 @@
         "type": [
           {
             "code": "Reference",
-            "targetProfile": [
-              "http://octofhir.io/StructureDefinition/App"
-            ]
+            "targetProfile": ["http://octofhir.io/StructureDefinition/App"]
           }
         ]
       },
@@ -44,11 +42,7 @@
         "comment": "Supports path parameters like :id, :resourceId",
         "min": 1,
         "max": "1",
-        "type": [
-          {
-            "code": "string"
-          }
-        ]
+        "type": [{ "code": "string" }]
       },
       {
         "id": "CustomOperation.method",
@@ -57,11 +51,7 @@
         "definition": "HTTP method for this operation (GET, POST, PUT, DELETE, PATCH)",
         "min": 1,
         "max": "1",
-        "type": [
-          {
-            "code": "code"
-          }
-        ],
+        "type": [{ "code": "code" }],
         "binding": {
           "strength": "required",
           "valueSet": "http://octofhir.io/ValueSet/http-methods"
@@ -71,14 +61,10 @@
         "id": "CustomOperation.type",
         "path": "CustomOperation.type",
         "short": "Operation type",
-        "definition": "Type of operation implementation: proxy | sql | fhirpath | handler",
+        "definition": "Type of operation implementation: proxy | sql | fhirpath | handler | app",
         "min": 1,
         "max": "1",
-        "type": [
-          {
-            "code": "code"
-          }
-        ],
+        "type": [{ "code": "code" }],
         "binding": {
           "strength": "required",
           "valueSet": "http://octofhir.io/ValueSet/operation-types"
@@ -89,16 +75,10 @@
         "path": "CustomOperation.proxy",
         "short": "Proxy configuration",
         "definition": "Configuration for proxy-type operations",
-        "condition": [
-          "type == 'proxy'"
-        ],
+        "condition": ["type == 'proxy'"],
         "min": 0,
         "max": "1",
-        "type": [
-          {
-            "code": "BackboneElement"
-          }
-        ]
+        "type": [{ "code": "BackboneElement" }]
       },
       {
         "id": "CustomOperation.proxy.url",
@@ -107,11 +87,7 @@
         "definition": "Full URL to proxy requests to",
         "min": 1,
         "max": "1",
-        "type": [
-          {
-            "code": "url"
-          }
-        ]
+        "type": [{ "code": "url" }]
       },
       {
         "id": "CustomOperation.proxy.timeout",
@@ -120,11 +96,7 @@
         "definition": "Request timeout in seconds (default: 30)",
         "min": 0,
         "max": "1",
-        "type": [
-          {
-            "code": "integer"
-          }
-        ]
+        "type": [{ "code": "integer" }]
       },
       {
         "id": "CustomOperation.proxy.headers",
@@ -133,11 +105,7 @@
         "definition": "Headers to add to proxied requests",
         "min": 0,
         "max": "*",
-        "type": [
-          {
-            "code": "BackboneElement"
-          }
-        ]
+        "type": [{ "code": "BackboneElement" }]
       },
       {
         "id": "CustomOperation.proxy.headers.name",
@@ -145,11 +113,7 @@
         "short": "Header name",
         "min": 1,
         "max": "1",
-        "type": [
-          {
-            "code": "string"
-          }
-        ]
+        "type": [{ "code": "string" }]
       },
       {
         "id": "CustomOperation.proxy.headers.value",
@@ -157,11 +121,7 @@
         "short": "Header value",
         "min": 1,
         "max": "1",
-        "type": [
-          {
-            "code": "string"
-          }
-        ]
+        "type": [{ "code": "string" }]
       },
       {
         "id": "CustomOperation.sql",
@@ -169,48 +129,30 @@
         "short": "SQL query",
         "definition": "SQL query to execute (for type = sql)",
         "comment": "Use parameterized queries to prevent SQL injection",
-        "condition": [
-          "type == 'sql'"
-        ],
+        "condition": ["type == 'sql'"],
         "min": 0,
         "max": "1",
-        "type": [
-          {
-            "code": "string"
-          }
-        ]
+        "type": [{ "code": "string" }]
       },
       {
         "id": "CustomOperation.fhirpath",
         "path": "CustomOperation.fhirpath",
         "short": "FHIRPath expression",
         "definition": "FHIRPath expression to evaluate (for type = fhirpath)",
-        "condition": [
-          "type == 'fhirpath'"
-        ],
+        "condition": ["type == 'fhirpath'"],
         "min": 0,
         "max": "1",
-        "type": [
-          {
-            "code": "string"
-          }
-        ]
+        "type": [{ "code": "string" }]
       },
       {
         "id": "CustomOperation.handler",
         "path": "CustomOperation.handler",
         "short": "Handler identifier",
         "definition": "Identifier for a registered custom handler (for type = handler)",
-        "condition": [
-          "type == 'handler'"
-        ],
+        "condition": ["type == 'handler'"],
         "min": 0,
         "max": "1",
-        "type": [
-          {
-            "code": "string"
-          }
-        ]
+        "type": [{ "code": "string" }]
       },
       {
         "id": "CustomOperation.active",
@@ -219,11 +161,16 @@
         "definition": "If false, requests to this operation return 404",
         "min": 1,
         "max": "1",
-        "type": [
-          {
-            "code": "boolean"
-          }
-        ]
+        "type": [{ "code": "boolean" }]
+      },
+      {
+        "id": "CustomOperation.public",
+        "path": "CustomOperation.public",
+        "short": "Public operation (no auth)",
+        "definition": "If true, no authentication required for this operation",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "boolean" }]
       },
       {
         "id": "CustomOperation.description",
@@ -232,11 +179,77 @@
         "definition": "Human-readable description of what this operation does",
         "min": 0,
         "max": "1",
-        "type": [
-          {
-            "code": "string"
-          }
-        ]
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "CustomOperation.policy",
+        "path": "CustomOperation.policy",
+        "short": "Access policy",
+        "definition": "Access control configuration for this operation (used with type=app)",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "BackboneElement" }]
+      },
+      {
+        "id": "CustomOperation.policy.authType",
+        "path": "CustomOperation.policy.authType",
+        "short": "Authentication type",
+        "definition": "Authentication method: 'forward' (OAuth token, default) or 'app' (X-App-Secret header)",
+        "comment": "Forward auth uses standard OAuth bearer tokens from the Authorization header. App auth requires the X-App-Secret header with the app's secret for machine-to-machine authentication.",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "code" }],
+        "binding": {
+          "strength": "required",
+          "valueSet": "http://octofhir.io/ValueSet/auth-types"
+        }
+      },
+      {
+        "id": "CustomOperation.policy.roles",
+        "path": "CustomOperation.policy.roles",
+        "short": "Required roles",
+        "definition": "User must have one of these roles",
+        "min": 0,
+        "max": "*",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "CustomOperation.policy.scopes",
+        "path": "CustomOperation.policy.scopes",
+        "short": "Required SMART scopes",
+        "definition": "Token must have one of these scopes (supports wildcards)",
+        "min": 0,
+        "max": "*",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "CustomOperation.policy.compartment",
+        "path": "CustomOperation.policy.compartment",
+        "short": "Compartment restriction",
+        "definition": "Restrict to user's compartment: patient, practitioner",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "code" }]
+      },
+      {
+        "id": "CustomOperation.policy.script",
+        "path": "CustomOperation.policy.script",
+        "short": "Custom policy script",
+        "definition": "QuickJS script for complex access control",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "CustomOperation.includeRawBody",
+        "path": "CustomOperation.includeRawBody",
+        "short": "Include raw request body bytes",
+        "definition": "Whether to include raw request body bytes (base64-encoded) in AppOperationRequest. Only applicable for type='app' operations. Useful for binary data, file uploads, or when the app needs the original bytes.",
+        "comment": "When true, the raw body will be base64-encoded and included in the rawBody field of AppOperationRequest. This allows App backends to access the original request bytes for binary data processing, signature verification, or other scenarios where the parsed JSON is insufficient.",
+        "condition": ["type == 'app'"],
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "boolean" }]
       }
     ]
   }

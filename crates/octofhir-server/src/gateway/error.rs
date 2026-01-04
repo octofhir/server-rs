@@ -32,6 +32,15 @@ pub enum GatewayError {
     /// Handler not found for the operation.
     HandlerNotFound(String),
 
+    /// Bad request (400).
+    BadRequest(String),
+
+    /// Authentication required (401 Unauthorized).
+    Unauthorized(String),
+
+    /// Access forbidden (403 Forbidden).
+    Forbidden(String),
+
     /// Generic internal error.
     InternalError(String),
 }
@@ -48,6 +57,9 @@ impl fmt::Display for GatewayError {
             Self::SqlError(msg) => write!(f, "SQL error: {}", msg),
             Self::FhirPathError(msg) => write!(f, "FHIRPath error: {}", msg),
             Self::HandlerNotFound(msg) => write!(f, "Handler not found: {}", msg),
+            Self::BadRequest(msg) => write!(f, "Bad request: {}", msg),
+            Self::Unauthorized(msg) => write!(f, "Authentication required: {}", msg),
+            Self::Forbidden(msg) => write!(f, "Access forbidden: {}", msg),
             Self::InternalError(msg) => write!(f, "Internal error: {}", msg),
         }
     }
@@ -64,9 +76,12 @@ impl IntoResponse for GatewayError {
             Self::ProxyError(_) => (StatusCode::BAD_GATEWAY, "error", "exception"),
             Self::SqlError(_) => (StatusCode::INTERNAL_SERVER_ERROR, "error", "exception"),
             Self::FhirPathError(_) => (StatusCode::BAD_REQUEST, "error", "invalid"),
+            Self::BadRequest(_) => (StatusCode::BAD_REQUEST, "error", "invalid"),
             Self::HandlerNotFound(_) => {
                 (StatusCode::INTERNAL_SERVER_ERROR, "error", "not-supported")
             }
+            Self::Unauthorized(_) => (StatusCode::UNAUTHORIZED, "error", "login"),
+            Self::Forbidden(_) => (StatusCode::FORBIDDEN, "error", "forbidden"),
             Self::InternalError(_) => (StatusCode::INTERNAL_SERVER_ERROR, "error", "exception"),
         };
 

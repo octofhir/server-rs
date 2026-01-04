@@ -44,6 +44,16 @@ export default defineConfig({
           ]
         },
         { label: 'API Reference', link: 'api-reference/' },
+        {
+          label: 'Search',
+          collapsed: false,
+          items: [
+            { label: 'Search Parameters', link: 'search-parameters/' },
+            { label: 'Search Architecture', link: 'search-architecture/' },
+          ]
+        },
+        { label: 'Application Platform', link: 'applications/' },
+        { label: 'Notifications', link: 'notifications/' },
         { label: 'Bulk Data Export', link: 'bulk-export/' },
         { label: 'Development', link: 'development/' },
         { label: 'Deployment', link: 'deployment/' },

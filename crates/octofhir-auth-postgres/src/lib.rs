@@ -26,7 +26,10 @@
 //! let client = client_storage.find_by_client_id("my-app").await?;
 //! ```
 
+pub mod app;
+pub mod authorize_session;
 pub mod client;
+pub mod consent;
 pub mod identity_provider;
 pub mod launch_context;
 pub mod policy;
@@ -34,6 +37,8 @@ pub mod policy_listener;
 pub mod revoked_token;
 pub mod role;
 pub mod session;
+pub mod session_token_index;
+pub mod sso_session;
 pub mod storage_adapters;
 pub mod token;
 pub mod user;
@@ -46,7 +51,10 @@ use sqlx_postgres::Postgres;
 /// PostgreSQL connection pool type alias.
 pub type PgPool = Pool<Postgres>;
 
+pub use app::AppStorage;
+pub use authorize_session::{AuthorizeSessionRow, AuthorizeSessionStorage};
 pub use client::{ClientStorage, PostgresClientStorage};
+pub use consent::{ConsentRow, ConsentStorage};
 pub use identity_provider::{IdentityProviderRow, IdentityProviderStorage};
 pub use launch_context::LaunchContextStorage;
 pub use policy::{PolicyStorage, PostgresPolicyStorageAdapter};
@@ -54,9 +62,11 @@ pub use policy_listener::{ListenerError, PolicyChangeEvent, PolicyChangeOp, Poli
 pub use revoked_token::RevokedTokenStorage;
 pub use role::{RoleRow, RoleStorage};
 pub use session::SessionStorage;
+pub use session_token_index::SessionTokenIndex;
+pub use sso_session::PostgresSsoSessionStorage;
 pub use storage_adapters::{
-    ArcClientStorage, ArcRefreshTokenStorage, ArcRevokedTokenStorage, ArcSessionStorage,
-    ArcUserStorage,
+    ArcAuthorizeSessionStorage, ArcBasicAuthStorage, ArcClientStorage, ArcConsentStorage,
+    ArcRefreshTokenStorage, ArcRevokedTokenStorage, ArcSessionStorage, ArcUserStorage,
 };
 pub use token::TokenStorage;
 pub use user::UserStorage;
@@ -268,6 +278,12 @@ impl PostgresAuthStorage {
     #[must_use]
     pub fn roles(&self) -> RoleStorage<'_> {
         RoleStorage::new(&self.pool)
+    }
+
+    /// Get session token index operations (for SSO session cookie lookups).
+    #[must_use]
+    pub fn session_token_index(&self) -> SessionTokenIndex<'_> {
+        SessionTokenIndex::new(&self.pool)
     }
 }
 

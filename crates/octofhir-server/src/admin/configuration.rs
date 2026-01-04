@@ -151,8 +151,8 @@ pub async fn list_config(
     };
 
     for category in categories {
-        if let Some(cat_value) = config.get_category(&category.to_string()) {
-            if let Some(obj) = cat_value.as_object() {
+        if let Some(cat_value) = config.get_category(&category.to_string())
+            && let Some(obj) = cat_value.as_object() {
                 for (key, value) in obj {
                     entries.push(ConfigEntryResponse {
                         key: key.clone(),
@@ -169,7 +169,6 @@ pub async fn list_config(
                     });
                 }
             }
-        }
     }
 
     Ok(Json(entries))

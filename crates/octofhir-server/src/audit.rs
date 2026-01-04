@@ -150,7 +150,7 @@ impl AuditOutcome {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ActorType {
     User {
-        id: Uuid,
+        id: String,
         name: Option<String>,
         fhir_user: Option<String>,
     },
@@ -224,9 +224,9 @@ impl AuditEventBuilder {
     }
 
     /// Set the actor as a user
-    pub fn user(mut self, id: Uuid, name: Option<String>, fhir_user: Option<String>) -> Self {
+    pub fn user(mut self, id: impl Into<String>, name: Option<String>, fhir_user: Option<String>) -> Self {
         self.actor = Some(ActorType::User {
-            id,
+            id: id.into(),
             name,
             fhir_user,
         });
@@ -524,11 +524,10 @@ impl AuditService {
         }
 
         // Check excluded resource types
-        if let Some(rt) = resource_type {
-            if self.config.exclude_resource_types.iter().any(|e| e == rt) {
+        if let Some(rt) = resource_type
+            && self.config.exclude_resource_types.iter().any(|e| e == rt) {
                 return false;
             }
-        }
 
         match action {
             // Auth events
@@ -640,7 +639,7 @@ impl AuditService {
                 name,
                 fhir_user,
             }) => {
-                builder = builder.user(*id, name.clone(), fhir_user.clone());
+                builder = builder.user(id.clone(), name.clone(), fhir_user.clone());
             }
             Some(ActorType::Client { id, name }) => {
                 builder = builder.client(id.clone(), name.clone());
@@ -659,7 +658,7 @@ impl AuditService {
         action: AuditAction,
         outcome: AuditOutcome,
         outcome_desc: Option<&str>,
-        user_id: Option<Uuid>,
+        user_id: Option<&str>,
         username: Option<&str>,
         client_id: Option<&str>,
         source: &AuditSource,
@@ -760,7 +759,7 @@ pub fn actor_from_auth_context(
 ) -> ActorType {
     if let Some(ref user) = auth_context.user {
         ActorType::User {
-            id: user.id,
+            id: user.id.clone(),
             name: Some(user.username.clone()),
             fhir_user: user.fhir_user.clone(),
         }

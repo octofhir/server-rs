@@ -6,6 +6,7 @@
 //!
 //! ## OAuth/OIDC Endpoints
 //!
+//! - [`authorize`] - Authorization endpoint (RFC 6749 Section 4.1)
 //! - [`token`] - Token endpoint (RFC 6749)
 //! - [`revoke`] - Token revocation endpoint (RFC 7009)
 //! - [`introspect`] - Token introspection endpoint (RFC 7662)
@@ -20,6 +21,8 @@
 //! - [`admin`] - Types for administrative endpoints (handlers in octofhir-server)
 
 pub mod admin;
+pub mod authorize;
+pub mod authorize_templates;
 pub mod discovery;
 pub mod introspect;
 pub mod jwks;
@@ -33,11 +36,12 @@ pub use admin::{
     Bundle, BundleEntry, IdpSearchParams, LinkIdentityRequest, UnlinkIdentityRequest,
     UserSearchParams,
 };
+pub use authorize::{AuthorizeFormData, AuthorizeState, authorize_get, authorize_post};
 pub use discovery::{SmartConfigState, smart_configuration_handler};
 pub use introspect::introspect_handler;
 pub use jwks::{JwksState, jwks_handler};
 pub use launch::{CreateLaunchRequest, CreateLaunchResponse, LaunchState, create_launch_handler};
-pub use logout::{LogoutState, logout_handler};
+pub use logout::{LogoutState, OidcLogoutParams, logout_handler, oidc_logout_handler};
 pub use revoke::revoke_handler;
 pub use token::{TokenState, token_handler};
 pub use userinfo::{UserInfoResponse, userinfo_handler};

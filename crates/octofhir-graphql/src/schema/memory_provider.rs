@@ -261,15 +261,15 @@ impl ModelProvider for InMemoryModelProvider {
             for (element_name, element) in &elements {
                 if element_name.ends_with("[x]") {
                     let base_name = element_name.trim_end_matches("[x]");
-                    if let Some(type_suffix) = property_name.strip_prefix(base_name) {
-                        if !type_suffix.is_empty() {
+                    if let Some(type_suffix) = property_name.strip_prefix(base_name)
+                        && !type_suffix.is_empty() {
                             let mut chars = type_suffix.chars();
                             if let Some(first_char) = chars.next() {
                                 let schema_type =
                                     format!("{}{}", first_char.to_lowercase(), chars.as_str());
 
-                                if let Some(choices) = &element.choices {
-                                    if choices.contains(&schema_type) {
+                                if let Some(choices) = &element.choices
+                                    && choices.contains(&schema_type) {
                                         let mapped_type = self.map_fhir_type(&schema_type);
                                         return Ok(Some(TypeInfo {
                                             type_name: mapped_type,
@@ -288,10 +288,8 @@ impl ModelProvider for InMemoryModelProvider {
                                             name: Some(schema_type),
                                         }));
                                     }
-                                }
                             }
                         }
-                    }
                 }
             }
         }
@@ -302,22 +300,19 @@ impl ModelProvider for InMemoryModelProvider {
         if type_info.type_name == target_type {
             return Some(type_info.clone());
         }
-        if let Some(ref name) = type_info.name {
-            if name == target_type {
+        if let Some(ref name) = type_info.name
+            && name == target_type {
                 return Some(type_info.clone());
             }
-        }
         None
     }
 
     fn get_element_names(&self, parent_type: &TypeInfo) -> Vec<String> {
-        if let Some(type_name) = &parent_type.name {
-            if let Some(schema) = self.get_schema(type_name) {
-                if let Some(elements) = &schema.elements {
+        if let Some(type_name) = &parent_type.name
+            && let Some(schema) = self.get_schema(type_name)
+                && let Some(elements) = &schema.elements {
                     return elements.keys().cloned().collect();
                 }
-            }
-        }
         Vec::new()
     }
 
@@ -425,11 +420,11 @@ impl ModelProvider for InMemoryModelProvider {
         parent_type: &str,
         property_name: &str,
     ) -> ModelResult<Option<Vec<ChoiceTypeInfo>>> {
-        if let Some(schema) = self.get_schema(parent_type) {
-            if let Some(elements) = &schema.elements {
+        if let Some(schema) = self.get_schema(parent_type)
+            && let Some(elements) = &schema.elements {
                 let choice_key = format!("{}[x]", property_name);
-                if let Some(element) = elements.get(&choice_key) {
-                    if let Some(choices) = &element.choices {
+                if let Some(element) = elements.get(&choice_key)
+                    && let Some(choices) = &element.choices {
                         let choice_infos: Vec<ChoiceTypeInfo> = choices
                             .iter()
                             .map(|type_name| {
@@ -447,9 +442,7 @@ impl ModelProvider for InMemoryModelProvider {
                             .collect();
                         return Ok(Some(choice_infos));
                     }
-                }
             }
-        }
         Ok(None)
     }
 

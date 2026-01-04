@@ -322,3 +322,297 @@ GET /Patient?telecom:missing=true
 # Observations without values
 GET /Observation?value-quantity:missing=true
 ```
+
+## Custom Search Parameters
+
+OctoFHIR supports creating custom SearchParameter resources that are automatically registered and immediately available for search operations.
+
+### Creating Custom Search Parameters
+
+Custom search parameters can be created in two ways:
+
+1. **Via FHIR Packages** - Include SearchParameter resources in your Implementation Guide
+2. **Via REST API** - Create SearchParameter resources directly through the FHIR API
+
+### REST API Creation
+
+Create a SearchParameter resource using the standard FHIR create operation:
+
+```bash
+POST /fhir/SearchParameter
+Content-Type: application/fhir+json
+
+{
+  "resourceType": "SearchParameter",
+  "url": "http://example.org/SearchParameter/patient-custom-field",
+  "name": "PatientCustomField",
+  "code": "custom-field",
+  "status": "active",
+  "description": "Search by custom patient field",
+  "base": ["Patient"],
+  "type": "string",
+  "expression": "Patient.extension.where(url='http://example.org/custom-field').valueString"
+}
+```
+
+**Response:**
+```json
+{
+  "resourceType": "SearchParameter",
+  "id": "12345",
+  "meta": {
+    "versionId": "1",
+    "lastUpdated": "2025-01-02T10:30:00Z"
+  },
+  "url": "http://example.org/SearchParameter/patient-custom-field",
+  "code": "custom-field",
+  ...
+}
+```
+
+### Automatic Registration
+
+When you create, update, or delete a SearchParameter resource:
+
+1. **FHIRPath Validation** - The expression is validated for syntax correctness
+2. **Immediate Registration** - The parameter is registered in the search registry
+3. **Zero Downtime** - Available immediately without server restart
+4. **Lock-Free** - No impact on concurrent search operations
+
+```bash
+# Create the SearchParameter
+POST /fhir/SearchParameter { ... }
+
+# Immediately use it in search (no restart needed!)
+GET /fhir/Patient?custom-field=some-value
+```
+
+### FHIRPath Expression Validation
+
+Invalid FHIRPath expressions are rejected:
+
+```bash
+POST /fhir/SearchParameter
+{
+  "resourceType": "SearchParameter",
+  "expression": "Patient..invalid..syntax",  # Invalid!
+  ...
+}
+```
+
+**Response (400 Bad Request):**
+```json
+{
+  "resourceType": "OperationOutcome",
+  "issue": [{
+    "severity": "error",
+    "code": "invalid",
+    "diagnostics": "Invalid FHIRPath expression: unexpected token"
+  }]
+}
+```
+
+### SearchParameter Fields
+
+Required fields:
+- `code` - The search parameter name (used in queries)
+- `url` - Canonical URL (must be unique)
+- `type` - Parameter type: `string`, `token`, `reference`, `date`, `number`, `quantity`, `uri`, `composite`, `special`
+- `base` - Resource types this parameter applies to (array)
+
+Optional but recommended:
+- `expression` - FHIRPath expression defining what to search
+- `description` - Human-readable description
+- `modifier` - Supported modifiers (`:exact`, `:contains`, etc.)
+- `comparator` - Supported comparators for numbers/dates (`eq`, `gt`, `lt`, etc.)
+- `target` - Target resource types (for `reference` type parameters)
+
+### Examples
+
+#### Extension Search Parameter
+
+Search by extension values:
+
+```json
+{
+  "resourceType": "SearchParameter",
+  "url": "http://example.org/SearchParameter/patient-ethnicity",
+  "code": "ethnicity",
+  "type": "token",
+  "base": ["Patient"],
+  "expression": "Patient.extension.where(url='http://example.org/ethnicity').valueCoding"
+}
+```
+
+Usage:
+```bash
+GET /fhir/Patient?ethnicity=http://example.org/ethnicity-codes|hispanic
+```
+
+#### Nested Field Search
+
+Search by nested fields:
+
+```json
+{
+  "resourceType": "SearchParameter",
+  "url": "http://example.org/SearchParameter/patient-home-city",
+  "code": "home-city",
+  "type": "string",
+  "base": ["Patient"],
+  "expression": "Patient.address.where(use='home').city"
+}
+```
+
+Usage:
+```bash
+GET /fhir/Patient?home-city=Boston
+```
+
+#### Multi-Resource Parameter
+
+Apply the same parameter to multiple resource types:
+
+```json
+{
+  "resourceType": "SearchParameter",
+  "url": "http://example.org/SearchParameter/clinical-custom-status",
+  "code": "custom-status",
+  "type": "token",
+  "base": ["Observation", "Condition", "Procedure"],
+  "expression": "%resource.extension.where(url='http://example.org/custom-status').valueCode"
+}
+```
+
+Usage:
+```bash
+GET /fhir/Observation?custom-status=reviewed
+GET /fhir/Condition?custom-status=reviewed
+GET /fhir/Procedure?custom-status=reviewed
+```
+
+#### Reference Search Parameter
+
+Search by custom references:
+
+```json
+{
+  "resourceType": "SearchParameter",
+  "url": "http://example.org/SearchParameter/observation-custom-performer",
+  "code": "custom-performer",
+  "type": "reference",
+  "base": ["Observation"],
+  "target": ["Practitioner", "Organization"],
+  "expression": "Observation.extension.where(url='http://example.org/custom-performer').valueReference"
+}
+```
+
+Usage:
+```bash
+GET /fhir/Observation?custom-performer=Practitioner/12345
+```
+
+### Updating Search Parameters
+
+Update a SearchParameter to modify its behavior:
+
+```bash
+PUT /fhir/SearchParameter/12345
+{
+  "resourceType": "SearchParameter",
+  "id": "12345",
+  "url": "http://example.org/SearchParameter/patient-custom-field",
+  "code": "custom-field",
+  "type": "string",
+  "base": ["Patient"],
+  "expression": "Patient.extension.where(url='http://example.org/updated-field').valueString",
+  "modifier": ["exact", "contains"]  # Added modifiers
+}
+```
+
+The updated parameter is immediately available with new behavior.
+
+### Deleting Search Parameters
+
+Delete a SearchParameter when no longer needed:
+
+```bash
+DELETE /fhir/SearchParameter/12345
+```
+
+After deletion:
+- The parameter is removed from the search registry
+- Queries using this parameter will fail with "unknown search parameter" error
+- Existing data is unchanged (only the search capability is removed)
+
+### Performance Characteristics
+
+OctoFHIR's search parameter architecture is designed for high-performance production workloads:
+
+**Lock-Free Reads:**
+- Search queries never block on registry access
+- Single atomic load (~1-5 nanoseconds)
+- Zero contention during concurrent searches
+
+**Incremental Updates:**
+- SearchParameter CRUD operations update registry incrementally
+- No full registry reload needed
+- Update time: ~100-500 nanoseconds
+
+**Query Cache:**
+- Automatically cleared when parameters change
+- Prevents stale query results
+- Minimal performance impact
+
+### Multi-Instance Deployments
+
+:::caution[Multi-Instance Behavior]
+When running multiple OctoFHIR instances:
+- SearchParameter created on Instance A is NOT automatically propagated to Instance B
+- Each instance loads parameters from the shared PostgreSQL database
+- Parameters become available on other instances when they reload from the database
+- Consider using package-based SearchParameters for multi-instance deployments
+:::
+
+### Best Practices
+
+1. **Use Canonical URLs** - Follow URI naming conventions (e.g., `http://your-org.org/SearchParameter/name`)
+2. **Test FHIRPath Expressions** - Validate expressions work correctly before deployment
+3. **Document Custom Parameters** - Add clear descriptions and examples
+4. **Version Your Parameters** - Include version in URL when making breaking changes
+5. **Use Packages for Production** - Package-based parameters ensure consistency across instances
+
+### Limitations
+
+- **No Semantic Validation** - FHIRPath expressions are checked for syntax, not semantics
+- **No Runtime Type Checking** - Expression type mismatches fail gracefully at query time
+- **Extension-Only** - Custom parameters typically target extensions (core FHIR fields already have parameters)
+
+### Troubleshooting
+
+**Parameter not found:**
+```bash
+GET /fhir/Patient?my-param=value
+# Error: Unknown search parameter 'my-param'
+```
+- Verify SearchParameter was created successfully
+- Check the `code` field matches the query parameter name
+- Ensure `base` includes the resource type you're querying
+
+**No results with valid parameter:**
+```bash
+GET /fhir/Patient?custom-field=value
+# Returns empty Bundle
+```
+- Verify the FHIRPath expression matches your data structure
+- Check extension URLs match exactly (case-sensitive)
+- Test the expression against sample resources
+
+**Invalid expression error:**
+```bash
+POST /fhir/SearchParameter
+# Error: Invalid FHIRPath expression
+```
+- Review FHIRPath syntax
+- Use parentheses for complex expressions
+- Test expression with FHIRPath evaluator tools

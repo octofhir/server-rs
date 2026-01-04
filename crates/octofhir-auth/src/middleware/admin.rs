@@ -20,7 +20,6 @@
 
 use axum::extract::{FromRef, FromRequestParts};
 use axum::http::request::Parts;
-use uuid::Uuid;
 
 use crate::error::AuthError;
 
@@ -37,7 +36,7 @@ use super::auth::{AuthState, BearerAuth};
 #[derive(Debug, Clone)]
 pub struct AdminAuth {
     /// User's unique identifier.
-    pub user_id: Uuid,
+    pub user_id: String,
 
     /// Username for display/logging.
     pub username: String,
@@ -112,11 +111,12 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use uuid::Uuid;
 
     #[test]
     fn test_admin_auth_has_role() {
         let admin = AdminAuth {
-            user_id: Uuid::new_v4(),
+            user_id: Uuid::new_v4().to_string(),
             username: "admin_user".to_string(),
             roles: vec!["admin".to_string(), "practitioner".to_string()],
         };

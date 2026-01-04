@@ -436,8 +436,8 @@ async fn build_registry_with_manager(cfg: &AppConfig) -> Result<CanonicalRegistr
         "converting schemas for all packages"
     );
     for pkg in &install_specs {
-        if let Some(ref version) = pkg.version {
-            if let Err(e) = convert_and_store_package_schemas(
+        if let Some(ref version) = pkg.version
+            && let Err(e) = convert_and_store_package_schemas(
                 postgres_store.as_ref(),
                 &pkg.id,
                 version,
@@ -452,7 +452,6 @@ async fn build_registry_with_manager(cfg: &AppConfig) -> Result<CanonicalRegistr
                     "failed to convert schemas for package"
                 );
             }
-        }
     }
 
     // Load embedded packages: octofhir-auth and octofhir-app
@@ -516,8 +515,8 @@ async fn build_registry_with_manager(cfg: &AppConfig) -> Result<CanonicalRegistr
                 };
 
                 // Convert and store FHIRSchemas
-                if loaded_ok {
-                    if let Err(e) = convert_and_store_package_schemas(
+                if loaded_ok
+                    && let Err(e) = convert_and_store_package_schemas(
                         postgres_store,
                         package_name,
                         package_version,
@@ -532,7 +531,6 @@ async fn build_registry_with_manager(cfg: &AppConfig) -> Result<CanonicalRegistr
                             "Failed to convert schemas for embedded package"
                         );
                     }
-                }
 
                 loaded_ok
             }
@@ -564,6 +562,16 @@ async fn build_registry_with_manager(cfg: &AppConfig) -> Result<CanonicalRegistr
         "0.1.0",
         fhir_version,
         crate::bootstrap::EMBEDDED_APP_RESOURCES,
+    )
+    .await;
+
+    // Load octofhir-notifications package
+    load_embedded_package(
+        &postgres_store,
+        "octofhir-notifications",
+        "0.1.0",
+        fhir_version,
+        crate::bootstrap::EMBEDDED_NOTIFICATIONS_RESOURCES,
     )
     .await;
 
@@ -793,12 +801,11 @@ fn determine_schema_type(sd: &StructureDefinition) -> String {
         _ => {
             // Check if it's an Extension
             let type_name = sd.type_name.as_str();
-            if type_name == "Extension" {
-                "extension".to_string()
-            } else if sd
-                .base_definition
-                .as_ref()
-                .is_some_and(|b| b.contains("Extension"))
+            if type_name == "Extension"
+                || sd
+                    .base_definition
+                    .as_ref()
+                    .is_some_and(|b| b.contains("Extension"))
             {
                 "extension".to_string()
             } else {
@@ -1259,8 +1266,8 @@ pub async fn install_package_parallel_runtime(
 /// Update the global canonical registry after a package installation.
 /// Returns true if the registry was updated successfully.
 async fn update_global_registry_with_package(name: &str, version: &str) -> bool {
-    if let Some(global) = get_registry() {
-        if let Ok(mut guard) = global.write() {
+    if let Some(global) = get_registry()
+        && let Ok(mut guard) = global.write() {
             // Add the new package to the registry
             let already_exists = guard
                 .packages
@@ -1276,7 +1283,6 @@ async fn update_global_registry_with_package(name: &str, version: &str) -> bool 
             }
             return true;
         }
-    }
     false
 }
 
@@ -1433,7 +1439,7 @@ pub async fn search_registry_packages(query: &str) -> Result<Vec<RegistrySearchR
 pub async fn build_search_registry(
     manager: &octofhir_canonical_manager::CanonicalManager,
 ) -> Result<SearchParameterRegistry, String> {
-    let mut registry = SearchParameterRegistry::new();
+    let registry = SearchParameterRegistry::new();
 
     // Query ALL SearchParameter resources from canonical manager with pagination
     // The canonical manager has a max limit of 1000, so we need to paginate

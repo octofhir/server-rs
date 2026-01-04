@@ -583,11 +583,11 @@ impl SqlGenerator {
                 PathSegment::OfType(type_name) => {
                     // ofType() filters by FHIR polymorphic type
                     // For now, we handle common value[x] patterns
-                    sql = format!("{}->'{}'", sql, format!("value{}", type_name));
+                    sql = format!("{}->'value{}'", sql, type_name);
                 }
                 PathSegment::Where(condition) => {
                     // Parse the condition and generate a filtered array subquery
-                    let (field, op, value) = self.parse_condition(&condition)?;
+                    let (field, op, value) = self.parse_condition(condition)?;
                     sql = format!(
                         "(SELECT jsonb_agg(elem) FROM jsonb_array_elements({}) AS elem WHERE elem->>'{}' {} '{}')",
                         sql, field, op, value
@@ -805,10 +805,10 @@ impl SqlGenerator {
             }
         }
 
-        if !current.is_empty() {
-            if let Some(segment) = self.parse_segment(&current)? {
-                segments.push(segment);
-            }
+        if !current.is_empty()
+            && let Some(segment) = self.parse_segment(&current)?
+        {
+            segments.push(segment);
         }
 
         Ok(segments)

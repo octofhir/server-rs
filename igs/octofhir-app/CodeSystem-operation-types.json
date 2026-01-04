@@ -28,6 +28,11 @@
       "code": "handler",
       "display": "Custom Handler",
       "definition": "Invoke a registered custom handler function. The handler is implemented in Rust code and registered with the server at startup."
+    },
+    {
+      "code": "app",
+      "display": "App Backend",
+      "definition": "Forward requests to the App's configured backend endpoint. Uses the App.endpoint configuration for proxying."
     }
   ]
 }

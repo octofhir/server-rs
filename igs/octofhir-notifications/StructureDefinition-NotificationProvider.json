@@ -1,0 +1,75 @@
+{
+  "resourceType": "StructureDefinition",
+  "id": "NotificationProvider",
+  "url": "http://octofhir.io/StructureDefinition/NotificationProvider",
+  "name": "NotificationProvider",
+  "title": "Notification Provider",
+  "status": "active",
+  "fhirVersion": "4.0.1",
+  "kind": "logical",
+  "abstract": false,
+  "type": "NotificationProvider",
+  "baseDefinition": "http://hl7.org/fhir/StructureDefinition/DomainResource",
+  "derivation": "specialization",
+  "description": "Configuration for a notification delivery provider (email, SMS, Telegram, webhook, push).",
+  "differential": {
+    "element": [
+      {
+        "id": "NotificationProvider",
+        "path": "NotificationProvider",
+        "short": "Notification provider configuration",
+        "definition": "Defines a notification provider with credentials and configuration for sending notifications."
+      },
+      {
+        "id": "NotificationProvider.name",
+        "path": "NotificationProvider.name",
+        "short": "Provider name",
+        "definition": "Human-readable name for this provider",
+        "min": 1,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "NotificationProvider.type",
+        "path": "NotificationProvider.type",
+        "short": "Provider type",
+        "definition": "Type of notification: email, sms, telegram, webhook, push",
+        "min": 1,
+        "max": "1",
+        "type": [{ "code": "code" }],
+        "binding": {
+          "strength": "required",
+          "valueSet": "http://octofhir.io/ValueSet/notification-provider-types"
+        }
+      },
+      {
+        "id": "NotificationProvider.provider",
+        "path": "NotificationProvider.provider",
+        "short": "Specific provider",
+        "definition": "Specific provider implementation: sendgrid, smtp, twilio, telegram, generic",
+        "min": 1,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "NotificationProvider.config",
+        "path": "NotificationProvider.config",
+        "short": "Provider configuration",
+        "definition": "Provider-specific configuration as a JSON object",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "string" }],
+        "comment": "Stored as JSON. Contains api_key, from, smtp_host, smtp_port, bot_token, webhook_url, etc."
+      },
+      {
+        "id": "NotificationProvider.active",
+        "path": "NotificationProvider.active",
+        "short": "Is provider active",
+        "definition": "Whether this provider is currently active and can be used for sending",
+        "min": 1,
+        "max": "1",
+        "type": [{ "code": "boolean" }]
+      }
+    ]
+  }
+}

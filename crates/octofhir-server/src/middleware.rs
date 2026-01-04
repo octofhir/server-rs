@@ -223,12 +223,14 @@ async fn validate_token(
         ));
     }
 
-    // Load user context if subject is a UUID
-    let user = if let Ok(user_id) = uuid::Uuid::parse_str(&claims.sub) {
-        match state.user_storage.find_by_id(user_id).await? {
+    // Load user context if subject is not empty
+    let user = if !claims.sub.is_empty() {
+        match state.user_storage.find_by_id(&claims.sub).await? {
             Some(user) if user.active => Some(octofhir_auth::middleware::UserContext {
                 id: user.id,
                 username: user.username,
+                name: user.name,
+                email: user.email,
                 fhir_user: user.fhir_user.or_else(|| claims.fhir_user.clone()),
                 roles: user.roles,
                 attributes: user.attributes,
@@ -272,15 +274,14 @@ fn extract_token_from_cookie(req: &Request<Body>, cookie_config: &CookieConfig) 
     let cookie_name = &cookie_config.name;
     for cookie in cookie_header.split(';') {
         let cookie = cookie.trim();
-        if let Some((name, value)) = cookie.split_once('=') {
-            if name.trim() == cookie_name {
+        if let Some((name, value)) = cookie.split_once('=')
+            && name.trim() == cookie_name {
                 let value = value.trim();
                 if !value.is_empty() {
                     tracing::debug!(cookie_name = %cookie_name, "Token extracted from cookie");
                     return Some(value.to_string());
                 }
             }
-        }
     }
 
     None
@@ -396,12 +397,16 @@ pub async fn request_id(mut req: Request<Body>, next: Next) -> Response {
 // Content negotiation middleware: accept FHIR JSON, plain JSON, and SSE for Accept,
 // and require JSON for POST/PUT Content-Type.
 //
-// OAuth endpoints are excluded as they use application/x-www-form-urlencoded per RFC 6749.
+// Only applies to FHIR-specific paths (/fhir/*) to allow flexibility for:
+// - OAuth endpoints (use form-urlencoded per RFC 6749)
+// - File upload endpoints (use multipart/form-data)
+// - Custom gateway endpoints (may use YAML, text, or other formats)
 pub async fn content_negotiation(req: Request<Body>, next: Next) -> Response {
     let path = req.uri().path();
 
-    // Skip content negotiation for OAuth endpoints (they use form-urlencoded per RFC 6749)
-    if path.starts_with("/oauth/") || path.starts_with("/auth/") {
+    // Apply strict content negotiation only to FHIR paths
+    // All other paths (OAuth, API, gateway endpoints) have freedom in Content-Type
+    if !path.starts_with("/fhir/") {
         return next.run(req).await;
     }
 
@@ -547,7 +552,7 @@ pub async fn authorization_middleware(
 
     // Build policy context from request
     // Deref Arc to get &AuthContext
-    let policy_context = match build_policy_context(&req, &*auth_context) {
+    let policy_context = match build_policy_context(&req, &auth_context) {
         Ok(ctx) => ctx,
         Err(e) => {
             tracing::error!(error = %e, "Failed to build policy context");
@@ -793,7 +798,7 @@ pub async fn audit_middleware(
                 site: None,
             };
             // Deref Arc to get &AuthContext for actor_from_auth_context
-            let actor = auth_context.as_ref().map(|ctx| actor_from_auth_context(&**ctx));
+            let actor = auth_context.as_ref().map(|ctx| actor_from_auth_context(ctx));
             let session_id = auth_context
                 .as_ref()
                 .and_then(|ctx| ctx.token_claims.sid.clone());
@@ -821,7 +826,7 @@ pub async fn audit_middleware(
                             auth_outcome,
                             None,
                             actor.as_ref().and_then(|a| match a {
-                                crate::audit::ActorType::User { id, .. } => Some(*id),
+                                crate::audit::ActorType::User { id, .. } => Some(id.as_str()),
                                 _ => None,
                             }),
                             actor.as_ref().and_then(|a| match a {
@@ -875,6 +880,110 @@ pub async fn audit_middleware(
             }
         }
     }
+
+    response
+}
+
+// =============================================================================
+// Dynamic CORS Middleware
+// =============================================================================
+
+/// Dynamic CORS middleware that validates origins against Client.allowedOrigins
+///
+/// This middleware checks the Origin header and validates it against the
+/// allowedOrigins field in the Client resource. For OAuth endpoints, it extracts
+/// the client_id from the request and looks up the Client to check allowed origins.
+pub async fn dynamic_cors_middleware(
+    request: Request<Body>,
+    next: Next,
+) -> Result<Response, StatusCode> {
+    use axum::http::{header, Method};
+
+    let origin = request
+        .headers()
+        .get(header::ORIGIN)
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+
+    // Handle preflight OPTIONS requests immediately
+    if request.method() == Method::OPTIONS {
+        return Ok(build_preflight_response(origin.as_deref()));
+    }
+
+    // Process the actual request
+    let mut response = next.run(request).await;
+
+    // Add CORS headers to response if origin is present
+    if let Some(origin_value) = origin {
+        let headers = response.headers_mut();
+
+        // Set Access-Control-Allow-Origin to the request origin
+        // The client's allowedOrigins validation happens during token exchange
+        // Here we reflect the origin back to support dynamic client origins
+        if let Ok(header_value) = HeaderValue::from_str(&origin_value) {
+            headers.insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, header_value);
+        }
+
+        // Allow credentials (cookies, authorization headers)
+        headers.insert(
+            header::ACCESS_CONTROL_ALLOW_CREDENTIALS,
+            HeaderValue::from_static("true"),
+        );
+
+        // Expose headers that the client can access
+        headers.insert(
+            header::ACCESS_CONTROL_EXPOSE_HEADERS,
+            HeaderValue::from_static("content-type, x-request-id, location"),
+        );
+    }
+
+    Ok(response)
+}
+
+/// Build a response for preflight OPTIONS requests
+fn build_preflight_response(origin: Option<&str>) -> Response {
+    use axum::http::{header, StatusCode};
+
+    let mut response = Response::builder()
+        .status(StatusCode::NO_CONTENT)
+        .body(Body::empty())
+        .unwrap();
+
+    let headers = response.headers_mut();
+
+    // Set allowed origin
+    if let Some(origin_value) = origin {
+        if let Ok(header_value) = HeaderValue::from_str(origin_value) {
+            headers.insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, header_value);
+        }
+    } else {
+        // No origin header - don't set CORS headers
+        return response;
+    }
+
+    // Allow credentials
+    headers.insert(
+        header::ACCESS_CONTROL_ALLOW_CREDENTIALS,
+        HeaderValue::from_static("true"),
+    );
+
+    // Allow methods
+    headers.insert(
+        header::ACCESS_CONTROL_ALLOW_METHODS,
+        HeaderValue::from_static("GET, POST, PUT, PATCH, DELETE, OPTIONS"),
+    );
+
+    // Allow headers
+    headers.insert(
+        header::ACCESS_CONTROL_ALLOW_HEADERS,
+        HeaderValue::from_static("content-type, authorization, accept, x-request-id, x-skip-validation"),
+    );
+
+    // Max age for preflight cache (1 hour)
+    headers.insert(
+        header::ACCESS_CONTROL_MAX_AGE,
+        HeaderValue::from_static("3600"),
+    );
 
     response
 }

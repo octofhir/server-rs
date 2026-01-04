@@ -63,11 +63,10 @@ impl EverythingOperation {
 
         for (resource_type, param_name, reference) in compartment_searches {
             // Skip if _type filter is specified and doesn't include this type
-            if let Some(ref types) = params.type_filter {
-                if !types.contains(&resource_type) {
+            if let Some(ref types) = params.type_filter
+                && !types.contains(&resource_type) {
                     continue;
                 }
-            }
 
             // Build search query using modern FhirStorage
             let mut search_params = SearchParams::new()
@@ -80,7 +79,7 @@ impl EverythingOperation {
                     .format(&time::format_description::well_known::Rfc3339)
                     .unwrap_or_default();
                 search_params =
-                    search_params.with_param("_lastUpdated", &format!("ge{}", since_str));
+                    search_params.with_param("_lastUpdated", format!("ge{}", since_str));
             }
 
             // Apply date range filters (start/end) if specified
@@ -88,13 +87,13 @@ impl EverythingOperation {
                 let start_str = start
                     .format(&time::format_description::well_known::Rfc3339)
                     .unwrap_or_default();
-                search_params = search_params.with_param("date", &format!("ge{}", start_str));
+                search_params = search_params.with_param("date", format!("ge{}", start_str));
             }
             if let Some(end) = params.end {
                 let end_str = end
                     .format(&time::format_description::well_known::Rfc3339)
                     .unwrap_or_default();
-                search_params = search_params.with_param("date", &format!("le{}", end_str));
+                search_params = search_params.with_param("date", format!("le{}", end_str));
             }
 
             match state.storage.search(&resource_type, &search_params).await {
@@ -165,11 +164,10 @@ impl EverythingOperation {
         let compartment_searches = self.get_encounter_compartment_searches(encounter_id);
 
         for (resource_type, param_name, reference) in compartment_searches {
-            if let Some(ref types) = params.type_filter {
-                if !types.contains(&resource_type) {
+            if let Some(ref types) = params.type_filter
+                && !types.contains(&resource_type) {
                     continue;
                 }
-            }
 
             let mut search_params = SearchParams::new()
                 .with_count(1000)
@@ -180,7 +178,7 @@ impl EverythingOperation {
                     .format(&time::format_description::well_known::Rfc3339)
                     .unwrap_or_default();
                 search_params =
-                    search_params.with_param("_lastUpdated", &format!("ge{}", since_str));
+                    search_params.with_param("_lastUpdated", format!("ge{}", since_str));
             }
 
             match state.storage.search(&resource_type, &search_params).await {

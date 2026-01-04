@@ -1,0 +1,18 @@
+{
+  "resourceType": "ValueSet",
+  "id": "session-status",
+  "url": "http://octofhir.io/ValueSet/session-status",
+  "name": "SessionStatus",
+  "title": "Session Status",
+  "status": "active",
+  "experimental": false,
+  "date": "2025-01-03",
+  "description": "Value set for authentication session status codes",
+  "compose": {
+    "include": [
+      {
+        "system": "http://octofhir.io/CodeSystem/session-status"
+      }
+    ]
+  }
+}

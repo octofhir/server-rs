@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Stack, Title, Text, Group, Badge, Table, Loader } from "@mantine/core";
 import { useParams, useNavigate } from "react-router-dom";
 import {
@@ -16,6 +17,7 @@ import { Button } from "@/shared/ui/Button/Button";
 import { ActionIcon } from "@/shared/ui/ActionIcon/ActionIcon";
 import { useUser, useUserSessions, useRevokeSession } from "../lib/useUsers";
 import type { UserSession } from "@/shared/api/types";
+import { EditUserModal } from "./EditUserModal";
 import classes from "./UserDetailPage.module.css";
 
 // Get user initials for avatar
@@ -76,6 +78,7 @@ export function UserDetailPage() {
 	const { data: user, isLoading: userLoading } = useUser(id ?? null);
 	const { data: sessions, isLoading: sessionsLoading } = useUserSessions(id ?? null);
 	const revokeSession = useRevokeSession();
+	const [editModalOpened, setEditModalOpened] = useState(false);
 
 	if (userLoading) {
 		return (
@@ -137,7 +140,7 @@ export function UserDetailPage() {
 						</Group>
 					</div>
 					<div className={classes.profileActions}>
-						<Button variant="light" leftSection={<IconEdit size={16} />}>
+						<Button variant="light" leftSection={<IconEdit size={16} />} onClick={() => setEditModalOpened(true)}>
 							Edit
 						</Button>
 						<Button variant="light" leftSection={<IconKey size={16} />}>
@@ -192,6 +195,12 @@ export function UserDetailPage() {
 							<div className={classes.infoItem}>
 								<Text className={classes.infoLabel}>Full Name</Text>
 								<Text className={classes.infoValue}>{user.name || "Not set"}</Text>
+							</div>
+							<div className={classes.infoItem}>
+								<Text className={classes.infoLabel}>FHIR User</Text>
+								<Text className={classes.infoValue}>
+									{user.fhirUser?.reference || "Not linked"}
+								</Text>
 							</div>
 							<div className={classes.infoItem}>
 								<Text className={classes.infoLabel}>MFA Status</Text>
@@ -329,6 +338,9 @@ export function UserDetailPage() {
 					</Card>
 				</Stack>
 			</div>
+
+			{/* Edit User Modal */}
+			<EditUserModal user={user} opened={editModalOpened} onClose={() => setEditModalOpened(false)} />
 		</Stack>
 	);
 }

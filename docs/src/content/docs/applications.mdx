@@ -1,0 +1,294 @@
+---
+title: Application Platform
+head: []
+---
+
+OctoFHIR provides an **Application Platform** for managing and extending FHIR server functionality through custom applications.
+
+## Overview
+
+Applications in OctoFHIR are FHIR resources that define:
+- Custom operations and endpoints
+- Event-driven workflows
+- Integration with external systems
+- UI components and widgets
+
+## App Resource Structure
+
+Apps are defined using a custom FHIR `App` resource type:
+
+```json
+{
+  "resourceType": "App",
+  "id": "my-custom-app",
+  "name": "My Custom Application",
+  "description": "Example application for custom workflows",
+  "status": "active",
+  "version": "1.0.0",
+  "operations": [
+    {
+      "name": "custom-operation",
+      "type": "read",
+      "resourceType": "Patient",
+      "handler": {
+        "type": "http",
+        "url": "https://my-service.example.com/handler"
+      }
+    }
+  ],
+  "subscriptions": [
+    {
+      "resourceType": "Observation",
+      "events": ["create", "update"],
+      "handler": {
+        "type": "webhook",
+        "url": "https://my-service.example.com/webhook"
+      }
+    }
+  ]
+}
+```
+
+## Custom Operations
+
+Apps can define custom FHIR operations that extend the server's functionality:
+
+### Operation Types
+
+- **`read`** - Custom read operations (e.g., computed views, aggregations)
+- **`write`** - Custom create/update operations with validation
+- **`search`** - Custom search implementations
+- **`execute`** - Named operations (e.g., `$custom-operation`)
+
+### Handler Types
+
+1. **HTTP Handler** - Forward requests to external HTTP service
+2. **JavaScript Handler** - Execute JavaScript code in QuickJS sandbox
+3. **Internal Handler** - Built-in Rust implementation
+
+Example HTTP handler operation:
+
+```json
+{
+  "name": "risk-score",
+  "type": "execute",
+  "resourceType": "Patient",
+  "handler": {
+    "type": "http",
+    "url": "https://analytics.example.com/risk-score",
+    "method": "POST",
+    "headers": {
+      "X-API-Key": "secret-key"
+    }
+  }
+}
+```
+
+Invoke the operation:
+
+```bash
+POST /Patient/123/$risk-score
+Authorization: Bearer <token>
+
+{
+  "parameters": {
+    "algorithm": "framingham"
+  }
+}
+```
+
+## Event Subscriptions
+
+Apps can subscribe to FHIR resource events for real-time workflows:
+
+### Supported Events
+
+- `create` - Resource created
+- `update` - Resource updated
+- `delete` - Resource deleted
+- `vread` - Resource version accessed
+
+### Subscription Handlers
+
+```json
+{
+  "resourceType": "Observation",
+  "events": ["create"],
+  "filter": {
+    "code": "85354-9",  // Blood pressure
+    "valueQuantity.value": { "gt": 140 }
+  },
+  "handler": {
+    "type": "webhook",
+    "url": "https://alerts.example.com/high-bp",
+    "retryPolicy": {
+      "maxRetries": 3,
+      "backoffSeconds": [10, 30, 60]
+    }
+  }
+}
+```
+
+## App Management API
+
+### Create App
+
+```bash
+POST /App
+Authorization: Bearer <admin-token>
+Content-Type: application/fhir+json
+
+{
+  "resourceType": "App",
+  "name": "My App",
+  ...
+}
+```
+
+### List Apps
+
+```bash
+GET /App?status=active
+Authorization: Bearer <admin-token>
+```
+
+### Update App
+
+```bash
+PUT /App/my-app
+Authorization: Bearer <admin-token>
+
+{
+  "resourceType": "App",
+  "id": "my-app",
+  "status": "inactive",
+  ...
+}
+```
+
+### Delete App
+
+```bash
+DELETE /App/my-app
+Authorization: Bearer <admin-token>
+```
+
+## App Status
+
+Apps can have the following statuses:
+
+- **`draft`** - Under development, not active
+- **`active`** - Deployed and processing requests
+- **`inactive`** - Temporarily disabled
+- **`retired`** - Permanently removed
+
+## Security & Permissions
+
+### App Authentication
+
+Apps can authenticate using:
+- **Client credentials** - OAuth 2.0 machine-to-machine
+- **Service accounts** - Dedicated user with system scopes
+- **API keys** - Simple token-based auth (for internal services)
+
+### Operation Authorization
+
+Operations inherit the user's access token and scopes. The app can:
+- **Pass-through auth** - Use the caller's token as-is
+- **Elevation** - Request additional scopes (requires consent)
+- **Service context** - Execute with app's own credentials
+
+### Audit Logging
+
+All app operations are logged to FHIR `AuditEvent` resources:
+
+```json
+{
+  "resourceType": "AuditEvent",
+  "action": "E",  // Execute
+  "recorded": "2026-01-03T14:00:00Z",
+  "outcome": "0",  // Success
+  "agent": [
+    {
+      "who": { "reference": "User/admin" }
+    },
+    {
+      "who": { "reference": "App/my-app" },
+      "requestor": false
+    }
+  ],
+  "entity": [
+    {
+      "what": { "reference": "Patient/123" },
+      "role": "4"  // Domain resource
+    }
+  ]
+}
+```
+
+## Best Practices
+
+1. **Version your apps** - Use semantic versioning and test changes
+2. **Handle failures gracefully** - Implement retry logic and error handling
+3. **Monitor performance** - Track operation latency and throughput
+4. **Validate inputs** - Don't trust external data
+5. **Use FHIR resources** - Store app configuration as FHIR resources when possible
+
+## Configuration
+
+App platform settings in `octofhir.toml`:
+
+```toml
+[apps]
+enabled = true
+max_operations_per_app = 100
+operation_timeout_seconds = 30
+webhook_timeout_seconds = 10
+webhook_max_retries = 3
+
+[apps.sandbox]
+enabled = true
+max_memory_mb = 128
+max_execution_ms = 5000
+```
+
+## Examples
+
+### Patient Portal Integration
+
+```json
+{
+  "resourceType": "App",
+  "name": "Patient Portal",
+  "operations": [
+    {
+      "name": "portal-dashboard",
+      "type": "read",
+      "resourceType": "Patient",
+      "handler": {
+        "type": "javascript",
+        "code": "function(patient) { return { summary: computeSummary(patient) } }"
+      }
+    }
+  ]
+}
+```
+
+### Clinical Decision Support
+
+```json
+{
+  "resourceType": "App",
+  "name": "Drug Interaction Checker",
+  "subscriptions": [
+    {
+      "resourceType": "MedicationRequest",
+      "events": ["create"],
+      "handler": {
+        "type": "http",
+        "url": "https://cds.example.com/check-interactions"
+      }
+    }
+  ]
+}
+```

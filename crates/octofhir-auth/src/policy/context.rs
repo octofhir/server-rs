@@ -855,6 +855,7 @@ mod tests {
             description: None,
             grant_types: vec![GrantType::AuthorizationCode],
             redirect_uris: vec!["https://app.example.com/callback".to_string()],
+            post_logout_redirect_uris: vec![],
             scopes: vec![],
             confidential: false,
             active: true,
@@ -869,8 +870,10 @@ mod tests {
 
     fn create_test_user_context() -> UserContext {
         UserContext {
-            id: Uuid::new_v4(),
+            id: Uuid::new_v4().to_string(),
             username: "testuser".to_string(),
+            name: Some("Test User".to_string()),
+            email: Some("test@example.com".to_string()),
             fhir_user: Some("Practitioner/789".to_string()),
             roles: vec!["practitioner".to_string(), "admin".to_string()],
             attributes: HashMap::new(),

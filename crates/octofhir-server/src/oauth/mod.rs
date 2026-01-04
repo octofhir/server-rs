@@ -20,16 +20,19 @@ use axum::{
     response::Response,
     routing::{get, post},
 };
+use octofhir_auth::oauth::service::{AuthorizationConfig, AuthorizationService};
 use octofhir_auth::oauth::token::TokenRequest;
 use octofhir_auth::token::jwt::JwtService;
 use octofhir_auth::token::service::TokenConfig;
 use octofhir_auth::{
-    AuthState, JwksState, LogoutState, SmartConfigState, TokenState, jwks_handler, logout_handler,
+    AuthState, AuthorizeState, JwksState, LogoutState, SmartConfigState, TokenState,
+    authorize_get, authorize_post, jwks_handler, logout_handler, oidc_logout_handler,
     smart_configuration_handler, token_handler, userinfo_handler,
 };
 use octofhir_auth_postgres::{
-    ArcClientStorage, ArcRefreshTokenStorage, ArcRevokedTokenStorage, ArcSessionStorage,
-    ArcUserStorage,
+    ArcAuthorizeSessionStorage, ArcClientStorage, ArcConsentStorage, ArcRefreshTokenStorage,
+    ArcRevokedTokenStorage, ArcSessionStorage, ArcUserStorage,
+    PostgresSsoSessionStorage,
 };
 use time::Duration;
 use url::Url;
@@ -44,6 +47,7 @@ pub struct OAuthState {
     pub logout_state: LogoutState,
     pub jwks_state: JwksState,
     pub smart_config_state: SmartConfigState,
+    pub authorize_state: AuthorizeState,
     pub audit_service: Arc<AuditService>,
 }
 
@@ -66,6 +70,8 @@ impl OAuthState {
         let session_storage = Arc::new(ArcSessionStorage::new(db_pool.clone()));
         let refresh_storage = Arc::new(ArcRefreshTokenStorage::new(db_pool.clone()));
         let revoked_storage = Arc::new(ArcRevokedTokenStorage::new(db_pool.clone()));
+        let authorize_session_storage = Arc::new(ArcAuthorizeSessionStorage::new(db_pool.clone()));
+        let consent_storage = Arc::new(ArcConsentStorage::new(db_pool.clone()));
 
         // Convert std::time::Duration to time::Duration for token lifetimes
         let access_token_secs = config.auth.oauth.access_token_lifetime.as_secs() as i64;
@@ -82,20 +88,31 @@ impl OAuthState {
         // Create TokenState with user storage for password grant and cookie config
         let token_state = TokenState::new(
             jwt_service.clone(),
-            session_storage,
+            session_storage.clone(),
             refresh_storage,
             revoked_storage.clone(),
             client_storage.clone(),
             token_config,
         )
-        .with_user_storage(user_storage)
-        .with_cookie_config(config.auth.cookie.clone());
+        .with_user_storage(user_storage.clone())
+        .with_cookie_config(config.auth.cookie.clone())
+        .with_fhir_storage(app_state.storage.clone());
+
+        // Create PostgresSsoSessionStorage for SSO logout support
+        // Uses FHIR storage for AuthSession resources
+        let sso_session_storage = Arc::new(PostgresSsoSessionStorage::new(
+            app_state.storage.clone(),
+        ));
 
         // Create LogoutState for browser-based logout
+        // Includes client_storage for OIDC RP-Initiated Logout validation
         let logout_state = LogoutState::new(
             jwt_service.clone(),
             revoked_storage,
             config.auth.cookie.clone(),
+            sso_session_storage.clone(),
+            config.auth.session.clone(),
+            client_storage.clone(),
         );
 
         // Create JwksState
@@ -105,11 +122,34 @@ impl OAuthState {
         let base_url = Url::parse(&config.base_url()).ok()?;
         let smart_config_state = SmartConfigState::new(config.auth.clone(), base_url);
 
+        // Create AuthorizationService for authorize endpoint
+        let authorization_service = Arc::new(AuthorizationService::new(
+            client_storage.clone(),
+            session_storage.clone(),
+            AuthorizationConfig::default(),
+        ));
+
+        // Create AuthorizeState for the authorize endpoint
+        let secure_cookies = config.auth.cookie.secure;
+        let authorize_state = AuthorizeState {
+            authorization_service,
+            authorize_session_storage,
+            user_storage,
+            client_storage,
+            consent_storage,
+            session_storage,
+            secure_cookies,
+            sso_session_storage,
+            session_config: config.auth.session.clone(),
+            fhir_storage: app_state.storage.clone(),
+        };
+
         Some(Self {
             token_state,
             logout_state,
             jwks_state,
             smart_config_state,
+            authorize_state,
             audit_service: app_state.audit_service.clone(),
         })
     }
@@ -235,10 +275,17 @@ async fn auditing_token_handler(
     response
 }
 
-/// Creates logout route for browser-based authentication.
+/// Creates logout routes for browser-based authentication.
+///
+/// Supports both:
+/// - POST: API-style logout with JSON response
+/// - GET: OIDC RP-Initiated Logout 1.0 with redirect support
+///
+/// Per OpenID Connect RP-Initiated Logout 1.0, the logout endpoint
+/// MUST support both GET and POST methods.
 pub fn logout_route(state: LogoutState) -> Router {
     Router::new()
-        .route("/auth/logout", post(logout_handler))
+        .route("/auth/logout", get(oidc_logout_handler).post(logout_handler))
         .with_state(state)
 }
 
@@ -263,5 +310,15 @@ pub fn smart_config_route(state: SmartConfigState) -> Router {
 pub fn userinfo_route(state: AuthState) -> Router {
     Router::new()
         .route("/auth/userinfo", get(userinfo_handler))
+        .with_state(state)
+}
+
+/// Creates authorization endpoint route for OAuth 2.0 authorization code flow.
+///
+/// This endpoint handles the interactive authorization flow where users
+/// authenticate and consent to grant access to clients.
+pub fn authorize_route(state: AuthorizeState) -> Router {
+    Router::new()
+        .route("/auth/authorize", get(authorize_get).post(authorize_post))
         .with_state(state)
 }

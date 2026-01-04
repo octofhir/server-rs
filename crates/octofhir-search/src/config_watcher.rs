@@ -286,13 +286,13 @@ async fn load_toml_config(path: &Path) -> Result<TerminologyConfig, WatcherError
     let content = tokio::fs::read_to_string(path).await?;
 
     // Try to parse as a full config with [terminology] section
-    if let Ok(full_config) = toml::from_str::<toml::Value>(&content) {
-        if let Some(term_section) = full_config.get("terminology") {
-            return term_section
-                .clone()
-                .try_into::<TerminologyConfig>()
-                .map_err(|e| WatcherError::ParseFailed(e.to_string()));
-        }
+    if let Ok(full_config) = toml::from_str::<toml::Value>(&content)
+        && let Some(term_section) = full_config.get("terminology")
+    {
+        return term_section
+            .clone()
+            .try_into::<TerminologyConfig>()
+            .map_err(|e| WatcherError::ParseFailed(e.to_string()));
     }
 
     // Try to parse directly as TerminologyConfig

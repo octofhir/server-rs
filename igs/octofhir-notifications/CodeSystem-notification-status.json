@@ -1,0 +1,36 @@
+{
+  "resourceType": "CodeSystem",
+  "id": "notification-status",
+  "url": "http://octofhir.io/CodeSystem/notification-status",
+  "name": "NotificationStatus",
+  "title": "Notification Status",
+  "status": "active",
+  "content": "complete",
+  "concept": [
+    {
+      "code": "pending",
+      "display": "Pending",
+      "definition": "Notification is queued and waiting to be sent"
+    },
+    {
+      "code": "sending",
+      "display": "Sending",
+      "definition": "Notification is currently being sent"
+    },
+    {
+      "code": "sent",
+      "display": "Sent",
+      "definition": "Notification was successfully sent"
+    },
+    {
+      "code": "failed",
+      "display": "Failed",
+      "definition": "Notification failed to send after all retries"
+    },
+    {
+      "code": "cancelled",
+      "display": "Cancelled",
+      "definition": "Notification was cancelled before sending"
+    }
+  ]
+}

@@ -218,11 +218,10 @@ pub async fn get_audit_analytics(
             for event in events {
                 if let Some(entities) = event.resource.get("entity").and_then(|e| e.as_array()) {
                     for entity in entities {
-                        if let Some(what) = entity.get("what") {
-                            if let Some(types) = what.get("type").and_then(|t| t.as_str()) {
+                        if let Some(what) = entity.get("what")
+                            && let Some(types) = what.get("type").and_then(|t| t.as_str()) {
                                 *resource_counts.entry(types.to_string()).or_insert(0) += 1;
                             }
-                        }
                     }
                 }
             }

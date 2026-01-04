@@ -329,13 +329,11 @@ pub fn create_resource_change_event_type() -> Object {
                 TypeRef::named_nn(TypeRef::STRING),
                 |ctx| {
                     async_graphql::dynamic::FieldFuture::new(async move {
-                        if let Some(parent) = ctx.parent_value.as_value() {
-                            if let Value::Object(obj) = parent {
-                                if let Some(v) = obj.get("eventType") {
+                        if let Some(parent) = ctx.parent_value.as_value()
+                            && let Value::Object(obj) = parent
+                                && let Some(v) = obj.get("eventType") {
                                     return Ok(Some(v.clone()));
                                 }
-                            }
-                        }
                         Ok(None)
                     })
                 },
@@ -348,13 +346,11 @@ pub fn create_resource_change_event_type() -> Object {
                 TypeRef::named_nn(TypeRef::STRING),
                 |ctx| {
                     async_graphql::dynamic::FieldFuture::new(async move {
-                        if let Some(parent) = ctx.parent_value.as_value() {
-                            if let Value::Object(obj) = parent {
-                                if let Some(v) = obj.get("resourceType") {
+                        if let Some(parent) = ctx.parent_value.as_value()
+                            && let Value::Object(obj) = parent
+                                && let Some(v) = obj.get("resourceType") {
                                     return Ok(Some(v.clone()));
                                 }
-                            }
-                        }
                         Ok(None)
                     })
                 },
@@ -367,13 +363,11 @@ pub fn create_resource_change_event_type() -> Object {
                 TypeRef::named_nn(TypeRef::STRING),
                 |ctx| {
                     async_graphql::dynamic::FieldFuture::new(async move {
-                        if let Some(parent) = ctx.parent_value.as_value() {
-                            if let Value::Object(obj) = parent {
-                                if let Some(v) = obj.get("resourceId") {
+                        if let Some(parent) = ctx.parent_value.as_value()
+                            && let Value::Object(obj) = parent
+                                && let Some(v) = obj.get("resourceId") {
                                     return Ok(Some(v.clone()));
                                 }
-                            }
-                        }
                         Ok(None)
                     })
                 },
@@ -383,13 +377,11 @@ pub fn create_resource_change_event_type() -> Object {
         .field(
             async_graphql::dynamic::Field::new("resource", TypeRef::named("FhirResource"), |ctx| {
                 async_graphql::dynamic::FieldFuture::new(async move {
-                    if let Some(parent) = ctx.parent_value.as_value() {
-                        if let Value::Object(obj) = parent {
-                            if let Some(v) = obj.get("resource") {
+                    if let Some(parent) = ctx.parent_value.as_value()
+                        && let Value::Object(obj) = parent
+                            && let Some(v) = obj.get("resource") {
                                 return Ok(Some(v.clone()));
                             }
-                        }
-                    }
                     Ok(None)
                 })
             })
@@ -401,13 +393,11 @@ pub fn create_resource_change_event_type() -> Object {
                 TypeRef::named_nn(TypeRef::STRING),
                 |ctx| {
                     async_graphql::dynamic::FieldFuture::new(async move {
-                        if let Some(parent) = ctx.parent_value.as_value() {
-                            if let Value::Object(obj) = parent {
-                                if let Some(v) = obj.get("timestamp") {
+                        if let Some(parent) = ctx.parent_value.as_value()
+                            && let Value::Object(obj) = parent
+                                && let Some(v) = obj.get("timestamp") {
                                     return Ok(Some(v.clone()));
                                 }
-                            }
-                        }
                         Ok(None)
                     })
                 },

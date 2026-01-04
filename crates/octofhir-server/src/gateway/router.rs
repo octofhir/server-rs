@@ -6,7 +6,7 @@ use std::sync::Arc;
 use axum::{
     Router,
     body::Body,
-    extract::{Path as AxumPath, State},
+    extract::{FromRequestParts, Path as AxumPath, State, ws::WebSocketUpgrade},
     http::Request,
     response::Response,
     routing::any,
@@ -18,7 +18,7 @@ use crate::server::AppState;
 use octofhir_storage::{DynStorage, SearchParams};
 
 use super::error::GatewayError;
-use super::types::{App, CustomOperation, RouteKey};
+use super::types::{App, CustomOperation, InlineOperation, ProxyConfig, Reference, RouteKey};
 
 /// Gateway router that dynamically routes requests based on App and CustomOperation resources.
 #[derive(Clone)]
@@ -51,14 +51,15 @@ impl GatewayRouter {
     ///
     /// This function:
     /// 1. Loads all active App resources
-    /// 2. Loads all active CustomOperation resources
-    /// 3. Builds a map of route keys (method:path) to operations
-    /// 4. Updates the in-memory cache
+    /// 2. Processes inline operations from App.operations[]
+    /// 3. Loads all active standalone CustomOperation resources
+    /// 4. Builds a map of route keys (method:path) to operations
+    /// 5. Updates the in-memory cache
     #[instrument(skip(self, storage))]
     pub async fn reload_routes(&self, storage: &DynStorage) -> Result<usize, GatewayError> {
         info!("Reloading gateway routes from storage");
 
-        // Load all active Apps
+        // Load all Apps
         let search_params = SearchParams::new().with_count(1000);
         let apps_result = storage
             .search("App", &search_params)
@@ -71,7 +72,7 @@ impl GatewayRouter {
             .filter_map(|stored| serde_json::from_value(stored.resource).ok())
             .collect();
 
-        debug!(count = apps.len(), "Loaded active Apps");
+        debug!(count = apps.len(), "Loaded Apps");
 
         // Build a map of app ID -> App for quick lookup
         let app_map: HashMap<String, App> = apps
@@ -79,7 +80,35 @@ impl GatewayRouter {
             .filter_map(|app| app.id.clone().map(|id| (id, app)))
             .collect();
 
-        // Load all active CustomOperations
+        // Build route map
+        let mut routes = HashMap::new();
+
+        // Process inline operations from active Apps
+        for (app_id, app) in &app_map {
+            // Skip inactive apps
+            if !app.is_active() {
+                debug!(app_id = %app_id, "Skipping inactive app");
+                continue;
+            }
+
+            // Register inline operations
+            for inline_op in &app.operations {
+                let custom_op = self.inline_to_custom_operation(app, inline_op);
+                let full_path = inline_op.path_string();
+                let route_key = RouteKey::new(inline_op.method.to_string(), full_path.clone());
+
+                debug!(
+                    route_key = %route_key,
+                    app_id = %app_id,
+                    operation_id = %inline_op.id,
+                    "Registered inline operation"
+                );
+
+                routes.insert(route_key.to_string(), custom_op);
+            }
+        }
+
+        // Load all active standalone CustomOperations
         let ops_result = storage
             .search("CustomOperation", &search_params)
             .await
@@ -93,12 +122,15 @@ impl GatewayRouter {
             .filter_map(|stored| serde_json::from_value(stored.resource).ok())
             .collect();
 
-        debug!(count = operations.len(), "Loaded active CustomOperations");
+        debug!(count = operations.len(), "Loaded standalone CustomOperations");
 
-        // Build route map
-        let mut routes = HashMap::new();
-
+        // Process standalone CustomOperations
         for operation in operations {
+            // Skip inactive operations
+            if !operation.active {
+                continue;
+            }
+
             // Extract app reference
             let app_ref = operation.app.reference.as_ref().ok_or_else(|| {
                 GatewayError::InvalidConfig(format!(
@@ -113,12 +145,21 @@ impl GatewayRouter {
             })?;
 
             // Find the app
-            let app = app_map
-                .get(app_id)
-                .ok_or_else(|| GatewayError::InvalidConfig(format!("App not found: {}", app_id)))?;
+            let app = app_map.get(app_id);
 
-            // Build full path
-            let full_path = format!("{}{}", app.base_path, operation.path);
+            // Build full path (support both new and deprecated formats)
+            let full_path = if let Some(app) = app {
+                if let Some(base_path) = &app.base_path {
+                    // Deprecated: use App.base_path
+                    format!("{}{}", base_path, operation.path)
+                } else {
+                    // New: path is already absolute
+                    operation.path.clone()
+                }
+            } else {
+                // App not found, use path as-is
+                operation.path.clone()
+            };
 
             // Create route key
             let route_key = RouteKey::new(operation.method.clone(), full_path.clone());
@@ -126,7 +167,7 @@ impl GatewayRouter {
             debug!(
                 route_key = %route_key,
                 operation_type = %operation.operation_type,
-                "Registered route"
+                "Registered standalone operation"
             );
 
             routes.insert(route_key.to_string(), operation);
@@ -141,6 +182,54 @@ impl GatewayRouter {
         info!(count = count, "Gateway routes reloaded");
 
         Ok(count)
+    }
+
+    /// Converts an inline operation from App.operations[] to a CustomOperation.
+    fn inline_to_custom_operation(&self, app: &App, op: &InlineOperation) -> CustomOperation {
+        // Build proxy config based on operation type
+        let proxy = if op.operation_type == "websocket" {
+            // WebSocket operations use websocket config
+            Some(ProxyConfig {
+                url: String::new(), // Not used for websocket
+                timeout: None,
+                forward_auth: None,
+                headers: None,
+                websocket: op.websocket.clone(),
+            })
+        } else {
+            // Regular app operations use endpoint config
+            app.endpoint.as_ref().map(|ep| ProxyConfig {
+                url: ep.url.clone(),
+                timeout: ep.timeout,
+                forward_auth: Some(true),
+                headers: None,
+                websocket: None,
+            })
+        };
+
+        CustomOperation {
+            id: Some(format!(
+                "{}-{}",
+                app.id.as_deref().unwrap_or("unknown"),
+                op.id
+            )),
+            resource_type: "CustomOperation".to_string(),
+            app: Reference {
+                reference: Some(format!("App/{}", app.id.as_deref().unwrap_or(""))),
+                display: Some(app.name.clone()),
+            },
+            path: op.path_string(),
+            method: op.method.to_string(),
+            operation_type: op.operation_type.clone(),
+            active: true,
+            public: op.public,
+            policy: op.policy.clone(),
+            proxy,
+            sql: None,
+            fhirpath: None,
+            handler: None,
+            include_raw_body: op.include_raw_body,
+        }
     }
 
     /// Creates an Axum router for the gateway.
@@ -218,6 +307,26 @@ async fn gateway_dispatch(
             path: full_path.to_string(),
         })?;
 
+    // Authenticate based on policy.authType
+    // - authType="app": validate X-App-Secret header
+    // - authType="forward" (default): OAuth token handled by middleware
+    if let Some(policy) = &operation.policy {
+        use crate::app_platform::AuthType;
+        let auth_type = policy.auth_type.unwrap_or(AuthType::Forward);
+        if auth_type == AuthType::App {
+            super::auth::authenticate_app_operation(&operation, request.headers(), state).await?;
+        }
+    }
+
+    // Extract auth context from request extensions
+    let auth_context = request
+        .extensions()
+        .get::<std::sync::Arc<octofhir_auth::middleware::AuthContext>>()
+        .cloned();
+
+    // Evaluate policy BEFORE dispatching to handler
+    super::policy::evaluate_operation_policy(&operation, auth_context.as_ref(), state).await?;
+
     info!(
         method = method,
         path = %full_path,
@@ -228,10 +337,30 @@ async fn gateway_dispatch(
     // Dispatch to the appropriate handler based on operation type
     match operation.operation_type.as_str() {
         "proxy" => super::proxy::handle_proxy(state, &operation, request).await,
+        "app" => super::app::handle_app(state, &operation, request).await,
         "sql" => super::sql::handle_sql(state, &operation, request).await,
         "fhirpath" => super::fhirpath::handle_fhirpath(state, &operation, request).await,
         "handler" => {
             super::handler::handle_handler(state.clone(), &operation, request).await
+        }
+        "websocket" => {
+            // WebSocket operations require a WebSocket upgrade request.
+            // Extract WebSocketUpgrade from request parts.
+            let (mut parts, _body) = request.into_parts();
+            let ws = WebSocketUpgrade::from_request_parts(&mut parts, state)
+                .await
+                .map_err(|_| {
+                    GatewayError::BadRequest(
+                        "WebSocket operation requires WebSocket upgrade request".to_string(),
+                    )
+                })?;
+
+            // Build auth info for the backend
+            let auth_info = super::types::AuthInfo::from_auth_context(
+                auth_context.as_ref().map(|arc| arc.as_ref()),
+            );
+
+            super::websocket::handle_websocket(state, &operation, ws, &auth_info).await
         }
         unknown => Err(GatewayError::InvalidConfig(format!(
             "Unknown operation type: {}",

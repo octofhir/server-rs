@@ -1,0 +1,13 @@
+{
+  "resourceType": "SearchParameter",
+  "id": "AuthSession-expires-at",
+  "url": "http://octofhir.org/fhir/SearchParameter/AuthSession-expires-at",
+  "name": "AuthSessionExpiresAt",
+  "status": "active",
+  "description": "Search AuthSession by expiration date/time",
+  "code": "expires-at",
+  "base": ["AuthSession"],
+  "type": "date",
+  "expression": "AuthSession.expiresAt",
+  "comparator": ["eq", "ne", "gt", "lt", "ge", "le", "sa", "eb"]
+}

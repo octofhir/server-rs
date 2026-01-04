@@ -6,11 +6,83 @@
 use std::collections::HashMap;
 
 use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use time::OffsetDateTime;
-use uuid::Uuid;
 
 use crate::AuthResult;
+
+/// Default datetime value for deserialization when field is missing.
+fn default_datetime() -> OffsetDateTime {
+    OffsetDateTime::now_utc()
+}
+
+/// Custom deserializer for fhir_user that accepts both:
+/// - A string: "Patient/123"
+/// - A FHIR Reference object: {"reference": "Patient/123", "display": "..."}
+fn deserialize_fhir_user<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    use serde::de::{self, MapAccess, Visitor};
+
+    struct FhirUserVisitor;
+
+    impl<'de> Visitor<'de> for FhirUserVisitor {
+        type Value = Option<String>;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+            formatter.write_str("a string or FHIR Reference object with 'reference' field")
+        }
+
+        fn visit_none<E>(self) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(None)
+        }
+
+        fn visit_unit<E>(self) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(None)
+        }
+
+        fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(Some(value.to_string()))
+        }
+
+        fn visit_string<E>(self, value: String) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(Some(value))
+        }
+
+        fn visit_map<M>(self, mut map: M) -> Result<Self::Value, M::Error>
+        where
+            M: MapAccess<'de>,
+        {
+            let mut reference: Option<String> = None;
+
+            while let Some(key) = map.next_key::<String>()? {
+                if key == "reference" {
+                    reference = Some(map.next_value()?);
+                } else {
+                    // Skip other fields like "display", "type", etc.
+                    let _: serde_json::Value = map.next_value()?;
+                }
+            }
+
+            Ok(reference)
+        }
+    }
+
+    deserializer.deserialize_any(FhirUserVisitor)
+}
 
 // =============================================================================
 // User Type
@@ -23,7 +95,10 @@ use crate::AuthResult;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct User {
     /// Unique identifier for the user.
-    pub id: Uuid,
+    /// This can be a UUID or any string identifier.
+    /// The actual ID comes from the database row, not the JSON resource.
+    #[serde(default)]
+    pub id: String,
 
     /// Username for authentication.
     pub username: String,
@@ -32,17 +107,28 @@ pub struct User {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub email: Option<String>,
 
+    /// Full name of the user (display name).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+
     /// BCrypt-hashed password (None for federated/SSO users).
     ///
     /// Note: This field is stored in the database for password authentication.
     /// When exposing User via API, filter this field out manually for security.
-    #[serde(default)]
+    #[serde(default, alias = "passwordHash")]
     pub password_hash: Option<String>,
 
     /// Reference to user's FHIR resource (e.g., "Practitioner/123").
     ///
     /// Used to set the `fhir_user` claim in access tokens.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    /// Accepts both string format ("Patient/123") and FHIR Reference object
+    /// ({"reference": "Patient/123"}).
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        alias = "fhirUser",
+        deserialize_with = "deserialize_fhir_user"
+    )]
     pub fhir_user: Option<String>,
 
     /// User roles for authorization.
@@ -63,11 +149,11 @@ pub struct User {
     pub active: bool,
 
     /// When the user was created.
-    #[serde(with = "time::serde::rfc3339")]
+    #[serde(default = "default_datetime", with = "time::serde::rfc3339")]
     pub created_at: OffsetDateTime,
 
     /// When the user was last updated.
-    #[serde(with = "time::serde::rfc3339")]
+    #[serde(default = "default_datetime", with = "time::serde::rfc3339")]
     pub updated_at: OffsetDateTime,
 }
 
@@ -75,13 +161,15 @@ impl User {
     /// Creates a new user with the given username.
     ///
     /// The user is active by default with no password (federated/SSO).
+    /// A new UUID is generated as the ID.
     #[must_use]
     pub fn new(username: impl Into<String>) -> Self {
         let now = OffsetDateTime::now_utc();
         Self {
-            id: Uuid::new_v4(),
+            id: uuid::Uuid::new_v4().to_string(),
             username: username.into(),
             email: None,
+            name: None,
             password_hash: None,
             fhir_user: None,
             roles: Vec::new(),
@@ -141,8 +229,8 @@ impl UserBuilder {
 
     /// Sets the user ID.
     #[must_use]
-    pub fn id(mut self, id: Uuid) -> Self {
-        self.user.id = id;
+    pub fn id(mut self, id: impl Into<String>) -> Self {
+        self.user.id = id.into();
         self
     }
 
@@ -150,6 +238,13 @@ impl UserBuilder {
     #[must_use]
     pub fn email(mut self, email: impl Into<String>) -> Self {
         self.user.email = Some(email.into());
+        self
+    }
+
+    /// Sets the full name.
+    #[must_use]
+    pub fn name(mut self, name: impl Into<String>) -> Self {
+        self.user.name = Some(name.into());
         self
     }
 
@@ -239,7 +334,7 @@ pub trait UserStorage: Send + Sync {
     /// # Errors
     ///
     /// Returns an error if the storage operation fails.
-    async fn find_by_id(&self, user_id: Uuid) -> AuthResult<Option<User>>;
+    async fn find_by_id(&self, user_id: &str) -> AuthResult<Option<User>>;
 
     /// Find a user by their username.
     ///
@@ -308,7 +403,7 @@ pub trait UserStorage: Send + Sync {
     /// Returns an error if:
     /// - The user doesn't exist
     /// - The storage operation fails
-    async fn delete(&self, user_id: Uuid) -> AuthResult<()>;
+    async fn delete(&self, user_id: &str) -> AuthResult<()>;
 
     /// Verify a user's password.
     ///
@@ -329,7 +424,7 @@ pub trait UserStorage: Send + Sync {
     /// Returns an error if:
     /// - The user doesn't exist
     /// - The storage operation fails
-    async fn verify_password(&self, user_id: Uuid, password: &str) -> AuthResult<bool>;
+    async fn verify_password(&self, user_id: &str, password: &str) -> AuthResult<bool>;
 
     /// List all users with pagination.
     ///
@@ -354,7 +449,7 @@ pub trait UserStorage: Send + Sync {
     /// Returns an error if:
     /// - The user doesn't exist
     /// - The storage operation fails
-    async fn update_last_login(&self, user_id: Uuid) -> AuthResult<()>;
+    async fn update_last_login(&self, user_id: &str) -> AuthResult<()>;
 }
 
 // =============================================================================
@@ -434,5 +529,75 @@ mod tests {
         assert!(json.contains("Practitioner/123"));
         // password_hash is serialized for storage (filter it out when exposing via API)
         assert!(json.contains("password_hash"));
+    }
+
+    #[test]
+    fn test_user_deserialization_fhir_user_as_string() {
+        let json = r#"{
+            "username": "patient1",
+            "email": "patient@example.com",
+            "name": "Test Patient",
+            "fhirUser": "Patient/123",
+            "roles": ["patient"],
+            "active": true
+        }"#;
+
+        let user: User = serde_json::from_str(json).unwrap();
+        assert_eq!(user.username, "patient1");
+        assert_eq!(user.email, Some("patient@example.com".to_string()));
+        assert_eq!(user.name, Some("Test Patient".to_string()));
+        assert_eq!(user.fhir_user, Some("Patient/123".to_string()));
+        assert_eq!(user.roles, vec!["patient"]);
+        assert!(user.active);
+    }
+
+    #[test]
+    fn test_user_deserialization_fhir_user_as_reference_object() {
+        let json = r#"{
+            "username": "patient1",
+            "email": "patient@psychportal.dev",
+            "name": "Test Patient Good",
+            "fhirUser": { "reference": "Patient/test-patient-1" },
+            "roles": ["patient"],
+            "active": true
+        }"#;
+
+        let user: User = serde_json::from_str(json).unwrap();
+        assert_eq!(user.username, "patient1");
+        assert_eq!(user.email, Some("patient@psychportal.dev".to_string()));
+        assert_eq!(user.name, Some("Test Patient Good".to_string()));
+        assert_eq!(user.fhir_user, Some("Patient/test-patient-1".to_string()));
+        assert_eq!(user.roles, vec!["patient"]);
+        assert!(user.active);
+    }
+
+    #[test]
+    fn test_user_deserialization_fhir_user_as_reference_with_display() {
+        let json = r#"{
+            "username": "doctor1",
+            "email": "doctor@hospital.com",
+            "name": "Dr. Smith",
+            "fhirUser": { "reference": "Practitioner/doc-1", "display": "Dr. John Smith" },
+            "roles": ["practitioner"],
+            "active": true
+        }"#;
+
+        let user: User = serde_json::from_str(json).unwrap();
+        assert_eq!(user.username, "doctor1");
+        assert_eq!(user.fhir_user, Some("Practitioner/doc-1".to_string()));
+    }
+
+    #[test]
+    fn test_user_deserialization_without_fhir_user() {
+        let json = r#"{
+            "username": "admin",
+            "email": "admin@example.com",
+            "roles": ["admin"],
+            "active": true
+        }"#;
+
+        let user: User = serde_json::from_str(json).unwrap();
+        assert_eq!(user.username, "admin");
+        assert!(user.fhir_user.is_none());
     }
 }

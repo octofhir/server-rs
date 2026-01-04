@@ -456,7 +456,7 @@ pub struct IdTokenClaims {
     pub nonce: Option<String>,
 
     /// User's FHIR resource reference.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none", rename = "fhirUser")]
     pub fhir_user: Option<String>,
 }
 

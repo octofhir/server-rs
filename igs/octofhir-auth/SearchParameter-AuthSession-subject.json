@@ -1,0 +1,13 @@
+{
+  "resourceType": "SearchParameter",
+  "id": "AuthSession-subject",
+  "url": "http://octofhir.org/fhir/SearchParameter/AuthSession-subject",
+  "name": "AuthSessionSubject",
+  "status": "active",
+  "description": "Search AuthSession by subject (User reference)",
+  "code": "subject",
+  "base": ["AuthSession"],
+  "type": "reference",
+  "expression": "AuthSession.subject",
+  "target": ["User"]
+}

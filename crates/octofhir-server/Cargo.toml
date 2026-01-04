@@ -31,13 +31,14 @@ octofhir-api = { path = "../octofhir-api" }
 octofhir-search = { path = "../octofhir-search" }
 octofhir-auth = { path = "../octofhir-auth" }
 octofhir-auth-postgres = { path = "../octofhir-auth-postgres" }
+octofhir-notifications = { path = "../octofhir-notifications" }
 octofhir-canonical-manager = { workspace = true }
 octofhir-graphql = { path = "../octofhir-graphql" }
 octofhir-sof = { path = "../octofhir-sof" }
 async-trait = { workspace = true }
 
 # Workspace dependencies
-axum = { workspace = true, features = ["ws"] }
+axum = { workspace = true, features = ["ws", "multipart"] }
 tower = { workspace = true }
 tower-http = { workspace = true }
 async-lsp = { workspace = true }
@@ -89,6 +90,9 @@ urlencoding = "2.1"
 # HTTP client
 reqwest = { version = "0.12", features = ["json"] }
 
+# WebSocket client for proxy
+tokio-tungstenite = "0.24"
+
 # Database
 sqlx-core = { version = "0.8.6", default-features = false, features = [
     "_rt-tokio",
@@ -105,7 +109,11 @@ sqlx-postgres = { version = "0.8.6", default-features = false, features = [
 chrono = { version = "0.4", features = ["serde"] }
 
 # Password hashing
-bcrypt = "0.16"
+argon2 = { version = "0.5.3", features = ["std"] }
+
+# Random generation and encoding for client secrets
+rand = "0.8"
+hex = "0.4"
 
 # Redis caching (optional, for horizontal scaling)
 deadpool-redis = "0.18"
@@ -124,10 +132,15 @@ futures = "0.3.31"
 
 # High-performance allocator (optional, enabled by default)
 mimalloc = { version = "0.1", default-features = false, optional = true }
+base64 = "0.22.1"
+
+# Package extraction for Implementation Guide uploads
+tar = "0.4"
+flate2 = "1.0"
+tempfile = { workspace = true }
 
 [dev-dependencies]
 tokio-test = { workspace = true }
-tempfile = { workspace = true }
 wiremock = { workspace = true }
 reqwest = { version = "0.12", features = ["json"] }
 filetime = { workspace = true }

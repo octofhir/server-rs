@@ -1,0 +1,110 @@
+{
+  "resourceType": "StructureDefinition",
+  "id": "AuthSession",
+  "url": "http://octofhir.io/StructureDefinition/AuthSession",
+  "name": "AuthSession",
+  "title": "Authentication Session",
+  "status": "active",
+  "fhirVersion": "4.0.1",
+  "kind": "logical",
+  "abstract": false,
+  "type": "AuthSession",
+  "baseDefinition": "http://hl7.org/fhir/StructureDefinition/DomainResource",
+  "derivation": "specialization",
+  "description": "A persistent user authentication session for SSO (Single Sign-On) across multiple OAuth authorization flows. Enables users to stay logged in and skip login forms.",
+  "differential": {
+    "element": [
+      {
+        "id": "AuthSession",
+        "path": "AuthSession",
+        "short": "SSO authentication session",
+        "definition": "Persistent user session that survives across multiple OAuth authorization flows for seamless SSO experience."
+      },
+      {
+        "id": "AuthSession.sessionToken",
+        "path": "AuthSession.sessionToken",
+        "short": "Session token",
+        "definition": "Cryptographically secure random token stored in HTTP-only cookie for session identification",
+        "min": 1,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "AuthSession.userId",
+        "path": "AuthSession.userId",
+        "short": "User ID",
+        "definition": "Reference to the authenticated user",
+        "min": 1,
+        "max": "1",
+        "type": [{ "code": "Reference", "targetProfile": ["http://octofhir.io/StructureDefinition/User"] }]
+      },
+      {
+        "id": "AuthSession.deviceName",
+        "path": "AuthSession.deviceName",
+        "short": "Device name",
+        "definition": "Human-readable device name parsed from User-Agent (e.g., 'Chrome on macOS')",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "AuthSession.userAgent",
+        "path": "AuthSession.userAgent",
+        "short": "User-Agent header",
+        "definition": "Full User-Agent string from the HTTP request",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "AuthSession.ipAddress",
+        "path": "AuthSession.ipAddress",
+        "short": "IP address",
+        "definition": "Client IP address (IPv4 or IPv6). May be from X-Forwarded-For if behind proxy.",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "AuthSession.createdAt",
+        "path": "AuthSession.createdAt",
+        "short": "Creation time",
+        "definition": "When this session was created (user logged in)",
+        "min": 1,
+        "max": "1",
+        "type": [{ "code": "instant" }]
+      },
+      {
+        "id": "AuthSession.lastActivityAt",
+        "path": "AuthSession.lastActivityAt",
+        "short": "Last activity time",
+        "definition": "Last time this session was used (for idle timeout calculation)",
+        "min": 1,
+        "max": "1",
+        "type": [{ "code": "instant" }]
+      },
+      {
+        "id": "AuthSession.expiresAt",
+        "path": "AuthSession.expiresAt",
+        "short": "Expiration time",
+        "definition": "When this session expires. Calculated using min(created + absolute_timeout, lastActivity + idle_timeout)",
+        "min": 1,
+        "max": "1",
+        "type": [{ "code": "instant" }]
+      },
+      {
+        "id": "AuthSession.status",
+        "path": "AuthSession.status",
+        "short": "Session status",
+        "definition": "Status of the session: active, expired, or revoked",
+        "min": 1,
+        "max": "1",
+        "type": [{ "code": "code" }],
+        "binding": {
+          "strength": "required",
+          "valueSet": "http://octofhir.io/ValueSet/session-status"
+        }
+      }
+    ]
+  }
+}

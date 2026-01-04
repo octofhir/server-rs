@@ -80,6 +80,12 @@ pub struct Client {
     #[serde(default)]
     pub redirect_uris: Vec<String>,
 
+    /// Allowed post-logout redirect URIs for RP-initiated logout.
+    /// Per OIDC RP-Initiated Logout 1.0, the OP MUST validate that
+    /// post_logout_redirect_uri matches one of these registered URIs.
+    #[serde(default)]
+    pub post_logout_redirect_uris: Vec<String>,
+
     /// OAuth scopes this client is allowed to request.
     /// Empty list means all scopes are allowed.
     #[serde(default)]
@@ -160,6 +166,24 @@ impl Client {
     #[must_use]
     pub fn is_redirect_uri_allowed(&self, uri: &str) -> bool {
         self.redirect_uris.iter().any(|allowed| allowed == uri)
+    }
+
+    /// Checks if the given post-logout redirect URI is allowed for this client.
+    ///
+    /// The comparison ignores query parameters, so if `http://example.com/logout`
+    /// is registered, `http://example.com/logout?state=foo` will also be allowed.
+    /// This is a practical relaxation of the OIDC spec to support common use cases
+    /// like passing logout reason or state via query parameters.
+    #[must_use]
+    pub fn is_post_logout_redirect_uri_allowed(&self, uri: &str) -> bool {
+        // Strip query parameters from the incoming URI for comparison
+        let uri_without_query = uri.split('?').next().unwrap_or(uri);
+
+        self.post_logout_redirect_uris.iter().any(|allowed| {
+            // Also strip query params from registered URI in case they're registered with params
+            let allowed_without_query = allowed.split('?').next().unwrap_or(allowed);
+            allowed_without_query == uri_without_query
+        })
     }
 
     /// Checks if the given scope is allowed for this client.
@@ -262,6 +286,7 @@ mod tests {
             description: None,
             grant_types: vec![GrantType::AuthorizationCode],
             redirect_uris: vec!["https://example.com/callback".to_string()],
+            post_logout_redirect_uris: vec!["https://example.com/logout".to_string()],
             scopes: vec![],
             confidential: false,
             active: true,
@@ -282,6 +307,7 @@ mod tests {
             description: Some("A test confidential client".to_string()),
             grant_types: vec![GrantType::ClientCredentials, GrantType::RefreshToken],
             redirect_uris: vec![],
+            post_logout_redirect_uris: vec![],
             scopes: vec!["read".to_string(), "write".to_string()],
             confidential: true,
             active: true,
@@ -457,5 +483,31 @@ mod tests {
         assert_eq!(parsed.name, client.name);
         assert_eq!(parsed.confidential, client.confidential);
         assert_eq!(parsed.grant_types, client.grant_types);
+    }
+
+    #[test]
+    fn test_post_logout_redirect_uri_ignores_query_params() {
+        let client = make_valid_public_client();
+        // Registered URI is "https://example.com/logout"
+
+        // Exact match works
+        assert!(client.is_post_logout_redirect_uri_allowed("https://example.com/logout"));
+
+        // URI with query params should also match
+        assert!(client.is_post_logout_redirect_uri_allowed(
+            "https://example.com/logout?reason=expired"
+        ));
+        assert!(client.is_post_logout_redirect_uri_allowed(
+            "https://example.com/logout?state=abc&reason=session_timeout"
+        ));
+
+        // Different path should not match
+        assert!(!client.is_post_logout_redirect_uri_allowed("https://example.com/other"));
+        assert!(!client.is_post_logout_redirect_uri_allowed(
+            "https://example.com/other?reason=expired"
+        ));
+
+        // Different host should not match
+        assert!(!client.is_post_logout_redirect_uri_allowed("https://evil.com/logout"));
     }
 }

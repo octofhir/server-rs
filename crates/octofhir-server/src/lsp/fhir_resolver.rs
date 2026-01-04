@@ -214,8 +214,8 @@ impl FhirResolver {
         // This prevents duplicate parallel loads for the same path
         {
             let state = self.loading_state.get(&cache_key);
-            if let Some(s) = state {
-                if *s.value() == LoadingState::Loading {
+            if let Some(s) = state
+                && *s.value() == LoadingState::Loading {
                     tracing::trace!(
                         "Already loading {}.{}, waiting for result",
                         resource_type,
@@ -229,7 +229,6 @@ impl FhirResolver {
                         return cached.value().clone();
                     }
                 }
-            }
         }
 
         // Mark as loading

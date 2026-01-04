@@ -91,11 +91,10 @@ impl ServerTerminologyService {
             }
 
             // Check nested concepts
-            if let Some(children) = concept.get("concept").and_then(|v| v.as_array()) {
-                if let Some(found) = self.find_concept_in_hierarchy(children, code) {
+            if let Some(children) = concept.get("concept").and_then(|v| v.as_array())
+                && let Some(found) = self.find_concept_in_hierarchy(children, code) {
                     return Some(found);
                 }
-            }
         }
         None
     }
@@ -118,11 +117,10 @@ impl ServerTerminologyService {
 
             if entry_code == code {
                 // Check system if provided
-                if let Some(expected_system) = system {
-                    if entry_system != Some(expected_system) {
+                if let Some(expected_system) = system
+                    && entry_system != Some(expected_system) {
                         continue; // System doesn't match, keep looking
                     }
-                }
 
                 // Found matching code
                 return Some(CodeValidationResult::valid_with_display(
@@ -165,11 +163,10 @@ impl ServerTerminologyService {
                 let include_system = include.get("system").and_then(|v| v.as_str());
 
                 // If system is specified, it must match
-                if let Some(expected_system) = system {
-                    if include_system != Some(expected_system) {
+                if let Some(expected_system) = system
+                    && include_system != Some(expected_system) {
                         continue;
                     }
-                }
 
                 // Check explicit concept list
                 if let Some(concepts) = include.get("concept").and_then(|v| v.as_array()) {
@@ -240,11 +237,10 @@ impl TerminologyService for ServerTerminologyService {
         }
 
         // Check compose
-        if let Some(compose) = value_set.get("compose") {
-            if let Some(result) = self.validate_in_compose(compose, code, system).await {
+        if let Some(compose) = value_set.get("compose")
+            && let Some(result) = self.validate_in_compose(compose, code, system).await {
                 return Ok(result);
             }
-        }
 
         // Code not found
         Ok(CodeValidationResult::invalid())
