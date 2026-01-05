@@ -1,0 +1,12 @@
+{
+  "resourceType": "SearchParameter",
+  "id": "Client-clientId",
+  "url": "http://octofhir.org/fhir/SearchParameter/Client-clientId",
+  "name": "ClientClientId",
+  "status": "active",
+  "description": "Search Client by OAuth client_id",
+  "code": "clientId",
+  "base": ["Client"],
+  "type": "string",
+  "expression": "Client.clientId"
+}

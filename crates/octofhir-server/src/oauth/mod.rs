@@ -106,6 +106,8 @@ impl OAuthState {
 
         // Create LogoutState for browser-based logout
         // Includes client_storage for OIDC RP-Initiated Logout validation
+        // Includes JWT cache invalidation callback to immediately reject revoked tokens
+        let jwt_cache = app_state.jwt_cache.clone();
         let logout_state = LogoutState::new(
             jwt_service.clone(),
             revoked_storage,
@@ -113,7 +115,10 @@ impl OAuthState {
             sso_session_storage.clone(),
             config.auth.session.clone(),
             client_storage.clone(),
-        );
+        )
+        .with_token_revoked_callback(Arc::new(move |jti: &str| {
+            jwt_cache.invalidate_by_jti(jti);
+        }));
 
         // Create JwksState
         let jwks_state = JwksState::new(jwt_service.clone());

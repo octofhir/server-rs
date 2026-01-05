@@ -268,9 +268,11 @@ mod tests {
             id: "test-op".to_string(),
             method: HttpMethod::Post,
             path: vec!["api".to_string(), "users".to_string()],
+            operation_type: "app".to_string(),
             public: false,
             policy: None,
             include_raw_body: None,
+            websocket: None,
         };
 
         let endpoint = Some(AppEndpoint {
@@ -305,9 +307,11 @@ mod tests {
             id: "test-op".to_string(),
             method: HttpMethod::Get,
             path: vec!["users".to_string()],
+            operation_type: "app".to_string(),
             public: false,
             policy: None,
             include_raw_body: None,
+            websocket: None,
         };
 
         let endpoint = Some(AppEndpoint {
@@ -327,9 +331,11 @@ mod tests {
             id: "test-op".to_string(),
             method: HttpMethod::Get,
             path: vec!["users".to_string()],
+            operation_type: "app".to_string(),
             public: false,
             policy: None,
             include_raw_body: None,
+            websocket: None,
         };
 
         let endpoint = Some(AppEndpoint {
@@ -352,9 +358,11 @@ mod tests {
             id: "test-op".to_string(),
             method: HttpMethod::Post,
             path: vec!["users".to_string()],
+            operation_type: "app".to_string(),
             public: false,
             policy: None,
             include_raw_body: None,
+            websocket: None,
         };
 
         let endpoint = Some(AppEndpoint {
@@ -377,9 +385,11 @@ mod tests {
             id: "test-op".to_string(),
             method: HttpMethod::Get,
             path: vec!["users".to_string()],
+            operation_type: "app".to_string(),
             public: false,
             policy: None,
             include_raw_body: None,
+            websocket: None,
         };
 
         let endpoint = Some(AppEndpoint {

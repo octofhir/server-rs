@@ -17,13 +17,24 @@ pub type PgPoolOptions = PoolOptions<Postgres>;
 pub async fn create_pool(config: &PostgresConfig) -> Result<PgPool> {
     info!(
         pool_size = config.pool_size,
+        min_connections = ?config.min_connections,
         connect_timeout_ms = config.connect_timeout_ms,
+        max_lifetime_secs = ?config.max_lifetime_secs,
         "Creating PostgreSQL connection pool"
     );
 
+    let min_connections = config
+        .min_connections
+        .unwrap_or(config.pool_size / 4)
+        .max(1);
+
+    let max_lifetime_secs = config.max_lifetime_secs.unwrap_or(1800);
+
     let mut options = PgPoolOptions::new()
         .max_connections(config.pool_size)
+        .min_connections(min_connections)
         .acquire_timeout(Duration::from_millis(config.connect_timeout_ms))
+        .max_lifetime(Duration::from_secs(max_lifetime_secs))
         .test_before_acquire(false);
 
     if let Some(idle_timeout) = config.idle_timeout_ms {

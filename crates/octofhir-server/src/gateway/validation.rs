@@ -257,9 +257,11 @@ mod tests {
             id: id.to_string(),
             method,
             path: path.into_iter().map(String::from).collect(),
+            operation_type: "app".to_string(),
             public: false,
             policy: None,
             include_raw_body: None,
+            websocket: None,
         }
     }
 

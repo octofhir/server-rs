@@ -41,7 +41,9 @@ pub use discovery::{SmartConfigState, smart_configuration_handler};
 pub use introspect::introspect_handler;
 pub use jwks::{JwksState, jwks_handler};
 pub use launch::{CreateLaunchRequest, CreateLaunchResponse, LaunchState, create_launch_handler};
-pub use logout::{LogoutState, OidcLogoutParams, logout_handler, oidc_logout_handler};
+pub use logout::{
+    LogoutState, OidcLogoutParams, TokenRevokedCallback, logout_handler, oidc_logout_handler,
+};
 pub use revoke::revoke_handler;
 pub use token::{TokenState, token_handler};
 pub use userinfo::{UserInfoResponse, userinfo_handler};

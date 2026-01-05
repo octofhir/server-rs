@@ -55,6 +55,12 @@ use crate::token::jwt::{AccessTokenClaims, IdTokenClaims, JwtService};
 // State Types
 // =============================================================================
 
+/// Callback for JWT cache invalidation when a token is revoked.
+///
+/// This allows the server to hook in cache invalidation without
+/// creating a dependency from octofhir-auth to octofhir-server.
+pub type TokenRevokedCallback = Arc<dyn Fn(&str) + Send + Sync>;
+
 /// State required for the logout endpoint.
 #[derive(Clone)]
 pub struct LogoutState {
@@ -70,6 +76,8 @@ pub struct LogoutState {
     pub session_config: SessionConfig,
     /// Client storage for validating post_logout_redirect_uri.
     pub client_storage: Arc<dyn ClientStorage>,
+    /// Optional callback invoked when a token is revoked (for cache invalidation).
+    pub on_token_revoked: Option<TokenRevokedCallback>,
 }
 
 impl LogoutState {
@@ -89,7 +97,18 @@ impl LogoutState {
             sso_session_storage,
             session_config,
             client_storage,
+            on_token_revoked: None,
         }
+    }
+
+    /// Sets the callback invoked when a token is revoked.
+    ///
+    /// This is called with the JTI of the revoked token, allowing
+    /// the server to invalidate its JWT verification cache immediately
+    /// instead of waiting for cache TTL expiration.
+    pub fn with_token_revoked_callback(mut self, callback: TokenRevokedCallback) -> Self {
+        self.on_token_revoked = Some(callback);
+        self
     }
 }
 
@@ -534,18 +553,28 @@ async fn revoke_token(state: &LogoutState, token: &str) -> Result<String, String
         .map_err(|e| format!("Failed to decode token: {}", e))?
         .claims;
 
+    let jti = claims.jti.clone();
+
+    // CRITICAL: Invalidate JWT verification cache FIRST (sync, fast, <1ms)
+    // This ensures the revoked token is immediately rejected for new requests
+    // even before the DB write completes.
+    if let Some(ref callback) = state.on_token_revoked {
+        debug!(jti = %jti, "Invalidating JWT cache for revoked token");
+        callback(&jti);
+    }
+
     // Calculate expiration time as OffsetDateTime
     let expires_at = time::OffsetDateTime::from_unix_timestamp(claims.exp)
         .map_err(|e| format!("Invalid expiration timestamp: {}", e))?;
 
-    // Revoke the token
+    // Revoke the token in storage (persists revocation for future restarts)
     state
         .revoked_token_storage
-        .revoke(&claims.jti, expires_at)
+        .revoke(&jti, expires_at)
         .await
         .map_err(|e| format!("Failed to revoke token: {}", e))?;
 
-    Ok(claims.jti)
+    Ok(jti)
 }
 
 /// Extract SSO session token from cookie.

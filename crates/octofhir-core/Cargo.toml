@@ -22,6 +22,11 @@ regex = { workspace = true }
 url = { workspace = true }
 tracing = { workspace = true }
 
+# Events system
+tokio = { workspace = true }
+async-trait = { workspace = true }
+futures-util = { workspace = true }
+
 [dev-dependencies]
 tokio-test = { workspace = true }
 tempfile = { workspace = true }

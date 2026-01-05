@@ -123,6 +123,11 @@ pub const EMBEDDED_AUTH_RESOURCES: &[(&str, &str)] = &[
         "SearchParameter-AuthSession-session-token.json",
         include_str!("../../../igs/octofhir-auth/SearchParameter-AuthSession-session-token.json"),
     ),
+    // Client search parameters
+    (
+        "SearchParameter-Client-clientId.json",
+        include_str!("../../../igs/octofhir-auth/SearchParameter-Client-clientId.json"),
+    ),
 ];
 
 /// Embedded octofhir-app IG resources

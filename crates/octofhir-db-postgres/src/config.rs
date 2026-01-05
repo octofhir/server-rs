@@ -11,12 +11,24 @@ pub struct PostgresConfig {
     /// Connection pool size (maximum number of connections).
     pub pool_size: u32,
 
+    /// Minimum number of connections to keep in the pool.
+    /// Pre-warms connections to reduce latency on first requests.
+    /// Defaults to pool_size / 4 if not set.
+    #[serde(default)]
+    pub min_connections: Option<u32>,
+
     /// Connection timeout in milliseconds.
     pub connect_timeout_ms: u64,
 
     /// Idle timeout in milliseconds.
     /// Connections idle longer than this will be closed.
     pub idle_timeout_ms: Option<u64>,
+
+    /// Maximum lifetime of a connection in seconds.
+    /// Connections older than this will be recycled.
+    /// Defaults to 1800 (30 minutes) if not set.
+    #[serde(default)]
+    pub max_lifetime_secs: Option<u64>,
 
     /// Whether to run migrations on startup.
     pub run_migrations: bool,
@@ -30,8 +42,10 @@ impl Default for PostgresConfig {
             // with moderate concurrency. Adjust based on PostgreSQL max_connections
             // and expected concurrent request load.
             pool_size: 20,
+            min_connections: None,
             connect_timeout_ms: 5000,
-            idle_timeout_ms: Some(300_000), // 5 minutes
+            idle_timeout_ms: Some(300_000),
+            max_lifetime_secs: None,
             run_migrations: true,
         }
     }
@@ -65,6 +79,20 @@ impl PostgresConfig {
     #[must_use]
     pub fn with_idle_timeout_ms(mut self, timeout: Option<u64>) -> Self {
         self.idle_timeout_ms = timeout;
+        self
+    }
+
+    /// Sets the minimum number of connections to keep in the pool.
+    #[must_use]
+    pub fn with_min_connections(mut self, min: Option<u32>) -> Self {
+        self.min_connections = min;
+        self
+    }
+
+    /// Sets the maximum lifetime of a connection in seconds.
+    #[must_use]
+    pub fn with_max_lifetime_secs(mut self, lifetime: Option<u64>) -> Self {
+        self.max_lifetime_secs = lifetime;
         self
     }
 

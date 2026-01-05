@@ -19,7 +19,7 @@ use octofhir_auth::policy::{
 use octofhir_auth::storage::BasicAuthStorage;
 use octofhir_auth::token::jwt::{JwtService, SigningAlgorithm, SigningKeyPair};
 use octofhir_auth_postgres::{
-    ArcBasicAuthStorage, ArcClientStorage, ArcRevokedTokenStorage, ArcUserStorage, PolicyListener,
+    ArcBasicAuthStorage, ArcClientStorage, ArcRevokedTokenStorage, ArcUserStorage,
     PostgresPolicyStorageAdapter,
 };
 
@@ -35,6 +35,11 @@ use octofhir_graphql::{FhirSchemaBuilder, InMemoryModelProvider, LazySchema, Sch
 use time::Duration;
 use tower_http::{compression::CompressionLayer, trace::TraceLayer};
 
+use crate::events::{RedisEventSyncBuilder, RedisPublishHook};
+use crate::hooks::{
+    AsyncAuditHook, GatewayReloadHook, GraphQLSubscriptionHook, HookRegistry, PolicyReloadHook,
+    SearchParamHook,
+};
 use crate::operation_registry::OperationRegistryService;
 use crate::operations::{DynOperationHandler, OperationRegistry, register_core_operations_full};
 use crate::reference_resolver::StorageReferenceResolver;
@@ -48,7 +53,8 @@ use octofhir_db_postgres::PostgresStorage;
 use octofhir_fhir_model::terminology::TerminologyProvider;
 use octofhir_fhirschema::TerminologyProviderAdapter;
 use octofhir_search::{HybridTerminologyProvider, ReloadableSearchConfig};
-use octofhir_storage::DynStorage;
+use octofhir_core::events::EventBroadcaster;
+use octofhir_storage::{DynStorage, EventedStorage};
 
 /// Shared model provider type for FHIRPath evaluation
 pub type SharedModelProvider = Arc<dyn ModelProvider + Send + Sync>;
@@ -386,12 +392,43 @@ async fn bootstrap_conformance_if_postgres(cfg: &AppConfig) -> Result<(), anyhow
     Ok(())
 }
 
+/// Creates Redis connection pool for event synchronization.
+///
+/// Returns a deadpool_redis pool configured for pub/sub operations.
+async fn create_redis_pool(
+    config: &crate::config::RedisConfig,
+) -> Result<deadpool_redis::Pool, anyhow::Error> {
+    use std::time::Duration as StdDuration;
+
+    let mut redis_config = deadpool_redis::Config::from_url(&config.url);
+    if let Some(ref mut pool_config) = redis_config.pool {
+        pool_config.max_size = config.pool_size;
+        pool_config.timeouts.wait = Some(StdDuration::from_millis(config.timeout_ms));
+        pool_config.timeouts.create = Some(StdDuration::from_millis(config.timeout_ms));
+        pool_config.timeouts.recycle = Some(StdDuration::from_millis(config.timeout_ms));
+    }
+
+    let pool = redis_config
+        .create_pool(Some(deadpool_redis::Runtime::Tokio1))
+        .map_err(|e| anyhow::anyhow!("Failed to create Redis pool: {e}"))?;
+
+    // Test connection
+    let _conn = pool
+        .get()
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to connect to Redis: {e}"))?;
+
+    tracing::info!(url = %config.url, "Redis pool created for event sync");
+    Ok(pool)
+}
+
 /// Creates PostgreSQL storage.
 ///
-/// Returns (storage, PostgreSQL pool for SQL handler).
+/// Returns (PostgresStorage, PostgreSQL pool for SQL handler).
+/// The caller is responsible for wrapping with EventedStorage and Arc if needed.
 async fn create_storage(
     cfg: &AppConfig,
-) -> Result<(DynStorage, Arc<sqlx_postgres::PgPool>), anyhow::Error> {
+) -> Result<(PostgresStorage, Arc<sqlx_postgres::PgPool>), anyhow::Error> {
     let pg_cfg = cfg
         .storage
         .postgres
@@ -411,8 +448,8 @@ async fn create_storage(
     // Get the pool reference for SQL handler
     let pool = pg_storage.pool().clone();
 
-    // Return PostgresStorage directly - it implements FhirStorage
-    Ok((Arc::new(pg_storage), Arc::new(pool)))
+    // Return PostgresStorage directly - caller wraps with EventedStorage
+    Ok((pg_storage, Arc::new(pool)))
 }
 
 /// Builds the application router with the given configuration.
@@ -421,7 +458,15 @@ pub async fn build_app(
     config_manager: Arc<octofhir_config::ConfigurationManager>,
 ) -> Result<Router, anyhow::Error> {
     let body_limit = cfg.server.body_limit_bytes;
-    let (storage, db_pool) = create_storage(cfg).await?;
+    let (pg_storage, db_pool) = create_storage(cfg).await?;
+
+    // Create event broadcaster for unified event system
+    let event_broadcaster = EventBroadcaster::new_shared();
+
+    // Wrap storage with EventedStorage to emit events on CRUD operations
+    let evented_storage = EventedStorage::new(pg_storage, event_broadcaster.clone());
+    let storage: DynStorage = Arc::new(evented_storage);
+    tracing::info!("Event broadcaster initialized, storage wrapped with EventedStorage");
 
     // Create PostgreSQL package store for FHIR package management
     let package_store = Arc::new(octofhir_db_postgres::PostgresPackageStore::new(
@@ -904,35 +949,8 @@ pub async fn build_app(
     });
     tracing::info!("Policy reload service started");
 
-    // Create and start policy listener (PostgreSQL LISTEN/NOTIFY)
-    let policy_listener = Arc::new(PolicyListener::new(db_pool.as_ref().clone()));
-    let policy_notifier_for_listener = policy_notifier.clone();
-
-    // Wire listener to notifier
-    let mut policy_rx = policy_listener.subscribe();
-    tokio::spawn(async move {
-        use octofhir_auth::policy::PolicyChange;
-        use octofhir_auth_postgres::PolicyChangeOp;
-
-        while let Ok(event) = policy_rx.recv().await {
-            let change = match event.operation {
-                PolicyChangeOp::Insert => PolicyChange::Created {
-                    policy_id: event.policy_id,
-                },
-                PolicyChangeOp::Update => PolicyChange::Updated {
-                    policy_id: event.policy_id,
-                },
-                PolicyChangeOp::Delete => PolicyChange::Deleted {
-                    policy_id: event.policy_id,
-                },
-            };
-            policy_notifier_for_listener.notify(change);
-        }
-    });
-
-    // Start the listener
-    let _listener_handle = policy_listener.start();
-    tracing::info!("Policy LISTEN/NOTIFY listener started");
+    // Note: Policy reload is now handled via unified event system (PolicyReloadHook)
+    // which subscribes to resource events instead of PostgreSQL LISTEN/NOTIFY.
 
     // Create policy evaluator with policies evaluated FIRST
     // This allows explicit Allow policies (like admin policy) to grant access
@@ -995,16 +1013,20 @@ pub async fn build_app(
     };
 
     // Create GraphQL state if enabled (schema build was started early)
-    let graphql_state = if let Some(lazy_schema) = lazy_schema {
+    let (graphql_state, graphql_subscription_broadcaster) = if let Some(lazy_schema) = lazy_schema {
         // Create PostgresStorage from the pool for GraphQL
         let graphql_storage: octofhir_storage::DynStorage =
             Arc::new(PostgresStorage::from_pool(db_pool.as_ref().clone()));
+
+        // Create subscription broadcaster for real-time updates
+        let subscription_broadcaster = octofhir_graphql::subscriptions::ResourceEventBroadcaster::new_shared();
 
         // Create context template with shared dependencies
         let context_template = GraphQLContextTemplate {
             storage: graphql_storage,
             search_config: (*search_config.config()).clone(),
             policy_evaluator: policy_evaluator.clone(),
+            subscription_broadcaster: Some(subscription_broadcaster.clone()),
         };
 
         let state = GraphQLState {
@@ -1015,9 +1037,9 @@ pub async fn build_app(
         // Schema build was already started early, no need to trigger again
         tracing::info!("GraphQL state initialized (schema build started early)");
 
-        Some(state)
+        (Some(state), Some(subscription_broadcaster))
     } else {
-        None
+        (None, None)
     };
 
     // Initialize audit service
@@ -1124,28 +1146,81 @@ pub async fn build_app(
     );
     tracing::info!("CapabilityStatement built and cached");
 
-    // Start gateway hot-reload listener now that operation_registry is available
-    let gateway_reload_pool = db_pool.as_ref().clone();
-    let gateway_reload_router = gateway_router.clone();
-    let gateway_reload_storage = storage.clone();
-    let gateway_reload_ops = operation_registry.clone();
-    tokio::spawn(async move {
-        use crate::gateway::GatewayReloadBuilder;
-        match GatewayReloadBuilder::new()
-            .with_pool(gateway_reload_pool)
-            .with_gateway_router(gateway_reload_router)
-            .with_storage(gateway_reload_storage)
-            .with_operation_registry(gateway_reload_ops)
-            .start()
-        {
-            Ok(_handle) => {
-                tracing::info!("Gateway hot-reload listener started");
+    // Register hooks for unified event system
+    // Hooks run asynchronously with isolation (timeout + panic recovery)
+    let hook_registry = HookRegistry::new();
+
+    // PolicyReloadHook: triggers policy cache reload on AccessPolicy changes
+    let policy_hook = PolicyReloadHook::new(policy_notifier.clone());
+    hook_registry.register_resource(Arc::new(policy_hook)).await;
+
+    // GatewayReloadHook: triggers gateway route reload on App/CustomOperation changes
+    let gateway_hook = GatewayReloadHook::new(gateway_router.clone(), storage.clone())
+        .with_operation_registry(operation_registry.clone());
+    hook_registry.register_resource(Arc::new(gateway_hook)).await;
+
+    // SearchParamHook: updates search parameter registry on SearchParameter changes
+    let search_hook = SearchParamHook::new(search_config.clone());
+    hook_registry.register_resource(Arc::new(search_hook)).await;
+
+    // GraphQLSubscriptionHook: forwards events to GraphQL subscription clients
+    if let Some(ref graphql_broadcaster) = graphql_subscription_broadcaster {
+        let graphql_hook = GraphQLSubscriptionHook::new(graphql_broadcaster.clone());
+        hook_registry.register_resource(Arc::new(graphql_hook)).await;
+        tracing::debug!("GraphQL subscription hook registered");
+    }
+
+    // AsyncAuditHook: logs resource changes asynchronously as FHIR AuditEvents
+    if audit_service.is_enabled() {
+        let audit_hook = AsyncAuditHook::new(audit_service.clone());
+        hook_registry.register_resource(Arc::new(audit_hook)).await;
+        tracing::debug!("Async audit hook registered");
+    }
+
+    // RedisPublishHook + RedisEventSync: multi-instance event synchronization
+    // When Redis is enabled:
+    // - RedisPublishHook publishes local events to Redis for other instances
+    // - RedisEventSync subscribes to Redis and forwards events to local broadcaster
+    if cfg.redis.enabled {
+        match create_redis_pool(&cfg.redis).await {
+            Ok(redis_pool) => {
+                // Register hook to publish events to Redis
+                let publish_hook = RedisPublishHook::new(redis_pool.clone());
+                hook_registry.register_resource(Arc::new(publish_hook)).await;
+
+                // Start Redis subscriber to receive events from other instances
+                match RedisEventSyncBuilder::new()
+                    .with_pool(redis_pool)
+                    .with_broadcaster(event_broadcaster.clone())
+                    .with_redis_url(&cfg.redis.url)
+                    .start()
+                {
+                    Ok(_handle) => {
+                        tracing::info!("Redis event sync enabled for multi-instance deployment");
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            error = %e,
+                            "Failed to start Redis event sync, continuing without multi-instance sync"
+                        );
+                    }
+                }
             }
             Err(e) => {
-                tracing::warn!(error = %e, "Failed to start gateway hot-reload listener");
+                tracing::warn!(
+                    error = %e,
+                    "Failed to create Redis pool for event sync, continuing without multi-instance sync"
+                );
             }
         }
-    });
+    }
+
+    // Start the event dispatcher - subscribes to broadcaster and dispatches to hooks
+    let hook_registry = Arc::new(hook_registry);
+    let dispatcher = octofhir_core::events::HookDispatcher::new(hook_registry.clone());
+    tokio::spawn(dispatcher.run(event_broadcaster.subscribe()));
+    tracing::info!("Unified event system: {} hooks registered, dispatcher started",
+        hook_registry.hook_count().await);
 
     // Create basic auth storage (unified Client and App authentication)
     let basic_auth_storage = Arc::new(ArcBasicAuthStorage::new(db_pool.clone()));

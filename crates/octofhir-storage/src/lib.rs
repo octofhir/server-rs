@@ -53,11 +53,13 @@
 //! ```
 
 mod error;
+pub mod evented;
 mod traits;
 mod types;
 
 // Re-export everything from submodules
 pub use error::{ErrorCategory, StorageError};
+pub use evented::{EventedStorage, EventedTransaction};
 pub use traits::{
     ConformanceChangeEvent, ConformanceChangeOp, ConformanceStorage, FhirStorage,
     StorageCapabilities, Transaction,
@@ -80,6 +82,7 @@ pub type DynStorage = std::sync::Arc<dyn FhirStorage>;
 /// ```
 pub mod prelude {
     pub use crate::error::{ErrorCategory, StorageError};
+    pub use crate::evented::{EventedStorage, EventedTransaction};
     pub use crate::traits::{
         ConformanceChangeEvent, ConformanceChangeOp, ConformanceStorage, FhirStorage,
         StorageCapabilities, Transaction,

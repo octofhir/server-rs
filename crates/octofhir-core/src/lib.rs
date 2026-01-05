@@ -1,4 +1,5 @@
 pub mod error;
+pub mod events;
 pub mod fhir;
 pub mod fhir_reference;
 pub mod id;

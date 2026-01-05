@@ -100,7 +100,7 @@ fn row_to_resource_index(row: &sqlx_postgres::PgRow) -> ResourceIndex {
     let characteristics: Option<Value> = row.get("sd_characteristics");
 
     ResourceIndex {
-        canonical_url: url.clone().unwrap_or_default(),
+        canonical_url: url.unwrap_or_default(),
         resource_type: row.get("resource_type"),
         package_name: row.get("package_name"),
         package_version: row.get("package_version"),

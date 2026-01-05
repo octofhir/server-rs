@@ -42,6 +42,9 @@ pub struct GraphQLContextTemplate {
     pub storage: octofhir_storage::DynStorage,
     pub search_config: octofhir_search::SearchConfig,
     pub policy_evaluator: Arc<octofhir_auth::policy::PolicyEvaluator>,
+    /// Broadcaster for subscription events.
+    /// This allows mutations to emit events that are delivered to subscription clients.
+    pub subscription_broadcaster: Option<Arc<crate::subscriptions::ResourceEventBroadcaster>>,
 }
 
 /// GraphQL request body.

@@ -116,46 +116,7 @@ K6_CLIENT_ID := "k6-test"
 
 # Create k6-test OAuth client and AccessPolicy (run once, saves secret to .k6-secret)
 k6-setup:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    echo "Getting admin token..."
-    TOKEN=$(curl -s -X POST 'http://localhost:8888/auth/token' \
-      -H 'Content-Type: application/x-www-form-urlencoded' \
-      -d 'grant_type=password&username={{K6_AUTH_USER}}&password={{K6_AUTH_PASSWORD}}&client_id=octofhir-ui' \
-      | jq -r '.access_token')
-
-    echo "Checking if k6-test client exists..."
-    EXISTS=$(curl -s "http://localhost:8888/Client?clientId=k6-test" \
-      -H "Authorization: Bearer $TOKEN" | jq '.total')
-
-    if [ "$EXISTS" -gt "0" ]; then
-      echo "Client k6-test already exists, regenerating secret..."
-    else
-      echo "Creating k6-test client..."
-      curl -s -X POST 'http://localhost:8888/Client' \
-        -H "Authorization: Bearer $TOKEN" \
-        -H 'Content-Type: application/json' \
-        -d '{"resourceType":"Client","clientId":"k6-test","name":"K6 Load Testing Client","confidential":true,"active":true,"grantTypes":["password","client_credentials"],"scopes":["openid","user/*.cruds","system/*.cruds"]}'
-      echo ""
-    fi
-
-    echo "Generating client secret..."
-    SECRET=$(curl -s -X POST 'http://localhost:8888/admin/clients/k6-test/regenerate-secret' \
-      -H "Authorization: Bearer $TOKEN" \
-      -H 'Content-Type: application/json' | jq -r '.clientSecret')
-
-    echo "$SECRET" > .k6-secret
-    echo "Client secret saved to .k6-secret"
-
-    echo "Creating/updating AccessPolicy for k6-test..."
-    curl -s -X PUT 'http://localhost:8888/AccessPolicy/00000000-0000-0000-0000-000000000002' \
-      -H "Authorization: Bearer $TOKEN" \
-      -H 'Content-Type: application/json' \
-      -H 'X-Skip-Validation: true' \
-      -d '{"resourceType":"AccessPolicy","id":"00000000-0000-0000-0000-000000000002","name":"K6 Test Full Access","description":"Allow all operations for admin users via k6-test client","active":true,"priority":1,"matcher":{"clients":["k6-test"],"roles":["admin"]},"engine":{"type":"allow"}}'
-    echo ""
-
-    echo "Done! You can now run: just k6-crud-test"
+   bun run scripts/k6-setup.ts
 
 # Run k6 CRUD test (single iteration for validation)
 k6-crud-test:

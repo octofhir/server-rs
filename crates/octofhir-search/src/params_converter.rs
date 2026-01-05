@@ -217,18 +217,16 @@ fn extract_prefix(value: &str) -> (Option<SearchPrefix>, &str) {
     // Use character iteration to safely handle multi-byte UTF-8 characters.
     // FHIR prefixes are ASCII only (eq, ne, gt, lt, ge, le, sa, eb, ap).
     let mut chars = value.chars();
-    if let Some(c1) = chars.next() {
-        if let Some(c2) = chars.next() {
-            // Try 2-character prefix first
-            if c1.is_ascii_lowercase() && c2.is_ascii_lowercase() {
-                let prefix_str: String = [c1, c2].iter().collect();
-                if let Some(prefix) = SearchPrefix::parse(&prefix_str) {
-                    // Safe to slice: we know c1 and c2 are ASCII (1 byte each)
-                    return (Some(prefix), &value[2..]);
-                }
-            }
+    if let Some(c1) = chars.next()
+        && let Some(c2) = chars.next()
+        && c1.is_ascii_lowercase()
+        && c2.is_ascii_lowercase()
+    {
+        let prefix_str: String = [c1, c2].iter().collect();
+        if let Some(prefix) = SearchPrefix::parse(&prefix_str) {
+            // Safe to slice: we know c1 and c2 are ASCII (1 byte each)
+            return (Some(prefix), &value[2..]);
         }
-        // No 2-char prefix currently exists that's single-char, but keep for safety
     }
     (None, value)
 }

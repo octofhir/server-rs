@@ -46,59 +46,72 @@ pub async fn load_search_parameters(
     // Register built-in common parameters first
     register_common_parameters(&registry);
 
-    // Query for all SearchParameter resources
-    // IMPORTANT: Set high limit to get all search parameters (FHIR R4 has ~1000 search parameters)
-    let query = SearchQuery {
-        resource_types: vec!["SearchParameter".to_string()],
-        limit: Some(10000), // High limit to ensure we get ALL SearchParameters
-        ..Default::default()
-    };
-
-    let results = manager
-        .search_engine()
-        .search(&query)
-        .await
-        .map_err(|e| LoaderError::QueryError(e.to_string()))?;
-
+    // Query for all SearchParameter resources using pagination
+    // The canonical manager has a max limit of 1000 per page
+    const PAGE_SIZE: usize = 1000;
+    let mut offset = 0;
     let mut loaded_count = 0;
     let mut skipped_count = 0;
+    let mut total_fetched = 0;
 
-    for resource_match in results.resources {
-        match parse_search_parameter(&resource_match.resource.content) {
-            Ok(param) => {
-                if param.code == "gender" {
-                    tracing::warn!(
+    loop {
+        let query = SearchQuery {
+            resource_types: vec!["SearchParameter".to_string()],
+            limit: Some(PAGE_SIZE),
+            offset: Some(offset),
+            ..Default::default()
+        };
+
+        let results = manager
+            .search_engine()
+            .search(&query)
+            .await
+            .map_err(|e| LoaderError::QueryError(e.to_string()))?;
+
+        let page_count = results.resources.len();
+        total_fetched += page_count;
+
+        tracing::debug!(
+            page_count = page_count,
+            offset = offset,
+            total_count = results.total_count,
+            "Fetched SearchParameter page"
+        );
+
+        for resource_match in results.resources {
+            match parse_search_parameter(&resource_match.resource.content) {
+                Ok(param) => {
+                    tracing::debug!(
                         code = %param.code,
                         bases = ?param.base,
                         param_type = ?param.param_type,
-                        url = %param.url,
-                        "🔍 FOUND gender search parameter!"
+                        "Loaded search parameter"
                     );
+                    registry.register(param);
+                    loaded_count += 1;
                 }
-                tracing::debug!(
-                    code = %param.code,
-                    bases = ?param.base,
-                    param_type = ?param.param_type,
-                    "Loaded search parameter"
-                );
-                registry.register(param);
-                loaded_count += 1;
-            }
-            Err(e) => {
-                let url = resource_match
-                    .resource
-                    .content
-                    .get("url")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("unknown");
-                tracing::warn!(
-                    url = %url,
-                    error = %e,
+                Err(e) => {
+                    let url = resource_match
+                        .resource
+                        .content
+                        .get("url")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("unknown");
+                    tracing::warn!(
+                        url = %url,
+                        error = %e,
                     "Failed to parse SearchParameter, skipping"
                 );
                 skipped_count += 1;
+                }
             }
         }
+
+        // Exit loop when we've fetched all resources or got an empty page
+        if page_count < PAGE_SIZE || total_fetched >= results.total_count {
+            break;
+        }
+        offset += PAGE_SIZE;
     }
 
     tracing::info!(

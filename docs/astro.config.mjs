@@ -52,6 +52,13 @@ export default defineConfig({
             { label: 'Search Architecture', link: 'search-architecture/' },
           ]
         },
+        {
+          label: 'Architecture',
+          collapsed: false,
+          items: [
+            { label: 'Event System', link: 'event-system/' },
+          ]
+        },
         { label: 'Application Platform', link: 'applications/' },
         { label: 'Notifications', link: 'notifications/' },
         { label: 'Bulk Data Export', link: 'bulk-export/' },

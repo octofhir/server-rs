@@ -4421,6 +4421,8 @@ name = "octofhir-core"
 version = "0.0.1"
 dependencies = [
  "anyhow",
+ "async-trait",
+ "futures-util",
  "indexmap 2.12.1",
  "regex",
  "serde",
@@ -4428,6 +4430,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.17",
  "time",
+ "tokio",
  "tokio-test",
  "tracing",
  "url",
@@ -4530,9 +4533,9 @@ dependencies = [
 
 [[package]]
 name = "octofhir-fhirschema"
-version = "0.3.12"
+version = "0.3.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ce38029de55cdfe01ee1080ff7dbd54c1c8f295f988cac3378f87b7df57b4222"
+checksum = "1e6b6870548a43784d9c69166d02b967f372eb6a225e6d812b3f30b36a980f0c"
 dependencies = [
  "async-recursion",
  "async-trait",
@@ -4755,6 +4758,7 @@ dependencies = [
  "thiserror 2.0.17",
  "time",
  "tokio",
+ "tracing",
  "uuid",
 ]
 

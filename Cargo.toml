@@ -91,7 +91,7 @@ hostname = "0.4"
 json-patch = "4"
 
 octofhir-fhirpath = { version = "0.4.34", features = ["lsp"] }
-octofhir-fhirschema = { version = "0.3.12"}
+octofhir-fhirschema = { version = "0.3.13"}
 
 # Environment
 dotenvy = "0.15"

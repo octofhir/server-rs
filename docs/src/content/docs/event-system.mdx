@@ -1,0 +1,245 @@
+---
+title: Event System
+description: Unified event system for inter-module communication, cache invalidation, and multi-instance synchronization
+---
+
+OctoFHIR uses a unified event system to coordinate actions across modules when resources are created, updated, or deleted. This enables real-time cache invalidation, policy reloads, GraphQL subscriptions, and multi-instance synchronization.
+
+## Overview
+
+When a FHIR resource is modified through the REST API, GraphQL, or any other endpoint, the system automatically:
+
+1. Emits a `ResourceEvent` to the central event bus
+2. Dispatches the event to all registered hooks
+3. Each hook performs its action asynchronously (cache invalidation, reload, etc.)
+4. If Redis is enabled, broadcasts the event to other server instances
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│                      FHIR CRUD Operation                      │
+│  POST /fhir/Patient  →  Storage  →  Event Broadcast          │
+└──────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌──────────────────────────────────────────────────────────────┐
+│                   Event Broadcaster                          │
+│              (tokio::broadcast channel)                      │
+└──────────────────────────────────────────────────────────────┘
+         │           │           │           │
+         ▼           ▼           ▼           ▼
+    ┌────────┐  ┌────────┐  ┌────────┐  ┌────────┐
+    │ Policy │  │Gateway │  │ Search │  │ Audit  │
+    │ Reload │  │ Reload │  │ Param  │  │  Log   │
+    └────────┘  └────────┘  └────────┘  └────────┘
+```
+
+## Built-in Hooks
+
+OctoFHIR includes several hooks that react to resource changes:
+
+### Policy Reload Hook
+
+Automatically reloads the policy cache when `AccessPolicy` resources are modified.
+
+**Triggered by:** `AccessPolicy` create/update/delete
+
+**Action:** Notifies the policy reload service to refresh the in-memory policy cache, ensuring authorization decisions use the latest policies.
+
+### Gateway Reload Hook
+
+Reloads the gateway routing table when `App` or `CustomOperation` resources change.
+
+**Triggered by:** `App`, `CustomOperation` create/update/delete
+
+**Action:** Rebuilds the dynamic API routes from the database, activating new endpoints or removing deleted ones.
+
+### Search Parameter Hook
+
+Updates the search parameter registry when `SearchParameter` resources are modified.
+
+**Triggered by:** `SearchParameter` create/update/delete
+
+**Action:** Upserts the parameter into the registry and clears the query cache to ensure new searches use the updated parameter.
+
+### GraphQL Subscription Hook
+
+Forwards resource events to connected GraphQL subscription clients.
+
+**Triggered by:** All resource types
+
+**Action:** Broadcasts the change to clients subscribed to that resource type, enabling real-time UI updates.
+
+### Audit Hook
+
+Logs resource changes as FHIR AuditEvent resources asynchronously.
+
+**Triggered by:** All resource types (filtered by audit configuration)
+
+**Action:** Creates an AuditEvent recording the action, actor, and outcome without blocking the API response.
+
+## Multi-Instance Synchronization
+
+For horizontal scaling with multiple OctoFHIR instances, enable Redis to synchronize events across all instances.
+
+### Configuration
+
+```toml
+[redis]
+enabled = true
+url = "redis://localhost:6379"
+pool_size = 10
+timeout_ms = 5000
+```
+
+### How It Works
+
+```
+┌─────────────────────────┐         ┌─────────────────────────┐
+│     Instance 1          │         │     Instance 2          │
+│                         │         │                         │
+│  POST /fhir/Patient     │         │                         │
+│         │               │         │                         │
+│         ▼               │         │                         │
+│  EventBroadcaster ──────┼────────►│  EventBroadcaster       │
+│         │               │  Redis  │         │               │
+│         ▼               │ Pub/Sub │         ▼               │
+│  Local Hooks            │         │  Local Hooks            │
+│  (Policy, Gateway...)   │         │  (Policy, Gateway...)   │
+└─────────────────────────┘         └─────────────────────────┘
+```
+
+When Redis is enabled:
+
+1. **RedisPublishHook** publishes events to the `octofhir:resource_events` channel
+2. **RedisEventSync** subscribes to the channel on each instance
+3. Received events are forwarded to the local broadcaster
+4. Local hooks process the event (cache invalidation, etc.)
+
+This ensures all instances have consistent caches without manual coordination.
+
+## Event Types
+
+### ResourceEvent
+
+Emitted when a FHIR resource is created, updated, or deleted:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `event_type` | `Created` \| `Updated` \| `Deleted` | Type of change |
+| `resource_type` | `String` | FHIR resource type (e.g., "Patient") |
+| `resource_id` | `String` | Resource ID |
+| `version_id` | `Option<i64>` | Version number (if available) |
+| `resource` | `Option<Value>` | Full resource JSON (None for deletes) |
+| `timestamp` | `OffsetDateTime` | When the event occurred |
+
+### AuthEvent
+
+Emitted for authentication-related actions:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `event_type` | `SessionCreated` \| `LoginSucceeded` \| `TokenRevoked` \| ... | Type of auth event |
+| `user_id` | `Option<String>` | User ID (if applicable) |
+| `client_id` | `String` | OAuth client ID |
+| `session_id` | `Option<String>` | Session ID |
+| `ip_address` | `Option<IpAddr>` | Client IP address |
+| `timestamp` | `OffsetDateTime` | When the event occurred |
+
+## Hook Isolation
+
+Each hook runs in isolation to prevent failures from affecting other hooks or the API:
+
+- **Timeout:** 30 seconds maximum execution time
+- **Panic Recovery:** Panics are caught and logged
+- **Error Isolation:** Errors in one hook don't affect others
+- **Async Execution:** Hooks run concurrently
+
+```
+Hook A: ✓ Success
+Hook B: ✗ Error (logged, other hooks continue)
+Hook C: ✓ Success
+Hook D: ⏱ Timeout (logged, other hooks continue)
+
+API Response: Success (hooks don't block response)
+```
+
+## Performance
+
+The event system is designed for minimal impact on API latency:
+
+| Operation | Latency | Notes |
+|-----------|---------|-------|
+| Event broadcast | ~1-5 μs | Non-blocking, returns immediately |
+| Hook dispatch | ~10-100 μs | Plus async execution |
+| Redis publish | ~1-5 ms | Network round-trip |
+| Total API impact | < 10 μs | Hooks run after response |
+
+Events are emitted **after** the storage operation completes but **before** sending the API response. Hook execution happens asynchronously, so it doesn't add latency to the response.
+
+## Monitoring
+
+Enable debug logging to see event activity:
+
+```bash
+RUST_LOG=octofhir_core::events=debug,octofhir_server::hooks=debug cargo run
+```
+
+Example logs:
+
+```
+DEBUG octofhir_storage::evented: Emitting Created event for Patient/123
+DEBUG octofhir_server::hooks::policy: Handling AccessPolicy change
+INFO  octofhir_server::hooks::gateway: Gateway routes reloaded
+DEBUG octofhir_server::events::redis: Published event to Redis
+```
+
+## Best Practices
+
+### For Single Instance Deployments
+
+- Redis is optional for single-instance deployments
+- All hooks work locally without Redis
+- Consider enabling audit logging for compliance
+
+### For Multi-Instance Deployments
+
+- **Always enable Redis** for cache consistency
+- Use the same Redis instance for all OctoFHIR servers
+- Monitor Redis connectivity (graceful degradation on failure)
+- Consider Redis Sentinel or Cluster for high availability
+
+### For Custom Applications
+
+When building applications that modify resources directly via the database:
+
+1. Use the OctoFHIR REST API instead of direct database writes
+2. This ensures events are emitted and all hooks are triggered
+3. Direct database changes bypass the event system
+
+## Troubleshooting
+
+### Events Not Triggering
+
+1. Check that resources are modified via the API (not direct DB writes)
+2. Verify hooks are registered (check startup logs)
+3. Enable debug logging for event tracing
+
+### Multi-Instance Sync Issues
+
+1. Verify Redis connectivity on all instances
+2. Check `redis.enabled = true` in configuration
+3. Monitor Redis pub/sub with `redis-cli SUBSCRIBE octofhir:resource_events`
+4. Check for Redis connection errors in logs
+
+### Hook Failures
+
+1. Check logs for hook error messages
+2. Verify required services are running (e.g., PostgreSQL for gateway reload)
+3. Hook failures are isolated and don't affect other hooks
+
+## Future Enhancements
+
+- **Webhook notifications** - HTTP callbacks for external systems
+- **Event replay** - Replay events from a point in time
+- **Event filtering** - Subscribe to specific resource types only
+- **Metrics** - Prometheus metrics for event throughput and latency
