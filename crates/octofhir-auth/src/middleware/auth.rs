@@ -160,8 +160,14 @@ where
             Some(t) => t,
             None => {
                 // Try to extract from cookie
-                extract_token_from_cookie(parts, &auth_state.cookie_config)
-                    .ok_or_else(|| AuthError::unauthorized("Missing Authorization header"))?
+                if let Some(t) = extract_token_from_cookie(parts, &auth_state.cookie_config) {
+                    t
+                } else if let Some(t) = extract_token_from_query(parts) {
+                    // 3. Try query parameter (for WebSocket connections)
+                    t
+                } else {
+                    return Err(AuthError::unauthorized("Missing Authorization header"));
+                }
             }
         };
 
@@ -310,12 +316,13 @@ where
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
         let auth_state = AuthState::from_ref(state);
 
-        // Check if Authorization header is present or cookie auth is available
+        // Check if Authorization header is present, cookie auth is available, or token in query
         let has_auth_header = parts.headers.get(AUTHORIZATION).is_some();
         let has_cookie_token =
             auth_state.cookie_config.enabled && parts.headers.get(COOKIE).is_some();
+        let has_query_token = parts.uri.query().is_some_and(|q| q.contains("token="));
 
-        if !has_auth_header && !has_cookie_token {
+        if !has_auth_header && !has_cookie_token && !has_query_token {
             return Ok(OptionalBearerAuth(None));
         }
 
@@ -331,6 +338,29 @@ where
 // =============================================================================
 // Cookie Helpers
 // =============================================================================
+
+/// Extract token from query parameter.
+///
+/// Useful for WebSocket connections where headers can't be set.
+/// Looks for `token` query parameter in the request URI.
+fn extract_token_from_query(parts: &Parts) -> Option<String> {
+    let query = parts.uri.query()?;
+
+    // Parse query string (simple key=value&key=value format)
+    for pair in query.split('&') {
+        if let Some((key, value)) = pair.split_once('=') {
+            if key == "token" {
+                let value = value.trim();
+                if !value.is_empty() {
+                    tracing::debug!("Token extracted from query parameter");
+                    return Some(value.to_string());
+                }
+            }
+        }
+    }
+
+    None
+}
 
 /// Extract token from cookie if cookie auth is enabled.
 ///

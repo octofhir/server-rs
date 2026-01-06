@@ -271,6 +271,21 @@ impl PostgresPackageStore {
             .execute(&self.pool)
             .await?;
 
+        // Delete existing FHIRSchemas for this package (they will be regenerated on-demand)
+        let deleted_schemas = query("DELETE FROM fcm.fhirschemas WHERE package_name = $1 AND package_version = $2")
+            .bind(name)
+            .bind(version)
+            .execute(&self.pool)
+            .await?
+            .rows_affected();
+
+        if deleted_schemas > 0 {
+            info!(
+                "Deleted {} old FHIRSchemas for package {}@{} (will regenerate on-demand)",
+                deleted_schemas, name, version
+            );
+        }
+
         // Insert all resources
         for (resource_type, content) in &resources {
             let sd_fields = Self::extract_sd_fields(content);
@@ -1193,6 +1208,22 @@ impl PackageStore for PostgresPackageStore {
             .execute(&self.pool)
             .await
             .map_err(db_error)?;
+
+        // Delete existing FHIRSchemas for this package (they will be regenerated on-demand)
+        let deleted_schemas = query("DELETE FROM fcm.fhirschemas WHERE package_name = $1 AND package_version = $2")
+            .bind(&package.name)
+            .bind(&package.version)
+            .execute(&self.pool)
+            .await
+            .map_err(db_error)?
+            .rows_affected();
+
+        if deleted_schemas > 0 {
+            info!(
+                "Deleted {} old FHIRSchemas for package {}@{} (will regenerate on-demand)",
+                deleted_schemas, package.name, package.version
+            );
+        }
 
         // Insert resources
         for resource in &package.resources {

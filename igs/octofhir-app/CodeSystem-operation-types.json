@@ -33,6 +33,11 @@
       "code": "app",
       "display": "App Backend",
       "definition": "Forward requests to the App's configured backend endpoint. Uses the App.endpoint configuration for proxying."
+    },
+    {
+      "code": "websocket",
+      "display": "WebSocket Proxy",
+      "definition": "WebSocket proxy operation. Proxies WebSocket connections from clients to a configured backend WebSocket server."
     }
   ]
 }

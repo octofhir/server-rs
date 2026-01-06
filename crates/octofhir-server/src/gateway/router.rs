@@ -245,10 +245,37 @@ impl GatewayRouter {
     }
 
     /// Looks up a route by method and path.
+    ///
+    /// Supports path parameters in the format `:param` (e.g., `/users/:id/profile`).
+    /// First tries exact match, then falls back to pattern matching.
     pub async fn get_route(&self, method: &str, path: &str) -> Option<CustomOperation> {
-        let route_key = RouteKey::new(method.to_string(), path.to_string());
         let routes = self.routes.read().await;
-        routes.get(&route_key.to_string()).cloned()
+
+        // First try exact match (faster for static routes)
+        let exact_key = RouteKey::new(method.to_string(), path.to_string());
+        if let Some(op) = routes.get(&exact_key.to_string()) {
+            return Some(op.clone());
+        }
+
+        // Fall back to pattern matching for routes with parameters
+        let request_segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
+
+        for (key, operation) in routes.iter() {
+            // Parse route key "METHOD:/path/to/resource"
+            if let Some((route_method, route_path)) = key.split_once(':') {
+                // Method must match exactly
+                if route_method != method {
+                    continue;
+                }
+
+                // Check path pattern match
+                if path_matches_pattern(route_path, &request_segments) {
+                    return Some(operation.clone());
+                }
+            }
+        }
+
+        None
     }
 }
 
@@ -256,6 +283,35 @@ impl Default for GatewayRouter {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Checks if a request path matches a route pattern with parameters.
+///
+/// Route patterns use `:param` syntax for dynamic segments.
+/// E.g., `/users/:id/profile` matches `/users/123/profile`.
+fn path_matches_pattern(route_path: &str, request_segments: &[&str]) -> bool {
+    let route_segments: Vec<&str> = route_path.split('/').filter(|s| !s.is_empty()).collect();
+
+    // Must have same number of segments
+    if route_segments.len() != request_segments.len() {
+        return false;
+    }
+
+    // Check each segment
+    for (route_seg, req_seg) in route_segments.iter().zip(request_segments.iter()) {
+        // Path parameters start with ':'
+        if route_seg.starts_with(':') {
+            // Parameter matches any non-empty value
+            continue;
+        }
+
+        // Static segments must match exactly
+        if route_seg != req_seg {
+            return false;
+        }
+    }
+
+    true
 }
 
 /// Gateway handler for routed requests (used with `/{*path}` route).
@@ -347,6 +403,10 @@ async fn gateway_dispatch(
             // WebSocket operations require a WebSocket upgrade request.
             // Extract WebSocketUpgrade from request parts.
             let (mut parts, _body) = request.into_parts();
+
+            // Extract query string from original request to forward to backend
+            let original_query = parts.uri.query().map(String::from);
+
             let ws = WebSocketUpgrade::from_request_parts(&mut parts, state)
                 .await
                 .map_err(|_| {
@@ -360,7 +420,15 @@ async fn gateway_dispatch(
                 auth_context.as_ref().map(|arc| arc.as_ref()),
             );
 
-            super::websocket::handle_websocket(state, &operation, ws, &auth_info).await
+            debug!(
+                fhir_user = ?auth_info.fhir_user,
+                user_id = ?auth_info.user_id,
+                authenticated = auth_info.authenticated,
+                original_query = ?original_query,
+                "WebSocket auth info"
+            );
+
+            super::websocket::handle_websocket(state, &operation, ws, &auth_info, original_query.as_deref()).await
         }
         unknown => Err(GatewayError::InvalidConfig(format!(
             "Unknown operation type: {}",

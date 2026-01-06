@@ -22,10 +22,11 @@ use tracing::info;
 use crate::config::AdminUserConfig;
 use crate::config::AppConfig;
 use crate::operation_registry::{
-    AuthOperationProvider, FhirOperationProvider, NotificationsOperationProvider,
-    OperationRegistryService, PostgresOperationStorage, SystemOperationProvider,
-    UiOperationProvider,
+    AuthOperationProvider, FhirOperationProvider, GatewayOperationProvider,
+    NotificationsOperationProvider, OperationRegistryService, PostgresOperationStorage,
+    SystemOperationProvider, UiOperationProvider,
 };
+use octofhir_storage::DynStorage;
 
 /// Default UI client ID - hardcoded for the built-in admin UI
 pub const DEFAULT_UI_CLIENT_ID: &str = "octofhir-ui";
@@ -660,19 +661,29 @@ pub async fn bootstrap_backend_access_policy<S: PolicyStorage>(
 /// # Arguments
 ///
 /// * `pool` - PostgreSQL connection pool
+/// * `storage` - FHIR storage for loading gateway operations
 /// * `config` - Application configuration to check which modules are enabled
 ///
 /// # Returns
 ///
-/// Returns the initialized OperationRegistryService with synced operations.
+/// Returns a tuple of (OperationRegistryService, GatewayOperationProvider).
+/// The gateway provider is returned separately so it can be passed to the GatewayReloadHook.
 pub async fn bootstrap_operations(
     pool: &PgPool,
+    storage: &DynStorage,
     config: &AppConfig,
-) -> Result<Arc<OperationRegistryService>, Box<dyn std::error::Error>> {
+) -> Result<(Arc<OperationRegistryService>, Arc<GatewayOperationProvider>), Box<dyn std::error::Error>> {
     info!("Bootstrapping operations registry");
 
     // Create storage adapter
     let op_storage = Arc::new(PostgresOperationStorage::new(pool.clone()));
+
+    // Create Gateway operations provider (loads App/CustomOperation from FHIR storage)
+    let gateway_provider = Arc::new(
+        GatewayOperationProvider::new(storage)
+            .await
+            .map_err(|e| format!("Failed to create gateway provider: {}", e))?
+    );
 
     // Collect operation providers based on enabled modules
     let mut providers: Vec<Arc<dyn OperationProvider>> = vec![
@@ -696,8 +707,9 @@ pub async fn bootstrap_operations(
     // Add Notifications provider
     providers.push(Arc::new(NotificationsOperationProvider));
 
-    // Note: Gateway CustomOperations are NOT stored in the operations table
-    // to avoid duplication. They are loaded dynamically by the /api/operations endpoint.
+    // Add Gateway provider (loads CustomOperations from database)
+    // This provider's cache will be reloaded by GatewayReloadHook when App/CustomOperation resources change
+    providers.push(gateway_provider.clone());
 
     // Create registry service
     let registry = Arc::new(OperationRegistryService::with_providers(op_storage, providers));
@@ -709,5 +721,5 @@ pub async fn bootstrap_operations(
         .map_err(|e| format!("Failed to sync operations: {}", e))?;
 
     info!(count, "Operations synced to database");
-    Ok(registry)
+    Ok((registry, gateway_provider))
 }

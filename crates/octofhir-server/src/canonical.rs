@@ -1116,6 +1116,9 @@ pub async fn install_package_runtime(
     let fhir_version = pkg_info.fhir_version.clone();
     let resource_count = pkg_info.resource_count;
 
+    // Note: Old FHIRSchemas are deleted automatically in add_package (PostgresPackageStore)
+    // and will be regenerated on-demand when needed
+
     // Update global registry
     let search_registry_rebuilt = update_global_registry_with_package(name, version).await;
 
@@ -1235,6 +1238,9 @@ pub async fn install_package_parallel_runtime(
             "updating global registry in background"
         );
 
+        // Note: Old FHIRSchemas are deleted automatically in add_package (PostgresPackageStore)
+        // and will be regenerated on-demand when needed
+
         // Update global registry
         update_global_registry_with_package(&main_name, &main_version).await;
         for (dep_name, dep_version) in &deps_for_registry {
@@ -1331,6 +1337,9 @@ pub async fn install_package_runtime_with_progress(
                     version = %version,
                     "package installed successfully with progress tracking"
                 );
+
+                // Note: Old FHIRSchemas are deleted automatically in add_package (PostgresPackageStore)
+                // and will be regenerated on-demand when needed
 
                 // Update global registry
                 let _ = update_global_registry_with_package(&name, &version).await;

@@ -18,6 +18,7 @@ use octofhir_storage::{
     TotalMode,
 };
 
+use crate::error::is_undefined_table;
 use crate::schema::SchemaManager;
 
 /// Converts chrono DateTime to time OffsetDateTime.
@@ -253,8 +254,8 @@ async fn execute_query(
         .await
         .map_err(|e| {
             tracing::warn!(error = %e, sql = %query.sql, "Search query failed");
-            // Check for table not found
-            if e.to_string().contains("does not exist") {
+            // Check for undefined table error (PostgreSQL 42P01)
+            if is_undefined_table(&e) {
                 return StorageError::internal(format!(
                     "Table for {} does not exist",
                     resource_type
@@ -304,8 +305,8 @@ async fn execute_query_raw(
             .await
             .map_err(|e| {
                 tracing::warn!(error = %e, sql = %raw_sql, "Raw search query failed");
-                // Check for table not found
-                if e.to_string().contains("does not exist") {
+                // Check for undefined table error (PostgreSQL 42P01)
+                if is_undefined_table(&e) {
                     return StorageError::internal(format!(
                         "Table for {} does not exist",
                         resource_type

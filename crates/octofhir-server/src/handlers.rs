@@ -4,7 +4,8 @@ use crate::mapping::{IdPolicy, envelope_from_json, json_from_envelope};
 use crate::operation_registry::{OperationStorage, PostgresOperationStorage};
 use crate::patch::{apply_fhirpath_patch, apply_json_patch};
 use crate::server::SharedModelProvider;
-use axum::body::Bytes;
+use axum::body::{Body, Bytes};
+use axum::http::Request;
 use axum::response::Response;
 use axum::{
     Json,
@@ -5754,6 +5755,84 @@ fn is_internal_resource_type(resource_type: &str) -> bool {
     INTERNAL_RESOURCE_TYPES.contains(&resource_type)
 }
 
+/// Converts a GatewayError to an ApiError.
+fn gateway_error_to_api_error(e: crate::gateway::error::GatewayError) -> ApiError {
+    use crate::gateway::error::GatewayError;
+    match e {
+        GatewayError::Unauthorized(msg) => ApiError::unauthorized(msg),
+        GatewayError::Forbidden(msg) => ApiError::forbidden(msg),
+        GatewayError::BadRequest(msg) => ApiError::bad_request(msg),
+        GatewayError::RouteNotFound { path, .. } => {
+            ApiError::not_found(format!("No route for {}", path))
+        }
+        other => ApiError::internal(other.to_string()),
+    }
+}
+
+/// Try to dispatch a request to the gateway router.
+///
+/// Returns the gateway response if a matching route is found,
+/// or a 404 error if no route matches.
+async fn dispatch_to_gateway_or_404(
+    state: &crate::server::AppState,
+    path: &str,
+    resource_type: &str,
+    request: Request<Body>,
+) -> Result<Response, ApiError> {
+    let method = request.method().as_str();
+
+    if state.gateway_router.get_route(method, path).await.is_some() {
+        crate::gateway::router::gateway_fallback_handler(State(state.clone()), request)
+            .await
+            .map(IntoResponse::into_response)
+            .map_err(gateway_error_to_api_error)
+    } else {
+        Err(ApiError::not_found(format!(
+            "Resource type '{}' is not available at this path",
+            resource_type
+        )))
+    }
+}
+
+/// Try to dispatch to gateway with a pre-read body.
+///
+/// This variant is used by POST/PUT handlers where the body has already been extracted.
+/// It rebuilds the request with the provided body bytes.
+async fn dispatch_to_gateway_with_body_or_404(
+    state: &crate::server::AppState,
+    method: &str,
+    path: &str,
+    resource_type: &str,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Response, ApiError> {
+    if state.gateway_router.get_route(method, path).await.is_some() {
+        // Rebuild the request with the body
+        let mut request_builder = Request::builder()
+            .method(method)
+            .uri(path);
+
+        // Copy headers
+        if let Some(headers_mut) = request_builder.headers_mut() {
+            headers_mut.extend(headers.into_iter());
+        }
+
+        let request = request_builder
+            .body(Body::from(body))
+            .map_err(|e| ApiError::internal(format!("Failed to build request: {}", e)))?;
+
+        crate::gateway::router::gateway_fallback_handler(State(state.clone()), request)
+            .await
+            .map(IntoResponse::into_response)
+            .map_err(gateway_error_to_api_error)
+    } else {
+        Err(ApiError::not_found(format!(
+            "Resource type '{}' is not available at this path",
+            resource_type
+        )))
+    }
+}
+
 /// Validates App operations for path conflicts.
 ///
 /// Fetches other Apps from database and validates that the new/updated App
@@ -5835,49 +5914,55 @@ fn app_validation_errors_to_api_error(errors: Vec<PathValidationError>) -> ApiEr
     )
 }
 
-/// GET /{resource_type} - Search internal resources.
+/// GET /{resource_type} - Search internal resources or dispatch to gateway.
 ///
-/// This handler validates that the resource type is an internal resource type
-/// before delegating to the standard search handler.
+/// This handler first checks if the resource type is an internal resource type.
+/// If not, it checks if there's a matching gateway route and dispatches to it.
+/// This allows App operations to be served at any root path (e.g., /psychportal/status).
 pub async fn internal_search_resource(
     state: State<crate::server::AppState>,
     Path(resource_type): Path<String>,
     query: Query<HashMap<String, String>>,
     raw: RawQuery,
-) -> Result<impl IntoResponse, ApiError> {
-    if !is_internal_resource_type(&resource_type) {
-        return Err(ApiError::not_found(format!(
-            "Resource type '{}' is not available at this path",
-            resource_type
-        )));
+    request: Request<Body>,
+) -> Result<Response, ApiError> {
+    if is_internal_resource_type(&resource_type) {
+        return search_resource(state, Path(resource_type), query, raw)
+            .await
+            .map(IntoResponse::into_response);
     }
 
-    search_resource(state, Path(resource_type), query, raw).await
+    // Not an internal resource - try gateway
+    let path = format!("/{}", resource_type);
+    dispatch_to_gateway_or_404(&state, &path, &resource_type, request).await
 }
 
-/// POST /{resource_type} - Create internal resource.
+/// POST /{resource_type} - Create internal resource or dispatch to gateway.
 ///
-/// This handler validates that the resource type is an internal resource type
-/// before delegating to the standard create handler.
+/// This handler first checks if the resource type is an internal resource type.
+/// If not, it checks if there's a matching gateway route and dispatches to it.
 pub async fn internal_create_resource(
     state: State<crate::server::AppState>,
     Path(resource_type): Path<String>,
     headers: HeaderMap,
-    payload: Json<Value>,
-) -> Result<impl IntoResponse, ApiError> {
+    body: Bytes,
+) -> Result<Response, ApiError> {
     if !is_internal_resource_type(&resource_type) {
-        return Err(ApiError::not_found(format!(
-            "Resource type '{}' is not available at this path",
-            resource_type
-        )));
+        // Not an internal resource - try gateway
+        let path = format!("/{}", resource_type);
+        return dispatch_to_gateway_with_body_or_404(&state, "POST", &path, &resource_type, headers, body).await;
     }
+
+    // Parse JSON payload for internal resources
+    let payload: Value = serde_json::from_slice(&body)
+        .map_err(|e| ApiError::bad_request(format!("Invalid JSON: {}", e)))?;
 
     // Validate App operations for path conflicts
     if resource_type == "App" {
         validate_app_payload(&state, &payload, None).await?;
     }
 
-    let response = create_resource(state.clone(), Path(resource_type.clone()), headers, payload.clone()).await?;
+    let response = create_resource(state.clone(), Path(resource_type.clone()), headers, Json(payload.clone())).await?;
 
     // Reconcile operations if this is an App resource
     if resource_type == "App"
@@ -5894,44 +5979,49 @@ pub async fn internal_create_resource(
             return Err(ApiError::internal(format!("Failed to reconcile operations: {}", e)));
         }
 
-    Ok(response)
+    Ok(response.into_response())
 }
 
-/// GET /{resource_type}/{id} - Read internal resource.
+/// GET /{resource_type}/{id} - Read internal resource or dispatch to gateway.
 ///
-/// This handler validates that the resource type is an internal resource type
-/// before delegating to the standard read handler.
+/// This handler first checks if the resource type is an internal resource type.
+/// If not, it checks if there's a matching gateway route and dispatches to it.
 pub async fn internal_read_resource(
     state: State<crate::server::AppState>,
     Path((resource_type, id)): Path<(String, String)>,
     headers: HeaderMap,
-) -> Result<impl IntoResponse, ApiError> {
-    if !is_internal_resource_type(&resource_type) {
-        return Err(ApiError::not_found(format!(
-            "Resource type '{}' is not available at this path",
-            resource_type
-        )));
+    request: Request<Body>,
+) -> Result<Response, ApiError> {
+    if is_internal_resource_type(&resource_type) {
+        return read_resource(state, Path((resource_type, id)), headers)
+            .await
+            .map(IntoResponse::into_response);
     }
 
-    read_resource(state, Path((resource_type, id)), headers).await
+    // Not an internal resource - try gateway
+    let path = format!("/{}/{}", resource_type, id);
+    dispatch_to_gateway_or_404(&state, &path, &resource_type, request).await
 }
 
-/// PUT /{resource_type}/{id} - Update internal resource.
+/// PUT /{resource_type}/{id} - Update internal resource or dispatch to gateway.
 ///
-/// This handler validates that the resource type is an internal resource type
-/// before delegating to the standard update handler.
+/// This handler first checks if the resource type is an internal resource type.
+/// If not, it checks if there's a matching gateway route and dispatches to it.
 pub async fn internal_update_resource(
     state: State<crate::server::AppState>,
     Path((resource_type, id)): Path<(String, String)>,
     headers: HeaderMap,
-    payload: Json<Value>,
-) -> Result<impl IntoResponse, ApiError> {
+    body: Bytes,
+) -> Result<Response, ApiError> {
     if !is_internal_resource_type(&resource_type) {
-        return Err(ApiError::not_found(format!(
-            "Resource type '{}' is not available at this path",
-            resource_type
-        )));
+        // Not an internal resource - try gateway
+        let path = format!("/{}/{}", resource_type, id);
+        return dispatch_to_gateway_with_body_or_404(&state, "PUT", &path, &resource_type, headers, body).await;
     }
+
+    // Parse JSON payload for internal resources
+    let payload: Value = serde_json::from_slice(&body)
+        .map_err(|e| ApiError::bad_request(format!("Invalid JSON: {}", e)))?;
 
     // Validate App operations for path conflicts
     if resource_type == "App" {
@@ -5945,7 +6035,7 @@ pub async fn internal_update_resource(
         None
     };
 
-    let response = update_resource(state.clone(), Path((resource_type.clone(), id.clone())), headers, payload.clone()).await?;
+    let response = update_resource(state.clone(), Path((resource_type.clone(), id.clone())), headers, Json(payload.clone())).await?;
 
     // Reconcile operations if this is an App resource
     if resource_type == "App"
@@ -5962,25 +6052,27 @@ pub async fn internal_update_resource(
             return Err(ApiError::internal(format!("Failed to reconcile operations: {}", e)));
         }
 
-    Ok(response)
+    Ok(response.into_response())
 }
 
-/// DELETE /{resource_type}/{id} - Delete internal resource.
+/// DELETE /{resource_type}/{id} - Delete internal resource or dispatch to gateway.
 ///
-/// This handler validates that the resource type is an internal resource type
-/// before delegating to the standard delete handler.
+/// This handler first checks if the resource type is an internal resource type.
+/// If not, it checks if there's a matching gateway route and dispatches to it.
 pub async fn internal_delete_resource(
     state: State<crate::server::AppState>,
     Path((resource_type, id)): Path<(String, String)>,
-) -> Result<impl IntoResponse, ApiError> {
-    if !is_internal_resource_type(&resource_type) {
-        return Err(ApiError::not_found(format!(
-            "Resource type '{}' is not available at this path",
-            resource_type
-        )));
+    request: Request<Body>,
+) -> Result<Response, ApiError> {
+    if is_internal_resource_type(&resource_type) {
+        return delete_resource(state, Path((resource_type, id)))
+            .await
+            .map(IntoResponse::into_response);
     }
 
-    delete_resource(state, Path((resource_type, id))).await
+    // Not an internal resource - try gateway
+    let path = format!("/{}/{}", resource_type, id);
+    dispatch_to_gateway_or_404(&state, &path, &resource_type, request).await
 }
 
 /// Helper function to reconcile App-derived resources (operations, subscriptions, and provisioned resources).

@@ -15,7 +15,8 @@ use crate::gateway::types::{App, CustomOperation};
 /// This provider loads CustomOperation and App resources from the database
 /// and converts them to OperationDefinitions for the operations registry.
 pub struct GatewayOperationProvider {
-    operations: Vec<OperationDefinition>,
+    operations: parking_lot::RwLock<Vec<OperationDefinition>>,
+    storage: DynStorage,
 }
 
 impl GatewayOperationProvider {
@@ -25,7 +26,23 @@ impl GatewayOperationProvider {
     /// from the database and converts them to operation definitions.
     pub async fn new(storage: &DynStorage) -> Result<Self, Box<dyn std::error::Error>> {
         let operations = Self::load_operations(storage).await?;
-        Ok(Self { operations })
+        Ok(Self {
+            operations: parking_lot::RwLock::new(operations),
+            storage: storage.clone(),
+        })
+    }
+
+    /// Reload operations from storage
+    ///
+    /// Called by GatewayReloadHook when App or CustomOperation resources change.
+    /// This refreshes the in-memory cache with fresh data from the database.
+    pub async fn reload(&self) -> Result<(), Box<dyn std::error::Error>> {
+        debug!("Reloading Gateway operations from storage");
+        let fresh_operations = Self::load_operations(&self.storage).await?;
+        let mut ops = self.operations.write();
+        *ops = fresh_operations;
+        debug!(count = ops.len(), "Gateway operations reloaded");
+        Ok(())
     }
 
     /// Load operations from storage
@@ -160,7 +177,7 @@ impl GatewayOperationProvider {
 
 impl OperationProvider for GatewayOperationProvider {
     fn get_operations(&self) -> Vec<OperationDefinition> {
-        self.operations.clone()
+        self.operations.read().clone()
     }
 
     fn module_id(&self) -> &str {
@@ -182,6 +199,8 @@ mod tests {
 
     #[test]
     fn test_provider_get_operations() {
+        use octofhir_storage::memory::MemoryStorage;
+
         let op = OperationDefinition::new(
             "gateway.test.op",
             "Test Operation",
@@ -191,8 +210,10 @@ mod tests {
             "test-app",
         );
 
+        let storage = DynStorage::from(MemoryStorage::new());
         let provider = GatewayOperationProvider {
-            operations: vec![op.clone()],
+            operations: parking_lot::RwLock::new(vec![op.clone()]),
+            storage,
         };
 
         let ops = provider.get_operations();

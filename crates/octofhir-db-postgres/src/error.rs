@@ -1,6 +1,27 @@
 //! Error types for the PostgreSQL storage backend.
 
 use octofhir_storage::StorageError;
+use sqlx_core::error::Error as SqlxError;
+
+/// PostgreSQL error code for undefined table (42P01).
+pub const PG_UNDEFINED_TABLE: &str = "42P01";
+
+/// PostgreSQL error code for undefined function/operator (42883).
+pub const PG_UNDEFINED_FUNCTION: &str = "42883";
+
+/// Checks if a sqlx error has a specific PostgreSQL error code.
+pub fn has_pg_error_code(err: &SqlxError, code: &str) -> bool {
+    if let SqlxError::Database(db_err) = err {
+        db_err.code().as_deref() == Some(code)
+    } else {
+        false
+    }
+}
+
+/// Checks if a sqlx error is "undefined table" (42P01).
+pub fn is_undefined_table(err: &SqlxError) -> bool {
+    has_pg_error_code(err, PG_UNDEFINED_TABLE)
+}
 
 /// Errors specific to the PostgreSQL storage backend.
 #[derive(Debug, thiserror::Error)]

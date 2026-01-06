@@ -8,7 +8,7 @@ use axum::{
     body::Body,
     http::{
         HeaderName, HeaderValue, Request, StatusCode,
-        header::{AUTHORIZATION, COOKIE},
+        header::{AUTHORIZATION, COOKIE, UPGRADE},
     },
     middleware::Next,
     response::Response,
@@ -109,15 +109,26 @@ pub async fn authentication_middleware(
 
     // 2. If no Authorization header, try cookie (if enabled)
     let token = match token {
+        Some(t) => Some(t),
+        None => extract_token_from_cookie(&req, &auth_state.cookie_config),
+    };
+
+    // 3. For WebSocket upgrade requests, also try query parameter ?token=...
+    // This is needed because browsers can't set Authorization header for WebSocket connections
+    let token = match token {
         Some(t) => t,
         None => {
-            // Try to extract from cookie
-            match extract_token_from_cookie(&req, &auth_state.cookie_config) {
-                Some(t) => t,
-                None => {
-                    tracing::debug!(path = %req.uri().path(), "No Authorization header or cookie");
-                    return unauthorized_response("Authentication required");
+            if is_websocket_upgrade(&req) {
+                match extract_token_from_query(&req) {
+                    Some(t) => t,
+                    None => {
+                        tracing::debug!(path = %req.uri().path(), "WebSocket: No token in header, cookie, or query");
+                        return unauthorized_response("Authentication required");
+                    }
                 }
+            } else {
+                tracing::debug!(path = %req.uri().path(), "No Authorization header or cookie");
+                return unauthorized_response("Authentication required");
             }
         }
     };
@@ -282,6 +293,35 @@ fn extract_token_from_cookie(req: &Request<Body>, cookie_config: &CookieConfig) 
                     return Some(value.to_string());
                 }
             }
+    }
+
+    None
+}
+
+/// Check if the request is a WebSocket upgrade request.
+fn is_websocket_upgrade(req: &Request<Body>) -> bool {
+    req.headers()
+        .get(UPGRADE)
+        .and_then(|h| h.to_str().ok())
+        .map(|v| v.eq_ignore_ascii_case("websocket"))
+        .unwrap_or(false)
+}
+
+/// Extract token from query parameter `?token=...`.
+///
+/// Used for WebSocket connections where Authorization header cannot be set by browsers.
+fn extract_token_from_query(req: &Request<Body>) -> Option<String> {
+    let query = req.uri().query()?;
+
+    for param in query.split('&') {
+        if let Some((key, value)) = param.split_once('=') {
+            if key == "token" && !value.is_empty() {
+                // URL-decode the token value
+                let decoded = urlencoding::decode(value).ok()?;
+                tracing::debug!("Token extracted from query parameter");
+                return Some(decoded.into_owned());
+            }
+        }
     }
 
     None

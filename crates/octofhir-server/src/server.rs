@@ -999,18 +999,12 @@ pub async fn build_app(
     }
 
     // Bootstrap operations registry (source of truth for public paths)
-    let operation_registry = match crate::bootstrap::bootstrap_operations(db_pool.as_ref(), cfg).await {
-        Ok(registry) => {
-            tracing::info!("Operations registry bootstrapped with in-memory indexes");
-            registry
-        }
-        Err(e) => {
-            tracing::warn!(error = %e, "Failed to bootstrap operations registry, using empty registry");
-            // Create an empty registry as fallback
-            let op_storage = Arc::new(crate::operation_registry::PostgresOperationStorage::new((*db_pool).clone()));
-            Arc::new(OperationRegistryService::new(op_storage))
-        }
-    };
+    let (operation_registry, gateway_provider) =
+        crate::bootstrap::bootstrap_operations(db_pool.as_ref(), &storage, cfg)
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to bootstrap operations registry: {}", e))?;
+
+    tracing::info!("Operations registry bootstrapped with in-memory indexes");
 
     // Create GraphQL state if enabled (schema build was started early)
     let (graphql_state, graphql_subscription_broadcaster) = if let Some(lazy_schema) = lazy_schema {
@@ -1156,7 +1150,9 @@ pub async fn build_app(
 
     // GatewayReloadHook: triggers gateway route reload on App/CustomOperation changes
     let gateway_hook = GatewayReloadHook::new(gateway_router.clone(), storage.clone())
-        .with_operation_registry(operation_registry.clone());
+        .with_operation_registry(operation_registry.clone())
+        .with_gateway_provider(gateway_provider.clone());
+
     hook_registry.register_resource(Arc::new(gateway_hook)).await;
 
     // SearchParamHook: updates search parameter registry on SearchParameter changes
@@ -1541,6 +1537,12 @@ fn build_router(state: AppState, body_limit: usize) -> Router {
     }
 
     router = router.nest("/fhir", fhir_router);
+
+    // Add root-level gateway fallback for custom App operations.
+    // This handles paths not matched by explicit routes (e.g., /myapp/users/123/profile).
+    // The internal_*_resource handlers already check gateway for 1-2 segment paths,
+    // but we need this fallback for paths with 3+ segments.
+    router = router.fallback(crate::gateway::router::gateway_fallback_handler);
 
     // Apply middleware stack (outer to inner: body limit -> trace -> compression/cors -> content negotiation -> authz -> auth -> request id -> handler)
     // Note: Layers wrap from outside-in, so first .layer() is closest to handler

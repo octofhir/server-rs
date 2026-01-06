@@ -160,13 +160,28 @@ async fn build_app_request(
         None
     };
 
-    // Extract selected headers to forward
+    // Extract headers to forward (all except hop-by-hop headers)
+    let hop_by_hop = [
+        "connection",
+        "keep-alive",
+        "proxy-authenticate",
+        "proxy-authorization",
+        "te",
+        "trailer",
+        "transfer-encoding",
+        "upgrade",
+        "host",
+        "content-length",
+        "content-type",
+    ];
     let mut headers = HashMap::new();
-    for key in ["x-request-id", "x-correlation-id", "accept-language"] {
-        if let Some(value) = parts.headers.get(key)
-            && let Ok(v) = value.to_str() {
-                headers.insert(key.to_string(), v.to_string());
+    for (key, value) in &parts.headers {
+        let key_str = key.as_str().to_lowercase();
+        if !hop_by_hop.contains(&key_str.as_str()) {
+            if let Ok(v) = value.to_str() {
+                headers.insert(key_str, v.to_string());
             }
+        }
     }
 
     Ok(AppOperationRequest {

@@ -212,6 +212,55 @@
         "type": [{ "code": "boolean" }]
       },
       {
+        "id": "App.operations.type",
+        "path": "App.operations.type",
+        "short": "Operation type",
+        "definition": "Type of operation: 'app' (default, forward to backend), 'websocket' (WebSocket proxy), 'proxy' (HTTP proxy)",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "code" }],
+        "binding": {
+          "strength": "required",
+          "valueSet": "http://octofhir.io/ValueSet/operation-types"
+        }
+      },
+      {
+        "id": "App.operations.websocket",
+        "path": "App.operations.websocket",
+        "short": "WebSocket proxy configuration",
+        "definition": "Configuration for WebSocket proxy operations (type='websocket')",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "BackboneElement" }]
+      },
+      {
+        "id": "App.operations.websocket.url",
+        "path": "App.operations.websocket.url",
+        "short": "WebSocket backend URL",
+        "definition": "URL of the WebSocket server to proxy to (ws:// or wss://)",
+        "min": 1,
+        "max": "1",
+        "type": [{ "code": "url" }]
+      },
+      {
+        "id": "App.operations.websocket.subprotocols",
+        "path": "App.operations.websocket.subprotocols",
+        "short": "WebSocket subprotocols",
+        "definition": "Subprotocols to negotiate with the backend",
+        "min": 0,
+        "max": "*",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "App.operations.websocket.forwardAuthInQuery",
+        "path": "App.operations.websocket.forwardAuthInQuery",
+        "short": "Forward auth info in query params",
+        "definition": "When true, adds fhirUser, userId, etc. as query parameters to the backend WebSocket URL",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "boolean" }]
+      },
+      {
         "id": "App.subscriptions",
         "path": "App.subscriptions",
         "short": "Event subscriptions",

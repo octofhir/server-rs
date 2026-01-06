@@ -99,7 +99,10 @@ pub fn dispatch_search(
                     build_jsonb_accessor(builder.resource_column(), &path_segments, false);
                 build_identifier_search(builder, param, &array_path)
             } else if is_simple_code_path(expression) {
-                build_code_search(builder, param, &jsonb_path)
+                // Simple code fields need text extraction (->>)
+                let text_path =
+                    build_jsonb_accessor(builder.resource_column(), &path_segments, true);
+                build_code_search(builder, param, &text_path)
             } else {
                 let json_path =
                     build_jsonb_accessor(builder.resource_column(), &path_segments, false);

@@ -19,12 +19,13 @@ use crate::server::AppState;
 /// 2. Upgrades the HTTP connection to WebSocket
 /// 3. Connects to the backend WebSocket
 /// 4. Bidirectionally proxies messages between client and backend
-#[instrument(skip(_state, operation, ws_upgrade, auth_info))]
+#[instrument(skip(_state, operation, ws_upgrade, auth_info, original_query))]
 pub async fn handle_websocket(
     _state: &AppState,
     operation: &CustomOperation,
     ws_upgrade: WebSocketUpgrade,
     auth_info: &AuthInfo,
+    original_query: Option<&str>,
 ) -> Result<Response, GatewayError> {
     // Get WebSocket config from proxy.websocket
     let ws_config = operation
@@ -39,14 +40,33 @@ pub async fn handle_websocket(
 
     let mut backend_url = ws_config.url.clone();
 
+    // Forward original query parameters from client request
+    if let Some(query) = original_query {
+        if !query.is_empty() {
+            if backend_url.contains('?') {
+                backend_url = format!("{}&{}", backend_url, query);
+            } else {
+                backend_url = format!("{}?{}", backend_url, query);
+            }
+            debug!(original_query = %query, "Forwarded original query params");
+        }
+    }
+
     // Forward auth info as query parameters if configured
     if ws_config.forward_auth_in_query {
+        debug!(
+            fhir_user = ?auth_info.fhir_user,
+            user_id = ?auth_info.user_id,
+            authenticated = auth_info.authenticated,
+            "Appending auth to WebSocket URL"
+        );
         backend_url = append_auth_query(&backend_url, auth_info);
     }
 
     info!(
         backend_url = %backend_url,
         operation_id = ?operation.id,
+        forward_auth = ws_config.forward_auth_in_query,
         "Upgrading to WebSocket and proxying to backend"
     );
 

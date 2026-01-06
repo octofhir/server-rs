@@ -11,7 +11,7 @@ use octofhir_storage::DynStorage;
 use tracing::{debug, error, info, warn};
 
 use crate::gateway::GatewayRouter;
-use crate::operation_registry::OperationRegistryService;
+use crate::operation_registry::{GatewayOperationProvider, OperationRegistryService};
 
 /// Hook that triggers gateway route reload on App/CustomOperation changes.
 ///
@@ -29,6 +29,7 @@ pub struct GatewayReloadHook {
     gateway_router: Arc<GatewayRouter>,
     storage: DynStorage,
     operation_registry: Option<Arc<OperationRegistryService>>,
+    gateway_provider: Option<Arc<GatewayOperationProvider>>,
 }
 
 impl GatewayReloadHook {
@@ -43,12 +44,19 @@ impl GatewayReloadHook {
             gateway_router,
             storage,
             operation_registry: None,
+            gateway_provider: None,
         }
     }
 
     /// Add operation registry for updating when routes change.
     pub fn with_operation_registry(mut self, registry: Arc<OperationRegistryService>) -> Self {
         self.operation_registry = Some(registry);
+        self
+    }
+
+    /// Add gateway operation provider for reloading when routes change.
+    pub fn with_gateway_provider(mut self, provider: Arc<GatewayOperationProvider>) -> Self {
+        self.gateway_provider = Some(provider);
         self
     }
 }
@@ -71,6 +79,14 @@ impl ResourceHook for GatewayReloadHook {
             "GatewayReloadHook: triggering route reload"
         );
 
+        // First, reload the gateway provider's cache from database
+        if let Some(ref provider) = self.gateway_provider {
+            if let Err(e) = provider.reload().await {
+                warn!(error = %e, "Failed to reload gateway provider cache");
+                // Continue anyway - old cache is better than nothing
+            }
+        }
+
         // Reload gateway routes
         match self.gateway_router.reload_routes(&self.storage).await {
             Ok(count) => {
@@ -82,6 +98,7 @@ impl ResourceHook for GatewayReloadHook {
                 );
 
                 // Re-sync operations to update in-memory indexes
+                // This will use the fresh data from the reloaded provider
                 if let Some(ref registry) = self.operation_registry {
                     match registry.sync_operations(false).await {
                         Ok(_) => {
@@ -113,6 +130,7 @@ impl std::fmt::Debug for GatewayReloadHook {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("GatewayReloadHook")
             .field("has_operation_registry", &self.operation_registry.is_some())
+            .field("has_gateway_provider", &self.gateway_provider.is_some())
             .finish()
     }
 }
