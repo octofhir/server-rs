@@ -129,7 +129,12 @@ pub fn dispatch_search(
 
         SearchParameterType::Reference => {
             let json_path = build_jsonb_accessor(builder.resource_column(), &path_segments, false);
-            build_reference_search(builder, param, &json_path, &definition.target)
+            // Check if this is an array reference field
+            if is_reference_array_path(expression) {
+                build_reference_array_search(builder, param, &json_path, &definition.target)
+            } else {
+                build_reference_search(builder, param, &json_path, &definition.target)
+            }
         }
 
         SearchParameterType::Composite => {
@@ -266,6 +271,30 @@ fn is_uri_array_path(expression: &str) -> bool {
     expression.contains(".profile") || expression.contains(".instantiates")
 }
 
+/// Check if a FHIRPath expression refers to a reference array field.
+/// These are fields that contain an array of Reference elements.
+fn is_reference_array_path(expression: &str) -> bool {
+    let array_reference_patterns = [
+        ".actor",           // Schedule.actor, PlanDefinition.actor
+        ".member",          // Group.member
+        ".participant",     // Appointment.participant (has nested actor)
+        ".performer",       // DiagnosticReport.performer, Observation.performer
+        ".author",          // Composition.author
+        ".recipient",       // Communication.recipient
+        ".basedOn",         // ServiceRequest.basedOn, etc.
+        ".partOf",          // Observation.partOf
+        ".focus",           // Observation.focus
+        ".reasonReference", // ServiceRequest.reasonReference
+        ".supportingInfo",  // ServiceRequest.supportingInfo
+        ".insurance",       // Claim.insurance
+        ".careTeam",        // EpisodeOfCare.careTeam
+        ".managingOrganization", // When it's an array
+    ];
+    array_reference_patterns
+        .iter()
+        .any(|p| expression.ends_with(p) || expression.contains(&format!("{p}.")))
+}
+
 /// Check if a FHIRPath expression refers to an array field.
 fn is_array_path(expression: &str) -> bool {
     // Common array fields in FHIR
@@ -364,6 +393,16 @@ mod tests {
         assert!(is_simple_code_path("Patient.gender"));
         assert!(is_simple_code_path("Observation.status"));
         assert!(!is_simple_code_path("Observation.code"));
+    }
+
+    #[test]
+    fn test_is_reference_array_path() {
+        assert!(is_reference_array_path("Schedule.actor"));
+        assert!(is_reference_array_path("Group.member"));
+        assert!(is_reference_array_path("Appointment.participant"));
+        assert!(is_reference_array_path("Observation.performer"));
+        assert!(!is_reference_array_path("Observation.subject"));
+        assert!(!is_reference_array_path("Patient.managingOrganization")); // single reference
     }
 
     #[test]
