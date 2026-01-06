@@ -288,7 +288,6 @@ fn is_reference_array_path(expression: &str) -> bool {
         ".supportingInfo",  // ServiceRequest.supportingInfo
         ".insurance",       // Claim.insurance
         ".careTeam",        // EpisodeOfCare.careTeam
-        ".managingOrganization", // When it's an array
     ];
     array_reference_patterns
         .iter()
@@ -401,8 +400,10 @@ mod tests {
         assert!(is_reference_array_path("Group.member"));
         assert!(is_reference_array_path("Appointment.participant"));
         assert!(is_reference_array_path("Observation.performer"));
-        assert!(!is_reference_array_path("Observation.subject"));
+        assert!(is_reference_array_path("Observation.basedOn"));
+        assert!(!is_reference_array_path("Observation.subject")); // single reference
         assert!(!is_reference_array_path("Patient.managingOrganization")); // single reference
+        assert!(!is_reference_array_path("Appointment.slot")); // single reference
     }
 
     #[test]

@@ -44,6 +44,7 @@ use sqlx_core::column::Column;
 use sqlx_core::query::Query;
 use sqlx_core::row::Row;
 use sqlx_postgres::{PgArguments, Postgres};
+use std::sync::Arc;
 use std::time::Instant;
 use tracing::{debug, info, warn};
 
@@ -118,7 +119,7 @@ pub struct SqlResponse {
 /// have that role to access this endpoint.
 pub async fn sql_operation(
     State(state): State<AppState>,
-    Extension(auth_context): Extension<AuthContext>,
+    Extension(auth_context): Extension<Arc<AuthContext>>,
     Json(req): Json<SqlRequest>,
 ) -> Result<Response, ApiError> {
     let config = &state.config.db_console;
