@@ -394,6 +394,14 @@ impl ClientStorageTrait for PostgresClientStorage<'_> {
             .validate()
             .map_err(|e| AuthError::invalid_client(e.to_string()))?;
 
+        // Check if clientId already exists
+        if self.find_by_client_id(&client.client_id).await?.is_some() {
+            return Err(AuthError::invalid_client(format!(
+                "Client with clientId '{}' already exists",
+                client.client_id
+            )));
+        }
+
         let id = Uuid::new_v4();
         let resource = serde_json::to_value(client)
             .map_err(|e| AuthError::storage(format!("Failed to serialize client: {}", e)))?;

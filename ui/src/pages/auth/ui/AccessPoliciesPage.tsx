@@ -308,13 +308,24 @@ function PolicyModal({
 	}, [policy]);
 
 	const clientOptions = useMemo(() => {
-		return (
+		const serverClients =
 			clientsData?.entry?.map((e) => ({
 				label: e.resource.name,
 				value: e.resource.clientId,
-			})) || []
-		);
-	}, [clientsData]);
+			})) || [];
+		// Dedupe server clients (in case of duplicates in DB)
+		const seen = new Set<string>();
+		const uniqueServerClients = serverClients.filter((c) => {
+			if (seen.has(c.value)) return false;
+			seen.add(c.value);
+			return true;
+		});
+		// Merge with form values to avoid duplicates when editing
+		const customClients = form.values.clients
+			.filter((c) => !seen.has(c))
+			.map((c) => ({ label: c, value: c }));
+		return [...uniqueServerClients, ...customClients];
+	}, [clientsData, form.values.clients]);
 
 	const typeOptions = useMemo(() => {
 		const types = resourceTypes || [];
@@ -498,7 +509,7 @@ function PolicyModal({
 									label="Roles"
 									description="User must have any of these roles"
 									placeholder="e.g. admin, practitioner"
-									data={["admin", "practitioner", "patient", "nurse"]}
+									data={[...new Set(["admin", "practitioner", "patient", "nurse", ...form.values.roles])]}
 									searchable
 									creatable
 									getCreateLabel={(query) => `+ Add "${query}"`}

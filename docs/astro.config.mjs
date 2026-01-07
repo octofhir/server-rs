@@ -40,6 +40,7 @@ export default defineConfig({
           items: [
             { label: 'Overview', link: 'authentication/' },
             { label: 'Auth Architecture', link: 'auth-architecture/' },
+            { label: 'Access Policies', link: 'access-policies/' },
             { label: 'JWT Key Persistence', link: 'jwt-key-persistence/' },
           ]
         },

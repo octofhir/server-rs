@@ -1,0 +1,323 @@
+---
+title: Access Policies
+description: Configuring fine-grained access control with Access Policies in OctoFHIR
+---
+
+Access Policies provide fine-grained authorization control beyond SMART scopes. They allow you to define complex access rules using pattern matching and JavaScript-based policies.
+
+## Policy Evaluation Flow
+
+When a request comes in, the policy engine evaluates access in the following order:
+
+1. **SMART Scopes Check** (if enabled) - Verifies token scopes permit the operation
+2. **Policy Matching** - Finds policies that match the request context
+3. **Policy Evaluation** - Evaluates matched policies in priority order
+4. **Final Decision** - Returns the first definitive decision or applies the default
+
+```
+Request → SMART Scopes → Policy Matching → Policy Evaluation → Decision
+              ↓               ↓                   ↓
+           Deny?          No match?            Allow/Deny/Abstain
+              ↓               ↓                   ↓
+           STOP          Default Decision    Continue to next policy
+```
+
+## Access Decisions
+
+Each policy evaluation returns one of three possible decisions:
+
+### Allow
+
+The policy explicitly grants access to the requested operation.
+
+```javascript
+// QuickJS policy example
+if (ctx.user?.roles?.includes("admin")) {
+  return allow();
+}
+```
+
+**Behavior**: The request is permitted. However, a subsequent policy with higher priority may still deny access.
+
+### Deny
+
+The policy explicitly rejects access with a reason.
+
+```javascript
+// Deny access outside business hours
+const hour = new Date(ctx.environment.requestTime).getHours();
+if (hour < 8 || hour > 18) {
+  return deny("Access is only permitted during business hours (8:00-18:00)");
+}
+```
+
+**Behavior**: The request is immediately rejected. No further policies are evaluated. The denial reason is included in the error response.
+
+### Abstain
+
+The policy cannot make a decision for this request and delegates to the next policy.
+
+```javascript
+// This policy only handles Patient resources
+if (ctx.request.resourceType !== "Patient") {
+  return abstain(); // Let another policy decide
+}
+
+// Apply Patient-specific rules
+if (isPatientUser() && ctx.request.resourceId === ctx.user.fhirId) {
+  return allow();
+}
+return deny("You can only access your own Patient record");
+```
+
+**Behavior**: The policy is skipped and the next matching policy is evaluated. This is useful for:
+
+- **Conditional policies** - Policies that only apply to specific resource types, operations, or user roles
+- **Delegation** - When one policy handles part of the logic and delegates the rest
+- **Fallback patterns** - When the policy cannot determine access based on available context
+
+## Decision Priority
+
+Policies are evaluated in **priority order** (lower number = higher priority). The evaluation follows these rules:
+
+| Decision | Effect |
+|----------|--------|
+| `Deny` | **Immediate rejection** - stops evaluation, request denied |
+| `Allow` | **Marks approval** - continues evaluation (may be overridden by later Deny) |
+| `Abstain` | **No effect** - continues to next policy |
+
+After all policies are evaluated:
+- If any policy returned `Allow` → Request is permitted
+- If no policy returned `Allow` → Default decision applies (`deny` by default)
+
+### Example: Multi-Policy Evaluation
+
+```
+Priority 10: Admin Policy      → Abstain (user is not admin)
+Priority 20: Department Policy → Allow (user is in cardiology dept)
+Priority 30: Audit Policy      → Abstain (just logs, doesn't decide)
+Priority 40: Rate Limit Policy → Deny (too many requests)
+
+Result: DENIED (first Deny wins, even though there was an Allow)
+```
+
+## Policy Engine Types
+
+### Allow Engine
+
+Always grants access. Use for broad permissions.
+
+```json
+{
+  "id": "allow-practitioners",
+  "name": "Allow all practitioners",
+  "engine": { "type": "allow" },
+  "matcher": {
+    "roles": ["practitioner"]
+  }
+}
+```
+
+### Deny Engine
+
+Always denies access. Use for explicit blocks.
+
+```json
+{
+  "id": "block-delete",
+  "name": "Block all delete operations",
+  "engine": { "type": "deny" },
+  "denyMessage": "Delete operations are not permitted",
+  "matcher": {
+    "operations": ["delete"]
+  }
+}
+```
+
+### QuickJS Engine
+
+JavaScript-based policies for complex logic.
+
+```json
+{
+  "id": "patient-compartment",
+  "name": "Patient compartment access",
+  "engine": {
+    "type": "quickjs",
+    "script": "if (isPatientUser()) { return inPatientCompartment() ? allow() : deny('Access denied outside your patient compartment'); } return abstain();"
+  }
+}
+```
+
+## QuickJS Helper Functions
+
+The following functions are available in QuickJS policy scripts:
+
+| Function | Description |
+|----------|-------------|
+| `allow()` | Return an allow decision |
+| `deny(reason)` | Return a deny decision with the specified reason |
+| `abstain()` | Return an abstain decision (delegate to next policy) |
+| `hasRole(role)` | Check if user has a specific role |
+| `hasAnyRole(...roles)` | Check if user has any of the specified roles |
+| `isPatientUser()` | Check if user's FHIR type is Patient |
+| `isPractitionerUser()` | Check if user's FHIR type is Practitioner |
+| `inPatientCompartment()` | Check if request is within user's patient compartment |
+| `console.log/warn/error` | Logging (mapped to server tracing) |
+
+## Policy Context
+
+QuickJS scripts have access to the full request context via the `ctx` object:
+
+```javascript
+ctx = {
+  user: {
+    id: "user-123",
+    name: "John Doe",
+    email: "john@example.com",
+    roles: ["practitioner", "admin"],
+    fhirType: "Practitioner",
+    fhirId: "Practitioner/456"
+  },
+  client: {
+    id: "client-abc",
+    name: "My SMART App",
+    trusted: false,
+    clientType: "public"
+  },
+  scopes: {
+    raw: "patient/Patient.rs user/Observation.cruds",
+    patientScopes: ["patient/Patient.rs"],
+    userScopes: ["user/Observation.cruds"],
+    systemScopes: [],
+    hasWildcard: false
+  },
+  request: {
+    operation: "read",        // create, read, update, delete, search, etc.
+    resourceType: "Patient",
+    resourceId: "123",
+    method: "GET",
+    path: "/Patient/123",
+    queryParams: {}
+  },
+  environment: {
+    requestTime: "2024-01-15T10:30:00Z",
+    sourceIp: "192.168.1.100",
+    requestId: "req-xyz",
+    patientContext: "Patient/123",
+    encounterContext: null
+  }
+}
+```
+
+## Configuration
+
+Configure the policy engine in `octofhir.toml`:
+
+```toml
+[auth.policy]
+# Enable QuickJS scripting engine
+quickjs_enabled = true
+
+# Default decision when no policy matches
+# Options: "deny" (secure default) or "allow"
+default_decision = "deny"
+
+# Evaluate SMART scopes before policies
+# If false, policies handle all authorization
+evaluate_scopes_first = true
+
+[auth.policy.quickjs]
+# Runtime pool size (for parallel evaluation)
+pool_size = 4
+
+# Memory limit per runtime (MB)
+memory_limit_mb = 8
+
+# Stack size limit (KB)
+max_stack_size_kb = 256
+
+# Script execution timeout (ms)
+timeout_ms = 100
+```
+
+## Best Practices
+
+### 1. Use Abstain for Conditional Logic
+
+Don't force every policy to make a decision. Use `abstain()` when the policy doesn't apply:
+
+```javascript
+// Good: Only handle what this policy is responsible for
+if (ctx.request.resourceType !== "Observation") {
+  return abstain();
+}
+// ... Observation-specific logic
+
+// Bad: Forcing a decision on everything
+if (ctx.request.resourceType === "Observation") {
+  // ... logic
+} else {
+  return allow(); // Dangerous! Allows everything else
+}
+```
+
+### 2. Order Policies by Specificity
+
+- Lower priority numbers = evaluated first
+- Put specific deny rules early (e.g., rate limiting, blocked users)
+- Put general allow rules later
+
+```
+Priority 10: Block banned users (Deny)
+Priority 20: Rate limiting (Deny if exceeded)
+Priority 50: Role-based access (Allow/Abstain)
+Priority 100: Default patient compartment (Allow/Deny)
+```
+
+### 3. Provide Clear Deny Messages
+
+Help users understand why access was denied:
+
+```javascript
+// Good
+return deny("You can only access patients assigned to your care team");
+
+// Bad
+return deny("Access denied");
+```
+
+### 4. Keep Scripts Simple
+
+Complex logic should be split across multiple policies:
+
+```javascript
+// Good: Single responsibility
+// Policy 1: Check department access
+// Policy 2: Check time-based restrictions
+// Policy 3: Check patient compartment
+
+// Bad: Everything in one script
+if (hasRole("doctor") && hour >= 8 && hour <= 18 && ...) { ... }
+```
+
+## Troubleshooting
+
+### Policy Not Being Evaluated
+
+1. Check if the policy is `active: true`
+2. Verify the `matcher` conditions match your request
+3. Check policy priority order
+
+### Unexpected Denials
+
+1. Enable debug logging: `RUST_LOG=octofhir_auth::policy=debug`
+2. Use `evaluate_with_audit()` to see which policies were evaluated
+3. Check if SMART scope check is denying before policies run
+
+### QuickJS Script Errors
+
+1. Check server logs for script execution errors
+2. Verify script syntax is valid JavaScript
+3. Ensure you're returning a decision (`allow()`, `deny()`, or `abstain()`)
+4. Check timeout configuration if scripts are timing out
