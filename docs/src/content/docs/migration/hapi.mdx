@@ -1,0 +1,312 @@
+---
+title: Migration from HAPI FHIR
+description: Guide for migrating from HAPI FHIR to OctoFHIR
+---
+
+import { Aside, Tabs, TabItem } from '@astrojs/starlight/components';
+
+This guide helps you migrate from HAPI FHIR JPA Server to OctoFHIR.
+
+## Feature Comparison
+
+| Feature | HAPI FHIR | OctoFHIR |
+|---------|-----------|----------|
+| **FHIR Versions** | R4, R4B, R5 | R4, R4B, R5, R6 |
+| **Storage** | JPA (SQL) | PostgreSQL (native) |
+| **Language** | Java | Rust |
+| **Memory (idle)** | 2-4 GB | ~200 MB |
+| **Cold Start** | 30-60s | &lt;5s |
+| **SMART on FHIR** | Via interceptors | Built-in |
+| **GraphQL** | Plugin | Built-in |
+| **Bulk Export** | Yes | Yes |
+| **Subscriptions** | Yes | Planned |
+| **Terminology** | Full TX server | External TX client |
+
+---
+
+## Performance Comparison
+
+| Metric | HAPI FHIR | OctoFHIR |
+|--------|-----------|----------|
+| Read p95 latency | 50-100ms | &lt;20ms |
+| Write TPS | 82-3,000 | 500+ |
+| Search latency | 100-500ms | 20-100ms |
+| Memory (load) | 4-8 GB | 500 MB |
+
+<Aside type="note">
+Performance varies based on hardware, configuration, and data size.
+</Aside>
+
+---
+
+## Migration Steps
+
+### 1. Export Data from HAPI FHIR
+
+Use HAPI's Bulk Export operation:
+
+```bash
+# Initiate system-level export
+curl -X GET "https://hapi-fhir.example.com/fhir/$export" \
+  -H "Accept: application/fhir+json" \
+  -H "Prefer: respond-async"
+```
+
+Or export specific resource types:
+
+```bash
+curl -X GET "https://hapi-fhir.example.com/fhir/$export?_type=Patient,Observation,Condition" \
+  -H "Accept: application/fhir+json" \
+  -H "Prefer: respond-async"
+```
+
+### 2. Transform Data (if needed)
+
+OctoFHIR accepts standard FHIR resources. However, check for:
+
+- **Custom extensions** - Ensure they're valid FHIR
+- **Local code systems** - May need mapping
+- **Resource references** - Must use standard format
+
+### 3. Import to OctoFHIR
+
+Use transaction bundles for bulk import:
+
+```bash
+# Split NDJSON into bundles of 1000 resources
+split -l 1000 patients.ndjson patient_batch_
+
+# Import each batch
+for file in patient_batch_*; do
+  curl -X POST "https://octofhir.example.com/fhir" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/fhir+json" \
+    -d @"$file"
+done
+```
+
+---
+
+## Configuration Mapping
+
+### Server Settings
+
+<Tabs>
+<TabItem label="HAPI FHIR">
+```yaml
+# application.yaml
+hapi:
+  fhir:
+    server:
+      path: /fhir
+    fhir_version: R4
+    default_page_size: 20
+    max_page_size: 200
+```
+</TabItem>
+<TabItem label="OctoFHIR">
+```toml
+# octofhir.toml
+[server]
+port = 8888
+
+[fhir]
+version = "R4"
+
+[search]
+default_count = 20
+max_count = 200
+```
+</TabItem>
+</Tabs>
+
+### Database
+
+<Tabs>
+<TabItem label="HAPI FHIR">
+```yaml
+spring:
+  datasource:
+    url: jdbc:postgresql://localhost:5432/hapi
+    username: hapi
+    password: secret
+```
+</TabItem>
+<TabItem label="OctoFHIR">
+```toml
+[storage.postgres]
+host = "localhost"
+port = 5432
+database = "octofhir"
+user = "octofhir"
+password = "secret"
+```
+</TabItem>
+</Tabs>
+
+### Authentication
+
+<Tabs>
+<TabItem label="HAPI FHIR">
+```java
+// Custom interceptor
+@Interceptor
+public class AuthInterceptor {
+  @Hook(Pointcut.SERVER_INCOMING_REQUEST_PRE_HANDLED)
+  public void authorize(RequestDetails details) {
+    // Custom auth logic
+  }
+}
+```
+</TabItem>
+<TabItem label="OctoFHIR">
+```toml
+[auth]
+issuer = "https://fhir.example.com"
+
+[auth.oauth]
+access_token_lifetime = "1h"
+grant_types = ["authorization_code", "client_credentials"]
+
+[auth.smart]
+launch_standalone_enabled = true
+supported_scopes = ["patient/*.read", "user/*.cruds"]
+```
+</TabItem>
+</Tabs>
+
+---
+
+## API Differences
+
+### Base URL
+
+| HAPI FHIR | OctoFHIR |
+|-----------|----------|
+| `/fhir` (configurable) | `/fhir` |
+
+### Authentication
+
+| HAPI FHIR | OctoFHIR |
+|-----------|----------|
+| Custom interceptors | Built-in OAuth 2.0 |
+| Header-based (custom) | `Authorization: Bearer <token>` |
+
+### Endpoints
+
+| Endpoint | HAPI FHIR | OctoFHIR |
+|----------|-----------|----------|
+| CapabilityStatement | `/fhir/metadata` | `/fhir/metadata` |
+| CRUD | `/fhir/{Type}/{id}` | `/fhir/{Type}/{id}` |
+| Search | `/fhir/{Type}?params` | `/fhir/{Type}?params` |
+| Transaction | `POST /fhir` | `POST /fhir` |
+| Bulk Export | `/$export` | `/$export` |
+| GraphQL | `/fhir/$graphql` | `/$graphql` |
+
+---
+
+## Search Parameter Differences
+
+Most search parameters work identically. Key differences:
+
+### Supported Modifiers
+
+| Modifier | HAPI FHIR | OctoFHIR |
+|----------|-----------|----------|
+| `:exact` | Yes | Yes |
+| `:contains` | Yes | Yes |
+| `:missing` | Yes | Yes |
+| `:not` | Yes | Yes |
+| `:text` | Yes | Planned |
+| `:above` (token) | Yes | Planned |
+| `:below` (token) | Yes | Planned |
+
+### Chained Searches
+
+Both support chained searches with identical syntax:
+
+```
+GET /Observation?subject:Patient.name=John
+```
+
+### Reverse Chaining
+
+```
+GET /Patient?_has:Observation:subject:code=1234-5
+```
+
+---
+
+## Missing Features
+
+Features in HAPI FHIR not yet available in OctoFHIR:
+
+| Feature | Status | ETA |
+|---------|--------|-----|
+| Subscriptions | Planned | Q2 2024 |
+| $validate operation | Partial | Q1 2024 |
+| Terminology server | External only | - |
+| MDM (Master Data Management) | Not planned | - |
+| Consent management | Planned | Q3 2024 |
+
+---
+
+## Common Gotchas
+
+### 1. Resource IDs
+
+HAPI FHIR allows numeric IDs by default. OctoFHIR uses UUIDs:
+
+```diff
+- GET /Patient/123
++ GET /Patient/550e8400-e29b-41d4-a716-446655440000
+```
+
+<Aside type="tip">
+When importing, use `PUT /Patient/{id}` to preserve original IDs (if UUID format).
+</Aside>
+
+### 2. Date Search Precision
+
+Both servers handle date precision, but behavior may differ slightly:
+
+```bash
+# Search for birthdate in 1990 (any day)
+GET /Patient?birthdate=1990
+
+# Search for exact date
+GET /Patient?birthdate=1990-01-15
+```
+
+### 3. Bundle Transaction Order
+
+Both process transaction bundle entries in order, resolving references. Ensure dependent resources come after their dependencies.
+
+### 4. Error Response Format
+
+Both return `OperationOutcome`, but messages may differ:
+
+```json
+{
+  "resourceType": "OperationOutcome",
+  "issue": [{
+    "severity": "error",
+    "code": "invalid",
+    "diagnostics": "Resource validation failed"
+  }]
+}
+```
+
+---
+
+## Support
+
+If you encounter migration issues:
+
+- GitHub Issues: https://github.com/octofhir/server-rs/issues
+- Discussions: https://github.com/octofhir/server-rs/discussions
+
+Include:
+- HAPI FHIR version
+- Sample failing request/response
+- Expected vs actual behavior

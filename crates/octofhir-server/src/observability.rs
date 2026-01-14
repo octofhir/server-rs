@@ -30,8 +30,8 @@ pub fn init_tracing_with_level(level: &str) {
 
     // Initialize log broadcast for WebSocket streaming
     let log_sender = init_log_broadcast();
-    let log_broadcast_layer = LogBroadcastLayer::new(log_sender)
-        .with_min_level(tracing::Level::DEBUG);
+    let log_broadcast_layer =
+        LogBroadcastLayer::new(log_sender).with_min_level(tracing::Level::DEBUG);
 
     let _ = tracing_subscriber::registry()
         .with(reload_layer)

@@ -61,8 +61,7 @@ impl ReverseReferenceResolver {
                 evaluate_access(gql_ctx, FhirOperation::Search, &resource_type, None).await?;
 
                 // Build search parameters
-                let search_params =
-                    build_reverse_reference_params(&ctx, reference_param);
+                let search_params = build_reverse_reference_params(&ctx, reference_param);
 
                 debug!(
                     resource_type = %resource_type,

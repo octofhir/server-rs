@@ -122,7 +122,10 @@ impl GatewayRouter {
             .filter_map(|stored| serde_json::from_value(stored.resource).ok())
             .collect();
 
-        debug!(count = operations.len(), "Loaded standalone CustomOperations");
+        debug!(
+            count = operations.len(),
+            "Loaded standalone CustomOperations"
+        );
 
         // Process standalone CustomOperations
         for operation in operations {
@@ -396,9 +399,7 @@ async fn gateway_dispatch(
         "app" => super::app::handle_app(state, &operation, request).await,
         "sql" => super::sql::handle_sql(state, &operation, request).await,
         "fhirpath" => super::fhirpath::handle_fhirpath(state, &operation, request).await,
-        "handler" => {
-            super::handler::handle_handler(state.clone(), &operation, request).await
-        }
+        "handler" => super::handler::handle_handler(state.clone(), &operation, request).await,
         "websocket" => {
             // WebSocket operations require a WebSocket upgrade request.
             // Extract WebSocketUpgrade from request parts.
@@ -428,7 +429,14 @@ async fn gateway_dispatch(
                 "WebSocket auth info"
             );
 
-            super::websocket::handle_websocket(state, &operation, ws, &auth_info, original_query.as_deref()).await
+            super::websocket::handle_websocket(
+                state,
+                &operation,
+                ws,
+                &auth_info,
+                original_query.as_deref(),
+            )
+            .await
         }
         unknown => Err(GatewayError::InvalidConfig(format!(
             "Unknown operation type: {}",

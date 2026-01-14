@@ -22,7 +22,6 @@ pub struct ParsedParameters {
     pub params: Vec<ParsedParam>,
 }
 
-
 pub struct SearchParameterParser;
 
 impl SearchParameterParser {

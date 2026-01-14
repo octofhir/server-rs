@@ -4,12 +4,11 @@
 //! autocomplete and validation. The conversion follows JSON Schema Draft-07.
 
 use octofhir_fhirschema::types::{FhirSchema, FhirSchemaElement};
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 use std::collections::HashMap;
 
 /// FHIR primitive type regex patterns for validation
-const FHIR_DATE_PATTERN: &str =
-    r"^([0-9]([0-9]([0-9][1-9]|[1-9]0)|[1-9]00)|[1-9]000)(-(0[1-9]|1[0-2])(-(0[1-9]|[1-2][0-9]|3[0-1]))?)?$";
+const FHIR_DATE_PATTERN: &str = r"^([0-9]([0-9]([0-9][1-9]|[1-9]0)|[1-9]00)|[1-9]000)(-(0[1-9]|1[0-2])(-(0[1-9]|[1-2][0-9]|3[0-1]))?)?$";
 const FHIR_DATETIME_PATTERN: &str = r"^([0-9]([0-9]([0-9][1-9]|[1-9]0)|[1-9]00)|[1-9]000)(-(0[1-9]|1[0-2])(-(0[1-9]|[1-2][0-9]|3[0-1])(T([01][0-9]|2[0-3]):[0-5][0-9]:([0-5][0-9]|60)(\.[0-9]+)?(Z|(\+|-)((0[0-9]|1[0-3]):[0-5][0-9]|14:00)))?)?)?$";
 const FHIR_TIME_PATTERN: &str = r"^([01][0-9]|2[0-3]):[0-5][0-9]:([0-5][0-9]|60)(\.[0-9]+)?$";
 const FHIR_INSTANT_PATTERN: &str = r"^([0-9]([0-9]([0-9][1-9]|[1-9]0)|[1-9]00)|[1-9]000)-(0[1-9]|1[0-2])-(0[1-9]|[1-2][0-9]|3[0-1])T([01][0-9]|2[0-3]):[0-5][0-9]:([0-5][0-9]|60)(\.[0-9]+)?(Z|(\+|-)((0[0-9]|1[0-3]):[0-5][0-9]|14:00))$";
@@ -107,9 +106,11 @@ pub fn convert_fhir_to_json_schema(fhir_schema: &FhirSchema) -> Value {
 
             // Check if required
             if element.min.unwrap_or(0) >= 1
-                && element.choice_of.is_none() && element.choices.is_none() {
-                    required_props.push(name.clone());
-                }
+                && element.choice_of.is_none()
+                && element.choices.is_none()
+            {
+                required_props.push(name.clone());
+            }
         }
     }
 
@@ -163,9 +164,10 @@ fn convert_element_to_schema(
         arr.insert("type".to_string(), json!("array"));
         arr.insert("items".to_string(), base_schema);
         if let Some(min) = element.min
-            && min > 0 {
-                arr.insert("minItems".to_string(), json!(min));
-            }
+            && min > 0
+        {
+            arr.insert("minItems".to_string(), json!(min));
+        }
         if let Some(max) = element.max {
             arr.insert("maxItems".to_string(), json!(max));
         }
@@ -176,30 +178,29 @@ fn convert_element_to_schema(
 
     // Add description
     if let Some(ref short) = element.short
-        && let Value::Object(ref mut map) = schema {
-            map.insert("description".to_string(), json!(short));
-        }
+        && let Value::Object(ref mut map) = schema
+    {
+        map.insert("description".to_string(), json!(short));
+    }
 
     // Add reference targets to description
     if let Some(ref refers) = element.refers
-        && !refers.is_empty() {
-            let targets: Vec<&str> = refers
-                .iter()
-                .filter_map(|r| r.rsplit('/').next())
-                .collect();
-            if let Value::Object(ref mut map) = schema {
-                let desc = map
-                    .get("description")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("");
-                let new_desc = if desc.is_empty() {
-                    format!("Reference to: {}", targets.join(", "))
-                } else {
-                    format!("{} (Reference to: {})", desc, targets.join(", "))
-                };
-                map.insert("description".to_string(), json!(new_desc));
-            }
+        && !refers.is_empty()
+    {
+        let targets: Vec<&str> = refers.iter().filter_map(|r| r.rsplit('/').next()).collect();
+        if let Value::Object(ref mut map) = schema {
+            let desc = map
+                .get("description")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let new_desc = if desc.is_empty() {
+                format!("Reference to: {}", targets.join(", "))
+            } else {
+                format!("{} (Reference to: {})", desc, targets.join(", "))
+            };
+            map.insert("description".to_string(), json!(new_desc));
         }
+    }
 
     schema
 }
@@ -566,9 +567,7 @@ fn convert_backbone_element(
             properties.insert(name.clone(), prop_schema);
         }
 
-        if element.min.unwrap_or(0) >= 1
-            && element.choice_of.is_none()
-            && element.choices.is_none()
+        if element.min.unwrap_or(0) >= 1 && element.choice_of.is_none() && element.choices.is_none()
         {
             required_props.push(name.clone());
         }

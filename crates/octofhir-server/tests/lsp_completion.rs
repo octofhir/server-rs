@@ -60,10 +60,7 @@ async fn get_test_infra() -> Arc<Mutex<TestInfra>> {
             let migrator = Migrator::new(Path::new("../octofhir-db-postgres/migrations"))
                 .await
                 .expect("load migrations");
-            migrator
-                .run(pool.as_ref())
-                .await
-                .expect("run migrations");
+            migrator.run(pool.as_ref()).await.expect("run migrations");
 
             // Insert minimal FHIR schemas for testing
             setup_test_fhir_schemas(pool.as_ref()).await;
@@ -191,8 +188,14 @@ async fn model_provider_loads_patient_schema() {
     assert_eq!(schema.name, "Patient");
 
     // Check that elements are present
-    let elements = schema.elements.as_ref().expect("Patient should have elements");
-    assert!(elements.contains_key("name"), "Patient should have 'name' element");
+    let elements = schema
+        .elements
+        .as_ref()
+        .expect("Patient should have elements");
+    assert!(
+        elements.contains_key("name"),
+        "Patient should have 'name' element"
+    );
 
     // Check that the name element has type HumanName
     let name_element = elements.get("name").expect("name element");
@@ -205,8 +208,14 @@ async fn model_provider_loads_patient_schema() {
         "Expected to load HumanName schema from database"
     );
     let humanname = humanname.unwrap();
-    let elements = humanname.elements.as_ref().expect("HumanName should have elements");
-    assert!(elements.contains_key("family"), "HumanName should have 'family' element");
+    let elements = humanname
+        .elements
+        .as_ref()
+        .expect("HumanName should have elements");
+    assert!(
+        elements.contains_key("family"),
+        "HumanName should have 'family' element"
+    );
 }
 
 #[tokio::test]
@@ -215,33 +224,57 @@ async fn jsonb_schema_fields_at_path_test() {
 
     // Create a mock JSONB schema that mimics what would be built from FHIR schemas
     let mut humanname_schema = JsonbSchema::new();
-    humanname_schema = humanname_schema.with_field(JsonbField::new("family".to_string(), JsonbFieldType::String));
-    humanname_schema = humanname_schema.with_field(JsonbField::new("given".to_string(), JsonbFieldType::Array));
-    humanname_schema = humanname_schema.with_field(JsonbField::new("use".to_string(), JsonbFieldType::String));
+    humanname_schema = humanname_schema.with_field(JsonbField::new(
+        "family".to_string(),
+        JsonbFieldType::String,
+    ));
+    humanname_schema =
+        humanname_schema.with_field(JsonbField::new("given".to_string(), JsonbFieldType::Array));
+    humanname_schema =
+        humanname_schema.with_field(JsonbField::new("use".to_string(), JsonbFieldType::String));
 
     let mut patient_schema = JsonbSchema::new();
-    patient_schema = patient_schema.with_field(JsonbField::new("id".to_string(), JsonbFieldType::String));
-    patient_schema = patient_schema.with_field(JsonbField::new("active".to_string(), JsonbFieldType::Boolean));
+    patient_schema =
+        patient_schema.with_field(JsonbField::new("id".to_string(), JsonbFieldType::String));
+    patient_schema = patient_schema.with_field(JsonbField::new(
+        "active".to_string(),
+        JsonbFieldType::Boolean,
+    ));
     patient_schema = patient_schema.with_field(
-        JsonbField::new("name".to_string(), JsonbFieldType::Array)
-            .with_nested(humanname_schema)
+        JsonbField::new("name".to_string(), JsonbFieldType::Array).with_nested(humanname_schema),
     );
 
     // Test 1: Empty path returns top-level fields (Patient fields)
     let fields = patient_schema.fields_at_path(&[]);
     let names: Vec<_> = fields.iter().map(|f| f.name.as_str()).collect();
-    assert!(names.contains(&"name"), "Empty path should return Patient fields: {:?}", names);
+    assert!(
+        names.contains(&"name"),
+        "Empty path should return Patient fields: {:?}",
+        names
+    );
 
     // Test 2: Path ["name"] should return HumanName fields (nested)
     let fields = patient_schema.fields_at_path(&["name".to_string()]);
     let names: Vec<_> = fields.iter().map(|f| f.name.as_str()).collect();
-    assert!(names.contains(&"family"), "Path ['name'] should return HumanName fields: {:?}", names);
-    assert!(names.contains(&"given"), "Path ['name'] should return HumanName fields: {:?}", names);
+    assert!(
+        names.contains(&"family"),
+        "Path ['name'] should return HumanName fields: {:?}",
+        names
+    );
+    assert!(
+        names.contains(&"given"),
+        "Path ['name'] should return HumanName fields: {:?}",
+        names
+    );
 
     // Test 3: Path ["name", "0"] should skip numeric index and return HumanName fields
     let fields = patient_schema.fields_at_path(&["name".to_string(), "0".to_string()]);
     let names: Vec<_> = fields.iter().map(|f| f.name.as_str()).collect();
-    assert!(names.contains(&"family"), "Path ['name', '0'] should return HumanName fields: {:?}", names);
+    assert!(
+        names.contains(&"family"),
+        "Path ['name', '0'] should return HumanName fields: {:?}",
+        names
+    );
 }
 
 #[tokio::test]

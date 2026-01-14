@@ -52,7 +52,9 @@ pub async fn reconcile_resources(
     for (resource_type, items) in resources {
         match resource_type.as_str() {
             "Client" => reconcile_resource_type(storage, app_id, "Client", items).await?,
-            "AccessPolicy" => reconcile_resource_type(storage, app_id, "AccessPolicy", items).await?,
+            "AccessPolicy" => {
+                reconcile_resource_type(storage, app_id, "AccessPolicy", items).await?
+            }
             // Support any other resource types
             _ => {
                 tracing::warn!(
@@ -92,8 +94,9 @@ fn preprocess_resource(resource_type: &str, resource: &mut Value) -> Result<(), 
             if let Some(secret) = obj.get("clientSecret").and_then(|v| v.as_str()) {
                 // Only hash if not already hashed
                 if !secret.starts_with("$argon2id$") {
-                    let hashed = hash_password(secret)
-                        .map_err(|e| ApiError::internal(format!("Failed to hash client secret: {}", e)))?;
+                    let hashed = hash_password(secret).map_err(|e| {
+                        ApiError::internal(format!("Failed to hash client secret: {}", e))
+                    })?;
                     obj.insert("clientSecret".to_string(), Value::String(hashed));
                 }
             }
@@ -117,13 +120,18 @@ async fn reconcile_resource_type(
 
         // Ensure resourceType is set
         if let Some(obj) = resource.as_object_mut() {
-            obj.insert("resourceType".to_string(), Value::String(resource_type.to_string()));
+            obj.insert(
+                "resourceType".to_string(),
+                Value::String(resource_type.to_string()),
+            );
             obj.insert("id".to_string(), Value::String(resource_id.clone()));
 
             // Add meta.tag to track app ownership
             let meta = obj.entry("meta").or_insert_with(|| serde_json::json!({}));
             if let Some(meta_obj) = meta.as_object_mut() {
-                let tags = meta_obj.entry("tag").or_insert_with(|| serde_json::json!([]));
+                let tags = meta_obj
+                    .entry("tag")
+                    .or_insert_with(|| serde_json::json!([]));
                 if let Some(tags_array) = tags.as_array_mut() {
                     // Add app tag if not already present
                     let app_tag = serde_json::json!({
@@ -141,13 +149,16 @@ async fn reconcile_resource_type(
         preprocess_resource(resource_type, &mut resource)?;
 
         // Check if resource exists
-        let existing = storage.read(resource_type, resource_id).await
+        let existing = storage
+            .read(resource_type, resource_id)
+            .await
             .map_err(|e| ApiError::internal(format!("Failed to read {}: {}", resource_type, e)))?;
 
         if existing.is_some() {
             // Update existing resource
-            storage.update(&resource, None).await
-                .map_err(|e| ApiError::internal(format!("Failed to update {}: {}", resource_type, e)))?;
+            storage.update(&resource, None).await.map_err(|e| {
+                ApiError::internal(format!("Failed to update {}: {}", resource_type, e))
+            })?;
 
             tracing::info!(
                 app_id = %app_id,
@@ -157,8 +168,9 @@ async fn reconcile_resource_type(
             );
         } else {
             // Create new resource
-            storage.create(&resource).await
-                .map_err(|e| ApiError::internal(format!("Failed to create {}: {}", resource_type, e)))?;
+            storage.create(&resource).await.map_err(|e| {
+                ApiError::internal(format!("Failed to create {}: {}", resource_type, e))
+            })?;
 
             tracing::info!(
                 app_id = %app_id,
@@ -188,7 +200,9 @@ mod tests {
         if let Some(obj) = resource.as_object_mut() {
             let meta = obj.entry("meta").or_insert_with(|| serde_json::json!({}));
             if let Some(meta_obj) = meta.as_object_mut() {
-                let tags = meta_obj.entry("tag").or_insert_with(|| serde_json::json!([]));
+                let tags = meta_obj
+                    .entry("tag")
+                    .or_insert_with(|| serde_json::json!([]));
                 if let Some(tags_array) = tags.as_array_mut() {
                     tags_array.push(serde_json::json!({
                         "system": "octofhir/app",
@@ -215,7 +229,10 @@ mod tests {
 
         // Simulate injection
         if let Some(obj) = resource.as_object_mut() {
-            obj.insert("resourceType".to_string(), Value::String("Client".to_string()));
+            obj.insert(
+                "resourceType".to_string(),
+                Value::String("Client".to_string()),
+            );
             obj.insert("id".to_string(), Value::String("test-client".to_string()));
         }
 

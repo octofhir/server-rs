@@ -61,7 +61,9 @@ impl<S: FhirStorage> EventedStorage<S> {
         if self.broadcaster.subscriber_count() == 0 {
             return;
         }
-        let count = self.broadcaster.send_created(resource_type, resource_id, resource.clone());
+        let count = self
+            .broadcaster
+            .send_created(resource_type, resource_id, resource.clone());
         debug!(
             resource_type = %resource_type,
             resource_id = %resource_id,
@@ -74,7 +76,9 @@ impl<S: FhirStorage> EventedStorage<S> {
         if self.broadcaster.subscriber_count() == 0 {
             return;
         }
-        let count = self.broadcaster.send_updated(resource_type, resource_id, resource.clone());
+        let count = self
+            .broadcaster
+            .send_updated(resource_type, resource_id, resource.clone());
         debug!(
             resource_type = %resource_type,
             resource_id = %resource_id,
@@ -261,10 +265,7 @@ impl Transaction for EventedTransaction {
         for event in pending_events {
             broadcaster.send_resource(event);
         }
-        debug!(
-            count = event_count,
-            "Emitted pending transaction events"
-        );
+        debug!(count = event_count, "Emitted pending transaction events");
 
         Ok(())
     }

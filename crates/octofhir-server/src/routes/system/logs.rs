@@ -3,7 +3,7 @@
 //! Apps can submit their logs to `/api/system/logs` for centralized logging.
 //! Logs are emitted to the server's tracing infrastructure with app context.
 
-use axum::{http::StatusCode, Json};
+use axum::{Json, http::StatusCode};
 use octofhir_auth::extractors::BasicAuth;
 use serde::{Deserialize, Serialize};
 

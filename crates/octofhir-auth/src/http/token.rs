@@ -51,7 +51,9 @@ use crate::federation::ClientJwksCache;
 use crate::oauth::client_assertion::ClientAssertionConfig;
 use crate::oauth::token::{TokenError, TokenErrorCode, TokenRequest, TokenResponse};
 use crate::storage::session::SessionStorage;
-use crate::storage::{ClientStorage, JtiStorage, RefreshTokenStorage, RevokedTokenStorage, UserStorage};
+use crate::storage::{
+    ClientStorage, JtiStorage, RefreshTokenStorage, RevokedTokenStorage, UserStorage,
+};
 use crate::token::jwt::{AccessTokenClaims, JwtService};
 use crate::token::service::{TokenConfig, TokenService};
 use crate::types::{Client, GrantType};
@@ -161,7 +163,10 @@ impl TokenState {
 
     /// Sets FHIR storage for creating AuthSession resources during password grant.
     #[must_use]
-    pub fn with_fhir_storage(mut self, fhir_storage: Arc<dyn octofhir_storage::FhirStorage>) -> Self {
+    pub fn with_fhir_storage(
+        mut self,
+        fhir_storage: Arc<dyn octofhir_storage::FhirStorage>,
+    ) -> Self {
         self.fhir_storage = Some(fhir_storage);
         self
     }
@@ -347,9 +352,7 @@ async fn authenticate_client(
             client_id,
             assertion_type,
             assertion,
-        } => {
-            authenticate_with_assertion(state, &client_id, &assertion_type, &assertion).await
-        }
+        } => authenticate_with_assertion(state, &client_id, &assertion_type, &assertion).await,
         ClientAuth::Public { client_id } => authenticate_public_client(state, &client_id).await,
         ClientAuth::None => Err(AuthError::invalid_client("No client credentials provided")),
     }
@@ -390,7 +393,10 @@ async fn authenticate_with_secret(
 }
 
 /// Authenticate a public client (no secret required).
-async fn authenticate_public_client(state: &TokenState, client_id: &str) -> Result<Client, AuthError> {
+async fn authenticate_public_client(
+    state: &TokenState,
+    client_id: &str,
+) -> Result<Client, AuthError> {
     let client = state
         .client_storage
         .find_by_client_id(client_id)
@@ -440,9 +446,10 @@ async fn authenticate_with_assertion(
         AuthError::internal("Token endpoint URL not configured for assertion validation")
     })?;
 
-    let jwks_cache = state.jwks_cache.as_ref().ok_or_else(|| {
-        AuthError::internal("JWKS cache not configured for assertion validation")
-    })?;
+    let jwks_cache = state
+        .jwks_cache
+        .as_ref()
+        .ok_or_else(|| AuthError::internal("JWKS cache not configured for assertion validation"))?;
 
     // 3. Look up client
     let client = state
@@ -481,7 +488,11 @@ async fn authenticate_with_assertion(
     struct DummyJtiStorage;
     #[async_trait::async_trait]
     impl crate::storage::JtiStorage for DummyJtiStorage {
-        async fn mark_used(&self, _jti: &str, _expires_at: OffsetDateTime) -> crate::AuthResult<bool> {
+        async fn mark_used(
+            &self,
+            _jti: &str,
+            _expires_at: OffsetDateTime,
+        ) -> crate::AuthResult<bool> {
             Ok(true) // Dummy - we handle JTI separately
         }
         async fn is_used(&self, _jti: &str) -> crate::AuthResult<bool> {

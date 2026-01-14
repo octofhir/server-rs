@@ -149,6 +149,42 @@ impl SearchPrefix {
             _ => None,
         }
     }
+
+    /// Check if this prefix is applicable to the given parameter type.
+    ///
+    /// According to FHIR spec:
+    /// - Number, Date, Quantity: all prefixes allowed
+    /// - String, Token, Reference, Uri, Composite, Special: only eq (implicit) allowed
+    pub fn applicable_to(&self, param_type: &SearchParameterType) -> bool {
+        match param_type {
+            // These types support all comparison prefixes
+            SearchParameterType::Number
+            | SearchParameterType::Date
+            | SearchParameterType::Quantity => true,
+            // These types only support equality (eq is implicit, others are invalid)
+            SearchParameterType::String
+            | SearchParameterType::Token
+            | SearchParameterType::Reference
+            | SearchParameterType::Uri
+            | SearchParameterType::Composite
+            | SearchParameterType::Special => matches!(self, Self::Eq),
+        }
+    }
+
+    /// Return human-readable name of the prefix.
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            Self::Eq => "equal",
+            Self::Ne => "not equal",
+            Self::Gt => "greater than",
+            Self::Lt => "less than",
+            Self::Ge => "greater than or equal",
+            Self::Le => "less than or equal",
+            Self::Sa => "starts after",
+            Self::Eb => "ends before",
+            Self::Ap => "approximately",
+        }
+    }
 }
 
 /// A single search parameter definition (metadata)
@@ -507,5 +543,76 @@ mod tests {
         assert!(SearchModifier::Below.applicable_to(&SearchParameterType::Token));
         assert!(SearchModifier::Below.applicable_to(&SearchParameterType::Uri));
         assert!(!SearchModifier::Below.applicable_to(&SearchParameterType::String));
+    }
+
+    #[test]
+    fn test_prefix_applicable_to() {
+        // Number, Date, Quantity support all prefixes
+        for prefix in [
+            SearchPrefix::Eq,
+            SearchPrefix::Ne,
+            SearchPrefix::Gt,
+            SearchPrefix::Lt,
+            SearchPrefix::Ge,
+            SearchPrefix::Le,
+            SearchPrefix::Sa,
+            SearchPrefix::Eb,
+            SearchPrefix::Ap,
+        ] {
+            assert!(
+                prefix.applicable_to(&SearchParameterType::Number),
+                "Prefix {} should be applicable to Number",
+                prefix
+            );
+            assert!(
+                prefix.applicable_to(&SearchParameterType::Date),
+                "Prefix {} should be applicable to Date",
+                prefix
+            );
+            assert!(
+                prefix.applicable_to(&SearchParameterType::Quantity),
+                "Prefix {} should be applicable to Quantity",
+                prefix
+            );
+        }
+
+        // String, Token, Reference, Uri only support eq
+        let string_incompatible = [
+            SearchPrefix::Ne,
+            SearchPrefix::Gt,
+            SearchPrefix::Lt,
+            SearchPrefix::Ge,
+            SearchPrefix::Le,
+            SearchPrefix::Sa,
+            SearchPrefix::Eb,
+            SearchPrefix::Ap,
+        ];
+
+        for prefix in string_incompatible {
+            assert!(
+                !prefix.applicable_to(&SearchParameterType::String),
+                "Prefix {} should NOT be applicable to String",
+                prefix
+            );
+            assert!(
+                !prefix.applicable_to(&SearchParameterType::Token),
+                "Prefix {} should NOT be applicable to Token",
+                prefix
+            );
+            assert!(
+                !prefix.applicable_to(&SearchParameterType::Reference),
+                "Prefix {} should NOT be applicable to Reference",
+                prefix
+            );
+            assert!(
+                !prefix.applicable_to(&SearchParameterType::Uri),
+                "Prefix {} should NOT be applicable to Uri",
+                prefix
+            );
+        }
+
+        // eq is always valid (implicit)
+        assert!(SearchPrefix::Eq.applicable_to(&SearchParameterType::String));
+        assert!(SearchPrefix::Eq.applicable_to(&SearchParameterType::Token));
     }
 }

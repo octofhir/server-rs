@@ -6,8 +6,8 @@
 use sqlx_core::query_as::query_as;
 use time::OffsetDateTime;
 
-use octofhir_auth::types::AppRecord;
 use octofhir_auth::AuthResult;
+use octofhir_auth::types::AppRecord;
 
 use crate::{PgPool, StorageError, StorageResult};
 
@@ -149,9 +149,9 @@ impl<'a> AppStorage<'a> {
         match row {
             Some(tuple) => {
                 let app_row = AppRow::from_tuple(tuple);
-                let app_record = app_row
-                    .to_app_record()
-                    .map_err(|e| StorageError::Internal(format!("Failed to parse app record: {}", e)))?;
+                let app_record = app_row.to_app_record().map_err(|e| {
+                    StorageError::Internal(format!("Failed to parse app record: {}", e))
+                })?;
                 let secret = app_row.secret();
                 Ok(Some((app_record, secret)))
             }

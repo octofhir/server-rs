@@ -66,9 +66,10 @@ pub fn extract_directives_from_field(
             names::SLICE => {
                 // Extract the fhirpath argument using the helper method
                 if let Some(value) = directive.get_argument("fhirpath")
-                    && let async_graphql_value::Value::String(s) = &value.node {
-                        result.slice_fhirpath = Some(s.clone());
-                    }
+                    && let async_graphql_value::Value::String(s) = &value.node
+                {
+                    result.slice_fhirpath = Some(s.clone());
+                }
             }
             _ => {} // Ignore unknown directives
         }
@@ -90,7 +91,6 @@ pub fn transform_response_value(value: Value, directives: &FieldDirectives) -> V
     };
 
     // Apply @singleton: ensure value is not a list
-    
 
     // Note: @flatten and @slice require access to the parent context
     // and are handled at a higher level in the response transformation
@@ -465,10 +465,7 @@ mod tests {
                 }
                 return Ok(result.to_string());
             }
-            Err(format!(
-                "Field '{}' not found in context",
-                expression
-            ))
+            Err(format!("Field '{}' not found in context", expression))
         }
     }
 

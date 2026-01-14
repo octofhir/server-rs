@@ -155,7 +155,9 @@ pub fn parse_reference(
     // Handle empty/whitespace references
     let reference = reference.trim();
     if reference.is_empty() {
-        return Err(UnresolvableReference::Invalid("empty reference".to_string()));
+        return Err(UnresolvableReference::Invalid(
+            "empty reference".to_string(),
+        ));
     }
 
     // Skip contained references (#id)
@@ -323,7 +325,9 @@ mod tests {
     #[test]
     fn test_contained_reference() {
         let result = parse_reference("#contained-id", None);
-        assert!(matches!(result, Err(UnresolvableReference::Contained(id)) if id == "contained-id"));
+        assert!(
+            matches!(result, Err(UnresolvableReference::Contained(id)) if id == "contained-id")
+        );
     }
 
     #[test]

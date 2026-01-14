@@ -1,0 +1,138 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "OctoFHIR Benchmark Configuration",
+  "version": "1.0.0",
+
+  "targets": {
+    "write_tps": {
+      "value": 500,
+      "unit": "transactions/second",
+      "description": "Target write throughput",
+      "competitor_baseline": {
+        "hapi_fhir": { "min": 82, "max": 3000, "note": "Varies by configuration" },
+        "smile_cdr": { "value": 2000, "note": "Enterprise configuration" }
+      }
+    },
+    "read_p95_latency": {
+      "value": 20,
+      "unit": "ms",
+      "description": "Target p95 read latency",
+      "competitor_baseline": {
+        "google_healthcare_api": { "value": 200, "note": "SLA target" },
+        "azure_fhir": { "value": 100, "note": "Typical latency" }
+      }
+    },
+    "memory_idle": {
+      "value": 500,
+      "unit": "MB",
+      "description": "Target idle memory footprint",
+      "competitor_baseline": {
+        "hapi_fhir_jpa": { "min": 2000, "max": 4000, "note": "JVM heap" },
+        "ibm_fhir": { "value": 1500, "note": "Liberty profile" }
+      }
+    },
+    "bulk_ingest": {
+      "value": 10000,
+      "unit": "resources/second",
+      "description": "Target bulk ingest rate",
+      "competitor_baseline": {
+        "google_healthcare_api": { "value": 10000, "note": "Import operation" }
+      }
+    }
+  },
+
+  "scenarios": {
+    "crud": {
+      "file": "benchmarks/crud.js",
+      "description": "CRUD operations across multiple resource types",
+      "duration": "3m",
+      "vus": 100,
+      "thresholds": {
+        "create_latency_ms_p95": 100,
+        "read_latency_ms_p95": 20,
+        "update_latency_ms_p95": 100,
+        "delete_latency_ms_p95": 100,
+        "success_rate": 0.99
+      }
+    },
+    "search": {
+      "file": "benchmarks/search.js",
+      "description": "Search operations including chained and _include",
+      "duration": "3m",
+      "vus": 30,
+      "thresholds": {
+        "simple_search_p95": 100,
+        "chained_search_p95": 300,
+        "include_search_p95": 400
+      }
+    },
+    "transaction": {
+      "file": "benchmarks/transaction.js",
+      "description": "Transaction and batch bundle processing",
+      "duration": "7m",
+      "vus": { "small": 50, "medium": 30, "large": 10 },
+      "thresholds": {
+        "transaction_p95_small": 500,
+        "transaction_p95_medium": 2000,
+        "transaction_p95_large": 5000
+      }
+    },
+    "concurrent": {
+      "file": "benchmarks/concurrent.js",
+      "description": "Concurrent user load test (10-300 VUs)",
+      "duration": "8m",
+      "vus": { "ramp": "10 -> 50 -> 100 -> 300" },
+      "thresholds": {
+        "read_latency_p95": 100,
+        "write_latency_p95": 200,
+        "success_rate": 0.99
+      }
+    },
+    "bulk": {
+      "file": "benchmarks/bulk.js",
+      "description": "Bulk data export operations",
+      "duration": "15m",
+      "thresholds": {
+        "ingest_rate": 100,
+        "export_init_p95": 5000
+      }
+    }
+  },
+
+  "environment": {
+    "required": {
+      "BASE_URL": "FHIR server base URL (e.g., http://localhost:8888/fhir)",
+      "AUTH_USER": "Username for authentication",
+      "AUTH_PASSWORD": "Password for authentication"
+    },
+    "optional": {
+      "CLIENT_ID": "OAuth client ID (default: k6-test)",
+      "CLIENT_SECRET": "OAuth client secret",
+      "TOKEN_URL": "OAuth token endpoint"
+    }
+  },
+
+  "hardware_requirements": {
+    "minimum": {
+      "cpu": "4 cores",
+      "memory": "8 GB",
+      "description": "Minimum for running benchmarks locally"
+    },
+    "recommended": {
+      "cpu": "8 cores",
+      "memory": "16 GB",
+      "description": "Recommended for accurate results"
+    },
+    "ci": {
+      "cpu": "4 cores",
+      "memory": "16 GB",
+      "description": "GitHub Actions runner"
+    }
+  },
+
+  "output": {
+    "directory": "benchmark-results",
+    "formats": ["json"],
+    "retention_days": 90
+  }
+}

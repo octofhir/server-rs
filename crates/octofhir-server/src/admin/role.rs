@@ -12,8 +12,8 @@ use octofhir_auth_postgres::RoleStorage;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use octofhir_auth::middleware::AdminAuth;
 use octofhir_auth::Bundle;
+use octofhir_auth::middleware::AdminAuth;
 
 use super::state::AdminState;
 
@@ -201,9 +201,7 @@ pub async fn create_role(
 
     // System roles cannot be created via API
     if role.is_system {
-        return Err(ApiError::bad_request(
-            "Cannot create system roles via API",
-        ));
+        return Err(ApiError::bad_request("Cannot create system roles via API"));
     }
 
     let storage = RoleStorage::new(&state.pool);
@@ -225,8 +223,14 @@ pub async fn create_role(
 
     // Set timestamps
     let now = time::OffsetDateTime::now_utc();
-    role.created_at = Some(now.format(&time::format_description::well_known::Rfc3339).unwrap());
-    role.updated_at = Some(now.format(&time::format_description::well_known::Rfc3339).unwrap());
+    role.created_at = Some(
+        now.format(&time::format_description::well_known::Rfc3339)
+            .unwrap(),
+    );
+    role.updated_at = Some(
+        now.format(&time::format_description::well_known::Rfc3339)
+            .unwrap(),
+    );
 
     // Convert to JSON for storage
     let resource = serde_json::to_value(&role)
@@ -280,9 +284,7 @@ pub async fn update_role(
             .and_then(|v| v.as_str())
             .unwrap_or("");
         if role.name != existing_name {
-            return Err(ApiError::bad_request(
-                "Cannot modify name of system roles",
-            ));
+            return Err(ApiError::bad_request("Cannot modify name of system roles"));
         }
     }
 
@@ -314,7 +316,10 @@ pub async fn update_role(
         .and_then(|v| v.as_str())
         .map(String::from);
     let now = time::OffsetDateTime::now_utc();
-    role.updated_at = Some(now.format(&time::format_description::well_known::Rfc3339).unwrap());
+    role.updated_at = Some(
+        now.format(&time::format_description::well_known::Rfc3339)
+            .unwrap(),
+    );
 
     // Convert to JSON for storage
     let resource = serde_json::to_value(&role)
@@ -391,13 +396,12 @@ pub async fn delete_role(
 }
 
 /// GET /Role/$permissions - Get available permissions.
-pub async fn list_permissions(
-    _admin: AdminAuth,
-) -> Result<impl IntoResponse, ApiError> {
+pub async fn list_permissions(_admin: AdminAuth) -> Result<impl IntoResponse, ApiError> {
     let permissions = default_permissions();
 
     // Group permissions by category
-    let mut grouped: std::collections::HashMap<String, Vec<&Permission>> = std::collections::HashMap::new();
+    let mut grouped: std::collections::HashMap<String, Vec<&Permission>> =
+        std::collections::HashMap::new();
     for perm in &permissions {
         let category = perm.category.as_deref().unwrap_or("Other");
         grouped.entry(category.to_string()).or_default().push(perm);

@@ -272,12 +272,13 @@ impl PostgresPackageStore {
             .await?;
 
         // Delete existing FHIRSchemas for this package (they will be regenerated on-demand)
-        let deleted_schemas = query("DELETE FROM fcm.fhirschemas WHERE package_name = $1 AND package_version = $2")
-            .bind(name)
-            .bind(version)
-            .execute(&self.pool)
-            .await?
-            .rows_affected();
+        let deleted_schemas =
+            query("DELETE FROM fcm.fhirschemas WHERE package_name = $1 AND package_version = $2")
+                .bind(name)
+                .bind(version)
+                .execute(&self.pool)
+                .await?
+                .rows_affected();
 
         if deleted_schemas > 0 {
             info!(
@@ -1210,13 +1211,14 @@ impl PackageStore for PostgresPackageStore {
             .map_err(db_error)?;
 
         // Delete existing FHIRSchemas for this package (they will be regenerated on-demand)
-        let deleted_schemas = query("DELETE FROM fcm.fhirschemas WHERE package_name = $1 AND package_version = $2")
-            .bind(&package.name)
-            .bind(&package.version)
-            .execute(&self.pool)
-            .await
-            .map_err(db_error)?
-            .rows_affected();
+        let deleted_schemas =
+            query("DELETE FROM fcm.fhirschemas WHERE package_name = $1 AND package_version = $2")
+                .bind(&package.name)
+                .bind(&package.version)
+                .execute(&self.pool)
+                .await
+                .map_err(db_error)?
+                .rows_affected();
 
         if deleted_schemas > 0 {
             info!(

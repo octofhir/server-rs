@@ -856,6 +856,418 @@ COMMENT ON TABLE fcm.resources IS 'Stores FHIR conformance resources (StructureD
 COMMENT ON TABLE fcm.fhirschemas IS 'Pre-converted FHIRSchemas from StructureDefinitions for on-demand loading';
 
 -- ============================================================================
+-- AUTOMATION (JavaScript event-driven workflows)
+-- ============================================================================
+
+-- Automation status enum
+DO $$ BEGIN
+    CREATE TYPE automation_status AS ENUM ('active', 'inactive', 'error');
+EXCEPTION
+    WHEN duplicate_object THEN null;
+END $$;
+
+-- Automation trigger type enum
+DO $$ BEGIN
+    CREATE TYPE automation_trigger_type AS ENUM ('resource_event', 'cron', 'manual');
+EXCEPTION
+    WHEN duplicate_object THEN null;
+END $$;
+
+-- Main automation table
+CREATE TABLE IF NOT EXISTS automation (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name TEXT NOT NULL,
+    description TEXT,
+    source_code TEXT NOT NULL,
+    compiled_code TEXT,
+    status automation_status NOT NULL DEFAULT 'inactive',
+    version INT NOT NULL DEFAULT 1,
+    timeout_ms INT NOT NULL DEFAULT 5000,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Automation triggers table
+CREATE TABLE IF NOT EXISTS automation_trigger (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    automation_id UUID NOT NULL REFERENCES automation(id) ON DELETE CASCADE,
+    trigger_type automation_trigger_type NOT NULL,
+    resource_type TEXT,
+    event_types TEXT[],
+    fhirpath_filter TEXT,
+    cron_expression TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+    -- Constraints
+    CONSTRAINT valid_resource_trigger CHECK (
+        trigger_type != 'resource_event' OR resource_type IS NOT NULL
+    ),
+    CONSTRAINT valid_cron_trigger CHECK (
+        trigger_type != 'cron' OR cron_expression IS NOT NULL
+    )
+);
+
+-- Automation execution log table
+CREATE TABLE IF NOT EXISTS automation_execution (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    automation_id UUID NOT NULL REFERENCES automation(id) ON DELETE CASCADE,
+    trigger_id UUID REFERENCES automation_trigger(id) ON DELETE SET NULL,
+    status TEXT NOT NULL,
+    input JSONB,
+    output JSONB,
+    error TEXT,
+    started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    completed_at TIMESTAMPTZ,
+    duration_ms INT
+);
+
+-- Indexes for efficient querying
+CREATE INDEX IF NOT EXISTS idx_automation_status ON automation(status);
+CREATE INDEX IF NOT EXISTS idx_automation_trigger_automation_id ON automation_trigger(automation_id);
+CREATE INDEX IF NOT EXISTS idx_automation_trigger_resource ON automation_trigger(resource_type, trigger_type)
+    WHERE trigger_type = 'resource_event';
+CREATE INDEX IF NOT EXISTS idx_automation_execution_automation_id ON automation_execution(automation_id);
+CREATE INDEX IF NOT EXISTS idx_automation_execution_started_at ON automation_execution(started_at DESC);
+
+-- Comments for documentation
+COMMENT ON TABLE automation IS 'JavaScript automations for event-driven workflows';
+COMMENT ON TABLE automation_trigger IS 'Triggers that activate automations';
+COMMENT ON TABLE automation_execution IS 'Log of automation executions';
+COMMENT ON COLUMN automation.source_code IS 'Source code (TypeScript or JavaScript)';
+COMMENT ON COLUMN automation.compiled_code IS 'Compiled JavaScript (transpiled from TypeScript at deploy time)';
+COMMENT ON COLUMN automation.status IS 'Automation status: active (will run), inactive (disabled), error (compilation failed)';
+COMMENT ON COLUMN automation.timeout_ms IS 'Maximum execution time in milliseconds';
+COMMENT ON COLUMN automation_trigger.resource_type IS 'FHIR resource type for resource_event triggers';
+COMMENT ON COLUMN automation_trigger.event_types IS 'Array of event types: created, updated, deleted';
+COMMENT ON COLUMN automation_trigger.fhirpath_filter IS 'Optional FHIRPath expression to filter events';
+COMMENT ON COLUMN automation_trigger.cron_expression IS 'Cron expression for scheduled triggers';
+
+-- ============================================================================
+-- R5 TOPIC-BASED SUBSCRIPTIONS
+-- ============================================================================
+-- Supports both R5 native subscriptions and R4/R4B via Backport IG
+--
+-- NOTE: SubscriptionTopic and Subscription resource tables are created automatically
+-- when their definitions are loaded from an IG:
+-- - R5: hl7.fhir.r5.core (SubscriptionTopic is native)
+-- - R4/R4B: hl7.fhir.uv.subscriptions-backport (Backport IG)
+--
+-- This section only creates operational tables for event queuing and delivery.
+
+-- Events waiting to be delivered to subscriptions
+-- Uses SELECT FOR UPDATE SKIP LOCKED for distributed processing
+CREATE TABLE IF NOT EXISTS subscription_event (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+
+    -- Subscription reference (FHIR resource ID)
+    subscription_id TEXT NOT NULL,
+
+    -- Topic that triggered this event (canonical URL)
+    topic_url TEXT NOT NULL,
+
+    -- Event metadata
+    event_type TEXT NOT NULL CHECK (event_type IN ('handshake', 'heartbeat', 'event-notification')),
+    event_number BIGINT NOT NULL,  -- Monotonic sequence per subscription
+
+    -- Triggering resource change (for event-notification type)
+    focus_resource_type TEXT,
+    focus_resource_id TEXT,
+    focus_event TEXT CHECK (focus_event IS NULL OR focus_event IN ('create', 'update', 'delete')),
+
+    -- Pre-rendered notification bundle (FHIR Bundle with type 'subscription-notification')
+    notification_bundle JSONB NOT NULL,
+
+    -- Queue status
+    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN (
+        'pending',     -- Waiting to be processed
+        'processing',  -- Currently being delivered
+        'delivered',   -- Successfully delivered
+        'failed',      -- Permanent failure (max retries exceeded)
+        'expired'      -- TTL exceeded
+    )),
+
+    -- Timestamps
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    processed_at TIMESTAMPTZ,      -- When processing started
+    delivered_at TIMESTAMPTZ,      -- When successfully delivered
+
+    -- Retry handling
+    attempts INT NOT NULL DEFAULT 0,
+    max_attempts INT NOT NULL DEFAULT 5,
+    next_retry_at TIMESTAMPTZ DEFAULT NOW(),  -- When to retry (NULL = immediate)
+    last_error TEXT,
+
+    -- Expiration (default 24 hours)
+    expires_at TIMESTAMPTZ NOT NULL DEFAULT (NOW() + INTERVAL '24 hours')
+);
+
+-- Index for efficient queue polling (most critical for performance)
+CREATE INDEX IF NOT EXISTS idx_sub_event_pending
+    ON subscription_event(next_retry_at, created_at)
+    WHERE status IN ('pending');
+
+-- Index for subscription-specific queries
+CREATE INDEX IF NOT EXISTS idx_sub_event_subscription
+    ON subscription_event(subscription_id, event_number DESC);
+
+-- Index for cleanup of expired events
+CREATE INDEX IF NOT EXISTS idx_sub_event_expires
+    ON subscription_event(expires_at)
+    WHERE status NOT IN ('delivered', 'failed');
+
+-- Index for status queries
+CREATE INDEX IF NOT EXISTS idx_sub_event_status
+    ON subscription_event(subscription_id, status);
+
+-- Historical record of delivery attempts for debugging and analytics
+CREATE TABLE IF NOT EXISTS subscription_delivery (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    event_id UUID NOT NULL REFERENCES subscription_event(id) ON DELETE CASCADE,
+    subscription_id TEXT NOT NULL,
+
+    -- Attempt details
+    attempt_number INT NOT NULL,
+    channel_type TEXT NOT NULL,  -- 'rest-hook', 'websocket', 'email'
+
+    -- Timing
+    started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    completed_at TIMESTAMPTZ,
+    response_time_ms INT,
+
+    -- Result
+    success BOOLEAN,
+    http_status INT,
+    error_code TEXT,
+    error_message TEXT,
+
+    -- Debug info (optional, can be disabled for privacy)
+    request_url TEXT,
+    response_body_preview TEXT  -- First 1000 chars of response for debugging
+);
+
+CREATE INDEX IF NOT EXISTS idx_sub_delivery_event
+    ON subscription_delivery(event_id);
+
+CREATE INDEX IF NOT EXISTS idx_sub_delivery_subscription
+    ON subscription_delivery(subscription_id, started_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_sub_delivery_failed
+    ON subscription_delivery(subscription_id, success)
+    WHERE success = FALSE;
+
+-- Track active WebSocket connections for subscription delivery
+-- Required for multi-instance deployments to route events correctly
+CREATE TABLE IF NOT EXISTS subscription_websocket (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    subscription_id TEXT NOT NULL,
+
+    -- Server instance that holds the connection
+    server_instance TEXT NOT NULL,
+
+    -- Connection state
+    connected_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    last_heartbeat_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+    -- Unique constraint: one connection per subscription per server
+    UNIQUE(subscription_id, server_instance)
+);
+
+CREATE INDEX IF NOT EXISTS idx_sub_ws_subscription
+    ON subscription_websocket(subscription_id);
+
+-- Index for stale connection cleanup
+CREATE INDEX IF NOT EXISTS idx_sub_ws_heartbeat
+    ON subscription_websocket(last_heartbeat_at);
+
+-- Cached subscription status for efficient $status operation
+-- Updated by delivery processor, avoids expensive aggregate queries
+CREATE TABLE IF NOT EXISTS subscription_status (
+    subscription_id TEXT PRIMARY KEY,
+
+    -- Counters
+    events_since_subscription_start BIGINT NOT NULL DEFAULT 0,
+    events_in_notification BIGINT NOT NULL DEFAULT 0,  -- Current batch
+
+    -- Error tracking
+    error_count INT NOT NULL DEFAULT 0,
+    last_error_at TIMESTAMPTZ,
+    last_error_message TEXT,
+
+    -- Delivery tracking
+    last_delivery_at TIMESTAMPTZ,
+    last_event_number BIGINT NOT NULL DEFAULT 0,
+
+    -- Topic reference
+    topic_url TEXT,
+
+    -- Timestamps
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Get next event number for a subscription (thread-safe)
+CREATE OR REPLACE FUNCTION next_subscription_event_number(p_subscription_id TEXT)
+RETURNS BIGINT AS $$
+DECLARE
+    v_next BIGINT;
+BEGIN
+    -- Use subscription_status for efficient lookup
+    INSERT INTO subscription_status (subscription_id, last_event_number)
+    VALUES (p_subscription_id, 1)
+    ON CONFLICT (subscription_id) DO UPDATE
+        SET last_event_number = subscription_status.last_event_number + 1,
+            updated_at = NOW()
+    RETURNING last_event_number INTO v_next;
+
+    RETURN v_next;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Claim pending events for processing (distributed lock pattern)
+-- Returns events that are ready to be processed
+CREATE OR REPLACE FUNCTION claim_subscription_events(
+    p_limit INT DEFAULT 100,
+    p_processor_id TEXT DEFAULT NULL
+)
+RETURNS SETOF subscription_event AS $$
+BEGIN
+    RETURN QUERY
+    WITH claimed AS (
+        SELECT id
+        FROM subscription_event
+        WHERE status = 'pending'
+          AND next_retry_at <= NOW()
+          AND expires_at > NOW()
+        ORDER BY next_retry_at ASC, created_at ASC
+        FOR UPDATE SKIP LOCKED
+        LIMIT p_limit
+    )
+    UPDATE subscription_event e
+    SET status = 'processing',
+        processed_at = NOW()
+    FROM claimed c
+    WHERE e.id = c.id
+    RETURNING e.*;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Mark event as delivered
+CREATE OR REPLACE FUNCTION mark_event_delivered(p_event_id UUID)
+RETURNS VOID AS $$
+BEGIN
+    UPDATE subscription_event
+    SET status = 'delivered',
+        delivered_at = NOW()
+    WHERE id = p_event_id;
+
+    -- Update subscription status
+    UPDATE subscription_status ss
+    SET events_since_subscription_start = events_since_subscription_start + 1,
+        last_delivery_at = NOW(),
+        updated_at = NOW()
+    FROM subscription_event se
+    WHERE se.id = p_event_id
+      AND ss.subscription_id = se.subscription_id;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Mark event for retry with exponential backoff
+CREATE OR REPLACE FUNCTION mark_event_retry(
+    p_event_id UUID,
+    p_error TEXT DEFAULT NULL
+)
+RETURNS VOID AS $$
+DECLARE
+    v_attempts INT;
+    v_max_attempts INT;
+    v_delay_seconds INT;
+BEGIN
+    SELECT attempts, max_attempts INTO v_attempts, v_max_attempts
+    FROM subscription_event
+    WHERE id = p_event_id;
+
+    v_attempts := v_attempts + 1;
+
+    IF v_attempts >= v_max_attempts THEN
+        -- Max retries exceeded, mark as failed
+        UPDATE subscription_event
+        SET status = 'failed',
+            attempts = v_attempts,
+            last_error = p_error
+        WHERE id = p_event_id;
+
+        -- Update subscription status error count
+        UPDATE subscription_status ss
+        SET error_count = error_count + 1,
+            last_error_at = NOW(),
+            last_error_message = p_error,
+            updated_at = NOW()
+        FROM subscription_event se
+        WHERE se.id = p_event_id
+          AND ss.subscription_id = se.subscription_id;
+    ELSE
+        -- Calculate exponential backoff: 60, 120, 240, 480, 960 seconds
+        v_delay_seconds := 60 * (1 << (v_attempts - 1));
+
+        UPDATE subscription_event
+        SET status = 'pending',
+            attempts = v_attempts,
+            next_retry_at = NOW() + (v_delay_seconds || ' seconds')::INTERVAL,
+            last_error = p_error
+        WHERE id = p_event_id;
+    END IF;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Cleanup expired and old delivered events
+CREATE OR REPLACE FUNCTION cleanup_subscription_events(
+    p_delivered_retention_hours INT DEFAULT 24,
+    p_failed_retention_hours INT DEFAULT 168  -- 7 days
+)
+RETURNS INT AS $$
+DECLARE
+    v_deleted INT;
+BEGIN
+    WITH deleted AS (
+        DELETE FROM subscription_event
+        WHERE (status = 'expired')
+           OR (status = 'delivered' AND delivered_at < NOW() - (p_delivered_retention_hours || ' hours')::INTERVAL)
+           OR (status = 'failed' AND created_at < NOW() - (p_failed_retention_hours || ' hours')::INTERVAL)
+           OR (expires_at < NOW() AND status NOT IN ('delivered', 'failed'))
+        RETURNING id
+    )
+    SELECT COUNT(*) INTO v_deleted FROM deleted;
+
+    RETURN v_deleted;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Cleanup stale WebSocket connections (no heartbeat for 5 minutes)
+CREATE OR REPLACE FUNCTION cleanup_stale_websocket_connections()
+RETURNS INT AS $$
+DECLARE
+    v_deleted INT;
+BEGIN
+    WITH deleted AS (
+        DELETE FROM subscription_websocket
+        WHERE last_heartbeat_at < NOW() - INTERVAL '5 minutes'
+        RETURNING id
+    )
+    SELECT COUNT(*) INTO v_deleted FROM deleted;
+
+    RETURN v_deleted;
+END;
+$$ LANGUAGE plpgsql;
+
+COMMENT ON TABLE subscription_event IS 'Queue of subscription notification events pending delivery';
+COMMENT ON TABLE subscription_delivery IS 'Historical record of delivery attempts for debugging';
+COMMENT ON TABLE subscription_websocket IS 'Active WebSocket connections for subscription delivery';
+COMMENT ON TABLE subscription_status IS 'Cached subscription status for efficient $status operation';
+COMMENT ON FUNCTION claim_subscription_events IS 'Atomically claim pending events for processing using SKIP LOCKED';
+COMMENT ON FUNCTION mark_event_delivered IS 'Mark event as successfully delivered and update status';
+COMMENT ON FUNCTION mark_event_retry IS 'Schedule event for retry with exponential backoff';
+
+-- ============================================================================
 -- SCHEMA NOTES
 -- ============================================================================
 --

@@ -6,8 +6,9 @@ use anyhow::Context;
 use arc_swap::ArcSwap;
 use axum::{
     Router,
-    extract::FromRef,
+    extract::{FromRef, Path, State, WebSocketUpgrade},
     middleware,
+    response::IntoResponse,
     routing::{get, post},
 };
 use octofhir_auth::extractors::BasicAuthState;
@@ -43,17 +44,18 @@ use crate::hooks::{
 use crate::operation_registry::OperationRegistryService;
 use crate::operations::{DynOperationHandler, OperationRegistry, register_core_operations_full};
 use crate::reference_resolver::StorageReferenceResolver;
+use crate::subscriptions::{SubscriptionHook, SubscriptionState};
 use crate::validation::ValidationService;
 
 use crate::audit::AuditService;
 use crate::cache::AuthContextCache;
 use crate::{config::AppConfig, handlers, middleware as app_middleware};
+use octofhir_core::events::EventBroadcaster;
 use octofhir_db_postgres::PostgresConfig;
 use octofhir_db_postgres::PostgresStorage;
 use octofhir_fhir_model::terminology::TerminologyProvider;
 use octofhir_fhirschema::TerminologyProviderAdapter;
 use octofhir_search::{HybridTerminologyProvider, ReloadableSearchConfig};
-use octofhir_core::events::EventBroadcaster;
 use octofhir_storage::{DynStorage, EventedStorage};
 
 /// Shared model provider type for FHIRPath evaluation
@@ -135,6 +137,13 @@ pub struct AppStateInner {
     pub notification_queue: Option<Arc<dyn octofhir_notifications::NotificationQueueStorage>>,
     /// PostgreSQL package store for FHIR Implementation Guide resources
     pub package_store: Arc<octofhir_db_postgres::PostgresPackageStore>,
+    /// Subscription state for FHIR R5 subscriptions
+    pub subscription_state: SubscriptionState,
+    /// Terminology provider for $expand, $validate-code, $subsumes, $translate, $lookup
+    /// This is the HybridTerminologyProvider with local + cached remote support
+    pub terminology_provider: Option<Arc<dyn TerminologyProvider>>,
+    /// Automation state for JavaScript automations
+    pub automation_state: Option<crate::automations::AutomationState>,
 }
 
 // =============================================================================
@@ -199,9 +208,86 @@ impl FromRef<AppState> for BasicAuthState {
     }
 }
 
+impl FromRef<AppState> for crate::automations::AutomationState {
+    fn from_ref(state: &AppState) -> Self {
+        state
+            .automation_state
+            .clone()
+            .expect("AutomationState not initialized in AppState")
+    }
+}
+
 pub struct OctofhirServer {
     addr: SocketAddr,
     app: Router,
+}
+
+/// Handler for WebSocket subscription events endpoint.
+///
+/// Upgrades HTTP connection to WebSocket for real-time subscription notifications.
+/// Endpoint: `/fhir/Subscription/{id}/$events`
+async fn subscription_events_ws_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    ws: WebSocketUpgrade,
+) -> impl IntoResponse {
+    use crate::subscriptions::types::SubscriptionChannel;
+
+    use axum::http::StatusCode;
+
+    // Get the subscription
+    let subscription = match state
+        .subscription_state
+        .subscription_manager
+        .get_subscription(&id)
+        .await
+    {
+        Ok(Some(sub)) => sub,
+        Ok(None) => {
+            return (
+                StatusCode::NOT_FOUND,
+                format!("Subscription/{} not found", id),
+            )
+                .into_response();
+        }
+        Err(e) => {
+            tracing::error!(error = %e, subscription_id = %id, "Failed to get subscription");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Failed to get subscription",
+            )
+                .into_response();
+        }
+    };
+
+    // Verify subscription uses WebSocket channel
+    if !matches!(subscription.channel, SubscriptionChannel::WebSocket { .. }) {
+        return (
+            StatusCode::BAD_REQUEST,
+            "Subscription does not use WebSocket channel",
+        )
+            .into_response();
+    }
+
+    // Verify subscription is active
+    if subscription.status != crate::subscriptions::types::SubscriptionStatus::Active {
+        return (
+            StatusCode::BAD_REQUEST,
+            format!(
+                "Subscription is not active (status: {:?})",
+                subscription.status
+            ),
+        )
+            .into_response();
+    }
+
+    let registry = state.subscription_state.websocket_registry.clone();
+
+    // Upgrade to WebSocket
+    ws.on_upgrade(move |socket| async move {
+        crate::subscriptions::handle_subscription_websocket(socket, subscription, registry).await;
+    })
+    .into_response()
 }
 
 /// Bootstraps auth resources and database tables.
@@ -489,9 +575,7 @@ pub async fn build_app(
     let search_config = match crate::canonical::get_manager() {
         Some(manager) => ReloadableSearchConfig::new(&manager, search_options)
             .await
-            .map_err(|e| {
-                anyhow::anyhow!("Failed to create reloadable search config: {}", e)
-            })?,
+            .map_err(|e| anyhow::anyhow!("Failed to create reloadable search config: {}", e))?,
         None => {
             return Err(anyhow::anyhow!(
                 "Canonical manager required for search config"
@@ -658,34 +742,33 @@ pub async fn build_app(
     // Terminology is always enabled - uses local packages first, then remote server with caching
     let terminology_provider: Option<Arc<dyn TerminologyProvider>> =
         match crate::canonical::get_manager() {
-            Some(manager) => {
-                match HybridTerminologyProvider::new(manager, &cfg.terminology) {
-                    Ok(provider) => {
-                        tracing::info!(
-                            server_url = %cfg.terminology.server_url,
-                            cache_ttl = cfg.terminology.cache_ttl_secs,
-                            "Terminology service initialized (local packages + remote server with caching)"
-                        );
-                        Some(Arc::new(provider))
-                    }
-                    Err(e) => {
-                        tracing::warn!(error = %e, "Failed to create terminology provider, terminology operations will be limited");
-                        None
-                    }
+            Some(manager) => match HybridTerminologyProvider::new(manager, &cfg.terminology) {
+                Ok(provider) => {
+                    tracing::info!(
+                        server_url = %cfg.terminology.server_url,
+                        cache_ttl = cfg.terminology.cache_ttl_secs,
+                        "Terminology service initialized (local packages + remote server with caching)"
+                    );
+                    Some(Arc::new(provider))
                 }
-            }
+                Err(e) => {
+                    tracing::warn!(error = %e, "Failed to create terminology provider, terminology operations will be limited");
+                    None
+                }
+            },
             None => {
-                tracing::warn!("Canonical manager not available, terminology operations will be limited");
+                tracing::warn!(
+                    "Canonical manager not available, terminology operations will be limited"
+                );
                 None
             }
         };
 
     // Create FHIRPath function registry and engine
     let registry = Arc::new(octofhir_fhirpath::create_function_registry());
-    let mut fhirpath_engine =
-        FhirPathEngine::new(registry, model_provider.clone())
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to initialize FHIRPath engine: {}", e))?;
+    let mut fhirpath_engine = FhirPathEngine::new(registry, model_provider.clone())
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to initialize FHIRPath engine: {}", e))?;
 
     // Add terminology provider to FhirPath engine for memberOf, validateVS, etc.
     if let Some(ref provider) = terminology_provider {
@@ -719,7 +802,8 @@ pub async fn build_app(
             // Register $run for ViewDefinition (SQL on FHIR)
             registry.register(crate::operations::OperationDefinition {
                 code: "run".to_string(),
-                url: "http://hl7.org/fhir/uv/sql-on-fhir/OperationDefinition/ViewDefinition-run".to_string(),
+                url: "http://hl7.org/fhir/uv/sql-on-fhir/OperationDefinition/ViewDefinition-run"
+                    .to_string(),
                 kind: crate::operations::OperationKind::Operation,
                 system: false,
                 type_level: true,
@@ -732,7 +816,8 @@ pub async fn build_app(
             // Register $sql for ViewDefinition (SQL generation)
             registry.register(crate::operations::OperationDefinition {
                 code: "sql".to_string(),
-                url: "http://hl7.org/fhir/uv/sql-on-fhir/OperationDefinition/ViewDefinition-sql".to_string(),
+                url: "http://hl7.org/fhir/uv/sql-on-fhir/OperationDefinition/ViewDefinition-sql"
+                    .to_string(),
                 kind: crate::operations::OperationKind::Operation,
                 system: false,
                 type_level: true,
@@ -742,6 +827,19 @@ pub async fn build_app(
                 affects_state: false,
             });
             tracing::info!("Registered $sql for ViewDefinition");
+            // Register $status for Subscription (R5 subscription status)
+            registry.register(crate::operations::OperationDefinition {
+                code: "status".to_string(),
+                url: "http://hl7.org/fhir/OperationDefinition/Subscription-status".to_string(),
+                kind: crate::operations::OperationKind::Operation,
+                system: false,
+                type_level: false,
+                instance: true,
+                resource: vec!["Subscription".to_string()],
+                parameters: vec![],
+                affects_state: false,
+            });
+            tracing::info!("Registered $status for Subscription");
             Arc::new(registry)
         }
         Err(e) => {
@@ -762,7 +860,8 @@ pub async fn build_app(
             // Register $run for ViewDefinition (SQL on FHIR)
             registry.register(crate::operations::OperationDefinition {
                 code: "run".to_string(),
-                url: "http://hl7.org/fhir/uv/sql-on-fhir/OperationDefinition/ViewDefinition-run".to_string(),
+                url: "http://hl7.org/fhir/uv/sql-on-fhir/OperationDefinition/ViewDefinition-run"
+                    .to_string(),
                 kind: crate::operations::OperationKind::Operation,
                 system: false,
                 type_level: true,
@@ -774,7 +873,8 @@ pub async fn build_app(
             // Register $sql for ViewDefinition (SQL generation)
             registry.register(crate::operations::OperationDefinition {
                 code: "sql".to_string(),
-                url: "http://hl7.org/fhir/uv/sql-on-fhir/OperationDefinition/ViewDefinition-sql".to_string(),
+                url: "http://hl7.org/fhir/uv/sql-on-fhir/OperationDefinition/ViewDefinition-sql"
+                    .to_string(),
                 kind: crate::operations::OperationKind::Operation,
                 system: false,
                 type_level: true,
@@ -783,19 +883,30 @@ pub async fn build_app(
                 parameters: vec![],
                 affects_state: false,
             });
+            // Register $status for Subscription (R5 subscription status)
+            registry.register(crate::operations::OperationDefinition {
+                code: "status".to_string(),
+                url: "http://hl7.org/fhir/OperationDefinition/Subscription-status".to_string(),
+                kind: crate::operations::OperationKind::Operation,
+                system: false,
+                type_level: false,
+                instance: true,
+                resource: vec!["Subscription".to_string()],
+                parameters: vec![],
+                affects_state: false,
+            });
             Arc::new(registry)
         }
     };
 
     // Register core operation handlers
-    let operation_handlers: Arc<HashMap<String, DynOperationHandler>> = Arc::new(
-        register_core_operations_full(
+    let operation_handlers: Arc<HashMap<String, DynOperationHandler>> =
+        Arc::new(register_core_operations_full(
             fhirpath_engine.clone(),
             model_provider.clone(),
             cfg.bulk_export.clone(),
             cfg.sql_on_fhir.clone(),
-        ),
-    );
+        ));
     tracing::info!(
         count = operation_handlers.len(),
         "Registered operation handlers"
@@ -1013,7 +1124,8 @@ pub async fn build_app(
             Arc::new(PostgresStorage::from_pool(db_pool.as_ref().clone()));
 
         // Create subscription broadcaster for real-time updates
-        let subscription_broadcaster = octofhir_graphql::subscriptions::ResourceEventBroadcaster::new_shared();
+        let subscription_broadcaster =
+            octofhir_graphql::subscriptions::ResourceEventBroadcaster::new_shared();
 
         // Create context template with shared dependencies
         let context_template = GraphQLContextTemplate {
@@ -1074,11 +1186,7 @@ pub async fn build_app(
                 let auth_removed = auth_cache_for_cleanup.cleanup_expired();
                 let jwt_removed = jwt_cache_for_cleanup.cleanup_expired();
                 if auth_removed > 0 || jwt_removed > 0 {
-                    tracing::debug!(
-                        auth_removed,
-                        jwt_removed,
-                        "Cache cleanup completed"
-                    );
+                    tracing::debug!(auth_removed, jwt_removed, "Cache cleanup completed");
                 }
             }
         });
@@ -1119,7 +1227,10 @@ pub async fn build_app(
         tracing::info!("Background SSO session cleanup task started (1h interval)");
     }
 
-    let resource_types = model_provider.get_resource_types().await.unwrap_or_default();
+    let resource_types = model_provider
+        .get_resource_types()
+        .await
+        .unwrap_or_default();
     let resource_type_set = Arc::new(ArcSwap::from_pointee(
         resource_types.iter().cloned().collect::<HashSet<String>>(),
     ));
@@ -1153,7 +1264,9 @@ pub async fn build_app(
         .with_operation_registry(operation_registry.clone())
         .with_gateway_provider(gateway_provider.clone());
 
-    hook_registry.register_resource(Arc::new(gateway_hook)).await;
+    hook_registry
+        .register_resource(Arc::new(gateway_hook))
+        .await;
 
     // SearchParamHook: updates search parameter registry on SearchParameter changes
     let search_hook = SearchParamHook::new(search_config.clone());
@@ -1162,7 +1275,9 @@ pub async fn build_app(
     // GraphQLSubscriptionHook: forwards events to GraphQL subscription clients
     if let Some(ref graphql_broadcaster) = graphql_subscription_broadcaster {
         let graphql_hook = GraphQLSubscriptionHook::new(graphql_broadcaster.clone());
-        hook_registry.register_resource(Arc::new(graphql_hook)).await;
+        hook_registry
+            .register_resource(Arc::new(graphql_hook))
+            .await;
         tracing::debug!("GraphQL subscription hook registered");
     }
 
@@ -1173,6 +1288,140 @@ pub async fn build_app(
         tracing::debug!("Async audit hook registered");
     }
 
+    // SubscriptionHook: dispatches resource events to matching FHIR subscriptions
+    // This will be fully initialized later once AppState is ready
+    let mut subscription_state = {
+        // Create event storage
+        let event_storage = Arc::new(crate::subscriptions::SubscriptionEventStorage::new(
+            db_pool.as_ref().clone(),
+        ));
+
+        // Create topic registry
+        let topic_registry = Arc::new(crate::subscriptions::TopicRegistry::new(storage.clone()));
+
+        // Create subscription manager
+        let subscription_manager = Arc::new(crate::subscriptions::SubscriptionManager::new(
+            storage.clone(),
+            db_pool.as_ref().clone(),
+        ));
+
+        // Create event matcher with FHIRPath engine
+        let event_matcher = Arc::new(crate::subscriptions::EventMatcher::new(
+            fhirpath_engine.clone(),
+        ));
+
+        // Create subscription hook
+        let subscription_hook = SubscriptionHook::new(
+            topic_registry.clone(),
+            subscription_manager.clone(),
+            event_matcher.clone(),
+            event_storage.clone(),
+            true, // enabled
+        );
+        hook_registry
+            .register_resource(Arc::new(subscription_hook))
+            .await;
+        tracing::debug!("Subscription hook registered");
+
+        // Return state for later use
+        // Create WebSocket registry for subscription connections
+        let websocket_registry = Arc::new(crate::subscriptions::WebSocketRegistry::new());
+
+        SubscriptionState {
+            topic_registry,
+            subscription_manager,
+            event_matcher,
+            event_storage,
+            websocket_registry,
+            enabled: true,
+            delivery_shutdown: None,
+        }
+    };
+
+    // Load subscription topics into cache
+    // Note: SubscriptionTopic table is created via octofhir-subscription IG for R4/R4B,
+    // or via the native R5+ core package
+    if let Err(e) = subscription_state.topic_registry.reload().await {
+        tracing::warn!(error = %e, "Failed to load subscription topics on startup");
+    } else {
+        tracing::info!(
+            topics = subscription_state.topic_registry.topic_count(),
+            "Subscription topics loaded"
+        );
+    }
+
+    // Start subscription delivery processor in background
+    let delivery_shutdown = {
+        let processor = crate::subscriptions::delivery::DeliveryProcessor::new(
+            subscription_state.event_storage.clone(),
+            subscription_state.subscription_manager.clone(),
+            subscription_state.websocket_registry.clone(),
+        );
+        let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+        let shutdown_handle = Arc::new(shutdown_tx);
+
+        tokio::spawn(async move {
+            if let Err(e) = processor.run(shutdown_rx).await {
+                tracing::error!(error = %e, "Subscription delivery processor failed");
+            }
+        });
+        tracing::info!("Subscription delivery processor started");
+
+        shutdown_handle
+    };
+
+    // Store shutdown handle in subscription state (keeps it alive for server lifetime)
+    subscription_state.delivery_shutdown = Some(delivery_shutdown);
+
+    // AutomationDispatcherHook: executes JavaScript automations on resource events
+    // CronScheduler: executes automations on cron schedules
+    let automation_state = {
+        use crate::automations::{
+            AutomationDispatcherHook, AutomationExecutor, AutomationExecutorConfig,
+            AutomationState, CronScheduler, PostgresAutomationStorage, SchedulerConfig,
+        };
+
+        // Create automation storage
+        let automation_storage =
+            Arc::new(PostgresAutomationStorage::new(db_pool.as_ref().clone()));
+
+        // Create automation executor
+        let executor_config = AutomationExecutorConfig::default();
+        match AutomationExecutor::new(storage.clone(), automation_storage.clone(), executor_config)
+        {
+            Ok(executor) => {
+                let executor = Arc::new(executor);
+
+                // Create and register the dispatcher hook for resource events
+                let dispatcher_hook =
+                    AutomationDispatcherHook::new(automation_storage.clone(), executor.clone());
+                hook_registry
+                    .register_resource(Arc::new(dispatcher_hook))
+                    .await;
+                tracing::info!("Automation dispatcher hook registered");
+
+                // Start the cron scheduler for scheduled automation execution
+                let scheduler = CronScheduler::new(
+                    automation_storage.clone(),
+                    executor.clone(),
+                    SchedulerConfig::default(),
+                );
+                let _cron_shutdown = scheduler.start();
+                tracing::info!("Automation cron scheduler started");
+
+                // Create automation state for handlers
+                Some(AutomationState {
+                    automation_storage,
+                    executor,
+                })
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "Failed to initialize automation executor, automation disabled");
+                None
+            }
+        }
+    };
+
     // RedisPublishHook + RedisEventSync: multi-instance event synchronization
     // When Redis is enabled:
     // - RedisPublishHook publishes local events to Redis for other instances
@@ -1182,7 +1431,9 @@ pub async fn build_app(
             Ok(redis_pool) => {
                 // Register hook to publish events to Redis
                 let publish_hook = RedisPublishHook::new(redis_pool.clone());
-                hook_registry.register_resource(Arc::new(publish_hook)).await;
+                hook_registry
+                    .register_resource(Arc::new(publish_hook))
+                    .await;
 
                 // Start Redis subscriber to receive events from other instances
                 match RedisEventSyncBuilder::new()
@@ -1215,17 +1466,18 @@ pub async fn build_app(
     let hook_registry = Arc::new(hook_registry);
     let dispatcher = octofhir_core::events::HookDispatcher::new(hook_registry.clone());
     tokio::spawn(dispatcher.run(event_broadcaster.subscribe()));
-    tracing::info!("Unified event system: {} hooks registered, dispatcher started",
-        hook_registry.hook_count().await);
+    tracing::info!(
+        "Unified event system: {} hooks registered, dispatcher started",
+        hook_registry.hook_count().await
+    );
 
     // Create basic auth storage (unified Client and App authentication)
     let basic_auth_storage = Arc::new(ArcBasicAuthStorage::new(db_pool.clone()));
 
     // Create notification queue storage
-    let notification_queue: Arc<dyn octofhir_notifications::NotificationQueueStorage> =
-        Arc::new(octofhir_db_postgres::PostgresNotificationStorage::new(
-            db_pool.as_ref().clone(),
-        ));
+    let notification_queue: Arc<dyn octofhir_notifications::NotificationQueueStorage> = Arc::new(
+        octofhir_db_postgres::PostgresNotificationStorage::new(db_pool.as_ref().clone()),
+    );
 
     // Create AppState wrapped in Arc for cheap cloning across all middleware/handlers
     // This is a single Arc::clone per request instead of cloning 25+ individual fields
@@ -1261,32 +1513,44 @@ pub async fn build_app(
         basic_auth_storage,
         notification_queue: Some(notification_queue),
         package_store,
+        subscription_state,
+        terminology_provider,
+        automation_state,
     }));
 
     // Configure async job executor to handle bulk export and ViewDefinition export jobs
     let state_for_executor = state.clone();
-    let executor: crate::async_jobs::JobExecutor = Arc::new(move |job_id: uuid::Uuid, request_type: String, _method: String, _url: String, body: Option<serde_json::Value>| {
-        let state = state_for_executor.clone();
-        Box::pin(async move {
-            match request_type.as_str() {
-                "bulk_export" => {
-                    // Extract job parameters from body
-                    let body = body.ok_or_else(|| "Missing job parameters".to_string())?;
+    let executor: crate::async_jobs::JobExecutor = Arc::new(
+        move |job_id: uuid::Uuid,
+              request_type: String,
+              _method: String,
+              _url: String,
+              body: Option<serde_json::Value>| {
+            let state = state_for_executor.clone();
+            Box::pin(async move {
+                match request_type.as_str() {
+                    "bulk_export" => {
+                        // Extract job parameters from body
+                        let body = body.ok_or_else(|| "Missing job parameters".to_string())?;
 
-                    // Execute the bulk export
-                    crate::operations::execute_bulk_export(state, job_id, body).await
-                },
-                "viewdefinition_export" => {
-                    // Extract job parameters from body
-                    let body = body.ok_or_else(|| "Missing job parameters".to_string())?;
+                        // Execute the bulk export
+                        crate::operations::execute_bulk_export(state, job_id, body).await
+                    }
+                    "viewdefinition_export" => {
+                        // Extract job parameters from body
+                        let body = body.ok_or_else(|| "Missing job parameters".to_string())?;
 
-                    // Execute the ViewDefinition export
-                    crate::operations::execute_viewdefinition_export(state, job_id, body).await
-                },
-                _ => Err(format!("Unknown job type: {}", request_type))
-            }
-        }) as std::pin::Pin<Box<dyn std::future::Future<Output = Result<serde_json::Value, String>> + Send>>
-    });
+                        // Execute the ViewDefinition export
+                        crate::operations::execute_viewdefinition_export(state, job_id, body).await
+                    }
+                    _ => Err(format!("Unknown job type: {}", request_type)),
+                }
+            })
+                as std::pin::Pin<
+                    Box<dyn std::future::Future<Output = Result<serde_json::Value, String>> + Send>,
+                >
+        },
+    );
 
     state.async_job_manager.set_executor(executor);
     tracing::info!("Async job executor configured for bulk export and ViewDefinition export");
@@ -1302,7 +1566,10 @@ pub async fn build_app(
 fn internal_resource_routes() -> Router<AppState> {
     Router::new()
         // User-specific operations
-        .route("/User/{id}/$reset-password", post(crate::admin::reset_user_password))
+        .route(
+            "/User/{id}/$reset-password",
+            post(crate::admin::reset_user_password),
+        )
         // Generic CRUD for internal resources
         .route(
             "/{resource_type}",
@@ -1362,9 +1629,15 @@ fn build_router(state: AppState, body_limit: usize) -> Router {
         )
         // LSP WebSocket endpoints (authenticated)
         .route("/api/lsp/pg", get(crate::lsp::pg_lsp_websocket_handler))
-        .route("/api/lsp/fhirpath", get(crate::lsp::fhirpath_lsp_websocket_handler))
+        .route(
+            "/api/lsp/fhirpath",
+            get(crate::lsp::fhirpath_lsp_websocket_handler),
+        )
         // Log stream WebSocket endpoint (authenticated, admin scope required)
-        .route("/api/logs/stream", get(crate::log_stream::log_stream_handler))
+        .route(
+            "/api/logs/stream",
+            get(crate::log_stream::log_stream_handler),
+        )
         // System API (for App integrations)
         .nest("/api/system", crate::routes::system::system_routes())
         // Package Management API
@@ -1417,13 +1690,20 @@ fn build_router(state: AppState, body_limit: usize) -> Router {
             },
         )
         // API routes (nested under /api)
-        .nest(
-            "/api",
-            Router::new()
-                .merge(crate::routes::canonical::canonical_routes())
+        .nest("/api", {
+            let api_router = Router::new().merge(crate::routes::canonical::canonical_routes());
+
+            // Add automation routes only if automation is enabled
+            let api_router = if state.automation_state.is_some() {
+                api_router.merge(crate::automations::automation_routes())
+            } else {
+                api_router
+            };
+
+            api_router
                 // Allow larger uploads (50MB) for canonical package upload
                 .layer(axum::extract::DefaultBodyLimit::max(50 * 1024 * 1024))
-        )
+        })
         // Embedded UI under /ui
         .route("/ui", get(handlers::ui_index))
         .route("/ui/{*path}", get(handlers::ui_static));
@@ -1486,6 +1766,12 @@ fn build_router(state: AppState, body_limit: usize) -> Router {
                 .patch(handlers::conditional_patch_resource)
                 .delete(handlers::conditional_delete_resource),
         )
+        // Subscription WebSocket endpoint: /Subscription/{id}/$events
+        // Must be before generic operation handler since $events requires WebSocket upgrade
+        .route(
+            "/Subscription/{id}/$events",
+            get(subscription_events_ws_handler),
+        )
         // Instance-level operations: GET/POST /{type}/{id}/$operation
         .route(
             "/{resource_type}/{id}/{operation}",
@@ -1514,8 +1800,14 @@ fn build_router(state: AppState, body_limit: usize) -> Router {
         )
         // Metadata endpoint scoped to /fhir base
         .route("/metadata", get(handlers::metadata))
-        // Transaction endpoint at base /fhir
-        .route("/", get(handlers::root).post(handlers::transaction_handler))
+        // Combined root/system-search at base /fhir
+        // GET /fhir - returns service info
+        // GET /fhir?_type=Patient,Observation - system-level search
+        // POST /fhir - transaction/batch
+        .route(
+            "/",
+            get(handlers::fhir_root).post(handlers::transaction_handler),
+        )
         // Gateway fallback - only called when no explicit route matches.
         // This allows users to define custom operations on any path.
         .fallback(crate::gateway::router::gateway_fallback_handler);
@@ -1637,7 +1929,6 @@ fn build_router(state: AppState, body_limit: usize) -> Router {
     // Merge OAuth routes if auth is enabled
     // OAuth routes have their own state and are not subject to FHIR content negotiation
     // Note: OAuth routes intentionally bypass auth middleware as they're public
-    
 
     if let Some(oauth) = oauth_routes {
         router.merge(oauth)
@@ -1770,7 +2061,9 @@ async fn initialize_auth_state(
             .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
         let key = SigningKeyPair::from_pem(kid.clone(), algorithm, private_pem, public_pem)
-            .map_err(|e| anyhow::anyhow!("Failed to load JWT signing key from configuration: {}", e))?;
+            .map_err(|e| {
+                anyhow::anyhow!("Failed to load JWT signing key from configuration: {}", e)
+            })?;
         tracing::info!(
             algorithm = %algorithm,
             kid = %kid,
@@ -1784,10 +2077,8 @@ async fn initialize_auth_state(
                 SigningKeyPair::generate_rsa(algorithm)
                     .map_err(|e| anyhow::anyhow!("Failed to generate RSA signing key: {}", e))?
             }
-            SigningAlgorithm::ES384 => {
-                SigningKeyPair::generate_ec()
-                    .map_err(|e| anyhow::anyhow!("Failed to generate EC signing key: {}", e))?
-            }
+            SigningAlgorithm::ES384 => SigningKeyPair::generate_ec()
+                .map_err(|e| anyhow::anyhow!("Failed to generate EC signing key: {}", e))?,
         };
 
         tracing::warn!(
@@ -1808,13 +2099,11 @@ async fn initialize_auth_state(
     let revoked_token_storage = Arc::new(ArcRevokedTokenStorage::new(db_pool.clone()));
     let user_storage = Arc::new(ArcUserStorage::new(db_pool));
 
-    Ok(
-        AuthState::new(
-            jwt_service,
-            client_storage,
-            revoked_token_storage,
-            user_storage,
-        )
-        .with_cookie_config(cfg.auth.cookie.clone()),
+    Ok(AuthState::new(
+        jwt_service,
+        client_storage,
+        revoked_token_storage,
+        user_storage,
     )
+    .with_cookie_config(cfg.auth.cookie.clone()))
 }

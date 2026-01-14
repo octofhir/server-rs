@@ -59,9 +59,12 @@ pub async fn reconcile_subscriptions(
     for sub_id in manifest_ids.difference(&current_ids_ref) {
         let inline_sub = manifest_map[*sub_id];
         let app_sub = build_app_subscription(app_id, app_name, inline_sub)?;
-        let resource_json = serde_json::to_value(&app_sub)
-            .map_err(|e| ApiError::internal(format!("Failed to serialize AppSubscription: {}", e)))?;
-        storage.create(&resource_json).await
+        let resource_json = serde_json::to_value(&app_sub).map_err(|e| {
+            ApiError::internal(format!("Failed to serialize AppSubscription: {}", e))
+        })?;
+        storage
+            .create(&resource_json)
+            .await
             .map_err(|e| ApiError::internal(format!("Failed to create AppSubscription: {}", e)))?;
         result.created.push((*sub_id).clone());
     }
@@ -73,10 +76,12 @@ pub async fn reconcile_subscriptions(
 
         if needs_update(current_sub, inline_sub) {
             let app_sub = build_app_subscription(app_id, app_name, inline_sub)?;
-            let resource_json = serde_json::to_value(&app_sub)
-                .map_err(|e| ApiError::internal(format!("Failed to serialize AppSubscription: {}", e)))?;
-            storage.update(&resource_json, None).await
-                .map_err(|e| ApiError::internal(format!("Failed to update AppSubscription: {}", e)))?;
+            let resource_json = serde_json::to_value(&app_sub).map_err(|e| {
+                ApiError::internal(format!("Failed to serialize AppSubscription: {}", e))
+            })?;
+            storage.update(&resource_json, None).await.map_err(|e| {
+                ApiError::internal(format!("Failed to update AppSubscription: {}", e))
+            })?;
             result.updated.push((*sub_id).clone());
         }
     }
@@ -84,7 +89,9 @@ pub async fn reconcile_subscriptions(
     // 5. DELETE removed subscriptions
     for sub_id in current_ids_ref.difference(&manifest_ids) {
         let full_id = format!("{}-{}", app_id, sub_id);
-        storage.delete("AppSubscription", &full_id).await
+        storage
+            .delete("AppSubscription", &full_id)
+            .await
             .map_err(|e| ApiError::internal(format!("Failed to delete AppSubscription: {}", e)))?;
         result.deleted.push((*sub_id).clone());
     }
@@ -151,10 +158,7 @@ fn build_app_subscription(
 }
 
 /// Check if an AppSubscription needs to be updated based on InlineSubscription.
-fn needs_update(
-    current: &AppSubscription,
-    inline_sub: &InlineSubscription,
-) -> bool {
+fn needs_update(current: &AppSubscription, inline_sub: &InlineSubscription) -> bool {
     // Compare trigger, channel, and notification
     // Note: We use Debug format for comparison as a simple approach
     // In production, you might want to implement PartialEq for these types
@@ -214,10 +218,7 @@ mod tests {
 
         assert_eq!(app_sub.id, Some("test-app-test-sub".to_string()));
         assert_eq!(app_sub.resource_type, "AppSubscription");
-        assert_eq!(
-            app_sub.app.reference,
-            Some("App/test-app".to_string())
-        );
+        assert_eq!(app_sub.app.reference, Some("App/test-app".to_string()));
         assert_eq!(app_sub.app.display, Some("Test App".to_string()));
         assert_eq!(app_sub.trigger.resource_type, "Patient");
         assert_eq!(app_sub.active, true);

@@ -46,17 +46,19 @@ pub mod storage;
 pub mod token;
 pub mod types;
 
-pub use app_secret::{generate_app_secret, hash_app_secret, hash_password, verify_app_secret, verify_password};
+pub use app_secret::{
+    generate_app_secret, hash_app_secret, hash_password, verify_app_secret, verify_password,
+};
 pub use config::{AuthConfig, ConfigError};
 pub use error::{AuthError, ErrorCategory};
 pub use extractors::{BasicAuth, BasicAuthError, BasicAuthState};
 pub use http::{
     AuthorizeFormData, AuthorizeState, Bundle, BundleEntry, CreateLaunchRequest,
-    CreateLaunchResponse, IdpSearchParams, JwksState, LaunchState, LinkIdentityRequest, LogoutState,
-    OidcLogoutParams, SmartConfigState, TokenRevokedCallback, TokenState, UnlinkIdentityRequest,
-    UserInfoResponse, UserSearchParams, authorize_get, authorize_post, create_launch_handler,
-    introspect_handler, jwks_handler, logout_handler, oidc_logout_handler, revoke_handler,
-    smart_configuration_handler, token_handler, userinfo_handler,
+    CreateLaunchResponse, IdpSearchParams, JwksState, LaunchState, LinkIdentityRequest,
+    LogoutState, OidcLogoutParams, SmartConfigState, TokenRevokedCallback, TokenState,
+    UnlinkIdentityRequest, UserInfoResponse, UserSearchParams, authorize_get, authorize_post,
+    create_launch_handler, introspect_handler, jwks_handler, logout_handler, oidc_logout_handler,
+    revoke_handler, smart_configuration_handler, token_handler, userinfo_handler,
 };
 pub use middleware::{
     AdminAuth, AuthContext, AuthState, BearerAuth, OptionalBearerAuth, UserContext,
@@ -80,7 +82,9 @@ pub use storage::{
     LaunchContextStorage, PolicySearchParams, PolicyStorage, RefreshTokenStorage,
     RevokedTokenStorage, SessionStorage, SsoSessionStorage, User, UserConsent, UserStorage,
 };
-pub use types::{AppRecord, BasicAuthEntity, Client, ClientValidationError, GrantType, RefreshToken};
+pub use types::{
+    AppRecord, BasicAuthEntity, Client, ClientValidationError, GrantType, RefreshToken,
+};
 
 /// Type alias for authentication/authorization results.
 pub type AuthResult<T> = Result<T, AuthError>;

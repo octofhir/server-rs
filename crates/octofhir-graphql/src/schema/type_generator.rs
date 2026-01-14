@@ -225,9 +225,10 @@ impl FhirTypeGenerator {
         for elem in &elements {
             // If this element has a choice_of reference, record the base
             if let Some(choices) = self.get_choice_types(type_name, &elem.name).await
-                && !choices.is_empty() {
-                    choice_bases.insert(elem.name.clone());
-                }
+                && !choices.is_empty()
+            {
+                choice_bases.insert(elem.name.clone());
+            }
         }
 
         // Track if we added any fields

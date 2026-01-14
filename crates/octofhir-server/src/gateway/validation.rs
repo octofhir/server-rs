@@ -42,10 +42,7 @@ pub enum PathValidationError {
         operation_id: String,
     },
     /// Operation path conflicts with FHIR resource endpoint.
-    ReservedResourcePath {
-        path: String,
-        operation_id: String,
-    },
+    ReservedResourcePath { path: String, operation_id: String },
     /// Operation path conflicts with another App's operation.
     ConflictWithOtherApp {
         path: String,
@@ -335,21 +332,13 @@ mod tests {
         let app1 = make_app(
             "app1",
             "App One",
-            vec![make_op(
-                "op1",
-                HttpMethod::Post,
-                vec!["shared", "endpoint"],
-            )],
+            vec![make_op("op1", HttpMethod::Post, vec!["shared", "endpoint"])],
         );
 
         let app2 = make_app(
             "app2",
             "App Two",
-            vec![make_op(
-                "op2",
-                HttpMethod::Post,
-                vec!["shared", "endpoint"],
-            )],
+            vec![make_op("op2", HttpMethod::Post, vec!["shared", "endpoint"])],
         );
 
         let result = validate_app_operations(&app2, &[app1]);
@@ -370,21 +359,13 @@ mod tests {
         let app1 = make_app(
             "app1",
             "App One",
-            vec![make_op(
-                "op1",
-                HttpMethod::Get,
-                vec!["shared", "endpoint"],
-            )],
+            vec![make_op("op1", HttpMethod::Get, vec!["shared", "endpoint"])],
         );
 
         let app2 = make_app(
             "app2",
             "App Two",
-            vec![make_op(
-                "op2",
-                HttpMethod::Post,
-                vec!["shared", "endpoint"],
-            )],
+            vec![make_op("op2", HttpMethod::Post, vec!["shared", "endpoint"])],
         );
 
         let result = validate_app_operations(&app2, &[app1]);
@@ -435,22 +416,14 @@ mod tests {
         let mut inactive_app = make_app(
             "inactive",
             "Inactive App",
-            vec![make_op(
-                "op1",
-                HttpMethod::Post,
-                vec!["shared", "endpoint"],
-            )],
+            vec![make_op("op1", HttpMethod::Post, vec!["shared", "endpoint"])],
         );
         inactive_app.status = AppStatus::Inactive;
 
         let new_app = make_app(
             "new",
             "New App",
-            vec![make_op(
-                "op2",
-                HttpMethod::Post,
-                vec!["shared", "endpoint"],
-            )],
+            vec![make_op("op2", HttpMethod::Post, vec!["shared", "endpoint"])],
         );
 
         // Should not conflict with inactive app

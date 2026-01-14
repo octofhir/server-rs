@@ -192,19 +192,27 @@ pub const EMBEDDED_SOF_COMPAT_RESOURCES: &[(&str, &str)] = &[(
 pub const EMBEDDED_NOTIFICATIONS_RESOURCES: &[(&str, &str)] = &[
     (
         "StructureDefinition-NotificationProvider.json",
-        include_str!("../../../igs/octofhir-notifications/StructureDefinition-NotificationProvider.json"),
+        include_str!(
+            "../../../igs/octofhir-notifications/StructureDefinition-NotificationProvider.json"
+        ),
     ),
     (
         "StructureDefinition-NotificationTemplate.json",
-        include_str!("../../../igs/octofhir-notifications/StructureDefinition-NotificationTemplate.json"),
+        include_str!(
+            "../../../igs/octofhir-notifications/StructureDefinition-NotificationTemplate.json"
+        ),
     ),
     (
         "StructureDefinition-NotificationLog.json",
-        include_str!("../../../igs/octofhir-notifications/StructureDefinition-NotificationLog.json"),
+        include_str!(
+            "../../../igs/octofhir-notifications/StructureDefinition-NotificationLog.json"
+        ),
     ),
     (
         "CodeSystem-notification-provider-types.json",
-        include_str!("../../../igs/octofhir-notifications/CodeSystem-notification-provider-types.json"),
+        include_str!(
+            "../../../igs/octofhir-notifications/CodeSystem-notification-provider-types.json"
+        ),
     ),
     (
         "CodeSystem-notification-status.json",
@@ -212,13 +220,22 @@ pub const EMBEDDED_NOTIFICATIONS_RESOURCES: &[(&str, &str)] = &[
     ),
     (
         "ValueSet-notification-provider-types.json",
-        include_str!("../../../igs/octofhir-notifications/ValueSet-notification-provider-types.json"),
+        include_str!(
+            "../../../igs/octofhir-notifications/ValueSet-notification-provider-types.json"
+        ),
     ),
     (
         "ValueSet-notification-status.json",
         include_str!("../../../igs/octofhir-notifications/ValueSet-notification-status.json"),
     ),
 ];
+
+/// Embedded octofhir-subscription IG resources
+/// SubscriptionTopic backport for R4/R4B servers (R5+ has native support)
+pub const EMBEDDED_SUBSCRIPTION_RESOURCES: &[(&str, &str)] = &[(
+    "StructureDefinition-SubscriptionTopic.json",
+    include_str!("../../../igs/octofhir-subscription/StructureDefinition-SubscriptionTopic.json"),
+)];
 
 /// Bootstraps admin user from configuration.
 ///
@@ -672,7 +689,10 @@ pub async fn bootstrap_operations(
     pool: &PgPool,
     storage: &DynStorage,
     config: &AppConfig,
-) -> Result<(Arc<OperationRegistryService>, Arc<GatewayOperationProvider>), Box<dyn std::error::Error>> {
+) -> Result<
+    (Arc<OperationRegistryService>, Arc<GatewayOperationProvider>),
+    Box<dyn std::error::Error>,
+> {
     info!("Bootstrapping operations registry");
 
     // Create storage adapter
@@ -682,7 +702,7 @@ pub async fn bootstrap_operations(
     let gateway_provider = Arc::new(
         GatewayOperationProvider::new(storage)
             .await
-            .map_err(|e| format!("Failed to create gateway provider: {}", e))?
+            .map_err(|e| format!("Failed to create gateway provider: {}", e))?,
     );
 
     // Collect operation providers based on enabled modules
@@ -712,7 +732,9 @@ pub async fn bootstrap_operations(
     providers.push(gateway_provider.clone());
 
     // Create registry service
-    let registry = Arc::new(OperationRegistryService::with_providers(op_storage, providers));
+    let registry = Arc::new(OperationRegistryService::with_providers(
+        op_storage, providers,
+    ));
 
     // Sync operations to database (also rebuilds in-memory indexes)
     let count = registry

@@ -2,8 +2,8 @@
 
 use async_trait::async_trait;
 
-use crate::types::BasicAuthEntity;
 use crate::AuthResult;
+use crate::types::BasicAuthEntity;
 
 /// Storage operations for Basic Auth (Client or App).
 ///
@@ -32,5 +32,9 @@ pub trait BasicAuthStorage: Send + Sync {
     /// # Errors
     ///
     /// Returns an error if the storage operation fails.
-    async fn authenticate(&self, entity_id: &str, secret: &str) -> AuthResult<Option<BasicAuthEntity>>;
+    async fn authenticate(
+        &self,
+        entity_id: &str,
+        secret: &str,
+    ) -> AuthResult<Option<BasicAuthEntity>>;
 }

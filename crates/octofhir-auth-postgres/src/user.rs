@@ -253,7 +253,11 @@ impl<'a> UserStorage<'a> {
     /// # Errors
     ///
     /// Returns an error if the database insert fails.
-    pub async fn create_str(&self, id: &str, resource: serde_json::Value) -> StorageResult<UserRow> {
+    pub async fn create_str(
+        &self,
+        id: &str,
+        resource: serde_json::Value,
+    ) -> StorageResult<UserRow> {
         let id_str = id;
         let row: (
             String,
@@ -299,7 +303,11 @@ impl<'a> UserStorage<'a> {
     /// # Errors
     ///
     /// Returns an error if the user doesn't exist or the database update fails.
-    pub async fn update_str(&self, id: &str, resource: serde_json::Value) -> StorageResult<UserRow> {
+    pub async fn update_str(
+        &self,
+        id: &str,
+        resource: serde_json::Value,
+    ) -> StorageResult<UserRow> {
         let row: Option<(
             String,
             i64,
@@ -480,5 +488,4 @@ impl<'a> UserStorage<'a> {
 
         Ok(count.0)
     }
-
 }

@@ -125,11 +125,11 @@ impl Default for AsyncJobConfig {
 /// Takes job ID and request details and returns result or error
 pub type JobExecutor = Arc<
     dyn Fn(
-            Uuid,                        // job_id
-            String,                      // request_type
-            String,                      // method
-            String,                      // url
-            Option<serde_json::Value>,   // body
+            Uuid,                      // job_id
+            String,                    // request_type
+            String,                    // method
+            String,                    // url
+            Option<serde_json::Value>, // body
         ) -> std::pin::Pin<
             Box<dyn std::future::Future<Output = Result<serde_json::Value, String>> + Send>,
         > + Send

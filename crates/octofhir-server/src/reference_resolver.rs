@@ -4,7 +4,7 @@
 //! whether referenced resources exist in the FHIR storage.
 
 use async_trait::async_trait;
-use octofhir_core::fhir_reference::{parse_reference, FhirReference};
+use octofhir_core::fhir_reference::{FhirReference, parse_reference};
 use octofhir_fhirschema::reference::{
     ReferenceError, ReferenceResolutionResult, ReferenceResolver, ReferenceResult,
 };

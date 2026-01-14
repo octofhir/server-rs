@@ -104,7 +104,6 @@ audit:
 # k6 Load Testing
 # =============================================================================
 
-
 flame:
     CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph --release --bin octofhir-server -o ./flamegraph.svg --post-process 'head -200000'
 
@@ -118,40 +117,68 @@ K6_CLIENT_ID := "k6-test"
 k6-setup:
    bun run scripts/k6-setup.ts
 
-# Run k6 CRUD test (single iteration for validation)
-k6-crud-test:
+# =============================================================================
+# Performance Benchmarks (k6/)
+# =============================================================================
+
+# Run all benchmarks
+bench-all: bench-crud bench-search bench-transaction bench-concurrent
+
+# Run CRUD benchmark (3 min, 100 VUs)
+bench-crud:
+    @mkdir -p benchmark-results
     AUTH_USER={{K6_AUTH_USER}} AUTH_PASSWORD={{K6_AUTH_PASSWORD}} \
     BASE_URL={{K6_BASE_URL}} CLIENT_ID={{K6_CLIENT_ID}} \
     CLIENT_SECRET=$(cat .k6-secret) \
-    k6 run --iterations 1 --vus 1 k6-private/crud.js
+    k6 run k6/benchmarks/crud.js
 
-# Run k6 search test (single iteration for validation)
-k6-search-test:
+# Run search benchmark (6 min total: 3 min seed + 3 min search)
+bench-search:
+    @mkdir -p benchmark-results
     AUTH_USER={{K6_AUTH_USER}} AUTH_PASSWORD={{K6_AUTH_PASSWORD}} \
     BASE_URL={{K6_BASE_URL}} CLIENT_ID={{K6_CLIENT_ID}} \
     CLIENT_SECRET=$(cat .k6-secret) \
-    k6 run --iterations 1 --vus 1 k6-private/search.js
+    k6 run k6/benchmarks/search.js
 
-# Run k6 CRUD load test (5 minutes, 300 VUs)
-k6-crud-load:
+# Run transaction/batch benchmark (7 min, varying VUs)
+bench-transaction:
+    @mkdir -p benchmark-results
     AUTH_USER={{K6_AUTH_USER}} AUTH_PASSWORD={{K6_AUTH_PASSWORD}} \
     BASE_URL={{K6_BASE_URL}} CLIENT_ID={{K6_CLIENT_ID}} \
     CLIENT_SECRET=$(cat .k6-secret) \
-    k6 run k6-private/crud.js
+    k6 run k6/benchmarks/transaction.js
 
-# Run k6 search load test (5 minutes, 10 VUs)
-k6-search-load:
+# Run concurrent users benchmark (8 min, 10-300 VUs ramp)
+bench-concurrent:
+    @mkdir -p benchmark-results
     AUTH_USER={{K6_AUTH_USER}} AUTH_PASSWORD={{K6_AUTH_PASSWORD}} \
     BASE_URL={{K6_BASE_URL}} CLIENT_ID={{K6_CLIENT_ID}} \
     CLIENT_SECRET=$(cat .k6-secret) \
-    k6 run k6-private/search.js
+    k6 run k6/benchmarks/concurrent.js
 
-# Run k6 import test (requires BUNDLE_URL)
-k6-import bundle_url:
+# Run bulk export benchmark (15 min)
+bench-bulk:
+    @mkdir -p benchmark-results
     AUTH_USER={{K6_AUTH_USER}} AUTH_PASSWORD={{K6_AUTH_PASSWORD}} \
     BASE_URL={{K6_BASE_URL}} CLIENT_ID={{K6_CLIENT_ID}} \
-    CLIENT_SECRET=$(cat .k6-secret) BUNDLE_URL={{bundle_url}} \
-    k6 run k6-private/import.js
+    CLIENT_SECRET=$(cat .k6-secret) \
+    k6 run k6/benchmarks/bulk.js
+
+# Quick benchmark validation (single iteration, no thresholds)
+bench-validate:
+    @mkdir -p benchmark-results
+    AUTH_USER={{K6_AUTH_USER}} AUTH_PASSWORD={{K6_AUTH_PASSWORD}} \
+    BASE_URL={{K6_BASE_URL}} CLIENT_ID={{K6_CLIENT_ID}} \
+    CLIENT_SECRET=$(cat .k6-secret) \
+    k6 run --iterations 1 --vus 1 --no-thresholds k6/benchmarks/crud.js
+
+# Verbose benchmark validation with HTTP debug
+bench-validate-verbose:
+    @mkdir -p benchmark-results
+    AUTH_USER={{K6_AUTH_USER}} AUTH_PASSWORD={{K6_AUTH_PASSWORD}} \
+    BASE_URL={{K6_BASE_URL}} CLIENT_ID={{K6_CLIENT_ID}} \
+    CLIENT_SECRET=$(cat .k6-secret) \
+    k6 run --iterations 1 --vus 1 --no-thresholds --http-debug=full k6/benchmarks/crud.js
 
 # =============================================================================
 # Docker Commands (GitHub Container Registry)

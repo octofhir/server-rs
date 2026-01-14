@@ -128,6 +128,37 @@ impl OperationOutcome {
             }],
         }
     }
+
+    /// Create an OperationOutcome with multiple warning issues.
+    ///
+    /// Useful for search responses where multiple parameters were ignored.
+    pub fn warnings(messages: Vec<String>) -> Self {
+        Self {
+            resource_type: "OperationOutcome",
+            issue: messages
+                .into_iter()
+                .map(|msg| OperationOutcomeIssue {
+                    severity: "warning",
+                    code: "not-supported",
+                    diagnostics: Some(msg),
+                })
+                .collect(),
+        }
+    }
+
+    /// Create a warning for unknown search parameters.
+    pub fn unknown_params_warning(param_names: &[String]) -> Self {
+        let messages: Vec<String> = param_names
+            .iter()
+            .map(|name| format!("Unknown search parameter '{}' was ignored", name))
+            .collect();
+        Self::warnings(messages)
+    }
+
+    /// Check if this outcome has any issues.
+    pub fn has_issues(&self) -> bool {
+        !self.issue.is_empty()
+    }
 }
 
 /// High-level API errors to be mapped to HTTP responses and FHIR OperationOutcome
@@ -879,7 +910,88 @@ pub fn bundle_from_search_raw(
 
     // Add included entries
     for inc in included {
-        let full_url = Some(join_url(base_url, &format!("{}/{}", inc.resource_type, inc.id)));
+        let full_url = Some(join_url(
+            base_url,
+            &format!("{}/{}", inc.resource_type, inc.id),
+        ));
+        entries.push(BundleEntry {
+            full_url,
+            resource: Some(inc.resource),
+            search: Some(BundleEntrySearch {
+                mode: "include".to_string(),
+                score: None,
+            }),
+            request: None,
+            response: None,
+        });
+    }
+
+    let links = build_search_links(total, base_url, resource_type, offset, count, query_suffix);
+    Bundle::searchset(total as u64, entries, links)
+}
+
+/// Create a search bundle from raw JSON resources with optional warnings.
+///
+/// Similar to `bundle_from_search_raw` but allows including an OperationOutcome
+/// entry at the beginning of the bundle to communicate warnings (e.g., unknown
+/// parameters that were ignored in lenient mode).
+///
+/// According to FHIR spec, the OperationOutcome is added as the first entry
+/// with search mode "outcome".
+#[allow(clippy::too_many_arguments)]
+pub fn bundle_from_search_raw_with_warnings(
+    total: usize,
+    resources: Vec<RawJson>,
+    resource_ids: Vec<String>,
+    included: Vec<RawIncludedEntry>,
+    base_url: &str,
+    resource_type: &str,
+    offset: usize,
+    count: usize,
+    query_suffix: Option<&str>,
+    warnings: Option<OperationOutcome>,
+) -> Bundle {
+    let mut entries = Vec::with_capacity(resources.len() + included.len() + 1);
+
+    // Add OperationOutcome as first entry if there are warnings
+    if let Some(outcome) = warnings {
+        if outcome.has_issues() {
+            let outcome_json =
+                serde_json::to_value(&outcome).expect("OperationOutcome should always serialize");
+            entries.push(BundleEntry {
+                full_url: None,
+                resource: Some(RawJson::from(outcome_json)),
+                search: Some(BundleEntrySearch {
+                    mode: "outcome".to_string(),
+                    score: None,
+                }),
+                request: None,
+                response: None,
+            });
+        }
+    }
+
+    // Add main match entries
+    for (res, id) in resources.into_iter().zip(resource_ids.into_iter()) {
+        let full_url = Some(join_url(base_url, &format!("{resource_type}/{id}")));
+        entries.push(BundleEntry {
+            full_url,
+            resource: Some(res),
+            search: Some(BundleEntrySearch {
+                mode: "match".to_string(),
+                score: None,
+            }),
+            request: None,
+            response: None,
+        });
+    }
+
+    // Add included entries
+    for inc in included {
+        let full_url = Some(join_url(
+            base_url,
+            &format!("{}/{}", inc.resource_type, inc.id),
+        ));
         entries.push(BundleEntry {
             full_url,
             resource: Some(inc.resource),

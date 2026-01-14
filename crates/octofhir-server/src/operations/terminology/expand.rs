@@ -12,6 +12,7 @@
 
 use async_trait::async_trait;
 use chrono::Utc;
+use regex::RegexBuilder;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::HashSet;
@@ -19,6 +20,16 @@ use std::collections::HashSet;
 use crate::canonical::get_manager;
 use crate::operations::{OperationError, OperationHandler};
 use crate::server::AppState;
+
+// ===== Hardening Constants =====
+/// Maximum number of codes to return in a single expansion
+const MAX_EXPANSION_COUNT: usize = 10_000;
+/// Maximum recursion depth for concept hierarchy traversal
+const MAX_RECURSION_DEPTH: usize = 100;
+/// Maximum length of user-provided regex patterns
+const MAX_REGEX_LENGTH: usize = 1000;
+/// Maximum offset value for pagination
+const MAX_OFFSET: usize = 1_000_000;
 
 /// Parameters for the $expand operation.
 #[derive(Debug, Default, Deserialize)]
@@ -74,6 +85,47 @@ pub struct ExpansionCode {
     pub designation: Vec<Value>,
 }
 
+/// Context for tracking expansion state (cycle detection)
+#[derive(Debug, Default)]
+struct ExpansionContext {
+    /// URLs of ValueSets that have been visited (for cycle detection)
+    visited_valuesets: HashSet<String>,
+}
+
+impl ExpansionContext {
+    fn new() -> Self {
+        Self::default()
+    }
+
+    /// Check and record a ValueSet URL, returns error if cycle detected
+    fn visit_valueset(&mut self, url: &str) -> Result<(), OperationError> {
+        if self.visited_valuesets.contains(url) {
+            return Err(OperationError::InvalidParameters(format!(
+                "Circular ValueSet reference detected: {}",
+                url
+            )));
+        }
+        self.visited_valuesets.insert(url.to_string());
+        Ok(())
+    }
+}
+
+/// Safely compile a regex with size limits to prevent DoS attacks.
+fn safe_regex_compile(pattern: &str) -> Result<regex::Regex, OperationError> {
+    if pattern.len() > MAX_REGEX_LENGTH {
+        return Err(OperationError::InvalidParameters(format!(
+            "Regex pattern exceeds maximum length of {} characters",
+            MAX_REGEX_LENGTH
+        )));
+    }
+
+    RegexBuilder::new(pattern)
+        .size_limit(10 * (1 << 20)) // 10MB compiled size limit
+        .dfa_size_limit(10 * (1 << 20))
+        .build()
+        .map_err(|e| OperationError::InvalidParameters(format!("Invalid regex pattern: {}", e)))
+}
+
 /// The $expand operation handler.
 pub struct ExpandOperation;
 
@@ -94,8 +146,10 @@ impl ExpandOperation {
                     let name = param.get("name").and_then(|v| v.as_str()).unwrap_or("");
                     match name {
                         "url" => {
-                            expand_params.url =
-                                param.get("valueUri").and_then(|v| v.as_str()).map(String::from);
+                            expand_params.url = param
+                                .get("valueUri")
+                                .and_then(|v| v.as_str())
+                                .map(String::from);
                         }
                         "valueSetVersion" => {
                             expand_params.value_set_version = param
@@ -113,13 +167,16 @@ impl ExpandOperation {
                             expand_params.offset = param
                                 .get("valueInteger")
                                 .and_then(|v| v.as_i64())
-                                .unwrap_or(0) as usize;
+                                .map(|v| v.max(0) as usize) // Clamp negative to 0
+                                .map(|v| v.min(MAX_OFFSET)) // Cap at maximum
+                                .unwrap_or(0);
                         }
                         "count" => {
                             expand_params.count = param
                                 .get("valueInteger")
                                 .and_then(|v| v.as_i64())
-                                .map(|v| v as usize);
+                                .map(|v| v.max(1) as usize) // At least 1
+                                .map(|v| v.min(MAX_EXPANSION_COUNT)); // Cap at maximum
                         }
                         "includeDesignations" => {
                             expand_params.include_designations = param
@@ -177,7 +234,9 @@ impl ExpandOperation {
             .limit(10)
             .execute()
             .await
-            .map_err(|e| OperationError::Internal(format!("Failed to search for ValueSet: {}", e)))?;
+            .map_err(|e| {
+                OperationError::Internal(format!("Failed to search for ValueSet: {}", e))
+            })?;
 
         // Filter to exact URL match (canonical_pattern might match partial)
         search_result
@@ -185,7 +244,9 @@ impl ExpandOperation {
             .into_iter()
             .find(|r| r.resource.content.get("url").and_then(|v| v.as_str()) == Some(url))
             .map(|r| r.resource.content)
-            .ok_or_else(|| OperationError::NotFound(format!("ValueSet with url '{}' not found", url)))
+            .ok_or_else(|| {
+                OperationError::NotFound(format!("ValueSet with url '{}' not found", url))
+            })
     }
 
     /// Load a ValueSet by ID from storage.
@@ -239,6 +300,25 @@ impl ExpandOperation {
         value_set: &Value,
         params: &ExpandParams,
     ) -> Result<Value, OperationError> {
+        // Initialize expansion context for cycle detection
+        let mut ctx = ExpansionContext::new();
+
+        // Track the current ValueSet URL if present
+        if let Some(url) = value_set.get("url").and_then(|v| v.as_str()) {
+            ctx.visit_valueset(url)?;
+        }
+
+        self.expand_value_set_with_context(value_set, params, &mut ctx)
+            .await
+    }
+
+    /// Internal expansion with context for cycle detection.
+    async fn expand_value_set_with_context(
+        &self,
+        value_set: &Value,
+        params: &ExpandParams,
+        ctx: &mut ExpansionContext,
+    ) -> Result<Value, OperationError> {
         let mut codes: Vec<ExpansionCode> = Vec::new();
         let mut excluded_codes: HashSet<(String, String)> = HashSet::new();
 
@@ -254,8 +334,14 @@ impl ExpandOperation {
             // Process compose.include
             if let Some(includes) = compose.get("include").and_then(|v| v.as_array()) {
                 for include in includes {
-                    self.process_include(include, &excluded_codes, &mut codes, params)
-                        .await?;
+                    self.process_include_with_context(
+                        include,
+                        &excluded_codes,
+                        &mut codes,
+                        params,
+                        ctx,
+                    )
+                    .await?;
                 }
             }
         }
@@ -293,18 +379,16 @@ impl ExpandOperation {
         Ok(response)
     }
 
-    /// Process a compose.include element to gather codes.
-    async fn process_include(
+    /// Process a compose.include element to gather codes (with cycle detection).
+    async fn process_include_with_context(
         &self,
         include: &Value,
         excluded: &HashSet<(String, String)>,
         codes: &mut Vec<ExpansionCode>,
         params: &ExpandParams,
+        ctx: &mut ExpansionContext,
     ) -> Result<(), OperationError> {
-        let system = include
-            .get("system")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let system = include.get("system").and_then(|v| v.as_str()).unwrap_or("");
         let version = include.get("version").and_then(|v| v.as_str());
 
         // If concept list is provided, use those directly
@@ -320,9 +404,10 @@ impl ExpandOperation {
 
                 let mut designations = Vec::new();
                 if params.include_designations
-                    && let Some(desigs) = concept.get("designation").and_then(|v| v.as_array()) {
-                        designations = desigs.clone();
-                    }
+                    && let Some(desigs) = concept.get("designation").and_then(|v| v.as_array())
+                {
+                    designations = desigs.clone();
+                }
 
                 codes.push(ExpansionCode {
                     system: system.to_string(),
@@ -342,56 +427,62 @@ impl ExpandOperation {
                 .await?;
         }
 
-        // Process valueSet references (import from other ValueSets)
+        // Process valueSet references (import from other ValueSets) with cycle detection
         if let Some(value_sets) = include.get("valueSet").and_then(|v| v.as_array()) {
             for vs_url in value_sets {
                 if let Some(url) = vs_url.as_str() {
+                    // Check for circular reference
+                    ctx.visit_valueset(url)?;
+
                     match Self::resolve_value_set_by_url(url).await {
                         Ok(imported_vs) => {
-                            // Recursively expand the imported ValueSet using Box::pin
-                            // Note: In production, we'd want cycle detection here
+                            // Recursively expand the imported ValueSet with cycle detection
                             let sub_params = ExpandParams {
                                 include_designations: params.include_designations,
                                 include_definition: params.include_definition,
                                 active_only: params.active_only,
                                 ..Default::default()
                             };
-                            let expanded_result = Box::pin(self.expand_value_set(&imported_vs, &sub_params)).await;
+                            let expanded_result = Box::pin(self.expand_value_set_with_context(
+                                &imported_vs,
+                                &sub_params,
+                                ctx,
+                            ))
+                            .await;
                             if let Ok(expanded) = expanded_result
                                 && let Some(expansion) = expanded.get("expansion")
-                                    && let Some(contains) =
-                                        expansion.get("contains").and_then(|v| v.as_array())
-                                    {
-                                        for contained in contains {
-                                            let sys = contained
-                                                .get("system")
-                                                .and_then(|v| v.as_str())
-                                                .unwrap_or("");
-                                            let code = contained
-                                                .get("code")
-                                                .and_then(|v| v.as_str())
-                                                .unwrap_or("");
+                                && let Some(contains) =
+                                    expansion.get("contains").and_then(|v| v.as_array())
+                            {
+                                for contained in contains {
+                                    let sys = contained
+                                        .get("system")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("");
+                                    let code = contained
+                                        .get("code")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("");
 
-                                            if excluded.contains(&(sys.to_string(), code.to_string()))
-                                            {
-                                                continue;
-                                            }
-
-                                            codes.push(ExpansionCode {
-                                                system: sys.to_string(),
-                                                code: code.to_string(),
-                                                display: contained
-                                                    .get("display")
-                                                    .and_then(|v| v.as_str())
-                                                    .map(String::from),
-                                                version: contained
-                                                    .get("version")
-                                                    .and_then(|v| v.as_str())
-                                                    .map(String::from),
-                                                designation: Vec::new(),
-                                            });
-                                        }
+                                    if excluded.contains(&(sys.to_string(), code.to_string())) {
+                                        continue;
                                     }
+
+                                    codes.push(ExpansionCode {
+                                        system: sys.to_string(),
+                                        code: code.to_string(),
+                                        display: contained
+                                            .get("display")
+                                            .and_then(|v| v.as_str())
+                                            .map(String::from),
+                                        version: contained
+                                            .get("version")
+                                            .and_then(|v| v.as_str())
+                                            .map(String::from),
+                                        designation: Vec::new(),
+                                    });
+                                }
+                            }
                         }
                         Err(e) => {
                             tracing::warn!(url = %url, error = %e, "Failed to import ValueSet");
@@ -435,9 +526,10 @@ impl ExpandOperation {
 
                 let mut designations = Vec::new();
                 if params.include_designations
-                    && let Some(desigs) = concept.get("designation").and_then(|v| v.as_array()) {
-                        designations = desigs.clone();
-                    }
+                    && let Some(desigs) = concept.get("designation").and_then(|v| v.as_array())
+                {
+                    designations = desigs.clone();
+                }
 
                 codes.push(ExpansionCode {
                     system: system.to_string(),
@@ -453,12 +545,8 @@ impl ExpandOperation {
                 // Include nested concepts if not excluded
                 if !params.exclude_nested {
                     self.collect_nested_concepts(
-                        concept,
-                        system,
-                        version,
-                        excluded,
-                        codes,
-                        params,
+                        concept, system, version, excluded, codes, params,
+                        1, // Start at depth 1 since we're already one level deep
                     );
                 }
             }
@@ -485,13 +573,13 @@ impl ExpandOperation {
             .unwrap_or_default();
 
         for concept in &concepts {
-            self.collect_concept_and_children(concept, system, version, excluded, codes, params);
+            self.collect_concept_and_children(concept, system, version, excluded, codes, params, 0);
         }
 
         Ok(())
     }
 
-    /// Recursively collect a concept and its children.
+    /// Recursively collect a concept and its children with depth limiting.
     fn collect_concept_and_children(
         &self,
         concept: &Value,
@@ -500,15 +588,27 @@ impl ExpandOperation {
         excluded: &HashSet<(String, String)>,
         codes: &mut Vec<ExpansionCode>,
         params: &ExpandParams,
+        depth: usize,
     ) {
+        // Guard against excessive recursion depth
+        if depth > MAX_RECURSION_DEPTH {
+            tracing::warn!(
+                depth = depth,
+                system = %system,
+                "Maximum recursion depth exceeded in concept hierarchy traversal"
+            );
+            return;
+        }
+
         let code = concept.get("code").and_then(|v| v.as_str()).unwrap_or("");
 
         if !excluded.contains(&(system.to_string(), code.to_string())) {
             let mut designations = Vec::new();
             if params.include_designations
-                && let Some(desigs) = concept.get("designation").and_then(|v| v.as_array()) {
-                    designations = desigs.clone();
-                }
+                && let Some(desigs) = concept.get("designation").and_then(|v| v.as_array())
+            {
+                designations = desigs.clone();
+            }
 
             codes.push(ExpansionCode {
                 system: system.to_string(),
@@ -524,16 +624,23 @@ impl ExpandOperation {
 
         // Process children if not excluding nested
         if !params.exclude_nested
-            && let Some(children) = concept.get("concept").and_then(|v| v.as_array()) {
-                for child in children {
-                    self.collect_concept_and_children(
-                        child, system, version, excluded, codes, params,
-                    );
-                }
+            && let Some(children) = concept.get("concept").and_then(|v| v.as_array())
+        {
+            for child in children {
+                self.collect_concept_and_children(
+                    child,
+                    system,
+                    version,
+                    excluded,
+                    codes,
+                    params,
+                    depth + 1,
+                );
             }
+        }
     }
 
-    /// Collect nested concepts from a parent concept.
+    /// Collect nested concepts from a parent concept with depth limiting.
     fn collect_nested_concepts(
         &self,
         concept: &Value,
@@ -542,10 +649,13 @@ impl ExpandOperation {
         excluded: &HashSet<(String, String)>,
         codes: &mut Vec<ExpansionCode>,
         params: &ExpandParams,
+        depth: usize,
     ) {
         if let Some(children) = concept.get("concept").and_then(|v| v.as_array()) {
             for child in children {
-                self.collect_concept_and_children(child, system, version, excluded, codes, params);
+                self.collect_concept_and_children(
+                    child, system, version, excluded, codes, params, depth,
+                );
             }
         }
     }
@@ -590,7 +700,8 @@ impl ExpandOperation {
                                         if let Some(prop_val) =
                                             p.get("value").and_then(|v| v.as_str())
                                         {
-                                            regex::Regex::new(value)
+                                            // Use safe regex compilation with size limits
+                                            safe_regex_compile(value)
                                                 .map(|re| re.is_match(prop_val))
                                                 .unwrap_or(false)
                                         } else {
@@ -625,9 +736,10 @@ impl ExpandOperation {
         if let Some(props) = concept.get("property").and_then(|v| v.as_array()) {
             for prop in props {
                 if prop.get("code").and_then(|v| v.as_str()) == Some("parent")
-                    && prop.get("valueCode").and_then(|v| v.as_str()) == Some(ancestor_code) {
-                        return true;
-                    }
+                    && prop.get("valueCode").and_then(|v| v.as_str()) == Some(ancestor_code)
+                {
+                    return true;
+                }
             }
         }
 
@@ -645,9 +757,10 @@ impl ExpandOperation {
         if let Some(props) = concept.get("property").and_then(|v| v.as_array()) {
             for prop in props {
                 if prop.get("code").and_then(|v| v.as_str()) == Some("parent")
-                    && prop.get("valueCode").and_then(|v| v.as_str()) == Some(ancestor_code) {
-                        return true;
-                    }
+                    && prop.get("valueCode").and_then(|v| v.as_str()) == Some(ancestor_code)
+                {
+                    return true;
+                }
             }
         }
 
@@ -703,10 +816,7 @@ impl ExpandOperation {
         excluded: &mut HashSet<(String, String)>,
         _is_exclude: bool,
     ) {
-        let system = element
-            .get("system")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let system = element.get("system").and_then(|v| v.as_str()).unwrap_or("");
 
         if let Some(concepts) = element.get("concept").and_then(|v| v.as_array()) {
             for concept in concepts {

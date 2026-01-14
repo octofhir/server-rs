@@ -55,10 +55,7 @@ impl<'a> AuthorizeSessionStorage<'a> {
     /// Find a session by ID.
     ///
     /// Returns None if not found or expired.
-    pub async fn find_by_id(
-        &self,
-        id: Uuid,
-    ) -> StorageResult<Option<AuthorizeSessionRow>> {
+    pub async fn find_by_id(&self, id: Uuid) -> StorageResult<Option<AuthorizeSessionRow>> {
         let row: Option<(
             Uuid,
             Option<String>,

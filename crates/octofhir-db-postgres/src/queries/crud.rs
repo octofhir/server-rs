@@ -299,16 +299,24 @@ pub async fn update(
         )
     };
 
-    let row: Option<(String, i64, DateTime<Utc>, DateTime<Utc>, Value, i64)> = query_as(&update_sql)
-        .bind(id)
-        .bind(&resource)
-        .bind(now)
-        .fetch_optional(pool)
-        .await
-        .map_err(|e| StorageError::internal(format!("Failed to update resource: {e}")))?;
+    let row: Option<(String, i64, DateTime<Utc>, DateTime<Utc>, Value, i64)> =
+        query_as(&update_sql)
+            .bind(id)
+            .bind(&resource)
+            .bind(now)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| StorageError::internal(format!("Failed to update resource: {e}")))?;
 
     match row {
-        Some((_returned_id, returned_txid, created_at, updated_at, updated_resource, _old_txid)) => {
+        Some((
+            _returned_id,
+            returned_txid,
+            created_at,
+            updated_at,
+            updated_resource,
+            _old_txid,
+        )) => {
             let created_at_time = chrono_to_time(created_at);
             let updated_at_time = chrono_to_time(updated_at);
             Ok(StoredResource {
@@ -330,7 +338,9 @@ pub async fn update(
                     .bind(id)
                     .fetch_optional(pool)
                     .await
-                    .map_err(|e| StorageError::internal(format!("Failed to check resource: {e}")))?;
+                    .map_err(|e| {
+                        StorageError::internal(format!("Failed to check resource: {e}"))
+                    })?;
 
                 match current {
                     Some(v) => Err(StorageError::version_conflict(

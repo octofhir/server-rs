@@ -150,16 +150,18 @@ fn resolve_config_path() -> (String, ConfigSource) {
     let mut args = env::args().skip(1);
     while let Some(arg) = args.next() {
         if arg == "--config"
-            && let Some(path) = args.next() {
-                return (path, ConfigSource::CliArgument);
-            }
+            && let Some(path) = args.next()
+        {
+            return (path, ConfigSource::CliArgument);
+        }
     }
 
     // 2. Check environment variable
     if let Ok(path) = env::var("OCTOFHIR_CONFIG")
-        && !path.is_empty() {
-            return (path, ConfigSource::EnvironmentVariable);
-        }
+        && !path.is_empty()
+    {
+        return (path, ConfigSource::EnvironmentVariable);
+    }
 
     // 3. Default to octofhir.toml
     ("octofhir.toml".to_string(), ConfigSource::Default)

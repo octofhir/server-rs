@@ -46,12 +46,18 @@ fn test_patient_demographics_view() {
     let sql = generate_sql(view);
 
     assert!(sql.contains("SELECT"), "SQL should have SELECT");
-    assert!(sql.contains("FROM patient"), "SQL should query patient table");
+    assert!(
+        sql.contains("FROM patient"),
+        "SQL should query patient table"
+    );
     assert!(sql.contains("base.id"), "SQL should select id");
     assert!(sql.contains("gender"), "SQL should select gender");
     assert!(sql.contains("birthDate"), "SQL should select birthDate");
     assert!(sql.contains("::date"), "SQL should cast birthDate to date");
-    assert!(sql.contains("::boolean"), "SQL should cast active to boolean");
+    assert!(
+        sql.contains("::boolean"),
+        "SQL should cast active to boolean"
+    );
 }
 
 #[test]
@@ -74,9 +80,18 @@ fn test_patient_name_expansion() {
 
     let sql = generate_sql(view);
 
-    assert!(sql.contains("CROSS JOIN LATERAL"), "SQL should use LATERAL join for forEach");
-    assert!(sql.contains("jsonb_array_elements"), "SQL should expand array");
-    assert!(sql.contains("string_agg"), "SQL should use string_agg for join()");
+    assert!(
+        sql.contains("CROSS JOIN LATERAL"),
+        "SQL should use LATERAL join for forEach"
+    );
+    assert!(
+        sql.contains("jsonb_array_elements"),
+        "SQL should expand array"
+    );
+    assert!(
+        sql.contains("string_agg"),
+        "SQL should use string_agg for join()"
+    );
 }
 
 #[test]
@@ -97,7 +112,10 @@ fn test_patient_name_with_filter() {
 
     let sql = generate_sql(view);
 
-    assert!(sql.contains("jsonb_agg"), "SQL should use jsonb_agg for where()");
+    assert!(
+        sql.contains("jsonb_agg"),
+        "SQL should use jsonb_agg for where()"
+    );
     assert!(sql.contains("->0"), "SQL should use ->0 for first()");
     assert!(sql.contains("official"), "SQL should filter by 'official'");
 }
@@ -121,8 +139,14 @@ fn test_for_each_or_null() {
 
     let sql = generate_sql(view);
 
-    assert!(sql.contains("LEFT JOIN LATERAL"), "SQL should use LEFT JOIN for forEachOrNull");
-    assert!(sql.contains("ON true"), "SQL should have ON true for LEFT JOIN LATERAL");
+    assert!(
+        sql.contains("LEFT JOIN LATERAL"),
+        "SQL should use LEFT JOIN for forEachOrNull"
+    );
+    assert!(
+        sql.contains("ON true"),
+        "SQL should have ON true for LEFT JOIN LATERAL"
+    );
 }
 
 // =============================================================================
@@ -151,10 +175,22 @@ fn test_observation_view() {
 
     let sql = generate_sql(view);
 
-    assert!(sql.contains("FROM observation"), "SQL should query observation table");
-    assert!(sql.contains("fhir_ref_id"), "SQL should use fhir_ref_id for reference");
-    assert!(sql.contains("fhir_ref_type"), "SQL should check reference type");
-    assert!(sql.contains("Patient"), "SQL should filter for Patient references");
+    assert!(
+        sql.contains("FROM observation"),
+        "SQL should query observation table"
+    );
+    assert!(
+        sql.contains("fhir_ref_id"),
+        "SQL should use fhir_ref_id for reference"
+    );
+    assert!(
+        sql.contains("fhir_ref_type"),
+        "SQL should check reference type"
+    );
+    assert!(
+        sql.contains("Patient"),
+        "SQL should filter for Patient references"
+    );
 }
 
 #[test]
@@ -177,9 +213,15 @@ fn test_observation_with_value_types() {
 
     let sql = generate_sql(view);
 
-    assert!(sql.contains("valueQuantity"), "SQL should access valueQuantity");
+    assert!(
+        sql.contains("valueQuantity"),
+        "SQL should access valueQuantity"
+    );
     assert!(sql.contains("valueString"), "SQL should access valueString");
-    assert!(sql.contains("::numeric"), "SQL should cast to numeric for decimal");
+    assert!(
+        sql.contains("::numeric"),
+        "SQL should cast to numeric for decimal"
+    );
 }
 
 // =============================================================================
@@ -206,7 +248,10 @@ fn test_extension_access() {
     let sql = generate_sql(view);
 
     assert!(sql.contains("extension"), "SQL should access extension");
-    assert!(sql.contains("http://hl7.org/fhir/us/core/StructureDefinition/us-core-race"), "SQL should filter by extension URL");
+    assert!(
+        sql.contains("http://hl7.org/fhir/us/core/StructureDefinition/us-core-race"),
+        "SQL should filter by extension URL"
+    );
 }
 
 // =============================================================================
@@ -235,8 +280,14 @@ fn test_constant_substitution() {
 
     let sql = generate_sql(view);
 
-    assert!(sql.contains("http://loinc.org"), "SQL should have substituted constant");
-    assert!(!sql.contains("%loincSystem"), "SQL should not contain %constant reference");
+    assert!(
+        sql.contains("http://loinc.org"),
+        "SQL should have substituted constant"
+    );
+    assert!(
+        !sql.contains("%loincSystem"),
+        "SQL should not contain %constant reference"
+    );
 }
 
 #[test]
@@ -332,7 +383,10 @@ fn test_exists_function() {
 
     let sql = generate_sql(view);
 
-    assert!(sql.contains("IS NOT NULL"), "SQL should check IS NOT NULL for exists()");
+    assert!(
+        sql.contains("IS NOT NULL"),
+        "SQL should check IS NOT NULL for exists()"
+    );
 }
 
 #[test]
@@ -351,7 +405,10 @@ fn test_empty_function() {
 
     let sql = generate_sql(view);
 
-    assert!(sql.contains("jsonb_array_length"), "SQL should use jsonb_array_length for empty()");
+    assert!(
+        sql.contains("jsonb_array_length"),
+        "SQL should use jsonb_array_length for empty()"
+    );
 }
 
 #[test]
@@ -370,7 +427,10 @@ fn test_count_function() {
 
     let sql = generate_sql(view);
 
-    assert!(sql.contains("jsonb_array_length"), "SQL should use jsonb_array_length for count()");
+    assert!(
+        sql.contains("jsonb_array_length"),
+        "SQL should use jsonb_array_length for count()"
+    );
 }
 
 #[test]
@@ -391,9 +451,18 @@ fn test_string_functions() {
 
     let sql = generate_sql(view);
 
-    assert!(sql.contains("LIKE '%son%'"), "SQL should use LIKE for contains()");
-    assert!(sql.contains("LIKE 'Dr%'"), "SQL should use LIKE for startsWith()");
-    assert!(sql.contains("LIKE '%Jr'"), "SQL should use LIKE for endsWith()");
+    assert!(
+        sql.contains("LIKE '%son%'"),
+        "SQL should use LIKE for contains()"
+    );
+    assert!(
+        sql.contains("LIKE 'Dr%'"),
+        "SQL should use LIKE for startsWith()"
+    );
+    assert!(
+        sql.contains("LIKE '%Jr'"),
+        "SQL should use LIKE for endsWith()"
+    );
 }
 
 #[test]
@@ -413,7 +482,10 @@ fn test_matches_function() {
     let sql = generate_sql(view);
 
     assert!(sql.contains("~"), "SQL should use ~ for regex matching");
-    assert!(sql.contains("[A-Z][a-z]+"), "SQL should contain regex pattern");
+    assert!(
+        sql.contains("[A-Z][a-z]+"),
+        "SQL should contain regex pattern"
+    );
 }
 
 #[test]
@@ -432,8 +504,14 @@ fn test_distinct_function() {
 
     let sql = generate_sql(view);
 
-    assert!(sql.contains("DISTINCT"), "SQL should use DISTINCT for distinct()");
-    assert!(sql.contains("jsonb_agg"), "SQL should use jsonb_agg for distinct()");
+    assert!(
+        sql.contains("DISTINCT"),
+        "SQL should use DISTINCT for distinct()"
+    );
+    assert!(
+        sql.contains("jsonb_agg"),
+        "SQL should use jsonb_agg for distinct()"
+    );
 }
 
 #[test]
@@ -471,7 +549,10 @@ fn test_has_value_function() {
 
     let sql = generate_sql(view);
 
-    assert!(sql.contains("IS NOT NULL"), "SQL should check IS NOT NULL for hasValue()");
+    assert!(
+        sql.contains("IS NOT NULL"),
+        "SQL should check IS NOT NULL for hasValue()"
+    );
 }
 
 // =============================================================================
@@ -498,8 +579,14 @@ fn test_repeat_expression() {
 
     let sql = generate_sql(view);
 
-    assert!(sql.contains("WITH RECURSIVE"), "SQL should use recursive CTE for repeat");
-    assert!(sql.contains("UNION ALL"), "SQL should have UNION ALL for recursion");
+    assert!(
+        sql.contains("WITH RECURSIVE"),
+        "SQL should use recursive CTE for repeat"
+    );
+    assert!(
+        sql.contains("UNION ALL"),
+        "SQL should have UNION ALL for recursion"
+    );
     assert!(sql.contains("depth < 10"), "SQL should have depth limit");
 }
 
@@ -531,12 +618,18 @@ fn test_all_column_types() {
     let sql = generate_sql(view);
 
     // String columns don't need casting
-    assert!(!sql.contains("str_col") || !sql.contains("::text"), "String columns should not be explicitly cast");
+    assert!(
+        !sql.contains("str_col") || !sql.contains("::text"),
+        "String columns should not be explicitly cast"
+    );
     assert!(sql.contains("::bigint"), "Integer should cast to bigint");
     assert!(sql.contains("::numeric"), "Decimal should cast to numeric");
     assert!(sql.contains("::boolean"), "Boolean should cast to boolean");
     assert!(sql.contains("::date"), "Date should cast to date");
-    assert!(sql.contains("::timestamptz"), "DateTime should cast to timestamptz");
+    assert!(
+        sql.contains("::timestamptz"),
+        "DateTime should cast to timestamptz"
+    );
     assert!(sql.contains("::time"), "Time should cast to time");
 }
 
@@ -569,11 +662,17 @@ fn test_us_core_patient_view() {
     });
 
     let parsed = parse_view(view.clone());
-    assert_eq!(parsed.profile, vec!["http://hl7.org/fhir/us/core/StructureDefinition/us-core-patient"]);
+    assert_eq!(
+        parsed.profile,
+        vec!["http://hl7.org/fhir/us/core/StructureDefinition/us-core-patient"]
+    );
 
     let sql = generate_sql(view);
 
-    assert!(sql.contains("resource_type || '/' ||"), "SQL should generate resource key");
+    assert!(
+        sql.contains("resource_type || '/' ||"),
+        "SQL should generate resource key"
+    );
     assert!(sql.contains("jsonb_agg"), "SQL should filter with where()");
     assert!(sql.contains("string_agg"), "SQL should join given names");
 }
@@ -610,8 +709,14 @@ fn test_condition_view() {
 
     let sql = generate_sql(view);
 
-    assert!(sql.contains("FROM condition"), "SQL should query condition table");
-    assert!(sql.contains("http://snomed.info/sct"), "SQL should substitute SNOMED constant");
+    assert!(
+        sql.contains("FROM condition"),
+        "SQL should query condition table"
+    );
+    assert!(
+        sql.contains("http://snomed.info/sct"),
+        "SQL should substitute SNOMED constant"
+    );
     assert!(sql.contains("WHERE"), "SQL should have WHERE clause");
 }
 
@@ -662,7 +767,10 @@ fn test_where_clause_description() {
     });
 
     let parsed = parse_view(view);
-    assert_eq!(parsed.where_[0].description, Some("Filter to only active patients for HIPAA compliance".to_string()));
+    assert_eq!(
+        parsed.where_[0].description,
+        Some("Filter to only active patients for HIPAA compliance".to_string())
+    );
 }
 
 // =============================================================================
@@ -680,7 +788,10 @@ fn test_empty_select() {
     });
 
     let sql = generate_sql(view);
-    assert!(sql.contains("SELECT *"), "Empty select should result in SELECT *");
+    assert!(
+        sql.contains("SELECT *"),
+        "Empty select should result in SELECT *"
+    );
 }
 
 #[test]
@@ -715,8 +826,14 @@ fn test_view_url_and_description() {
     });
 
     let parsed = parse_view(view);
-    assert_eq!(parsed.url, Some("http://example.org/views/test".to_string()));
-    assert_eq!(parsed.description, Some("A test view for patients".to_string()));
+    assert_eq!(
+        parsed.url,
+        Some("http://example.org/views/test".to_string())
+    );
+    assert_eq!(
+        parsed.description,
+        Some("A test view for patients".to_string())
+    );
 }
 
 // =============================================================================

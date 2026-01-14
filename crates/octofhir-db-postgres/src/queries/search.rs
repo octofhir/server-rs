@@ -12,11 +12,17 @@ use sqlx_core::query_scalar::query_scalar;
 use sqlx_postgres::PgPool;
 use time::OffsetDateTime;
 
-use octofhir_search::{BuiltQuery, SearchParameterRegistry, SqlValue, build_query_from_params};
+use octofhir_search::{
+    BuiltQuery, ParamsSearchConfig, SearchParameterRegistry, SqlValue, UnknownParamHandling,
+    build_query_from_params, build_query_from_params_with_config,
+};
 use octofhir_storage::{
     RawSearchResult, RawStoredResource, SearchParams, SearchResult, StorageError, StoredResource,
     TotalMode,
 };
+
+/// Re-export UnknownParamHandling for convenience.
+pub use octofhir_search::UnknownParamHandling as SearchUnknownParamHandling;
 
 use crate::error::is_undefined_table;
 use crate::schema::SchemaManager;
@@ -135,17 +141,57 @@ pub async fn execute_search_raw(
     params: &SearchParams,
     registry: Option<&Arc<SearchParameterRegistry>>,
 ) -> Result<RawSearchResult, StorageError> {
+    execute_search_raw_with_config(pool, resource_type, params, registry, None).await
+}
+
+/// Execute a FHIR search query with configurable unknown parameter handling.
+///
+/// This version allows specifying how to handle unknown search parameters:
+/// - `Strict`: Return 400 error for unknown parameters
+/// - `Lenient` (default): Ignore unknown parameters and continue
+pub async fn execute_search_raw_with_config(
+    pool: &PgPool,
+    resource_type: &str,
+    params: &SearchParams,
+    registry: Option<&Arc<SearchParameterRegistry>>,
+    unknown_param_handling: Option<UnknownParamHandling>,
+) -> Result<RawSearchResult, StorageError> {
     // Use default registry if none provided
     let empty_registry = Arc::new(SearchParameterRegistry::new());
     let registry_arc = registry.unwrap_or(&empty_registry);
     let registry = registry_arc.as_ref();
 
+    // Build search config
+    let search_config = ParamsSearchConfig {
+        unknown_param_handling: unknown_param_handling.unwrap_or_default(),
+    };
+
     // Convert SearchParams to SQL query using the params converter
-    let converted =
-        build_query_from_params(resource_type, params, registry, "public").map_err(|e| {
-            tracing::warn!(error = %e, "Failed to build search query");
-            StorageError::invalid_resource(format!("Invalid search parameters: {e}"))
-        })?;
+    let converted = build_query_from_params_with_config(
+        resource_type,
+        params,
+        registry,
+        "public",
+        &search_config,
+    )
+    .map_err(|e| {
+        tracing::warn!(error = %e, "Failed to build search query");
+        StorageError::invalid_resource(format!("Invalid search parameters: {e}"))
+    })?;
+
+    // Collect unknown parameters as warnings
+    let warnings: Vec<String> = converted
+        .unknown_params
+        .iter()
+        .map(|p| format!("Unknown search parameter '{}' was ignored", p.name))
+        .collect();
+
+    if !warnings.is_empty() {
+        tracing::info!(
+            unknown_params = ?converted.unknown_params.iter().map(|p| &p.name).collect::<Vec<_>>(),
+            "Search ignored unknown parameters (lenient mode)"
+        );
+    }
 
     // Build the SQL query
     let built_query = converted.builder.build().map_err(|e| {
@@ -182,10 +228,9 @@ pub async fn execute_search_raw(
 
     // Handle _include and _revinclude by falling back to regular search
     if !converted.includes.is_empty() || !converted.revincludes.is_empty() {
-        tracing::debug!(
-            "Raw search using fallback for _include/_revinclude"
-        );
-        let regular_result = execute_search(pool, resource_type, params, Some(registry_arc)).await?;
+        tracing::debug!("Raw search using fallback for _include/_revinclude");
+        let regular_result =
+            execute_search(pool, resource_type, params, Some(registry_arc)).await?;
 
         // Separate main results from included resources
         let mut main_entries = Vec::new();
@@ -213,6 +258,7 @@ pub async fn execute_search_raw(
             included,
             total: regular_result.total,
             has_more: regular_result.has_more,
+            warnings: warnings.clone(),
         });
     }
 
@@ -221,6 +267,7 @@ pub async fn execute_search_raw(
         included: Vec::new(),
         total,
         has_more,
+        warnings,
     })
 }
 
@@ -298,22 +345,21 @@ async fn execute_query_raw(
     let raw_sql = query.sql.replacen("resource,", "resource::text,", 1);
 
     // Execute and map results
-    let rows: Vec<(String, String, i64, DateTime<Utc>, DateTime<Utc>)> =
-        query_as::<_, (String, String, i64, DateTime<Utc>, DateTime<Utc>)>(&raw_sql)
-            .bind_all_params_raw(&query.params)
-            .fetch_all(pool)
-            .await
-            .map_err(|e| {
-                tracing::warn!(error = %e, sql = %raw_sql, "Raw search query failed");
-                // Check for undefined table error (PostgreSQL 42P01)
-                if is_undefined_table(&e) {
-                    return StorageError::internal(format!(
-                        "Table for {} does not exist",
-                        resource_type
-                    ));
-                }
-                StorageError::internal(format!("Search query failed: {e}"))
-            })?;
+    let rows: Vec<(String, String, i64, DateTime<Utc>, DateTime<Utc>)> = query_as::<
+        _,
+        (String, String, i64, DateTime<Utc>, DateTime<Utc>),
+    >(&raw_sql)
+    .bind_all_params_raw(&query.params)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| {
+        tracing::warn!(error = %e, sql = %raw_sql, "Raw search query failed");
+        // Check for undefined table error (PostgreSQL 42P01)
+        if is_undefined_table(&e) {
+            return StorageError::internal(format!("Table for {} does not exist", resource_type));
+        }
+        StorageError::internal(format!("Search query failed: {e}"))
+    })?;
 
     let entries: Vec<RawStoredResource> = rows
         .into_iter()
@@ -378,8 +424,7 @@ async fn resolve_includes_revincludes(
     )?;
 
     // Flatten results
-    let mut included: Vec<StoredResource> =
-        include_results.into_iter().flatten().collect();
+    let mut included: Vec<StoredResource> = include_results.into_iter().flatten().collect();
     included.extend(revinclude_results.into_iter().flatten());
 
     Ok(included)
@@ -403,12 +448,13 @@ async fn resolve_include(
     for result in main_results {
         // Try to extract reference from the resource
         if let Some(ref_value) = result.resource.get(param_name)
-            && let Some(reference) = ref_value.get("reference").and_then(|r| r.as_str()) {
-                // Use the shared reference parser to extract the ID
-                if let Ok((_, id)) = parse_reference_simple(reference, None) {
-                    reference_ids.push(id);
-                }
+            && let Some(reference) = ref_value.get("reference").and_then(|r| r.as_str())
+        {
+            // Use the shared reference parser to extract the ID
+            if let Ok((_, id)) = parse_reference_simple(reference, None) {
+                reference_ids.push(id);
             }
+        }
     }
 
     if reference_ids.is_empty() {

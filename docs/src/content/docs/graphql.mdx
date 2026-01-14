@@ -1,0 +1,619 @@
+---
+title: GraphQL API
+description: Query FHIR resources using GraphQL with full search and mutation support
+---
+
+import { Aside, Tabs, TabItem, Steps } from '@astrojs/starlight/components';
+
+OctoFHIR provides a GraphQL API following the [GraphQL for FHIR](https://hl7.org/fhir/graphql.html) specification. It offers a flexible alternative to the REST API for querying and mutating FHIR resources.
+
+## Quick Start
+
+<Steps>
+
+1. **Enable GraphQL in configuration**
+
+   ```toml
+   # octofhir.toml
+   [graphql]
+   enabled = true
+   introspection = true  # Disable in production
+   ```
+
+2. **Get an access token**
+
+   ```bash
+   TOKEN=$(curl -s -X POST http://localhost:8888/oauth/token \
+     -d "grant_type=password&username=admin&password=admin123" \
+     | jq -r '.access_token')
+   ```
+
+3. **Query a resource**
+
+   ```bash
+   curl http://localhost:8888/\$graphql \
+     -H "Authorization: Bearer $TOKEN" \
+     -H "Content-Type: application/json" \
+     -d '{"query": "{ PatientList { id name { given family } } }"}'
+   ```
+
+</Steps>
+
+---
+
+## Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/$graphql` | POST | System-level GraphQL endpoint |
+| `/$graphql` | GET | Query via `query` URL parameter |
+| `/{Type}/{id}/$graphql` | POST | Instance-level (resource in context) |
+
+<Aside type="note">
+The UI includes GraphiQL playground at `/$graphql` for interactive exploration.
+</Aside>
+
+---
+
+## Query Operations
+
+### Read Single Resource
+
+Query a resource by ID:
+
+```graphql
+query {
+  Patient(_id: "patient-123") {
+    id
+    meta {
+      versionId
+      lastUpdated
+    }
+    name {
+      given
+      family
+    }
+    birthDate
+    gender
+  }
+}
+```
+
+### Search Resources (List)
+
+Search with FHIR search parameters:
+
+```graphql
+query {
+  PatientList(
+    name: "Smith"
+    gender: "female"
+    _count: 10
+    _sort: "-birthDate"
+  ) {
+    id
+    name {
+      given
+      family
+    }
+    birthDate
+  }
+}
+```
+
+### Connection (Cursor Pagination)
+
+For large result sets, use connection-style pagination:
+
+```graphql
+query {
+  PatientConnection(first: 10, after: "cursor123") {
+    pageInfo {
+      hasNextPage
+      hasPreviousPage
+      startCursor
+      endCursor
+    }
+    edges {
+      cursor
+      node {
+        id
+        name { family }
+      }
+    }
+    totalCount
+  }
+}
+```
+
+### Nested Resources (References)
+
+Resolve references automatically:
+
+```graphql
+query {
+  ObservationList(code: "29463-7") {
+    id
+    code {
+      coding {
+        system
+        code
+        display
+      }
+    }
+    valueQuantity {
+      value
+      unit
+    }
+    subject {
+      reference
+      resource {
+        ... on Patient {
+          id
+          name { given family }
+        }
+      }
+    }
+    performer {
+      resource {
+        ... on Practitioner {
+          id
+          name { given family }
+        }
+      }
+    }
+  }
+}
+```
+
+### Reverse References
+
+Find resources that reference a given resource:
+
+```graphql
+query {
+  Patient(_id: "patient-123") {
+    id
+    name { family }
+
+    # All observations for this patient
+    ObservationList(_reference: "subject") {
+      id
+      code { text }
+      effectiveDateTime
+    }
+
+    # All conditions for this patient
+    ConditionList(_reference: "subject") {
+      id
+      code { text }
+      clinicalStatus { coding { code } }
+    }
+  }
+}
+```
+
+---
+
+## Mutation Operations
+
+### Create Resource
+
+```graphql
+mutation {
+  PatientCreate(res: {
+    resourceType: "Patient"
+    name: [{
+      given: ["John"]
+      family: "Doe"
+    }]
+    gender: "male"
+    birthDate: "1990-01-15"
+  }) {
+    id
+    meta {
+      versionId
+      lastUpdated
+    }
+    name { given family }
+  }
+}
+```
+
+### Update Resource
+
+```graphql
+mutation {
+  PatientUpdate(
+    id: "patient-123"
+    res: {
+      resourceType: "Patient"
+      id: "patient-123"
+      name: [{
+        given: ["John", "William"]
+        family: "Doe"
+      }]
+      gender: "male"
+      birthDate: "1990-01-15"
+    }
+  ) {
+    id
+    meta { versionId }
+    name { given family }
+  }
+}
+```
+
+### Delete Resource
+
+```graphql
+mutation {
+  PatientDelete(id: "patient-123") {
+    id
+  }
+}
+```
+
+---
+
+## Subscriptions
+
+<Aside type="caution">
+Subscriptions require WebSocket support and are disabled by default.
+Enable with `subscriptions = true` in configuration.
+</Aside>
+
+### Configuration
+
+```toml
+[graphql]
+enabled = true
+subscriptions = true
+```
+
+### Available Subscriptions
+
+```graphql
+subscription {
+  # All resource changes
+  resourceChanged(resourceType: "Patient") {
+    eventType   # CREATED, UPDATED, DELETED
+    resourceType
+    resourceId
+    resource {
+      ... on Patient {
+        id
+        name { family }
+      }
+    }
+  }
+}
+```
+
+```graphql
+subscription {
+  # Specific event types
+  resourceCreated(resourceType: "Observation") {
+    resourceId
+    resource {
+      ... on Observation {
+        code { text }
+        valueQuantity { value unit }
+      }
+    }
+  }
+}
+```
+
+---
+
+## Search Parameters
+
+GraphQL uses the same search parameters as the REST API:
+
+### Common Parameters
+
+| Parameter | Description |
+|-----------|-------------|
+| `_id` | Resource ID |
+| `_lastUpdated` | Last modification time |
+| `_count` | Results per page |
+| `_offset` | Skip first N results |
+| `_sort` | Sort order (prefix `-` for descending) |
+
+### Resource-Specific Parameters
+
+```graphql
+query {
+  # Patient search parameters
+  PatientList(
+    name: "John"
+    family: "Doe"
+    birthdate: "ge1990-01-01"
+    gender: "male"
+    identifier: "MRN|12345"
+  ) { id }
+
+  # Observation search parameters
+  ObservationList(
+    code: "29463-7"
+    date: "ge2024-01-01"
+    patient: "Patient/123"
+    status: "final"
+    value_quantity: "gt100"
+  ) { id }
+}
+```
+
+### Modifiers
+
+Search modifiers work the same as REST:
+
+```graphql
+query {
+  PatientList(
+    name_exact: "John Smith"        # :exact modifier
+    name_contains: "smith"          # :contains modifier
+    deceased_missing: false         # :missing modifier
+  ) { id name { text } }
+}
+```
+
+---
+
+## Configuration Reference
+
+```toml
+[graphql]
+# Enable GraphQL endpoints
+enabled = true
+
+# Maximum query depth (prevents deeply nested queries)
+max_depth = 15
+
+# Maximum query complexity score
+max_complexity = 500
+
+# Enable schema introspection (disable in production)
+introspection = true
+
+# Enable real-time subscriptions
+subscriptions = false
+
+# Allow batched queries
+batching = false
+
+# Maximum operations per batch
+max_batch_size = 10
+```
+
+<Aside type="danger">
+**Production Security**: Disable introspection in production to prevent schema exposure:
+```toml
+introspection = false
+```
+</Aside>
+
+---
+
+## Error Handling
+
+GraphQL errors follow the standard format:
+
+```json
+{
+  "data": null,
+  "errors": [
+    {
+      "message": "Resource not found",
+      "locations": [{ "line": 2, "column": 3 }],
+      "path": ["Patient"],
+      "extensions": {
+        "code": "NOT_FOUND",
+        "resourceType": "Patient",
+        "resourceId": "invalid-id"
+      }
+    }
+  ]
+}
+```
+
+### Common Error Codes
+
+| Code | Description |
+|------|-------------|
+| `NOT_FOUND` | Resource does not exist |
+| `UNAUTHORIZED` | Missing or invalid token |
+| `FORBIDDEN` | Access denied by policy |
+| `VALIDATION_ERROR` | Invalid resource data |
+| `COMPLEXITY_EXCEEDED` | Query too complex |
+| `DEPTH_EXCEEDED` | Query too deeply nested |
+
+---
+
+## Best Practices
+
+### 1. Request Only Needed Fields
+
+```graphql
+# Good - only request what you need
+query {
+  PatientList { id name { family } }
+}
+
+# Avoid - requesting everything
+query {
+  PatientList { id meta name ... }
+}
+```
+
+### 2. Use Fragments for Reusable Selections
+
+```graphql
+fragment PatientBasics on Patient {
+  id
+  name { given family }
+  birthDate
+  gender
+}
+
+query {
+  patient1: Patient(_id: "p1") { ...PatientBasics }
+  patient2: Patient(_id: "p2") { ...PatientBasics }
+}
+```
+
+### 3. Use Variables for Dynamic Values
+
+```graphql
+query GetPatient($id: String!) {
+  Patient(_id: $id) {
+    id
+    name { given family }
+  }
+}
+```
+
+```json
+{
+  "query": "query GetPatient($id: String!) { ... }",
+  "variables": { "id": "patient-123" }
+}
+```
+
+### 4. Paginate Large Result Sets
+
+```graphql
+query {
+  PatientConnection(first: 50) {
+    pageInfo { hasNextPage endCursor }
+    edges {
+      node { id name { family } }
+    }
+  }
+}
+```
+
+---
+
+## Comparison with REST
+
+| Feature | REST | GraphQL |
+|---------|------|---------|
+| **Endpoint** | Multiple per resource | Single `/$graphql` |
+| **Data fetching** | Fixed response shape | Client specifies fields |
+| **Related data** | `_include`/`_revinclude` | Nested queries |
+| **Batch requests** | Transaction bundle | Multiple queries |
+| **Real-time** | Subscriptions (planned) | Subscriptions |
+| **Caching** | HTTP caching | Client-side |
+
+### When to Use GraphQL
+
+- **Complex data requirements** - Need data from multiple related resources
+- **Mobile/bandwidth-sensitive** - Request only needed fields
+- **Interactive applications** - Explore schema with introspection
+- **Real-time updates** - Use subscriptions
+
+### When to Use REST
+
+- **Simple CRUD** - Standard create/read/update/delete
+- **Bulk operations** - Transactions, batch imports
+- **HTTP caching** - Leverage proxy caches
+- **Tooling compatibility** - Wide ecosystem support
+
+---
+
+## Examples
+
+### Patient with All Observations
+
+```graphql
+query PatientWithObservations($patientId: String!) {
+  Patient(_id: $patientId) {
+    id
+    name { given family }
+    birthDate
+
+    ObservationList(_reference: "subject", _sort: "-date", _count: 10) {
+      id
+      code {
+        coding { system code display }
+        text
+      }
+      effectiveDateTime
+      valueQuantity { value unit }
+      status
+    }
+  }
+}
+```
+
+### Create Observation with Patient Reference
+
+```graphql
+mutation CreateVitalSign($patientId: String!, $value: Decimal!) {
+  ObservationCreate(res: {
+    resourceType: "Observation"
+    status: "final"
+    category: [{
+      coding: [{
+        system: "http://terminology.hl7.org/CodeSystem/observation-category"
+        code: "vital-signs"
+      }]
+    }]
+    code: {
+      coding: [{
+        system: "http://loinc.org"
+        code: "29463-7"
+        display: "Body Weight"
+      }]
+    }
+    subject: { reference: $patientId }
+    effectiveDateTime: "2024-01-15T10:30:00Z"
+    valueQuantity: {
+      value: $value
+      unit: "kg"
+      system: "http://unitsofmeasure.org"
+      code: "kg"
+    }
+  }) {
+    id
+    meta { versionId lastUpdated }
+  }
+}
+```
+
+### Search with Multiple Criteria
+
+```graphql
+query ActiveDiabeticPatients {
+  ConditionList(
+    code: "http://snomed.info/sct|73211009"
+    clinical_status: "active"
+    _count: 100
+  ) {
+    id
+    subject {
+      resource {
+        ... on Patient {
+          id
+          name { given family }
+          birthDate
+
+          # Get their recent lab results
+          ObservationList(
+            _reference: "subject"
+            category: "laboratory"
+            _sort: "-date"
+            _count: 5
+          ) {
+            code { text }
+            valueQuantity { value unit }
+            effectiveDateTime
+          }
+        }
+      }
+    }
+  }
+}
+```

@@ -1,0 +1,1211 @@
+openapi: 3.1.0
+info:
+  title: OctoFHIR API
+  description: |
+    OctoFHIR is a high-performance FHIR R4/R5/R6 server built in Rust.
+
+    This API reference covers:
+    - FHIR REST API (CRUD, search, operations)
+    - OAuth 2.0 / SMART on FHIR authentication
+    - Admin API for user and configuration management
+    - GraphQL endpoint
+  version: 1.0.0
+  contact:
+    name: OctoFHIR Support
+    url: https://github.com/octofhir/server-rs
+  license:
+    name: Apache 2.0
+    url: https://www.apache.org/licenses/LICENSE-2.0
+
+servers:
+  - url: http://localhost:8888
+    description: Local development server
+  - url: https://fhir.example.com
+    description: Production server (example)
+
+tags:
+  - name: FHIR
+    description: FHIR REST API operations
+  - name: Search
+    description: FHIR search operations
+  - name: Operations
+    description: FHIR operations ($validate, $expand, etc.)
+  - name: OAuth
+    description: OAuth 2.0 / SMART on FHIR endpoints
+  - name: Admin
+    description: Administrative API endpoints
+  - name: GraphQL
+    description: GraphQL API endpoint
+
+paths:
+  # =============================================================================
+  # FHIR REST API
+  # =============================================================================
+
+  /fhir/metadata:
+    get:
+      tags: [FHIR]
+      summary: Get CapabilityStatement
+      description: Returns the server's CapabilityStatement describing supported resources and operations
+      operationId: getMetadata
+      responses:
+        '200':
+          description: CapabilityStatement resource
+          content:
+            application/fhir+json:
+              schema:
+                $ref: '#/components/schemas/CapabilityStatement'
+
+  /fhir/{resourceType}:
+    get:
+      tags: [Search]
+      summary: Search resources
+      description: Search for resources by type with optional search parameters
+      operationId: searchResources
+      parameters:
+        - $ref: '#/components/parameters/resourceType'
+        - $ref: '#/components/parameters/_id'
+        - $ref: '#/components/parameters/_lastUpdated'
+        - $ref: '#/components/parameters/_count'
+        - $ref: '#/components/parameters/_offset'
+        - $ref: '#/components/parameters/_sort'
+        - $ref: '#/components/parameters/_include'
+        - $ref: '#/components/parameters/_revinclude'
+        - $ref: '#/components/parameters/_elements'
+        - $ref: '#/components/parameters/_summary'
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Search results bundle
+          content:
+            application/fhir+json:
+              schema:
+                $ref: '#/components/schemas/Bundle'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+    post:
+      tags: [FHIR]
+      summary: Create resource
+      description: Create a new resource with server-assigned ID
+      operationId: createResource
+      parameters:
+        - $ref: '#/components/parameters/resourceType'
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/fhir+json:
+            schema:
+              $ref: '#/components/schemas/Resource'
+      responses:
+        '201':
+          description: Resource created
+          headers:
+            Location:
+              description: URL of the created resource
+              schema:
+                type: string
+            ETag:
+              description: Resource version
+              schema:
+                type: string
+          content:
+            application/fhir+json:
+              schema:
+                $ref: '#/components/schemas/Resource'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+
+  /fhir/{resourceType}/{id}:
+    get:
+      tags: [FHIR]
+      summary: Read resource
+      description: Read a resource by ID
+      operationId: readResource
+      parameters:
+        - $ref: '#/components/parameters/resourceType'
+        - $ref: '#/components/parameters/id'
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Resource found
+          headers:
+            ETag:
+              description: Resource version
+              schema:
+                type: string
+          content:
+            application/fhir+json:
+              schema:
+                $ref: '#/components/schemas/Resource'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    put:
+      tags: [FHIR]
+      summary: Update resource
+      description: Update an existing resource or create with client-assigned ID
+      operationId: updateResource
+      parameters:
+        - $ref: '#/components/parameters/resourceType'
+        - $ref: '#/components/parameters/id'
+        - name: If-Match
+          in: header
+          description: Conditional update (version check)
+          schema:
+            type: string
+            example: W/"1"
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/fhir+json:
+            schema:
+              $ref: '#/components/schemas/Resource'
+      responses:
+        '200':
+          description: Resource updated
+          content:
+            application/fhir+json:
+              schema:
+                $ref: '#/components/schemas/Resource'
+        '201':
+          description: Resource created (client-assigned ID)
+          content:
+            application/fhir+json:
+              schema:
+                $ref: '#/components/schemas/Resource'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+
+    delete:
+      tags: [FHIR]
+      summary: Delete resource
+      description: Delete a resource by ID
+      operationId: deleteResource
+      parameters:
+        - $ref: '#/components/parameters/resourceType'
+        - $ref: '#/components/parameters/id'
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: Resource deleted
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /fhir/{resourceType}/{id}/_history:
+    get:
+      tags: [FHIR]
+      summary: Resource history
+      description: Get the version history of a resource
+      operationId: resourceHistory
+      parameters:
+        - $ref: '#/components/parameters/resourceType'
+        - $ref: '#/components/parameters/id'
+        - $ref: '#/components/parameters/_count'
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: History bundle
+          content:
+            application/fhir+json:
+              schema:
+                $ref: '#/components/schemas/Bundle'
+
+  /fhir/{resourceType}/{id}/_history/{vid}:
+    get:
+      tags: [FHIR]
+      summary: Read resource version
+      description: Read a specific version of a resource
+      operationId: vreadResource
+      parameters:
+        - $ref: '#/components/parameters/resourceType'
+        - $ref: '#/components/parameters/id'
+        - name: vid
+          in: path
+          required: true
+          description: Version ID
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Resource version found
+          content:
+            application/fhir+json:
+              schema:
+                $ref: '#/components/schemas/Resource'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # =============================================================================
+  # Transaction / Batch
+  # =============================================================================
+
+  /fhir:
+    post:
+      tags: [FHIR]
+      summary: Transaction or batch
+      description: |
+        Execute a transaction or batch bundle.
+        - **transaction**: All-or-nothing execution
+        - **batch**: Independent execution of each entry
+      operationId: transaction
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/fhir+json:
+            schema:
+              $ref: '#/components/schemas/Bundle'
+            example:
+              resourceType: Bundle
+              type: transaction
+              entry:
+                - request:
+                    method: POST
+                    url: Patient
+                  resource:
+                    resourceType: Patient
+                    name:
+                      - given: [John]
+                        family: Doe
+      responses:
+        '200':
+          description: Transaction/batch response
+          content:
+            application/fhir+json:
+              schema:
+                $ref: '#/components/schemas/Bundle'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  # =============================================================================
+  # FHIR Operations
+  # =============================================================================
+
+  /fhir/{resourceType}/$validate:
+    post:
+      tags: [Operations]
+      summary: Validate resource
+      description: Validate a resource against profiles
+      operationId: validateResource
+      parameters:
+        - $ref: '#/components/parameters/resourceType'
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/fhir+json:
+            schema:
+              $ref: '#/components/schemas/Resource'
+      responses:
+        '200':
+          description: Validation result
+          content:
+            application/fhir+json:
+              schema:
+                $ref: '#/components/schemas/OperationOutcome'
+
+  /fhir/ValueSet/$expand:
+    get:
+      tags: [Operations]
+      summary: Expand ValueSet
+      description: Expand a ValueSet to enumerate its codes
+      operationId: expandValueSet
+      parameters:
+        - name: url
+          in: query
+          required: true
+          description: ValueSet canonical URL
+          schema:
+            type: string
+        - name: filter
+          in: query
+          description: Filter codes by display text
+          schema:
+            type: string
+        - name: count
+          in: query
+          description: Maximum codes to return
+          schema:
+            type: integer
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Expanded ValueSet
+          content:
+            application/fhir+json:
+              schema:
+                $ref: '#/components/schemas/ValueSet'
+
+  /fhir/Patient/{id}/$everything:
+    get:
+      tags: [Operations]
+      summary: Patient $everything
+      description: Returns all resources related to a patient
+      operationId: patientEverything
+      parameters:
+        - $ref: '#/components/parameters/id'
+        - name: start
+          in: query
+          description: Start date filter
+          schema:
+            type: string
+            format: date
+        - name: end
+          in: query
+          description: End date filter
+          schema:
+            type: string
+            format: date
+        - name: _type
+          in: query
+          description: Resource types to include
+          schema:
+            type: string
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Bundle with patient data
+          content:
+            application/fhir+json:
+              schema:
+                $ref: '#/components/schemas/Bundle'
+
+  /fhir/$export:
+    get:
+      tags: [Operations]
+      summary: Bulk data export
+      description: Initiate a system-level bulk data export
+      operationId: bulkExport
+      parameters:
+        - name: _type
+          in: query
+          description: Resource types to export (comma-separated)
+          schema:
+            type: string
+        - name: _since
+          in: query
+          description: Export resources modified since this time
+          schema:
+            type: string
+            format: date-time
+        - name: _outputFormat
+          in: query
+          description: Output format
+          schema:
+            type: string
+            default: application/fhir+ndjson
+      security:
+        - bearerAuth: []
+      responses:
+        '202':
+          description: Export accepted
+          headers:
+            Content-Location:
+              description: Status endpoint URL
+              schema:
+                type: string
+        '429':
+          description: Too many concurrent exports
+
+  # =============================================================================
+  # GraphQL
+  # =============================================================================
+
+  /$graphql:
+    post:
+      tags: [GraphQL]
+      summary: GraphQL endpoint
+      description: Execute GraphQL queries and mutations
+      operationId: graphql
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [query]
+              properties:
+                query:
+                  type: string
+                  description: GraphQL query
+                variables:
+                  type: object
+                  description: Query variables
+                operationName:
+                  type: string
+                  description: Operation name for multi-operation documents
+            example:
+              query: |
+                query {
+                  PatientList(name: "Smith", _count: 10) {
+                    id
+                    name { given family }
+                    birthDate
+                  }
+                }
+      responses:
+        '200':
+          description: GraphQL response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                  errors:
+                    type: array
+                    items:
+                      type: object
+
+  # =============================================================================
+  # OAuth 2.0 / SMART on FHIR
+  # =============================================================================
+
+  /.well-known/smart-configuration:
+    get:
+      tags: [OAuth]
+      summary: SMART configuration
+      description: SMART on FHIR discovery endpoint
+      operationId: smartConfiguration
+      responses:
+        '200':
+          description: SMART configuration
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  issuer:
+                    type: string
+                  authorization_endpoint:
+                    type: string
+                  token_endpoint:
+                    type: string
+                  capabilities:
+                    type: array
+                    items:
+                      type: string
+
+  /auth/token:
+    post:
+      tags: [OAuth]
+      summary: Token endpoint
+      description: |
+        OAuth 2.0 token endpoint supporting:
+        - `authorization_code` - Authorization code exchange
+        - `client_credentials` - Machine-to-machine
+        - `password` - Resource owner password (if enabled)
+        - `refresh_token` - Refresh access token
+      operationId: token
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required: [grant_type]
+              properties:
+                grant_type:
+                  type: string
+                  enum: [authorization_code, client_credentials, password, refresh_token]
+                code:
+                  type: string
+                  description: Authorization code (for authorization_code grant)
+                redirect_uri:
+                  type: string
+                  description: Redirect URI (for authorization_code grant)
+                client_id:
+                  type: string
+                client_secret:
+                  type: string
+                username:
+                  type: string
+                  description: Username (for password grant)
+                password:
+                  type: string
+                  description: Password (for password grant)
+                refresh_token:
+                  type: string
+                  description: Refresh token (for refresh_token grant)
+                scope:
+                  type: string
+      responses:
+        '200':
+          description: Token response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenResponse'
+        '400':
+          description: Invalid request
+        '401':
+          description: Invalid credentials
+
+  /auth/authorize:
+    get:
+      tags: [OAuth]
+      summary: Authorization endpoint
+      description: OAuth 2.0 authorization endpoint for interactive login
+      operationId: authorize
+      parameters:
+        - name: response_type
+          in: query
+          required: true
+          schema:
+            type: string
+            enum: [code]
+        - name: client_id
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: redirect_uri
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: scope
+          in: query
+          schema:
+            type: string
+        - name: state
+          in: query
+          schema:
+            type: string
+        - name: aud
+          in: query
+          description: FHIR server URL (SMART launch)
+          schema:
+            type: string
+        - name: launch
+          in: query
+          description: Launch context (EHR launch)
+          schema:
+            type: string
+        - name: code_challenge
+          in: query
+          description: PKCE code challenge
+          schema:
+            type: string
+        - name: code_challenge_method
+          in: query
+          schema:
+            type: string
+            enum: [S256]
+      responses:
+        '302':
+          description: Redirect to login or callback
+        '400':
+          description: Invalid request
+
+  /auth/logout:
+    post:
+      tags: [OAuth]
+      summary: Logout
+      description: Revoke tokens and clear session
+      operationId: logout
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Logout successful
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /auth/jwks:
+    get:
+      tags: [OAuth]
+      summary: JWKS endpoint
+      description: JSON Web Key Set for token verification
+      operationId: jwks
+      responses:
+        '200':
+          description: JWKS
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  keys:
+                    type: array
+                    items:
+                      type: object
+
+  /auth/userinfo:
+    get:
+      tags: [OAuth]
+      summary: UserInfo endpoint
+      description: OpenID Connect UserInfo endpoint
+      operationId: userinfo
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: User information
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sub:
+                    type: string
+                  name:
+                    type: string
+                  email:
+                    type: string
+                  fhirUser:
+                    type: string
+
+  # =============================================================================
+  # Admin API
+  # =============================================================================
+
+  /admin/User:
+    get:
+      tags: [Admin]
+      summary: List users
+      description: Search and list users
+      operationId: listUsers
+      security:
+        - bearerAuth: [admin]
+      parameters:
+        - name: username
+          in: query
+          schema:
+            type: string
+        - name: email
+          in: query
+          schema:
+            type: string
+        - name: _count
+          in: query
+          schema:
+            type: integer
+            default: 20
+      responses:
+        '200':
+          description: User list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  total:
+                    type: integer
+                  entry:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/User'
+
+    post:
+      tags: [Admin]
+      summary: Create user
+      operationId: createUser
+      security:
+        - bearerAuth: [admin]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/User'
+      responses:
+        '201':
+          description: User created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+
+  /admin/User/{id}:
+    get:
+      tags: [Admin]
+      summary: Get user
+      operationId: getUser
+      security:
+        - bearerAuth: [admin]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: User details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+
+    put:
+      tags: [Admin]
+      summary: Update user
+      operationId: updateUser
+      security:
+        - bearerAuth: [admin]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/User'
+      responses:
+        '200':
+          description: User updated
+
+    delete:
+      tags: [Admin]
+      summary: Delete user
+      operationId: deleteUser
+      security:
+        - bearerAuth: [admin]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: User deleted
+
+  /admin/config:
+    get:
+      tags: [Admin]
+      summary: List configuration
+      description: Get all configuration categories and values
+      operationId: listConfig
+      security:
+        - bearerAuth: [admin]
+      responses:
+        '200':
+          description: Configuration listing
+          content:
+            application/json:
+              schema:
+                type: object
+
+  /admin/config/{category}/{key}:
+    get:
+      tags: [Admin]
+      summary: Get config value
+      operationId: getConfigValue
+      security:
+        - bearerAuth: [admin]
+      parameters:
+        - name: category
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: key
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Configuration value
+
+    put:
+      tags: [Admin]
+      summary: Set config value
+      operationId: setConfigValue
+      security:
+        - bearerAuth: [admin]
+      parameters:
+        - name: category
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: key
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Configuration updated
+
+  /admin/features:
+    get:
+      tags: [Admin]
+      summary: List feature flags
+      operationId: listFeatures
+      security:
+        - bearerAuth: [admin]
+      responses:
+        '200':
+          description: Feature flags
+          content:
+            application/json:
+              schema:
+                type: object
+
+  /healthz:
+    get:
+      tags: [Admin]
+      summary: Health check
+      description: Server health and readiness check
+      operationId: healthCheck
+      responses:
+        '200':
+          description: Server healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [ok, degraded]
+                  version:
+                    type: string
+                  database:
+                    type: string
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: OAuth 2.0 Bearer token
+
+  parameters:
+    resourceType:
+      name: resourceType
+      in: path
+      required: true
+      description: FHIR resource type
+      schema:
+        type: string
+        example: Patient
+
+    id:
+      name: id
+      in: path
+      required: true
+      description: Resource ID
+      schema:
+        type: string
+        format: uuid
+
+    _id:
+      name: _id
+      in: query
+      description: Resource logical ID
+      schema:
+        type: string
+
+    _lastUpdated:
+      name: _lastUpdated
+      in: query
+      description: Last modification time
+      schema:
+        type: string
+        example: gt2024-01-01
+
+    _count:
+      name: _count
+      in: query
+      description: Number of results per page
+      schema:
+        type: integer
+        default: 10
+        maximum: 100
+
+    _offset:
+      name: _offset
+      in: query
+      description: Pagination offset
+      schema:
+        type: integer
+        default: 0
+
+    _sort:
+      name: _sort
+      in: query
+      description: Sort order (prefix - for descending)
+      schema:
+        type: string
+        example: -_lastUpdated
+
+    _include:
+      name: _include
+      in: query
+      description: Include referenced resources
+      schema:
+        type: string
+        example: Observation:subject
+
+    _revinclude:
+      name: _revinclude
+      in: query
+      description: Include resources that reference results
+      schema:
+        type: string
+        example: Provenance:target
+
+    _elements:
+      name: _elements
+      in: query
+      description: Return only specified elements
+      schema:
+        type: string
+        example: id,name
+
+    _summary:
+      name: _summary
+      in: query
+      description: Return summary
+      schema:
+        type: string
+        enum: ['true', 'false', 'text', 'data', 'count']
+
+  schemas:
+    Resource:
+      type: object
+      required: [resourceType]
+      properties:
+        resourceType:
+          type: string
+        id:
+          type: string
+        meta:
+          type: object
+          properties:
+            versionId:
+              type: string
+            lastUpdated:
+              type: string
+              format: date-time
+            profile:
+              type: array
+              items:
+                type: string
+
+    Bundle:
+      type: object
+      required: [resourceType, type]
+      properties:
+        resourceType:
+          type: string
+          enum: [Bundle]
+        type:
+          type: string
+          enum: [searchset, transaction, batch, transaction-response, batch-response, history]
+        total:
+          type: integer
+        link:
+          type: array
+          items:
+            type: object
+            properties:
+              relation:
+                type: string
+              url:
+                type: string
+        entry:
+          type: array
+          items:
+            type: object
+            properties:
+              fullUrl:
+                type: string
+              resource:
+                $ref: '#/components/schemas/Resource'
+              request:
+                type: object
+              response:
+                type: object
+
+    CapabilityStatement:
+      type: object
+      properties:
+        resourceType:
+          type: string
+          enum: [CapabilityStatement]
+        status:
+          type: string
+        fhirVersion:
+          type: string
+        rest:
+          type: array
+          items:
+            type: object
+
+    OperationOutcome:
+      type: object
+      required: [resourceType, issue]
+      properties:
+        resourceType:
+          type: string
+          enum: [OperationOutcome]
+        issue:
+          type: array
+          items:
+            type: object
+            required: [severity, code]
+            properties:
+              severity:
+                type: string
+                enum: [fatal, error, warning, information]
+              code:
+                type: string
+              diagnostics:
+                type: string
+              location:
+                type: array
+                items:
+                  type: string
+
+    ValueSet:
+      type: object
+      properties:
+        resourceType:
+          type: string
+          enum: [ValueSet]
+        expansion:
+          type: object
+          properties:
+            total:
+              type: integer
+            contains:
+              type: array
+              items:
+                type: object
+                properties:
+                  system:
+                    type: string
+                  code:
+                    type: string
+                  display:
+                    type: string
+
+    TokenResponse:
+      type: object
+      required: [access_token, token_type]
+      properties:
+        access_token:
+          type: string
+        token_type:
+          type: string
+          enum: [Bearer]
+        expires_in:
+          type: integer
+          description: Token lifetime in seconds
+        refresh_token:
+          type: string
+        scope:
+          type: string
+        patient:
+          type: string
+          description: Patient context (SMART launch)
+        id_token:
+          type: string
+          description: OpenID Connect ID token
+
+    User:
+      type: object
+      properties:
+        id:
+          type: string
+        username:
+          type: string
+        email:
+          type: string
+        name:
+          type: string
+        roles:
+          type: array
+          items:
+            type: string
+        active:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+
+  responses:
+    BadRequest:
+      description: Bad request
+      content:
+        application/fhir+json:
+          schema:
+            $ref: '#/components/schemas/OperationOutcome'
+
+    Unauthorized:
+      description: Unauthorized - missing or invalid token
+      content:
+        application/fhir+json:
+          schema:
+            $ref: '#/components/schemas/OperationOutcome'
+
+    NotFound:
+      description: Resource not found
+      content:
+        application/fhir+json:
+          schema:
+            $ref: '#/components/schemas/OperationOutcome'
+
+    Conflict:
+      description: Conflict - version mismatch
+      content:
+        application/fhir+json:
+          schema:
+            $ref: '#/components/schemas/OperationOutcome'
+
+    UnprocessableEntity:
+      description: Validation failed
+      content:
+        application/fhir+json:
+          schema:
+            $ref: '#/components/schemas/OperationOutcome'
+
+security:
+  - bearerAuth: []

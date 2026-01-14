@@ -8,10 +8,12 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use futures_util::FutureExt;
-use tokio::sync::{broadcast, RwLock};
+use tokio::sync::{RwLock, broadcast};
 use tracing::{debug, error, info, warn};
 
-use super::hooks::{AuthHook, AuthHookAdapter, HookError, ResourceHook, ResourceHookAdapter, SystemHook};
+use super::hooks::{
+    AuthHook, AuthHookAdapter, HookError, ResourceHook, ResourceHookAdapter, SystemHook,
+};
 use super::types::SystemEvent;
 
 /// Default timeout for hook execution.
@@ -84,11 +86,7 @@ impl HookRegistry {
     /// Get hooks that match an event.
     pub async fn get_matching_hooks(&self, event: &SystemEvent) -> Vec<Arc<dyn SystemHook>> {
         let hooks = self.hooks.read().await;
-        hooks
-            .iter()
-            .filter(|h| h.matches(event))
-            .cloned()
-            .collect()
+        hooks.iter().filter(|h| h.matches(event)).cloned().collect()
     }
 
     /// Dispatch an event to all matching hooks.
@@ -118,9 +116,7 @@ impl HookRegistry {
                 // Wrap in timeout
                 let result = tokio::time::timeout(timeout, async {
                     // Wrap in catch_unwind for panic protection
-                    AssertUnwindSafe(hook.handle(&event))
-                        .catch_unwind()
-                        .await
+                    AssertUnwindSafe(hook.handle(&event)).catch_unwind().await
                 })
                 .await;
 

@@ -41,9 +41,15 @@ impl TemplateRenderer {
             .get(template_id)
             .ok_or(NotificationError::TemplateNotFound(template_id.to_string()))?;
 
-        let subject = template.subject.as_ref().map(|s| self.render_string(s, data));
+        let subject = template
+            .subject
+            .as_ref()
+            .map(|s| self.render_string(s, data));
         let body = self.render_string(&template.body, data);
-        let html_body = template.html_body.as_ref().map(|s| self.render_string(s, data));
+        let html_body = template
+            .html_body
+            .as_ref()
+            .map(|s| self.render_string(s, data));
 
         Ok(RenderedContent {
             subject,
@@ -123,6 +129,9 @@ mod tests {
         let data = HashMap::new();
 
         let result = renderer.render("nonexistent", &data);
-        assert!(matches!(result, Err(NotificationError::TemplateNotFound(_))));
+        assert!(matches!(
+            result,
+            Err(NotificationError::TemplateNotFound(_))
+        ));
     }
 }

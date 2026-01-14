@@ -16,8 +16,8 @@ use axum::{
 use include_dir::{Dir, include_dir};
 use mime_guess::MimeGuess;
 use octofhir_api::ApiError;
-use octofhir_core::fhir_reference::parse_reference_simple;
 use octofhir_core::ResourceType;
+use octofhir_core::fhir_reference::parse_reference_simple;
 use octofhir_fhir_model::ModelProvider;
 use octofhir_storage::{FhirStorage, StorageError}; // For begin_transaction method and error mapping
 use serde::{Deserialize, Serialize};
@@ -74,6 +74,33 @@ pub async fn root() -> impl IntoResponse {
     (StatusCode::OK, Json(body))
 }
 
+/// GET /fhir or GET /fhir?_type=Patient,Observation - Combined root and system search handler
+///
+/// If `_type` parameter is present, performs system-level search across specified resource types.
+/// Otherwise returns service info.
+#[tracing::instrument(name = "fhir.root", skip_all)]
+pub async fn fhir_root(
+    state: State<crate::server::AppState>,
+    params: Query<HashMap<String, String>>,
+    raw: RawQuery,
+) -> Result<impl IntoResponse, ApiError> {
+    // If _type parameter is present, this is a system search
+    if params.contains_key("_type") {
+        return system_search(state, params, raw)
+            .await
+            .map(|r| r.into_response());
+    }
+
+    // Otherwise return service info
+    let body = json!({
+        "service": "OctoFHIR Server",
+        "status": "ok",
+        "version": env!("CARGO_PKG_VERSION"),
+        "fhirVersion": state.fhir_version,
+    });
+    Ok((StatusCode::OK, Json(body)).into_response())
+}
+
 pub async fn healthz() -> impl IntoResponse {
     (StatusCode::OK, Json(HealthResponse { status: "ok" }))
 }
@@ -109,11 +136,7 @@ pub async fn metrics(State(state): State<crate::server::AppState>) -> impl IntoR
             output,
         )
             .into_response(),
-        None => (
-            StatusCode::SERVICE_UNAVAILABLE,
-            "Metrics not initialized",
-        )
-            .into_response(),
+        None => (StatusCode::SERVICE_UNAVAILABLE, "Metrics not initialized").into_response(),
     }
 }
 
@@ -280,10 +303,8 @@ pub async fn build_capability_statement(
     // Build resources using pre-fetched data
     for rt in resource_types.iter() {
         // Get search params for this resource type, add common params
-        let mut mapped: Vec<SearchParam> = search_params_by_type
-            .get(rt)
-            .cloned()
-            .unwrap_or_default();
+        let mut mapped: Vec<SearchParam> =
+            search_params_by_type.get(rt).cloned().unwrap_or_default();
         mapped.extend(octofhir_api::common_search_params());
 
         let resource = octofhir_api::CapabilityStatementRestResource::new(rt)
@@ -463,34 +484,36 @@ fn count_summary_capability_statement(cs: &Value) -> Value {
 async fn preprocess_payload(resource_type: &str, payload: &mut Value) -> Result<(), ApiError> {
     if resource_type == "User" {
         if let Some(obj) = payload.as_object_mut()
-            && let Some(password) = obj.get("password").and_then(|v| v.as_str()) {
-                let hashed = octofhir_auth::hash_password(password)
-                    .map_err(|e| ApiError::internal(format!("Failed to hash password: {}", e)))?;
-                obj.insert("passwordHash".to_string(), Value::String(hashed));
-                obj.remove("password");
-            }
+            && let Some(password) = obj.get("password").and_then(|v| v.as_str())
+        {
+            let hashed = octofhir_auth::hash_password(password)
+                .map_err(|e| ApiError::internal(format!("Failed to hash password: {}", e)))?;
+            obj.insert("passwordHash".to_string(), Value::String(hashed));
+            obj.remove("password");
+        }
     } else if resource_type == "Client" {
         if let Some(obj) = payload.as_object_mut()
-            && let Some(secret) = obj.get("clientSecret").and_then(|v| v.as_str()) {
-                // Only hash if it doesn't look like an Argon2 hash already
-                if !secret.starts_with("$argon2id$") {
-                    let hashed = octofhir_auth::hash_password(secret).map_err(|e| {
-                        ApiError::internal(format!("Failed to hash client secret: {}", e))
-                    })?;
-                    obj.insert("clientSecret".to_string(), Value::String(hashed));
-                }
+            && let Some(secret) = obj.get("clientSecret").and_then(|v| v.as_str())
+        {
+            // Only hash if it doesn't look like an Argon2 hash already
+            if !secret.starts_with("$argon2id$") {
+                let hashed = octofhir_auth::hash_password(secret).map_err(|e| {
+                    ApiError::internal(format!("Failed to hash client secret: {}", e))
+                })?;
+                obj.insert("clientSecret".to_string(), Value::String(hashed));
             }
+        }
     } else if resource_type == "App"
         && let Some(obj) = payload.as_object_mut()
-            && let Some(secret) = obj.get("secret").and_then(|v| v.as_str()) {
-                // Only hash if it doesn't look like an Argon2 hash already
-                if !secret.starts_with("$argon2id$") {
-                    let hashed = octofhir_auth::hash_app_secret(secret).map_err(|e| {
-                        ApiError::internal(format!("Failed to hash app secret: {}", e))
-                    })?;
-                    obj.insert("secret".to_string(), Value::String(hashed));
-                }
-            }
+        && let Some(secret) = obj.get("secret").and_then(|v| v.as_str())
+    {
+        // Only hash if it doesn't look like an Argon2 hash already
+        if !secret.starts_with("$argon2id$") {
+            let hashed = octofhir_auth::hash_app_secret(secret)
+                .map_err(|e| ApiError::internal(format!("Failed to hash app secret: {}", e)))?;
+            obj.insert("secret".to_string(), Value::String(hashed));
+        }
+    }
     Ok(())
 }
 
@@ -1276,12 +1299,13 @@ pub async fn update_resource(
         Ok(Some(existing_stored)) => {
             // Resource exists - check If-Match if provided
             if let Some(ref expected_version) = if_match
-                && expected_version != &existing_stored.version_id {
-                    return Err(ApiError::conflict(format!(
-                        "Version conflict: expected {}, but current is {}",
-                        expected_version, existing_stored.version_id
-                    )));
-                }
+                && expected_version != &existing_stored.version_id
+            {
+                return Err(ApiError::conflict(format!(
+                    "Version conflict: expected {}, but current is {}",
+                    expected_version, existing_stored.version_id
+                )));
+            }
 
             // Update existing resource using FhirStorage
             match state.storage.update(&payload, if_match.as_deref()).await {
@@ -1566,12 +1590,13 @@ pub async fn conditional_update_resource(
 
                 // Check If-Match if provided
                 if let Some(ref expected_version) = if_match
-                    && expected_version != &existing.version_id {
-                        return Err(ApiError::conflict(format!(
-                            "Version conflict: expected {}, but current is {}",
-                            expected_version, existing.version_id
-                        )));
-                    }
+                    && expected_version != &existing.version_id
+                {
+                    return Err(ApiError::conflict(format!(
+                        "Version conflict: expected {}, but current is {}",
+                        expected_version, existing.version_id
+                    )));
+                }
 
                 // Validate and update the matched resource
                 if let Err(err) = envelope_from_json(
@@ -1689,16 +1714,17 @@ pub async fn delete_resource(
         Ok(_) => {
             // NEW: Handle SearchParameter deletion - remove from registry
             if resource_type == "SearchParameter"
-                && let Some(url) = search_param_url {
-                    let config = state.search_config.config();
-                    if config.registry.remove_by_url(&url) {
-                        // Clear query cache
-                        if let Some(cache) = &config.cache {
-                            cache.clear();
-                        }
-                        tracing::info!(url = %url, "Search parameter removed from registry");
+                && let Some(url) = search_param_url
+            {
+                let config = state.search_config.config();
+                if config.registry.remove_by_url(&url) {
+                    // Clear query cache
+                    if let Some(cache) = &config.cache {
+                        cache.clear();
                     }
+                    tracing::info!(url = %url, "Search parameter removed from registry");
                 }
+            }
 
             Ok(StatusCode::NO_CONTENT)
         }
@@ -1743,7 +1769,8 @@ pub async fn conditional_delete_resource(
                 let resource_to_delete = &result.entries[0];
 
                 // Protect the default admin access policy from deletion
-                if resource_type == "AccessPolicy" && resource_to_delete.id == ADMIN_ACCESS_POLICY_ID
+                if resource_type == "AccessPolicy"
+                    && resource_to_delete.id == ADMIN_ACCESS_POLICY_ID
                 {
                     return Err(ApiError::forbidden(
                         "The default admin access policy cannot be deleted",
@@ -1831,12 +1858,13 @@ pub async fn patch_resource(
 
     // Check If-Match if provided
     if let Some(ref expected_version) = if_match
-        && expected_version != &existing.version_id {
-            return Err(ApiError::conflict(format!(
-                "Version conflict: expected {}, but current is {}",
-                expected_version, existing.version_id
-            )));
-        }
+        && expected_version != &existing.version_id
+    {
+        return Err(ApiError::conflict(format!(
+            "Version conflict: expected {}, but current is {}",
+            expected_version, existing.version_id
+        )));
+    }
 
     // Get current resource JSON for patching
     let current_json = existing.resource.clone();
@@ -1858,11 +1886,9 @@ pub async fn patch_resource(
 
     // Basic structural validation (resourceType match)
     let resource_types = state.resource_type_set.load();
-    if let Err(e) = crate::validation::validate_resource(
-        &resource_type,
-        &patched_json,
-        resource_types.as_ref(),
-    ) {
+    if let Err(e) =
+        crate::validation::validate_resource(&resource_type, &patched_json, resource_types.as_ref())
+    {
         return Err(ApiError::bad_request(format!("Validation failed: {e}")));
     }
 
@@ -2019,12 +2045,13 @@ pub async fn conditional_patch_resource(
 
                 // Check If-Match if provided
                 if let Some(ref expected_version) = if_match
-                    && expected_version != &existing.version_id {
-                        return Err(ApiError::conflict(format!(
-                            "Version conflict: expected {}, but current is {}",
-                            expected_version, existing.version_id
-                        )));
-                    }
+                    && expected_version != &existing.version_id
+                {
+                    return Err(ApiError::conflict(format!(
+                        "Version conflict: expected {}, but current is {}",
+                        expected_version, existing.version_id
+                    )));
+                }
 
                 // Get current resource JSON for patching
                 let current_json = existing.resource.clone();
@@ -2175,6 +2202,7 @@ pub struct SearchResultParams {
 #[tracing::instrument(name = "fhir.search", skip_all, fields(resource_type = %resource_type))]
 pub async fn search_resource(
     State(state): State<crate::server::AppState>,
+    headers: HeaderMap,
     Path(resource_type): Path<String>,
     Query(params): Query<HashMap<String, String>>,
     RawQuery(raw): RawQuery,
@@ -2185,6 +2213,12 @@ pub async fn search_resource(
             "Unknown resourceType '{resource_type}'"
         )));
     }
+
+    // Parse Prefer header for handling mode (strict/lenient)
+    let unknown_param_handling = headers
+        .get("Prefer")
+        .and_then(|h| h.to_str().ok())
+        .map(octofhir_search::UnknownParamHandling::from_prefer_header);
 
     let raw_q = raw.unwrap_or_default();
     let cfg = state.search_config.config();
@@ -2198,17 +2232,21 @@ pub async fn search_resource(
     let offset = search_params.offset.unwrap_or(0) as usize;
     let count = search_params.count.unwrap_or(10) as usize;
 
-    // Execute search with raw JSON optimization
-    let result = octofhir_db_postgres::queries::execute_search_raw(
+    // Execute search with raw JSON optimization and handling mode
+    let result = octofhir_db_postgres::queries::execute_search_raw_with_config(
         &state.db_pool,
         &resource_type,
         &search_params,
         Some(&cfg.registry),
+        unknown_param_handling,
     )
     .await
     .map_err(|e| ApiError::bad_request(e.to_string()))?;
 
-    let total = result.total.map(|t| t as usize).unwrap_or(result.entries.len());
+    let total = result
+        .total
+        .map(|t| t as usize)
+        .unwrap_or(result.entries.len());
 
     // Convert main entries to RawJson
     let (resources, ids): (Vec<_>, Vec<_>) = result
@@ -2228,7 +2266,14 @@ pub async fn search_resource(
         })
         .collect();
 
-    let bundle = octofhir_api::bundle_from_search_raw(
+    // Create OperationOutcome warnings if there were unknown parameters
+    let warnings = if !result.warnings.is_empty() {
+        Some(octofhir_api::OperationOutcome::warnings(result.warnings))
+    } else {
+        None
+    };
+
+    let bundle = octofhir_api::bundle_from_search_raw_with_warnings(
         total,
         resources,
         ids,
@@ -2238,6 +2283,7 @@ pub async fn search_resource(
         offset,
         count,
         suffix.as_deref(),
+        warnings,
     );
 
     // Apply _summary and _elements filters if present
@@ -2293,7 +2339,10 @@ pub async fn search_resource_post(
     .await
     .map_err(|e| ApiError::bad_request(e.to_string()))?;
 
-    let total = result.total.map(|t| t as usize).unwrap_or(result.entries.len());
+    let total = result
+        .total
+        .map(|t| t as usize)
+        .unwrap_or(result.entries.len());
 
     // Convert main entries to RawJson
     let (resources, ids): (Vec<_>, Vec<_>) = result
@@ -2313,7 +2362,14 @@ pub async fn search_resource_post(
         })
         .collect();
 
-    let bundle = octofhir_api::bundle_from_search_raw(
+    // Create OperationOutcome warnings if there were unknown parameters
+    let warnings = if !result.warnings.is_empty() {
+        Some(octofhir_api::OperationOutcome::warnings(result.warnings))
+    } else {
+        None
+    };
+
+    let bundle = octofhir_api::bundle_from_search_raw_with_warnings(
         total,
         resources,
         ids,
@@ -2323,6 +2379,7 @@ pub async fn search_resource_post(
         offset,
         count,
         suffix.as_deref(),
+        warnings,
     );
 
     // Apply _summary and _elements filters if present
@@ -2475,9 +2532,10 @@ async fn resolve_includes_for_search(
                             for (ref_type, ref_id) in refs {
                                 // Skip if target type filter doesn't match
                                 if let Some(tt) = target_type
-                                    && ref_type != tt {
-                                        continue;
-                                    }
+                                    && ref_type != tt
+                                {
+                                    continue;
+                                }
 
                                 // Skip duplicates
                                 let key = (ref_type.clone(), ref_id.clone());
@@ -2488,14 +2546,14 @@ async fn resolve_includes_for_search(
                                 // Fetch the referenced resource using modern storage API
                                 if ref_type.parse::<ResourceType>().is_ok()
                                     && let Ok(Some(stored)) = storage.read(&ref_type, &ref_id).await
-                                    {
-                                        included_keys.insert(key);
-                                        included.push(octofhir_api::IncludedResourceEntry {
-                                            resource: stored.resource.into(),
-                                            resource_type: ref_type,
-                                            id: ref_id,
-                                        });
-                                    }
+                                {
+                                    included_keys.insert(key);
+                                    included.push(octofhir_api::IncludedResourceEntry {
+                                        resource: stored.resource.into(),
+                                        resource_type: ref_type,
+                                        id: ref_id,
+                                    });
+                                }
                             }
                         }
                     }
@@ -2607,7 +2665,12 @@ fn parse_reference_string(reference: &str) -> Option<(String, String)> {
             let rid = parts[0];
             if !rtype.is_empty() && !rid.is_empty() {
                 // Validate resource type starts with uppercase
-                if rtype.chars().next().map(|c| c.is_ascii_uppercase()).unwrap_or(false) {
+                if rtype
+                    .chars()
+                    .next()
+                    .map(|c| c.is_ascii_uppercase())
+                    .unwrap_or(false)
+                {
                     return Some((rtype.to_string(), rid.to_string()));
                 }
             }
@@ -2950,7 +3013,10 @@ pub async fn api_json_schema(
         .get_schema(&resource_type)
         .await
         .ok_or_else(|| {
-            ApiError::NotFound(format!("Schema not found for resource type: {}", resource_type))
+            ApiError::NotFound(format!(
+                "Schema not found for resource type: {}",
+                resource_type
+            ))
         })?;
 
     // Convert to JSON Schema
@@ -3008,19 +3074,22 @@ pub async fn api_operations(
         .filter(|op| {
             // Category filter
             if let Some(ref cat) = params.category
-                && &op.category != cat {
-                    return false;
-                }
+                && &op.category != cat
+            {
+                return false;
+            }
             // Module filter
             if let Some(ref module) = params.module
-                && &op.module != module {
-                    return false;
-                }
+                && &op.module != module
+            {
+                return false;
+            }
             // Public filter
             if let Some(public) = params.public
-                && op.public != public {
-                    return false;
-                }
+                && op.public != public
+            {
+                return false;
+            }
             true
         })
         .collect();
@@ -3203,7 +3272,11 @@ pub async fn api_operation_patch(
 
     // If only updating public flag, use the registry service which also updates in-memory indexes
     if body.description.is_none() && body.public.is_some() {
-        match state.operation_registry.set_operation_public(&id, body.public.unwrap()).await {
+        match state
+            .operation_registry
+            .set_operation_public(&id, body.public.unwrap())
+            .await
+        {
             Ok(Some(op)) => {
                 tracing::info!(operation_id = %id, public = body.public.unwrap(), "Operation public flag updated");
                 return (StatusCode::OK, Json(serde_json::to_value(op).unwrap()));
@@ -3235,9 +3308,10 @@ pub async fn api_operation_patch(
         Ok(Some(op)) => {
             // If public flag was also changed, re-sync registry to update in-memory indexes
             if body.public.is_some()
-                && let Err(e) = state.operation_registry.sync_operations(false).await {
-                    tracing::warn!(error = %e, "Failed to sync operation registry after update");
-                }
+                && let Err(e) = state.operation_registry.sync_operations(false).await
+            {
+                tracing::warn!(error = %e, "Failed to sync operation registry after update");
+            }
             (StatusCode::OK, Json(serde_json::to_value(op).unwrap()))
         }
         Ok(None) => {
@@ -3910,12 +3984,13 @@ async fn process_put_entry(
 
         // Handle If-Match version check
         if let (Some(expected_version), Some(existing_stored)) = (&if_match, &existing)
-            && expected_version != &existing_stored.version_id {
-                return Err(ApiError::conflict(format!(
-                    "Version mismatch: expected {}, found {}",
-                    expected_version, existing_stored.version_id
-                )));
-            }
+            && expected_version != &existing_stored.version_id
+        {
+            return Err(ApiError::conflict(format!(
+                "Version mismatch: expected {}, found {}",
+                expected_version, existing_stored.version_id
+            )));
+        }
 
         // Ensure id and resourceType are set
         resource["id"] = json!(id);
@@ -4753,9 +4828,10 @@ pub async fn async_job_status(
     // For bulk export jobs that are completed, return the manifest directly
     if job.request_type == "bulk_export"
         && job.status == crate::async_jobs::AsyncJobStatus::Completed
-        && let Some(result) = job.result {
-            return Ok((StatusCode::OK, Json(result)).into_response());
-        }
+        && let Some(result) = job.result
+    {
+        return Ok((StatusCode::OK, Json(result)).into_response());
+    }
 
     // Build response based on job status
     let response = json!({
@@ -4784,10 +4860,9 @@ pub async fn async_job_status(
         || job.status == crate::async_jobs::AsyncJobStatus::Queued
     {
         let progress_pct = (job.progress * 100.0).round() as u32;
-        if let Ok(progress_value) = axum::http::HeaderValue::from_str(&format!(
-            "Processing: {}% complete",
-            progress_pct
-        )) {
+        if let Ok(progress_value) =
+            axum::http::HeaderValue::from_str(&format!("Processing: {}% complete", progress_pct))
+        {
             headers.insert("X-Progress", progress_value);
         }
         // Also add Retry-After header to suggest when to poll again (in seconds)
@@ -5808,9 +5883,7 @@ async fn dispatch_to_gateway_with_body_or_404(
 ) -> Result<Response, ApiError> {
     if state.gateway_router.get_route(method, path).await.is_some() {
         // Rebuild the request with the body
-        let mut request_builder = Request::builder()
-            .method(method)
-            .uri(path);
+        let mut request_builder = Request::builder().method(method).uri(path);
 
         // Copy headers
         if let Some(headers_mut) = request_builder.headers_mut() {
@@ -5843,9 +5916,8 @@ async fn validate_app_payload(
     exclude_id: Option<&str>,
 ) -> Result<(), ApiError> {
     // Parse the App from payload
-    let app: App = serde_json::from_value(payload.clone()).map_err(|e| {
-        ApiError::bad_request(format!("Invalid App payload: {}", e))
-    })?;
+    let app: App = serde_json::from_value(payload.clone())
+        .map_err(|e| ApiError::bad_request(format!("Invalid App payload: {}", e)))?;
 
     // Fetch all other Apps for conflict checking
     let other_apps = fetch_other_apps(state, exclude_id).await?;
@@ -5878,9 +5950,10 @@ async fn fetch_other_apps(
         if let Ok(app) = serde_json::from_value::<App>(stored.resource.clone()) {
             // Exclude the App being updated
             if let Some(exclude) = exclude_id
-                && app.id.as_deref() == Some(exclude) {
-                    continue;
-                }
+                && app.id.as_deref() == Some(exclude)
+            {
+                continue;
+            }
             apps.push(app);
         }
     }
@@ -5921,13 +5994,14 @@ fn app_validation_errors_to_api_error(errors: Vec<PathValidationError>) -> ApiEr
 /// This allows App operations to be served at any root path (e.g., /psychportal/status).
 pub async fn internal_search_resource(
     state: State<crate::server::AppState>,
+    headers: HeaderMap,
     Path(resource_type): Path<String>,
     query: Query<HashMap<String, String>>,
     raw: RawQuery,
     request: Request<Body>,
 ) -> Result<Response, ApiError> {
     if is_internal_resource_type(&resource_type) {
-        return search_resource(state, Path(resource_type), query, raw)
+        return search_resource(state, headers, Path(resource_type), query, raw)
             .await
             .map(IntoResponse::into_response);
     }
@@ -5950,7 +6024,15 @@ pub async fn internal_create_resource(
     if !is_internal_resource_type(&resource_type) {
         // Not an internal resource - try gateway
         let path = format!("/{}", resource_type);
-        return dispatch_to_gateway_with_body_or_404(&state, "POST", &path, &resource_type, headers, body).await;
+        return dispatch_to_gateway_with_body_or_404(
+            &state,
+            "POST",
+            &path,
+            &resource_type,
+            headers,
+            body,
+        )
+        .await;
     }
 
     // Parse JSON payload for internal resources
@@ -5962,22 +6044,32 @@ pub async fn internal_create_resource(
         validate_app_payload(&state, &payload, None).await?;
     }
 
-    let response = create_resource(state.clone(), Path(resource_type.clone()), headers, Json(payload.clone())).await?;
+    let response = create_resource(
+        state.clone(),
+        Path(resource_type.clone()),
+        headers,
+        Json(payload.clone()),
+    )
+    .await?;
 
     // Reconcile operations if this is an App resource
     if resource_type == "App"
-        && let Err(e) = reconcile_app_operations(&state, &payload).await {
-            // Rollback: delete the App we just created
-            if let Some(app_id) = payload.get("id").and_then(|v| v.as_str()) {
-                let _ = state.storage.delete("App", app_id).await;
-                tracing::error!(
-                    error = %e,
-                    app_id = %app_id,
-                    "Failed to reconcile operations, rolled back App creation"
-                );
-            }
-            return Err(ApiError::internal(format!("Failed to reconcile operations: {}", e)));
+        && let Err(e) = reconcile_app_operations(&state, &payload).await
+    {
+        // Rollback: delete the App we just created
+        if let Some(app_id) = payload.get("id").and_then(|v| v.as_str()) {
+            let _ = state.storage.delete("App", app_id).await;
+            tracing::error!(
+                error = %e,
+                app_id = %app_id,
+                "Failed to reconcile operations, rolled back App creation"
+            );
         }
+        return Err(ApiError::internal(format!(
+            "Failed to reconcile operations: {}",
+            e
+        )));
+    }
 
     Ok(response.into_response())
 }
@@ -6016,7 +6108,15 @@ pub async fn internal_update_resource(
     if !is_internal_resource_type(&resource_type) {
         // Not an internal resource - try gateway
         let path = format!("/{}/{}", resource_type, id);
-        return dispatch_to_gateway_with_body_or_404(&state, "PUT", &path, &resource_type, headers, body).await;
+        return dispatch_to_gateway_with_body_or_404(
+            &state,
+            "PUT",
+            &path,
+            &resource_type,
+            headers,
+            body,
+        )
+        .await;
     }
 
     // Parse JSON payload for internal resources
@@ -6035,22 +6135,32 @@ pub async fn internal_update_resource(
         None
     };
 
-    let response = update_resource(state.clone(), Path((resource_type.clone(), id.clone())), headers, Json(payload.clone())).await?;
+    let response = update_resource(
+        state.clone(),
+        Path((resource_type.clone(), id.clone())),
+        headers,
+        Json(payload.clone()),
+    )
+    .await?;
 
     // Reconcile operations if this is an App resource
     if resource_type == "App"
-        && let Err(e) = reconcile_app_operations(&state, &payload).await {
-            // Rollback: restore old App state
-            if let Some(old_resource) = old_app {
-                let _ = state.storage.update(&old_resource.resource, None).await;
-                tracing::error!(
-                    error = %e,
-                    app_id = %id,
-                    "Failed to reconcile operations, rolled back App update"
-                );
-            }
-            return Err(ApiError::internal(format!("Failed to reconcile operations: {}", e)));
+        && let Err(e) = reconcile_app_operations(&state, &payload).await
+    {
+        // Rollback: restore old App state
+        if let Some(old_resource) = old_app {
+            let _ = state.storage.update(&old_resource.resource, None).await;
+            tracing::error!(
+                error = %e,
+                app_id = %id,
+                "Failed to reconcile operations, rolled back App update"
+            );
         }
+        return Err(ApiError::internal(format!(
+            "Failed to reconcile operations: {}",
+            e
+        )));
+    }
 
     Ok(response.into_response())
 }
@@ -6085,9 +6195,9 @@ async fn reconcile_app_operations(
     state: &crate::server::AppState,
     app_payload: &Value,
 ) -> Result<(), ApiError> {
-    use std::collections::HashMap;
     use crate::gateway::types::App;
     use crate::reconcile::{reconcile_operations, reconcile_resources, reconcile_subscriptions};
+    use std::collections::HashMap;
 
     // Deserialize App from payload
     let app: App = serde_json::from_value(app_payload.clone())
@@ -6099,12 +6209,17 @@ async fn reconcile_app_operations(
         .ok_or_else(|| ApiError::internal("App has no ID"))?;
 
     // Reconcile operations
-    reconcile_operations(&state.storage, app_id, &app.name, &app.endpoint, &app.operations)
-        .await?;
+    reconcile_operations(
+        &state.storage,
+        app_id,
+        &app.name,
+        &app.endpoint,
+        &app.operations,
+    )
+    .await?;
 
     // Reconcile subscriptions
-    reconcile_subscriptions(&state.storage, app_id, &app.name, &app.subscriptions)
-        .await?;
+    reconcile_subscriptions(&state.storage, app_id, &app.name, &app.subscriptions).await?;
 
     // Reconcile provisioned resources (if present)
     if let Some(resources_json) = &app.resources {
@@ -6139,12 +6254,20 @@ mod tests {
             "secret": "app_test_secret_1234567890abcdef1234567890abcdef1234567890abcdef12"
         });
 
-        preprocess_payload(resource_type, &mut payload).await.unwrap();
+        preprocess_payload(resource_type, &mut payload)
+            .await
+            .unwrap();
 
         let secret = payload["secret"].as_str().unwrap();
         // Should be hashed (Argon2id format)
-        assert!(secret.starts_with("$argon2id$"), "Secret should be hashed with Argon2id");
-        assert_ne!(secret, "app_test_secret_1234567890abcdef1234567890abcdef1234567890abcdef12", "Secret should not be plaintext");
+        assert!(
+            secret.starts_with("$argon2id$"),
+            "Secret should be hashed with Argon2id"
+        );
+        assert_ne!(
+            secret, "app_test_secret_1234567890abcdef1234567890abcdef1234567890abcdef12",
+            "Secret should not be plaintext"
+        );
     }
 
     #[tokio::test]
@@ -6158,11 +6281,16 @@ mod tests {
             "secret": original_hash
         });
 
-        preprocess_payload(resource_type, &mut payload).await.unwrap();
+        preprocess_payload(resource_type, &mut payload)
+            .await
+            .unwrap();
 
         let secret = payload["secret"].as_str().unwrap();
         // Should remain unchanged if already hashed
-        assert_eq!(secret, original_hash, "Already hashed secret should not be re-hashed");
+        assert_eq!(
+            secret, original_hash,
+            "Already hashed secret should not be re-hashed"
+        );
     }
 
     #[tokio::test]
@@ -6175,7 +6303,9 @@ mod tests {
         });
 
         // Should not fail if no secret field
-        preprocess_payload(resource_type, &mut payload).await.unwrap();
+        preprocess_payload(resource_type, &mut payload)
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
@@ -6189,7 +6319,9 @@ mod tests {
             "secret": original_secret
         });
 
-        preprocess_payload(resource_type, &mut payload).await.unwrap();
+        preprocess_payload(resource_type, &mut payload)
+            .await
+            .unwrap();
 
         let hashed_secret = payload["secret"].as_str().unwrap();
 

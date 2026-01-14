@@ -1,11 +1,11 @@
 //! App authentication for Gateway operations.
 
-use axum::http::{HeaderMap, Request};
 use axum::body::Body;
+use axum::http::{HeaderMap, Request};
 
-use crate::server::AppState;
 use super::error::GatewayError;
 use super::types::{App, CustomOperation};
+use crate::server::AppState;
 
 /// Header name for App secret authentication.
 pub const X_APP_SECRET_HEADER: &str = "x-app-secret";
@@ -43,9 +43,7 @@ pub async fn authenticate_app_operation(
         .get(X_APP_SECRET_HEADER)
         .and_then(|v| v.to_str().ok())
         .ok_or_else(|| {
-            GatewayError::Unauthorized(
-                "Missing X-App-Secret header for App operation".to_string()
-            )
+            GatewayError::Unauthorized("Missing X-App-Secret header for App operation".to_string())
         })?;
 
     // Extract App ID from operation.app.reference
@@ -57,32 +55,25 @@ pub async fn authenticate_app_operation(
     })?;
 
     // Parse App ID from reference (e.g., "App/123" -> "123")
-    let app_id = app_ref
-        .strip_prefix("App/")
-        .ok_or_else(|| {
-            GatewayError::InternalError(format!("Invalid app reference format: {}", app_ref))
-        })?;
+    let app_id = app_ref.strip_prefix("App/").ok_or_else(|| {
+        GatewayError::InternalError(format!("Invalid app reference format: {}", app_ref))
+    })?;
 
     // Load App resource from storage
     let app_json = state
         .storage
         .read("App", app_id)
         .await
-        .map_err(|e| {
-            GatewayError::InternalError(format!("Failed to load App {}: {}", app_id, e))
-        })?
-        .ok_or_else(|| {
-            GatewayError::InternalError(format!("App {} not found", app_id))
-        })?;
+        .map_err(|e| GatewayError::InternalError(format!("Failed to load App {}: {}", app_id, e)))?
+        .ok_or_else(|| GatewayError::InternalError(format!("App {} not found", app_id)))?;
 
     let app: App = serde_json::from_value(app_json.resource).map_err(|e| {
         GatewayError::InternalError(format!("Failed to parse App {}: {}", app_id, e))
     })?;
 
     // Verify secret against stored hash
-    let is_valid = octofhir_auth::verify_app_secret(secret, &app.secret).map_err(|e| {
-        GatewayError::InternalError(format!("Failed to verify app secret: {}", e))
-    })?;
+    let is_valid = octofhir_auth::verify_app_secret(secret, &app.secret)
+        .map_err(|e| GatewayError::InternalError(format!("Failed to verify app secret: {}", e)))?;
 
     if !is_valid {
         return Err(GatewayError::Unauthorized(format!(

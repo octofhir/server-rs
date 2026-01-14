@@ -9,6 +9,6 @@ mod operations;
 mod resources;
 mod subscriptions;
 
-pub use operations::{reconcile_operations, ReconcileResult};
+pub use operations::{ReconcileResult, reconcile_operations};
 pub use resources::reconcile_resources;
 pub use subscriptions::reconcile_subscriptions;

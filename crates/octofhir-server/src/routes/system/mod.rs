@@ -10,7 +10,7 @@ mod logs;
 
 pub use logs::*;
 
-use axum::{routing::post, Router};
+use axum::{Router, routing::post};
 
 use crate::server::AppState;
 

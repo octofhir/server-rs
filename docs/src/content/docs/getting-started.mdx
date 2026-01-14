@@ -1,38 +1,175 @@
 ---
 title: Getting Started
-head: []
+description: Get OctoFHIR server running in 5 minutes
 ---
 
-Prerequisites:
+import { Tabs, TabItem, Steps, Aside } from '@astrojs/starlight/components';
 
-- Rust (stable) and `cargo`
-- `just` (optional) for convenience
+This guide will get you from zero to a running FHIR server in about 5 minutes.
 
-Build and run:
+## Prerequisites
+
+- Docker and Docker Compose (recommended for quick start)
+- OR: Rust 1.75+ and PostgreSQL 14+
+
+## Quick Start with Docker Compose
+
+<Steps>
+
+1. **Clone the repository**
+
+   ```bash
+   git clone https://github.com/octofhir/server-rs.git
+   cd server-rs
+   ```
+
+2. **Start the database**
+
+   ```bash
+   docker compose up -d
+   ```
+
+   This starts PostgreSQL on port 5450 and Redis on port 6380.
+
+3. **Run the server**
+
+   <Tabs>
+   <TabItem label="Pre-built Binary">
+   ```bash
+   # Download latest release
+   curl -LO https://github.com/octofhir/server-rs/releases/latest/download/octofhir-server
+   chmod +x octofhir-server
+   ./octofhir-server
+   ```
+   </TabItem>
+   <TabItem label="From Source">
+   ```bash
+   cargo run --release
+   ```
+   </TabItem>
+   </Tabs>
+
+4. **Verify it's running**
+
+   ```bash
+   curl http://localhost:8888/healthz
+   # {"status":"ok"}
+   ```
+
+</Steps>
+
+## Your First FHIR Requests
+
+### Get the CapabilityStatement
 
 ```bash
-just build
-just run
-# or
-cargo run --bin octofhir-server
+curl -s http://localhost:8888/fhir/metadata | jq '.fhirVersion'
+# "4.0.1"
 ```
 
-Configuration:
+### Authenticate
 
-- Default config path: `octofhir.toml`
-- Override with `OCTOFHIR_CONFIG=/path/to/config.toml`
-- Example env override: `OCTOFHIR__SEARCH__DEFAULT_COUNT=9`
-
-First requests:
+OctoFHIR uses OAuth 2.0. Get an access token with the default admin credentials:
 
 ```bash
-# CapabilityStatement
-curl -H 'Accept: application/fhir+json' localhost:8080/metadata
+TOKEN=$(curl -s -X POST http://localhost:8888/auth/token \
+  -d "grant_type=password&username=admin&password=admin123" \
+  | jq -r '.access_token')
 
-# Create a Patient
-curl -s -H 'Accept: application/fhir+json' -H 'Content-Type: application/fhir+json' \
-  -d '{"resourceType":"Patient","active":true}' localhost:8080/Patient
-
-# Search Patients
-curl -H 'Accept: application/fhir+json' 'localhost:8080/Patient?name=Jo&_count=10'
+echo $TOKEN
 ```
+
+### Create a Patient
+
+```bash
+curl -s -X POST http://localhost:8888/fhir/Patient \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/fhir+json" \
+  -d '{
+    "resourceType": "Patient",
+    "name": [{"given": ["John"], "family": "Doe"}],
+    "birthDate": "1990-01-15",
+    "gender": "male"
+  }' | jq '.id'
+# "550e8400-e29b-41d4-a716-446655440000"
+```
+
+### Search for Patients
+
+```bash
+curl -s "http://localhost:8888/fhir/Patient?name=John&_count=10" \
+  -H "Authorization: Bearer $TOKEN" \
+  | jq '.entry[].resource.name'
+```
+
+### Read a Patient
+
+```bash
+curl -s "http://localhost:8888/fhir/Patient/550e8400-e29b-41d4-a716-446655440000" \
+  -H "Authorization: Bearer $TOKEN" \
+  | jq '.'
+```
+
+## Configuration
+
+The server is configured via `octofhir.toml`. Key options:
+
+```toml
+[server]
+host = "0.0.0.0"
+port = 8888
+
+[storage.postgres]
+host = "localhost"
+port = 5450
+database = "octofhir"
+
+[fhir]
+version = "R4"  # R4, R4B, R5, or R6
+
+[bootstrap.admin_user]
+username = "admin"
+password = "admin123"
+```
+
+Override any option via environment variables:
+
+```bash
+OCTOFHIR__SERVER__PORT=9000 ./octofhir-server
+OCTOFHIR__FHIR__VERSION=R5 ./octofhir-server
+```
+
+<Aside type="tip">
+See the [Configuration Reference](/server-rs/configuration/) for all available options.
+</Aside>
+
+## Development Setup
+
+For active development with hot reload:
+
+```bash
+# Install cargo-watch
+cargo install cargo-watch
+
+# Run with auto-reload
+cargo watch -x 'run --bin octofhir-server'
+
+# Or use just
+just dev
+```
+
+## Web Console
+
+OctoFHIR includes a built-in web console at http://localhost:8888/ui with:
+
+- Resource browser
+- FHIR search playground
+- SQL console for direct database queries
+- GraphQL playground
+
+## Next Steps
+
+- [Authentication](/server-rs/authentication/) - Configure OAuth 2.0 and SMART on FHIR
+- [Search Parameters](/server-rs/search-parameters/) - Learn about FHIR search
+- [API Reference](/server-rs/api-reference/) - Full API documentation
+- [Deployment](/server-rs/deployment/) - Production deployment guide

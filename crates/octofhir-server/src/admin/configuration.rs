@@ -152,23 +152,24 @@ pub async fn list_config(
 
     for category in categories {
         if let Some(cat_value) = config.get_category(&category.to_string())
-            && let Some(obj) = cat_value.as_object() {
-                for (key, value) in obj {
-                    entries.push(ConfigEntryResponse {
-                        key: key.clone(),
-                        category: category.to_string(),
-                        value: if octofhir_config::secrets::is_secret_key(key)
-                            && !params.include_secrets
-                        {
-                            serde_json::json!("<secret>")
-                        } else {
-                            value.clone()
-                        },
-                        description: None,
-                        is_secret: octofhir_config::secrets::is_secret_key(key),
-                    });
-                }
+            && let Some(obj) = cat_value.as_object()
+        {
+            for (key, value) in obj {
+                entries.push(ConfigEntryResponse {
+                    key: key.clone(),
+                    category: category.to_string(),
+                    value: if octofhir_config::secrets::is_secret_key(key)
+                        && !params.include_secrets
+                    {
+                        serde_json::json!("<secret>")
+                    } else {
+                        value.clone()
+                    },
+                    description: None,
+                    is_secret: octofhir_config::secrets::is_secret_key(key),
+                });
             }
+        }
     }
 
     Ok(Json(entries))

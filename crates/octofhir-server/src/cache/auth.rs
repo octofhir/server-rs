@@ -177,8 +177,7 @@ impl AuthContextCache for LocalAuthCache {
 
         if let Some(entry) = self.cache.get(jti) {
             if entry.expires_at > now {
-                self.hits
-                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                self.hits.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 // Arc::clone is cheap - just increments reference count
                 return Some(Arc::clone(&entry.context));
             }

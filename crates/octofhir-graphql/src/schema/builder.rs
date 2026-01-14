@@ -459,9 +459,10 @@ impl FhirSchemaBuilder {
                     FieldFuture::new(async move {
                         if let Some(parent) = ctx.parent_value.as_value()
                             && let Value::Object(obj) = parent
-                                && let Some(resource) = obj.get("resource") {
-                                    return Ok(Some(resource.clone()));
-                                }
+                            && let Some(resource) = obj.get("resource")
+                        {
+                            return Ok(Some(resource.clone()));
+                        }
                         Ok(None)
                     })
                 })
@@ -472,9 +473,10 @@ impl FhirSchemaBuilder {
                     FieldFuture::new(async move {
                         if let Some(parent) = ctx.parent_value.as_value()
                             && let Value::Object(obj) = parent
-                                && let Some(mode) = obj.get("mode") {
-                                    return Ok(Some(mode.clone()));
-                                }
+                            && let Some(mode) = obj.get("mode")
+                        {
+                            return Ok(Some(mode.clone()));
+                        }
                         Ok(None)
                     })
                 })
@@ -485,9 +487,10 @@ impl FhirSchemaBuilder {
                     FieldFuture::new(async move {
                         if let Some(parent) = ctx.parent_value.as_value()
                             && let Value::Object(obj) = parent
-                                && let Some(score) = obj.get("score") {
-                                    return Ok(Some(score.clone()));
-                                }
+                            && let Some(score) = obj.get("score")
+                        {
+                            return Ok(Some(score.clone()));
+                        }
                         Ok(None)
                     })
                 })
@@ -510,9 +513,10 @@ impl FhirSchemaBuilder {
                     FieldFuture::new(async move {
                         if let Some(parent) = ctx.parent_value.as_value()
                             && let Value::Object(obj) = parent
-                                && let Some(count) = obj.get("count") {
-                                    return Ok(Some(count.clone()));
-                                }
+                            && let Some(count) = obj.get("count")
+                        {
+                            return Ok(Some(count.clone()));
+                        }
                         Ok(None)
                     })
                 })
@@ -523,9 +527,10 @@ impl FhirSchemaBuilder {
                     FieldFuture::new(async move {
                         if let Some(parent) = ctx.parent_value.as_value()
                             && let Value::Object(obj) = parent
-                                && let Some(offset) = obj.get("offset") {
-                                    return Ok(Some(offset.clone()));
-                                }
+                            && let Some(offset) = obj.get("offset")
+                        {
+                            return Ok(Some(offset.clone()));
+                        }
                         Ok(None)
                     })
                 })
@@ -536,9 +541,10 @@ impl FhirSchemaBuilder {
                     FieldFuture::new(async move {
                         if let Some(parent) = ctx.parent_value.as_value()
                             && let Value::Object(obj) = parent
-                                && let Some(size) = obj.get("pageSize") {
-                                    return Ok(Some(size.clone()));
-                                }
+                            && let Some(size) = obj.get("pageSize")
+                        {
+                            return Ok(Some(size.clone()));
+                        }
                         Ok(None)
                     })
                 })
@@ -549,9 +555,10 @@ impl FhirSchemaBuilder {
                     FieldFuture::new(async move {
                         if let Some(parent) = ctx.parent_value.as_value()
                             && let Value::Object(obj) = parent
-                                && let Some(edges) = obj.get("edges") {
-                                    return Ok(Some(edges.clone()));
-                                }
+                            && let Some(edges) = obj.get("edges")
+                        {
+                            return Ok(Some(edges.clone()));
+                        }
                         Ok(Some(Value::List(vec![])))
                     })
                 })
@@ -562,9 +569,10 @@ impl FhirSchemaBuilder {
                     FieldFuture::new(async move {
                         if let Some(parent) = ctx.parent_value.as_value()
                             && let Value::Object(obj) = parent
-                                && let Some(cursor) = obj.get("first") {
-                                    return Ok(Some(cursor.clone()));
-                                }
+                            && let Some(cursor) = obj.get("first")
+                        {
+                            return Ok(Some(cursor.clone()));
+                        }
                         Ok(None)
                     })
                 })
@@ -575,9 +583,10 @@ impl FhirSchemaBuilder {
                     FieldFuture::new(async move {
                         if let Some(parent) = ctx.parent_value.as_value()
                             && let Value::Object(obj) = parent
-                                && let Some(cursor) = obj.get("previous") {
-                                    return Ok(Some(cursor.clone()));
-                                }
+                            && let Some(cursor) = obj.get("previous")
+                        {
+                            return Ok(Some(cursor.clone()));
+                        }
                         Ok(None)
                     })
                 })
@@ -588,9 +597,10 @@ impl FhirSchemaBuilder {
                     FieldFuture::new(async move {
                         if let Some(parent) = ctx.parent_value.as_value()
                             && let Value::Object(obj) = parent
-                                && let Some(cursor) = obj.get("next") {
-                                    return Ok(Some(cursor.clone()));
-                                }
+                            && let Some(cursor) = obj.get("next")
+                        {
+                            return Ok(Some(cursor.clone()));
+                        }
                         Ok(None)
                     })
                 })
@@ -601,9 +611,10 @@ impl FhirSchemaBuilder {
                     FieldFuture::new(async move {
                         if let Some(parent) = ctx.parent_value.as_value()
                             && let Value::Object(obj) = parent
-                                && let Some(cursor) = obj.get("last") {
-                                    return Ok(Some(cursor.clone()));
-                                }
+                            && let Some(cursor) = obj.get("last")
+                        {
+                            return Ok(Some(cursor.clone()));
+                        }
                         Ok(None)
                     })
                 })

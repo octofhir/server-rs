@@ -72,12 +72,12 @@ pub mod validation;
 pub mod websocket;
 
 pub use app::handle_app;
-pub use websocket::handle_websocket;
-pub use auth::{authenticate_app_operation, X_APP_SECRET_HEADER};
+pub use auth::{X_APP_SECRET_HEADER, authenticate_app_operation};
 pub use error::GatewayError;
 pub use handler::HandlerRegistry;
 pub use policy::evaluate_operation_policy;
 pub use reload::{GatewayReloadBuilder, GatewayReloadListener};
 pub use router::GatewayRouter;
 pub use types::{App, CustomOperation, ProxyConfig, Reference, RouteKey};
-pub use validation::{validate_app_operations, PathValidationError};
+pub use validation::{PathValidationError, validate_app_operations};
+pub use websocket::handle_websocket;

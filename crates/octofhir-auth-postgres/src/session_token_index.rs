@@ -22,7 +22,10 @@ impl<'a> SessionTokenIndex<'a> {
     /// Find AuthSession resource ID by session token (for cookie validation).
     /// Returns None if token doesn't exist or session is expired.
     #[instrument(skip(self))]
-    pub async fn find_by_token(&self, token: &str) -> Result<Option<String>, sqlx_core::error::Error> {
+    pub async fn find_by_token(
+        &self,
+        token: &str,
+    ) -> Result<Option<String>, sqlx_core::error::Error> {
         let result = query_scalar::<_, String>(
             r#"
             SELECT resource_id
@@ -179,7 +182,10 @@ impl<'a> SessionTokenIndex<'a> {
     /// Count active sessions for a user.
     /// Used to enforce concurrent session limits.
     #[instrument(skip(self))]
-    pub async fn count_active_for_user(&self, user_id: Uuid) -> Result<i64, sqlx_core::error::Error> {
+    pub async fn count_active_for_user(
+        &self,
+        user_id: Uuid,
+    ) -> Result<i64, sqlx_core::error::Error> {
         let count = query_scalar::<_, i64>(
             r#"
             SELECT COUNT(*)

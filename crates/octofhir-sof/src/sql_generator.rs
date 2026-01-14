@@ -3,9 +3,9 @@
 //! This module converts ViewDefinition resources into PostgreSQL queries
 //! that can be executed against FHIR data stored in JSONB format.
 
+use crate::Error;
 use crate::column::ColumnType;
 use crate::view_definition::{SelectColumn, ViewDefinition};
-use crate::Error;
 
 /// Represents a parsed FHIRPath segment.
 #[derive(Debug, Clone, PartialEq)]
@@ -456,16 +456,23 @@ impl SqlGenerator {
             .collect();
 
         // For simplicity, use the first repeat path (most common case)
-        let repeat_path = repeat_paths.first().map(|p| {
-            self.fhirpath_to_jsonb_array_path(p).unwrap_or_else(|_| format!("'{}'", p))
-        }).unwrap_or_default();
+        let repeat_path = repeat_paths
+            .first()
+            .map(|p| {
+                self.fhirpath_to_jsonb_array_path(p)
+                    .unwrap_or_else(|_| format!("'{}'", p))
+            })
+            .unwrap_or_default();
 
         let recursive_case = format!(
             "SELECT child.value AS elem, parent.depth + 1 FROM {} parent CROSS JOIN LATERAL jsonb_array_elements(parent.elem->{}) AS child WHERE parent.depth < 10",
             cte_name, repeat_path
         );
 
-        let cte_sql = format!("{} AS ({} UNION ALL {})", cte_name, base_case, recursive_case);
+        let cte_sql = format!(
+            "{} AS ({} UNION ALL {})",
+            cte_name, base_case, recursive_case
+        );
         ctes.push(cte_sql);
 
         // Process columns using the CTE as the source
@@ -1280,7 +1287,11 @@ mod tests {
         let sql = generator
             .fhirpath_to_sql("name.where(use = 'official')", "base")
             .unwrap();
-        assert!(sql.contains("jsonb_agg"), "SQL should contain jsonb_agg: {}", sql);
+        assert!(
+            sql.contains("jsonb_agg"),
+            "SQL should contain jsonb_agg: {}",
+            sql
+        );
         assert!(
             sql.contains("elem->>'use' = 'official'"),
             "SQL should filter by use: {}",
@@ -1296,8 +1307,16 @@ mod tests {
         let sql = generator
             .fhirpath_to_sql("name.where(use = 'official').first().family", "base")
             .unwrap();
-        assert!(sql.contains("jsonb_agg"), "SQL should contain jsonb_agg: {}", sql);
-        assert!(sql.contains("->0"), "SQL should contain ->0 for first(): {}", sql);
+        assert!(
+            sql.contains("jsonb_agg"),
+            "SQL should contain jsonb_agg: {}",
+            sql
+        );
+        assert!(
+            sql.contains("->0"),
+            "SQL should contain ->0 for first(): {}",
+            sql
+        );
         assert!(sql.contains("family"), "SQL should contain family: {}", sql);
     }
 
@@ -1327,14 +1346,21 @@ mod tests {
 
         // Test extension().valueCoding.code
         let sql = generator
-            .fhirpath_to_sql("extension('http://example.org/race').valueCoding.code", "base")
+            .fhirpath_to_sql(
+                "extension('http://example.org/race').valueCoding.code",
+                "base",
+            )
             .unwrap();
         assert!(
             sql.contains("elem->>'url' = 'http://example.org/race'"),
             "SQL should filter by URL: {}",
             sql
         );
-        assert!(sql.contains("valueCoding"), "SQL should contain valueCoding: {}", sql);
+        assert!(
+            sql.contains("valueCoding"),
+            "SQL should contain valueCoding: {}",
+            sql
+        );
     }
 
     #[test]
@@ -1370,7 +1396,11 @@ mod tests {
             "SQL should filter by Patient type: {}",
             sql
         );
-        assert!(sql.contains("CASE WHEN"), "SQL should use CASE WHEN: {}", sql);
+        assert!(
+            sql.contains("CASE WHEN"),
+            "SQL should use CASE WHEN: {}",
+            sql
+        );
     }
 
     #[test]
@@ -1384,8 +1414,16 @@ mod tests {
             "SQL should use jsonb_array_length: {}",
             sql
         );
-        assert!(sql.contains("CASE WHEN"), "SQL should use CASE WHEN: {}", sql);
-        assert!(sql.contains("IS NULL"), "SQL should check for NULL: {}", sql);
+        assert!(
+            sql.contains("CASE WHEN"),
+            "SQL should use CASE WHEN: {}",
+            sql
+        );
+        assert!(
+            sql.contains("IS NULL"),
+            "SQL should check for NULL: {}",
+            sql
+        );
     }
 
     #[test]
@@ -1461,15 +1499,17 @@ mod tests {
         let path = "code.coding.where(system = %targetSystem)";
         let substituted = generator.substitute_constants(path, &constants);
         assert_eq!(
-            substituted,
-            "code.coding.where(system = 'http://loinc.org')",
+            substituted, "code.coding.where(system = 'http://loinc.org')",
             "Constants should be substituted in path"
         );
 
         // Test integer constant
         let path = "value > %maxValue";
         let substituted = generator.substitute_constants(path, &constants);
-        assert_eq!(substituted, "value > 100", "Integer constants should be substituted");
+        assert_eq!(
+            substituted, "value > 100",
+            "Integer constants should be substituted"
+        );
     }
 
     #[test]
@@ -1563,9 +1603,7 @@ mod tests {
     fn test_fhirpath_count_function() {
         let generator = SqlGenerator::new();
 
-        let sql = generator
-            .fhirpath_to_sql("name.count()", "base")
-            .unwrap();
+        let sql = generator.fhirpath_to_sql("name.count()", "base").unwrap();
         assert!(
             sql.contains("jsonb_array_length"),
             "SQL should use jsonb_array_length: {}",
@@ -1580,11 +1618,7 @@ mod tests {
         let sql = generator
             .fhirpath_to_sql("identifier.distinct()", "base")
             .unwrap();
-        assert!(
-            sql.contains("DISTINCT"),
-            "SQL should use DISTINCT: {}",
-            sql
-        );
+        assert!(sql.contains("DISTINCT"), "SQL should use DISTINCT: {}", sql);
         assert!(
             sql.contains("jsonb_agg"),
             "SQL should use jsonb_agg: {}",
@@ -1596,14 +1630,8 @@ mod tests {
     fn test_fhirpath_not_function() {
         let generator = SqlGenerator::new();
 
-        let sql = generator
-            .fhirpath_to_sql("active.not()", "base")
-            .unwrap();
-        assert!(
-            sql.contains("NOT"),
-            "SQL should contain NOT: {}",
-            sql
-        );
+        let sql = generator.fhirpath_to_sql("active.not()", "base").unwrap();
+        assert!(sql.contains("NOT"), "SQL should contain NOT: {}", sql);
     }
 
     #[test]

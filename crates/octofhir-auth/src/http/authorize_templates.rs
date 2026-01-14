@@ -329,7 +329,9 @@ fn html_page(title: &str, content: &str) -> String {
     let mut html = String::with_capacity(content.len() + 2000);
     html.push_str("<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n");
     html.push_str("    <meta charset=\"UTF-8\">\n");
-    html.push_str("    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n");
+    html.push_str(
+        "    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n",
+    );
     html.push_str("    <title>");
     html.push_str(&html_escape(title));
     html.push_str(" - OctoFHIR</title>\n");
@@ -382,15 +384,20 @@ pub fn render_login_form(client_name: &str, session_id: &str, error: Option<&str
     // Username field
     content.push_str("<div class=\"form-group\">\n");
     content.push_str("<label class=\"form-label\" for=\"username\">Username</label>\n");
-    content.push_str("<input type=\"text\" id=\"username\" name=\"username\" class=\"form-input\" ");
+    content
+        .push_str("<input type=\"text\" id=\"username\" name=\"username\" class=\"form-input\" ");
     content.push_str("placeholder=\"Enter your username\" required autocomplete=\"username\">\n");
     content.push_str("</div>\n\n");
 
     // Password field
     content.push_str("<div class=\"form-group\">\n");
     content.push_str("<label class=\"form-label\" for=\"password\">Password</label>\n");
-    content.push_str("<input type=\"password\" id=\"password\" name=\"password\" class=\"form-input\" ");
-    content.push_str("placeholder=\"Enter your password\" required autocomplete=\"current-password\">\n");
+    content.push_str(
+        "<input type=\"password\" id=\"password\" name=\"password\" class=\"form-input\" ",
+    );
+    content.push_str(
+        "placeholder=\"Enter your password\" required autocomplete=\"current-password\">\n",
+    );
     content.push_str("</div>\n\n");
 
     // Submit button
@@ -559,7 +566,9 @@ pub fn render_consent_form(
 
     // Warning box
     content.push_str("<div class=\"warning-box\">\n");
-    content.push_str("By authorizing, you allow this application to access your data as described above.\n");
+    content.push_str(
+        "By authorizing, you allow this application to access your data as described above.\n",
+    );
     content.push_str("</div>\n\n");
 
     // Form with buttons

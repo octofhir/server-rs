@@ -30,11 +30,13 @@ RUN pnpm build
 # -----------------------------------------------------------------------------
 FROM rust:1.92-slim-bookworm AS rust-builder
 
-# Install build dependencies
+# Install build dependencies including JavaScriptCore for bot automation
 RUN apt-get update && apt-get install -y \
     pkg-config \
     libssl-dev \
     git \
+    # JSC dependencies for bot automation
+    libjavascriptcoregtk-4.1-dev \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /build
@@ -60,11 +62,13 @@ RUN CARGO_PROFILE_RELEASE_LTO=thin \
 # -----------------------------------------------------------------------------
 FROM debian:bookworm-slim AS runtime
 
-# Install runtime dependencies
+# Install runtime dependencies including JavaScriptCore for bot automation
 RUN apt-get update && apt-get install -y \
     ca-certificates \
     libssl3 \
     wget \
+    # JSC runtime for bot automation
+    libjavascriptcoregtk-4.1-0 \
     && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user

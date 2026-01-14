@@ -34,6 +34,7 @@ export default defineConfig({
       sidebar: [
         { label: 'Overview', link: '' },
         { label: 'Getting Started', link: 'getting-started/' },
+        { label: 'Configuration', link: 'configuration/' },
         {
           label: 'Authentication',
           collapsed: false,
@@ -44,7 +45,9 @@ export default defineConfig({
             { label: 'JWT Key Persistence', link: 'jwt-key-persistence/' },
           ]
         },
+        { label: 'Security', link: 'security/' },
         { label: 'API Reference', link: 'api-reference/' },
+        { label: 'GraphQL', link: 'graphql/' },
         {
           label: 'Search',
           collapsed: false,
@@ -54,15 +57,31 @@ export default defineConfig({
           ]
         },
         {
+          label: 'Features',
+          collapsed: false,
+          items: [
+            { label: 'Transactions', link: 'transactions/' },
+            { label: 'Bulk Data Export', link: 'bulk-export/' },
+            { label: 'Terminology', link: 'terminology/' },
+            { label: 'Notifications', link: 'notifications/' },
+          ]
+        },
+        {
           label: 'Architecture',
           collapsed: false,
           items: [
             { label: 'Event System', link: 'event-system/' },
+            { label: 'Performance', link: 'performance/' },
           ]
         },
         { label: 'Application Platform', link: 'applications/' },
-        { label: 'Notifications', link: 'notifications/' },
-        { label: 'Bulk Data Export', link: 'bulk-export/' },
+        {
+          label: 'Migration',
+          collapsed: true,
+          items: [
+            { label: 'From HAPI FHIR', link: 'migration/hapi/' },
+          ]
+        },
         { label: 'Development', link: 'development/' },
         { label: 'Deployment', link: 'deployment/' },
       ],

@@ -388,7 +388,12 @@ pub fn parse_reference_value(reference: &str) -> Option<(String, String)> {
             return None;
         }
         // Validate resource type starts with uppercase
-        if !rtype.chars().next().map(|c| c.is_ascii_uppercase()).unwrap_or(false) {
+        if !rtype
+            .chars()
+            .next()
+            .map(|c| c.is_ascii_uppercase())
+            .unwrap_or(false)
+        {
             return None;
         }
         return Some((rtype.to_string(), id.to_string()));

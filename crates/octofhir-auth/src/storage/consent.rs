@@ -51,7 +51,12 @@ pub trait ConsentStorage: Send + Sync {
     /// # Errors
     ///
     /// Returns an error if the storage operation fails.
-    async fn has_consent(&self, user_id: &str, client_id: &str, scopes: &[&str]) -> AuthResult<bool>;
+    async fn has_consent(
+        &self,
+        user_id: &str,
+        client_id: &str,
+        scopes: &[&str],
+    ) -> AuthResult<bool>;
 
     /// Saves or updates consent for a user+client combination.
     ///

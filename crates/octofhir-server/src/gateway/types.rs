@@ -713,7 +713,7 @@ mod tests {
 
     #[test]
     fn test_app_operation_request_with_raw_body() {
-        use base64::{engine::general_purpose::STANDARD, Engine};
+        use base64::{Engine, engine::general_purpose::STANDARD};
 
         // Create request with raw body
         let raw_data = b"binary file data here";

@@ -21,8 +21,8 @@
 //! // Use config.registry to look up search parameters
 //! ```
 
-use std::sync::Arc;
 use arc_swap::ArcSwap;
+use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, info};
 

@@ -4,7 +4,7 @@
 //! and returns the results as tabular data.
 
 use async_trait::async_trait;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::operations::{OperationError, OperationHandler};
 use crate::server::AppState;
@@ -70,14 +70,12 @@ impl ViewDefinitionRunOperation {
         for param in parameters {
             let name = param.get("name").and_then(|n| n.as_str());
             if name == Some("viewDefinition")
-                && let Some(resource) = param.get("resource") {
-                    return ViewDefinition::from_json(resource).map_err(|e| {
-                        OperationError::InvalidParameters(format!(
-                            "Invalid ViewDefinition: {}",
-                            e
-                        ))
-                    });
-                }
+                && let Some(resource) = param.get("resource")
+            {
+                return ViewDefinition::from_json(resource).map_err(|e| {
+                    OperationError::InvalidParameters(format!("Invalid ViewDefinition: {}", e))
+                });
+            }
         }
 
         Err(OperationError::InvalidParameters(
@@ -220,9 +218,7 @@ impl OperationHandler for ViewDefinitionRunOperation {
             .read("ViewDefinition", id)
             .await
             .map_err(|e| OperationError::Internal(format!("Storage error: {}", e)))?
-            .ok_or_else(|| {
-                OperationError::NotFound(format!("ViewDefinition/{} not found", id))
-            })?;
+            .ok_or_else(|| OperationError::NotFound(format!("ViewDefinition/{} not found", id)))?;
 
         let view_def = ViewDefinition::from_json(&stored.resource).map_err(|e| {
             OperationError::Internal(format!("Invalid stored ViewDefinition: {}", e))

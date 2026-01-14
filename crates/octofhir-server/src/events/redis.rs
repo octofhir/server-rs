@@ -17,7 +17,7 @@ use octofhir_core::events::{EventBroadcaster, ResourceEvent};
 use tokio::time::sleep;
 use tracing::{debug, error, info, warn};
 
-use super::{SerializableEvent, REDIS_CHANNEL};
+use super::{REDIS_CHANNEL, SerializableEvent};
 
 /// Redis event synchronization for multi-instance deployments.
 ///
@@ -123,19 +123,18 @@ impl RedisEventSync {
             .await
             .map_err(|e| RedisEventError::Subscribe(e.to_string()))?;
 
-        info!(
-            channel = REDIS_CHANNEL,
-            "Subscribed to Redis event channel"
-        );
+        info!(channel = REDIS_CHANNEL, "Subscribed to Redis event channel");
 
         let mut stream = pubsub.on_message();
 
         loop {
             match stream.next().await {
                 Some(msg) => {
-                    let payload: String = msg
-                        .get_payload()
-                        .map_err(|e: deadpool_redis::redis::RedisError| RedisEventError::Message(e.to_string()))?;
+                    let payload: String =
+                        msg.get_payload()
+                            .map_err(|e: deadpool_redis::redis::RedisError| {
+                                RedisEventError::Message(e.to_string())
+                            })?;
 
                     match serde_json::from_str::<SerializableEvent>(&payload) {
                         Ok(event) => {
@@ -229,17 +228,17 @@ impl RedisEventSyncBuilder {
     ///
     /// Returns a handle to the spawned task.
     pub fn start(self) -> Result<tokio::task::JoinHandle<()>, RedisEventError> {
-        let pool = self.pool.ok_or_else(|| {
-            RedisEventError::Pool("Redis pool is required".to_string())
-        })?;
+        let pool = self
+            .pool
+            .ok_or_else(|| RedisEventError::Pool("Redis pool is required".to_string()))?;
 
-        let broadcaster = self.broadcaster.ok_or_else(|| {
-            RedisEventError::Pool("Event broadcaster is required".to_string())
-        })?;
+        let broadcaster = self
+            .broadcaster
+            .ok_or_else(|| RedisEventError::Pool("Event broadcaster is required".to_string()))?;
 
-        let redis_url = self.redis_url.ok_or_else(|| {
-            RedisEventError::Connection("Redis URL is required".to_string())
-        })?;
+        let redis_url = self
+            .redis_url
+            .ok_or_else(|| RedisEventError::Connection("Redis URL is required".to_string()))?;
 
         let sync = Arc::new(RedisEventSync::new(pool, broadcaster, redis_url));
         Ok(tokio::spawn(sync.run()))

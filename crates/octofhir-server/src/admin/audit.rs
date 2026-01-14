@@ -151,9 +151,7 @@ pub async fn get_audit_analytics(
                         "12" => "major_failure",
                         _ => outcome,
                     };
-                    *outcome_counts
-                        .entry(outcome_name.to_string())
-                        .or_insert(0) += 1;
+                    *outcome_counts.entry(outcome_name.to_string()).or_insert(0) += 1;
                     if outcome != "0" {
                         failed_attempts += 1;
                     }
@@ -174,8 +172,7 @@ pub async fn get_audit_analytics(
                             for t in types {
                                 if let Some(coding) = t.get("coding").and_then(|c| c.as_array()) {
                                     for c in coding {
-                                        if let Some(code) = c.get("code").and_then(|c| c.as_str())
-                                        {
+                                        if let Some(code) = c.get("code").and_then(|c| c.as_str()) {
                                             *actor_type_counts
                                                 .entry(code.to_string())
                                                 .or_insert(0) += 1;
@@ -219,9 +216,10 @@ pub async fn get_audit_analytics(
                 if let Some(entities) = event.resource.get("entity").and_then(|e| e.as_array()) {
                     for entity in entities {
                         if let Some(what) = entity.get("what")
-                            && let Some(types) = what.get("type").and_then(|t| t.as_str()) {
-                                *resource_counts.entry(types.to_string()).or_insert(0) += 1;
-                            }
+                            && let Some(types) = what.get("type").and_then(|t| t.as_str())
+                        {
+                            *resource_counts.entry(types.to_string()).or_insert(0) += 1;
+                        }
                     }
                 }
             }

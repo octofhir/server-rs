@@ -3,29 +3,155 @@ title: Development Guide
 head: []
 ---
 
-Workspace layout:
+## Workspace Layout
 
 - `crates/octofhir-core`: core types (ResourceEnvelope/meta, FhirVersion/DateTime, errors)
-- `crates/octofhir-db`: in-memory storage, query filters, transactions
+- `crates/octofhir-db-postgres`: PostgreSQL storage, query filters, transactions
 - `crates/octofhir-search`: query parsing/validation, engine
 - `crates/octofhir-api`: OperationOutcome, CapabilityStatement, Bundle helpers
 - `crates/octofhir-server`: HTTP server (Axum), routes, middleware, config, observability
+- `crates/octofhir-jsc`: JavaScriptCore runtime for bot automation
+- `crates/octofhir-auth`: OAuth 2.0 / SMART on FHIR authentication
 
-Common tasks:
+## Prerequisites
+
+### macOS
+
+On macOS, JavaScriptCore is available as a system framework. No additional dependencies are required.
+
+```bash
+# Install Rust
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+
+# Install just (command runner)
+brew install just
+```
+
+### Linux (Ubuntu/Debian)
+
+On Linux, you need to install JavaScriptCore development libraries for bot automation:
+
+```bash
+# Install Rust
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+
+# Install build dependencies
+sudo apt-get update
+sudo apt-get install -y \
+    build-essential \
+    pkg-config \
+    libssl-dev \
+    libjavascriptcoregtk-4.1-dev
+
+# Install just (command runner)
+cargo install just
+```
+
+### Linux (Fedora/RHEL)
+
+```bash
+# Install Rust
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+
+# Install build dependencies
+sudo dnf install -y \
+    gcc \
+    pkg-config \
+    openssl-devel \
+    webkit2gtk4.1-devel
+
+# Install just (command runner)
+cargo install just
+```
+
+## Common Tasks
 
 ```bash
 just build   # cargo build
 just test    # cargo test --all --all-features
 just lint    # cargo clippy -- -D warnings
 just fmt     # cargo fmt --all
+just dev     # cargo watch -x run (auto-reload on changes)
 ```
 
-Testing:
+## Building from Source
+
+### Debug Build (Recommended for Development)
+
+```bash
+# Start dependencies (PostgreSQL, Redis)
+docker compose up -d
+
+# Build and run
+cargo run
+```
+
+### Release Build
+
+```bash
+# Build release binary (takes 5-10 minutes)
+cargo build --release
+
+# Run release binary
+./target/release/octofhir-server
+```
+
+### Docker Build
+
+```bash
+# Build Docker image
+docker build -t octofhir-server .
+
+# Run container
+docker run -p 8888:8888 octofhir-server
+```
+
+## Bot Automation (JSC)
+
+OctoFHIR uses JavaScriptCore for executing JavaScript bots. The JSC runtime provides:
+
+- **ES2020+ support**: Full modern JavaScript syntax
+- **Native APIs**: `console`, `http.fetch()`, `fhir.*` CRUD operations
+- **Thread-safe pool**: Multiple JSC contexts for concurrent execution
+- **JIT compilation**: Fast execution with JSC's multi-tier compiler
+
+### Platform Support
+
+| Platform | JSC Source | Notes |
+|----------|------------|-------|
+| macOS | System framework | No additional dependencies |
+| Linux (Debian/Ubuntu) | `libjavascriptcoregtk-4.1-dev` | Via apt-get |
+| Linux (Fedora/RHEL) | `webkit2gtk4.1-devel` | Via dnf |
+| Docker | Debian bookworm | Included in Dockerfile |
+
+### Bot Example
+
+```javascript
+// Bot triggered on Patient creation
+if (event.type === 'created' && event.resource.resourceType === 'Patient') {
+  const patient = event.resource;
+
+  // Create a welcome task
+  const task = fhir.create({
+    resourceType: 'Task',
+    status: 'requested',
+    intent: 'order',
+    description: `Welcome patient: ${patient.name?.[0]?.family}`,
+    for: { reference: `Patient/${patient.id}` }
+  });
+
+  console.log('Created task:', task.id);
+  return { taskId: task.id };
+}
+```
+
+## Testing
 
 - Unit tests inside crates
 - Integration tests in `crates/octofhir-server/tests` cover HTTP flows
+- Bot tests: `bun run scripts/test-bots.ts`
 
-Contributing:
+## Contributing
 
 - Keep PRs small and focused; follow Conventional Commits
 - Fix all clippy warnings; run `just lint`

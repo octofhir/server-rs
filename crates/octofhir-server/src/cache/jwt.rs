@@ -11,8 +11,8 @@
 //! - The JTI is still checked against revocation after cache hit
 //! - Cache entries expire before the token's exp claim
 
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use dashmap::DashMap;
@@ -155,10 +155,7 @@ impl JwtVerificationCache {
         );
 
         // Update JTI index for O(1) invalidation by JTI
-        self.jti_index
-            .entry(jti)
-            .or_default()
-            .push(hash);
+        self.jti_index.entry(jti).or_default().push(hash);
     }
 
     /// Invalidate cache entry for a token.

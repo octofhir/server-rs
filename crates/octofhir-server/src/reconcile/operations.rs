@@ -68,9 +68,12 @@ pub async fn reconcile_operations(
     for op_id in manifest_ids.difference(&current_ids_ref) {
         let inline_op = manifest_map[*op_id];
         let custom_op = build_custom_operation(app_id, app_name, app_endpoint, inline_op)?;
-        let resource_json = serde_json::to_value(&custom_op)
-            .map_err(|e| ApiError::internal(format!("Failed to serialize CustomOperation: {}", e)))?;
-        storage.create(&resource_json).await
+        let resource_json = serde_json::to_value(&custom_op).map_err(|e| {
+            ApiError::internal(format!("Failed to serialize CustomOperation: {}", e))
+        })?;
+        storage
+            .create(&resource_json)
+            .await
             .map_err(|e| ApiError::internal(format!("Failed to create CustomOperation: {}", e)))?;
         result.created.push((*op_id).clone());
     }
@@ -82,10 +85,12 @@ pub async fn reconcile_operations(
 
         if needs_update(current_op, inline_op, app_endpoint) {
             let custom_op = build_custom_operation(app_id, app_name, app_endpoint, inline_op)?;
-            let resource_json = serde_json::to_value(&custom_op)
-                .map_err(|e| ApiError::internal(format!("Failed to serialize CustomOperation: {}", e)))?;
-            storage.update(&resource_json, None).await
-                .map_err(|e| ApiError::internal(format!("Failed to update CustomOperation: {}", e)))?;
+            let resource_json = serde_json::to_value(&custom_op).map_err(|e| {
+                ApiError::internal(format!("Failed to serialize CustomOperation: {}", e))
+            })?;
+            storage.update(&resource_json, None).await.map_err(|e| {
+                ApiError::internal(format!("Failed to update CustomOperation: {}", e))
+            })?;
             result.updated.push((*op_id).clone());
         }
     }
@@ -93,7 +98,9 @@ pub async fn reconcile_operations(
     // 5. DELETE removed operations
     for op_id in current_ids_ref.difference(&manifest_ids) {
         let full_id = format!("{}-{}", app_id, op_id);
-        storage.delete("CustomOperation", &full_id).await
+        storage
+            .delete("CustomOperation", &full_id)
+            .await
             .map_err(|e| ApiError::internal(format!("Failed to delete CustomOperation: {}", e)))?;
         result.deleted.push((*op_id).clone());
     }
@@ -285,10 +292,7 @@ mod tests {
 
         assert_eq!(custom_op.id, Some("test-app-test-op".to_string()));
         assert_eq!(custom_op.resource_type, "CustomOperation");
-        assert_eq!(
-            custom_op.app.reference,
-            Some("App/test-app".to_string())
-        );
+        assert_eq!(custom_op.app.reference, Some("App/test-app".to_string()));
         assert_eq!(custom_op.app.display, Some("Test App".to_string()));
         assert_eq!(custom_op.path, "/api/users");
         assert_eq!(custom_op.method, "POST");

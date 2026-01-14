@@ -64,9 +64,10 @@ impl EverythingOperation {
         for (resource_type, param_name, reference) in compartment_searches {
             // Skip if _type filter is specified and doesn't include this type
             if let Some(ref types) = params.type_filter
-                && !types.contains(&resource_type) {
-                    continue;
-                }
+                && !types.contains(&resource_type)
+            {
+                continue;
+            }
 
             // Build search query using modern FhirStorage
             let mut search_params = SearchParams::new()
@@ -165,9 +166,10 @@ impl EverythingOperation {
 
         for (resource_type, param_name, reference) in compartment_searches {
             if let Some(ref types) = params.type_filter
-                && !types.contains(&resource_type) {
-                    continue;
-                }
+                && !types.contains(&resource_type)
+            {
+                continue;
+            }
 
             let mut search_params = SearchParams::new()
                 .with_count(1000)

@@ -150,6 +150,8 @@ pub struct RawSearchResult {
     pub total: Option<u32>,
     /// Whether there are more results available beyond this page.
     pub has_more: bool,
+    /// Warning messages to include in the response (e.g., unknown parameters ignored).
+    pub warnings: Vec<String>,
 }
 
 impl RawSearchResult {

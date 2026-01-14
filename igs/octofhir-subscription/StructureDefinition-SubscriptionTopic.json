@@ -1,0 +1,389 @@
+{
+  "resourceType": "StructureDefinition",
+  "id": "SubscriptionTopic",
+  "url": "http://octofhir.io/StructureDefinition/SubscriptionTopic",
+  "name": "SubscriptionTopic",
+  "title": "Subscription Topic",
+  "status": "active",
+  "fhirVersion": "4.0.1",
+  "kind": "logical",
+  "abstract": false,
+  "type": "SubscriptionTopic",
+  "baseDefinition": "http://hl7.org/fhir/StructureDefinition/DomainResource",
+  "derivation": "specialization",
+  "description": "Describes a stream of resource state changes or events and annotated with labels useful to filter subscriptions. Backported from FHIR R5 for use in R4/R4B servers.",
+  "differential": {
+    "element": [
+      {
+        "id": "SubscriptionTopic",
+        "path": "SubscriptionTopic",
+        "short": "Definition of a subscription topic",
+        "definition": "Describes a stream of resource state changes or events and annotated with labels useful to filter subscriptions."
+      },
+      {
+        "id": "SubscriptionTopic.url",
+        "path": "SubscriptionTopic.url",
+        "short": "Canonical URL for this subscription topic",
+        "definition": "An absolute URI that is used to identify this subscription topic when it is referenced in a specification, model, design or an instance.",
+        "min": 1,
+        "max": "1",
+        "type": [{ "code": "uri" }]
+      },
+      {
+        "id": "SubscriptionTopic.identifier",
+        "path": "SubscriptionTopic.identifier",
+        "short": "Business identifier for this subscription topic",
+        "definition": "Business identifiers assigned to this subscription topic by the performer and/or other systems.",
+        "min": 0,
+        "max": "*",
+        "type": [{ "code": "Identifier" }]
+      },
+      {
+        "id": "SubscriptionTopic.version",
+        "path": "SubscriptionTopic.version",
+        "short": "Business version of the subscription topic",
+        "definition": "The identifier that is used to identify this version of the subscription topic when it is referenced in a specification, model, design or instance.",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "SubscriptionTopic.title",
+        "path": "SubscriptionTopic.title",
+        "short": "Human-friendly name for this subscription topic",
+        "definition": "A short, descriptive, user-friendly title for the subscription topic.",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "SubscriptionTopic.status",
+        "path": "SubscriptionTopic.status",
+        "short": "draft | active | retired | unknown",
+        "definition": "The current state of the subscription topic.",
+        "min": 1,
+        "max": "1",
+        "type": [{ "code": "code" }],
+        "binding": {
+          "strength": "required",
+          "valueSet": "http://hl7.org/fhir/ValueSet/publication-status"
+        }
+      },
+      {
+        "id": "SubscriptionTopic.experimental",
+        "path": "SubscriptionTopic.experimental",
+        "short": "For testing purposes only",
+        "definition": "A Boolean value to indicate that this subscription topic is authored for testing purposes.",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "boolean" }]
+      },
+      {
+        "id": "SubscriptionTopic.date",
+        "path": "SubscriptionTopic.date",
+        "short": "Date last changed",
+        "definition": "The date (and optionally time) when the subscription topic was published.",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "dateTime" }]
+      },
+      {
+        "id": "SubscriptionTopic.publisher",
+        "path": "SubscriptionTopic.publisher",
+        "short": "Name of the publisher",
+        "definition": "The name of the organization or individual that published the subscription topic.",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "SubscriptionTopic.contact",
+        "path": "SubscriptionTopic.contact",
+        "short": "Contact details for the publisher",
+        "definition": "Contact details to assist a user in finding and communicating with the publisher.",
+        "min": 0,
+        "max": "*",
+        "type": [{ "code": "ContactDetail" }]
+      },
+      {
+        "id": "SubscriptionTopic.description",
+        "path": "SubscriptionTopic.description",
+        "short": "Natural language description of the subscription topic",
+        "definition": "A free text natural language description of the subscription topic from a consumer's perspective.",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "markdown" }]
+      },
+      {
+        "id": "SubscriptionTopic.useContext",
+        "path": "SubscriptionTopic.useContext",
+        "short": "The context that the content is intended to support",
+        "definition": "The content was developed with a focus and intent of supporting the contexts that are listed.",
+        "min": 0,
+        "max": "*",
+        "type": [{ "code": "UsageContext" }]
+      },
+      {
+        "id": "SubscriptionTopic.jurisdiction",
+        "path": "SubscriptionTopic.jurisdiction",
+        "short": "Intended jurisdiction for subscription topic",
+        "definition": "A legal or geographic region in which the subscription topic is intended to be used.",
+        "min": 0,
+        "max": "*",
+        "type": [{ "code": "CodeableConcept" }]
+      },
+      {
+        "id": "SubscriptionTopic.purpose",
+        "path": "SubscriptionTopic.purpose",
+        "short": "Why this subscription topic is defined",
+        "definition": "Explanation of why this subscription topic is needed and why it has been designed as it has.",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "markdown" }]
+      },
+      {
+        "id": "SubscriptionTopic.copyright",
+        "path": "SubscriptionTopic.copyright",
+        "short": "Use and/or publishing restrictions",
+        "definition": "A copyright statement relating to the subscription topic and/or its contents.",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "markdown" }]
+      },
+      {
+        "id": "SubscriptionTopic.resourceTrigger",
+        "path": "SubscriptionTopic.resourceTrigger",
+        "short": "Definition of a resource-based trigger for the subscription topic",
+        "definition": "A definition of a resource-based event that triggers a notification based on the SubscriptionTopic.",
+        "min": 0,
+        "max": "*",
+        "type": [{ "code": "BackboneElement" }]
+      },
+      {
+        "id": "SubscriptionTopic.resourceTrigger.description",
+        "path": "SubscriptionTopic.resourceTrigger.description",
+        "short": "Text representation of the trigger",
+        "definition": "The human-readable description of this resource trigger.",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "markdown" }]
+      },
+      {
+        "id": "SubscriptionTopic.resourceTrigger.resource",
+        "path": "SubscriptionTopic.resourceTrigger.resource",
+        "short": "Data Type or Resource (reference to definition)",
+        "definition": "URL of the Resource that is the type used in this trigger.",
+        "min": 1,
+        "max": "1",
+        "type": [{ "code": "uri" }]
+      },
+      {
+        "id": "SubscriptionTopic.resourceTrigger.supportedInteraction",
+        "path": "SubscriptionTopic.resourceTrigger.supportedInteraction",
+        "short": "create | update | delete",
+        "definition": "The FHIR RESTful interaction which can be used to trigger a notification.",
+        "min": 0,
+        "max": "*",
+        "type": [{ "code": "code" }]
+      },
+      {
+        "id": "SubscriptionTopic.resourceTrigger.queryCriteria",
+        "path": "SubscriptionTopic.resourceTrigger.queryCriteria",
+        "short": "Query based trigger rule",
+        "definition": "The FHIR query based rules that the server should use to determine when to trigger a notification for this topic.",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "BackboneElement" }]
+      },
+      {
+        "id": "SubscriptionTopic.resourceTrigger.queryCriteria.previous",
+        "path": "SubscriptionTopic.resourceTrigger.queryCriteria.previous",
+        "short": "Rule applied to previous resource state",
+        "definition": "The FHIR query based rules are applied to the previous resource state.",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "SubscriptionTopic.resourceTrigger.queryCriteria.resultForCreate",
+        "path": "SubscriptionTopic.resourceTrigger.queryCriteria.resultForCreate",
+        "short": "test-passes | test-fails",
+        "definition": "For create interactions, should the previous criteria count as an automatic pass or an automatic fail.",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "code" }]
+      },
+      {
+        "id": "SubscriptionTopic.resourceTrigger.queryCriteria.current",
+        "path": "SubscriptionTopic.resourceTrigger.queryCriteria.current",
+        "short": "Rule applied to current resource state",
+        "definition": "The FHIR query based rules are applied to the current resource state.",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "SubscriptionTopic.resourceTrigger.queryCriteria.resultForDelete",
+        "path": "SubscriptionTopic.resourceTrigger.queryCriteria.resultForDelete",
+        "short": "test-passes | test-fails",
+        "definition": "For delete interactions, should the current criteria count as an automatic pass or an automatic fail.",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "code" }]
+      },
+      {
+        "id": "SubscriptionTopic.resourceTrigger.queryCriteria.requireBoth",
+        "path": "SubscriptionTopic.resourceTrigger.queryCriteria.requireBoth",
+        "short": "Both must be true flag",
+        "definition": "If set to true, both current and previous criteria must evaluate true to trigger a notification.",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "boolean" }]
+      },
+      {
+        "id": "SubscriptionTopic.resourceTrigger.fhirPathCriteria",
+        "path": "SubscriptionTopic.resourceTrigger.fhirPathCriteria",
+        "short": "FHIRPath based trigger rule",
+        "definition": "The FHIRPath based rules that the server should use to determine when to trigger a notification for this topic.",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "SubscriptionTopic.eventTrigger",
+        "path": "SubscriptionTopic.eventTrigger",
+        "short": "Event definitions the topic",
+        "definition": "Event definition which can be used to trigger a notification.",
+        "min": 0,
+        "max": "*",
+        "type": [{ "code": "BackboneElement" }]
+      },
+      {
+        "id": "SubscriptionTopic.eventTrigger.description",
+        "path": "SubscriptionTopic.eventTrigger.description",
+        "short": "Text representation of the event trigger",
+        "definition": "The human-readable description of this event trigger.",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "markdown" }]
+      },
+      {
+        "id": "SubscriptionTopic.eventTrigger.event",
+        "path": "SubscriptionTopic.eventTrigger.event",
+        "short": "Event which can trigger a notification",
+        "definition": "A well-defined event which can be used to trigger notifications from the SubscriptionTopic.",
+        "min": 1,
+        "max": "1",
+        "type": [{ "code": "CodeableConcept" }]
+      },
+      {
+        "id": "SubscriptionTopic.eventTrigger.resource",
+        "path": "SubscriptionTopic.eventTrigger.resource",
+        "short": "Data Type or Resource (reference to definition)",
+        "definition": "URL of the Resource that is the focus type used in this event trigger.",
+        "min": 1,
+        "max": "1",
+        "type": [{ "code": "uri" }]
+      },
+      {
+        "id": "SubscriptionTopic.canFilterBy",
+        "path": "SubscriptionTopic.canFilterBy",
+        "short": "Properties by which a Subscription can filter notifications",
+        "definition": "List of properties by which Subscriptions on the subscription topic can be filtered.",
+        "min": 0,
+        "max": "*",
+        "type": [{ "code": "BackboneElement" }]
+      },
+      {
+        "id": "SubscriptionTopic.canFilterBy.description",
+        "path": "SubscriptionTopic.canFilterBy.description",
+        "short": "Description of this filter parameter",
+        "definition": "Description of how this filtering parameter is intended to be used.",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "markdown" }]
+      },
+      {
+        "id": "SubscriptionTopic.canFilterBy.resource",
+        "path": "SubscriptionTopic.canFilterBy.resource",
+        "short": "URL of the triggering Resource that this filter applies to",
+        "definition": "URL of the Resource that is the type used in this filter.",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "uri" }]
+      },
+      {
+        "id": "SubscriptionTopic.canFilterBy.filterParameter",
+        "path": "SubscriptionTopic.canFilterBy.filterParameter",
+        "short": "Human-readable and computation-friendly name for a filter parameter",
+        "definition": "Either the canonical URL to a search parameter or topic-filter-name.",
+        "min": 1,
+        "max": "1",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "SubscriptionTopic.canFilterBy.filterDefinition",
+        "path": "SubscriptionTopic.canFilterBy.filterDefinition",
+        "short": "Canonical URL for a filterParameter definition",
+        "definition": "Either a canonical URL to a SearchParameter defining the filter or topic-filter-name.",
+        "min": 0,
+        "max": "1",
+        "type": [{ "code": "uri" }]
+      },
+      {
+        "id": "SubscriptionTopic.canFilterBy.comparator",
+        "path": "SubscriptionTopic.canFilterBy.comparator",
+        "short": "eq | ne | gt | lt | ge | le | sa | eb | ap",
+        "definition": "Comparators allowed for the filter parameter.",
+        "min": 0,
+        "max": "*",
+        "type": [{ "code": "code" }]
+      },
+      {
+        "id": "SubscriptionTopic.canFilterBy.modifier",
+        "path": "SubscriptionTopic.canFilterBy.modifier",
+        "short": "missing | exact | contains | not | text | in | not-in | below | above | type | identifier | of-type",
+        "definition": "Modifiers allowed for the filter parameter.",
+        "min": 0,
+        "max": "*",
+        "type": [{ "code": "code" }]
+      },
+      {
+        "id": "SubscriptionTopic.notificationShape",
+        "path": "SubscriptionTopic.notificationShape",
+        "short": "Properties for describing the shape of notifications generated by this topic",
+        "definition": "List of properties to describe the shape (e.g., resources) included in notifications from this topic.",
+        "min": 0,
+        "max": "*",
+        "type": [{ "code": "BackboneElement" }]
+      },
+      {
+        "id": "SubscriptionTopic.notificationShape.resource",
+        "path": "SubscriptionTopic.notificationShape.resource",
+        "short": "URL of the Resource that is the focus (main) resource in a notification shape",
+        "definition": "URL of the Resource that is the type used in this shape.",
+        "min": 1,
+        "max": "1",
+        "type": [{ "code": "uri" }]
+      },
+      {
+        "id": "SubscriptionTopic.notificationShape.include",
+        "path": "SubscriptionTopic.notificationShape.include",
+        "short": "Include directives, rooted in the resource for this shape",
+        "definition": "Search-style _include directives, rooted in the resource for this shape.",
+        "min": 0,
+        "max": "*",
+        "type": [{ "code": "string" }]
+      },
+      {
+        "id": "SubscriptionTopic.notificationShape.revInclude",
+        "path": "SubscriptionTopic.notificationShape.revInclude",
+        "short": "Reverse include directives, rooted in the resource for this shape",
+        "definition": "Search-style _revinclude directives, rooted in the resource for this shape.",
+        "min": 0,
+        "max": "*",
+        "type": [{ "code": "string" }]
+      }
+    ]
+  }
+}

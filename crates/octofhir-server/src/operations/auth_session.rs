@@ -1,8 +1,8 @@
 use axum::{
+    Json,
     extract::{Path, State},
     http::StatusCode,
     response::{IntoResponse, Response},
-    Json,
 };
 use octofhir_api::ApiError;
 use octofhir_auth_postgres::PostgresAuthStorage;
@@ -80,12 +80,16 @@ pub async fn revoke_session(
 
     // Add revocation metadata
     if let Some(reason) = &input.reason
-        && let Some(ext) = stored.resource.get_mut("extension").and_then(|e: &mut serde_json::Value| e.as_array_mut()) {
-            ext.push(json!({
-                "url": "http://octofhir.io/fhir/StructureDefinition/revocation-reason",
-                "valueString": reason
-            }));
-        }
+        && let Some(ext) = stored
+            .resource
+            .get_mut("extension")
+            .and_then(|e: &mut serde_json::Value| e.as_array_mut())
+    {
+        ext.push(json!({
+            "url": "http://octofhir.io/fhir/StructureDefinition/revocation-reason",
+            "valueString": reason
+        }));
+    }
 
     // 3. Update the resource in storage
     state
@@ -129,13 +133,10 @@ pub async fn revoke_all_sessions(
     info!(subject = %input.subject, "Revoking all sessions for user");
 
     // 1. Parse user ID from subject reference
-    let user_id = input
-        .subject
-        .strip_prefix("User/")
-        .ok_or_else(|| {
-            error!("Invalid subject format: {}", input.subject);
-            ApiError::bad_request("Subject must be in format 'User/{id}'")
-        })?;
+    let user_id = input.subject.strip_prefix("User/").ok_or_else(|| {
+        error!("Invalid subject format: {}", input.subject);
+        ApiError::bad_request("Subject must be in format 'User/{id}'")
+    })?;
 
     let user_uuid = Uuid::parse_str(user_id).map_err(|_| {
         error!("Invalid user UUID: {}", user_id);
@@ -186,19 +187,18 @@ pub async fn revoke_all_sessions(
 
             // Add revocation metadata
             if let Some(reason) = &input.reason
-                && let Some(ext) = stored.resource.get_mut("extension").and_then(|e: &mut serde_json::Value| e.as_array_mut()) {
-                    ext.push(json!({
-                        "url": "http://octofhir.io/fhir/StructureDefinition/revocation-reason",
-                        "valueString": reason
-                    }));
-                }
-
-            if state
-                .storage
-                .update(&stored.resource, None)
-                .await
-                .is_ok()
+                && let Some(ext) = stored
+                    .resource
+                    .get_mut("extension")
+                    .and_then(|e: &mut serde_json::Value| e.as_array_mut())
             {
+                ext.push(json!({
+                    "url": "http://octofhir.io/fhir/StructureDefinition/revocation-reason",
+                    "valueString": reason
+                }));
+            }
+
+            if state.storage.update(&stored.resource, None).await.is_ok() {
                 revoked_count += 1;
 
                 // Delete from token index
@@ -230,10 +230,7 @@ pub async fn revoke_all_sessions(
     let response = RevokeResponse {
         success: true,
         revoked_count,
-        message: format!(
-            "Revoked {} session(s) for user {}",
-            revoked_count, user_id
-        ),
+        message: format!("Revoked {} session(s) for user {}", revoked_count, user_id),
     };
 
     Ok((StatusCode::OK, Json(response)).into_response())

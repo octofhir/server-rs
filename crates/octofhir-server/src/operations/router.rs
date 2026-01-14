@@ -180,6 +180,7 @@ pub async fn instance_operation_handler(
 /// This allows a single route to handle both `/$meta` and `/Patient`.
 pub async fn merged_root_get_handler(
     state: State<AppState>,
+    headers: HeaderMap,
     Path(param): Path<String>,
     Query(query_params): Query<HashMap<String, String>>,
     RawQuery(raw): RawQuery,
@@ -191,9 +192,14 @@ pub async fn merged_root_get_handler(
         Ok(result.into_response())
     } else {
         // Dispatch to resource search handler
-        let result =
-            handlers::search_resource(state, Path(param), Query(query_params), RawQuery(raw))
-                .await?;
+        let result = handlers::search_resource(
+            state,
+            headers,
+            Path(param),
+            Query(query_params),
+            RawQuery(raw),
+        )
+        .await?;
         Ok(result.into_response())
     }
 }

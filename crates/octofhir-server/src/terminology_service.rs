@@ -82,7 +82,11 @@ impl ServerTerminologyService {
     }
 
     /// Find a concept in a CodeSystem's hierarchical concept list
-    fn find_concept_in_hierarchy<'a>(&self, concepts: &'a [Value], code: &str) -> Option<&'a Value> {
+    fn find_concept_in_hierarchy<'a>(
+        &self,
+        concepts: &'a [Value],
+        code: &str,
+    ) -> Option<&'a Value> {
         for concept in concepts {
             let concept_code = concept.get("code").and_then(|v| v.as_str()).unwrap_or("");
 
@@ -92,9 +96,10 @@ impl ServerTerminologyService {
 
             // Check nested concepts
             if let Some(children) = concept.get("concept").and_then(|v| v.as_array())
-                && let Some(found) = self.find_concept_in_hierarchy(children, code) {
-                    return Some(found);
-                }
+                && let Some(found) = self.find_concept_in_hierarchy(children, code)
+            {
+                return Some(found);
+            }
         }
         None
     }
@@ -106,9 +111,7 @@ impl ServerTerminologyService {
         code: &str,
         system: Option<&str>,
     ) -> Option<CodeValidationResult> {
-        let contains = expansion
-            .get("contains")
-            .and_then(|v| v.as_array())?;
+        let contains = expansion.get("contains").and_then(|v| v.as_array())?;
 
         for entry in contains {
             let entry_code = entry.get("code").and_then(|v| v.as_str()).unwrap_or("");
@@ -118,9 +121,10 @@ impl ServerTerminologyService {
             if entry_code == code {
                 // Check system if provided
                 if let Some(expected_system) = system
-                    && entry_system != Some(expected_system) {
-                        continue; // System doesn't match, keep looking
-                    }
+                    && entry_system != Some(expected_system)
+                {
+                    continue; // System doesn't match, keep looking
+                }
 
                 // Found matching code
                 return Some(CodeValidationResult::valid_with_display(
@@ -164,9 +168,10 @@ impl ServerTerminologyService {
 
                 // If system is specified, it must match
                 if let Some(expected_system) = system
-                    && include_system != Some(expected_system) {
-                        continue;
-                    }
+                    && include_system != Some(expected_system)
+                {
+                    continue;
+                }
 
                 // Check explicit concept list
                 if let Some(concepts) = include.get("concept").and_then(|v| v.as_array()) {
@@ -238,9 +243,10 @@ impl TerminologyService for ServerTerminologyService {
 
         // Check compose
         if let Some(compose) = value_set.get("compose")
-            && let Some(result) = self.validate_in_compose(compose, code, system).await {
-                return Ok(result);
-            }
+            && let Some(result) = self.validate_in_compose(compose, code, system).await
+        {
+            return Ok(result);
+        }
 
         // Code not found
         Ok(CodeValidationResult::invalid())
@@ -265,7 +271,10 @@ impl TerminologyService for ServerTerminologyService {
             .unwrap_or_default();
 
         if let Some(found) = self.find_concept_in_hierarchy(&concepts, code) {
-            return Ok(found.get("display").and_then(|v| v.as_str()).map(String::from));
+            return Ok(found
+                .get("display")
+                .and_then(|v| v.as_str())
+                .map(String::from));
         }
 
         Ok(None)
@@ -341,7 +350,8 @@ mod tests {
         assert_eq!(result.unwrap().display, Some("Code A".to_string()));
 
         // Valid code with system check
-        let result = service.validate_in_expansion(&expansion, "A", Some("http://example.org/codes"));
+        let result =
+            service.validate_in_expansion(&expansion, "A", Some("http://example.org/codes"));
         assert!(result.is_some());
         assert!(result.unwrap().valid);
 

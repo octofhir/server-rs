@@ -280,16 +280,17 @@ pub async fn cleanup_expired_exports(
             // Check directory modification time
             if let Ok(metadata) = entry.metadata().await
                 && let Ok(modified) = metadata.modified()
-                    && let Ok(age) = now.duration_since(modified)
-                        && age > max_age {
-                            tracing::info!(
-                                path = %path.display(),
-                                age_hours = age.as_secs() / 3600,
-                                "Cleaning up expired export directory"
-                            );
-                            fs::remove_dir_all(&path).await?;
-                            cleaned += 1;
-                        }
+                && let Ok(age) = now.duration_since(modified)
+                && age > max_age
+            {
+                tracing::info!(
+                    path = %path.display(),
+                    age_hours = age.as_secs() / 3600,
+                    "Cleaning up expired export directory"
+                );
+                fs::remove_dir_all(&path).await?;
+                cleaned += 1;
+            }
         }
     }
 
@@ -305,9 +306,7 @@ mod tests {
     async fn test_write_single_resource() {
         let dir = tempdir().unwrap();
         let job_id = Uuid::new_v4();
-        let mut writer = NdjsonWriter::new(dir.path(), job_id, 1000)
-            .await
-            .unwrap();
+        let mut writer = NdjsonWriter::new(dir.path(), job_id, 1000).await.unwrap();
 
         let resource = serde_json::json!({
             "resourceType": "Patient",
@@ -326,9 +325,7 @@ mod tests {
     async fn test_file_splitting() {
         let dir = tempdir().unwrap();
         let job_id = Uuid::new_v4();
-        let mut writer = NdjsonWriter::new(dir.path(), job_id, 2)
-            .await
-            .unwrap(); // Split after 2 resources
+        let mut writer = NdjsonWriter::new(dir.path(), job_id, 2).await.unwrap(); // Split after 2 resources
 
         for i in 0..5 {
             let resource = serde_json::json!({
@@ -347,9 +344,7 @@ mod tests {
     async fn test_multiple_resource_types() {
         let dir = tempdir().unwrap();
         let job_id = Uuid::new_v4();
-        let mut writer = NdjsonWriter::new(dir.path(), job_id, 1000)
-            .await
-            .unwrap();
+        let mut writer = NdjsonWriter::new(dir.path(), job_id, 1000).await.unwrap();
 
         writer
             .write_resource(

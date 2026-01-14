@@ -10,7 +10,7 @@
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use uuid::Uuid;
 
 use crate::async_jobs::AsyncJobRequest;
@@ -19,9 +19,9 @@ use crate::operations::handler::{OperationError, OperationHandler};
 use crate::server::AppState;
 use octofhir_sof::ViewDefinition;
 
+use super::NDJSON_CONTENT_TYPE;
 use super::status::{BulkExportLevel, BulkExportParams};
 use super::writer::NdjsonWriter;
-use super::NDJSON_CONTENT_TYPE;
 
 /// The $export operation handler
 ///
@@ -61,12 +61,14 @@ impl ExportOperation {
 
         // Validate output format if specified
         if let Some(ref fmt) = output_format
-            && fmt != NDJSON_CONTENT_TYPE && fmt != "ndjson" {
-                return Err(OperationError::InvalidParameters(format!(
-                    "Unsupported _outputFormat: {}. Only {} is supported.",
-                    fmt, NDJSON_CONTENT_TYPE
-                )));
-            }
+            && fmt != NDJSON_CONTENT_TYPE
+            && fmt != "ndjson"
+        {
+            return Err(OperationError::InvalidParameters(format!(
+                "Unsupported _outputFormat: {}. Only {} is supported.",
+                fmt, NDJSON_CONTENT_TYPE
+            )));
+        }
 
         let since = params
             .get("_since")
@@ -184,14 +186,12 @@ impl ExportOperation {
         for param in parameters {
             let name = param.get("name").and_then(|n| n.as_str());
             if name == Some("viewDefinition")
-                && let Some(resource) = param.get("resource") {
-                    return ViewDefinition::from_json(resource).map_err(|e| {
-                        OperationError::InvalidParameters(format!(
-                            "Invalid ViewDefinition: {}",
-                            e
-                        ))
-                    });
-                }
+                && let Some(resource) = param.get("resource")
+            {
+                return ViewDefinition::from_json(resource).map_err(|e| {
+                    OperationError::InvalidParameters(format!("Invalid ViewDefinition: {}", e))
+                });
+            }
         }
 
         Err(OperationError::InvalidParameters(
@@ -330,10 +330,7 @@ impl OperationHandler for ExportOperation {
                     OperationError::Internal(format!("Invalid stored ViewDefinition: {}", e))
                 })?;
 
-                let request_url = format!(
-                    "{}/fhir/ViewDefinition/{}/$export",
-                    state.base_url, id
-                );
+                let request_url = format!("{}/fhir/ViewDefinition/{}/$export", state.base_url, id);
 
                 self.submit_viewdefinition_export(state, view_def, &request_url)
                     .await
@@ -415,8 +412,14 @@ pub async fn execute_bulk_export(
 
     // Export each resource type
     for resource_type in &resource_types {
-        match export_resource_type(&state, &mut writer, resource_type, &export_params, batch_size)
-            .await
+        match export_resource_type(
+            &state,
+            &mut writer,
+            resource_type,
+            &export_params,
+            batch_size,
+        )
+        .await
         {
             Ok(count) => {
                 total_exported += count;
@@ -439,11 +442,18 @@ pub async fn execute_bulk_export(
         }
 
         // Update progress
-        let progress =
-            (resource_types.iter().position(|t| t == resource_type).unwrap_or(0) + 1) as f32
-                / resource_types.len() as f32;
+        let progress = (resource_types
+            .iter()
+            .position(|t| t == resource_type)
+            .unwrap_or(0)
+            + 1) as f32
+            / resource_types.len() as f32;
 
-        if let Err(e) = state.async_job_manager.update_progress(job_id, progress).await {
+        if let Err(e) = state
+            .async_job_manager
+            .update_progress(job_id, progress)
+            .await
+        {
             tracing::warn!(error = %e, "Failed to update job progress");
         }
     }
@@ -621,7 +631,10 @@ mod tests {
             result.output_format,
             Some("application/fhir+ndjson".to_string())
         );
-        assert_eq!(result.resource_types, Some("Patient,Observation".to_string()));
+        assert_eq!(
+            result.resource_types,
+            Some("Patient,Observation".to_string())
+        );
         assert!(result.since.is_some());
     }
 

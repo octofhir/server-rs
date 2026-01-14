@@ -1210,7 +1210,10 @@ pub fn fhirpath_to_jsonb_path(expression: &str, resource_type: &str) -> Vec<Stri
     let expr = if let Some(idx) = expr.find(" as ") {
         let path_part = &expr[..idx];
         // Remove surrounding parentheses if present
-        path_part.trim().trim_start_matches('(').trim_end_matches(')')
+        path_part
+            .trim()
+            .trim_start_matches('(')
+            .trim_end_matches(')')
     } else {
         expr
     };
@@ -1226,7 +1229,11 @@ pub fn fhirpath_to_jsonb_path(expression: &str, resource_type: &str) -> Vec<Stri
             if let Some(idx) = expr.find('.') {
                 let potential_type = &expr[..idx];
                 // If it looks like a resource type (starts with uppercase), strip it
-                if potential_type.chars().next().is_some_and(|c| c.is_ascii_uppercase()) {
+                if potential_type
+                    .chars()
+                    .next()
+                    .is_some_and(|c| c.is_ascii_uppercase())
+                {
                     return Some(&expr[idx + 1..]);
                 }
             }
@@ -1323,10 +1330,7 @@ mod tests {
         );
         assert_eq!(path, vec!["useContext", "value"]);
 
-        let path = fhirpath_to_jsonb_path(
-            "Observation.value as Quantity",
-            "Observation",
-        );
+        let path = fhirpath_to_jsonb_path("Observation.value as Quantity", "Observation");
         assert_eq!(path, vec!["value"]);
     }
 

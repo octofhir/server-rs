@@ -16,11 +16,11 @@ mod pg_server;
 mod fhirpath_handler;
 
 pub use fhir_resolver::{ElementInfo, FhirResolver, LoadingState};
+pub use fhirpath_handler::fhirpath_lsp_websocket_handler;
 pub use formatter_config::{
     CommaStyle, IdentifierCase, KeywordCase, LspFormatterConfig, PgFormatterStyleConfig,
     SqlStyleConfig,
 };
 pub use pg_handler::pg_lsp_websocket_handler;
-pub use fhirpath_handler::fhirpath_lsp_websocket_handler;
-pub use schema_cache::{ColumnInfo, FunctionInfo, SchemaCache, TableInfo};
 pub use pg_server::PostgresLspServer;
+pub use schema_cache::{ColumnInfo, FunctionInfo, SchemaCache, TableInfo};

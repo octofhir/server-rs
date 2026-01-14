@@ -239,9 +239,10 @@ impl LazySchema {
         // Check if build failed previously
         let state = *self.state.read().await;
         if state == SchemaState::Failed
-            && let Some(err) = self.last_error.read().await.as_ref() {
-                return Err(GraphQLError::SchemaBuildFailed(err.clone()));
-            }
+            && let Some(err) = self.last_error.read().await.as_ref()
+        {
+            return Err(GraphQLError::SchemaBuildFailed(err.clone()));
+        }
 
         // Check if we have a builder (external build pattern has no builder)
         let builder = match &self.builder {

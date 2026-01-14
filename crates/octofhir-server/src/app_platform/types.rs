@@ -195,7 +195,6 @@ pub enum AuthType {
     App,
 }
 
-
 /// Policy configuration for operation authorization.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -449,10 +448,7 @@ mod tests {
 
         let channel = sub.channel.unwrap();
         assert_eq!(channel.channel_type, "webhook");
-        assert_eq!(
-            channel.endpoint,
-            "http://backend:3000/webhooks/appointment"
-        );
+        assert_eq!(channel.endpoint, "http://backend:3000/webhooks/appointment");
     }
 
     #[test]
@@ -479,7 +475,10 @@ mod tests {
         let sub: SubscriptionDef = serde_json::from_str(json).unwrap();
         let notif = sub.notification.unwrap();
 
-        assert_eq!(notif.provider, Some("NotificationProvider/twilio".to_string()));
+        assert_eq!(
+            notif.provider,
+            Some("NotificationProvider/twilio".to_string())
+        );
         assert_eq!(notif.template, "appointment-confirmation");
 
         match &notif.channel {

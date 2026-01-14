@@ -8,8 +8,8 @@
 //! - Custom QuickJS policy scripts
 
 use crate::app_platform::OperationPolicy;
-use crate::gateway::types::CustomOperation;
 use crate::gateway::GatewayError;
+use crate::gateway::types::CustomOperation;
 use crate::server::AppState;
 use octofhir_auth::middleware::AuthContext;
 use octofhir_auth::policy::{AccessDecision, PolicyContextBuilder};
@@ -86,51 +86,48 @@ fn evaluate_simple_policy(
     auth: &AuthContext,
 ) -> Result<(), GatewayError> {
     // Check fhirUser requirement
-    if policy.require_fhir_user.unwrap_or(false)
-        && auth.fhir_user().is_none() {
-            return Err(GatewayError::Forbidden(
-                "User must be linked to a FHIR resource".to_string(),
-            ));
-        }
+    if policy.require_fhir_user.unwrap_or(false) && auth.fhir_user().is_none() {
+        return Err(GatewayError::Forbidden(
+            "User must be linked to a FHIR resource".to_string(),
+        ));
+    }
 
     // Check roles (OR logic)
     if let Some(required_roles) = &policy.roles
-        && !required_roles.is_empty() {
-            let empty_roles = Vec::new();
-            let user_roles = auth
-                .user
-                .as_ref()
-                .map(|u| &u.roles)
-                .unwrap_or(&empty_roles);
+        && !required_roles.is_empty()
+    {
+        let empty_roles = Vec::new();
+        let user_roles = auth.user.as_ref().map(|u| &u.roles).unwrap_or(&empty_roles);
 
-            let has_role = required_roles.iter().any(|r| user_roles.contains(r));
+        let has_role = required_roles.iter().any(|r| user_roles.contains(r));
 
-            if !has_role {
-                return Err(GatewayError::Forbidden(format!(
-                    "Missing required role. Need one of: {:?}",
-                    required_roles
-                )));
-            }
+        if !has_role {
+            return Err(GatewayError::Forbidden(format!(
+                "Missing required role. Need one of: {:?}",
+                required_roles
+            )));
         }
+    }
 
     // Check scopes (OR logic with wildcard support)
     if let Some(required_scopes) = &policy.scopes
-        && !required_scopes.is_empty() {
-            let user_scopes: Vec<String> = auth.scopes().map(String::from).collect();
+        && !required_scopes.is_empty()
+    {
+        let user_scopes: Vec<String> = auth.scopes().map(String::from).collect();
 
-            let has_scope = required_scopes.iter().any(|req_scope| {
-                user_scopes
-                    .iter()
-                    .any(|user_scope| scope_matches(user_scope, req_scope))
-            });
+        let has_scope = required_scopes.iter().any(|req_scope| {
+            user_scopes
+                .iter()
+                .any(|user_scope| scope_matches(user_scope, req_scope))
+        });
 
-            if !has_scope {
-                return Err(GatewayError::Forbidden(format!(
-                    "Missing required scope. Need one of: {:?}",
-                    required_scopes
-                )));
-            }
+        if !has_scope {
+            return Err(GatewayError::Forbidden(format!(
+                "Missing required scope. Need one of: {:?}",
+                required_scopes
+            )));
         }
+    }
 
     // Check compartment
     if let Some(compartment) = &policy.compartment {
@@ -288,19 +285,13 @@ mod tests {
 
     #[test]
     fn test_scope_matches_wildcard_resource() {
-        assert!(scope_matches(
-            "patient/*.read",
-            "patient/Observation.read"
-        ));
+        assert!(scope_matches("patient/*.read", "patient/Observation.read"));
         assert!(scope_matches("patient/*.read", "patient/Patient.read"));
         assert!(!scope_matches(
             "patient/*.read",
             "patient/Observation.write"
         ));
-        assert!(!scope_matches(
-            "user/*.read",
-            "patient/Observation.read"
-        ));
+        assert!(!scope_matches("user/*.read", "patient/Observation.read"));
     }
 
     #[test]
@@ -327,10 +318,7 @@ mod tests {
 
     #[test]
     fn test_scope_matches_different_context() {
-        assert!(!scope_matches(
-            "patient/Patient.read",
-            "user/Patient.read"
-        ));
+        assert!(!scope_matches("patient/Patient.read", "user/Patient.read"));
         assert!(!scope_matches(
             "system/Patient.read",
             "patient/Patient.read"

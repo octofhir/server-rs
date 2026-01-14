@@ -492,8 +492,8 @@ impl ClientStorageTrait for PostgresClientStorage<'_> {
             Some(hash) => {
                 // Verify using Argon2
                 use argon2::{
-                    password_hash::{PasswordHash, PasswordVerifier},
                     Argon2,
+                    password_hash::{PasswordHash, PasswordVerifier},
                 };
 
                 let parsed_hash = match PasswordHash::new(hash) {
@@ -519,9 +519,8 @@ impl ClientStorageTrait for PostgresClientStorage<'_> {
                 AuthError::invalid_client(format!("Client '{}' not found", client_id))
             })?;
 
-        let mut client: Client = serde_json::from_value(existing.resource.clone()).map_err(|e| {
-            AuthError::storage(format!("Failed to deserialize client: {}", e))
-        })?;
+        let mut client: Client = serde_json::from_value(existing.resource.clone())
+            .map_err(|e| AuthError::storage(format!("Failed to deserialize client: {}", e)))?;
 
         // Verify client is confidential
         if !client.confidential {
@@ -537,8 +536,8 @@ impl ClientStorageTrait for PostgresClientStorage<'_> {
 
         // Hash with Argon2id
         use argon2::{
-            password_hash::{rand_core::OsRng, PasswordHasher, SaltString},
             Argon2,
+            password_hash::{PasswordHasher, SaltString, rand_core::OsRng},
         };
 
         let salt = SaltString::generate(&mut OsRng);

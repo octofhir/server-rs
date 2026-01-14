@@ -178,10 +178,13 @@ impl OperationRegistryService {
         // Update in database
         let updated = self
             .storage
-            .update(id, OperationUpdate {
-                public: Some(public),
-                description: None,
-            })
+            .update(
+                id,
+                OperationUpdate {
+                    public: Some(public),
+                    description: None,
+                },
+            )
             .await?;
 
         // Update in-memory indexes

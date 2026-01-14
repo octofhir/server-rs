@@ -286,13 +286,14 @@ fn extract_token_from_cookie(req: &Request<Body>, cookie_config: &CookieConfig) 
     for cookie in cookie_header.split(';') {
         let cookie = cookie.trim();
         if let Some((name, value)) = cookie.split_once('=')
-            && name.trim() == cookie_name {
-                let value = value.trim();
-                if !value.is_empty() {
-                    tracing::debug!(cookie_name = %cookie_name, "Token extracted from cookie");
-                    return Some(value.to_string());
-                }
+            && name.trim() == cookie_name
+        {
+            let value = value.trim();
+            if !value.is_empty() {
+                tracing::debug!(cookie_name = %cookie_name, "Token extracted from cookie");
+                return Some(value.to_string());
             }
+        }
     }
 
     None
@@ -403,12 +404,7 @@ pub async fn metrics_middleware(req: Request<Body>, next: Next) -> Response {
 fn should_skip_metrics(path: &str) -> bool {
     matches!(
         path,
-        "/healthz"
-            | "/readyz"
-            | "/livez"
-            | "/metrics"
-            | "/favicon.ico"
-            | "/api/health"
+        "/healthz" | "/readyz" | "/livez" | "/metrics" | "/favicon.ico" | "/api/health"
     )
 }
 
@@ -764,8 +760,8 @@ pub async fn audit_middleware(
     next: Next,
 ) -> Response {
     use crate::audit::{
-        action_from_request, actor_from_auth_context, outcome_from_status, parse_fhir_path,
-        AuditSource,
+        AuditSource, action_from_request, actor_from_auth_context, outcome_from_status,
+        parse_fhir_path,
     };
 
     // Extract request information before passing to handler
@@ -778,11 +774,7 @@ pub async fn audit_middleware(
         .get("x-forwarded-for")
         .and_then(|v| v.to_str().ok())
         .and_then(|s| s.split(',').next())
-        .or_else(|| {
-            req.headers()
-                .get("x-real-ip")
-                .and_then(|v| v.to_str().ok())
-        })
+        .or_else(|| req.headers().get("x-real-ip").and_then(|v| v.to_str().ok()))
         .and_then(|s| s.trim().parse().ok());
     let user_agent = req
         .headers()
@@ -838,7 +830,9 @@ pub async fn audit_middleware(
                 site: None,
             };
             // Deref Arc to get &AuthContext for actor_from_auth_context
-            let actor = auth_context.as_ref().map(|ctx| actor_from_auth_context(ctx));
+            let actor = auth_context
+                .as_ref()
+                .map(|ctx| actor_from_auth_context(ctx));
             let session_id = auth_context
                 .as_ref()
                 .and_then(|ctx| ctx.token_claims.sid.clone());
@@ -937,7 +931,7 @@ pub async fn dynamic_cors_middleware(
     request: Request<Body>,
     next: Next,
 ) -> Result<Response, StatusCode> {
-    use axum::http::{header, Method};
+    use axum::http::{Method, header};
 
     let origin = request
         .headers()
@@ -982,7 +976,7 @@ pub async fn dynamic_cors_middleware(
 
 /// Build a response for preflight OPTIONS requests
 fn build_preflight_response(origin: Option<&str>) -> Response {
-    use axum::http::{header, StatusCode};
+    use axum::http::{StatusCode, header};
 
     let mut response = Response::builder()
         .status(StatusCode::NO_CONTENT)
@@ -1016,7 +1010,9 @@ fn build_preflight_response(origin: Option<&str>) -> Response {
     // Allow headers
     headers.insert(
         header::ACCESS_CONTROL_ALLOW_HEADERS,
-        HeaderValue::from_static("content-type, authorization, accept, x-request-id, x-skip-validation"),
+        HeaderValue::from_static(
+            "content-type, authorization, accept, x-request-id, x-skip-validation",
+        ),
     );
 
     // Max age for preflight cache (1 hour)

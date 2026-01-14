@@ -11,7 +11,7 @@
 //! queried using the normal FHIR search API.
 
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::net::IpAddr;
 use time::OffsetDateTime;
 use uuid::Uuid;
@@ -224,7 +224,12 @@ impl AuditEventBuilder {
     }
 
     /// Set the actor as a user
-    pub fn user(mut self, id: impl Into<String>, name: Option<String>, fhir_user: Option<String>) -> Self {
+    pub fn user(
+        mut self,
+        id: impl Into<String>,
+        name: Option<String>,
+        fhir_user: Option<String>,
+    ) -> Self {
         self.actor = Some(ActorType::User {
             id: id.into(),
             name,
@@ -525,9 +530,10 @@ impl AuditService {
 
         // Check excluded resource types
         if let Some(rt) = resource_type
-            && self.config.exclude_resource_types.iter().any(|e| e == rt) {
-                return false;
-            }
+            && self.config.exclude_resource_types.iter().any(|e| e == rt)
+        {
+            return false;
+        }
 
         match action {
             // Auth events
@@ -573,8 +579,7 @@ impl AuditService {
 
         // Store the AuditEvent resource
         // The event already contains resourceType and id fields
-        match self.storage.create(&event).await
-        {
+        match self.storage.create(&event).await {
             Ok(_) => {
                 tracing::debug!(
                     audit_id = %id,
@@ -612,13 +617,11 @@ impl AuditService {
             return Ok(());
         }
 
-        let mut builder = AuditEventBuilder::new(action)
-            .outcome(outcome)
-            .entity(
-                Some(resource_type.to_string()),
-                resource_id.map(String::from),
-                query.map(String::from),
-            );
+        let mut builder = AuditEventBuilder::new(action).outcome(outcome).entity(
+            Some(resource_type.to_string()),
+            resource_id.map(String::from),
+            query.map(String::from),
+        );
 
         if let Some(ip) = source.ip_address {
             builder = builder.ip_address(ip);
@@ -725,11 +728,7 @@ pub fn extract_audit_source(headers: &axum::http::HeaderMap) -> AuditSource {
         .get("x-forwarded-for")
         .and_then(|v| v.to_str().ok())
         .and_then(|s| s.split(',').next())
-        .or_else(|| {
-            headers
-                .get("x-real-ip")
-                .and_then(|v| v.to_str().ok())
-        })
+        .or_else(|| headers.get("x-real-ip").and_then(|v| v.to_str().ok()))
         .and_then(|s| s.trim().parse().ok());
 
     // Extract user agent
@@ -754,9 +753,7 @@ pub fn extract_request_id(headers: &axum::http::HeaderMap) -> Option<String> {
 }
 
 /// Extract ActorType from AuthContext
-pub fn actor_from_auth_context(
-    auth_context: &octofhir_auth::middleware::AuthContext,
-) -> ActorType {
+pub fn actor_from_auth_context(auth_context: &octofhir_auth::middleware::AuthContext) -> ActorType {
     if let Some(ref user) = auth_context.user {
         ActorType::User {
             id: user.id.clone(),
@@ -772,10 +769,7 @@ pub fn actor_from_auth_context(
 }
 
 /// Determine audit action from HTTP method and path
-pub fn action_from_request(
-    method: &axum::http::Method,
-    path: &str,
-) -> Option<AuditAction> {
+pub fn action_from_request(method: &axum::http::Method, path: &str) -> Option<AuditAction> {
     use axum::http::Method;
 
     // Check for auth paths first
@@ -824,7 +818,9 @@ pub fn action_from_request(
 
 /// Extract resource type and ID from FHIR path
 pub fn parse_fhir_path(path: &str) -> (Option<String>, Option<String>) {
-    let fhir_path = path.strip_prefix("/fhir/").or_else(|| path.strip_prefix("/fhir"));
+    let fhir_path = path
+        .strip_prefix("/fhir/")
+        .or_else(|| path.strip_prefix("/fhir"));
 
     if let Some(p) = fhir_path {
         let parts: Vec<&str> = p.split('/').filter(|s| !s.is_empty()).collect();
@@ -874,8 +870,7 @@ pub async fn log_fhir_audit(
     let source = extract_audit_source(headers);
     let request_id = extract_request_id(headers);
     let actor = auth_context.map(actor_from_auth_context);
-    let session_id = auth_context
-        .and_then(|ctx| ctx.token_claims.sid.as_deref());
+    let session_id = auth_context.and_then(|ctx| ctx.token_claims.sid.as_deref());
 
     if let Err(e) = audit_service
         .log_fhir_operation(

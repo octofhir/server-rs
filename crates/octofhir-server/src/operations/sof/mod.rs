@@ -28,6 +28,6 @@ mod export;
 mod run;
 mod sql;
 
-pub use export::{execute_viewdefinition_export, ViewDefinitionExportOperation};
+pub use export::{ViewDefinitionExportOperation, execute_viewdefinition_export};
 pub use run::ViewDefinitionRunOperation;
 pub use sql::ViewDefinitionSqlOperation;

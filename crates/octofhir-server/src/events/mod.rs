@@ -84,10 +84,7 @@ impl ResourceHook for RedisPublishHook {
             Ok(conn) => conn,
             Err(e) => {
                 warn!(error = %e, "Failed to get Redis connection for event publish");
-                return Err(HookError::Execution(format!(
-                    "Redis pool error: {}",
-                    e
-                )));
+                return Err(HookError::Execution(format!("Redis pool error: {}", e)));
             }
         };
 
@@ -96,10 +93,7 @@ impl ResourceHook for RedisPublishHook {
             Ok(msg) => msg,
             Err(e) => {
                 warn!(error = %e, "Failed to serialize event for Redis");
-                return Err(HookError::Execution(format!(
-                    "Serialization error: {}",
-                    e
-                )));
+                return Err(HookError::Execution(format!("Serialization error: {}", e)));
             }
         };
 

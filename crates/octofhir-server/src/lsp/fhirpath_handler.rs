@@ -5,18 +5,16 @@
 
 use axum::{
     extract::{Query, State, WebSocketUpgrade},
-    http::{header::COOKIE, HeaderMap, StatusCode},
+    http::{HeaderMap, StatusCode, header::COOKIE},
     response::{IntoResponse, Response},
 };
 use futures_util::{SinkExt, StreamExt};
 use octofhir_auth::token::jwt::AccessTokenClaims;
 use octofhir_fhirpath::evaluator::create_function_registry;
-use octofhir_fhirpath::lsp::{
-    CompletionProvider, LspHandlers, SetContextParams,
-};
+use octofhir_fhirpath::lsp::{CompletionProvider, LspHandlers, SetContextParams};
 use serde::Deserialize;
 use std::sync::Arc;
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{Mutex, mpsc};
 
 use crate::server::AppState;
 
@@ -88,12 +86,13 @@ fn extract_cookie_token(headers: &HeaderMap, cookie_name: &str) -> Option<String
     for cookie in cookie_header.split(';') {
         let cookie = cookie.trim();
         if let Some((name, value)) = cookie.split_once('=')
-            && name.trim() == cookie_name {
-                let value = value.trim();
-                if !value.is_empty() {
-                    return Some(value.to_string());
-                }
+            && name.trim() == cookie_name
+        {
+            let value = value.trim();
+            if !value.is_empty() {
+                return Some(value.to_string());
             }
+        }
     }
 
     None
@@ -137,19 +136,20 @@ async fn handle_fhirpath_lsp_connection(
         match msg {
             Ok(axum::extract::ws::Message::Text(text)) => {
                 tracing::debug!("FHIRPath LSP received: {}", text);
-                if let Some(response) =
-                    process_lsp_message(&text, &handlers, &response_tx).await
-                    && response_tx.send(response).is_err() {
-                        break;
-                    }
+                if let Some(response) = process_lsp_message(&text, &handlers, &response_tx).await
+                    && response_tx.send(response).is_err()
+                {
+                    break;
+                }
             }
             Ok(axum::extract::ws::Message::Binary(data)) => {
                 if let Ok(text) = String::from_utf8(data.to_vec())
                     && let Some(response) =
                         process_lsp_message(&text, &handlers, &response_tx).await
-                        && response_tx.send(response).is_err() {
-                            break;
-                        }
+                    && response_tx.send(response).is_err()
+                {
+                    break;
+                }
             }
             Ok(axum::extract::ws::Message::Close(_)) => {
                 tracing::debug!("FHIRPath LSP WebSocket close received");

@@ -214,7 +214,10 @@ fn append_auth_query(url: &str, auth_info: &AuthInfo) -> String {
     }
 
     if !auth_info.roles.is_empty() {
-        params.push(format!("roles={}", urlencoding::encode(&auth_info.roles.join(","))));
+        params.push(format!(
+            "roles={}",
+            urlencoding::encode(&auth_info.roles.join(","))
+        ));
     }
 
     if params.is_empty() {

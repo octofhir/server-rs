@@ -25,14 +25,13 @@ use octofhir_auth::oauth::token::TokenRequest;
 use octofhir_auth::token::jwt::JwtService;
 use octofhir_auth::token::service::TokenConfig;
 use octofhir_auth::{
-    AuthState, AuthorizeState, JwksState, LogoutState, SmartConfigState, TokenState,
-    authorize_get, authorize_post, jwks_handler, logout_handler, oidc_logout_handler,
-    smart_configuration_handler, token_handler, userinfo_handler,
+    AuthState, AuthorizeState, JwksState, LogoutState, SmartConfigState, TokenState, authorize_get,
+    authorize_post, jwks_handler, logout_handler, oidc_logout_handler, smart_configuration_handler,
+    token_handler, userinfo_handler,
 };
 use octofhir_auth_postgres::{
     ArcAuthorizeSessionStorage, ArcClientStorage, ArcConsentStorage, ArcRefreshTokenStorage,
-    ArcRevokedTokenStorage, ArcSessionStorage, ArcUserStorage,
-    PostgresSsoSessionStorage,
+    ArcRevokedTokenStorage, ArcSessionStorage, ArcUserStorage, PostgresSsoSessionStorage,
 };
 use time::Duration;
 use url::Url;
@@ -100,9 +99,8 @@ impl OAuthState {
 
         // Create PostgresSsoSessionStorage for SSO logout support
         // Uses FHIR storage for AuthSession resources
-        let sso_session_storage = Arc::new(PostgresSsoSessionStorage::new(
-            app_state.storage.clone(),
-        ));
+        let sso_session_storage =
+            Arc::new(PostgresSsoSessionStorage::new(app_state.storage.clone()));
 
         // Create LogoutState for browser-based logout
         // Includes client_storage for OIDC RP-Initiated Logout validation
@@ -224,9 +222,15 @@ async fn auditing_token_handler(
     let (audit_outcome, outcome_desc) = if status.is_success() {
         (AuditOutcome::Success, "Authentication successful")
     } else if status == StatusCode::UNAUTHORIZED {
-        (AuditOutcome::SeriousFailure, "Authentication failed: invalid credentials")
+        (
+            AuditOutcome::SeriousFailure,
+            "Authentication failed: invalid credentials",
+        )
     } else if status == StatusCode::BAD_REQUEST {
-        (AuditOutcome::MinorFailure, "Authentication failed: invalid request")
+        (
+            AuditOutcome::MinorFailure,
+            "Authentication failed: invalid request",
+        )
     } else {
         (AuditOutcome::SeriousFailure, "Authentication failed")
     };
@@ -290,7 +294,10 @@ async fn auditing_token_handler(
 /// MUST support both GET and POST methods.
 pub fn logout_route(state: LogoutState) -> Router {
     Router::new()
-        .route("/auth/logout", get(oidc_logout_handler).post(logout_handler))
+        .route(
+            "/auth/logout",
+            get(oidc_logout_handler).post(logout_handler),
+        )
         .with_state(state)
 }
 

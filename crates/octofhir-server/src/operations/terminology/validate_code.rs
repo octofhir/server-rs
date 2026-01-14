@@ -19,6 +19,10 @@ use crate::canonical::get_manager;
 use crate::operations::{OperationError, OperationHandler};
 use crate::server::AppState;
 
+// ===== Hardening Constants =====
+/// Maximum recursion depth for concept hierarchy traversal
+const MAX_RECURSION_DEPTH: usize = 100;
+
 /// Parameters for the $validate-code operation.
 #[derive(Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -45,6 +49,16 @@ pub struct ValidateCodeParams {
     /// A CodeableConcept to validate (alternative to code+system)
     #[serde(default)]
     pub codeable_concept: Option<Value>,
+
+    /// If true, infer the system from the ValueSet definition
+    /// (when only one system is included in the ValueSet)
+    #[serde(default)]
+    pub infer_system: Option<bool>,
+
+    /// If true, abstract codes are allowed (default: false)
+    /// Abstract codes are used for grouping and normally cannot be selected
+    #[serde(default)]
+    pub abstract_allowed: Option<bool>,
 }
 
 /// Result of code validation.
@@ -124,16 +138,22 @@ impl ValidateCodeOperation {
                     let name = param.get("name").and_then(|v| v.as_str()).unwrap_or("");
                     match name {
                         "url" => {
-                            validate_params.url =
-                                param.get("valueUri").and_then(|v| v.as_str()).map(String::from);
+                            validate_params.url = param
+                                .get("valueUri")
+                                .and_then(|v| v.as_str())
+                                .map(String::from);
                         }
                         "code" => {
-                            validate_params.code =
-                                param.get("valueCode").and_then(|v| v.as_str()).map(String::from);
+                            validate_params.code = param
+                                .get("valueCode")
+                                .and_then(|v| v.as_str())
+                                .map(String::from);
                         }
                         "system" => {
-                            validate_params.system =
-                                param.get("valueUri").and_then(|v| v.as_str()).map(String::from);
+                            validate_params.system = param
+                                .get("valueUri")
+                                .and_then(|v| v.as_str())
+                                .map(String::from);
                         }
                         "systemVersion" => {
                             validate_params.system_version = param
@@ -153,6 +173,14 @@ impl ValidateCodeOperation {
                         "codeableConcept" => {
                             validate_params.codeable_concept =
                                 param.get("valueCodeableConcept").cloned();
+                        }
+                        "inferSystem" => {
+                            validate_params.infer_system =
+                                param.get("valueBoolean").and_then(|v| v.as_bool());
+                        }
+                        "abstractAllowed" | "abstract" => {
+                            validate_params.abstract_allowed =
+                                param.get("valueBoolean").and_then(|v| v.as_bool());
                         }
                         _ => {}
                     }
@@ -176,6 +204,7 @@ impl ValidateCodeOperation {
         code_system_id: Option<&str>,
         code: &str,
         display: Option<&str>,
+        abstract_allowed: bool,
     ) -> Result<ValidateCodeResult, OperationError> {
         // Load the CodeSystem
         let code_system = if let Some(id) = code_system_id {
@@ -199,23 +228,34 @@ impl ValidateCodeOperation {
         if let Some(found) = self.find_concept_in_hierarchy(&concepts, code) {
             let concept_display = found.get("display").and_then(|v| v.as_str());
 
+            // Check if the code is abstract
+            if !abstract_allowed && Self::is_abstract_concept(found) {
+                return Ok(ValidateCodeResult {
+                    result: false,
+                    message: Some(format!(
+                        "Code '{}' is abstract and cannot be used for data entry. Set 'abstractAllowed=true' to allow abstract codes.",
+                        code
+                    )),
+                    display: concept_display.map(String::from),
+                });
+            }
+
             // If display was provided, validate it matches
             if let Some(expected_display) = display
                 && let Some(actual_display) = concept_display
-                    && actual_display != expected_display {
-                        return Ok(ValidateCodeResult {
-                            result: true, // Code is valid, but display doesn't match
-                            message: Some(format!(
-                                "Code '{}' is valid, but display '{}' does not match expected '{}'",
-                                code, actual_display, expected_display
-                            )),
-                            display: Some(actual_display.to_string()),
-                        });
-                    }
+                && actual_display != expected_display
+            {
+                return Ok(ValidateCodeResult {
+                    result: true, // Code is valid, but display doesn't match
+                    message: Some(format!(
+                        "Code '{}' is valid, but display '{}' does not match expected '{}'",
+                        code, actual_display, expected_display
+                    )),
+                    display: Some(actual_display.to_string()),
+                });
+            }
 
-            Ok(ValidateCodeResult::valid(
-                concept_display.map(String::from),
-            ))
+            Ok(ValidateCodeResult::valid(concept_display.map(String::from)))
         } else {
             let cs_name = code_system
                 .get("name")
@@ -239,6 +279,8 @@ impl ValidateCodeOperation {
         code: &str,
         system: Option<&str>,
         display: Option<&str>,
+        infer_system: bool,
+        abstract_allowed: bool,
     ) -> Result<ValidateCodeResult, OperationError> {
         // Load the ValueSet
         let value_set = if let Some(id) = value_set_id {
@@ -251,15 +293,34 @@ impl ValidateCodeOperation {
             ));
         };
 
+        // Try to infer system if not provided and inferSystem is true
+        let effective_system = if system.is_none() && infer_system {
+            self.infer_system_from_valueset(&value_set)
+        } else {
+            system.map(String::from)
+        };
+
         // First check if ValueSet has an existing expansion
         if let Some(expansion) = value_set.get("expansion") {
-            return self.validate_in_expansion(expansion, code, system, display);
+            return self.validate_in_expansion(
+                expansion,
+                code,
+                effective_system.as_deref(),
+                display,
+                abstract_allowed,
+            );
         }
 
         // No expansion, need to process compose
         if let Some(compose) = value_set.get("compose") {
             return self
-                .validate_in_compose(compose, code, system, display)
+                .validate_in_compose(
+                    compose,
+                    code,
+                    effective_system.as_deref(),
+                    display,
+                    abstract_allowed,
+                )
                 .await;
         }
 
@@ -276,6 +337,7 @@ impl ValidateCodeOperation {
         code: &str,
         system: Option<&str>,
         display: Option<&str>,
+        abstract_allowed: bool,
     ) -> Result<ValidateCodeResult, OperationError> {
         let contains = expansion
             .get("contains")
@@ -291,27 +353,43 @@ impl ValidateCodeOperation {
             if entry_code == code {
                 // Check system if provided
                 if let Some(expected_system) = system
-                    && entry_system != Some(expected_system) {
-                        continue; // System doesn't match, keep looking
-                    }
+                    && entry_system != Some(expected_system)
+                {
+                    continue; // System doesn't match, keep looking
+                }
+
+                // Check if abstract (in expansion, abstract is a boolean property)
+                let is_abstract = entry
+                    .get("abstract")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                if !abstract_allowed && is_abstract {
+                    return Ok(ValidateCodeResult {
+                        result: false,
+                        message: Some(format!(
+                            "Code '{}' is abstract and cannot be used for data entry. Set 'abstractAllowed=true' to allow abstract codes.",
+                            code
+                        )),
+                        display: entry_display.map(String::from),
+                    });
+                }
 
                 // Found matching code (and system if provided)
                 if let Some(expected_display) = display
                     && let Some(actual_display) = entry_display
-                        && actual_display != expected_display {
-                            return Ok(ValidateCodeResult {
-                                result: true,
-                                message: Some(format!(
-                                    "Code is valid, but display '{}' does not match expected '{}'",
-                                    actual_display, expected_display
-                                )),
-                                display: Some(actual_display.to_string()),
-                            });
-                        }
+                    && actual_display != expected_display
+                {
+                    return Ok(ValidateCodeResult {
+                        result: true,
+                        message: Some(format!(
+                            "Code is valid, but display '{}' does not match expected '{}'",
+                            actual_display, expected_display
+                        )),
+                        display: Some(actual_display.to_string()),
+                    });
+                }
 
-                return Ok(ValidateCodeResult::valid(
-                    entry_display.map(String::from),
-                ));
+                return Ok(ValidateCodeResult::valid(entry_display.map(String::from)));
             }
         }
 
@@ -328,6 +406,7 @@ impl ValidateCodeOperation {
         code: &str,
         system: Option<&str>,
         display: Option<&str>,
+        abstract_allowed: bool,
     ) -> Result<ValidateCodeResult, OperationError> {
         // First check excludes
         if let Some(excludes) = compose.get("exclude").and_then(|v| v.as_array()) {
@@ -365,9 +444,10 @@ impl ValidateCodeOperation {
 
                 // If system is specified in params, it must match include's system
                 if let Some(expected_system) = system
-                    && include_system != Some(expected_system) {
-                        continue;
-                    }
+                    && include_system != Some(expected_system)
+                {
+                    continue;
+                }
 
                 // Check explicit concept list
                 if let Some(concepts) = include.get("concept").and_then(|v| v.as_array()) {
@@ -376,19 +456,32 @@ impl ValidateCodeOperation {
                         let concept_display = concept.get("display").and_then(|v| v.as_str());
 
                         if concept_code == Some(code) {
+                            // Check if abstract
+                            if !abstract_allowed && Self::is_abstract_concept(concept) {
+                                return Ok(ValidateCodeResult {
+                                    result: false,
+                                    message: Some(format!(
+                                        "Code '{}' is abstract and cannot be used for data entry. Set 'abstractAllowed=true' to allow abstract codes.",
+                                        code
+                                    )),
+                                    display: concept_display.map(String::from),
+                                });
+                            }
+
                             // Found the code
                             if let Some(expected_display) = display
                                 && let Some(actual_display) = concept_display
-                                    && actual_display != expected_display {
-                                        return Ok(ValidateCodeResult {
-                                            result: true,
-                                            message: Some(format!(
-                                                "Code is valid, but display '{}' does not match expected '{}'",
-                                                actual_display, expected_display
-                                            )),
-                                            display: Some(actual_display.to_string()),
-                                        });
-                                    }
+                                && actual_display != expected_display
+                            {
+                                return Ok(ValidateCodeResult {
+                                    result: true,
+                                    message: Some(format!(
+                                        "Code is valid, but display '{}' does not match expected '{}'",
+                                        actual_display, expected_display
+                                    )),
+                                    display: Some(actual_display.to_string()),
+                                });
+                            }
                             return Ok(ValidateCodeResult::valid(
                                 concept_display.map(String::from),
                             ));
@@ -406,24 +499,36 @@ impl ValidateCodeOperation {
                                     .cloned()
                                     .unwrap_or_default();
 
-                                if let Some(found) =
-                                    self.find_concept_in_hierarchy(&concepts, code)
+                                if let Some(found) = self.find_concept_in_hierarchy(&concepts, code)
                                 {
                                     let concept_display =
                                         found.get("display").and_then(|v| v.as_str());
 
+                                    // Check if abstract
+                                    if !abstract_allowed && Self::is_abstract_concept(found) {
+                                        return Ok(ValidateCodeResult {
+                                            result: false,
+                                            message: Some(format!(
+                                                "Code '{}' is abstract and cannot be used for data entry. Set 'abstractAllowed=true' to allow abstract codes.",
+                                                code
+                                            )),
+                                            display: concept_display.map(String::from),
+                                        });
+                                    }
+
                                     if let Some(expected_display) = display
                                         && let Some(actual_display) = concept_display
-                                            && actual_display != expected_display {
-                                                return Ok(ValidateCodeResult {
-                                                    result: true,
-                                                    message: Some(format!(
-                                                        "Code is valid, but display '{}' does not match expected '{}'",
-                                                        actual_display, expected_display
-                                                    )),
-                                                    display: Some(actual_display.to_string()),
-                                                });
-                                            }
+                                        && actual_display != expected_display
+                                    {
+                                        return Ok(ValidateCodeResult {
+                                            result: true,
+                                            message: Some(format!(
+                                                "Code is valid, but display '{}' does not match expected '{}'",
+                                                actual_display, expected_display
+                                            )),
+                                            display: Some(actual_display.to_string()),
+                                        });
+                                    }
                                     return Ok(ValidateCodeResult::valid(
                                         concept_display.map(String::from),
                                     ));
@@ -444,12 +549,103 @@ impl ValidateCodeOperation {
         )))
     }
 
-    /// Find a concept in a hierarchical concept list.
+    /// Infer the system from a ValueSet when only one system is included.
+    fn infer_system_from_valueset(&self, value_set: &Value) -> Option<String> {
+        let mut systems: Vec<String> = Vec::new();
+
+        // Check expansion first
+        if let Some(expansion) = value_set.get("expansion") {
+            if let Some(contains) = expansion.get("contains").and_then(|v| v.as_array()) {
+                for entry in contains {
+                    if let Some(system) = entry.get("system").and_then(|v| v.as_str()) {
+                        if !systems.contains(&system.to_string()) {
+                            systems.push(system.to_string());
+                        }
+                    }
+                }
+            }
+        }
+
+        // Check compose if no expansion
+        if systems.is_empty() {
+            if let Some(compose) = value_set.get("compose") {
+                if let Some(includes) = compose.get("include").and_then(|v| v.as_array()) {
+                    for include in includes {
+                        if let Some(system) = include.get("system").and_then(|v| v.as_str()) {
+                            if !systems.contains(&system.to_string()) {
+                                systems.push(system.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Only return if there's exactly one system
+        if systems.len() == 1 {
+            tracing::debug!(system = %systems[0], "Inferred system from ValueSet");
+            Some(systems.remove(0))
+        } else {
+            tracing::debug!(
+                system_count = systems.len(),
+                "Cannot infer system: ValueSet contains {} systems",
+                systems.len()
+            );
+            None
+        }
+    }
+
+    /// Check if a concept is abstract (cannot be selected for data entry).
+    fn is_abstract_concept(concept: &Value) -> bool {
+        // Check 'abstract' property on the concept
+        if let Some(is_abstract) = concept.get("abstract").and_then(|v| v.as_bool()) {
+            return is_abstract;
+        }
+
+        // Check 'property' array for 'inactive' or 'notSelectable'
+        if let Some(properties) = concept.get("property").and_then(|v| v.as_array()) {
+            for prop in properties {
+                let code = prop.get("code").and_then(|v| v.as_str()).unwrap_or("");
+                let value = prop
+                    .get("valueBoolean")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+
+                if (code == "notSelectable" || code == "abstract") && value {
+                    return true;
+                }
+            }
+        }
+
+        false
+    }
+
+    /// Find a concept in a hierarchical concept list with depth limiting.
     fn find_concept_in_hierarchy<'a>(
         &self,
         concepts: &'a [Value],
         code: &str,
     ) -> Option<&'a Value> {
+        self.find_concept_in_hierarchy_with_depth(concepts, code, 0)
+    }
+
+    /// Internal recursive search with depth tracking.
+    fn find_concept_in_hierarchy_with_depth<'a>(
+        &self,
+        concepts: &'a [Value],
+        code: &str,
+        depth: usize,
+    ) -> Option<&'a Value> {
+        // Guard against excessive recursion depth
+        if depth > MAX_RECURSION_DEPTH {
+            tracing::warn!(
+                depth = depth,
+                code = %code,
+                "Maximum recursion depth exceeded in concept hierarchy search"
+            );
+            return None;
+        }
+
         for concept in concepts {
             let concept_code = concept.get("code").and_then(|v| v.as_str()).unwrap_or("");
 
@@ -459,9 +655,11 @@ impl ValidateCodeOperation {
 
             // Check nested concepts
             if let Some(children) = concept.get("concept").and_then(|v| v.as_array())
-                && let Some(found) = self.find_concept_in_hierarchy(children, code) {
-                    return Some(found);
-                }
+                && let Some(found) =
+                    self.find_concept_in_hierarchy_with_depth(children, code, depth + 1)
+            {
+                return Some(found);
+            }
         }
         None
     }
@@ -480,7 +678,9 @@ impl ValidateCodeOperation {
             .limit(10)
             .execute()
             .await
-            .map_err(|e| OperationError::Internal(format!("Failed to search for CodeSystem: {}", e)))?;
+            .map_err(|e| {
+                OperationError::Internal(format!("Failed to search for CodeSystem: {}", e))
+            })?;
 
         search_result
             .resources
@@ -498,11 +698,10 @@ impl ValidateCodeOperation {
         state: &AppState,
         id: &str,
     ) -> Result<Value, OperationError> {
-        let result = state
-            .storage
-            .read("CodeSystem", id)
-            .await
-            .map_err(|e| OperationError::Internal(format!("Failed to read CodeSystem: {}", e)))?;
+        let result =
+            state.storage.read("CodeSystem", id).await.map_err(|e| {
+                OperationError::Internal(format!("Failed to read CodeSystem: {}", e))
+            })?;
 
         match result {
             Some(stored) => Ok(stored.resource),
@@ -525,9 +724,7 @@ impl ValidateCodeOperation {
                     search_result
                         .resources
                         .into_iter()
-                        .find(|r| {
-                            r.resource.content.get("id").and_then(|v| v.as_str()) == Some(id)
-                        })
+                        .find(|r| r.resource.content.get("id").and_then(|v| v.as_str()) == Some(id))
                         .map(|r| r.resource.content)
                         .ok_or_else(|| {
                             OperationError::NotFound(format!("CodeSystem '{}' not found", id))
@@ -556,7 +753,9 @@ impl ValidateCodeOperation {
             .limit(10)
             .execute()
             .await
-            .map_err(|e| OperationError::Internal(format!("Failed to search for ValueSet: {}", e)))?;
+            .map_err(|e| {
+                OperationError::Internal(format!("Failed to search for ValueSet: {}", e))
+            })?;
 
         search_result
             .resources
@@ -618,9 +817,18 @@ impl ValidateCodeOperation {
 
     /// Extract code/system/display from a Coding value.
     fn extract_from_coding(coding: &Value) -> (Option<String>, Option<String>, Option<String>) {
-        let code = coding.get("code").and_then(|v| v.as_str()).map(String::from);
-        let system = coding.get("system").and_then(|v| v.as_str()).map(String::from);
-        let display = coding.get("display").and_then(|v| v.as_str()).map(String::from);
+        let code = coding
+            .get("code")
+            .and_then(|v| v.as_str())
+            .map(String::from);
+        let system = coding
+            .get("system")
+            .and_then(|v| v.as_str())
+            .map(String::from);
+        let display = coding
+            .get("display")
+            .and_then(|v| v.as_str())
+            .map(String::from);
         (code, system, display)
     }
 
@@ -689,10 +897,13 @@ impl OperationHandler for ValidateCodeOperation {
             ));
         }
 
+        let infer_system = validate_params.infer_system.unwrap_or(false);
+        let abstract_allowed = validate_params.abstract_allowed.unwrap_or(false);
+
         // Try to determine if it's a CodeSystem or ValueSet URL
-        // For now, if system is provided, assume ValueSet validation
+        // For now, if system is provided or inferSystem is true, assume ValueSet validation
         // Otherwise try CodeSystem first
-        if system.is_some() {
+        if system.is_some() || infer_system {
             // ValueSet validation
             self.validate_value_set(
                 state,
@@ -701,14 +912,23 @@ impl OperationHandler for ValidateCodeOperation {
                 &code,
                 system.as_deref(),
                 display.as_deref(),
+                infer_system,
+                abstract_allowed,
             )
             .await
             .map(|r| r.to_parameters())
         } else {
             // Try CodeSystem validation
-            self.validate_code_system(state, url, None, &code, display.as_deref())
-                .await
-                .map(|r| r.to_parameters())
+            self.validate_code_system(
+                state,
+                url,
+                None,
+                &code,
+                display.as_deref(),
+                abstract_allowed,
+            )
+            .await
+            .map(|r| r.to_parameters())
         }
     }
 
@@ -741,6 +961,8 @@ impl OperationHandler for ValidateCodeOperation {
         })?;
 
         let url = validate_params.url.as_deref();
+        let infer_system = validate_params.infer_system.unwrap_or(false);
+        let abstract_allowed = validate_params.abstract_allowed.unwrap_or(false);
 
         match resource_type {
             "CodeSystem" => {
@@ -750,9 +972,16 @@ impl OperationHandler for ValidateCodeOperation {
                             .into(),
                     ));
                 }
-                self.validate_code_system(state, url, None, &code, display.as_deref())
-                    .await
-                    .map(|r| r.to_parameters())
+                self.validate_code_system(
+                    state,
+                    url,
+                    None,
+                    &code,
+                    display.as_deref(),
+                    abstract_allowed,
+                )
+                .await
+                .map(|r| r.to_parameters())
             }
             "ValueSet" => {
                 if url.is_none() {
@@ -768,6 +997,8 @@ impl OperationHandler for ValidateCodeOperation {
                     &code,
                     system.as_deref(),
                     display.as_deref(),
+                    infer_system,
+                    abstract_allowed,
                 )
                 .await
                 .map(|r| r.to_parameters())
@@ -808,24 +1039,34 @@ impl OperationHandler for ValidateCodeOperation {
             )
         })?;
 
+        let infer_system = validate_params.infer_system.unwrap_or(false);
+        let abstract_allowed = validate_params.abstract_allowed.unwrap_or(false);
+
         match resource_type {
-            "CodeSystem" => {
-                self.validate_code_system(state, None, Some(id), &code, display.as_deref())
-                    .await
-                    .map(|r| r.to_parameters())
-            }
-            "ValueSet" => {
-                self.validate_value_set(
+            "CodeSystem" => self
+                .validate_code_system(
+                    state,
+                    None,
+                    Some(id),
+                    &code,
+                    display.as_deref(),
+                    abstract_allowed,
+                )
+                .await
+                .map(|r| r.to_parameters()),
+            "ValueSet" => self
+                .validate_value_set(
                     state,
                     None,
                     Some(id),
                     &code,
                     system.as_deref(),
                     display.as_deref(),
+                    infer_system,
+                    abstract_allowed,
                 )
                 .await
-                .map(|r| r.to_parameters())
-            }
+                .map(|r| r.to_parameters()),
             _ => Err(OperationError::NotSupported(format!(
                 "$validate-code is only supported on CodeSystem and ValueSet, not {}",
                 resource_type
@@ -895,12 +1136,16 @@ mod tests {
         assert_eq!(params["resourceType"], "Parameters");
 
         let parameters = params["parameter"].as_array().unwrap();
-        assert!(parameters.iter().any(|p| {
-            p["name"] == "result" && p["valueBoolean"] == true
-        }));
-        assert!(parameters.iter().any(|p| {
-            p["name"] == "display" && p["valueString"] == "Test Display"
-        }));
+        assert!(
+            parameters
+                .iter()
+                .any(|p| { p["name"] == "result" && p["valueBoolean"] == true })
+        );
+        assert!(
+            parameters
+                .iter()
+                .any(|p| { p["name"] == "display" && p["valueString"] == "Test Display" })
+        );
     }
 
     #[test]
@@ -973,5 +1218,126 @@ mod tests {
         // Not found
         let found = op.find_concept_in_hierarchy(&concepts, "Z");
         assert!(found.is_none());
+    }
+
+    #[test]
+    fn test_infer_system_from_valueset_single_system() {
+        let op = ValidateCodeOperation::new();
+
+        // ValueSet with single system in compose
+        let valueset = json!({
+            "resourceType": "ValueSet",
+            "compose": {
+                "include": [{
+                    "system": "http://example.org/codes"
+                }]
+            }
+        });
+
+        let system = op.infer_system_from_valueset(&valueset);
+        assert_eq!(system, Some("http://example.org/codes".to_string()));
+    }
+
+    #[test]
+    fn test_infer_system_from_valueset_multiple_systems() {
+        let op = ValidateCodeOperation::new();
+
+        // ValueSet with multiple systems - cannot infer
+        let valueset = json!({
+            "resourceType": "ValueSet",
+            "compose": {
+                "include": [
+                    {"system": "http://example.org/codes1"},
+                    {"system": "http://example.org/codes2"}
+                ]
+            }
+        });
+
+        let system = op.infer_system_from_valueset(&valueset);
+        assert!(system.is_none());
+    }
+
+    #[test]
+    fn test_infer_system_from_valueset_expansion() {
+        let op = ValidateCodeOperation::new();
+
+        // ValueSet with expansion
+        let valueset = json!({
+            "resourceType": "ValueSet",
+            "expansion": {
+                "contains": [
+                    {"system": "http://example.org/codes", "code": "A"},
+                    {"system": "http://example.org/codes", "code": "B"}
+                ]
+            }
+        });
+
+        let system = op.infer_system_from_valueset(&valueset);
+        assert_eq!(system, Some("http://example.org/codes".to_string()));
+    }
+
+    #[test]
+    fn test_is_abstract_concept_boolean_property() {
+        // Abstract concept with boolean property
+        let concept = json!({
+            "code": "A",
+            "display": "Abstract Code A",
+            "abstract": true
+        });
+
+        assert!(ValidateCodeOperation::is_abstract_concept(&concept));
+
+        // Non-abstract concept
+        let concept = json!({
+            "code": "B",
+            "display": "Concrete Code B",
+            "abstract": false
+        });
+
+        assert!(!ValidateCodeOperation::is_abstract_concept(&concept));
+    }
+
+    #[test]
+    fn test_is_abstract_concept_property_array() {
+        // Abstract concept with property array
+        let concept = json!({
+            "code": "A",
+            "display": "Abstract Code A",
+            "property": [{
+                "code": "notSelectable",
+                "valueBoolean": true
+            }]
+        });
+
+        assert!(ValidateCodeOperation::is_abstract_concept(&concept));
+
+        // Non-abstract with property array
+        let concept = json!({
+            "code": "B",
+            "display": "Concrete Code B",
+            "property": [{
+                "code": "notSelectable",
+                "valueBoolean": false
+            }]
+        });
+
+        assert!(!ValidateCodeOperation::is_abstract_concept(&concept));
+    }
+
+    #[test]
+    fn test_extract_params_with_infer_system() {
+        let params = json!({
+            "resourceType": "Parameters",
+            "parameter": [
+                {"name": "url", "valueUri": "http://example.org/fhir/ValueSet/test"},
+                {"name": "code", "valueCode": "ABC"},
+                {"name": "inferSystem", "valueBoolean": true},
+                {"name": "abstractAllowed", "valueBoolean": true}
+            ]
+        });
+
+        let validate_params = ValidateCodeOperation::extract_params(&params).unwrap();
+        assert_eq!(validate_params.infer_system, Some(true));
+        assert_eq!(validate_params.abstract_allowed, Some(true));
     }
 }

@@ -177,7 +177,10 @@ impl CacheBackend {
                 let ttl_secs = ttl.as_secs();
                 tokio::spawn(async move {
                     if let Ok(mut conn) = redis.get().await {
-                        if let Err(e) = conn.set_ex::<_, _, ()>(&key, &*data_for_redis, ttl_secs).await {
+                        if let Err(e) = conn
+                            .set_ex::<_, _, ()>(&key, &*data_for_redis, ttl_secs)
+                            .await
+                        {
                             tracing::warn!(key = %key, error = %e, "Redis SET error");
                         } else {
                             tracing::debug!(key = %key, ttl_secs = %ttl_secs, "cache set (L1+L2)");

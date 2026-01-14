@@ -20,8 +20,8 @@
 use async_trait::async_trait;
 use uuid::Uuid;
 
-use crate::oauth::authorize_session::AuthorizeSession;
 use crate::AuthResult;
+use crate::oauth::authorize_session::AuthorizeSession;
 
 /// Storage trait for authorize flow sessions.
 ///

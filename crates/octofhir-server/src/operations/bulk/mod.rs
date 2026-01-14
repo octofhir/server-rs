@@ -33,11 +33,11 @@ mod export;
 mod status;
 mod writer;
 
-pub use export::{execute_bulk_export, ExportOperation};
+pub use export::{ExportOperation, execute_bulk_export};
 pub use status::{
     BulkExportJob, BulkExportLevel, BulkExportManifest, BulkExportOutput, BulkExportStatus,
 };
-pub use writer::{cleanup_expired_exports, NdjsonWriter};
+pub use writer::{NdjsonWriter, cleanup_expired_exports};
 
 /// NDJSON content type as per Bulk Data specification
 pub const NDJSON_CONTENT_TYPE: &str = "application/fhir+ndjson";

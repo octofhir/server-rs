@@ -1,8 +1,7 @@
 use async_trait::async_trait;
 use lettre::{
-    message::header::ContentType,
+    AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor, message::header::ContentType,
     transport::smtp::authentication::Credentials,
-    AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor,
 };
 use reqwest::Client;
 use serde_json::json;
@@ -116,18 +115,18 @@ impl EmailAdapter {
 
         let subject = content.subject.as_deref().unwrap_or("Notification");
 
-        let email = Message::builder()
-            .from(
-                from.parse()
-                    .map_err(|e| NotificationError::InvalidConfig(format!("Invalid from: {}", e)))?,
-            )
-            .to(to
-                .parse()
-                .map_err(|e| NotificationError::InvalidConfig(format!("Invalid to: {}", e)))?)
-            .subject(subject)
-            .header(ContentType::TEXT_PLAIN)
-            .body(content.body.clone())
-            .map_err(|e| NotificationError::SendFailed(e.to_string()))?;
+        let email =
+            Message::builder()
+                .from(from.parse().map_err(|e| {
+                    NotificationError::InvalidConfig(format!("Invalid from: {}", e))
+                })?)
+                .to(to
+                    .parse()
+                    .map_err(|e| NotificationError::InvalidConfig(format!("Invalid to: {}", e)))?)
+                .subject(subject)
+                .header(ContentType::TEXT_PLAIN)
+                .body(content.body.clone())
+                .map_err(|e| NotificationError::SendFailed(e.to_string()))?;
 
         let mut mailer_builder = AsyncSmtpTransport::<Tokio1Executor>::relay(host)
             .map_err(|e| NotificationError::InvalidConfig(e.to_string()))?

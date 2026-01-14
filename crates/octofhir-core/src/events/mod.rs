@@ -60,6 +60,8 @@ pub mod types;
 
 // Re-export main types for convenience
 pub use broadcaster::EventBroadcaster;
-pub use hooks::{AuthHook, AuthHookAdapter, HookError, ResourceHook, ResourceHookAdapter, SystemHook};
+pub use hooks::{
+    AuthHook, AuthHookAdapter, HookError, ResourceHook, ResourceHookAdapter, SystemHook,
+};
 pub use registry::{HookDispatcher, HookRegistry, HookSystemBuilder};
 pub use types::{AuthEvent, AuthEventType, ResourceEvent, ResourceEventType, SystemEvent};

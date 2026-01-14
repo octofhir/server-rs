@@ -26,8 +26,8 @@
 //! ```
 
 use argon2::{
-    password_hash::{rand_core::OsRng, PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
     Argon2,
+    password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString, rand_core::OsRng},
 };
 use rand::Rng;
 
@@ -199,12 +199,22 @@ mod tests {
     #[test]
     fn test_generate_secret_format() {
         let secret = generate_app_secret();
-        assert!(secret.starts_with("app_"), "Secret should start with 'app_'");
-        assert_eq!(secret.len(), 68, "Secret should be 68 chars (app_ + 64 hex)");
+        assert!(
+            secret.starts_with("app_"),
+            "Secret should start with 'app_'"
+        );
+        assert_eq!(
+            secret.len(),
+            68,
+            "Secret should be 68 chars (app_ + 64 hex)"
+        );
 
         // Verify it's valid hex after the prefix
         let hex_part = &secret[4..];
-        assert!(hex::decode(hex_part).is_ok(), "Secret should be valid hex after prefix");
+        assert!(
+            hex::decode(hex_part).is_ok(),
+            "Secret should be valid hex after prefix"
+        );
     }
 
     #[test]
@@ -229,8 +239,10 @@ mod tests {
         let secret = generate_app_secret();
         let hash = hash_app_secret(&secret).unwrap();
 
-        assert!(verify_app_secret(&secret, &hash).unwrap(),
-            "Correct secret should verify successfully");
+        assert!(
+            verify_app_secret(&secret, &hash).unwrap(),
+            "Correct secret should verify successfully"
+        );
     }
 
     #[test]
@@ -238,8 +250,14 @@ mod tests {
         let secret = generate_app_secret();
         let hash = hash_app_secret(&secret).unwrap();
 
-        assert!(!verify_app_secret("app_wrong_secret_123456789012345678901234567890123456789012345678", &hash).unwrap(),
-            "Wrong secret should not verify");
+        assert!(
+            !verify_app_secret(
+                "app_wrong_secret_123456789012345678901234567890123456789012345678",
+                &hash
+            )
+            .unwrap(),
+            "Wrong secret should not verify"
+        );
     }
 
     #[test]
@@ -248,8 +266,10 @@ mod tests {
         let secret2 = generate_app_secret();
         let hash1 = hash_app_secret(&secret1).unwrap();
 
-        assert!(!verify_app_secret(&secret2, &hash1).unwrap(),
-            "Different secret should not verify against another's hash");
+        assert!(
+            !verify_app_secret(&secret2, &hash1).unwrap(),
+            "Different secret should not verify against another's hash"
+        );
     }
 
     #[test]
@@ -259,7 +279,10 @@ mod tests {
         let hash2 = hash_app_secret(&secret).unwrap();
 
         // Same secret should produce different hashes due to random salt
-        assert_ne!(hash1, hash2, "Same secret should produce different hashes (different salts)");
+        assert_ne!(
+            hash1, hash2,
+            "Same secret should produce different hashes (different salts)"
+        );
 
         // But both should verify correctly
         assert!(verify_app_secret(&secret, &hash1).unwrap());
@@ -271,6 +294,9 @@ mod tests {
         let secret = generate_app_secret();
         let result = verify_app_secret(&secret, "invalid_hash_format");
 
-        assert!(result.is_err(), "Invalid hash format should return an error");
+        assert!(
+            result.is_err(),
+            "Invalid hash format should return an error"
+        );
     }
 }

@@ -19,8 +19,9 @@ use octofhir_auth::storage::{
     UserConsent, UserStorage as UserStorageTrait,
 };
 use octofhir_auth::types::{BasicAuthEntity, Client, RefreshToken};
-use octofhir_auth::{verify_app_secret, AuthError, AuthResult};
+use octofhir_auth::{AuthError, AuthResult, verify_app_secret};
 
+use crate::PgPool;
 use crate::app::AppStorage;
 use crate::authorize_session::AuthorizeSessionStorage;
 use crate::client::PostgresClientStorage;
@@ -29,7 +30,6 @@ use crate::revoked_token::RevokedTokenStorage;
 use crate::session::SessionStorage;
 use crate::token::TokenStorage;
 use crate::user::{UserRow, UserStorage};
-use crate::PgPool;
 
 // =============================================================================
 // Arc-Owning Client Storage
@@ -280,8 +280,8 @@ impl UserStorageTrait for ArcUserStorage {
                     Some(hash) => {
                         // Verify using Argon2
                         use argon2::{
-                            password_hash::{PasswordHash, PasswordVerifier},
                             Argon2,
+                            password_hash::{PasswordHash, PasswordVerifier},
                         };
 
                         let parsed_hash = match PasswordHash::new(&hash) {
@@ -293,11 +293,15 @@ impl UserStorageTrait for ArcUserStorage {
                                     hash_preview = ?hash.chars().take(50).collect::<String>(),
                                     "verify_password: invalid hash format"
                                 );
-                                return Err(AuthError::storage(format!("Invalid password hash format: {}", e)));
+                                return Err(AuthError::storage(format!(
+                                    "Invalid password hash format: {}",
+                                    e
+                                )));
                             }
                         };
 
-                        let result = Argon2::default().verify_password(password.as_bytes(), &parsed_hash);
+                        let result =
+                            Argon2::default().verify_password(password.as_bytes(), &parsed_hash);
                         let verified = result.is_ok();
                         tracing::debug!(
                             user_id = %user_id,
@@ -639,7 +643,11 @@ impl ArcBasicAuthStorage {
 
 #[async_trait]
 impl BasicAuthStorage for ArcBasicAuthStorage {
-    async fn authenticate(&self, entity_id: &str, secret: &str) -> AuthResult<Option<BasicAuthEntity>> {
+    async fn authenticate(
+        &self,
+        entity_id: &str,
+        secret: &str,
+    ) -> AuthResult<Option<BasicAuthEntity>> {
         // Try to find Client first
         let client_storage = PostgresClientStorage::new(&self.pool);
         if let Some(client) = client_storage.find_by_client_id(entity_id).await? {

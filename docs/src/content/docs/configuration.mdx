@@ -1,0 +1,396 @@
+---
+title: Configuration Reference
+description: Complete reference for all OctoFHIR configuration options
+---
+
+import { Aside, Tabs, TabItem } from '@astrojs/starlight/components';
+
+OctoFHIR is configured via a TOML file (default: `octofhir.toml`). All options can be overridden via environment variables using the `OCTOFHIR__` prefix.
+
+## Configuration File Location
+
+```bash
+# Default location
+./octofhir.toml
+
+# Custom location via environment variable
+OCTOFHIR_CONFIG=/path/to/config.toml ./octofhir-server
+```
+
+## Environment Variable Overrides
+
+Any configuration option can be overridden via environment variables:
+
+```bash
+# Pattern: OCTOFHIR__SECTION__SUBSECTION__KEY
+OCTOFHIR__SERVER__PORT=9000
+OCTOFHIR__STORAGE__POSTGRES__HOST=db.example.com
+OCTOFHIR__AUTH__OAUTH__ACCESS_TOKEN_LIFETIME=2h
+```
+
+---
+
+## Server Configuration
+
+```toml
+[server]
+# Network binding
+host = "0.0.0.0"          # Listen address
+port = 8888               # Listen port
+
+# Request handling
+read_timeout_ms = 15000   # Read timeout (15s)
+write_timeout_ms = 15000  # Write timeout (15s)
+body_limit_bytes = 1048576  # Max request body (1 MiB)
+```
+
+---
+
+## Storage Configuration
+
+### PostgreSQL
+
+```toml
+[storage.postgres]
+# Option 1: Connection URL (takes precedence)
+url = "postgres://user:pass@localhost:5432/octofhir"
+
+# Option 2: Individual settings
+host = "localhost"
+port = 5450
+user = "postgres"
+password = "postgres"
+database = "octofhir"
+
+# Connection pool
+pool_size = 20            # Max connections
+connect_timeout_ms = 10000  # Connection timeout (10s)
+idle_timeout_ms = 60000   # Idle connection timeout (60s)
+```
+
+<Aside type="tip">
+For production, use `url` with connection string from your cloud provider (e.g., AWS RDS, Google Cloud SQL).
+</Aside>
+
+---
+
+## FHIR Configuration
+
+```toml
+[fhir]
+# Supported versions: R4, R4B, R5, R6
+version = "R4"
+
+[validation]
+# Allow clients to skip validation via X-Skip-Validation header
+allow_skip_validation = true
+
+[search]
+default_count = 10        # Default page size
+max_count = 100           # Maximum page size
+```
+
+---
+
+## FHIR Packages
+
+```toml
+[packages]
+# Base directory for package storage
+path = ".fhir"
+
+# Packages to load on startup
+load = [
+  "hl7.fhir.r4.core#4.0.1",
+  "hl7.fhir.us.core#6.1.0"
+]
+```
+
+---
+
+## Authentication & Authorization
+
+### OAuth 2.0 Settings
+
+```toml
+[auth]
+# Issuer URL (should match your public URL)
+issuer = "http://localhost:8888"
+
+[auth.oauth]
+# Token lifetimes
+authorization_code_lifetime = "10m"
+access_token_lifetime = "1h"
+refresh_token_lifetime = "90d"
+
+# Security settings
+refresh_token_rotation = true
+
+# Allowed grant types
+grant_types = ["authorization_code", "client_credentials", "refresh_token"]
+```
+
+### SMART on FHIR
+
+```toml
+[auth.smart]
+# Launch modes
+launch_ehr_enabled = true
+launch_standalone_enabled = true
+
+# Client types
+public_clients_allowed = true
+confidential_symmetric_allowed = true
+confidential_asymmetric_allowed = true
+
+# Features
+refresh_tokens_enabled = true
+openid_enabled = true
+dynamic_registration_enabled = false
+
+# Supported scopes
+supported_scopes = [
+  "openid",
+  "fhirUser",
+  "launch",
+  "launch/patient",
+  "offline_access",
+  "patient/*.cruds",
+  "user/*.cruds",
+  "system/*.cruds"
+]
+```
+
+### JWT Signing
+
+```toml
+[auth.signing]
+# Algorithm: RS256, RS384, or ES384
+algorithm = "RS384"
+
+# Key rotation
+key_rotation_days = 90
+keys_to_keep = 3
+
+# Optional: Fixed keys for token persistence across restarts
+# kid = "my-key-id"
+# private_key_pem = """-----BEGIN PRIVATE KEY-----..."""
+# public_key_pem = """-----BEGIN PUBLIC KEY-----..."""
+```
+
+<Aside type="caution">
+Without fixed keys, tokens are invalidated on server restart. For production, configure persistent keys.
+</Aside>
+
+### Access Policies
+
+```toml
+[auth.policy]
+default_deny = true       # Deny when no policy matches
+quickjs_enabled = true    # Enable JavaScript policy engine
+
+[auth.policy.quickjs]
+memory_limit_mb = 16
+max_stack_size_kb = 256
+timeout_ms = 100
+```
+
+### Rate Limiting
+
+```toml
+[auth.rate_limiting]
+token_requests_per_minute = 60
+token_requests_per_hour = 1000
+auth_requests_per_minute = 30
+max_failed_attempts = 5
+lockout_duration = "5m"
+```
+
+### Sessions & Cookies
+
+```toml
+[auth.cookie]
+enabled = true
+name = "octofhir_token"
+secure = false            # Set true in production (HTTPS)
+http_only = true
+same_site = "lax"
+path = "/"
+
+[auth.session]
+idle_timeout = "30m"
+absolute_timeout = "8h"
+max_concurrent_sessions = 10
+cookie_name = "octofhir_sso"
+cookie_secure = false     # Set true in production
+```
+
+### Identity Federation
+
+```toml
+[auth.federation]
+allow_external_idp = true
+auto_provision_users = false
+jwks_cache_ttl = "1h"
+jwks_refresh_on_failure = true
+```
+
+---
+
+## Caching
+
+### Redis (for horizontal scaling)
+
+```toml
+[redis]
+enabled = false           # Enable for multi-instance
+url = "redis://localhost:6380"
+pool_size = 10
+timeout_ms = 5000
+
+[cache]
+terminology_ttl_secs = 3600
+local_cache_max_entries = 10000
+```
+
+---
+
+## Features
+
+### GraphQL
+
+```toml
+[graphql]
+enabled = true
+introspection = true      # Disable in production for security
+max_depth = 15
+max_complexity = 500
+```
+
+### DB Console
+
+```toml
+[db_console]
+enabled = true
+sql_mode = "admin"        # readonly | readwrite | admin
+lsp_enabled = true
+```
+
+### SQL on FHIR
+
+```toml
+[sql_on_fhir]
+enabled = true
+```
+
+### Terminology
+
+```toml
+[terminology]
+server_url = "https://tx.fhir.org/r4"
+cache_ttl_secs = 3600
+```
+
+### Audit Trail
+
+```toml
+[audit]
+enabled = false
+log_fhir_operations = true
+log_auth_events = true
+log_read_operations = true
+log_search_operations = true
+exclude_resource_types = ["AuditEvent"]
+```
+
+---
+
+## Observability
+
+### Logging
+
+```toml
+[logging]
+# trace | debug | info | warn | error | off
+level = "info"
+```
+
+### OpenTelemetry
+
+```toml
+[otel]
+enabled = false
+endpoint = "http://localhost:4318"
+sample_ratio = 0.1        # 10% sampling
+```
+
+---
+
+## Bootstrap
+
+Initial setup on first run:
+
+```toml
+[bootstrap.admin_user]
+username = "admin"
+password = "admin123"     # Change in production!
+email = "admin@example.com"
+
+[bootstrap.backend_client]
+client_id = "backend"
+client_secret = "dev-secret-2024"
+scopes = ["system/*.cruds"]
+name = "Backend Service"
+```
+
+<Aside type="danger">
+Always change default credentials in production! Use environment variables:
+```bash
+OCTOFHIR__BOOTSTRAP__ADMIN_USER__PASSWORD=secure-random-password
+```
+</Aside>
+
+---
+
+## Production Example
+
+```toml
+[server]
+host = "0.0.0.0"
+port = 8888
+
+[storage.postgres]
+url = "postgres://user:pass@prod-db.example.com:5432/octofhir?sslmode=require"
+pool_size = 50
+
+[fhir]
+version = "R4"
+
+[validation]
+allow_skip_validation = false
+
+[auth]
+issuer = "https://fhir.example.com"
+
+[auth.cookie]
+secure = true
+same_site = "strict"
+
+[auth.session]
+cookie_secure = true
+
+[redis]
+enabled = true
+url = "redis://prod-redis.example.com:6379"
+
+[graphql]
+introspection = false
+
+[logging]
+level = "warn"
+
+[otel]
+enabled = true
+endpoint = "https://otel.example.com:4318"
+sample_ratio = 0.01
+```

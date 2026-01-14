@@ -262,34 +262,32 @@ impl ModelProvider for InMemoryModelProvider {
                 if element_name.ends_with("[x]") {
                     let base_name = element_name.trim_end_matches("[x]");
                     if let Some(type_suffix) = property_name.strip_prefix(base_name)
-                        && !type_suffix.is_empty() {
-                            let mut chars = type_suffix.chars();
-                            if let Some(first_char) = chars.next() {
-                                let schema_type =
-                                    format!("{}{}", first_char.to_lowercase(), chars.as_str());
+                        && !type_suffix.is_empty()
+                    {
+                        let mut chars = type_suffix.chars();
+                        if let Some(first_char) = chars.next() {
+                            let schema_type =
+                                format!("{}{}", first_char.to_lowercase(), chars.as_str());
 
-                                if let Some(choices) = &element.choices
-                                    && choices.contains(&schema_type) {
-                                        let mapped_type = self.map_fhir_type(&schema_type);
-                                        return Ok(Some(TypeInfo {
-                                            type_name: mapped_type,
-                                            singleton: Some(element.max == Some(1)),
-                                            is_empty: Some(false),
-                                            namespace: if schema_type
-                                                .chars()
-                                                .next()
-                                                .unwrap()
-                                                .is_uppercase()
-                                            {
-                                                Some("FHIR".to_string())
-                                            } else {
-                                                Some("System".to_string())
-                                            },
-                                            name: Some(schema_type),
-                                        }));
-                                    }
+                            if let Some(choices) = &element.choices
+                                && choices.contains(&schema_type)
+                            {
+                                let mapped_type = self.map_fhir_type(&schema_type);
+                                return Ok(Some(TypeInfo {
+                                    type_name: mapped_type,
+                                    singleton: Some(element.max == Some(1)),
+                                    is_empty: Some(false),
+                                    namespace: if schema_type.chars().next().unwrap().is_uppercase()
+                                    {
+                                        Some("FHIR".to_string())
+                                    } else {
+                                        Some("System".to_string())
+                                    },
+                                    name: Some(schema_type),
+                                }));
                             }
                         }
+                    }
                 }
             }
         }
@@ -301,18 +299,20 @@ impl ModelProvider for InMemoryModelProvider {
             return Some(type_info.clone());
         }
         if let Some(ref name) = type_info.name
-            && name == target_type {
-                return Some(type_info.clone());
-            }
+            && name == target_type
+        {
+            return Some(type_info.clone());
+        }
         None
     }
 
     fn get_element_names(&self, parent_type: &TypeInfo) -> Vec<String> {
         if let Some(type_name) = &parent_type.name
             && let Some(schema) = self.get_schema(type_name)
-                && let Some(elements) = &schema.elements {
-                    return elements.keys().cloned().collect();
-                }
+            && let Some(elements) = &schema.elements
+        {
+            return elements.keys().cloned().collect();
+        }
         Vec::new()
     }
 
@@ -421,28 +421,30 @@ impl ModelProvider for InMemoryModelProvider {
         property_name: &str,
     ) -> ModelResult<Option<Vec<ChoiceTypeInfo>>> {
         if let Some(schema) = self.get_schema(parent_type)
-            && let Some(elements) = &schema.elements {
-                let choice_key = format!("{}[x]", property_name);
-                if let Some(element) = elements.get(&choice_key)
-                    && let Some(choices) = &element.choices {
-                        let choice_infos: Vec<ChoiceTypeInfo> = choices
-                            .iter()
-                            .map(|type_name| {
-                                let suffix = type_name
-                                    .chars()
-                                    .next()
-                                    .map(|c| c.to_uppercase().to_string())
-                                    .unwrap_or_default()
-                                    + &type_name.chars().skip(1).collect::<String>();
-                                ChoiceTypeInfo {
-                                    suffix,
-                                    type_name: type_name.clone(),
-                                }
-                            })
-                            .collect();
-                        return Ok(Some(choice_infos));
-                    }
+            && let Some(elements) = &schema.elements
+        {
+            let choice_key = format!("{}[x]", property_name);
+            if let Some(element) = elements.get(&choice_key)
+                && let Some(choices) = &element.choices
+            {
+                let choice_infos: Vec<ChoiceTypeInfo> = choices
+                    .iter()
+                    .map(|type_name| {
+                        let suffix = type_name
+                            .chars()
+                            .next()
+                            .map(|c| c.to_uppercase().to_string())
+                            .unwrap_or_default()
+                            + &type_name.chars().skip(1).collect::<String>();
+                        ChoiceTypeInfo {
+                            suffix,
+                            type_name: type_name.clone(),
+                        }
+                    })
+                    .collect();
+                return Ok(Some(choice_infos));
             }
+        }
         Ok(None)
     }
 

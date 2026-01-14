@@ -1,0 +1,215 @@
+name: Performance Benchmarks
+
+on:
+  # Nightly run at 2 AM UTC
+  schedule:
+    - cron: '0 2 * * *'
+  # Manual trigger
+  workflow_dispatch:
+    inputs:
+      scenario:
+        description: 'Benchmark scenario to run'
+        required: false
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - crud
+          - search
+          - transaction
+          - concurrent
+  # Run on releases
+  release:
+    types: [published]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_LOG: info
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: octofhir
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-bench-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-bench-
+            ${{ runner.os }}-cargo-
+
+      - name: Install k6
+        run: |
+          sudo gpg -k
+          sudo gpg --no-default-keyring --keyring /usr/share/keyrings/k6-archive-keyring.gpg --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys C5AD17C747E3415A3642D57D77C6C491D6AC1D69
+          echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" | sudo tee /etc/apt/sources.list.d/k6.list
+          sudo apt-get update
+          sudo apt-get install k6
+
+      - name: Create UI dist placeholder
+        run: |
+          mkdir -p ui/dist
+          echo '<!DOCTYPE html><html><body>Benchmark</body></html>' > ui/dist/index.html
+
+      - name: Build release binary
+        run: cargo build --release --bin octofhir-server
+
+      - name: Start server
+        env:
+          OCTOFHIR__STORAGE__POSTGRES__HOST: localhost
+          OCTOFHIR__STORAGE__POSTGRES__PORT: "5432"
+          OCTOFHIR__STORAGE__POSTGRES__USER: postgres
+          OCTOFHIR__STORAGE__POSTGRES__PASSWORD: postgres
+          OCTOFHIR__STORAGE__POSTGRES__DATABASE: octofhir
+          OCTOFHIR__BOOTSTRAP__ADMIN_USER__PASSWORD: admin123
+          RUST_LOG: warn
+        run: |
+          ./target/release/octofhir-server &
+          echo "Waiting for server to start..."
+          for i in {1..30}; do
+            if curl -s http://localhost:8888/healthz > /dev/null; then
+              echo "Server is ready"
+              break
+            fi
+            sleep 2
+          done
+
+      - name: Create benchmark results directory
+        run: mkdir -p benchmark-results
+
+      - name: Run CRUD benchmark
+        if: ${{ github.event.inputs.scenario == 'all' || github.event.inputs.scenario == 'crud' || github.event_name != 'workflow_dispatch' }}
+        env:
+          BASE_URL: http://localhost:8888/fhir
+          AUTH_USER: admin
+          AUTH_PASSWORD: admin123
+        run: |
+          k6 run k6/benchmarks/crud.js --out json=benchmark-results/crud-raw.json || true
+          mv benchmark-results/crud.json benchmark-results/crud-summary.json 2>/dev/null || true
+
+      - name: Run Search benchmark
+        if: ${{ github.event.inputs.scenario == 'all' || github.event.inputs.scenario == 'search' || github.event_name != 'workflow_dispatch' }}
+        env:
+          BASE_URL: http://localhost:8888/fhir
+          AUTH_USER: admin
+          AUTH_PASSWORD: admin123
+        run: |
+          k6 run k6/benchmarks/search.js --out json=benchmark-results/search-raw.json || true
+          mv benchmark-results/search.json benchmark-results/search-summary.json 2>/dev/null || true
+
+      - name: Run Transaction benchmark
+        if: ${{ github.event.inputs.scenario == 'all' || github.event.inputs.scenario == 'transaction' || github.event_name != 'workflow_dispatch' }}
+        env:
+          BASE_URL: http://localhost:8888/fhir
+          AUTH_USER: admin
+          AUTH_PASSWORD: admin123
+        run: |
+          k6 run k6/benchmarks/transaction.js --out json=benchmark-results/transaction-raw.json || true
+          mv benchmark-results/transaction.json benchmark-results/transaction-summary.json 2>/dev/null || true
+
+      - name: Run Concurrent benchmark
+        if: ${{ github.event.inputs.scenario == 'all' || github.event.inputs.scenario == 'concurrent' || github.event_name != 'workflow_dispatch' }}
+        env:
+          BASE_URL: http://localhost:8888/fhir
+          AUTH_USER: admin
+          AUTH_PASSWORD: admin123
+        run: |
+          k6 run k6/benchmarks/concurrent.js --out json=benchmark-results/concurrent-raw.json || true
+          mv benchmark-results/concurrent.json benchmark-results/concurrent-summary.json 2>/dev/null || true
+
+      - name: Collect server metrics
+        run: |
+          # Collect memory usage
+          ps aux | grep octofhir-server | grep -v grep | awk '{print $6}' > benchmark-results/memory-kb.txt
+
+          # Create combined results
+          echo "{" > benchmark-results/combined.json
+          echo "  \"timestamp\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"," >> benchmark-results/combined.json
+          echo "  \"commit\": \"${{ github.sha }}\"," >> benchmark-results/combined.json
+          echo "  \"ref\": \"${{ github.ref }}\"," >> benchmark-results/combined.json
+          echo "  \"memory_kb\": $(cat benchmark-results/memory-kb.txt || echo 0)" >> benchmark-results/combined.json
+          echo "}" >> benchmark-results/combined.json
+
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results-${{ github.sha }}
+          path: benchmark-results/
+          retention-days: 90
+
+      - name: Check for performance regression
+        run: |
+          # Simple threshold check
+          if [ -f benchmark-results/crud-summary.json ]; then
+            READ_P95=$(jq -r '.metrics.read.p95 // 0' benchmark-results/crud-summary.json)
+            if [ $(echo "$READ_P95 > 50" | bc -l) -eq 1 ]; then
+              echo "::warning::Read p95 latency ($READ_P95 ms) exceeds target (50ms)"
+            fi
+          fi
+
+      - name: Comment on PR (if applicable)
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+
+            let comment = '## Benchmark Results\n\n';
+
+            const files = ['crud', 'search', 'transaction', 'concurrent'];
+            for (const file of files) {
+              try {
+                const data = JSON.parse(fs.readFileSync(`benchmark-results/${file}-summary.json`, 'utf8'));
+                comment += `### ${file.charAt(0).toUpperCase() + file.slice(1)}\n`;
+                comment += '```json\n' + JSON.stringify(data.metrics, null, 2) + '\n```\n\n';
+              } catch (e) {
+                // File might not exist
+              }
+            }
+
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: comment
+            });
+
+  alert-regression:
+    needs: benchmark
+    runs-on: ubuntu-latest
+    if: failure()
+    steps:
+      - name: Send alert
+        run: |
+          echo "Performance regression detected!"
+          # Add Slack/email notification here if needed

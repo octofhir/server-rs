@@ -338,7 +338,10 @@ mod tests {
     #[test]
     fn test_hook_error_display() {
         let err = HookError::execution("something went wrong");
-        assert_eq!(err.to_string(), "Hook execution failed: something went wrong");
+        assert_eq!(
+            err.to_string(),
+            "Hook execution failed: something went wrong"
+        );
 
         let err = HookError::database("connection failed");
         assert_eq!(err.to_string(), "Database error: connection failed");

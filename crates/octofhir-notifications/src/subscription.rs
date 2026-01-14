@@ -124,25 +124,43 @@ mod tests {
 
     #[test]
     fn test_parse_iso_duration_hours() {
-        assert_eq!(parse_iso_duration("PT24H").unwrap(), time::Duration::hours(24));
-        assert_eq!(parse_iso_duration("-PT24H").unwrap(), time::Duration::hours(-24));
+        assert_eq!(
+            parse_iso_duration("PT24H").unwrap(),
+            time::Duration::hours(24)
+        );
+        assert_eq!(
+            parse_iso_duration("-PT24H").unwrap(),
+            time::Duration::hours(-24)
+        );
     }
 
     #[test]
     fn test_parse_iso_duration_minutes() {
-        assert_eq!(parse_iso_duration("PT30M").unwrap(), time::Duration::minutes(30));
-        assert_eq!(parse_iso_duration("-PT30M").unwrap(), time::Duration::minutes(-30));
+        assert_eq!(
+            parse_iso_duration("PT30M").unwrap(),
+            time::Duration::minutes(30)
+        );
+        assert_eq!(
+            parse_iso_duration("-PT30M").unwrap(),
+            time::Duration::minutes(-30)
+        );
     }
 
     #[test]
     fn test_parse_iso_duration_days() {
         assert_eq!(parse_iso_duration("P7D").unwrap(), time::Duration::days(7));
-        assert_eq!(parse_iso_duration("-P1D").unwrap(), time::Duration::days(-1));
+        assert_eq!(
+            parse_iso_duration("-P1D").unwrap(),
+            time::Duration::days(-1)
+        );
     }
 
     #[test]
     fn test_parse_iso_duration_seconds() {
-        assert_eq!(parse_iso_duration("PT60S").unwrap(), time::Duration::seconds(60));
+        assert_eq!(
+            parse_iso_duration("PT60S").unwrap(),
+            time::Duration::seconds(60)
+        );
     }
 
     #[test]

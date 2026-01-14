@@ -55,18 +55,15 @@ pub async fn regenerate_client_secret(
 ) -> Result<impl IntoResponse, ApiError> {
     let storage = PostgresClientStorage::new(&state.pool);
 
-    let (client, plain_secret) = storage
-        .regenerate_secret(&client_id)
-        .await
-        .map_err(|e| {
-            if e.to_string().contains("not found") {
-                ApiError::not_found(format!("Client/{}", client_id))
-            } else if e.to_string().contains("public clients") {
-                ApiError::bad_request("Cannot regenerate secret for public clients")
-            } else {
-                ApiError::internal(e.to_string())
-            }
-        })?;
+    let (client, plain_secret) = storage.regenerate_secret(&client_id).await.map_err(|e| {
+        if e.to_string().contains("not found") {
+            ApiError::not_found(format!("Client/{}", client_id))
+        } else if e.to_string().contains("public clients") {
+            ApiError::bad_request("Cannot regenerate secret for public clients")
+        } else {
+            ApiError::internal(e.to_string())
+        }
+    })?;
 
     Ok(Json(RegenerateSecretResponse {
         client_id: client.client_id,

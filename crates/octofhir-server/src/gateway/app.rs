@@ -154,7 +154,7 @@ async fn build_app_request(
 
     // Optionally include raw body bytes (base64-encoded)
     let raw_body = if operation.include_raw_body.unwrap_or(false) && !body_bytes.is_empty() {
-        use base64::{engine::general_purpose::STANDARD, Engine};
+        use base64::{Engine, engine::general_purpose::STANDARD};
         Some(STANDARD.encode(&body_bytes))
     } else {
         None
@@ -215,10 +215,7 @@ fn extract_path_params(
     let mut params = HashMap::new();
 
     // Split paths into segments, filtering out empty strings
-    let path_segments: Vec<&str> = request_path
-        .split('/')
-        .filter(|s| !s.is_empty())
-        .collect();
+    let path_segments: Vec<&str> = request_path.split('/').filter(|s| !s.is_empty()).collect();
     let pattern_segments: Vec<&str> = pattern.split('/').filter(|s| !s.is_empty()).collect();
 
     // Match segments
@@ -296,8 +293,8 @@ mod tests {
 
     #[test]
     fn test_extract_path_params_multiple() {
-        let result = extract_path_params("/users/123/posts/456", "/users/:userId/posts/:postId")
-            .unwrap();
+        let result =
+            extract_path_params("/users/123/posts/456", "/users/:userId/posts/:postId").unwrap();
         assert_eq!(result.get("userId"), Some(&"123".to_string()));
         assert_eq!(result.get("postId"), Some(&"456".to_string()));
     }
@@ -333,9 +330,7 @@ mod tests {
 
     #[test]
     fn test_extract_query_params_encoded() {
-        let uri: axum::http::Uri = "http://example.com/api?name=John%20Doe"
-            .parse()
-            .unwrap();
+        let uri: axum::http::Uri = "http://example.com/api?name=John%20Doe".parse().unwrap();
         let result = extract_query_params(&uri);
         assert_eq!(result.get("name"), Some(&"John Doe".to_string()));
     }
@@ -367,10 +362,7 @@ mod tests {
 
         let response = convert_app_response(app_response).unwrap();
         assert_eq!(response.status(), StatusCode::CREATED);
-        assert_eq!(
-            response.headers().get("X-Custom-Header").unwrap(),
-            "value"
-        );
+        assert_eq!(response.headers().get("X-Custom-Header").unwrap(), "value");
     }
 
     #[test]

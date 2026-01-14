@@ -1,6 +1,7 @@
 pub mod chaining;
 pub mod common;
 pub mod config_watcher;
+pub mod filter;
 pub mod include;
 pub mod loader;
 pub mod parameters;
@@ -79,4 +80,7 @@ pub use terminology::{
 };
 
 // SearchParams to query builder conversion
-pub use params_converter::{ConvertedQuery, build_query_from_params, parse_query_string};
+pub use params_converter::{
+    ConvertedQuery, SearchConfig as ParamsSearchConfig, UnknownParamHandling, UnknownParamWarning,
+    build_query_from_params, build_query_from_params_with_config, parse_query_string,
+};

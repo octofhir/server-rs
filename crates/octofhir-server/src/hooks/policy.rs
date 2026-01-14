@@ -98,7 +98,8 @@ mod tests {
         assert!(!hook.matches(&ResourceEvent::created("Patient", "test-id", json!({}))));
 
         // Handle event
-        let event = ResourceEvent::created("AccessPolicy", "policy-123", json!({"id": "policy-123"}));
+        let event =
+            ResourceEvent::created("AccessPolicy", "policy-123", json!({"id": "policy-123"}));
         hook.handle(&event).await.unwrap();
 
         // Check notification was sent

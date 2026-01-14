@@ -6,10 +6,10 @@
 
 use axum::{
     extract::{
-        ws::{Message, WebSocket, WebSocketUpgrade},
         Query, State,
+        ws::{Message, WebSocket, WebSocketUpgrade},
     },
-    http::{header::COOKIE, HeaderMap, StatusCode},
+    http::{HeaderMap, StatusCode, header::COOKIE},
     response::{IntoResponse, Response},
 };
 use futures_util::{SinkExt, StreamExt};
@@ -119,11 +119,7 @@ impl<S> Layer<S> for LogBroadcastLayer
 where
     S: tracing::Subscriber + for<'a> tracing_subscriber::registry::LookupSpan<'a>,
 {
-    fn on_event(
-        &self,
-        event: &tracing::Event<'_>,
-        ctx: tracing_subscriber::layer::Context<'_, S>,
-    ) {
+    fn on_event(&self, event: &tracing::Event<'_>, ctx: tracing_subscriber::layer::Context<'_, S>) {
         // Check level filter
         if event.metadata().level() > &self.min_level {
             return;
@@ -178,8 +174,10 @@ impl tracing::field::Visit for LogVisitor {
         if field.name() == "message" {
             self.message = Some(value.to_string());
         } else {
-            self.fields
-                .insert(field.name().to_string(), serde_json::Value::String(value.to_string()));
+            self.fields.insert(
+                field.name().to_string(),
+                serde_json::Value::String(value.to_string()),
+            );
         }
     }
 
@@ -188,19 +186,25 @@ impl tracing::field::Visit for LogVisitor {
         if field.name() == "message" {
             self.message = Some(formatted);
         } else {
-            self.fields
-                .insert(field.name().to_string(), serde_json::Value::String(formatted));
+            self.fields.insert(
+                field.name().to_string(),
+                serde_json::Value::String(formatted),
+            );
         }
     }
 
     fn record_i64(&mut self, field: &tracing::field::Field, value: i64) {
-        self.fields
-            .insert(field.name().to_string(), serde_json::Value::Number(value.into()));
+        self.fields.insert(
+            field.name().to_string(),
+            serde_json::Value::Number(value.into()),
+        );
     }
 
     fn record_u64(&mut self, field: &tracing::field::Field, value: u64) {
-        self.fields
-            .insert(field.name().to_string(), serde_json::Value::Number(value.into()));
+        self.fields.insert(
+            field.name().to_string(),
+            serde_json::Value::Number(value.into()),
+        );
     }
 
     fn record_bool(&mut self, field: &tracing::field::Field, value: bool) {
@@ -210,7 +214,8 @@ impl tracing::field::Visit for LogVisitor {
 
     fn record_f64(&mut self, field: &tracing::field::Field, value: f64) {
         if let Some(n) = serde_json::Number::from_f64(value) {
-            self.fields.insert(field.name().to_string(), serde_json::Value::Number(n));
+            self.fields
+                .insert(field.name().to_string(), serde_json::Value::Number(n));
         }
     }
 }
@@ -390,12 +395,13 @@ fn extract_cookie_token(headers: &HeaderMap, cookie_name: &str) -> Option<String
     for cookie in cookie_header.split(';') {
         let cookie = cookie.trim();
         if let Some((name, value)) = cookie.split_once('=')
-            && name.trim() == cookie_name {
-                let value = value.trim();
-                if !value.is_empty() {
-                    return Some(value.to_string());
-                }
+            && name.trim() == cookie_name
+        {
+            let value = value.trim();
+            if !value.is_empty() {
+                return Some(value.to_string());
             }
+        }
     }
 
     None
@@ -409,10 +415,15 @@ fn has_log_access_permission(claims: &AccessTokenClaims) -> bool {
         // Exact matches for common permission patterns
         if matches!(
             s,
-            "system/*.*" | "system/*.read" | "system/*.cruds" |
-            "admin/*" | "admin/*.*" |
-            "user/*.*" | "user/*.cruds" |
-            "logs" | "logs.read"
+            "system/*.*"
+                | "system/*.read"
+                | "system/*.cruds"
+                | "admin/*"
+                | "admin/*.*"
+                | "user/*.*"
+                | "user/*.cruds"
+                | "logs"
+                | "logs.read"
         ) {
             return true;
         }
@@ -436,15 +447,21 @@ pub enum LogStreamError {
 impl IntoResponse for LogStreamError {
     fn into_response(self) -> Response {
         match self {
-            LogStreamError::Unauthorized => {
-                (StatusCode::UNAUTHORIZED, "Invalid or missing authentication token").into_response()
-            }
-            LogStreamError::Forbidden => {
-                (StatusCode::FORBIDDEN, "Insufficient permissions for log access").into_response()
-            }
-            LogStreamError::NotConfigured => {
-                (StatusCode::SERVICE_UNAVAILABLE, "Log streaming not configured").into_response()
-            }
+            LogStreamError::Unauthorized => (
+                StatusCode::UNAUTHORIZED,
+                "Invalid or missing authentication token",
+            )
+                .into_response(),
+            LogStreamError::Forbidden => (
+                StatusCode::FORBIDDEN,
+                "Insufficient permissions for log access",
+            )
+                .into_response(),
+            LogStreamError::NotConfigured => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Log streaming not configured",
+            )
+                .into_response(),
         }
     }
 }

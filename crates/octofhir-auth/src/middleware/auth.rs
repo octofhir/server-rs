@@ -20,14 +20,14 @@
 
 use std::sync::Arc;
 
-use axum::{
-    extract::{FromRef, FromRequestParts},
-    http::{header::AUTHORIZATION, header::COOKIE, request::Parts},
-};
 use crate::config::CookieConfig;
 use crate::error::AuthError;
 use crate::storage::{ClientStorage, RevokedTokenStorage, UserStorage};
 use crate::token::jwt::{AccessTokenClaims, JwtService};
+use axum::{
+    extract::{FromRef, FromRequestParts},
+    http::{header::AUTHORIZATION, header::COOKIE, request::Parts},
+};
 
 use super::types::{AuthContext, UserContext};
 

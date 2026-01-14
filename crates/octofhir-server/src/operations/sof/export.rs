@@ -7,7 +7,7 @@
 
 use async_trait::async_trait;
 use chrono::Utc;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use uuid::Uuid;
 
 use crate::async_jobs::AsyncJobRequest;
@@ -86,14 +86,12 @@ impl ViewDefinitionExportOperation {
         for param in parameters {
             let name = param.get("name").and_then(|n| n.as_str());
             if name == Some("viewDefinition")
-                && let Some(resource) = param.get("resource") {
-                    return ViewDefinition::from_json(resource).map_err(|e| {
-                        OperationError::InvalidParameters(format!(
-                            "Invalid ViewDefinition: {}",
-                            e
-                        ))
-                    });
-                }
+                && let Some(resource) = param.get("resource")
+            {
+                return ViewDefinition::from_json(resource).map_err(|e| {
+                    OperationError::InvalidParameters(format!("Invalid ViewDefinition: {}", e))
+                });
+            }
         }
 
         Err(OperationError::InvalidParameters(
@@ -206,18 +204,13 @@ impl OperationHandler for ViewDefinitionExportOperation {
             .read("ViewDefinition", id)
             .await
             .map_err(|e| OperationError::Internal(format!("Storage error: {}", e)))?
-            .ok_or_else(|| {
-                OperationError::NotFound(format!("ViewDefinition/{} not found", id))
-            })?;
+            .ok_or_else(|| OperationError::NotFound(format!("ViewDefinition/{} not found", id)))?;
 
         let view_def = ViewDefinition::from_json(&stored.resource).map_err(|e| {
             OperationError::Internal(format!("Invalid stored ViewDefinition: {}", e))
         })?;
 
-        let request_url = format!(
-            "{}/fhir/ViewDefinition/{}/$export",
-            state.base_url, id
-        );
+        let request_url = format!("{}/fhir/ViewDefinition/{}/$export", state.base_url, id);
 
         self.submit_export(state, view_def, &request_url).await
     }
@@ -314,7 +307,11 @@ pub async fn execute_viewdefinition_export(
         // Update progress periodically
         if i % batch_size == 0 && total_rows > 0 {
             let progress = 0.5 + (0.4 * (i as f32 / total_rows as f32));
-            if let Err(e) = state.async_job_manager.update_progress(job_id, progress).await {
+            if let Err(e) = state
+                .async_job_manager
+                .update_progress(job_id, progress)
+                .await
+            {
                 tracing::warn!(error = %e, "Failed to update job progress");
             }
         }

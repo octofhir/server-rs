@@ -494,18 +494,18 @@ mod tests {
         assert!(client.is_post_logout_redirect_uri_allowed("https://example.com/logout"));
 
         // URI with query params should also match
-        assert!(client.is_post_logout_redirect_uri_allowed(
-            "https://example.com/logout?reason=expired"
-        ));
+        assert!(
+            client.is_post_logout_redirect_uri_allowed("https://example.com/logout?reason=expired")
+        );
         assert!(client.is_post_logout_redirect_uri_allowed(
             "https://example.com/logout?state=abc&reason=session_timeout"
         ));
 
         // Different path should not match
         assert!(!client.is_post_logout_redirect_uri_allowed("https://example.com/other"));
-        assert!(!client.is_post_logout_redirect_uri_allowed(
-            "https://example.com/other?reason=expired"
-        ));
+        assert!(
+            !client.is_post_logout_redirect_uri_allowed("https://example.com/other?reason=expired")
+        );
 
         // Different host should not match
         assert!(!client.is_post_logout_redirect_uri_allowed("https://evil.com/logout"));

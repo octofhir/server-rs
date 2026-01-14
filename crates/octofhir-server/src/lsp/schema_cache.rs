@@ -1555,9 +1555,7 @@ impl SchemaCache {
             .unwrap_or((None, table_name));
 
         self.tables.iter().find_map(|r| {
-            if r.value().name == table_name
-                && schema.is_none_or(|s| r.value().schema == s)
-            {
+            if r.value().name == table_name && schema.is_none_or(|s| r.value().schema == s) {
                 r.value().fhir_resource_type.clone()
             } else {
                 None
@@ -1571,8 +1569,7 @@ impl SchemaCache {
 
     fn split_qualified_table(table_name: &str) -> Option<(&str, &str)> {
         let (schema, table) = table_name.split_once('.')?;
-        
-        
+
         if schema.is_empty() || table.is_empty() {
             return None;
         }

@@ -6,12 +6,12 @@
 use std::sync::Arc;
 
 use axum::{
-    extract::{FromRef, FromRequestParts},
-    http::{header::AUTHORIZATION, request::Parts, StatusCode},
-    response::{IntoResponse, Response},
     Json,
+    extract::{FromRef, FromRequestParts},
+    http::{StatusCode, header::AUTHORIZATION, request::Parts},
+    response::{IntoResponse, Response},
 };
-use base64::{engine::general_purpose::STANDARD, Engine};
+use base64::{Engine, engine::general_purpose::STANDARD};
 use serde::Serialize;
 
 use crate::storage::BasicAuthStorage;
@@ -120,10 +120,7 @@ where
             "Entity authenticated via Basic Auth"
         );
 
-        Ok(BasicAuth {
-            entity,
-            entity_id,
-        })
+        Ok(BasicAuth { entity, entity_id })
     }
 }
 
@@ -155,8 +152,8 @@ mod tests {
 
     #[test]
     fn test_parse_basic_auth_valid() {
-        let credentials = base64::engine::general_purpose::STANDARD
-            .encode(b"test-client:test-secret");
+        let credentials =
+            base64::engine::general_purpose::STANDARD.encode(b"test-client:test-secret");
         let header = format!("Basic {}", credentials);
 
         let (id, secret) = parse_basic_auth(&header).unwrap();

@@ -79,7 +79,9 @@ impl FileSource {
             return Ok(PartialConfig::new());
         }
 
-        let content = tokio::fs::read_to_string(path).await.map_err(ConfigError::Io)?;
+        let content = tokio::fs::read_to_string(path)
+            .await
+            .map_err(ConfigError::Io)?;
 
         PartialConfig::from_toml(&content)
     }

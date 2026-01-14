@@ -223,9 +223,7 @@ async fn build_registry_with_manager(cfg: &AppConfig) -> Result<CanonicalRegistr
         let sof_url = Some("https://build.fhir.org/ig/FHIR/sql-on-fhir-v2/package.tgz".to_string());
 
         // Check if not already in the list
-        let already_added = install_specs
-            .iter()
-            .any(|pkg| pkg.id == sof_id);
+        let already_added = install_specs.iter().any(|pkg| pkg.id == sof_id);
         if !already_added {
             tracing::info!(
                 "SQL on FHIR enabled; adding package {}@{} from URL",
@@ -249,9 +247,7 @@ async fn build_registry_with_manager(cfg: &AppConfig) -> Result<CanonicalRegistr
         let (term_id, term_ver) = default_terminology_for(desired);
 
         // Check if not already in the list
-        let already_added = install_specs
-            .iter()
-            .any(|pkg| pkg.id == term_id);
+        let already_added = install_specs.iter().any(|pkg| pkg.id == term_id);
         if !already_added {
             tracing::info!(
                 "Auto-loading terminology package {}@{} for FHIR {}",
@@ -268,6 +264,10 @@ async fn build_registry_with_manager(cfg: &AppConfig) -> Result<CanonicalRegistr
             });
         }
     }
+
+    // NOTE: For R4/R4B, SubscriptionTopic is loaded via our internal octofhir-subscription IG
+    // (see load_embedded_package calls below). The external hl7.fhir.uv.subscriptions-backport
+    // IG only provides profiles/extensions, not the base SubscriptionTopic resource definition.
 
     // Initialize PostgreSQL storage FIRST to check for already-installed packages
     let pg_cfg = cfg
@@ -444,14 +444,14 @@ async fn build_registry_with_manager(cfg: &AppConfig) -> Result<CanonicalRegistr
                 fhir_version_str,
             )
             .await
-            {
-                tracing::warn!(
-                    package = %pkg.id,
-                    version = %version,
-                    error = %e,
-                    "failed to convert schemas for package"
-                );
-            }
+        {
+            tracing::warn!(
+                package = %pkg.id,
+                version = %version,
+                error = %e,
+                "failed to convert schemas for package"
+            );
+        }
     }
 
     // Load embedded packages: octofhir-auth and octofhir-app
@@ -523,14 +523,14 @@ async fn build_registry_with_manager(cfg: &AppConfig) -> Result<CanonicalRegistr
                         fhir_version,
                     )
                     .await
-                    {
-                        tracing::warn!(
-                            package = package_name,
-                            version = package_version,
-                            error = %e,
-                            "Failed to convert schemas for embedded package"
-                        );
-                    }
+                {
+                    tracing::warn!(
+                        package = package_name,
+                        version = package_version,
+                        error = %e,
+                        "Failed to convert schemas for embedded package"
+                    );
+                }
 
                 loaded_ok
             }
@@ -574,6 +574,20 @@ async fn build_registry_with_manager(cfg: &AppConfig) -> Result<CanonicalRegistr
         crate::bootstrap::EMBEDDED_NOTIFICATIONS_RESOURCES,
     )
     .await;
+
+    // Load octofhir-subscription package for R4/R4B
+    // This provides the SubscriptionTopic logical model for topic-based subscriptions.
+    // R5+ has native SubscriptionTopic resource support in the core package.
+    if fhir_version == "R4" || fhir_version == "R4B" {
+        load_embedded_package(
+            &postgres_store,
+            "octofhir-subscription",
+            "0.1.0",
+            fhir_version,
+            crate::bootstrap::EMBEDDED_SUBSCRIPTION_RESOURCES,
+        )
+        .await;
+    }
 
     // Load CanonicalResource for R4 when SQL on FHIR is enabled
     // CanonicalResource is an R4B/R5 abstract type that ViewDefinition depends on
@@ -818,8 +832,16 @@ fn determine_schema_type(sd: &StructureDefinition) -> String {
 fn normalize_spec(spec: &PackageSpec) -> Result<LoadedPackage, String> {
     match spec {
         PackageSpec::Simple(s) => parse_simple_spec(s),
-        PackageSpec::Table { id, version, path, url } => {
-            if id.as_deref().unwrap_or("").is_empty() && path.as_deref().unwrap_or("").is_empty() && url.is_none() {
+        PackageSpec::Table {
+            id,
+            version,
+            path,
+            url,
+        } => {
+            if id.as_deref().unwrap_or("").is_empty()
+                && path.as_deref().unwrap_or("").is_empty()
+                && url.is_none()
+            {
                 return Err("package table requires either 'id', 'path', or 'url'".into());
             }
             Ok(LoadedPackage {
@@ -1273,22 +1295,23 @@ pub async fn install_package_parallel_runtime(
 /// Returns true if the registry was updated successfully.
 async fn update_global_registry_with_package(name: &str, version: &str) -> bool {
     if let Some(global) = get_registry()
-        && let Ok(mut guard) = global.write() {
-            // Add the new package to the registry
-            let already_exists = guard
-                .packages
-                .iter()
-                .any(|p| p.id == name && p.version.as_deref() == Some(version));
-            if !already_exists {
-                guard.packages.push(LoadedPackage {
-                    id: name.to_string(),
-                    version: Some(version.to_string()),
-                    path: None,
-                    url: None,
-                });
-            }
-            return true;
+        && let Ok(mut guard) = global.write()
+    {
+        // Add the new package to the registry
+        let already_exists = guard
+            .packages
+            .iter()
+            .any(|p| p.id == name && p.version.as_deref() == Some(version));
+        if !already_exists {
+            guard.packages.push(LoadedPackage {
+                id: name.to_string(),
+                version: Some(version.to_string()),
+                path: None,
+                url: None,
+            });
         }
+        return true;
+    }
     false
 }
 

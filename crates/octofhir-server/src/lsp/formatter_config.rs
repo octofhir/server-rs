@@ -5,8 +5,8 @@
 //! via LSP formatting requests.
 
 use mold_format::{
-    CommaStyle as MoldCommaStyle, FormatConfig, IdentifierCase as MoldIdentifierCase,
-    IndentStyle, KeywordCase as MoldKeywordCase, PgFormatterConfig,
+    CommaStyle as MoldCommaStyle, FormatConfig, IdentifierCase as MoldIdentifierCase, IndentStyle,
+    KeywordCase as MoldKeywordCase, PgFormatterConfig,
 };
 use serde::{Deserialize, Serialize};
 
@@ -307,9 +307,9 @@ pub struct PgFormatterStyleConfig {
 impl Default for PgFormatterStyleConfig {
     fn default() -> Self {
         Self {
-            keyword_case: 2,   // upper
-            function_case: 0,  // unchanged
-            type_case: 1,      // lower
+            keyword_case: 2,  // upper
+            function_case: 0, // unchanged
+            type_case: 1,     // lower
             spaces: 4,
             use_tabs: false,
             comma_start: false,
@@ -336,9 +336,8 @@ impl PgFormatterStyleConfig {
     pub fn to_pg_formatter_config(&self) -> PgFormatterConfig {
         use mold_format::CaseOption;
 
-        let to_case_option = |v: u8| -> CaseOption {
-            CaseOption::from_value(v).unwrap_or(CaseOption::Upper)
-        };
+        let to_case_option =
+            |v: u8| -> CaseOption { CaseOption::from_value(v).unwrap_or(CaseOption::Upper) };
 
         PgFormatterConfig {
             keyword_case: to_case_option(self.keyword_case),
@@ -418,42 +417,41 @@ impl LspFormatterConfig {
 
         // Check if there's a "style" key
         if let Some(style_prop) = options.properties.get("style")
-            && let FormattingProperty::String(style_str) = style_prop {
-                match style_str.as_str() {
-                    "compact" => return LspFormatterConfig::Compact,
-                    "pg_formatter" => {
-                        // Try to parse PgFormatter config from properties
-                        let json_obj: serde_json::Map<String, serde_json::Value> = options
-                            .properties
-                            .iter()
-                            .map(|(k, v)| (k.clone(), prop_to_json(v)))
-                            .collect();
+            && let FormattingProperty::String(style_str) = style_prop
+        {
+            match style_str.as_str() {
+                "compact" => return LspFormatterConfig::Compact,
+                "pg_formatter" => {
+                    // Try to parse PgFormatter config from properties
+                    let json_obj: serde_json::Map<String, serde_json::Value> = options
+                        .properties
+                        .iter()
+                        .map(|(k, v)| (k.clone(), prop_to_json(v)))
+                        .collect();
 
-                        if let Ok(config) =
-                            serde_json::from_value(serde_json::Value::Object(json_obj))
-                        {
-                            return LspFormatterConfig::PgFormatter(config);
-                        }
-                        return LspFormatterConfig::PgFormatter(PgFormatterStyleConfig::default());
+                    if let Ok(config) = serde_json::from_value(serde_json::Value::Object(json_obj))
+                    {
+                        return LspFormatterConfig::PgFormatter(config);
                     }
-                    "sql_style" => {
-                        // Try to parse SqlStyle config from properties
-                        let json_obj: serde_json::Map<String, serde_json::Value> = options
-                            .properties
-                            .iter()
-                            .map(|(k, v)| (k.clone(), prop_to_json(v)))
-                            .collect();
-
-                        if let Ok(config) =
-                            serde_json::from_value(serde_json::Value::Object(json_obj))
-                        {
-                            return LspFormatterConfig::SqlStyle(config);
-                        }
-                        return LspFormatterConfig::SqlStyle(SqlStyleConfig::default());
-                    }
-                    _ => {}
+                    return LspFormatterConfig::PgFormatter(PgFormatterStyleConfig::default());
                 }
+                "sql_style" => {
+                    // Try to parse SqlStyle config from properties
+                    let json_obj: serde_json::Map<String, serde_json::Value> = options
+                        .properties
+                        .iter()
+                        .map(|(k, v)| (k.clone(), prop_to_json(v)))
+                        .collect();
+
+                    if let Ok(config) = serde_json::from_value(serde_json::Value::Object(json_obj))
+                    {
+                        return LspFormatterConfig::SqlStyle(config);
+                    }
+                    return LspFormatterConfig::SqlStyle(SqlStyleConfig::default());
+                }
+                _ => {}
             }
+        }
 
         // Try to parse the entire properties as a config
         let json_obj: serde_json::Map<String, serde_json::Value> = options

@@ -11,8 +11,8 @@ use tracing::{debug, info, instrument};
 
 use octofhir_notifications::{
     Notification, NotificationChannel, NotificationError, NotificationProvider,
-    NotificationProviderStorage, NotificationQueueStorage, NotificationRecipient, NotificationStats,
-    NotificationStatus,
+    NotificationProviderStorage, NotificationQueueStorage, NotificationRecipient,
+    NotificationStats, NotificationStatus,
 };
 
 /// PostgreSQL implementation of notification storage.
@@ -119,8 +119,7 @@ impl PostgresNotificationStorage {
     }
 
     fn time_to_chrono(t: OffsetDateTime) -> DateTime<Utc> {
-        DateTime::from_timestamp(t.unix_timestamp(), t.nanosecond())
-            .unwrap_or_else(Utc::now)
+        DateTime::from_timestamp(t.unix_timestamp(), t.nanosecond()).unwrap_or_else(Utc::now)
     }
 
     fn time_to_chrono_opt(t: Option<OffsetDateTime>) -> Option<DateTime<Utc>> {
@@ -230,7 +229,8 @@ impl NotificationQueueStorage for PostgresNotificationStorage {
                     channel: Self::parse_channel(&channel),
                     provider_id,
                     status: Self::parse_status(&status),
-                    recipient: serde_json::from_value(recipient).unwrap_or_else(|_| Self::default_recipient()),
+                    recipient: serde_json::from_value(recipient)
+                        .unwrap_or_else(|_| Self::default_recipient()),
                     template_id,
                     template_data: serde_json::from_value(template_data).unwrap_or_default(),
                     scheduled_at: Self::chrono_to_time_opt(scheduled_at),
@@ -276,8 +276,7 @@ impl NotificationQueueStorage for PostgresNotificationStorage {
     }
 
     async fn mark_sent(&self, id: &str) -> Result<(), NotificationError> {
-        self.update_status(id, NotificationStatus::Sent, None)
-            .await
+        self.update_status(id, NotificationStatus::Sent, None).await
     }
 
     async fn schedule_retry(
@@ -364,7 +363,8 @@ impl NotificationQueueStorage for PostgresNotificationStorage {
                         channel: Self::parse_channel(&channel),
                         provider_id,
                         status: Self::parse_status(&status),
-                        recipient: serde_json::from_value(recipient).unwrap_or_else(|_| Self::default_recipient()),
+                        recipient: serde_json::from_value(recipient)
+                            .unwrap_or_else(|_| Self::default_recipient()),
                         template_id,
                         template_data: serde_json::from_value(template_data).unwrap_or_default(),
                         scheduled_at: Self::chrono_to_time_opt(scheduled_at),
@@ -497,7 +497,8 @@ impl NotificationQueueStorage for PostgresNotificationStorage {
                         channel: Self::parse_channel(&channel),
                         provider_id,
                         status: Self::parse_status(&status),
-                        recipient: serde_json::from_value(recipient).unwrap_or_else(|_| Self::default_recipient()),
+                        recipient: serde_json::from_value(recipient)
+                            .unwrap_or_else(|_| Self::default_recipient()),
                         template_id,
                         template_data: serde_json::from_value(template_data).unwrap_or_default(),
                         scheduled_at: Self::chrono_to_time_opt(scheduled_at),
@@ -567,8 +568,13 @@ impl NotificationProviderStorage for PostgresNotificationStorage {
 
         match row {
             Some((resource,)) => {
-                let provider: NotificationProvider = serde_json::from_value(resource)
-                    .map_err(|e| NotificationError::Internal(format!("Failed to parse NotificationProvider: {}", e)))?;
+                let provider: NotificationProvider =
+                    serde_json::from_value(resource).map_err(|e| {
+                        NotificationError::Internal(format!(
+                            "Failed to parse NotificationProvider: {}",
+                            e
+                        ))
+                    })?;
                 Ok(Some(provider))
             }
             None => Ok(None),
@@ -589,7 +595,9 @@ impl NotificationProviderStorage for PostgresNotificationStorage {
         .map_err(|e| {
             // Table doesn't exist - no providers configured
             if e.to_string().contains("does not exist") {
-                return NotificationError::Internal("NotificationProvider table not found".to_string());
+                return NotificationError::Internal(
+                    "NotificationProvider table not found".to_string(),
+                );
             }
             NotificationError::Internal(e.to_string())
         })

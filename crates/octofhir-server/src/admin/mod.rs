@@ -73,6 +73,7 @@ pub mod role;
 pub mod state;
 pub mod user;
 
+pub use audit::get_audit_analytics;
 pub use client::regenerate_client_secret;
 pub use configuration::{
     ConfigState, delete_config_value, evaluate_feature, get_category_config, get_config_value,
@@ -83,22 +84,19 @@ pub use identity_provider::{
     search_identity_providers, update_identity_provider,
 };
 pub use policy::{PolicyState, policy_status, reload_policies};
-pub use role::{
-    create_role, delete_role, list_permissions, read_role, search_roles, update_role,
-};
+pub use role::{create_role, delete_role, list_permissions, read_role, search_roles, update_role};
 pub use state::{AdminState, CombinedAdminState};
 pub use user::{
-    bulk_update_users, create_user, delete_user, get_user_sessions, read_user,
-    reset_user_password, revoke_all_user_sessions, revoke_user_session, search_users, update_user,
+    bulk_update_users, create_user, delete_user, get_user_sessions, read_user, reset_user_password,
+    revoke_all_user_sessions, revoke_user_session, search_users, update_user,
 };
-pub use audit::get_audit_analytics;
 
 use axum::Router;
 use axum::extract::FromRef;
 use axum::routing::{delete, get, post};
 
-use octofhir_auth::middleware::AuthState;
 use crate::server::AppState;
+use octofhir_auth::middleware::AuthState;
 
 // =============================================================================
 // Routes

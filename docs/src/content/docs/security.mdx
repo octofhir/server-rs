@@ -1,0 +1,345 @@
+---
+title: Security Best Practices
+description: Security configuration and best practices for OctoFHIR
+---
+
+import { Aside, Steps, Tabs, TabItem } from '@astrojs/starlight/components';
+
+This guide covers security configuration for production deployments of OctoFHIR.
+
+## Authentication Overview
+
+OctoFHIR implements OAuth 2.0 and SMART on FHIR for authentication and authorization:
+
+- **OAuth 2.0** - Industry standard authorization framework
+- **SMART on FHIR** - Healthcare-specific OAuth 2.0 profile
+- **Policy Engine** - Fine-grained access control with JavaScript policies
+
+---
+
+## TLS Configuration
+
+<Aside type="danger">
+Always use HTTPS in production. OctoFHIR should run behind a reverse proxy (nginx, Caddy, or cloud load balancer) that terminates TLS.
+</Aside>
+
+### Nginx Example
+
+```nginx
+server {
+    listen 443 ssl http2;
+    server_name fhir.example.com;
+
+    ssl_certificate /etc/letsencrypt/live/fhir.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/fhir.example.com/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256;
+
+    location / {
+        proxy_pass http://127.0.0.1:8888;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+```
+
+### Caddy Example
+
+```caddy
+fhir.example.com {
+    reverse_proxy localhost:8888
+}
+```
+
+---
+
+## OAuth 2.0 Configuration
+
+### Secure Token Settings
+
+```toml
+[auth]
+# Must match your public URL
+issuer = "https://fhir.example.com"
+
+[auth.oauth]
+# Short-lived access tokens
+access_token_lifetime = "15m"
+# Longer refresh tokens for UX
+refresh_token_lifetime = "7d"
+# Rotate refresh tokens on each use
+refresh_token_rotation = true
+# Only allow needed grant types
+grant_types = ["authorization_code", "refresh_token"]
+```
+
+### JWT Key Management
+
+For production, configure persistent signing keys:
+
+<Steps>
+
+1. **Generate RSA keys**
+
+   ```bash
+   # Generate private key (PKCS#8 format required)
+   openssl genpkey -algorithm RSA -out private.pem -pkeyopt rsa_keygen_bits:3072
+
+   # Extract public key
+   openssl rsa -in private.pem -pubout -out public.pem
+   ```
+
+2. **Configure in octofhir.toml**
+
+   ```toml
+   [auth.signing]
+   algorithm = "RS384"
+   kid = "prod-key-2024"
+
+   private_key_pem = """
+   -----BEGIN PRIVATE KEY-----
+   ...
+   -----END PRIVATE KEY-----
+   """
+
+   public_key_pem = """
+   -----BEGIN PUBLIC KEY-----
+   ...
+   -----END PUBLIC KEY-----
+   """
+   ```
+
+3. **Or use environment variables**
+
+   ```bash
+   OCTOFHIR__AUTH__SIGNING__PRIVATE_KEY_PEM="$(cat private.pem)"
+   OCTOFHIR__AUTH__SIGNING__PUBLIC_KEY_PEM="$(cat public.pem)"
+   ```
+
+</Steps>
+
+<Aside type="tip">
+For EC keys (ES384), use:
+```bash
+openssl genpkey -algorithm EC -pkeyopt ec_paramgen_curve:P-384 -out private.pem
+```
+</Aside>
+
+---
+
+## SMART on FHIR Setup
+
+### Client Registration
+
+Register OAuth clients for your applications:
+
+```bash
+curl -X POST https://fhir.example.com/admin/clients \
+  -H "Authorization: Bearer $ADMIN_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "client_id": "my-ehr-app",
+    "client_name": "My EHR Application",
+    "redirect_uris": ["https://app.example.com/callback"],
+    "grant_types": ["authorization_code", "refresh_token"],
+    "token_endpoint_auth_method": "client_secret_basic",
+    "scope": "openid fhirUser launch/patient patient/*.read"
+  }'
+```
+
+### Confidential vs Public Clients
+
+| Client Type | Use Case | Auth Method |
+|------------|----------|-------------|
+| **Confidential** | Server-side apps | `client_secret_basic` or `private_key_jwt` |
+| **Public** | SPAs, mobile apps | PKCE required |
+
+```toml
+[auth.smart]
+# Production: disable public clients or require PKCE
+public_clients_allowed = false
+confidential_symmetric_allowed = true
+confidential_asymmetric_allowed = true
+```
+
+---
+
+## Access Policies
+
+OctoFHIR uses a policy engine for fine-grained access control.
+
+### Default Deny
+
+```toml
+[auth.policy]
+default_deny = true  # Deny if no policy matches
+```
+
+### Example Policies
+
+**Admin Full Access:**
+```javascript
+// Policy: admin-full-access
+if (user.roles.includes('admin')) {
+  return { allow: true };
+}
+```
+
+**Patient Compartment Access:**
+```javascript
+// Policy: patient-compartment
+if (request.resourceType === 'Patient' && request.resourceId === user.patientId) {
+  return { allow: true };
+}
+if (request.resource?.subject?.reference === `Patient/${user.patientId}`) {
+  return { allow: true };
+}
+return { allow: false, reason: 'Access denied to this patient data' };
+```
+
+**Read-Only for Researchers:**
+```javascript
+// Policy: researcher-readonly
+if (user.roles.includes('researcher') && request.method === 'GET') {
+  return { allow: true };
+}
+```
+
+---
+
+## Rate Limiting
+
+Protect against abuse and DoS:
+
+```toml
+[auth.rate_limiting]
+# Token endpoint
+token_requests_per_minute = 30
+token_requests_per_hour = 500
+
+# Authorization endpoint
+auth_requests_per_minute = 20
+
+# Brute force protection
+max_failed_attempts = 5
+lockout_duration = "15m"
+```
+
+---
+
+## Session Security
+
+```toml
+[auth.session]
+# Idle timeout (sliding window)
+idle_timeout = "15m"
+# Absolute timeout (max session length)
+absolute_timeout = "8h"
+# Limit concurrent sessions
+max_concurrent_sessions = 5
+
+[auth.cookie]
+secure = true           # HTTPS only
+http_only = true        # No JavaScript access
+same_site = "strict"    # CSRF protection
+```
+
+---
+
+## Audit Logging
+
+Enable comprehensive audit trails:
+
+```toml
+[audit]
+enabled = true
+log_fhir_operations = true
+log_auth_events = true
+log_read_operations = true
+log_search_operations = true
+```
+
+Audit events are stored as `AuditEvent` resources and can be queried:
+
+```bash
+curl "https://fhir.example.com/fhir/AuditEvent?date=gt2024-01-01&_count=100" \
+  -H "Authorization: Bearer $ADMIN_TOKEN"
+```
+
+---
+
+## Validation Security
+
+```toml
+[validation]
+# Disable skip validation in production
+allow_skip_validation = false
+```
+
+---
+
+## Database Security
+
+### Connection Security
+
+```toml
+[storage.postgres]
+# Use SSL for database connections
+url = "postgres://user:pass@db.example.com:5432/octofhir?sslmode=require"
+```
+
+### Principle of Least Privilege
+
+Create a dedicated database user with minimal permissions:
+
+```sql
+CREATE USER octofhir_app WITH PASSWORD 'secure-password';
+GRANT CONNECT ON DATABASE octofhir TO octofhir_app;
+GRANT USAGE ON SCHEMA public TO octofhir_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO octofhir_app;
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO octofhir_app;
+```
+
+---
+
+## Production Checklist
+
+<Steps>
+
+1. **TLS/HTTPS** - Always use HTTPS with TLS 1.2+
+2. **Credentials** - Change all default passwords
+3. **JWT Keys** - Configure persistent signing keys
+4. **Cookies** - Set `secure = true` and `same_site = "strict"`
+5. **Rate Limiting** - Enable and tune rate limits
+6. **Audit Logging** - Enable audit trail
+7. **Validation** - Disable skip validation header
+8. **GraphQL** - Disable introspection
+9. **Database** - Use SSL connections
+10. **Secrets** - Use environment variables for sensitive config
+
+</Steps>
+
+---
+
+## Security Headers
+
+Configure your reverse proxy to add security headers:
+
+```nginx
+add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+add_header X-Content-Type-Options "nosniff" always;
+add_header X-Frame-Options "DENY" always;
+add_header X-XSS-Protection "1; mode=block" always;
+add_header Content-Security-Policy "default-src 'self'" always;
+```
+
+---
+
+## Reporting Security Issues
+
+If you discover a security vulnerability, please report it privately:
+
+- Email: security@octofhir.io
+- Do not create public GitHub issues for security vulnerabilities

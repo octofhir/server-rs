@@ -139,9 +139,7 @@ where
             .providers
             .get(&notification.provider_id)
             .await?
-            .ok_or_else(|| {
-                NotificationError::ProviderNotFound(notification.provider_id.clone())
-            })?;
+            .ok_or_else(|| NotificationError::ProviderNotFound(notification.provider_id.clone()))?;
 
         if !provider.active {
             return Err(NotificationError::ProviderDisabled(
@@ -191,7 +189,10 @@ where
         }
     }
 
-    fn decrypt_config(&self, provider: &NotificationProvider) -> Result<ProviderConfig, NotificationError> {
+    fn decrypt_config(
+        &self,
+        provider: &NotificationProvider,
+    ) -> Result<ProviderConfig, NotificationError> {
         let mut config = provider.config.clone();
 
         if let Some(ref encrypted) = config.api_key

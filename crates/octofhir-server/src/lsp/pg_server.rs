@@ -1,5 +1,6 @@
 //! PostgreSQL Language Server implementation backed by the Mold SQL stack.
 
+use super::formatter_config::LspFormatterConfig;
 use async_lsp::lsp_types::notification::PublishDiagnostics;
 use async_lsp::lsp_types::{
     CompletionItem as LspCompletionItem, CompletionItemKind as LspCompletionItemKind,
@@ -13,7 +14,6 @@ use async_lsp::{ClientSocket, LanguageServer, ResponseError};
 use futures::future::BoxFuture;
 use mold_completion::types::{CompletionItemKind, TableType};
 use mold_completion::{CompletionRequest, FunctionProvider, SchemaProvider, complete};
-use super::formatter_config::LspFormatterConfig;
 use mold_hir::{
     ColumnInfo as HirColumnInfo, DataType as HirDataType, SchemaProvider as HirSchemaProvider,
     Severity as HirSeverity, TableInfo as HirTableInfo, TableType as HirTableType, analyze_query,
@@ -318,11 +318,12 @@ impl LanguageServer for PostgresLspServer {
         let version = params.text_document.version;
 
         if let Some(state) = self.documents.get_mut(&uri)
-            && let Some(change) = params.content_changes.into_iter().last() {
-                state.text = change.text.clone();
-                state.version = version;
-                self.publish_diagnostics(uri, version, change.text);
-            }
+            && let Some(change) = params.content_changes.into_iter().last()
+        {
+            state.text = change.text.clone();
+            state.version = version;
+            self.publish_diagnostics(uri, version, change.text);
+        }
 
         std::ops::ControlFlow::Continue(())
     }
@@ -365,9 +366,10 @@ impl LanguageServer for PostgresLspServer {
             };
 
             if (schema_cache.get_tables().is_empty() || schema_cache.get_functions().is_empty())
-                && let Err(err) = schema_cache.refresh().await {
-                    tracing::warn!(error = %err, "Failed to refresh LSP schema cache");
-                }
+                && let Err(err) = schema_cache.refresh().await
+            {
+                tracing::warn!(error = %err, "Failed to refresh LSP schema cache");
+            }
 
             // Preload FHIR schemas for all known tables (async, before synchronous completion)
             model_snapshot.preload_fhir_schemas(&schema_cache).await;
@@ -477,7 +479,8 @@ impl ModelSchemaSnapshot {
 
         // Load from model provider
         if let Some(fhir_schema) = self.model_provider.get_schema(resource_type).await {
-            let schema = Self::build_jsonb_schema_from_fhir(&fhir_schema, &self.model_provider).await;
+            let schema =
+                Self::build_jsonb_schema_from_fhir(&fhir_schema, &self.model_provider).await;
             self.jsonb_cache.insert(key, schema);
         }
     }

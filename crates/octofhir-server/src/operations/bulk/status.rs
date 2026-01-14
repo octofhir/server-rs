@@ -294,7 +294,10 @@ mod tests {
 
         let filters = params.get_type_filters();
         assert_eq!(filters.len(), 2);
-        assert_eq!(filters[0], ("Patient".to_string(), "gender=male".to_string()));
+        assert_eq!(
+            filters[0],
+            ("Patient".to_string(), "gender=male".to_string())
+        );
         assert_eq!(
             filters[1],
             ("Observation".to_string(), "code=1234".to_string())

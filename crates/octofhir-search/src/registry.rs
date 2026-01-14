@@ -109,7 +109,11 @@ impl SearchParameterRegistry {
     ///
     /// Returns both resource-specific and common parameters.
     pub fn get_all_for_type(&self, resource_type: &str) -> Vec<Arc<SearchParameter>> {
-        let mut params: Vec<_> = self.common.iter().map(|entry| entry.value().clone()).collect();
+        let mut params: Vec<_> = self
+            .common
+            .iter()
+            .map(|entry| entry.value().clone())
+            .collect();
 
         // Iterate over all entries and filter by resource type
         params.extend(
@@ -129,7 +133,10 @@ impl SearchParameterRegistry {
 
     /// Get all common parameters (applicable to all resources).
     pub fn get_common_parameters(&self) -> Vec<Arc<SearchParameter>> {
-        self.common.iter().map(|entry| entry.value().clone()).collect()
+        self.common
+            .iter()
+            .map(|entry| entry.value().clone())
+            .collect()
     }
 
     /// Get the total number of registered parameters.

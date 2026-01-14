@@ -18,10 +18,8 @@ use std::sync::Arc;
 
 use octofhir_fhirpath::FhirPathEngine;
 use octofhir_fhirschema::{
-    reference::ReferenceResolver,
-    terminology::TerminologyService,
-    types::ValidationError as FhirSchemaValidationError,
-    types::ValidationResult,
+    reference::ReferenceResolver, terminology::TerminologyService,
+    types::ValidationError as FhirSchemaValidationError, types::ValidationResult,
     validation::FhirValidator,
 };
 use serde_json::Value as JsonValue;
@@ -154,10 +152,7 @@ impl ValidationService {
         model_provider: Arc<OctoFhirModelProvider>,
         fhirpath_engine: Arc<FhirPathEngine>,
     ) -> Self {
-        let validator = FhirValidator::new_with_fhirpath(
-            model_provider,
-            fhirpath_engine,
-        );
+        let validator = FhirValidator::new_with_fhirpath(model_provider, fhirpath_engine);
 
         Self {
             validator: Arc::new(validator),
@@ -174,10 +169,7 @@ impl ValidationService {
         reference_resolver: Option<Arc<dyn ReferenceResolver>>,
         terminology_service: Option<Arc<dyn TerminologyService>>,
     ) -> Self {
-        let mut validator = FhirValidator::new_with_fhirpath(
-            model_provider,
-            fhirpath_engine,
-        );
+        let mut validator = FhirValidator::new_with_fhirpath(model_provider, fhirpath_engine);
 
         if let Some(resolver) = reference_resolver {
             validator = validator.with_reference_resolver(resolver);

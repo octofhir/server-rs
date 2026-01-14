@@ -817,8 +817,7 @@ impl Default for BulkExportConfig {
 /// - OCTOFHIR__BOOTSTRAP__ADMIN_USER__USERNAME
 /// - OCTOFHIR__BOOTSTRAP__ADMIN_USER__PASSWORD
 /// - OCTOFHIR__BOOTSTRAP__ADMIN_USER__EMAIL
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct BootstrapConfig {
     /// Admin user configuration
     /// If set, creates an admin user on first startup (if not already exists)
@@ -830,7 +829,6 @@ pub struct BootstrapConfig {
     #[serde(default)]
     pub backend_client: Option<BackendClientConfig>,
 }
-
 
 /// Configuration for bootstrapping an admin user
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -958,8 +956,7 @@ impl Default for AuditConfig {
 ///
 /// When enabled, the SQL on FHIR IG package (`hl7.fhir.uv.sql-on-fhir`) is installed,
 /// which creates the `viewdefinition` table dynamically via FCM.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct SqlOnFhirConfig {
     /// Enable SQL on FHIR feature
     /// When true, installs the SQL on FHIR package and enables ViewDefinition operations
@@ -967,7 +964,6 @@ pub struct SqlOnFhirConfig {
     #[serde(default)]
     pub enabled: bool,
 }
-
 
 pub mod loader {
     use super::AppConfig;

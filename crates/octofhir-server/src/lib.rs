@@ -3,6 +3,7 @@ pub mod app_platform;
 pub mod async_jobs;
 pub mod audit;
 pub mod bootstrap;
+pub mod automations;
 pub mod cache;
 pub mod canonical;
 pub mod compartments;
@@ -29,6 +30,7 @@ pub mod reference_resolver;
 pub mod rest_console;
 pub mod routes;
 pub mod server;
+pub mod subscriptions;
 pub mod terminology_service;
 pub mod validation;
 

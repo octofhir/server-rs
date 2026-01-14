@@ -58,12 +58,11 @@ pub mod validate;
 
 // Re-export main types for convenience
 pub use bulk::{
-    cleanup_expired_exports, execute_bulk_export, BulkExportJob, BulkExportLevel,
-    BulkExportManifest, BulkExportStatus, ExportOperation,
+    BulkExportJob, BulkExportLevel, BulkExportManifest, BulkExportStatus, ExportOperation,
+    cleanup_expired_exports, execute_bulk_export,
 };
 pub use definition::{OperationDefinition, OperationKind, OperationParameter, ParameterUse};
 pub use everything::EverythingOperation;
-pub use terminology::{ExpandOperation, ValidateCodeOperation};
 pub use handler::{DynOperationHandler, OperationError, OperationHandler};
 pub use loader::{LoadError, load_operations};
 pub use meta::{MetaAddOperation, MetaDeleteOperation, MetaOperation};
@@ -75,7 +74,11 @@ pub use router::{
     type_operation_handler,
 };
 pub use sof::{
-    execute_viewdefinition_export, ViewDefinitionRunOperation, ViewDefinitionSqlOperation,
+    ViewDefinitionRunOperation, ViewDefinitionSqlOperation, execute_viewdefinition_export,
+};
+pub use terminology::{
+    ClosureOperation, ExpandOperation, LookupOperation, SubsumesOperation, TranslateOperation,
+    ValidateCodeOperation,
 };
 pub use validate::{Issue, Severity, ValidateOperation};
 
@@ -166,6 +169,10 @@ pub fn register_core_operations_full(
         "validate-code".to_string(),
         Arc::new(ValidateCodeOperation::new()),
     );
+    handlers.insert("lookup".to_string(), Arc::new(LookupOperation::new()));
+    handlers.insert("subsumes".to_string(), Arc::new(SubsumesOperation::new()));
+    handlers.insert("translate".to_string(), Arc::new(TranslateOperation::new()));
+    handlers.insert("closure".to_string(), Arc::new(ClosureOperation::new()));
 
     // $export operation (Bulk Data Access + ViewDefinition/SQL on FHIR)
     // The unified ExportOperation handles:
@@ -204,13 +211,16 @@ pub fn register_core_operations_full(
         "resend-all".to_string(),
         Arc::new(notifications::ResendAllOperation),
     );
-    handlers.insert(
-        "stats".to_string(),
-        Arc::new(notifications::StatsOperation),
-    );
+    handlers.insert("stats".to_string(), Arc::new(notifications::StatsOperation));
     handlers.insert(
         "cancel".to_string(),
         Arc::new(notifications::CancelOperation),
+    );
+
+    // Subscription $status operation
+    handlers.insert(
+        "status".to_string(),
+        Arc::new(crate::subscriptions::operations::StatusOperation),
     );
 
     handlers

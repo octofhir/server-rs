@@ -238,13 +238,15 @@ fn is_likely_id(s: &str) -> bool {
     }
 
     // Long alphanumeric (likely an ID)
-    if s.len() > 12 && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+    if s.len() > 12
+        && s.chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
         return true;
     }
 
     false
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -252,10 +254,7 @@ mod tests {
 
     #[test]
     fn test_normalize_path() {
-        assert_eq!(
-            normalize_path("/fhir/Patient/12345"),
-            "/fhir/Patient/{id}"
-        );
+        assert_eq!(normalize_path("/fhir/Patient/12345"), "/fhir/Patient/{id}");
         assert_eq!(
             normalize_path("/fhir/Patient/550e8400-e29b-41d4-a716-446655440000"),
             "/fhir/Patient/{id}"

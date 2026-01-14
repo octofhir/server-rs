@@ -99,54 +99,29 @@ pub fn build_content_search(builder: &mut SqlBuilder, value: &str) -> Result<(),
     Ok(())
 }
 
-/// Build SQL for _filter parameter (basic expression parsing).
+/// Build SQL for _filter parameter with full R5 expression syntax.
+///
+/// Supports:
+/// - Comparison operators: eq, ne, co, sw, ew, gt, lt, ge, le, sa, eb, ap
+/// - Logical operators: and, or, not
+/// - Parentheses for grouping
+/// - Chained paths (e.g., subject.name)
+///
+/// # Examples
+///
+/// ```text
+/// name eq "Smith"
+/// birthdate ge 1990-01-01
+/// status ne "cancelled" or priority eq "urgent"
+/// not (status eq "draft")
+/// subject.name co "john"
+/// ```
 pub fn build_filter_search(
     builder: &mut SqlBuilder,
     value: &str,
-    _resource_type: &str,
+    resource_type: &str,
 ) -> Result<(), SqlBuilderError> {
-    let parts: Vec<&str> = value.split_whitespace().collect();
-    if parts.len() < 3 {
-        return Err(SqlBuilderError::InvalidSearchValue(
-            "_filter requires 'field op value' format".to_string(),
-        ));
-    }
-
-    let field = parts[0];
-    let op = parts[1];
-    let filter_value = parts[2..].join(" ").trim_matches('"').to_string();
-
-    let json_path = format!("resource->>'{field}'");
-    let p = builder.add_text_param(&filter_value);
-
-    let condition = match op {
-        "eq" => format!("{json_path} = ${p}"),
-        "ne" => format!("{json_path} != ${p}"),
-        "gt" => format!("{json_path} > ${p}"),
-        "lt" => format!("{json_path} < ${p}"),
-        "ge" => format!("{json_path} >= ${p}"),
-        "le" => format!("{json_path} <= ${p}"),
-        "co" => {
-            let like_p = builder.add_text_param(format!("%{filter_value}%"));
-            format!("{json_path} ILIKE ${like_p}")
-        }
-        "sw" => {
-            let like_p = builder.add_text_param(format!("{filter_value}%"));
-            format!("{json_path} ILIKE ${like_p}")
-        }
-        "ew" => {
-            let like_p = builder.add_text_param(format!("%{filter_value}"));
-            format!("{json_path} ILIKE ${like_p}")
-        }
-        _ => {
-            return Err(SqlBuilderError::NotImplemented(format!(
-                "Filter operator '{op}' not supported"
-            )));
-        }
-    };
-
-    builder.add_condition(condition);
-    Ok(())
+    crate::filter::build_filter_sql(builder, value, resource_type)
 }
 
 /// Build SQL for _list parameter.

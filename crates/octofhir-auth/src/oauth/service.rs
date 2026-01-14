@@ -243,8 +243,9 @@ impl AuthorizationService {
         }
 
         if let Some(ref challenge) = request.code_challenge {
-            let _challenge = PkceChallenge::new(challenge.clone())
-                .map_err(|e| AuthError::invalid_request(format!("Invalid PKCE challenge: {}", e)))?;
+            let _challenge = PkceChallenge::new(challenge.clone()).map_err(|e| {
+                AuthError::invalid_request(format!("Invalid PKCE challenge: {}", e))
+            })?;
         }
 
         // Ensure both PKCE parameters are provided together if one is provided

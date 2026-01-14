@@ -240,10 +240,7 @@ impl AuthEvent {
     }
 
     /// Create a login succeeded event.
-    pub fn login_succeeded(
-        user_id: impl Into<String>,
-        client_id: impl Into<String>,
-    ) -> Self {
+    pub fn login_succeeded(user_id: impl Into<String>, client_id: impl Into<String>) -> Self {
         Self {
             event_type: AuthEventType::LoginSucceeded,
             user_id: Some(user_id.into()),
@@ -257,10 +254,7 @@ impl AuthEvent {
     }
 
     /// Create a login failed event.
-    pub fn login_failed(
-        client_id: impl Into<String>,
-        reason: impl Into<String>,
-    ) -> Self {
+    pub fn login_failed(client_id: impl Into<String>, reason: impl Into<String>) -> Self {
         Self {
             event_type: AuthEventType::LoginFailed,
             user_id: None,
@@ -292,10 +286,7 @@ impl AuthEvent {
     }
 
     /// Create a token revoked event.
-    pub fn token_revoked(
-        client_id: impl Into<String>,
-        token_jti: impl Into<String>,
-    ) -> Self {
+    pub fn token_revoked(client_id: impl Into<String>, token_jti: impl Into<String>) -> Self {
         Self {
             event_type: AuthEventType::TokenRevoked,
             user_id: None,

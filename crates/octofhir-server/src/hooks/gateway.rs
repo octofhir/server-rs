@@ -120,7 +120,10 @@ impl ResourceHook for GatewayReloadHook {
                     resource_id = %event.resource_id,
                     "Failed to reload gateway routes"
                 );
-                Err(HookError::execution(format!("Gateway reload failed: {}", e)))
+                Err(HookError::execution(format!(
+                    "Gateway reload failed: {}",
+                    e
+                )))
             }
         }
     }

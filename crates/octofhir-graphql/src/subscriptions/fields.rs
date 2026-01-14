@@ -331,9 +331,10 @@ pub fn create_resource_change_event_type() -> Object {
                     async_graphql::dynamic::FieldFuture::new(async move {
                         if let Some(parent) = ctx.parent_value.as_value()
                             && let Value::Object(obj) = parent
-                                && let Some(v) = obj.get("eventType") {
-                                    return Ok(Some(v.clone()));
-                                }
+                            && let Some(v) = obj.get("eventType")
+                        {
+                            return Ok(Some(v.clone()));
+                        }
                         Ok(None)
                     })
                 },
@@ -348,9 +349,10 @@ pub fn create_resource_change_event_type() -> Object {
                     async_graphql::dynamic::FieldFuture::new(async move {
                         if let Some(parent) = ctx.parent_value.as_value()
                             && let Value::Object(obj) = parent
-                                && let Some(v) = obj.get("resourceType") {
-                                    return Ok(Some(v.clone()));
-                                }
+                            && let Some(v) = obj.get("resourceType")
+                        {
+                            return Ok(Some(v.clone()));
+                        }
                         Ok(None)
                     })
                 },
@@ -365,9 +367,10 @@ pub fn create_resource_change_event_type() -> Object {
                     async_graphql::dynamic::FieldFuture::new(async move {
                         if let Some(parent) = ctx.parent_value.as_value()
                             && let Value::Object(obj) = parent
-                                && let Some(v) = obj.get("resourceId") {
-                                    return Ok(Some(v.clone()));
-                                }
+                            && let Some(v) = obj.get("resourceId")
+                        {
+                            return Ok(Some(v.clone()));
+                        }
                         Ok(None)
                     })
                 },
@@ -379,9 +382,10 @@ pub fn create_resource_change_event_type() -> Object {
                 async_graphql::dynamic::FieldFuture::new(async move {
                     if let Some(parent) = ctx.parent_value.as_value()
                         && let Value::Object(obj) = parent
-                            && let Some(v) = obj.get("resource") {
-                                return Ok(Some(v.clone()));
-                            }
+                        && let Some(v) = obj.get("resource")
+                    {
+                        return Ok(Some(v.clone()));
+                    }
                     Ok(None)
                 })
             })
@@ -395,9 +399,10 @@ pub fn create_resource_change_event_type() -> Object {
                     async_graphql::dynamic::FieldFuture::new(async move {
                         if let Some(parent) = ctx.parent_value.as_value()
                             && let Value::Object(obj) = parent
-                                && let Some(v) = obj.get("timestamp") {
-                                    return Ok(Some(v.clone()));
-                                }
+                            && let Some(v) = obj.get("timestamp")
+                        {
+                            return Ok(Some(v.clone()));
+                        }
                         Ok(None)
                     })
                 },

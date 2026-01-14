@@ -24,10 +24,10 @@
 
 use std::sync::Arc;
 
+use axum::Form;
 use axum::extract::{Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{Html, IntoResponse, Redirect, Response};
-use axum::Form;
 use axum_extra::extract::CookieJar;
 use cookie::{Cookie, SameSite};
 use serde::Deserialize;
@@ -121,7 +121,10 @@ pub async fn authorize_get(
             tracing::error!("Failed to lookup client: {}", e);
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                Html(render_error_page("server_error", "Failed to validate client")),
+                Html(render_error_page(
+                    "server_error",
+                    "Failed to validate client",
+                )),
             )
                 .into_response();
         }
@@ -216,12 +219,21 @@ pub async fn authorize_get(
         {
             // Update lastActivityAt to extend session
             let mut updated_session = session_data.clone();
-            updated_session["lastActivityAt"] = json!(OffsetDateTime::now_utc().format(&time::format_description::well_known::Rfc3339).unwrap());
+            updated_session["lastActivityAt"] = json!(
+                OffsetDateTime::now_utc()
+                    .format(&time::format_description::well_known::Rfc3339)
+                    .unwrap()
+            );
 
             // Calculate new expiry based on idle timeout
-            let idle_timeout_duration = time::Duration::seconds(state.session_config.idle_timeout.as_secs() as i64);
+            let idle_timeout_duration =
+                time::Duration::seconds(state.session_config.idle_timeout.as_secs() as i64);
             let new_expiry = OffsetDateTime::now_utc() + idle_timeout_duration;
-            updated_session["expiresAt"] = json!(new_expiry.format(&time::format_description::well_known::Rfc3339).unwrap());
+            updated_session["expiresAt"] = json!(
+                new_expiry
+                    .format(&time::format_description::well_known::Rfc3339)
+                    .unwrap()
+            );
 
             // Update the session (fire and forget - don't block on this)
             let _ = state.fhir_storage.update(&updated_session, None).await;
@@ -283,10 +295,7 @@ pub async fn authorize_get(
     // Check for existing session cookie
     if let Some(cookie) = jar.get(SESSION_COOKIE_NAME)
         && let Ok(session_id) = Uuid::parse_str(cookie.value())
-        && let Ok(Some(session)) = state
-            .authorize_session_storage
-            .find_by_id(session_id)
-            .await
+        && let Ok(Some(session)) = state.authorize_session_storage.find_by_id(session_id).await
         && let Some(ref user_id) = session.user_id
     {
         let scopes: Vec<&str> = session.scopes();
@@ -360,11 +369,7 @@ pub async fn authorize_post(
     };
 
     // Load session
-    let session = match state
-        .authorize_session_storage
-        .find_by_id(session_id)
-        .await
-    {
+    let session = match state.authorize_session_storage.find_by_id(session_id).await {
         Ok(Some(s)) => s,
         Ok(None) => {
             return (
@@ -504,7 +509,10 @@ async fn handle_login(
                 tracing::error!("Failed to update session: {}", e);
                 return (
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    Html(render_error_page("server_error", "Failed to update session")),
+                    Html(render_error_page(
+                        "server_error",
+                        "Failed to update session",
+                    )),
                 )
                     .into_response();
             }
@@ -636,10 +644,8 @@ async fn issue_authorization_code(
             let _ = state.authorize_session_storage.delete(session.id).await;
 
             // Build redirect URL
-            let response = AuthorizationResponse::new(
-                auth_session.code.clone(),
-                session.state().to_string(),
-            );
+            let response =
+                AuthorizationResponse::new(auth_session.code.clone(), session.state().to_string());
 
             match response.to_redirect_url(session.redirect_uri()) {
                 Ok(url) => Redirect::to(&url).into_response(),
@@ -716,7 +722,8 @@ async fn create_sso_session(
     // Calculate expiry times
     let now = OffsetDateTime::now_utc();
     let idle_timeout = time::Duration::seconds(state.session_config.idle_timeout.as_secs() as i64);
-    let absolute_timeout = time::Duration::seconds(state.session_config.absolute_timeout.as_secs() as i64);
+    let absolute_timeout =
+        time::Duration::seconds(state.session_config.absolute_timeout.as_secs() as i64);
     let idle_expiry = now + idle_timeout;
     let absolute_expiry = now + absolute_timeout;
 
@@ -753,7 +760,8 @@ async fn create_sso_session(
             );
 
             // Create SSO cookie
-            let sso_cookie = create_sso_cookie(&state.session_config, &session_token, state.secure_cookies);
+            let sso_cookie =
+                create_sso_cookie(&state.session_config, &session_token, state.secure_cookies);
             jar.add(sso_cookie)
         }
         Err(e) => {

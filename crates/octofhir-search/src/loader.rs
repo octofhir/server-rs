@@ -98,11 +98,11 @@ pub async fn load_search_parameters(
                         .and_then(|v| v.as_str())
                         .unwrap_or("unknown");
                     tracing::warn!(
-                        url = %url,
-                        error = %e,
-                    "Failed to parse SearchParameter, skipping"
-                );
-                skipped_count += 1;
+                            url = %url,
+                            error = %e,
+                        "Failed to parse SearchParameter, skipping"
+                    );
+                    skipped_count += 1;
                 }
             }
         }

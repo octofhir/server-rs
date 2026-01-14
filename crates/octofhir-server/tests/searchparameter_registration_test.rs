@@ -9,10 +9,10 @@
 //!
 //! Run with: cargo test -p octofhir-server searchparameter_registration -- --ignored
 
-use octofhir_server::{build_app, AppConfig, PostgresStorageConfig};
+use octofhir_server::{AppConfig, PostgresStorageConfig, build_app};
 use serde_json::json;
 use std::sync::Arc;
-use testcontainers::{runners::AsyncRunner, ContainerAsync};
+use testcontainers::{ContainerAsync, runners::AsyncRunner};
 use testcontainers_modules::postgres::Postgres;
 use tokio::task::JoinHandle;
 
@@ -56,9 +56,7 @@ async fn start_server(
             .expect("create config manager"),
     );
 
-    let app = build_app(config, config_manager)
-        .await
-        .expect("build app");
+    let app = build_app(config, config_manager).await.expect("build app");
 
     // Bind to an ephemeral port
     let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
@@ -222,9 +220,7 @@ async fn test_invalid_fhirpath_expression_rejected() {
     assert_eq!(outcome["resourceType"], "OperationOutcome");
 
     // Verify error message mentions FHIRPath
-    let diagnostics = outcome["issue"][0]["diagnostics"]
-        .as_str()
-        .unwrap_or("");
+    let diagnostics = outcome["issue"][0]["diagnostics"].as_str().unwrap_or("");
     assert!(
         diagnostics.contains("FHIRPath") || diagnostics.contains("expression"),
         "Error message should mention FHIRPath or expression"
@@ -270,10 +266,7 @@ async fn test_update_searchparameter_updates_registry() {
         json!("Patient.extension.where(url='http://example.org/field-v2').valueString");
 
     let update_response = client
-        .put(&format!(
-            "{}/fhir/SearchParameter/{}",
-            base_url, param_id
-        ))
+        .put(&format!("{}/fhir/SearchParameter/{}", base_url, param_id))
         .header("content-type", "application/fhir+json")
         .json(&updated_param)
         .send()
@@ -318,10 +311,7 @@ async fn test_update_searchparameter_updates_registry() {
 
     // Cleanup
     client
-        .delete(&format!(
-            "{}/fhir/SearchParameter/{}",
-            base_url, param_id
-        ))
+        .delete(&format!("{}/fhir/SearchParameter/{}", base_url, param_id))
         .send()
         .await
         .ok();
@@ -362,10 +352,7 @@ async fn test_delete_searchparameter_removes_from_registry() {
 
     // Verify the parameter works
     let search_response = client
-        .get(&format!(
-            "{}/fhir/Patient?deletable-field=test",
-            base_url
-        ))
+        .get(&format!("{}/fhir/Patient?deletable-field=test", base_url))
         .send()
         .await
         .expect("Failed to search");
@@ -377,10 +364,7 @@ async fn test_delete_searchparameter_removes_from_registry() {
 
     // Delete the SearchParameter
     let delete_response = client
-        .delete(&format!(
-            "{}/fhir/SearchParameter/{}",
-            base_url, param_id
-        ))
+        .delete(&format!("{}/fhir/SearchParameter/{}", base_url, param_id))
         .send()
         .await
         .expect("Failed to delete");
@@ -395,10 +379,7 @@ async fn test_delete_searchparameter_removes_from_registry() {
 
     // Try to use the deleted parameter - should fail or return error
     let search_after_delete = client
-        .get(&format!(
-            "{}/fhir/Patient?deletable-field=test",
-            base_url
-        ))
+        .get(&format!("{}/fhir/Patient?deletable-field=test", base_url))
         .send()
         .await
         .expect("Failed to search");
@@ -407,8 +388,7 @@ async fn test_delete_searchparameter_removes_from_registry() {
     // depending on how the server handles unknown parameters
     // For now, we just verify it doesn't crash
     assert!(
-        search_after_delete.status().is_client_error()
-            || search_after_delete.status().is_success(),
+        search_after_delete.status().is_client_error() || search_after_delete.status().is_success(),
         "Search after deletion should either fail gracefully or return empty results"
     );
 
@@ -474,10 +454,7 @@ async fn test_searchparameter_with_multi_resource_base() {
 
     // Cleanup
     client
-        .delete(&format!(
-            "{}/fhir/SearchParameter/{}",
-            base_url, param_id
-        ))
+        .delete(&format!("{}/fhir/SearchParameter/{}", base_url, param_id))
         .send()
         .await
         .ok();

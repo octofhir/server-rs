@@ -12,8 +12,8 @@ use octofhir_auth_postgres::{TokenStorage, UserStorage};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use octofhir_auth::middleware::AdminAuth;
 use octofhir_auth::Bundle;
+use octofhir_auth::middleware::AdminAuth;
 
 use super::state::AdminState;
 
@@ -116,9 +116,10 @@ impl UserResource {
             return Err("Username must be 100 characters or less".to_string());
         }
         if let Some(ref email) = self.email
-            && !email.contains('@') {
-                return Err("Invalid email format".to_string());
-            }
+            && !email.contains('@')
+        {
+            return Err("Invalid email format".to_string());
+        }
         Ok(())
     }
 }
@@ -364,9 +365,9 @@ pub async fn create_user(
             .await
             .map_err(|e| ApiError::internal(e.to_string()))?
             .is_some()
-        {
-            return Err(ApiError::conflict("User with this email already exists"));
-        }
+    {
+        return Err(ApiError::conflict("User with this email already exists"));
+    }
 
     // Generate ID and set it
     let id = Uuid::new_v4();
@@ -445,14 +446,14 @@ pub async fn update_user(
         .unwrap_or("");
     if let Some(ref email) = user.email
         && email != existing_email
-            && storage
-                .find_by_email(email)
-                .await
-                .map_err(|e| ApiError::internal(e.to_string()))?
-                .is_some()
-        {
-            return Err(ApiError::conflict("User with this email already exists"));
-        }
+        && storage
+            .find_by_email(email)
+            .await
+            .map_err(|e| ApiError::internal(e.to_string()))?
+            .is_some()
+    {
+        return Err(ApiError::conflict("User with this email already exists"));
+    }
 
     // Set the ID from the path
     user.id = Some(id.clone());
@@ -551,13 +552,31 @@ pub async fn get_user_sessions(
             Some(UserSession {
                 id: token.id,
                 user_id: resource.get("userId")?.as_str()?.to_string(),
-                client_id: resource.get("clientId").and_then(|v| v.as_str()).map(String::from),
-                client_name: resource.get("clientName").and_then(|v| v.as_str()).map(String::from),
-                ip_address: resource.get("ipAddress").and_then(|v| v.as_str()).map(String::from),
-                user_agent: resource.get("userAgent").and_then(|v| v.as_str()).map(String::from),
-                created_at: token.created_at.format(&time::format_description::well_known::Rfc3339).ok()?,
+                client_id: resource
+                    .get("clientId")
+                    .and_then(|v| v.as_str())
+                    .map(String::from),
+                client_name: resource
+                    .get("clientName")
+                    .and_then(|v| v.as_str())
+                    .map(String::from),
+                ip_address: resource
+                    .get("ipAddress")
+                    .and_then(|v| v.as_str())
+                    .map(String::from),
+                user_agent: resource
+                    .get("userAgent")
+                    .and_then(|v| v.as_str())
+                    .map(String::from),
+                created_at: token
+                    .created_at
+                    .format(&time::format_description::well_known::Rfc3339)
+                    .ok()?,
                 expires_at: resource.get("expiresAt")?.as_str()?.to_string(),
-                last_activity: resource.get("lastUsedAt").and_then(|v| v.as_str()).map(String::from),
+                last_activity: resource
+                    .get("lastUsedAt")
+                    .and_then(|v| v.as_str())
+                    .map(String::from),
             })
         })
         .collect();
@@ -685,9 +704,10 @@ pub async fn reset_user_password(
         let now = time::OffsetDateTime::now_utc();
         obj.insert(
             "updatedAt".to_string(),
-            serde_json::json!(now
-                .format(&time::format_description::well_known::Rfc3339)
-                .unwrap()),
+            serde_json::json!(
+                now.format(&time::format_description::well_known::Rfc3339)
+                    .unwrap()
+            ),
         );
     }
 
@@ -785,9 +805,10 @@ pub async fn bulk_update_users(
             let now = time::OffsetDateTime::now_utc();
             obj.insert(
                 "updatedAt".to_string(),
-                serde_json::json!(now
-                    .format(&time::format_description::well_known::Rfc3339)
-                    .unwrap()),
+                serde_json::json!(
+                    now.format(&time::format_description::well_known::Rfc3339)
+                        .unwrap()
+                ),
             );
         }
 

@@ -1,6 +1,6 @@
 //! Notifications Operations Provider
 
-use octofhir_core::{categories, modules, OperationDefinition, OperationProvider};
+use octofhir_core::{OperationDefinition, OperationProvider, categories, modules};
 
 /// Provider for notification operations
 pub struct NotificationsOperationProvider;

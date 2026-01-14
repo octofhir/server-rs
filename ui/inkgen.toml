@@ -1,0 +1,26 @@
+# InkGen Configuration for Bot Editor FHIR Types
+# Generates TypeScript interfaces for Monaco editor autocomplete
+
+[[packages]]
+name = "hl7.fhir.r4.core"
+version = "4.0.1"
+folder = "fhir-r4"
+# Generate all resources for comprehensive autocomplete
+
+[languages.typescript]
+mode = "interface"
+output_structure = "flat"
+output_dir = "src/types/fhir"
+
+# Disable features not needed for editor autocomplete
+structural_guards = false
+generate_profiles = false
+generate_valuesets = true    # Keep valuesets for status/code autocomplete
+profile_classes = false
+zod_schemas = false
+
+# Use simpler types without branding for bot scripts
+branded_primitives = false
+
+# Enable helpers that are useful for bot development
+generate_interop = false     # Not needed for autocomplete

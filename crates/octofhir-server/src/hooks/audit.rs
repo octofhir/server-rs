@@ -59,7 +59,10 @@ impl ResourceHook for AsyncAuditHook {
         };
 
         // Check if this action should be logged based on config
-        if !self.audit_service.should_log(&action, Some(&event.resource_type)) {
+        if !self
+            .audit_service
+            .should_log(&action, Some(&event.resource_type))
+        {
             return Ok(());
         }
 

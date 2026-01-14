@@ -186,10 +186,11 @@ pub async fn oidc_logout_handler(
     };
 
     // Step 2: Validate post_logout_redirect_uri if provided
-    let redirect_uri = match validate_post_logout_redirect_uri(&state, &params, client_id.as_deref()).await {
-        Ok(uri) => uri,
-        Err(error_response) => return error_response,
-    };
+    let redirect_uri =
+        match validate_post_logout_redirect_uri(&state, &params, client_id.as_deref()).await {
+            Ok(uri) => uri,
+            Err(error_response) => return error_response,
+        };
 
     // Step 3: Revoke SSO session (from cookie)
     if let Some(session_token) = extract_sso_cookie(&headers, &state.session_config) {
@@ -224,7 +225,8 @@ pub async fn oidc_logout_handler(
             // Build redirect URL with optional state
             let redirect_url = if let Some(state_param) = params.state {
                 // URL-encode the state parameter
-                let encoded_state: String = form_urlencoded::byte_serialize(state_param.as_bytes()).collect();
+                let encoded_state: String =
+                    form_urlencoded::byte_serialize(state_param.as_bytes()).collect();
                 if uri.contains('?') {
                     format!("{}&state={}", uri, encoded_state)
                 } else {
@@ -497,7 +499,10 @@ pub async fn logout_handler(State(state): State<LogoutState>, headers: HeaderMap
         StatusCode::OK,
         [
             ("Content-Type", "application/json"),
-            ("Set-Cookie", &format!("{}, {}", clear_auth_cookie, clear_sso_cookie)),
+            (
+                "Set-Cookie",
+                &format!("{}, {}", clear_auth_cookie, clear_sso_cookie),
+            ),
             ("Cache-Control", "no-store"),
         ],
         Json(response),

@@ -4,7 +4,7 @@
 //! useful for previewing the generated query.
 
 use async_trait::async_trait;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::operations::{OperationError, OperationHandler};
 use crate::server::AppState;
@@ -69,14 +69,12 @@ impl ViewDefinitionSqlOperation {
         for param in parameters {
             let name = param.get("name").and_then(|n| n.as_str());
             if name == Some("viewDefinition")
-                && let Some(resource) = param.get("resource") {
-                    return ViewDefinition::from_json(resource).map_err(|e| {
-                        OperationError::InvalidParameters(format!(
-                            "Invalid ViewDefinition: {}",
-                            e
-                        ))
-                    });
-                }
+                && let Some(resource) = param.get("resource")
+            {
+                return ViewDefinition::from_json(resource).map_err(|e| {
+                    OperationError::InvalidParameters(format!("Invalid ViewDefinition: {}", e))
+                });
+            }
         }
 
         Err(OperationError::InvalidParameters(
@@ -87,9 +85,9 @@ impl ViewDefinitionSqlOperation {
     /// Generate SQL from the ViewDefinition.
     fn generate_sql(&self, view_def: &ViewDefinition) -> Result<Value, OperationError> {
         let generator = SqlGenerator::new();
-        let generated = generator.generate(view_def).map_err(|e| {
-            OperationError::Internal(format!("Failed to generate SQL: {}", e))
-        })?;
+        let generated = generator
+            .generate(view_def)
+            .map_err(|e| OperationError::Internal(format!("Failed to generate SQL: {}", e)))?;
 
         // Return as Parameters resource with the SQL string
         Ok(json!({
@@ -163,9 +161,7 @@ impl OperationHandler for ViewDefinitionSqlOperation {
             .read("ViewDefinition", id)
             .await
             .map_err(|e| OperationError::Internal(format!("Storage error: {}", e)))?
-            .ok_or_else(|| {
-                OperationError::NotFound(format!("ViewDefinition/{} not found", id))
-            })?;
+            .ok_or_else(|| OperationError::NotFound(format!("ViewDefinition/{} not found", id)))?;
 
         let view_def = ViewDefinition::from_json(&stored.resource).map_err(|e| {
             OperationError::Internal(format!("Invalid stored ViewDefinition: {}", e))

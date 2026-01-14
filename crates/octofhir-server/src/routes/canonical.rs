@@ -1,12 +1,12 @@
 //! Canonical package management - Implementation Guide package upload.
 
 use axum::{
+    Json, Router,
     body::Bytes,
     extract::{Multipart, State},
     http::StatusCode,
     response::{IntoResponse, Response},
     routing::post,
-    Json, Router,
 };
 use flate2::read::GzDecoder;
 use octofhir_api::OperationOutcome;
@@ -97,12 +97,9 @@ pub async fn upload_package(
     let fhir_version = &state.config.fhir.version;
 
     // Extract and load resources
-    let (package_name, package_version, count) = extract_and_load_resources(
-        temp_file.path(),
-        state.package_store.as_ref(),
-        fhir_version,
-    )
-    .await?;
+    let (package_name, package_version, count) =
+        extract_and_load_resources(temp_file.path(), state.package_store.as_ref(), fhir_version)
+            .await?;
 
     // Convert and store FhirSchemas for the package
     info!(
@@ -190,8 +187,7 @@ async fn extract_and_load_resources(
                     }
 
                     // Check if this is a FHIR resource (has resourceType)
-                    if let Some(resource_type) = json.get("resourceType").and_then(|v| v.as_str())
-                    {
+                    if let Some(resource_type) = json.get("resourceType").and_then(|v| v.as_str()) {
                         info!(
                             resource_type = %resource_type,
                             file = %file_name,
@@ -282,9 +278,7 @@ impl IntoResponse for PackageError {
             PackageError::Multipart(_)
             | PackageError::MissingPackage
             | PackageError::InvalidPackage(_) => (StatusCode::BAD_REQUEST, self.to_string()),
-            PackageError::Io(_)
-            | PackageError::LoadFailed(_)
-            | PackageError::RegistryReload(_) => {
+            PackageError::Io(_) | PackageError::LoadFailed(_) | PackageError::RegistryReload(_) => {
                 (StatusCode::INTERNAL_SERVER_ERROR, self.to_string())
             }
         };

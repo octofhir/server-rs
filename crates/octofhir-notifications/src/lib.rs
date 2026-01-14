@@ -9,8 +9,7 @@ pub mod templates;
 pub mod types;
 
 pub use adapters::{
-    EmailAdapter, NotificationAdapter, RenderedContent, SendResult, TelegramAdapter,
-    WebhookAdapter,
+    EmailAdapter, NotificationAdapter, RenderedContent, SendResult, TelegramAdapter, WebhookAdapter,
 };
 pub use error::NotificationError;
 pub use provider::{NotificationProvider, ProviderConfig, ProviderType};

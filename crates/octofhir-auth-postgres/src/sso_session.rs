@@ -54,9 +54,7 @@ impl SsoSessionStorage for PostgresSsoSessionStorage {
                 })
                 .is_some_and(|expiry| expiry > OffsetDateTime::now_utc());
 
-            if is_valid
-                && let Some(id) = resource.get("id").and_then(|v| v.as_str())
-            {
+            if is_valid && let Some(id) = resource.get("id").and_then(|v| v.as_str()) {
                 return Ok(Some(id.to_string()));
             }
         }

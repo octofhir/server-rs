@@ -16,6 +16,53 @@ use crate::types::dispatch_search;
 use octofhir_storage::{SearchParams, TotalMode};
 use url::form_urlencoded;
 
+/// How to handle unknown search parameters.
+///
+/// FHIR servers may choose to either reject unknown parameters (strict)
+/// or ignore them and continue (lenient). The behavior is controlled by
+/// the `Prefer: handling=strict|lenient` HTTP header.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum UnknownParamHandling {
+    /// Reject unknown parameters with 400 Bad Request error.
+    Strict,
+    /// Ignore unknown parameters and continue with search.
+    /// The unknown parameters are collected and can be returned as warnings.
+    #[default]
+    Lenient,
+}
+
+impl UnknownParamHandling {
+    /// Parse from Prefer header value (e.g., "handling=strict" or "handling=lenient").
+    pub fn from_prefer_header(header: &str) -> Self {
+        for part in header.split(';').map(str::trim) {
+            if let Some(value) = part.strip_prefix("handling=") {
+                match value.trim() {
+                    "strict" => return Self::Strict,
+                    "lenient" => return Self::Lenient,
+                    _ => {}
+                }
+            }
+        }
+        Self::default()
+    }
+}
+
+/// Configuration for search query building.
+#[derive(Debug, Clone, Default)]
+pub struct SearchConfig {
+    /// How to handle unknown search parameters.
+    pub unknown_param_handling: UnknownParamHandling,
+}
+
+/// Warning for an unknown search parameter.
+#[derive(Debug, Clone)]
+pub struct UnknownParamWarning {
+    /// Name of the unknown parameter.
+    pub name: String,
+    /// Optional modifier that was specified.
+    pub modifier: Option<String>,
+}
+
 /// Control parameters that don't generate search conditions.
 const CONTROL_PARAMS: &[&str] = &[
     "_count",
@@ -40,9 +87,11 @@ pub struct ConvertedQuery {
     pub revincludes: Vec<RevIncludeSpec>,
     /// Whether to return total count
     pub total_mode: Option<TotalMode>,
+    /// Unknown parameters that were encountered (when using lenient mode).
+    pub unknown_params: Vec<UnknownParamWarning>,
 }
 
-/// Convert SearchParams to a FhirQueryBuilder.
+/// Convert SearchParams to a FhirQueryBuilder with default (lenient) handling.
 ///
 /// This function:
 /// 1. Converts SearchParams.parameters to ParsedParam format
@@ -56,10 +105,33 @@ pub fn build_query_from_params(
     registry: &SearchParameterRegistry,
     schema: &str,
 ) -> Result<ConvertedQuery, SqlBuilderError> {
+    build_query_from_params_with_config(
+        resource_type,
+        params,
+        registry,
+        schema,
+        &SearchConfig::default(),
+    )
+}
+
+/// Convert SearchParams to a FhirQueryBuilder with configurable unknown parameter handling.
+///
+/// When `config.unknown_param_handling` is `Strict`, returns an error for unknown parameters.
+/// When `Lenient`, unknown parameters are skipped and returned in the result for warning.
+pub fn build_query_from_params_with_config(
+    resource_type: &str,
+    params: &SearchParams,
+    registry: &SearchParameterRegistry,
+    schema: &str,
+    config: &SearchConfig,
+) -> Result<ConvertedQuery, SqlBuilderError> {
     let mut builder = FhirQueryBuilder::new(resource_type, schema).with_alias("r");
 
     // Use SqlBuilder to accumulate conditions, then convert to SearchCondition::Raw
     let mut sql_builder = SqlBuilder::with_resource_column("r.resource");
+
+    // Collect unknown parameters for warnings
+    let mut unknown_params = Vec::new();
 
     // Convert SearchParams.parameters to ParsedParam and process
     for (key, values) in &params.parameters {
@@ -86,10 +158,51 @@ pub fn build_query_from_params(
 
         // Look up parameter definition in registry
         let Some(param_def) = registry.get(resource_type, &parsed.name) else {
-            // Unknown parameter - skip or error depending on policy
-            tracing::debug!(param = %parsed.name, "Unknown search parameter, skipping");
-            continue;
+            // Unknown parameter - handle based on policy
+            match config.unknown_param_handling {
+                UnknownParamHandling::Strict => {
+                    return Err(SqlBuilderError::InvalidSearchValue(format!(
+                        "Unknown search parameter: {}",
+                        key
+                    )));
+                }
+                UnknownParamHandling::Lenient => {
+                    tracing::debug!(param = %parsed.name, "Unknown search parameter, skipping");
+                    unknown_params.push(UnknownParamWarning {
+                        name: parsed.name.clone(),
+                        modifier: parsed.modifier.as_ref().map(|m| format!("{:?}", m)),
+                    });
+                    continue;
+                }
+            }
         };
+
+        // Validate modifier compatibility with parameter type
+        if let Some(ref modifier) = parsed.modifier {
+            if !modifier.applicable_to(&param_def.param_type) {
+                return Err(SqlBuilderError::InvalidSearchValue(format!(
+                    "Modifier ':{:?}' is not valid for {} parameter '{}' (type: {:?})",
+                    modifier, resource_type, parsed.name, param_def.param_type
+                )));
+            }
+        }
+
+        // Validate prefix compatibility with parameter type
+        for value in &parsed.values {
+            if let Some(ref prefix) = value.prefix {
+                if !prefix.applicable_to(&param_def.param_type) {
+                    return Err(SqlBuilderError::InvalidSearchValue(format!(
+                        "Prefix '{}' ({}) is not valid for {} parameter '{}' (type: {:?}). \
+                         Comparison prefixes are only allowed for number, date, and quantity parameters.",
+                        prefix,
+                        prefix.display_name(),
+                        resource_type,
+                        parsed.name,
+                        param_def.param_type
+                    )));
+                }
+            }
+        }
 
         // Use dispatch_search to build the condition
         dispatch_search(&mut sql_builder, &parsed, &param_def, resource_type)?;
@@ -155,6 +268,7 @@ pub fn build_query_from_params(
         includes,
         revincludes,
         total_mode: params.total,
+        unknown_params,
     })
 }
 

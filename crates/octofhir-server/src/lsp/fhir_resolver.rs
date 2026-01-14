@@ -215,20 +215,21 @@ impl FhirResolver {
         {
             let state = self.loading_state.get(&cache_key);
             if let Some(s) = state
-                && *s.value() == LoadingState::Loading {
-                    tracing::trace!(
-                        "Already loading {}.{}, waiting for result",
-                        resource_type,
-                        parent_path
-                    );
-                    // Drop the reference before sleeping
-                    drop(s);
-                    // Brief wait then check cache
-                    tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
-                    if let Some(cached) = self.children_cache.get(&cache_key) {
-                        return cached.value().clone();
-                    }
+                && *s.value() == LoadingState::Loading
+            {
+                tracing::trace!(
+                    "Already loading {}.{}, waiting for result",
+                    resource_type,
+                    parent_path
+                );
+                // Drop the reference before sleeping
+                drop(s);
+                // Brief wait then check cache
+                tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+                if let Some(cached) = self.children_cache.get(&cache_key) {
+                    return cached.value().clone();
                 }
+            }
         }
 
         // Mark as loading

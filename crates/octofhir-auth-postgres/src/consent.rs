@@ -103,18 +103,24 @@ impl<'a> ConsentStorage<'a> {
 
     /// List all consents for a user.
     pub async fn list_consents(&self, user_id: &str) -> StorageResult<Vec<ConsentRow>> {
-        let rows: Vec<(Uuid, String, String, Vec<String>, OffsetDateTime, OffsetDateTime)> =
-            query_as(
-                r#"
+        let rows: Vec<(
+            Uuid,
+            String,
+            String,
+            Vec<String>,
+            OffsetDateTime,
+            OffsetDateTime,
+        )> = query_as(
+            r#"
             SELECT id, user_id, client_id, scopes, created_at, updated_at
             FROM octofhir_auth.user_consents
             WHERE user_id = $1
             ORDER BY updated_at DESC
             "#,
-            )
-            .bind(user_id)
-            .fetch_all(self.pool)
-            .await?;
+        )
+        .bind(user_id)
+        .fetch_all(self.pool)
+        .await?;
 
         Ok(rows
             .into_iter()
