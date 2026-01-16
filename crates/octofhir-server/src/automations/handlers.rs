@@ -15,10 +15,9 @@ use uuid::Uuid;
 use super::executor::AutomationExecutor;
 use super::storage::{AutomationStorage, PostgresAutomationStorage};
 use super::types::{
-    Automation, AutomationTrigger, CreateAutomation, CreateAutomationTrigger, UpdateAutomation,
+    Automation, AutomationEvent, AutomationExecutionStats, AutomationTrigger, CreateAutomation,
+    CreateAutomationTrigger, UpdateAutomation,
 };
-
-use super::types::AutomationEvent;
 use otter_runtime::{is_typescript, transpile_typescript};
 use sqlx_postgres::PgPool;
 
@@ -75,12 +74,35 @@ pub struct ExecuteAutomationRequest {
     pub event_type: Option<String>,
 }
 
+/// Request to test automation code without saving.
+#[derive(Debug, Deserialize)]
+pub struct TestAutomationRequest {
+    /// Source code to test
+    pub source_code: String,
+
+    /// Optional resource to pass as event context
+    pub resource: Option<serde_json::Value>,
+
+    /// Optional event type (defaults to "manual")
+    pub event_type: Option<String>,
+}
+
 /// Response wrapper for automation with triggers.
 #[derive(Debug, serde::Serialize)]
 pub struct AutomationWithTriggers {
     #[serde(flatten)]
     pub automation: Automation,
     pub triggers: Vec<AutomationTrigger>,
+}
+
+/// Response wrapper for automation with execution stats (used in list view).
+#[derive(Debug, serde::Serialize)]
+pub struct AutomationWithStats {
+    #[serde(flatten)]
+    pub automation: Automation,
+    /// Execution statistics for this automation
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub execution_stats: Option<AutomationExecutionStats>,
 }
 
 /// Bundle response for lists.
@@ -161,7 +183,27 @@ pub async fn list_automations(
     let count = params.count.unwrap_or(100) as usize;
     let paginated: Vec<Automation> = filtered.into_iter().skip(offset).take(count).collect();
 
-    let bundle = AutomationBundle::searchset(paginated);
+    // Fetch execution stats for all automations in batch
+    let automation_ids: Vec<_> = paginated.iter().map(|a| a.id).collect();
+    let stats_map = state
+        .automation_storage
+        .get_execution_stats_batch(&automation_ids)
+        .await
+        .unwrap_or_default();
+
+    // Combine automations with their stats
+    let automations_with_stats: Vec<AutomationWithStats> = paginated
+        .into_iter()
+        .map(|automation| {
+            let stats = stats_map.get(&automation.id).cloned();
+            AutomationWithStats {
+                automation,
+                execution_stats: stats,
+            }
+        })
+        .collect();
+
+    let bundle = AutomationBundle::searchset(automations_with_stats);
 
     Ok(Json(bundle))
 }
@@ -382,6 +424,7 @@ pub async fn execute_automation(
         "success": result.success,
         "output": result.output,
         "error": result.error,
+        "logs": result.logs,
         "durationMs": result.duration.as_millis() as u64,
     });
 
@@ -391,6 +434,71 @@ pub async fn execute_automation(
         // Return 200 with error details in body (automation execution failed, not API error)
         Ok(Json(response))
     }
+}
+
+/// POST /api/automations/test - Test automation code without saving.
+///
+/// This endpoint allows testing automation code before deploying.
+/// The code is transpiled (if TypeScript) and executed with the provided context.
+pub async fn test_automation(
+    State(state): State<AutomationState>,
+    _admin: AdminAuth,
+    Json(request): Json<TestAutomationRequest>,
+) -> Result<impl IntoResponse, ApiError> {
+    // Validate source code is not empty
+    if request.source_code.trim().is_empty() {
+        return Err(ApiError::bad_request("Source code cannot be empty"));
+    }
+
+    // Transpile if TypeScript
+    let compiled_code = if is_typescript(&request.source_code) {
+        match transpile_typescript(&request.source_code) {
+            Ok(result) => result.code,
+            Err(e) => {
+                return Err(ApiError::bad_request(format!(
+                    "TypeScript compilation failed: {}",
+                    e
+                )));
+            }
+        }
+    } else {
+        request.source_code.clone()
+    };
+
+    // Create a temporary automation for execution
+    let temp_automation = Automation {
+        id: Uuid::new_v4(),
+        name: "test".to_string(),
+        description: None,
+        source_code: request.source_code,
+        compiled_code: Some(compiled_code),
+        status: super::types::AutomationStatus::Active,
+        version: 1,
+        timeout_ms: 30000,
+        created_at: time::OffsetDateTime::now_utc(),
+        updated_at: time::OffsetDateTime::now_utc(),
+    };
+
+    // Create event for test execution
+    let event = AutomationEvent {
+        event_type: request.event_type.unwrap_or_else(|| "manual".to_string()),
+        resource: request.resource.unwrap_or(serde_json::json!({})),
+        previous: None,
+        timestamp: time::OffsetDateTime::now_utc().to_string(),
+    };
+
+    // Execute the automation
+    let result = state.executor.execute(&temp_automation, None, event).await;
+
+    let response = serde_json::json!({
+        "success": result.success,
+        "output": result.output,
+        "error": result.error,
+        "logs": result.logs,
+        "duration_ms": result.duration.as_millis() as u64,
+    });
+
+    Ok(Json(response))
 }
 
 /// GET /api/automations/:id/logs - Get execution logs for an automation.
@@ -498,6 +606,8 @@ where
     Router::new()
         // Automation CRUD
         .route("/automations", get(list_automations).post(create_automation))
+        // Test endpoint (must be before /{id} to avoid matching "test" as id)
+        .route("/automations/test", post(test_automation))
         .route(
             "/automations/{id}",
             get(get_automation)

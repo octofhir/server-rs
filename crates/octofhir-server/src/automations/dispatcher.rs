@@ -7,6 +7,7 @@ use std::sync::Arc;
 use super::types::AutomationEvent;
 use async_trait::async_trait;
 use octofhir_core::events::{HookError, ResourceEvent, ResourceEventType, ResourceHook};
+use octofhir_fhirpath::{Collection, EvaluationContext, FhirPathEngine, FhirPathValue};
 use tracing::{debug, info, warn};
 
 use super::executor::AutomationExecutor;
@@ -24,6 +25,7 @@ use super::storage::AutomationStorage;
 pub struct AutomationDispatcherHook {
     automation_storage: Arc<dyn AutomationStorage>,
     executor: Arc<AutomationExecutor>,
+    fhirpath_engine: Arc<FhirPathEngine>,
 }
 
 impl AutomationDispatcherHook {
@@ -31,11 +33,58 @@ impl AutomationDispatcherHook {
     pub fn new(
         automation_storage: Arc<dyn AutomationStorage>,
         executor: Arc<AutomationExecutor>,
+        fhirpath_engine: Arc<FhirPathEngine>,
     ) -> Self {
         Self {
             automation_storage,
             executor,
+            fhirpath_engine,
         }
+    }
+
+    /// Evaluate a FHIRPath filter expression against a resource.
+    ///
+    /// Returns true if the expression evaluates to a truthy value (non-empty result).
+    async fn evaluate_fhirpath_filter(
+        &self,
+        filter: &str,
+        resource: &serde_json::Value,
+    ) -> Result<bool, String> {
+        // Create evaluation context
+        let provider = self.fhirpath_engine.get_model_provider();
+        let collection = Collection::from_json_resource(resource.clone(), Some(provider.clone()))
+            .await
+            .map_err(|e| format!("Failed to create FHIRPath context: {e}"))?;
+
+        let context = EvaluationContext::new(collection, provider, None, None, None);
+
+        // Evaluate expression
+        let result = self
+            .fhirpath_engine
+            .evaluate(filter, &context)
+            .await
+            .map_err(|e| format!("FHIRPath evaluation failed: {e}"))?;
+
+        // Convert result to boolean - non-empty and truthy = true
+        let values = result.value.into_vec();
+        Ok(Self::result_to_bool(&values))
+    }
+
+    /// Convert FHIRPath result to boolean.
+    fn result_to_bool(result: &[FhirPathValue]) -> bool {
+        if result.is_empty() {
+            return false;
+        }
+
+        // Check if any value is truthy
+        result.iter().any(|v| match v {
+            FhirPathValue::Boolean(b, ..) => *b,
+            FhirPathValue::String(s, ..) => !s.is_empty(),
+            FhirPathValue::Integer(i, ..) => *i != 0,
+            FhirPathValue::Decimal(d, ..) => !d.is_zero(),
+            FhirPathValue::Resource(..) => true,
+            _ => true,
+        })
     }
 }
 
@@ -109,10 +158,36 @@ impl ResourceHook for AutomationDispatcherHook {
 
         // Execute each matching automation
         for (automation, trigger) in matching_automations {
-            // TODO: Evaluate FHIRPath filter if present
-            if let Some(ref _filter) = trigger.fhirpath_filter {
-                // For now, skip FHIRPath filtering
-                // In the future: evaluate filter against resource
+            // Evaluate FHIRPath filter if present
+            if let Some(ref filter) = trigger.fhirpath_filter {
+                if let Some(ref resource) = event.resource {
+                    match self.evaluate_fhirpath_filter(filter, resource).await {
+                        Ok(true) => {
+                            debug!(
+                                automation_id = %automation.id,
+                                filter = %filter,
+                                "FHIRPath filter matched"
+                            );
+                        }
+                        Ok(false) => {
+                            debug!(
+                                automation_id = %automation.id,
+                                filter = %filter,
+                                "FHIRPath filter did not match, skipping automation"
+                            );
+                            continue; // Skip this automation
+                        }
+                        Err(e) => {
+                            warn!(
+                                automation_id = %automation.id,
+                                filter = %filter,
+                                error = %e,
+                                "FHIRPath filter evaluation failed, skipping automation"
+                            );
+                            continue; // Skip on error
+                        }
+                    }
+                }
             }
 
             let executor = self.executor.clone();

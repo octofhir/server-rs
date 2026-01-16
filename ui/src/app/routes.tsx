@@ -19,6 +19,7 @@ import { PackagesPage, PackageDetailPage } from "@/pages/packages";
 import { LogsViewerPage } from "@/pages/logs";
 import { AuditTrailPage } from "@/pages/audit";
 import { ViewDefinitionPage } from "@/pages/viewdefinition";
+import { AutomationsPage, AutomationEditorPage } from "@/pages/automations";
 
 // Placeholder component for pages during migration
 function PlaceholderPage({ name, description }: { name: string; description?: string }) {
@@ -70,6 +71,9 @@ export function AppRoutes() {
         <Route path="/operations/:id" element={<OperationDetailPage />} />
         <Route path="/apps" element={<AppsPage />} />
         <Route path="/apps/:id" element={<AppDetailPage />} />
+        <Route path="/automations" element={<AutomationsPage />} />
+        <Route path="/automations/new" element={<AutomationEditorPage />} />
+        <Route path="/automations/:id" element={<AutomationEditorPage />} />
 
         {/* Auth */}
         <Route path="/auth/providers" element={<IdentityProvidersPage />} />

@@ -1393,12 +1393,15 @@ pub async fn build_app(
                 let executor = Arc::new(executor);
 
                 // Create and register the dispatcher hook for resource events
-                let dispatcher_hook =
-                    AutomationDispatcherHook::new(automation_storage.clone(), executor.clone());
+                let dispatcher_hook = AutomationDispatcherHook::new(
+                    automation_storage.clone(),
+                    executor.clone(),
+                    fhirpath_engine.clone(),
+                );
                 hook_registry
                     .register_resource(Arc::new(dispatcher_hook))
                     .await;
-                tracing::info!("Automation dispatcher hook registered");
+                tracing::info!("Automation dispatcher hook registered with FHIRPath support");
 
                 // Start the cron scheduler for scheduled automation execution
                 let scheduler = CronScheduler::new(

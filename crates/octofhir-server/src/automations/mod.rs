@@ -1,15 +1,16 @@
 //! Automation system for OctoFHIR.
 //!
-//! This module provides automation using JavaScriptCore.
-//! Automations are JavaScript scripts that can be triggered by resource events,
+//! This module provides automation using [otter-runtime](https://crates.io/crates/otter-runtime)
+//! (JavaScriptCore-based TypeScript/JavaScript engine).
+//! Automations are JS/TS scripts that can be triggered by resource events,
 //! cron schedules, or manual invocation.
 //!
 //! # Architecture
 //!
 //! ```text
-//! Resource Event → AutomationDispatcherHook → Automation Matching → AutomationExecutor → JSC Runtime
+//! Resource Event → AutomationDispatcherHook → Automation Matching → AutomationExecutor → otter Engine
 //!                                                            ↓
-//!                                                     fhir.* / http.* APIs
+//!                                                     fhir.* / console.* / fetch() APIs
 //! ```
 //!
 //! # Automation APIs
@@ -21,7 +22,7 @@
 //! - `fhir.update(resource)` - Update a FHIR resource
 //! - `fhir.delete(resourceType, id)` - Delete a FHIR resource
 //! - `fhir.search(resourceType, params)` - Search for resources
-//! - `http.fetch(url, options)` - Make HTTP requests
+//! - `await fetch(url, options)` - Make HTTP requests (async, built-in)
 //! - `console.log/warn/error(...)` - Logging
 //!
 //! # Example Automation
@@ -42,9 +43,9 @@
 //! ```
 
 mod dispatcher;
+mod execution_api;
 mod executor;
 mod fhir_api;
-mod fhir_client;
 pub mod handlers;
 mod scheduler;
 mod storage;
@@ -52,16 +53,15 @@ mod types;
 
 pub use dispatcher::AutomationDispatcherHook;
 pub use executor::{AutomationExecutor, AutomationExecutorConfig};
-pub use fhir_client::StorageFhirClient;
 pub use handlers::{
     AutomationState, add_trigger, automation_routes, create_automation, delete_automation,
     delete_trigger, deploy_automation, execute_automation, get_automation, get_automation_logs,
-    list_automations, update_automation,
+    list_automations, test_automation, update_automation,
 };
 pub use scheduler::{CronScheduler, SchedulerConfig};
 pub use storage::{AutomationStorage, PostgresAutomationStorage};
 pub use types::{
-    Automation, AutomationExecution, AutomationExecutionStatus, AutomationStatus,
-    AutomationTrigger, AutomationTriggerType, CreateAutomation, CreateAutomationTrigger,
-    UpdateAutomation,
+    Automation, AutomationExecution, AutomationExecutionStats, AutomationExecutionStatus,
+    AutomationLogEntry, AutomationStatus, AutomationTrigger, AutomationTriggerType,
+    CreateAutomation, CreateAutomationTrigger, UpdateAutomation,
 };

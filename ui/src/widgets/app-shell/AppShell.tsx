@@ -40,6 +40,7 @@ import {
 	IconFileText,
 	IconTable,
 	IconDevices,
+	IconRobot,
 } from "@tabler/icons-react";
 import { useUnit } from "effector-react";
 import { useHealth, useAuth, useBuildInfo } from "@/shared/api/hooks";
@@ -105,6 +106,12 @@ const adminNavigation: NavItem[] = [
 		path: "/apps",
 		description: "Manage applications",
 		icon: IconApps,
+	},
+	{
+		label: "Automations",
+		path: "/automations",
+		description: "Event-driven automation scripts",
+		icon: IconRobot,
 	},
 	{
 		label: "Audit Trail",

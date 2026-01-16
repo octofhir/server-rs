@@ -505,27 +505,24 @@ async function testAutomationWithFHIR(token: string) {
 async function testAutomationWithHTTP(token: string) {
   console.log("\n=== Test: Automation with HTTP Requests ===\n");
 
-  // Create an automation that makes an HTTP request
+  // Create an automation that makes an HTTP request using built-in fetch
   console.log("1. Creating HTTP automation...");
   const automation = await createAutomation(token, {
     name: "HTTP Test Automation",
-    description: "Tests HTTP fetch functionality",
+    description: "Tests async fetch functionality",
     source_code: `
-      // Automation that fetches data from an API
+      // Automation that fetches data from an API using async fetch
       console.log('Fetching from httpbin...');
 
       try {
-        const response = http.fetch('https://httpbin.org/json', {
-          method: 'GET',
-          timeout: 5000
-        });
+        const response = await fetch('https://httpbin.org/json');
 
         console.log('Response status:', response.status);
         console.log('Response ok:', response.ok);
 
         if (response.ok) {
-          // response.body is already parsed as JSON by the http API
-          const data = response.body;
+          // Use the standard Response.json() method
+          const data = await response.json();
           return {
             success: true,
             status: response.status,

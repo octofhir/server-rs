@@ -22,6 +22,7 @@
 		"@mantine/dates": "^8.3.10",
 		"@mantine/form": "^8.3.10",
 		"@mantine/hooks": "^8.3.10",
+		"@mantine/modals": "^8.3.12",
 		"@mantine/notifications": "^8.0.0",
 		"@monaco-editor/react": "^4.6.0",
 		"@tabler/icons-react": "^3.24.0",

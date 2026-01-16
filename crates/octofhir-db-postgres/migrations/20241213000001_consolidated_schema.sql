@@ -916,6 +916,7 @@ CREATE TABLE IF NOT EXISTS automation_execution (
     input JSONB,
     output JSONB,
     error TEXT,
+    logs JSONB,  -- Structured execution logs from execution.log() API
     started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     completed_at TIMESTAMPTZ,
     duration_ms INT

@@ -214,7 +214,7 @@ impl SchemaManager {
 
         let sql = format!(
             r#"
-            CREATE TABLE "{history_table}" (
+            CREATE TABLE IF NOT EXISTS "{history_table}" (
                 id TEXT NOT NULL,
                 txid BIGINT NOT NULL,
                 created_at TIMESTAMPTZ NOT NULL,

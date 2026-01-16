@@ -706,3 +706,127 @@ export interface AuditAnalytics {
     lastAttempt: string;
   }>;
 }
+
+// ============ Automation types ============
+
+export type AutomationStatus = "active" | "inactive" | "error";
+export type AutomationTriggerType = "resource_event" | "cron" | "manual";
+export type AutomationExecutionStatus = "running" | "completed" | "failed";
+
+export interface Automation {
+  id: string;
+  name: string;
+  description?: string;
+  source_code: string;
+  compiled_code?: string;
+  status: AutomationStatus;
+  version: number;
+  timeout_ms: number;
+  created_at: string;
+  updated_at: string;
+  triggers?: AutomationTrigger[];
+  /** Execution statistics (included in list response) */
+  execution_stats?: AutomationExecutionStats;
+}
+
+export interface AutomationTrigger {
+  id: string;
+  automation_id: string;
+  trigger_type: AutomationTriggerType;
+  resource_type?: string;
+  event_types?: string[];
+  fhirpath_filter?: string;
+  cron_expression?: string;
+  created_at: string;
+}
+
+export interface AutomationExecution {
+  id: string;
+  automation_id: string;
+  trigger_id?: string;
+  status: AutomationExecutionStatus;
+  input?: unknown;
+  output?: unknown;
+  logs?: AutomationLogEntry[];
+  error?: string;
+  started_at: string;
+  completed_at?: string;
+  duration_ms?: number;
+}
+
+export interface AutomationLogEntry {
+  level: "log" | "info" | "debug" | "warn" | "error";
+  message: string;
+  /** Optional structured data attached to the log entry */
+  data?: unknown;
+  timestamp?: string;
+}
+
+/** Execution statistics for an automation (returned in list view) */
+export interface AutomationExecutionStats {
+  /** Last execution status: "completed", "failed", "running" */
+  last_execution_status?: "completed" | "failed" | "running";
+  /** When the last execution occurred (ISO 8601) */
+  last_execution_at?: string;
+  /** Error message from the last failed execution */
+  last_error?: string;
+  /** Number of failed executions in the last 24 hours */
+  failure_count_24h: number;
+  /** Number of successful executions in the last 24 hours */
+  success_count_24h: number;
+}
+
+export interface AutomationSearchParams {
+  status?: AutomationStatus;
+  name?: string;
+  _count?: number;
+  _offset?: number;
+}
+
+export interface AutomationListResponse {
+  automations: Automation[];
+  total: number;
+}
+
+export interface CreateAutomationRequest {
+  name: string;
+  description?: string;
+  source_code: string;
+  timeout_ms?: number;
+  triggers?: CreateTriggerRequest[];
+}
+
+export interface UpdateAutomationRequest {
+  name?: string;
+  description?: string;
+  source_code?: string;
+  timeout_ms?: number;
+}
+
+export interface CreateTriggerRequest {
+  trigger_type: AutomationTriggerType;
+  resource_type?: string;
+  event_types?: string[];
+  fhirpath_filter?: string;
+  cron_expression?: string;
+}
+
+export interface ExecuteAutomationRequest {
+  resource?: unknown;
+  event_type?: string;
+}
+
+export interface TestAutomationRequest {
+  source_code: string;
+  resource?: unknown;
+  event_type?: string;
+}
+
+export interface ExecuteAutomationResponse {
+  execution_id: string;
+  success: boolean;
+  output?: unknown;
+  logs?: AutomationLogEntry[];
+  error?: string;
+  duration_ms?: number;
+}

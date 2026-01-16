@@ -4,13 +4,14 @@ use async_trait::async_trait;
 use sqlx_core::query::query;
 use sqlx_core::row::Row;
 use sqlx_postgres::PgPool;
+use std::collections::HashMap;
 use time::OffsetDateTime;
 use uuid::Uuid;
 
 use super::types::{
-    Automation, AutomationExecution, AutomationExecutionStatus, AutomationStatus,
-    AutomationTrigger, AutomationTriggerType, CreateAutomation, CreateAutomationTrigger,
-    UpdateAutomation,
+    Automation, AutomationExecution, AutomationExecutionStats, AutomationExecutionStatus,
+    AutomationStatus, AutomationTrigger, AutomationTriggerType, CreateAutomation,
+    CreateAutomationTrigger, UpdateAutomation,
 };
 
 /// Automation storage trait
@@ -80,6 +81,12 @@ pub trait AutomationStorage: Send + Sync {
         automation_id: Uuid,
         limit: i64,
     ) -> Result<Vec<AutomationExecution>, AutomationStorageError>;
+
+    /// Get execution statistics for multiple automations in batch
+    async fn get_execution_stats_batch(
+        &self,
+        automation_ids: &[Uuid],
+    ) -> Result<HashMap<Uuid, AutomationExecutionStats>, AutomationStorageError>;
 }
 
 /// Automation storage error
@@ -458,16 +465,24 @@ impl AutomationStorage for PostgresAutomationStorage {
         &self,
         execution: AutomationExecution,
     ) -> Result<(), AutomationStorageError> {
+        // Serialize logs to JSON
+        let logs_json = execution
+            .logs
+            .as_ref()
+            .map(|logs| serde_json::to_value(logs).ok())
+            .flatten();
+
         query(
             r#"
-            INSERT INTO automation_execution (id, automation_id, trigger_id, status, input, output, error, started_at, completed_at, duration_ms)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            INSERT INTO automation_execution (id, automation_id, trigger_id, status, input, output, error, started_at, completed_at, duration_ms, logs)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
             ON CONFLICT (id) DO UPDATE SET
                 status = EXCLUDED.status,
                 output = EXCLUDED.output,
                 error = EXCLUDED.error,
                 completed_at = EXCLUDED.completed_at,
-                duration_ms = EXCLUDED.duration_ms
+                duration_ms = EXCLUDED.duration_ms,
+                logs = EXCLUDED.logs
             "#,
         )
         .bind(execution.id)
@@ -480,6 +495,7 @@ impl AutomationStorage for PostgresAutomationStorage {
         .bind(execution.started_at)
         .bind(execution.completed_at)
         .bind(execution.duration_ms)
+        .bind(&logs_json)
         .execute(&self.pool)
         .await?;
 
@@ -493,7 +509,7 @@ impl AutomationStorage for PostgresAutomationStorage {
     ) -> Result<Vec<AutomationExecution>, AutomationStorageError> {
         let rows = query(
             r#"
-            SELECT id, automation_id, trigger_id, status, input, output, error, started_at, completed_at, duration_ms
+            SELECT id, automation_id, trigger_id, status, input, output, error, started_at, completed_at, duration_ms, logs
             FROM automation_execution
             WHERE automation_id = $1
             ORDER BY started_at DESC
@@ -511,6 +527,10 @@ impl AutomationStorage for PostgresAutomationStorage {
             let status = AutomationExecutionStatus::from_str(&status_str)
                 .unwrap_or(AutomationExecutionStatus::Failed);
 
+            // Parse logs from JSON
+            let logs_json: Option<serde_json::Value> = row.try_get("logs")?;
+            let logs = logs_json.and_then(|v| serde_json::from_value(v).ok());
+
             executions.push(AutomationExecution {
                 id: row.try_get("id")?,
                 automation_id: row.try_get("automation_id")?,
@@ -522,9 +542,84 @@ impl AutomationStorage for PostgresAutomationStorage {
                 started_at: row.try_get("started_at")?,
                 completed_at: row.try_get("completed_at")?,
                 duration_ms: row.try_get("duration_ms")?,
+                logs,
             });
         }
 
         Ok(executions)
+    }
+
+    async fn get_execution_stats_batch(
+        &self,
+        automation_ids: &[Uuid],
+    ) -> Result<HashMap<Uuid, AutomationExecutionStats>, AutomationStorageError> {
+        if automation_ids.is_empty() {
+            return Ok(HashMap::new());
+        }
+
+        // Query to get stats for all automation IDs at once
+        // Uses CTEs to efficiently compute:
+        // - Last execution status and timestamp
+        // - Last error message
+        // - Counts for last 24 hours
+        let rows = query(
+            r#"
+            WITH last_executions AS (
+                SELECT DISTINCT ON (automation_id)
+                    automation_id,
+                    status,
+                    error,
+                    started_at
+                FROM automation_execution
+                WHERE automation_id = ANY($1)
+                ORDER BY automation_id, started_at DESC
+            ),
+            counts_24h AS (
+                SELECT
+                    automation_id,
+                    COUNT(CASE WHEN status = 'completed' THEN 1 END) as success_count,
+                    COUNT(CASE WHEN status = 'failed' THEN 1 END) as failure_count
+                FROM automation_execution
+                WHERE automation_id = ANY($1)
+                  AND started_at > NOW() - INTERVAL '24 hours'
+                GROUP BY automation_id
+            )
+            SELECT
+                le.automation_id,
+                le.status as last_status,
+                le.error as last_error,
+                le.started_at as last_execution_at,
+                COALESCE(c.success_count, 0)::INT as success_count_24h,
+                COALESCE(c.failure_count, 0)::INT as failure_count_24h
+            FROM last_executions le
+            LEFT JOIN counts_24h c ON le.automation_id = c.automation_id
+            "#,
+        )
+        .bind(automation_ids)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut stats_map = HashMap::new();
+        for row in rows {
+            let automation_id: Uuid = row.try_get("automation_id")?;
+            let last_status: Option<String> = row.try_get("last_status")?;
+            let last_error: Option<String> = row.try_get("last_error")?;
+            let last_execution_at: Option<OffsetDateTime> = row.try_get("last_execution_at")?;
+            let success_count_24h: i32 = row.try_get("success_count_24h")?;
+            let failure_count_24h: i32 = row.try_get("failure_count_24h")?;
+
+            stats_map.insert(
+                automation_id,
+                AutomationExecutionStats {
+                    last_execution_status: last_status,
+                    last_execution_at: last_execution_at.map(|t| t.to_string()),
+                    last_error,
+                    failure_count_24h,
+                    success_count_24h,
+                },
+            );
+        }
+
+        Ok(stats_map)
     }
 }

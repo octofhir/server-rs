@@ -103,6 +103,21 @@ impl AutomationExecutionStatus {
     }
 }
 
+/// A log entry from execution.log() API
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AutomationLogEntry {
+    /// Log level: "log", "info", "debug", "warn", "error"
+    pub level: String,
+    /// Log message
+    pub message: String,
+    /// Optional structured data attached to the log
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data: Option<serde_json::Value>,
+    /// Timestamp when the log was created
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timestamp: Option<String>,
+}
+
 /// Event that triggered an automation execution
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AutomationEvent {
@@ -208,6 +223,27 @@ pub struct AutomationExecution {
     /// Execution duration in milliseconds
     #[serde(skip_serializing_if = "Option::is_none")]
     pub duration_ms: Option<i32>,
+    /// Structured logs from execution.log() API
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub logs: Option<Vec<AutomationLogEntry>>,
+}
+
+/// Statistics about automation executions (for list view)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AutomationExecutionStats {
+    /// Last execution status: "completed", "failed", "running"
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_execution_status: Option<String>,
+    /// When the last execution occurred (ISO 8601)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_execution_at: Option<String>,
+    /// Error message from the last failed execution
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_error: Option<String>,
+    /// Number of failed executions in the last 24 hours
+    pub failure_count_24h: i32,
+    /// Number of successful executions in the last 24 hours
+    pub success_count_24h: i32,
 }
 
 /// Request to create a new automation

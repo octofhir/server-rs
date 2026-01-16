@@ -64,6 +64,7 @@ const STATIC_TITLES: Record<string, TabConfig> = {
 	"/packages": { title: "Packages" },
 	"/operations": { title: "Operations" },
 	"/apps": { title: "Apps" },
+	"/automations": { title: "Automations" },
 	"/auth/clients": { title: "Clients" },
 	"/auth/users": { title: "Users" },
 	"/auth/policies": { title: "Access Policies" },
@@ -155,6 +156,20 @@ export function resolveTabFromPath(pathname: string, options?: ResolveOptions): 
 			kind: "page",
 			closeable: true,
 			groupKey: "/operations",
+			createdAt: Date.now(),
+			customTitle: false,
+		};
+	}
+
+	if (segments[0] === "automations" && segments.length === 2) {
+		const automationId = decodeSegment(segments[1]);
+		return {
+			id: createTabId(),
+			title: `Automation: ${automationId.slice(0, 8)}...`,
+			path: normalized,
+			kind: "page",
+			closeable: true,
+			groupKey: "/automations",
 			createdAt: Date.now(),
 			customTitle: false,
 		};

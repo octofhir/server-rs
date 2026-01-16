@@ -5,6 +5,7 @@ import { StrictMode } from "react";
 import { BrowserRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MantineProvider } from "@mantine/core";
+import { ModalsProvider } from "@mantine/modals";
 import { Notifications } from "@mantine/notifications";
 import { HelmetProvider } from "react-helmet-async";
 import { theme } from "./theme";
@@ -52,13 +53,15 @@ export function App() {
 			<HelmetProvider>
 				<QueryClientProvider client={queryClient}>
 					<MantineProvider theme={theme} defaultColorScheme="auto">
-						<ErrorBoundary>
-							<ThemeCssVars />
-							<Notifications position="top-right" />
-							<BrowserRouter basename="/ui">
-								<AppContent />
-							</BrowserRouter>
-						</ErrorBoundary>
+						<ModalsProvider>
+							<ErrorBoundary>
+								<ThemeCssVars />
+								<Notifications position="top-right" />
+								<BrowserRouter basename="/ui">
+									<AppContent />
+								</BrowserRouter>
+							</ErrorBoundary>
+						</ModalsProvider>
 					</MantineProvider>
 				</QueryClientProvider>
 			</HelmetProvider>

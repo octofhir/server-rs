@@ -1,10 +1,10 @@
 //! Automation execution engine.
 //!
-//! This module provides the `AutomationExecutor` which manages JSC runtime pools
+//! This module provides the `AutomationExecutor` which manages the otter Engine
 //! and executes automations with proper context injection.
 
 use octofhir_storage::FhirStorage;
-use otter_runtime::{JscConfig, JscRuntimePool};
+use otter_runtime::{Engine, EngineBuilder, EngineHandle, set_net_permission_checker};
 use serde_json::json;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -13,11 +13,11 @@ use tokio::runtime::Handle;
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
 
-use super::fhir_api::{clear_fhir_client, register_fhir_api, set_fhir_client};
-use super::fhir_client::StorageFhirClient;
+use super::fhir_api::{FhirContext, fhir_extension};
 use super::storage::AutomationStorage;
 use super::types::{
-    Automation, AutomationEvent, AutomationExecution, AutomationExecutionStatus, AutomationTrigger,
+    Automation, AutomationEvent, AutomationExecution, AutomationExecutionStatus,
+    AutomationLogEntry, AutomationTrigger,
 };
 
 /// Configuration for the automation executor
@@ -52,18 +52,21 @@ pub struct ExecutionResult {
     pub output: Option<serde_json::Value>,
     /// Error message (if failed)
     pub error: Option<String>,
+    /// Structured logs from execution.log() API
+    pub logs: Vec<AutomationLogEntry>,
     /// Execution duration
     pub duration: Duration,
 }
 
-/// Automation executor manages JSC runtime pools and executes automations
+/// Automation executor manages the otter Engine and executes automations
 pub struct AutomationExecutor {
-    #[allow(dead_code)]
-    runtime_pool: JscRuntimePool,
-    storage: Arc<dyn FhirStorage>,
+    engine_handle: EngineHandle,
     automation_storage: Arc<dyn AutomationStorage>,
     #[allow(dead_code)]
     config: AutomationExecutorConfig,
+    // Keep Engine alive
+    #[allow(dead_code)]
+    engine: Engine,
 }
 
 impl AutomationExecutor {
@@ -73,26 +76,44 @@ impl AutomationExecutor {
         automation_storage: Arc<dyn AutomationStorage>,
         config: AutomationExecutorConfig,
     ) -> Result<Self, String> {
-        let jsc_config = JscConfig {
-            pool_size: config.pool_size,
-            timeout_ms: config.default_timeout_ms,
-            enable_console: config.enable_console,
-        };
+        let handle = Handle::current();
 
-        let runtime_pool = JscRuntimePool::new(jsc_config)
-            .map_err(|e| format!("Failed to create JSC pool: {}", e))?;
+        // Enable network access for built-in fetch() in automations
+        set_net_permission_checker(Box::new(|_host| true));
+
+        // Create FHIR extension with init that sets up the context
+        // ExtensionState::put wraps in Arc automatically, so pass FhirContext directly
+        let fhir_ext = fhir_extension().with_init({
+            let storage = storage.clone();
+            let handle = handle.clone();
+            move |state| {
+                state.put(FhirContext {
+                    storage: storage.clone(),
+                    handle: handle.clone(),
+                });
+            }
+        });
+
+        // Build engine with FHIR extension (uses built-in fetch() for HTTP)
+        let engine = EngineBuilder::default()
+            .pool_size(config.pool_size)
+            .extension(fhir_ext)
+            .build()
+            .map_err(|e| format!("Failed to create otter Engine: {}", e))?;
+
+        let engine_handle = engine.handle();
 
         info!(
             pool_size = config.pool_size,
             timeout_ms = config.default_timeout_ms,
-            "Automation executor initialized"
+            "Automation executor initialized with otter Engine"
         );
 
         Ok(Self {
-            runtime_pool,
-            storage,
+            engine_handle,
             automation_storage,
             config,
+            engine,
         })
     }
 
@@ -129,78 +150,105 @@ impl AutomationExecutor {
             started_at,
             completed_at: None,
             duration_ms: None,
+            logs: None,
         };
 
         if let Err(e) = self.automation_storage.log_execution(execution).await {
             warn!(error = %e, "Failed to log execution start");
         }
 
-        // Create FHIR client for this execution
-        let handle = Handle::current();
-        let fhir_client = Arc::new(StorageFhirClient::new(self.storage.clone(), handle));
-
-        // Execute in a blocking context since JSC is not async
-        // We need to convert the result to a type that is Send-safe
         // Use compiled_code if available (pre-transpiled at deploy time), otherwise fall back to source_code
         let js_code = automation
             .compiled_code
             .clone()
             .unwrap_or_else(|| automation.source_code.clone());
-        let automation_event = event.clone();
 
-        let result: Result<Option<serde_json::Value>, String> =
-            tokio::task::spawn_blocking(move || {
-                // Set FHIR client for this thread
-                set_fhir_client(fhir_client);
+        // Build the execution context
+        let ctx_json = serde_json::to_string(&json!({ "event": event }))
+            .unwrap_or_else(|_| r#"{"event":{}}"#.to_string());
 
-                // Execute the automation
-                let pool = match JscRuntimePool::new(JscConfig {
-                    pool_size: 1,
-                    timeout_ms: 5000,
-                    enable_console: true,
-                }) {
-                    Ok(p) => p,
-                    Err(e) => {
-                        clear_fhir_client();
-                        return Err(format!("Failed to create JSC runtime: {}", e));
-                    }
-                };
+        // Transform ES module export default syntax to executable code
+        // Replace "export default" with variable assignment
+        let transformed_code = js_code
+            .replace("export default async function", "var __defaultExport = async function")
+            .replace("export default async (", "var __defaultExport = async (")
+            .replace("export default function", "var __defaultExport = function");
 
-                if let Err(e) = pool.register_apis(register_fhir_api) {
-                    clear_fhir_client();
-                    return Err(format!("Failed to register FHIR API: {}", e));
-                }
+        // Wrap in async IIFE that:
+        // 1. Sets up the execution.log() API
+        // 2. Calls the default export with context
+        // 3. Returns result and captured logs
+        let wrapped_code = format!(
+            r#"
+(async function() {{
+    // Set up execution logging API
+    const __executionLogs = [];
+    const __logWithLevel = (level, message, data) => {{
+        __executionLogs.push({{
+            level,
+            message: typeof message === 'string' ? message : JSON.stringify(message),
+            data: data !== undefined ? data : null,
+            timestamp: new Date().toISOString()
+        }});
+    }};
+    globalThis.execution = {{
+        log: (message, data) => __logWithLevel('log', message, data),
+        info: (message, data) => __logWithLevel('info', message, data),
+        debug: (message, data) => __logWithLevel('debug', message, data),
+        warn: (message, data) => __logWithLevel('warn', message, data),
+        error: (message, data) => __logWithLevel('error', message, data),
+    }};
 
-                // Wrap the automation code in a function to allow return statements
-                // The function is immediately invoked with the event context
-                let wrapped_code = format!("(function() {{\n{}\n}})()", js_code);
-                let result = pool.eval_with_context(&wrapped_code, "event", &automation_event);
+    {transformed_code}
 
-                // Clean up
-                clear_fhir_client();
+    if (typeof __defaultExport !== 'function') {{
+        throw new Error('Automation must export default async function(ctx)');
+    }}
 
-                // Convert JscValue to JSON (JscValue is not Send-safe)
-                match result {
-                    Ok(value) => {
-                        let json_result = value
-                            .to_json()
-                            .ok()
-                            .and_then(|s| serde_json::from_str(&s).ok());
-                        Ok(json_result)
-                    }
-                    Err(e) => Err(e.to_string()),
-                }
-            })
-            .await
-            .unwrap_or_else(|e| Err(format!("Task panicked: {}", e)));
+    try {{
+        const __result = await __defaultExport({ctx_json});
+        return {{ __success: true, __result, __logs: __executionLogs }};
+    }} catch (__err) {{
+        return {{ __success: false, __error: __err.message || String(__err), __logs: __executionLogs }};
+    }}
+}})()
+"#
+        );
+
+        // Execute using async EngineHandle
+        let result = self.engine_handle.eval(&wrapped_code).await;
 
         let duration = start.elapsed();
         let completed_at = OffsetDateTime::now_utc();
 
-        // Process result
-        let (success, output, error) = match result {
-            Ok(json_output) => (true, json_output, None),
-            Err(e) => (false, None, Some(e)),
+        // Process result - extract success, output, error, and logs from wrapped response
+        let (success, output, error, logs) = match result {
+            Ok(json_output) => {
+                // Parse the wrapped response: { __success, __result/__error, __logs }
+                let is_success = json_output
+                    .get("__success")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+
+                let output = json_output
+                    .get("__result")
+                    .cloned()
+                    .filter(|v| !v.is_null());
+
+                let error = json_output
+                    .get("__error")
+                    .and_then(|v| v.as_str())
+                    .map(String::from);
+
+                // Parse logs from the response
+                let logs: Vec<AutomationLogEntry> = json_output
+                    .get("__logs")
+                    .and_then(|v| serde_json::from_value(v.clone()).ok())
+                    .unwrap_or_default();
+
+                (is_success, output, error, logs)
+            }
+            Err(e) => (false, None, Some(e.to_string()), Vec::new()),
         };
 
         // Log execution completion
@@ -223,6 +271,7 @@ impl AutomationExecutor {
             started_at,
             completed_at: Some(completed_at),
             duration_ms: Some(duration.as_millis() as i32),
+            logs: if logs.is_empty() { None } else { Some(logs.clone()) },
         };
 
         if let Err(e) = self.automation_storage.log_execution(execution).await {
@@ -235,6 +284,7 @@ impl AutomationExecutor {
                 automation_name = %automation.name,
                 execution_id = %execution_id,
                 duration_ms = duration.as_millis() as u64,
+                log_count = logs.len(),
                 "Automation execution completed successfully"
             );
         } else {
@@ -244,6 +294,7 @@ impl AutomationExecutor {
                 execution_id = %execution_id,
                 error = ?error,
                 duration_ms = duration.as_millis() as u64,
+                log_count = logs.len(),
                 "Automation execution failed"
             );
         }
@@ -253,17 +304,18 @@ impl AutomationExecutor {
             success,
             output,
             error,
+            logs,
             duration,
         }
     }
 
-    /// Get the JSC runtime pool size
+    /// Get the Engine pool size
     pub fn pool_size(&self) -> usize {
-        self.runtime_pool.pool_size()
+        self.engine.pool_size()
     }
 
-    /// Force garbage collection on all runtime instances
-    pub fn gc(&self) {
-        self.runtime_pool.gc_all();
+    /// Get engine statistics
+    pub fn stats(&self) -> otter_runtime::EngineStatsSnapshot {
+        self.engine.stats().snapshot()
     }
 }

@@ -1,0 +1,29 @@
+.container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.header {
+  flex-shrink: 0;
+}
+
+.editorContainer {
+  flex: 1;
+  min-height: 200px;
+  overflow: hidden;
+}
+
+.bottomPanel {
+  flex-shrink: 0;
+  height: 320px;
+  display: flex;
+  flex-direction: column;
+}
+
+.tabContent {
+  flex: 1;
+  overflow: auto;
+  min-height: 0;
+}
