@@ -32,6 +32,7 @@ FROM rust:1.92-slim-bookworm AS rust-builder
 
 # Install build dependencies including JavaScriptCore for bot automation
 RUN apt-get update && apt-get install -y \
+    g++ \
     pkg-config \
     libssl-dev \
     git \
@@ -65,6 +66,7 @@ FROM debian:bookworm-slim AS runtime
 # Install runtime dependencies including JavaScriptCore for bot automation
 RUN apt-get update && apt-get install -y \
     ca-certificates \
+    libstdc++6 \
     libssl3 \
     wget \
     # JSC runtime for bot automation
