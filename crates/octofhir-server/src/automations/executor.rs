@@ -4,7 +4,7 @@
 //! and executes automations with proper context injection.
 
 use octofhir_storage::FhirStorage;
-use otter_runtime::{Engine, EngineBuilder, EngineHandle, set_net_permission_checker};
+// use otter_runtime::{Engine, EngineBuilder, EngineHandle, set_net_permission_checker};
 use serde_json::json;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -60,6 +60,7 @@ pub struct ExecutionResult {
 
 /// Automation executor manages the otter Engine and executes automations
 pub struct AutomationExecutor {
+    /*
     engine_handle: EngineHandle,
     automation_storage: Arc<dyn AutomationStorage>,
     #[allow(dead_code)]
@@ -67,15 +68,19 @@ pub struct AutomationExecutor {
     // Keep Engine alive
     #[allow(dead_code)]
     engine: Engine,
+    */
+    automation_storage: Arc<dyn AutomationStorage>,
+    config: AutomationExecutorConfig,
 }
 
 impl AutomationExecutor {
     /// Create a new automation executor
     pub fn new(
-        storage: Arc<dyn FhirStorage>,
+        _storage: Arc<dyn FhirStorage>,
         automation_storage: Arc<dyn AutomationStorage>,
         config: AutomationExecutorConfig,
     ) -> Result<Self, String> {
+        /*
         let handle = Handle::current();
 
         // Enable network access for built-in fetch() in automations
@@ -108,12 +113,13 @@ impl AutomationExecutor {
             timeout_ms = config.default_timeout_ms,
             "Automation executor initialized with otter Engine"
         );
+        */
 
         Ok(Self {
-            engine_handle,
+            // engine_handle,
             automation_storage,
             config,
-            engine,
+            // engine,
         })
     }
 
@@ -215,6 +221,7 @@ impl AutomationExecutor {
 "#
         );
 
+        /*
         // Execute using async EngineHandle
         let result = self.engine_handle.eval(&wrapped_code).await;
 
@@ -250,6 +257,10 @@ impl AutomationExecutor {
             }
             Err(e) => (false, None, Some(e.to_string()), Vec::new()),
         };
+        */
+        let (success, output, error, logs) = (false, None, Some("Automation disabled".to_string()), Vec::new());
+        let duration = start.elapsed();
+        let completed_at = OffsetDateTime::now_utc();
 
         // Log execution completion
         let status = if success {
@@ -311,11 +322,14 @@ impl AutomationExecutor {
 
     /// Get the Engine pool size
     pub fn pool_size(&self) -> usize {
-        self.engine.pool_size()
+        // self.engine.pool_size()
+        0
     }
 
     /// Get engine statistics
+    /*
     pub fn stats(&self) -> otter_runtime::EngineStatsSnapshot {
         self.engine.stats().snapshot()
     }
+    */
 }

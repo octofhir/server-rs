@@ -3,7 +3,7 @@ pub mod app_platform;
 pub mod async_jobs;
 pub mod audit;
 pub mod bootstrap;
-pub mod automations;
+// pub mod automations;
 pub mod cache;
 pub mod canonical;
 pub mod compartments;

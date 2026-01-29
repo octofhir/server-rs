@@ -34,7 +34,7 @@ octofhir-auth-postgres = { path = "../octofhir-auth-postgres" }
 octofhir-notifications = { path = "../octofhir-notifications" }
 octofhir-canonical-manager = { workspace = true }
 octofhir-graphql = { path = "../octofhir-graphql" }
-otter-runtime = "0.1"
+# otter-runtime = "0.1"
 octofhir-sof = { path = "../octofhir-sof" }
 async-trait = { workspace = true }
 num_cpus = "1.16"
@@ -143,7 +143,7 @@ mimalloc = { version = "0.1", default-features = false, optional = true }
 base64 = "0.22.1"
 
 # Cron scheduling for automation
-croner = "2.0"
+# croner = "2.0"
 
 # Package extraction for Implementation Guide uploads
 tar = "0.4"

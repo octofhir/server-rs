@@ -142,8 +142,7 @@ pub struct AppStateInner {
     /// Terminology provider for $expand, $validate-code, $subsumes, $translate, $lookup
     /// This is the HybridTerminologyProvider with local + cached remote support
     pub terminology_provider: Option<Arc<dyn TerminologyProvider>>,
-    /// Automation state for JavaScript automations
-    pub automation_state: Option<crate::automations::AutomationState>,
+    // pub automation_state: Option<crate::automations::AutomationState>,
 }
 
 // =============================================================================
@@ -208,6 +207,7 @@ impl FromRef<AppState> for BasicAuthState {
     }
 }
 
+/*
 impl FromRef<AppState> for crate::automations::AutomationState {
     fn from_ref(state: &AppState) -> Self {
         state
@@ -216,6 +216,7 @@ impl FromRef<AppState> for crate::automations::AutomationState {
             .expect("AutomationState not initialized in AppState")
     }
 }
+*/
 
 pub struct OctofhirServer {
     addr: SocketAddr,
@@ -1373,58 +1374,6 @@ pub async fn build_app(
     // Store shutdown handle in subscription state (keeps it alive for server lifetime)
     subscription_state.delivery_shutdown = Some(delivery_shutdown);
 
-    // AutomationDispatcherHook: executes JavaScript automations on resource events
-    // CronScheduler: executes automations on cron schedules
-    let automation_state = {
-        use crate::automations::{
-            AutomationDispatcherHook, AutomationExecutor, AutomationExecutorConfig,
-            AutomationState, CronScheduler, PostgresAutomationStorage, SchedulerConfig,
-        };
-
-        // Create automation storage
-        let automation_storage =
-            Arc::new(PostgresAutomationStorage::new(db_pool.as_ref().clone()));
-
-        // Create automation executor
-        let executor_config = AutomationExecutorConfig::default();
-        match AutomationExecutor::new(storage.clone(), automation_storage.clone(), executor_config)
-        {
-            Ok(executor) => {
-                let executor = Arc::new(executor);
-
-                // Create and register the dispatcher hook for resource events
-                let dispatcher_hook = AutomationDispatcherHook::new(
-                    automation_storage.clone(),
-                    executor.clone(),
-                    fhirpath_engine.clone(),
-                );
-                hook_registry
-                    .register_resource(Arc::new(dispatcher_hook))
-                    .await;
-                tracing::info!("Automation dispatcher hook registered with FHIRPath support");
-
-                // Start the cron scheduler for scheduled automation execution
-                let scheduler = CronScheduler::new(
-                    automation_storage.clone(),
-                    executor.clone(),
-                    SchedulerConfig::default(),
-                );
-                let _cron_shutdown = scheduler.start();
-                tracing::info!("Automation cron scheduler started");
-
-                // Create automation state for handlers
-                Some(AutomationState {
-                    automation_storage,
-                    executor,
-                })
-            }
-            Err(e) => {
-                tracing::warn!(error = %e, "Failed to initialize automation executor, automation disabled");
-                None
-            }
-        }
-    };
-
     // RedisPublishHook + RedisEventSync: multi-instance event synchronization
     // When Redis is enabled:
     // - RedisPublishHook publishes local events to Redis for other instances
@@ -1518,7 +1467,7 @@ pub async fn build_app(
         package_store,
         subscription_state,
         terminology_provider,
-        automation_state,
+        // automation_state,
     }));
 
     // Configure async job executor to handle bulk export and ViewDefinition export jobs
@@ -1696,12 +1645,15 @@ fn build_router(state: AppState, body_limit: usize) -> Router {
         .nest("/api", {
             let api_router = Router::new().merge(crate::routes::canonical::canonical_routes());
 
+            /*
             // Add automation routes only if automation is enabled
             let api_router = if state.automation_state.is_some() {
                 api_router.merge(crate::automations::automation_routes())
             } else {
                 api_router
             };
+            */
+            let api_router = api_router;
 
             api_router
                 // Allow larger uploads (50MB) for canonical package upload
