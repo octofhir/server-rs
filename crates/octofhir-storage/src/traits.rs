@@ -6,7 +6,9 @@ use async_trait::async_trait;
 use serde_json::Value;
 
 use crate::error::StorageError;
-use crate::types::{HistoryParams, HistoryResult, SearchParams, SearchResult, StoredResource};
+use crate::types::{
+    HistoryParams, HistoryResult, RawStoredResource, SearchParams, SearchResult, StoredResource,
+};
 
 /// The main storage trait that all FHIR storage backends must implement.
 ///
@@ -52,6 +54,37 @@ pub trait FhirStorage: Send + Sync {
         resource_type: &str,
         id: &str,
     ) -> Result<Option<StoredResource>, StorageError>;
+
+    /// Reads a resource as raw JSON string, avoiding serde_json::Value round-trip.
+    ///
+    /// This is an optimized read path that returns the resource JSON as a raw string
+    /// directly from PostgreSQL (via `resource::text`), skipping the JSONB → Value
+    /// deserialization and Value → JSON serialization steps.
+    ///
+    /// Default implementation falls back to `read()` and serializes the Value.
+    async fn read_raw(
+        &self,
+        resource_type: &str,
+        id: &str,
+    ) -> Result<Option<RawStoredResource>, StorageError> {
+        match self.read(resource_type, id).await? {
+            Some(stored) => {
+                let resource_json =
+                    serde_json::to_string(&stored.resource).map_err(|e| {
+                        StorageError::internal(format!("Failed to serialize resource: {e}"))
+                    })?;
+                Ok(Some(RawStoredResource {
+                    id: stored.id,
+                    version_id: stored.version_id,
+                    resource_type: stored.resource_type,
+                    resource_json,
+                    last_updated: stored.last_updated,
+                    created_at: stored.created_at,
+                }))
+            }
+            None => Ok(None),
+        }
+    }
 
     /// Updates an existing resource.
     ///

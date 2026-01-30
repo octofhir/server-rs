@@ -11,7 +11,7 @@ use sqlx_postgres::{PgPool, PgTransaction};
 use time::OffsetDateTime;
 use uuid::Uuid;
 
-use octofhir_storage::{StorageError, StoredResource};
+use octofhir_storage::{RawStoredResource, StorageError, StoredResource};
 
 use crate::schema::SchemaManager;
 
@@ -73,13 +73,10 @@ pub async fn create(
 
     let now = Utc::now();
 
-    // Build resource with id (meta.versionId will be set after we get txid)
-    let mut resource = resource.clone();
-    resource["id"] = serde_json::json!(id);
-
     // Insert into table with CTE for transaction creation (single query instead of two)
     // This combines the transaction creation and resource insertion atomically
-    // We use jsonb_set to add meta.versionId and meta.lastUpdated in the SQL
+    // We use jsonb_set to add id, meta.versionId and meta.lastUpdated in the SQL
+    // This avoids cloning the entire resource JSON just to inject the id field
     let table = SchemaManager::table_name(resource_type);
     let sql = format!(
         r#"WITH new_tx AS (
@@ -92,7 +89,10 @@ pub async fn create(
                $2,
                $2,
                jsonb_set(
-                   jsonb_set($3::jsonb, '{{meta}}', '{{}}'::jsonb, true),
+                   jsonb_set(
+                       jsonb_set($3::jsonb, '{{id}}', to_jsonb($1::text)),
+                       '{{meta}}', '{{}}'::jsonb, true
+                   ),
                    '{{meta}}',
                    jsonb_build_object(
                        'versionId', new_tx.txid::text,
@@ -108,7 +108,7 @@ pub async fn create(
     let row: (String, i64, DateTime<Utc>, DateTime<Utc>, Value) = query_as(&sql)
         .bind(&id)
         .bind(now)
-        .bind(&resource)
+        .bind(resource)
         .fetch_one(pool)
         .await
         .map_err(|e| {
@@ -205,6 +205,58 @@ pub async fn read(
     }
 }
 
+/// Reads a FHIR resource as raw JSON string, avoiding serde_json::Value round-trip.
+///
+/// Uses `resource::text` to get the JSON directly as a string from PostgreSQL,
+/// skipping JSONB → serde_json::Value deserialization entirely.
+/// The resource JSON in the DB already contains correct meta (versionId, lastUpdated)
+/// from create/update operations.
+pub async fn read_raw(
+    pool: &PgPool,
+    resource_type: &str,
+    id: &str,
+) -> Result<Option<RawStoredResource>, StorageError> {
+    let table = SchemaManager::table_name(resource_type);
+
+    let sql = format!(
+        r#"SELECT id, txid, created_at, updated_at, resource::text, status::text
+           FROM "{table}"
+           WHERE id = $1"#
+    );
+
+    let row: Option<(String, i64, DateTime<Utc>, DateTime<Utc>, String, String)> = query_as(&sql)
+        .bind(id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| {
+            if e.to_string().contains("does not exist") {
+                return StorageError::internal(format!("Table does not exist: {e}"));
+            }
+            StorageError::internal(format!("Failed to read resource: {e}"))
+        })?;
+
+    match row {
+        Some((row_id, txid, created_at, updated_at, resource_json, status)) => {
+            if status == "deleted" {
+                return Err(StorageError::deleted(resource_type, id));
+            }
+
+            let created_at_time = chrono_to_time(created_at);
+            let updated_at_time = chrono_to_time(updated_at);
+
+            Ok(Some(RawStoredResource {
+                id: row_id,
+                version_id: txid.to_string(),
+                resource_type: resource_type.to_string(),
+                resource_json,
+                last_updated: updated_at_time,
+                created_at: created_at_time,
+            }))
+        }
+        None => Ok(None),
+    }
+}
+
 /// Updates an existing FHIR resource.
 ///
 /// If `if_match` is provided, the update will only succeed if the current
@@ -231,9 +283,6 @@ pub async fn update(
 
     let table = SchemaManager::table_name(resource_type);
     let now = Utc::now();
-
-    // Clone resource for the update (meta is set in SQL)
-    let resource = resource.clone();
 
     // Single query with CTE: create transaction + update resource + set meta atomically
     // Version check is done in the WHERE clause if if_match is provided

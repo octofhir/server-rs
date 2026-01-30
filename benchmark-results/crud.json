@@ -1,39 +1,39 @@
 {
-  "timestamp": "2026-01-11T17:32:58.948Z",
+  "timestamp": "2026-01-30T12:19:41.581Z",
   "test": "crud",
   "metrics": {
     "create": {
-      "count": 0,
+      "count": 120120,
       "p50": 0,
-      "p95": 14.499999999999998,
+      "p95": 54,
       "p99": 0
     },
     "read": {
-      "count": 0,
+      "count": 120120,
       "p50": 0,
-      "p95": 0,
+      "p95": 31,
       "p99": 0
     },
     "update": {
-      "count": 0,
+      "count": 120120,
       "p50": 0,
-      "p95": 0,
+      "p95": 84,
       "p99": 0
     },
     "delete": {
-      "count": 0,
+      "count": 120120,
       "p50": 0,
-      "p95": 0,
+      "p95": 86,
       "p99": 0
     },
     "search": {
       "p50": 0,
-      "p95": 0,
+      "p95": 52,
       "p99": 0
     },
     "overall": {
-      "success_rate": 0,
-      "requests_per_second": 4.600651912375984
+      "success_rate": 1,
+      "requests_per_second": 2820.975626522147
     }
   }
 }

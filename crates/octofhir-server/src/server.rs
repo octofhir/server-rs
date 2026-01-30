@@ -1507,7 +1507,7 @@ pub async fn build_app(
     state.async_job_manager.set_executor(executor);
     tracing::info!("Async job executor configured for bulk export and ViewDefinition export");
 
-    Ok(build_router(state, body_limit))
+    Ok(build_router(state, body_limit, cfg.server.compression))
 }
 
 /// Creates routes for internal administrative resources.
@@ -1535,7 +1535,7 @@ fn internal_resource_routes() -> Router<AppState> {
         )
 }
 
-fn build_router(state: AppState, body_limit: usize) -> Router {
+fn build_router(state: AppState, body_limit: usize, compression: bool) -> Router {
     // Build OAuth routes if auth is enabled (these are merged AFTER middleware, as they're public)
     let oauth_routes = build_oauth_routes(&state);
 
@@ -1814,9 +1814,14 @@ fn build_router(state: AppState, body_limit: usize) -> Router {
         ));
 
     // Apply dynamic CORS middleware that validates origins
+    let router = router
+        .layer(middleware::from_fn(app_middleware::content_negotiation));
+    let router = if compression {
+        router.layer(CompressionLayer::new())
+    } else {
+        router
+    };
     let router: Router = router
-        .layer(middleware::from_fn(app_middleware::content_negotiation))
-        .layer(CompressionLayer::new())
         .layer(middleware::from_fn(app_middleware::dynamic_cors_middleware))
         .layer(
             TraceLayer::new_for_http()

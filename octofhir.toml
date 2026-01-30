@@ -9,6 +9,7 @@ read_timeout_ms = 15000
 write_timeout_ms = 15000
 # Max request body size in bytes (1 MiB)
 body_limit_bytes = 1048576
+compression = true
 
 [storage]
 # PostgreSQL storage configuration (required)
@@ -30,7 +31,7 @@ password = "postgres"
 database = "octofhir"
 
 # Connection pool settings
-pool_size = 20
+pool_size = 50
 connect_timeout_ms = 10000
 idle_timeout_ms = 60000
 

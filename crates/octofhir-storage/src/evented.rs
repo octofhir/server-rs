@@ -126,6 +126,14 @@ impl<S: FhirStorage> FhirStorage for EventedStorage<S> {
         self.inner.read(resource_type, id).await
     }
 
+    async fn read_raw(
+        &self,
+        resource_type: &str,
+        id: &str,
+    ) -> Result<Option<crate::RawStoredResource>, StorageError> {
+        self.inner.read_raw(resource_type, id).await
+    }
+
     async fn update(
         &self,
         resource: &Value,

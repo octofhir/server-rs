@@ -146,6 +146,14 @@ impl FhirStorage for PostgresStorage {
         queries::read(&self.pool, resource_type, id).await
     }
 
+    async fn read_raw(
+        &self,
+        resource_type: &str,
+        id: &str,
+    ) -> Result<Option<octofhir_storage::RawStoredResource>, StorageError> {
+        queries::read_raw(&self.pool, resource_type, id).await
+    }
+
     async fn update(
         &self,
         resource: &Value,

@@ -177,6 +177,8 @@ pub struct ServerConfig {
     pub write_timeout_ms: u32,
     #[serde(default = "default_body_limit")]
     pub body_limit_bytes: usize,
+    #[serde(default)]
+    pub compression: bool,
 }
 
 fn default_host() -> String {
@@ -204,6 +206,7 @@ impl Default for ServerConfig {
             read_timeout_ms: default_read_timeout_ms(),
             write_timeout_ms: default_write_timeout_ms(),
             body_limit_bytes: default_body_limit(),
+            compression: false,
         }
     }
 }

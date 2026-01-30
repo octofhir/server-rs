@@ -107,6 +107,19 @@ audit:
 flame:
     CARGO_PROFILE_RELEASE_DEBUG=true cargo flamegraph --release --bin octofhir-server -o ./flamegraph.svg --post-process 'head -200000'
 
+# Build release binary with debug symbols (bench profile)
+profile-build:
+    cargo build --profile bench --bin octofhir-server
+
+# Run server with macOS sample profiler (120s capture). Run k6 benchmarks in another terminal.
+profile:
+    @echo "Starting server under profiler (120s capture)..."
+    @echo "Run 'just bench-crud' in another terminal to generate load"
+    target/release/octofhir-server &
+    @sleep 5
+    sample octofhir-server 120 -f profile_output.txt
+    @echo "Profile saved to profile_output.txt"
+
 # k6 variables
 K6_BASE_URL := "http://localhost:8888/fhir"
 K6_AUTH_USER := "admin"

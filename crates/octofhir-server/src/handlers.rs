@@ -844,15 +844,17 @@ pub async fn read_resource(
     State(state): State<crate::server::AppState>,
     Path((resource_type, id)): Path<(String, String)>,
     headers: HeaderMap,
-) -> Result<impl IntoResponse, ApiError> {
-    match state.storage.read(&resource_type, &id).await {
+) -> Result<Response, ApiError> {
+    match state.storage.read_raw(&resource_type, &id).await {
         Ok(Some(stored)) => {
-            // Get version_id for ETag
             let version_id = &stored.version_id;
 
             // Check If-None-Match (conditional read - return 304 if version matches)
             if octofhir_api::check_if_none_match(&headers, version_id) {
-                return Ok((StatusCode::NOT_MODIFIED, HeaderMap::new(), Json(json!({}))));
+                return Ok(Response::builder()
+                    .status(StatusCode::NOT_MODIFIED)
+                    .body(Body::empty())
+                    .unwrap());
             }
 
             // Check If-Modified-Since (conditional read)
@@ -863,35 +865,33 @@ pub async fn read_resource(
                 let last_updated_ts = std::time::UNIX_EPOCH
                     + std::time::Duration::from_secs(stored.last_updated.unix_timestamp() as u64);
                 if last_updated_ts <= since {
-                    return Ok((StatusCode::NOT_MODIFIED, HeaderMap::new(), Json(json!({}))));
+                    return Ok(Response::builder()
+                        .status(StatusCode::NOT_MODIFIED)
+                        .body(Body::empty())
+                        .unwrap());
                 }
             }
 
-            // Build response headers
-            let mut response_headers = HeaderMap::new();
+            // Build response with raw JSON body (no serde_json::Value round-trip)
+            let mut builder = Response::builder()
+                .status(StatusCode::OK)
+                .header(
+                    header::CONTENT_TYPE,
+                    "application/fhir+json; charset=utf-8",
+                );
 
             // ETag: W/"version_id"
             let etag = format!("W/\"{}\"", version_id);
-            if let Ok(val) = header::HeaderValue::from_str(&etag) {
-                response_headers.insert(header::ETAG, val);
-            }
+            builder = builder.header(header::ETAG, etag);
 
             // Last-Modified: HTTP date format
             let last_modified = httpdate::fmt_http_date(
                 std::time::UNIX_EPOCH
                     + std::time::Duration::from_secs(stored.last_updated.unix_timestamp() as u64),
             );
-            if let Ok(val) = header::HeaderValue::from_str(&last_modified) {
-                response_headers.insert(header::LAST_MODIFIED, val);
-            }
+            builder = builder.header(header::LAST_MODIFIED, last_modified);
 
-            // Content-Type
-            response_headers.insert(
-                header::CONTENT_TYPE,
-                header::HeaderValue::from_static("application/fhir+json; charset=utf-8"),
-            );
-
-            Ok((StatusCode::OK, response_headers, Json(stored.resource)))
+            Ok(builder.body(Body::from(stored.resource_json)).unwrap())
         }
         Ok(None) => Err(ApiError::not_found(format!(
             "{resource_type} with id '{id}' not found"
