@@ -43,3 +43,4 @@ config/local.toml
 *.pem
 k6-private
 .k6-secret
+octofhir.toml

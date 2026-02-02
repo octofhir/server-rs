@@ -32,6 +32,7 @@ octofhir-search = { path = "../octofhir-search" }
 octofhir-auth = { path = "../octofhir-auth" }
 octofhir-auth-postgres = { path = "../octofhir-auth-postgres" }
 octofhir-notifications = { path = "../octofhir-notifications" }
+octofhir-cql-service = { path = "../octofhir-cql-service" }
 octofhir-canonical-manager = { workspace = true }
 octofhir-graphql = { path = "../octofhir-graphql" }
 # otter-runtime = "0.1"

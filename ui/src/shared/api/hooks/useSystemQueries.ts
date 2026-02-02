@@ -7,6 +7,7 @@ export const systemKeys = {
 	all: ["system"] as const,
 	health: () => [...systemKeys.all, "health"] as const,
 	buildInfo: () => [...systemKeys.all, "buildInfo"] as const,
+	settings: () => [...systemKeys.all, "settings"] as const,
 	resourceTypes: () => [...systemKeys.all, "resourceTypes"] as const,
 	resourceTypesCategorized: () => [...systemKeys.all, "resourceTypesCategorized"] as const,
 	jsonSchema: (resourceType: string) => [...systemKeys.all, "jsonSchema", resourceType] as const,
@@ -39,6 +40,19 @@ export function useBuildInfo() {
 		queryFn: () => serverApi.getBuildInfo(),
 		staleTime: 1000 * 60 * 60, // 1 hour
 		gcTime: 1000 * 60 * 60 * 24, // 24 hours
+	});
+}
+
+/**
+ * Hook to fetch server settings and feature flags.
+ * This data changes rarely, so we cache it for a long time.
+ */
+export function useSettings() {
+	return useQuery({
+		queryKey: systemKeys.settings(),
+		queryFn: () => serverApi.getSettings(),
+		staleTime: 1000 * 60 * 30, // 30 minutes
+		gcTime: 1000 * 60 * 60, // 1 hour
 	});
 }
 

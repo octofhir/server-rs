@@ -412,13 +412,21 @@ impl LspFormatterConfig {
 
         // Check if properties are empty
         if options.properties.is_empty() {
+            tracing::debug!("[formatter] no properties in formatting options, using default");
             return LspFormatterConfig::default();
         }
+
+        tracing::debug!(
+            "[formatter] received {} properties: {:?}",
+            options.properties.len(),
+            options.properties.keys().collect::<Vec<_>>()
+        );
 
         // Check if there's a "style" key
         if let Some(style_prop) = options.properties.get("style")
             && let FormattingProperty::String(style_str) = style_prop
         {
+            tracing::debug!("[formatter] style = {style_str}");
             match style_str.as_str() {
                 "compact" => return LspFormatterConfig::Compact,
                 "pg_formatter" => {
@@ -429,10 +437,14 @@ impl LspFormatterConfig {
                         .map(|(k, v)| (k.clone(), prop_to_json(v)))
                         .collect();
 
-                    if let Ok(config) = serde_json::from_value(serde_json::Value::Object(json_obj))
+                    if let Ok(config) =
+                        serde_json::from_value(serde_json::Value::Object(json_obj.clone()))
                     {
                         return LspFormatterConfig::PgFormatter(config);
                     }
+                    tracing::warn!(
+                        "[formatter] failed to parse pg_formatter config from: {json_obj:?}"
+                    );
                     return LspFormatterConfig::PgFormatter(PgFormatterStyleConfig::default());
                 }
                 "sql_style" => {
@@ -443,13 +455,19 @@ impl LspFormatterConfig {
                         .map(|(k, v)| (k.clone(), prop_to_json(v)))
                         .collect();
 
-                    if let Ok(config) = serde_json::from_value(serde_json::Value::Object(json_obj))
+                    if let Ok(config) =
+                        serde_json::from_value(serde_json::Value::Object(json_obj.clone()))
                     {
                         return LspFormatterConfig::SqlStyle(config);
                     }
+                    tracing::warn!(
+                        "[formatter] failed to parse sql_style config from: {json_obj:?}"
+                    );
                     return LspFormatterConfig::SqlStyle(SqlStyleConfig::default());
                 }
-                _ => {}
+                _ => {
+                    tracing::warn!("[formatter] unknown style: {style_str}");
+                }
             }
         }
 

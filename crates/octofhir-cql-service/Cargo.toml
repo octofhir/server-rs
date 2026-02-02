@@ -1,0 +1,65 @@
+[package]
+name = "octofhir-cql-service"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+# Workspace CQL dependencies
+octofhir-cql = { workspace = true }
+octofhir-cql-types = { workspace = true }
+octofhir-cql-eval = { workspace = true }
+octofhir-cql-model = { workspace = true }
+
+# Workspace octofhir dependencies
+octofhir-core = { workspace = true }
+octofhir-storage = { path = "../octofhir-storage" }
+octofhir-fhirpath = { workspace = true }
+octofhir-fhir-model = { workspace = true }
+
+# Async runtime and utilities
+tokio = { workspace = true }
+async-trait = { workspace = true }
+futures-util = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+indexmap = { workspace = true }
+
+# Decimal arithmetic (for CQL Decimal type) - matches CQL types
+bigdecimal = "0.4"
+num-traits = "0.2"
+
+# Error handling
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+
+# Caching
+dashmap = { workspace = true }
+arc-swap = { workspace = true }
+
+# Redis (optional L2 cache)
+deadpool-redis = { version = "0.19", optional = true }
+redis = { version = "0.27", optional = true, features = ["tokio-comp", "connection-manager"] }
+
+# Base64 encoding/decoding for CQL content
+base64 = "0.22"
+
+# Logging
+tracing = { workspace = true }
+
+# Time handling
+time = { workspace = true }
+
+[features]
+default = []
+redis-cache = ["deadpool-redis", "redis"]
+
+[dev-dependencies]
+tokio-test = { workspace = true }
+tempfile = { workspace = true }

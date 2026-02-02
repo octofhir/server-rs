@@ -15,6 +15,7 @@ import type {
   PackageResourcesResponse,
   PackageSearchResponse,
   RestConsoleResponse,
+  ServerSettings,
   SqlResponse,
   SqlValue,
 } from "./types";
@@ -129,6 +130,11 @@ class ServerApiClient {
 
   async getBuildInfo(): Promise<BuildInfo> {
     const response = await this.request<BuildInfo>("/api/build-info");
+    return response.data;
+  }
+
+  async getSettings(): Promise<ServerSettings> {
+    const response = await this.request<ServerSettings>("/api/settings");
     return response.data;
   }
 

@@ -795,10 +795,14 @@ class PgLspConnection {
 						};
 
 						// Add custom formatter config if set
+						// Filter out null/undefined values since LSP FormattingProperty
+						// only supports bool, number, and string
 						if (currentFormatterConfig) {
-							// Spread the formatter config properties into options
-							// The server will extract these based on the 'style' field
-							Object.assign(options, currentFormatterConfig);
+							for (const [key, value] of Object.entries(currentFormatterConfig)) {
+								if (value !== null && value !== undefined) {
+									options[key] = value;
+								}
+							}
 						}
 
 						const params = {

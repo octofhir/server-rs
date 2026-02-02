@@ -12,11 +12,9 @@ import {
 	Text,
 } from "@mantine/core";
 import { IconAlertCircle, IconCheck, IconX } from "@tabler/icons-react";
-import { useUnit } from "effector-react";
 import { useNavigate } from "react-router-dom";
 import { JsonViewer } from "@/shared/ui-react/JsonViewer";
 import type { FhirBundle, FhirResource } from "@/shared/api";
-import { buildResourceTabPath, openTabForPath } from "@/shared/state/appTabsStore";
 import type { RequestResponse } from "../hooks/useSendConsoleRequest";
 
 interface ResponseViewerProps {
@@ -53,8 +51,6 @@ function isFhirBundle(body: unknown): body is FhirBundle {
 }
 
 export function ResponseViewer({ response, isLoading }: ResponseViewerProps) {
-	// Hooks must be called unconditionally at the top
-	const openTabForPathEvent = useUnit(openTabForPath);
 	const navigate = useNavigate();
 
 	if (isLoading) {
@@ -90,9 +86,7 @@ export function ResponseViewer({ response, isLoading }: ResponseViewerProps) {
 	const defaultTab = hasResultEntries ? "results" : "body";
 
 	const handleOpenResource = (resourceType: string, resourceId: string) => {
-		const path = buildResourceTabPath(resourceType, resourceId);
-		openTabForPathEvent({ pathname: path, titleOverride: `${resourceType}/${resourceId}` });
-		navigate(path);
+		navigate(`/resources/${resourceType}/${resourceId}`);
 	};
 
 	return (

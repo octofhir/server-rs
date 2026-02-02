@@ -42,7 +42,9 @@
 
 pub mod auth_session;
 pub mod bulk;
+pub mod cql;
 pub mod definition;
+pub mod evaluate_measure;
 pub mod everything;
 pub mod fhirpath;
 pub mod handler;
@@ -62,7 +64,9 @@ pub use bulk::{
     BulkExportJob, BulkExportLevel, BulkExportManifest, BulkExportStatus, ExportOperation,
     cleanup_expired_exports, execute_bulk_export,
 };
+pub use cql::CqlOperation;
 pub use definition::{OperationDefinition, OperationKind, OperationParameter, ParameterUse};
+pub use evaluate_measure::EvaluateMeasureOperation;
 pub use everything::EverythingOperation;
 pub use fhirpath::FhirPathOperation;
 pub use handler::{DynOperationHandler, OperationError, OperationHandler};
@@ -133,6 +137,7 @@ pub fn register_core_operations_with_config(
         model_provider,
         bulk_export_config,
         crate::config::SqlOnFhirConfig::default(),
+        false, // CQL disabled by default
     )
 }
 
@@ -142,6 +147,7 @@ pub fn register_core_operations_full(
     model_provider: SharedModelProvider,
     bulk_export_config: crate::config::BulkExportConfig,
     sql_on_fhir_config: crate::config::SqlOnFhirConfig,
+    cql_enabled: bool,
 ) -> HashMap<String, DynOperationHandler> {
     let mut handlers: HashMap<String, DynOperationHandler> = HashMap::new();
 
@@ -230,6 +236,19 @@ pub fn register_core_operations_full(
         "fhirpath".to_string(),
         Arc::new(FhirPathOperation::new()),
     );
+
+    // CQL operations ($cql, $evaluate-measure) - only if enabled
+    if cql_enabled {
+        tracing::info!("Registering CQL operations (cql_enabled=true)");
+        handlers.insert("cql".to_string(), Arc::new(CqlOperation::new()));
+        handlers.insert(
+            "evaluate-measure".to_string(),
+            Arc::new(EvaluateMeasureOperation::new()),
+        );
+        tracing::info!("CQL operations registered: cql, evaluate-measure");
+    } else {
+        tracing::info!("CQL operations NOT registered (cql_enabled=false)");
+    }
 
     handlers
 }

@@ -11,6 +11,20 @@ export interface BuildInfo {
   uiVersion?: string;
 }
 
+export interface ServerFeatures {
+  sqlOnFhir: boolean;
+  graphql: boolean;
+  bulkExport: boolean;
+  dbConsole: boolean;
+  auth: boolean;
+  cql: boolean;
+}
+
+export interface ServerSettings {
+  fhirVersion: string;
+  features: ServerFeatures;
+}
+
 // Resource type categorization
 export interface CategorizedResourceType {
   name: string;

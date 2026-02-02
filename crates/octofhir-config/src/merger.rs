@@ -69,6 +69,8 @@ pub struct PartialConfig {
     pub cache: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub features: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cql: Option<Value>,
 }
 
 impl PartialConfig {
@@ -104,6 +106,7 @@ impl PartialConfig {
             "redis" => self.redis.is_some(),
             "cache" => self.cache.is_some(),
             "features" => self.features.is_some(),
+            "cql" => self.cql.is_some(),
             _ => false,
         }
     }
@@ -124,6 +127,7 @@ impl PartialConfig {
             "redis" => self.redis.as_ref(),
             "cache" => self.cache.as_ref(),
             "features" => self.features.as_ref(),
+            "cql" => self.cql.as_ref(),
             _ => None,
         }
     }
@@ -144,6 +148,7 @@ impl PartialConfig {
             "redis" => self.redis = Some(value),
             "cache" => self.cache = Some(value),
             "features" => self.features = Some(value),
+            "cql" => self.cql = Some(value),
             _ => {}
         }
     }

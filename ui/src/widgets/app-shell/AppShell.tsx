@@ -1,4 +1,3 @@
-import { useEffect, useState } from "react";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
 import {
 	AppShell as MantineAppShell,
@@ -15,7 +14,6 @@ import {
 	Box,
 	Stack,
 	Divider,
-	Menu,
 	ErrorBoundary,
 } from "@/shared/ui";
 import { useDisclosure } from "@mantine/hooks";
@@ -42,18 +40,7 @@ import {
 	IconDevices,
 	IconRobot,
 } from "@tabler/icons-react";
-import { useUnit } from "effector-react";
-import { useHealth, useAuth, useBuildInfo } from "@/shared/api/hooks";
-import {
-	$tabs,
-	openTab,
-	openNewTabForPath,
-	openTabForPath,
-	renameTab,
-	resolveTabFromPath,
-	togglePinTab,
-} from "@/shared/state/appTabsStore";
-import { AppTabsBar } from "./AppTabsBar";
+import { useHealth, useAuth, useBuildInfo, useSettings } from "@/shared/api/hooks";
 
 interface NavItem {
 	label: string;
@@ -180,6 +167,12 @@ const toolsNavigation: NavItem[] = [
 		icon: IconTerminal,
 	},
 	{
+		label: "CQL Console",
+		path: "/cql",
+		description: "Clinical Quality Language Evaluator",
+		icon: IconCode,
+	},
+	{
 		label: "ViewDefinition",
 		path: "/viewdefinition",
 		description: "SQL on FHIR ViewDefinition Editor",
@@ -246,36 +239,10 @@ export function AppShell() {
 	const navigate = useNavigate();
 	const { logout, user } = useAuth();
 	const { data: buildInfo } = useBuildInfo();
-	const {
-		tabs,
-		openTab: openTabEvent,
-		openTabForPath: openTabForPathEvent,
-		openNewTabForPath: openNewTabForPathEvent,
-		renameTab: renameTabEvent,
-		togglePinTab: togglePinTabEvent,
-	} = useUnit({
-		tabs: $tabs,
-		openTab,
-		openTabForPath,
-		openNewTabForPath,
-		renameTab,
-		togglePinTab,
-	});
-	const [menuState, setMenuState] = useState<{
-		x: number;
-		y: number;
-		item: NavItem;
-	} | null>(null);
+	const { data: settings } = useSettings();
 
-	useEffect(() => {
-		openTabForPathEvent({ pathname: location.pathname });
-	}, [location.pathname, openTabForPathEvent]);
-
-	useEffect(() => {
-		if (tabs.length === 0) {
-			openTabForPathEvent({ pathname: "/" });
-		}
-	}, [tabs.length, openTabForPathEvent]);
+	// Check if CQL feature is enabled
+	const cqlEnabled = settings?.features?.cql ?? false;
 
 	const isActive = (path: string) => {
 		if (path === "/") {
@@ -290,33 +257,32 @@ export function AppShell() {
 	};
 
 	const renderNavItems = (items: NavItem[]) =>
-		items.map((item) => (
-			<NavLink
-				key={item.path}
-				label={item.label}
-				leftSection={<item.icon size={14} stroke={1.5} />}
-				active={isActive(item.path)}
-				onClick={() => {
-					openTabForPathEvent({ pathname: item.path, titleOverride: item.label });
-					navigate(item.path);
-					close();
-				}}
-				onContextMenu={(event: React.MouseEvent) => {
-					event.preventDefault();
-					setMenuState({
-						x: event.clientX,
-						y: event.clientY,
-						item,
-					});
-				}}
-				variant="subtle"
-				styles={{
-					root: {
-						borderRadius: "var(--mantine-radius-sm)",
-						paddingTop: 4,
-						paddingBottom: 4,
-						minHeight: 28,
-						"&[data-active]": {
+		items
+			.filter((item) => {
+				// Hide CQL console if CQL feature is disabled
+				if (item.path === '/cql' && !cqlEnabled) {
+					return false;
+				}
+				return true;
+			})
+			.map((item) => (
+				<NavLink
+					key={item.path}
+					label={item.label}
+					leftSection={<item.icon size={14} stroke={1.5} />}
+					active={isActive(item.path)}
+					onClick={() => {
+						navigate(item.path);
+						close();
+					}}
+					variant="subtle"
+					styles={{
+						root: {
+							borderRadius: "var(--mantine-radius-sm)",
+							paddingTop: 4,
+							paddingBottom: 4,
+							minHeight: 28,
+							"&[data-active]": {
 							backgroundColor: "var(--app-surface-3)",
 							color: "var(--app-text-primary)",
 						},
@@ -336,62 +302,6 @@ export function AppShell() {
 				}}
 			/>
 		));
-
-	const handleMenuClose = () => setMenuState(null);
-
-	const handleOpenNewTab = () => {
-		if (!menuState) return;
-		openNewTabForPathEvent({
-			pathname: menuState.item.path,
-			titleOverride: menuState.item.label,
-		});
-		handleMenuClose();
-	};
-
-	const handleRenameTab = () => {
-		if (!menuState) return;
-		const normalized = menuState.item.path.replace(/\/+$/, "") || "/";
-		const resolved = resolveTabFromPath(normalized);
-		const candidate =
-			tabs.find((tab) => tab.path === normalized && !tab.customTitle) ??
-			(resolved?.groupKey
-				? tabs.find((tab) => tab.groupKey === resolved.groupKey && !tab.customTitle)
-				: undefined);
-		if (!candidate) {
-			if (!resolved) return;
-			openTabEvent(resolved);
-			const nextTitle = window.prompt("Rename tab", resolved.title);
-			if (nextTitle && nextTitle.trim()) {
-				renameTabEvent({ id: resolved.id, title: nextTitle.trim() });
-			}
-			handleMenuClose();
-			return;
-		}
-		const nextTitle = window.prompt("Rename tab", candidate.title);
-		if (nextTitle && nextTitle.trim()) {
-			renameTabEvent({ id: candidate.id, title: nextTitle.trim() });
-		}
-		handleMenuClose();
-	};
-
-	const handleTogglePin = () => {
-		if (!menuState) return;
-		const normalized = menuState.item.path.replace(/\/+$/, "") || "/";
-		const resolved = resolveTabFromPath(normalized);
-		const candidate =
-			tabs.find((tab) => tab.path === normalized && !tab.customTitle) ??
-			(resolved?.groupKey
-				? tabs.find((tab) => tab.groupKey === resolved.groupKey && !tab.customTitle)
-				: undefined);
-		if (candidate) {
-			togglePinTabEvent(candidate.id);
-		} else {
-			if (resolved) {
-				openTabEvent({ ...resolved, pinned: true });
-			}
-		}
-		handleMenuClose();
-	};
 
 	return (
 		<MantineAppShell
@@ -472,26 +382,6 @@ export function AppShell() {
 					transition: "all 0.2s ease",
 				}}
 			>
-				{menuState && (
-					<Menu opened onClose={handleMenuClose} withinPortal position="bottom-start">
-						<Menu.Target>
-							<Box
-								style={{
-									position: "fixed",
-									left: menuState.x,
-									top: menuState.y,
-									width: 1,
-									height: 1,
-								}}
-							/>
-						</Menu.Target>
-						<Menu.Dropdown style={{ borderRadius: "12px", border: "1px solid var(--app-border-subtle)" }}>
-							<Menu.Item leftSection={<IconCode size={14} />} onClick={handleOpenNewTab}>Open in new tab</Menu.Item>
-							<Menu.Item leftSection={<IconSettings size={14} />} onClick={handleRenameTab}>Rename tab</Menu.Item>
-							<Menu.Item leftSection={<IconApps size={14} />} onClick={handleTogglePin}>Pin/Unpin tab</Menu.Item>
-						</Menu.Dropdown>
-					</Menu>
-				)}
 				<Box style={{ flex: 1, overflowY: "auto", overflowX: "hidden" }} className="custom-scrollbar">
 					<Stack gap={4}>
 						<Text size="11px" fw={600} c="dimmed" tt="uppercase" px="xs" mt="xs" style={{ letterSpacing: "0.05em" }}>
@@ -559,7 +449,6 @@ export function AppShell() {
 					backgroundColor: "var(--app-surface-1)",
 				}}
 			>
-				<AppTabsBar />
 				<Box style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
 					<ErrorBoundary layout resetKey={location.pathname}>
 						<Outlet />

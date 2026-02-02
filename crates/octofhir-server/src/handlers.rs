@@ -2867,6 +2867,8 @@ pub struct ServerFeatures {
     pub db_console: bool,
     /// Authentication enabled
     pub auth: bool,
+    /// CQL (Clinical Quality Language)
+    pub cql: bool,
 }
 
 /// GET /api/settings - Server settings and feature flags for UI
@@ -2881,6 +2883,7 @@ pub async fn api_settings(State(state): State<crate::server::AppState>) -> impl 
             bulk_export: config.bulk_export.enabled,
             db_console: config.db_console.enabled,
             auth: true,
+            cql: config.cql.enabled,
         },
     };
 

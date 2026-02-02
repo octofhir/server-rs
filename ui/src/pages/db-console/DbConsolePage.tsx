@@ -352,9 +352,24 @@ export function DbConsolePage() {
               </Text>
               <FormatterSettings
                 value={formatterConfig}
-                onChange={saveFormatterConfig}
+                onChange={(config) => {
+                  setLspFormatterConfig(config);
+                  saveFormatterConfig(config);
+                }}
                 compact
               />
+              <Group justify="flex-end" mt="sm">
+                <Button
+                  size="xs"
+                  variant="light"
+                  onClick={() => {
+                    closeFormatter();
+                    handleFormat();
+                  }}
+                >
+                  Apply & Format
+                </Button>
+              </Group>
             </Popover.Dropdown>
           </Popover>
 

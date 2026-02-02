@@ -115,6 +115,8 @@ pub struct AppStateInner {
     pub auth_state: AuthState,
     /// GraphQL state for GraphQL handlers
     pub graphql_state: Option<GraphQLState>,
+    /// CQL evaluation service (optional, feature-gated)
+    pub cql_service: Option<Arc<octofhir_cql_service::CqlService>>,
     /// Operation registry (source of truth for public paths, middleware lookups)
     pub operation_registry: Arc<OperationRegistryService>,
     /// Cache for authenticated contexts (reduces DB queries per request)
@@ -854,6 +856,36 @@ pub async fn build_app(
                 affects_state: false,
             });
             tracing::info!("Registered $fhirpath operation");
+
+            // Register CQL operations if enabled
+            if cfg.cql.enabled {
+                registry.register(crate::operations::OperationDefinition {
+                    code: "cql".to_string(),
+                    url: "http://octofhir.org/OperationDefinition/cql".to_string(),
+                    kind: crate::operations::OperationKind::Operation,
+                    system: true,
+                    type_level: true,
+                    instance: true,
+                    resource: vec![], // All resource types
+                    parameters: vec![],
+                    affects_state: false,
+                });
+                tracing::info!("Registered $cql operation");
+
+                registry.register(crate::operations::OperationDefinition {
+                    code: "evaluate-measure".to_string(),
+                    url: "http://hl7.org/fhir/OperationDefinition/Measure-evaluate-measure".to_string(),
+                    kind: crate::operations::OperationKind::Operation,
+                    system: false,
+                    type_level: false,
+                    instance: true,
+                    resource: vec!["Measure".to_string()],
+                    parameters: vec![],
+                    affects_state: false,
+                });
+                tracing::info!("Registered $evaluate-measure operation");
+            }
+
             Arc::new(registry)
         }
         Err(e) => {
@@ -921,17 +953,50 @@ pub async fn build_app(
                 parameters: vec![],
                 affects_state: false,
             });
+
+            // Register CQL operations if enabled
+            if cfg.cql.enabled {
+                registry.register(crate::operations::OperationDefinition {
+                    code: "cql".to_string(),
+                    url: "http://octofhir.org/OperationDefinition/cql".to_string(),
+                    kind: crate::operations::OperationKind::Operation,
+                    system: true,
+                    type_level: true,
+                    instance: true,
+                    resource: vec![], // All resource types
+                    parameters: vec![],
+                    affects_state: false,
+                });
+
+                registry.register(crate::operations::OperationDefinition {
+                    code: "evaluate-measure".to_string(),
+                    url: "http://hl7.org/fhir/OperationDefinition/Measure-evaluate-measure".to_string(),
+                    kind: crate::operations::OperationKind::Operation,
+                    system: false,
+                    type_level: false,
+                    instance: true,
+                    resource: vec!["Measure".to_string()],
+                    parameters: vec![],
+                    affects_state: false,
+                });
+            }
+
             Arc::new(registry)
         }
     };
 
     // Register core operation handlers
+    tracing::info!(
+        cql_enabled = cfg.cql.enabled,
+        "Registering operation handlers with CQL enabled flag"
+    );
     let operation_handlers: Arc<HashMap<String, DynOperationHandler>> =
         Arc::new(register_core_operations_full(
             fhirpath_engine.clone(),
             model_provider.clone(),
             cfg.bulk_export.clone(),
             cfg.sql_on_fhir.clone(),
+            cfg.cql.enabled,
         ));
     tracing::info!(
         count = operation_handlers.len(),
@@ -1172,6 +1237,41 @@ pub async fn build_app(
         (Some(state), Some(subscription_broadcaster))
     } else {
         (None, None)
+    };
+
+    // Initialize CQL service if enabled
+    let cql_service = if cfg.cql.enabled {
+        tracing::info!("Initializing CQL service...");
+
+        // Create FHIR data provider with FHIRPath engine for property navigation
+        let data_provider = Arc::new(octofhir_cql_service::data_provider::FhirServerDataProvider::new(
+            storage.clone(),
+            fhirpath_engine.clone(),
+            cfg.cql.max_retrieve_size,
+        ));
+
+        // Create terminology adapter
+        let cql_terminology = Arc::new(octofhir_cql_service::terminology_provider::CqlTerminologyProvider::new());
+
+        // Create library cache (with optional Redis L2 cache)
+        let library_cache = Arc::new(octofhir_cql_service::library_cache::LibraryCache::new(
+            cfg.cql.cache_capacity,
+        ));
+
+        // Create CQL service
+        let service = octofhir_cql_service::CqlService::new(
+            data_provider,
+            cql_terminology,
+            library_cache,
+            storage.clone(),
+            cfg.cql.clone(),
+        );
+
+        tracing::info!("CQL service initialized");
+        Some(Arc::new(service))
+    } else {
+        tracing::info!("CQL service disabled");
+        None
     };
 
     // Initialize audit service
@@ -1479,6 +1579,7 @@ pub async fn build_app(
         policy_reload_service,
         auth_state,
         graphql_state,
+        cql_service,
         operation_registry,
         auth_cache,
         jwt_cache,

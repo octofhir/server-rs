@@ -6,6 +6,7 @@ members = [
     "crates/octofhir-auth-postgres",
     "crates/octofhir-config",
     "crates/octofhir-core",
+    "crates/octofhir-cql-service",
     "crates/octofhir-db-postgres",
     "crates/octofhir-graphql",
     "crates/octofhir-notifications",
@@ -92,6 +93,12 @@ json-patch = "4"
 
 octofhir-fhirpath = { version = "0.4.39", features = ["lsp"] }
 octofhir-fhirschema = { version = "0.3.15" }
+
+# CQL dependencies (local path to ../cql-rs/)
+octofhir-cql = { path = "../cql-rs/crates/octofhir-cql", version = "0.1.0" }
+octofhir-cql-types = { path = "../cql-rs/crates/octofhir-cql-types", version = "0.1.0" }
+octofhir-cql-eval = { path = "../cql-rs/crates/octofhir-cql-eval", version = "0.1.0" }
+octofhir-cql-model = { path = "../cql-rs/crates/octofhir-cql-model", version = "0.1.0" }
 
 # Environment
 dotenvy = "0.15"

@@ -52,6 +52,9 @@ pub struct AppConfig {
     /// SQL on FHIR configuration (ViewDefinition editor, $run/$export operations)
     #[serde(default)]
     pub sql_on_fhir: SqlOnFhirConfig,
+    /// CQL evaluation configuration ($cql, $evaluate-measure operations)
+    #[serde(default)]
+    pub cql: octofhir_cql_service::CqlConfig,
 }
 
 // Default derived via field defaults
