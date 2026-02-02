@@ -841,6 +841,19 @@ pub async fn build_app(
                 affects_state: false,
             });
             tracing::info!("Registered $status for Subscription");
+            // Register $fhirpath operation
+            registry.register(crate::operations::OperationDefinition {
+                code: "fhirpath".to_string(),
+                url: "http://octofhir.org/OperationDefinition/fhirpath".to_string(),
+                kind: crate::operations::OperationKind::Operation,
+                system: true,
+                type_level: true,
+                instance: true,
+                resource: vec![], // All resource types
+                parameters: vec![],
+                affects_state: false,
+            });
+            tracing::info!("Registered $fhirpath operation");
             Arc::new(registry)
         }
         Err(e) => {
@@ -893,6 +906,18 @@ pub async fn build_app(
                 type_level: false,
                 instance: true,
                 resource: vec!["Subscription".to_string()],
+                parameters: vec![],
+                affects_state: false,
+            });
+            // Register $fhirpath operation
+            registry.register(crate::operations::OperationDefinition {
+                code: "fhirpath".to_string(),
+                url: "http://octofhir.org/OperationDefinition/fhirpath".to_string(),
+                kind: crate::operations::OperationKind::Operation,
+                system: true,
+                type_level: true,
+                instance: true,
+                resource: vec![], // All resource types
                 parameters: vec![],
                 affects_state: false,
             });

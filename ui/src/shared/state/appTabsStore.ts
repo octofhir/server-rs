@@ -71,6 +71,7 @@ const STATIC_TITLES: Record<string, TabConfig> = {
 	"/audit": { title: "Audit Trail" },
 	"/db-console": { title: "DB Console" },
 	"/graphql": { title: "GraphQL" },
+	"/fhirpath": { title: "FHIRPath Console" },
 	"/viewdefinition": { title: "ViewDefinition" },
 	"/settings": { title: "Settings" },
 	"/logs": { title: "System Logs" },

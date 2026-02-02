@@ -9,6 +9,7 @@ import { DashboardPage } from "@/pages/dashboard";
 import { SettingsPage } from "@/pages/settings";
 import { DbConsolePage } from "@/pages/db-console";
 import { GraphQLConsolePage } from "@/pages/graphql-console";
+import { FhirPathConsolePage } from "@/pages/fhirpath-console";
 import { ResourceBrowserPage } from "@/pages/resource-browser";
 import { RestConsolePage } from "@/pages/console";
 import { OperationsPage, OperationDetailPage } from "@/pages/operations";
@@ -87,6 +88,7 @@ export function AppRoutes() {
         {/* Tools */}
         <Route path="/db-console" element={<DbConsolePage />} />
         <Route path="/graphql" element={<GraphQLConsolePage />} />
+        <Route path="/fhirpath" element={<FhirPathConsolePage />} />
         <Route path="/settings" element={<SettingsPage />} />
 
         {/* Other */}

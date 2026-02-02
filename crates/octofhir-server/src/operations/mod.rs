@@ -44,6 +44,7 @@ pub mod auth_session;
 pub mod bulk;
 pub mod definition;
 pub mod everything;
+pub mod fhirpath;
 pub mod handler;
 pub mod loader;
 pub mod meta;
@@ -63,6 +64,7 @@ pub use bulk::{
 };
 pub use definition::{OperationDefinition, OperationKind, OperationParameter, ParameterUse};
 pub use everything::EverythingOperation;
+pub use fhirpath::FhirPathOperation;
 pub use handler::{DynOperationHandler, OperationError, OperationHandler};
 pub use loader::{LoadError, load_operations};
 pub use meta::{MetaAddOperation, MetaDeleteOperation, MetaOperation};
@@ -221,6 +223,12 @@ pub fn register_core_operations_full(
     handlers.insert(
         "status".to_string(),
         Arc::new(crate::subscriptions::operations::StatusOperation),
+    );
+
+    // $fhirpath operation
+    handlers.insert(
+        "fhirpath".to_string(),
+        Arc::new(FhirPathOperation::new()),
     );
 
     handlers

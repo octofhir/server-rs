@@ -174,6 +174,12 @@ const toolsNavigation: NavItem[] = [
 		icon: IconCode,
 	},
 	{
+		label: "FHIRPath Console",
+		path: "/fhirpath",
+		description: "FHIRPath Expression Evaluator",
+		icon: IconTerminal,
+	},
+	{
 		label: "ViewDefinition",
 		path: "/viewdefinition",
 		description: "SQL on FHIR ViewDefinition Editor",

@@ -182,6 +182,33 @@ impl OperationProvider for FhirOperationProvider {
                 modules::SERVER,
             )
             .with_description("Remove metadata elements"),
+            OperationDefinition::new(
+                "fhir.fhirpath",
+                "$fhirpath",
+                categories::FHIR,
+                vec!["POST".to_string()],
+                fhir_path("/$fhirpath"),
+                modules::SERVER,
+            )
+            .with_description("Evaluate FHIRPath expressions against FHIR resources"),
+            OperationDefinition::new(
+                "fhir.fhirpath-type",
+                "$fhirpath",
+                categories::FHIR,
+                vec!["POST".to_string()],
+                fhir_path("/{type}/$fhirpath"),
+                modules::SERVER,
+            )
+            .with_description("Evaluate FHIRPath expressions for a resource type"),
+            OperationDefinition::new(
+                "fhir.fhirpath-instance",
+                "$fhirpath",
+                categories::FHIR,
+                vec!["POST".to_string()],
+                fhir_path("/{type}/{id}/$fhirpath"),
+                modules::SERVER,
+            )
+            .with_description("Evaluate FHIRPath expressions on a resource instance"),
         ]
     }
 
