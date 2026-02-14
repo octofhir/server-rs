@@ -10,7 +10,6 @@ use serde_json::Value;
 use sqlx_core::query_as::query_as;
 use sqlx_postgres::PgPool;
 use time::OffsetDateTime;
-use uuid::Uuid;
 
 use octofhir_storage::{
     HistoryEntry, HistoryMethod, HistoryParams, HistoryResult, StorageError, StoredResource,
@@ -19,11 +18,11 @@ use octofhir_storage::{
 use crate::schema::SchemaManager;
 
 /// Row type for history queries (id, txid, created_at, updated_at, resource, status).
-type HistoryRow = (Uuid, i64, DateTime<Utc>, DateTime<Utc>, Value, String);
+type HistoryRow = (String, i64, DateTime<Utc>, DateTime<Utc>, Value, String);
 
 /// Row type for system history queries (id, txid, created_at, updated_at, resource, status, resource_type).
 type SystemHistoryRow = (
-    Uuid,
+    String,
     i64,
     DateTime<Utc>,
     DateTime<Utc>,
@@ -70,14 +69,8 @@ pub async fn get_history(
     let table = SchemaManager::table_name(resource_type);
     let history_table = format!("{}_history", table);
 
-    // Parse optional UUID
-    let id_uuid: Option<Uuid> = match id {
-        Some(id_str) => Some(
-            Uuid::parse_str(id_str)
-                .map_err(|e| StorageError::invalid_resource(format!("Invalid UUID: {e}")))?,
-        ),
-        None => None,
-    };
+    // ID column is TEXT in the database, bind as string directly
+    let id_str: Option<String> = id.map(|s| s.to_string());
 
     // Default pagination
     let limit = params.count.unwrap_or(100) as i64;
@@ -91,7 +84,7 @@ pub async fn get_history(
     let (sql, has_id, has_since, has_at) = build_union_query(
         &table,
         &history_table,
-        id_uuid.is_some(),
+        id_str.is_some(),
         &since_chrono,
         &at_chrono,
     );
@@ -109,7 +102,7 @@ pub async fn get_history(
     let rows = execute_history_query(
         &full_sql,
         pool,
-        id_uuid,
+        id_str,
         since_chrono,
         at_chrono,
         has_id,
@@ -309,7 +302,7 @@ fn build_union_query(
 async fn execute_history_query(
     sql: &str,
     pool: &PgPool,
-    id_uuid: Option<Uuid>,
+    id_str: Option<String>,
     since: Option<DateTime<Utc>>,
     at: Option<DateTime<Utc>>,
     has_id: bool,
@@ -320,7 +313,7 @@ async fn execute_history_query(
     let result = match (has_id, has_since, has_at) {
         (true, true, true) => {
             query_as(sql)
-                .bind(id_uuid.unwrap())
+                .bind(id_str.unwrap())
                 .bind(since.unwrap())
                 .bind(at.unwrap())
                 .fetch_all(pool)
@@ -328,19 +321,19 @@ async fn execute_history_query(
         }
         (true, true, false) => {
             query_as(sql)
-                .bind(id_uuid.unwrap())
+                .bind(id_str.unwrap())
                 .bind(since.unwrap())
                 .fetch_all(pool)
                 .await
         }
         (true, false, true) => {
             query_as(sql)
-                .bind(id_uuid.unwrap())
+                .bind(id_str.unwrap())
                 .bind(at.unwrap())
                 .fetch_all(pool)
                 .await
         }
-        (true, false, false) => query_as(sql).bind(id_uuid.unwrap()).fetch_all(pool).await,
+        (true, false, false) => query_as(sql).bind(id_str.unwrap()).fetch_all(pool).await,
         (false, true, true) => {
             query_as(sql)
                 .bind(since.unwrap())

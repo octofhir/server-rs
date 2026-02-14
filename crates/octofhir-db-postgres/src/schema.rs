@@ -89,6 +89,16 @@ impl SchemaManager {
         // Check database
         if self.table_exists(&table).await? {
             debug!("Table {} exists in database, adding to cache", table);
+            // Ensure history table exists for non-internal resources
+            // (may be missing if table was created by an older version)
+            if !Self::is_internal_resource(&table) {
+                let history_table = format!("{}_history", table);
+                if !self.table_exists(&history_table).await? {
+                    info!("History table {} missing, creating", history_table);
+                    self.create_history_table(resource_type).await?;
+                    self.create_history_trigger(resource_type).await?;
+                }
+            }
             self.created_tables.insert(table);
             return Ok(());
         }

@@ -1853,21 +1853,18 @@ fn build_router(state: AppState, body_limit: usize, compression: bool) -> Router
             "/Subscription/{id}/$events",
             get(subscription_events_ws_handler),
         )
-        // Instance-level operations: GET/POST /{type}/{id}/$operation
-        .route(
-            "/{resource_type}/{id}/{operation}",
-            get(crate::operations::instance_operation_handler)
-                .post(crate::operations::instance_operation_handler),
-        )
-        // Instance history: GET /{type}/{id}/_history (before vread)
-        .route(
-            "/{resource_type}/{id}/_history",
-            get(handlers::instance_history),
-        )
         // Vread: GET /[type]/[id]/_history/[vid]
         .route(
             "/{resource_type}/{id}/_history/{version_id}",
             get(handlers::vread_resource),
+        )
+        // Instance-level operations and history: GET/POST /{type}/{id}/{operation_or_history}
+        // Note: /{type}/{id}/_history and /{type}/{id}/{operation} cannot coexist as separate
+        // routes in matchit, so we use a single catch-all and dispatch inside the handler.
+        .route(
+            "/{resource_type}/{id}/{operation}",
+            get(crate::operations::instance_operation_or_history_handler)
+                .post(crate::operations::instance_operation_handler),
         )
         // Type operations and resource CRUD
         // This merged route handles both /{type}/$operation and /{type}/{id}

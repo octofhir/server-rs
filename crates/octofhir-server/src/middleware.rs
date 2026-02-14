@@ -16,13 +16,15 @@ use axum::{
 use serde_json::{Value, json};
 use uuid::Uuid;
 
+use base64::{Engine, engine::general_purpose::STANDARD};
 use octofhir_auth::config::CookieConfig;
-use octofhir_auth::middleware::{AuthContext, AuthState};
+use octofhir_auth::middleware::{AuthContext, AuthState, UserContext};
 use octofhir_auth::policy::{
     AccessDecision, DenyReason, PolicyContext, PolicyContextBuilder, PolicyEvaluator,
 };
 use octofhir_auth::token::jwt::AccessTokenClaims;
 
+use crate::bootstrap::DEFAULT_UI_CLIENT_ID;
 use crate::cache::{AuthContextCache, JwtVerificationCache};
 use crate::operation_registry::OperationRegistryService;
 
@@ -79,7 +81,7 @@ impl ExtendedAuthState {
 /// - `ExtendedAuthState` must be available via `FromRef<S>`
 pub async fn authentication_middleware(
     State(state): State<ExtendedAuthState>,
-    mut req: Request<Body>,
+    req: Request<Body>,
     next: Next,
 ) -> Response {
     // Skip authentication for public endpoints (from registry + hardcoded)
@@ -91,57 +93,64 @@ pub async fn authentication_middleware(
     let auth_state = &state.auth_state;
 
     // 1. Try Authorization header first
-    let token = if let Some(auth_header) = req
+    let auth_header = req
         .headers()
         .get(AUTHORIZATION)
         .and_then(|h| h.to_str().ok())
-    {
-        // Parse Bearer token from header
-        match auth_header.strip_prefix("Bearer ") {
-            Some(t) if !t.is_empty() => Some(t.to_string()),
-            _ => {
-                return unauthorized_response("Invalid Authorization header format");
-            }
+        .map(|s| s.to_string());
+
+    if let Some(auth_header) = &auth_header {
+        // Handle Basic auth
+        if let Some(encoded) = auth_header.strip_prefix("Basic ") {
+            let encoded = encoded.to_string();
+            return handle_basic_auth(auth_state, &encoded, req, next).await;
         }
-    } else {
-        None
-    };
+
+        // Handle Bearer token
+        if let Some(token) = auth_header.strip_prefix("Bearer ")
+            && !token.is_empty()
+        {
+            return handle_bearer_token(auth_state, &state.auth_cache, &state.jwt_cache, token, req, next).await;
+        }
+
+        return unauthorized_response("Invalid Authorization header format");
+    }
 
     // 2. If no Authorization header, try cookie (if enabled)
-    let token = match token {
-        Some(t) => Some(t),
-        None => extract_token_from_cookie(&req, &auth_state.cookie_config),
-    };
+    if let Some(token) = extract_token_from_cookie(&req, &auth_state.cookie_config) {
+        return handle_bearer_token(auth_state, &state.auth_cache, &state.jwt_cache, &token, req, next).await;
+    }
 
     // 3. For WebSocket upgrade requests, also try query parameter ?token=...
     // This is needed because browsers can't set Authorization header for WebSocket connections
-    let token = match token {
-        Some(t) => t,
-        None => {
-            if is_websocket_upgrade(&req) {
-                match extract_token_from_query(&req) {
-                    Some(t) => t,
-                    None => {
-                        tracing::debug!(path = %req.uri().path(), "WebSocket: No token in header, cookie, or query");
-                        return unauthorized_response("Authentication required");
-                    }
-                }
-            } else {
-                tracing::debug!(path = %req.uri().path(), "No Authorization header or cookie");
-                return unauthorized_response("Authentication required");
-            }
+    if is_websocket_upgrade(&req) {
+        if let Some(token) = extract_token_from_query(&req) {
+            return handle_bearer_token(auth_state, &state.auth_cache, &state.jwt_cache, &token, req, next).await;
         }
-    };
+        tracing::debug!(path = %req.uri().path(), "WebSocket: No token in header, cookie, or query");
+    } else {
+        tracing::debug!(path = %req.uri().path(), "No Authorization header or cookie");
+    }
 
-    // Validate token and build auth context (with caching)
-    match validate_token(auth_state, &state.auth_cache, &state.jwt_cache, &token).await {
+    unauthorized_response("Authentication required")
+}
+
+/// Handles Bearer token authentication flow.
+async fn handle_bearer_token(
+    auth_state: &AuthState,
+    auth_cache: &Arc<dyn AuthContextCache>,
+    jwt_cache: &Arc<JwtVerificationCache>,
+    token: &str,
+    mut req: Request<Body>,
+    next: Next,
+) -> Response {
+    match validate_token(auth_state, auth_cache, jwt_cache, token).await {
         Ok(auth_context) => {
             tracing::debug!(
                 client_id = %auth_context.client_id(),
                 subject = %auth_context.subject(),
                 "Token validated successfully"
             );
-            // Store auth context in request extensions
             req.extensions_mut().insert(auth_context);
             next.run(req).await
         }
@@ -154,6 +163,137 @@ pub async fn authentication_middleware(
             }
         }
     }
+}
+
+/// Handles HTTP Basic authentication.
+///
+/// Decodes base64 credentials, verifies username/password against the user store,
+/// and creates a synthetic AuthContext for the request.
+async fn handle_basic_auth(
+    auth_state: &AuthState,
+    encoded: &str,
+    mut req: Request<Body>,
+    next: Next,
+) -> Response {
+    // Decode base64 credentials
+    let decoded = match STANDARD.decode(encoded) {
+        Ok(bytes) => match String::from_utf8(bytes) {
+            Ok(s) => s,
+            Err(_) => return unauthorized_response("Invalid Basic auth encoding"),
+        },
+        Err(_) => return unauthorized_response("Invalid Basic auth encoding"),
+    };
+
+    // Split into username:password
+    let (username, password) = match decoded.split_once(':') {
+        Some((u, p)) => (u.to_string(), p.to_string()),
+        None => return unauthorized_response("Invalid Basic auth format"),
+    };
+
+    // Find user by username
+    let user = match auth_state.user_storage.find_by_username(&username).await {
+        Ok(Some(user)) => user,
+        Ok(None) => {
+            tracing::debug!(username = %username, "Basic auth: user not found");
+            return unauthorized_response("Invalid credentials");
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "Basic auth: failed to look up user");
+            return unauthorized_response("Authentication error");
+        }
+    };
+
+    if !user.active {
+        tracing::debug!(username = %username, "Basic auth: user is inactive");
+        return unauthorized_response("User is inactive");
+    }
+
+    // Verify password (argon2 is CPU-intensive, use spawn_blocking)
+    let user_id = user.id.clone();
+    let user_storage = Arc::clone(&auth_state.user_storage);
+    let password_valid = match tokio::task::spawn_blocking(move || {
+        tokio::runtime::Handle::current()
+            .block_on(user_storage.verify_password(&user_id, &password))
+    })
+    .await
+    {
+        Ok(Ok(valid)) => valid,
+        Ok(Err(e)) => {
+            tracing::error!(error = %e, "Basic auth: password verification failed");
+            return unauthorized_response("Authentication error");
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "Basic auth: password verification task panicked");
+            return unauthorized_response("Authentication error");
+        }
+    };
+
+    if !password_valid {
+        tracing::debug!(username = %username, "Basic auth: invalid password");
+        return unauthorized_response("Invalid credentials");
+    }
+
+    // Load the default client
+    let client = match auth_state
+        .client_storage
+        .find_by_client_id(DEFAULT_UI_CLIENT_ID)
+        .await
+    {
+        Ok(Some(c)) => c,
+        Ok(None) => {
+            tracing::error!("Basic auth: default client '{}' not found", DEFAULT_UI_CLIENT_ID);
+            return internal_error_response("Server configuration error");
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "Basic auth: failed to load default client");
+            return internal_error_response("Server configuration error");
+        }
+    };
+
+    // Build synthetic AccessTokenClaims
+    let now = time::OffsetDateTime::now_utc().unix_timestamp();
+    let claims = Arc::new(AccessTokenClaims {
+        iss: "octofhir".to_string(),
+        sub: user.id.clone(),
+        aud: vec![],
+        exp: now + 3600, // 1 hour
+        iat: now,
+        jti: Uuid::new_v4().to_string(),
+        scope: "user/*.cruds system/*.cruds".to_string(),
+        client_id: DEFAULT_UI_CLIENT_ID.to_string(),
+        patient: None,
+        encounter: None,
+        fhir_user: user.fhir_user.clone(),
+        sid: None,
+    });
+
+    // Build UserContext
+    let user_context = UserContext {
+        id: user.id,
+        username: user.username,
+        name: user.name,
+        email: user.email,
+        fhir_user: user.fhir_user,
+        roles: user.roles,
+        attributes: user.attributes,
+    };
+
+    let auth_context = Arc::new(AuthContext {
+        patient: None,
+        encounter: None,
+        token_claims: claims,
+        client,
+        user: Some(user_context),
+    });
+
+    tracing::debug!(
+        client_id = %auth_context.client_id(),
+        subject = %auth_context.subject(),
+        "Basic auth validated successfully"
+    );
+
+    req.extensions_mut().insert(auth_context);
+    next.run(req).await
 }
 
 /// Validates a Bearer token and returns the AuthContext.

@@ -91,7 +91,7 @@ httpdate = "1.0"
 urlencoding = "2.1"
 
 # HTTP client
-reqwest = { version = "0.12", features = ["json"] }
+reqwest = { workspace = true }
 
 # Email (SMTP)
 lettre = { version = "0.11", features = ["tokio1-rustls-tls", "smtp-transport", "builder"], default-features = false }
@@ -154,7 +154,7 @@ tempfile = { workspace = true }
 [dev-dependencies]
 tokio-test = { workspace = true }
 wiremock = { workspace = true }
-reqwest = { version = "0.12", features = ["json"] }
+reqwest = { workspace = true }
 filetime = { workspace = true }
 testcontainers = "0.25"
 testcontainers-modules = { version = "0.13", features = ["postgres", "redis"] }

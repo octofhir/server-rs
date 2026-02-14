@@ -101,6 +101,45 @@ audit:
     cargo audit
 
 # =============================================================================
+# CLI Tool
+# =============================================================================
+
+# Build CLI tool
+cli-build:
+    cargo build -p octofhir-cli
+
+# Run CLI tool with arguments
+cli *ARGS:
+    cargo run -p octofhir-cli -- {{ARGS}}
+
+# Install CLI locally
+cli-install:
+    cargo install --path crates/octofhir-cli
+
+# Test CLI against local OctoFHIR server (server must be running)
+cli-test-local:
+    @echo "Testing CLI against local OctoFHIR server..."
+    cargo run -p octofhir-cli -- --server http://localhost:8888 status
+    cargo run -p octofhir-cli -- --server http://localhost:8888 login --username admin --password admin123
+    cargo run -p octofhir-cli -- --server http://localhost:8888 whoami
+    cargo run -p octofhir-cli -- --server http://localhost:8888 metadata --format table
+    cargo run -p octofhir-cli -- --server http://localhost:8888 search Patient --format table
+
+# Start Aidbox for CLI testing
+aidbox-up:
+    docker compose -f docker-compose.aidbox.yml up -d
+
+# Stop Aidbox
+aidbox-down:
+    docker compose -f docker-compose.aidbox.yml down
+
+# Test CLI against Aidbox (Aidbox must be running)
+cli-test-aidbox:
+    @echo "Testing CLI against Aidbox..."
+    cargo run -p octofhir-cli -- --server http://localhost:8080 status
+    cargo run -p octofhir-cli -- --server http://localhost:8080 metadata --format table
+
+# =============================================================================
 # k6 Load Testing
 # =============================================================================
 

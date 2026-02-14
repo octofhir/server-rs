@@ -4542,10 +4542,35 @@ fn build_transaction_response_entry(
 /// - GET /Patient/123/Condition?clinical-status=active - Active conditions for patient 123
 /// - GET /Encounter/456/Procedure - All procedures for encounter 456
 pub async fn compartment_search(
-    Path((compartment_type, compartment_id, resource_type)): Path<(String, String, String)>,
+    axum::extract::OriginalUri(uri): axum::extract::OriginalUri,
+    Path((compartment_id, resource_type)): Path<(String, String)>,
+    query: Query<HistoryQueryParams>,
     RawQuery(query_string): RawQuery,
     State(state): State<crate::server::AppState>,
 ) -> Result<impl IntoResponse, ApiError> {
+    // Extract compartment type from the original URI path
+    // e.g. /fhir/Patient/123/Observation → "Patient"
+    let compartment_type = uri
+        .path()
+        .strip_prefix("/fhir/")
+        .unwrap_or(uri.path())
+        .split('/')
+        .next()
+        .unwrap_or("")
+        .to_string();
+
+    // Dispatch _history requests — literal compartment routes (e.g. /Patient/{id}/{...})
+    // match before the generic /{resource_type}/{id}/{operation} route in matchit
+    if resource_type == "_history" {
+        return instance_history(
+            State(state),
+            Path((compartment_type, compartment_id)),
+            query,
+        )
+        .await
+        .map(|r| r.into_response());
+    }
+
     tracing::info!(
         compartment_type = %compartment_type,
         compartment_id = %compartment_id,
@@ -4670,7 +4695,7 @@ pub async fn compartment_search(
         None,
     );
 
-    Ok((StatusCode::OK, Json(bundle)))
+    Ok((StatusCode::OK, Json(bundle)).into_response())
 }
 
 /// Handler for wildcard compartment search: GET /{CompartmentType}/{id}/*

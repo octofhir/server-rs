@@ -122,6 +122,58 @@ pub async fn type_operation_handler(
 /// # Note
 /// This handler validates that the operation parameter starts with `$`.
 /// If it doesn't, a 404 is returned indicating the path is not a valid operation.
+/// Combined GET handler for instance-level operations and history.
+///
+/// Dispatches `_history` requests to the history handler and `$operation` requests
+/// to the operation handler. These must share a route because matchit cannot have
+/// both `/{a}/{b}/_history` and `/{a}/{b}/{c}` as separate routes.
+pub async fn instance_operation_or_history_handler(
+    state: State<AppState>,
+    Path((resource_type, id, operation)): Path<(String, String, String)>,
+    query: Query<crate::handlers::HistoryQueryParams>,
+) -> Response {
+    if operation == "_history" {
+        let path = Path((resource_type, id));
+        match crate::handlers::instance_history(state, path, query).await {
+            Ok(resp) => resp.into_response(),
+            Err(e) => e.into_response(),
+        }
+    } else if is_operation(&operation) {
+        // Re-extract raw query for operation params
+        let app_state = state.0;
+        let code = operation.trim_start_matches('$');
+        let op_def = app_state
+            .fhir_operations
+            .get_instance_operation(&resource_type, code);
+        if op_def.is_none() {
+            return ApiError::not_found(format!(
+                "Operation ${code} not found for {resource_type}/{id}"
+            ))
+            .into_response();
+        }
+        let handler = app_state.operation_handlers.get(code);
+        match handler {
+            Some(h) => {
+                let params_value = serde_json::Value::Null;
+                match h
+                    .handle_instance(&app_state, &resource_type, &id, &params_value)
+                    .await
+                {
+                    Ok(result) => (StatusCode::OK, Json(result)).into_response(),
+                    Err(e) => ApiError::from(e).into_response(),
+                }
+            }
+            None => ApiError::not_implemented(format!("Operation ${code} is not implemented"))
+                .into_response(),
+        }
+    } else {
+        ApiError::not_found(format!(
+            "Invalid path: /{resource_type}/{id}/{operation}. Operations must start with '$'"
+        ))
+        .into_response()
+    }
+}
+
 pub async fn instance_operation_handler(
     State(state): State<AppState>,
     Path((resource_type, id, operation)): Path<(String, String, String)>,
