@@ -37,34 +37,34 @@ async fn run() -> Result<()> {
         Commands::Whoami => {
             commands::auth::whoami(profile)?;
         }
-        Commands::Config(args) => {
-            match &args.command {
-                cli::ConfigCommands::Show => {
-                    let cfg = config::load_profile(profile)?;
-                    println!("{}: {}", "Profile".cyan(), profile);
-                    println!(
-                        "{}: {}",
-                        "Server".cyan(),
-                        cfg.server.as_deref().unwrap_or("(not set)")
-                    );
-                    println!(
-                        "{}: {}",
-                        "Format".cyan(),
-                        cfg.format.as_deref().unwrap_or("json")
-                    );
-                }
-                cli::ConfigCommands::Set(set_args) => {
-                    let mut cfg = config::load_profile(profile)?;
-                    match set_args.key.as_str() {
-                        "server" => cfg.server = Some(set_args.value.clone()),
-                        "format" => cfg.format = Some(set_args.value.clone()),
-                        other => anyhow::bail!("Unknown config key: {other}. Valid keys: server, format"),
-                    }
-                    config::save_profile(profile, &cfg)?;
-                    output::print_success(&format!("Set {} = {}", set_args.key, set_args.value));
-                }
+        Commands::Config(args) => match &args.command {
+            cli::ConfigCommands::Show => {
+                let cfg = config::load_profile(profile)?;
+                println!("{}: {}", "Profile".cyan(), profile);
+                println!(
+                    "{}: {}",
+                    "Server".cyan(),
+                    cfg.server.as_deref().unwrap_or("(not set)")
+                );
+                println!(
+                    "{}: {}",
+                    "Format".cyan(),
+                    cfg.format.as_deref().unwrap_or("json")
+                );
             }
-        }
+            cli::ConfigCommands::Set(set_args) => {
+                let mut cfg = config::load_profile(profile)?;
+                match set_args.key.as_str() {
+                    "server" => cfg.server = Some(set_args.value.clone()),
+                    "format" => cfg.format = Some(set_args.value.clone()),
+                    other => {
+                        anyhow::bail!("Unknown config key: {other}. Valid keys: server, format")
+                    }
+                }
+                config::save_profile(profile, &cfg)?;
+                output::print_success(&format!("Set {} = {}", set_args.key, set_args.value));
+            }
+        },
         Commands::Status => {
             let server = config::resolve_server(&cli.server, profile)?;
             let client = make_client(&server, profile)?;
@@ -103,8 +103,14 @@ async fn run() -> Result<()> {
         Commands::Search(args) => {
             let server = config::resolve_server(&cli.server, profile)?;
             let client = make_client(&server, profile)?;
-            commands::search::search(&client, &args.resource_type, &args.params, args.count, format)
-                .await?;
+            commands::search::search(
+                &client,
+                &args.resource_type,
+                &args.params,
+                args.count,
+                format,
+            )
+            .await?;
         }
     }
 

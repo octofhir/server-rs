@@ -37,15 +37,22 @@ pub fn load_all() -> Result<ConfigFile> {
 
 pub fn load_profile(profile: &str) -> Result<ProfileConfig> {
     let all = load_all()?;
-    Ok(all.into_iter().find(|(k, _)| k == profile).map(|(_, v)| v).unwrap_or_default())
+    Ok(all
+        .into_iter()
+        .find(|(k, _)| k == profile)
+        .map(|(_, v)| v)
+        .unwrap_or_default())
 }
 
 pub fn save_profile(profile: &str, config: &ProfileConfig) -> Result<()> {
     let mut all = load_all()?;
-    all.insert(profile.to_string(), ProfileConfig {
-        server: config.server.clone(),
-        format: config.format.clone(),
-    });
+    all.insert(
+        profile.to_string(),
+        ProfileConfig {
+            server: config.server.clone(),
+            format: config.format.clone(),
+        },
+    );
     let content = toml::to_string_pretty(&all)?;
     fs::write(config_path()?, content)?;
     Ok(())

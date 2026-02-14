@@ -45,6 +45,8 @@ impl std::fmt::Display for ConfigSource {
 
 #[tokio::main]
 async fn main() {
+    let startup_start = std::time::Instant::now();
+
     println!("{STARTUP_BANNER}");
 
     // Load .env file if present (before anything else)
@@ -67,6 +69,7 @@ async fn main() {
     let (config_path, source) = resolve_config_path();
 
     // Load initial configuration
+    let phase_start = std::time::Instant::now();
     let cfg = match load_config(Some(&config_path)) {
         Ok(c) => c,
         Err(e) => {
@@ -78,6 +81,7 @@ async fn main() {
     tracing::info!(
         path = %config_path,
         source = %source,
+        elapsed_ms = phase_start.elapsed().as_millis(),
         "Configuration loaded"
     );
 
@@ -86,6 +90,7 @@ async fn main() {
     octofhir_server::observability::apply_otel_config(&cfg.otel);
 
     // Initialize canonical registry
+    let phase_start = std::time::Instant::now();
     let registry = match octofhir_server::canonical::init_from_config_async(&cfg).await {
         Ok(r) => r,
         Err(e) => {
@@ -98,6 +103,7 @@ async fn main() {
         tracing::info!(
             fhir.version = %cfg.fhir.version,
             packages_loaded = %guard.list().len(),
+            elapsed_ms = phase_start.elapsed().as_millis(),
             "Canonical registry initialized"
         );
     }
@@ -120,6 +126,7 @@ async fn main() {
     tracing::info!("Hot-reload enabled");
 
     // Build and run server
+    let phase_start = std::time::Instant::now();
     let server = match ServerBuilder::new(config_manager.inner_arc())
         .with_config(cfg)
         .build()
@@ -131,6 +138,12 @@ async fn main() {
             std::process::exit(2);
         }
     };
+
+    tracing::info!(
+        server_build_ms = phase_start.elapsed().as_millis(),
+        total_startup_ms = startup_start.elapsed().as_millis(),
+        "Server startup complete"
+    );
 
     if let Err(err) = server.run().await {
         eprintln!("Server error: {err}");

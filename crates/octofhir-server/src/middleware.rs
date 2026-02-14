@@ -110,7 +110,15 @@ pub async fn authentication_middleware(
         if let Some(token) = auth_header.strip_prefix("Bearer ")
             && !token.is_empty()
         {
-            return handle_bearer_token(auth_state, &state.auth_cache, &state.jwt_cache, token, req, next).await;
+            return handle_bearer_token(
+                auth_state,
+                &state.auth_cache,
+                &state.jwt_cache,
+                token,
+                req,
+                next,
+            )
+            .await;
         }
 
         return unauthorized_response("Invalid Authorization header format");
@@ -118,14 +126,30 @@ pub async fn authentication_middleware(
 
     // 2. If no Authorization header, try cookie (if enabled)
     if let Some(token) = extract_token_from_cookie(&req, &auth_state.cookie_config) {
-        return handle_bearer_token(auth_state, &state.auth_cache, &state.jwt_cache, &token, req, next).await;
+        return handle_bearer_token(
+            auth_state,
+            &state.auth_cache,
+            &state.jwt_cache,
+            &token,
+            req,
+            next,
+        )
+        .await;
     }
 
     // 3. For WebSocket upgrade requests, also try query parameter ?token=...
     // This is needed because browsers can't set Authorization header for WebSocket connections
     if is_websocket_upgrade(&req) {
         if let Some(token) = extract_token_from_query(&req) {
-            return handle_bearer_token(auth_state, &state.auth_cache, &state.jwt_cache, &token, req, next).await;
+            return handle_bearer_token(
+                auth_state,
+                &state.auth_cache,
+                &state.jwt_cache,
+                &token,
+                req,
+                next,
+            )
+            .await;
         }
         tracing::debug!(path = %req.uri().path(), "WebSocket: No token in header, cookie, or query");
     } else {
@@ -241,7 +265,10 @@ async fn handle_basic_auth(
     {
         Ok(Some(c)) => c,
         Ok(None) => {
-            tracing::error!("Basic auth: default client '{}' not found", DEFAULT_UI_CLIENT_ID);
+            tracing::error!(
+                "Basic auth: default client '{}' not found",
+                DEFAULT_UI_CLIENT_ID
+            );
             return internal_error_response("Server configuration error");
         }
         Err(e) => {

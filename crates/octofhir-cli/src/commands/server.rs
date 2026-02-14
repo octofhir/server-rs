@@ -28,18 +28,19 @@ pub async fn metadata(client: &FhirClient, format: OutputFormat) -> Result<()> {
             .and_then(|v| v.as_str())
             .unwrap_or("unknown");
 
-        println!("{}: {} {}", "Server".cyan(), software_name, software_version);
+        println!(
+            "{}: {} {}",
+            "Server".cyan(),
+            software_name,
+            software_version
+        );
         println!("{}: {}", "FHIR Version".cyan(), fhir_version);
         println!("{}: {}", "Status".cyan(), status);
 
         if let Some(rest) = cs.get("rest").and_then(|v| v.as_array()) {
             for r in rest {
                 if let Some(resources) = r.get("resource").and_then(|v| v.as_array()) {
-                    println!(
-                        "{}: {} resource types",
-                        "Resources".cyan(),
-                        resources.len()
-                    );
+                    println!("{}: {} resource types", "Resources".cyan(), resources.len());
                     let types: Vec<&str> = resources
                         .iter()
                         .filter_map(|r| r.get("type").and_then(|v| v.as_str()))

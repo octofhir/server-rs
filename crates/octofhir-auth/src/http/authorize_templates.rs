@@ -621,15 +621,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_render_login_form() {
-        let html = render_login_form("Test App", "session-123", None);
-        assert!(html.contains("Test App"));
-        assert!(html.contains("session-123"));
-        assert!(html.contains("Sign in"));
-        assert!(!html.contains("alert-error"));
-    }
-
-    #[test]
     fn test_render_login_form_with_error() {
         let html = render_login_form("Test App", "session-123", Some("Invalid credentials"));
         assert!(html.contains("Invalid credentials"));

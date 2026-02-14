@@ -144,7 +144,11 @@ async fn test_automation_crud_operations() {
     assert_eq!(updated["version"], 2);
 
     // List all automations
-    let resp = client.get(format!("{base}/api/automations")).send().await.unwrap();
+    let resp = client
+        .get(format!("{base}/api/automations"))
+        .send()
+        .await
+        .unwrap();
 
     assert_eq!(resp.status(), reqwest::StatusCode::OK);
     let list: Value = resp.json().await.unwrap();
@@ -345,7 +349,9 @@ async fn test_automation_trigger_configuration() {
 
     // Delete the first trigger
     let resp = client
-        .delete(format!("{base}/api/automations/{automation_id}/triggers/{trigger_id}"))
+        .delete(format!(
+            "{base}/api/automations/{automation_id}/triggers/{trigger_id}"
+        ))
         .send()
         .await
         .unwrap();

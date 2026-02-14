@@ -7,6 +7,7 @@
 //! Tests use testcontainers to spin up a real Redis instance.
 
 use octofhir_server::{CacheBackend, RedisConfig, create_cache_backend};
+use std::sync::Arc;
 use std::time::Duration;
 use testcontainers::{ContainerAsync, runners::AsyncRunner};
 use testcontainers_modules::redis::Redis;
@@ -45,7 +46,7 @@ async fn test_local_cache_get_set() {
 
     // Get the value back
     let value = cache.get("test_key").await;
-    assert_eq!(value, Some(b"test_value".to_vec()));
+    assert_eq!(value, Some(Arc::new(b"test_value".to_vec())));
 
     // Check stats
     let stats = cache.stats();
@@ -146,7 +147,7 @@ async fn test_redis_cache_get_set() {
 
     // Get the value back (should hit L1 first)
     let value = cache.get("redis_test_key").await;
-    assert_eq!(value, Some(b"redis_test_value".to_vec()));
+    assert_eq!(value, Some(Arc::new(b"redis_test_value".to_vec())));
 }
 
 #[tokio::test]
@@ -180,11 +181,11 @@ async fn test_redis_cache_l1_l2_promotion() {
 
     // Get from cache2 - should retrieve from L2 (Redis) and promote to L1
     let value = cache2.get("promotion_key").await;
-    assert_eq!(value, Some(b"promotion_value".to_vec()));
+    assert_eq!(value, Some(Arc::new(b"promotion_value".to_vec())));
 
     // Second get should hit L1
     let value = cache2.get("promotion_key").await;
-    assert_eq!(value, Some(b"promotion_value".to_vec()));
+    assert_eq!(value, Some(Arc::new(b"promotion_value".to_vec())));
 }
 
 #[tokio::test]
@@ -250,7 +251,7 @@ async fn test_graceful_degradation_invalid_url() {
         .await;
 
     let value = cache.get("fallback_key").await;
-    assert_eq!(value, Some(b"fallback_value".to_vec()));
+    assert_eq!(value, Some(Arc::new(b"fallback_value".to_vec())));
 
     let stats = cache.stats();
     assert_eq!(stats.mode, "local");

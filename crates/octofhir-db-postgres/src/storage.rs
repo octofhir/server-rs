@@ -135,7 +135,7 @@ impl PostgresStorage {
 #[async_trait]
 impl FhirStorage for PostgresStorage {
     async fn create(&self, resource: &Value) -> Result<StoredResource, StorageError> {
-        queries::create(&self.pool, &self.schema_manager, resource).await
+        queries::create(&self.pool, resource).await
     }
 
     async fn read(
@@ -159,7 +159,7 @@ impl FhirStorage for PostgresStorage {
         resource: &Value,
         if_match: Option<&str>,
     ) -> Result<StoredResource, StorageError> {
-        queries::update(&self.pool, &self.schema_manager, resource, if_match).await
+        queries::update(&self.pool, resource, if_match).await
     }
 
     async fn delete(&self, resource_type: &str, id: &str) -> Result<(), StorageError> {
@@ -209,8 +209,7 @@ impl FhirStorage for PostgresStorage {
         })?;
 
         // Wrap in our PostgresTransaction type
-        let pg_tx =
-            crate::transaction::PostgresTransaction::new(sqlx_tx, self.schema_manager.clone());
+        let pg_tx = crate::transaction::PostgresTransaction::new(sqlx_tx);
 
         Ok(Box::new(pg_tx))
     }

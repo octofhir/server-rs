@@ -12,20 +12,44 @@ struct TestStorage;
 
 #[async_trait::async_trait]
 impl octofhir_storage::FhirStorage for TestStorage {
-    async fn create(&self, _resource: &serde_json::Value) -> Result<octofhir_storage::StoredResource, octofhir_storage::StorageError> {
+    async fn create(
+        &self,
+        _resource: &serde_json::Value,
+    ) -> Result<octofhir_storage::StoredResource, octofhir_storage::StorageError> {
         unimplemented!("Test storage: create not needed")
     }
 
-    async fn read(&self, _resource_type: &str, _id: &str) -> Result<Option<octofhir_storage::StoredResource>, octofhir_storage::StorageError> {
+    async fn read(
+        &self,
+        _resource_type: &str,
+        _id: &str,
+    ) -> Result<Option<octofhir_storage::StoredResource>, octofhir_storage::StorageError> {
         Ok(None)
     }
 
-    async fn update(&self, _resource: &serde_json::Value) -> Result<octofhir_storage::StoredResource, octofhir_storage::StorageError> {
+    async fn update(
+        &self,
+        _resource: &serde_json::Value,
+        _if_match: Option<&str>,
+    ) -> Result<octofhir_storage::StoredResource, octofhir_storage::StorageError> {
         unimplemented!("Test storage: update not needed")
     }
 
-    async fn delete(&self, _resource_type: &str, _id: &str) -> Result<(), octofhir_storage::StorageError> {
+    async fn delete(
+        &self,
+        _resource_type: &str,
+        _id: &str,
+    ) -> Result<(), octofhir_storage::StorageError> {
         Ok(())
+    }
+
+    async fn vread(
+        &self,
+        _resource_type: &str,
+        _id: &str,
+        _version: &str,
+    ) -> Result<Option<octofhir_storage::StoredResource>, octofhir_storage::StorageError> {
+        Ok(None)
     }
 
     async fn search(
@@ -43,7 +67,7 @@ impl octofhir_storage::FhirStorage for TestStorage {
     async fn history(
         &self,
         _resource_type: &str,
-        _id: &str,
+        _id: Option<&str>,
         _params: &octofhir_storage::HistoryParams,
     ) -> Result<octofhir_storage::HistoryResult, octofhir_storage::StorageError> {
         Ok(octofhir_storage::HistoryResult {
@@ -52,13 +76,22 @@ impl octofhir_storage::FhirStorage for TestStorage {
         })
     }
 
-    async fn read_version(
+    async fn system_history(
         &self,
-        _resource_type: &str,
-        _id: &str,
-        _version_id: &str,
-    ) -> Result<Option<octofhir_storage::StoredResource>, octofhir_storage::StorageError> {
-        Ok(None)
+        _params: &octofhir_storage::HistoryParams,
+    ) -> Result<octofhir_storage::HistoryResult, octofhir_storage::StorageError> {
+        Ok(octofhir_storage::HistoryResult {
+            entries: vec![],
+            total: Some(0),
+        })
+    }
+
+    async fn begin_transaction(
+        &self,
+    ) -> Result<Box<dyn octofhir_storage::Transaction>, octofhir_storage::StorageError> {
+        Err(octofhir_storage::StorageError::transaction_error(
+            "Test storage does not support transactions",
+        ))
     }
 
     fn supports_transactions(&self) -> bool {
@@ -80,8 +113,11 @@ fn create_test_service() -> CqlService {
     let fhirpath_engine = Arc::new(
         tokio::runtime::Runtime::new()
             .unwrap()
-            .block_on(octofhir_fhirpath::FhirPathEngine::new(registry, model_provider.clone()))
-            .unwrap()
+            .block_on(octofhir_fhirpath::FhirPathEngine::new(
+                registry,
+                model_provider.clone(),
+            ))
+            .unwrap(),
     );
 
     let data_provider = Arc::new(FhirServerDataProvider::new(

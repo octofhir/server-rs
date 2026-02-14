@@ -359,6 +359,7 @@ fn create_test_auth_context() -> AuthContext {
         description: Some("Test client for integration tests".to_string()),
         grant_types: vec![GrantType::AuthorizationCode],
         redirect_uris: vec!["http://localhost/callback".to_string()],
+        post_logout_redirect_uris: vec![],
         scopes: vec!["user/*.cruds".to_string()],
         confidential: false,
         active: true,
@@ -371,7 +372,7 @@ fn create_test_auth_context() -> AuthContext {
     };
 
     AuthContext {
-        token_claims,
+        token_claims: std::sync::Arc::new(token_claims),
         client,
         user: None,
         patient: None,
@@ -1915,6 +1916,7 @@ fn create_restricted_auth_context(scope: &str) -> AuthContext {
         description: Some("Test client for integration tests".to_string()),
         grant_types: vec![GrantType::AuthorizationCode],
         redirect_uris: vec!["http://localhost/callback".to_string()],
+        post_logout_redirect_uris: vec![],
         scopes: vec![scope.to_string()],
         confidential: false,
         active: true,
@@ -1927,7 +1929,7 @@ fn create_restricted_auth_context(scope: &str) -> AuthContext {
     };
 
     AuthContext {
-        token_claims,
+        token_claims: std::sync::Arc::new(token_claims),
         client,
         user: None,
         patient: None,

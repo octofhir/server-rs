@@ -1,8 +1,8 @@
+use crate::cli::OutputFormat;
 use colored::Colorize;
 use serde_json::Value;
-use tabled::settings::Style;
 use tabled::builder::Builder;
-use crate::cli::OutputFormat;
+use tabled::settings::Style;
 
 pub fn print_value(value: &Value, format: OutputFormat) {
     match format {
@@ -36,10 +36,7 @@ fn print_as_table(value: &Value) {
         builder.push_record(["ID", "ResourceType", "LastUpdated"]);
         for entry in entries {
             let resource = entry.get("resource").unwrap_or(entry);
-            let id = resource
-                .get("id")
-                .and_then(|v| v.as_str())
-                .unwrap_or("-");
+            let id = resource.get("id").and_then(|v| v.as_str()).unwrap_or("-");
             let rt = resource
                 .get("resourceType")
                 .and_then(|v| v.as_str())
@@ -65,10 +62,7 @@ fn print_as_table(value: &Value) {
             .unwrap_or("Resource");
         let id = value.get("id").and_then(|v| v.as_str()).unwrap_or("-");
         println!("{} {}/{}", "Resource:".cyan(), rt.cyan(), id.cyan());
-        println!(
-            "{}",
-            serde_json::to_string_pretty(value).unwrap()
-        );
+        println!("{}", serde_json::to_string_pretty(value).unwrap());
     }
 }
 
@@ -93,7 +87,11 @@ fn format_yaml(value: &Value, indent: usize) -> String {
         Value::Number(n) => n.to_string(),
         Value::String(s) => {
             if s.contains('\n') || s.contains(':') || s.contains('#') {
-                format!("|\n{}{}", " ".repeat(indent + 2), s.replace('\n', &format!("\n{}", " ".repeat(indent + 2))))
+                format!(
+                    "|\n{}{}",
+                    " ".repeat(indent + 2),
+                    s.replace('\n', &format!("\n{}", " ".repeat(indent + 2)))
+                )
             } else {
                 format!("\"{s}\"")
             }

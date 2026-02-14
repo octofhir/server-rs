@@ -10,6 +10,9 @@
 //! - Docker running (for testcontainers)
 //! - Internet connection (for tx.fhir.org)
 
+use std::sync::Arc;
+
+use octofhir_config::ConfigurationManager;
 use octofhir_search::TerminologyConfig;
 use octofhir_server::{AppConfig, PostgresStorageConfig, build_app};
 use serde_json::{Value, json};
@@ -48,7 +51,6 @@ fn create_config_with_terminology(postgres_url: &str) -> AppConfig {
 
     // Enable terminology service with tx.fhir.org
     config.terminology = TerminologyConfig {
-        enabled: true,
         server_url: "https://tx.fhir.org/r4".to_string(),
         cache_ttl_secs: 300, // 5 minutes for tests
     };
@@ -63,7 +65,13 @@ fn create_config_with_terminology(postgres_url: &str) -> AppConfig {
 async fn start_server(
     config: &AppConfig,
 ) -> (String, tokio::sync::oneshot::Sender<()>, JoinHandle<()>) {
-    let app = build_app(config).await.expect("build app");
+    let config_manager = Arc::new(
+        ConfigurationManager::builder()
+            .build()
+            .await
+            .expect("build config manager"),
+    );
+    let app = build_app(config, config_manager).await.expect("build app");
 
     // Bind to an ephemeral port
     let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
@@ -400,8 +408,8 @@ async fn test_terminology_disabled() {
     let (_container, postgres_url) = start_postgres().await;
     let mut config = create_config_with_terminology(&postgres_url);
 
-    // Disable terminology service
-    config.terminology.enabled = false;
+    // Disable terminology service by setting empty URL
+    config.terminology.server_url = String::new();
 
     let (base, shutdown_tx, _handle) = start_server(&config).await;
     let client = reqwest::Client::new();

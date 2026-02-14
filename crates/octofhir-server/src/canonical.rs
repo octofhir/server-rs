@@ -386,73 +386,113 @@ async fn build_registry_with_manager(cfg: &AppConfig) -> Result<CanonicalRegistr
         })
         .collect();
 
-    // Install packages - manager handles dependencies internally
-    // Use batch installation with PackageSpec to support URL-based packages
+    // Install all packages in a single batch call for efficiency
+    let install_start = std::time::Instant::now();
+    let batch_specs: Vec<octofhir_canonical_manager::PackageSpec> = packages_to_install
+        .iter()
+        .map(|pkg| {
+            tracing::info!(
+                package = %pkg.id,
+                version = ?pkg.version,
+                url = ?pkg.url,
+                "queued package for batch installation"
+            );
+            octofhir_canonical_manager::PackageSpec {
+                name: pkg.id.clone(),
+                version: pkg.version.clone().unwrap_or_default(),
+                priority: 1,
+                url: pkg.url.clone(),
+            }
+        })
+        .collect();
+
     let mut successfully_installed: Vec<(String, String)> = Vec::new();
-    for pkg in &packages_to_install {
-        let name = &pkg.id;
-        let version = pkg.version.as_ref().unwrap();
+    if !batch_specs.is_empty() {
+        tracing::info!(count = batch_specs.len(), "Installing packages via batch");
+        // Keep track of names for logging
+        let spec_names: Vec<_> = batch_specs
+            .iter()
+            .map(|s| (s.name.clone(), s.version.clone()))
+            .collect();
 
-        tracing::info!(
-            package = %name,
-            version = %version,
-            url = ?pkg.url,
-            "attempting to install package via canonical manager"
-        );
-
-        // Create PackageSpec with URL if available
-        let spec = octofhir_canonical_manager::PackageSpec {
-            name: name.clone(),
-            version: version.clone(),
-            priority: 1,
-            url: pkg.url.clone(),
-        };
-
-        // Use install_packages_batch for consistency
-        match manager.install_packages_batch(vec![spec]).await {
+        match manager.install_packages_batch(batch_specs).await {
             Ok(()) => {
                 tracing::info!(
-                    package = %name,
-                    version = %version,
-                    "successfully installed package"
+                    count = spec_names.len(),
+                    elapsed_ms = install_start.elapsed().as_millis(),
+                    "Successfully installed all packages in batch"
                 );
-                successfully_installed.push((name.clone(), version.clone()));
+                successfully_installed = spec_names;
             }
             Err(e) => {
                 tracing::error!(
-                    package = %name,
-                    version = %version,
                     error = %e,
                     error_debug = ?e,
-                    "failed to install package"
+                    "Batch package installation failed, falling back to sequential"
                 );
+                // Fallback: install one by one
+                for pkg in &packages_to_install {
+                    let name = &pkg.id;
+                    let version = pkg.version.as_ref().unwrap();
+                    let spec = octofhir_canonical_manager::PackageSpec {
+                        name: name.clone(),
+                        version: version.clone(),
+                        priority: 1,
+                        url: pkg.url.clone(),
+                    };
+                    match manager.install_packages_batch(vec![spec]).await {
+                        Ok(()) => {
+                            tracing::info!(package = %name, version = %version, "installed package");
+                            successfully_installed.push((name.clone(), version.clone()));
+                        }
+                        Err(e) => {
+                            tracing::error!(package = %name, version = %version, error = %e, "failed to install package");
+                        }
+                    }
+                }
             }
         }
     }
 
-    // Convert schemas once for all packages at the end (more efficient than per-package)
+    // Convert schemas for all packages concurrently
+    let conversion_start = std::time::Instant::now();
+    let conversion_count = install_specs.len();
     tracing::info!(
-        count = install_specs.len(),
-        "converting schemas for all packages"
+        count = conversion_count,
+        "converting schemas for all packages concurrently"
     );
-    for pkg in &install_specs {
-        if let Some(ref version) = pkg.version
-            && let Err(e) = convert_and_store_package_schemas(
-                postgres_store.as_ref(),
-                &pkg.id,
-                version,
-                fhir_version_str,
-            )
-            .await
-        {
-            tracing::warn!(
-                package = %pkg.id,
-                version = %version,
-                error = %e,
-                "failed to convert schemas for package"
-            );
-        }
-    }
+
+    let conversion_futures: Vec<_> = install_specs
+        .iter()
+        .filter_map(|pkg| {
+            pkg.version.as_ref().map(|version| {
+                let store = postgres_store.clone();
+                let pkg_id = pkg.id.clone();
+                let version = version.clone();
+                let fhir_ver = fhir_version_str.to_string();
+                async move {
+                    if let Err(e) =
+                        convert_and_store_package_schemas(&store, &pkg_id, &version, &fhir_ver)
+                            .await
+                    {
+                        tracing::warn!(
+                            package = %pkg_id,
+                            version = %version,
+                            error = %e,
+                            "failed to convert schemas for package"
+                        );
+                    }
+                }
+            })
+        })
+        .collect();
+
+    futures::future::join_all(conversion_futures).await;
+    tracing::info!(
+        count = conversion_count,
+        elapsed_ms = conversion_start.elapsed().as_millis(),
+        "schema conversion completed"
+    );
 
     // Load embedded packages: octofhir-auth and octofhir-app
     // These packages are split for better organization: auth resources vs app resources

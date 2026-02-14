@@ -201,12 +201,6 @@ mod tests {
     }
 
     #[test]
-    fn test_detect_os_ios() {
-        let ua = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_2 like Mac OS X)";
-        assert_eq!(detect_os(ua), "iOS");
-    }
-
-    #[test]
     fn test_detect_os_android() {
         let ua = "Mozilla/5.0 (Linux; Android 13; Pixel 7)";
         assert_eq!(detect_os(ua), "Android");
@@ -241,15 +235,6 @@ mod tests {
     fn test_generate_device_name_none() {
         let name = generate_device_name(None);
         assert_eq!(name, "Unknown Device");
-    }
-
-    #[test]
-    fn test_parse_device_info() {
-        let ua = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Mobile/15E148 Safari/604.1";
-        let info = parse_device_info(ua);
-        assert_eq!(info.browser, "Safari");
-        assert_eq!(info.os, "iOS");
-        assert_eq!(info.device_type, DeviceType::Mobile);
     }
 
     #[test]

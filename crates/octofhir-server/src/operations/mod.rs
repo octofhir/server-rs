@@ -76,9 +76,8 @@ pub use params::OperationParams;
 pub use registry::OperationRegistry;
 pub use router::{
     instance_operation_handler, instance_operation_or_history_handler, is_operation,
-    merged_root_get_handler, merged_root_post_handler,
-    merged_type_get_handler, merged_type_post_handler, system_operation_handler,
-    type_operation_handler,
+    merged_root_get_handler, merged_root_post_handler, merged_type_get_handler,
+    merged_type_post_handler, system_operation_handler, type_operation_handler,
 };
 pub use sof::{
     ViewDefinitionRunOperation, ViewDefinitionSqlOperation, execute_viewdefinition_export,
@@ -233,10 +232,7 @@ pub fn register_core_operations_full(
     );
 
     // $fhirpath operation
-    handlers.insert(
-        "fhirpath".to_string(),
-        Arc::new(FhirPathOperation::new()),
-    );
+    handlers.insert("fhirpath".to_string(), Arc::new(FhirPathOperation::new()));
 
     // CQL operations ($cql, $evaluate-measure) - only if enabled
     if cql_enabled {

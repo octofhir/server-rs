@@ -101,12 +101,7 @@ impl FhirPathOperation {
         let mut params = Vec::new();
 
         // Metadata section
-        params.push(self.build_metadata_section(
-            expression,
-            &result,
-            parse_time,
-            eval_time,
-        ));
+        params.push(self.build_metadata_section(expression, &result, parse_time, eval_time));
 
         // Result section(s)
         for (index, value) in result.into_iter().enumerate() {
@@ -198,10 +193,7 @@ impl FhirPathOperation {
             FhirPathValue::Boolean(b, _, _) => ("boolean".to_string(), ("valueBoolean", json!(b))),
             FhirPathValue::Integer(i, _, _) => ("integer".to_string(), ("valueInteger", json!(i))),
             FhirPathValue::String(s, type_info, _) => {
-                let type_name = type_info
-                    .name
-                    .as_deref()
-                    .unwrap_or(&type_info.type_name);
+                let type_name = type_info.name.as_deref().unwrap_or(&type_info.type_name);
 
                 match type_name {
                     "code" => ("code".to_string(), ("valueCode", json!(s))),
@@ -211,66 +203,79 @@ impl FhirPathOperation {
                     _ => ("string".to_string(), ("valueString", json!(s))),
                 }
             }
-            FhirPathValue::Decimal(d, _, _) => {
-                ("decimal".to_string(), ("valueDecimal", json!(d.to_string())))
-            }
+            FhirPathValue::Decimal(d, _, _) => (
+                "decimal".to_string(),
+                ("valueDecimal", json!(d.to_string())),
+            ),
             FhirPathValue::Date(date, _, _) => {
                 ("date".to_string(), ("valueDate", json!(date.to_string())))
             }
-            FhirPathValue::DateTime(dt, _, _) => {
-                ("dateTime".to_string(), ("valueDateTime", json!(dt.to_string())))
-            }
+            FhirPathValue::DateTime(dt, _, _) => (
+                "dateTime".to_string(),
+                ("valueDateTime", json!(dt.to_string())),
+            ),
             FhirPathValue::Time(time, _, _) => {
                 ("time".to_string(), ("valueTime", json!(time.to_string())))
             }
-            FhirPathValue::Quantity { value, unit, .. } => ("Quantity".to_string(), (
-                "valueQuantity",
-                json!({
-                    "value": value.to_string(),
-                    "unit": unit
-                }),
-            )),
+            FhirPathValue::Quantity { value, unit, .. } => (
+                "Quantity".to_string(),
+                (
+                    "valueQuantity",
+                    json!({
+                        "value": value.to_string(),
+                        "unit": unit
+                    }),
+                ),
+            ),
             FhirPathValue::Resource(json_value, type_info, _) => {
-                let type_name = type_info
-                    .name
-                    .as_deref()
-                    .unwrap_or(&type_info.type_name);
+                let type_name = type_info.name.as_deref().unwrap_or(&type_info.type_name);
 
                 // Check if this is a complex datatype or resource
                 match type_name {
-                    "HumanName" => {
-                        (type_name.to_string(), ("valueHumanName", json_value.as_ref().clone()))
-                    }
-                    "Address" => {
-                        (type_name.to_string(), ("valueAddress", json_value.as_ref().clone()))
-                    }
-                    "Identifier" => {
-                        (type_name.to_string(), ("valueIdentifier", json_value.as_ref().clone()))
-                    }
+                    "HumanName" => (
+                        type_name.to_string(),
+                        ("valueHumanName", json_value.as_ref().clone()),
+                    ),
+                    "Address" => (
+                        type_name.to_string(),
+                        ("valueAddress", json_value.as_ref().clone()),
+                    ),
+                    "Identifier" => (
+                        type_name.to_string(),
+                        ("valueIdentifier", json_value.as_ref().clone()),
+                    ),
                     "CodeableConcept" => (
                         type_name.to_string(),
                         ("valueCodeableConcept", json_value.as_ref().clone()),
                     ),
-                    "Coding" => {
-                        (type_name.to_string(), ("valueCoding", json_value.as_ref().clone()))
-                    }
-                    "Reference" => {
-                        (type_name.to_string(), ("valueReference", json_value.as_ref().clone()))
-                    }
-                    "Period" => {
-                        (type_name.to_string(), ("valuePeriod", json_value.as_ref().clone()))
-                    }
-                    "Range" => {
-                        (type_name.to_string(), ("valueRange", json_value.as_ref().clone()))
-                    }
-                    "Ratio" => {
-                        (type_name.to_string(), ("valueRatio", json_value.as_ref().clone()))
-                    }
+                    "Coding" => (
+                        type_name.to_string(),
+                        ("valueCoding", json_value.as_ref().clone()),
+                    ),
+                    "Reference" => (
+                        type_name.to_string(),
+                        ("valueReference", json_value.as_ref().clone()),
+                    ),
+                    "Period" => (
+                        type_name.to_string(),
+                        ("valuePeriod", json_value.as_ref().clone()),
+                    ),
+                    "Range" => (
+                        type_name.to_string(),
+                        ("valueRange", json_value.as_ref().clone()),
+                    ),
+                    "Ratio" => (
+                        type_name.to_string(),
+                        ("valueRatio", json_value.as_ref().clone()),
+                    ),
                     "ContactPoint" => (
                         type_name.to_string(),
                         ("valueContactPoint", json_value.as_ref().clone()),
                     ),
-                    _ => (type_name.to_string(), ("resource", json_value.as_ref().clone())),
+                    _ => (
+                        type_name.to_string(),
+                        ("resource", json_value.as_ref().clone()),
+                    ),
                 }
             }
             _ => ("unknown".to_string(), ("valueString", json!("{}"))),
@@ -351,8 +356,7 @@ impl OperationHandler for FhirPathOperation {
     ) -> Result<Value, OperationError> {
         let expression = self.extract_expression(params)?;
         let resource = self.extract_resource(params);
-        self.evaluate_expression(state, &expression, resource)
-            .await
+        self.evaluate_expression(state, &expression, resource).await
     }
 
     async fn handle_type(
@@ -362,11 +366,10 @@ impl OperationHandler for FhirPathOperation {
         params: &Value,
     ) -> Result<Value, OperationError> {
         let expression = self.extract_expression(params)?;
-        let resource = self.extract_resource(params).or_else(|| {
-            Some(json!({ "resourceType": resource_type }))
-        });
-        self.evaluate_expression(state, &expression, resource)
-            .await
+        let resource = self
+            .extract_resource(params)
+            .or_else(|| Some(json!({ "resourceType": resource_type })));
+        self.evaluate_expression(state, &expression, resource).await
     }
 
     async fn handle_instance(

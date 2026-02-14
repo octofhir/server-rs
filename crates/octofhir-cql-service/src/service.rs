@@ -49,7 +49,9 @@ impl CqlService {
         tracing::info!(expression = expression, "Evaluating CQL expression");
 
         if expression.is_empty() {
-            return Err(CqlError::InvalidParameter("Expression cannot be empty".to_string()));
+            return Err(CqlError::InvalidParameter(
+                "Expression cannot be empty".to_string(),
+            ));
         }
 
         let result = tokio::time::timeout(
@@ -57,7 +59,12 @@ impl CqlService {
             self.evaluate_expression_internal(expression, context_type, context_value, parameters),
         )
         .await
-        .map_err(|_| CqlError::Timeout(format!("Expression evaluation timed out after {}ms", self.config.evaluation_timeout_ms)))??;
+        .map_err(|_| {
+            CqlError::Timeout(format!(
+                "Expression evaluation timed out after {}ms",
+                self.config.evaluation_timeout_ms
+            ))
+        })??;
 
         Ok(result)
     }
@@ -80,7 +87,8 @@ define Result:
         );
 
         // Parse CQL expression to AST
-        let ast_library = parse(&library_cql).map_err(|e| CqlError::ParseError(format!("{:?}", e)))?;
+        let ast_library =
+            parse(&library_cql).map_err(|e| CqlError::ParseError(format!("{:?}", e)))?;
 
         // Convert AST to ELM
         let elm_library = {
@@ -113,9 +121,10 @@ define Result:
         let mut ctx = ctx_builder.build();
 
         // Evaluate the ELM library
-        let results = self.engine.evaluate_library(&elm_library, &mut ctx).map_err(|e| {
-            CqlError::EvaluationError(format!("{:?}", e))
-        })?;
+        let results = self
+            .engine
+            .evaluate_library(&elm_library, &mut ctx)
+            .map_err(|e| CqlError::EvaluationError(format!("{:?}", e)))?;
 
         // Get the "Result" definition from the library
         if let Some(result_value) = results.get("Result") {
@@ -139,13 +148,21 @@ define Result:
     ) -> CqlResult<HashMap<String, Value>> {
         let version = version.unwrap_or("latest");
 
-        tracing::info!(library_url = library_url, version = version, "Evaluating CQL library");
+        tracing::info!(
+            library_url = library_url,
+            version = version,
+            "Evaluating CQL library"
+        );
 
-        let _library = self.library_cache.get_or_compile(library_url, version, &self.storage).await?;
+        let _library = self
+            .library_cache
+            .get_or_compile(library_url, version, &self.storage)
+            .await?;
 
         // Parse library CQL source to AST
         let cql_source = &_library.cql_source;
-        let ast_library = parse(cql_source).map_err(|e| CqlError::ParseError(format!("{:?}", e)))?;
+        let ast_library =
+            parse(cql_source).map_err(|e| CqlError::ParseError(format!("{:?}", e)))?;
 
         // Convert AST to ELM
         let elm_library = {
@@ -176,9 +193,10 @@ define Result:
         let mut ctx = ctx_builder.build();
 
         // Evaluate all definitions
-        let results = self.engine.evaluate_library(&elm_library, &mut ctx).map_err(|e| {
-            CqlError::EvaluationError(format!("{:?}", e))
-        })?;
+        let results = self
+            .engine
+            .evaluate_library(&elm_library, &mut ctx)
+            .map_err(|e| CqlError::EvaluationError(format!("{:?}", e)))?;
 
         // Convert to JSON
         let mut json_results = HashMap::new();
@@ -199,7 +217,6 @@ define Result:
         self.library_cache.clear();
     }
 }
-
 
 #[cfg(test)]
 mod tests;

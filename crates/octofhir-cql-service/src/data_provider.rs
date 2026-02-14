@@ -6,7 +6,9 @@ use indexmap::IndexMap;
 use num_traits::ToPrimitive;
 use octofhir_cql_eval::DataProvider;
 use octofhir_cql_types::{CqlList, CqlTuple, CqlType, CqlValue};
-use octofhir_fhirpath::{Collection, EvaluationContext as FhirPathContext, FhirPathEngine, FhirPathValue};
+use octofhir_fhirpath::{
+    Collection, EvaluationContext as FhirPathContext, FhirPathEngine, FhirPathValue,
+};
 use octofhir_storage::{DynStorage, SearchParams};
 use serde_json::Value;
 use std::sync::Arc;
@@ -19,7 +21,11 @@ pub struct FhirServerDataProvider {
 }
 
 impl FhirServerDataProvider {
-    pub fn new(storage: DynStorage, fhirpath_engine: Arc<FhirPathEngine>, max_retrieve_size: usize) -> Self {
+    pub fn new(
+        storage: DynStorage,
+        fhirpath_engine: Arc<FhirPathEngine>,
+        max_retrieve_size: usize,
+    ) -> Self {
         Self {
             storage,
             fhirpath_engine,
@@ -82,9 +88,15 @@ impl FhirServerDataProvider {
             .storage
             .search(data_type, &search_params)
             .await
-            .map_err(|e| crate::error::CqlError::DataProviderError(format!("Search failed: {}", e)))?;
+            .map_err(|e| {
+                crate::error::CqlError::DataProviderError(format!("Search failed: {}", e))
+            })?;
 
-        let resources: Vec<Value> = result.entries.into_iter().map(|entry| entry.resource).collect();
+        let resources: Vec<Value> = result
+            .entries
+            .into_iter()
+            .map(|entry| entry.resource)
+            .collect();
         Ok(resources)
     }
 
@@ -107,8 +119,13 @@ impl FhirServerDataProvider {
     fn has_subject_field(resource_type: &str) -> bool {
         matches!(
             resource_type,
-            "Observation" | "Condition" | "Procedure" | "MedicationRequest"
-            | "DiagnosticReport" | "Encounter" | "AllergyIntolerance"
+            "Observation"
+                | "Condition"
+                | "Procedure"
+                | "MedicationRequest"
+                | "DiagnosticReport"
+                | "Encounter"
+                | "AllergyIntolerance"
         )
     }
 
@@ -175,7 +192,10 @@ impl DataProvider for FhirServerDataProvider {
             })
         });
 
-        resources.into_iter().filter_map(|json| json_to_cql_value(&json)).collect()
+        resources
+            .into_iter()
+            .filter_map(|json| json_to_cql_value(&json))
+            .collect()
     }
 
     fn get_property(&self, resource: &CqlValue, path: &str) -> Option<CqlValue> {
@@ -195,10 +215,7 @@ impl DataProvider for FhirServerDataProvider {
 
             let ctx = FhirPathContext::new(input, model_provider, None, None, None);
 
-            self.fhirpath_engine
-                .evaluate(path, &ctx)
-                .await
-                .ok()
+            self.fhirpath_engine.evaluate(path, &ctx).await.ok()
         })?;
 
         // Convert FHIRPath result to CqlValue
@@ -212,7 +229,10 @@ pub(crate) fn cql_value_to_json(value: &CqlValue) -> Option<Value> {
         CqlValue::Boolean(b) => Some(Value::Bool(*b)),
         CqlValue::Integer(i) => Some(Value::Number((*i).into())),
         CqlValue::Long(l) => Some(Value::Number((*l).into())),
-        CqlValue::Decimal(d) => d.to_f64().and_then(|f| serde_json::Number::from_f64(f)).map(Value::Number),
+        CqlValue::Decimal(d) => d
+            .to_f64()
+            .and_then(|f| serde_json::Number::from_f64(f))
+            .map(Value::Number),
         CqlValue::String(s) => Some(Value::String(s.clone())),
         CqlValue::Date(d) => Some(Value::String(d.to_string())),
         CqlValue::DateTime(dt) => Some(Value::String(dt.to_string())),
@@ -220,7 +240,10 @@ pub(crate) fn cql_value_to_json(value: &CqlValue) -> Option<Value> {
         CqlValue::Quantity(q) => {
             let mut map = serde_json::Map::new();
             if let Some(v) = q.value.to_f64() {
-                map.insert("value".to_string(), Value::Number(serde_json::Number::from_f64(v)?));
+                map.insert(
+                    "value".to_string(),
+                    Value::Number(serde_json::Number::from_f64(v)?),
+                );
             }
             if let Some(u) = &q.unit {
                 map.insert("unit".to_string(), Value::String(u.clone()));
@@ -237,7 +260,11 @@ pub(crate) fn cql_value_to_json(value: &CqlValue) -> Option<Value> {
             Some(Value::Object(map))
         }
         CqlValue::List(list) => {
-            let json_items: Vec<Value> = list.elements.iter().filter_map(|item| cql_value_to_json(item)).collect();
+            let json_items: Vec<Value> = list
+                .elements
+                .iter()
+                .filter_map(|item| cql_value_to_json(item))
+                .collect();
             Some(Value::Array(json_items))
         }
         CqlValue::Tuple(tuple) => {
@@ -272,7 +299,10 @@ pub(crate) fn json_to_cql_value(value: &Value) -> Option<CqlValue> {
         }
         Value::String(s) => Some(CqlValue::String(s.clone())),
         Value::Array(arr) => {
-            let items: Vec<CqlValue> = arr.iter().filter_map(|item| json_to_cql_value(item)).collect();
+            let items: Vec<CqlValue> = arr
+                .iter()
+                .filter_map(|item| json_to_cql_value(item))
+                .collect();
             Some(CqlValue::List(CqlList {
                 element_type: CqlType::Any,
                 elements: items,
@@ -317,16 +347,20 @@ fn fhirpath_value_to_json(value: &FhirPathValue) -> Option<Value> {
         FhirPathValue::Boolean(b, _, _) => Some(Value::Bool(*b)),
         FhirPathValue::String(s, _, _) => Some(Value::String(s.clone())),
         FhirPathValue::Integer(i, _, _) => Some(Value::Number((*i).into())),
-        FhirPathValue::Decimal(d, _, _) => {
-            d.to_f64().and_then(serde_json::Number::from_f64).map(Value::Number)
-        }
+        FhirPathValue::Decimal(d, _, _) => d
+            .to_f64()
+            .and_then(serde_json::Number::from_f64)
+            .map(Value::Number),
         FhirPathValue::Date(d, _, _) => Some(Value::String(d.to_string())),
         FhirPathValue::DateTime(dt, _, _) => Some(Value::String(dt.to_string())),
         FhirPathValue::Time(t, _, _) => Some(Value::String(t.to_string())),
         FhirPathValue::Quantity { value, unit, .. } => {
             let mut map = serde_json::Map::new();
             if let Some(v) = value.to_f64() {
-                map.insert("value".to_string(), Value::Number(serde_json::Number::from_f64(v)?));
+                map.insert(
+                    "value".to_string(),
+                    Value::Number(serde_json::Number::from_f64(v)?),
+                );
             }
             if let Some(u) = unit {
                 map.insert("unit".to_string(), Value::String(u.clone()));

@@ -12,6 +12,9 @@
 //! Requirements:
 //! - Docker running (for testcontainers)
 
+use std::sync::Arc;
+
+use octofhir_config::ConfigurationManager;
 use octofhir_server::{AppConfig, PostgresStorageConfig, build_app};
 use serde_json::{Value, json};
 use testcontainers::{ContainerAsync, runners::AsyncRunner};
@@ -52,7 +55,13 @@ fn create_config(postgres_url: &str) -> AppConfig {
 async fn start_server(
     config: &AppConfig,
 ) -> (String, tokio::sync::oneshot::Sender<()>, JoinHandle<()>) {
-    let app = build_app(config).await.expect("build app");
+    let config_manager = Arc::new(
+        ConfigurationManager::builder()
+            .build()
+            .await
+            .expect("build config manager"),
+    );
+    let app = build_app(config, config_manager).await.expect("build app");
 
     let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
         .await

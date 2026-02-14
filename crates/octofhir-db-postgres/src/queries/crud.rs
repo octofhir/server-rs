@@ -45,20 +45,12 @@ pub async fn create_transaction(pool: &PgPool) -> Result<i64, StorageError> {
 /// # Returns
 ///
 /// Returns the created `StoredResource` with generated ID and version.
-pub async fn create(
-    pool: &PgPool,
-    schema: &SchemaManager,
-    resource: &Value,
-) -> Result<StoredResource, StorageError> {
+pub async fn create(pool: &PgPool, resource: &Value) -> Result<StoredResource, StorageError> {
     let resource_type = resource["resourceType"]
         .as_str()
         .ok_or_else(|| StorageError::invalid_resource("Missing or invalid resourceType field"))?;
 
-    // Ensure table exists
-    schema
-        .ensure_table(resource_type)
-        .await
-        .map_err(|e| StorageError::internal(format!("Schema error: {e}")))?;
+    // Tables are created at startup by bootstrap_conformance_if_postgres()
 
     // Generate ID if not provided, validate if provided
     let id = if let Some(provided_id) = resource["id"].as_str() {
@@ -263,7 +255,6 @@ pub async fn read_raw(
 /// version matches the expected version (optimistic locking).
 pub async fn update(
     pool: &PgPool,
-    schema: &SchemaManager,
     resource: &Value,
     if_match: Option<&str>,
 ) -> Result<StoredResource, StorageError> {
@@ -275,11 +266,7 @@ pub async fn update(
         .as_str()
         .ok_or_else(|| StorageError::invalid_resource("Missing id field"))?;
 
-    // Ensure table exists
-    schema
-        .ensure_table(resource_type)
-        .await
-        .map_err(|e| StorageError::internal(format!("Schema error: {e}")))?;
+    // Tables are created at startup by bootstrap_conformance_if_postgres()
 
     let table = SchemaManager::table_name(resource_type);
     let now = Utc::now();
@@ -538,18 +525,13 @@ pub async fn vread(
 /// allowing multiple operations to be grouped atomically.
 pub async fn create_with_tx(
     tx: &mut PgTransaction<'_>,
-    schema: &SchemaManager,
     resource: &Value,
 ) -> Result<StoredResource, StorageError> {
     let resource_type = resource["resourceType"]
         .as_str()
         .ok_or_else(|| StorageError::invalid_resource("Missing or invalid resourceType field"))?;
 
-    // Ensure table exists (uses the pool from the transaction's connection)
-    schema
-        .ensure_table(resource_type)
-        .await
-        .map_err(|e| StorageError::internal(format!("Schema error: {e}")))?;
+    // Tables are created at startup by bootstrap_conformance_if_postgres()
 
     // Generate ID if not provided
     let id = resource["id"]
@@ -613,7 +595,6 @@ pub async fn create_with_tx(
 /// Updates a resource within a transaction.
 pub async fn update_with_tx(
     tx: &mut PgTransaction<'_>,
-    schema: &SchemaManager,
     resource: &Value,
 ) -> Result<StoredResource, StorageError> {
     let resource_type = resource["resourceType"]
@@ -624,11 +605,7 @@ pub async fn update_with_tx(
         .as_str()
         .ok_or_else(|| StorageError::invalid_resource("Missing id field"))?;
 
-    // Ensure table exists
-    schema
-        .ensure_table(resource_type)
-        .await
-        .map_err(|e| StorageError::internal(format!("Schema error: {e}")))?;
+    // Tables are created at startup by bootstrap_conformance_if_postgres()
 
     let table = SchemaManager::table_name(resource_type);
 
@@ -685,7 +662,6 @@ pub async fn update_with_tx(
 /// Deletes a resource within a transaction.
 pub async fn delete_with_tx(
     tx: &mut PgTransaction<'_>,
-    _schema: &SchemaManager,
     resource_type: &str,
     id: &str,
 ) -> Result<(), StorageError> {
@@ -726,7 +702,6 @@ pub async fn delete_with_tx(
 /// This read sees uncommitted changes made within the same transaction.
 pub async fn read_with_tx(
     tx: &mut PgTransaction<'_>,
-    _schema: &SchemaManager,
     resource_type: &str,
     id: &str,
 ) -> Result<Option<StoredResource>, StorageError> {

@@ -2,6 +2,7 @@ use axum::http::HeaderValue;
 use serde_json::Value;
 use tokio::task::JoinHandle;
 
+use octofhir_config::ConfigurationManager;
 use octofhir_server::{AppConfig, build_app, canonical};
 
 async fn start_server_with_packages() -> (String, tokio::sync::oneshot::Sender<()>, JoinHandle<()>)
@@ -23,7 +24,13 @@ async fn start_server_with_packages() -> (String, tokio::sync::oneshot::Sender<(
         .expect("canonical init");
     canonical::set_registry(reg);
 
-    let app = build_app(&cfg).await.expect("build app");
+    let config_manager = std::sync::Arc::new(
+        ConfigurationManager::builder()
+            .build()
+            .await
+            .expect("build config manager"),
+    );
+    let app = build_app(&cfg, config_manager).await.expect("build app");
     let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
         .await
         .unwrap();

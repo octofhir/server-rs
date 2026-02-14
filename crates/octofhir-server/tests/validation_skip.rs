@@ -7,6 +7,7 @@
 //! Tests also verify that the feature is disabled by default for security.
 
 use axum::http::StatusCode;
+use octofhir_config::ConfigurationManager;
 use octofhir_server::{AppConfig, PostgresStorageConfig, build_app};
 use serde_json::json;
 use std::sync::Arc;
@@ -98,7 +99,13 @@ async fn start_server(
     // Initialize canonical manager once (shared across all tests)
     init_canonical_once().await;
 
-    let app = build_app(config).await.expect("build app");
+    let config_manager = Arc::new(
+        ConfigurationManager::builder()
+            .build()
+            .await
+            .expect("build config manager"),
+    );
+    let app = build_app(config, config_manager).await.expect("build app");
 
     // Bind to an ephemeral port
     let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))

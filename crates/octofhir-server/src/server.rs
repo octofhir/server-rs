@@ -298,25 +298,15 @@ async fn subscription_events_ws_handler(
 /// This function:
 /// 1. Creates database tables for all FHIR resource types from FCM packages
 /// 2. Bootstraps auth resources (admin user, default UI client, access policy)
-async fn bootstrap_conformance_if_postgres(cfg: &AppConfig) -> Result<(), anyhow::Error> {
+async fn bootstrap_conformance_if_postgres(
+    cfg: &AppConfig,
+    pool: Arc<sqlx_postgres::PgPool>,
+) -> Result<(), anyhow::Error> {
     use octofhir_auth_postgres::{ArcClientStorage, ArcUserStorage};
-
-    let pg_cfg = cfg.storage.postgres.as_ref().ok_or_else(|| {
-        anyhow::anyhow!("PostgreSQL config is required for conformance bootstrap")
-    })?;
-
-    // Create PostgresStorage first to get access to the pool
-    let postgres_config = octofhir_db_postgres::PostgresConfig::new(pg_cfg.connection_url())
-        .with_pool_size(pg_cfg.pool_size)
-        .with_connect_timeout_ms(pg_cfg.connect_timeout_ms)
-        .with_idle_timeout_ms(pg_cfg.idle_timeout_ms)
-        .with_run_migrations(true);
-
-    let pg_storage = octofhir_db_postgres::PostgresStorage::new(postgres_config).await?;
 
     // Create database tables for all FHIR resource types from FCM packages
     // This includes all resource-kind and logical-kind StructureDefinitions
-    let fcm_storage = octofhir_db_postgres::PostgresPackageStore::new(pg_storage.pool().clone());
+    let fcm_storage = octofhir_db_postgres::PostgresPackageStore::new((*pool).clone());
     match fcm_storage.ensure_resource_tables().await {
         Ok(count) => {
             tracing::info!(
@@ -331,10 +321,6 @@ async fn bootstrap_conformance_if_postgres(cfg: &AppConfig) -> Result<(), anyhow
             );
         }
     }
-
-    // Bootstrap auth resources (admin user, default UI client)
-    // Tables are automatically created when StructureDefinitions are loaded above
-    let pool = Arc::new(pg_storage.pool().clone());
 
     // Bootstrap default UI client
     let client_storage = ArcClientStorage::new(pool.clone());
@@ -562,30 +548,6 @@ pub async fn build_app(
         (*db_pool).clone(),
     ));
 
-    // Bootstrap database tables and auth resources
-    if let Err(e) = bootstrap_conformance_if_postgres(cfg).await {
-        tracing::warn!(error = %e, "Failed to bootstrap database tables and auth resources");
-    }
-
-    // Build reloadable search config with lock-free reads
-    use octofhir_search::SearchOptions;
-    let search_options = SearchOptions {
-        default_count: cfg.search.default_count,
-        max_count: cfg.search.max_count,
-        cache_capacity: cfg.search.cache_capacity,
-    };
-
-    let search_config = match crate::canonical::get_manager() {
-        Some(manager) => ReloadableSearchConfig::new(&manager, search_options)
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to create reloadable search config: {}", e))?,
-        None => {
-            return Err(anyhow::anyhow!(
-                "Canonical manager required for search config"
-            ));
-        }
-    };
-
     // Parse FHIR version early - used by both model provider and GraphQL
     let fhir_version = match cfg.fhir.version.as_str() {
         "R4" | "4.0" | "4.0.1" => FhirVersion::R4,
@@ -594,6 +556,144 @@ pub async fn build_app(
         "R6" | "6.0" => FhirVersion::R6,
         _ => FhirVersion::R4, // Default to R4
     };
+
+    // ── Phase 1: Create lightweight components (instant, no I/O) ──
+
+    // On-demand model provider with LRU cache (schemas loaded lazily from DB)
+    let octofhir_provider = Arc::new(OctoFhirModelProvider::new(
+        db_pool.as_ref().clone(),
+        fhir_version.clone(),
+        500, // LRU cache size
+    ));
+    let model_provider = octofhir_provider;
+    tracing::info!(
+        "Model provider initialized with on-demand schema loading (FHIR version: {:?})",
+        cfg.fhir.version
+    );
+
+    // HybridTerminologyProvider for terminology operations
+    let terminology_provider: Option<Arc<dyn TerminologyProvider>> =
+        match crate::canonical::get_manager() {
+            Some(manager) => match HybridTerminologyProvider::new(manager, &cfg.terminology) {
+                Ok(provider) => {
+                    tracing::info!(
+                        server_url = %cfg.terminology.server_url,
+                        cache_ttl = cfg.terminology.cache_ttl_secs,
+                        "Terminology service initialized (local packages + remote server with caching)"
+                    );
+                    Some(Arc::new(provider))
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "Failed to create terminology provider, terminology operations will be limited");
+                    None
+                }
+            },
+            None => {
+                tracing::warn!(
+                    "Canonical manager not available, terminology operations will be limited"
+                );
+                None
+            }
+        };
+
+    // FHIRPath engine (needs model_provider, fast init)
+    let registry = Arc::new(octofhir_fhirpath::create_function_registry());
+    let mut fhirpath_engine = FhirPathEngine::new(registry, model_provider.clone())
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to initialize FHIRPath engine: {}", e))?;
+    if let Some(ref provider) = terminology_provider {
+        fhirpath_engine = fhirpath_engine.with_terminology_provider(provider.clone());
+        tracing::info!("FHIRPath engine configured with terminology provider");
+    }
+    let fhirpath_engine = Arc::new(fhirpath_engine);
+    tracing::info!("FHIRPath engine initialized successfully with schema-aware model provider");
+
+    // Policy storage and cache (creation is instant, refresh is async — done in Phase 2)
+    let policy_storage = Arc::new(PostgresPolicyStorageAdapter::new(db_pool.clone()));
+    let policy_cache = Arc::new(PolicyCache::new(policy_storage, Duration::minutes(5)));
+
+    // Async job manager (instant)
+    let async_job_config = crate::async_jobs::AsyncJobConfig::default();
+    let async_job_manager = Arc::new(crate::async_jobs::AsyncJobManager::new(
+        db_pool.clone(),
+        async_job_config,
+    ));
+    tracing::info!("Async job manager initialized");
+
+    // Gateway router (creation is instant, route loading is async — done in Phase 2)
+    let gateway_router = Arc::new(crate::gateway::GatewayRouter::new());
+
+    // ── Phase 2: Parallel heavy I/O operations ──
+    // These are all independent: they need only db_pool, cfg, or canonical_manager
+
+    use octofhir_search::SearchOptions;
+    let search_options = SearchOptions {
+        default_count: cfg.search.default_count,
+        max_count: cfg.search.max_count,
+        cache_capacity: cfg.search.cache_capacity,
+    };
+
+    let canonical_manager = crate::canonical::get_manager()
+        .ok_or_else(|| anyhow::anyhow!("Canonical manager required for initialization"))?;
+
+    // Launch all heavy init operations concurrently
+    let parallel_start = std::time::Instant::now();
+    tracing::info!("Starting parallel initialization of 8 components...");
+    let bootstrap_fut = bootstrap_conformance_if_postgres(cfg, db_pool.clone());
+    let search_config_fut = ReloadableSearchConfig::new(&canonical_manager, search_options);
+    let auth_state_fut = initialize_auth_state(cfg, db_pool.clone());
+    let policy_refresh_fut = policy_cache.refresh();
+    let operations_fut = crate::operations::load_operations();
+    let compartment_fut =
+        crate::compartments::CompartmentRegistry::from_canonical_manager(&canonical_manager);
+    let gateway_routes_fut = gateway_router.reload_routes(&storage);
+    let resource_types_fut = model_provider.get_resource_types();
+
+    let (
+        bootstrap_result,
+        search_config_result,
+        auth_state_result,
+        policy_refresh_result,
+        operations_result,
+        compartment_result,
+        gateway_routes_result,
+        resource_types_result,
+    ) = tokio::join!(
+        bootstrap_fut,
+        search_config_fut,
+        auth_state_fut,
+        policy_refresh_fut,
+        operations_fut,
+        compartment_fut,
+        gateway_routes_fut,
+        resource_types_fut,
+    );
+
+    tracing::info!(
+        elapsed_ms = parallel_start.elapsed().as_millis(),
+        "Parallel initialization completed"
+    );
+
+    // Process results from parallel operations
+    if let Err(e) = bootstrap_result {
+        tracing::warn!(error = %e, "Failed to bootstrap database tables and auth resources");
+    }
+
+    let search_config = search_config_result
+        .map_err(|e| anyhow::anyhow!("Failed to create reloadable search config: {}", e))?;
+
+    let auth_state = auth_state_result.context("Failed to initialize authentication")?;
+    tracing::info!("Authentication initialized");
+
+    if let Err(e) = policy_refresh_result {
+        tracing::warn!(error = %e, "Failed to load initial policies, continuing with empty cache");
+    } else {
+        let stats = policy_cache.stats().await;
+        tracing::info!(
+            policy_count = stats.policy_count,
+            "Policy cache initialized"
+        );
+    }
 
     // Start GraphQL schema build EARLY in background to improve startup time
     // The schema will be building while other components initialize
@@ -723,67 +823,10 @@ pub async fn build_app(
         None
     };
 
-    // Create on-demand model provider - schemas loaded from database as needed
-    // The database stores pre-converted FHIRSchemas which are loaded on-demand
-    // with an LRU cache for frequently accessed schemas.
-    let octofhir_provider = Arc::new(OctoFhirModelProvider::new(
-        db_pool.as_ref().clone(),
-        fhir_version,
-        500, // LRU cache size
-    ));
+    // ── Phase 3: Process parallel results and build dependent components ──
 
-    tracing::info!(
-        "✓ Model provider initialized with on-demand schema loading (FHIR version: {:?})",
-        cfg.fhir.version
-    );
-
-    // Use Arc<OctoFhirModelProvider> directly for all components
-    let model_provider = octofhir_provider;
-
-    // Create HybridTerminologyProvider for terminology operations
-    // This is shared across FhirPath, validation, $expand, and $validate-code
-    // Terminology is always enabled - uses local packages first, then remote server with caching
-    let terminology_provider: Option<Arc<dyn TerminologyProvider>> =
-        match crate::canonical::get_manager() {
-            Some(manager) => match HybridTerminologyProvider::new(manager, &cfg.terminology) {
-                Ok(provider) => {
-                    tracing::info!(
-                        server_url = %cfg.terminology.server_url,
-                        cache_ttl = cfg.terminology.cache_ttl_secs,
-                        "Terminology service initialized (local packages + remote server with caching)"
-                    );
-                    Some(Arc::new(provider))
-                }
-                Err(e) => {
-                    tracing::warn!(error = %e, "Failed to create terminology provider, terminology operations will be limited");
-                    None
-                }
-            },
-            None => {
-                tracing::warn!(
-                    "Canonical manager not available, terminology operations will be limited"
-                );
-                None
-            }
-        };
-
-    // Create FHIRPath function registry and engine
-    let registry = Arc::new(octofhir_fhirpath::create_function_registry());
-    let mut fhirpath_engine = FhirPathEngine::new(registry, model_provider.clone())
-        .await
-        .map_err(|e| anyhow::anyhow!("Failed to initialize FHIRPath engine: {}", e))?;
-
-    // Add terminology provider to FhirPath engine for memberOf, validateVS, etc.
-    if let Some(ref provider) = terminology_provider {
-        fhirpath_engine = fhirpath_engine.with_terminology_provider(provider.clone());
-        tracing::info!("FHIRPath engine configured with terminology provider");
-    }
-
-    let fhirpath_engine = Arc::new(fhirpath_engine);
-    tracing::info!("FHIRPath engine initialized successfully with schema-aware model provider");
-
-    // Load operation definitions from canonical manager
-    let fhir_operations = match crate::operations::load_operations().await {
+    // Process operation definitions from parallel Phase 2
+    let fhir_operations = match operations_result {
         Ok(mut registry) => {
             tracing::info!(
                 count = registry.len(),
@@ -874,7 +917,8 @@ pub async fn build_app(
 
                 registry.register(crate::operations::OperationDefinition {
                     code: "evaluate-measure".to_string(),
-                    url: "http://hl7.org/fhir/OperationDefinition/Measure-evaluate-measure".to_string(),
+                    url: "http://hl7.org/fhir/OperationDefinition/Measure-evaluate-measure"
+                        .to_string(),
                     kind: crate::operations::OperationKind::Operation,
                     system: false,
                     type_level: false,
@@ -970,7 +1014,8 @@ pub async fn build_app(
 
                 registry.register(crate::operations::OperationDefinition {
                     code: "evaluate-measure".to_string(),
-                    url: "http://hl7.org/fhir/OperationDefinition/Measure-evaluate-measure".to_string(),
+                    url: "http://hl7.org/fhir/OperationDefinition/Measure-evaluate-measure"
+                        .to_string(),
                     kind: crate::operations::OperationKind::Operation,
                     system: false,
                     type_level: false,
@@ -1034,9 +1079,8 @@ pub async fn build_app(
         terminology_service,
     );
 
-    // Initialize gateway router and load initial routes
-    let gateway_router = Arc::new(crate::gateway::GatewayRouter::new());
-    match gateway_router.reload_routes(&storage).await {
+    // Process gateway routes from parallel Phase 2
+    match gateway_routes_result {
         Ok(count) => {
             tracing::info!(count = count, "Loaded initial gateway routes");
         }
@@ -1044,56 +1088,36 @@ pub async fn build_app(
             tracing::warn!(error = %e, "Failed to load initial gateway routes");
         }
     }
-    // Note: Gateway hot-reload listener is started later after operation_registry is initialized
 
     // Initialize custom handler registry
     let handler_registry = Arc::new(crate::gateway::HandlerRegistry::new());
     tracing::info!("Initialized custom handler registry");
 
-    // Initialize compartment registry from canonical manager
-    let compartment_registry = match crate::canonical::get_manager() {
-        Some(manager) => {
-            match crate::compartments::CompartmentRegistry::from_canonical_manager(&manager).await {
-                Ok(registry) => {
-                    tracing::info!(
-                        compartments = %registry.list_compartments().join(", "),
-                        "Compartment registry initialized"
-                    );
-                    Arc::new(registry)
-                }
-                Err(e) => {
-                    tracing::warn!(error = %e, "Failed to load compartment definitions, using empty registry");
-                    Arc::new(crate::compartments::CompartmentRegistry::new())
-                }
-            }
-        }
-        None => {
-            tracing::warn!(
-                "Canonical manager not available, compartment search will not be available"
+    // Process compartment registry from parallel Phase 2
+    let compartment_registry = match compartment_result {
+        Ok(registry) => {
+            tracing::info!(
+                compartments = %registry.list_compartments().join(", "),
+                "Compartment registry initialized"
             );
+            Arc::new(registry)
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "Failed to load compartment definitions, using empty registry");
             Arc::new(crate::compartments::CompartmentRegistry::new())
         }
     };
 
-    // Initialize async job manager
-    let async_job_config = crate::async_jobs::AsyncJobConfig::default();
-    let async_job_manager = Arc::new(crate::async_jobs::AsyncJobManager::new(
-        db_pool.clone(),
-        async_job_config,
-    ));
-    tracing::info!("Async job manager initialized");
-
     // Start background cleanup task for expired jobs
     let _cleanup_handle = async_job_manager.clone().start_cleanup_task();
     tracing::info!("Async job cleanup task started");
-    // Note: _cleanup_handle is dropped here but the task continues running in the background
 
     // Start background cleanup task for expired bulk export files
     if cfg.bulk_export.enabled {
         let export_path = cfg.bulk_export.export_path.clone();
         let retention_hours = cfg.bulk_export.retention_hours;
         let _export_cleanup_handle = tokio::spawn(async move {
-            let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(3600)); // Run every hour
+            let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(3600));
             loop {
                 interval.tick().await;
                 match crate::operations::cleanup_expired_exports(&export_path, retention_hours)
@@ -1120,21 +1144,6 @@ pub async fn build_app(
         );
     }
 
-    // Initialize policy evaluation components
-    let policy_storage = Arc::new(PostgresPolicyStorageAdapter::new(db_pool.clone()));
-    let policy_cache = Arc::new(PolicyCache::new(policy_storage, Duration::minutes(5)));
-
-    // Perform initial cache load
-    if let Err(e) = policy_cache.refresh().await {
-        tracing::warn!(error = %e, "Failed to load initial policies, continuing with empty cache");
-    } else {
-        let stats = policy_cache.stats().await;
-        tracing::info!(
-            policy_count = stats.policy_count,
-            "Policy cache initialized"
-        );
-    }
-
     // Create policy change notifier and reload service
     let policy_notifier = Arc::new(PolicyChangeNotifier::new(64));
     let reload_config = ReloadConfig::default();
@@ -1151,54 +1160,17 @@ pub async fn build_app(
     });
     tracing::info!("Policy reload service started");
 
-    // Note: Policy reload is now handled via unified event system (PolicyReloadHook)
-    // which subscribes to resource events instead of PostgreSQL LISTEN/NOTIFY.
-
     // Create policy evaluator with policies evaluated FIRST
-    // This allows explicit Allow policies (like admin policy) to grant access
-    // without requiring SMART scopes for non-FHIR endpoints like /api/*
     let policy_evaluator = Arc::new(PolicyEvaluator::new(
         policy_cache.clone(),
         PolicyEvaluatorConfig {
-            evaluate_scopes_first: false, // Policies first, then scope check
+            evaluate_scopes_first: false,
             quickjs_enabled: cfg.auth.policy.quickjs_enabled,
             quickjs_config: cfg.auth.policy.quickjs.clone(),
             ..PolicyEvaluatorConfig::default()
         },
     ));
     tracing::info!("Policy evaluator initialized");
-
-    // Initialize auth state (mandatory)
-    let auth_state = initialize_auth_state(cfg, db_pool.clone())
-        .await
-        .context("Failed to initialize authentication")?;
-    tracing::info!("Authentication initialized");
-
-    // Bootstrap admin user if configured
-    if let Some(ref admin_config) = cfg.bootstrap.admin_user {
-        let user_storage = octofhir_auth_postgres::ArcUserStorage::new(db_pool.clone());
-        match crate::bootstrap::bootstrap_admin_user(&user_storage, admin_config).await {
-            Ok(true) => {
-                tracing::info!(
-                    username = %admin_config.username,
-                    "Admin user bootstrapped successfully"
-                );
-            }
-            Ok(false) => {
-                tracing::debug!(
-                    username = %admin_config.username,
-                    "Admin user already exists, skipping bootstrap"
-                );
-            }
-            Err(e) => {
-                tracing::error!(
-                    error = %e,
-                    username = %admin_config.username,
-                    "Failed to bootstrap admin user"
-                );
-            }
-        }
-    }
 
     // Bootstrap operations registry (source of truth for public paths)
     let (operation_registry, gateway_provider) =
@@ -1244,14 +1216,17 @@ pub async fn build_app(
         tracing::info!("Initializing CQL service...");
 
         // Create FHIR data provider with FHIRPath engine for property navigation
-        let data_provider = Arc::new(octofhir_cql_service::data_provider::FhirServerDataProvider::new(
-            storage.clone(),
-            fhirpath_engine.clone(),
-            cfg.cql.max_retrieve_size,
-        ));
+        let data_provider = Arc::new(
+            octofhir_cql_service::data_provider::FhirServerDataProvider::new(
+                storage.clone(),
+                fhirpath_engine.clone(),
+                cfg.cql.max_retrieve_size,
+            ),
+        );
 
         // Create terminology adapter
-        let cql_terminology = Arc::new(octofhir_cql_service::terminology_provider::CqlTerminologyProvider::new());
+        let cql_terminology =
+            Arc::new(octofhir_cql_service::terminology_provider::CqlTerminologyProvider::new());
 
         // Create library cache (with optional Redis L2 cache)
         let library_cache = Arc::new(octofhir_cql_service::library_cache::LibraryCache::new(
@@ -1353,10 +1328,8 @@ pub async fn build_app(
         tracing::info!("Background SSO session cleanup task started (1h interval)");
     }
 
-    let resource_types = model_provider
-        .get_resource_types()
-        .await
-        .unwrap_or_default();
+    // Process resource types from parallel Phase 2
+    let resource_types = resource_types_result.unwrap_or_default();
     let resource_type_set = Arc::new(ArcSwap::from_pointee(
         resource_types.iter().cloned().collect::<HashSet<String>>(),
     ));
@@ -1937,8 +1910,7 @@ fn build_router(state: AppState, body_limit: usize, compression: bool) -> Router
         ));
 
     // Apply dynamic CORS middleware that validates origins
-    let router = router
-        .layer(middleware::from_fn(app_middleware::content_negotiation));
+    let router = router.layer(middleware::from_fn(app_middleware::content_negotiation));
     let router = if compression {
         router.layer(CompressionLayer::new())
     } else {

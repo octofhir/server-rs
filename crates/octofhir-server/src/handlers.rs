@@ -105,9 +105,38 @@ pub async fn healthz() -> impl IntoResponse {
     (StatusCode::OK, Json(HealthResponse { status: "ok" }))
 }
 
-pub async fn readyz() -> impl IntoResponse {
-    // In future, perform checks for DB/connectivity etc.
-    (StatusCode::OK, Json(HealthResponse { status: "ready" }))
+pub async fn readyz(State(state): State<crate::server::AppState>) -> impl IntoResponse {
+    // Check database connectivity with a lightweight query
+    let db_ok = sqlx_core::executor::Executor::execute(
+        &*state.db_pool,
+        sqlx_core::query::query("SELECT 1"),
+    )
+    .await
+    .is_ok();
+
+    // Check canonical manager is loaded
+    let canonical_ok = crate::canonical::get_manager().is_some();
+
+    if db_ok && canonical_ok {
+        (
+            StatusCode::OK,
+            Json(json!({
+                "status": "ready",
+                "checks": { "database": "ok", "canonical_manager": "ok" }
+            })),
+        )
+    } else {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({
+                "status": "not_ready",
+                "checks": {
+                    "database": if db_ok { "ok" } else { "failed" },
+                    "canonical_manager": if canonical_ok { "ok" } else { "not_loaded" }
+                }
+            })),
+        )
+    }
 }
 
 /// Prometheus metrics endpoint.
@@ -875,10 +904,7 @@ pub async fn read_resource(
             // Build response with raw JSON body (no serde_json::Value round-trip)
             let mut builder = Response::builder()
                 .status(StatusCode::OK)
-                .header(
-                    header::CONTENT_TYPE,
-                    "application/fhir+json; charset=utf-8",
-                );
+                .header(header::CONTENT_TYPE, "application/fhir+json; charset=utf-8");
 
             // ETag: W/"version_id"
             let etag = format!("W/\"{}\"", version_id);

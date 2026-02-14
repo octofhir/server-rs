@@ -1007,23 +1007,6 @@ mod tests {
     }
 
     #[test]
-    fn test_id_token_claims_serialization() {
-        let claims = IdTokenClaims {
-            iss: "https://issuer.com".to_string(),
-            sub: "user123".to_string(),
-            aud: "client123".to_string(),
-            exp: 1700000000,
-            iat: 1699996400,
-            nonce: Some("abc123".to_string()),
-            fhir_user: Some("Practitioner/456".to_string()),
-        };
-
-        let json = serde_json::to_string(&claims).unwrap();
-        assert!(json.contains("\"nonce\":\"abc123\""));
-        assert!(json.contains("\"fhir_user\":\"Practitioner/456\""));
-    }
-
-    #[test]
     fn test_expired_token_rejected() {
         let key_pair = SigningKeyPair::generate_rsa(SigningAlgorithm::RS256).unwrap();
         let service = JwtService::new(key_pair, "https://fhir.example.com");

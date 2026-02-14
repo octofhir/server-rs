@@ -13,7 +13,13 @@ pub struct Cli {
     pub server: Option<String>,
 
     /// Config profile name
-    #[arg(short, long, global = true, env = "OCTOFHIR_PROFILE", default_value = "default")]
+    #[arg(
+        short,
+        long,
+        global = true,
+        env = "OCTOFHIR_PROFILE",
+        default_value = "default"
+    )]
     pub profile: String,
 
     /// Output format

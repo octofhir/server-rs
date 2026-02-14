@@ -18,7 +18,9 @@ fn parse_reference(reference: &str) -> Result<(&str, &str)> {
 
 fn read_body(file: &Option<String>) -> Result<serde_json::Value> {
     let content = match file {
-        Some(path) => fs::read_to_string(path).with_context(|| format!("Failed to read file: {path}"))?,
+        Some(path) => {
+            fs::read_to_string(path).with_context(|| format!("Failed to read file: {path}"))?
+        }
         None => {
             let mut buf = String::new();
             io::stdin()
@@ -72,11 +74,7 @@ pub async fn delete(client: &FhirClient, reference: &str) -> Result<()> {
     Ok(())
 }
 
-pub async fn history(
-    client: &FhirClient,
-    reference: &str,
-    format: OutputFormat,
-) -> Result<()> {
+pub async fn history(client: &FhirClient, reference: &str, format: OutputFormat) -> Result<()> {
     let (rt, id) = parse_reference(reference)?;
     let bundle = client.history(rt, id).await?;
     print_value(&bundle, format);

@@ -2,6 +2,7 @@ use axum::http::HeaderValue;
 use serde_json::Value;
 use tokio::task::JoinHandle;
 
+use octofhir_config::ConfigurationManager;
 use octofhir_server::{AppConfig, build_app, config};
 
 async fn start_server_with_cfg(
@@ -11,7 +12,13 @@ async fn start_server_with_cfg(
     let shared = std::sync::Arc::new(std::sync::RwLock::new(cfg.clone()));
     config::shared::set_shared(shared);
 
-    let app = build_app(&cfg).await.expect("build app");
+    let config_manager = std::sync::Arc::new(
+        ConfigurationManager::builder()
+            .build()
+            .await
+            .expect("build config manager"),
+    );
+    let app = build_app(&cfg, config_manager).await.expect("build app");
     let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
         .await
         .unwrap();

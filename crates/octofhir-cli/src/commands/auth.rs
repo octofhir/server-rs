@@ -13,14 +13,8 @@ pub async fn login(server: &str, args: &LoginArgs, profile: &str) -> Result<()> 
 }
 
 fn login_basic(server: &str, args: &LoginArgs, profile: &str) -> Result<()> {
-    let username = args
-        .username
-        .as_deref()
-        .context("--username is required")?;
-    let password = args
-        .password
-        .as_deref()
-        .context("--password is required")?;
+    let username = args.username.as_deref().context("--username is required")?;
+    let password = args.password.as_deref().context("--password is required")?;
 
     let creds = StoredCredentials::Basic {
         server: server.to_string(),
@@ -37,29 +31,28 @@ fn login_basic(server: &str, args: &LoginArgs, profile: &str) -> Result<()> {
 }
 
 async fn login_oauth(server: &str, args: &LoginArgs, profile: &str) -> Result<()> {
-    let token_resp = if let (Some(client_id), Some(client_secret)) =
-        (&args.client_id, &args.client_secret)
-    {
-        // client_credentials grant
-        println!("Logging in with client credentials...");
-        auth::oauth_client_credentials(server, client_id, client_secret).await?
-    } else {
-        // password grant (requires username + password + client_id)
-        let username = args
-            .username
-            .as_deref()
-            .context("--username is required for OAuth password grant")?;
-        let password = args
-            .password
-            .as_deref()
-            .context("--password is required for OAuth password grant")?;
-        let client_id = args
-            .client_id
-            .as_deref()
-            .context("--client-id is required for OAuth password grant")?;
-        println!("Logging in as {username} (OAuth)...");
-        auth::oauth_password(server, username, password, client_id).await?
-    };
+    let token_resp =
+        if let (Some(client_id), Some(client_secret)) = (&args.client_id, &args.client_secret) {
+            // client_credentials grant
+            println!("Logging in with client credentials...");
+            auth::oauth_client_credentials(server, client_id, client_secret).await?
+        } else {
+            // password grant (requires username + password + client_id)
+            let username = args
+                .username
+                .as_deref()
+                .context("--username is required for OAuth password grant")?;
+            let password = args
+                .password
+                .as_deref()
+                .context("--password is required for OAuth password grant")?;
+            let client_id = args
+                .client_id
+                .as_deref()
+                .context("--client-id is required for OAuth password grant")?;
+            println!("Logging in as {username} (OAuth)...");
+            auth::oauth_password(server, username, password, client_id).await?
+        };
 
     let creds = StoredCredentials::Bearer {
         server: server.to_string(),

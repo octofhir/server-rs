@@ -69,10 +69,9 @@ pub trait FhirStorage: Send + Sync {
     ) -> Result<Option<RawStoredResource>, StorageError> {
         match self.read(resource_type, id).await? {
             Some(stored) => {
-                let resource_json =
-                    serde_json::to_string(&stored.resource).map_err(|e| {
-                        StorageError::internal(format!("Failed to serialize resource: {e}"))
-                    })?;
+                let resource_json = serde_json::to_string(&stored.resource).map_err(|e| {
+                    StorageError::internal(format!("Failed to serialize resource: {e}"))
+                })?;
                 Ok(Some(RawStoredResource {
                     id: stored.id,
                     version_id: stored.version_id,

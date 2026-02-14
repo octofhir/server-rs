@@ -100,7 +100,11 @@ impl LibraryCache {
         }
 
         // Compile from source
-        tracing::debug!(url = url, version = version, "Compiling library from source");
+        tracing::debug!(
+            url = url,
+            version = version,
+            "Compiling library from source"
+        );
         let library = self.compile_from_storage(url, version, storage).await?;
         let library_arc = Arc::new(library);
 
@@ -207,11 +211,15 @@ impl LibraryCache {
                 .unwrap_or("");
 
             if content_type == "text/cql" || content_type == "text/cql-expression" {
-                let data_base64 = content.get("data").and_then(|d| d.as_str()).ok_or_else(|| {
-                    crate::error::CqlError::CompilationError(
-                        "CQL content missing data field".to_string(),
-                    )
-                })?;
+                let data_base64 =
+                    content
+                        .get("data")
+                        .and_then(|d| d.as_str())
+                        .ok_or_else(|| {
+                            crate::error::CqlError::CompilationError(
+                                "CQL content missing data field".to_string(),
+                            )
+                        })?;
 
                 // Decode base64
                 use base64::Engine;
@@ -261,9 +269,7 @@ impl LibraryCache {
         let data: Option<String> = conn
             .get(format!("cql:library:{}", key))
             .await
-            .map_err(|e| {
-                crate::error::CqlError::CacheError(format!("Redis get error: {}", e))
-            })?;
+            .map_err(|e| crate::error::CqlError::CacheError(format!("Redis get error: {}", e)))?;
 
         match data {
             Some(json) => {
@@ -291,9 +297,7 @@ impl LibraryCache {
 
         conn.set_ex(format!("cql:library:{}", key), json, 3600) // 1 hour TTL
             .await
-            .map_err(|e| {
-                crate::error::CqlError::CacheError(format!("Redis set error: {}", e))
-            })?;
+            .map_err(|e| crate::error::CqlError::CacheError(format!("Redis set error: {}", e)))?;
 
         Ok(())
     }

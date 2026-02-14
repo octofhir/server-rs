@@ -12,7 +12,6 @@ use tokio::sync::Mutex;
 use octofhir_storage::{StorageError, StoredResource, Transaction};
 
 use crate::queries;
-use crate::schema::SchemaManager;
 
 /// PostgreSQL transaction wrapper providing ACID guarantees.
 ///
@@ -28,21 +27,13 @@ pub struct PostgresTransaction {
     /// Wrapped in Option so we can take ownership during commit/rollback.
     /// Box allows us to work without lifetime parameters.
     tx: Mutex<Option<Box<PgTransaction<'static>>>>,
-    /// Schema manager for table management and SQL generation.
-    schema_manager: SchemaManager,
 }
 
 impl PostgresTransaction {
     /// Creates a new PostgreSQL transaction.
-    ///
-    /// # Arguments
-    ///
-    /// * `tx` - The sqlx transaction to wrap
-    /// * `schema_manager` - Schema manager for table operations
-    pub fn new(tx: PgTransaction<'static>, schema_manager: SchemaManager) -> Self {
+    pub fn new(tx: PgTransaction<'static>) -> Self {
         Self {
             tx: Mutex::new(Some(Box::new(tx))),
-            schema_manager,
         }
     }
 }
@@ -70,36 +61,33 @@ impl Transaction for PostgresTransaction {
     }
 
     async fn create(&mut self, resource: &Value) -> Result<StoredResource, StorageError> {
-        let schema = self.schema_manager.clone();
         let mut tx_guard = self.tx.lock().await;
         let tx = tx_guard.as_deref_mut().ok_or_else(|| {
             StorageError::transaction_error(
                 "Transaction already completed (committed or rolled back)",
             )
         })?;
-        queries::crud::create_with_tx(tx, &schema, resource).await
+        queries::crud::create_with_tx(tx, resource).await
     }
 
     async fn update(&mut self, resource: &Value) -> Result<StoredResource, StorageError> {
-        let schema = self.schema_manager.clone();
         let mut tx_guard = self.tx.lock().await;
         let tx = tx_guard.as_deref_mut().ok_or_else(|| {
             StorageError::transaction_error(
                 "Transaction already completed (committed or rolled back)",
             )
         })?;
-        queries::crud::update_with_tx(tx, &schema, resource).await
+        queries::crud::update_with_tx(tx, resource).await
     }
 
     async fn delete(&mut self, resource_type: &str, id: &str) -> Result<(), StorageError> {
-        let schema = self.schema_manager.clone();
         let mut tx_guard = self.tx.lock().await;
         let tx = tx_guard.as_deref_mut().ok_or_else(|| {
             StorageError::transaction_error(
                 "Transaction already completed (committed or rolled back)",
             )
         })?;
-        queries::crud::delete_with_tx(tx, &schema, resource_type, id).await
+        queries::crud::delete_with_tx(tx, resource_type, id).await
     }
 
     async fn read(
@@ -114,7 +102,7 @@ impl Transaction for PostgresTransaction {
                 "Transaction already completed (committed or rolled back)",
             )
         })?;
-        queries::crud::read_with_tx(tx, &self.schema_manager, resource_type, id).await
+        queries::crud::read_with_tx(tx, resource_type, id).await
     }
 }
 

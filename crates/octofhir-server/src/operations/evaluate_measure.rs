@@ -239,7 +239,9 @@ mod tests {
             ]
         });
 
-        let date = operation.extract_date_param(&params, "periodStart").unwrap();
+        let date = operation
+            .extract_date_param(&params, "periodStart")
+            .unwrap();
         assert_eq!(date, "2024-01-01");
     }
 
@@ -257,9 +259,7 @@ mod tests {
             ]
         });
 
-        let code = operation
-            .extract_code_param(&params, "reportType")
-            .unwrap();
+        let code = operation.extract_code_param(&params, "reportType").unwrap();
         assert_eq!(code, "summary");
     }
 
