@@ -1,0 +1,94 @@
+Category,Feature,OctoFHIR,HAPI FHIR,IBM FHIR,Medplum,Aidbox,Azure FHIR,Google FHIR,AWS HealthLake,Smile CDR,Firely
+A. FHIR Conformance,FHIR Versions,"R4/R4B/R5/R6","DSTU2/STU3/R4/R4B","R4/R4B","R4 only","STU3/R4/R5/R6","DSTU2/STU3/R4/R5","DSTU2/STU3/R4/R5","R4 only","STU3/R4/R5","STU3/R4/R5"
+A. FHIR Conformance,read,full,full,full,full,full,full,full,full,full,full
+A. FHIR Conformance,vread,full,full,full,full,full,full,full,full,full,full
+A. FHIR Conformance,create,full,full,full,full,full,full,full,full,full,full
+A. FHIR Conformance,update,full,full,full,full,full,full,full,full,full,full
+A. FHIR Conformance,patch (JSON Patch),full,full,full,full,full,full,full,partial,full,full
+A. FHIR Conformance,patch (FHIRPath Patch),full,full,partial,missing,partial,partial,missing,missing,full,partial
+A. FHIR Conformance,delete,full,full,full,full,full,full,full,full,full,full
+A. FHIR Conformance,history (instance),full,full,full,full,full,full,full,full,full,full
+A. FHIR Conformance,history (type),full,full,full,full,full,full,full,partial,full,full
+A. FHIR Conformance,history (system),full,full,full,partial,full,partial,partial,missing,full,full
+A. FHIR Conformance,batch,full,full,full,full,full,full,full,full,full,full
+A. FHIR Conformance,transaction,full,full,full,full,full,full,full,partial,full,full
+A. FHIR Conformance,conditional create,full,full,full,full,full,full,full,partial,full,full
+A. FHIR Conformance,conditional update,full,full,full,full,full,full,full,partial,full,full
+A. FHIR Conformance,conditional delete,full,full,full,full,full,full,full,partial,full,full
+A. FHIR Conformance,capabilities,full,full,full,full,full,full,full,full,full,full
+A. Search,Basic search params,full,full,full,full,full,full,full,full,full,full
+A. Search,_include,full,full,full,full,full,full,full,full,full,full
+A. Search,_revinclude,full,full,full,full,full,full,full,full,full,full
+A. Search,Chained params,full,full,full,full,full,full,full,full,full,full
+A. Search,Reverse chaining (_has),full,full,full,partial,full,partial,partial,partial,full,full
+A. Search,_sort,full,full,full,full,full,full,full,full,full,full
+A. Search,_count,full,full,full,full,full,full,full,full,full,full
+A. Search,_summary,full,full,full,full,full,full,full,full,full,full
+A. Search,_elements,full,full,full,full,full,full,full,full,full,full
+A. Search,_filter,full,full,partial,missing,full,partial,partial,missing,full,full
+A. Search,Compartment search,full,full,full,full,full,full,full,partial,full,full
+A. Search,Custom search params,full,full,full,partial,full,missing,missing,missing,full,full
+A. Search,_total,full,full,full,full,full,full,full,partial,full,full
+A. Operations,$validate,full,full,full,full,full,full,full,partial,full,full
+A. Operations,$everything (Patient),full,full,full,full,full,full,full,partial,full,full
+A. Operations,$export (Bulk Data),full,full,full,full,full,full,full,full,full,full
+A. Operations,$import (Bulk Data),missing,full,full,full,full,full,full,full,full,full
+A. Operations,$graphql,full,partial,missing,partial,full,missing,missing,missing,partial,missing
+A. Operations,$convert,missing,partial,missing,missing,partial,missing,missing,missing,full,missing
+B. Terminology,CodeSystem storage,full,full,full,full,full,full,full,partial,full,full
+B. Terminology,ValueSet storage,full,full,full,full,full,full,full,partial,full,full
+B. Terminology,ConceptMap storage,full,full,full,full,full,full,full,partial,full,full
+B. Terminology,$expand,full,full,full,partial,full,full,full,missing,full,full
+B. Terminology,$lookup,full,full,full,partial,full,full,full,missing,full,full
+B. Terminology,$translate,full,full,partial,missing,full,partial,partial,missing,full,full
+B. Terminology,Terminology versioning,full,full,full,partial,full,full,full,missing,full,full
+B. Terminology,SNOMED/LOINC native,partial,full,full,partial,full,full,full,full,full,full
+B. Terminology,Search-time expansion,full,full,full,partial,full,full,full,partial,full,full
+C. Security,SMART on FHIR (auth code),full,partial,full,full,full,full,full,full,full,full
+C. Security,SMART backend services,full,partial,full,full,full,full,full,full,full,full
+C. Security,OAuth 2.0 / OIDC,full,partial,full,full,full,full,full,full,full,full
+C. Security,Scopes (resource/user),full,partial,full,full,full,full,full,full,full,full
+C. Security,Fine-grained ACL,full,partial,full,partial,full,full,full,full,full,full
+C. Security,AuditEvent auto-gen,full,partial,full,full,full,full,full,full,full,full
+C. Security,Rate limiting,full,missing,partial,missing,full,full,full,full,full,partial
+C. Security,External IdP federation,full,partial,full,full,full,full,full,full,full,full
+C. Security,Key rotation,full,partial,partial,full,full,full,full,full,full,full
+C. Security,TLS,partial,partial,partial,full,full,full,full,full,full,full
+D. Performance,Indexing strategy,full,full,full,full,full,full,full,full,full,full
+D. Performance,Two-tier cache,full,partial,partial,partial,partial,full,full,full,partial,partial
+D. Performance,Cross-instance invalidation,full,missing,missing,partial,full,full,full,full,partial,partial
+D. Performance,Connection pooling,full,full,full,full,full,full,full,full,full,full
+D. Performance,Multi-tenancy,partial,full,full,partial,full,full,full,full,full,full
+D. Performance,Async jobs,full,full,full,partial,full,full,full,full,full,full
+D. Performance,Reindexing,partial,full,full,partial,full,full,full,full,full,full
+D. Performance,Read replicas,missing,partial,partial,full,partial,full,full,full,partial,partial
+D. Performance,Horizontal scaling,partial,partial,partial,full,full,full,full,full,full,partial
+D. Performance,Raw JSON optimization,full,missing,missing,missing,missing,n/a,n/a,n/a,missing,missing
+D. Performance,Memory allocator (mimalloc),full,missing,missing,missing,missing,n/a,n/a,n/a,missing,missing
+E. Ops & DX,Prometheus metrics,full,full,partial,partial,full,full,full,full,full,partial
+E. Ops & DX,Structured logging,full,full,full,full,full,full,full,full,full,full
+E. Ops & DX,Distributed tracing,full,partial,partial,partial,partial,full,full,full,partial,partial
+E. Ops & DX,Admin UI,full,partial,missing,full,full,full,full,full,full,partial
+E. Ops & DX,SQL console,full,missing,missing,missing,full,missing,missing,full,missing,missing
+E. Ops & DX,GraphQL playground,full,missing,missing,missing,full,missing,missing,missing,missing,missing
+E. Ops & DX,FHIRPath console,full,missing,missing,missing,partial,missing,missing,missing,missing,missing
+E. Ops & DX,CQL console,full,partial,missing,missing,partial,missing,missing,missing,full,missing
+E. Ops & DX,CLI tool,full,missing,missing,full,full,full,full,full,missing,missing
+E. Ops & DX,Helm chart,missing,full,full,partial,full,n/a,n/a,n/a,full,full
+E. Ops & DX,Config hot reload,full,missing,missing,missing,partial,n/a,n/a,n/a,missing,partial
+E. Ops & DX,Docs quality,partial,full,full,full,full,full,full,full,full,full
+E. Ops & DX,Live log streaming,full,missing,missing,missing,partial,full,full,full,partial,missing
+E. Ops & DX,Conformance tests,missing,full,full,full,full,full,full,full,full,full
+F. Extensibility,Interceptors/hooks,full,full,full,full,full,partial,partial,partial,full,full
+F. Extensibility,Scripting engine,full,missing,missing,full,full,partial,partial,partial,partial,missing
+F. Extensibility,Custom operations,full,full,full,full,full,partial,partial,partial,full,full
+F. Extensibility,Custom resources,full,partial,partial,full,full,missing,missing,missing,partial,partial
+F. Extensibility,Plugin/Extension SDK,missing,full,partial,full,full,partial,partial,partial,full,full
+F. Extensibility,SQL on FHIR,full,missing,missing,missing,full,missing,missing,full,missing,missing
+F. Extensibility,CQL support,full,partial,missing,missing,partial,missing,missing,missing,full,missing
+F. Extensibility,FHIRPath evaluation,full,full,full,full,full,partial,partial,partial,full,full
+F. Extensibility,Subscriptions,full,full,partial,full,full,full,full,partial,full,full
+F. Extensibility,Automations,full,missing,missing,full,full,partial,partial,partial,partial,missing
+F. Extensibility,Data transformations,partial,partial,partial,partial,full,missing,missing,full,partial,partial
+F. Extensibility,XML format,missing,full,full,full,partial,full,full,partial,full,full
+F. Extensibility,Notification service,full,partial,partial,full,full,partial,partial,partial,full,partial

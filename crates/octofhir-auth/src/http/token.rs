@@ -126,9 +126,14 @@ impl TokenState {
         }
     }
 
-    /// Sets user storage for password grant support.
+    /// Sets user storage for password grant support and fhirUser claim in ID tokens.
     #[must_use]
     pub fn with_user_storage(mut self, user_storage: Arc<dyn UserStorage>) -> Self {
+        // Also set user storage on the inner TokenService so it can look up
+        // fhir_user claims when generating ID tokens.
+        if let Some(ts) = Arc::get_mut(&mut self.token_service) {
+            ts.set_user_storage(user_storage.clone());
+        }
         self.user_storage = Some(user_storage);
         self
     }

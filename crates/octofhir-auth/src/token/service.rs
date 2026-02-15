@@ -161,7 +161,7 @@ impl TokenService {
         }
     }
 
-    /// Sets the user storage for loading fhir_user claims.
+    /// Sets the user storage for loading fhir_user claims (builder pattern).
     ///
     /// When set, the service will look up the user's fhir_user field
     /// and include it in access tokens and ID tokens.
@@ -169,6 +169,11 @@ impl TokenService {
     pub fn with_user_storage(mut self, user_storage: Arc<dyn UserStorage>) -> Self {
         self.user_storage = Some(user_storage);
         self
+    }
+
+    /// Sets the user storage for loading fhir_user claims (mutable reference).
+    pub fn set_user_storage(&mut self, user_storage: Arc<dyn UserStorage>) {
+        self.user_storage = Some(user_storage);
     }
 
     /// Helper to load fhir_user from user storage if available.

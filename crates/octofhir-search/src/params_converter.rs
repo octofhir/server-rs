@@ -154,7 +154,7 @@ pub fn build_query_from_params_with_config(
         }
 
         // Convert to ParsedParam format
-        let parsed = convert_to_parsed_param(key, values);
+        let mut parsed = convert_to_parsed_param(key, values);
 
         // Look up parameter definition in registry
         let Some(param_def) = registry.get(resource_type, &parsed.name) else {
@@ -187,21 +187,32 @@ pub fn build_query_from_params_with_config(
             }
         }
 
-        // Validate prefix compatibility with parameter type
-        for value in &parsed.values {
+        // Validate prefix compatibility with parameter type.
+        // If a prefix is not applicable (e.g., UUID starting with "eb" parsed as "ends before"
+        // for a reference param), revert it — treat the prefix chars as part of the value.
+        for value in &mut parsed.values {
             if let Some(ref prefix) = value.prefix {
                 if !prefix.applicable_to(&param_def.param_type) {
-                    return Err(SqlBuilderError::InvalidSearchValue(format!(
-                        "Prefix '{}' ({}) is not valid for {} parameter '{}' (type: {:?}). \
-                         Comparison prefixes are only allowed for number, date, and quantity parameters.",
-                        prefix,
-                        prefix.display_name(),
-                        resource_type,
-                        parsed.name,
-                        param_def.param_type
-                    )));
+                    // Restore the prefix as part of the raw value
+                    value.raw = format!("{}{}", prefix, value.raw);
+                    value.prefix = None;
                 }
             }
+        }
+
+        // Handle _id specially — it maps to the database column `r.id`, not JSONB
+        if parsed.name == "_id" {
+            let mut or_conditions = Vec::new();
+            for value in &parsed.values {
+                if !value.raw.is_empty() {
+                    let p = sql_builder.add_text_param(&value.raw);
+                    or_conditions.push(format!("r.id = ${p}"));
+                }
+            }
+            if !or_conditions.is_empty() {
+                sql_builder.add_condition(SqlBuilder::build_or_clause(&or_conditions));
+            }
+            continue;
         }
 
         // Use dispatch_search to build the condition

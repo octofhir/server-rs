@@ -607,6 +607,76 @@ pub fn render_error_page(error_code: &str, error_description: &str) -> String {
     html_page("Error", &content)
 }
 
+/// Patient info for the patient picker.
+pub struct PatientInfo {
+    /// FHIR resource ID.
+    pub id: String,
+    /// Display name.
+    pub name: String,
+    /// Date of birth (optional).
+    pub birth_date: Option<String>,
+}
+
+/// Renders the patient picker form for standalone launch.
+///
+/// # Arguments
+///
+/// * `patients` - List of available patients
+/// * `session_id` - Session ID for the hidden form field
+pub fn render_patient_picker(patients: &[PatientInfo], session_id: &str) -> String {
+    let mut content = String::with_capacity(4096);
+
+    // Logo section
+    content.push_str("<div class=\"logo-section\">\n");
+    content.push_str(LOGO_SVG_80);
+    content.push_str("\n</div>\n\n");
+
+    // Card
+    content.push_str("<div class=\"card\">\n");
+    content.push_str("<div class=\"card-title\">Select Patient</div>\n\n");
+
+    content.push_str("<p style=\"font-size: 0.875rem; color: var(--text-secondary); margin-bottom: 1rem;\">\n");
+    content.push_str("Choose the patient context for this application:\n</p>\n\n");
+
+    // Form
+    content.push_str("<form method=\"POST\">\n");
+    content.push_str("<input type=\"hidden\" name=\"action\" value=\"select_patient\">\n");
+    content.push_str("<input type=\"hidden\" name=\"session_id\" value=\"");
+    content.push_str(&html_escape(session_id));
+    content.push_str("\">\n\n");
+
+    // Patient list as radio buttons
+    content.push_str("<div style=\"margin-bottom: 1rem;\">\n");
+    for (i, patient) in patients.iter().enumerate() {
+        let checked = if i == 0 { " checked" } else { "" };
+        content.push_str("<label style=\"display: flex; align-items: center; padding: 0.75rem; background: var(--surface-2); border-radius: var(--radius-lg); margin-bottom: 0.5rem; cursor: pointer; border: 1px solid var(--border-subtle); transition: border-color 0.15s;\">\n");
+        content.push_str("<input type=\"radio\" name=\"patient_id\" value=\"");
+        content.push_str(&html_escape(&patient.id));
+        content.push_str("\"");
+        content.push_str(checked);
+        content.push_str(" style=\"margin-right: 0.75rem; accent-color: var(--brand-primary);\">\n");
+        content.push_str("<div>\n<div style=\"font-weight: 500; color: var(--text-primary);\">");
+        content.push_str(&html_escape(&patient.name));
+        content.push_str("</div>\n");
+        if let Some(dob) = &patient.birth_date {
+            content.push_str("<div style=\"font-size: 0.75rem; color: var(--text-dimmed);\">DOB: ");
+            content.push_str(&html_escape(dob));
+            content.push_str("</div>\n");
+        }
+        content.push_str("<div style=\"font-size: 0.75rem; color: var(--text-dimmed);\">ID: ");
+        content.push_str(&html_escape(&patient.id));
+        content.push_str("</div>\n</div>\n</label>\n");
+    }
+    content.push_str("</div>\n\n");
+
+    // Submit button
+    content.push_str("<button type=\"submit\" class=\"btn btn-primary\">Continue</button>\n");
+    content.push_str("</form>\n");
+    content.push_str("</div>");
+
+    html_page("Select Patient", &content)
+}
+
 /// Simple HTML escaping to prevent XSS.
 fn html_escape(s: &str) -> String {
     s.replace('&', "&amp;")

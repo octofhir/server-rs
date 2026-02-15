@@ -37,7 +37,7 @@ pub use admin::{
     UserSearchParams,
 };
 pub use authorize::{AuthorizeFormData, AuthorizeState, authorize_get, authorize_post};
-pub use discovery::{SmartConfigState, smart_configuration_handler};
+pub use discovery::{SmartConfigState, openid_configuration_handler, smart_configuration_handler};
 pub use introspect::introspect_handler;
 pub use jwks::{JwksState, jwks_handler};
 pub use launch::{CreateLaunchRequest, CreateLaunchResponse, LaunchState, create_launch_handler};

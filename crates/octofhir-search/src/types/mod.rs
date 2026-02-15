@@ -39,7 +39,7 @@ pub use token::{
 };
 pub use uri::{build_uri_array_search, build_uri_search};
 
-use crate::parameters::{SearchParameter, SearchParameterType};
+use crate::parameters::{ElementTypeHint, SearchParameter, SearchParameterType};
 use crate::parser::ParsedParam;
 use crate::sql_builder::{
     SqlBuilder, SqlBuilderError, build_jsonb_accessor, fhirpath_to_jsonb_path,
@@ -74,15 +74,14 @@ pub fn dispatch_search(
 
     let jsonb_path = build_jsonb_accessor(builder.resource_column(), &path_segments, needs_text);
 
-    // Dispatch to the appropriate handler
+    // Dispatch to the appropriate handler based on param type and resolved element type hint
     match definition.param_type {
         SearchParameterType::String => {
-            // Check if this is a complex type like HumanName
-            if is_human_name_path(expression) {
+            if definition.element_type_hint.is_human_name() {
                 let array_path =
                     build_jsonb_accessor(builder.resource_column(), &path_segments, false);
                 build_human_name_search(builder, param, &array_path)
-            } else if is_array_path(expression) {
+            } else if matches!(&definition.element_type_hint, ElementTypeHint::Array(_)) {
                 let (array_segments, field) = split_array_path(&path_segments);
                 let array_path =
                     build_jsonb_accessor(builder.resource_column(), &array_segments, false);
@@ -93,17 +92,16 @@ pub fn dispatch_search(
         }
 
         SearchParameterType::Token => {
-            // Determine token subtype based on path
-            if is_identifier_path(expression) {
+            if definition.element_type_hint.is_identifier() {
                 let array_path =
                     build_jsonb_accessor(builder.resource_column(), &path_segments, false);
                 build_identifier_search(builder, param, &array_path)
-            } else if is_simple_code_path(expression) {
-                // Simple code fields need text extraction (->>)
+            } else if matches!(&definition.element_type_hint, ElementTypeHint::SimpleCode) {
                 let text_path =
                     build_jsonb_accessor(builder.resource_column(), &path_segments, true);
                 build_code_search(builder, param, &text_path)
             } else {
+                // Default: CodeableConcept/Coding/Token or Unknown
                 let json_path =
                     build_jsonb_accessor(builder.resource_column(), &path_segments, false);
                 build_token_search(builder, param, &json_path)
@@ -113,7 +111,7 @@ pub fn dispatch_search(
         SearchParameterType::Number => build_number_search(builder, param, &jsonb_path),
 
         SearchParameterType::Date => {
-            if is_period_path(expression) {
+            if definition.element_type_hint.is_period() {
                 let json_path =
                     build_jsonb_accessor(builder.resource_column(), &path_segments, false);
                 build_period_search(builder, param, &json_path)
@@ -129,11 +127,11 @@ pub fn dispatch_search(
 
         SearchParameterType::Reference => {
             let json_path = build_jsonb_accessor(builder.resource_column(), &path_segments, false);
-            // Check if this is an array reference field
-            if is_reference_array_path(expression) {
-                build_reference_array_search(builder, param, &json_path, &definition.target)
-            } else {
-                build_reference_search(builder, param, &json_path, &definition.target)
+            match &definition.element_type_hint {
+                ElementTypeHint::Array(_) => {
+                    build_reference_array_search(builder, param, &json_path, &definition.target)
+                }
+                _ => build_reference_search(builder, param, &json_path, &definition.target),
             }
         }
 
@@ -172,13 +170,13 @@ pub fn dispatch_search(
         }
 
         SearchParameterType::Uri => {
-            // Check if this is an array field like meta.profile
-            if is_uri_array_path(expression) {
-                let array_path =
-                    build_jsonb_accessor(builder.resource_column(), &path_segments, false);
-                build_uri_array_search(builder, param, &array_path)
-            } else {
-                build_uri_search(builder, param, &jsonb_path)
+            match &definition.element_type_hint {
+                ElementTypeHint::Array(_) => {
+                    let array_path =
+                        build_jsonb_accessor(builder.resource_column(), &path_segments, false);
+                    build_uri_array_search(builder, param, &array_path)
+                }
+                _ => build_uri_search(builder, param, &jsonb_path),
             }
         }
 
@@ -243,68 +241,6 @@ pub fn dispatch_search(
             }
         }
     }
-}
-
-/// Check if a FHIRPath expression refers to a HumanName type.
-fn is_human_name_path(expression: &str) -> bool {
-    expression.contains(".name") && !expression.contains(".name.")
-}
-
-/// Check if a FHIRPath expression refers to an Identifier array.
-fn is_identifier_path(expression: &str) -> bool {
-    expression.ends_with(".identifier") || expression.contains(".identifier[")
-}
-
-/// Check if a FHIRPath expression refers to a simple code field.
-fn is_simple_code_path(expression: &str) -> bool {
-    let simple_codes = [".gender", ".status", ".active", ".language"];
-    simple_codes.iter().any(|s| expression.ends_with(s))
-}
-
-/// Check if a FHIRPath expression refers to a Period type.
-fn is_period_path(expression: &str) -> bool {
-    expression.ends_with("Period") || expression.contains(".period")
-}
-
-/// Check if a FHIRPath expression refers to a URI array (e.g., meta.profile).
-fn is_uri_array_path(expression: &str) -> bool {
-    expression.contains(".profile") || expression.contains(".instantiates")
-}
-
-/// Check if a FHIRPath expression refers to a reference array field.
-/// These are fields that contain an array of Reference elements.
-fn is_reference_array_path(expression: &str) -> bool {
-    let array_reference_patterns = [
-        ".actor",           // Schedule.actor, PlanDefinition.actor
-        ".member",          // Group.member
-        ".participant",     // Appointment.participant (has nested actor)
-        ".performer",       // DiagnosticReport.performer, Observation.performer
-        ".author",          // Composition.author
-        ".recipient",       // Communication.recipient
-        ".basedOn",         // ServiceRequest.basedOn, etc.
-        ".partOf",          // Observation.partOf
-        ".focus",           // Observation.focus
-        ".reasonReference", // ServiceRequest.reasonReference
-        ".supportingInfo",  // ServiceRequest.supportingInfo
-        ".insurance",       // Claim.insurance
-        ".careTeam",        // EpisodeOfCare.careTeam
-    ];
-    array_reference_patterns
-        .iter()
-        .any(|p| expression.ends_with(p) || expression.contains(&format!("{p}.")))
-}
-
-/// Check if a FHIRPath expression refers to an array field.
-fn is_array_path(expression: &str) -> bool {
-    // Common array fields in FHIR
-    let array_patterns = [
-        ".telecom",
-        ".address",
-        ".contact",
-        ".communication",
-        ".link",
-    ];
-    array_patterns.iter().any(|p| expression.contains(p))
 }
 
 /// Split a path into array path and field name.
@@ -374,39 +310,6 @@ mod tests {
     use crate::parser::ParsedValue;
 
     #[test]
-    fn test_is_human_name_path() {
-        assert!(is_human_name_path("Patient.name"));
-        assert!(!is_human_name_path("Patient.name.family"));
-        assert!(!is_human_name_path("Patient.identifier"));
-    }
-
-    #[test]
-    fn test_is_identifier_path() {
-        assert!(is_identifier_path("Patient.identifier"));
-        assert!(is_identifier_path("Observation.identifier"));
-        assert!(!is_identifier_path("Patient.name"));
-    }
-
-    #[test]
-    fn test_is_simple_code_path() {
-        assert!(is_simple_code_path("Patient.gender"));
-        assert!(is_simple_code_path("Observation.status"));
-        assert!(!is_simple_code_path("Observation.code"));
-    }
-
-    #[test]
-    fn test_is_reference_array_path() {
-        assert!(is_reference_array_path("Schedule.actor"));
-        assert!(is_reference_array_path("Group.member"));
-        assert!(is_reference_array_path("Appointment.participant"));
-        assert!(is_reference_array_path("Observation.performer"));
-        assert!(is_reference_array_path("Observation.basedOn"));
-        assert!(!is_reference_array_path("Observation.subject")); // single reference
-        assert!(!is_reference_array_path("Patient.managingOrganization")); // single reference
-        assert!(!is_reference_array_path("Appointment.slot")); // single reference
-    }
-
-    #[test]
     fn test_dispatch_string_search() {
         let mut builder = SqlBuilder::new();
         let param = ParsedParam {
@@ -451,7 +354,8 @@ mod tests {
                 SearchParameterType::Token,
                 vec!["Patient".to_string()],
             )
-            .with_expression("Patient.gender"),
+            .with_expression("Patient.gender")
+            .with_element_type_hint(ElementTypeHint::SimpleCode),
         );
 
         dispatch_search(&mut builder, &param, &def, "Patient").unwrap();

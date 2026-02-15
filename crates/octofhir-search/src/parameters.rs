@@ -237,6 +237,90 @@ pub struct SearchParameterComponent {
     pub expression: String,
 }
 
+/// Hint about the FHIR element type, resolved from FhirSchema at registry build time.
+///
+/// Used by `dispatch_search` to choose the correct SQL builder for each search parameter
+/// instead of hardcoded path-based heuristics.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ElementTypeHint {
+    /// Simple scalar: code, id, boolean, string, etc. — use text extraction (->>) and equality
+    SimpleCode,
+    /// Identifier type — use identifier-specific search (system|value)
+    Identifier,
+    /// HumanName type — use name-specific search (family, given, text)
+    HumanName,
+    /// CodeableConcept or Coding — use full token search (coding array, code, value)
+    Token,
+    /// Period type — use period-specific date search (start/end)
+    Period,
+    /// Array of elements where the inner type determines further dispatch.
+    /// E.g., Array("Reference") for reference arrays, Array("uri") for URI arrays.
+    Array(String),
+    /// Not resolved from schema — use default behavior for the search parameter type
+    Unknown,
+}
+
+impl Default for ElementTypeHint {
+    fn default() -> Self {
+        Self::Unknown
+    }
+}
+
+/// Primitive FHIR types that map to simple scalar search (text extraction with ->>).
+const SIMPLE_SCALAR_TYPES: &[&str] = &[
+    "code",
+    "id",
+    "boolean",
+    "string",
+    "uri",
+    "url",
+    "canonical",
+    "markdown",
+    "oid",
+    "uuid",
+    "base64Binary",
+    "integer",
+    "positiveInt",
+    "unsignedInt",
+    "decimal",
+    "xhtml",
+];
+
+impl ElementTypeHint {
+    /// Check if this hint represents a HumanName (direct or array).
+    pub fn is_human_name(&self) -> bool {
+        matches!(self, Self::HumanName)
+            || matches!(self, Self::Array(t) if t == "HumanName")
+    }
+
+    /// Check if this hint represents an Identifier (direct or array).
+    pub fn is_identifier(&self) -> bool {
+        matches!(self, Self::Identifier)
+            || matches!(self, Self::Array(t) if t == "Identifier")
+    }
+
+    /// Check if this hint represents a Period (direct or array).
+    pub fn is_period(&self) -> bool {
+        matches!(self, Self::Period)
+            || matches!(self, Self::Array(t) if t == "Period")
+    }
+
+    /// Create an `ElementTypeHint` from a FHIR type name and array flag.
+    pub fn from_fhir_type(type_name: &str, is_array: bool) -> Self {
+        if is_array {
+            return Self::Array(type_name.to_string());
+        }
+        match type_name {
+            "Identifier" => Self::Identifier,
+            "HumanName" => Self::HumanName,
+            "CodeableConcept" | "Coding" => Self::Token,
+            "Period" => Self::Period,
+            t if SIMPLE_SCALAR_TYPES.contains(&t) => Self::SimpleCode,
+            _ => Self::Token,
+        }
+    }
+}
+
 /// A complete search parameter definition loaded from FHIR packages.
 ///
 /// This represents a FHIR SearchParameter resource with all fields needed
@@ -269,6 +353,9 @@ pub struct SearchParameter {
     /// Pre-computed once when parameter is created to avoid repeated parsing.
     /// Format: segments like ["name", "family"] derived from "Patient.name.family"
     cached_jsonb_path: Option<Vec<String>>,
+    /// Element type hint resolved from FhirSchema at registry build time.
+    /// Determines which SQL builder to use in dispatch_search.
+    pub element_type_hint: ElementTypeHint,
 }
 
 impl SearchParameter {
@@ -292,6 +379,7 @@ impl SearchParameter {
             description: String::new(),
             component: Vec::new(),
             cached_jsonb_path: None,
+            element_type_hint: ElementTypeHint::Unknown,
         }
     }
 
@@ -383,6 +471,13 @@ impl SearchParameter {
 
         // Fallback to cached path
         self.jsonb_path()
+    }
+
+    /// Set the element type hint (resolved from FhirSchema).
+    #[must_use]
+    pub fn with_element_type_hint(mut self, hint: ElementTypeHint) -> Self {
+        self.element_type_hint = hint;
+        self
     }
 
     /// Set the description.

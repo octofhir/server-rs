@@ -25,13 +25,15 @@ use octofhir_auth::oauth::token::TokenRequest;
 use octofhir_auth::token::jwt::JwtService;
 use octofhir_auth::token::service::TokenConfig;
 use octofhir_auth::{
-    AuthState, AuthorizeState, JwksState, LogoutState, SmartConfigState, TokenState, authorize_get,
-    authorize_post, jwks_handler, logout_handler, oidc_logout_handler, smart_configuration_handler,
-    token_handler, userinfo_handler,
+    AuthState, AuthorizeState, JwksState, LaunchState, LogoutState, SmartConfigState, TokenState,
+    authorize_get, authorize_post, create_launch_handler, jwks_handler, logout_handler,
+    oidc_logout_handler, openid_configuration_handler, smart_configuration_handler, token_handler,
+    userinfo_handler,
 };
 use octofhir_auth_postgres::{
-    ArcAuthorizeSessionStorage, ArcClientStorage, ArcConsentStorage, ArcRefreshTokenStorage,
-    ArcRevokedTokenStorage, ArcSessionStorage, ArcUserStorage, PostgresSsoSessionStorage,
+    ArcAuthorizeSessionStorage, ArcClientStorage, ArcConsentStorage, ArcLaunchContextStorage,
+    ArcRefreshTokenStorage, ArcRevokedTokenStorage, ArcSessionStorage, ArcUserStorage,
+    PostgresSsoSessionStorage,
 };
 use time::Duration;
 use url::Url;
@@ -47,6 +49,7 @@ pub struct OAuthState {
     pub jwks_state: JwksState,
     pub smart_config_state: SmartConfigState,
     pub authorize_state: AuthorizeState,
+    pub launch_state: LaunchState,
     pub audit_service: Arc<AuditService>,
 }
 
@@ -125,15 +128,24 @@ impl OAuthState {
         let base_url = Url::parse(&config.base_url()).ok()?;
         let smart_config_state = SmartConfigState::new(config.auth.clone(), base_url);
 
+        // Create LaunchState for EHR launch context
+        let launch_storage: Arc<ArcLaunchContextStorage> =
+            Arc::new(ArcLaunchContextStorage::new(db_pool));
+        let launch_state = LaunchState::new(launch_storage.clone());
+
         // Create AuthorizationService for authorize endpoint
-        let authorization_service = Arc::new(AuthorizationService::new(
-            client_storage.clone(),
-            session_storage.clone(),
-            AuthorizationConfig::default(),
-        ));
+        let authorization_service = Arc::new(
+            AuthorizationService::new(
+                client_storage.clone(),
+                session_storage.clone(),
+                AuthorizationConfig::default(),
+            )
+            .with_launch_storage(launch_storage.clone()),
+        );
 
         // Create AuthorizeState for the authorize endpoint
         let secure_cookies = config.auth.cookie.secure;
+
         let authorize_state = AuthorizeState {
             authorization_service,
             authorize_session_storage,
@@ -153,6 +165,7 @@ impl OAuthState {
             jwks_state,
             smart_config_state,
             authorize_state,
+            launch_state,
             audit_service: app_state.audit_service.clone(),
         })
     }
@@ -305,6 +318,7 @@ pub fn logout_route(state: LogoutState) -> Router {
 pub fn jwks_route(state: JwksState) -> Router {
     Router::new()
         .route("/auth/jwks", get(jwks_handler))
+        .route("/.well-known/jwks.json", get(jwks_handler))
         .with_state(state)
 }
 
@@ -314,6 +328,10 @@ pub fn smart_config_route(state: SmartConfigState) -> Router {
         .route(
             "/.well-known/smart-configuration",
             get(smart_configuration_handler),
+        )
+        .route(
+            "/.well-known/openid-configuration",
+            get(openid_configuration_handler),
         )
         .with_state(state)
 }
@@ -332,5 +350,15 @@ pub fn userinfo_route(state: AuthState) -> Router {
 pub fn authorize_route(state: AuthorizeState) -> Router {
     Router::new()
         .route("/auth/authorize", get(authorize_get).post(authorize_post))
+        .with_state(state)
+}
+
+/// Creates SMART EHR launch route.
+///
+/// Allows EHR systems to create a launch context before redirecting
+/// to the authorization endpoint with a `launch` parameter.
+pub fn launch_route(state: LaunchState) -> Router {
+    Router::new()
+        .route("/auth/launch", post(create_launch_handler))
         .with_state(state)
 }

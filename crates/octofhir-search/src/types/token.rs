@@ -458,11 +458,11 @@ fn build_default_token_condition(
         }
         None => {
             // code only - match in any system
+            // Checks: direct code/value fields, and coding array elements
             let p = builder.add_text_param(code);
             format!(
                 "({jsonb_path}->>'code' = ${p} OR \
                  {jsonb_path}->>'value' = ${p} OR \
-                 {jsonb_path} = ${p} OR \
                  EXISTS (SELECT 1 FROM jsonb_array_elements({jsonb_path}->'coding') AS c WHERE c->>'code' = ${p}))"
             )
         }
@@ -496,9 +496,9 @@ fn build_identifier_of_type_condition(
         let p_val = builder.add_text_param(id_value);
 
         Ok(format!(
-            "EXISTS (SELECT 1 FROM jsonb_array_elements({jsonb_path}) AS id \
-             WHERE id->'type'->'coding' @> '[{{\"code\": \"{}\"}}]'::jsonb \
-             AND id->>'system' = ${p_sys} AND id->>'value' = ${p_val})",
+            "EXISTS (SELECT 1 FROM jsonb_array_elements({jsonb_path}) AS ident \
+             WHERE ident->'type'->'coding' @> '[{{\"code\": \"{}\"}}]'::jsonb \
+             AND ident->>'system' = ${p_sys} AND ident->>'value' = ${p_val})",
             type_code.replace('"', "\\\"")
         )
         .replace(&format!("${p_type}"), type_code))
@@ -508,9 +508,9 @@ fn build_identifier_of_type_condition(
         let p_val = builder.add_text_param(id_value);
 
         Ok(format!(
-            "EXISTS (SELECT 1 FROM jsonb_array_elements({jsonb_path}) AS id \
-             WHERE id->'type'->'coding' @> '[{{\"code\": \"{}\"}}]'::jsonb \
-             AND id->>'value' = ${p_val})",
+            "EXISTS (SELECT 1 FROM jsonb_array_elements({jsonb_path}) AS ident \
+             WHERE ident->'type'->'coding' @> '[{{\"code\": \"{}\"}}]'::jsonb \
+             AND ident->>'value' = ${p_val})",
             type_code.replace('"', "\\\"")
         ))
     }
@@ -550,16 +550,16 @@ pub fn build_identifier_search(
                         // |value - no system (empty string case)
                         let p = builder.add_text_param(code);
                         format!(
-                            "EXISTS (SELECT 1 FROM jsonb_array_elements({array_path}) AS id \
-                             WHERE (id->>'system' IS NULL OR id->>'system' = '') AND id->>'value' = ${p})"
+                            "EXISTS (SELECT 1 FROM jsonb_array_elements({array_path}) AS ident \
+                             WHERE (ident->>'system' IS NULL OR ident->>'system' = '') AND ident->>'value' = ${p})"
                         )
                     }
                     None => {
                         // value only
                         let p = builder.add_text_param(code);
                         format!(
-                            "EXISTS (SELECT 1 FROM jsonb_array_elements({array_path}) AS id \
-                             WHERE id->>'value' = ${p})"
+                            "EXISTS (SELECT 1 FROM jsonb_array_elements({array_path}) AS ident \
+                             WHERE ident->>'value' = ${p})"
                         )
                     }
                 }
@@ -574,8 +574,8 @@ pub fn build_identifier_search(
                 _ => {
                     let p = builder.add_text_param(code);
                     format!(
-                        "NOT EXISTS (SELECT 1 FROM jsonb_array_elements({array_path}) AS id \
-                             WHERE id->>'value' = ${p})"
+                        "NOT EXISTS (SELECT 1 FROM jsonb_array_elements({array_path}) AS ident \
+                             WHERE ident->>'value' = ${p})"
                     )
                 }
             },

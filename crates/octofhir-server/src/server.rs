@@ -640,7 +640,8 @@ pub async fn build_app(
     let parallel_start = std::time::Instant::now();
     tracing::info!("Starting parallel initialization of 8 components...");
     let bootstrap_fut = bootstrap_conformance_if_postgres(cfg, db_pool.clone());
-    let search_config_fut = ReloadableSearchConfig::new(&canonical_manager, search_options);
+    let search_config_fut =
+        ReloadableSearchConfig::new(&canonical_manager, search_options, Some(model_provider.as_ref()));
     let auth_state_fut = initialize_auth_state(cfg, db_pool.clone());
     let policy_refresh_fut = policy_cache.refresh();
     let operations_fut = crate::operations::load_operations();
@@ -1339,15 +1340,24 @@ pub async fn build_app(
     );
 
     // Build CapabilityStatement at startup (cached for /metadata requests)
-    let capability_statement = Arc::new(
-        handlers::build_capability_statement(
-            &cfg.fhir.version,
-            &cfg.base_url(),
-            &db_pool,
-            &resource_types,
-        )
-        .await,
-    );
+    let mut capability_statement = handlers::build_capability_statement(
+        &cfg.fhir.version,
+        &cfg.base_url(),
+        &db_pool,
+        &resource_types,
+    )
+    .await;
+
+    // Add SMART on FHIR security extensions (oauth-uris) to CapabilityStatement
+    if let Ok(base_url) = url::Url::parse(&cfg.base_url()) {
+        if let Err(e) =
+            octofhir_auth::add_smart_security(&mut capability_statement, &cfg.auth.smart, &base_url)
+        {
+            tracing::warn!(error = %e, "Failed to add SMART security to CapabilityStatement");
+        }
+    }
+
+    let capability_statement = Arc::new(capability_statement);
     tracing::info!("CapabilityStatement built and cached");
 
     // Register hooks for unified event system
@@ -2003,12 +2013,18 @@ fn build_oauth_routes(state: &AppState) -> Option<Router> {
     // Build OAuth routes
     let oauth_router = crate::oauth::oauth_routes(oauth_state.clone());
     let jwks_router = crate::oauth::jwks_route(oauth_state.jwks_state.clone());
-    let smart_config_router = crate::oauth::smart_config_route(oauth_state.smart_config_state);
+    let smart_config_router =
+        crate::oauth::smart_config_route(oauth_state.smart_config_state.clone());
     let userinfo_router = crate::oauth::userinfo_route(auth_state.clone());
     let authorize_router = crate::oauth::authorize_route(oauth_state.authorize_state);
+    let launch_router = crate::oauth::launch_route(oauth_state.launch_state);
+
+    // Duplicate discovery routes under /fhir so that
+    // /fhir/.well-known/smart-configuration works when Inferno uses /fhir as base URL
+    let fhir_discovery = crate::oauth::smart_config_route(oauth_state.smart_config_state);
 
     tracing::info!(
-        "OAuth routes enabled: /auth/token, /auth/logout, /auth/authorize, /auth/userinfo, /auth/jwks, /.well-known/smart-configuration"
+        "OAuth routes enabled: /auth/token, /auth/logout, /auth/authorize, /auth/launch, /auth/userinfo, /auth/jwks, /.well-known/smart-configuration, /fhir/.well-known/smart-configuration"
     );
 
     Some(
@@ -2018,6 +2034,8 @@ fn build_oauth_routes(state: &AppState) -> Option<Router> {
             .merge(smart_config_router)
             .merge(userinfo_router)
             .merge(authorize_router)
+            .merge(launch_router)
+            .nest("/fhir", fhir_discovery)
             // Apply CORS middleware to OAuth routes to allow cross-origin requests
             .layer(middleware::from_fn(app_middleware::dynamic_cors_middleware)),
     )

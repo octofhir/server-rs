@@ -7,6 +7,8 @@
 use jsonwebtoken::jwk::JwkSet;
 use serde::{Deserialize, Serialize};
 
+use crate::smart::scopes::SmartScope;
+
 // =============================================================================
 // Grant Type
 // =============================================================================
@@ -189,9 +191,30 @@ impl Client {
     /// Checks if the given scope is allowed for this client.
     ///
     /// An empty scopes list means all scopes are allowed.
+    /// For SMART on FHIR scopes, uses semantic matching via `SmartScope::covers()`
+    /// so that wildcard registrations (e.g. `patient/*.cruds`) cover specific
+    /// resource requests (e.g. `patient/Patient.rs`).
     #[must_use]
     pub fn is_scope_allowed(&self, scope: &str) -> bool {
-        self.scopes.is_empty() || self.scopes.iter().any(|s| s == scope)
+        if self.scopes.is_empty() {
+            return true;
+        }
+
+        let requested_smart = SmartScope::parse(scope).ok();
+
+        self.scopes.iter().any(|allowed| {
+            // Exact string match (handles openid, fhirUser, launch/*, offline_access, etc.)
+            if allowed == scope {
+                return true;
+            }
+            // SMART semantic matching: wildcard + permission coverage
+            if let Some(ref req) = requested_smart {
+                if let Ok(allowed_smart) = SmartScope::parse(allowed) {
+                    return allowed_smart.covers(req);
+                }
+            }
+            false
+        })
     }
 
     /// Checks if the given grant type is allowed for this client.
@@ -509,5 +532,66 @@ mod tests {
 
         // Different host should not match
         assert!(!client.is_post_logout_redirect_uri_allowed("https://evil.com/logout"));
+    }
+
+    #[test]
+    fn test_scope_allowed_smart_wildcard() {
+        let mut client = make_valid_public_client();
+        client.scopes = vec!["patient/*.cruds".to_string()];
+
+        // Specific resource scopes covered by wildcard
+        assert!(client.is_scope_allowed("patient/Patient.rs"));
+        assert!(client.is_scope_allowed("patient/Observation.r"));
+        assert!(client.is_scope_allowed("patient/Condition.cruds"));
+
+        // Different context not covered
+        assert!(!client.is_scope_allowed("user/Patient.rs"));
+        assert!(!client.is_scope_allowed("system/Patient.rs"));
+    }
+
+    #[test]
+    fn test_scope_allowed_smart_permission_subset() {
+        let mut client = make_valid_public_client();
+        client.scopes = vec!["patient/*.r".to_string()];
+
+        // Read-only covered
+        assert!(client.is_scope_allowed("patient/Patient.r"));
+
+        // Write permissions NOT covered
+        assert!(!client.is_scope_allowed("patient/Patient.cruds"));
+        assert!(!client.is_scope_allowed("patient/Patient.cu"));
+    }
+
+    #[test]
+    fn test_scope_allowed_inferno_scenario() {
+        let mut client = make_valid_public_client();
+        client.scopes = vec![
+            "openid".to_string(),
+            "fhirUser".to_string(),
+            "launch".to_string(),
+            "launch/patient".to_string(),
+            "offline_access".to_string(),
+            "online_access".to_string(),
+            "patient/*.r".to_string(),
+            "patient/*.cruds".to_string(),
+            "user/*.r".to_string(),
+            "user/*.cruds".to_string(),
+            "system/*.cruds".to_string(),
+        ];
+
+        // Non-SMART scopes: exact match
+        assert!(client.is_scope_allowed("openid"));
+        assert!(client.is_scope_allowed("fhirUser"));
+        assert!(client.is_scope_allowed("launch/patient"));
+        assert!(client.is_scope_allowed("offline_access"));
+
+        // SMART scopes: semantic matching
+        assert!(client.is_scope_allowed("patient/Patient.rs"));
+        assert!(client.is_scope_allowed("patient/Observation.rs"));
+        assert!(client.is_scope_allowed("user/Patient.r"));
+        assert!(client.is_scope_allowed("system/Encounter.cruds"));
+
+        // Not allowed
+        assert!(!client.is_scope_allowed("unknown_scope"));
     }
 }

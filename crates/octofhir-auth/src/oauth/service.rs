@@ -374,11 +374,13 @@ impl AuthorizationService {
             ));
         }
 
-        // Case 2: launch parameter present but no launch scope
+        // Case 2: launch parameter present but no launch scope — still process it.
+        // Some clients (e.g., Inferno) may omit the `launch` scope while providing
+        // the launch parameter. Per SMART spec, we should still honor the launch context.
         if launch_param.is_some() && !scopes.launch {
-            return Err(AuthError::invalid_scope(
-                "launch parameter present but launch scope not requested",
-            ));
+            tracing::warn!(
+                "launch parameter present but launch scope not requested; processing anyway"
+            );
         }
 
         // Case 3: No launch parameter and no launch scope - standalone launch

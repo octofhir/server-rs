@@ -28,7 +28,7 @@ use tracing::{debug, info};
 
 use octofhir_canonical_manager::CanonicalManager;
 
-use crate::loader::{LoaderError, load_search_parameters};
+use crate::loader::{ElementTypeResolver, LoaderError, load_search_parameters};
 use crate::query_cache::{CacheStatsSnapshot, QueryCache};
 use crate::registry::SearchParameterRegistry;
 
@@ -131,9 +131,10 @@ impl ReloadableSearchConfig {
     pub async fn new(
         canonical_manager: &CanonicalManager,
         options: SearchOptions,
+        resolver: Option<&dyn ElementTypeResolver>,
     ) -> Result<Self, LoaderError> {
-        // Load initial registry
-        let registry = Arc::new(load_search_parameters(canonical_manager).await?);
+        // Load initial registry with element type resolution
+        let registry = Arc::new(load_search_parameters(canonical_manager, resolver).await?);
 
         // Create shared cache if capacity > 0
         let cache = if options.cache_capacity > 0 {
@@ -197,11 +198,12 @@ impl ReloadableSearchConfig {
     pub async fn reload_registry(
         &self,
         canonical_manager: &CanonicalManager,
+        resolver: Option<&dyn ElementTypeResolver>,
     ) -> Result<(), LoaderError> {
         info!("Reloading search parameter registry");
 
         // Load new registry (happens in background, doesn't block readers)
-        let new_registry = Arc::new(load_search_parameters(canonical_manager).await?);
+        let new_registry = Arc::new(load_search_parameters(canonical_manager, resolver).await?);
 
         // Get current config
         let current = self.inner.load_full();

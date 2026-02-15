@@ -58,7 +58,7 @@ pub use http::{
     LogoutState, OidcLogoutParams, SmartConfigState, TokenRevokedCallback, TokenState,
     UnlinkIdentityRequest, UserInfoResponse, UserSearchParams, authorize_get, authorize_post,
     create_launch_handler, introspect_handler, jwks_handler, logout_handler, oidc_logout_handler,
-    revoke_handler, smart_configuration_handler, token_handler, userinfo_handler,
+    revoke_handler, smart_configuration_handler, openid_configuration_handler, token_handler, userinfo_handler,
 };
 pub use middleware::{
     AdminAuth, AuthContext, AuthState, BearerAuth, OptionalBearerAuth, UserContext,
@@ -105,7 +105,7 @@ pub mod prelude {
         CreateLaunchResponse, IdpSearchParams, JwksState, LaunchState, LinkIdentityRequest,
         SmartConfigState, TokenState, UnlinkIdentityRequest, UserInfoResponse, UserSearchParams,
         authorize_get, authorize_post, create_launch_handler, introspect_handler, jwks_handler,
-        revoke_handler, smart_configuration_handler, token_handler, userinfo_handler,
+        revoke_handler, smart_configuration_handler, openid_configuration_handler, token_handler, userinfo_handler,
     };
     pub use crate::middleware::{
         AdminAuth, AuthContext, AuthState, BearerAuth, OptionalBearerAuth, UserContext,

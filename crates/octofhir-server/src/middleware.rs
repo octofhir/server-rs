@@ -635,6 +635,10 @@ pub async fn content_negotiation(req: Request<Body>, next: Next) -> Response {
     let needs_body_type = method == axum::http::Method::POST || method == axum::http::Method::PUT;
 
     if needs_body_type {
+        let path = req.uri().path();
+        // POST _search endpoints accept application/x-www-form-urlencoded per FHIR spec
+        let is_search_post = path.ends_with("/_search");
+
         let content_type = req
             .headers()
             .get("content-type")
@@ -642,7 +646,11 @@ pub async fn content_negotiation(req: Request<Body>, next: Next) -> Response {
             .map(|s| s.to_ascii_lowercase());
         let content_ok = content_type
             .as_deref()
-            .map(|s| s.starts_with("application/fhir+json") || s.starts_with("application/json"))
+            .map(|s| {
+                s.starts_with("application/fhir+json")
+                    || s.starts_with("application/json")
+                    || (is_search_post && s.starts_with("application/x-www-form-urlencoded"))
+            })
             .unwrap_or(false);
         if !content_ok {
             return error_response(

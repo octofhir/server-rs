@@ -3,11 +3,23 @@
 //! This module provides functionality to load SearchParameter resources from
 //! FHIR packages via the canonical manager and populate a SearchParameterRegistry.
 
+use async_trait::async_trait;
 use serde_json::Value;
 
 use crate::common::register_common_parameters;
-use crate::parameters::{SearchModifier, SearchParameter, SearchParameterType};
+use crate::parameters::{ElementTypeHint, SearchModifier, SearchParameter, SearchParameterType};
 use crate::registry::SearchParameterRegistry;
+
+/// Resolves FHIR element type information from schema at registry build time.
+///
+/// Implemented by the server using FhirSchema/ModelProvider to provide
+/// element type info that determines which SQL builder to use for search.
+#[async_trait]
+pub trait ElementTypeResolver: Send + Sync {
+    /// Given a resource type (e.g., "Patient") and element path (e.g., "gender"),
+    /// returns the FHIR type name (e.g., "code") and whether it's an array.
+    async fn resolve(&self, resource_type: &str, element_path: &str) -> Option<(String, bool)>;
+}
 
 /// Error type for search parameter loading.
 #[derive(Debug, thiserror::Error)]
@@ -27,17 +39,20 @@ pub enum LoaderError {
 /// 1. Creates a new registry with common parameters
 /// 2. Queries the canonical manager for SearchParameter resources
 /// 3. Parses and registers each valid SearchParameter
-/// 4. Logs warnings for invalid parameters (but continues processing)
+/// 4. Resolves element types from schema for correct SQL generation
+/// 5. Logs warnings for invalid parameters (but continues processing)
 ///
 /// # Arguments
 ///
 /// * `manager` - Reference to the canonical manager
+/// * `resolver` - Optional element type resolver for resolving FHIR element types from schema
 ///
 /// # Returns
 ///
 /// A populated `SearchParameterRegistry`, or an error if the query fails.
 pub async fn load_search_parameters(
     manager: &octofhir_canonical_manager::CanonicalManager,
+    resolver: Option<&dyn ElementTypeResolver>,
 ) -> Result<SearchParameterRegistry, LoaderError> {
     use octofhir_canonical_manager::search::SearchQuery;
 
@@ -45,6 +60,11 @@ pub async fn load_search_parameters(
 
     // Register built-in common parameters first
     register_common_parameters(&registry);
+
+    // Resolve element types for common parameters if resolver is available
+    if let Some(resolver) = resolver {
+        resolve_registry_element_types(&registry, resolver).await;
+    }
 
     // Query for all SearchParameter resources using pagination
     // The canonical manager has a max limit of 1000 per page
@@ -80,11 +100,17 @@ pub async fn load_search_parameters(
 
         for resource_match in results.resources {
             match parse_search_parameter(&resource_match.resource.content) {
-                Ok(param) => {
+                Ok(mut param) => {
+                    // Resolve element type from schema
+                    if let Some(resolver) = resolver {
+                        param.element_type_hint =
+                            resolve_element_type_for_param(&param, resolver).await;
+                    }
                     tracing::debug!(
                         code = %param.code,
                         bases = ?param.base,
                         param_type = ?param.param_type,
+                        element_type_hint = ?param.element_type_hint,
                         "Loaded search parameter"
                     );
                     registry.register(param);
@@ -244,6 +270,96 @@ pub fn parse_search_parameter(value: &Value) -> Result<SearchParameter, LoaderEr
     // If needed, it can be added later via a with_xpath() method
 
     Ok(param)
+}
+
+/// Resolve element type hint for a parsed search parameter using the schema resolver.
+///
+/// Extracts resource type and element path from the FHIRPath expression,
+/// then queries the resolver for the FHIR element type. For multi-resource
+/// expressions, tries each expression to find a matching base type.
+async fn resolve_element_type_for_param(
+    param: &SearchParameter,
+    resolver: &dyn ElementTypeResolver,
+) -> ElementTypeHint {
+    let Some(expression) = &param.expression else {
+        return ElementTypeHint::Unknown;
+    };
+
+    // Parse expression to get resource type and element path.
+    // Expressions can be multi-resource like "Patient.name | Practitioner.name"
+    // or contain FHIRPath functions like "Encounter.subject.where(resolve() is Patient)".
+    //
+    // We iterate over each `|`-separated expression to find one that resolves,
+    // and strip FHIRPath functions before querying the resolver.
+    for expr_part in expression.split('|') {
+        let expr_part = expr_part.trim();
+
+        let Some((resource_type, element_path)) = expr_part.split_once('.') else {
+            continue;
+        };
+
+        let element_path = element_path.trim();
+        if element_path.is_empty() {
+            continue;
+        }
+
+        // Strip FHIRPath functions (e.g., ".where(resolve() is Patient)") from
+        // the element path — the resolver only understands schema element names.
+        let clean_path = crate::sql_builder::strip_fhirpath_functions(element_path);
+        if clean_path.is_empty() {
+            continue;
+        }
+
+        // For common params with base "Resource", resolve against a concrete type
+        let resolve_type = if resource_type == "Resource" || resource_type == "DomainResource" {
+            "Patient"
+        } else {
+            resource_type
+        };
+
+        if let Some((type_name, is_array)) = resolver.resolve(resolve_type, &clean_path).await {
+            let hint = ElementTypeHint::from_fhir_type(&type_name, is_array);
+            tracing::trace!(
+                code = %param.code,
+                expression = %expression,
+                resolved_expr = %expr_part,
+                clean_path = %clean_path,
+                fhir_type = %type_name,
+                is_array = is_array,
+                hint = ?hint,
+                "Resolved element type for search parameter"
+            );
+            return hint;
+        }
+    }
+
+    tracing::debug!(
+        code = %param.code,
+        expression = %expression,
+        "Could not resolve element type from schema"
+    );
+    ElementTypeHint::Unknown
+}
+
+/// Resolve element types for all already-registered parameters in the registry.
+///
+/// Used after `register_common_parameters` to retroactively resolve types
+/// for the built-in common parameters.
+async fn resolve_registry_element_types(
+    registry: &SearchParameterRegistry,
+    resolver: &dyn ElementTypeResolver,
+) {
+    // Get all common parameters and resolve their types
+    let common_params = registry.get_common_parameters();
+    for param in &common_params {
+        let hint = resolve_element_type_for_param(param, resolver).await;
+        if hint != ElementTypeHint::Unknown {
+            // Re-register with resolved hint
+            let mut updated = (**param).clone();
+            updated.element_type_hint = hint;
+            registry.register(updated);
+        }
+    }
 }
 
 #[cfg(test)]

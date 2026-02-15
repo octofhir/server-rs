@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1
 # =============================================================================
 # OctoFHIR Server Dockerfile
 # Multi-stage build for minimal production image
@@ -52,11 +53,15 @@ COPY igs/ ./igs/
 # Copy built UI
 COPY --from=ui-builder /app/dist ./ui/dist
 
-# Build release binary
-RUN CARGO_PROFILE_RELEASE_LTO=thin \
+# Build release binary with cached cargo registry and target dir
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/usr/local/cargo/git \
+    --mount=type=cache,target=/build/target \
+    CARGO_PROFILE_RELEASE_LTO=thin \
     CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16 \
     CARGO_PROFILE_RELEASE_DEBUG=0 \
-    cargo build --release --bin octofhir-server
+    cargo build --release --bin octofhir-server \
+    && cp /build/target/release/octofhir-server /usr/local/bin/octofhir-server
 
 # -----------------------------------------------------------------------------
 # Stage 3: Runtime image (minimal)
@@ -83,7 +88,7 @@ RUN mkdir -p /opt/octofhir/config /opt/octofhir/data/.fhir \
 WORKDIR /opt/octofhir
 
 # Copy binary
-COPY --from=rust-builder /build/target/release/octofhir-server /usr/local/bin/
+COPY --from=rust-builder /usr/local/bin/octofhir-server /usr/local/bin/
 
 # Create default configuration
 RUN cat > /opt/octofhir/config/octofhir.toml << 'EOF'
@@ -120,7 +125,7 @@ max_count = 500
 
 [packages]
 path = "/opt/octofhir/data/.fhir"
-load = ["hl7.fhir.r4.core#4.0.1"]
+load = ["hl7.fhir.r4.core#4.0.1", "hl7.fhir.us.core#5.0.1"]
 
 [logging]
 level = "info"
@@ -138,7 +143,7 @@ authorization_code_lifetime = "10m"
 access_token_lifetime = "1h"
 refresh_token_lifetime = "90d"
 refresh_token_rotation = true
-grant_types = ["authorization_code", "client_credentials", "refresh_token", "password"]
+grant_types = ["authorization_code", "client_credentials", "refresh_token"]
 
 [auth.smart]
 launch_ehr_enabled = true

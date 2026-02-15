@@ -113,12 +113,21 @@ impl Drop for PostgresTransaction {
     /// This provides safety against accidentally leaving transactions open.
     /// sqlx's Transaction Drop implementation automatically issues a ROLLBACK.
     fn drop(&mut self) {
-        if self.tx.blocking_lock().is_some() {
-            tracing::warn!(
-                "PostgresTransaction dropped without explicit commit/rollback - will auto-rollback"
-            );
-            // The inner SqlxTransaction's Drop impl will automatically rollback
+        match self.tx.try_lock() {
+            Ok(guard) => {
+                if guard.is_some() {
+                    tracing::warn!(
+                        "PostgresTransaction dropped without explicit commit/rollback - will auto-rollback"
+                    );
+                }
+            }
+            Err(_) => {
+                tracing::warn!(
+                    "PostgresTransaction dropped while lock was held - will auto-rollback"
+                );
+            }
         }
+        // The inner SqlxTransaction's Drop impl will automatically rollback
     }
 }
 

@@ -1,0 +1,60 @@
+# Docker Compose override for Inferno conformance testing
+# Usage: docker compose -f docker-compose.yml -f docker-compose.inferno.yml up -d
+#
+# Adds OctoFHIR + TLS reverse proxy (nginx on port 8443).
+# Inferno runs separately via inferno/us-core-test-kit/docker-compose.yml.
+
+services:
+  octofhir:
+    build: .
+    container_name: octofhir-server
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      OCTOFHIR__STORAGE__POSTGRES__HOST: octofhir-postgres
+      OCTOFHIR__STORAGE__POSTGRES__PORT: '5432'
+      OCTOFHIR__STORAGE__POSTGRES__USER: postgres
+      OCTOFHIR__STORAGE__POSTGRES__PASSWORD: postgres
+      OCTOFHIR__STORAGE__POSTGRES__DATABASE: octofhir
+      OCTOFHIR__SERVER__HOST: '0.0.0.0'
+      OCTOFHIR__SERVER__PORT: '8888'
+      OCTOFHIR__SERVER__BASE_URL: 'https://host.docker.internal:8443'
+      OCTOFHIR__BOOTSTRAP__ADMIN_USER__PASSWORD: admin123
+      OCTOFHIR__AUTH__ISSUER: 'https://host.docker.internal:8443'
+      OCTOFHIR__AUTH__SIGNING__ALGORITHM: 'RS256'
+      RUST_LOG: info
+    ports:
+      - '8888:8888'
+    networks:
+      - octofhir-network
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'wget',
+          '--no-verbose',
+          '--tries=1',
+          '--spider',
+          'http://localhost:8888/healthz',
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 60s
+
+  # TLS reverse proxy — SMART App Launch requires TLS 1.2+
+  octofhir-tls:
+    image: nginx:alpine
+    container_name: octofhir-tls
+    depends_on:
+      octofhir:
+        condition: service_healthy
+    volumes:
+      - ./scripts/inferno/tls/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./scripts/inferno/tls/server.crt:/etc/nginx/certs/server.crt:ro
+      - ./scripts/inferno/tls/server.key:/etc/nginx/certs/server.key:ro
+    ports:
+      - '8443:443'
+    networks:
+      - octofhir-network

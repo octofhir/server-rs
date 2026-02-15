@@ -14,6 +14,7 @@ use octofhir_fhir_model::provider::{
 };
 use octofhir_fhirschema::SchemaProvider;
 use octofhir_fhirschema::types::FhirSchema;
+use octofhir_search::ElementTypeResolver;
 use sqlx_postgres::PgPool;
 use tracing::{debug, warn};
 
@@ -637,5 +638,36 @@ impl SchemaProvider for OctoFhirModelProvider {
         // Fall back to name lookup (for short names like "Patient", "AccessPolicy")
         // The SchemaCompiler passes resource type names to get_schema_by_url
         OctoFhirModelProvider::get_schema(self, url).await
+    }
+}
+
+/// ElementTypeResolver implementation for search parameter type resolution.
+///
+/// Resolves FHIR element types from FhirSchema at search registry build time,
+/// allowing the search engine to generate correct SQL without hardcoded path heuristics.
+#[async_trait]
+impl ElementTypeResolver for OctoFhirModelProvider {
+    async fn resolve(&self, resource_type: &str, element_path: &str) -> Option<(String, bool)> {
+        let schema = OctoFhirModelProvider::get_schema(self, resource_type).await?;
+        let elements = schema.elements.as_ref()?;
+
+        // Navigate nested paths (e.g., "meta.tag" → meta -> tag)
+        let parts: Vec<&str> = element_path.split('.').collect();
+        let mut current_elements = elements;
+
+        for (i, part) in parts.iter().enumerate() {
+            let element = current_elements.get(*part)?;
+            if i == parts.len() - 1 {
+                // Found the target element
+                return Some((
+                    element.type_name.clone().unwrap_or_default(),
+                    element.array.unwrap_or(false),
+                ));
+            }
+            // Navigate into nested elements (backbone elements)
+            current_elements = element.elements.as_ref()?;
+        }
+
+        None
     }
 }

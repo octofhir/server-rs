@@ -216,6 +216,7 @@ pub async fn build_capability_statement(
     let mut builder = CapabilityStatementBuilder::new_json_r4b()
         .status("active")
         .kind("instance")
+        .date(chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string())
         .add_format("application/fhir+json")
         .add_format("application/json");
 
@@ -330,13 +331,34 @@ pub async fn build_capability_statement(
     }
 
     // Build resources using pre-fetched data
-    for rt in resource_types.iter() {
-        // Get search params for this resource type, add common params
-        let mut mapped: Vec<SearchParam> =
-            search_params_by_type.get(rt).cloned().unwrap_or_default();
-        mapped.extend(octofhir_api::common_search_params());
+    // Filter out non-standard resource types that are not part of the FHIR spec
+    // (e.g., AccessPolicy, App, Client, etc.) — these fail CapabilityStatement validation (cpb-12)
+    let standard_resource_types: Vec<&str> = resource_types
+        .iter()
+        .filter(|rt| {
+            // Only include standard FHIR resource types in the CapabilityStatement.
+            // Custom types (AccessPolicy, App, Client, etc.) are excluded to pass
+            // FHIR validation against the ResourceType value set.
+            octofhir_api::is_standard_fhir_resource(rt)
+        })
+        .map(|s| s.as_str())
+        .collect();
 
-        let resource = octofhir_api::CapabilityStatementRestResource::new(rt)
+    for rt in &standard_resource_types {
+        // Get search params for this resource type, add common params, deduplicate by name
+        let mut mapped: Vec<SearchParam> =
+            search_params_by_type.get(*rt).cloned().unwrap_or_default();
+        // Only add common params if not already present (avoid cpb-12 duplicate names)
+        for common in octofhir_api::common_search_params() {
+            if !mapped.iter().any(|p| p.name == common.name) {
+                mapped.push(common);
+            }
+        }
+        // Deduplicate remaining params by name (keep first occurrence)
+        let mut seen = std::collections::HashSet::new();
+        mapped.retain(|p| seen.insert(p.name.clone()));
+
+        let resource = octofhir_api::CapabilityStatementRestResource::new(*rt)
             .with_interactions(
                 &[
                     "read",
@@ -350,8 +372,8 @@ pub async fn build_capability_statement(
                 ][..],
             )
             .with_search_params(mapped)
-            .with_profile(base_profiles.get(rt).cloned())
-            .with_supported_profiles(supported_profiles.get(rt).cloned().unwrap_or_default());
+            .with_profile(base_profiles.get(*rt).cloned())
+            .with_supported_profiles(supported_profiles.get(*rt).cloned().unwrap_or_default());
         builder = builder.add_resource_struct(resource);
     }
 
@@ -405,48 +427,23 @@ pub async fn build_capability_statement(
         "url": base_url
     });
 
-    // Add security section to rest
-    if let Some(rest) = body.get_mut("rest")
-        && let Some(rest_arr) = rest.as_array_mut()
-        && let Some(rest_item) = rest_arr.first_mut()
-    {
-        rest_item["security"] = json!({
-            "cors": true,
-            "service": [{
-                "coding": [{
-                    "system": "http://terminology.hl7.org/CodeSystem/restful-security-service",
-                    "code": "SMART-on-FHIR",
-                    "display": "SMART-on-FHIR"
-                }]
-            }],
-            "description": "OAuth2 using SMART-on-FHIR profile (when enabled)"
-        });
+    // Declare conformance to US Core Server CapabilityStatement if the package is loaded
+    let has_us_core = crate::canonical::with_registry(|r| {
+        r.list().iter().any(|p| p.id.starts_with("hl7.fhir.us.core"))
+    })
+    .unwrap_or(false);
+    if has_us_core {
+        body["instantiates"] = json!([
+            "http://hl7.org/fhir/us/core/CapabilityStatement/us-core-server"
+        ]);
     }
 
-    // Reflect loaded canonical packages via an extension
-    if let Some(pkgs) = crate::canonical::with_registry(|r| {
-        r.list()
-            .iter()
-            .map(|p| {
-                json!({
-                    "url": "urn:abyxon:loaded-package",
-                    "extension": [
-                        {"url": "id", "valueString": p.id},
-                        {"url": "version", "valueString": p.version.clone().unwrap_or_default()},
-                        {"url": "path", "valueString": p.path.clone().unwrap_or_default()},
-                    ]
-                })
-            })
-            .collect::<Vec<_>>()
-    }) {
-        if let Some(ext) = body.get_mut("extension") {
-            if let Some(arr) = ext.as_array_mut() {
-                arr.extend(pkgs);
-            }
-        } else {
-            body["extension"] = Value::Array(pkgs);
-        }
-    }
+    // Note: SMART security extensions (oauth-uris) are added at startup
+    // via octofhir_auth::add_smart_security() in server.rs
+
+    // Note: loaded canonical packages are available via /api/packages endpoint.
+    // Custom extensions (urn:abyxon:loaded-package) were removed from the
+    // CapabilityStatement to avoid FHIR validation errors for unknown extensions.
 
     body
 }
@@ -3503,7 +3500,11 @@ pub async fn transaction_handler(
     }
 }
 
-/// Process a transaction bundle atomically - all entries succeed or all fail
+/// Process a transaction bundle atomically - all entries succeed or all fail.
+///
+/// Uses a two-pass approach for correct urn:uuid reference resolution:
+/// - Pass 1: Create/update all resources, building the complete fullUrl -> ResourceType/id map
+/// - Pass 2: Update resources that contained urn:uuid references with resolved values
 async fn process_transaction(
     state: &crate::server::AppState,
     bundle: &Value,
@@ -3513,7 +3514,6 @@ async fn process_transaction(
         .ok_or_else(|| ApiError::bad_request("Missing or invalid bundle entries"))?;
 
     if entries.is_empty() {
-        // Empty transaction is valid - return empty response
         let response_bundle = json!({
             "resourceType": "Bundle",
             "type": "transaction-response",
@@ -3525,35 +3525,74 @@ async fn process_transaction(
     // Sort entries by HTTP method for proper processing order
     let sorted_entries = sort_transaction_entries(entries);
 
-    // Build reference map for fullUrl -> actual reference resolution
+    // Pre-populate reference map for PUT entries where the target ID is known from the URL
     let mut reference_map: std::collections::HashMap<String, String> =
         std::collections::HashMap::new();
+    for entry in &sorted_entries {
+        let method = entry["request"]["method"].as_str().unwrap_or("");
+        if method.eq_ignore_ascii_case("PUT") {
+            if let (Some(full_url), Some(url)) = (
+                entry["fullUrl"].as_str(),
+                entry["request"]["url"].as_str(),
+            ) {
+                // PUT URL is "ResourceType/id" — use it directly as the resolved reference
+                reference_map.insert(full_url.to_string(), url.to_string());
+            }
+        }
+    }
 
-    // Begin native PostgreSQL database transaction
+    // Begin database transaction
     tracing::debug!("Beginning native PostgreSQL transaction for Bundle processing");
-    // Access the DB pool directly from AppState for native transactions
     let mut tx = octofhir_db_postgres::PostgresStorage::from_pool((*state.db_pool).clone())
         .begin_transaction()
         .await
         .map_err(|e| ApiError::internal(format!("Failed to begin transaction: {}", e)))?;
 
+    // Track entries that need reference resolution in pass 2
+    // (resource_type, id, original_resource_with_urn_refs)
+    let mut needs_resolution: Vec<(String, String, Value)> = Vec::new();
     let mut response_entries: Vec<Value> = Vec::new();
 
-    // Process each entry within the transaction
+    // Pass 1: Create/update all resources, build complete reference map
     for entry in &sorted_entries {
         let result =
-            process_transaction_entry_with_tx(&mut *tx, state, entry, &mut reference_map).await;
+            process_transaction_entry_pass1(&mut *tx, state, entry, &mut reference_map, &mut needs_resolution).await;
 
         match result {
             Ok(response_entry) => {
                 response_entries.push(response_entry);
             }
             Err(e) => {
-                // Transaction failed - automatic rollback via Drop impl
                 tracing::warn!("Transaction failed, will auto-rollback: {}", e);
-                // No need to explicitly rollback - PostgresTransaction Drop handles it
                 return Err(e);
             }
+        }
+    }
+
+    // Pass 2: Resolve urn:uuid references in resources that contained them
+    if !needs_resolution.is_empty() {
+        tracing::debug!(
+            "Pass 2: resolving urn:uuid references in {} resources",
+            needs_resolution.len()
+        );
+        for (resource_type, id, original_resource) in &needs_resolution {
+            let mut resolved = original_resource.clone();
+            resolve_references_recursive(&mut resolved, &reference_map)?;
+
+            // Ensure the resource has the correct id and resourceType
+            if let Some(obj) = resolved.as_object_mut() {
+                obj.insert("id".to_string(), json!(id));
+                obj.insert("resourceType".to_string(), json!(resource_type));
+            }
+
+            tx.update(&resolved)
+                .await
+                .map_err(|e| {
+                    ApiError::internal(format!(
+                        "Failed to update {}/{} with resolved references: {}",
+                        resource_type, id, e
+                    ))
+                })?;
         }
     }
 
@@ -3567,7 +3606,6 @@ async fn process_transaction(
         response_entries.len()
     );
 
-    // Build response bundle
     let response_bundle = json!({
         "resourceType": "Bundle",
         "type": "transaction-response",

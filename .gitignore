@@ -44,3 +44,9 @@ config/local.toml
 k6-private
 .k6-secret
 octofhir.toml
+
+# Inferno conformance testing
+inferno/
+conformance-results/
+scripts/inferno/tls/server.crt
+scripts/inferno/tls/server.key

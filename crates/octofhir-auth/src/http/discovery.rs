@@ -60,6 +60,34 @@ pub async fn smart_configuration_handler(
     ([(header::CONTENT_TYPE, "application/json")], Json(config))
 }
 
+/// Handler for `GET /.well-known/openid-configuration`.
+///
+/// Returns an OpenID Connect Discovery document. Uses the configured
+/// `base_url` for all endpoint URLs, not the bind address.
+pub async fn openid_configuration_handler(
+    State(state): State<SmartConfigState>,
+) -> impl IntoResponse {
+    let base = state.base_url.as_str().trim_end_matches('/');
+
+    let doc = serde_json::json!({
+        "issuer": base,
+        "authorization_endpoint": format!("{}/auth/authorize", base),
+        "token_endpoint": format!("{}/auth/token", base),
+        "userinfo_endpoint": format!("{}/auth/userinfo", base),
+        "jwks_uri": format!("{}/.well-known/jwks.json", base),
+        "scopes_supported": state.config.smart.supported_scopes,
+        "response_types_supported": ["code"],
+        "grant_types_supported": state.config.oauth.grant_types,
+        "subject_types_supported": ["public"],
+        "id_token_signing_alg_values_supported": [state.config.signing.algorithm.to_string()],
+        "token_endpoint_auth_methods_supported": ["client_secret_basic", "client_secret_post", "private_key_jwt"],
+        "introspection_endpoint": format!("{}/auth/introspect", base),
+        "revocation_endpoint": format!("{}/auth/revoke", base),
+    });
+
+    ([(header::CONTENT_TYPE, "application/json")], Json(doc))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

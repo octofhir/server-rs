@@ -272,3 +272,50 @@ docker-run:
 # Login to GitHub Container Registry (requires gh cli)
 docker-login:
     gh auth token | docker login {{DOCKER_REGISTRY}} -u $(gh api user -q .login) --password-stdin
+
+# =============================================================================
+# Conformance Testing (Inferno)
+# =============================================================================
+
+# Setup Inferno US Core Test Kit (clone + configure, run once)
+inferno-setup:
+    bash scripts/inferno/setup.sh
+
+# Start OctoFHIR in Docker for conformance testing
+inferno-server-up:
+    docker compose -f docker-compose.yml -f docker-compose.inferno.yml up -d --build
+
+# Start Inferno (requires inferno-setup first)
+inferno-up:
+    cd inferno/us-core-test-kit && docker compose up -d
+
+# Start all services (OctoFHIR + Inferno) with health checks
+inferno-start:
+    bash scripts/inferno/start.sh
+
+# Stop OctoFHIR conformance server
+inferno-server-down:
+    docker compose -f docker-compose.yml -f docker-compose.inferno.yml down
+
+# Stop Inferno
+inferno-stop:
+    cd inferno/us-core-test-kit && docker compose down
+
+# Stop everything (OctoFHIR + Inferno)
+inferno-down: inferno-server-down inferno-stop
+
+# Seed test data for Inferno
+inferno-seed:
+    NODE_TLS_REJECT_UNAUTHORIZED=0 bun run scripts/inferno/seed-data.ts
+
+# Run conformance tests (full workflow: health check + seed + instructions)
+inferno-test:
+    bun run scripts/inferno/run-tests.ts
+
+# Collect and categorize test results
+inferno-results *ARGS:
+    bun run scripts/inferno/collect-results.ts {{ARGS}}
+
+# Open Inferno UI in browser
+inferno-ui:
+    open http://localhost:4567

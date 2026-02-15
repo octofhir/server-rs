@@ -66,7 +66,8 @@ pub use session_token_index::SessionTokenIndex;
 pub use sso_session::PostgresSsoSessionStorage;
 pub use storage_adapters::{
     ArcAuthorizeSessionStorage, ArcBasicAuthStorage, ArcClientStorage, ArcConsentStorage,
-    ArcRefreshTokenStorage, ArcRevokedTokenStorage, ArcSessionStorage, ArcUserStorage,
+    ArcLaunchContextStorage, ArcRefreshTokenStorage, ArcRevokedTokenStorage, ArcSessionStorage,
+    ArcUserStorage,
 };
 pub use token::TokenStorage;
 pub use user::UserStorage;

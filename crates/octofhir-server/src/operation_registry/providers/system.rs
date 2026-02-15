@@ -36,7 +36,7 @@ impl OperationProvider for SystemOperationProvider {
                 "Capability Statement",
                 categories::SYSTEM,
                 vec!["GET".to_string()],
-                "/metadata",
+                "/fhir/metadata",
                 modules::SERVER,
             )
             .with_description("Get the server's capability statement")

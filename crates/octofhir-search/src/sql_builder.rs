@@ -1241,6 +1241,14 @@ pub fn fhirpath_to_jsonb_path(expression: &str, resource_type: &str) -> Vec<Stri
         })
         .unwrap_or(expr);
 
+    // Strip FHIRPath function calls that don't map to JSONB paths.
+    // These are type filters/resolvers — the type info is already in SearchParameter.target.
+    // Examples:
+    //   "subject.where(resolve() is Patient)" → "subject"
+    //   "value.ofType(Quantity)" → "valueQuantity" (handled separately via polymorphic naming)
+    //   "effective.ofType(dateTime)" → "effectiveDateTime"
+    let expr = strip_fhirpath_functions(expr);
+
     // Split by '.' and handle special cases
     expr.split('.')
         .filter(|s| !s.is_empty())
@@ -1254,6 +1262,68 @@ pub fn fhirpath_to_jsonb_path(expression: &str, resource_type: &str) -> Vec<Stri
             s.to_string()
         })
         .collect()
+}
+
+/// Strip FHIRPath function calls from an expression, keeping only property paths.
+///
+/// FHIRPath expressions like `subject.where(resolve() is Patient)` contain
+/// function calls that have no JSONB equivalent — they're type discriminators.
+/// The type info is already available in SearchParameter.target, so we only
+/// need the underlying property path.
+pub(crate) fn strip_fhirpath_functions(expr: &str) -> String {
+    let mut result = String::with_capacity(expr.len());
+    let mut i = 0;
+    let bytes = expr.as_bytes();
+
+    while i < bytes.len() {
+        // Look for function calls: identifier followed by '('
+        if bytes[i] == b'(' {
+            // Found start of function args — skip until matching ')'
+            let mut depth = 1;
+            i += 1;
+            while i < bytes.len() && depth > 0 {
+                match bytes[i] {
+                    b'(' => depth += 1,
+                    b')' => depth -= 1,
+                    _ => {}
+                }
+                i += 1;
+            }
+            // Remove the function name we already appended (e.g., "where", "resolve", "ofType")
+            // by scanning back to the last '.' or start
+            if let Some(dot_pos) = result.rfind('.') {
+                let func_candidate = &result[dot_pos + 1..];
+                if is_fhirpath_function(func_candidate) {
+                    result.truncate(dot_pos);
+                }
+            } else if is_fhirpath_function(&result) {
+                result.clear();
+            }
+        } else {
+            result.push(bytes[i] as char);
+            i += 1;
+        }
+    }
+
+    // Clean up trailing dots
+    while result.ends_with('.') {
+        result.pop();
+    }
+    // Clean up leading dots
+    while result.starts_with('.') {
+        result.remove(0);
+    }
+
+    result
+}
+
+/// Check if a string is a known FHIRPath function name.
+fn is_fhirpath_function(name: &str) -> bool {
+    matches!(
+        name,
+        "where" | "resolve" | "ofType" | "exists" | "empty" | "first" | "last" | "as" | "is"
+            | "not" | "all" | "any" | "count" | "distinct" | "single" | "type"
+    )
 }
 
 /// Build a JSONB accessor chain from path segments.
@@ -1319,6 +1389,30 @@ mod tests {
             "Unknown",
         );
         assert_eq!(path, vec!["name"]);
+    }
+
+    #[test]
+    fn test_fhirpath_to_jsonb_path_where_resolve() {
+        // subject.where(resolve() is Patient) → just "subject"
+        let path = fhirpath_to_jsonb_path(
+            "Observation.subject.where(resolve() is Patient)",
+            "Observation",
+        );
+        assert_eq!(path, vec!["subject"]);
+
+        // More complex: performer.where(resolve() is Practitioner)
+        let path = fhirpath_to_jsonb_path(
+            "Encounter.participant.individual.where(resolve() is Practitioner)",
+            "Encounter",
+        );
+        assert_eq!(path, vec!["participant", "individual"]);
+
+        // Simple resolve() without where
+        let path = fhirpath_to_jsonb_path(
+            "Observation.subject.resolve()",
+            "Observation",
+        );
+        assert_eq!(path, vec!["subject"]);
     }
 
     #[test]

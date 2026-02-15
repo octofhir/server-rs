@@ -11,9 +11,11 @@ use uuid::Uuid;
 
 use octofhir_auth::oauth::authorize_session::AuthorizeSession;
 use octofhir_auth::oauth::session::{AuthorizationSession, LaunchContext};
+use octofhir_auth::smart::launch::StoredLaunchContext;
 use octofhir_auth::storage::{
     AuthorizeSessionStorage as AuthorizeSessionStorageTrait, BasicAuthStorage,
     ClientStorage as ClientStorageTrait, ConsentStorage as ConsentStorageTrait,
+    LaunchContextStorage as LaunchContextStorageTrait,
     RefreshTokenStorage as RefreshTokenStorageTrait,
     RevokedTokenStorage as RevokedTokenStorageTrait, SessionStorage as SessionStorageTrait, User,
     UserConsent, UserStorage as UserStorageTrait,
@@ -26,6 +28,7 @@ use crate::app::AppStorage;
 use crate::authorize_session::AuthorizeSessionStorage;
 use crate::client::PostgresClientStorage;
 use crate::consent::ConsentStorage;
+use crate::launch_context::LaunchContextStorage;
 use crate::revoked_token::RevokedTokenStorage;
 use crate::session::SessionStorage;
 use crate::token::TokenStorage;
@@ -835,5 +838,66 @@ impl ConsentStorageTrait for ArcConsentStorage {
                 updated_at: r.updated_at,
             })
             .collect())
+    }
+}
+
+// =============================================================================
+// Arc-Owning Launch Context Storage
+// =============================================================================
+
+/// Arc-owning PostgreSQL launch context storage adapter.
+#[derive(Clone)]
+pub struct ArcLaunchContextStorage {
+    pool: Arc<PgPool>,
+}
+
+impl ArcLaunchContextStorage {
+    /// Create a new Arc-owning launch context storage.
+    #[must_use]
+    pub fn new(pool: Arc<PgPool>) -> Self {
+        Self { pool }
+    }
+}
+
+#[async_trait]
+impl LaunchContextStorageTrait for ArcLaunchContextStorage {
+    async fn store(&self, context: &StoredLaunchContext, ttl_seconds: u64) -> AuthResult<()> {
+        let storage = LaunchContextStorage::new(&self.pool);
+        storage
+            .store(context, ttl_seconds)
+            .await
+            .map_err(|e| AuthError::storage(e.to_string()))
+    }
+
+    async fn get(&self, launch_id: &str) -> AuthResult<Option<StoredLaunchContext>> {
+        let storage = LaunchContextStorage::new(&self.pool);
+        storage
+            .get(launch_id)
+            .await
+            .map_err(|e| AuthError::storage(e.to_string()))
+    }
+
+    async fn consume(&self, launch_id: &str) -> AuthResult<Option<StoredLaunchContext>> {
+        let storage = LaunchContextStorage::new(&self.pool);
+        storage
+            .consume(launch_id)
+            .await
+            .map_err(|e| AuthError::storage(e.to_string()))
+    }
+
+    async fn delete(&self, launch_id: &str) -> AuthResult<()> {
+        let storage = LaunchContextStorage::new(&self.pool);
+        storage
+            .delete(launch_id)
+            .await
+            .map_err(|e| AuthError::storage(e.to_string()))
+    }
+
+    async fn cleanup_expired(&self) -> AuthResult<u64> {
+        let storage = LaunchContextStorage::new(&self.pool);
+        storage
+            .cleanup_expired()
+            .await
+            .map_err(|e| AuthError::storage(e.to_string()))
     }
 }

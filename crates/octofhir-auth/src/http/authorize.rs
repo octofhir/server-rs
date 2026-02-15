@@ -47,7 +47,9 @@ use crate::storage::{
     UserStorage,
 };
 
-use super::authorize_templates::{render_consent_form, render_error_page, render_login_form};
+use super::authorize_templates::{
+    PatientInfo, render_consent_form, render_error_page, render_login_form, render_patient_picker,
+};
 
 /// Session cookie name.
 const SESSION_COOKIE_NAME: &str = "oauth_session";
@@ -90,6 +92,9 @@ pub struct AuthorizeFormData {
     /// Password (for login action).
     #[serde(default)]
     pub password: Option<String>,
+    /// Patient ID (for select_patient action).
+    #[serde(default)]
+    pub patient_id: Option<String>,
 }
 
 /// GET /oauth/authorize handler.
@@ -410,6 +415,7 @@ pub async fn authorize_post(
     match form.action.as_str() {
         "login" => handle_login(&state, &session, &form, &client.name, jar, &headers).await,
         "authorize" => handle_authorize(&state, &session, jar).await,
+        "select_patient" => handle_select_patient(&state, &session, &form).await,
         "deny" => {
             // Clean up session
             let _ = state.authorize_session_storage.delete(session_id).await;
@@ -608,6 +614,34 @@ async fn handle_authorize(
         // Continue anyway - consent not saved but we can still issue the code
     }
 
+    // Check if launch/patient scope requires patient selection (standalone launch)
+    let needs_patient_picker = scopes.iter().any(|s| s == "launch/patient")
+        && session
+            .authorization_request
+            .launch
+            .is_none();
+
+    if needs_patient_picker {
+        // Query patients from FHIR storage to show picker
+        match fetch_patients(state).await {
+            Ok(patients) if !patients.is_empty() => {
+                return (
+                    StatusCode::OK,
+                    Html(render_patient_picker(&patients, &session.id.to_string())),
+                )
+                    .into_response();
+            }
+            Ok(_) => {
+                tracing::warn!("No patients found for patient picker");
+                // Fall through to issue code without patient context
+            }
+            Err(e) => {
+                tracing::error!("Failed to fetch patients for picker: {}", e);
+                // Fall through to issue code without patient context
+            }
+        }
+    }
+
     // Issue authorization code
     issue_authorization_code(state, session, user_id).await
 }
@@ -639,6 +673,9 @@ async fn issue_authorization_code(
                     session.state(),
                 );
             }
+
+            // Note: EHR launch context is already resolved by AuthorizationService::authorize()
+            // via process_launch_parameter() and stored in the authorization session.
 
             // Clean up authorize session
             let _ = state.authorize_session_storage.delete(session.id).await;
@@ -672,6 +709,178 @@ async fn issue_authorization_code(
             )
         }
     }
+}
+
+/// Handle patient selection for standalone launch.
+async fn handle_select_patient(
+    state: &AuthorizeState,
+    session: &AuthorizeSession,
+    form: &AuthorizeFormData,
+) -> Response {
+    let user_id = match &session.user_id {
+        Some(id) => id.clone(),
+        None => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Html(render_error_page(
+                    "invalid_request",
+                    "User not authenticated",
+                )),
+            )
+                .into_response();
+        }
+    };
+
+    let patient_id = match &form.patient_id {
+        Some(id) if !id.is_empty() => id.clone(),
+        _ => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Html(render_error_page(
+                    "invalid_request",
+                    "No patient selected",
+                )),
+            )
+                .into_response();
+        }
+    };
+
+    // Issue authorization code, then update the session with patient context
+    match state
+        .authorization_service
+        .authorize(&session.authorization_request)
+        .await
+    {
+        Ok(auth_session) => {
+            // Update user
+            if let Err(e) = state
+                .session_storage
+                .update_user(auth_session.id, &user_id)
+                .await
+            {
+                tracing::error!("Failed to update session with user: {}", e);
+                return redirect_with_error(
+                    session.redirect_uri(),
+                    AuthorizationErrorCode::ServerError,
+                    "Failed to create authorization code",
+                    session.state(),
+                );
+            }
+
+            // Update launch context with selected patient
+            let launch_context = crate::oauth::session::LaunchContext {
+                patient: Some(patient_id.clone()),
+                ..Default::default()
+            };
+
+            if let Err(e) = state
+                .session_storage
+                .update_launch_context(auth_session.id, launch_context)
+                .await
+            {
+                tracing::error!("Failed to set patient launch context: {}", e);
+                return redirect_with_error(
+                    session.redirect_uri(),
+                    AuthorizationErrorCode::ServerError,
+                    "Failed to set patient context",
+                    session.state(),
+                );
+            }
+
+            tracing::info!(
+                patient_id = %patient_id,
+                session_id = %auth_session.id,
+                "Set standalone launch patient context"
+            );
+
+            // Clean up authorize session
+            let _ = state.authorize_session_storage.delete(session.id).await;
+
+            // Build redirect URL
+            let response = AuthorizationResponse::new(
+                auth_session.code.clone(),
+                session.state().to_string(),
+            );
+
+            match response.to_redirect_url(session.redirect_uri()) {
+                Ok(url) => Redirect::to(&url).into_response(),
+                Err(e) => {
+                    tracing::error!("Failed to build redirect URL: {}", e);
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Html(render_error_page(
+                            "server_error",
+                            "Failed to build redirect URL",
+                        )),
+                    )
+                        .into_response()
+                }
+            }
+        }
+        Err(e) => {
+            tracing::error!("Failed to create authorization code: {}", e);
+            redirect_with_error(
+                session.redirect_uri(),
+                AuthorizationErrorCode::ServerError,
+                "Failed to create authorization code",
+                session.state(),
+            )
+        }
+    }
+}
+
+/// Fetch patients from FHIR storage for the patient picker.
+async fn fetch_patients(state: &AuthorizeState) -> Result<Vec<PatientInfo>, String> {
+    let mut search_params = octofhir_storage::SearchParams::new();
+    search_params.count = Some(50);
+
+    let result = state
+        .fhir_storage
+        .search("Patient", &search_params)
+        .await
+        .map_err(|e| format!("FHIR search failed: {}", e))?;
+
+    let mut patients = Vec::new();
+    for stored in &result.entries {
+        let resource = &stored.resource;
+        let id = stored.id.clone();
+
+        // Extract name from FHIR Patient
+        let name = resource
+            .get("name")
+            .and_then(|n| n.as_array())
+            .and_then(|names| names.first())
+            .map(|n| {
+                let family = n.get("family").and_then(|f| f.as_str()).unwrap_or("");
+                let given = n
+                    .get("given")
+                    .and_then(|g| g.as_array())
+                    .and_then(|arr| arr.first())
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                if given.is_empty() {
+                    family.to_string()
+                } else {
+                    format!("{} {}", given, family)
+                }
+            })
+            .unwrap_or_else(|| format!("Patient/{}", id));
+
+        let birth_date = resource
+            .get("birthDate")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+
+        if !id.is_empty() {
+            patients.push(PatientInfo {
+                id,
+                name,
+                birth_date,
+            });
+        }
+    }
+
+    Ok(patients)
 }
 
 /// Create a redirect response with an OAuth error.

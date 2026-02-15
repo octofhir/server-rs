@@ -16,10 +16,10 @@ pub mod terminology;
 pub mod types;
 
 pub use common::register_common_parameters;
-pub use loader::{LoaderError, load_search_parameters, parse_search_parameter};
+pub use loader::{ElementTypeResolver, LoaderError, load_search_parameters, parse_search_parameter};
 pub use parameters::{
-    SearchModifier, SearchParameter, SearchParameterDefinition, SearchParameterType,
-    SearchParameters,
+    ElementTypeHint, SearchModifier, SearchParameter, SearchParameterDefinition,
+    SearchParameterType, SearchParameters,
 };
 pub use parser::{ParsedParameters, SearchParameterParser};
 pub use registry::SearchParameterRegistry;
