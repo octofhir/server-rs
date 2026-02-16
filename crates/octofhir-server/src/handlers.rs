@@ -3502,9 +3502,10 @@ pub async fn transaction_handler(
 
 /// Process a transaction bundle atomically - all entries succeed or all fail.
 ///
-/// Uses a two-pass approach for correct urn:uuid reference resolution:
-/// - Pass 1: Create/update all resources, building the complete fullUrl -> ResourceType/id map
-/// - Pass 2: Update resources that contained urn:uuid references with resolved values
+/// Per FHIR R4 spec (http.html#transaction), uses pre-scan with pre-assigned IDs:
+/// 1. Pre-scan: assign IDs to POST entries, build complete urn:uuid reference map
+/// 2. Resolve: replace all urn:uuid references in all resources using the complete map
+/// 3. Execute: process entries in verb order (DELETE → POST → PUT → GET) in one DB transaction
 async fn process_transaction(
     state: &crate::server::AppState,
     bundle: &Value,
@@ -3525,38 +3526,70 @@ async fn process_transaction(
     // Sort entries by HTTP method for proper processing order
     let sorted_entries = sort_transaction_entries(entries);
 
-    // Pre-populate reference map for PUT entries where the target ID is known from the URL
+    // Phase 1: Pre-scan — build complete reference map before creating anything
     let mut reference_map: std::collections::HashMap<String, String> =
         std::collections::HashMap::new();
+    let mut pre_assigned_ids: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
+
     for entry in &sorted_entries {
         let method = entry["request"]["method"].as_str().unwrap_or("");
-        if method.eq_ignore_ascii_case("PUT") {
-            if let (Some(full_url), Some(url)) = (
-                entry["fullUrl"].as_str(),
-                entry["request"]["url"].as_str(),
-            ) {
-                // PUT URL is "ResourceType/id" — use it directly as the resolved reference
-                reference_map.insert(full_url.to_string(), url.to_string());
+        let full_url = entry["fullUrl"].as_str();
+        let url = entry["request"]["url"].as_str().unwrap_or("");
+
+        match method.to_uppercase().as_str() {
+            "POST" => {
+                if let Some(fu) = full_url {
+                    // Extract resource type from request URL (e.g. "Organization" or "Organization?...")
+                    let resource_type = url.split('?').next().unwrap_or(url);
+                    let new_id = octofhir_core::generate_id();
+                    reference_map.insert(fu.to_string(), format!("{}/{}", resource_type, new_id));
+                    pre_assigned_ids.insert(fu.to_string(), new_id);
+                }
             }
+            "PUT" => {
+                if let Some(fu) = full_url {
+                    // PUT URL is "ResourceType/id" — ID is already known
+                    reference_map.insert(fu.to_string(), url.to_string());
+                }
+            }
+            _ => {}
         }
     }
 
-    // Begin database transaction
+    // Phase 2: Build resolved entries — replace all urn:uuid references using the complete map
+    let mut resolved_entries: Vec<Value> = Vec::new();
+    for entry in &sorted_entries {
+        let mut resolved_entry = (*entry).clone();
+
+        // Inject pre-assigned ID into POST resources
+        if let Some(fu) = entry["fullUrl"].as_str() {
+            if let Some(new_id) = pre_assigned_ids.get(fu) {
+                if let Some(res) = resolved_entry.get_mut("resource") {
+                    res["id"] = json!(new_id);
+                }
+            }
+        }
+
+        // Resolve all urn:uuid references in the resource
+        if let Some(res) = resolved_entry.get_mut("resource") {
+            resolve_references_recursive(res, &reference_map)?;
+        }
+
+        resolved_entries.push(resolved_entry);
+    }
+
+    // Phase 3: Execute all entries in one database transaction
     tracing::debug!("Beginning native PostgreSQL transaction for Bundle processing");
     let mut tx = octofhir_db_postgres::PostgresStorage::from_pool((*state.db_pool).clone())
         .begin_transaction()
         .await
         .map_err(|e| ApiError::internal(format!("Failed to begin transaction: {}", e)))?;
 
-    // Track entries that need reference resolution in pass 2
-    // (resource_type, id, original_resource_with_urn_refs)
-    let mut needs_resolution: Vec<(String, String, Value)> = Vec::new();
     let mut response_entries: Vec<Value> = Vec::new();
 
-    // Pass 1: Create/update all resources, build complete reference map
-    for entry in &sorted_entries {
-        let result =
-            process_transaction_entry_pass1(&mut *tx, state, entry, &mut reference_map, &mut needs_resolution).await;
+    for entry in &resolved_entries {
+        let result = process_transaction_entry_with_tx(&mut *tx, state, entry).await;
 
         match result {
             Ok(response_entry) => {
@@ -3566,33 +3599,6 @@ async fn process_transaction(
                 tracing::warn!("Transaction failed, will auto-rollback: {}", e);
                 return Err(e);
             }
-        }
-    }
-
-    // Pass 2: Resolve urn:uuid references in resources that contained them
-    if !needs_resolution.is_empty() {
-        tracing::debug!(
-            "Pass 2: resolving urn:uuid references in {} resources",
-            needs_resolution.len()
-        );
-        for (resource_type, id, original_resource) in &needs_resolution {
-            let mut resolved = original_resource.clone();
-            resolve_references_recursive(&mut resolved, &reference_map)?;
-
-            // Ensure the resource has the correct id and resourceType
-            if let Some(obj) = resolved.as_object_mut() {
-                obj.insert("id".to_string(), json!(id));
-                obj.insert("resourceType".to_string(), json!(resource_type));
-            }
-
-            tx.update(&resolved)
-                .await
-                .map_err(|e| {
-                    ApiError::internal(format!(
-                        "Failed to update {}/{} with resolved references: {}",
-                        resource_type, id, e
-                    ))
-                })?;
         }
     }
 
@@ -3617,12 +3623,12 @@ async fn process_transaction(
 
 /// Process a single transaction entry using a transaction object.
 ///
-/// This version works with native database transactions for ACID guarantees.
+/// Resources are expected to already have pre-assigned IDs and resolved references
+/// (done in the pre-scan phase of process_transaction).
 async fn process_transaction_entry_with_tx(
     tx: &mut dyn octofhir_storage::Transaction,
     _state: &crate::server::AppState,
     entry: &Value,
-    reference_map: &mut std::collections::HashMap<String, String>,
 ) -> Result<Value, ApiError> {
     let request = &entry["request"];
     let method = request["method"]
@@ -3632,18 +3638,10 @@ async fn process_transaction_entry_with_tx(
         .as_str()
         .ok_or_else(|| ApiError::bad_request("Missing request.url in bundle entry"))?;
 
-    let full_url = entry["fullUrl"].as_str();
-
-    // Resolve references in the resource if present
-    let resource = if let Some(res) = entry.get("resource") {
-        Some(resolve_bundle_references(res, reference_map)?)
-    } else {
-        None
-    };
+    let resource = entry.get("resource").cloned();
 
     match method.to_uppercase().as_str() {
         "POST" => {
-            // Create operation
             let resource =
                 resource.ok_or_else(|| ApiError::bad_request("POST entry requires a resource"))?;
 
@@ -3657,25 +3655,13 @@ async fn process_transaction_entry_with_tx(
                 ApiError::bad_request(format!("Unknown resource type: {}", resource_type))
             })?;
 
-            // Create using transaction
             let stored = tx
                 .create(&resource)
                 .await
                 .map_err(|e| ApiError::internal(format!("Failed to create resource: {}", e)))?;
 
-            // Update reference map
-            if let Some(fu) = full_url {
-                reference_map.insert(fu.to_string(), format!("{}/{}", resource_type, stored.id));
-            }
-
-            // Build response - convert StoredResource to ResourceEnvelope
-            let envelope: octofhir_core::ResourceEnvelope =
-                serde_json::from_value(stored.resource.clone()).map_err(|e| {
-                    ApiError::internal(format!("Failed to deserialize resource: {}", e))
-                })?;
-            let response_json = json_from_envelope(&envelope);
             Ok(build_transaction_response_entry(
-                Some(&response_json),
+                Some(&stored.resource),
                 "201 Created",
                 Some(resource_type),
                 Some(&stored.id),
@@ -3683,30 +3669,40 @@ async fn process_transaction_entry_with_tx(
             ))
         }
         "PUT" => {
-            // Update operation
+            // PUT in a transaction bundle is an upsert (create-or-update) per FHIR spec
             let resource =
                 resource.ok_or_else(|| ApiError::bad_request("PUT entry requires a resource"))?;
 
-            // Update using transaction
-            let stored = tx
-                .update(&resource)
-                .await
-                .map_err(|e| ApiError::internal(format!("Failed to update resource: {}", e)))?;
+            // Try update first; if resource doesn't exist, create it
+            match tx.update(&resource).await {
+                Ok(stored) => {
+                    let resource_type = stored.resource_type.clone();
+                    Ok(build_transaction_response_entry(
+                        Some(&stored.resource),
+                        "200 OK",
+                        Some(&resource_type),
+                        Some(&stored.id),
+                        Some(&stored.version_id),
+                    ))
+                }
+                Err(e) if e.to_string().contains("not found") => {
+                    // Resource doesn't exist — create it (PUT as create with client-assigned ID)
+                    let stored = tx
+                        .create(&resource)
+                        .await
+                        .map_err(|e| ApiError::internal(format!("Failed to create resource via PUT: {}", e)))?;
 
-            // Convert StoredResource to ResourceEnvelope
-            let envelope: octofhir_core::ResourceEnvelope =
-                serde_json::from_value(stored.resource.clone()).map_err(|e| {
-                    ApiError::internal(format!("Failed to deserialize resource: {}", e))
-                })?;
-            let response_json = json_from_envelope(&envelope);
-            let resource_type = stored.resource_type.clone();
-            Ok(build_transaction_response_entry(
-                Some(&response_json),
-                "200 OK",
-                Some(&resource_type),
-                Some(&stored.id),
-                Some(&stored.version_id),
-            ))
+                    let resource_type = stored.resource_type.clone();
+                    Ok(build_transaction_response_entry(
+                        Some(&stored.resource),
+                        "201 Created",
+                        Some(&resource_type),
+                        Some(&stored.id),
+                        Some(&stored.version_id),
+                    ))
+                }
+                Err(e) => Err(ApiError::internal(format!("Failed to update resource: {}", e))),
+            }
         }
         "DELETE" => {
             // Delete operation
