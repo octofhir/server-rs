@@ -509,6 +509,9 @@ pub struct FhirQueryBuilder {
     chain_joins: Vec<ChainJoin>,
     mode: QueryMode,
     table_alias: Option<String>,
+    /// When true, emit `resource::text` instead of `resource` in SELECT.
+    /// This avoids JSONB -> Value deserialization for raw string output.
+    raw_resource: bool,
 }
 
 impl FhirQueryBuilder {
@@ -525,12 +528,19 @@ impl FhirQueryBuilder {
             chain_joins: Vec::new(),
             mode: QueryMode::Resources,
             table_alias: None,
+            raw_resource: false,
         }
     }
 
     /// Set a table alias for the main resource table.
     pub fn with_alias(mut self, alias: impl Into<String>) -> Self {
         self.table_alias = Some(alias.into());
+        self
+    }
+
+    /// Emit `resource::text` instead of `resource` in SELECT for raw string output.
+    pub fn with_raw_resource(mut self, raw: bool) -> Self {
+        self.raw_resource = raw;
         self
     }
 
@@ -634,12 +644,17 @@ impl FhirQueryBuilder {
         let resource_col = format!("{alias}.resource");
 
         // Build SELECT clause
+        let resource_select = if self.raw_resource {
+            format!("{alias}.resource::text")
+        } else {
+            format!("{alias}.resource")
+        };
         let select_clause = match self.mode {
             QueryMode::Count => "SELECT COUNT(*) as total".to_string(),
             QueryMode::IdsOnly => format!("SELECT {alias}.id"),
             QueryMode::Resources | QueryMode::ResourcesWithTotal => {
                 format!(
-                    "{alias}.resource, {alias}.id, {alias}.txid, {alias}.created_at, {alias}.updated_at"
+                    "{resource_select}, {alias}.id, {alias}.txid, {alias}.created_at, {alias}.updated_at"
                 )
             }
         };
@@ -710,6 +725,44 @@ impl FhirQueryBuilder {
             sql: format!("EXPLAIN ANALYZE {}", query.sql),
             params: query.params,
         })
+    }
+
+    /// Extract just the bind parameters from accumulated conditions,
+    /// without generating SQL. Used by query cache on cache hit.
+    pub fn extract_params(&self) -> Vec<SqlValue> {
+        let mut params = Vec::new();
+        for condition in &self.conditions {
+            Self::collect_condition_params(condition, &mut params);
+        }
+        params
+    }
+
+    fn collect_condition_params(condition: &SearchCondition, params: &mut Vec<SqlValue>) {
+        match condition {
+            SearchCondition::Simple { op, value, .. } => match op {
+                Operator::IsNull | Operator::IsNotNull => {}
+                _ => params.push(value.clone()),
+            },
+            SearchCondition::Raw { params: p, .. } => {
+                params.extend(p.iter().cloned());
+            }
+            SearchCondition::Array {
+                element_condition, ..
+            } => {
+                Self::collect_condition_params(element_condition, params);
+            }
+            SearchCondition::Exists { .. }
+            | SearchCondition::True
+            | SearchCondition::False => {}
+            SearchCondition::Or(conditions) | SearchCondition::And(conditions) => {
+                for c in conditions {
+                    Self::collect_condition_params(c, params);
+                }
+            }
+            SearchCondition::Not(inner) => {
+                Self::collect_condition_params(inner, params);
+            }
+        }
     }
 
     fn build_from_clause(&self, full_table: &str, alias: &str) -> Result<String, SqlBuilderError> {

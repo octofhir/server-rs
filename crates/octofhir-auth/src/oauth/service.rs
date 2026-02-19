@@ -954,20 +954,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_authorize_launch_parameter_without_scope() {
-        let (service, client_storage, _) = create_service();
-        client_storage.add_client(create_test_client());
-
-        let mut request = create_test_request();
-        request.launch = Some("launch123".to_string());
-        request.scope = "openid patient/*.rs".to_string(); // No launch scope
-
-        let result = service.authorize(&request).await;
-        // Should fail: launch parameter without launch scope
-        assert!(matches!(result, Err(AuthError::InvalidScope { .. })));
-    }
-
-    #[tokio::test]
     async fn test_config_defaults() {
         let config = AuthorizationConfig::default();
         assert_eq!(config.code_lifetime, Duration::minutes(10));

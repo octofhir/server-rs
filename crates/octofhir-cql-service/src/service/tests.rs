@@ -104,19 +104,15 @@ impl octofhir_storage::FhirStorage for TestStorage {
 }
 
 /// Create a test CQL service with minimal dependencies
-fn create_test_service() -> CqlService {
+async fn create_test_service() -> CqlService {
     let storage: octofhir_storage::DynStorage = Arc::new(TestStorage);
 
     // Create minimal FhirPathEngine for tests
     let model_provider = Arc::new(octofhir_fhir_model::EmptyModelProvider);
     let registry = Arc::new(octofhir_fhirpath::create_function_registry());
     let fhirpath_engine = Arc::new(
-        tokio::runtime::Runtime::new()
-            .unwrap()
-            .block_on(octofhir_fhirpath::FhirPathEngine::new(
-                registry,
-                model_provider.clone(),
-            ))
+        octofhir_fhirpath::FhirPathEngine::new(registry, model_provider.clone())
+            .await
             .unwrap(),
     );
 
@@ -140,7 +136,7 @@ fn create_test_service() -> CqlService {
 
 #[tokio::test]
 async fn test_evaluate_simple_arithmetic() {
-    let service = create_test_service();
+    let service = create_test_service().await;
 
     let result = service
         .evaluate_expression("1 + 1", None, None, HashMap::new())
@@ -153,7 +149,7 @@ async fn test_evaluate_simple_arithmetic() {
 
 #[tokio::test]
 async fn test_evaluate_empty_expression_fails() {
-    let service = create_test_service();
+    let service = create_test_service().await;
 
     let result = service
         .evaluate_expression("", None, None, HashMap::new())
@@ -168,7 +164,7 @@ async fn test_evaluate_empty_expression_fails() {
 
 #[tokio::test]
 async fn test_evaluate_boolean_logic() {
-    let service = create_test_service();
+    let service = create_test_service().await;
 
     let result = service
         .evaluate_expression("true and false", None, None, HashMap::new())
@@ -181,7 +177,7 @@ async fn test_evaluate_boolean_logic() {
 
 #[tokio::test]
 async fn test_evaluate_string_concatenation() {
-    let service = create_test_service();
+    let service = create_test_service().await;
 
     let result = service
         .evaluate_expression("'Hello' + ' ' + 'World'", None, None, HashMap::new())
@@ -194,7 +190,7 @@ async fn test_evaluate_string_concatenation() {
 
 #[tokio::test]
 async fn test_evaluate_comparison() {
-    let service = create_test_service();
+    let service = create_test_service().await;
 
     let result = service
         .evaluate_expression("5 > 3", None, None, HashMap::new())
@@ -207,7 +203,7 @@ async fn test_evaluate_comparison() {
 
 #[tokio::test]
 async fn test_evaluate_multiplication() {
-    let service = create_test_service();
+    let service = create_test_service().await;
 
     let result = service
         .evaluate_expression("6 * 7", None, None, HashMap::new())
@@ -220,7 +216,7 @@ async fn test_evaluate_multiplication() {
 
 #[tokio::test]
 async fn test_cache_stats() {
-    let service = create_test_service();
+    let service = create_test_service().await;
 
     let stats = service.cache_stats();
     assert_eq!(stats.size, 0);
@@ -229,7 +225,7 @@ async fn test_cache_stats() {
 
 #[tokio::test]
 async fn test_clear_cache() {
-    let service = create_test_service();
+    let service = create_test_service().await;
 
     // This should not panic
     service.clear_cache();
@@ -240,7 +236,7 @@ async fn test_clear_cache() {
 
 #[tokio::test]
 async fn test_invalid_cql_syntax() {
-    let service = create_test_service();
+    let service = create_test_service().await;
 
     let result = service
         .evaluate_expression("this is not valid CQL !!!", None, None, HashMap::new())

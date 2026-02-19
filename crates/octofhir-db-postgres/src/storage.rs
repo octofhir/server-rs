@@ -6,10 +6,10 @@ use async_trait::async_trait;
 use serde_json::Value;
 use sqlx_postgres::PgPool;
 
-use octofhir_search::{SearchParameter, SearchParameterRegistry};
+use octofhir_search::{QueryCache, SearchParameter, SearchParameterRegistry};
 use octofhir_storage::{
-    FhirStorage, HistoryParams, HistoryResult, SearchParams, SearchResult, StorageError,
-    StoredResource, Transaction,
+    FhirStorage, HistoryParams, HistoryResult, RawHistoryResult, RawStoredResource, SearchParams,
+    SearchResult, StorageError, StoredResource, Transaction,
 };
 
 use crate::config::PostgresConfig;
@@ -25,9 +25,13 @@ use crate::schema::SchemaManager;
 #[derive(Debug, Clone)]
 pub struct PostgresStorage {
     pool: PgPool,
+    /// Optional read replica pool. Read operations use this when available.
+    read_pool: Option<PgPool>,
     schema_manager: SchemaManager,
     /// Search parameter registry for parameter lookup during search
     search_registry: Option<Arc<SearchParameterRegistry>>,
+    /// Query cache for search SQL template reuse
+    query_cache: Option<Arc<QueryCache>>,
 }
 
 impl PostgresStorage {
@@ -53,8 +57,10 @@ impl PostgresStorage {
 
         Ok(Self {
             pool,
+            read_pool: None,
             schema_manager,
             search_registry: None,
+            query_cache: None,
         })
     }
 
@@ -67,15 +73,28 @@ impl PostgresStorage {
         let schema_manager = SchemaManager::new(pool.clone());
         Self {
             pool,
+            read_pool: None,
             schema_manager,
             search_registry: None,
+            query_cache: None,
         }
     }
 
-    /// Returns a reference to the connection pool.
+    /// Sets the read replica pool for routing read operations.
+    pub fn set_read_pool(&mut self, pool: PgPool) {
+        self.read_pool = Some(pool);
+    }
+
+    /// Returns the primary (write) connection pool.
     #[must_use]
     pub fn pool(&self) -> &PgPool {
         &self.pool
+    }
+
+    /// Returns the read pool (replica if configured, otherwise primary).
+    #[must_use]
+    pub fn read_pool(&self) -> &PgPool {
+        self.read_pool.as_ref().unwrap_or(&self.pool)
     }
 
     /// Returns a reference to the schema manager.
@@ -96,6 +115,17 @@ impl PostgresStorage {
     #[must_use]
     pub fn search_registry(&self) -> Option<&Arc<SearchParameterRegistry>> {
         self.search_registry.as_ref()
+    }
+
+    /// Sets the query cache for search SQL template reuse.
+    pub fn set_query_cache(&mut self, cache: Arc<QueryCache>) {
+        self.query_cache = Some(cache);
+    }
+
+    /// Returns a reference to the query cache, if set.
+    #[must_use]
+    pub fn query_cache(&self) -> Option<&Arc<QueryCache>> {
+        self.query_cache.as_ref()
     }
 
     /// Gets a search parameter for a specific resource type and code.
@@ -128,7 +158,7 @@ impl PostgresStorage {
         &self,
         params: &HistoryParams,
     ) -> Result<HistoryResult, StorageError> {
-        queries::get_system_history(&self.pool, &self.schema_manager, params).await
+        queries::get_system_history(self.read_pool(), &self.schema_manager, params).await
     }
 }
 
@@ -143,7 +173,7 @@ impl FhirStorage for PostgresStorage {
         resource_type: &str,
         id: &str,
     ) -> Result<Option<StoredResource>, StorageError> {
-        queries::read(&self.pool, resource_type, id).await
+        queries::read(self.read_pool(), resource_type, id).await
     }
 
     async fn read_raw(
@@ -151,7 +181,7 @@ impl FhirStorage for PostgresStorage {
         resource_type: &str,
         id: &str,
     ) -> Result<Option<octofhir_storage::RawStoredResource>, StorageError> {
-        queries::read_raw(&self.pool, resource_type, id).await
+        queries::read_raw(self.read_pool(), resource_type, id).await
     }
 
     async fn update(
@@ -172,7 +202,16 @@ impl FhirStorage for PostgresStorage {
         id: &str,
         version: &str,
     ) -> Result<Option<StoredResource>, StorageError> {
-        queries::vread(&self.pool, resource_type, id, version).await
+        queries::vread(self.read_pool(), resource_type, id, version).await
+    }
+
+    async fn vread_raw(
+        &self,
+        resource_type: &str,
+        id: &str,
+        version: &str,
+    ) -> Result<Option<RawStoredResource>, StorageError> {
+        queries::vread_raw(self.read_pool(), resource_type, id, version).await
     }
 
     async fn history(
@@ -181,11 +220,27 @@ impl FhirStorage for PostgresStorage {
         id: Option<&str>,
         params: &HistoryParams,
     ) -> Result<HistoryResult, StorageError> {
-        queries::get_history(&self.pool, resource_type, id, params).await
+        queries::get_history(self.read_pool(), resource_type, id, params).await
     }
 
     async fn system_history(&self, params: &HistoryParams) -> Result<HistoryResult, StorageError> {
-        queries::get_system_history(&self.pool, &self.schema_manager, params).await
+        queries::get_system_history(self.read_pool(), &self.schema_manager, params).await
+    }
+
+    async fn history_raw(
+        &self,
+        resource_type: &str,
+        id: Option<&str>,
+        params: &HistoryParams,
+    ) -> Result<RawHistoryResult, StorageError> {
+        queries::get_history_raw(self.read_pool(), resource_type, id, params).await
+    }
+
+    async fn system_history_raw(
+        &self,
+        params: &HistoryParams,
+    ) -> Result<RawHistoryResult, StorageError> {
+        queries::get_system_history_raw(self.read_pool(), &self.schema_manager, params).await
     }
 
     async fn search(
@@ -194,7 +249,7 @@ impl FhirStorage for PostgresStorage {
         params: &SearchParams,
     ) -> Result<SearchResult, StorageError> {
         queries::execute_search(
-            &self.pool,
+            self.read_pool(),
             resource_type,
             params,
             self.search_registry.as_ref(),

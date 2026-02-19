@@ -13,8 +13,9 @@ use sqlx_postgres::PgPool;
 use time::OffsetDateTime;
 
 use octofhir_search::{
-    BuiltQuery, ParamsSearchConfig, SearchParameterRegistry, SqlValue, UnknownParamHandling,
-    build_query_from_params, build_query_from_params_with_config,
+    BuiltQuery, ParamsSearchConfig, PreparedQuery, QueryCache, QueryCacheKey, QueryParamKey,
+    SearchParameterRegistry, SqlValue, UnknownParamHandling, build_query_from_params,
+    build_query_from_params_with_config,
 };
 use octofhir_storage::{
     RawSearchResult, RawStoredResource, SearchParams, SearchResult, StorageError, StoredResource,
@@ -141,7 +142,7 @@ pub async fn execute_search_raw(
     params: &SearchParams,
     registry: Option<&Arc<SearchParameterRegistry>>,
 ) -> Result<RawSearchResult, StorageError> {
-    execute_search_raw_with_config(pool, resource_type, params, registry, None).await
+    execute_search_raw_with_config(pool, resource_type, params, registry, None, None).await
 }
 
 /// Execute a FHIR search query with configurable unknown parameter handling.
@@ -155,6 +156,7 @@ pub async fn execute_search_raw_with_config(
     params: &SearchParams,
     registry: Option<&Arc<SearchParameterRegistry>>,
     unknown_param_handling: Option<UnknownParamHandling>,
+    query_cache: Option<&QueryCache>,
 ) -> Result<RawSearchResult, StorageError> {
     // Use default registry if none provided
     let empty_registry = Arc::new(SearchParameterRegistry::new());
@@ -193,11 +195,89 @@ pub async fn execute_search_raw_with_config(
         );
     }
 
-    // Build the SQL query
-    let built_query = converted.builder.build().map_err(|e| {
-        tracing::warn!(error = %e, "Failed to build SQL");
-        StorageError::internal(format!("Failed to build search SQL: {e}"))
-    })?;
+    // Build cache key for query template reuse
+    let cache_key = query_cache.map(|_| {
+        let param_keys: Vec<QueryParamKey> = params
+            .parameters
+            .iter()
+            .map(|(key, values)| {
+                let (name, modifier) = key
+                    .split_once(':')
+                    .map(|(n, m)| (n.to_string(), Some(m.to_string())))
+                    .unwrap_or_else(|| (key.clone(), None));
+                QueryParamKey {
+                    name,
+                    modifier,
+                    param_type: QueryCacheKey::infer_param_type(key),
+                    value_count: values.len(),
+                }
+            })
+            .collect();
+        let sort_fields: Vec<String> = params
+            .sort
+            .as_ref()
+            .map(|s| s.iter().map(|f| f.field.clone()).collect())
+            .unwrap_or_default();
+        QueryCacheKey::from_typed_params(
+            resource_type,
+            param_keys,
+            params.count.is_some() || params.offset.is_some(),
+            sort_fields,
+        )
+    });
+
+    // Try cache hit for main query SQL template
+    let cached_main = cache_key
+        .as_ref()
+        .and_then(|key| query_cache.and_then(|c| c.get(key)));
+
+    // Build count query first (before consuming builder with with_raw_resource)
+    let count_query = if matches!(converted.total_mode, Some(TotalMode::Accurate)) {
+        Some(converted.builder.build_count().map_err(|e| {
+            tracing::warn!(error = %e, "Failed to build count SQL");
+            StorageError::internal(format!("Failed to build count SQL: {e}"))
+        })?)
+    } else {
+        None
+    };
+
+    // Build or reuse the main SQL query
+    let built_query = if let Some(cached) = cached_main {
+        // Cache hit: reuse SQL template, extract fresh params from builder
+        let fresh_params = converted.builder.extract_params();
+        match cached.bind(fresh_params) {
+            Ok(bq) => bq,
+            Err(_) => {
+                // Param count mismatch — fall back to full build
+                converted
+                    .builder
+                    .with_raw_resource(true)
+                    .build()
+                    .map_err(|e| {
+                        StorageError::internal(format!("Failed to build search SQL: {e}"))
+                    })?
+            }
+        }
+    } else {
+        // Cache miss: build SQL and cache the template
+        let bq = converted
+            .builder
+            .with_raw_resource(true)
+            .build()
+            .map_err(|e| {
+                tracing::warn!(error = %e, "Failed to build SQL");
+                StorageError::internal(format!("Failed to build search SQL: {e}"))
+            })?;
+
+        if let (Some(cache), Some(key)) = (query_cache, cache_key) {
+            cache.insert(
+                key,
+                PreparedQuery::simple(bq.sql.clone(), bq.params.len()),
+            );
+        }
+
+        bq
+    };
 
     tracing::debug!(
         resource_type = %resource_type,
@@ -206,7 +286,7 @@ pub async fn execute_search_raw_with_config(
         "Executing raw search query"
     );
 
-    // Execute the main query with raw JSON
+    // Execute the main query with raw JSON (SQL already emits resource::text)
     let limit = params.count.unwrap_or(10) as usize;
     let entries = execute_query_raw(pool, &built_query, resource_type).await?;
 
@@ -215,56 +295,29 @@ pub async fn execute_search_raw_with_config(
     let entries: Vec<RawStoredResource> = entries.into_iter().take(limit).collect();
 
     // Execute count query if requested
-    let total = if matches!(converted.total_mode, Some(TotalMode::Accurate)) {
-        let count_query = converted.builder.build_count().map_err(|e| {
-            tracing::warn!(error = %e, "Failed to build count SQL");
-            StorageError::internal(format!("Failed to build count SQL: {e}"))
-        })?;
-
-        Some(execute_count_query(pool, &count_query).await?)
+    let total = if let Some(cq) = count_query {
+        Some(execute_count_query(pool, &cq).await?)
     } else {
         None
     };
 
-    // Handle _include and _revinclude by falling back to regular search
-    if !converted.includes.is_empty() || !converted.revincludes.is_empty() {
-        tracing::debug!("Raw search using fallback for _include/_revinclude");
-        let regular_result =
-            execute_search(pool, resource_type, params, Some(registry_arc)).await?;
-
-        // Separate main results from included resources
-        let mut main_entries = Vec::new();
-        let mut included = Vec::new();
-
-        for e in regular_result.entries {
-            let raw = RawStoredResource {
-                id: e.id,
-                version_id: e.version_id,
-                resource_type: e.resource_type.clone(),
-                resource_json: serde_json::to_string(&e.resource)
-                    .unwrap_or_else(|_| "{}".to_string()),
-                last_updated: e.last_updated,
-                created_at: e.created_at,
-            };
-            if e.resource_type == resource_type {
-                main_entries.push(raw);
-            } else {
-                included.push(raw);
-            }
-        }
-
-        return Ok(RawSearchResult {
-            entries: main_entries,
-            included,
-            total: regular_result.total,
-            has_more: regular_result.has_more,
-            warnings: warnings.clone(),
-        });
-    }
+    // Handle _include and _revinclude natively with raw results
+    let included = if !converted.includes.is_empty() || !converted.revincludes.is_empty() {
+        resolve_includes_revincludes_raw(
+            pool,
+            resource_type,
+            &entries,
+            &converted.includes,
+            &converted.revincludes,
+        )
+        .await?
+    } else {
+        Vec::new()
+    };
 
     Ok(RawSearchResult {
         entries,
-        included: Vec::new(),
+        included,
         total,
         has_more,
         warnings,
@@ -332,28 +385,23 @@ async fn execute_query(
 
 /// Execute a search query and return raw JSON entries (optimized path).
 ///
-/// This version modifies the SQL to select `resource::text` instead of `resource`,
-/// avoiding JSONB → Value deserialization overhead.
+/// Expects SQL that already selects `resource::text` (via `with_raw_resource(true)`
+/// on the query builder), avoiding JSONB → Value deserialization overhead.
 async fn execute_query_raw(
     pool: &PgPool,
     query: &BuiltQuery,
     resource_type: &str,
 ) -> Result<Vec<RawStoredResource>, StorageError> {
-    // Modify SQL to cast resource to text for zero-copy serialization
-    // The original SQL is: SELECT resource, id, txid, created_at, updated_at FROM ...
-    // We change it to: SELECT resource::text, id, txid, created_at, updated_at FROM ...
-    let raw_sql = query.sql.replacen("resource,", "resource::text,", 1);
-
-    // Execute and map results
+    // Execute and map results (SQL already selects resource::text)
     let rows: Vec<(String, String, i64, DateTime<Utc>, DateTime<Utc>)> = query_as::<
         _,
         (String, String, i64, DateTime<Utc>, DateTime<Utc>),
-    >(&raw_sql)
+    >(&query.sql)
     .bind_all_params_raw(&query.params)
     .fetch_all(pool)
     .await
     .map_err(|e| {
-        tracing::warn!(error = %e, sql = %raw_sql, "Raw search query failed");
+        tracing::warn!(error = %e, sql = %query.sql, "Raw search query failed");
         // Check for undefined table error (PostgreSQL 42P01)
         if is_undefined_table(&e) {
             return StorageError::internal(format!("Table for {} does not exist", resource_type));
@@ -577,6 +625,188 @@ async fn resolve_revinclude(
                 version_id: txid.to_string(),
                 resource_type: source_type.to_string(),
                 resource,
+                last_updated: updated_at_time,
+                created_at: created_at_time,
+            }
+        })
+        .collect();
+
+    Ok(entries)
+}
+
+/// Resolve _include and _revinclude specifications for raw search results.
+///
+/// Uses `resource::text` to avoid JSONB -> Value -> String round-trip.
+async fn resolve_includes_revincludes_raw(
+    pool: &PgPool,
+    main_resource_type: &str,
+    main_results: &[RawStoredResource],
+    includes: &[octofhir_search::IncludeSpec],
+    revincludes: &[octofhir_search::RevIncludeSpec],
+) -> Result<Vec<RawStoredResource>, StorageError> {
+    use futures_util::future::try_join_all;
+
+    let include_futures: Vec<_> = includes
+        .iter()
+        .map(|include| resolve_include_raw(pool, main_results, include))
+        .collect();
+
+    let revinclude_futures: Vec<_> = revincludes
+        .iter()
+        .map(|revinclude| resolve_revinclude_raw(pool, main_resource_type, main_results, revinclude))
+        .collect();
+
+    let (include_results, revinclude_results) = tokio::try_join!(
+        try_join_all(include_futures),
+        try_join_all(revinclude_futures)
+    )?;
+
+    let mut included: Vec<RawStoredResource> = include_results.into_iter().flatten().collect();
+    included.extend(revinclude_results.into_iter().flatten());
+
+    Ok(included)
+}
+
+/// Resolve a single _include specification using raw JSON.
+async fn resolve_include_raw(
+    pool: &PgPool,
+    main_results: &[RawStoredResource],
+    include: &octofhir_search::IncludeSpec,
+) -> Result<Vec<RawStoredResource>, StorageError> {
+    if main_results.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // Extract reference IDs by partially parsing JSON (only the needed field)
+    let mut reference_ids: Vec<String> = Vec::new();
+    let param_name = &include.param_name;
+
+    for result in main_results {
+        // Parse just enough to extract the reference field
+        if let Ok(v) = serde_json::from_str::<Value>(&result.resource_json) {
+            if let Some(ref_value) = v.get(param_name)
+                && let Some(reference) = ref_value.get("reference").and_then(|r| r.as_str())
+            {
+                if let Ok((_, id)) = parse_reference_simple(reference, None) {
+                    reference_ids.push(id);
+                }
+            }
+        }
+    }
+
+    if reference_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let target_type = include
+        .target_type
+        .as_deref()
+        .unwrap_or(&include.param_name);
+    let table = SchemaManager::table_name(target_type);
+
+    let placeholders: Vec<String> = (1..=reference_ids.len()).map(|i| format!("${i}")).collect();
+    let sql = format!(
+        r#"SELECT resource::text, id, txid, created_at, updated_at FROM "{table}"
+           WHERE id = ANY(ARRAY[{}]::text[])
+           AND status != 'deleted'"#,
+        placeholders.join(", ")
+    );
+
+    let mut query = query_as(&sql);
+    for id in &reference_ids {
+        query = query.bind(id);
+    }
+
+    let rows: Vec<(String, String, i64, DateTime<Utc>, DateTime<Utc>)> =
+        query.fetch_all(pool).await.map_err(|e| {
+            if e.to_string().contains("does not exist") {
+                return StorageError::internal(format!(
+                    "Include target table {} not found",
+                    target_type
+                ));
+            }
+            StorageError::internal(format!("Include query failed: {e}"))
+        })?;
+
+    let entries: Vec<RawStoredResource> = rows
+        .into_iter()
+        .map(|(resource_json, id, txid, created_at, updated_at)| {
+            let created_at_time = chrono_to_time(created_at);
+            let updated_at_time = chrono_to_time(updated_at);
+            RawStoredResource {
+                id,
+                version_id: txid.to_string(),
+                resource_type: target_type.to_string(),
+                resource_json,
+                last_updated: updated_at_time,
+                created_at: created_at_time,
+            }
+        })
+        .collect();
+
+    Ok(entries)
+}
+
+/// Resolve a single _revinclude specification using raw JSON.
+async fn resolve_revinclude_raw(
+    pool: &PgPool,
+    main_resource_type: &str,
+    main_results: &[RawStoredResource],
+    revinclude: &octofhir_search::RevIncludeSpec,
+) -> Result<Vec<RawStoredResource>, StorageError> {
+    if main_results.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let reference_values: Vec<String> = main_results
+        .iter()
+        .map(|r| format!("{}/{}", main_resource_type, r.id))
+        .collect();
+
+    if reference_values.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let source_type = &revinclude.source_type;
+    let table = SchemaManager::table_name(source_type);
+    let param_name = &revinclude.param_name;
+
+    let placeholders: Vec<String> = (1..=reference_values.len())
+        .map(|i| format!("${i}"))
+        .collect();
+    let sql = format!(
+        r#"SELECT resource::text, id, txid, created_at, updated_at FROM "{table}"
+           WHERE resource->'{param_name}'->>'reference' = ANY(ARRAY[{}]::text[])
+           AND status != 'deleted'"#,
+        placeholders.join(", ")
+    );
+
+    let mut query = query_as(&sql);
+    for ref_value in &reference_values {
+        query = query.bind(ref_value);
+    }
+
+    let rows: Vec<(String, String, i64, DateTime<Utc>, DateTime<Utc>)> =
+        query.fetch_all(pool).await.map_err(|e| {
+            if e.to_string().contains("does not exist") {
+                return StorageError::internal(format!(
+                    "RevInclude source table {} not found",
+                    source_type
+                ));
+            }
+            StorageError::internal(format!("RevInclude query failed: {e}"))
+        })?;
+
+    let entries: Vec<RawStoredResource> = rows
+        .into_iter()
+        .map(|(resource_json, id, txid, created_at, updated_at)| {
+            let created_at_time = chrono_to_time(created_at);
+            let updated_at_time = chrono_to_time(updated_at);
+            RawStoredResource {
+                id,
+                version_id: txid.to_string(),
+                resource_type: source_type.to_string(),
+                resource_json,
                 last_updated: updated_at_time,
                 created_at: created_at_time,
             }

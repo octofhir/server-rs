@@ -251,6 +251,24 @@ impl std::fmt::Display for HistoryMethod {
     }
 }
 
+/// Raw history entry with resource as raw JSON string (zero-copy path).
+#[derive(Debug, Clone)]
+pub struct RawHistoryEntry {
+    /// The resource at this point in history (raw JSON).
+    pub resource: RawStoredResource,
+    /// The operation that created this history entry.
+    pub method: HistoryMethod,
+}
+
+/// Raw history result for optimized serialization.
+#[derive(Debug, Clone, Default)]
+pub struct RawHistoryResult {
+    /// The history entries with raw JSON resources.
+    pub entries: Vec<RawHistoryEntry>,
+    /// Total count of history entries, if available.
+    pub total: Option<u32>,
+}
+
 /// Parameters for a history query.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct HistoryParams {

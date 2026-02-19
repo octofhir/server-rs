@@ -49,7 +49,7 @@ mod config;
 mod error;
 mod fcm_storage;
 mod notification_storage;
-mod pool;
+pub mod pool;
 mod query_analyzer;
 mod schema;
 mod storage;

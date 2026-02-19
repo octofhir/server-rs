@@ -189,41 +189,38 @@ impl QuickJsRuntime {
             tracing::warn!(error = %e, "Failed to setup console in QuickJS");
         }
 
-        // Wrap user script with helper functions
-        let wrapped_script = format!(
-            r#"
-(function() {{
-    // Decision helper functions
-    const allow = () => ({{ decision: "allow" }});
-    const deny = (reason) => ({{ decision: "deny", reason: reason || "Access denied" }});
-    const abstain = () => ({{ decision: "abstain" }});
+        // Define helper functions as globals (same for every policy evaluation)
+        const HELPER_SETUP: &[u8] = br#"
+var allow = function() { return { decision: "allow" }; };
+var deny = function(reason) { return { decision: "deny", reason: reason || "Access denied" }; };
+var abstain = function() { return { decision: "abstain" }; };
+var hasRole = function(role) { return user && user.roles && user.roles.includes(role); };
+var hasAnyRole = function() { var args = Array.prototype.slice.call(arguments); return args.some(function(r) { return hasRole(r); }); };
+var isPatientUser = function() { return user && user.fhirUserType === "Patient"; };
+var isPractitionerUser = function() { return user && user.fhirUserType === "Practitioner"; };
+var getPatientContext = function() { return environment.patientContext; };
+var getEncounterContext = function() { return environment.encounterContext; };
+var inPatientCompartment = function() {
+    var patientId = environment.patientContext;
+    if (!patientId) return false;
+    if (!resource || !resource.subject) return false;
+    var r = resource.subject;
+    return r === "Patient/" + patientId || r.endsWith("/" + patientId);
+};
+"#;
 
-    // Role checking helpers
-    const hasRole = (role) => user && user.roles && user.roles.includes(role);
-    const hasAnyRole = (...roles) => roles.some(r => hasRole(r));
+        if let Err(e) = ctx.eval::<(), _>(HELPER_SETUP) {
+            tracing::warn!(error = %e, "Failed to setup helper functions in QuickJS");
+            return AccessDecision::Deny(DenyReason {
+                code: "script-error".to_string(),
+                message: format!("Failed to setup helpers: {}", e),
+                details: None,
+                policy_id: None,
+            });
+        }
 
-    // User type helpers
-    const isPatientUser = () => user && user.fhirUserType === "Patient";
-    const isPractitionerUser = () => user && user.fhirUserType === "Practitioner";
-
-    // Context helpers
-    const getPatientContext = () => environment.patientContext;
-    const getEncounterContext = () => environment.encounterContext;
-
-    // Compartment check helper
-    const inPatientCompartment = () => {{
-        const patientId = environment.patientContext;
-        if (!patientId) return false;
-        if (!resource || !resource.subject) return false;
-        const ref = resource.subject;
-        return ref === `Patient/${{patientId}}` || ref.endsWith(`/${{patientId}}`);
-    }};
-
-    // User's policy script
-    {script}
-}})()
-"#
-        );
+        // Evaluate only the user's policy script (no format! allocation for helpers)
+        let wrapped_script = format!("(function() {{\n{script}\n}})()");
 
         // Evaluate the wrapped script
         match ctx.eval::<Value, _>(wrapped_script.as_bytes()) {
@@ -450,17 +447,7 @@ mod tests {
                 trusted: false,
                 client_type: ClientType::Public,
             },
-            scopes: ScopeSummary {
-                raw: "user/Patient.r".to_string(),
-                patient_scopes: vec![],
-                user_scopes: vec!["user/Patient.r".to_string()],
-                system_scopes: vec![],
-                has_wildcard: false,
-                launch: false,
-                openid: false,
-                fhir_user: false,
-                offline_access: false,
-            },
+            scopes: ScopeSummary::from_scope_string("user/Patient.r"),
             request: RequestContext {
                 operation: FhirOperation::Read,
                 resource_type: "Patient".to_string(),

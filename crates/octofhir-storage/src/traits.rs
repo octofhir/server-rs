@@ -7,7 +7,8 @@ use serde_json::Value;
 
 use crate::error::StorageError;
 use crate::types::{
-    HistoryParams, HistoryResult, RawStoredResource, SearchParams, SearchResult, StoredResource,
+    HistoryParams, HistoryResult, RawHistoryResult, RawStoredResource, SearchParams, SearchResult,
+    StoredResource,
 };
 
 /// The main storage trait that all FHIR storage backends must implement.
@@ -127,6 +128,37 @@ pub trait FhirStorage: Send + Sync {
         version: &str,
     ) -> Result<Option<StoredResource>, StorageError>;
 
+    /// Reads a specific version of a resource as raw JSON string.
+    ///
+    /// This is an optimized vread path that returns the resource JSON as a raw string
+    /// directly from PostgreSQL (via `resource::text`), skipping the JSONB → Value
+    /// deserialization and Value → JSON serialization steps.
+    ///
+    /// Default implementation falls back to `vread()` and serializes the Value.
+    async fn vread_raw(
+        &self,
+        resource_type: &str,
+        id: &str,
+        version: &str,
+    ) -> Result<Option<RawStoredResource>, StorageError> {
+        match self.vread(resource_type, id, version).await? {
+            Some(stored) => {
+                let resource_json = serde_json::to_string(&stored.resource).map_err(|e| {
+                    StorageError::internal(format!("Failed to serialize resource: {e}"))
+                })?;
+                Ok(Some(RawStoredResource {
+                    id: stored.id,
+                    version_id: stored.version_id,
+                    resource_type: stored.resource_type,
+                    resource_json,
+                    last_updated: stored.last_updated,
+                    created_at: stored.created_at,
+                }))
+            }
+            None => Ok(None),
+        }
+    }
+
     /// Returns the history of a resource or resource type.
     ///
     /// If `id` is `Some`, returns history for a specific resource.
@@ -150,6 +182,20 @@ pub trait FhirStorage: Send + Sync {
     ///
     /// Returns an error for infrastructure issues or invalid parameters.
     async fn system_history(&self, params: &HistoryParams) -> Result<HistoryResult, StorageError>;
+
+    /// Raw history returning resources as JSON strings (zero-copy path).
+    async fn history_raw(
+        &self,
+        resource_type: &str,
+        id: Option<&str>,
+        params: &HistoryParams,
+    ) -> Result<RawHistoryResult, StorageError>;
+
+    /// Raw system history returning resources as JSON strings.
+    async fn system_history_raw(
+        &self,
+        params: &HistoryParams,
+    ) -> Result<RawHistoryResult, StorageError>;
 
     // ==================== Search ====================
 

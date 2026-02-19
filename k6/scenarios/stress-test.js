@@ -67,7 +67,10 @@ function searchPatients() {
 
 function readRandomPatient() {
   const id = Math.floor(Math.random() * 1000);
-  http.get(`${config.baseUrl}/Patient/${id}`, httpParams);
+  http.get(`${config.baseUrl}/Patient/${id}`, {
+    ...httpParams,
+    tags: { name: `${config.baseUrl}/Patient/{id}` },
+  });
 }
 
 function readObservations() {
@@ -86,12 +89,18 @@ function createObservation() {
 
 function updatePatient() {
   const id = Math.floor(Math.random() * 1000);
-  const response = http.get(`${config.baseUrl}/Patient/${id}`, httpParams);
+  const response = http.get(`${config.baseUrl}/Patient/${id}`, {
+    ...httpParams,
+    tags: { name: `${config.baseUrl}/Patient/{id}` },
+  });
 
   if (response.status === 200) {
     const patient = JSON.parse(response.body);
     patient.meta.lastUpdated = new Date().toISOString();
-    http.put(`${config.baseUrl}/Patient/${id}`, JSON.stringify(patient), httpParams);
+    http.put(`${config.baseUrl}/Patient/${id}`, JSON.stringify(patient), {
+      ...httpParams,
+      tags: { name: `${config.baseUrl}/Patient/{id}` },
+    });
   }
 }
 

@@ -129,7 +129,7 @@ impl QueryCacheKey {
     }
 
     /// Infer parameter type from name (heuristic).
-    fn infer_param_type(name: &str) -> SearchParameterType {
+    pub fn infer_param_type(name: &str) -> SearchParameterType {
         let lower = name.to_lowercase();
 
         // Common patterns

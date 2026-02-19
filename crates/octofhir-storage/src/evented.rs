@@ -25,7 +25,9 @@ use tracing::debug;
 
 use crate::error::StorageError;
 use crate::traits::{FhirStorage, Transaction};
-use crate::types::{HistoryParams, HistoryResult, SearchParams, SearchResult, StoredResource};
+use crate::types::{
+    HistoryParams, HistoryResult, RawHistoryResult, SearchParams, SearchResult, StoredResource,
+};
 
 /// A storage wrapper that emits events after successful CRUD operations.
 ///
@@ -182,8 +184,23 @@ impl<S: FhirStorage> FhirStorage for EventedStorage<S> {
     }
 
     async fn system_history(&self, params: &HistoryParams) -> Result<HistoryResult, StorageError> {
-        // Read operations don't emit events
         self.inner.system_history(params).await
+    }
+
+    async fn history_raw(
+        &self,
+        resource_type: &str,
+        id: Option<&str>,
+        params: &HistoryParams,
+    ) -> Result<RawHistoryResult, StorageError> {
+        self.inner.history_raw(resource_type, id, params).await
+    }
+
+    async fn system_history_raw(
+        &self,
+        params: &HistoryParams,
+    ) -> Result<RawHistoryResult, StorageError> {
+        self.inner.system_history_raw(params).await
     }
 
     async fn search(

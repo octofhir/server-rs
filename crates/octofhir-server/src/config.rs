@@ -274,6 +274,32 @@ pub struct PostgresStorageConfig {
     /// Idle timeout in milliseconds
     #[serde(default)]
     pub idle_timeout_ms: Option<u64>,
+
+    /// Optional read replica configuration.
+    /// When set, read operations (search, read, vread, history) are routed
+    /// to this replica pool while writes stay on the primary.
+    #[serde(default)]
+    pub read_replica: Option<ReadReplicaConfig>,
+}
+
+/// Read replica configuration. Only `url` is required;
+/// pool settings default to the primary's values.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReadReplicaConfig {
+    /// Connection URL for the read replica.
+    pub url: String,
+
+    /// Pool size for the replica (defaults to primary pool_size).
+    #[serde(default)]
+    pub pool_size: Option<u32>,
+
+    /// Connection timeout in milliseconds (defaults to primary's).
+    #[serde(default)]
+    pub connect_timeout_ms: Option<u64>,
+
+    /// Idle timeout in milliseconds (defaults to primary's).
+    #[serde(default)]
+    pub idle_timeout_ms: Option<u64>,
 }
 
 fn default_postgres_host() -> String {
@@ -330,6 +356,7 @@ impl Default for PostgresStorageConfig {
             pool_size: default_postgres_pool_size(),
             connect_timeout_ms: default_postgres_connect_timeout(),
             idle_timeout_ms: Some(300_000), // 5 minutes
+            read_replica: None,
         }
     }
 }
@@ -532,6 +559,10 @@ pub struct CacheConfig {
     /// Local (L1) cache max entries
     #[serde(default = "default_local_cache_max_entries")]
     pub local_cache_max_entries: usize,
+
+    /// Resource read cache TTL in seconds (0 to disable)
+    #[serde(default = "default_resource_ttl_secs")]
+    pub resource_ttl_secs: u64,
 }
 
 fn default_terminology_ttl_secs() -> u64 {
@@ -542,11 +573,16 @@ fn default_local_cache_max_entries() -> usize {
     10000
 }
 
+fn default_resource_ttl_secs() -> u64 {
+    60 // 1 minute default TTL for resource cache
+}
+
 impl Default for CacheConfig {
     fn default() -> Self {
         Self {
             terminology_ttl_secs: default_terminology_ttl_secs(),
             local_cache_max_entries: default_local_cache_max_entries(),
+            resource_ttl_secs: default_resource_ttl_secs(),
         }
     }
 }

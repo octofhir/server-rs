@@ -102,6 +102,53 @@ pub fn envelope_from_json(
     Ok(env)
 }
 
+/// Validate payload structure without allocating a full ResourceEnvelope.
+///
+/// This is a zero-allocation check that verifies:
+/// - body is a JSON object
+/// - `resourceType` is present and matches `expected_type`
+/// - For Update policy: body `id` (if present) matches the path id
+///
+/// Use this instead of `envelope_from_json` when you only need validation
+/// (the result ResourceEnvelope is discarded anyway).
+pub fn validate_payload_structure(
+    expected_type: &str,
+    json: &Value,
+    policy: &IdPolicy,
+) -> Result<(), String> {
+    let obj = json
+        .as_object()
+        .ok_or_else(|| "body must be a JSON object".to_string())?;
+
+    let rt_str = obj
+        .get("resourceType")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "missing resourceType".to_string())?;
+    if rt_str != expected_type {
+        return Err(format!(
+            "resourceType '{rt_str}' does not match path type '{expected_type}'"
+        ));
+    }
+
+    // Validate resourceType is parseable
+    rt_str
+        .parse::<ResourceType>()
+        .map_err(|_| format!("invalid resourceType '{rt_str}'"))?;
+
+    // Validate id policy (no allocation for common case)
+    if let IdPolicy::Update { path_id } = policy {
+        if let Some(bid) = obj.get("id").and_then(|v| v.as_str()) {
+            if bid != path_id {
+                return Err(format!(
+                    "id in body '{bid}' does not match URL id '{path_id}'"
+                ));
+            }
+        }
+    }
+
+    Ok(())
+}
+
 /// Convert a ResourceEnvelope back into FHIR JSON object.
 pub fn json_from_envelope(env: &ResourceEnvelope) -> Value {
     let mut map = Map::new();
@@ -187,5 +234,41 @@ mod tests {
         let body = json!({"resourceType": "Observation"});
         let err = envelope_from_json("Patient", &body, IdPolicy::Create).unwrap_err();
         assert!(err.contains("does not match"));
+    }
+
+    #[test]
+    fn validate_payload_structure_accepts_valid_create() {
+        let body = json!({"resourceType": "Patient", "name": [{"family": "Doe"}]});
+        assert!(validate_payload_structure("Patient", &body, &IdPolicy::Create).is_ok());
+    }
+
+    #[test]
+    fn validate_payload_structure_rejects_wrong_type() {
+        let body = json!({"resourceType": "Observation"});
+        let err = validate_payload_structure("Patient", &body, &IdPolicy::Create).unwrap_err();
+        assert!(err.contains("does not match"));
+    }
+
+    #[test]
+    fn validate_payload_structure_rejects_id_mismatch() {
+        let body = json!({"resourceType": "Patient", "id": "abc"});
+        let err = validate_payload_structure(
+            "Patient",
+            &body,
+            &IdPolicy::Update { path_id: "xyz".into() },
+        )
+        .unwrap_err();
+        assert!(err.contains("does not match"));
+    }
+
+    #[test]
+    fn validate_payload_structure_accepts_matching_id() {
+        let body = json!({"resourceType": "Patient", "id": "abc"});
+        assert!(validate_payload_structure(
+            "Patient",
+            &body,
+            &IdPolicy::Update { path_id: "abc".into() },
+        )
+        .is_ok());
     }
 }

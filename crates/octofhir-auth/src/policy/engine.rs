@@ -33,7 +33,7 @@ use crate::policy::context::PolicyContext;
 use crate::policy::matcher::PatternMatcher;
 use crate::policy::quickjs::QuickJsRuntime;
 use crate::policy::resources::{InternalPolicy, PolicyEngine as PolicyEngineType};
-use crate::smart::scopes::{FhirOperation, SmartScopes};
+use crate::smart::scopes::FhirOperation;
 
 // =============================================================================
 // Access Decision
@@ -489,8 +489,8 @@ impl PolicyEvaluator {
         let resource_type = &context.request.resource_type;
         let operation = context.request.operation;
 
-        // Parse the raw scope string to check permissions
-        let scopes = SmartScopes::parse(&context.scopes.raw).unwrap_or_default();
+        // Use cached parsed scopes from ScopeSummary (parsed once at construction)
+        let scopes = &context.scopes.parsed;
 
         // Operations that don't require scope checking
         if operation.always_allowed() {
@@ -726,17 +726,7 @@ mod tests {
                 trusted: false,
                 client_type: ClientType::Public,
             },
-            scopes: ScopeSummary {
-                raw: format!("user/{}.cruds", resource_type),
-                patient_scopes: vec![],
-                user_scopes: vec![format!("user/{}.cruds", resource_type)],
-                system_scopes: vec![],
-                has_wildcard: false,
-                launch: false,
-                openid: false,
-                fhir_user: false,
-                offline_access: false,
-            },
+            scopes: ScopeSummary::from_scope_string(&format!("user/{}.cruds", resource_type)),
             request: RequestContext {
                 operation,
                 resource_type: resource_type.to_string(),

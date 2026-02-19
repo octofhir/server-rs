@@ -1804,17 +1804,7 @@ mod tests {
                 trusted: false,
                 client_type: ClientType::ConfidentialSymmetric,
             },
-            scopes: ScopeSummary {
-                raw: "patient/*.read".to_string(),
-                patient_scopes: vec!["patient/*.read".to_string()],
-                user_scopes: vec![],
-                system_scopes: vec![],
-                has_wildcard: true,
-                launch: false,
-                openid: false,
-                fhir_user: false,
-                offline_access: false,
-            },
+            scopes: ScopeSummary::from_scope_string("patient/*.read"),
             request: RequestContext {
                 operation: FhirOperation::Read,
                 resource_type: resource_type.to_string(),

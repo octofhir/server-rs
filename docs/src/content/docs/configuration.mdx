@@ -66,10 +66,17 @@ database = "octofhir"
 pool_size = 20            # Max connections
 connect_timeout_ms = 10000  # Connection timeout (10s)
 idle_timeout_ms = 60000   # Idle connection timeout (60s)
+
+# Optional: Read replica for scaling reads
+# [storage.postgres.read_replica]
+# url = "postgres://user:pass@replica:5432/octofhir"
+# pool_size = 30          # Defaults to primary pool_size
+# connect_timeout_ms = 5000
 ```
 
 <Aside type="tip">
 For production, use `url` with connection string from your cloud provider (e.g., AWS RDS, Google Cloud SQL).
+When using a read replica, all search, read, vread, and history operations are routed to the replica while writes (create, update, delete) stay on the primary.
 </Aside>
 
 ---

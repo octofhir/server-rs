@@ -29,6 +29,14 @@ pool_size = 10
 connect_timeout_ms = 5000
 idle_timeout_ms = 300000  # 5 minutes
 
+# Optional: Read replica for scaling read-heavy workloads.
+# When configured, all read operations (search, read, vread, history)
+# are routed to the replica while writes stay on the primary.
+# [storage.postgres.read_replica]
+# url = "postgres://user:password@replica-host:5432/octofhir"
+# pool_size = 20           # Defaults to primary pool_size if omitted
+# connect_timeout_ms = 5000  # Defaults to primary value if omitted
+
 [search]
 default_count = 10
 max_count = 100
@@ -156,3 +164,6 @@ timeout_ms = 5000
 # Local cache settings
 terminology_ttl_secs = 3600
 local_cache_max_entries = 10000
+# FHIR resource read cache TTL in seconds (0 = disabled)
+# Caches read-by-id results in DashMap L1 + optional Redis L2
+resource_ttl_secs = 60

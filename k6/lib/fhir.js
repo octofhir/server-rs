@@ -61,6 +61,7 @@ export function readResource(resourceType, id) {
   const response = http.get(url, {
     headers: getHeaders(),
     ...httpParams,
+    tags: { name: `${config.baseUrl}/${resourceType}/{id}` },
   });
   return response;
 }
@@ -72,6 +73,7 @@ export function updateResource(resourceType, id, resource) {
   const response = http.put(url, JSON.stringify(resourceWithId), {
     headers: getHeaders(),
     ...httpParams,
+    tags: { name: `${config.baseUrl}/${resourceType}/{id}` },
   });
   return response;
 }
@@ -82,6 +84,7 @@ export function deleteResource(resourceType, id) {
   const response = http.del(url, null, {
     headers: getHeaders(),
     ...httpParams,
+    tags: { name: `${config.baseUrl}/${resourceType}/{id}` },
   });
   return response;
 }
@@ -115,6 +118,7 @@ export function readHistory(resourceType, id) {
   const response = http.get(url, {
     headers: getHeaders(),
     ...httpParams,
+    tags: { name: `${config.baseUrl}/${resourceType}/{id}/_history` },
   });
   return response;
 }
@@ -125,6 +129,7 @@ export function vreadResource(resourceType, id, versionId) {
   const response = http.get(url, {
     headers: getHeaders(),
     ...httpParams,
+    tags: { name: `${config.baseUrl}/${resourceType}/{id}/_history/{vid}` },
   });
   return response;
 }
@@ -138,6 +143,7 @@ export function patchResource(resourceType, id, patchOperations) {
       "Content-Type": "application/json-patch+json",
     },
     ...httpParams,
+    tags: { name: `${config.baseUrl}/${resourceType}/{id}` },
   });
   return response;
 }

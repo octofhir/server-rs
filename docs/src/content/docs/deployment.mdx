@@ -88,6 +88,8 @@ All configuration options can be set via environment variables using the `OCTOFH
 | `OCTOFHIR__AUTH__ISSUER` | OAuth issuer URL | `http://localhost:8888` |
 | `OCTOFHIR__BOOTSTRAP__ADMIN_USER__USERNAME` | Initial admin username | `admin` |
 | `OCTOFHIR__BOOTSTRAP__ADMIN_USER__PASSWORD` | Initial admin password | `admin` |
+| `OCTOFHIR__STORAGE__POSTGRES__READ_REPLICA__URL` | Read replica connection URL | - |
+| `OCTOFHIR__STORAGE__POSTGRES__READ_REPLICA__POOL_SIZE` | Read replica pool size | primary pool_size |
 | `OCTOFHIR__REDIS__ENABLED` | Enable Redis cache | `false` |
 | `OCTOFHIR__REDIS__URL` | Redis URL | `redis://redis:6379` |
 | `RUST_LOG` | Log level | `info` |

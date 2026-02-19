@@ -12,7 +12,8 @@ use sqlx_postgres::PgPool;
 use time::OffsetDateTime;
 
 use octofhir_storage::{
-    HistoryEntry, HistoryMethod, HistoryParams, HistoryResult, StorageError, StoredResource,
+    HistoryEntry, HistoryMethod, HistoryParams, HistoryResult, RawHistoryEntry, RawHistoryResult,
+    RawStoredResource, StorageError, StoredResource,
 };
 
 use crate::schema::SchemaManager;
@@ -255,6 +256,241 @@ pub async fn get_system_history(
     })
 }
 
+/// Row type for raw history queries (id, txid, created_at, updated_at, resource_text, status).
+type RawHistoryRow = (String, i64, DateTime<Utc>, DateTime<Utc>, String, String);
+
+/// Row type for raw system history queries (id, txid, created_at, updated_at, resource_text, status, resource_type).
+type RawSystemHistoryRow = (
+    String,
+    i64,
+    DateTime<Utc>,
+    DateTime<Utc>,
+    String,
+    String,
+    Option<String>,
+);
+
+/// Retrieves history as raw JSON strings (zero-copy path).
+///
+/// Same as `get_history` but returns `resource::text` instead of JSONB,
+/// avoiding the JSONB → Value → JSON serialization round-trip.
+pub async fn get_history_raw(
+    pool: &PgPool,
+    resource_type: &str,
+    id: Option<&str>,
+    params: &HistoryParams,
+) -> Result<RawHistoryResult, StorageError> {
+    let table = SchemaManager::table_name(resource_type);
+    let history_table = format!("{}_history", table);
+
+    let id_str: Option<String> = id.map(|s| s.to_string());
+
+    let limit = params.count.unwrap_or(100) as i64;
+    let offset = params.offset.unwrap_or(0) as i64;
+
+    let since_chrono = params.since.map(time_to_chrono);
+    let at_chrono = params.at.map(time_to_chrono);
+
+    // Build UNION ALL query with resource::text instead of resource
+    let (sql, has_id, has_since, has_at) = build_raw_union_query(
+        &table,
+        &history_table,
+        id_str.is_some(),
+        &since_chrono,
+        &at_chrono,
+    );
+
+    let full_sql = format!(
+        r#"WITH all_versions AS ({sql})
+           SELECT id, txid, created_at, updated_at, resource_text, status
+           FROM all_versions
+           ORDER BY txid DESC
+           LIMIT {limit} OFFSET {offset}"#
+    );
+
+    let rows: Vec<RawHistoryRow> = execute_raw_history_query(
+        &full_sql,
+        pool,
+        id_str,
+        since_chrono,
+        at_chrono,
+        has_id,
+        has_since,
+        has_at,
+    )
+    .await?;
+
+    let entries: Vec<RawHistoryEntry> = rows
+        .into_iter()
+        .map(|(row_id, txid, created_at, updated_at, resource_text, status)| {
+            let created_at_time = chrono_to_time(created_at);
+            let updated_at_time = chrono_to_time(updated_at);
+            RawHistoryEntry {
+                resource: RawStoredResource {
+                    id: row_id,
+                    version_id: txid.to_string(),
+                    resource_type: resource_type.to_string(),
+                    resource_json: resource_text,
+                    last_updated: updated_at_time,
+                    created_at: created_at_time,
+                },
+                method: status_to_method(&status),
+            }
+        })
+        .collect();
+
+    let total = entries.len() as u32;
+
+    Ok(RawHistoryResult {
+        entries,
+        total: Some(total),
+    })
+}
+
+/// Retrieves system history as raw JSON strings (zero-copy path).
+pub async fn get_system_history_raw(
+    pool: &PgPool,
+    schema: &SchemaManager,
+    params: &HistoryParams,
+) -> Result<RawHistoryResult, StorageError> {
+    let tables = schema
+        .list_tables()
+        .await
+        .map_err(|e| StorageError::internal(format!("Failed to list tables: {e}")))?;
+
+    if tables.is_empty() {
+        return Ok(RawHistoryResult {
+            entries: vec![],
+            total: Some(0),
+        });
+    }
+
+    let limit = params.count.unwrap_or(100) as i64;
+    let offset = params.offset.unwrap_or(0) as i64;
+
+    let since_chrono = params.since.map(time_to_chrono);
+    let at_chrono = params.at.map(time_to_chrono);
+
+    let mut where_conditions = Vec::new();
+    let mut param_idx = 1;
+
+    if since_chrono.is_some() {
+        where_conditions.push(format!("updated_at > ${param_idx}"));
+        param_idx += 1;
+    }
+
+    if at_chrono.is_some() {
+        where_conditions.push(format!("updated_at <= ${param_idx}"));
+    }
+
+    let where_clause = if where_conditions.is_empty() {
+        String::new()
+    } else {
+        format!("WHERE {}", where_conditions.join(" AND "))
+    };
+
+    let mut unions = Vec::new();
+    for table in &tables {
+        let history_table = format!("{}_history", table);
+        unions.push(format!(
+            r#"SELECT id, txid, created_at, updated_at, resource::text as resource_text, status::text, resource->>'resourceType' as resource_type
+               FROM "{table}" {where_clause}"#
+        ));
+        unions.push(format!(
+            r#"SELECT id, txid, created_at, updated_at, resource::text as resource_text, status::text, resource->>'resourceType' as resource_type
+               FROM "{history_table}" {where_clause}"#
+        ));
+    }
+
+    let sql = format!(
+        r#"WITH all_versions AS ({})
+           SELECT id, txid, created_at, updated_at, resource_text, status, resource_type
+           FROM all_versions
+           ORDER BY txid DESC
+           LIMIT {limit} OFFSET {offset}"#,
+        unions.join(" UNION ALL ")
+    );
+
+    let rows: Vec<RawSystemHistoryRow> = match (since_chrono, at_chrono) {
+        (Some(since), Some(at)) => query_as(&sql).bind(since).bind(at).fetch_all(pool).await,
+        (Some(since), None) => query_as(&sql).bind(since).fetch_all(pool).await,
+        (None, Some(at)) => query_as(&sql).bind(at).fetch_all(pool).await,
+        (None, None) => query_as(&sql).fetch_all(pool).await,
+    }
+    .map_err(|e| StorageError::internal(format!("Failed to query system history: {e}")))?;
+
+    let entries: Vec<RawHistoryEntry> = rows
+        .into_iter()
+        .map(
+            |(row_id, txid, created_at, updated_at, resource_text, status, resource_type)| {
+                let created_at_time = chrono_to_time(created_at);
+                let updated_at_time = chrono_to_time(updated_at);
+                let rt = resource_type.unwrap_or_else(|| "Unknown".to_string());
+                RawHistoryEntry {
+                    resource: RawStoredResource {
+                        id: row_id,
+                        version_id: txid.to_string(),
+                        resource_type: rt,
+                        resource_json: resource_text,
+                        last_updated: updated_at_time,
+                        created_at: created_at_time,
+                    },
+                    method: status_to_method(&status),
+                }
+            },
+        )
+        .collect();
+
+    let total = entries.len() as u32;
+
+    Ok(RawHistoryResult {
+        entries,
+        total: Some(total),
+    })
+}
+
+/// Builds a UNION ALL query with `resource::text` for raw history.
+fn build_raw_union_query(
+    table: &str,
+    history_table: &str,
+    has_id: bool,
+    since: &Option<DateTime<Utc>>,
+    at: &Option<DateTime<Utc>>,
+) -> (String, bool, bool, bool) {
+    let mut conditions = Vec::new();
+    let mut param_idx = 1;
+
+    if has_id {
+        conditions.push(format!("id = ${param_idx}"));
+        param_idx += 1;
+    }
+
+    let has_since = since.is_some();
+    if has_since {
+        conditions.push(format!("updated_at > ${param_idx}"));
+        param_idx += 1;
+    }
+
+    let has_at = at.is_some();
+    if has_at {
+        conditions.push(format!("updated_at <= ${param_idx}"));
+    }
+
+    let where_clause = if conditions.is_empty() {
+        String::new()
+    } else {
+        format!("WHERE {}", conditions.join(" AND "))
+    };
+
+    let sql = format!(
+        r#"SELECT id, txid, created_at, updated_at, resource::text as resource_text, status::text FROM "{table}" {where_clause}
+           UNION ALL
+           SELECT id, txid, created_at, updated_at, resource::text as resource_text, status::text FROM "{history_table}" {where_clause}"#
+    );
+
+    (sql, has_id, has_since, has_at)
+}
+
 /// Builds a UNION ALL query for combining current and history tables.
 fn build_union_query(
     table: &str,
@@ -310,6 +546,63 @@ async fn execute_history_query(
     has_at: bool,
 ) -> Result<Vec<HistoryRow>, StorageError> {
     // Build query dynamically based on which parameters are present
+    let result = match (has_id, has_since, has_at) {
+        (true, true, true) => {
+            query_as(sql)
+                .bind(id_str.unwrap())
+                .bind(since.unwrap())
+                .bind(at.unwrap())
+                .fetch_all(pool)
+                .await
+        }
+        (true, true, false) => {
+            query_as(sql)
+                .bind(id_str.unwrap())
+                .bind(since.unwrap())
+                .fetch_all(pool)
+                .await
+        }
+        (true, false, true) => {
+            query_as(sql)
+                .bind(id_str.unwrap())
+                .bind(at.unwrap())
+                .fetch_all(pool)
+                .await
+        }
+        (true, false, false) => query_as(sql).bind(id_str.unwrap()).fetch_all(pool).await,
+        (false, true, true) => {
+            query_as(sql)
+                .bind(since.unwrap())
+                .bind(at.unwrap())
+                .fetch_all(pool)
+                .await
+        }
+        (false, true, false) => query_as(sql).bind(since.unwrap()).fetch_all(pool).await,
+        (false, false, true) => query_as(sql).bind(at.unwrap()).fetch_all(pool).await,
+        (false, false, false) => query_as(sql).fetch_all(pool).await,
+    }
+    .map_err(|e| {
+        if e.to_string().contains("does not exist") {
+            return StorageError::internal(format!("Table does not exist: {e}"));
+        }
+        StorageError::internal(format!("Failed to query history: {e}"))
+    })?;
+
+    Ok(result)
+}
+
+/// Executes a raw history query (resource::text) with dynamic parameter bindings.
+#[allow(clippy::too_many_arguments)]
+async fn execute_raw_history_query(
+    sql: &str,
+    pool: &PgPool,
+    id_str: Option<String>,
+    since: Option<DateTime<Utc>>,
+    at: Option<DateTime<Utc>>,
+    has_id: bool,
+    has_since: bool,
+    has_at: bool,
+) -> Result<Vec<RawHistoryRow>, StorageError> {
     let result = match (has_id, has_since, has_at) {
         (true, true, true) => {
             query_as(sql)

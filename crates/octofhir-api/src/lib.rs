@@ -1,6 +1,7 @@
 use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use serde::{Deserialize, Serialize};
+use serde_json::value::RawValue;
 use std::sync::Arc;
 use thiserror::Error;
 
@@ -8,50 +9,68 @@ use thiserror::Error;
 // Raw JSON Type for Zero-Copy Serialization
 // -------------------------
 
-/// Raw JSON string that serializes directly without full parsing.
+/// Raw JSON that serializes directly without re-parsing or allocation.
 ///
-/// This is used to avoid the overhead of parsing JSONB from PostgreSQL
-/// into `serde_json::Value` and then re-serializing. Instead, the raw
-/// JSON string is validated and output directly.
+/// Stores a validated `Box<RawValue>` inside an `Arc` so cloning is cheap.
+/// Validation happens once at construction; serialization is zero-copy.
 ///
-/// Performance benefit: ~25-30% faster for search results by avoiding
-/// the full JSON tree construction.
-#[derive(Debug, Clone, PartialEq)]
-pub struct RawJson(Arc<str>);
+/// Performance benefit: eliminates per-resource clone + re-validation in
+/// search results (100-entry search = 100 allocations saved).
+#[derive(Debug, Clone)]
+pub struct RawJson(Arc<Box<RawValue>>);
 
 impl RawJson {
-    /// Create from a raw JSON string.
-    ///
-    /// The string should be valid JSON. Validation happens during serialization.
+    /// Create from a raw JSON string, validating once at construction.
     #[inline]
     pub fn from_string(s: impl Into<String>) -> Self {
-        Self(Arc::from(s.into()))
+        Self(Arc::new(
+            RawValue::from_string(s.into()).expect("valid JSON"),
+        ))
     }
 
     /// Get the raw JSON string.
     #[inline]
     pub fn as_str(&self) -> &str {
-        &self.0
+        self.0.get()
     }
 
     /// Parse the raw JSON into a Value.
     ///
     /// This is useful when you need to inspect or modify the JSON.
     pub fn to_value(&self) -> Result<serde_json::Value, serde_json::Error> {
-        serde_json::from_str(&self.0)
+        serde_json::from_str(self.0.get())
     }
 
-    /// Extract a field from the JSON without full parsing.
+    /// Extract a string field from the JSON without full parsing.
     ///
-    /// Uses a streaming parser to find the field efficiently.
+    /// For known top-level fields (`id`, `resourceType`), uses a targeted
+    /// 1-field struct deserializer instead of building the full Value tree.
+    /// Falls back to full parse for other fields.
     pub fn get_str_field(&self, field: &str) -> Option<String> {
-        // Simple implementation - parse fully for now
-        // Could be optimized with a streaming parser later
-        if let Ok(v) = self.to_value() {
-            v.get(field).and_then(|v| v.as_str()).map(String::from)
-        } else {
-            None
+        // Targeted extraction for common fields avoids full Value tree
+        match field {
+            "id" => {
+                #[derive(Deserialize)]
+                struct IdOnly { id: Option<String> }
+                serde_json::from_str::<IdOnly>(self.0.get()).ok()?.id
+            }
+            "resourceType" => {
+                #[derive(Deserialize)]
+                struct RtOnly { #[serde(rename = "resourceType")] resource_type: Option<String> }
+                serde_json::from_str::<RtOnly>(self.0.get()).ok()?.resource_type
+            }
+            _ => {
+                // Generic fallback: full parse
+                let v: serde_json::Value = serde_json::from_str(self.0.get()).ok()?;
+                v.get(field).and_then(|v| v.as_str()).map(String::from)
+            }
         }
+    }
+}
+
+impl PartialEq for RawJson {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.get() == other.0.get()
     }
 }
 
@@ -60,12 +79,8 @@ impl Serialize for RawJson {
     where
         S: serde::Serializer,
     {
-        use serde::ser::Error;
-        // Validate and serialize as raw JSON using RawValue
-        // RawValue validates structure without building the full tree
-        let raw = serde_json::value::RawValue::from_string(self.0.to_string())
-            .map_err(S::Error::custom)?;
-        raw.serialize(serializer)
+        // Zero-copy: RawValue serializes directly without allocation
+        self.0.serialize(serializer)
     }
 }
 
@@ -74,17 +89,16 @@ impl<'de> Deserialize<'de> for RawJson {
     where
         D: serde::Deserializer<'de>,
     {
-        // Deserialize as Value, then convert to string
-        let value = serde_json::Value::deserialize(deserializer)?;
-        let s = serde_json::to_string(&value).map_err(serde::de::Error::custom)?;
-        Ok(RawJson::from_string(s))
+        // Deserialize directly into RawValue (no Value tree intermediate)
+        let raw = Box::<RawValue>::deserialize(deserializer)?;
+        Ok(RawJson(Arc::new(raw)))
     }
 }
 
 impl From<serde_json::Value> for RawJson {
     fn from(value: serde_json::Value) -> Self {
         let s = serde_json::to_string(&value).expect("valid JSON");
-        Self(Arc::from(s))
+        Self(Arc::new(RawValue::from_string(s).expect("valid JSON")))
     }
 }
 
@@ -1152,7 +1166,7 @@ pub fn bundle_from_search_with_includes(
 }
 
 /// Build pagination links for search results.
-fn build_search_links(
+pub fn build_search_links(
     total: usize,
     base_url: &str,
     resource_type: &str,

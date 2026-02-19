@@ -1,6 +1,6 @@
 use crate::bootstrap::ADMIN_ACCESS_POLICY_ID;
 use crate::gateway::{App, PathValidationError, validate_app_operations};
-use crate::mapping::{IdPolicy, envelope_from_json, json_from_envelope};
+use crate::mapping::{IdPolicy, json_from_envelope, validate_payload_structure};
 use crate::operation_registry::{OperationStorage, PostgresOperationStorage};
 use crate::patch::{apply_fhirpath_patch, apply_json_patch};
 use crate::server::SharedModelProvider;
@@ -17,7 +17,6 @@ use include_dir::{Dir, include_dir};
 use mime_guess::MimeGuess;
 use octofhir_api::ApiError;
 use octofhir_core::ResourceType;
-use octofhir_core::fhir_reference::parse_reference_simple;
 use octofhir_fhir_model::ModelProvider;
 use octofhir_storage::{FhirStorage, StorageError}; // For begin_transaction method and error mapping
 use serde::{Deserialize, Serialize};
@@ -569,10 +568,15 @@ fn validate_fhirpath_expression(expression: &str) -> Result<(), ApiError> {
 /// - Future: Other resource types may trigger specific actions
 async fn postprocess_resource(
     resource_type: &str,
-    _resource_id: &str,
+    resource_id: &str,
     payload: &Value,
     state: &crate::server::AppState,
 ) -> Result<(), ApiError> {
+    // Invalidate resource cache on create/update
+    if let Some(cache) = &state.resource_cache {
+        cache.invalidate(resource_type, resource_id).await;
+    }
+
     // Handle SearchParameter resource type
     if resource_type == "SearchParameter" {
         // 1. Validate FHIRPath expression if present
@@ -718,8 +722,8 @@ pub async fn create_resource(
         .and_then(|h| h.to_str().ok())
         .map(parse_prefer_return);
 
-    // Validate the payload structure using envelope_from_json (for validation only)
-    if let Err(err) = envelope_from_json(&resource_type, &payload, IdPolicy::Create) {
+    // Validate the payload structure (zero-allocation check)
+    if let Err(err) = validate_payload_structure(&resource_type, &payload, &IdPolicy::Create) {
         tracing::warn!(error.kind = "invalid-payload", message = %err);
         return Err(ApiError::bad_request(err));
     }
@@ -871,8 +875,30 @@ pub async fn read_resource(
     Path((resource_type, id)): Path<(String, String)>,
     headers: HeaderMap,
 ) -> Result<Response, ApiError> {
-    match state.storage.read_raw(&resource_type, &id).await {
-        Ok(Some(stored)) => {
+    // Try resource cache first
+    let stored = if let Some(cache) = &state.resource_cache {
+        if let Some(cached) = cache.get(&resource_type, &id).await {
+            Some(cached)
+        } else {
+            match state.storage.read_raw(&resource_type, &id).await {
+                Ok(Some(s)) => {
+                    cache.set(&s).await;
+                    Some(s)
+                }
+                Ok(None) => None,
+                Err(e) => return Err(map_storage_error(e)),
+            }
+        }
+    } else {
+        match state.storage.read_raw(&resource_type, &id).await {
+            Ok(Some(s)) => Some(s),
+            Ok(None) => None,
+            Err(e) => return Err(map_storage_error(e)),
+        }
+    };
+
+    match stored {
+        Some(stored) => {
             let version_id = &stored.version_id;
 
             // Check If-None-Match (conditional read - return 304 if version matches)
@@ -916,10 +942,9 @@ pub async fn read_resource(
 
             Ok(builder.body(Body::from(stored.resource_json)).unwrap())
         }
-        Ok(None) => Err(ApiError::not_found(format!(
+        None => Err(ApiError::not_found(format!(
             "{resource_type} with id '{id}' not found"
         ))),
-        Err(e) => Err(map_storage_error(e)),
     }
 }
 
@@ -929,37 +954,30 @@ pub async fn vread_resource(
     State(state): State<crate::server::AppState>,
     Path((resource_type, id, version_id)): Path<(String, String, String)>,
 ) -> Result<impl IntoResponse, ApiError> {
-    // Use vread to get the specific version from storage (including history)
-    match state.storage.vread(&resource_type, &id, &version_id).await {
+    // Use vread_raw to get the specific version as raw JSON (no Value round-trip)
+    match state
+        .storage
+        .vread_raw(&resource_type, &id, &version_id)
+        .await
+    {
         Ok(Some(stored)) => {
-            // Get version_id for ETag
-            let version = &stored.version_id;
-
-            // Build response headers
-            let mut response_headers = HeaderMap::new();
+            // Build response with raw JSON body
+            let mut builder = Response::builder()
+                .status(StatusCode::OK)
+                .header(header::CONTENT_TYPE, "application/fhir+json; charset=utf-8");
 
             // ETag: W/"version_id"
-            let etag = format!("W/\"{}\"", version);
-            if let Ok(val) = header::HeaderValue::from_str(&etag) {
-                response_headers.insert(header::ETAG, val);
-            }
+            let etag = format!("W/\"{}\"", stored.version_id);
+            builder = builder.header(header::ETAG, etag);
 
             // Last-Modified: HTTP date format
             let last_modified = httpdate::fmt_http_date(
                 std::time::UNIX_EPOCH
                     + std::time::Duration::from_secs(stored.last_updated.unix_timestamp() as u64),
             );
-            if let Ok(val) = header::HeaderValue::from_str(&last_modified) {
-                response_headers.insert(header::LAST_MODIFIED, val);
-            }
+            builder = builder.header(header::LAST_MODIFIED, last_modified);
 
-            // Content-Type
-            response_headers.insert(
-                header::CONTENT_TYPE,
-                header::HeaderValue::from_static("application/fhir+json; charset=utf-8"),
-            );
-
-            Ok((StatusCode::OK, response_headers, Json(stored.resource)))
+            Ok(builder.body(Body::from(stored.resource_json)).unwrap())
         }
         Ok(None) => Err(ApiError::not_found(format!(
             "{resource_type}/{id}/_history/{version_id} not found"
@@ -993,7 +1011,7 @@ pub async fn instance_history(
 
     // Check if resource exists (either current or was deleted)
     // For history, we allow viewing history of deleted resources
-    match state.storage.read(&resource_type, &id).await {
+    match state.storage.read_raw(&resource_type, &id).await {
         Ok(None) => {
             // Resource never existed
             return Err(ApiError::not_found(format!(
@@ -1025,10 +1043,10 @@ pub async fn instance_history(
     history_params.count = Some(count);
     history_params.offset = Some(offset);
 
-    // Get history from storage
+    // Get history from storage (raw path: skips JSONB → Value round-trip)
     let result = state
         .storage
-        .history(&resource_type, Some(&id), &history_params)
+        .history_raw(&resource_type, Some(&id), &history_params)
         .await
         .map_err(map_storage_error)?;
 
@@ -1043,7 +1061,7 @@ pub async fn instance_history(
                 octofhir_storage::HistoryMethod::Delete => HistoryBundleMethod::Delete,
             };
             HistoryBundleEntry {
-                resource: octofhir_api::RawJson::from(entry.resource.resource),
+                resource: octofhir_api::RawJson::from_string(entry.resource.resource_json),
                 id: entry.resource.id,
                 resource_type: entry.resource.resource_type,
                 version_id: entry.resource.version_id,
@@ -1110,10 +1128,10 @@ pub async fn type_history(
     history_params.count = Some(count);
     history_params.offset = Some(offset);
 
-    // Get history from storage (None for id = type-level history)
+    // Get history from storage (raw path, None for id = type-level history)
     let result = state
         .storage
-        .history(&resource_type, None, &history_params)
+        .history_raw(&resource_type, None, &history_params)
         .await
         .map_err(map_storage_error)?;
 
@@ -1128,7 +1146,7 @@ pub async fn type_history(
                 octofhir_storage::HistoryMethod::Delete => HistoryBundleMethod::Delete,
             };
             HistoryBundleEntry {
-                resource: octofhir_api::RawJson::from(entry.resource.resource),
+                resource: octofhir_api::RawJson::from_string(entry.resource.resource_json),
                 id: entry.resource.id,
                 resource_type: entry.resource.resource_type,
                 version_id: entry.resource.version_id,
@@ -1184,10 +1202,10 @@ pub async fn system_history(
     history_params.count = Some(count);
     history_params.offset = Some(offset);
 
-    // Get system-level history from storage
+    // Get system-level history from storage (raw path)
     let result = state
         .storage
-        .system_history(&history_params)
+        .system_history_raw(&history_params)
         .await
         .map_err(map_storage_error)?;
 
@@ -1202,7 +1220,7 @@ pub async fn system_history(
                 octofhir_storage::HistoryMethod::Delete => HistoryBundleMethod::Delete,
             };
             HistoryBundleEntry {
-                resource: octofhir_api::RawJson::from(entry.resource.resource),
+                resource: octofhir_api::RawJson::from_string(entry.resource.resource_json),
                 id: entry.resource.id,
                 resource_type: entry.resource.resource_type,
                 version_id: entry.resource.version_id,
@@ -1299,11 +1317,11 @@ pub async fn update_resource(
     let mut payload = payload;
     preprocess_payload(&resource_type, &mut payload).await?;
 
-    // Validate payload structure
-    if let Err(err) = envelope_from_json(
+    // Validate payload structure (zero-allocation check)
+    if let Err(err) = validate_payload_structure(
         &resource_type,
         &payload,
-        IdPolicy::Update {
+        &IdPolicy::Update {
             path_id: id.clone(),
         },
     ) {
@@ -1315,94 +1333,77 @@ pub async fn update_resource(
         obj.insert("id".to_string(), Value::String(id.clone()));
     }
 
-    // Check if resource exists
-    let existing = state.storage.read(&resource_type, &id).await;
+    // Try update first (single DB round-trip via CTE with If-Match check).
+    // The storage layer already handles version conflict and not-found errors,
+    // so the previous pre-read was redundant.
+    match state.storage.update(&payload, if_match.as_deref()).await {
+        Ok(stored) => {
+            // Resource existed and was updated
+            postprocess_resource(&resource_type, &id, &payload, &state).await?;
 
-    match existing {
-        Ok(Some(existing_stored)) => {
-            // Resource exists - check If-Match if provided
-            if let Some(ref expected_version) = if_match
-                && expected_version != &existing_stored.version_id
-            {
-                return Err(ApiError::conflict(format!(
-                    "Version conflict: expected {}, but current is {}",
-                    expected_version, existing_stored.version_id
-                )));
+            let mut response_headers = HeaderMap::new();
+
+            // ETag
+            let etag = format!("W/\"{}\"", stored.version_id);
+            if let Ok(val) = header::HeaderValue::from_str(&etag) {
+                response_headers.insert(header::ETAG, val);
             }
 
-            // Update existing resource using FhirStorage
-            match state.storage.update(&payload, if_match.as_deref()).await {
-                Ok(stored) => {
-                    // NEW: Postprocess resource
-                    postprocess_resource(&resource_type, &id, &payload, &state).await?;
+            // Last-Modified
+            let last_modified = httpdate::fmt_http_date(
+                std::time::UNIX_EPOCH
+                    + std::time::Duration::from_secs(
+                        stored.last_updated.unix_timestamp() as u64
+                    ),
+            );
+            if let Ok(val) = header::HeaderValue::from_str(&last_modified) {
+                response_headers.insert(header::LAST_MODIFIED, val);
+            }
 
-                    let mut response_headers = HeaderMap::new();
+            // Content-Type
+            response_headers.insert(
+                header::CONTENT_TYPE,
+                header::HeaderValue::from_static("application/fhir+json; charset=utf-8"),
+            );
 
-                    // ETag
-                    let etag = format!("W/\"{}\"", stored.version_id);
-                    if let Ok(val) = header::HeaderValue::from_str(&etag) {
-                        response_headers.insert(header::ETAG, val);
-                    }
+            // X-Validation-Skipped header if validation was skipped
+            if skip_validation {
+                response_headers.insert(
+                    "X-Validation-Skipped",
+                    header::HeaderValue::from_static("true"),
+                );
+            }
 
-                    // Last-Modified
-                    let last_modified = httpdate::fmt_http_date(
-                        std::time::UNIX_EPOCH
-                            + std::time::Duration::from_secs(
-                                stored.last_updated.unix_timestamp() as u64
-                            ),
-                    );
-                    if let Ok(val) = header::HeaderValue::from_str(&last_modified) {
-                        response_headers.insert(header::LAST_MODIFIED, val);
-                    }
-
-                    // Content-Type
-                    response_headers.insert(
-                        header::CONTENT_TYPE,
-                        header::HeaderValue::from_static("application/fhir+json; charset=utf-8"),
-                    );
-
-                    // X-Validation-Skipped header if validation was skipped
-                    if skip_validation {
-                        response_headers.insert(
-                            "X-Validation-Skipped",
-                            header::HeaderValue::from_static("true"),
-                        );
-                    }
-
-                    // Handle Prefer return preference
-                    match prefer_return {
-                        Some(PreferReturn::Minimal) => {
-                            Ok((StatusCode::OK, response_headers, Json(json!({}))))
-                        }
-                        Some(PreferReturn::OperationOutcome) => {
-                            let outcome = json!({
-                                "resourceType": "OperationOutcome",
-                                "issue": [{
-                                    "severity": "information",
-                                    "code": "informational",
-                                    "diagnostics": format!("Resource updated: {}/{}", resource_type, id)
-                                }]
-                            });
-                            Ok((StatusCode::OK, response_headers, Json(outcome)))
-                        }
-                        _ => Ok((StatusCode::OK, response_headers, Json(stored.resource))),
-                    }
+            // Handle Prefer return preference
+            match prefer_return {
+                Some(PreferReturn::Minimal) => {
+                    Ok((StatusCode::OK, response_headers, Json(json!({}))))
                 }
-                Err(e) => Err(map_storage_error(e)),
+                Some(PreferReturn::OperationOutcome) => {
+                    let outcome = json!({
+                        "resourceType": "OperationOutcome",
+                        "issue": [{
+                            "severity": "information",
+                            "code": "informational",
+                            "diagnostics": format!("Resource updated: {}/{}", resource_type, id)
+                        }]
+                    });
+                    Ok((StatusCode::OK, response_headers, Json(outcome)))
+                }
+                _ => Ok((StatusCode::OK, response_headers, Json(stored.resource))),
             }
         }
-        Ok(None) => {
-            // Resource doesn't exist - create-on-update
+        Err(StorageError::NotFound { .. }) => {
+            // Resource doesn't exist - create-on-update (upsert)
             if if_match.is_some() {
                 return Err(ApiError::precondition_failed(
                     "Resource does not exist but If-Match was provided",
                 ));
             }
 
-            // Create new resource with provided ID using FhirStorage
+            // Create new resource with provided ID
             match state.storage.create(&payload).await {
                 Ok(stored) => {
-                    // NEW: Postprocess resource
                     postprocess_resource(&resource_type, &id, &payload, &state).await?;
 
                     let mut response_headers = HeaderMap::new();
@@ -1538,7 +1539,7 @@ pub async fn conditional_update_resource(
         Ok(result) => match result.entries.len() {
             0 => {
                 // No match - create new resource (201)
-                if let Err(err) = envelope_from_json(&resource_type, &payload, IdPolicy::Create) {
+                if let Err(err) = validate_payload_structure(&resource_type, &payload, &IdPolicy::Create) {
                     return Err(ApiError::bad_request(err));
                 }
 
@@ -1622,10 +1623,10 @@ pub async fn conditional_update_resource(
                 }
 
                 // Validate and update the matched resource
-                if let Err(err) = envelope_from_json(
+                if let Err(err) = validate_payload_structure(
                     &resource_type,
                     &payload,
-                    IdPolicy::Update {
+                    &IdPolicy::Update {
                         path_id: id.clone(),
                     },
                 ) {
@@ -1721,11 +1722,9 @@ pub async fn delete_resource(
 
     // For SearchParameter, read it first to get the URL for registry removal
     let search_param_url: Option<String> = if resource_type == "SearchParameter" {
-        match state.storage.read(&resource_type, &id).await {
-            Ok(Some(stored)) => stored
-                .resource
-                .get("url")
-                .and_then(|v| v.as_str())
+        match state.storage.read_raw(&resource_type, &id).await {
+            Ok(Some(stored)) => octofhir_api::RawJson::from_string(stored.resource_json)
+                .get_str_field("url")
                 .map(String::from),
             _ => None,
         }
@@ -1735,7 +1734,12 @@ pub async fn delete_resource(
 
     match state.storage.delete(&resource_type, &id).await {
         Ok(_) => {
-            // NEW: Handle SearchParameter deletion - remove from registry
+            // Invalidate resource cache
+            if let Some(cache) = &state.resource_cache {
+                cache.invalidate(&resource_type, &id).await;
+            }
+
+            // Handle SearchParameter deletion - remove from registry
             if resource_type == "SearchParameter"
                 && let Some(url) = search_param_url
             {
@@ -2257,11 +2261,12 @@ pub async fn search_resource(
 
     // Execute search with raw JSON optimization and handling mode
     let result = octofhir_db_postgres::queries::execute_search_raw_with_config(
-        &state.db_pool,
+        &state.read_db_pool,
         &resource_type,
         &search_params,
         Some(&cfg.registry),
         unknown_param_handling,
+        state.query_cache.as_deref(),
     )
     .await
     .map_err(|e| ApiError::bad_request(e.to_string()))?;
@@ -2353,11 +2358,13 @@ pub async fn search_resource_post(
     let count = search_params.count.unwrap_or(10) as usize;
 
     // Execute search with raw JSON optimization
-    let result = octofhir_db_postgres::queries::execute_search_raw(
-        &state.db_pool,
+    let result = octofhir_db_postgres::queries::execute_search_raw_with_config(
+        &state.read_db_pool,
         &resource_type,
         &search_params,
         Some(&cfg.registry),
+        None,
+        state.query_cache.as_deref(),
     )
     .await
     .map_err(|e| ApiError::bad_request(e.to_string()))?;
@@ -2439,25 +2446,35 @@ pub async fn system_search(
     let raw_q = raw.unwrap_or_default();
     let cfg = state.search_config.config();
 
-    let mut all_resources: Vec<Value> = Vec::new();
+    // Collect raw entries: (resource_json, id, resource_type)
+    let mut all_entries: Vec<(String, String, String)> = Vec::new();
     let mut total_count: usize = 0;
 
     // Parse search params once
     let search_params =
         octofhir_search::parse_query_string(&raw_q, cfg.default_count as u32, cfg.max_count as u32);
 
-    // Search each resource type using modern storage API
+    // Search each resource type using raw path (skips JSONB → Value round-trip)
     for type_name in &types {
         if type_name.parse::<ResourceType>().is_err() {
             tracing::warn!("Skipping unknown resource type: {}", type_name);
             continue;
         }
 
-        match state.storage.search(type_name, &search_params).await {
+        match octofhir_db_postgres::queries::execute_search_raw_with_config(
+            &state.read_db_pool,
+            type_name,
+            &search_params,
+            Some(&cfg.registry),
+            None,
+            state.query_cache.as_deref(),
+        )
+        .await
+        {
             Ok(result) => {
                 total_count += result.total.unwrap_or(result.entries.len() as u32) as usize;
                 for entry in result.entries {
-                    all_resources.push(entry.resource);
+                    all_entries.push((entry.resource_json, entry.id, entry.resource_type));
                 }
             }
             Err(e) => {
@@ -2479,22 +2496,37 @@ pub async fn system_search(
         .and_then(|o| o.parse::<usize>().ok())
         .unwrap_or(0);
 
-    // Paginate combined results
-    let paginated: Vec<Value> = all_resources.into_iter().skip(offset).take(count).collect();
+    // Paginate combined results and build bundle entries
+    let paginated: Vec<octofhir_api::BundleEntry> = all_entries
+        .into_iter()
+        .skip(offset)
+        .take(count)
+        .map(|(resource_json, id, rt)| {
+            let full_url = Some(format!(
+                "{}/{}/{}",
+                state.base_url.trim_end_matches('/'),
+                rt,
+                id
+            ));
+            octofhir_api::BundleEntry {
+                full_url,
+                resource: Some(octofhir_api::RawJson::from_string(resource_json)),
+                search: Some(octofhir_api::BundleEntrySearch {
+                    mode: "match".to_string(),
+                    score: None,
+                }),
+                request: None,
+                response: None,
+            }
+        })
+        .collect();
 
-    // Build system search bundle (use first type for link building)
+    // Build system search bundle
     let primary_type = types.first().unwrap_or(&"Resource");
     let suffix = build_query_suffix_for_links(&raw_q);
-
-    let bundle = octofhir_api::bundle_from_search(
-        total_count,
-        paginated,
-        &state.base_url,
-        primary_type,
-        offset,
-        count,
-        suffix.as_deref(),
-    );
+    let links =
+        octofhir_api::build_search_links(total_count, &state.base_url, primary_type, offset, count, suffix.as_deref());
+    let bundle = octofhir_api::Bundle::searchset(total_count as u64, paginated, links);
 
     // Apply _summary and _elements filters
     let bundle_value = apply_result_params(bundle, &params)?;
@@ -2518,191 +2550,6 @@ fn build_query_suffix_for_links(raw_q: &str) -> Option<String> {
         .collect();
     let s = filtered.join("&");
     if s.is_empty() { None } else { Some(s) }
-}
-
-/// Resolve _include and _revinclude for search results
-///
-/// Note: This is currently unused as execute_search handles includes internally.
-/// Kept for potential future use with custom include logic.
-#[allow(dead_code)]
-async fn resolve_includes_for_search(
-    storage: &octofhir_storage::DynStorage,
-    resources: &[octofhir_storage::StoredResource],
-    resource_type: &str,
-    params: &HashMap<String, String>,
-    _search_cfg: &octofhir_search::SearchConfig,
-) -> Vec<octofhir_api::IncludedResourceEntry> {
-    let mut included = Vec::new();
-    let mut included_keys: std::collections::HashSet<(String, String)> =
-        std::collections::HashSet::new();
-
-    // Process _include parameters
-    if let Some(include_values) = params.get("_include") {
-        for include_spec in include_values.split(',') {
-            let parts: Vec<&str> = include_spec.split(':').collect();
-            if parts.len() >= 2 {
-                let source_type = parts[0];
-                let param_name = parts[1];
-                let target_type = parts.get(2).copied();
-
-                // Only process includes for matching source type
-                if source_type == resource_type || source_type == "*" {
-                    // Extract references from resources and fetch included resources
-                    for res in resources {
-                        if let Some(refs) =
-                            extract_references_from_resource(&res.resource, param_name)
-                        {
-                            for (ref_type, ref_id) in refs {
-                                // Skip if target type filter doesn't match
-                                if let Some(tt) = target_type
-                                    && ref_type != tt
-                                {
-                                    continue;
-                                }
-
-                                // Skip duplicates
-                                let key = (ref_type.clone(), ref_id.clone());
-                                if included_keys.contains(&key) {
-                                    continue;
-                                }
-
-                                // Fetch the referenced resource using modern storage API
-                                if ref_type.parse::<ResourceType>().is_ok()
-                                    && let Ok(Some(stored)) = storage.read(&ref_type, &ref_id).await
-                                {
-                                    included_keys.insert(key);
-                                    included.push(octofhir_api::IncludedResourceEntry {
-                                        resource: stored.resource.into(),
-                                        resource_type: ref_type,
-                                        id: ref_id,
-                                    });
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // Process _revinclude parameters
-    if let Some(revinclude_values) = params.get("_revinclude") {
-        for revinclude_spec in revinclude_values.split(',') {
-            let parts: Vec<&str> = revinclude_spec.split(':').collect();
-            if parts.len() >= 2 {
-                let source_type = parts[0];
-                let param_name = parts[1];
-
-                // For revinclude, find resources of source_type that reference our results
-                if source_type.parse::<ResourceType>().is_ok() {
-                    for res in resources {
-                        // Build search params to find referencing resources
-                        let ref_value = format!("{}/{}", resource_type, res.id);
-                        let search_params = octofhir_storage::SearchParams::new()
-                            .with_count(100)
-                            .with_param(param_name, &ref_value);
-
-                        // Execute search for referencing resources
-                        if let Ok(result) = storage.search(source_type, &search_params).await {
-                            for entry in result.entries {
-                                let key = (entry.resource_type.clone(), entry.id.clone());
-                                if !included_keys.contains(&key) {
-                                    included_keys.insert(key);
-                                    included.push(octofhir_api::IncludedResourceEntry {
-                                        resource: entry.resource.into(),
-                                        resource_type: entry.resource_type,
-                                        id: entry.id,
-                                    });
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    included
-}
-
-/// Extract reference values from a resource for a given search parameter
-fn extract_references_from_resource(
-    resource: &Value,
-    param_name: &str,
-) -> Option<Vec<(String, String)>> {
-    let mut refs = Vec::new();
-
-    // Common reference field mappings
-    let field_name = match param_name {
-        "patient" | "subject" => "subject",
-        "encounter" => "encounter",
-        "performer" => "performer",
-        "author" => "author",
-        "organization" => "managingOrganization",
-        "practitioner" => "practitioner",
-        "location" => "location",
-        _ => param_name,
-    };
-
-    // Try to get the field
-    if let Some(field_value) = resource.get(field_name) {
-        extract_refs_from_value(field_value, &mut refs);
-    }
-
-    // Also try direct param name
-    if let Some(field_value) = resource.get(param_name) {
-        extract_refs_from_value(field_value, &mut refs);
-    }
-
-    if refs.is_empty() { None } else { Some(refs) }
-}
-
-/// Extract references from a JSON value (handles Reference objects and arrays)
-fn extract_refs_from_value(value: &Value, refs: &mut Vec<(String, String)>) {
-    match value {
-        Value::Object(obj) => {
-            // Check if this is a Reference
-            if let Some(ref_str) = obj.get("reference").and_then(|v| v.as_str())
-                && let Some((rtype, rid)) = parse_reference_string(ref_str)
-            {
-                refs.push((rtype, rid));
-            }
-        }
-        Value::Array(arr) => {
-            for item in arr {
-                extract_refs_from_value(item, refs);
-            }
-        }
-        _ => {}
-    }
-}
-
-/// Parse a FHIR reference string into (type, id)
-fn parse_reference_string(reference: &str) -> Option<(String, String)> {
-    // For backwards compatibility, handle absolute URLs by extracting the last two path segments.
-    // This matches the old behavior where all absolute URLs were treated as potentially local.
-    if reference.contains("://") {
-        let parts: Vec<&str> = reference.rsplitn(3, '/').collect();
-        if parts.len() >= 2 {
-            let rtype = parts[1];
-            let rid = parts[0];
-            if !rtype.is_empty() && !rid.is_empty() {
-                // Validate resource type starts with uppercase
-                if rtype
-                    .chars()
-                    .next()
-                    .map(|c| c.is_ascii_uppercase())
-                    .unwrap_or(false)
-                {
-                    return Some((rtype.to_string(), rid.to_string()));
-                }
-            }
-        }
-        return None;
-    }
-
-    // For relative references, use the shared implementation
-    parse_reference_simple(reference, None).ok()
 }
 
 /// Apply _summary and _elements result parameters to a bundle
@@ -4399,30 +4246,40 @@ async fn process_get_search_entry(
         )));
     }
 
-    // Search using modern storage API
+    // Search using raw path (skips JSONB → Value round-trip)
     let cfg = state.search_config.config();
     let search_params =
         octofhir_search::parse_query_string(query, cfg.default_count as u32, cfg.max_count as u32);
 
-    let result = state
-        .storage
-        .search(resource_type, &search_params)
-        .await
-        .map_err(|e| ApiError::bad_request(e.to_string()))?;
-
-    let resources_json: Vec<Value> = result.entries.iter().map(|e| e.resource.clone()).collect();
+    let result = octofhir_db_postgres::queries::execute_search_raw_with_config(
+        &state.read_db_pool,
+        resource_type,
+        &search_params,
+        Some(&cfg.registry),
+        None,
+        state.query_cache.as_deref(),
+    )
+    .await
+    .map_err(|e| ApiError::bad_request(e.to_string()))?;
 
     let offset = search_params.offset.unwrap_or(0) as usize;
     let count = search_params.count.unwrap_or(10) as usize;
     let total = result
         .total
         .map(|t| t as usize)
-        .unwrap_or(resources_json.len());
+        .unwrap_or(result.entries.len());
 
-    // Build a searchset bundle for the response
-    let search_bundle = octofhir_api::bundle_from_search(
+    let (resources, ids): (Vec<_>, Vec<_>) = result
+        .entries
+        .into_iter()
+        .map(|e| (octofhir_api::RawJson::from_string(e.resource_json), e.id))
+        .unzip();
+
+    let search_bundle = octofhir_api::bundle_from_search_raw(
         total,
-        resources_json,
+        resources,
+        ids,
+        vec![],
         &state.base_url,
         resource_type,
         offset,
@@ -4660,8 +4517,8 @@ pub async fn compartment_search(
             ))
         })?;
 
-    // Check if the compartment resource exists
-    match state.storage.read(&compartment_type, &compartment_id).await {
+    // Check if the compartment resource exists (raw path avoids Value parsing)
+    match state.storage.read_raw(&compartment_type, &compartment_id).await {
         Ok(Some(_)) => {} // Resource exists
         Ok(None) => {
             return Err(ApiError::NotFound(format!(
@@ -4690,8 +4547,9 @@ pub async fn compartment_search(
         "Executing compartment search with OR semantics"
     );
 
-    // Execute searches for all inclusion parameters and collect unique resources
-    let mut all_resources = std::collections::HashMap::new(); // Use HashMap to deduplicate by ID
+    // Execute searches for all inclusion parameters and collect unique resources (raw path)
+    let cfg = state.search_config.config();
+    let mut all_resources: std::collections::HashMap<String, String> = std::collections::HashMap::new(); // Deduplicate by ID → raw JSON
     let mut total_count = 0usize;
 
     for param in inclusion_params {
@@ -4708,17 +4566,23 @@ pub async fn compartment_search(
             "Searching with inclusion parameter"
         );
 
-        // Execute search for this parameter using modern storage API
         let search_params = octofhir_search::parse_query_string(&query, 1000, 1000);
-        match state.storage.search(&resource_type, &search_params).await {
+        match octofhir_db_postgres::queries::execute_search_raw_with_config(
+            &state.read_db_pool,
+            &resource_type,
+            &search_params,
+            Some(&cfg.registry),
+            None,
+            state.query_cache.as_deref(),
+        )
+        .await
+        {
             Ok(result) => {
                 total_count = total_count.max(result.total.unwrap_or(0) as usize);
 
                 // Add resources, deduplicating by ID
-                for stored in result.entries {
-                    if let Some(id) = stored.resource.get("id").and_then(|v| v.as_str()) {
-                        all_resources.insert(id.to_string(), stored.resource);
-                    }
+                for entry in result.entries {
+                    all_resources.entry(entry.id).or_insert(entry.resource_json);
                 }
             }
             Err(e) => {
@@ -4727,14 +4591,11 @@ pub async fn compartment_search(
                     error = %e,
                     "Search failed for inclusion parameter, continuing with others"
                 );
-                // Continue with other parameters even if one fails
             }
         }
     }
 
-    // Convert deduplicated resources to Vec
-    let resources_json: Vec<Value> = all_resources.into_values().collect();
-    let actual_count = resources_json.len();
+    let actual_count = all_resources.len();
 
     tracing::info!(
         compartment = %compartment_ref,
@@ -4744,10 +4605,17 @@ pub async fn compartment_search(
         "Compartment search completed with OR semantics"
     );
 
-    // Build Bundle with deduplicated results
-    let bundle = octofhir_api::bundle_from_search(
+    // Build Bundle entries from deduplicated raw resources
+    let (resources, ids): (Vec<_>, Vec<_>) = all_resources
+        .into_iter()
+        .map(|(id, json)| (octofhir_api::RawJson::from_string(json), id))
+        .unzip();
+
+    let bundle = octofhir_api::bundle_from_search_raw(
         actual_count,
-        resources_json,
+        resources,
+        ids,
+        vec![],
         &state.base_url,
         &resource_type,
         0,
@@ -4781,8 +4649,8 @@ pub async fn compartment_search_all(
         .get(&compartment_type)
         .map_err(|e| ApiError::NotFound(format!("Compartment not found: {}", e)))?;
 
-    // Verify compartment resource exists
-    match state.storage.read(&compartment_type, &compartment_id).await {
+    // Verify compartment resource exists (raw path avoids Value parsing)
+    match state.storage.read_raw(&compartment_type, &compartment_id).await {
         Ok(Some(_)) => {} // Resource exists
         Ok(None) => {
             return Err(ApiError::NotFound(format!(
@@ -4806,8 +4674,9 @@ pub async fn compartment_search_all(
         "Searching all resource types in compartment"
     );
 
-    // Build searchset Bundle
-    let mut all_entries = Vec::new();
+    // Build searchset Bundle (raw path)
+    let cfg = state.search_config.config();
+    let mut all_bundle_entries = Vec::new();
     let mut total = 0usize;
 
     // Execute search for each resource type
@@ -4842,24 +4711,38 @@ pub async fn compartment_search_all(
             query.push_str(&format!("{}={}", param, compartment_ref));
         }
 
-        // Execute search using modern storage API
+        // Execute search using raw path (skips JSONB → Value round-trip)
         let search_params = octofhir_search::parse_query_string(&query, 1000, 1000);
-        match state
-            .storage
-            .search(resource_type_str, &search_params)
-            .await
+        match octofhir_db_postgres::queries::execute_search_raw_with_config(
+            &state.read_db_pool,
+            resource_type_str,
+            &search_params,
+            Some(&cfg.registry),
+            None,
+            state.query_cache.as_deref(),
+        )
+        .await
         {
             Ok(result) => {
                 total += result.entries.len();
 
-                // Add each resource as an entry in the bundle
-                for stored in result.entries {
-                    all_entries.push(json!({
-                        "resource": stored.resource,
-                        "search": {
-                            "mode": "match"
-                        }
-                    }));
+                for entry in result.entries {
+                    let full_url = Some(format!(
+                        "{}/{}/{}",
+                        state.base_url.trim_end_matches('/'),
+                        entry.resource_type,
+                        entry.id
+                    ));
+                    all_bundle_entries.push(octofhir_api::BundleEntry {
+                        full_url,
+                        resource: Some(octofhir_api::RawJson::from_string(entry.resource_json)),
+                        search: Some(octofhir_api::BundleEntrySearch {
+                            mode: "match".to_string(),
+                            score: None,
+                        }),
+                        request: None,
+                        response: None,
+                    });
                 }
             }
             Err(e) => {
@@ -4873,13 +4756,7 @@ pub async fn compartment_search_all(
         }
     }
 
-    // Build searchset Bundle with all entries
-    let bundle = json!({
-        "resourceType": "Bundle",
-        "type": "searchset",
-        "total": total,
-        "entry": all_entries,
-    });
+    let bundle = octofhir_api::Bundle::searchset(total as u64, all_bundle_entries, vec![]);
 
     tracing::info!(
         total = total,

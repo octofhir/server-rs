@@ -105,7 +105,7 @@ export default function () {
     group("Read", function () {
       const readResponse = http.get(`${config.baseUrl}/${resourceType}/${resourceId}`, {
         ...httpParams,
-        tags: { operation: "read", resource_type: resourceType },
+        tags: { name: `${config.baseUrl}/${resourceType}/{id}`, operation: "read", resource_type: resourceType },
       });
 
       check(readResponse, {
@@ -137,7 +137,10 @@ export default function () {
     // UPDATE
     group("Update", function () {
       // First read to get current version
-      const current = http.get(`${config.baseUrl}/${resourceType}/${resourceId}`, httpParams);
+      const current = http.get(`${config.baseUrl}/${resourceType}/${resourceId}`, {
+        ...httpParams,
+        tags: { name: `${config.baseUrl}/${resourceType}/{id}` },
+      });
 
       if (current.status === 200) {
         const resource = JSON.parse(current.body);
@@ -152,7 +155,7 @@ export default function () {
           JSON.stringify(resource),
           {
             ...httpParams,
-            tags: { operation: "update", resource_type: resourceType },
+            tags: { name: `${config.baseUrl}/${resourceType}/{id}`, operation: "update", resource_type: resourceType },
           }
         );
 
@@ -181,9 +184,9 @@ export default function () {
 
     // DELETE
     group("Delete", function () {
-      const deleteResponse = http.del(`${config.baseUrl}/${resourceType}/${resourceId}`, {
+      const deleteResponse = http.del(`${config.baseUrl}/${resourceType}/${resourceId}`, null, {
         ...httpParams,
-        tags: { operation: "delete", resource_type: resourceType },
+        tags: { name: `${config.baseUrl}/${resourceType}/{id}`, operation: "delete", resource_type: resourceType },
       });
 
       check(deleteResponse, {
@@ -197,7 +200,10 @@ export default function () {
       sleep(0.1);
       const verifyResponse = http.get(
         `${config.baseUrl}/${resourceType}/${resourceId}`,
-        httpParams
+        {
+          ...httpParams,
+          tags: { name: `${config.baseUrl}/${resourceType}/{id}` },
+        }
       );
 
       check(verifyResponse, {

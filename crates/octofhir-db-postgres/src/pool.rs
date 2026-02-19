@@ -23,12 +23,9 @@ pub async fn create_pool(config: &PostgresConfig) -> Result<PgPool> {
         "Creating PostgreSQL connection pool"
     );
 
-    let min_connections = config
-        .min_connections
-        .unwrap_or(config.pool_size / 4)
-        .max(1);
+    let min_connections = config.min_connections.unwrap_or(0);
 
-    let max_lifetime_secs = config.max_lifetime_secs.unwrap_or(1800);
+    let max_lifetime_secs = config.max_lifetime_secs.unwrap_or(3600);
 
     let mut options = PgPoolOptions::new()
         .max_connections(config.pool_size)
@@ -63,7 +60,7 @@ pub async fn test_connection(pool: &PgPool) -> Result<()> {
 }
 
 /// Masks the password in a database URL for logging.
-fn mask_password(url: &str) -> String {
+pub fn mask_password(url: &str) -> String {
     // Simple password masking for logging
     if let Some(at_pos) = url.find('@')
         && let Some(colon_pos) = url[..at_pos].rfind(':')

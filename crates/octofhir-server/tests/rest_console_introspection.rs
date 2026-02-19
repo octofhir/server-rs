@@ -17,8 +17,8 @@ use octofhir_server::operations::definition::{OperationDefinition, OperationKind
 use octofhir_server::operations::registry::OperationRegistry;
 use octofhir_server::rest_console::{self, RestConsoleState};
 use octofhir_storage::{
-    DynStorage, FhirStorage, HistoryParams, HistoryResult, SearchParams, SearchResult,
-    StorageError, StoredResource, Transaction,
+    DynStorage, FhirStorage, HistoryParams, HistoryResult, RawHistoryResult, SearchParams,
+    SearchResult, StorageError, StoredResource, Transaction,
 };
 use sqlx_postgres::PgPool;
 
@@ -79,6 +79,28 @@ impl FhirStorage for MockStorage {
 
     async fn system_history(&self, _params: &HistoryParams) -> Result<HistoryResult, StorageError> {
         Ok(HistoryResult {
+            entries: vec![],
+            total: Some(0),
+        })
+    }
+
+    async fn history_raw(
+        &self,
+        _resource_type: &str,
+        _id: Option<&str>,
+        _params: &HistoryParams,
+    ) -> Result<RawHistoryResult, StorageError> {
+        Ok(RawHistoryResult {
+            entries: vec![],
+            total: Some(0),
+        })
+    }
+
+    async fn system_history_raw(
+        &self,
+        _params: &HistoryParams,
+    ) -> Result<RawHistoryResult, StorageError> {
+        Ok(RawHistoryResult {
             entries: vec![],
             total: Some(0),
         })

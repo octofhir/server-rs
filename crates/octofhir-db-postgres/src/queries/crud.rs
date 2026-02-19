@@ -402,18 +402,19 @@ pub async fn update(
 pub async fn delete(pool: &PgPool, resource_type: &str, id: &str) -> Result<(), StorageError> {
     let table = SchemaManager::table_name(resource_type);
 
-    // Create transaction for the delete operation
-    let txid = create_transaction(pool).await?;
-
-    // Note: updated_at is automatically updated by the update_updated_at_column() trigger
+    // Single CTE query: create transaction + update resource atomically
+    // Eliminates a separate DB round-trip for create_transaction()
     let sql = format!(
-        r#"UPDATE "{table}"
-           SET txid = $1, status = 'deleted'
-           WHERE id = $2 AND status != 'deleted'"#
+        r#"WITH new_tx AS (
+               INSERT INTO _transaction (status) VALUES ('committed') RETURNING txid
+           )
+           UPDATE "{table}"
+           SET txid = new_tx.txid, status = 'deleted'
+           FROM new_tx
+           WHERE id = $1 AND status != 'deleted'"#
     );
 
     let _result = query(&sql)
-        .bind(txid)
         .bind(id)
         .execute(pool)
         .await
@@ -515,6 +516,93 @@ pub async fn vread(
     }
 }
 
+/// Reads a specific version of a FHIR resource as raw JSON string.
+///
+/// Like `vread()` but uses `resource::text` to avoid the JSONB → Value round-trip.
+/// First checks the current table, then falls back to the history table.
+pub async fn vread_raw(
+    pool: &PgPool,
+    resource_type: &str,
+    id: &str,
+    version: &str,
+) -> Result<Option<RawStoredResource>, StorageError> {
+    let table = SchemaManager::table_name(resource_type);
+    let history_table = format!("{}_history", table);
+
+    let version_id: i64 = version
+        .parse()
+        .map_err(|e| StorageError::invalid_resource(format!("Invalid version ID: {e}")))?;
+
+    // First check current table
+    let current_sql = format!(
+        r#"SELECT id, txid, created_at, updated_at, resource::text
+           FROM "{table}"
+           WHERE id = $1 AND txid = $2"#
+    );
+
+    let row: Option<(String, i64, DateTime<Utc>, DateTime<Utc>, String)> =
+        query_as(&current_sql)
+            .bind(id)
+            .bind(version_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| {
+                if e.to_string().contains("does not exist") {
+                    return StorageError::internal(format!("Table does not exist: {e}"));
+                }
+                StorageError::internal(format!("Failed to read version: {e}"))
+            })?;
+
+    if let Some((row_id, txid, created_at, updated_at, resource_json)) = row {
+        let created_at_time = chrono_to_time(created_at);
+        let updated_at_time = chrono_to_time(updated_at);
+        return Ok(Some(RawStoredResource {
+            id: row_id,
+            version_id: txid.to_string(),
+            resource_type: resource_type.to_string(),
+            resource_json,
+            last_updated: updated_at_time,
+            created_at: created_at_time,
+        }));
+    }
+
+    // Check history table
+    let history_sql = format!(
+        r#"SELECT id, txid, created_at, updated_at, resource::text
+           FROM "{history_table}"
+           WHERE id = $1 AND txid = $2"#
+    );
+
+    let row: Option<(String, i64, DateTime<Utc>, DateTime<Utc>, String)> =
+        query_as(&history_sql)
+            .bind(id)
+            .bind(version_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| {
+                if e.to_string().contains("does not exist") {
+                    return StorageError::internal(format!("History table does not exist: {e}"));
+                }
+                StorageError::internal(format!("Failed to read version from history: {e}"))
+            })?;
+
+    match row {
+        Some((row_id, txid, created_at, updated_at, resource_json)) => {
+            let created_at_time = chrono_to_time(created_at);
+            let updated_at_time = chrono_to_time(updated_at);
+            Ok(Some(RawStoredResource {
+                id: row_id,
+                version_id: txid.to_string(),
+                resource_type: resource_type.to_string(),
+                resource_json,
+                last_updated: updated_at_time,
+                created_at: created_at_time,
+            }))
+        }
+        None => Ok(None),
+    }
+}
+
 // ============================================================================
 // Transaction-aware CRUD operations
 // ============================================================================
@@ -523,6 +611,7 @@ pub async fn vread(
 ///
 /// This variant uses an existing transaction instead of the pool,
 /// allowing multiple operations to be grouped atomically.
+/// Uses SQL `jsonb_set` to inject id/meta without cloning the resource in Rust.
 pub async fn create_with_tx(
     tx: &mut PgTransaction<'_>,
     resource: &Value,
@@ -531,44 +620,47 @@ pub async fn create_with_tx(
         .as_str()
         .ok_or_else(|| StorageError::invalid_resource("Missing or invalid resourceType field"))?;
 
-    // Tables are created at startup by bootstrap_conformance_if_postgres()
-
     // Generate ID if not provided
     let id = resource["id"]
         .as_str()
         .map(String::from)
         .unwrap_or_else(|| Uuid::new_v4().to_string());
 
-    // Create transaction for this operation (within the outer transaction)
-    let txid: i64 =
-        query_scalar("INSERT INTO _transaction (status) VALUES ('committed') RETURNING txid")
-            .fetch_one(&mut **tx)
-            .await
-            .map_err(|e| StorageError::internal(format!("Failed to create transaction: {e}")))?;
-
     let now = Utc::now();
 
-    // Build resource with id and meta fields
-    let mut resource = resource.clone();
-    resource["id"] = serde_json::json!(id);
-    resource["meta"] = serde_json::json!({
-        "versionId": txid.to_string(),
-        "lastUpdated": now.to_rfc3339()
-    });
-
-    // Insert into table
+    // Use SQL jsonb_set to inject id and meta atomically, avoiding Rust-side resource.clone()
     let table = SchemaManager::table_name(resource_type);
     let sql = format!(
-        r#"INSERT INTO "{table}" (id, txid, created_at, updated_at, resource, status)
-           VALUES ($1, $2, $3, $3, $4, 'created')
-           RETURNING id, txid, created_at, updated_at"#
+        r#"WITH new_tx AS (
+               INSERT INTO _transaction (status) VALUES ('committed') RETURNING txid
+           )
+           INSERT INTO "{table}" (id, txid, created_at, updated_at, resource, status)
+           SELECT
+               $1,
+               new_tx.txid,
+               $2,
+               $2,
+               jsonb_set(
+                   jsonb_set(
+                       jsonb_set($3::jsonb, '{{id}}', to_jsonb($1::text)),
+                       '{{meta}}', '{{}}'::jsonb, true
+                   ),
+                   '{{meta}}',
+                   jsonb_build_object(
+                       'versionId', new_tx.txid::text,
+                       'lastUpdated', to_char($2 AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+                   ),
+                   true
+               ),
+               'created'
+           FROM new_tx
+           RETURNING id, txid, created_at, updated_at, resource"#
     );
 
-    let row: (String, i64, DateTime<Utc>, DateTime<Utc>) = query_as(&sql)
+    let row: (String, i64, DateTime<Utc>, DateTime<Utc>, Value) = query_as(&sql)
         .bind(&id)
-        .bind(txid)
         .bind(now)
-        .bind(&resource)
+        .bind(resource)
         .fetch_one(&mut **tx)
         .await
         .map_err(|e| {
@@ -579,6 +671,7 @@ pub async fn create_with_tx(
             }
         })?;
 
+    let resource = row.4;
     let created_at_time = chrono_to_time(row.2);
     let updated_at_time = chrono_to_time(row.3);
 
@@ -593,6 +686,8 @@ pub async fn create_with_tx(
 }
 
 /// Updates a resource within a transaction.
+///
+/// Uses SQL `jsonb_set` to inject meta without cloning the resource in Rust.
 pub async fn update_with_tx(
     tx: &mut PgTransaction<'_>,
     resource: &Value,
@@ -605,52 +700,48 @@ pub async fn update_with_tx(
         .as_str()
         .ok_or_else(|| StorageError::invalid_resource("Missing id field"))?;
 
-    // Tables are created at startup by bootstrap_conformance_if_postgres()
-
     let table = SchemaManager::table_name(resource_type);
-
-    // Create new transaction for this version (within the outer transaction)
-    let txid: i64 =
-        query_scalar("INSERT INTO _transaction (status) VALUES ('committed') RETURNING txid")
-            .fetch_one(&mut **tx)
-            .await
-            .map_err(|e| StorageError::internal(format!("Failed to create transaction: {e}")))?;
-
     let now = Utc::now();
 
-    // Build updated resource with new meta
-    let mut resource = resource.clone();
-    resource["meta"] = serde_json::json!({
-        "versionId": txid.to_string(),
-        "lastUpdated": now.to_rfc3339()
-    });
-
-    // Update resource (trigger will archive old version to history)
-    // Note: updated_at is automatically updated by the update_updated_at_column() trigger
+    // Use CTE + SQL jsonb_set to avoid Rust-side resource.clone()
     let update_sql = format!(
-        r#"UPDATE "{table}"
-           SET txid = $1, resource = $2, status = 'updated'
-           WHERE id = $3 AND status != 'deleted'
-           RETURNING id, txid, created_at, updated_at"#
+        r#"WITH new_tx AS (
+               INSERT INTO _transaction (status) VALUES ('committed') RETURNING txid
+           )
+           UPDATE "{table}" t
+           SET txid = new_tx.txid,
+               resource = jsonb_set(
+                   jsonb_set($1::jsonb, '{{meta}}', '{{}}'::jsonb, true),
+                   '{{meta}}',
+                   jsonb_build_object(
+                       'versionId', new_tx.txid::text,
+                       'lastUpdated', to_char($2 AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+                   ),
+                   true
+               ),
+               status = 'updated'
+           FROM new_tx
+           WHERE t.id = $3 AND t.status != 'deleted'
+           RETURNING t.id, new_tx.txid, t.created_at, t.updated_at, t.resource"#
     );
 
-    let row: Option<(String, i64, DateTime<Utc>, DateTime<Utc>)> = query_as(&update_sql)
-        .bind(txid)
-        .bind(&resource)
+    let row: Option<(String, i64, DateTime<Utc>, DateTime<Utc>, Value)> = query_as(&update_sql)
+        .bind(resource)
+        .bind(now)
         .bind(id)
         .fetch_optional(&mut **tx)
         .await
         .map_err(|e| StorageError::internal(format!("Failed to update resource: {e}")))?;
 
     match row {
-        Some((_returned_id, returned_txid, created_at, updated_at)) => {
+        Some((_returned_id, returned_txid, created_at, updated_at, updated_resource)) => {
             let created_at_time = chrono_to_time(created_at);
             let updated_at_time = chrono_to_time(updated_at);
             Ok(StoredResource {
                 id: id.to_string(),
                 version_id: returned_txid.to_string(),
                 resource_type: resource_type.to_string(),
-                resource,
+                resource: updated_resource,
                 last_updated: updated_at_time,
                 created_at: created_at_time,
             })
@@ -660,6 +751,8 @@ pub async fn update_with_tx(
 }
 
 /// Deletes a resource within a transaction.
+///
+/// Uses CTE to combine transaction creation + delete in a single query.
 pub async fn delete_with_tx(
     tx: &mut PgTransaction<'_>,
     resource_type: &str,
@@ -667,22 +760,18 @@ pub async fn delete_with_tx(
 ) -> Result<(), StorageError> {
     let table = SchemaManager::table_name(resource_type);
 
-    // Create transaction for the delete operation (within the outer transaction)
-    let txid: i64 =
-        query_scalar("INSERT INTO _transaction (status) VALUES ('committed') RETURNING txid")
-            .fetch_one(&mut **tx)
-            .await
-            .map_err(|e| StorageError::internal(format!("Failed to create transaction: {e}")))?;
-
-    // Note: updated_at is automatically updated by the update_updated_at_column() trigger
+    // Single CTE query: create transaction + update atomically
     let sql = format!(
-        r#"UPDATE "{table}"
-           SET txid = $1, status = 'deleted'
-           WHERE id = $2 AND status != 'deleted'"#
+        r#"WITH new_tx AS (
+               INSERT INTO _transaction (status) VALUES ('committed') RETURNING txid
+           )
+           UPDATE "{table}"
+           SET txid = new_tx.txid, status = 'deleted'
+           FROM new_tx
+           WHERE id = $1 AND status != 'deleted'"#
     );
 
     let _result = query(&sql)
-        .bind(txid)
         .bind(id)
         .execute(&mut **tx)
         .await

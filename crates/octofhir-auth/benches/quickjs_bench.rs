@@ -35,17 +35,7 @@ fn create_minimal_context() -> PolicyContext {
             trusted: false,
             client_type: ClientType::Public,
         },
-        scopes: ScopeSummary {
-            raw: "user/Patient.cruds".to_string(),
-            patient_scopes: vec![],
-            user_scopes: vec!["user/Patient.cruds".to_string()],
-            system_scopes: vec![],
-            has_wildcard: false,
-            launch: false,
-            openid: true,
-            fhir_user: true,
-            offline_access: false,
-        },
+        scopes: ScopeSummary::from_scope_string("openid fhirUser user/Patient.cruds"),
         request: RequestContext {
             operation: FhirOperation::Read,
             resource_type: "Patient".to_string(),

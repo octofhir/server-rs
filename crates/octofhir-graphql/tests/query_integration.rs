@@ -24,8 +24,8 @@ use octofhir_search::{
     SearchConfig, SearchParameter, SearchParameterRegistry, SearchParameterType,
 };
 use octofhir_storage::{
-    DynStorage, FhirStorage, HistoryParams, HistoryResult, SearchParams, SearchResult,
-    StorageError, StoredResource, Transaction,
+    DynStorage, FhirStorage, HistoryParams, HistoryResult, RawHistoryResult, SearchParams,
+    SearchResult, StorageError, StoredResource, Transaction,
 };
 use serde_json::json;
 use time::Duration;
@@ -103,6 +103,26 @@ impl FhirStorage for MockStorage {
     async fn system_history(&self, _params: &HistoryParams) -> Result<HistoryResult, StorageError> {
         Err(StorageError::internal(
             "system_history not supported in mock",
+        ))
+    }
+
+    async fn history_raw(
+        &self,
+        _resource_type: &str,
+        _id: Option<&str>,
+        _params: &HistoryParams,
+    ) -> Result<RawHistoryResult, StorageError> {
+        Err(StorageError::internal(
+            "history_raw not supported in mock",
+        ))
+    }
+
+    async fn system_history_raw(
+        &self,
+        _params: &HistoryParams,
+    ) -> Result<RawHistoryResult, StorageError> {
+        Err(StorageError::internal(
+            "system_history_raw not supported in mock",
         ))
     }
 

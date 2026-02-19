@@ -100,7 +100,7 @@ export default function({ baseUrl, params, seedPatients }) {
 
       const res = http.get(
         `${baseUrl}/Patient/${patientId}`,
-        { ...params, tags: { operation: 'read' } }
+        { ...params, tags: { name: `${baseUrl}/Patient/{id}`, operation: 'read' } }
       )
 
       readLatency.add(Date.now() - start)
@@ -152,7 +152,7 @@ export function teardown(data) {
   // Cleanup: delete seed patients
   const { baseUrl, params, seedPatients } = data
   for (const id of seedPatients) {
-    http.del(`${baseUrl}/Patient/${id}`, null, params)
+    http.del(`${baseUrl}/Patient/${id}`, null, { ...params, tags: { name: `${baseUrl}/Patient/{id}` } })
   }
   console.log(`Teardown: Deleted ${seedPatients.length} seed patients`)
 }

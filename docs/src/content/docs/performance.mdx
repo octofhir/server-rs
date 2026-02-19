@@ -240,6 +240,28 @@ GET /admin/db/stats
 }
 ```
 
+### Read Replicas
+
+For read-heavy workloads, route search and read operations to a PostgreSQL read replica:
+
+```toml
+[storage.postgres.read_replica]
+url = "postgres://user:pass@replica:5432/octofhir"
+pool_size = 30              # Defaults to primary pool_size
+connect_timeout_ms = 5000   # Defaults to primary value
+idle_timeout_ms = 300000    # Defaults to primary value
+```
+
+When configured, the following operations use the replica pool:
+- `GET /fhir/{type}?...` (search)
+- `GET /fhir/{type}/{id}` (read)
+- `GET /fhir/{type}/{id}/_history/{vid}` (vread)
+- `GET /fhir/{type}/{id}/_history` (history)
+- `GET /fhir/{type}/_history` (type history)
+- `GET /fhir/_history` (system history)
+
+Write operations (create, update, delete, transactions) always go to the primary.
+
 ## Redis Caching
 
 ### Configuration

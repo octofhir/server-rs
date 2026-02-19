@@ -6,6 +6,57 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: octofhir
+    command:
+      - "postgres"
+      # Memory (tuned for ~8GB RAM dev machine)
+      - "-c"
+      - "shared_buffers=512MB"
+      - "-c"
+      - "effective_cache_size=2GB"
+      - "-c"
+      - "work_mem=16MB"
+      - "-c"
+      - "maintenance_work_mem=128MB"
+      - "-c"
+      - "temp_buffers=16MB"
+      # WAL
+      - "-c"
+      - "wal_buffers=16MB"
+      - "-c"
+      - "max_wal_size=1GB"
+      - "-c"
+      - "min_wal_size=80MB"
+      - "-c"
+      - "checkpoint_completion_target=0.9"
+      # Query planner (SSD-optimized)
+      - "-c"
+      - "random_page_cost=1.1"
+      - "-c"
+      - "effective_io_concurrency=200"
+      # Parallelism
+      - "-c"
+      - "max_parallel_workers_per_gather=2"
+      - "-c"
+      - "max_parallel_workers=4"
+      - "-c"
+      - "max_parallel_maintenance_workers=2"
+      # Disable JIT for OLTP (FHIR CRUD workload)
+      - "-c"
+      - "jit=off"
+      # Logging (dev: log queries slower than 500ms)
+      - "-c"
+      - "log_min_duration_statement=500"
+      - "-c"
+      - "log_checkpoints=on"
+      - "-c"
+      - "log_lock_waits=on"
+      # Autovacuum
+      - "-c"
+      - "autovacuum_naptime=10s"
+      - "-c"
+      - "autovacuum_vacuum_scale_factor=0.05"
+      - "-c"
+      - "autovacuum_analyze_scale_factor=0.02"
     ports:
       - "5450:5432"
     volumes:

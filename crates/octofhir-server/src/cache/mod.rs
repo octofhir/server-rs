@@ -23,8 +23,10 @@ pub mod auth;
 pub mod backend;
 pub mod jwt;
 pub mod pubsub;
+pub mod resource;
 
 pub use auth::{AuthContextCache, CacheStats, LocalAuthCache, NoOpAuthCache, create_auth_cache};
 pub use backend::{CacheBackend, CachedEntry};
 pub use jwt::{JwtCacheStats, JwtVerificationCache};
 pub use pubsub::{CacheInvalidationListener, publish_invalidation};
+pub use resource::ResourceCache;

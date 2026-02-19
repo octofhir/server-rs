@@ -597,6 +597,23 @@ pub async fn request_id(mut req: Request<Body>, next: Next) -> Response {
     res
 }
 
+/// Case-insensitive substring search without allocation.
+#[inline]
+fn contains_ignore_ascii_case(haystack: &[u8], needle: &[u8]) -> bool {
+    if needle.len() > haystack.len() {
+        return false;
+    }
+    haystack
+        .windows(needle.len())
+        .any(|w| w.eq_ignore_ascii_case(needle))
+}
+
+/// Case-insensitive prefix check without allocation.
+#[inline]
+fn starts_with_ignore_ascii_case(haystack: &[u8], prefix: &[u8]) -> bool {
+    haystack.len() >= prefix.len() && haystack[..prefix.len()].eq_ignore_ascii_case(prefix)
+}
+
 // Content negotiation middleware: accept FHIR JSON, plain JSON, and SSE for Accept,
 // and require JSON for POST/PUT Content-Type.
 //
@@ -616,10 +633,11 @@ pub async fn content_negotiation(req: Request<Body>, next: Next) -> Response {
     let accepts_hdr = req.headers().get("accept").and_then(|v| v.to_str().ok());
     let accept_ok = accepts_hdr
         .map(|v| {
-            let v = v.to_ascii_lowercase();
-            v.contains("application/fhir+json")
-                || v.contains("application/json")
-                || v.contains("text/event-stream") // For SSE endpoints
+            // Case-insensitive check without allocating a lowercase copy
+            let v_lower = v.as_bytes();
+            contains_ignore_ascii_case(v_lower, b"application/fhir+json")
+                || contains_ignore_ascii_case(v_lower, b"application/json")
+                || contains_ignore_ascii_case(v_lower, b"text/event-stream")
                 || v.contains("*/*")
         })
         .unwrap_or(true); // if missing, treat as ok per HTTP defaults
@@ -642,14 +660,14 @@ pub async fn content_negotiation(req: Request<Body>, next: Next) -> Response {
         let content_type = req
             .headers()
             .get("content-type")
-            .and_then(|v| v.to_str().ok())
-            .map(|s| s.to_ascii_lowercase());
+            .and_then(|v| v.to_str().ok());
         let content_ok = content_type
-            .as_deref()
             .map(|s| {
-                s.starts_with("application/fhir+json")
-                    || s.starts_with("application/json")
-                    || (is_search_post && s.starts_with("application/x-www-form-urlencoded"))
+                // Case-insensitive prefix check without allocating a lowercase copy
+                let bytes = s.as_bytes();
+                starts_with_ignore_ascii_case(bytes, b"application/fhir+json")
+                    || starts_with_ignore_ascii_case(bytes, b"application/json")
+                    || (is_search_post && starts_with_ignore_ascii_case(bytes, b"application/x-www-form-urlencoded"))
             })
             .unwrap_or(false);
         if !content_ok {
@@ -939,8 +957,17 @@ pub async fn audit_middleware(
         parse_fhir_path,
     };
 
-    // Extract request information before passing to handler
+    // Check auditability first with borrowed &str to avoid allocations
+    // for non-auditable requests (healthz, UI, API, static assets)
     let method = req.method().clone();
+    let audit_action = action_from_request(&method, req.uri().path());
+
+    if audit_action.is_none() {
+        // Fast exit: no allocations for non-auditable requests
+        return next.run(req).await;
+    }
+
+    // Only allocate for auditable requests
     let path = req.uri().path().to_string();
 
     // Extract only needed headers for audit (avoid cloning entire HeaderMap ~500-1000 bytes)
@@ -966,13 +993,10 @@ pub async fn audit_middleware(
     // Auth context is stored as Arc<AuthContext> for cheap cloning
     let auth_context = req.extensions().get::<Arc<AuthContext>>().cloned();
 
-    // Determine if this is an auditable FHIR operation
-    let audit_action = action_from_request(&method, &path);
-
     // Call the next handler
     let response = next.run(req).await;
 
-    // Log audit event if this is an auditable action
+    // Log audit event (we already returned early if not auditable)
     if let Some(action) = audit_action {
         let status = response.status();
         let outcome = outcome_from_status(status);

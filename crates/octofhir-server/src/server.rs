@@ -95,8 +95,10 @@ pub struct AppStateInner {
     pub validation_service: ValidationService,
     /// Gateway router for dynamic API endpoints
     pub gateway_router: crate::gateway::GatewayRouter,
-    /// PostgreSQL connection pool for SQL handler
+    /// PostgreSQL connection pool for SQL handler (primary / write)
     pub db_pool: Arc<sqlx_postgres::PgPool>,
+    /// Read replica pool (falls back to db_pool if no replica configured)
+    pub read_db_pool: Arc<sqlx_postgres::PgPool>,
     /// Custom handler registry for gateway operations
     pub handler_registry: Arc<crate::gateway::HandlerRegistry>,
     /// Compartment registry for compartment-based search
@@ -125,6 +127,10 @@ pub struct AppStateInner {
     pub jwt_cache: Arc<crate::cache::JwtVerificationCache>,
     /// Cache for JSON Schema conversions (FhirSchema -> JSON Schema)
     pub json_schema_cache: Arc<dashmap::DashMap<String, serde_json::Value>>,
+    /// Cache for FHIR resource reads (reduces DB queries for read-heavy workloads)
+    pub resource_cache: Option<Arc<crate::cache::ResourceCache>>,
+    /// Query cache for search SQL template reuse
+    pub query_cache: Option<Arc<octofhir_search::QueryCache>>,
     /// Cached resource types for fast validation
     pub resource_type_set: Arc<ArcSwap<HashSet<String>>>,
     /// Cached CapabilityStatement (built at startup)
@@ -499,11 +505,12 @@ async fn create_redis_pool(
 
 /// Creates PostgreSQL storage.
 ///
-/// Returns (PostgresStorage, PostgreSQL pool for SQL handler).
+/// Returns (PostgresStorage, primary pool, read pool).
 /// The caller is responsible for wrapping with EventedStorage and Arc if needed.
 async fn create_storage(
     cfg: &AppConfig,
-) -> Result<(PostgresStorage, Arc<sqlx_postgres::PgPool>), anyhow::Error> {
+) -> Result<(PostgresStorage, Arc<sqlx_postgres::PgPool>, Arc<sqlx_postgres::PgPool>), anyhow::Error>
+{
     let pg_cfg = cfg
         .storage
         .postgres
@@ -516,15 +523,32 @@ async fn create_storage(
         .with_idle_timeout_ms(pg_cfg.idle_timeout_ms)
         .with_run_migrations(true);
 
-    let pg_storage = PostgresStorage::new(postgres_config)
+    let mut pg_storage = PostgresStorage::new(postgres_config)
         .await
         .map_err(|e| anyhow::anyhow!("Failed to create PostgreSQL storage: {e}"))?;
 
-    // Get the pool reference for SQL handler
-    let pool = pg_storage.pool().clone();
+    let primary_pool = Arc::new(pg_storage.pool().clone());
 
-    // Return PostgresStorage directly - caller wraps with EventedStorage
-    Ok((pg_storage, Arc::new(pool)))
+    // Create read replica pool if configured
+    let read_pool = if let Some(ref replica_cfg) = pg_cfg.read_replica {
+        tracing::info!(url = %octofhir_db_postgres::pool::mask_password(&replica_cfg.url), "Creating read replica pool");
+        let replica_config = PostgresConfig::new(&replica_cfg.url)
+            .with_pool_size(replica_cfg.pool_size.unwrap_or(pg_cfg.pool_size))
+            .with_connect_timeout_ms(replica_cfg.connect_timeout_ms.unwrap_or(pg_cfg.connect_timeout_ms))
+            .with_idle_timeout_ms(replica_cfg.idle_timeout_ms.or(pg_cfg.idle_timeout_ms))
+            .with_run_migrations(false);
+
+        let replica_pool = octofhir_db_postgres::pool::create_pool(&replica_config)
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to create read replica pool: {e}"))?;
+
+        pg_storage.set_read_pool(replica_pool.clone());
+        Arc::new(replica_pool)
+    } else {
+        primary_pool.clone()
+    };
+
+    Ok((pg_storage, primary_pool, read_pool))
 }
 
 /// Builds the application router with the given configuration.
@@ -533,7 +557,7 @@ pub async fn build_app(
     config_manager: Arc<octofhir_config::ConfigurationManager>,
 ) -> Result<Router, anyhow::Error> {
     let body_limit = cfg.server.body_limit_bytes;
-    let (pg_storage, db_pool) = create_storage(cfg).await?;
+    let (pg_storage, db_pool, read_db_pool) = create_storage(cfg).await?;
 
     // Create event broadcaster for unified event system
     let event_broadcaster = EventBroadcaster::new_shared();
@@ -1553,6 +1577,7 @@ pub async fn build_app(
         validation_service,
         gateway_router: (*gateway_router).clone(),
         db_pool,
+        read_db_pool,
         handler_registry,
         compartment_registry,
         async_job_manager,
@@ -1567,6 +1592,17 @@ pub async fn build_app(
         auth_cache,
         jwt_cache,
         json_schema_cache: Arc::new(dashmap::DashMap::new()),
+        resource_cache: if cfg.cache.resource_ttl_secs > 0 {
+            Some(Arc::new(crate::cache::ResourceCache::new(
+                crate::cache::CacheBackend::new_local(),
+                std::time::Duration::from_secs(cfg.cache.resource_ttl_secs),
+            )))
+        } else {
+            None
+        },
+        query_cache: Some(Arc::new(octofhir_search::QueryCache::new(
+            cfg.search.cache_capacity,
+        ))),
         resource_type_set,
         capability_statement,
         config_manager: Some(config_manager),
@@ -1922,7 +1958,11 @@ fn build_router(state: AppState, body_limit: usize, compression: bool) -> Router
     // Apply dynamic CORS middleware that validates origins
     let router = router.layer(middleware::from_fn(app_middleware::content_negotiation));
     let router = if compression {
-        router.layer(CompressionLayer::new())
+        use tower_http::compression::predicate::{DefaultPredicate, Predicate, SizeAbove};
+        router.layer(
+            CompressionLayer::new()
+                .compress_when(DefaultPredicate::new().and(SizeAbove::new(1024))),
+        )
     } else {
         router
     };

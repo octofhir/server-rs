@@ -65,8 +65,9 @@ pub use traits::{
     StorageCapabilities, Transaction,
 };
 pub use types::{
-    HistoryEntry, HistoryMethod, HistoryParams, HistoryResult, RawSearchResult, RawStoredResource,
-    SearchParams, SearchResult, SortParam, StoredResource, TotalMode,
+    HistoryEntry, HistoryMethod, HistoryParams, HistoryResult, RawHistoryEntry, RawHistoryResult,
+    RawSearchResult, RawStoredResource, SearchParams, SearchResult, SortParam, StoredResource,
+    TotalMode,
 };
 
 /// Type alias for a storage result.

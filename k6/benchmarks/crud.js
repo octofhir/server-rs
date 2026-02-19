@@ -225,7 +225,7 @@ export default function({ baseUrl, params }) {
 
         const res = http.get(
           `${baseUrl}/${rt}/${resource.id}`,
-          { ...params, tags: { operation: 'read', resource: rt } }
+          { ...params, tags: { name: `${baseUrl}/${rt}/{id}`, operation: 'read', resource: rt } }
         )
 
         readLatency.add(Date.now() - start)
@@ -248,7 +248,7 @@ export default function({ baseUrl, params }) {
 
         const res = http.get(
           `${baseUrl}/Patient?family=${resources.Patient.name[0].family}&_count=10`,
-          { ...params, tags: { operation: 'search', resource: 'Patient' } }
+          { ...params, tags: { name: `${baseUrl}/Patient?family`, operation: 'search', resource: 'Patient' } }
         )
 
         searchLatency.add(Date.now() - start)
@@ -275,7 +275,7 @@ export default function({ baseUrl, params }) {
         const res = http.put(
           `${baseUrl}/${rt}/${resource.id}`,
           JSON.stringify(modified),
-          { ...params, tags: { operation: 'update', resource: rt } }
+          { ...params, tags: { name: `${baseUrl}/${rt}/{id}`, operation: 'update', resource: rt } }
         )
 
         updateLatency.add(Date.now() - start)
@@ -302,7 +302,7 @@ export default function({ baseUrl, params }) {
           const res = http.del(
             `${baseUrl}/${rt}/${resources[rt].id}`,
             null,
-            { ...params, tags: { operation: 'delete', resource: rt } }
+            { ...params, tags: { name: `${baseUrl}/${rt}/{id}`, operation: 'delete', resource: rt } }
           )
 
           deleteLatency.add(Date.now() - start)

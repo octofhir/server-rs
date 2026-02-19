@@ -203,6 +203,10 @@ pub struct ScopeSummary {
     /// Original scope string.
     pub raw: String,
 
+    /// Cached parsed SMART scopes (not serialized, used for fast permission checks).
+    #[serde(skip)]
+    pub parsed: SmartScopes,
+
     /// Patient-context scopes (e.g., "patient/Observation.rs").
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub patient_scopes: Vec<String>,
@@ -257,6 +261,7 @@ impl ScopeSummary {
 
         Self {
             raw: raw.to_string(),
+            parsed: scopes.clone(),
             patient_scopes,
             user_scopes,
             system_scopes,
