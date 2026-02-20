@@ -128,6 +128,84 @@ pub async fn create(pool: &PgPool, resource: &Value) -> Result<StoredResource, S
     })
 }
 
+/// Creates a new FHIR resource and returns the result as raw JSON string.
+///
+/// Like `create()` but uses `resource::text` in the RETURNING clause to avoid
+/// JSONB → serde_json::Value deserialization. The raw JSON string can be sent
+/// directly to the HTTP response body.
+pub async fn create_raw(
+    pool: &PgPool,
+    resource: &Value,
+) -> Result<RawStoredResource, StorageError> {
+    let resource_type = resource["resourceType"]
+        .as_str()
+        .ok_or_else(|| StorageError::invalid_resource("Missing or invalid resourceType field"))?;
+
+    let id = if let Some(provided_id) = resource["id"].as_str() {
+        octofhir_core::validate_id(provided_id)
+            .map_err(|e| StorageError::invalid_resource(format!("Invalid resource ID: {e}")))?;
+        provided_id.to_string()
+    } else {
+        octofhir_core::generate_id()
+    };
+
+    let now = Utc::now();
+
+    let table = SchemaManager::table_name(resource_type);
+    let sql = format!(
+        r#"WITH new_tx AS (
+               INSERT INTO _transaction (status) VALUES ('committed') RETURNING txid
+           )
+           INSERT INTO "{table}" (id, txid, created_at, updated_at, resource, status)
+           SELECT
+               $1,
+               new_tx.txid,
+               $2,
+               $2,
+               jsonb_set(
+                   jsonb_set(
+                       jsonb_set($3::jsonb, '{{id}}', to_jsonb($1::text)),
+                       '{{meta}}', '{{}}'::jsonb, true
+                   ),
+                   '{{meta}}',
+                   jsonb_build_object(
+                       'versionId', new_tx.txid::text,
+                       'lastUpdated', to_char($2 AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+                   ),
+                   true
+               ),
+               'created'
+           FROM new_tx
+           RETURNING id, txid, created_at, updated_at, resource::text"#
+    );
+
+    let row: (String, i64, DateTime<Utc>, DateTime<Utc>, String) = query_as(&sql)
+        .bind(&id)
+        .bind(now)
+        .bind(resource)
+        .fetch_one(pool)
+        .await
+        .map_err(|e| {
+            if e.to_string().contains("duplicate key") {
+                StorageError::already_exists(resource_type, &id)
+            } else {
+                StorageError::internal(format!("Failed to create resource: {e}"))
+            }
+        })?;
+
+    let created_at_time = chrono_to_time(row.2);
+    let updated_at_time = chrono_to_time(row.3);
+
+    Ok(RawStoredResource {
+        id,
+        version_id: row.1.to_string(),
+        resource_type: resource_type.to_string(),
+        resource_json: row.4,
+        last_updated: updated_at_time,
+        created_at: created_at_time,
+    })
+}
+
 /// Reads a FHIR resource by type and ID.
 ///
 /// Returns `None` if the resource doesn't exist.
@@ -368,6 +446,135 @@ pub async fn update(
             // If version check was used and no row returned, need to determine why
             if has_version_check {
                 // Check if resource exists with different version
+                let check_sql =
+                    format!(r#"SELECT txid FROM "{table}" WHERE id = $1 AND status != 'deleted'"#);
+                let current: Option<i64> = query_scalar(&check_sql)
+                    .bind(id)
+                    .fetch_optional(pool)
+                    .await
+                    .map_err(|e| {
+                        StorageError::internal(format!("Failed to check resource: {e}"))
+                    })?;
+
+                match current {
+                    Some(v) => Err(StorageError::version_conflict(
+                        if_match.unwrap_or(""),
+                        v.to_string(),
+                    )),
+                    None => Err(StorageError::not_found(resource_type, id)),
+                }
+            } else {
+                Err(StorageError::not_found(resource_type, id))
+            }
+        }
+    }
+}
+
+/// Updates an existing FHIR resource and returns the result as raw JSON string.
+///
+/// Like `update()` but uses `resource::text` in the RETURNING clause to avoid
+/// JSONB → serde_json::Value deserialization.
+pub async fn update_raw(
+    pool: &PgPool,
+    resource: &Value,
+    if_match: Option<&str>,
+) -> Result<RawStoredResource, StorageError> {
+    let resource_type = resource["resourceType"]
+        .as_str()
+        .ok_or_else(|| StorageError::invalid_resource("Missing or invalid resourceType field"))?;
+
+    let id = resource["id"]
+        .as_str()
+        .ok_or_else(|| StorageError::invalid_resource("Missing id field"))?;
+
+    let table = SchemaManager::table_name(resource_type);
+    let now = Utc::now();
+
+    let (update_sql, has_version_check) = if let Some(expected_version) = if_match {
+        let expected_txid: i64 = expected_version.parse().map_err(|_| {
+            StorageError::invalid_resource(format!("Invalid version format: {expected_version}"))
+        })?;
+
+        (
+            format!(
+                r#"WITH new_tx AS (
+                       INSERT INTO _transaction (status) VALUES ('committed') RETURNING txid
+                   ),
+                   current AS (
+                       SELECT id, txid, created_at FROM "{table}"
+                       WHERE id = $1 AND status != 'deleted'
+                   )
+                   UPDATE "{table}" t
+                   SET txid = new_tx.txid,
+                       resource = jsonb_set(
+                           jsonb_set($2::jsonb, '{{meta}}', '{{}}'::jsonb, true),
+                           '{{meta}}',
+                           jsonb_build_object(
+                               'versionId', new_tx.txid::text,
+                               'lastUpdated', to_char($3 AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+                           ),
+                           true
+                       ),
+                       status = 'updated'
+                   FROM new_tx, current
+                   WHERE t.id = $1
+                     AND t.status != 'deleted'
+                     AND t.txid = {expected_txid}
+                   RETURNING t.id, new_tx.txid, t.created_at, t.updated_at, t.resource::text,
+                             (SELECT txid FROM current) as old_txid"#
+            ),
+            true,
+        )
+    } else {
+        (
+            format!(
+                r#"WITH new_tx AS (
+                       INSERT INTO _transaction (status) VALUES ('committed') RETURNING txid
+                   )
+                   UPDATE "{table}" t
+                   SET txid = new_tx.txid,
+                       resource = jsonb_set(
+                           jsonb_set($2::jsonb, '{{meta}}', '{{}}'::jsonb, true),
+                           '{{meta}}',
+                           jsonb_build_object(
+                               'versionId', new_tx.txid::text,
+                               'lastUpdated', to_char($3 AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+                           ),
+                           true
+                       ),
+                       status = 'updated'
+                   FROM new_tx
+                   WHERE t.id = $1 AND t.status != 'deleted'
+                   RETURNING t.id, new_tx.txid, t.created_at, t.updated_at, t.resource::text, 0::bigint as old_txid"#
+            ),
+            false,
+        )
+    };
+
+    let row: Option<(String, i64, DateTime<Utc>, DateTime<Utc>, String, i64)> =
+        query_as(&update_sql)
+            .bind(id)
+            .bind(&resource)
+            .bind(now)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| StorageError::internal(format!("Failed to update resource: {e}")))?;
+
+    match row {
+        Some((_returned_id, returned_txid, created_at, updated_at, resource_json, _old_txid)) => {
+            let created_at_time = chrono_to_time(created_at);
+            let updated_at_time = chrono_to_time(updated_at);
+            Ok(RawStoredResource {
+                id: id.to_string(),
+                version_id: returned_txid.to_string(),
+                resource_type: resource_type.to_string(),
+                resource_json,
+                last_updated: updated_at_time,
+                created_at: created_at_time,
+            })
+        }
+        None => {
+            if has_version_check {
                 let check_sql =
                     format!(r#"SELECT txid FROM "{table}" WHERE id = $1 AND status != 'deleted'"#);
                 let current: Option<i64> = query_scalar(&check_sql)

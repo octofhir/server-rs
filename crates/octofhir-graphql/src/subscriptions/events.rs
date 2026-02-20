@@ -43,8 +43,9 @@ pub struct ResourceChangeEvent {
     pub resource_type: String,
     /// Resource ID
     pub resource_id: String,
-    /// The resource data as JSON (None for deletions)
-    pub resource: Option<serde_json::Value>,
+    /// The resource data as JSON (None for deletions).
+    /// Wrapped in Arc to avoid deep clones through the subscription pipeline.
+    pub resource: Option<Arc<serde_json::Value>>,
     /// Timestamp of the event
     pub timestamp: time::OffsetDateTime,
 }
@@ -55,7 +56,7 @@ impl ResourceChangeEvent {
         event_type: ResourceEventType,
         resource_type: impl Into<String>,
         resource_id: impl Into<String>,
-        resource: Option<serde_json::Value>,
+        resource: Option<Arc<serde_json::Value>>,
     ) -> Self {
         Self {
             event_type,
@@ -76,7 +77,7 @@ impl ResourceChangeEvent {
             ResourceEventType::Created,
             resource_type,
             resource_id,
-            Some(resource),
+            Some(Arc::new(resource)),
         )
     }
 
@@ -90,7 +91,7 @@ impl ResourceChangeEvent {
             ResourceEventType::Updated,
             resource_type,
             resource_id,
-            Some(resource),
+            Some(Arc::new(resource)),
         )
     }
 
@@ -155,10 +156,11 @@ impl ResourceEventBroadcaster {
         resource_id: impl Into<String>,
         resource: serde_json::Value,
     ) -> usize {
-        self.send(ResourceChangeEvent::created(
+        self.send(ResourceChangeEvent::new(
+            ResourceEventType::Created,
             resource_type,
             resource_id,
-            resource,
+            Some(Arc::new(resource)),
         ))
     }
 
@@ -169,10 +171,11 @@ impl ResourceEventBroadcaster {
         resource_id: impl Into<String>,
         resource: serde_json::Value,
     ) -> usize {
-        self.send(ResourceChangeEvent::updated(
+        self.send(ResourceChangeEvent::new(
+            ResourceEventType::Updated,
             resource_type,
             resource_id,
-            resource,
+            Some(Arc::new(resource)),
         ))
     }
 

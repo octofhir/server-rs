@@ -14,11 +14,17 @@ static LOG_RELOAD_HANDLE: OnceLock<reload::Handle<EnvFilter, tracing_subscriber:
 static OTEL_INSTALLED: OnceLock<()> = OnceLock::new();
 static OTEL_PROVIDER: OnceLock<sdktrace::SdkTracerProvider> = OnceLock::new();
 
-pub fn init_tracing() {
-    init_tracing_with_level("info");
+pub fn init_tracing() -> tracing_appender::non_blocking::WorkerGuard {
+    // Check env var for format since config isn't loaded yet at init time.
+    // Defaults to "json" for lower CPU overhead (avoids Display formatting).
+    let format = std::env::var("OCTOFHIR__LOGGING__FORMAT").unwrap_or_else(|_| "json".into());
+    init_tracing_with_options("info", &format)
 }
 
-pub fn init_tracing_with_level(level: &str) {
+pub fn init_tracing_with_options(
+    level: &str,
+    format: &str,
+) -> tracing_appender::non_blocking::WorkerGuard {
     // Prefer RUST_LOG from env, otherwise use provided level string.
     let base_filter = std::env::var("RUST_LOG")
         .ok()
@@ -28,16 +34,38 @@ pub fn init_tracing_with_level(level: &str) {
     let (reload_layer, handle) = reload::Layer::new(base_filter);
     let _ = LOG_RELOAD_HANDLE.set(handle);
 
+    // Use non-blocking writer to avoid blocking the tokio runtime on log I/O
+    let (non_blocking, guard) = tracing_appender::non_blocking(std::io::stdout());
+
     // Initialize log broadcast for WebSocket streaming
     let log_sender = init_log_broadcast();
     let log_broadcast_layer =
         LogBroadcastLayer::new(log_sender).with_min_level(tracing::Level::DEBUG);
 
-    let _ = tracing_subscriber::registry()
-        .with(reload_layer)
-        .with(fmt::layer())
-        .with(log_broadcast_layer)
-        .try_init();
+    // Branch on format: JSON is more efficient (avoids Display formatting overhead),
+    // text is more human-readable for development.
+    if format == "text" {
+        let _ = tracing_subscriber::registry()
+            .with(reload_layer)
+            .with(fmt::layer().with_writer(non_blocking))
+            .with(log_broadcast_layer)
+            .try_init();
+    } else {
+        let _ = tracing_subscriber::registry()
+            .with(reload_layer)
+            .with(
+                fmt::layer()
+                    .json()
+                    .with_target(true)
+                    .with_thread_ids(false)
+                    .with_thread_names(false)
+                    .with_writer(non_blocking),
+            )
+            .with(log_broadcast_layer)
+            .try_init();
+    }
+
+    guard
 }
 
 /// Apply a new logging level at runtime if reload handle is configured.

@@ -34,12 +34,12 @@ pub use special::{
 };
 pub use string::{build_array_string_search, build_human_name_search, build_string_search};
 pub use token::{
-    build_code_search, build_identifier_search, build_token_search,
-    build_token_search_with_terminology, parse_token_value,
+    build_code_search, build_gin_code_search, build_gin_token_search, build_identifier_search,
+    build_token_search, build_token_search_with_terminology, parse_token_value,
 };
 pub use uri::{build_uri_array_search, build_uri_search};
 
-use crate::parameters::{ElementTypeHint, SearchParameter, SearchParameterType};
+use crate::parameters::{ElementTypeHint, SearchModifier, SearchParameter, SearchParameterType};
 use crate::parser::ParsedParam;
 use crate::sql_builder::{
     SqlBuilder, SqlBuilderError, build_jsonb_accessor, fhirpath_to_jsonb_path,
@@ -77,6 +77,16 @@ pub fn dispatch_search(
     // Dispatch to the appropriate handler based on param type and resolved element type hint
     match definition.param_type {
         SearchParameterType::String => {
+            // GIN-optimized path for :exact modifier — uses @> containment
+            if matches!(&param.modifier, Some(SearchModifier::Exact)) {
+                return build_gin_exact_string_search(
+                    builder,
+                    param,
+                    &path_segments,
+                    &definition.element_type_hint,
+                );
+            }
+
             if definition.element_type_hint.is_human_name() {
                 let array_path =
                     build_jsonb_accessor(builder.resource_column(), &path_segments, false);
@@ -93,18 +103,16 @@ pub fn dispatch_search(
 
         SearchParameterType::Token => {
             if definition.element_type_hint.is_identifier() {
+                // Identifier search already uses @> for system|value — keep as-is
                 let array_path =
                     build_jsonb_accessor(builder.resource_column(), &path_segments, false);
                 build_identifier_search(builder, param, &array_path)
             } else if matches!(&definition.element_type_hint, ElementTypeHint::SimpleCode) {
-                let text_path =
-                    build_jsonb_accessor(builder.resource_column(), &path_segments, true);
-                build_code_search(builder, param, &text_path)
+                // GIN-optimized simple code search (e.g., Patient.gender)
+                build_gin_code_search(builder, param, &path_segments)
             } else {
-                // Default: CodeableConcept/Coding/Token or Unknown
-                let json_path =
-                    build_jsonb_accessor(builder.resource_column(), &path_segments, false);
-                build_token_search(builder, param, &json_path)
+                // GIN-optimized CodeableConcept/Coding/Token search
+                build_gin_token_search(builder, param, &path_segments)
             }
         }
 
@@ -243,6 +251,116 @@ pub fn dispatch_search(
     }
 }
 
+/// Build GIN-optimized `:exact` string search using `resource @> '{...}'::jsonb`.
+///
+/// Uses the `@>` containment operator to leverage the existing GIN index
+/// (`jsonb_path_ops`) on the resource column. Handles three cases:
+///
+/// - **HumanName** (path=`["name"]`): OR of containments for family/text/given
+/// - **Array string** (e.g. `["name","family"]`): containment wrapping in array
+/// - **Simple string** (e.g. `["gender"]`): direct containment
+fn build_gin_exact_string_search(
+    builder: &mut SqlBuilder,
+    param: &ParsedParam,
+    path_segments: &[String],
+    element_type_hint: &ElementTypeHint,
+) -> Result<(), SqlBuilderError> {
+    if param.values.is_empty() {
+        return Ok(());
+    }
+
+    let resource_col = builder.resource_column().to_string();
+    let mut or_conditions = Vec::new();
+
+    for value in &param.values {
+        if value.raw.is_empty() {
+            continue;
+        }
+
+        let condition = if element_type_hint.is_human_name() {
+            // HumanName: OR of containments for family, text, and given
+            build_gin_human_name_exact(builder, &resource_col, path_segments, &value.raw)
+        } else if matches!(element_type_hint, ElementTypeHint::Array(_)) {
+            // Array string field (e.g., name.family within name array)
+            // Split into array path and field, wrap in array containment
+            let (array_segments, field) = split_array_path(path_segments);
+            if field.is_empty() {
+                // Direct array containment
+                let containment = build_string_nested_containment(
+                    &array_segments,
+                    serde_json::json!([&value.raw]),
+                );
+                let json_str = containment.to_string();
+                let p = builder.add_json_param(&json_str);
+                format!("{resource_col} @> ${p}::jsonb")
+            } else {
+                // Array element field containment: {"name": [{"family": "Smith"}]}
+                let elem_obj = serde_json::json!([{field.as_str(): &value.raw}]);
+                let containment = build_string_nested_containment(&array_segments, elem_obj);
+                let json_str = containment.to_string();
+                let p = builder.add_json_param(&json_str);
+                format!("{resource_col} @> ${p}::jsonb")
+            }
+        } else {
+            // Simple string field: {"gender": "female"}
+            let containment =
+                build_string_nested_containment(path_segments, serde_json::json!(&value.raw));
+            let json_str = containment.to_string();
+            let p = builder.add_json_param(&json_str);
+            format!("{resource_col} @> ${p}::jsonb")
+        };
+
+        or_conditions.push(condition);
+    }
+
+    if !or_conditions.is_empty() {
+        builder.add_condition(SqlBuilder::build_or_clause(&or_conditions));
+    }
+
+    Ok(())
+}
+
+/// Build GIN containment conditions for HumanName :exact search.
+///
+/// Produces an OR of three containment checks:
+/// - `resource @> '{"name": [{"family": "Smith"}]}'::jsonb`
+/// - `resource @> '{"name": [{"text": "Smith"}]}'::jsonb`
+/// - `resource @> '{"name": [{"given": ["Smith"]}]}'::jsonb`
+fn build_gin_human_name_exact(
+    builder: &mut SqlBuilder,
+    resource_col: &str,
+    path_segments: &[String],
+    value: &str,
+) -> String {
+    let family_obj = serde_json::json!([{"family": value}]);
+    let family_containment = build_string_nested_containment(path_segments, family_obj);
+    let p1 = builder.add_json_param(&family_containment.to_string());
+
+    let text_obj = serde_json::json!([{"text": value}]);
+    let text_containment = build_string_nested_containment(path_segments, text_obj);
+    let p2 = builder.add_json_param(&text_containment.to_string());
+
+    let given_obj = serde_json::json!([{"given": [value]}]);
+    let given_containment = build_string_nested_containment(path_segments, given_obj);
+    let p3 = builder.add_json_param(&given_containment.to_string());
+
+    format!(
+        "({resource_col} @> ${p1}::jsonb OR {resource_col} @> ${p2}::jsonb OR {resource_col} @> ${p3}::jsonb)"
+    )
+}
+
+/// Build a nested JSON object from path segments wrapping a leaf value (for string search).
+fn build_string_nested_containment(
+    path_segments: &[String],
+    leaf_value: serde_json::Value,
+) -> serde_json::Value {
+    let mut result = leaf_value;
+    for segment in path_segments.iter().rev() {
+        result = serde_json::json!({ segment.as_str(): result });
+    }
+    result
+}
+
 /// Split a path into array path and field name.
 fn split_array_path(path: &[String]) -> (Vec<String>, String) {
     if path.len() > 1 {
@@ -362,6 +480,12 @@ mod tests {
 
         let clause = builder.build_where_clause();
         assert!(clause.is_some());
+        let clause_str = clause.unwrap();
+        // GIN-optimized: should use @> containment operator
+        assert!(
+            clause_str.contains("@>"),
+            "Expected GIN containment (@>), got: {clause_str}"
+        );
     }
 
     #[test]
@@ -558,5 +682,207 @@ mod tests {
         assert_eq!(super::infer_component_type("effective"), "date");
         assert_eq!(super::infer_component_type("subject"), "reference");
         assert_eq!(super::infer_component_type("display"), "string");
+    }
+
+    // ========================================================================
+    // GIN-optimized search tests
+    // ========================================================================
+
+    #[test]
+    fn test_gin_exact_string_simple() {
+        // Simple string field: Patient.gender with :exact
+        let mut builder = SqlBuilder::new();
+        let param = ParsedParam {
+            name: "address-city".to_string(),
+            modifier: Some(SearchModifier::Exact),
+            values: vec![ParsedValue {
+                prefix: None,
+                raw: "Boston".to_string(),
+            }],
+        };
+
+        build_gin_exact_string_search(
+            &mut builder,
+            &param,
+            &["address".to_string(), "city".to_string()],
+            &ElementTypeHint::Unknown,
+        )
+        .unwrap();
+
+        let clause = builder.build_where_clause().unwrap();
+        assert!(
+            clause.contains("@>"),
+            "Expected @> containment, got: {clause}"
+        );
+        assert!(clause.contains("::jsonb"));
+    }
+
+    #[test]
+    fn test_gin_exact_string_human_name() {
+        // HumanName :exact search should generate OR of family/text/given containments
+        let mut builder = SqlBuilder::new();
+        let param = ParsedParam {
+            name: "name".to_string(),
+            modifier: Some(SearchModifier::Exact),
+            values: vec![ParsedValue {
+                prefix: None,
+                raw: "Smith".to_string(),
+            }],
+        };
+
+        build_gin_exact_string_search(
+            &mut builder,
+            &param,
+            &["name".to_string()],
+            &ElementTypeHint::HumanName,
+        )
+        .unwrap();
+
+        let clause = builder.build_where_clause().unwrap();
+        // Should have 3 @> checks (family, text, given)
+        let containment_count = clause.matches("@>").count();
+        assert_eq!(
+            containment_count, 3,
+            "Expected 3 containment checks for HumanName, got {containment_count}: {clause}"
+        );
+        assert!(clause.contains("OR"));
+    }
+
+    #[test]
+    fn test_gin_exact_string_array() {
+        // Array string field: Patient.name.family with :exact
+        let mut builder = SqlBuilder::new();
+        let param = ParsedParam {
+            name: "family".to_string(),
+            modifier: Some(SearchModifier::Exact),
+            values: vec![ParsedValue {
+                prefix: None,
+                raw: "Smith".to_string(),
+            }],
+        };
+
+        build_gin_exact_string_search(
+            &mut builder,
+            &param,
+            &["name".to_string(), "family".to_string()],
+            &ElementTypeHint::Array("string".to_string()),
+        )
+        .unwrap();
+
+        let clause = builder.build_where_clause().unwrap();
+        assert!(
+            clause.contains("@>"),
+            "Expected @> containment, got: {clause}"
+        );
+        assert!(clause.contains("::jsonb"));
+    }
+
+    #[test]
+    fn test_dispatch_string_exact_uses_gin() {
+        // Dispatch :exact string search should route through GIN
+        let mut builder = SqlBuilder::new();
+        let param = ParsedParam {
+            name: "family".to_string(),
+            modifier: Some(SearchModifier::Exact),
+            values: vec![ParsedValue {
+                prefix: None,
+                raw: "Smith".to_string(),
+            }],
+        };
+        let def = Arc::new(
+            SearchParameter::new(
+                "family",
+                "http://hl7.org/fhir/SearchParameter/Patient-family",
+                SearchParameterType::String,
+                vec!["Patient".to_string()],
+            )
+            .with_expression("Patient.name.family")
+            .with_element_type_hint(ElementTypeHint::Array("string".to_string())),
+        );
+
+        dispatch_search(&mut builder, &param, &def, "Patient").unwrap();
+
+        let clause = builder.build_where_clause().unwrap();
+        assert!(
+            clause.contains("@>"),
+            "Expected GIN containment for :exact, got: {clause}"
+        );
+    }
+
+    #[test]
+    fn test_dispatch_token_code_uses_gin() {
+        // SimpleCode token dispatch should use GIN containment
+        let mut builder = SqlBuilder::new();
+        let param = ParsedParam {
+            name: "gender".to_string(),
+            modifier: None,
+            values: vec![ParsedValue {
+                prefix: None,
+                raw: "female".to_string(),
+            }],
+        };
+        let def = Arc::new(
+            SearchParameter::new(
+                "gender",
+                "http://hl7.org/fhir/SearchParameter/Patient-gender",
+                SearchParameterType::Token,
+                vec!["Patient".to_string()],
+            )
+            .with_expression("Patient.gender")
+            .with_element_type_hint(ElementTypeHint::SimpleCode),
+        );
+
+        dispatch_search(&mut builder, &param, &def, "Patient").unwrap();
+
+        let clause = builder.build_where_clause().unwrap();
+        assert!(
+            clause.contains("@>"),
+            "Expected GIN containment for SimpleCode, got: {clause}"
+        );
+        // JSON params contain the containment object {"gender": "female"}
+        let params = builder.params();
+        let json_str = params[0].as_str();
+        assert!(
+            json_str.contains("gender") && json_str.contains("female"),
+            "Expected JSON param with gender/female, got: {json_str}"
+        );
+    }
+
+    #[test]
+    fn test_dispatch_token_codeable_concept_uses_gin() {
+        // CodeableConcept token dispatch should use GIN containment
+        let mut builder = SqlBuilder::new();
+        let param = ParsedParam {
+            name: "code".to_string(),
+            modifier: None,
+            values: vec![ParsedValue {
+                prefix: None,
+                raw: "http://loinc.org|8480-6".to_string(),
+            }],
+        };
+        let def = Arc::new(
+            SearchParameter::new(
+                "code",
+                "http://hl7.org/fhir/SearchParameter/Observation-code",
+                SearchParameterType::Token,
+                vec!["Observation".to_string()],
+            )
+            .with_expression("Observation.code"),
+        );
+
+        dispatch_search(&mut builder, &param, &def, "Observation").unwrap();
+
+        let clause = builder.build_where_clause().unwrap();
+        assert!(
+            clause.contains("@>"),
+            "Expected GIN containment for CodeableConcept, got: {clause}"
+        );
+        // JSON params contain the containment object with coding array
+        let params = builder.params();
+        let json_str = params[0].as_str();
+        assert!(
+            json_str.contains("coding"),
+            "Expected JSON param with coding, got: {json_str}"
+        );
     }
 }

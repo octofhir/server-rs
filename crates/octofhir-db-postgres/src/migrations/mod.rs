@@ -21,6 +21,11 @@ macro_rules! embedded_migrations {
                 "consolidated_schema",
                 include_str!("../../migrations/20241213000001_consolidated_schema.sql"),
             ),
+            (
+                20260220000001i64,
+                "pg_trgm_extension",
+                include_str!("../../migrations/20260220000001_pg_trgm_extension.sql"),
+            ),
             // Add new migrations here:
             // (20241214000001, "add_new_feature", include_str!("../../migrations/20241214000001_add_new_feature.sql")),
         ]

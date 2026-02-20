@@ -34,7 +34,7 @@ use octofhir_db_postgres::PostgresPackageStore;
 use octofhir_graphql::handler::{GraphQLContextTemplate, GraphQLState};
 use octofhir_graphql::{FhirSchemaBuilder, InMemoryModelProvider, LazySchema, SchemaBuilderConfig};
 use time::Duration;
-use tower_http::{compression::CompressionLayer, trace::TraceLayer};
+use tower_http::compression::CompressionLayer;
 
 use crate::events::{RedisEventSyncBuilder, RedisPublishHook};
 use crate::hooks::{
@@ -171,6 +171,18 @@ impl FromRef<AppState> for crate::middleware::ExtendedAuthState {
 impl FromRef<AppState> for AuthState {
     fn from_ref(state: &AppState) -> Self {
         state.auth_state.clone()
+    }
+}
+
+impl FromRef<AppState> for crate::middleware::CombinedAuthState {
+    fn from_ref(state: &AppState) -> Self {
+        crate::middleware::CombinedAuthState {
+            auth_state: state.auth_state.clone(),
+            operation_registry: state.operation_registry.clone(),
+            auth_cache: state.auth_cache.clone(),
+            jwt_cache: state.jwt_cache.clone(),
+            policy_evaluator: state.policy_evaluator.clone(),
+        }
     }
 }
 
@@ -1933,30 +1945,24 @@ fn build_router(state: AppState, body_limit: usize, compression: bool) -> Router
     // but we need this fallback for paths with 3+ segments.
     router = router.fallback(crate::gateway::router::gateway_fallback_handler);
 
-    // Apply middleware stack (outer to inner: body limit -> trace -> compression/cors -> content negotiation -> authz -> auth -> request id -> handler)
-    // Note: Layers wrap from outside-in, so first .layer() is closest to handler
-    // Note: `.with_state(state)` consumes the AppState and returns Router<()>
+    // Apply middleware stack (outer to inner):
+    // DefaultBodyLimit → trace_metrics(+request_id) → cors → compression →
+    //   auth_combined(+content_negotiation) → audit → handler
+    // 6 layers total (down from 10), reducing Tower BoxCloneSyncService clone overhead.
+    // Note: Layers wrap from outside-in, so first .layer() is closest to handler.
 
-    // Only apply auth/authz middleware if auth is enabled
-    // Apply middleware stack (auth is mandatory)
     router = router
         // Audit middleware runs closest to handler, after auth context is set
         .layer(middleware::from_fn_with_state(
             state.clone(),
             app_middleware::audit_middleware,
         ))
-        .layer(middleware::from_fn(app_middleware::request_id))
+        // Combined auth (authn + authz) — single layer instead of two
         .layer(middleware::from_fn_with_state(
             state.clone(),
-            app_middleware::authorization_middleware,
-        ))
-        .layer(middleware::from_fn_with_state(
-            state.clone(),
-            app_middleware::authentication_middleware,
+            app_middleware::auth_middleware,
         ));
 
-    // Apply dynamic CORS middleware that validates origins
-    let router = router.layer(middleware::from_fn(app_middleware::content_negotiation));
     let router = if compression {
         use tower_http::compression::predicate::{DefaultPredicate, Predicate, SizeAbove};
         router.layer(
@@ -1968,66 +1974,8 @@ fn build_router(state: AppState, body_limit: usize, compression: bool) -> Router
     };
     let router: Router = router
         .layer(middleware::from_fn(app_middleware::dynamic_cors_middleware))
-        .layer(
-            TraceLayer::new_for_http()
-                .make_span_with(|req: &axum::http::Request<_>| {
-                    use tracing::field::Empty;
-                    // Skip creating a span for noisy infrastructure endpoints
-                    let path = req.uri().path();
-                    if matches!(
-                        path,
-                        "/healthz"
-                            | "/readyz"
-                            | "/livez"
-                            | "/metrics"
-                            | "/favicon.ico"
-                            | "/api/health"
-                    ) {
-                        return tracing::span!(tracing::Level::TRACE, "noop");
-                    }
-                    let method = req.method().clone();
-                    let uri = req.uri().clone();
-                    let req_id = req
-                        .extensions()
-                        .get::<axum::http::HeaderValue>()
-                        .and_then(|v| v.to_str().ok())
-                        .unwrap_or("")
-                        .to_string();
-                    tracing::info_span!(
-                        "http.request",
-                        http.method = %method,
-                        http.target = %uri,
-                        http.route = Empty,
-                        http.status_code = Empty,
-                        request_id = %req_id
-                    )
-                })
-                .on_response(
-                    |res: &axum::http::Response<_>,
-                     latency: std::time::Duration,
-                     span: &tracing::Span| {
-                        // Record status on the span; access log emission is handled only for non-favicon paths via the span field presence
-                        span.record(
-                            "http.status_code",
-                            tracing::field::display(res.status().as_u16()),
-                        );
-                        // Determine if this span is our real request span by checking that it has the http.method field recorded (noop span won't)
-                        // Unfortunately Span API doesn't expose field inspection, so we conservatively avoid extra logic and instead rely on make_span_with to avoid logging favicon.
-                        // Thus, only emit the access log if the span's metadata target matches our request span name.
-                        if let Some(meta) = span.metadata()
-                            && meta.name() != "noop"
-                        {
-                            tracing::info!(
-                                http.status = %res.status().as_u16(),
-                                elapsed_ms = %latency.as_millis(),
-                                "request handled"
-                            );
-                        }
-                    },
-                ),
-        )
-        // Metrics middleware - tracks all requests before any other processing
-        .layer(middleware::from_fn(app_middleware::metrics_middleware))
+        // Combined tracing + metrics + request ID (replaces separate TraceLayer + metrics_middleware)
+        .layer(middleware::from_fn(app_middleware::trace_metrics_middleware))
         .with_state(state)
         .layer(axum::extract::DefaultBodyLimit::max(body_limit));
 

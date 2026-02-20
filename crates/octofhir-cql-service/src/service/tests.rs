@@ -86,6 +86,28 @@ impl octofhir_storage::FhirStorage for TestStorage {
         })
     }
 
+    async fn history_raw(
+        &self,
+        _resource_type: &str,
+        _id: Option<&str>,
+        _params: &octofhir_storage::HistoryParams,
+    ) -> Result<octofhir_storage::RawHistoryResult, octofhir_storage::StorageError> {
+        Ok(octofhir_storage::RawHistoryResult {
+            entries: vec![],
+            total: Some(0),
+        })
+    }
+
+    async fn system_history_raw(
+        &self,
+        _params: &octofhir_storage::HistoryParams,
+    ) -> Result<octofhir_storage::RawHistoryResult, octofhir_storage::StorageError> {
+        Ok(octofhir_storage::RawHistoryResult {
+            entries: vec![],
+            total: Some(0),
+        })
+    }
+
     async fn begin_transaction(
         &self,
     ) -> Result<Box<dyn octofhir_storage::Transaction>, octofhir_storage::StorageError> {

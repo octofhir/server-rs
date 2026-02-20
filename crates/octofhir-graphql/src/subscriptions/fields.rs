@@ -270,7 +270,7 @@ fn event_to_graphql_value(event: &ResourceChangeEvent) -> Value {
     if let Some(resource) = &event.resource {
         obj.insert(
             async_graphql::Name::new("resource"),
-            json_to_graphql_value(resource.clone()),
+            json_to_graphql_value(serde_json::Value::clone(resource)),
         );
     } else {
         obj.insert(async_graphql::Name::new("resource"), Value::Null);

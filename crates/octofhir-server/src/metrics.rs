@@ -88,10 +88,11 @@ pub fn record_http_request(method: &str, path: &str, status: u16, duration: Dura
 
     // Normalize path to avoid high cardinality
     let normalized_path = normalize_path(path);
+    let method_owned = method.to_string();
 
     counter!(
         names::HTTP_REQUESTS_TOTAL,
-        "method" => method.to_string(),
+        "method" => method_owned.clone(),
         "path" => normalized_path.clone(),
         "status" => status.to_string(),
         "status_class" => status_class.to_string()
@@ -100,7 +101,7 @@ pub fn record_http_request(method: &str, path: &str, status: u16, duration: Dura
 
     histogram!(
         names::HTTP_REQUEST_DURATION_SECONDS,
-        "method" => method.to_string(),
+        "method" => method_owned,
         "path" => normalized_path
     )
     .record(duration.as_secs_f64());
@@ -179,43 +180,37 @@ pub fn record_fhir_operation(operation: &str, resource_type: Option<&str>) {
 /// Normalize a path to reduce cardinality.
 ///
 /// Replaces resource IDs with placeholders to avoid creating too many unique label values.
+/// Uses direct string building to avoid per-segment String allocations.
 fn normalize_path(path: &str) -> String {
     // Common patterns to normalize:
     // /fhir/Patient/123 -> /fhir/Patient/{id}
     // /fhir/Patient/123/_history/2 -> /fhir/Patient/{id}/_history/{vid}
     // /_async-status/uuid -> /_async-status/{job_id}
 
-    let parts: Vec<&str> = path.split('/').collect();
-    let mut normalized = Vec::with_capacity(parts.len());
+    let mut result = String::with_capacity(path.len());
+    let mut prev_segment = "";
 
-    let mut i = 0;
-    while i < parts.len() {
-        let part = parts[i];
-
-        // Check if this looks like an ID (UUID, numeric, or alphanumeric > 8 chars)
-        if is_likely_id(part) {
-            // Special handling for known patterns
-            if i > 0 {
-                let prev = normalized.last().map(|s: &String| s.as_str()).unwrap_or("");
-                if prev == "_history" {
-                    normalized.push("{vid}".to_string());
-                } else if prev == "_async-status" {
-                    normalized.push("{job_id}".to_string());
-                } else {
-                    // Resource type or anything else gets an {id} placeholder
-                    normalized.push("{id}".to_string());
-                }
-            } else {
-                normalized.push(part.to_string());
-            }
-        } else {
-            normalized.push(part.to_string());
+    for (i, part) in path.split('/').enumerate() {
+        if i > 0 {
+            result.push('/');
         }
 
-        i += 1;
+        if is_likely_id(part) && i > 0 {
+            if prev_segment == "_history" {
+                result.push_str("{vid}");
+            } else if prev_segment == "_async-status" {
+                result.push_str("{job_id}");
+            } else {
+                result.push_str("{id}");
+            }
+        } else {
+            result.push_str(part);
+        }
+
+        prev_segment = part;
     }
 
-    normalized.join("/")
+    result
 }
 
 /// Check if a string looks like an ID (UUID or numeric).

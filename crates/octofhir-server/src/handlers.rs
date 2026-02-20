@@ -619,7 +619,7 @@ pub async fn create_resource(
     Path(resource_type): Path<String>,
     headers: HeaderMap,
     Json(payload): Json<Value>,
-) -> Result<impl IntoResponse, ApiError> {
+) -> Result<Response, ApiError> {
     // Basic structural validation (resourceType match)
     let resource_types = state.resource_type_set.load();
     if let Err(e) =
@@ -700,7 +700,8 @@ pub async fn create_resource(
                         StatusCode::OK,
                         response_headers,
                         Json(existing.resource.clone()),
-                    ));
+                    )
+                        .into_response());
                 }
                 _ => {
                     // Multiple matches - return 412 Precondition Failed
@@ -728,13 +729,14 @@ pub async fn create_resource(
         return Err(ApiError::bad_request(err));
     }
 
-    // Create resource using FhirStorage
-    match state.storage.create(&payload).await {
+    // Create resource using FhirStorage (raw path avoids serde round-trip)
+    match state.storage.create_raw(&payload).await {
         Ok(stored) => {
             let id = stored.id.clone();
             let version_id = stored.version_id.clone();
 
-            // NEW: Postprocess resource (triggers, notifications, registry updates)
+            // Postprocess resource (triggers, notifications, registry updates)
+            // Uses the original payload Value, not stored.resource
             postprocess_resource(&resource_type, &id, &payload, &state).await?;
 
             let mut response_headers = HeaderMap::new();
@@ -776,9 +778,12 @@ pub async fn create_resource(
 
             // Handle Prefer return preference
             match prefer_return {
-                Some(PreferReturn::Minimal) => {
-                    Ok((StatusCode::CREATED, response_headers, Json(json!({}))))
-                }
+                Some(PreferReturn::Minimal) => Ok((
+                    StatusCode::CREATED,
+                    response_headers,
+                    Json(json!({})),
+                )
+                    .into_response()),
                 Some(PreferReturn::OperationOutcome) => {
                     let outcome = json!({
                         "resourceType": "OperationOutcome",
@@ -788,11 +793,11 @@ pub async fn create_resource(
                             "diagnostics": format!("Resource created: {}/{}", resource_type, id)
                         }]
                     });
-                    Ok((StatusCode::CREATED, response_headers, Json(outcome)))
+                    Ok((StatusCode::CREATED, response_headers, Json(outcome)).into_response())
                 }
                 _ => {
-                    // Default: return representation
-                    Ok((StatusCode::CREATED, response_headers, Json(stored.resource)))
+                    // Default: return raw JSON directly (avoids Value → JSON serialization)
+                    Ok((StatusCode::CREATED, response_headers, stored.resource_json).into_response())
                 }
             }
         }
@@ -1257,7 +1262,7 @@ pub async fn update_resource(
     Path((resource_type, id)): Path<(String, String)>,
     headers: HeaderMap,
     Json(payload): Json<Value>,
-) -> Result<impl IntoResponse, ApiError> {
+) -> Result<Response, ApiError> {
     // Basic structural validation (resourceType match)
     let resource_types = state.resource_type_set.load();
     if let Err(e) =
@@ -1333,10 +1338,12 @@ pub async fn update_resource(
         obj.insert("id".to_string(), Value::String(id.clone()));
     }
 
-    // Try update first (single DB round-trip via CTE with If-Match check).
-    // The storage layer already handles version conflict and not-found errors,
-    // so the previous pre-read was redundant.
-    match state.storage.update(&payload, if_match.as_deref()).await {
+    // Try update first using raw path (avoids serde round-trip).
+    match state
+        .storage
+        .update_raw(&payload, if_match.as_deref())
+        .await
+    {
         Ok(stored) => {
             // Resource existed and was updated
             postprocess_resource(&resource_type, &id, &payload, &state).await?;
@@ -1353,7 +1360,7 @@ pub async fn update_resource(
             let last_modified = httpdate::fmt_http_date(
                 std::time::UNIX_EPOCH
                     + std::time::Duration::from_secs(
-                        stored.last_updated.unix_timestamp() as u64
+                        stored.last_updated.unix_timestamp() as u64,
                     ),
             );
             if let Ok(val) = header::HeaderValue::from_str(&last_modified) {
@@ -1376,9 +1383,12 @@ pub async fn update_resource(
 
             // Handle Prefer return preference
             match prefer_return {
-                Some(PreferReturn::Minimal) => {
-                    Ok((StatusCode::OK, response_headers, Json(json!({}))))
-                }
+                Some(PreferReturn::Minimal) => Ok((
+                    StatusCode::OK,
+                    response_headers,
+                    Json(json!({})),
+                )
+                    .into_response()),
                 Some(PreferReturn::OperationOutcome) => {
                     let outcome = json!({
                         "resourceType": "OperationOutcome",
@@ -1388,9 +1398,9 @@ pub async fn update_resource(
                             "diagnostics": format!("Resource updated: {}/{}", resource_type, id)
                         }]
                     });
-                    Ok((StatusCode::OK, response_headers, Json(outcome)))
+                    Ok((StatusCode::OK, response_headers, Json(outcome)).into_response())
                 }
-                _ => Ok((StatusCode::OK, response_headers, Json(stored.resource))),
+                _ => Ok((StatusCode::OK, response_headers, stored.resource_json).into_response()),
             }
         }
         Err(StorageError::NotFound { .. }) => {
@@ -1401,8 +1411,8 @@ pub async fn update_resource(
                 ));
             }
 
-            // Create new resource with provided ID
-            match state.storage.create(&payload).await {
+            // Create new resource with provided ID (raw path)
+            match state.storage.create_raw(&payload).await {
                 Ok(stored) => {
                     postprocess_resource(&resource_type, &id, &payload, &state).await?;
 
@@ -1424,7 +1434,7 @@ pub async fn update_resource(
                     let last_modified = httpdate::fmt_http_date(
                         std::time::UNIX_EPOCH
                             + std::time::Duration::from_secs(
-                                stored.last_updated.unix_timestamp() as u64
+                                stored.last_updated.unix_timestamp() as u64,
                             ),
                     );
                     if let Ok(val) = header::HeaderValue::from_str(&last_modified) {
@@ -1439,9 +1449,12 @@ pub async fn update_resource(
 
                     // Handle Prefer return preference
                     match prefer_return {
-                        Some(PreferReturn::Minimal) => {
-                            Ok((StatusCode::CREATED, response_headers, Json(json!({}))))
-                        }
+                        Some(PreferReturn::Minimal) => Ok((
+                            StatusCode::CREATED,
+                            response_headers,
+                            Json(json!({})),
+                        )
+                            .into_response()),
                         Some(PreferReturn::OperationOutcome) => {
                             let outcome = json!({
                                 "resourceType": "OperationOutcome",
@@ -1451,9 +1464,11 @@ pub async fn update_resource(
                                     "diagnostics": format!("Resource created: {}/{}", resource_type, id)
                                 }]
                             });
-                            Ok((StatusCode::CREATED, response_headers, Json(outcome)))
+                            Ok((StatusCode::CREATED, response_headers, Json(outcome))
+                                .into_response())
                         }
-                        _ => Ok((StatusCode::CREATED, response_headers, Json(stored.resource))),
+                        _ => Ok((StatusCode::CREATED, response_headers, stored.resource_json)
+                            .into_response()),
                     }
                 }
                 Err(e) => Err(map_storage_error(e)),

@@ -395,14 +395,22 @@ impl Default for SearchSettings {
 pub struct LoggingConfig {
     #[serde(default = "default_log_level")]
     pub level: String,
+    /// Log output format: "json" or "text"
+    /// Default: "json" (structured JSON for machine parsing, lower CPU overhead)
+    #[serde(default = "default_log_format")]
+    pub format: String,
 }
 fn default_log_level() -> String {
     "info".into()
+}
+fn default_log_format() -> String {
+    "json".into()
 }
 impl Default for LoggingConfig {
     fn default() -> Self {
         Self {
             level: default_log_level(),
+            format: default_log_format(),
         }
     }
 }

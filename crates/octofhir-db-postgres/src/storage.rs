@@ -168,6 +168,13 @@ impl FhirStorage for PostgresStorage {
         queries::create(&self.pool, resource).await
     }
 
+    async fn create_raw(
+        &self,
+        resource: &Value,
+    ) -> Result<octofhir_storage::RawStoredResource, StorageError> {
+        queries::create_raw(&self.pool, resource).await
+    }
+
     async fn read(
         &self,
         resource_type: &str,
@@ -190,6 +197,14 @@ impl FhirStorage for PostgresStorage {
         if_match: Option<&str>,
     ) -> Result<StoredResource, StorageError> {
         queries::update(&self.pool, resource, if_match).await
+    }
+
+    async fn update_raw(
+        &self,
+        resource: &Value,
+        if_match: Option<&str>,
+    ) -> Result<octofhir_storage::RawStoredResource, StorageError> {
+        queries::update_raw(&self.pool, resource, if_match).await
     }
 
     async fn delete(&self, resource_type: &str, id: &str) -> Result<(), StorageError> {

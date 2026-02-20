@@ -43,6 +43,27 @@ pub trait FhirStorage: Send + Sync {
     /// Returns `StorageError::InvalidResource` if the resource is malformed.
     async fn create(&self, resource: &Value) -> Result<StoredResource, StorageError>;
 
+    /// Creates a new resource and returns the result as a raw JSON string.
+    ///
+    /// This is an optimized create path that returns the resource JSON as a raw
+    /// string directly from the database, skipping the JSONB → Value
+    /// deserialization step.
+    ///
+    /// Default implementation delegates to `create()` and serializes the Value.
+    async fn create_raw(&self, resource: &Value) -> Result<RawStoredResource, StorageError> {
+        let stored = self.create(resource).await?;
+        let resource_json = serde_json::to_string(&stored.resource)
+            .map_err(|e| StorageError::internal(format!("Failed to serialize resource: {e}")))?;
+        Ok(RawStoredResource {
+            id: stored.id,
+            version_id: stored.version_id,
+            resource_type: stored.resource_type,
+            resource_json,
+            last_updated: stored.last_updated,
+            created_at: stored.created_at,
+        })
+    }
+
     /// Reads a resource by type and ID.
     ///
     /// Returns `None` if the resource does not exist.
@@ -102,6 +123,31 @@ pub trait FhirStorage: Send + Sync {
         resource: &Value,
         if_match: Option<&str>,
     ) -> Result<StoredResource, StorageError>;
+
+    /// Updates an existing resource and returns the result as a raw JSON string.
+    ///
+    /// This is an optimized update path that returns the resource JSON as a raw
+    /// string directly from the database, skipping the JSONB → Value
+    /// deserialization step.
+    ///
+    /// Default implementation delegates to `update()` and serializes the Value.
+    async fn update_raw(
+        &self,
+        resource: &Value,
+        if_match: Option<&str>,
+    ) -> Result<RawStoredResource, StorageError> {
+        let stored = self.update(resource, if_match).await?;
+        let resource_json = serde_json::to_string(&stored.resource)
+            .map_err(|e| StorageError::internal(format!("Failed to serialize resource: {e}")))?;
+        Ok(RawStoredResource {
+            id: stored.id,
+            version_id: stored.version_id,
+            resource_type: stored.resource_type,
+            resource_json,
+            last_updated: stored.last_updated,
+            created_at: stored.created_at,
+        })
+    }
 
     /// Deletes a resource by type and ID.
     ///

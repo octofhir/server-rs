@@ -151,7 +151,7 @@ impl ResourceHook for AutomationDispatcherHook {
         // Create automation event from resource event
         let automation_event = AutomationEvent {
             event_type: event_type_str.to_string(),
-            resource: event.resource.clone().unwrap_or_default(),
+            resource: event.resource.as_deref().cloned().unwrap_or_default(),
             previous: None, // Previous version is not available in ResourceEvent
             timestamp: time::OffsetDateTime::now_utc().to_string(),
         };

@@ -7,6 +7,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::net::IpAddr;
+use std::sync::Arc;
 use time::OffsetDateTime;
 
 // ============================================================================
@@ -53,8 +54,9 @@ pub struct ResourceEvent {
     pub resource_id: String,
     /// Version ID (transaction ID) if available
     pub version_id: Option<i64>,
-    /// The resource data as JSON (None for deletions)
-    pub resource: Option<serde_json::Value>,
+    /// The resource data as JSON (None for deletions).
+    /// Wrapped in Arc to avoid deep clones through the event pipeline.
+    pub resource: Option<Arc<serde_json::Value>>,
     /// Timestamp of the event
     #[serde(with = "time::serde::rfc3339")]
     pub timestamp: OffsetDateTime,
@@ -66,7 +68,7 @@ impl ResourceEvent {
         event_type: ResourceEventType,
         resource_type: impl Into<String>,
         resource_id: impl Into<String>,
-        resource: Option<serde_json::Value>,
+        resource: Option<Arc<serde_json::Value>>,
     ) -> Self {
         Self {
             event_type,
@@ -88,7 +90,7 @@ impl ResourceEvent {
             ResourceEventType::Created,
             resource_type,
             resource_id,
-            Some(resource),
+            Some(Arc::new(resource)),
         )
     }
 
@@ -102,7 +104,7 @@ impl ResourceEvent {
             ResourceEventType::Updated,
             resource_type,
             resource_id,
-            Some(resource),
+            Some(Arc::new(resource)),
         )
     }
 

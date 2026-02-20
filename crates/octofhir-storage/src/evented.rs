@@ -21,12 +21,13 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use octofhir_core::events::{EventBroadcaster, ResourceEvent};
 use serde_json::Value;
-use tracing::debug;
+use tracing::trace;
 
 use crate::error::StorageError;
 use crate::traits::{FhirStorage, Transaction};
 use crate::types::{
-    HistoryParams, HistoryResult, RawHistoryResult, SearchParams, SearchResult, StoredResource,
+    HistoryParams, HistoryResult, RawHistoryResult, RawStoredResource, SearchParams, SearchResult,
+    StoredResource,
 };
 
 /// A storage wrapper that emits events after successful CRUD operations.
@@ -66,7 +67,7 @@ impl<S: FhirStorage> EventedStorage<S> {
         let count = self
             .broadcaster
             .send_created(resource_type, resource_id, resource.clone());
-        debug!(
+        trace!(
             resource_type = %resource_type,
             resource_id = %resource_id,
             subscribers = count,
@@ -81,7 +82,7 @@ impl<S: FhirStorage> EventedStorage<S> {
         let count = self
             .broadcaster
             .send_updated(resource_type, resource_id, resource.clone());
-        debug!(
+        trace!(
             resource_type = %resource_type,
             resource_id = %resource_id,
             subscribers = count,
@@ -94,7 +95,7 @@ impl<S: FhirStorage> EventedStorage<S> {
             return;
         }
         let count = self.broadcaster.send_deleted(resource_type, resource_id);
-        debug!(
+        trace!(
             resource_type = %resource_type,
             resource_id = %resource_id,
             subscribers = count,
@@ -115,6 +116,19 @@ impl<S: FhirStorage> FhirStorage for EventedStorage<S> {
             .and_then(|v| v.as_str())
             .unwrap_or("Unknown");
         self.emit_created(resource_type, &result.id, &result.resource);
+
+        Ok(result)
+    }
+
+    async fn create_raw(&self, resource: &Value) -> Result<RawStoredResource, StorageError> {
+        let result = self.inner.create_raw(resource).await?;
+
+        // Emit event only if there are subscribers (avoids JSON parse overhead)
+        if self.broadcaster.subscriber_count() > 0 {
+            if let Ok(value) = serde_json::from_str::<Value>(&result.resource_json) {
+                self.emit_created(&result.resource_type, &result.id, &value);
+            }
+        }
 
         Ok(result)
     }
@@ -150,6 +164,23 @@ impl<S: FhirStorage> FhirStorage for EventedStorage<S> {
             .and_then(|v| v.as_str())
             .unwrap_or("Unknown");
         self.emit_updated(resource_type, &result.id, &result.resource);
+
+        Ok(result)
+    }
+
+    async fn update_raw(
+        &self,
+        resource: &Value,
+        if_match: Option<&str>,
+    ) -> Result<RawStoredResource, StorageError> {
+        let result = self.inner.update_raw(resource, if_match).await?;
+
+        // Emit event only if there are subscribers (avoids JSON parse overhead)
+        if self.broadcaster.subscriber_count() > 0 {
+            if let Ok(value) = serde_json::from_str::<Value>(&result.resource_json) {
+                self.emit_updated(&result.resource_type, &result.id, &value);
+            }
+        }
 
         Ok(result)
     }
@@ -290,7 +321,7 @@ impl Transaction for EventedTransaction {
         for event in pending_events {
             broadcaster.send_resource(event);
         }
-        debug!(count = event_count, "Emitted pending transaction events");
+        trace!(count = event_count, "Emitted pending transaction events");
 
         Ok(())
     }

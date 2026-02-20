@@ -59,8 +59,9 @@ async fn main() {
         }
     }
 
-    // Initialize tracing early with the default level
-    octofhir_server::observability::init_tracing();
+    // Initialize tracing early with the default level.
+    // The guard must be held alive to keep the non-blocking writer active.
+    let _log_guard = octofhir_server::observability::init_tracing();
 
     // Initialize Prometheus metrics
     octofhir_server::metrics::init_metrics();

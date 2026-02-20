@@ -522,79 +522,97 @@ fn should_skip_authentication(req: &Request<Body>, registry: &OperationRegistryS
 // Other Middleware
 // =============================================================================
 
-/// Prometheus metrics middleware.
+/// Combined tracing + metrics middleware.
 ///
-/// Records HTTP request metrics including:
-/// - Request count by method, path, and status
-/// - Request duration histogram
-/// - Active connection gauge
+/// Replaces the separate `TraceLayer` (tower-http) and `metrics_middleware` (from_fn)
+/// with a single middleware layer, eliminating one BoxCloneSyncService clone+drop per request.
 ///
-/// Excludes noisy endpoints (health checks, metrics, favicon) from recording.
-pub async fn metrics_middleware(req: Request<Body>, next: Next) -> Response {
+/// This middleware:
+/// - Generates/extracts `x-request-id` and mirrors it on the response
+/// - Creates a tracing span for non-noisy endpoints
+/// - Records HTTP request metrics (count, latency, active connections)
+/// - Skips tracing and metrics for noisy infrastructure endpoints
+pub async fn trace_metrics_middleware(req: Request<Body>, next: Next) -> Response {
     use crate::metrics;
     use std::time::Instant;
+    use tracing::Instrument;
 
     let path = req.uri().path();
 
-    // Skip metrics recording for noisy endpoints
-    if should_skip_metrics(path) {
+    // Fast path: skip tracing + metrics for noisy infrastructure endpoints
+    if is_noisy_endpoint(path) {
         return next.run(req).await;
     }
 
-    let method = req.method().to_string();
-    let path = path.to_string();
+    let method = req.method().clone();
+    let uri = req.uri().clone();
+
+    // Generate or extract request ID
+    let req_id = req
+        .headers()
+        .get("x-request-id")
+        .and_then(|v| v.to_str().ok())
+        .map(String::from)
+        .unwrap_or_else(|| Uuid::new_v4().to_string());
+
+    // Create tracing span
+    let span = tracing::info_span!(
+        "http.request",
+        http.method = %method,
+        http.target = %uri,
+        http.status_code = tracing::field::Empty,
+        request_id = %req_id,
+    );
+
+    let method_str = method.to_string();
+    let path_str = uri.path().to_string();
     let start = Instant::now();
 
-    // Track active connections
     metrics::increment_active_connections();
 
-    // Execute the request
-    let response = next.run(req).await;
+    // Execute the request inside the span
+    let response = next.run(req).instrument(span.clone()).await;
 
-    // Record metrics
     let status = response.status().as_u16();
     let duration = start.elapsed();
 
-    metrics::record_http_request(&method, &path, status, duration);
+    // Record status on span and log
+    span.record("http.status_code", tracing::field::display(status));
+    let _enter = span.enter();
+    tracing::info!(
+        http.status = %status,
+        elapsed_ms = %duration.as_millis(),
+        "request handled"
+    );
+    drop(_enter);
+
+    // Record metrics and mirror request ID on response
+    metrics::record_http_request(&method_str, &path_str, status, duration);
     metrics::decrement_active_connections();
+
+    let mut response = response;
+    if let Ok(header_value) = HeaderValue::from_str(&req_id) {
+        response.headers_mut().insert(
+            HeaderName::from_static("x-request-id"),
+            header_value,
+        );
+    }
 
     response
 }
 
-/// Check if metrics should be skipped for this path.
+/// Check if an endpoint is noisy (should skip tracing + metrics).
 ///
 /// Excludes high-frequency infrastructure endpoints that would create noise:
 /// - Health checks (/healthz, /readyz, /livez, /api/health)
 /// - Metrics endpoint (/metrics) - avoid self-referential metrics
 /// - Favicon (/favicon.ico) - browser noise
 #[inline]
-fn should_skip_metrics(path: &str) -> bool {
+fn is_noisy_endpoint(path: &str) -> bool {
     matches!(
         path,
         "/healthz" | "/readyz" | "/livez" | "/metrics" | "/favicon.ico" | "/api/health"
     )
-}
-
-// Middleware that ensures each request has an X-Request-Id and mirrors it on the response
-pub async fn request_id(mut req: Request<Body>, next: Next) -> Response {
-    let header_name = HeaderName::from_static("x-request-id");
-
-    // If the incoming request already has a request-id, preserve it; otherwise generate one
-    let req_id_value = req
-        .headers()
-        .get(&header_name)
-        .cloned()
-        .unwrap_or_else(|| HeaderValue::from_str(&Uuid::new_v4().to_string()).unwrap());
-
-    // Add to request extensions for downstream usage (e.g., logging)
-    req.extensions_mut().insert(req_id_value.clone());
-
-    let mut res = next.run(req).await;
-
-    // Add/propagate the request id header to response
-    res.headers_mut().insert(header_name.clone(), req_id_value);
-
-    res
 }
 
 /// Case-insensitive substring search without allocation.
@@ -614,47 +632,42 @@ fn starts_with_ignore_ascii_case(haystack: &[u8], prefix: &[u8]) -> bool {
     haystack.len() >= prefix.len() && haystack[..prefix.len()].eq_ignore_ascii_case(prefix)
 }
 
-// Content negotiation middleware: accept FHIR JSON, plain JSON, and SSE for Accept,
-// and require JSON for POST/PUT Content-Type.
-//
-// Only applies to FHIR-specific paths (/fhir/*) to allow flexibility for:
-// - OAuth endpoints (use form-urlencoded per RFC 6749)
-// - File upload endpoints (use multipart/form-data)
-// - Custom gateway endpoints (may use YAML, text, or other formats)
-pub async fn content_negotiation(req: Request<Body>, next: Next) -> Response {
+/// Check content negotiation for FHIR paths.
+///
+/// Returns `Some(error_response)` if the request has an unsupported Accept or Content-Type
+/// for FHIR paths (`/fhir/*`). Returns `None` if the request is acceptable or not a FHIR path.
+///
+/// This is called inline from `auth_middleware` to avoid a separate middleware layer.
+fn check_content_negotiation(req: &Request<Body>) -> Option<Response> {
     let path = req.uri().path();
 
-    // Apply strict content negotiation only to FHIR paths
-    // All other paths (OAuth, API, gateway endpoints) have freedom in Content-Type
+    // Only enforce for FHIR paths
     if !path.starts_with("/fhir/") {
-        return next.run(req).await;
+        return None;
     }
 
     let accepts_hdr = req.headers().get("accept").and_then(|v| v.to_str().ok());
     let accept_ok = accepts_hdr
         .map(|v| {
-            // Case-insensitive check without allocating a lowercase copy
             let v_lower = v.as_bytes();
             contains_ignore_ascii_case(v_lower, b"application/fhir+json")
                 || contains_ignore_ascii_case(v_lower, b"application/json")
                 || contains_ignore_ascii_case(v_lower, b"text/event-stream")
                 || v.contains("*/*")
         })
-        .unwrap_or(true); // if missing, treat as ok per HTTP defaults
+        .unwrap_or(true);
 
     if !accept_ok {
-        return error_response(
+        return Some(error_response(
             StatusCode::UNSUPPORTED_MEDIA_TYPE,
             "Only JSON is supported (application/fhir+json or application/json) in Accept",
-        );
+        ));
     }
 
-    let method = req.method().clone();
+    let method = req.method();
     let needs_body_type = method == axum::http::Method::POST || method == axum::http::Method::PUT;
 
     if needs_body_type {
-        let path = req.uri().path();
-        // POST _search endpoints accept application/x-www-form-urlencoded per FHIR spec
         let is_search_post = path.ends_with("/_search");
 
         let content_type = req
@@ -663,22 +676,25 @@ pub async fn content_negotiation(req: Request<Body>, next: Next) -> Response {
             .and_then(|v| v.to_str().ok());
         let content_ok = content_type
             .map(|s| {
-                // Case-insensitive prefix check without allocating a lowercase copy
                 let bytes = s.as_bytes();
                 starts_with_ignore_ascii_case(bytes, b"application/fhir+json")
                     || starts_with_ignore_ascii_case(bytes, b"application/json")
-                    || (is_search_post && starts_with_ignore_ascii_case(bytes, b"application/x-www-form-urlencoded"))
+                    || (is_search_post
+                        && starts_with_ignore_ascii_case(
+                            bytes,
+                            b"application/x-www-form-urlencoded",
+                        ))
             })
             .unwrap_or(false);
         if !content_ok {
-            return error_response(
+            return Some(error_response(
                 StatusCode::UNSUPPORTED_MEDIA_TYPE,
                 "Content-Type must be application/fhir+json or application/json",
-            );
+            ));
         }
     }
 
-    next.run(req).await
+    None
 }
 
 fn error_response(status: StatusCode, msg: &str) -> Response {
@@ -744,6 +760,28 @@ impl AuthorizationState {
             operation_registry,
         }
     }
+}
+
+// =============================================================================
+// Combined Auth State (authentication + authorization in one layer)
+// =============================================================================
+
+/// Combined state for the merged authentication + authorization middleware.
+///
+/// Merging authn + authz into a single middleware layer reduces Tower
+/// BoxCloneSyncService clone overhead by eliminating one layer.
+#[derive(Clone)]
+pub struct CombinedAuthState {
+    /// Core authentication state.
+    pub auth_state: AuthState,
+    /// Operation registry for public path lookups (source of truth).
+    pub operation_registry: Arc<OperationRegistryService>,
+    /// Cache for authenticated contexts (reduces DB queries per request).
+    pub auth_cache: Arc<dyn AuthContextCache>,
+    /// Cache for JWT verification (reduces signature verification overhead).
+    pub jwt_cache: Arc<JwtVerificationCache>,
+    /// Policy evaluator for access control.
+    pub policy_evaluator: Arc<PolicyEvaluator>,
 }
 
 /// Authorization middleware that enforces policy-based access control.
@@ -847,6 +885,376 @@ fn should_skip_authorization(req: &Request<Body>, registry: &OperationRegistrySe
     false
 }
 
+// =============================================================================
+// Combined Auth Middleware (authn + authz in one layer)
+// =============================================================================
+
+/// Combined authentication + authorization middleware.
+///
+/// Merges two separate middleware layers into one, reducing Tower
+/// BoxCloneSyncService clone+drop overhead by ~10% (one fewer layer).
+///
+/// This middleware:
+/// 1. Checks if the path should skip auth (single check instead of two)
+/// 2. Authenticates (validates Bearer/Basic/Cookie tokens)
+/// 3. Authorizes (evaluates access policies)
+/// 4. Inserts AuthContext + PolicyContext into request extensions
+pub async fn auth_middleware(
+    State(state): State<CombinedAuthState>,
+    mut req: Request<Body>,
+    next: Next,
+) -> Response {
+    // Content negotiation check (merged from separate middleware layer)
+    if let Some(response) = check_content_negotiation(&req) {
+        return response;
+    }
+
+    // Single public-path check (replaces two separate checks in authn + authz)
+    if should_skip_auth(&req, &state.operation_registry) {
+        return next.run(req).await;
+    }
+
+    // --- Authentication phase ---
+    let auth_state = &state.auth_state;
+
+    // 1. Try Authorization header first
+    let auth_header = req
+        .headers()
+        .get(AUTHORIZATION)
+        .and_then(|h| h.to_str().ok())
+        .map(|s| s.to_string());
+
+    let mut req = if let Some(auth_header) = &auth_header {
+        // Handle Basic auth
+        if let Some(encoded) = auth_header.strip_prefix("Basic ") {
+            let encoded = encoded.to_string();
+            return handle_basic_auth_then_authorize(
+                auth_state,
+                &encoded,
+                &state.policy_evaluator,
+                req,
+                next,
+            )
+            .await;
+        }
+
+        // Handle Bearer token
+        if let Some(token) = auth_header.strip_prefix("Bearer ")
+            && !token.is_empty()
+        {
+            match validate_token(auth_state, &state.auth_cache, &state.jwt_cache, token).await {
+                Ok(auth_context) => {
+                    tracing::debug!(
+                        client_id = %auth_context.client_id(),
+                        subject = %auth_context.subject(),
+                        "Token validated successfully"
+                    );
+                    req.extensions_mut().insert(auth_context);
+                    req
+                }
+                Err(e) => {
+                    tracing::debug!(error = %e, "Token validation failed");
+                    return match e {
+                        octofhir_auth::AuthError::TokenExpired => {
+                            unauthorized_response("Token expired")
+                        }
+                        octofhir_auth::AuthError::TokenRevoked => {
+                            unauthorized_response("Token revoked")
+                        }
+                        _ => unauthorized_response(&e.to_string()),
+                    };
+                }
+            }
+        } else {
+            return unauthorized_response("Invalid Authorization header format");
+        }
+    } else if let Some(token) = extract_token_from_cookie(&req, &auth_state.cookie_config) {
+        // 2. Try cookie
+        match validate_token(auth_state, &state.auth_cache, &state.jwt_cache, &token).await {
+            Ok(auth_context) => {
+                tracing::debug!(
+                    client_id = %auth_context.client_id(),
+                    subject = %auth_context.subject(),
+                    "Token validated successfully"
+                );
+                req.extensions_mut().insert(auth_context);
+                req
+            }
+            Err(e) => {
+                tracing::debug!(error = %e, "Token validation failed");
+                return match e {
+                    octofhir_auth::AuthError::TokenExpired => {
+                        unauthorized_response("Token expired")
+                    }
+                    octofhir_auth::AuthError::TokenRevoked => {
+                        unauthorized_response("Token revoked")
+                    }
+                    _ => unauthorized_response(&e.to_string()),
+                };
+            }
+        }
+    } else if is_websocket_upgrade(&req) {
+        // 3. WebSocket: try query parameter ?token=...
+        if let Some(token) = extract_token_from_query(&req) {
+            match validate_token(auth_state, &state.auth_cache, &state.jwt_cache, &token).await {
+                Ok(auth_context) => {
+                    req.extensions_mut().insert(auth_context);
+                    req
+                }
+                Err(e) => {
+                    tracing::debug!(error = %e, "Token validation failed");
+                    return match e {
+                        octofhir_auth::AuthError::TokenExpired => {
+                            unauthorized_response("Token expired")
+                        }
+                        octofhir_auth::AuthError::TokenRevoked => {
+                            unauthorized_response("Token revoked")
+                        }
+                        _ => unauthorized_response(&e.to_string()),
+                    };
+                }
+            }
+        } else {
+            tracing::debug!(path = %req.uri().path(), "WebSocket: No token in header, cookie, or query");
+            return unauthorized_response("Authentication required");
+        }
+    } else {
+        tracing::debug!(path = %req.uri().path(), "No Authorization header or cookie");
+        return unauthorized_response("Authentication required");
+    };
+
+    // --- Authorization phase ---
+    let auth_context = match req.extensions().get::<Arc<AuthContext>>() {
+        Some(ctx) => Arc::clone(ctx),
+        None => {
+            return unauthorized_response("Authentication required");
+        }
+    };
+
+    let policy_context = match build_policy_context(&req, &auth_context) {
+        Ok(ctx) => ctx,
+        Err(e) => {
+            tracing::error!(error = %e, "Failed to build policy context");
+            return internal_error_response("Policy evaluation failed");
+        }
+    };
+
+    let decision = state.policy_evaluator.evaluate(&policy_context).await;
+
+    match decision {
+        AccessDecision::Allow => {
+            req.extensions_mut().insert(policy_context);
+            next.run(req).await
+        }
+        AccessDecision::Deny(reason) => {
+            tracing::info!(
+                reason = %reason.message,
+                code = %reason.code,
+                user = ?auth_context.user.as_ref().map(|u| &u.username),
+                path = %req.uri().path(),
+                "Access denied"
+            );
+            forbidden_response(&reason)
+        }
+        AccessDecision::Abstain => {
+            tracing::info!(
+                user = ?auth_context.user.as_ref().map(|u| &u.username),
+                path = %req.uri().path(),
+                "Access denied: no matching policy"
+            );
+            forbidden_response(&DenyReason {
+                code: "no-matching-policy".to_string(),
+                message: "No policy matched this request".to_string(),
+                details: None,
+                policy_id: None,
+            })
+        }
+    }
+}
+
+/// Helper for Basic auth that continues into authorization after successful authn.
+async fn handle_basic_auth_then_authorize(
+    auth_state: &AuthState,
+    encoded: &str,
+    policy_evaluator: &PolicyEvaluator,
+    mut req: Request<Body>,
+    next: Next,
+) -> Response {
+    // Decode base64 credentials
+    let decoded = match STANDARD.decode(encoded) {
+        Ok(bytes) => match String::from_utf8(bytes) {
+            Ok(s) => s,
+            Err(_) => return unauthorized_response("Invalid Basic auth encoding"),
+        },
+        Err(_) => return unauthorized_response("Invalid Basic auth encoding"),
+    };
+
+    let (username, password) = match decoded.split_once(':') {
+        Some((u, p)) => (u.to_string(), p.to_string()),
+        None => return unauthorized_response("Invalid Basic auth format"),
+    };
+
+    let user = match auth_state.user_storage.find_by_username(&username).await {
+        Ok(Some(user)) => user,
+        Ok(None) => {
+            tracing::debug!(username = %username, "Basic auth: user not found");
+            return unauthorized_response("Invalid credentials");
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "Basic auth: failed to look up user");
+            return unauthorized_response("Authentication error");
+        }
+    };
+
+    if !user.active {
+        tracing::debug!(username = %username, "Basic auth: user is inactive");
+        return unauthorized_response("User is inactive");
+    }
+
+    let user_id = user.id.clone();
+    let user_storage = Arc::clone(&auth_state.user_storage);
+    let password_valid = match tokio::task::spawn_blocking(move || {
+        tokio::runtime::Handle::current()
+            .block_on(user_storage.verify_password(&user_id, &password))
+    })
+    .await
+    {
+        Ok(Ok(valid)) => valid,
+        Ok(Err(e)) => {
+            tracing::error!(error = %e, "Basic auth: password verification failed");
+            return unauthorized_response("Authentication error");
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "Basic auth: password verification task panicked");
+            return unauthorized_response("Authentication error");
+        }
+    };
+
+    if !password_valid {
+        tracing::debug!(username = %username, "Basic auth: invalid password");
+        return unauthorized_response("Invalid credentials");
+    }
+
+    let client = match auth_state
+        .client_storage
+        .find_by_client_id(DEFAULT_UI_CLIENT_ID)
+        .await
+    {
+        Ok(Some(c)) => c,
+        Ok(None) => {
+            tracing::error!(
+                "Basic auth: default client '{}' not found",
+                DEFAULT_UI_CLIENT_ID
+            );
+            return internal_error_response("Server configuration error");
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "Basic auth: failed to load default client");
+            return internal_error_response("Server configuration error");
+        }
+    };
+
+    let now = time::OffsetDateTime::now_utc().unix_timestamp();
+    let claims = Arc::new(AccessTokenClaims {
+        iss: "octofhir".to_string(),
+        sub: user.id.clone(),
+        aud: vec![],
+        exp: now + 3600,
+        iat: now,
+        jti: Uuid::new_v4().to_string(),
+        scope: "user/*.cruds system/*.cruds".to_string(),
+        client_id: DEFAULT_UI_CLIENT_ID.to_string(),
+        patient: None,
+        encounter: None,
+        fhir_user: user.fhir_user.clone(),
+        sid: None,
+    });
+
+    let user_context = UserContext {
+        id: user.id,
+        username: user.username,
+        name: user.name,
+        email: user.email,
+        fhir_user: user.fhir_user,
+        roles: user.roles,
+        attributes: user.attributes,
+    };
+
+    let auth_context = Arc::new(AuthContext {
+        patient: None,
+        encounter: None,
+        token_claims: claims,
+        client,
+        user: Some(user_context),
+    });
+
+    tracing::debug!(
+        client_id = %auth_context.client_id(),
+        subject = %auth_context.subject(),
+        "Basic auth validated successfully"
+    );
+
+    req.extensions_mut().insert(auth_context.clone());
+
+    // --- Inline authorization ---
+    let policy_context = match build_policy_context(&req, &auth_context) {
+        Ok(ctx) => ctx,
+        Err(e) => {
+            tracing::error!(error = %e, "Failed to build policy context");
+            return internal_error_response("Policy evaluation failed");
+        }
+    };
+
+    let decision = policy_evaluator.evaluate(&policy_context).await;
+
+    match decision {
+        AccessDecision::Allow => {
+            req.extensions_mut().insert(policy_context);
+            next.run(req).await
+        }
+        AccessDecision::Deny(reason) => {
+            tracing::info!(
+                reason = %reason.message,
+                code = %reason.code,
+                path = %req.uri().path(),
+                "Access denied"
+            );
+            forbidden_response(&reason)
+        }
+        AccessDecision::Abstain => {
+            tracing::info!(
+                path = %req.uri().path(),
+                "Access denied: no matching policy"
+            );
+            forbidden_response(&DenyReason {
+                code: "no-matching-policy".to_string(),
+                message: "No policy matched this request".to_string(),
+                details: None,
+                policy_id: None,
+            })
+        }
+    }
+}
+
+/// Check if a request should skip both authentication and authorization.
+///
+/// Uses the operation registry's public paths cache plus static UI paths.
+fn should_skip_auth(req: &Request<Body>, registry: &OperationRegistryService) -> bool {
+    let path = req.uri().path();
+
+    if registry.is_path_public(path) {
+        tracing::debug!(path = %path, "Skipping auth: public operation from registry");
+        return true;
+    }
+
+    if path.starts_with("/ui") {
+        tracing::debug!(path = %path, "Skipping auth: static UI path");
+        return true;
+    }
+
+    false
+}
+
 /// Build a PolicyContext from the request and auth context.
 fn build_policy_context(
     req: &Request<Body>,
@@ -855,16 +1263,13 @@ fn build_policy_context(
     let method = req.method().as_str();
     let path = req.uri().path();
 
-    // Parse query parameters using into_owned() to avoid allocation when Cow is already Owned
-    let query_params: HashMap<String, String> = req
-        .uri()
-        .query()
-        .map(|q| {
-            url::form_urlencoded::parse(q.as_bytes())
-                .map(|(k, v)| (k.into_owned(), v.into_owned()))
-                .collect()
-        })
-        .unwrap_or_default();
+    // Parse query parameters, skipping the parser for empty/missing query strings
+    let query_params: HashMap<String, String> = match req.uri().query() {
+        Some(q) if !q.is_empty() => url::form_urlencoded::parse(q.as_bytes())
+            .map(|(k, v)| (k.into_owned(), v.into_owned()))
+            .collect(),
+        _ => HashMap::new(),
+    };
 
     // Get request ID from headers if available
     let request_id = req

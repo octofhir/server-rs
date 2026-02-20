@@ -164,7 +164,7 @@ impl SubscriptionHook {
                             SubscriptionEventType::EventNotification,
                             0, // Event number will be assigned by storage
                         )
-                        .with_focus(resource.clone())
+                        .with_focus(serde_json::Value::clone(resource))
                         .build();
 
                         // Queue the event

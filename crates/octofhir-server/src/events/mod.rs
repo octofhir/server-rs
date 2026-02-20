@@ -138,7 +138,7 @@ impl From<&ResourceEvent> for SerializableEvent {
             resource_type: event.resource_type.clone(),
             resource_id: event.resource_id.clone(),
             version_id: event.version_id,
-            resource: event.resource.clone(),
+            resource: event.resource.as_deref().cloned(),
             timestamp: event.timestamp.unix_timestamp(),
         }
     }
@@ -163,7 +163,7 @@ impl SerializableEvent {
             resource_type: self.resource_type,
             resource_id: self.resource_id,
             version_id: self.version_id,
-            resource: self.resource,
+            resource: self.resource.map(std::sync::Arc::new),
             timestamp,
         }
     }
@@ -181,7 +181,7 @@ mod tests {
             resource_type: "Patient".to_string(),
             resource_id: "123".to_string(),
             version_id: Some(1),
-            resource: Some(serde_json::json!({"id": "123"})),
+            resource: Some(std::sync::Arc::new(serde_json::json!({"id": "123"}))),
             timestamp: time::OffsetDateTime::now_utc(),
         };
 

@@ -604,6 +604,185 @@ pub fn build_identifier_search(
     Ok(())
 }
 
+/// Build GIN-optimized token search using `resource @> '{...}'::jsonb`.
+///
+/// Generates containment queries that leverage the existing GIN index
+/// (`jsonb_path_ops`) on the resource column. For CodeableConcept/Coding fields,
+/// this produces queries like:
+/// ```sql
+/// resource @> '{"code": {"coding": [{"system": "http://loinc.org", "code": "8480-6"}]}}'::jsonb
+/// ```
+pub fn build_gin_token_search(
+    builder: &mut SqlBuilder,
+    param: &ParsedParam,
+    path_segments: &[String],
+) -> Result<(), SqlBuilderError> {
+    if param.values.is_empty() {
+        return Ok(());
+    }
+
+    let resource_col = builder.resource_column().to_string();
+    let mut or_conditions = Vec::new();
+
+    for value in &param.values {
+        if value.raw.is_empty() {
+            continue;
+        }
+
+        let (system, code) = parse_token_value(&value.raw);
+
+        let condition = match &param.modifier {
+            None => build_gin_token_containment(&mut *builder, &resource_col, path_segments, system, code),
+
+            Some(SearchModifier::Not) => {
+                let inner = build_gin_token_containment(&mut *builder, &resource_col, path_segments, system, code);
+                format!("NOT ({inner})")
+            }
+
+            // For other modifiers, fall back to the standard token search
+            _ => {
+                let json_path = crate::sql_builder::build_jsonb_accessor(&resource_col, path_segments, false);
+                let mut temp_builder = SqlBuilder::new().with_param_offset(builder.param_count());
+                build_token_search(&mut temp_builder, param, &json_path)?;
+                // Copy params
+                for p in temp_builder.params() {
+                    match p {
+                        SqlParam::Text(s) => { builder.add_text_param(s); }
+                        SqlParam::Json(s) => { builder.add_json_param(s); }
+                        SqlParam::Integer(i) => { builder.add_integer_param(*i); }
+                        SqlParam::Float(f) => { builder.add_float_param(*f); }
+                        SqlParam::Boolean(b) => { builder.add_boolean_param(*b); }
+                        SqlParam::Timestamp(s) => { builder.add_timestamp_param(s); }
+                    }
+                }
+                let conditions = temp_builder.conditions();
+                if let Some(c) = conditions.first() {
+                    builder.add_condition(c.clone());
+                }
+                return Ok(());
+            }
+        };
+
+        or_conditions.push(condition);
+    }
+
+    if !or_conditions.is_empty() {
+        builder.add_condition(SqlBuilder::build_or_clause(&or_conditions));
+    }
+
+    Ok(())
+}
+
+/// Build GIN containment condition for a token (CodeableConcept/Coding).
+fn build_gin_token_containment(
+    builder: &mut SqlBuilder,
+    resource_col: &str,
+    path_segments: &[String],
+    system: Option<&str>,
+    code: &str,
+) -> String {
+    // Build the coding object based on system presence
+    let coding_obj = match system {
+        Some(sys) if !sys.is_empty() => {
+            serde_json::json!({"system": sys, "code": code})
+        }
+        _ => {
+            serde_json::json!({"code": code})
+        }
+    };
+
+    // Wrap in {"coding": [...]} for CodeableConcept
+    let field_value = serde_json::json!({"coding": [coding_obj]});
+
+    // Build the nested JSON containment object from path segments
+    let containment = build_nested_containment(path_segments, field_value);
+
+    let json_str = containment.to_string();
+    let p = builder.add_json_param(&json_str);
+    format!("{resource_col} @> ${p}::jsonb")
+}
+
+/// Build GIN-optimized search for simple code fields using `resource @> '{...}'::jsonb`.
+///
+/// For simple code fields like `Patient.gender`, generates:
+/// ```sql
+/// resource @> '{"gender": "female"}'::jsonb
+/// ```
+pub fn build_gin_code_search(
+    builder: &mut SqlBuilder,
+    param: &ParsedParam,
+    path_segments: &[String],
+) -> Result<(), SqlBuilderError> {
+    if param.values.is_empty() {
+        return Ok(());
+    }
+
+    let resource_col = builder.resource_column().to_string();
+    let mut or_conditions = Vec::new();
+
+    for value in &param.values {
+        if value.raw.is_empty() {
+            continue;
+        }
+
+        // For simple codes, ignore system part
+        let (_, code) = parse_token_value(&value.raw);
+
+        let condition = match &param.modifier {
+            None => {
+                let containment = build_nested_containment(path_segments, serde_json::json!(code));
+                let json_str = containment.to_string();
+                let p = builder.add_json_param(&json_str);
+                format!("{resource_col} @> ${p}::jsonb")
+            }
+
+            Some(SearchModifier::Not) => {
+                let containment = build_nested_containment(path_segments, serde_json::json!(code));
+                let json_str = containment.to_string();
+                let p = builder.add_json_param(&json_str);
+                format!("NOT ({resource_col} @> ${p}::jsonb)")
+            }
+
+            Some(SearchModifier::Missing) => {
+                let text_path = crate::sql_builder::build_jsonb_accessor(&resource_col, path_segments, true);
+                let is_missing = value.raw.eq_ignore_ascii_case("true");
+                if is_missing {
+                    format!("({text_path} IS NULL OR {text_path} = 'null')")
+                } else {
+                    format!("({text_path} IS NOT NULL AND {text_path} != 'null')")
+                }
+            }
+
+            Some(other) => {
+                return Err(SqlBuilderError::InvalidModifier(format!("{other:?}")));
+            }
+        };
+
+        or_conditions.push(condition);
+    }
+
+    if !or_conditions.is_empty() {
+        builder.add_condition(SqlBuilder::build_or_clause(&or_conditions));
+    }
+
+    Ok(())
+}
+
+/// Build a nested JSON object from path segments wrapping a leaf value.
+///
+/// For path `["code"]` and value `{"coding": [...]}`, produces:
+/// `{"code": {"coding": [...]}}`
+///
+/// For path `["name", "family"]` and value `"Smith"`, produces:
+/// `{"name": [{"family": "Smith"}]}`  (arrays handled by caller)
+fn build_nested_containment(path_segments: &[String], leaf_value: serde_json::Value) -> serde_json::Value {
+    let mut result = leaf_value;
+    for segment in path_segments.iter().rev() {
+        result = serde_json::json!({ segment.as_str(): result });
+    }
+    result
+}
+
 /// Build search for simple code fields (not CodeableConcept).
 ///
 /// Used for fields like Patient.gender which are simple code values.
@@ -791,4 +970,103 @@ mod tests {
     // with the sync version tests above. The async version is primarily for
     // terminology-requiring modifiers (:in, :not-in, :below, :above) which
     // require integration tests with a real PostgreSQL pool.
+
+    // ========================================================================
+    // GIN-optimized token search tests
+    // ========================================================================
+
+    #[test]
+    fn test_gin_code_search_simple() {
+        let mut builder = SqlBuilder::new();
+        let param = make_param("gender", "female", None);
+
+        build_gin_code_search(&mut builder, &param, &["gender".to_string()]).unwrap();
+
+        let clause = builder.build_where_clause().unwrap();
+        assert!(
+            clause.contains("@>"),
+            "Expected @> containment, got: {clause}"
+        );
+        assert!(clause.contains("::jsonb"));
+    }
+
+    #[test]
+    fn test_gin_code_search_not_modifier() {
+        let mut builder = SqlBuilder::new();
+        let param = make_param("gender", "female", Some(SearchModifier::Not));
+
+        build_gin_code_search(&mut builder, &param, &["gender".to_string()]).unwrap();
+
+        let clause = builder.build_where_clause().unwrap();
+        assert!(
+            clause.starts_with("NOT ("),
+            "Expected NOT wrapper, got: {clause}"
+        );
+        assert!(clause.contains("@>"));
+    }
+
+    #[test]
+    fn test_gin_token_search_system_and_code() {
+        let mut builder = SqlBuilder::new();
+        let param = make_param("code", "http://loinc.org|8480-6", None);
+
+        build_gin_token_search(&mut builder, &param, &["code".to_string()]).unwrap();
+
+        let clause = builder.build_where_clause().unwrap();
+        assert!(
+            clause.contains("@>"),
+            "Expected @> containment, got: {clause}"
+        );
+        assert!(clause.contains("::jsonb"));
+    }
+
+    #[test]
+    fn test_gin_token_search_code_only() {
+        let mut builder = SqlBuilder::new();
+        let param = make_param("code", "8480-6", None);
+
+        build_gin_token_search(&mut builder, &param, &["code".to_string()]).unwrap();
+
+        let clause = builder.build_where_clause().unwrap();
+        assert!(
+            clause.contains("@>"),
+            "Expected @> containment, got: {clause}"
+        );
+    }
+
+    #[test]
+    fn test_gin_token_search_not_modifier() {
+        let mut builder = SqlBuilder::new();
+        let param = make_param("code", "http://loinc.org|8480-6", Some(SearchModifier::Not));
+
+        build_gin_token_search(&mut builder, &param, &["code".to_string()]).unwrap();
+
+        let clause = builder.build_where_clause().unwrap();
+        assert!(
+            clause.starts_with("NOT ("),
+            "Expected NOT wrapper, got: {clause}"
+        );
+        assert!(clause.contains("@>"));
+    }
+
+    #[test]
+    fn test_gin_nested_containment() {
+        // Verify the nested containment builder produces correct JSON
+        let result = build_nested_containment(
+            &["code".to_string()],
+            serde_json::json!({"coding": [{"system": "http://loinc.org", "code": "8480-6"}]}),
+        );
+        let expected = serde_json::json!({
+            "code": {"coding": [{"system": "http://loinc.org", "code": "8480-6"}]}
+        });
+        assert_eq!(result, expected);
+
+        // Simple code
+        let result = build_nested_containment(
+            &["gender".to_string()],
+            serde_json::json!("female"),
+        );
+        let expected = serde_json::json!({"gender": "female"});
+        assert_eq!(result, expected);
+    }
 }
