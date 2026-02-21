@@ -1,0 +1,112 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "octofhir.fullname" . }}-config
+  labels:
+    {{- include "octofhir.labels" . | nindent 4 }}
+data:
+  octofhir.toml: |
+    [server]
+    host = {{ .Values.config.server.host | quote }}
+    port = {{ .Values.config.server.port }}
+    body_limit_bytes = {{ .Values.config.server.bodyLimitBytes | int }}
+    compression = {{ .Values.config.server.compression }}
+
+    [storage.postgres]
+    host = {{ include "octofhir.postgresql.host" . | quote }}
+    port = {{ include "octofhir.postgresql.port" . }}
+    user = {{ include "octofhir.postgresql.user" . | quote }}
+    # Password injected via OCTOFHIR__STORAGE__POSTGRES__PASSWORD env var
+    password = ""
+    database = {{ include "octofhir.postgresql.database" . | quote }}
+    pool_size = {{ .Values.externalPostgresql.poolSize | default 50 }}
+
+    [fhir]
+    version = {{ .Values.config.fhir.version | quote }}
+
+    [validation]
+    allow_skip_validation = {{ .Values.config.validation.allowSkipValidation }}
+
+    [search]
+    default_count = {{ .Values.config.search.defaultCount }}
+    max_count = {{ .Values.config.search.maxCount }}
+
+    [packages]
+    path = {{ .Values.config.packages.path | quote }}
+    load = [
+    {{- range .Values.config.packages.load }}
+      {{ . | quote }},
+    {{- end }}
+    ]
+
+    [logging]
+    level = {{ .Values.config.logging.level | quote }}
+
+    [otel]
+    enabled = {{ .Values.config.otel.enabled }}
+    endpoint = {{ .Values.config.otel.endpoint | quote }}
+    sample_ratio = {{ .Values.config.otel.sampleRatio }}
+
+    [auth]
+    {{- if .Values.config.auth.issuer }}
+    issuer = {{ .Values.config.auth.issuer | quote }}
+    {{- else }}
+    issuer = "http://{{ include "octofhir.fullname" . }}:{{ .Values.service.port }}"
+    {{- end }}
+
+    [auth.oauth]
+    access_token_lifetime = {{ .Values.config.auth.oauth.accessTokenLifetime | quote }}
+    refresh_token_lifetime = {{ .Values.config.auth.oauth.refreshTokenLifetime | quote }}
+    refresh_token_rotation = {{ .Values.config.auth.oauth.refreshTokenRotation }}
+    grant_types = [
+    {{- range .Values.config.auth.oauth.grantTypes }}
+      {{ . | quote }},
+    {{- end }}
+    ]
+
+    [auth.smart]
+    launch_ehr_enabled = {{ .Values.config.auth.smart.launchEhrEnabled }}
+    launch_standalone_enabled = {{ .Values.config.auth.smart.launchStandaloneEnabled }}
+    public_clients_allowed = {{ .Values.config.auth.smart.publicClientsAllowed }}
+    refresh_tokens_enabled = {{ .Values.config.auth.smart.refreshTokensEnabled }}
+    openid_enabled = {{ .Values.config.auth.smart.openidEnabled }}
+
+    [auth.signing]
+    algorithm = {{ .Values.config.auth.signing.algorithm | quote }}
+    key_rotation_days = {{ .Values.config.auth.signing.keyRotationDays }}
+    keys_to_keep = {{ .Values.config.auth.signing.keysToKeep }}
+
+    [auth.policy]
+    default_deny = {{ .Values.config.auth.policy.defaultDeny }}
+    quickjs_enabled = {{ .Values.config.auth.policy.quickjsEnabled }}
+
+    [redis]
+    enabled = {{ .Values.config.redis.enabled }}
+    {{- if .Values.config.redis.url }}
+    url = {{ .Values.config.redis.url | quote }}
+    {{- end }}
+    pool_size = {{ .Values.config.redis.poolSize }}
+
+    [graphql]
+    enabled = {{ .Values.config.graphql.enabled }}
+    introspection = {{ .Values.config.graphql.introspection }}
+    max_depth = {{ .Values.config.graphql.maxDepth }}
+    max_complexity = {{ .Values.config.graphql.maxComplexity }}
+
+    [sql_on_fhir]
+    enabled = {{ .Values.config.sqlOnFhir.enabled }}
+
+    [cql]
+    enabled = {{ .Values.config.cql.enabled }}
+
+    [audit]
+    enabled = {{ .Values.config.audit.enabled }}
+
+    [bulk_import]
+    enabled = {{ .Values.config.bulkImport.enabled }}
+    batch_size = {{ .Values.config.bulkImport.batchSize }}
+
+    # Bootstrap credentials injected via env vars:
+    # OCTOFHIR__BOOTSTRAP__ADMIN_USER__USERNAME
+    # OCTOFHIR__BOOTSTRAP__ADMIN_USER__PASSWORD
+    # OCTOFHIR__BOOTSTRAP__BACKEND_CLIENT__CLIENT_SECRET

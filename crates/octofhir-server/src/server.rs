@@ -42,7 +42,7 @@ use crate::hooks::{
     SearchParamHook,
 };
 use crate::operation_registry::OperationRegistryService;
-use crate::operations::{DynOperationHandler, OperationRegistry, register_core_operations_full};
+use crate::operations::{DynOperationHandler, OperationRegistry, register_core_operations_all};
 use crate::reference_resolver::StorageReferenceResolver;
 use crate::subscriptions::{SubscriptionHook, SubscriptionState};
 use crate::validation::ValidationService;
@@ -995,6 +995,34 @@ pub async fn build_app(
                 tracing::info!("Registered $evaluate-measure operation");
             }
 
+            // Register $reindex operation
+            registry.register(crate::operations::OperationDefinition {
+                code: "reindex".to_string(),
+                url: "http://octofhir.org/OperationDefinition/reindex".to_string(),
+                kind: crate::operations::OperationKind::Operation,
+                system: true,
+                type_level: true,
+                instance: true,
+                resource: vec![], // All resource types
+                parameters: vec![],
+                affects_state: true,
+            });
+            tracing::info!("Registered $reindex operation");
+
+            // Register $import operation
+            registry.register(crate::operations::OperationDefinition {
+                code: "import".to_string(),
+                url: "http://octofhir.org/OperationDefinition/import".to_string(),
+                kind: crate::operations::OperationKind::Operation,
+                system: true,
+                type_level: false,
+                instance: false,
+                resource: vec![],
+                parameters: vec![],
+                affects_state: true,
+            });
+            tracing::info!("Registered $import operation");
+
             Arc::new(registry)
         }
         Err(e) => {
@@ -1091,6 +1119,32 @@ pub async fn build_app(
                 });
             }
 
+            // Register $reindex operation
+            registry.register(crate::operations::OperationDefinition {
+                code: "reindex".to_string(),
+                url: "http://octofhir.org/OperationDefinition/reindex".to_string(),
+                kind: crate::operations::OperationKind::Operation,
+                system: true,
+                type_level: true,
+                instance: true,
+                resource: vec![], // All resource types
+                parameters: vec![],
+                affects_state: true,
+            });
+
+            // Register $import operation
+            registry.register(crate::operations::OperationDefinition {
+                code: "import".to_string(),
+                url: "http://octofhir.org/OperationDefinition/import".to_string(),
+                kind: crate::operations::OperationKind::Operation,
+                system: true,
+                type_level: false,
+                instance: false,
+                resource: vec![],
+                parameters: vec![],
+                affects_state: true,
+            });
+
             Arc::new(registry)
         }
     };
@@ -1101,12 +1155,14 @@ pub async fn build_app(
         "Registering operation handlers with CQL enabled flag"
     );
     let operation_handlers: Arc<HashMap<String, DynOperationHandler>> =
-        Arc::new(register_core_operations_full(
+        Arc::new(register_core_operations_all(
             fhirpath_engine.clone(),
             model_provider.clone(),
             cfg.bulk_export.clone(),
             cfg.sql_on_fhir.clone(),
             cfg.cql.enabled,
+            cfg.reindex.clone(),
+            cfg.bulk_import.clone(),
         ));
     tracing::info!(
         count = operation_handlers.len(),
@@ -1680,6 +1736,14 @@ pub async fn build_app(
                         // Execute the ViewDefinition export
                         crate::operations::execute_viewdefinition_export(state, job_id, body).await
                     }
+                    "reindex" => {
+                        let body = body.ok_or_else(|| "Missing job parameters".to_string())?;
+                        crate::operations::execute_reindex(state, job_id, body).await
+                    }
+                    "bulk_import" => {
+                        let body = body.ok_or_else(|| "Missing job parameters".to_string())?;
+                        crate::operations::execute_bulk_import(state, job_id, body).await
+                    }
                     _ => Err(format!("Unknown job type: {}", request_type)),
                 }
             })
@@ -1874,27 +1938,33 @@ fn build_router(state: AppState, body_limit: usize, compression: bool) -> Router
             "/{resource_type}/_search",
             axum::routing::post(handlers::search_resource_post),
         )
-        // Compartment search routes (must come before instance-level routes)
-        // GET /Patient/123/Observation - resources in compartment (specific routes first)
+        // Compartment search + instance operation routes (must come before generic instance routes)
+        // GET /Patient/123/Observation - compartment search
+        // POST /Patient/123/$reindex - instance-level operation
         .route(
             "/Patient/{id}/{resource_type}",
-            get(handlers::compartment_search),
+            get(handlers::compartment_search)
+                .post(crate::operations::compartment_post_handler),
         )
         .route(
             "/Encounter/{id}/{resource_type}",
-            get(handlers::compartment_search),
+            get(handlers::compartment_search)
+                .post(crate::operations::compartment_post_handler),
         )
         .route(
             "/Practitioner/{id}/{resource_type}",
-            get(handlers::compartment_search),
+            get(handlers::compartment_search)
+                .post(crate::operations::compartment_post_handler),
         )
         .route(
             "/RelatedPerson/{id}/{resource_type}",
-            get(handlers::compartment_search),
+            get(handlers::compartment_search)
+                .post(crate::operations::compartment_post_handler),
         )
         .route(
             "/Device/{id}/{resource_type}",
-            get(handlers::compartment_search),
+            get(handlers::compartment_search)
+                .post(crate::operations::compartment_post_handler),
         )
         // CRUD, search, and system operations
         // This merged route handles both /$operation and /ResourceType

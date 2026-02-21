@@ -1,0 +1,30 @@
+OctoFHIR has been deployed.
+
+1. Get the application URL:
+{{- if .Values.ingress.enabled }}
+{{- range $host := .Values.ingress.hosts }}
+  http{{ if $.Values.ingress.tls }}s{{ end }}://{{ $host.host }}
+{{- end }}
+{{- else if contains "NodePort" .Values.service.type }}
+  export NODE_PORT=$(kubectl get --namespace {{ .Release.Namespace }} -o jsonpath="{.spec.ports[0].nodePort}" services {{ include "octofhir.fullname" . }})
+  export NODE_IP=$(kubectl get nodes --namespace {{ .Release.Namespace }} -o jsonpath="{.items[0].status.addresses[0].address}")
+  echo http://$NODE_IP:$NODE_PORT
+{{- else if contains "LoadBalancer" .Values.service.type }}
+  NOTE: It may take a few minutes for the LoadBalancer IP to be available.
+  kubectl get --namespace {{ .Release.Namespace }} svc {{ include "octofhir.fullname" . }} -w
+{{- else }}
+  kubectl --namespace {{ .Release.Namespace }} port-forward svc/{{ include "octofhir.fullname" . }} {{ .Values.service.port }}:{{ .Values.service.port }}
+  echo "Visit http://127.0.0.1:{{ .Values.service.port }}/ui"
+{{- end }}
+
+2. FHIR endpoints:
+   - Metadata:   /fhir/metadata
+   - Resources:  /fhir/{ResourceType}
+   - UI Console: /ui
+
+3. Get the admin password:
+{{- if .Values.bootstrap.existingSecret }}
+   kubectl get secret {{ .Values.bootstrap.existingSecret }} --namespace {{ .Release.Namespace }} -o jsonpath="{.data.admin-password}" | base64 -d
+{{- else }}
+   kubectl get secret {{ include "octofhir.fullname" . }}-secret --namespace {{ .Release.Namespace }} -o jsonpath="{.data.admin-password}" | base64 -d
+{{- end }}

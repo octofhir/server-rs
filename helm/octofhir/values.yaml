@@ -1,0 +1,219 @@
+# OctoFHIR Helm Chart - Default Values
+
+replicaCount: 1
+
+image:
+  repository: ghcr.io/octofhir/server-rs
+  pullPolicy: IfNotPresent
+  # Defaults to Chart appVersion
+  tag: ""
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  automount: true
+  annotations: {}
+  name: ""
+
+podAnnotations: {}
+podLabels: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  fsGroup: 1000
+
+securityContext:
+  readOnlyRootFilesystem: true
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+
+service:
+  type: ClusterIP
+  port: 8888
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: octofhir.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+resources:
+  requests:
+    cpu: 500m
+    memory: 2Gi
+  limits:
+    cpu: "2"
+    memory: 4Gi
+
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+
+pdb:
+  enabled: false
+  minAvailable: 1
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+# ============================================================================
+# OctoFHIR Configuration
+# Maps to octofhir.toml sections
+# ============================================================================
+
+config:
+  server:
+    host: "0.0.0.0"
+    port: 8888
+    bodyLimitBytes: 1048576
+    compression: true
+
+  fhir:
+    version: "R4"
+
+  search:
+    defaultCount: 10
+    maxCount: 100
+
+  packages:
+    path: "/data/fhir"
+    load:
+      - "hl7.fhir.r4.core#4.0.1"
+
+  validation:
+    allowSkipValidation: false
+
+  logging:
+    level: "info"
+
+  otel:
+    enabled: false
+    endpoint: ""
+    sampleRatio: 0.0
+
+  auth:
+    issuer: ""  # Set to your external URL, e.g. https://fhir.example.com
+    oauth:
+      accessTokenLifetime: "1h"
+      refreshTokenLifetime: "90d"
+      refreshTokenRotation: true
+      grantTypes:
+        - authorization_code
+        - client_credentials
+        - refresh_token
+    smart:
+      launchEhrEnabled: true
+      launchStandaloneEnabled: true
+      publicClientsAllowed: true
+      refreshTokensEnabled: true
+      openidEnabled: true
+    signing:
+      algorithm: "RS256"
+      keyRotationDays: 90
+      keysToKeep: 3
+    policy:
+      defaultDeny: true
+      quickjsEnabled: true
+
+  redis:
+    enabled: false
+    url: ""
+    poolSize: 10
+
+  graphql:
+    enabled: true
+    introspection: false
+    maxDepth: 15
+    maxComplexity: 500
+
+  sqlOnFhir:
+    enabled: true
+
+  cql:
+    enabled: false
+
+  audit:
+    enabled: false
+
+  bulkImport:
+    enabled: true
+    batchSize: 1000
+
+# ============================================================================
+# Bootstrap credentials (stored in Secret)
+# ============================================================================
+
+bootstrap:
+  adminUser:
+    username: "admin"
+    # Password: set via --set or external Secret
+    password: ""
+    email: "admin@octofhir.io"
+  backendClient:
+    clientId: "backend"
+    # Secret: set via --set or external Secret
+    clientSecret: ""
+    scopes:
+      - "system/*.cruds"
+
+  # Use existing secret instead of creating one
+  existingSecret: ""
+
+# ============================================================================
+# Bitnami PostgreSQL subchart
+# ============================================================================
+
+postgresql:
+  enabled: true
+  auth:
+    username: octofhir
+    password: ""
+    database: octofhir
+    existingSecret: ""
+  primary:
+    persistence:
+      enabled: true
+      size: 50Gi
+    extendedConfiguration: |
+      jit = off
+      shared_buffers = 512MB
+      effective_cache_size = 1536MB
+      work_mem = 16MB
+      maintenance_work_mem = 256MB
+      max_connections = 200
+    resources:
+      requests:
+        cpu: 500m
+        memory: 1Gi
+      limits:
+        cpu: "2"
+        memory: 2Gi
+
+# ============================================================================
+# External PostgreSQL (when subchart is disabled)
+# ============================================================================
+
+externalPostgresql:
+  host: ""
+  port: 5432
+  user: "octofhir"
+  password: ""
+  database: "octofhir"
+  # Use existing secret for password (key: postgresql-password)
+  existingSecret: ""
+  poolSize: 50

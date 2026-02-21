@@ -266,9 +266,13 @@ pub async fn merged_root_post_handler(
     body: axum::body::Bytes,
 ) -> Result<Response, ApiError> {
     if is_operation(&param) {
-        // Parse body as JSON for operation
-        let value: serde_json::Value = serde_json::from_slice(&body)
-            .map_err(|e| ApiError::bad_request(format!("Invalid JSON: {}", e)))?;
+        // Parse body as JSON for operation (empty body → null)
+        let value: serde_json::Value = if body.is_empty() {
+            serde_json::Value::Null
+        } else {
+            serde_json::from_slice(&body)
+                .map_err(|e| ApiError::bad_request(format!("Invalid JSON: {}", e)))?
+        };
         let params = OperationParams::Post(value);
         let result = system_operation_handler_internal(state, param, params).await?;
         Ok(result.into_response())
@@ -312,9 +316,13 @@ pub async fn merged_type_post_handler(
     body: axum::body::Bytes,
 ) -> Result<Response, ApiError> {
     if is_operation(&param) {
-        // Parse body as JSON for operation
-        let value: serde_json::Value = serde_json::from_slice(&body)
-            .map_err(|e| ApiError::bad_request(format!("Invalid JSON: {}", e)))?;
+        // Parse body as JSON for operation (empty body → null)
+        let value: serde_json::Value = if body.is_empty() {
+            serde_json::Value::Null
+        } else {
+            serde_json::from_slice(&body)
+                .map_err(|e| ApiError::bad_request(format!("Invalid JSON: {}", e)))?
+        };
         let params = OperationParams::Post(value);
         let result = type_operation_handler_internal(state, resource_type, param, params).await?;
         Ok(result.into_response())
@@ -323,6 +331,43 @@ pub async fn merged_type_post_handler(
         Err(ApiError::bad_request(format!(
             "POST to /{}/{} is not supported. Use PUT to update a resource.",
             resource_type, param
+        )))
+    }
+}
+
+/// POST handler for compartment routes like `/Patient/{id}/{param}`.
+///
+/// Compartment routes (e.g. `/Patient/{id}/{resource_type}`) match before the
+/// generic `/{resource_type}/{id}/{operation}` route. This POST handler dispatches
+/// `$operation` requests to the instance-level operation handler.
+pub async fn compartment_post_handler(
+    axum::extract::OriginalUri(uri): axum::extract::OriginalUri,
+    State(state): State<AppState>,
+    Path((id, param)): Path<(String, String)>,
+    body: axum::body::Bytes,
+) -> Result<Response, ApiError> {
+    if is_operation(&param) {
+        // Extract compartment type from URI: /fhir/Patient/123/$reindex → "Patient"
+        let compartment_type = uri
+            .path()
+            .strip_prefix("/fhir/")
+            .unwrap_or(uri.path())
+            .split('/')
+            .next()
+            .unwrap_or("")
+            .to_string();
+
+        let value: serde_json::Value = if body.is_empty() {
+            serde_json::Value::Null
+        } else {
+            serde_json::from_slice(&body)
+                .map_err(|e| ApiError::bad_request(format!("Invalid JSON: {}", e)))?
+        };
+        let params = OperationParams::Post(value);
+        instance_operation_handler_internal(&state, &compartment_type, &id, &param, params).await
+    } else {
+        Err(ApiError::bad_request(format!(
+            "POST to this compartment path is not supported."
         )))
     }
 }
@@ -360,6 +405,41 @@ async fn system_operation_handler_internal(
         None => Err(ApiError::not_implemented(format!(
             "Operation ${} is not implemented",
             code
+        ))),
+    }
+}
+
+/// Internal instance operation handler that takes pre-parsed parameters.
+async fn instance_operation_handler_internal(
+    state: &AppState,
+    resource_type: &str,
+    id: &str,
+    operation: &str,
+    params: OperationParams,
+) -> Result<Response, ApiError> {
+    let code = operation.trim_start_matches('$');
+
+    let op_def = state
+        .fhir_operations
+        .get_instance_operation(resource_type, code);
+    if op_def.is_none() {
+        return Err(ApiError::not_found(format!(
+            "Operation ${code} not found for {resource_type}/{id}"
+        )));
+    }
+
+    let handler = state.operation_handlers.get(code);
+    match handler {
+        Some(h) => {
+            let params_value = params.to_value();
+            let result = h
+                .handle_instance(state, resource_type, id, &params_value)
+                .await
+                .map_err(ApiError::from)?;
+            Ok((StatusCode::OK, Json(result)).into_response())
+        }
+        None => Err(ApiError::not_implemented(format!(
+            "Operation ${code} is not implemented"
         ))),
     }
 }

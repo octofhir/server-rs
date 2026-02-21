@@ -30,10 +30,12 @@
 //! - [FHIR Asynchronous Request Pattern](http://hl7.org/fhir/async.html)
 
 mod export;
+mod import;
 mod status;
 mod writer;
 
 pub use export::{ExportOperation, execute_bulk_export};
+pub use import::{ImportOperation, execute_bulk_import};
 pub use status::{
     BulkExportJob, BulkExportLevel, BulkExportManifest, BulkExportOutput, BulkExportStatus,
 };

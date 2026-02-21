@@ -53,6 +53,7 @@ pub mod meta;
 pub mod notifications;
 pub mod params;
 pub mod registry;
+pub mod reindex;
 pub mod router;
 pub mod sof;
 pub mod sql;
@@ -62,7 +63,7 @@ pub mod validate;
 // Re-export main types for convenience
 pub use bulk::{
     BulkExportJob, BulkExportLevel, BulkExportManifest, BulkExportStatus, ExportOperation,
-    cleanup_expired_exports, execute_bulk_export,
+    ImportOperation, cleanup_expired_exports, execute_bulk_export, execute_bulk_import,
 };
 pub use cql::CqlOperation;
 pub use definition::{OperationDefinition, OperationKind, OperationParameter, ParameterUse};
@@ -75,9 +76,10 @@ pub use meta::{MetaAddOperation, MetaDeleteOperation, MetaOperation};
 pub use params::OperationParams;
 pub use registry::OperationRegistry;
 pub use router::{
-    instance_operation_handler, instance_operation_or_history_handler, is_operation,
-    merged_root_get_handler, merged_root_post_handler, merged_type_get_handler,
-    merged_type_post_handler, system_operation_handler, type_operation_handler,
+    compartment_post_handler, instance_operation_handler,
+    instance_operation_or_history_handler, is_operation, merged_root_get_handler,
+    merged_root_post_handler, merged_type_get_handler, merged_type_post_handler,
+    system_operation_handler, type_operation_handler,
 };
 pub use sof::{
     ViewDefinitionRunOperation, ViewDefinitionSqlOperation, execute_viewdefinition_export,
@@ -86,6 +88,7 @@ pub use terminology::{
     ClosureOperation, ExpandOperation, LookupOperation, SubsumesOperation, TranslateOperation,
     ValidateCodeOperation,
 };
+pub use reindex::{ReindexOperation, execute_reindex};
 pub use validate::{Issue, Severity, ValidateOperation};
 
 use std::collections::HashMap;
@@ -148,6 +151,27 @@ pub fn register_core_operations_full(
     bulk_export_config: crate::config::BulkExportConfig,
     sql_on_fhir_config: crate::config::SqlOnFhirConfig,
     cql_enabled: bool,
+) -> HashMap<String, DynOperationHandler> {
+    register_core_operations_all(
+        fhirpath_engine,
+        model_provider,
+        bulk_export_config,
+        sql_on_fhir_config,
+        cql_enabled,
+        crate::config::ReindexConfig::default(),
+        crate::config::BulkImportConfig::default(),
+    )
+}
+
+/// Registers core operations with all configuration options including reindex.
+pub fn register_core_operations_all(
+    fhirpath_engine: Arc<FhirPathEngine>,
+    model_provider: SharedModelProvider,
+    bulk_export_config: crate::config::BulkExportConfig,
+    sql_on_fhir_config: crate::config::SqlOnFhirConfig,
+    cql_enabled: bool,
+    reindex_config: crate::config::ReindexConfig,
+    bulk_import_config: crate::config::BulkImportConfig,
 ) -> HashMap<String, DynOperationHandler> {
     let mut handlers: HashMap<String, DynOperationHandler> = HashMap::new();
 
@@ -246,6 +270,18 @@ pub fn register_core_operations_full(
     } else {
         tracing::info!("CQL operations NOT registered (cql_enabled=false)");
     }
+
+    // $reindex operation
+    handlers.insert(
+        "reindex".to_string(),
+        Arc::new(ReindexOperation::new(reindex_config)),
+    );
+
+    // $import operation
+    handlers.insert(
+        "import".to_string(),
+        Arc::new(ImportOperation::new(bulk_import_config)),
+    );
 
     handlers
 }

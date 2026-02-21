@@ -165,3 +165,7 @@ If adding a new denormalized index table, require all of the following:
 3. Explicit write-path extraction + cleanup behavior.
 4. Capacity estimate (storage growth + write amplification).
 5. Migration and rollback strategy.
+
+## Related Internal Plans
+
+1. [10GB Observation Ingestion Plan](./observation-10gb-ingestion-plan.md)

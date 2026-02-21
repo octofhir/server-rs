@@ -232,6 +232,61 @@ impl PostgresStorage {
         }
     }
 
+    /// Reindex a single resource: delete old index rows, extract new ones, and write them.
+    ///
+    /// This is the same logic as `write_search_indexes` but exposed publicly for
+    /// the `$reindex` operation. Errors are propagated rather than silently logged.
+    pub async fn reindex_resource(
+        &self,
+        resource_type: &str,
+        resource_id: &str,
+        resource: &Value,
+    ) -> Result<(), StorageError> {
+        let registry = self.search_registry.get().ok_or_else(|| {
+            StorageError::internal("Search registry not initialized")
+        })?;
+
+        let params = registry.get_all_for_type(resource_type);
+
+        let mut refs = Vec::new();
+        let mut dates = Vec::new();
+
+        for param in &params {
+            let expression = match &param.expression {
+                Some(e) => e.as_str(),
+                None => continue,
+            };
+
+            match param.param_type {
+                SearchParameterType::Reference => {
+                    refs.extend(octofhir_core::search_index::extract_references(
+                        resource,
+                        resource_type,
+                        &param.code,
+                        expression,
+                        None,
+                    ));
+                }
+                SearchParameterType::Date => {
+                    dates.extend(octofhir_core::search_index::extract_dates(
+                        resource,
+                        resource_type,
+                        &param.code,
+                        expression,
+                    ));
+                }
+                _ => {}
+            }
+        }
+
+        crate::search_index::write_reference_index(&self.pool, resource_type, resource_id, &refs)
+            .await?;
+        crate::search_index::write_date_index(&self.pool, resource_type, resource_id, &dates)
+            .await?;
+
+        Ok(())
+    }
+
     /// Retrieves history across all resource types (system-level history).
     ///
     /// This is a PostgreSQL-specific extension that queries history

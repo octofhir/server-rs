@@ -55,6 +55,12 @@ pub struct AppConfig {
     /// CQL evaluation configuration ($cql, $evaluate-measure operations)
     #[serde(default)]
     pub cql: octofhir_cql_service::CqlConfig,
+    /// Reindex configuration ($reindex operation)
+    #[serde(default)]
+    pub reindex: ReindexConfig,
+    /// Bulk import configuration ($import operation)
+    #[serde(default)]
+    pub bulk_import: BulkImportConfig,
 }
 
 // Default derived via field defaults
@@ -856,6 +862,75 @@ impl Default for BulkExportConfig {
             max_resources_per_file: default_bulk_export_max_resources_per_file(),
             batch_size: default_bulk_export_batch_size(),
             default_resource_types: Vec::new(),
+        }
+    }
+}
+
+/// Reindex configuration ($reindex operation)
+///
+/// Configures the $reindex operation for rebuilding search index tables
+/// (`search_idx_reference`, `search_idx_date`) from stored resources.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReindexConfig {
+    /// Number of resources to process per batch
+    #[serde(default = "default_reindex_batch_size")]
+    pub batch_size: usize,
+
+    /// Run consistency check after reindex (report drift count)
+    #[serde(default)]
+    pub consistency_check: bool,
+}
+
+fn default_reindex_batch_size() -> usize {
+    1000
+}
+
+impl Default for ReindexConfig {
+    fn default() -> Self {
+        Self {
+            batch_size: default_reindex_batch_size(),
+            consistency_check: false,
+        }
+    }
+}
+
+/// Bulk import configuration ($import operation)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BulkImportConfig {
+    /// Enable bulk import functionality
+    #[serde(default = "default_bulk_import_enabled")]
+    pub enabled: bool,
+
+    /// Number of resources to create per transaction batch
+    #[serde(default = "default_bulk_import_batch_size")]
+    pub batch_size: usize,
+
+    /// Maximum concurrent import jobs
+    #[serde(default = "default_bulk_import_max_concurrent")]
+    pub max_concurrent_jobs: usize,
+
+    /// Skip FHIR validation for trusted data (can be overridden per-request)
+    #[serde(default)]
+    pub default_skip_validation: bool,
+}
+
+fn default_bulk_import_enabled() -> bool {
+    true
+}
+fn default_bulk_import_batch_size() -> usize {
+    1000
+}
+fn default_bulk_import_max_concurrent() -> usize {
+    3
+}
+
+impl Default for BulkImportConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_bulk_import_enabled(),
+            batch_size: default_bulk_import_batch_size(),
+            max_concurrent_jobs: default_bulk_import_max_concurrent(),
+            default_skip_validation: false,
         }
     }
 }

@@ -1,0 +1,23 @@
+apiVersion: v2
+name: octofhir
+description: OctoFHIR - High-performance FHIR server written in Rust
+type: application
+version: 0.1.0
+appVersion: "0.0.1"
+keywords:
+  - fhir
+  - healthcare
+  - hl7
+  - interoperability
+home: https://github.com/octofhir/server-rs
+sources:
+  - https://github.com/octofhir/server-rs
+maintainers:
+  - name: OctoFHIR
+    url: https://github.com/octofhir
+
+dependencies:
+  - name: postgresql
+    version: "16.4.1"
+    repository: https://charts.bitnami.com/bitnami
+    condition: postgresql.enabled
