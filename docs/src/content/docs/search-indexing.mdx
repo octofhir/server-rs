@@ -1,0 +1,115 @@
+---
+title: Search Indexing
+description: How OctoFHIR indexes FHIR search patterns (reference/date/string), and how to use this effectively in real workloads
+---
+
+This page explains the practical indexing model used by OctoFHIR today.
+
+If you only need query syntax, see [Search Parameters](./search-parameters).  
+If you need internals (registry/cache lifecycle), see [Search Architecture](./search-architecture).
+
+## Quick Summary
+
+OctoFHIR uses a hybrid model:
+
+1. **Denormalized index tables** for high-impact patterns:
+   - `search_idx_reference`
+   - `search_idx_date`
+2. **Direct JSONB SQL paths** for string-heavy patterns.
+
+This keeps reference/date queries fast while avoiding unnecessary string duplication.
+
+## What Is Indexed
+
+| Query Type | Primary Execution Path | Notes |
+|---|---|---|
+| Reference search (`subject=Patient/123`) | `search_idx_reference` | Optimized for lookup and joins |
+| `_include` / `_revinclude` | `search_idx_reference` | Uses normalized reference rows |
+| Chained search | `search_idx_reference` + target query | Efficient join start point |
+| Date search (`ge`, `lt`, `ap`, etc.) | `search_idx_date` | Precision-aware ranges |
+| String `:exact` | JSONB containment (`@>`) + GIN | No string denormalization table |
+| String default / `:contains` | JSON path + `LIKE`/`ILIKE` | Path-aware SQL builders |
+
+## Why No `search_idx_string`
+
+Earlier designs that denormalized strings can grow storage quickly on real datasets.
+
+Current design keeps strings in resource JSON and uses:
+
+- GIN-backed containment for exact-style matching
+- path SQL for prefix/contains
+
+This reduces write amplification and keeps schema simpler.
+
+## How This Affects Query Design
+
+### Prefer Typed References
+
+```bash
+# Better (typed)
+GET /Observation?subject=Patient/123
+
+# Allowed but less explicit
+GET /Observation?subject=123
+```
+
+### Use Bounded Date Windows
+
+```bash
+GET /Observation?date=ge2026-01-01&date=lt2026-02-01
+```
+
+Bounded windows usually plan better than very broad unbounded date filters.
+
+### Use `:exact` Intentionally
+
+```bash
+GET /Patient?family:exact=Smith
+```
+
+Use `:exact` for exact text semantics, not as a generic performance toggle.
+
+## Write Path Behavior
+
+On resource create/update:
+
+1. Search parameters for the resource type are resolved.
+2. Reference/date values are extracted from resource JSON.
+3. Existing rows for that resource are replaced in `search_idx_reference` and `search_idx_date`.
+
+On delete:
+
+- Rows are removed from both index tables for that resource.
+
+## Operational Checks
+
+### Verify index tables
+
+```sql
+\dt search_idx*
+```
+
+Expected:
+
+- `search_idx_reference`
+- `search_idx_date`
+
+### Check cardinality quickly
+
+```sql
+SELECT 'reference' AS kind, count(*) FROM search_idx_reference
+UNION ALL
+SELECT 'date' AS kind, count(*) FROM search_idx_date;
+```
+
+## Tuning Strategy
+
+Start with defaults first. Add custom indexes only when measurements justify them.
+
+Typical triggers for custom indexes:
+
+- very high traffic on one string field
+- workload-specific extension filters
+- clear slow-query evidence + repeatable EXPLAIN improvement
+
+For broader guidance, see [Performance Tuning](./performance).

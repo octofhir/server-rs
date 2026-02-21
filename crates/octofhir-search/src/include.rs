@@ -164,19 +164,22 @@ pub fn extract_revincludes(query: &str, registry: &SearchParameterRegistry) -> V
 
 /// Build SQL to fetch included resources for forward includes.
 ///
-/// This generates a query to fetch resources referenced by the main results.
+/// Uses the `search_idx_reference` index table for B-tree lookups.
 pub fn build_include_query(
     include: &IncludeParam,
     source_ids: &[String],
-    ref_path: &str,
+    _ref_path: &str,
 ) -> Option<(String, Vec<String>)> {
     if source_ids.is_empty() {
         return None;
     }
 
-    // For wildcard target, we would need to extract type from reference and query multiple tables
+    // For wildcard target, we would need to query multiple tables
     // For now, return None for untyped includes
-    let target_table = include.target_type.as_ref()?.to_lowercase();
+    let target_type = include.target_type.as_ref()?;
+    let target_table = target_type.to_lowercase();
+    let source_type = &include.source_type;
+    let param_code = &include.search_param;
 
     let placeholders: Vec<String> = source_ids
         .iter()
@@ -185,14 +188,12 @@ pub fn build_include_query(
         .collect();
 
     let sql = format!(
-        "SELECT id, txid, ts, resource_type, resource, status \
-         FROM {target_table} \
-         WHERE id::text IN (\
-             SELECT fhir_ref_id({ref_path}->>'reference') \
-             FROM {source_table} \
-             WHERE id::text IN ({placeholders})\
-         ) AND status != 'deleted'",
-        source_table = include.source_type.to_lowercase(),
+        "SELECT DISTINCT t.id, t.txid, t.created_at AS ts, t.resource_type, t.resource, t.status \
+         FROM search_idx_reference sir \
+         JOIN {target_table} t ON t.id = sir.target_id AND t.status != 'deleted' \
+         WHERE sir.resource_type = '{source_type}' AND sir.resource_id IN ({placeholders}) \
+         AND sir.param_code = '{param_code}' AND sir.ref_kind = 1 \
+         AND sir.target_type = '{target_type}'",
         placeholders = placeholders.join(", ")
     );
 
@@ -201,26 +202,22 @@ pub fn build_include_query(
 
 /// Build SQL to fetch reverse included resources.
 ///
-/// This generates a query to fetch resources that reference the main results.
+/// Uses the `search_idx_reference` index table for B-tree lookups.
 pub fn build_revinclude_query(
     include: &IncludeParam,
     target_type: &str,
     target_ids: &[String],
-    ref_path: &str,
+    _ref_path: &str,
 ) -> Option<(String, Vec<String>)> {
     if target_ids.is_empty() {
         return None;
     }
 
-    let source_table = include.source_type.to_lowercase();
+    let source_type = &include.source_type;
+    let source_table = source_type.to_lowercase();
+    let param_code = &include.search_param;
 
-    // Build reference values to search for
-    let ref_values: Vec<String> = target_ids
-        .iter()
-        .map(|id| format!("{target_type}/{id}"))
-        .collect();
-
-    let placeholders: String = ref_values
+    let placeholders: String = target_ids
         .iter()
         .enumerate()
         .map(|(i, _)| format!("${}", i + 1))
@@ -228,13 +225,15 @@ pub fn build_revinclude_query(
         .join(", ");
 
     let sql = format!(
-        "SELECT id, txid, ts, resource_type, resource, status \
-         FROM {source_table} \
-         WHERE {ref_path}->>'reference' IN ({placeholders}) \
-         AND status != 'deleted'"
+        "SELECT DISTINCT s.id, s.txid, s.created_at AS ts, s.resource_type, s.resource, s.status \
+         FROM search_idx_reference sir \
+         JOIN {source_table} s ON s.id = sir.resource_id AND s.status != 'deleted' \
+         WHERE sir.resource_type = '{source_type}' AND sir.param_code = '{param_code}' \
+         AND sir.ref_kind = 1 AND sir.target_type = '{target_type}' \
+         AND sir.target_id IN ({placeholders})"
     );
 
-    Some((sql, ref_values))
+    Some((sql, target_ids.to_vec()))
 }
 
 // ============================================================================
@@ -446,11 +445,14 @@ impl IncludePlan {
 
 /// Generate SQL queries for a batch of resources to include.
 ///
+/// Uses the `search_idx_reference` index table for B-tree lookups instead of
+/// runtime `fhir_ref_id()` / `fhir_ref_type()` extraction from JSONB.
+///
 /// Returns list of (sql, params, target_type) tuples.
 pub fn generate_include_queries(
     include: &IncludeParam,
     source_ids: &[String],
-    ref_path: &str,
+    _ref_path: &str,
     registry: &SearchParameterRegistry,
 ) -> Vec<(String, Vec<String>, String)> {
     let mut queries = Vec::new();
@@ -468,7 +470,8 @@ pub fn generate_include_queries(
         return queries;
     };
 
-    let source_table = include.source_type.to_lowercase();
+    let source_type = &include.source_type;
+    let param_code = &include.search_param;
 
     for target_type in target_types {
         let target_table = target_type.to_lowercase();
@@ -480,14 +483,12 @@ pub fn generate_include_queries(
             .join(", ");
 
         let sql = format!(
-            "SELECT id, txid, ts, resource_type, resource, status \
-             FROM {target_table} \
-             WHERE id::text IN (\
-                 SELECT fhir_ref_id({ref_path}->>'reference') \
-                 FROM {source_table} \
-                 WHERE id::text IN ({placeholders}) \
-                 AND fhir_ref_type({ref_path}->>'reference') = '{target_type}'\
-             ) AND status != 'deleted'"
+            "SELECT DISTINCT t.id, t.txid, t.created_at AS ts, t.resource_type, t.resource, t.status \
+             FROM search_idx_reference sir \
+             JOIN {target_table} t ON t.id = sir.target_id AND t.status != 'deleted' \
+             WHERE sir.resource_type = '{source_type}' AND sir.resource_id IN ({placeholders}) \
+             AND sir.param_code = '{param_code}' AND sir.ref_kind = 1 \
+             AND sir.target_type = '{target_type}'"
         );
 
         queries.push((sql, source_ids.to_vec(), target_type));
@@ -497,24 +498,24 @@ pub fn generate_include_queries(
 }
 
 /// Generate SQL queries for reverse includes.
+///
+/// Uses the `search_idx_reference` index table for B-tree lookups instead of
+/// runtime JSONB ->> extraction.
 pub fn generate_revinclude_queries(
     include: &IncludeParam,
     target_type: &str,
     target_ids: &[String],
-    ref_path: &str,
+    _ref_path: &str,
 ) -> Vec<(String, Vec<String>, String)> {
     if target_ids.is_empty() {
         return vec![];
     }
 
-    let source_table = include.source_type.to_lowercase();
+    let source_type = &include.source_type;
+    let source_table = source_type.to_lowercase();
+    let param_code = &include.search_param;
 
-    let ref_values: Vec<String> = target_ids
-        .iter()
-        .map(|id| format!("{target_type}/{id}"))
-        .collect();
-
-    let placeholders: String = ref_values
+    let placeholders: String = target_ids
         .iter()
         .enumerate()
         .map(|(i, _)| format!("${}", i + 1))
@@ -522,13 +523,15 @@ pub fn generate_revinclude_queries(
         .join(", ");
 
     let sql = format!(
-        "SELECT id, txid, ts, resource_type, resource, status \
-         FROM {source_table} \
-         WHERE {ref_path}->>'reference' IN ({placeholders}) \
-         AND status != 'deleted'"
+        "SELECT DISTINCT s.id, s.txid, s.created_at AS ts, s.resource_type, s.resource, s.status \
+         FROM search_idx_reference sir \
+         JOIN {source_table} s ON s.id = sir.resource_id AND s.status != 'deleted' \
+         WHERE sir.resource_type = '{source_type}' AND sir.param_code = '{param_code}' \
+         AND sir.ref_kind = 1 AND sir.target_type = '{target_type}' \
+         AND sir.target_id IN ({placeholders})"
     );
 
-    vec![(sql, ref_values, include.source_type.clone())]
+    vec![(sql, target_ids.to_vec(), include.source_type.clone())]
 }
 
 #[cfg(test)]

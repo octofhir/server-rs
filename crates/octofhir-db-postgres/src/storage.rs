@@ -1,12 +1,12 @@
 //! PostgreSQL implementation of the FhirStorage trait.
 
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use async_trait::async_trait;
 use serde_json::Value;
 use sqlx_postgres::PgPool;
 
-use octofhir_search::{QueryCache, SearchParameter, SearchParameterRegistry};
+use octofhir_search::{QueryCache, SearchParameter, SearchParameterRegistry, SearchParameterType};
 use octofhir_storage::{
     FhirStorage, HistoryParams, HistoryResult, RawHistoryResult, RawStoredResource, SearchParams,
     SearchResult, StorageError, StoredResource, Transaction,
@@ -28,8 +28,10 @@ pub struct PostgresStorage {
     /// Optional read replica pool. Read operations use this when available.
     read_pool: Option<PgPool>,
     schema_manager: SchemaManager,
-    /// Search parameter registry for parameter lookup during search
-    search_registry: Option<Arc<SearchParameterRegistry>>,
+    /// Search parameter registry for parameter lookup during search and indexing.
+    /// Wrapped in Arc<OnceLock<>> to allow late initialization after the storage
+    /// is wrapped in EventedStorage (the OnceLock is shared across clones).
+    search_registry: Arc<OnceLock<Arc<SearchParameterRegistry>>>,
     /// Query cache for search SQL template reuse
     query_cache: Option<Arc<QueryCache>>,
 }
@@ -59,7 +61,7 @@ impl PostgresStorage {
             pool,
             read_pool: None,
             schema_manager,
-            search_registry: None,
+            search_registry: Arc::new(OnceLock::new()),
             query_cache: None,
         })
     }
@@ -75,7 +77,7 @@ impl PostgresStorage {
             pool,
             read_pool: None,
             schema_manager,
-            search_registry: None,
+            search_registry: Arc::new(OnceLock::new()),
             query_cache: None,
         }
     }
@@ -103,18 +105,19 @@ impl PostgresStorage {
         &self.schema_manager
     }
 
-    /// Sets the search parameter registry for this storage.
+    /// Returns the shared slot for late-initializing the search registry.
     ///
-    /// The registry is used to look up search parameters during search execution.
-    /// This should be called after loading search parameters from packages.
-    pub fn set_search_registry(&mut self, registry: Arc<SearchParameterRegistry>) {
-        self.search_registry = Some(registry);
+    /// Clone this `Arc` before wrapping the storage in `EventedStorage`,
+    /// then call `.set(registry)` once the registry is ready.
+    #[must_use]
+    pub fn search_registry_slot(&self) -> &Arc<OnceLock<Arc<SearchParameterRegistry>>> {
+        &self.search_registry
     }
 
     /// Returns a reference to the search parameter registry, if set.
     #[must_use]
     pub fn search_registry(&self) -> Option<&Arc<SearchParameterRegistry>> {
-        self.search_registry.as_ref()
+        self.search_registry.get()
     }
 
     /// Sets the query cache for search SQL template reuse.
@@ -138,8 +141,95 @@ impl PostgresStorage {
         code: &str,
     ) -> Option<Arc<SearchParameter>> {
         self.search_registry
-            .as_ref()
+            .get()
             .and_then(|r| r.get(resource_type, code))
+    }
+
+    /// Extract and write search indexes for a resource after create/update.
+    ///
+    /// Iterates over all search parameters for the resource type, extracts
+    /// reference/date/string values, and writes them to denormalized index tables.
+    /// Errors are logged but do not fail the CRUD operation.
+    async fn write_search_indexes(&self, resource_type: &str, resource_id: &str, resource: &Value) {
+        let registry = match self.search_registry.get() {
+            Some(r) => r,
+            None => return,
+        };
+
+        let params = registry.get_all_for_type(resource_type);
+
+        let mut refs = Vec::new();
+        let mut dates = Vec::new();
+
+        for param in &params {
+            let expression = match &param.expression {
+                Some(e) => e.as_str(),
+                None => continue,
+            };
+
+            match param.param_type {
+                SearchParameterType::Reference => {
+                    refs.extend(octofhir_core::search_index::extract_references(
+                        resource,
+                        resource_type,
+                        &param.code,
+                        expression,
+                        None,
+                    ));
+                }
+                SearchParameterType::Date => {
+                    dates.extend(octofhir_core::search_index::extract_dates(
+                        resource,
+                        resource_type,
+                        &param.code,
+                        expression,
+                    ));
+                }
+                _ => {}
+            }
+        }
+
+        if let Err(e) = crate::search_index::write_reference_index(
+            &self.pool,
+            resource_type,
+            resource_id,
+            &refs,
+        )
+        .await
+        {
+            tracing::warn!(
+                "Failed to write reference index for {}/{}: {}",
+                resource_type,
+                resource_id,
+                e
+            );
+        }
+
+        if let Err(e) =
+            crate::search_index::write_date_index(&self.pool, resource_type, resource_id, &dates)
+                .await
+        {
+            tracing::warn!(
+                "Failed to write date index for {}/{}: {}",
+                resource_type,
+                resource_id,
+                e
+            );
+        }
+    }
+
+    /// Delete all search indexes for a resource after delete.
+    async fn remove_search_indexes(&self, resource_type: &str, resource_id: &str) {
+        if let Err(e) =
+            crate::search_index::delete_search_indexes(&self.pool, resource_type, resource_id).await
+        {
+            tracing::warn!(
+                "Failed to delete search indexes for {}/{}: {}",
+                resource_type,
+                resource_id,
+                e
+            );
+        }
     }
 
     /// Retrieves history across all resource types (system-level history).
@@ -165,14 +255,21 @@ impl PostgresStorage {
 #[async_trait]
 impl FhirStorage for PostgresStorage {
     async fn create(&self, resource: &Value) -> Result<StoredResource, StorageError> {
-        queries::create(&self.pool, resource).await
+        let result = queries::create(&self.pool, resource).await?;
+        self.write_search_indexes(&result.resource_type, &result.id, &result.resource)
+            .await;
+        Ok(result)
     }
 
     async fn create_raw(
         &self,
         resource: &Value,
     ) -> Result<octofhir_storage::RawStoredResource, StorageError> {
-        queries::create_raw(&self.pool, resource).await
+        let result = queries::create_raw(&self.pool, resource).await?;
+        // Use the input resource for extraction (avoid parsing raw JSON back)
+        self.write_search_indexes(&result.resource_type, &result.id, resource)
+            .await;
+        Ok(result)
     }
 
     async fn read(
@@ -196,7 +293,10 @@ impl FhirStorage for PostgresStorage {
         resource: &Value,
         if_match: Option<&str>,
     ) -> Result<StoredResource, StorageError> {
-        queries::update(&self.pool, resource, if_match).await
+        let result = queries::update(&self.pool, resource, if_match).await?;
+        self.write_search_indexes(&result.resource_type, &result.id, &result.resource)
+            .await;
+        Ok(result)
     }
 
     async fn update_raw(
@@ -204,11 +304,16 @@ impl FhirStorage for PostgresStorage {
         resource: &Value,
         if_match: Option<&str>,
     ) -> Result<octofhir_storage::RawStoredResource, StorageError> {
-        queries::update_raw(&self.pool, resource, if_match).await
+        let result = queries::update_raw(&self.pool, resource, if_match).await?;
+        self.write_search_indexes(&result.resource_type, &result.id, resource)
+            .await;
+        Ok(result)
     }
 
     async fn delete(&self, resource_type: &str, id: &str) -> Result<(), StorageError> {
-        queries::delete(&self.pool, resource_type, id).await
+        queries::delete(&self.pool, resource_type, id).await?;
+        self.remove_search_indexes(resource_type, id).await;
+        Ok(())
     }
 
     async fn vread(
@@ -267,7 +372,7 @@ impl FhirStorage for PostgresStorage {
             self.read_pool(),
             resource_type,
             params,
-            self.search_registry.as_ref(),
+            self.search_registry.get(),
         )
         .await
     }

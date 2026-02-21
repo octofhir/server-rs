@@ -7,9 +7,10 @@
 //! - `Observation?patient.name=Smith` - Find observations where patient's name is Smith
 //! - `Observation?subject:Patient.name=Smith` - Explicit type modifier
 
-use crate::parameters::SearchParameterType;
+use crate::parameters::{SearchParameter, SearchParameterType};
 use crate::registry::SearchParameterRegistry;
 use crate::sql_builder::{SqlBuilder, SqlBuilderError};
+use std::sync::Arc;
 
 /// A link in a chained search parameter.
 #[derive(Debug, Clone)]
@@ -33,6 +34,8 @@ pub struct ChainedParameter {
     pub final_param_type: SearchParameterType,
     /// The final search parameter expression
     pub final_expression: String,
+    /// Full search parameter definition for the final parameter
+    pub final_param_def: Option<Arc<SearchParameter>>,
     /// The search value
     pub value: String,
     /// Optional modifier on the final parameter
@@ -151,6 +154,7 @@ pub fn parse_chained_parameter(
         final_param: final_param.to_string(),
         final_param_type: final_param_def.param_type,
         final_expression: final_param_def.expression.clone().unwrap_or_default(),
+        final_param_def: Some(final_param_def),
         value: value.to_string(),
         modifier: modifier.map(|s| s.to_string()),
     })
@@ -201,6 +205,9 @@ pub fn build_chained_search(
 }
 
 /// Recursively build nested EXISTS subqueries for multi-level chaining.
+///
+/// Uses the `search_idx_reference` index table for B-tree lookups instead of
+/// runtime `fhir_ref_id()` extraction from JSONB.
 fn build_nested_chain(
     builder: &mut SqlBuilder,
     chained: &ChainedParameter,
@@ -213,19 +220,20 @@ fn build_nested_chain(
         .as_ref()
         .ok_or_else(|| ChainingError::AmbiguousTarget(link.parameter.clone()))?;
 
-    let ref_path = extract_reference_path(&link.expression, current_type);
     let target_table = target_type.to_lowercase();
     let alias = format!("chain{depth}");
+    let sir_alias = format!("sir{depth}");
 
-    // Determine reference source: base resource or previous chain alias
-    let ref_source = if depth == 0 {
-        ref_path
+    // Add parameters for index table lookup
+    let rt_param = builder.add_text_param(current_type);
+    let pc_param = builder.add_text_param(&link.parameter);
+    let tt_param = builder.add_text_param(target_type);
+
+    // Determine resource_id reference: depth 0 uses r.id, deeper levels use previous chain alias
+    let resource_id_ref = if depth == 0 {
+        "r.id".to_string()
     } else {
-        format!(
-            "chain{}.{}",
-            depth - 1,
-            ref_path.strip_prefix("resource").unwrap_or(&ref_path)
-        )
+        format!("chain{}.id", depth - 1)
     };
 
     // Build inner condition: either next chain level or final condition
@@ -238,46 +246,91 @@ fn build_nested_chain(
     };
 
     Ok(format!(
-        "EXISTS (SELECT 1 FROM {target_table} {alias} WHERE \
-         {alias}.id::text = fhir_ref_id({ref_source}->>'reference') \
+        "EXISTS (SELECT 1 FROM search_idx_reference {sir_alias} \
+         JOIN {target_table} {alias} ON {alias}.id = {sir_alias}.target_id \
          AND {alias}.status != 'deleted' \
+         WHERE {sir_alias}.resource_type = ${rt_param} AND {sir_alias}.resource_id = {resource_id_ref} \
+         AND {sir_alias}.param_code = ${pc_param} AND {sir_alias}.ref_kind = 1 \
+         AND {sir_alias}.target_type = ${tt_param} \
          AND {inner_condition})"
     ))
 }
 
-/// Extract the reference path from a FHIRPath expression.
-fn extract_reference_path(expression: &str, resource_type: &str) -> String {
-    // Convert FHIRPath like "Observation.subject" to JSONB path
-    let path = expression
-        .strip_prefix(resource_type)
-        .unwrap_or(expression)
-        .strip_prefix('.')
-        .unwrap_or(expression);
-
-    // Split by . and build JSONB accessor
-    let parts: Vec<&str> = path.split('.').filter(|p| !p.is_empty()).collect();
-
-    if parts.is_empty() {
-        return "resource".to_string();
-    }
-
-    let mut accessor = "resource".to_string();
-    for part in parts {
-        accessor.push_str(&format!("->'{part}'"));
-    }
-    accessor
-}
-
 /// Build the final condition for the chained search.
+///
+/// Uses the full `dispatch_search` pipeline when a parameter definition is
+/// available, so array-aware and GIN-optimized logic is reused correctly.
+/// Falls back to a simple path-based condition otherwise.
 fn build_final_condition(
     builder: &mut SqlBuilder,
     chained: &ChainedParameter,
     target_type: &str,
     alias: &str,
 ) -> Result<String, ChainingError> {
-    let final_path = extract_final_path(&chained.final_expression, target_type);
+    // If we have the full param definition, use dispatch_search for correct handling
+    // of arrays, HumanName, GIN containment, etc.
+    if let Some(ref param_def) = chained.final_param_def {
+        let resource_col = format!("{alias}.resource");
+        let mut inner_builder = SqlBuilder::with_resource_column(&resource_col)
+            .with_param_offset(builder.param_count());
 
-    // Build condition based on parameter type
+        // Build ParsedParam from the chained value
+        let modifier = chained
+            .modifier
+            .as_deref()
+            .and_then(crate::parameters::SearchModifier::parse);
+
+        // Parse the value into ParsedValue(s), handling comma-separated OR values
+        let values: Vec<crate::parser::ParsedValue> = chained
+            .value
+            .split(',')
+            .filter(|v| !v.is_empty())
+            .map(|v| crate::parser::ParsedValue {
+                prefix: None,
+                raw: v.to_string(),
+            })
+            .collect();
+
+        let parsed = crate::parser::ParsedParam {
+            name: chained.final_param.clone(),
+            modifier,
+            values,
+        };
+
+        crate::types::dispatch_search(&mut inner_builder, &parsed, param_def, target_type)?;
+
+        // Extract conditions and params from inner builder
+        let conditions = inner_builder.conditions();
+        if let Some(condition) = conditions.first() {
+            // Copy params from inner builder to outer builder
+            for p in inner_builder.params() {
+                match p {
+                    crate::sql_builder::SqlParam::Text(s) => {
+                        builder.add_text_param(s);
+                    }
+                    crate::sql_builder::SqlParam::Integer(i) => {
+                        builder.add_integer_param(*i);
+                    }
+                    crate::sql_builder::SqlParam::Float(f) => {
+                        builder.add_float_param(*f);
+                    }
+                    crate::sql_builder::SqlParam::Boolean(b) => {
+                        builder.add_boolean_param(*b);
+                    }
+                    crate::sql_builder::SqlParam::Json(s) => {
+                        builder.add_json_param(s);
+                    }
+                    crate::sql_builder::SqlParam::Timestamp(s) => {
+                        builder.add_timestamp_param(s);
+                    }
+                }
+            }
+            return Ok(condition.clone());
+        }
+    }
+
+    // Fallback: simple path-based condition (for when no param def is available)
+    let final_path = extract_final_path(&chained.final_expression, target_type);
     match chained.final_param_type {
         SearchParameterType::String => {
             let p = builder.add_text_param(format!("{}%", chained.value));
@@ -347,6 +400,8 @@ mod tests {
     use crate::parameters::SearchParameter;
 
     fn create_test_registry() -> SearchParameterRegistry {
+        use crate::parameters::ElementTypeHint;
+
         let mut registry = SearchParameterRegistry::new();
 
         // Observation.subject -> Patient
@@ -360,15 +415,27 @@ mod tests {
         .with_targets(vec!["Patient".to_string(), "Group".to_string()]);
         registry.register(subject_param);
 
-        // Patient.name
+        // Patient.name (HumanName)
         let name_param = SearchParameter::new(
             "name",
             "http://hl7.org/fhir/SearchParameter/Patient-name",
             SearchParameterType::String,
             vec!["Patient".to_string()],
         )
-        .with_expression("Patient.name");
+        .with_expression("Patient.name")
+        .with_element_type_hint(ElementTypeHint::HumanName);
         registry.register(name_param);
+
+        // Patient.name.family (array string field)
+        let family_param = SearchParameter::new(
+            "family",
+            "http://hl7.org/fhir/SearchParameter/Patient-family",
+            SearchParameterType::String,
+            vec!["Patient".to_string()],
+        )
+        .with_expression("Patient.name.family")
+        .with_element_type_hint(ElementTypeHint::Array("string".to_string()));
+        registry.register(family_param);
 
         // Patient.gender
         let gender_param = SearchParameter::new(
@@ -476,16 +543,9 @@ mod tests {
         assert!(clause.is_some());
         let clause_str = clause.unwrap();
         assert!(clause_str.contains("EXISTS"));
+        assert!(clause_str.contains("search_idx_reference"));
         assert!(clause_str.contains("patient"));
-    }
-
-    #[test]
-    fn test_extract_reference_path() {
-        let path = extract_reference_path("Observation.subject", "Observation");
-        assert_eq!(path, "resource->'subject'");
-
-        let path = extract_reference_path("Patient.generalPractitioner", "Patient");
-        assert_eq!(path, "resource->'generalPractitioner'");
+        assert!(clause_str.contains("ref_kind = 1"));
     }
 
     #[test]
@@ -529,11 +589,72 @@ mod tests {
 
         assert!(result.is_ok());
         let clause = builder.build_where_clause().unwrap();
-        // Should have nested EXISTS
+        // Should have nested EXISTS with index table
         assert!(clause.contains("EXISTS"));
+        assert!(clause.contains("search_idx_reference"));
         assert!(clause.contains("chain0"));
         assert!(clause.contains("chain1"));
+        assert!(clause.contains("sir0"));
+        assert!(clause.contains("sir1"));
         assert!(clause.contains("patient"));
         assert!(clause.contains("organization"));
+    }
+
+    #[test]
+    fn test_chained_string_family_uses_array_search() {
+        // Test: Observation?subject:Patient.family=DebugFamily
+        // The final condition should use array-aware SQL, not naive JSONB path
+        let registry = create_test_registry();
+        let chained = parse_chained_parameter(
+            "subject:Patient.family",
+            "DebugFamily",
+            &registry,
+            "Observation",
+        )
+        .unwrap();
+
+        assert!(
+            chained.final_param_def.is_some(),
+            "Should have final param def"
+        );
+
+        let mut builder = SqlBuilder::new();
+        build_chained_search(&mut builder, &chained, "Observation").unwrap();
+
+        let clause = builder.build_where_clause().unwrap();
+        // Should use jsonb_array_elements for name array, NOT naive resource->'name'->>'family'
+        assert!(
+            clause.contains("jsonb_array_elements") || clause.contains("@>"),
+            "Expected array-aware SQL (jsonb_array_elements or @>), got: {clause}"
+        );
+        // Should NOT use the naive ->'name'->>'family' pattern
+        assert!(
+            !clause.contains("resource->'name'->>'family'"),
+            "Should NOT use naive JSONB path for array field, got: {clause}"
+        );
+    }
+
+    #[test]
+    fn test_chained_string_name_uses_human_name_search() {
+        // Test: Observation?subject:Patient.name=DebugGiven
+        // The final condition should use HumanName search (family, given, text)
+        let registry = create_test_registry();
+        let chained = parse_chained_parameter(
+            "subject:Patient.name",
+            "DebugGiven",
+            &registry,
+            "Observation",
+        )
+        .unwrap();
+
+        let mut builder = SqlBuilder::new();
+        build_chained_search(&mut builder, &chained, "Observation").unwrap();
+
+        let clause = builder.build_where_clause().unwrap();
+        // Should search across family, given, text via HumanName logic
+        assert!(
+            clause.contains("family") && clause.contains("given"),
+            "Expected HumanName search with family/given fields, got: {clause}"
+        );
     }
 }

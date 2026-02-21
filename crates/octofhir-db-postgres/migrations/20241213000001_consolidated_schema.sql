@@ -7,6 +7,7 @@
 -- ============================================================================
 
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
 
 -- ============================================================================
 -- BASE TABLES
@@ -1267,6 +1268,79 @@ COMMENT ON TABLE subscription_status IS 'Cached subscription status for efficien
 COMMENT ON FUNCTION claim_subscription_events IS 'Atomically claim pending events for processing using SKIP LOCKED';
 COMMENT ON FUNCTION mark_event_delivered IS 'Mark event as successfully delivered and update status';
 COMMENT ON FUNCTION mark_event_retry IS 'Schedule event for retry with exponential backoff';
+
+-- ============================================================================
+-- SEARCH INDEX TABLES (Denormalized for fast B-tree lookups)
+-- ============================================================================
+-- These tables store pre-extracted values from FHIR resources for efficient
+-- search operations. They are populated at write time and use PostgreSQL
+-- list partitioning by resource_type for partition pruning.
+--
+-- Each resource type gets its own partition, created dynamically by SchemaManager.
+
+-- Reference index for fast reference search, chaining, include/revinclude
+CREATE TABLE IF NOT EXISTS search_idx_reference (
+    resource_type   TEXT NOT NULL,
+    resource_id     TEXT NOT NULL,
+    param_code      TEXT NOT NULL,     -- 'subject', 'performer', 'encounter'
+    ref_kind        SMALLINT NOT NULL, -- 1=local, 2=external, 3=canonical, 4=identifier
+    target_type     TEXT,              -- 'Patient' (NULL if external/canonical)
+    target_id       TEXT,              -- '123' (NULL if external/canonical)
+    external_url    TEXT,              -- full URL for external refs
+    canonical_url   TEXT,              -- canonical URL
+    canonical_version TEXT,            -- canonical version
+    identifier_system TEXT,            -- identifier system
+    identifier_value  TEXT,            -- identifier value
+    raw_reference   TEXT               -- original reference string
+) PARTITION BY LIST (resource_type);
+
+-- Forward search: Observation?subject=Patient/123
+CREATE INDEX IF NOT EXISTS idx_ref_local
+    ON search_idx_reference (resource_type, param_code, target_type, target_id)
+    WHERE ref_kind = 1;
+
+-- Untyped search: Observation?subject=123
+CREATE INDEX IF NOT EXISTS idx_ref_local_untyped
+    ON search_idx_reference (resource_type, param_code, target_id)
+    WHERE ref_kind = 1;
+
+-- Reverse lookup: Patient?_revinclude=Observation:subject
+CREATE INDEX IF NOT EXISTS idx_ref_revinclude
+    ON search_idx_reference (target_type, target_id, resource_type, param_code)
+    WHERE ref_kind = 1;
+
+-- External reference search
+CREATE INDEX IF NOT EXISTS idx_ref_external
+    ON search_idx_reference (resource_type, param_code, external_url)
+    WHERE ref_kind = 2;
+
+-- Canonical reference search
+CREATE INDEX IF NOT EXISTS idx_ref_canonical
+    ON search_idx_reference (resource_type, param_code, canonical_url, canonical_version)
+    WHERE ref_kind = 3;
+
+-- Identifier reference search
+CREATE INDEX IF NOT EXISTS idx_ref_identifier
+    ON search_idx_reference (resource_type, param_code, identifier_system, identifier_value)
+    WHERE ref_kind = 4;
+
+-- Date index for fast date range queries and sorting
+CREATE TABLE IF NOT EXISTS search_idx_date (
+    resource_type   TEXT        NOT NULL,
+    resource_id     TEXT        NOT NULL,
+    param_code      TEXT        NOT NULL,
+    range_start     TIMESTAMPTZ NOT NULL,
+    range_end       TIMESTAMPTZ NOT NULL
+) PARTITION BY LIST (resource_type);
+
+CREATE INDEX IF NOT EXISTS idx_date_range
+    ON search_idx_date (resource_type, param_code, range_start, range_end);
+
+CREATE INDEX IF NOT EXISTS idx_date_sort
+    ON search_idx_date (resource_type, param_code, range_start DESC);
+
+COMMENT ON TABLE search_idx_reference IS 'Denormalized reference index for O(log N) reference search, chaining, and include/revinclude';
+COMMENT ON TABLE search_idx_date IS 'Denormalized date index for O(log N) date range queries and index-ordered sorting';
 
 -- ============================================================================
 -- SCHEMA NOTES

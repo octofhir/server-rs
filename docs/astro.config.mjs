@@ -53,6 +53,7 @@ export default defineConfig({
           collapsed: false,
           items: [
             { label: 'Search Parameters', link: 'search-parameters/' },
+            { label: 'Search Indexing', link: 'search-indexing/' },
             { label: 'Search Architecture', link: 'search-architecture/' },
           ]
         },

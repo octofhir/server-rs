@@ -289,20 +289,17 @@ const SIMPLE_SCALAR_TYPES: &[&str] = &[
 impl ElementTypeHint {
     /// Check if this hint represents a HumanName (direct or array).
     pub fn is_human_name(&self) -> bool {
-        matches!(self, Self::HumanName)
-            || matches!(self, Self::Array(t) if t == "HumanName")
+        matches!(self, Self::HumanName) || matches!(self, Self::Array(t) if t == "HumanName")
     }
 
     /// Check if this hint represents an Identifier (direct or array).
     pub fn is_identifier(&self) -> bool {
-        matches!(self, Self::Identifier)
-            || matches!(self, Self::Array(t) if t == "Identifier")
+        matches!(self, Self::Identifier) || matches!(self, Self::Array(t) if t == "Identifier")
     }
 
     /// Check if this hint represents a Period (direct or array).
     pub fn is_period(&self) -> bool {
-        matches!(self, Self::Period)
-            || matches!(self, Self::Array(t) if t == "Period")
+        matches!(self, Self::Period) || matches!(self, Self::Array(t) if t == "Period")
     }
 
     /// Create an `ElementTypeHint` from a FHIR type name and array flag.

@@ -51,13 +51,20 @@ impl RawJson {
         match field {
             "id" => {
                 #[derive(Deserialize)]
-                struct IdOnly { id: Option<String> }
+                struct IdOnly {
+                    id: Option<String>,
+                }
                 serde_json::from_str::<IdOnly>(self.0.get()).ok()?.id
             }
             "resourceType" => {
                 #[derive(Deserialize)]
-                struct RtOnly { #[serde(rename = "resourceType")] resource_type: Option<String> }
-                serde_json::from_str::<RtOnly>(self.0.get()).ok()?.resource_type
+                struct RtOnly {
+                    #[serde(rename = "resourceType")]
+                    resource_type: Option<String>,
+                }
+                serde_json::from_str::<RtOnly>(self.0.get())
+                    .ok()?
+                    .resource_type
             }
             _ => {
                 // Generic fallback: full parse

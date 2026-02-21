@@ -52,6 +52,7 @@ mod notification_storage;
 pub mod pool;
 mod query_analyzer;
 mod schema;
+pub mod search_index;
 mod storage;
 mod transaction;
 

@@ -16,7 +16,9 @@ pub mod terminology;
 pub mod types;
 
 pub use common::register_common_parameters;
-pub use loader::{ElementTypeResolver, LoaderError, load_search_parameters, parse_search_parameter};
+pub use loader::{
+    ElementTypeResolver, LoaderError, load_search_parameters, parse_search_parameter,
+};
 pub use parameters::{
     ElementTypeHint, SearchModifier, SearchParameter, SearchParameterDefinition,
     SearchParameterType, SearchParameters,

@@ -5,7 +5,6 @@
 use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
-use octofhir_core::fhir_reference::parse_reference_simple;
 use serde_json::Value;
 use sqlx_core::query_as::query_as;
 use sqlx_core::query_scalar::query_scalar;
@@ -205,8 +204,42 @@ pub async fn execute_search_raw_with_config(
                     .split_once(':')
                     .map(|(n, m)| (n.to_string(), Some(m.to_string())))
                     .unwrap_or_else(|| (key.clone(), None));
+
+                // SQL shape for token-like params can depend on raw value format
+                // (e.g. identifier=value vs identifier=system|value). Encode this
+                // in the cache key to avoid binding a text param to a cached JSON
+                // template (or vice versa).
+                let token_shape = {
+                    let has_pipe = values.iter().any(|v| v.contains('|'));
+                    let has_no_pipe = values.iter().any(|v| !v.contains('|'));
+                    let has_system = values.iter().any(|v| {
+                        v.split_once('|')
+                            .map(|(left, _)| !left.is_empty())
+                            .unwrap_or(false)
+                    });
+                    let has_empty_system = values.iter().any(|v| {
+                        v.split_once('|')
+                            .map(|(left, _)| left.is_empty())
+                            .unwrap_or(false)
+                    });
+
+                    if has_pipe && has_no_pipe {
+                        "token-mixed"
+                    } else if has_pipe && has_system && !has_empty_system {
+                        "token-system"
+                    } else if has_pipe && has_empty_system && !has_system {
+                        "token-nosystem"
+                    } else if has_pipe {
+                        "token-pipe-mixed"
+                    } else {
+                        "token-plain"
+                    }
+                };
+
+                let cache_name = format!("{name}#{token_shape}");
+
                 QueryParamKey {
-                    name,
+                    name: cache_name,
                     modifier,
                     param_type: QueryCacheKey::infer_param_type(key),
                     value_count: values.len(),
@@ -270,10 +303,7 @@ pub async fn execute_search_raw_with_config(
             })?;
 
         if let (Some(cache), Some(key)) = (query_cache, cache_key) {
-            cache.insert(
-                key,
-                PreparedQuery::simple(bq.sql.clone(), bq.params.len()),
-            );
+            cache.insert(key, PreparedQuery::simple(bq.sql.clone(), bq.params.len()));
         }
 
         bq
@@ -478,7 +508,10 @@ async fn resolve_includes_revincludes(
     Ok(included)
 }
 
-/// Resolve a single _include specification.
+/// Resolve a single _include specification using the search_idx_reference index table.
+///
+/// Uses B-tree index scan on `search_idx_reference` to find referenced resource IDs
+/// instead of parsing JSONB at runtime.
 async fn resolve_include(
     pool: &PgPool,
     main_results: &[StoredResource],
@@ -489,49 +522,79 @@ async fn resolve_include(
         return Ok(Vec::new());
     }
 
-    // Extract reference IDs from main results for the specified parameter
-    let mut reference_ids: Vec<String> = Vec::new();
+    let source_type = &include.source_type;
     let param_name = &include.param_name;
 
-    for result in main_results {
-        // Try to extract reference from the resource
-        if let Some(ref_value) = result.resource.get(param_name)
-            && let Some(reference) = ref_value.get("reference").and_then(|r| r.as_str())
-        {
-            // Use the shared reference parser to extract the ID
-            if let Ok((_, id)) = parse_reference_simple(reference, None) {
-                reference_ids.push(id);
-            }
-        }
+    // Collect source IDs
+    let source_ids: Vec<&str> = main_results.iter().map(|r| r.id.as_str()).collect();
+
+    let target_types = if let Some(target_type) = include.target_type.as_ref() {
+        vec![target_type.clone()]
+    } else {
+        query_include_target_types(pool, source_type, param_name, &source_ids).await?
+    };
+
+    let mut entries = Vec::new();
+    for target_type in target_types {
+        let mut matched =
+            query_include_for_target(pool, source_type, param_name, &source_ids, &target_type)
+                .await?;
+        entries.append(&mut matched);
     }
 
-    if reference_ids.is_empty() {
-        return Ok(Vec::new());
-    }
+    Ok(entries)
+}
 
-    // Determine target type
-    let target_type = include
-        .target_type
-        .as_deref()
-        .unwrap_or(&include.param_name);
+async fn query_include_target_types(
+    pool: &PgPool,
+    source_type: &str,
+    param_name: &str,
+    source_ids: &[&str],
+) -> Result<Vec<String>, StorageError> {
+    let rows: Vec<Option<String>> = query_scalar(
+        r#"SELECT DISTINCT sir.target_type
+           FROM search_idx_reference sir
+           WHERE sir.resource_type = $1
+             AND sir.resource_id = ANY($2::text[])
+             AND sir.param_code = $3
+             AND sir.ref_kind = 1"#,
+    )
+    .bind(source_type)
+    .bind(source_ids)
+    .bind(param_name)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| StorageError::internal(format!("Include target type lookup failed: {e}")))?;
+
+    Ok(rows.into_iter().flatten().collect())
+}
+
+async fn query_include_for_target(
+    pool: &PgPool,
+    source_type: &str,
+    param_name: &str,
+    source_ids: &[&str],
+    target_type: &str,
+) -> Result<Vec<StoredResource>, StorageError> {
     let table = SchemaManager::table_name(target_type);
 
-    // Query for included resources
-    let placeholders: Vec<String> = (1..=reference_ids.len()).map(|i| format!("${i}")).collect();
     let sql = format!(
-        r#"SELECT resource, id, txid, created_at, updated_at FROM "{table}"
-           WHERE id = ANY(ARRAY[{}]::text[])
-           AND status != 'deleted'"#,
-        placeholders.join(", ")
+        r#"SELECT DISTINCT t.resource, t.id, t.txid, t.created_at, t.updated_at
+           FROM search_idx_reference sir
+           JOIN "{table}" t ON t.id = sir.target_id AND t.status != 'deleted'
+           WHERE sir.resource_type = $1 AND sir.resource_id = ANY($2::text[])
+           AND sir.param_code = $3 AND sir.ref_kind = 1
+           AND sir.target_type = $4"#
     );
 
-    let mut query = query_as(&sql);
-    for id in &reference_ids {
-        query = query.bind(id);
-    }
-
-    let rows: Vec<(Value, String, i64, DateTime<Utc>, DateTime<Utc>)> =
-        query.fetch_all(pool).await.map_err(|e| {
+    let rows: Vec<(Value, String, i64, DateTime<Utc>, DateTime<Utc>)> = query_as(&sql)
+        .bind(source_type)
+        .bind(&source_ids)
+        .bind(param_name)
+        .bind(target_type)
+        .fetch_all(pool)
+        .await
+        .map_err(|e| {
             if e.to_string().contains("does not exist") {
                 return StorageError::internal(format!(
                     "Include target table {} not found",
@@ -560,7 +623,10 @@ async fn resolve_include(
     Ok(entries)
 }
 
-/// Resolve a single _revinclude specification.
+/// Resolve a single _revinclude specification using the search_idx_reference index table.
+///
+/// Uses B-tree index scan on `search_idx_reference` to find resources that reference
+/// the main results, instead of runtime JSONB ->> extraction.
 async fn resolve_revinclude(
     pool: &PgPool,
     main_results: &[StoredResource],
@@ -570,42 +636,34 @@ async fn resolve_revinclude(
         return Ok(Vec::new());
     }
 
-    // Build reference values to search for
     let main_type = main_results
         .first()
         .map(|r| r.resource_type.as_str())
         .unwrap_or("");
-    let reference_values: Vec<String> = main_results
-        .iter()
-        .map(|r| format!("{}/{}", main_type, r.id))
-        .collect();
-
-    if reference_values.is_empty() {
-        return Ok(Vec::new());
-    }
+    let target_ids: Vec<&str> = main_results.iter().map(|r| r.id.as_str()).collect();
 
     let source_type = &revinclude.source_type;
     let table = SchemaManager::table_name(source_type);
     let param_name = &revinclude.param_name;
 
-    // Query for resources that reference main results
-    let placeholders: Vec<String> = (1..=reference_values.len())
-        .map(|i| format!("${i}"))
-        .collect();
+    // Use index table: find source resources that reference any of the target IDs
     let sql = format!(
-        r#"SELECT resource, id, txid, created_at, updated_at FROM "{table}"
-           WHERE resource->'{param_name}'->>'reference' = ANY(ARRAY[{}]::text[])
-           AND status != 'deleted'"#,
-        placeholders.join(", ")
+        r#"SELECT DISTINCT s.resource, s.id, s.txid, s.created_at, s.updated_at
+           FROM search_idx_reference sir
+           JOIN "{table}" s ON s.id = sir.resource_id AND s.status != 'deleted'
+           WHERE sir.resource_type = $1 AND sir.param_code = $2
+           AND sir.ref_kind = 1 AND sir.target_type = $3
+           AND sir.target_id = ANY($4::text[])"#
     );
 
-    let mut query = query_as(&sql);
-    for ref_value in &reference_values {
-        query = query.bind(ref_value);
-    }
-
-    let rows: Vec<(Value, String, i64, DateTime<Utc>, DateTime<Utc>)> =
-        query.fetch_all(pool).await.map_err(|e| {
+    let rows: Vec<(Value, String, i64, DateTime<Utc>, DateTime<Utc>)> = query_as(&sql)
+        .bind(source_type)
+        .bind(param_name)
+        .bind(main_type)
+        .bind(&target_ids)
+        .fetch_all(pool)
+        .await
+        .map_err(|e| {
             if e.to_string().contains("does not exist") {
                 return StorageError::internal(format!(
                     "RevInclude source table {} not found",
@@ -653,7 +711,9 @@ async fn resolve_includes_revincludes_raw(
 
     let revinclude_futures: Vec<_> = revincludes
         .iter()
-        .map(|revinclude| resolve_revinclude_raw(pool, main_resource_type, main_results, revinclude))
+        .map(|revinclude| {
+            resolve_revinclude_raw(pool, main_resource_type, main_results, revinclude)
+        })
         .collect();
 
     let (include_results, revinclude_results) = tokio::try_join!(
@@ -667,7 +727,10 @@ async fn resolve_includes_revincludes_raw(
     Ok(included)
 }
 
-/// Resolve a single _include specification using raw JSON.
+/// Resolve a single _include specification using raw JSON and the index table.
+///
+/// Uses B-tree index scan on `search_idx_reference` to find referenced resource IDs
+/// instead of parsing JSONB at runtime. Returns resources as raw JSON strings.
 async fn resolve_include_raw(
     pool: &PgPool,
     main_results: &[RawStoredResource],
@@ -677,48 +740,56 @@ async fn resolve_include_raw(
         return Ok(Vec::new());
     }
 
-    // Extract reference IDs by partially parsing JSON (only the needed field)
-    let mut reference_ids: Vec<String> = Vec::new();
+    let source_type = &include.source_type;
     let param_name = &include.param_name;
 
-    for result in main_results {
-        // Parse just enough to extract the reference field
-        if let Ok(v) = serde_json::from_str::<Value>(&result.resource_json) {
-            if let Some(ref_value) = v.get(param_name)
-                && let Some(reference) = ref_value.get("reference").and_then(|r| r.as_str())
-            {
-                if let Ok((_, id)) = parse_reference_simple(reference, None) {
-                    reference_ids.push(id);
-                }
-            }
-        }
+    // Collect source IDs
+    let source_ids: Vec<&str> = main_results.iter().map(|r| r.id.as_str()).collect();
+
+    let target_types = if let Some(target_type) = include.target_type.as_ref() {
+        vec![target_type.clone()]
+    } else {
+        query_include_target_types(pool, source_type, param_name, &source_ids).await?
+    };
+
+    let mut entries = Vec::new();
+    for target_type in target_types {
+        let mut matched =
+            query_include_for_target_raw(pool, source_type, param_name, &source_ids, &target_type)
+                .await?;
+        entries.append(&mut matched);
     }
 
-    if reference_ids.is_empty() {
-        return Ok(Vec::new());
-    }
+    Ok(entries)
+}
 
-    let target_type = include
-        .target_type
-        .as_deref()
-        .unwrap_or(&include.param_name);
+async fn query_include_for_target_raw(
+    pool: &PgPool,
+    source_type: &str,
+    param_name: &str,
+    source_ids: &[&str],
+    target_type: &str,
+) -> Result<Vec<RawStoredResource>, StorageError> {
     let table = SchemaManager::table_name(target_type);
 
-    let placeholders: Vec<String> = (1..=reference_ids.len()).map(|i| format!("${i}")).collect();
     let sql = format!(
-        r#"SELECT resource::text, id, txid, created_at, updated_at FROM "{table}"
-           WHERE id = ANY(ARRAY[{}]::text[])
-           AND status != 'deleted'"#,
-        placeholders.join(", ")
+        r#"SELECT DISTINCT t.resource::text, t.id, t.txid, t.created_at, t.updated_at
+           FROM search_idx_reference sir
+           JOIN "{table}" t ON t.id = sir.target_id AND t.status != 'deleted'
+           WHERE sir.resource_type = $1 AND sir.resource_id = ANY($2::text[])
+           AND sir.param_code = $3 AND sir.ref_kind = 1
+           AND sir.target_type = $4"#
     );
 
-    let mut query = query_as(&sql);
-    for id in &reference_ids {
-        query = query.bind(id);
-    }
-
-    let rows: Vec<(String, String, i64, DateTime<Utc>, DateTime<Utc>)> =
-        query.fetch_all(pool).await.map_err(|e| {
+    let rows: Vec<(String, String, i64, DateTime<Utc>, DateTime<Utc>)> = query_as(&sql)
+        .bind(source_type)
+        .bind(&source_ids)
+        .bind(param_name)
+        .bind(target_type)
+        .fetch_all(pool)
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, sql = %sql, "Include query failed");
             if e.to_string().contains("does not exist") {
                 return StorageError::internal(format!(
                     "Include target table {} not found",
@@ -747,7 +818,10 @@ async fn resolve_include_raw(
     Ok(entries)
 }
 
-/// Resolve a single _revinclude specification using raw JSON.
+/// Resolve a single _revinclude specification using raw JSON and the index table.
+///
+/// Uses B-tree index scan on `search_idx_reference` to find resources that reference
+/// the main results, instead of runtime JSONB ->> extraction.
 async fn resolve_revinclude_raw(
     pool: &PgPool,
     main_resource_type: &str,
@@ -758,36 +832,30 @@ async fn resolve_revinclude_raw(
         return Ok(Vec::new());
     }
 
-    let reference_values: Vec<String> = main_results
-        .iter()
-        .map(|r| format!("{}/{}", main_resource_type, r.id))
-        .collect();
-
-    if reference_values.is_empty() {
-        return Ok(Vec::new());
-    }
+    let target_ids: Vec<&str> = main_results.iter().map(|r| r.id.as_str()).collect();
 
     let source_type = &revinclude.source_type;
     let table = SchemaManager::table_name(source_type);
     let param_name = &revinclude.param_name;
 
-    let placeholders: Vec<String> = (1..=reference_values.len())
-        .map(|i| format!("${i}"))
-        .collect();
+    // Use index table: find source resources that reference any of the target IDs
     let sql = format!(
-        r#"SELECT resource::text, id, txid, created_at, updated_at FROM "{table}"
-           WHERE resource->'{param_name}'->>'reference' = ANY(ARRAY[{}]::text[])
-           AND status != 'deleted'"#,
-        placeholders.join(", ")
+        r#"SELECT DISTINCT s.resource::text, s.id, s.txid, s.created_at, s.updated_at
+           FROM search_idx_reference sir
+           JOIN "{table}" s ON s.id = sir.resource_id AND s.status != 'deleted'
+           WHERE sir.resource_type = $1 AND sir.param_code = $2
+           AND sir.ref_kind = 1 AND sir.target_type = $3
+           AND sir.target_id = ANY($4::text[])"#
     );
 
-    let mut query = query_as(&sql);
-    for ref_value in &reference_values {
-        query = query.bind(ref_value);
-    }
-
-    let rows: Vec<(String, String, i64, DateTime<Utc>, DateTime<Utc>)> =
-        query.fetch_all(pool).await.map_err(|e| {
+    let rows: Vec<(String, String, i64, DateTime<Utc>, DateTime<Utc>)> = query_as(&sql)
+        .bind(source_type)
+        .bind(param_name)
+        .bind(main_resource_type)
+        .bind(&target_ids)
+        .fetch_all(pool)
+        .await
+        .map_err(|e| {
             if e.to_string().contains("does not exist") {
                 return StorageError::internal(format!(
                     "RevInclude source table {} not found",

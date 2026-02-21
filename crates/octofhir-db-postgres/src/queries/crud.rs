@@ -621,17 +621,13 @@ pub async fn delete(pool: &PgPool, resource_type: &str, id: &str) -> Result<(), 
            WHERE id = $1 AND status != 'deleted'"#
     );
 
-    let _result = query(&sql)
-        .bind(id)
-        .execute(pool)
-        .await
-        .map_err(|e| {
-            // Table might not exist, but that's OK for idempotent delete
-            if e.to_string().contains("does not exist") {
-                return StorageError::internal(format!("Table does not exist: {e}"));
-            }
-            StorageError::internal(format!("Failed to delete resource: {e}"))
-        })?;
+    let _result = query(&sql).bind(id).execute(pool).await.map_err(|e| {
+        // Table might not exist, but that's OK for idempotent delete
+        if e.to_string().contains("does not exist") {
+            return StorageError::internal(format!("Table does not exist: {e}"));
+        }
+        StorageError::internal(format!("Failed to delete resource: {e}"))
+    })?;
 
     // Per FHIR spec: delete is idempotent, so success regardless of whether
     // any rows were affected (resource didn't exist or was already deleted)
@@ -747,18 +743,17 @@ pub async fn vread_raw(
            WHERE id = $1 AND txid = $2"#
     );
 
-    let row: Option<(String, i64, DateTime<Utc>, DateTime<Utc>, String)> =
-        query_as(&current_sql)
-            .bind(id)
-            .bind(version_id)
-            .fetch_optional(pool)
-            .await
-            .map_err(|e| {
-                if e.to_string().contains("does not exist") {
-                    return StorageError::internal(format!("Table does not exist: {e}"));
-                }
-                StorageError::internal(format!("Failed to read version: {e}"))
-            })?;
+    let row: Option<(String, i64, DateTime<Utc>, DateTime<Utc>, String)> = query_as(&current_sql)
+        .bind(id)
+        .bind(version_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| {
+            if e.to_string().contains("does not exist") {
+                return StorageError::internal(format!("Table does not exist: {e}"));
+            }
+            StorageError::internal(format!("Failed to read version: {e}"))
+        })?;
 
     if let Some((row_id, txid, created_at, updated_at, resource_json)) = row {
         let created_at_time = chrono_to_time(created_at);
@@ -780,18 +775,17 @@ pub async fn vread_raw(
            WHERE id = $1 AND txid = $2"#
     );
 
-    let row: Option<(String, i64, DateTime<Utc>, DateTime<Utc>, String)> =
-        query_as(&history_sql)
-            .bind(id)
-            .bind(version_id)
-            .fetch_optional(pool)
-            .await
-            .map_err(|e| {
-                if e.to_string().contains("does not exist") {
-                    return StorageError::internal(format!("History table does not exist: {e}"));
-                }
-                StorageError::internal(format!("Failed to read version from history: {e}"))
-            })?;
+    let row: Option<(String, i64, DateTime<Utc>, DateTime<Utc>, String)> = query_as(&history_sql)
+        .bind(id)
+        .bind(version_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| {
+            if e.to_string().contains("does not exist") {
+                return StorageError::internal(format!("History table does not exist: {e}"));
+            }
+            StorageError::internal(format!("Failed to read version from history: {e}"))
+        })?;
 
     match row {
         Some((row_id, txid, created_at, updated_at, resource_json)) => {
@@ -978,16 +972,12 @@ pub async fn delete_with_tx(
            WHERE id = $1 AND status != 'deleted'"#
     );
 
-    let _result = query(&sql)
-        .bind(id)
-        .execute(&mut **tx)
-        .await
-        .map_err(|e| {
-            if e.to_string().contains("does not exist") {
-                return StorageError::internal(format!("Table does not exist: {e}"));
-            }
-            StorageError::internal(format!("Failed to delete resource: {e}"))
-        })?;
+    let _result = query(&sql).bind(id).execute(&mut **tx).await.map_err(|e| {
+        if e.to_string().contains("does not exist") {
+            return StorageError::internal(format!("Table does not exist: {e}"));
+        }
+        StorageError::internal(format!("Failed to delete resource: {e}"))
+    })?;
 
     // Per FHIR spec: delete is idempotent
     Ok(())

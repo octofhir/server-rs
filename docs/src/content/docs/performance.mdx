@@ -5,6 +5,8 @@ description: Query caching, index optimization, and performance best practices
 
 OctoFHIR includes built-in performance optimizations including query caching, automatic index analysis, and configurable tuning options.
 
+For the current query/index execution model, see [Search Indexing](./search-indexing).
+
 ## Query Caching
 
 ### Overview
@@ -95,76 +97,45 @@ Response:
 }
 ```
 
-### Recommended Indexes
+### Built-In Indexes (Default)
 
-For optimal performance, create these indexes:
+In most setups, you do **not** need to handcraft indexes on day one.
 
-#### Core Indexes (All Resources)
+OctoFHIR already creates and maintains:
 
-```sql
--- Resource type filtering (if using single table)
-CREATE INDEX idx_resource_type ON fhir_resources ((resource->>'resourceType'));
+1. Resource-table indexes (per resource type table):
+   - GIN on `resource` JSONB for containment paths
+   - BTREE on lifecycle columns (`updated_at`, `status`, etc.)
+2. Denormalized search tables:
+   - `search_idx_reference` for reference lookup, include/revinclude, chaining
+   - `search_idx_date` for date range and precision-aware date matching
 
--- Last updated (for _lastUpdated searches and history)
-CREATE INDEX idx_resource_ts ON fhir_resources (ts DESC);
+This gives good defaults for real-world FHIR traffic without manual SQL tuning.
 
--- Resource ID lookup
-CREATE INDEX idx_resource_id ON fhir_resources ((resource->>'id'));
+### Optional Custom Indexes
 
--- Version tracking
-CREATE INDEX idx_resource_txid ON fhir_resources (txid);
-```
+Add custom indexes only after measuring a real hotspot (via EXPLAIN plans, slow-query logs, or index suggestions API).
 
-#### Patient Indexes
+Common candidates:
 
-```sql
--- Name searches
-CREATE INDEX idx_patient_family ON patient USING btree (
-  (resource->'name'->0->>'family')
-);
+- Heavy string prefix/contains traffic on a specific field
+- Custom extension fields queried at high frequency
+- Tenant-specific filter patterns in multi-tenant deployments
 
--- Identifier searches
-CREATE INDEX idx_patient_identifier ON patient USING gin (
-  (resource->'identifier')
-);
-
--- Birth date range searches
-CREATE INDEX idx_patient_birthdate ON patient USING btree (
-  (resource->>'birthDate')
-);
-```
-
-#### Observation Indexes
+Example (optional, workload-driven):
 
 ```sql
--- Code searches (most common)
-CREATE INDEX idx_observation_code ON observation USING gin (
-  (resource->'code'->'coding')
-);
-
--- Subject reference
-CREATE INDEX idx_observation_subject ON observation USING btree (
-  (resource->'subject'->>'reference')
-);
-
--- Effective date ranges
-CREATE INDEX idx_observation_effective ON observation USING btree (
-  (resource->>'effectiveDateTime')
-);
-
--- Composite: code + date (common query pattern)
-CREATE INDEX idx_observation_code_date ON observation USING btree (
-  (resource->'code'->'coding'->0->>'code'),
-  (resource->>'effectiveDateTime')
-);
+-- Example: optimize frequent Patient.family prefix lookups
+CREATE INDEX idx_patient_family_text
+ON patient ((LOWER(resource->'name'->0->>'family')));
 ```
 
 ### GIN vs BTREE
 
 | Index Type | Use Case | Example |
 |------------|----------|---------|
-| BTREE | Equality, ranges | `birthDate`, `_lastUpdated` |
-| GIN | JSONB containment, arrays | `identifier`, `code.coding` |
+| BTREE | Equality, ranges, ordered scans | `search_idx_date.range_start`, `target_id` lookups |
+| GIN | JSONB containment and array/object matching | `resource @> {...}` for exact-style filters |
 
 ### Analyzing Query Performance
 

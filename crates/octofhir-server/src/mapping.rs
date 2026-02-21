@@ -255,7 +255,9 @@ mod tests {
         let err = validate_payload_structure(
             "Patient",
             &body,
-            &IdPolicy::Update { path_id: "xyz".into() },
+            &IdPolicy::Update {
+                path_id: "xyz".into(),
+            },
         )
         .unwrap_err();
         assert!(err.contains("does not match"));
@@ -264,11 +266,15 @@ mod tests {
     #[test]
     fn validate_payload_structure_accepts_matching_id() {
         let body = json!({"resourceType": "Patient", "id": "abc"});
-        assert!(validate_payload_structure(
-            "Patient",
-            &body,
-            &IdPolicy::Update { path_id: "abc".into() },
-        )
-        .is_ok());
+        assert!(
+            validate_payload_structure(
+                "Patient",
+                &body,
+                &IdPolicy::Update {
+                    path_id: "abc".into()
+                },
+            )
+            .is_ok()
+        );
     }
 }

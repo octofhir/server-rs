@@ -3,7 +3,7 @@
 //! This module bridges the modern `SearchParams` type (from octofhir-storage)
 //! to the SQL query builder, enabling search via the FhirStorage trait.
 
-use crate::chaining::{is_chained_parameter, parse_chained_parameter};
+use crate::chaining::{build_chained_search, is_chained_parameter, parse_chained_parameter};
 use crate::include::{is_include_parameter, is_revinclude_parameter};
 use crate::parameters::SearchPrefix;
 use crate::parser::{ParsedParam, ParsedValue};
@@ -149,6 +149,7 @@ pub fn build_query_from_params_with_config(
                 values,
                 registry,
                 schema,
+                resource_type,
             )?;
             continue;
         }
@@ -357,6 +358,9 @@ fn extract_prefix(value: &str) -> (Option<SearchPrefix>, &str) {
 }
 
 /// Handle chained search parameter (e.g., patient.name=John).
+///
+/// Uses the `search_idx_reference` index table for B-tree lookups instead of
+/// runtime JSONB extraction and CONCAT matching.
 fn handle_chained_param(
     _builder: &mut FhirQueryBuilder,
     sql_builder: &mut SqlBuilder,
@@ -364,72 +368,19 @@ fn handle_chained_param(
     values: &[String],
     registry: &SearchParameterRegistry,
     _schema: &str,
+    resource_type: &str,
 ) -> Result<(), SqlBuilderError> {
-    // For now, use the existing chaining infrastructure
-    // Full chaining implementation would add JOINs to the builder
     let value = values.first().map(|s| s.as_str()).unwrap_or("");
 
-    match parse_chained_parameter(key, value, registry, "") {
+    match parse_chained_parameter(key, value, registry, resource_type) {
         Ok(chained) => {
-            // Add chain joins
-            // For each link in the chain, we need to JOIN the target resource table
-            // This is a simplified implementation - full implementation would handle
-            // multiple chain links and proper alias management
-
             tracing::debug!(
                 chain = ?chained.chain,
                 final_param = %chained.final_param,
                 "Processing chained parameter"
             );
-
-            // For simple single-level chains like "patient.name"
-            if let Some(first_link) = chained.chain.first()
-                && let Some(target_type) = &first_link.target_type
-            {
-                // Build the reference path
-                let expr = &first_link.expression;
-                let path_segments = fhirpath_to_jsonb_path(expr, "");
-                if let Ok(ref_path) = JsonbPath::new(path_segments) {
-                    // Note: We can't modify builder here because of borrow issues
-                    // Instead, build the chain condition using EXISTS subquery
-                    let target_lower = target_type.to_lowercase();
-                    let final_param_def = registry.get(target_type, &chained.final_param);
-
-                    if let Some(param_def) = final_param_def
-                        && let Some(final_expr) = &param_def.expression
-                    {
-                        let final_path = fhirpath_to_jsonb_path(final_expr, target_type);
-                        let final_accessor = if final_path.is_empty() {
-                            "target.resource".to_string()
-                        } else {
-                            let mut acc = "target.resource".to_string();
-                            for (i, seg) in final_path.iter().enumerate() {
-                                if i == final_path.len() - 1 {
-                                    acc = format!("{acc}->>'{seg}'");
-                                } else {
-                                    acc = format!("{acc}->'{seg}'");
-                                }
-                            }
-                            acc
-                        };
-
-                        // Build the chained condition
-                        let ref_accessor = ref_path.to_accessor("r.resource", true);
-                        let param_num = sql_builder.add_text_param(&chained.value);
-
-                        let condition = format!(
-                            "EXISTS (SELECT 1 FROM \"public\".\"{target_lower}\" AS target \
-                             WHERE ({ref_accessor}) = CONCAT('{target_type}/', target.id) \
-                             AND target.status != 'deleted' \
-                             AND LOWER({final_accessor}) LIKE LOWER(${param_num} || '%'))"
-                        );
-
-                        sql_builder.add_condition(condition);
-                    }
-                }
-            }
-
-            Ok(())
+            build_chained_search(sql_builder, &chained, resource_type)
+                .map_err(|e| SqlBuilderError::InvalidSearchValue(e.to_string()))
         }
         Err(e) => {
             tracing::warn!(key = %key, error = %e, "Failed to parse chained parameter");
@@ -473,7 +424,7 @@ fn build_sort_spec(
 /// Extract _include specifications from params.
 fn extract_include_specs(
     params: &SearchParams,
-    _registry: &SearchParameterRegistry,
+    registry: &SearchParameterRegistry,
     _resource_type: &str,
 ) -> Vec<IncludeSpec> {
     let mut specs = Vec::new();
@@ -490,6 +441,14 @@ fn extract_include_specs(
                 let mut spec = IncludeSpec::new(source, param);
                 if let Some(t) = target {
                     spec = spec.with_target(t);
+                } else if let Some(param_def) = registry.get(source, param) {
+                    // Resolve target type from registry when not explicitly provided.
+                    // For params with a single target (e.g., patient → Patient), set it.
+                    // For multi-target params (e.g., subject → Patient|Group), keep unresolved
+                    // and resolve dynamically from index rows at execution time.
+                    if param_def.target.len() == 1 {
+                        spec = spec.with_target(&param_def.target[0]);
+                    }
                 }
                 specs.push(spec);
             }
@@ -647,5 +606,154 @@ mod tests {
         assert_eq!(extract_prefix("ge2000"), (Some(SearchPrefix::Ge), "2000"));
         assert_eq!(extract_prefix("le100"), (Some(SearchPrefix::Le), "100"));
         assert_eq!(extract_prefix("John"), (None, "John"));
+    }
+
+    #[test]
+    fn test_parse_query_string_include() {
+        let params =
+            parse_query_string("code=8867-4&_include=Observation:subject&_count=5", 10, 100);
+        // _include should be in the parameters map
+        assert!(
+            params.parameters.contains_key("_include"),
+            "params.parameters should contain _include, got keys: {:?}",
+            params.parameters.keys().collect::<Vec<_>>()
+        );
+        let include_values = params.parameters.get("_include").unwrap();
+        assert_eq!(include_values, &["Observation:subject"]);
+    }
+
+    #[test]
+    fn test_extract_include_specs_from_params() {
+        let registry = SearchParameterRegistry::new();
+        let params =
+            parse_query_string("code=8867-4&_include=Observation:subject&_count=5", 10, 100);
+        let specs = extract_include_specs(&params, &registry, "Observation");
+        assert!(
+            !specs.is_empty(),
+            "include specs should not be empty, params had keys: {:?}",
+            params.parameters.keys().collect::<Vec<_>>()
+        );
+        assert_eq!(specs[0].source_type, "Observation");
+        assert_eq!(specs[0].param_name, "subject");
+    }
+
+    #[test]
+    fn test_extract_revinclude_specs_from_params() {
+        let registry = SearchParameterRegistry::new();
+        let params = parse_query_string(
+            "family=Smith&_revinclude=Observation:subject&_count=5",
+            10,
+            100,
+        );
+        let specs = extract_revinclude_specs(&params, &registry, "Patient");
+        assert!(!specs.is_empty(), "revinclude specs should not be empty");
+        assert_eq!(specs[0].source_type, "Observation");
+        assert_eq!(specs[0].param_name, "subject");
+    }
+
+    #[test]
+    fn test_build_query_includes_populated() {
+        let registry = SearchParameterRegistry::new();
+        let params =
+            parse_query_string("code=8867-4&_include=Observation:subject&_count=5", 10, 100);
+        let converted =
+            build_query_from_params("Observation", &params, &registry, "public").unwrap();
+        assert!(
+            !converted.includes.is_empty(),
+            "converted.includes should not be empty"
+        );
+        assert_eq!(converted.includes[0].source_type, "Observation");
+        assert_eq!(converted.includes[0].param_name, "subject");
+    }
+
+    #[test]
+    fn test_identifier_system_value_through_query_builder() {
+        use crate::parameters::{ElementTypeHint, SearchParameter, SearchParameterType};
+        use std::sync::Arc;
+
+        // Set up registry with identifier search parameter
+        let mut registry = SearchParameterRegistry::new();
+        registry.register(
+            SearchParameter::new(
+                "identifier",
+                "http://hl7.org/fhir/SearchParameter/Patient-identifier",
+                SearchParameterType::Token,
+                vec!["Patient".to_string()],
+            )
+            .with_expression("Patient.identifier")
+            .with_element_type_hint(ElementTypeHint::Array("Identifier".to_string())),
+        );
+
+        let params = parse_query_string("identifier=http://test.org|debug-123&_count=5", 10, 100);
+
+        let converted = build_query_from_params("Patient", &params, &registry, "public").unwrap();
+        let built = converted.builder.with_raw_resource(true).build().unwrap();
+
+        // Should contain @> containment for identifier system|value
+        assert!(
+            built.sql.contains("@>"),
+            "Expected @> containment in SQL for identifier system|value, got: {}",
+            built.sql
+        );
+        // Check that the param is the right JSON
+        let json_params: Vec<_> = built
+            .params
+            .iter()
+            .filter(|p| matches!(p, SqlValue::Json(_)))
+            .collect();
+        assert!(
+            !json_params.is_empty(),
+            "Expected at least one JSON param for identifier containment"
+        );
+        if let SqlValue::Json(j) = &json_params[0] {
+            assert!(
+                j.contains("http://test.org") && j.contains("debug-123"),
+                "Expected JSON with system/value, got: {j}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_identifier_without_element_hint_still_works() {
+        // Test fallback: even without element_type_hint, identifier search
+        // should use identifier-specific containment (not coding wrapper)
+        let mut registry = SearchParameterRegistry::new();
+        registry.register(
+            crate::parameters::SearchParameter::new(
+                "identifier",
+                "http://hl7.org/fhir/SearchParameter/Patient-identifier",
+                crate::parameters::SearchParameterType::Token,
+                vec!["Patient".to_string()],
+            )
+            .with_expression("Patient.identifier"),
+            // Note: no element_type_hint — defaults to Unknown
+        );
+
+        let params = parse_query_string("identifier=http://test.org|debug-123&_count=5", 10, 100);
+
+        let converted = build_query_from_params("Patient", &params, &registry, "public").unwrap();
+        let built = converted.builder.with_raw_resource(true).build().unwrap();
+
+        // Should use @> containment with identifier-style JSON (system/value, NOT coding)
+        assert!(built.sql.contains("@>"), "Expected @> containment");
+        let json_params: Vec<_> = built
+            .params
+            .iter()
+            .filter_map(|p| match p {
+                SqlValue::Json(j) => Some(j.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert!(!json_params.is_empty(), "Expected JSON param");
+        assert!(
+            json_params[0].contains("\"value\"") && json_params[0].contains("\"system\""),
+            "Expected identifier JSON with system/value, got: {}",
+            json_params[0]
+        );
+        assert!(
+            !json_params[0].contains("coding"),
+            "Should NOT contain 'coding' for identifier search, got: {}",
+            json_params[0]
+        );
     }
 }

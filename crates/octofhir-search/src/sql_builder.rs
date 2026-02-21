@@ -751,9 +751,7 @@ impl FhirQueryBuilder {
             } => {
                 Self::collect_condition_params(element_condition, params);
             }
-            SearchCondition::Exists { .. }
-            | SearchCondition::True
-            | SearchCondition::False => {}
+            SearchCondition::Exists { .. } | SearchCondition::True | SearchCondition::False => {}
             SearchCondition::Or(conditions) | SearchCondition::And(conditions) => {
                 for c in conditions {
                     Self::collect_condition_params(c, params);
@@ -928,24 +926,29 @@ impl FhirQueryBuilder {
         clause
     }
 
-    /// Build queries for _include specifications.
+    /// Build queries for _include specifications using the search_idx_reference index table.
     pub fn build_include_queries(&self) -> Result<Vec<BuiltQuery>, SqlBuilderError> {
-        // For each include, generate a separate query
         let mut queries = Vec::new();
 
         for include in &self.includes {
-            let target_type = include
-                .target_type
-                .as_deref()
-                .unwrap_or(&include.param_name);
+            let target_type = match include.target_type.as_deref() {
+                Some(t) => t,
+                None => continue, // Skip includes without resolved target type
+            };
             let target_table = target_type.to_lowercase();
             let target_table_escaped = escape_identifier(&target_table)?;
             let schema = escape_identifier(&self.schema)?;
+            let source_type = &include.source_type;
+            let param_name = &include.param_name;
 
-            // This is a simplified include query - real implementation would
-            // extract reference IDs from main query results
+            // Use index table JOIN to find referenced resources
             let sql = format!(
-                "SELECT resource, id, txid, created_at, updated_at FROM {schema}.{target_table_escaped} WHERE id = ANY($1)"
+                "SELECT DISTINCT t.resource, t.id, t.txid, t.created_at, t.updated_at \
+                 FROM search_idx_reference sir \
+                 JOIN {schema}.{target_table_escaped} t ON t.id = sir.target_id AND t.status != 'deleted' \
+                 WHERE sir.resource_type = '{source_type}' AND sir.resource_id = ANY($1::text[]) \
+                 AND sir.param_code = '{param_name}' AND sir.ref_kind = 1 \
+                 AND sir.target_type = '{target_type}'"
             );
 
             queries.push(BuiltQuery {
@@ -957,7 +960,7 @@ impl FhirQueryBuilder {
         Ok(queries)
     }
 
-    /// Build queries for _revinclude specifications.
+    /// Build queries for _revinclude specifications using the search_idx_reference index table.
     pub fn build_revinclude_queries(&self) -> Result<Vec<BuiltQuery>, SqlBuilderError> {
         let mut queries = Vec::new();
 
@@ -965,14 +968,16 @@ impl FhirQueryBuilder {
             let source_table = revinclude.source_type.to_lowercase();
             let source_table_escaped = escape_identifier(&source_table)?;
             let schema = escape_identifier(&self.schema)?;
+            let source_type = &revinclude.source_type;
+            let param_name = &revinclude.param_name;
 
-            // Build the reference path for the param
-            let ref_path = format!("resource->'{}'->>'reference'", revinclude.param_name);
-
-            // This query finds resources that reference any of the main results
+            // Use index table to find resources that reference the main results
             let sql = format!(
-                "SELECT resource, id, txid, created_at, updated_at FROM {schema}.{source_table_escaped} \
-                 WHERE ({ref_path}) = ANY($1)"
+                "SELECT DISTINCT s.resource, s.id, s.txid, s.created_at, s.updated_at \
+                 FROM search_idx_reference sir \
+                 JOIN {schema}.{source_table_escaped} s ON s.id = sir.resource_id AND s.status != 'deleted' \
+                 WHERE sir.resource_type = '{source_type}' AND sir.param_code = '{param_name}' \
+                 AND sir.ref_kind = 1 AND sir.target_id = ANY($1::text[])"
             );
 
             queries.push(BuiltQuery {
@@ -1374,8 +1379,22 @@ pub(crate) fn strip_fhirpath_functions(expr: &str) -> String {
 fn is_fhirpath_function(name: &str) -> bool {
     matches!(
         name,
-        "where" | "resolve" | "ofType" | "exists" | "empty" | "first" | "last" | "as" | "is"
-            | "not" | "all" | "any" | "count" | "distinct" | "single" | "type"
+        "where"
+            | "resolve"
+            | "ofType"
+            | "exists"
+            | "empty"
+            | "first"
+            | "last"
+            | "as"
+            | "is"
+            | "not"
+            | "all"
+            | "any"
+            | "count"
+            | "distinct"
+            | "single"
+            | "type"
     )
 }
 
@@ -1461,10 +1480,7 @@ mod tests {
         assert_eq!(path, vec!["participant", "individual"]);
 
         // Simple resolve() without where
-        let path = fhirpath_to_jsonb_path(
-            "Observation.subject.resolve()",
-            "Observation",
-        );
+        let path = fhirpath_to_jsonb_path("Observation.subject.resolve()", "Observation");
         assert_eq!(path, vec!["subject"]);
     }
 
@@ -1864,6 +1880,7 @@ mod tests {
         let include_queries = builder.build_include_queries().unwrap();
         assert_eq!(include_queries.len(), 1);
         assert!(include_queries[0].sql.contains("\"patient\""));
+        assert!(include_queries[0].sql.contains("search_idx_reference"));
     }
 
     #[test]
@@ -1874,6 +1891,7 @@ mod tests {
         let revinclude_queries = builder.build_revinclude_queries().unwrap();
         assert_eq!(revinclude_queries.len(), 1);
         assert!(revinclude_queries[0].sql.contains("\"observation\""));
+        assert!(revinclude_queries[0].sql.contains("search_idx_reference"));
     }
 
     #[test]

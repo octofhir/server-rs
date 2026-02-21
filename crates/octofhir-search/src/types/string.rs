@@ -117,28 +117,43 @@ pub fn build_array_string_search(
         let condition = match &param.modifier {
             None => {
                 // Default: starts-with, case-insensitive
-                // Use EXISTS to search across array elements
+                // Use EXISTS to search across array elements.
+                // Also handle nested string arrays (e.g., name[].given[] where given is an array of strings)
+                // by checking both scalar and array extraction. Guard with jsonb_typeof to avoid
+                // "cannot extract elements from a scalar" errors.
                 let escaped = escape_like_pattern(&value.raw);
                 let p = builder.add_text_param(format!("{escaped}%"));
                 format!(
-                    "EXISTS (SELECT 1 FROM jsonb_array_elements({array_path}) AS elem WHERE LOWER(elem->>'{field_name}') LIKE LOWER(${p}))"
+                    "EXISTS (SELECT 1 FROM jsonb_array_elements({array_path}) AS elem WHERE \
+                     LOWER(elem->>'{field_name}') LIKE LOWER(${p}) OR \
+                     (jsonb_typeof(elem->'{field_name}') = 'array' AND \
+                      EXISTS (SELECT 1 FROM jsonb_array_elements_text(elem->'{field_name}') AS sub \
+                      WHERE LOWER(sub) LIKE LOWER(${p}))))"
                 )
             }
 
             Some(SearchModifier::Exact) => {
-                // Exact match across array elements
+                // Exact match across array elements (scalar or nested array)
                 let p = builder.add_text_param(&value.raw);
                 format!(
-                    "EXISTS (SELECT 1 FROM jsonb_array_elements({array_path}) AS elem WHERE elem->>'{field_name}' = ${p})"
+                    "EXISTS (SELECT 1 FROM jsonb_array_elements({array_path}) AS elem WHERE \
+                     elem->>'{field_name}' = ${p} OR \
+                     (jsonb_typeof(elem->'{field_name}') = 'array' AND \
+                      EXISTS (SELECT 1 FROM jsonb_array_elements_text(elem->'{field_name}') AS sub \
+                      WHERE sub = ${p})))"
                 )
             }
 
             Some(SearchModifier::Contains) => {
-                // Contains, case-insensitive across array elements
+                // Contains, case-insensitive across array elements (scalar or nested array)
                 let escaped = escape_like_pattern(&value.raw);
                 let p = builder.add_text_param(format!("%{escaped}%"));
                 format!(
-                    "EXISTS (SELECT 1 FROM jsonb_array_elements({array_path}) AS elem WHERE LOWER(elem->>'{field_name}') LIKE LOWER(${p}))"
+                    "EXISTS (SELECT 1 FROM jsonb_array_elements({array_path}) AS elem WHERE \
+                     LOWER(elem->>'{field_name}') LIKE LOWER(${p}) OR \
+                     (jsonb_typeof(elem->'{field_name}') = 'array' AND \
+                      EXISTS (SELECT 1 FROM jsonb_array_elements_text(elem->'{field_name}') AS sub \
+                      WHERE LOWER(sub) LIKE LOWER(${p}))))"
                 )
             }
 

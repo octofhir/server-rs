@@ -112,9 +112,7 @@ impl FhirStorage for MockStorage {
         _id: Option<&str>,
         _params: &HistoryParams,
     ) -> Result<RawHistoryResult, StorageError> {
-        Err(StorageError::internal(
-            "history_raw not supported in mock",
-        ))
+        Err(StorageError::internal("history_raw not supported in mock"))
     }
 
     async fn system_history_raw(

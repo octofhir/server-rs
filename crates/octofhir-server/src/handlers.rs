@@ -428,13 +428,14 @@ pub async fn build_capability_statement(
 
     // Declare conformance to US Core Server CapabilityStatement if the package is loaded
     let has_us_core = crate::canonical::with_registry(|r| {
-        r.list().iter().any(|p| p.id.starts_with("hl7.fhir.us.core"))
+        r.list()
+            .iter()
+            .any(|p| p.id.starts_with("hl7.fhir.us.core"))
     })
     .unwrap_or(false);
     if has_us_core {
-        body["instantiates"] = json!([
-            "http://hl7.org/fhir/us/core/CapabilityStatement/us-core-server"
-        ]);
+        body["instantiates"] =
+            json!(["http://hl7.org/fhir/us/core/CapabilityStatement/us-core-server"]);
     }
 
     // Note: SMART security extensions (oauth-uris) are added at startup
@@ -778,12 +779,9 @@ pub async fn create_resource(
 
             // Handle Prefer return preference
             match prefer_return {
-                Some(PreferReturn::Minimal) => Ok((
-                    StatusCode::CREATED,
-                    response_headers,
-                    Json(json!({})),
-                )
-                    .into_response()),
+                Some(PreferReturn::Minimal) => {
+                    Ok((StatusCode::CREATED, response_headers, Json(json!({}))).into_response())
+                }
                 Some(PreferReturn::OperationOutcome) => {
                     let outcome = json!({
                         "resourceType": "OperationOutcome",
@@ -797,7 +795,10 @@ pub async fn create_resource(
                 }
                 _ => {
                     // Default: return raw JSON directly (avoids Value → JSON serialization)
-                    Ok((StatusCode::CREATED, response_headers, stored.resource_json).into_response())
+                    Ok(
+                        (StatusCode::CREATED, response_headers, stored.resource_json)
+                            .into_response(),
+                    )
                 }
             }
         }
@@ -1359,9 +1360,7 @@ pub async fn update_resource(
             // Last-Modified
             let last_modified = httpdate::fmt_http_date(
                 std::time::UNIX_EPOCH
-                    + std::time::Duration::from_secs(
-                        stored.last_updated.unix_timestamp() as u64,
-                    ),
+                    + std::time::Duration::from_secs(stored.last_updated.unix_timestamp() as u64),
             );
             if let Ok(val) = header::HeaderValue::from_str(&last_modified) {
                 response_headers.insert(header::LAST_MODIFIED, val);
@@ -1383,12 +1382,9 @@ pub async fn update_resource(
 
             // Handle Prefer return preference
             match prefer_return {
-                Some(PreferReturn::Minimal) => Ok((
-                    StatusCode::OK,
-                    response_headers,
-                    Json(json!({})),
-                )
-                    .into_response()),
+                Some(PreferReturn::Minimal) => {
+                    Ok((StatusCode::OK, response_headers, Json(json!({}))).into_response())
+                }
                 Some(PreferReturn::OperationOutcome) => {
                     let outcome = json!({
                         "resourceType": "OperationOutcome",
@@ -1434,7 +1430,7 @@ pub async fn update_resource(
                     let last_modified = httpdate::fmt_http_date(
                         std::time::UNIX_EPOCH
                             + std::time::Duration::from_secs(
-                                stored.last_updated.unix_timestamp() as u64,
+                                stored.last_updated.unix_timestamp() as u64
                             ),
                     );
                     if let Ok(val) = header::HeaderValue::from_str(&last_modified) {
@@ -1449,12 +1445,10 @@ pub async fn update_resource(
 
                     // Handle Prefer return preference
                     match prefer_return {
-                        Some(PreferReturn::Minimal) => Ok((
-                            StatusCode::CREATED,
-                            response_headers,
-                            Json(json!({})),
-                        )
-                            .into_response()),
+                        Some(PreferReturn::Minimal) => {
+                            Ok((StatusCode::CREATED, response_headers, Json(json!({})))
+                                .into_response())
+                        }
                         Some(PreferReturn::OperationOutcome) => {
                             let outcome = json!({
                                 "resourceType": "OperationOutcome",
@@ -1467,8 +1461,10 @@ pub async fn update_resource(
                             Ok((StatusCode::CREATED, response_headers, Json(outcome))
                                 .into_response())
                         }
-                        _ => Ok((StatusCode::CREATED, response_headers, stored.resource_json)
-                            .into_response()),
+                        _ => Ok(
+                            (StatusCode::CREATED, response_headers, stored.resource_json)
+                                .into_response(),
+                        ),
                     }
                 }
                 Err(e) => Err(map_storage_error(e)),
@@ -1554,7 +1550,9 @@ pub async fn conditional_update_resource(
         Ok(result) => match result.entries.len() {
             0 => {
                 // No match - create new resource (201)
-                if let Err(err) = validate_payload_structure(&resource_type, &payload, &IdPolicy::Create) {
+                if let Err(err) =
+                    validate_payload_structure(&resource_type, &payload, &IdPolicy::Create)
+                {
                     return Err(ApiError::bad_request(err));
                 }
 
@@ -2539,8 +2537,14 @@ pub async fn system_search(
     // Build system search bundle
     let primary_type = types.first().unwrap_or(&"Resource");
     let suffix = build_query_suffix_for_links(&raw_q);
-    let links =
-        octofhir_api::build_search_links(total_count, &state.base_url, primary_type, offset, count, suffix.as_deref());
+    let links = octofhir_api::build_search_links(
+        total_count,
+        &state.base_url,
+        primary_type,
+        offset,
+        count,
+        suffix.as_deref(),
+    );
     let bundle = octofhir_api::Bundle::searchset(total_count as u64, paginated, links);
 
     // Apply _summary and _elements filters
@@ -3549,10 +3553,9 @@ async fn process_transaction_entry_with_tx(
                 }
                 Err(e) if e.to_string().contains("not found") => {
                     // Resource doesn't exist — create it (PUT as create with client-assigned ID)
-                    let stored = tx
-                        .create(&resource)
-                        .await
-                        .map_err(|e| ApiError::internal(format!("Failed to create resource via PUT: {}", e)))?;
+                    let stored = tx.create(&resource).await.map_err(|e| {
+                        ApiError::internal(format!("Failed to create resource via PUT: {}", e))
+                    })?;
 
                     let resource_type = stored.resource_type.clone();
                     Ok(build_transaction_response_entry(
@@ -3563,7 +3566,10 @@ async fn process_transaction_entry_with_tx(
                         Some(&stored.version_id),
                     ))
                 }
-                Err(e) => Err(ApiError::internal(format!("Failed to update resource: {}", e))),
+                Err(e) => Err(ApiError::internal(format!(
+                    "Failed to update resource: {}",
+                    e
+                ))),
             }
         }
         "DELETE" => {
@@ -4533,7 +4539,11 @@ pub async fn compartment_search(
         })?;
 
     // Check if the compartment resource exists (raw path avoids Value parsing)
-    match state.storage.read_raw(&compartment_type, &compartment_id).await {
+    match state
+        .storage
+        .read_raw(&compartment_type, &compartment_id)
+        .await
+    {
         Ok(Some(_)) => {} // Resource exists
         Ok(None) => {
             return Err(ApiError::NotFound(format!(
@@ -4564,7 +4574,8 @@ pub async fn compartment_search(
 
     // Execute searches for all inclusion parameters and collect unique resources (raw path)
     let cfg = state.search_config.config();
-    let mut all_resources: std::collections::HashMap<String, String> = std::collections::HashMap::new(); // Deduplicate by ID → raw JSON
+    let mut all_resources: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new(); // Deduplicate by ID → raw JSON
     let mut total_count = 0usize;
 
     for param in inclusion_params {
@@ -4665,7 +4676,11 @@ pub async fn compartment_search_all(
         .map_err(|e| ApiError::NotFound(format!("Compartment not found: {}", e)))?;
 
     // Verify compartment resource exists (raw path avoids Value parsing)
-    match state.storage.read_raw(&compartment_type, &compartment_id).await {
+    match state
+        .storage
+        .read_raw(&compartment_type, &compartment_id)
+        .await
+    {
         Ok(Some(_)) => {} // Resource exists
         Ok(None) => {
             return Err(ApiError::NotFound(format!(

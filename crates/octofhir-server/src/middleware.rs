@@ -592,10 +592,9 @@ pub async fn trace_metrics_middleware(req: Request<Body>, next: Next) -> Respons
 
     let mut response = response;
     if let Ok(header_value) = HeaderValue::from_str(&req_id) {
-        response.headers_mut().insert(
-            HeaderName::from_static("x-request-id"),
-            header_value,
-        );
+        response
+            .headers_mut()
+            .insert(HeaderName::from_static("x-request-id"), header_value);
     }
 
     response

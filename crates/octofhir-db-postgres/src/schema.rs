@@ -4,9 +4,6 @@
 //! index management, and schema introspection. It uses a table-per-resource
 //! pattern where each FHIR resource type gets its own table.
 
-use std::sync::Arc;
-
-use dashmap::DashSet;
 use sqlx_postgres::PgPool;
 use tracing::{debug, info, instrument};
 
@@ -18,7 +15,6 @@ use crate::error::{PostgresError, Result};
 /// - Creating and managing resource tables dynamically
 /// - Creating history tables with triggers for versioning
 /// - Managing indexes for efficient JSONB search
-/// - Caching table existence to avoid repeated database checks
 ///
 /// # Table Structure
 ///
@@ -30,19 +26,13 @@ use crate::error::{PostgresError, Result};
 #[derive(Debug, Clone)]
 pub struct SchemaManager {
     pool: PgPool,
-    /// Cache of tables that have been verified to exist.
-    /// Uses DashSet for thread-safe concurrent access.
-    created_tables: Arc<DashSet<String>>,
 }
 
 impl SchemaManager {
     /// Creates a new `SchemaManager` with the given connection pool.
     #[must_use]
     pub fn new(pool: PgPool) -> Self {
-        Self {
-            pool,
-            created_tables: Arc::new(DashSet::new()),
-        }
+        Self { pool }
     }
 
     /// Returns a reference to the connection pool.
@@ -60,73 +50,42 @@ impl SchemaManager {
         resource_type.to_lowercase()
     }
 
-    /// Ensures the table exists for the given resource type.
+    /// Creates the full schema for a resource type (idempotent).
     ///
-    /// This method is idempotent - calling it multiple times for the same
-    /// resource type is safe and efficient due to caching.
-    ///
-    /// # Process
-    ///
-    /// 1. Check the in-memory cache
-    /// 2. If not cached, check if the table exists in the database
-    /// 3. If the table doesn't exist, create it along with history table,
-    ///    indexes, and triggers
-    /// 4. Add to cache
+    /// Creates: resource table, history table, triggers, indexes, search index partitions.
+    /// All DDL uses `IF NOT EXISTS` / `CREATE OR REPLACE` for idempotency — no caching
+    /// or existence checks needed.
     ///
     /// # Errors
     ///
-    /// Returns an error if database queries fail or table creation fails.
+    /// Returns an error if any DDL statement fails.
     #[instrument(skip(self), fields(resource_type = %resource_type))]
-    pub async fn ensure_table(&self, resource_type: &str) -> Result<()> {
+    pub async fn create_resource_schema(&self, resource_type: &str) -> Result<()> {
         let table = Self::table_name(resource_type);
 
-        // Check cache first (fast path)
-        if self.created_tables.contains(&table) {
-            debug!("Table {} found in cache", table);
-            return Ok(());
-        }
-
-        // Check database
-        if self.table_exists(&table).await? {
-            debug!("Table {} exists in database, adding to cache", table);
-            // Ensure history table exists for non-internal resources
-            // (may be missing if table was created by an older version)
-            if !Self::is_internal_resource(&table) {
-                let history_table = format!("{}_history", table);
-                if !self.table_exists(&history_table).await? {
-                    info!("History table {} missing, creating", history_table);
-                    self.create_history_table(resource_type).await?;
-                    self.create_history_trigger(resource_type).await?;
-                }
-            }
-            self.created_tables.insert(table);
-            return Ok(());
-        }
-
-        // Create table and related objects
-        info!("Creating schema for resource type: {}", resource_type);
         self.create_resource_table(resource_type).await?;
-        self.create_indexes(resource_type).await?;
         self.create_update_trigger(resource_type).await?;
 
-        // Skip history tables/triggers for internal resources (auth, app config)
-        // They don't need FHIR-style versioning
         if !Self::is_internal_resource(&table) {
             self.create_history_table(resource_type).await?;
             self.create_history_trigger(resource_type).await?;
         }
 
-        // Add gateway notification trigger for App and CustomOperation resources
+        // Indexes after history table so history table indexes can be created
+        self.create_indexes(resource_type).await?;
+
+        if !Self::is_internal_resource(&table) {
+            self.ensure_search_index_partitions(resource_type).await?;
+        }
+
         if Self::is_gateway_resource(&table) {
             self.create_gateway_trigger(resource_type).await?;
         }
 
-        // Add policy notification trigger for AccessPolicy resources
         if Self::is_policy_resource(&table) {
             self.create_policy_trigger(resource_type).await?;
         }
 
-        self.created_tables.insert(table);
         Ok(())
     }
 
@@ -163,36 +122,14 @@ impl SchemaManager {
         )
     }
 
-    /// Checks if a table exists in the database.
-    #[instrument(skip(self))]
-    async fn table_exists(&self, table: &str) -> Result<bool> {
-        let row: Option<(bool,)> = sqlx_core::query_as::query_as(
-            "SELECT EXISTS (
-                SELECT FROM information_schema.tables
-                WHERE table_schema = 'public' AND table_name = $1
-            )",
-        )
-        .bind(table)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(PostgresError::from)?;
-
-        Ok(row.map(|(exists,)| exists).unwrap_or(false))
-    }
-
     /// Creates the main resource table.
     #[instrument(skip(self))]
     async fn create_resource_table(&self, resource_type: &str) -> Result<()> {
         let table = Self::table_name(resource_type);
 
-        // Using format! for table name since it can't be parameterized
-        // The table name is derived from resource_type which should be validated
-        // Note: resource_type is not stored as a column since:
-        // 1. The table name already indicates the resource type
-        // 2. The JSONB resource field contains resourceType
         let sql = format!(
             r#"
-            CREATE TABLE "{table}" (
+            CREATE TABLE IF NOT EXISTS "{table}" (
                 id TEXT PRIMARY KEY,
                 txid BIGINT NOT NULL REFERENCES _transaction(txid),
                 created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -208,7 +145,7 @@ impl SchemaManager {
             .await
             .map_err(PostgresError::from)?;
 
-        info!("Created table: {}", table);
+        debug!("Ensured table: {}", table);
         Ok(())
     }
 
@@ -468,6 +405,33 @@ impl SchemaManager {
         Ok(())
     }
 
+    /// Creates search index partitions for a resource type.
+    ///
+    /// Creates partitions of `search_idx_reference` and `search_idx_date`
+    /// for the given resource type. Uses `IF NOT EXISTS`
+    /// for idempotency.
+    #[instrument(skip(self))]
+    async fn ensure_search_index_partitions(&self, resource_type: &str) -> Result<()> {
+        let table = Self::table_name(resource_type);
+
+        let index_tables = ["search_idx_reference", "search_idx_date"];
+
+        for idx_table in &index_tables {
+            let partition_name = format!("{idx_table}_{table}");
+            let sql = format!(
+                r#"CREATE TABLE IF NOT EXISTS "{partition_name}"
+                   PARTITION OF {idx_table} FOR VALUES IN ('{resource_type}')"#
+            );
+            sqlx_core::query::query(&sql)
+                .execute(&self.pool)
+                .await
+                .map_err(PostgresError::from)?;
+        }
+
+        debug!("Created search index partitions for: {}", resource_type);
+        Ok(())
+    }
+
     /// Lists all resource tables (excludes history and system tables).
     #[instrument(skip(self))]
     pub async fn list_tables(&self) -> Result<Vec<String>> {
@@ -483,19 +447,6 @@ impl SchemaManager {
         .map_err(PostgresError::from)?;
 
         Ok(rows.into_iter().map(|(t,)| t).collect())
-    }
-
-    /// Clears the internal cache of created tables.
-    ///
-    /// This can be useful after schema changes or for testing.
-    pub fn clear_cache(&self) {
-        self.created_tables.clear();
-    }
-
-    /// Returns the number of tables in the cache.
-    #[must_use]
-    pub fn cache_size(&self) -> usize {
-        self.created_tables.len()
     }
 }
 

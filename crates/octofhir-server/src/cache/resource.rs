@@ -73,11 +73,7 @@ impl ResourceCache {
     }
 
     /// Get a cached resource by type and ID.
-    pub async fn get(
-        &self,
-        resource_type: &str,
-        id: &str,
-    ) -> Option<RawStoredResource> {
+    pub async fn get(&self, resource_type: &str, id: &str) -> Option<RawStoredResource> {
         let key = Self::cache_key(resource_type, id);
         let data = self.backend.get(&key).await?;
         match rmp_serde::from_slice::<CachedResource>(&data) {

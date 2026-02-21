@@ -5,6 +5,32 @@ description: Complete guide to FHIR search parameters, modifiers, and advanced s
 
 OctoFHIR supports comprehensive FHIR search capabilities including all standard modifiers, date prefixes, and advanced features like `_include` and `_revinclude`.
 
+For indexing behavior and performance-oriented query design, see [Search Indexing](./search-indexing).
+
+## How Search Is Accelerated
+
+You can use FHIR search normally; OctoFHIR chooses the fast path under the hood.
+
+| Search Pattern | Fast Path |
+|---|---|
+| `reference` params (`subject`, `patient`, etc.) | Denormalized `search_idx_reference` table |
+| `_include`, `_revinclude`, chained search | `search_idx_reference` lookups |
+| `date` params (including precision/ranges) | Denormalized `search_idx_date` table |
+| `string:exact` | JSONB containment (`@>`) via GIN index on `resource` |
+| Default `string` / `string:contains` | JSON traversal + `LIKE`/`ILIKE` path filters |
+
+:::note
+There is no separate `search_idx_string` table in the current design.  
+String search works directly on resource JSON with specialized SQL paths.
+:::
+
+### Practical Tips
+
+1. Prefer typed references when possible: `subject=Patient/123` is clearer than `subject=123`.
+2. Use bounded date ranges for large datasets: `ge...` + `lt...`.
+3. Use `:exact` only when you really need exact text matching semantics.
+4. Keep `_include`/`_revinclude` focused (paginate aggressively on wide relationships).
+
 ## Basic Search
 
 Search for resources using query parameters:

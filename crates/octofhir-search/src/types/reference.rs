@@ -1,16 +1,19 @@
 //! Reference search parameter implementation.
 //!
-//! Reference search is used for reference fields (Reference type) and supports:
-//! - Default: match by reference string (Type/id, id, or full URL)
-//! - :identifier modifier: search by identifier within the reference
-//! - :Type modifier: type-specific reference search (e.g., subject:Patient=123)
-//! - :missing modifier: check if reference is present or absent
+//! Reference search uses the `search_idx_reference` denormalized index table
+//! for B-tree index scans instead of runtime JSONB parsing.
+//!
+//! Supports:
+//! - Default: match by reference (Type/id, id, or full URL) via index
+//! - :identifier modifier: search by identifier via index (ref_kind=4)
+//! - :Type modifier: type-specific reference search via index
+//! - :missing modifier: check if reference is present or absent (uses JSONB)
 
 use crate::parameters::SearchModifier;
 use crate::parser::ParsedParam;
 use crate::sql_builder::{SqlBuilder, SqlBuilderError};
 
-/// Build SQL conditions for reference search.
+/// Build SQL conditions for reference search using the search_idx_reference table.
 ///
 /// Reference parameters match Reference elements. The value can be:
 /// - A full reference: "Patient/123"
@@ -21,6 +24,7 @@ pub fn build_reference_search(
     param: &ParsedParam,
     jsonb_path: &str,
     target_types: &[String],
+    resource_type: &str,
 ) -> Result<(), SqlBuilderError> {
     if param.values.is_empty() {
         return Ok(());
@@ -35,24 +39,37 @@ pub fn build_reference_search(
 
         let condition = match &param.modifier {
             None => {
-                // Default: match reference string
-                let ref_value = normalize_reference(&value.raw, target_types);
-                build_default_reference_condition(builder, jsonb_path, &ref_value)
+                // Default: match reference via index table
+                build_index_reference_condition(
+                    builder,
+                    resource_type,
+                    &param.name,
+                    &value.raw,
+                    target_types,
+                )
             }
 
             Some(SearchModifier::Identifier) => {
-                // Search by identifier within the reference
-                build_identifier_reference_condition(builder, jsonb_path, &value.raw)
+                // Search by identifier via index table (ref_kind=4)
+                build_index_identifier_condition(builder, resource_type, &param.name, &value.raw)
             }
 
             Some(SearchModifier::Type(type_name)) => {
                 // Type-specific reference: subject:Patient=123
-                let full_ref = format!("{type_name}/{}", value.raw);
-                let p = builder.add_text_param(&full_ref);
-                format!("{jsonb_path}->>'reference' = ${p}")
+                let rt_param = builder.add_text_param(resource_type);
+                let pc_param = builder.add_text_param(&param.name);
+                let tt_param = builder.add_text_param(type_name);
+                let tid_param = builder.add_text_param(&value.raw);
+                format!(
+                    "EXISTS (SELECT 1 FROM search_idx_reference sir \
+                     WHERE sir.resource_type = ${rt_param} AND sir.resource_id = r.id \
+                     AND sir.param_code = ${pc_param} AND sir.ref_kind = 1 \
+                     AND sir.target_type = ${tt_param} AND sir.target_id = ${tid_param})"
+                )
             }
 
             Some(SearchModifier::Missing) => {
+                // :missing still uses JSONB path (checks field presence)
                 let is_missing = value.raw.eq_ignore_ascii_case("true");
                 if is_missing {
                     format!(
@@ -80,58 +97,102 @@ pub fn build_reference_search(
     Ok(())
 }
 
-/// Build default reference matching condition.
-fn build_default_reference_condition(
+/// Build default reference matching condition using index table.
+fn build_index_reference_condition(
     builder: &mut SqlBuilder,
-    jsonb_path: &str,
+    resource_type: &str,
+    param_code: &str,
     ref_value: &str,
+    target_types: &[String],
 ) -> String {
-    // Reference can be stored as:
-    // 1. { "reference": "Patient/123" }
-    // 2. { "reference": "http://example.org/fhir/Patient/123" }
-    // We need to match both relative and absolute forms
-
-    let p = builder.add_text_param(ref_value);
+    let rt_param = builder.add_text_param(resource_type);
+    let pc_param = builder.add_text_param(param_code);
 
     if ref_value.starts_with("http://") || ref_value.starts_with("https://") {
-        // Full URL - exact match only
-        format!("{jsonb_path}->>'reference' = ${p}")
-    } else {
-        // Relative reference - could be stored as relative or absolute
-        // Also handle the case where the reference ends with the value
+        // URL — match external_url or raw_reference
+        let url_param = builder.add_text_param(ref_value);
         format!(
-            "({jsonb_path}->>'reference' = ${p} OR {jsonb_path}->>'reference' LIKE '%/' || ${p})"
+            "EXISTS (SELECT 1 FROM search_idx_reference sir \
+             WHERE sir.resource_type = ${rt_param} AND sir.resource_id = r.id \
+             AND sir.param_code = ${pc_param} \
+             AND (sir.external_url = ${url_param} OR sir.raw_reference = ${url_param}))"
+        )
+    } else if ref_value.contains('/') {
+        // Type/id format — exact match on target_type + target_id
+        let parts: Vec<&str> = ref_value.splitn(2, '/').collect();
+        let tt_param = builder.add_text_param(parts[0]);
+        let tid_param = builder.add_text_param(parts[1]);
+        format!(
+            "EXISTS (SELECT 1 FROM search_idx_reference sir \
+             WHERE sir.resource_type = ${rt_param} AND sir.resource_id = r.id \
+             AND sir.param_code = ${pc_param} AND sir.ref_kind = 1 \
+             AND sir.target_type = ${tt_param} AND sir.target_id = ${tid_param})"
+        )
+    } else if target_types.len() == 1 {
+        // ID only with single target type
+        let tt_param = builder.add_text_param(&target_types[0]);
+        let tid_param = builder.add_text_param(ref_value);
+        format!(
+            "EXISTS (SELECT 1 FROM search_idx_reference sir \
+             WHERE sir.resource_type = ${rt_param} AND sir.resource_id = r.id \
+             AND sir.param_code = ${pc_param} AND sir.ref_kind = 1 \
+             AND sir.target_type = ${tt_param} AND sir.target_id = ${tid_param})"
+        )
+    } else {
+        // ID only with multiple target types — match any target_type
+        let tid_param = builder.add_text_param(ref_value);
+        format!(
+            "EXISTS (SELECT 1 FROM search_idx_reference sir \
+             WHERE sir.resource_type = ${rt_param} AND sir.resource_id = r.id \
+             AND sir.param_code = ${pc_param} AND sir.ref_kind = 1 \
+             AND sir.target_id = ${tid_param})"
         )
     }
 }
 
-/// Build identifier-based reference condition.
-fn build_identifier_reference_condition(
+/// Build identifier-based reference condition using index table (ref_kind=4).
+fn build_index_identifier_condition(
     builder: &mut SqlBuilder,
-    jsonb_path: &str,
+    resource_type: &str,
+    param_code: &str,
     value: &str,
 ) -> String {
-    // Parse system|value format
+    let rt_param = builder.add_text_param(resource_type);
+    let pc_param = builder.add_text_param(param_code);
+
     let (system, id_value) = parse_identifier_value(value);
 
     match system {
         Some(sys) if !sys.is_empty() => {
-            // system|value - match both
-            let json = serde_json::json!({"system": sys, "value": id_value}).to_string();
-            let p = builder.add_json_param(&json);
-            format!("{jsonb_path}->'identifier' @> ${p}::jsonb")
+            // system|value — match both
+            let sys_param = builder.add_text_param(sys);
+            let val_param = builder.add_text_param(id_value);
+            format!(
+                "EXISTS (SELECT 1 FROM search_idx_reference sir \
+                 WHERE sir.resource_type = ${rt_param} AND sir.resource_id = r.id \
+                 AND sir.param_code = ${pc_param} AND sir.ref_kind = 4 \
+                 AND sir.identifier_system = ${sys_param} AND sir.identifier_value = ${val_param})"
+            )
         }
         Some(_) => {
-            // |value - value with no system
-            let p = builder.add_text_param(id_value);
+            // |value — no system
+            let val_param = builder.add_text_param(id_value);
             format!(
-                "({jsonb_path}->'identifier'->>'system' IS NULL AND {jsonb_path}->'identifier'->>'value' = ${p})"
+                "EXISTS (SELECT 1 FROM search_idx_reference sir \
+                 WHERE sir.resource_type = ${rt_param} AND sir.resource_id = r.id \
+                 AND sir.param_code = ${pc_param} AND sir.ref_kind = 4 \
+                 AND sir.identifier_system IS NULL AND sir.identifier_value = ${val_param})"
             )
         }
         None => {
-            // value only - match any system
-            let p = builder.add_text_param(id_value);
-            format!("{jsonb_path}->'identifier'->>'value' = ${p}")
+            // value only — any system
+            let val_param = builder.add_text_param(id_value);
+            format!(
+                "EXISTS (SELECT 1 FROM search_idx_reference sir \
+                 WHERE sir.resource_type = ${rt_param} AND sir.resource_id = r.id \
+                 AND sir.param_code = ${pc_param} AND sir.ref_kind = 4 \
+                 AND sir.identifier_value = ${val_param})"
+            )
         }
     }
 }
@@ -151,96 +212,25 @@ fn parse_identifier_value(value: &str) -> (Option<&str>, &str) {
     }
 }
 
-/// Normalize a reference value based on target types.
-///
-/// If the value is already a full reference (Type/id or URL), return as-is.
-/// If there's exactly one target type and value is just an ID, prefix with the type.
-fn normalize_reference(value: &str, targets: &[String]) -> String {
-    // If already a full reference (Type/id), return as-is
-    if value.contains('/') {
-        return value.to_string();
-    }
-
-    // If value looks like a URL, return as-is
-    if value.starts_with("http://") || value.starts_with("https://") {
-        return value.to_string();
-    }
-
-    // If there's exactly one target type, prefix with it
-    if targets.len() == 1 {
-        return format!("{}/{value}", targets[0]);
-    }
-
-    // Otherwise, return as-is and let the query handle it
-    value.to_string()
-}
-
 /// Check if a string looks like a FHIR resource type.
 pub fn is_resource_type(s: &str) -> bool {
-    // Resource types start with uppercase letter
     s.chars().next().is_some_and(|c| c.is_ascii_uppercase())
         && s.chars().all(|c| c.is_ascii_alphanumeric())
 }
 
-/// Build reference search for an array of references.
+/// Build reference search for an array of references using index table.
+///
+/// The index table already handles arrays — each reference in the array
+/// gets its own index row, so the query is identical to single reference.
 pub fn build_reference_array_search(
     builder: &mut SqlBuilder,
     param: &ParsedParam,
     array_path: &str,
     target_types: &[String],
+    resource_type: &str,
 ) -> Result<(), SqlBuilderError> {
-    if param.values.is_empty() {
-        return Ok(());
-    }
-
-    let mut or_conditions = Vec::new();
-
-    for value in &param.values {
-        if value.raw.is_empty() {
-            continue;
-        }
-
-        let condition = match &param.modifier {
-            None => {
-                let ref_value = normalize_reference(&value.raw, target_types);
-                let p = builder.add_text_param(&ref_value);
-                format!(
-                    "EXISTS (SELECT 1 FROM jsonb_array_elements({array_path}) AS ref \
-                     WHERE ref->>'reference' = ${p} OR ref->>'reference' LIKE '%/' || ${p})"
-                )
-            }
-
-            Some(SearchModifier::Type(type_name)) => {
-                let full_ref = format!("{type_name}/{}", value.raw);
-                let p = builder.add_text_param(&full_ref);
-                format!(
-                    "EXISTS (SELECT 1 FROM jsonb_array_elements({array_path}) AS ref \
-                     WHERE ref->>'reference' = ${p})"
-                )
-            }
-
-            Some(SearchModifier::Missing) => {
-                let is_missing = value.raw.eq_ignore_ascii_case("true");
-                if is_missing {
-                    format!("({array_path} IS NULL OR jsonb_array_length({array_path}) = 0)")
-                } else {
-                    format!("({array_path} IS NOT NULL AND jsonb_array_length({array_path}) > 0)")
-                }
-            }
-
-            Some(other) => {
-                return Err(SqlBuilderError::InvalidModifier(format!("{other:?}")));
-            }
-        };
-
-        or_conditions.push(condition);
-    }
-
-    if !or_conditions.is_empty() {
-        builder.add_condition(SqlBuilder::build_or_clause(&or_conditions));
-    }
-
-    Ok(())
+    // The index table already flattens arrays, so we use the same logic
+    build_reference_search(builder, param, array_path, target_types, resource_type)
 }
 
 #[cfg(test)]
@@ -260,34 +250,6 @@ mod tests {
     }
 
     #[test]
-    fn test_normalize_reference_with_type() {
-        let result = normalize_reference("123", &["Patient".to_string()]);
-        assert_eq!(result, "Patient/123");
-    }
-
-    #[test]
-    fn test_normalize_reference_already_full() {
-        let result = normalize_reference("Patient/123", &["Patient".to_string()]);
-        assert_eq!(result, "Patient/123");
-    }
-
-    #[test]
-    fn test_normalize_reference_multiple_targets() {
-        let result =
-            normalize_reference("123", &["Patient".to_string(), "Practitioner".to_string()]);
-        assert_eq!(result, "123");
-    }
-
-    #[test]
-    fn test_normalize_reference_url() {
-        let result = normalize_reference(
-            "http://example.org/fhir/Patient/123",
-            &["Patient".to_string()],
-        );
-        assert_eq!(result, "http://example.org/fhir/Patient/123");
-    }
-
-    #[test]
     fn test_is_resource_type() {
         assert!(is_resource_type("Patient"));
         assert!(is_resource_type("Observation"));
@@ -296,7 +258,7 @@ mod tests {
     }
 
     #[test]
-    fn test_reference_default_search() {
+    fn test_reference_default_search_uses_index() {
         let mut builder = SqlBuilder::new();
         let param = make_param("subject", "Patient/123", None);
 
@@ -305,15 +267,18 @@ mod tests {
             &param,
             "resource->'subject'",
             &["Patient".to_string()],
+            "Observation",
         )
         .unwrap();
 
         let clause = builder.build_where_clause().unwrap();
-        assert!(clause.contains("reference"));
+        assert!(clause.contains("search_idx_reference"));
+        assert!(clause.contains("target_type"));
+        assert!(clause.contains("target_id"));
     }
 
     #[test]
-    fn test_reference_type_modifier() {
+    fn test_reference_type_modifier_uses_index() {
         let mut builder = SqlBuilder::new();
         let param = make_param(
             "subject",
@@ -326,17 +291,17 @@ mod tests {
             &param,
             "resource->'subject'",
             &["Patient".to_string(), "Group".to_string()],
+            "Observation",
         )
         .unwrap();
 
         let clause = builder.build_where_clause().unwrap();
-        assert!(clause.contains("$1"));
-        // The parameterized value should contain "Patient/123"
-        assert_eq!(builder.params()[0].as_str(), "Patient/123");
+        assert!(clause.contains("search_idx_reference"));
+        assert!(clause.contains("ref_kind = 1"));
     }
 
     #[test]
-    fn test_reference_identifier_modifier() {
+    fn test_reference_identifier_modifier_uses_index() {
         let mut builder = SqlBuilder::new();
         let param = make_param(
             "subject",
@@ -349,11 +314,15 @@ mod tests {
             &param,
             "resource->'subject'",
             &["Patient".to_string()],
+            "Observation",
         )
         .unwrap();
 
         let clause = builder.build_where_clause().unwrap();
-        assert!(clause.contains("identifier"));
+        assert!(clause.contains("search_idx_reference"));
+        assert!(clause.contains("ref_kind = 4"));
+        assert!(clause.contains("identifier_system"));
+        assert!(clause.contains("identifier_value"));
     }
 
     #[test]
@@ -366,11 +335,52 @@ mod tests {
             &param,
             "resource->'subject'",
             &["Patient".to_string()],
+            "Observation",
         )
         .unwrap();
 
         let clause = builder.build_where_clause().unwrap();
         assert!(clause.contains("IS NULL"));
+    }
+
+    #[test]
+    fn test_reference_id_only_single_target() {
+        let mut builder = SqlBuilder::new();
+        let param = make_param("subject", "123", None);
+
+        build_reference_search(
+            &mut builder,
+            &param,
+            "resource->'subject'",
+            &["Patient".to_string()],
+            "Observation",
+        )
+        .unwrap();
+
+        let clause = builder.build_where_clause().unwrap();
+        assert!(clause.contains("search_idx_reference"));
+        // Should include target_type since there's only one target
+        assert!(clause.contains("target_type"));
+    }
+
+    #[test]
+    fn test_reference_id_only_multiple_targets() {
+        let mut builder = SqlBuilder::new();
+        let param = make_param("subject", "123", None);
+
+        build_reference_search(
+            &mut builder,
+            &param,
+            "resource->'subject'",
+            &["Patient".to_string(), "Group".to_string()],
+            "Observation",
+        )
+        .unwrap();
+
+        let clause = builder.build_where_clause().unwrap();
+        assert!(clause.contains("search_idx_reference"));
+        // Should NOT filter by target_type when multiple targets
+        assert!(!clause.contains("target_type"));
     }
 
     #[test]

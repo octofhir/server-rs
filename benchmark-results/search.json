@@ -1,0 +1,452 @@
+{
+    "root_group": {
+        "name": "",
+        "path": "",
+        "id": "d41d8cd98f00b204e9800998ecf8427e",
+        "groups": {
+            "setup": {
+                "name": "setup",
+                "path": "::setup",
+                "id": "5c0f8025f7e0b6654089e5b00e950f1a",
+                "groups": {},
+                "checks": {
+                        "Password grant token": {
+                            "name": "Password grant token",
+                            "path": "::setup::Password grant token",
+                            "id": "461b097b055805719a35b20a31dc09cf",
+                            "passes": 1,
+                            "fails": 0
+                        }
+                    }
+            },
+            "simple": {
+                "path": "::simple",
+                "id": "ef2f98fae1a1b2d1f0bc51196440c0af",
+                "groups": {
+                    "string": {
+                        "path": "::simple::string",
+                        "id": "e979f700384b45fc70878ff522bb7f06",
+                        "groups": {},
+                        "checks": {
+                                "string search 200": {
+                                    "name": "string search 200",
+                                    "path": "::simple::string::string search 200",
+                                    "id": "0f74d89eab0da34477a64db8caaea79a",
+                                    "passes": 11398,
+                                    "fails": 0
+                                },
+                                "string search returns results": {
+                                    "passes": 11398,
+                                    "fails": 0,
+                                    "name": "string search returns results",
+                                    "path": "::simple::string::string search returns results",
+                                    "id": "c24ab717b961cec9974498d4941840e5"
+                                }
+                            },
+                        "name": "string"
+                    },
+                    "token": {
+                        "name": "token",
+                        "path": "::simple::token",
+                        "id": "f8135e184124115529f62df8e3eba496",
+                        "groups": {},
+                        "checks": {
+                                "token search 200": {
+                                    "fails": 0,
+                                    "name": "token search 200",
+                                    "path": "::simple::token::token search 200",
+                                    "id": "bc051315b768fb3fcbf3a9f7965cdcd3",
+                                    "passes": 11398
+                                }
+                            }
+                    },
+                    "token-system": {
+                        "name": "token-system",
+                        "path": "::simple::token-system",
+                        "id": "8fd6677342af9247c8388c36c7ecffe1",
+                        "groups": {},
+                        "checks": {
+                                "token-system search 200": {
+                                    "path": "::simple::token-system::token-system search 200",
+                                    "id": "f057dbd09c5b9ae51dfb445f5c79c5fd",
+                                    "passes": 11398,
+                                    "fails": 0,
+                                    "name": "token-system search 200"
+                                }
+                            }
+                    },
+                    "date": {
+                        "id": "7d2acd1a7ab65b5a4b8eac5ceb3af607",
+                        "groups": {},
+                        "checks": {
+                                "date search 200": {
+                                    "name": "date search 200",
+                                    "path": "::simple::date::date search 200",
+                                    "id": "4f16e7e2f3b97c10b368b8ecc7cfe576",
+                                    "passes": 11398,
+                                    "fails": 0
+                                }
+                            },
+                        "name": "date",
+                        "path": "::simple::date"
+                    },
+                    "reference": {
+                        "name": "reference",
+                        "path": "::simple::reference",
+                        "id": "47c9367b06853262adf6ef174e612d57",
+                        "groups": {},
+                        "checks": {
+                                "reference search 200": {
+                                    "fails": 0,
+                                    "name": "reference search 200",
+                                    "path": "::simple::reference::reference search 200",
+                                    "id": "db2b5215f32fb758e15e10125df904f8",
+                                    "passes": 11398
+                                }
+                            }
+                    }
+                },
+                "checks": {},
+                "name": "simple"
+            },
+            "chained": {
+                "name": "chained",
+                "path": "::chained",
+                "id": "e7c9ba08dfe7160cf425a2f83c4cbaab",
+                "groups": {
+                    "observation-patient": {
+                        "name": "observation-patient",
+                        "path": "::chained::observation-patient",
+                        "id": "47b92656656ae1bc06e888a9748a5287",
+                        "groups": {},
+                        "checks": {
+                                "chained observation-patient 200": {
+                                    "name": "chained observation-patient 200",
+                                    "path": "::chained::observation-patient::chained observation-patient 200",
+                                    "id": "3fa9fbb80bafa1b5b19a230b698e4864",
+                                    "passes": 11398,
+                                    "fails": 0
+                                }
+                            }
+                    },
+                    "patient-organization": {
+                        "name": "patient-organization",
+                        "path": "::chained::patient-organization",
+                        "id": "793ffc1ab21e441d9bf8ba6b7dbb2ee0",
+                        "groups": {},
+                        "checks": {
+                                "chained patient-org 200": {
+                                    "name": "chained patient-org 200",
+                                    "path": "::chained::patient-organization::chained patient-org 200",
+                                    "id": "564dae23aa762f287c56809a8d9e2ee4",
+                                    "passes": 11398,
+                                    "fails": 0
+                                }
+                            }
+                    }
+                },
+                "checks": {}
+            },
+            "include": {
+                "path": "::include",
+                "id": "32f5ef19f006b8ba898197b58c3809e5",
+                "groups": {
+                    "include-patient": {
+                        "name": "include-patient",
+                        "path": "::include::include-patient",
+                        "id": "42eecd46102f67d42e5386445cb91753",
+                        "groups": {},
+                        "checks": {
+                                "include 200": {
+                                    "name": "include 200",
+                                    "path": "::include::include-patient::include 200",
+                                    "id": "48b7463f7094f636d6e86265d4cb3383",
+                                    "passes": 11398,
+                                    "fails": 0
+                                },
+                                "include has patient": {
+                                    "passes": 11398,
+                                    "fails": 0,
+                                    "name": "include has patient",
+                                    "path": "::include::include-patient::include has patient",
+                                    "id": "943fae37286cf1ddfe7898aa7ea9520f"
+                                }
+                            }
+                    },
+                    "revinclude-observations": {
+                        "name": "revinclude-observations",
+                        "path": "::include::revinclude-observations",
+                        "id": "3162c9d076bea1faab4fb6c8f8b93227",
+                        "groups": {},
+                        "checks": {
+                                "revinclude 200": {
+                                    "name": "revinclude 200",
+                                    "path": "::include::revinclude-observations::revinclude 200",
+                                    "id": "ea0ce5cdaeab9cad5607854560e49b34",
+                                    "passes": 11398,
+                                    "fails": 0
+                                },
+                                "revinclude has observations": {
+                                    "id": "ac49e2b9b3e561b325e49f27c31fab74",
+                                    "passes": 11398,
+                                    "fails": 0,
+                                    "name": "revinclude has observations",
+                                    "path": "::include::revinclude-observations::revinclude has observations"
+                                }
+                            }
+                    }
+                },
+                "checks": {},
+                "name": "include"
+            },
+            "pagination": {
+                "name": "pagination",
+                "path": "::pagination",
+                "id": "bae1a25b6c778efa6db16a82b50fa29d",
+                "groups": {
+                    "first-page": {
+                        "name": "first-page",
+                        "path": "::pagination::first-page",
+                        "id": "aae4fbdbb19ca83455cdbcd24765b084",
+                        "groups": {},
+                        "checks": {
+                                "pagination 200": {
+                                    "name": "pagination 200",
+                                    "path": "::pagination::first-page::pagination 200",
+                                    "id": "713d418903bd2c1856a11c560aabe2a6",
+                                    "passes": 11398,
+                                    "fails": 0
+                                },
+                                "has next link": {
+                                    "fails": 11398,
+                                    "name": "has next link",
+                                    "path": "::pagination::first-page::has next link",
+                                    "id": "9cf04c143a56dbb5430965b78ea30373",
+                                    "passes": 0
+                                }
+                            }
+                    },
+                    "second-page": {
+                        "checks": {
+                            "second page 200": {
+                                "passes": 11398,
+                                "fails": 0,
+                                "name": "second page 200",
+                                "path": "::pagination::second-page::second page 200",
+                                "id": "a2ccff2b6cef699472cac6bbc403305d"
+                            }
+                        },
+                        "name": "second-page",
+                        "path": "::pagination::second-page",
+                        "id": "87e224398e979830d2022a15299b6720",
+                        "groups": {}
+                    }
+                },
+                "checks": {}
+            },
+            "sorting": {
+                "name": "sorting",
+                "path": "::sorting",
+                "id": "0c78c2a0e4759b712b03985ddac465d8",
+                "groups": {
+                    "sort-date": {
+                        "path": "::sorting::sort-date",
+                        "id": "e99d5112d0e8b5e03038526025a76db2",
+                        "groups": {},
+                        "checks": {
+                                "sort 200": {
+                                    "name": "sort 200",
+                                    "path": "::sorting::sort-date::sort 200",
+                                    "id": "e15165e857d8cdbacc4cd8c2b66be08e",
+                                    "passes": 11398,
+                                    "fails": 0
+                                }
+                            },
+                        "name": "sort-date"
+                    }
+                },
+                "checks": {}
+            }
+        },
+        "checks": {}
+    },
+    "metrics": {
+        "simple_search_latency_ms": {
+            "p(95)": 51,
+            "avg": 25.97979177633503,
+            "min": 4,
+            "med": 21,
+            "max": 1313,
+            "p(90)": 40,
+            "thresholds": {
+                "p(95)<100": false,
+                "p(99)<200": false
+            }
+        },
+        "group_duration": {
+            "med": 28.8522295,
+            "max": 1380.493458,
+            "p(90)": 89.33612500000002,
+            "p(95)": 118.91554124999993,
+            "avg": 43.7851644713314,
+            "min": 3.734958
+        },
+        "http_req_waiting": {
+            "min": 3.586,
+            "med": 23.62,
+            "max": 1311.776,
+            "p(90)": 50.25280000000001,
+            "p(95)": 65.74559999999998,
+            "avg": 30.525422410462095
+        },
+        "search_success": {
+            "count": 34194,
+            "rate": 87.48260872525198
+        },
+        "pagination_latency_ms": {
+            "avg": 26.953412879452536,
+            "min": 5,
+            "med": 22,
+            "max": 473,
+            "p(90)": 41,
+            "p(95)": 53
+        },
+        "http_req_duration{expected_response:true}": {
+            "avg": 30.731997506870577,
+            "min": 3.684,
+            "med": 23.828,
+            "max": 1312.154,
+            "p(90)": 50.509,
+            "p(95)": 65.99079999999996
+        },
+        "http_req_tls_handshaking": {
+            "med": 0,
+            "max": 0,
+            "p(90)": 0,
+            "p(95)": 0,
+            "avg": 0,
+            "min": 0
+        },
+        "http_req_sending": {
+            "max": 75.116,
+            "p(90)": 0.02,
+            "p(95)": 0.025,
+            "avg": 0.02874040108764799,
+            "min": 0.002,
+            "med": 0.01
+        },
+        "http_reqs": {
+            "count": 137177,
+            "rate": 350.956361265248
+        },
+        "iteration_duration": {
+            "avg": 474.36451882311366,
+            "min": 201.361958,
+            "med": 415.237417,
+            "max": 2697.856791,
+            "p(90)": 658.6488874,
+            "p(95)": 802.7792497999995
+        },
+        "iterations": {
+            "count": 11448,
+            "rate": 29.288790568131386
+        },
+        "http_req_blocked": {
+            "med": 0.003,
+            "max": 7.555,
+            "p(90)": 0.005,
+            "p(95)": 0.006,
+            "avg": 0.004005576736621173,
+            "min": 0
+        },
+        "checks": {
+            "fails": 11398,
+            "passes": 170971,
+            "value": 0.9375003427117548
+        },
+        "http_req_receiving": {
+            "avg": 0.17783469532064056,
+            "min": 0.016,
+            "med": 0.102,
+            "max": 73.402,
+            "p(90)": 0.268,
+            "p(95)": 0.404
+        },
+        "data_received": {
+            "count": 291203471,
+            "rate": 745020.7437833614
+        },
+        "vus": {
+            "max": 30,
+            "value": 30,
+            "min": 0
+        },
+        "http_req_duration": {
+            "med": 23.828,
+            "max": 1312.154,
+            "p(90)": 50.509,
+            "p(95)": 65.99079999999996,
+            "avg": 30.731997506870577,
+            "min": 3.684
+        },
+        "http_req_connecting": {
+            "p(95)": 0,
+            "avg": 0.00020902192058435456,
+            "min": 0,
+            "med": 0,
+            "max": 2.079,
+            "p(90)": 0
+        },
+        "http_req_failed": {
+            "passes": 0,
+            "fails": 137177,
+            "value": 0
+        },
+        "chained_search_latency_ms": {
+            "avg": 30.09949113879628,
+            "min": 5,
+            "med": 24,
+            "max": 1238,
+            "p(90)": 46,
+            "p(95)": 60,
+            "thresholds": {
+                "p(99)<500": false,
+                "p(95)<300": false
+            }
+        },
+        "data_sent": {
+            "count": 166159422,
+            "rate": 425105.56532842095
+        },
+        "vus_max": {
+            "max": 30,
+            "value": 30,
+            "min": 30
+        },
+        "include_search_latency_ms": {
+            "avg": 49.68928759431479,
+            "min": 7,
+            "med": 41,
+            "max": 1273,
+            "p(90)": 76,
+            "p(95)": 97,
+            "thresholds": {
+                "p(95)<400": false,
+                "p(99)<800": false
+            }
+        }
+    },
+    "setup_data": {
+        "baseUrl": "http://localhost:8888/fhir",
+        "params": {
+            "headers": {
+                "Content-Type": "application/fhir+json",
+                "Accept": "application/fhir+json, application/json",
+                "Accept-Encoding": "gzip",
+                "Authorization": "Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzI1NiIsImtpZCI6ImRldi1yczI1Ni1rZXktMjAyNCJ9.eyJpc3MiOiJodHRwOi8vbG9jYWxob3N0Ojg4ODgiLCJzdWIiOiJkMDAxZWY1OC1kZDAwLTQwMDUtOTY4NC05NDI3ZDgzMzllNjYiLCJhdWQiOlsiaHR0cDovLzAuMC4wLjA6ODg4OCJdLCJleHAiOjE3NzE3MDAzMzQsImlhdCI6MTc3MTY5NjczNCwianRpIjoiMTVkMmQ1ZTgtZTViZC00OTg1LThkNDktOWY2MGUyMzQ4NzljIiwic2NvcGUiOiJvcGVuaWQiLCJjbGllbnRfaWQiOiJvY3RvZmhpci11aSIsInNpZCI6IjE2ZjI1MTM0LTE2ODYtNGVlNS1iYTM2LWZlMGU0ZTY5ZGZmNSJ9.19yr2oZrCm2NuHu9lYHDLNFt10KCKJmNVFu8Ol89YeozR8-2_ORvKXteRpD1TXRvp9Gyv0BtTxwXA5htJILzLjGSCUCtMLi423P1WihRE3LxVZ5e2vu5E1QMFg87A909GPBZb-RZwa4FnjxBJ9Gj3Srh41Aqzhe0gs33GKaCW9kmgoHT5ZkrwFARtCU4OutG_h4RWMhKT7okqUH_I8TSjtUBh6cFk5pJjBSMMO5dsI-NtewoozXTlYAqqGjkwoNIe8C5RKGryfaEmo79yXPf6JDR5e01mSBE1n2xcskJvUnzULFzMbaORFuF7yj6ORAnouxW_Ci7Nak7a0uXq9TCWCVZQGO_V7qx_LlVmMGEkuubpbkt8r7kXydhOlsKgr4_7INtuI_Zm0Gfe_E3izuSqyTPkqXIJJSyWK_jGrNfiYcGHCXTgA9MXVAvRFxWX79gX4IAgvWeZ33cHMC56NkOcGbWE5aRbgCFSCjLs5ipt9T_wKLjaMjZIdbjcrHSPo33"
+            }
+        },
+        "seedOrgName": "SearchOrg-1771696734183",
+        "seedPatientFamily": "SearchTest-1771696734183"
+    }
+}

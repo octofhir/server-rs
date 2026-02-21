@@ -322,21 +322,23 @@ pub async fn get_history_raw(
 
     let entries: Vec<RawHistoryEntry> = rows
         .into_iter()
-        .map(|(row_id, txid, created_at, updated_at, resource_text, status)| {
-            let created_at_time = chrono_to_time(created_at);
-            let updated_at_time = chrono_to_time(updated_at);
-            RawHistoryEntry {
-                resource: RawStoredResource {
-                    id: row_id,
-                    version_id: txid.to_string(),
-                    resource_type: resource_type.to_string(),
-                    resource_json: resource_text,
-                    last_updated: updated_at_time,
-                    created_at: created_at_time,
-                },
-                method: status_to_method(&status),
-            }
-        })
+        .map(
+            |(row_id, txid, created_at, updated_at, resource_text, status)| {
+                let created_at_time = chrono_to_time(created_at);
+                let updated_at_time = chrono_to_time(updated_at);
+                RawHistoryEntry {
+                    resource: RawStoredResource {
+                        id: row_id,
+                        version_id: txid.to_string(),
+                        resource_type: resource_type.to_string(),
+                        resource_json: resource_text,
+                        last_updated: updated_at_time,
+                        created_at: created_at_time,
+                    },
+                    method: status_to_method(&status),
+                }
+            },
+        )
         .collect();
 
     let total = entries.len() as u32;

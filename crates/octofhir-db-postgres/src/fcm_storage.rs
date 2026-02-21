@@ -418,9 +418,9 @@ impl PostgresPackageStore {
         let mut created_count = 0;
 
         for resource_type in &resource_types {
-            match schema_manager.ensure_table(resource_type).await {
+            match schema_manager.create_resource_schema(resource_type).await {
                 Ok(()) => {
-                    debug!("Ensured table for resource type: {}", resource_type);
+                    debug!("Created schema for resource type: {}", resource_type);
                     created_count += 1;
                 }
                 Err(e) => {

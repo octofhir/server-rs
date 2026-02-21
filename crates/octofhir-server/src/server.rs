@@ -521,8 +521,14 @@ async fn create_redis_pool(
 /// The caller is responsible for wrapping with EventedStorage and Arc if needed.
 async fn create_storage(
     cfg: &AppConfig,
-) -> Result<(PostgresStorage, Arc<sqlx_postgres::PgPool>, Arc<sqlx_postgres::PgPool>), anyhow::Error>
-{
+) -> Result<
+    (
+        PostgresStorage,
+        Arc<sqlx_postgres::PgPool>,
+        Arc<sqlx_postgres::PgPool>,
+    ),
+    anyhow::Error,
+> {
     let pg_cfg = cfg
         .storage
         .postgres
@@ -546,7 +552,11 @@ async fn create_storage(
         tracing::info!(url = %octofhir_db_postgres::pool::mask_password(&replica_cfg.url), "Creating read replica pool");
         let replica_config = PostgresConfig::new(&replica_cfg.url)
             .with_pool_size(replica_cfg.pool_size.unwrap_or(pg_cfg.pool_size))
-            .with_connect_timeout_ms(replica_cfg.connect_timeout_ms.unwrap_or(pg_cfg.connect_timeout_ms))
+            .with_connect_timeout_ms(
+                replica_cfg
+                    .connect_timeout_ms
+                    .unwrap_or(pg_cfg.connect_timeout_ms),
+            )
             .with_idle_timeout_ms(replica_cfg.idle_timeout_ms.or(pg_cfg.idle_timeout_ms))
             .with_run_migrations(false);
 
@@ -573,6 +583,9 @@ pub async fn build_app(
 
     // Create event broadcaster for unified event system
     let event_broadcaster = EventBroadcaster::new_shared();
+
+    // Save the search registry slot for late initialization (after parallel init)
+    let search_registry_slot = pg_storage.search_registry_slot().clone();
 
     // Wrap storage with EventedStorage to emit events on CRUD operations
     let evented_storage = EventedStorage::new(pg_storage, event_broadcaster.clone());
@@ -676,8 +689,11 @@ pub async fn build_app(
     let parallel_start = std::time::Instant::now();
     tracing::info!("Starting parallel initialization of 8 components...");
     let bootstrap_fut = bootstrap_conformance_if_postgres(cfg, db_pool.clone());
-    let search_config_fut =
-        ReloadableSearchConfig::new(&canonical_manager, search_options, Some(model_provider.as_ref()));
+    let search_config_fut = ReloadableSearchConfig::new(
+        &canonical_manager,
+        search_options,
+        Some(model_provider.as_ref()),
+    );
     let auth_state_fut = initialize_auth_state(cfg, db_pool.clone());
     let policy_refresh_fut = policy_cache.refresh();
     let operations_fut = crate::operations::load_operations();
@@ -718,6 +734,18 @@ pub async fn build_app(
 
     let search_config = search_config_result
         .map_err(|e| anyhow::anyhow!("Failed to create reloadable search config: {}", e))?;
+
+    // Late-initialize the search registry on the storage so CRUD operations
+    // can write search indexes (references, dates, strings).
+    let cfg_snapshot = search_config.config();
+    if search_registry_slot
+        .set(cfg_snapshot.registry.clone())
+        .is_err()
+    {
+        tracing::warn!("Search registry slot was already set (should not happen)");
+    } else {
+        tracing::info!("Search registry initialized on storage for index writing");
+    }
 
     let auth_state = auth_state_result.context("Failed to initialize authentication")?;
     tracing::info!("Authentication initialized");
@@ -1975,7 +2003,9 @@ fn build_router(state: AppState, body_limit: usize, compression: bool) -> Router
     let router: Router = router
         .layer(middleware::from_fn(app_middleware::dynamic_cors_middleware))
         // Combined tracing + metrics + request ID (replaces separate TraceLayer + metrics_middleware)
-        .layer(middleware::from_fn(app_middleware::trace_metrics_middleware))
+        .layer(middleware::from_fn(
+            app_middleware::trace_metrics_middleware,
+        ))
         .with_state(state)
         .layer(axum::extract::DefaultBodyLimit::max(body_limit));
 

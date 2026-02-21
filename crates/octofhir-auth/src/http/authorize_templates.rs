@@ -635,7 +635,9 @@ pub fn render_patient_picker(patients: &[PatientInfo], session_id: &str) -> Stri
     content.push_str("<div class=\"card\">\n");
     content.push_str("<div class=\"card-title\">Select Patient</div>\n\n");
 
-    content.push_str("<p style=\"font-size: 0.875rem; color: var(--text-secondary); margin-bottom: 1rem;\">\n");
+    content.push_str(
+        "<p style=\"font-size: 0.875rem; color: var(--text-secondary); margin-bottom: 1rem;\">\n",
+    );
     content.push_str("Choose the patient context for this application:\n</p>\n\n");
 
     // Form
@@ -654,7 +656,8 @@ pub fn render_patient_picker(patients: &[PatientInfo], session_id: &str) -> Stri
         content.push_str(&html_escape(&patient.id));
         content.push_str("\"");
         content.push_str(checked);
-        content.push_str(" style=\"margin-right: 0.75rem; accent-color: var(--brand-primary);\">\n");
+        content
+            .push_str(" style=\"margin-right: 0.75rem; accent-color: var(--brand-primary);\">\n");
         content.push_str("<div>\n<div style=\"font-weight: 500; color: var(--text-primary);\">");
         content.push_str(&html_escape(&patient.name));
         content.push_str("</div>\n");

@@ -251,6 +251,177 @@ pub fn parse_reference_simple(
     Ok((parsed.resource_type, parsed.id))
 }
 
+// ============================================================================
+// Normalized Reference for Index Tables
+// ============================================================================
+
+/// Reference kind constants matching the `ref_kind` SMALLINT in `search_idx_reference`.
+pub mod ref_kind {
+    pub const LOCAL: i16 = 1;
+    pub const EXTERNAL: i16 = 2;
+    pub const CANONICAL: i16 = 3;
+    pub const IDENTIFIER: i16 = 4;
+}
+
+/// A normalized FHIR reference for indexing in `search_idx_reference`.
+///
+/// Covers all reference patterns: local Type/id, external URLs, canonical
+/// references, and identifier-based references.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NormalizedRef {
+    /// A local reference to a resource on this server (Type/id).
+    Local {
+        target_type: String,
+        target_id: String,
+    },
+    /// An external reference to another server.
+    External { url: String },
+    /// A canonical URL reference (e.g., to a ValueSet or StructureDefinition).
+    Canonical {
+        url: String,
+        version: Option<String>,
+    },
+    /// A reference by identifier (system|value).
+    Identifier {
+        system: Option<String>,
+        value: String,
+    },
+}
+
+impl NormalizedRef {
+    /// Returns the `ref_kind` SMALLINT value for the database.
+    pub fn ref_kind(&self) -> i16 {
+        match self {
+            Self::Local { .. } => ref_kind::LOCAL,
+            Self::External { .. } => ref_kind::EXTERNAL,
+            Self::Canonical { .. } => ref_kind::CANONICAL,
+            Self::Identifier { .. } => ref_kind::IDENTIFIER,
+        }
+    }
+}
+
+/// Normalize a FHIR reference object for indexing.
+///
+/// Handles the full `Reference` type from FHIR which can contain:
+/// - `reference`: a relative or absolute URL (Type/id, http://...)
+/// - `type`: explicit resource type
+/// - `identifier`: an identifier-based reference (system + value)
+///
+/// Contained (#id) and URN references are skipped (return None).
+pub fn normalize_reference_for_index(
+    ref_obj: &serde_json::Value,
+    base_url: Option<&str>,
+) -> Vec<NormalizedRef> {
+    let mut results = Vec::new();
+
+    // Handle identifier-based reference
+    if let Some(identifier) = ref_obj.get("identifier") {
+        let system = identifier
+            .get("system")
+            .and_then(|s| s.as_str())
+            .map(String::from);
+        if let Some(value) = identifier.get("value").and_then(|v| v.as_str()) {
+            results.push(NormalizedRef::Identifier {
+                system,
+                value: value.to_string(),
+            });
+        }
+    }
+
+    // Handle reference string
+    if let Some(reference) = ref_obj.get("reference").and_then(|r| r.as_str())
+        && let Some(normalized) = normalize_reference_string(reference, base_url)
+    {
+        results.push(normalized);
+    }
+
+    results
+}
+
+/// Normalize a raw FHIR reference string for indexing.
+///
+/// Returns None for contained (#id) and URN references.
+pub fn normalize_reference_string(
+    reference: &str,
+    base_url: Option<&str>,
+) -> Option<NormalizedRef> {
+    let reference = reference.trim();
+    if reference.is_empty() {
+        return None;
+    }
+
+    // Skip contained references
+    if reference.starts_with('#') {
+        return None;
+    }
+
+    // Skip URN references
+    if reference.starts_with("urn:") {
+        return None;
+    }
+
+    // Try to parse as a local reference
+    match parse_reference(reference, base_url) {
+        Ok(fhir_ref) => Some(NormalizedRef::Local {
+            target_type: fhir_ref.resource_type,
+            target_id: fhir_ref.id,
+        }),
+        Err(UnresolvableReference::External(url)) => {
+            // Could be a canonical URL (no Type/id pattern) or external ref
+            // Canonical URLs typically don't have a Type/id at the end
+            if is_canonical_url(&url) {
+                let (canonical_url, version) = parse_canonical_url(&url);
+                Some(NormalizedRef::Canonical {
+                    url: canonical_url,
+                    version,
+                })
+            } else {
+                Some(NormalizedRef::External { url })
+            }
+        }
+        Err(_) => None, // Contained, URN, Invalid — skip
+    }
+}
+
+/// Check if a URL looks like a canonical reference (no Type/id at end).
+fn is_canonical_url(url: &str) -> bool {
+    // Canonical URLs don't end with a valid Type/id pattern
+    if let Some(last_slash) = url.rfind('/') {
+        let after_slash = &url[last_slash + 1..];
+        // If the part before last slash also has a slash, check for Type/id pattern
+        let before_slash = &url[..last_slash];
+        if let Some(second_last) = before_slash.rfind('/') {
+            let potential_type = &before_slash[second_last + 1..];
+            // If it looks like Type/id (Type starts with uppercase, id is non-empty)
+            if potential_type
+                .chars()
+                .next()
+                .map(|c| c.is_ascii_uppercase())
+                .unwrap_or(false)
+                && !after_slash.is_empty()
+                && !after_slash.contains('|')
+            {
+                return false; // Looks like a real Type/id reference
+            }
+        }
+    }
+    true
+}
+
+/// Parse canonical URL into (url, optional version).
+///
+/// Canonical references can include a version: `http://example.org/ValueSet/my-vs|1.0`
+fn parse_canonical_url(url: &str) -> (String, Option<String>) {
+    if let Some(pipe_pos) = url.rfind('|') {
+        let canonical = url[..pipe_pos].to_string();
+        let version = url[pipe_pos + 1..].to_string();
+        if !version.is_empty() {
+            return (canonical, Some(version));
+        }
+    }
+    (url.to_string(), None)
+}
+
 /// Check if a reference string represents a local reference that can be resolved.
 ///
 /// Returns `true` for relative references and absolute URLs matching the base URL.

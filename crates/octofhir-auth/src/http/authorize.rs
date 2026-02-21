@@ -616,10 +616,7 @@ async fn handle_authorize(
 
     // Check if launch/patient scope requires patient selection (standalone launch)
     let needs_patient_picker = scopes.iter().any(|s| s == "launch/patient")
-        && session
-            .authorization_request
-            .launch
-            .is_none();
+        && session.authorization_request.launch.is_none();
 
     if needs_patient_picker {
         // Query patients from FHIR storage to show picker
@@ -736,10 +733,7 @@ async fn handle_select_patient(
         _ => {
             return (
                 StatusCode::BAD_REQUEST,
-                Html(render_error_page(
-                    "invalid_request",
-                    "No patient selected",
-                )),
+                Html(render_error_page("invalid_request", "No patient selected")),
             )
                 .into_response();
         }
@@ -797,10 +791,8 @@ async fn handle_select_patient(
             let _ = state.authorize_session_storage.delete(session.id).await;
 
             // Build redirect URL
-            let response = AuthorizationResponse::new(
-                auth_session.code.clone(),
-                session.state().to_string(),
-            );
+            let response =
+                AuthorizationResponse::new(auth_session.code.clone(), session.state().to_string());
 
             match response.to_redirect_url(session.redirect_uri()) {
                 Ok(url) => Redirect::to(&url).into_response(),

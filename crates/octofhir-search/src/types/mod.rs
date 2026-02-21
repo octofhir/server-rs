@@ -24,7 +24,9 @@ pub mod uri;
 pub use composite::{
     CompositeComponent, CompositeValue, build_composite_search, parse_composite_value,
 };
-pub use date::{DateRange, build_date_search, build_period_search, parse_date_range};
+pub use date::{
+    DateRange, build_date_search, build_index_date_search, build_period_search, parse_date_range,
+};
 pub use number::{build_number_search, build_quantity_search};
 pub use reference::{build_reference_array_search, build_reference_search, is_resource_type};
 pub use special::{
@@ -87,11 +89,21 @@ pub fn dispatch_search(
                 );
             }
 
-            if definition.element_type_hint.is_human_name() {
+            if definition.element_type_hint.is_human_name() && path_segments.len() == 1 {
+                // HumanName search — only when path points directly to the HumanName array
+                // (e.g., Patient.name → ["name"]). Sub-fields like Patient.name.family
+                // (→ ["name", "family"]) must use array string search instead.
                 let array_path =
                     build_jsonb_accessor(builder.resource_column(), &path_segments, false);
                 build_human_name_search(builder, param, &array_path)
-            } else if matches!(&definition.element_type_hint, ElementTypeHint::Array(_)) {
+            } else if matches!(&definition.element_type_hint, ElementTypeHint::Array(_))
+                || path_segments.len() > 1
+            {
+                // Array element search for:
+                // 1. Explicitly typed array paths (ElementTypeHint::Array)
+                // 2. Multi-segment paths (e.g., name.family, address.city) — in FHIR,
+                //    these almost always traverse through arrays (name[], address[], etc.)
+                //    and need jsonb_array_elements() to iterate the array.
                 let (array_segments, field) = split_array_path(&path_segments);
                 let array_path =
                     build_jsonb_accessor(builder.resource_column(), &array_segments, false);
@@ -102,8 +114,13 @@ pub fn dispatch_search(
         }
 
         SearchParameterType::Token => {
-            if definition.element_type_hint.is_identifier() {
-                // Identifier search already uses @> for system|value — keep as-is
+            if definition.element_type_hint.is_identifier()
+                || (matches!(&definition.element_type_hint, ElementTypeHint::Unknown)
+                    && is_identifier_param(&definition.code, expression))
+            {
+                // Identifier search uses @> for system|value.
+                // Also detect identifier params when element_type_hint is Unknown
+                // (e.g. schema resolver unavailable) by checking param code / expression.
                 let array_path =
                     build_jsonb_accessor(builder.resource_column(), &path_segments, false);
                 build_identifier_search(builder, param, &array_path)
@@ -119,13 +136,10 @@ pub fn dispatch_search(
         SearchParameterType::Number => build_number_search(builder, param, &jsonb_path),
 
         SearchParameterType::Date => {
-            if definition.element_type_hint.is_period() {
-                let json_path =
-                    build_jsonb_accessor(builder.resource_column(), &path_segments, false);
-                build_period_search(builder, param, &json_path)
-            } else {
-                build_date_search(builder, param, &jsonb_path)
-            }
+            // Use the search_idx_date index table for all date searches.
+            // This correctly handles polymorphic date fields (e.g., effective[x])
+            // where the JSONB path would resolve to a non-existent field name.
+            build_index_date_search(builder, param, resource_type)
         }
 
         SearchParameterType::Quantity => {
@@ -136,10 +150,20 @@ pub fn dispatch_search(
         SearchParameterType::Reference => {
             let json_path = build_jsonb_accessor(builder.resource_column(), &path_segments, false);
             match &definition.element_type_hint {
-                ElementTypeHint::Array(_) => {
-                    build_reference_array_search(builder, param, &json_path, &definition.target)
-                }
-                _ => build_reference_search(builder, param, &json_path, &definition.target),
+                ElementTypeHint::Array(_) => build_reference_array_search(
+                    builder,
+                    param,
+                    &json_path,
+                    &definition.target,
+                    resource_type,
+                ),
+                _ => build_reference_search(
+                    builder,
+                    param,
+                    &json_path,
+                    &definition.target,
+                    resource_type,
+                ),
             }
         }
 
@@ -177,16 +201,14 @@ pub fn dispatch_search(
             Ok(())
         }
 
-        SearchParameterType::Uri => {
-            match &definition.element_type_hint {
-                ElementTypeHint::Array(_) => {
-                    let array_path =
-                        build_jsonb_accessor(builder.resource_column(), &path_segments, false);
-                    build_uri_array_search(builder, param, &array_path)
-                }
-                _ => build_uri_search(builder, param, &jsonb_path),
+        SearchParameterType::Uri => match &definition.element_type_hint {
+            ElementTypeHint::Array(_) => {
+                let array_path =
+                    build_jsonb_accessor(builder.resource_column(), &path_segments, false);
+                build_uri_array_search(builder, param, &array_path)
             }
-        }
+            _ => build_uri_search(builder, param, &jsonb_path),
+        },
 
         SearchParameterType::Special => {
             // Special parameters are usually handled by name, not by expression
@@ -370,6 +392,14 @@ fn split_array_path(path: &[String]) -> (Vec<String>, String) {
     } else {
         (path.to_vec(), String::new())
     }
+}
+
+/// Detect identifier params when element_type_hint is Unknown.
+///
+/// Heuristic: if the param code is "identifier" or the FHIRPath expression
+/// ends with ".identifier", this is likely an Identifier-type field.
+fn is_identifier_param(code: &str, expression: &str) -> bool {
+    code == "identifier" || expression.ends_with(".identifier")
 }
 
 /// Infer component type from FHIRPath expression.
@@ -564,7 +594,7 @@ mod tests {
         let clause = builder.build_where_clause();
         assert!(clause.is_some());
         let clause_str = clause.unwrap();
-        assert!(clause_str.contains("reference"));
+        assert!(clause_str.contains("search_idx_reference"));
     }
 
     #[test]

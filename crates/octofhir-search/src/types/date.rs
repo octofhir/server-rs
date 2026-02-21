@@ -301,6 +301,163 @@ fn format_datetime(dt: &OffsetDateTime) -> String {
         .unwrap_or_else(|_| dt.to_string())
 }
 
+/// Build date search using the `search_idx_date` index table.
+///
+/// This approach is more robust than JSONB path queries because:
+/// - Handles polymorphic date fields (e.g., `effective[x]` → effectiveDateTime/effectivePeriod)
+/// - The index already contains correctly extracted date ranges regardless of JSON field name
+/// - Uses B-tree index for efficient range queries
+pub fn build_index_date_search(
+    builder: &mut SqlBuilder,
+    param: &ParsedParam,
+    resource_type: &str,
+) -> Result<(), SqlBuilderError> {
+    if param.values.is_empty() {
+        return Ok(());
+    }
+
+    // Handle :missing modifier — fall back to checking if any index row exists
+    if let Some(SearchModifier::Missing) = &param.modifier {
+        let is_missing = param
+            .values
+            .first()
+            .map(|v| v.raw.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
+
+        let rt_param = builder.add_text_param(resource_type);
+        let pc_param = builder.add_text_param(&param.name);
+
+        let condition = if is_missing {
+            format!(
+                "NOT EXISTS (SELECT 1 FROM search_idx_date sid \
+                 WHERE sid.resource_type = ${rt_param} AND sid.resource_id = r.id \
+                 AND sid.param_code = ${pc_param})"
+            )
+        } else {
+            format!(
+                "EXISTS (SELECT 1 FROM search_idx_date sid \
+                 WHERE sid.resource_type = ${rt_param} AND sid.resource_id = r.id \
+                 AND sid.param_code = ${pc_param})"
+            )
+        };
+
+        builder.add_condition(condition);
+        return Ok(());
+    }
+
+    let mut or_conditions = Vec::new();
+
+    for value in &param.values {
+        if value.raw.is_empty() {
+            continue;
+        }
+
+        let prefix = value.prefix.unwrap_or(SearchPrefix::Eq);
+        let date_range = parse_date_range(&value.raw)?;
+
+        let start_str = format_datetime(&date_range.start);
+        let end_str = format_datetime(&date_range.end);
+
+        let rt_param = builder.add_text_param(resource_type);
+        let pc_param = builder.add_text_param(&param.name);
+
+        // The index stores (range_start, range_end) for each date value.
+        // A resource date "overlaps" a search range when:
+        //   index.range_start < search.end AND index.range_end >= search.start
+        let condition = match prefix {
+            SearchPrefix::Eq => {
+                // Resource value overlaps with search range
+                let p1 = builder.add_timestamp_param(&start_str);
+                let p2 = builder.add_timestamp_param(&end_str);
+                format!(
+                    "EXISTS (SELECT 1 FROM search_idx_date sid \
+                     WHERE sid.resource_type = ${rt_param} AND sid.resource_id = r.id \
+                     AND sid.param_code = ${pc_param} \
+                     AND sid.range_start < ${p2}::timestamptz \
+                     AND sid.range_end >= ${p1}::timestamptz)"
+                )
+            }
+            SearchPrefix::Ne => {
+                // Resource value does NOT overlap with search range
+                let p1 = builder.add_timestamp_param(&start_str);
+                let p2 = builder.add_timestamp_param(&end_str);
+                format!(
+                    "NOT EXISTS (SELECT 1 FROM search_idx_date sid \
+                     WHERE sid.resource_type = ${rt_param} AND sid.resource_id = r.id \
+                     AND sid.param_code = ${pc_param} \
+                     AND sid.range_start < ${p2}::timestamptz \
+                     AND sid.range_end >= ${p1}::timestamptz)"
+                )
+            }
+            SearchPrefix::Gt | SearchPrefix::Sa => {
+                // Resource value is after search range
+                let p = builder.add_timestamp_param(&end_str);
+                format!(
+                    "EXISTS (SELECT 1 FROM search_idx_date sid \
+                     WHERE sid.resource_type = ${rt_param} AND sid.resource_id = r.id \
+                     AND sid.param_code = ${pc_param} \
+                     AND sid.range_start >= ${p}::timestamptz)"
+                )
+            }
+            SearchPrefix::Lt | SearchPrefix::Eb => {
+                // Resource value is before search range
+                let p = builder.add_timestamp_param(&start_str);
+                format!(
+                    "EXISTS (SELECT 1 FROM search_idx_date sid \
+                     WHERE sid.resource_type = ${rt_param} AND sid.resource_id = r.id \
+                     AND sid.param_code = ${pc_param} \
+                     AND sid.range_end < ${p}::timestamptz)"
+                )
+            }
+            SearchPrefix::Ge => {
+                // Resource value >= search start
+                let p = builder.add_timestamp_param(&start_str);
+                format!(
+                    "EXISTS (SELECT 1 FROM search_idx_date sid \
+                     WHERE sid.resource_type = ${rt_param} AND sid.resource_id = r.id \
+                     AND sid.param_code = ${pc_param} \
+                     AND sid.range_end >= ${p}::timestamptz)"
+                )
+            }
+            SearchPrefix::Le => {
+                // Resource value <= search end
+                let p = builder.add_timestamp_param(&end_str);
+                format!(
+                    "EXISTS (SELECT 1 FROM search_idx_date sid \
+                     WHERE sid.resource_type = ${rt_param} AND sid.resource_id = r.id \
+                     AND sid.param_code = ${pc_param} \
+                     AND sid.range_start < ${p}::timestamptz)"
+                )
+            }
+            SearchPrefix::Ap => {
+                // Approximate: expand range by 10%
+                let duration = date_range.end - date_range.start;
+                let expansion = duration / 10;
+                let approx_start = date_range.start - expansion;
+                let approx_end = date_range.end + expansion;
+
+                let p1 = builder.add_timestamp_param(format_datetime(&approx_start));
+                let p2 = builder.add_timestamp_param(format_datetime(&approx_end));
+                format!(
+                    "EXISTS (SELECT 1 FROM search_idx_date sid \
+                     WHERE sid.resource_type = ${rt_param} AND sid.resource_id = r.id \
+                     AND sid.param_code = ${pc_param} \
+                     AND sid.range_start < ${p2}::timestamptz \
+                     AND sid.range_end >= ${p1}::timestamptz)"
+                )
+            }
+        };
+
+        or_conditions.push(condition);
+    }
+
+    if !or_conditions.is_empty() {
+        builder.add_condition(SqlBuilder::build_or_clause(&or_conditions));
+    }
+
+    Ok(())
+}
+
 /// Build search for Period types which have start and end fields.
 ///
 /// A Period overlaps with the search range if:

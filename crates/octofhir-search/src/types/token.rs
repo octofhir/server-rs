@@ -632,27 +632,52 @@ pub fn build_gin_token_search(
         let (system, code) = parse_token_value(&value.raw);
 
         let condition = match &param.modifier {
-            None => build_gin_token_containment(&mut *builder, &resource_col, path_segments, system, code),
+            None => build_gin_token_containment(
+                &mut *builder,
+                &resource_col,
+                path_segments,
+                system,
+                code,
+            ),
 
             Some(SearchModifier::Not) => {
-                let inner = build_gin_token_containment(&mut *builder, &resource_col, path_segments, system, code);
+                let inner = build_gin_token_containment(
+                    &mut *builder,
+                    &resource_col,
+                    path_segments,
+                    system,
+                    code,
+                );
                 format!("NOT ({inner})")
             }
 
             // For other modifiers, fall back to the standard token search
             _ => {
-                let json_path = crate::sql_builder::build_jsonb_accessor(&resource_col, path_segments, false);
+                let json_path =
+                    crate::sql_builder::build_jsonb_accessor(&resource_col, path_segments, false);
                 let mut temp_builder = SqlBuilder::new().with_param_offset(builder.param_count());
                 build_token_search(&mut temp_builder, param, &json_path)?;
                 // Copy params
                 for p in temp_builder.params() {
                     match p {
-                        SqlParam::Text(s) => { builder.add_text_param(s); }
-                        SqlParam::Json(s) => { builder.add_json_param(s); }
-                        SqlParam::Integer(i) => { builder.add_integer_param(*i); }
-                        SqlParam::Float(f) => { builder.add_float_param(*f); }
-                        SqlParam::Boolean(b) => { builder.add_boolean_param(*b); }
-                        SqlParam::Timestamp(s) => { builder.add_timestamp_param(s); }
+                        SqlParam::Text(s) => {
+                            builder.add_text_param(s);
+                        }
+                        SqlParam::Json(s) => {
+                            builder.add_json_param(s);
+                        }
+                        SqlParam::Integer(i) => {
+                            builder.add_integer_param(*i);
+                        }
+                        SqlParam::Float(f) => {
+                            builder.add_float_param(*f);
+                        }
+                        SqlParam::Boolean(b) => {
+                            builder.add_boolean_param(*b);
+                        }
+                        SqlParam::Timestamp(s) => {
+                            builder.add_timestamp_param(s);
+                        }
                     }
                 }
                 let conditions = temp_builder.conditions();
@@ -744,7 +769,8 @@ pub fn build_gin_code_search(
             }
 
             Some(SearchModifier::Missing) => {
-                let text_path = crate::sql_builder::build_jsonb_accessor(&resource_col, path_segments, true);
+                let text_path =
+                    crate::sql_builder::build_jsonb_accessor(&resource_col, path_segments, true);
                 let is_missing = value.raw.eq_ignore_ascii_case("true");
                 if is_missing {
                     format!("({text_path} IS NULL OR {text_path} = 'null')")
@@ -775,7 +801,10 @@ pub fn build_gin_code_search(
 ///
 /// For path `["name", "family"]` and value `"Smith"`, produces:
 /// `{"name": [{"family": "Smith"}]}`  (arrays handled by caller)
-fn build_nested_containment(path_segments: &[String], leaf_value: serde_json::Value) -> serde_json::Value {
+fn build_nested_containment(
+    path_segments: &[String],
+    leaf_value: serde_json::Value,
+) -> serde_json::Value {
     let mut result = leaf_value;
     for segment in path_segments.iter().rev() {
         result = serde_json::json!({ segment.as_str(): result });
@@ -1062,11 +1091,94 @@ mod tests {
         assert_eq!(result, expected);
 
         // Simple code
-        let result = build_nested_containment(
-            &["gender".to_string()],
-            serde_json::json!("female"),
-        );
+        let result = build_nested_containment(&["gender".to_string()], serde_json::json!("female"));
         let expected = serde_json::json!({"gender": "female"});
         assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn test_identifier_system_value_search() {
+        // Exact test case from integration: Patient?identifier=http://test.org|debug-123
+        let mut builder = SqlBuilder::new();
+        let param = make_param("identifier", "http://test.org|debug-123", None);
+
+        build_identifier_search(&mut builder, &param, "r.resource->'identifier'").unwrap();
+
+        let clause = builder.build_where_clause().unwrap();
+        // Should use @> containment for system|value
+        assert!(
+            clause.contains("@>"),
+            "Expected @> containment, got: {clause}"
+        );
+        // Check the JSON param contains correct system and value
+        let params = builder.params();
+        assert_eq!(params.len(), 1, "Expected 1 param, got {}", params.len());
+        let json_str = params[0].as_str();
+        assert!(
+            json_str.contains("http://test.org") && json_str.contains("debug-123"),
+            "Expected JSON with system and value, got: {json_str}"
+        );
+    }
+
+    #[test]
+    fn test_identifier_value_only_search() {
+        // Test: Patient?identifier=debug-123
+        let mut builder = SqlBuilder::new();
+        let param = make_param("identifier", "debug-123", None);
+
+        build_identifier_search(&mut builder, &param, "r.resource->'identifier'").unwrap();
+
+        let clause = builder.build_where_clause().unwrap();
+        // Should use EXISTS with value check
+        assert!(
+            clause.contains("ident->>'value' = $1"),
+            "Expected value check, got: {clause}"
+        );
+    }
+
+    #[test]
+    fn test_identifier_dispatch_with_element_type_hint() {
+        // Verify that identifier token search is dispatched correctly through dispatch_search
+        use crate::parameters::{ElementTypeHint, SearchParameter, SearchParameterType};
+
+        let mut builder = SqlBuilder::new();
+        let param = crate::parser::ParsedParam {
+            name: "identifier".to_string(),
+            modifier: None,
+            values: vec![crate::parser::ParsedValue {
+                prefix: None,
+                raw: "http://test.org|debug-123".to_string(),
+            }],
+        };
+        let def = std::sync::Arc::new(
+            SearchParameter::new(
+                "identifier",
+                "http://hl7.org/fhir/SearchParameter/Patient-identifier",
+                SearchParameterType::Token,
+                vec!["Patient".to_string()],
+            )
+            .with_expression("Patient.identifier")
+            .with_element_type_hint(ElementTypeHint::Identifier),
+        );
+
+        crate::types::dispatch_search(&mut builder, &param, &def, "Patient").unwrap();
+
+        let clause = builder.build_where_clause().unwrap();
+        // Should use @> containment (identifier path), NOT coding
+        assert!(
+            clause.contains("@>"),
+            "Expected @> containment, got: {clause}"
+        );
+        let params = builder.params();
+        let json_str = params[0].as_str();
+        // Should contain system/value, NOT coding
+        assert!(
+            json_str.contains("\"value\"") && json_str.contains("\"system\""),
+            "Expected identifier JSON with system/value, got: {json_str}"
+        );
+        assert!(
+            !json_str.contains("coding"),
+            "Should NOT contain 'coding' for identifier search, got: {json_str}"
+        );
     }
 }
