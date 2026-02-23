@@ -54,8 +54,6 @@ pub async fn load_search_parameters(
     manager: &octofhir_canonical_manager::CanonicalManager,
     resolver: Option<&dyn ElementTypeResolver>,
 ) -> Result<SearchParameterRegistry, LoaderError> {
-    use octofhir_canonical_manager::search::SearchQuery;
-
     let registry = SearchParameterRegistry::new();
 
     // Register built-in common parameters first
@@ -66,8 +64,8 @@ pub async fn load_search_parameters(
         resolve_registry_element_types(&registry, resolver).await;
     }
 
-    // Query for all SearchParameter resources using pagination
-    // The canonical manager has a max limit of 1000 per page
+    // Query for all SearchParameter resources using pagination via the
+    // SearchQueryBuilder API (database-backed, reliable at startup).
     const PAGE_SIZE: usize = 1000;
     let mut offset = 0;
     let mut loaded_count = 0;
@@ -75,16 +73,13 @@ pub async fn load_search_parameters(
     let mut total_fetched = 0;
 
     loop {
-        let query = SearchQuery {
-            resource_types: vec!["SearchParameter".to_string()],
-            limit: Some(PAGE_SIZE),
-            offset: Some(offset),
-            ..Default::default()
-        };
-
         let results = manager
-            .search_engine()
-            .search(&query)
+            .search()
+            .await
+            .resource_type("SearchParameter")
+            .limit(PAGE_SIZE)
+            .offset(offset)
+            .execute()
             .await
             .map_err(|e| LoaderError::QueryError(e.to_string()))?;
 

@@ -130,6 +130,7 @@ pub async fn type_operation_handler(
 pub async fn instance_operation_or_history_handler(
     state: State<AppState>,
     Path((resource_type, id, operation)): Path<(String, String, String)>,
+    Query(query_params): Query<HashMap<String, String>>,
     query: Query<crate::handlers::HistoryQueryParams>,
 ) -> Response {
     if operation == "_history" {
@@ -139,7 +140,6 @@ pub async fn instance_operation_or_history_handler(
             Err(e) => e.into_response(),
         }
     } else if is_operation(&operation) {
-        // Re-extract raw query for operation params
         let app_state = state.0;
         let code = operation.trim_start_matches('$');
         let op_def = app_state
@@ -154,7 +154,8 @@ pub async fn instance_operation_or_history_handler(
         let handler = app_state.operation_handlers.get(code);
         match handler {
             Some(h) => {
-                let params_value = serde_json::Value::Null;
+                let params = OperationParams::Get(query_params);
+                let params_value = params.to_value();
                 match h
                     .handle_instance(&app_state, &resource_type, &id, &params_value)
                     .await

@@ -203,11 +203,15 @@ pub async fn metadata(
 ///
 /// This function is called once during initialization and the result is cached in AppState.
 /// This avoids building the CapabilityStatement on every /metadata request.
+///
+/// Reuses the already-loaded `SearchParameterRegistry` from `ReloadableSearchConfig`
+/// instead of re-querying the canonical manager (single source of truth).
 pub async fn build_capability_statement(
     fhir_version: &str,
     base_url: &str,
     db_pool: &sqlx_postgres::PgPool,
     resource_types: &[String],
+    search_registry: &octofhir_search::SearchParameterRegistry,
 ) -> Value {
     use octofhir_api::{CapabilityStatementBuilder, SearchParam};
 
@@ -227,67 +231,17 @@ pub async fn build_capability_statement(
         _ => "4.3.0",
     });
 
-    // Fetch all search parameters and StructureDefinitions once (bulk queries)
+    // Fetch StructureDefinitions for profiles (search params come from registry)
     let manager = crate::canonical::get_manager();
 
-    // Build maps for search params and profiles grouped by resource type
-    let mut search_params_by_type: std::collections::HashMap<String, Vec<SearchParam>> =
-        std::collections::HashMap::new();
     let mut base_profiles: std::collections::HashMap<String, String> =
         std::collections::HashMap::new();
     let mut supported_profiles: std::collections::HashMap<String, Vec<String>> =
         std::collections::HashMap::new();
 
     if let Some(mgr) = &manager {
-        // Fetch ALL SearchParameter resources at once (paginated)
-        const PAGE_SIZE: usize = 1000;
-        let mut offset = 0;
-        loop {
-            if let Ok(results) = mgr
-                .search()
-                .await
-                .resource_type("SearchParameter")
-                .limit(PAGE_SIZE)
-                .offset(offset)
-                .execute()
-                .await
-            {
-                let page_count = results.resources.len();
-                for rm in &results.resources {
-                    let content = &rm.resource.content;
-                    // Get the base resource types this search param applies to
-                    if let Some(base) = content.get("base").and_then(|v| v.as_array()) {
-                        let code = content.get("code").and_then(|v| v.as_str()).unwrap_or("");
-                        let type_ = content.get("type").and_then(|v| v.as_str()).unwrap_or("");
-                        let description = content
-                            .get("description")
-                            .and_then(|v| v.as_str())
-                            .map(|s| s.to_string());
-
-                        for base_type in base {
-                            if let Some(rt) = base_type.as_str() {
-                                search_params_by_type
-                                    .entry(rt.to_string())
-                                    .or_default()
-                                    .push(SearchParam {
-                                        name: code.to_string(),
-                                        type_: type_.to_string(),
-                                        documentation: description.clone(),
-                                    });
-                            }
-                        }
-                    }
-                }
-                if page_count < PAGE_SIZE {
-                    break;
-                }
-                offset += PAGE_SIZE;
-            } else {
-                break;
-            }
-        }
-
         // Fetch ALL StructureDefinition resources at once (paginated)
+        const PAGE_SIZE: usize = 1000;
         let mut offset = 0;
         loop {
             if let Ok(results) = mgr
@@ -344,9 +298,21 @@ pub async fn build_capability_statement(
         .collect();
 
     for rt in &standard_resource_types {
-        // Get search params for this resource type, add common params, deduplicate by name
-        let mut mapped: Vec<SearchParam> =
-            search_params_by_type.get(*rt).cloned().unwrap_or_default();
+        // Build search params from the shared SearchParameterRegistry
+        let registry_params = search_registry.get_all_for_type(rt);
+        let mut mapped: Vec<SearchParam> = registry_params
+            .iter()
+            .map(|p| SearchParam {
+                name: p.code.clone(),
+                type_: format!("{:?}", p.param_type).to_lowercase(),
+                documentation: if p.description.is_empty() {
+                    None
+                } else {
+                    Some(p.description.clone())
+                },
+            })
+            .collect();
+
         // Only add common params if not already present (avoid cpb-12 duplicate names)
         for common in octofhir_api::common_search_params() {
             if !mapped.iter().any(|p| p.name == common.name) {

@@ -20,7 +20,7 @@ use crate::operations::registry::OperationRegistry;
 use crate::server::AppState;
 
 const BASE_PATH: &str = "/fhir";
-const API_VERSION: u8 = 1;
+const SCHEMA_VERSION: u8 = 3;
 
 #[derive(Clone)]
 pub struct RestConsoleState {
@@ -61,9 +61,9 @@ impl FromRef<AppState> for RestConsoleState {
     }
 }
 
-/// GET /api/__introspect/rest-console handler
+/// GET /api/__introspect/rest-console handler (unified v3)
 pub async fn introspect(State(state): State<RestConsoleState>) -> impl IntoResponse {
-    let payload = build_payload(&state).await;
+    let payload = build_unified_payload(&state).await;
     let etag = compute_etag(&payload);
 
     let mut response = Json(payload).into_response();
@@ -79,8 +79,11 @@ pub async fn introspect(State(state): State<RestConsoleState>) -> impl IntoRespo
     response
 }
 
-pub async fn build_payload(state: &RestConsoleState) -> RestConsoleResponse {
-    let registry = state.registry.clone();
+pub async fn build_unified_payload(state: &RestConsoleState) -> RestConsoleResponse {
+    let registry = &state.registry;
+    let operations = load_all_operations_for_console(state).await;
+
+    // === Build autocomplete suggestions ===
     let mut suggestions = Suggestions {
         resources: Vec::new(),
         system_operations: Vec::new(),
@@ -89,11 +92,8 @@ pub async fn build_payload(state: &RestConsoleState) -> RestConsoleResponse {
         api_endpoints: Vec::new(),
     };
 
-    // Build resource suggestions
     for resource_type in registry.list_resource_types() {
-        let params = registry.get_all_for_type(&resource_type);
-        let param_count = params.len();
-
+        let param_count = registry.get_all_for_type(&resource_type).len();
         suggestions.resources.push(AutocompleteSuggestion {
             id: format!("resource:{}", resource_type),
             kind: SuggestionKind::Resource,
@@ -112,18 +112,14 @@ pub async fn build_payload(state: &RestConsoleState) -> RestConsoleResponse {
     }
     suggestions.resources.sort_by(|a, b| a.label.cmp(&b.label));
 
-    // Load all operations
-    let operations = load_all_operations_for_console(state).await;
-
-    // Build operation suggestions
-    for op in operations {
-        // System-level operations
+    for op in &operations {
+        let code = op.code.trim_start_matches('$');
         if op.system {
             suggestions.system_operations.push(AutocompleteSuggestion {
-                id: format!("system-op:{}", op.code),
+                id: format!("system-op:{}", code),
                 kind: SuggestionKind::SystemOp,
-                label: format!("${}", op.code),
-                path_template: format!("{}/${}", BASE_PATH, op.code),
+                label: format!("${}", code),
+                path_template: format!("{}/${}", BASE_PATH, code),
                 methods: vec![op.method.clone()],
                 placeholders: vec![],
                 description: op.path_templates.first().cloned(),
@@ -135,21 +131,18 @@ pub async fn build_payload(state: &RestConsoleState) -> RestConsoleResponse {
                 },
             });
         }
-
-        // Type-level operations
         if op.type_level {
             for resource_type in &op.resource_types {
                 if resource_type == "Resource" {
-                    // Generic operation - add for all resource types
                     for rt in registry.list_resource_types() {
                         suggestions.type_operations.push(AutocompleteSuggestion {
-                            id: format!("type-op:{}:{}", rt, op.code),
+                            id: format!("type-op:{}:{}", rt, code),
                             kind: SuggestionKind::TypeOp,
-                            label: format!("${}", op.code),
-                            path_template: format!("{}/{{resourceType}}/${}", BASE_PATH, op.code),
+                            label: format!("${}", code),
+                            path_template: format!("{}/{{resourceType}}/${}", BASE_PATH, code),
                             methods: vec![op.method.clone()],
                             placeholders: vec!["resourceType".to_string()],
-                            description: Some(format!("{} for {}", op.code, rt)),
+                            description: Some(format!("{} for {}", code, rt)),
                             metadata: SuggestionMetadata {
                                 resource_type: Some(rt.to_string()),
                                 affects_state: op.affects_state,
@@ -160,13 +153,13 @@ pub async fn build_payload(state: &RestConsoleState) -> RestConsoleResponse {
                     }
                 } else {
                     suggestions.type_operations.push(AutocompleteSuggestion {
-                        id: format!("type-op:{}:{}", resource_type, op.code),
+                        id: format!("type-op:{}:{}", resource_type, code),
                         kind: SuggestionKind::TypeOp,
-                        label: format!("${}", op.code),
-                        path_template: format!("{}/{{resourceType}}/${}", BASE_PATH, op.code),
+                        label: format!("${}", code),
+                        path_template: format!("{}/{{resourceType}}/${}", BASE_PATH, code),
                         methods: vec![op.method.clone()],
                         placeholders: vec!["resourceType".to_string()],
-                        description: Some(format!("{} for {}", op.code, resource_type)),
+                        description: Some(format!("{} for {}", code, resource_type)),
                         metadata: SuggestionMetadata {
                             resource_type: Some(resource_type.clone()),
                             affects_state: op.affects_state,
@@ -177,26 +170,23 @@ pub async fn build_payload(state: &RestConsoleState) -> RestConsoleResponse {
                 }
             }
         }
-
-        // Instance-level operations
         if op.instance {
             for resource_type in &op.resource_types {
                 if resource_type == "Resource" {
-                    // Generic operation - add for all resource types
                     for rt in registry.list_resource_types() {
                         suggestions
                             .instance_operations
                             .push(AutocompleteSuggestion {
-                                id: format!("instance-op:{}:{}", rt, op.code),
+                                id: format!("instance-op:{}:{}", rt, code),
                                 kind: SuggestionKind::InstanceOp,
-                                label: format!("${}", op.code),
+                                label: format!("${}", code),
                                 path_template: format!(
                                     "{}/{{resourceType}}/{{id}}/${}",
-                                    BASE_PATH, op.code
+                                    BASE_PATH, code
                                 ),
                                 methods: vec![op.method.clone()],
                                 placeholders: vec!["resourceType".to_string(), "id".to_string()],
-                                description: Some(format!("{} for {} instance", op.code, rt)),
+                                description: Some(format!("{} for {} instance", code, rt)),
                                 metadata: SuggestionMetadata {
                                     resource_type: Some(rt.to_string()),
                                     affects_state: op.affects_state,
@@ -209,18 +199,18 @@ pub async fn build_payload(state: &RestConsoleState) -> RestConsoleResponse {
                     suggestions
                         .instance_operations
                         .push(AutocompleteSuggestion {
-                            id: format!("instance-op:{}:{}", resource_type, op.code),
+                            id: format!("instance-op:{}:{}", resource_type, code),
                             kind: SuggestionKind::InstanceOp,
-                            label: format!("${}", op.code),
+                            label: format!("${}", code),
                             path_template: format!(
                                 "{}/{{resourceType}}/{{id}}/${}",
-                                BASE_PATH, op.code
+                                BASE_PATH, code
                             ),
                             methods: vec![op.method.clone()],
                             placeholders: vec!["resourceType".to_string(), "id".to_string()],
                             description: Some(format!(
                                 "{} for {} instance",
-                                op.code, resource_type
+                                code, resource_type
                             )),
                             metadata: SuggestionMetadata {
                                 resource_type: Some(resource_type.clone()),
@@ -234,7 +224,6 @@ pub async fn build_payload(state: &RestConsoleState) -> RestConsoleResponse {
         }
     }
 
-    // Sort operations
     suggestions
         .system_operations
         .sort_by(|a, b| a.label.cmp(&b.label));
@@ -255,7 +244,6 @@ pub async fn build_payload(state: &RestConsoleState) -> RestConsoleResponse {
         }
     });
 
-    // Build API endpoint suggestions
     suggestions.api_endpoints = vec![
         AutocompleteSuggestion {
             id: "api:introspect".to_string(),
@@ -304,12 +292,12 @@ pub async fn build_payload(state: &RestConsoleState) -> RestConsoleResponse {
         },
     ];
 
-    // Build search params by resource
+    // === Build search params by resource (flat map for autocomplete) ===
     let mut search_params: HashMap<String, Vec<SearchParamSuggestion>> = HashMap::new();
     for resource_type in registry.list_resource_types() {
         let params = registry.get_all_for_type(&resource_type);
         let mut param_suggestions: Vec<SearchParamSuggestion> = params
-            .into_iter()
+            .iter()
             .map(|param| SearchParamSuggestion {
                 code: param.code.clone(),
                 search_type: format_param_type(&param.param_type),
@@ -331,13 +319,83 @@ pub async fn build_payload(state: &RestConsoleState) -> RestConsoleResponse {
                 is_common: param.is_common(),
             })
             .collect();
-
         param_suggestions.sort_by(|a, b| a.code.cmp(&b.code));
         search_params.insert(resource_type.to_string(), param_suggestions);
     }
 
+    // === Build enriched resource capabilities ===
+    let mut resources = Vec::new();
+    for resource_type in registry.list_resource_types() {
+        let params = registry.get_all_for_type(&resource_type);
+
+        let enriched_params: Vec<EnrichedSearchParam> = params
+            .iter()
+            .map(|param| {
+                let chains = if param.param_type == SearchParameterType::Reference
+                    && !param.target.is_empty()
+                {
+                    compute_chains(registry, &param.code, &param.target)
+                } else {
+                    Vec::new()
+                };
+
+                EnrichedSearchParam {
+                    code: param.code.clone(),
+                    param_type: format_param_type(&param.param_type),
+                    description: if param.description.is_empty() {
+                        None
+                    } else {
+                        Some(param.description.clone())
+                    },
+                    modifiers: param
+                        .modifier
+                        .iter()
+                        .map(|m| EnrichedModifierSuggestion {
+                            code: modifier_to_string(m),
+                            description: None,
+                        })
+                        .collect(),
+                    comparators: param.comparator.clone(),
+                    targets: param.target.clone(),
+                    chains,
+                    is_common: param.is_common(),
+                }
+            })
+            .collect();
+
+        let includes = compute_includes(&params);
+        let rev_includes = compute_rev_includes(registry, &resource_type);
+        let sort_params = compute_sort_params(&params);
+        let type_operations = filter_operations_enriched(&operations, &resource_type, true, false);
+        let instance_operations =
+            filter_operations_enriched(&operations, &resource_type, false, true);
+
+        resources.push(ResourceCapability {
+            resource_type: resource_type.to_string(),
+            search_params: enriched_params,
+            includes,
+            rev_includes,
+            sort_params,
+            type_operations,
+            instance_operations,
+        });
+    }
+    resources.sort_by(|a, b| a.resource_type.cmp(&b.resource_type));
+
+    let system_operations: Vec<OperationCapability> = operations
+        .iter()
+        .filter(|op| op.system)
+        .map(|op| OperationCapability {
+            code: op.code.clone(),
+            method: op.method.clone(),
+            description: op.path_templates.first().cloned(),
+            affects_state: op.affects_state,
+            resource_types: op.resource_types.clone(),
+        })
+        .collect();
+
     RestConsoleResponse {
-        api_version: API_VERSION,
+        schema_version: SCHEMA_VERSION,
         fhir_version: state.fhir_version.clone(),
         base_path: BASE_PATH.to_string(),
         generated_at: OffsetDateTime::now_utc()
@@ -345,6 +403,9 @@ pub async fn build_payload(state: &RestConsoleState) -> RestConsoleResponse {
             .unwrap_or_else(|_| "1970-01-01T00:00:00Z".to_string()),
         suggestions,
         search_params,
+        resources,
+        system_operations,
+        special_params: build_special_params(),
     }
 }
 
@@ -514,29 +575,16 @@ async fn load_gateway_custom_operations(
 
 fn compute_etag(payload: &RestConsoleResponse) -> String {
     let mut hasher = DefaultHasher::new();
+    payload.schema_version.hash(&mut hasher);
     payload.fhir_version.hash(&mut hasher);
     payload.base_path.hash(&mut hasher);
-    payload.api_version.hash(&mut hasher);
     payload.suggestions.resources.len().hash(&mut hasher);
-    payload
-        .suggestions
-        .system_operations
-        .len()
-        .hash(&mut hasher);
-    payload.suggestions.type_operations.len().hash(&mut hasher);
-    payload
-        .suggestions
-        .instance_operations
-        .len()
-        .hash(&mut hasher);
-    payload.suggestions.api_endpoints.len().hash(&mut hasher);
-
-    // Hash search params count per resource
-    for (resource_type, params) in &payload.search_params {
-        resource_type.hash(&mut hasher);
-        params.len().hash(&mut hasher);
+    payload.resources.len().hash(&mut hasher);
+    for res in &payload.resources {
+        res.resource_type.hash(&mut hasher);
+        res.search_params.len().hash(&mut hasher);
+        res.includes.len().hash(&mut hasher);
     }
-
     format!("W/\"rc-{hash:x}\"", hash = hasher.finish())
 }
 
@@ -581,12 +629,15 @@ fn operation_method(op: &OperationDefinition) -> &'static str {
 
 #[derive(Clone, Serialize)]
 pub struct RestConsoleResponse {
-    api_version: u8,
+    schema_version: u8,
     fhir_version: String,
     base_path: String,
     generated_at: String,
     suggestions: Suggestions,
     search_params: HashMap<String, Vec<SearchParamSuggestion>>,
+    resources: Vec<ResourceCapability>,
+    system_operations: Vec<OperationCapability>,
+    special_params: Vec<SpecialParamInfo>,
 }
 
 #[derive(Clone, Serialize, Hash)]
@@ -722,6 +773,264 @@ impl OperationMetadata {
             path_templates: templates,
         }
     }
+}
+
+// === Enriched Capabilities helpers ===
+
+fn compute_chains(
+    registry: &SearchParameterRegistry,
+    _param_code: &str,
+    targets: &[String],
+) -> Vec<ChainInfo> {
+    let mut chains = Vec::new();
+    for target_type in targets {
+        // Don't expand wildcard "Resource" references — too many targets
+        if target_type == "Resource" {
+            chains.push(ChainInfo {
+                target_type: target_type.clone(),
+                target_params: Vec::new(),
+            });
+            continue;
+        }
+        let target_params: Vec<String> = registry
+            .get_all_for_type(target_type)
+            .iter()
+            .filter(|p| !p.is_common())
+            .map(|p| p.code.clone())
+            .collect();
+        if !target_params.is_empty() {
+            chains.push(ChainInfo {
+                target_type: target_type.clone(),
+                target_params,
+            });
+        }
+    }
+    chains
+}
+
+fn compute_includes(
+    params: &[Arc<octofhir_search::parameters::SearchParameter>],
+) -> Vec<IncludeCapability> {
+    params
+        .iter()
+        .filter(|p| p.param_type == SearchParameterType::Reference && !p.target.is_empty())
+        .map(|p| IncludeCapability {
+            param_code: p.code.clone(),
+            target_types: p.target.clone(),
+        })
+        .collect()
+}
+
+fn compute_rev_includes(
+    registry: &SearchParameterRegistry,
+    resource_type: &str,
+) -> Vec<IncludeCapability> {
+    let mut rev_includes = Vec::new();
+    for other_type in registry.list_resource_types() {
+        for param in registry.get_all_for_type(&other_type) {
+            if param.param_type == SearchParameterType::Reference
+                && param.target.contains(&resource_type.to_string())
+            {
+                rev_includes.push(IncludeCapability {
+                    param_code: format!("{}:{}", other_type, param.code),
+                    target_types: vec![resource_type.to_string()],
+                });
+            }
+        }
+    }
+    rev_includes
+}
+
+fn compute_sort_params(
+    params: &[Arc<octofhir_search::parameters::SearchParameter>],
+) -> Vec<String> {
+    let mut sort_params = vec!["_id".to_string(), "_lastUpdated".to_string()];
+    for param in params {
+        match param.param_type {
+            SearchParameterType::Date
+            | SearchParameterType::String
+            | SearchParameterType::Number => {
+                if !param.is_common() {
+                    sort_params.push(param.code.clone());
+                }
+            }
+            _ => {}
+        }
+    }
+    sort_params.sort();
+    sort_params.dedup();
+    sort_params
+}
+
+fn filter_operations_enriched(
+    operations: &[OperationMetadata],
+    resource_type: &str,
+    type_level: bool,
+    instance: bool,
+) -> Vec<OperationCapability> {
+    operations
+        .iter()
+        .filter(|op| {
+            let level_match = if type_level {
+                op.type_level
+            } else if instance {
+                op.instance
+            } else {
+                false
+            };
+            if !level_match {
+                return false;
+            }
+            op.resource_types.contains(&resource_type.to_string())
+                || op.resource_types.contains(&"Resource".to_string())
+        })
+        .map(|op| OperationCapability {
+            code: op.code.clone(),
+            method: op.method.clone(),
+            description: op.path_templates.first().cloned(),
+            affects_state: op.affects_state,
+            resource_types: op.resource_types.clone(),
+        })
+        .collect()
+}
+
+fn build_special_params() -> Vec<SpecialParamInfo> {
+    vec![
+        SpecialParamInfo {
+            name: "_count".into(),
+            description: Some("Max results per page".into()),
+            supported: true,
+            examples: vec!["10".into(), "50".into(), "100".into()],
+        },
+        SpecialParamInfo {
+            name: "_offset".into(),
+            description: Some("Skip N results".into()),
+            supported: true,
+            examples: vec!["0".into(), "10".into()],
+        },
+        SpecialParamInfo {
+            name: "_sort".into(),
+            description: Some(
+                "Sort results by parameter (prefix with - for desc)".into(),
+            ),
+            supported: true,
+            examples: vec!["-_lastUpdated".into(), "_id".into()],
+        },
+        SpecialParamInfo {
+            name: "_summary".into(),
+            description: Some("Return summary of results".into()),
+            supported: true,
+            examples: vec![
+                "true".into(),
+                "false".into(),
+                "count".into(),
+                "text".into(),
+                "data".into(),
+            ],
+        },
+        SpecialParamInfo {
+            name: "_elements".into(),
+            description: Some("Include only specific elements".into()),
+            supported: true,
+            examples: vec!["id,name".into()],
+        },
+        SpecialParamInfo {
+            name: "_include".into(),
+            description: Some("Include referenced resources in results".into()),
+            supported: true,
+            examples: vec![],
+        },
+        SpecialParamInfo {
+            name: "_revinclude".into(),
+            description: Some(
+                "Include resources that reference current results".into(),
+            ),
+            supported: true,
+            examples: vec![],
+        },
+        SpecialParamInfo {
+            name: "_total".into(),
+            description: Some("Request total count mode".into()),
+            supported: true,
+            examples: vec!["none".into(), "estimate".into(), "accurate".into()],
+        },
+        SpecialParamInfo {
+            name: "_contained".into(),
+            description: Some("Search contained resources".into()),
+            supported: false,
+            examples: vec![],
+        },
+        SpecialParamInfo {
+            name: "_containedType".into(),
+            description: Some("Type of contained resource search".into()),
+            supported: false,
+            examples: vec![],
+        },
+    ]
+}
+
+// === Enriched Resource Types ===
+
+#[derive(Clone, Serialize)]
+pub struct ResourceCapability {
+    pub resource_type: String,
+    pub search_params: Vec<EnrichedSearchParam>,
+    pub includes: Vec<IncludeCapability>,
+    pub rev_includes: Vec<IncludeCapability>,
+    pub sort_params: Vec<String>,
+    pub type_operations: Vec<OperationCapability>,
+    pub instance_operations: Vec<OperationCapability>,
+}
+
+#[derive(Clone, Serialize)]
+pub struct EnrichedSearchParam {
+    pub code: String,
+    pub param_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    pub modifiers: Vec<EnrichedModifierSuggestion>,
+    pub comparators: Vec<String>,
+    pub targets: Vec<String>,
+    pub chains: Vec<ChainInfo>,
+    pub is_common: bool,
+}
+
+#[derive(Clone, Serialize)]
+pub struct EnrichedModifierSuggestion {
+    pub code: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+}
+
+#[derive(Clone, Serialize)]
+pub struct ChainInfo {
+    pub target_type: String,
+    pub target_params: Vec<String>,
+}
+
+#[derive(Clone, Serialize)]
+pub struct IncludeCapability {
+    pub param_code: String,
+    pub target_types: Vec<String>,
+}
+
+#[derive(Clone, Serialize)]
+pub struct OperationCapability {
+    pub code: String,
+    pub method: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    pub affects_state: bool,
+    pub resource_types: Vec<String>,
+}
+
+#[derive(Clone, Serialize)]
+pub struct SpecialParamInfo {
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    pub supported: bool,
+    pub examples: Vec<String>,
 }
 
 #[cfg(test)]

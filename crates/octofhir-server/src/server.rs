@@ -1460,11 +1460,13 @@ pub async fn build_app(
     );
 
     // Build CapabilityStatement at startup (cached for /metadata requests)
+    // Reuses the search registry that was already loaded by ReloadableSearchConfig
     let mut capability_statement = handlers::build_capability_statement(
         &cfg.fhir.version,
         &cfg.base_url(),
         &db_pool,
         &resource_types,
+        &search_config.config().registry,
     )
     .await;
 

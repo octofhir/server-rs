@@ -178,7 +178,6 @@ impl SchemaManager {
             .await
             .map_err(PostgresError::from)?;
 
-        info!("Created history table: {}", history_table);
         Ok(())
     }
 
@@ -337,7 +336,6 @@ impl SchemaManager {
             .await
             .map_err(PostgresError::from)?;
 
-        info!("Created history trigger for: {}", table);
         Ok(())
     }
 

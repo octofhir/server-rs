@@ -47,6 +47,7 @@ pub mod definition;
 pub mod evaluate_measure;
 pub mod everything;
 pub mod fhirpath;
+pub mod graph;
 pub mod handler;
 pub mod loader;
 pub mod meta;
@@ -70,6 +71,7 @@ pub use definition::{OperationDefinition, OperationKind, OperationParameter, Par
 pub use evaluate_measure::EvaluateMeasureOperation;
 pub use everything::EverythingOperation;
 pub use fhirpath::FhirPathOperation;
+pub use graph::GraphOperation;
 pub use handler::{DynOperationHandler, OperationError, OperationHandler};
 pub use loader::{LoadError, load_operations};
 pub use meta::{MetaAddOperation, MetaDeleteOperation, MetaOperation};
@@ -282,6 +284,9 @@ pub fn register_core_operations_all(
         "import".to_string(),
         Arc::new(ImportOperation::new(bulk_import_config)),
     );
+
+    // $graph operation
+    handlers.insert("graph".to_string(), Arc::new(GraphOperation::new()));
 
     handlers
 }

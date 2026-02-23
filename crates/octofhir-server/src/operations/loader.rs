@@ -3,7 +3,6 @@
 //! This module provides functionality to load FHIR OperationDefinition resources
 //! from the canonical manager and populate the operation registry.
 
-use octofhir_canonical_manager::search::SearchQuery;
 use serde_json::Value;
 
 use super::definition::{OperationDefinition, OperationKind, OperationParameter, ParameterUse};
@@ -29,15 +28,14 @@ pub async fn load_operations() -> Result<OperationRegistry, LoadError> {
 
     let mut registry = OperationRegistry::new();
 
-    // Query for all OperationDefinition resources
-    let query = SearchQuery {
-        resource_types: vec!["OperationDefinition".to_string()],
-        ..Default::default()
-    };
-
+    // Query for all OperationDefinition resources via the SearchQueryBuilder API
+    // (database-backed, reliable at startup).
     let results = manager
-        .search_engine()
-        .search(&query)
+        .search()
+        .await
+        .resource_type("OperationDefinition")
+        .limit(1000)
+        .execute()
         .await
         .map_err(|e| LoadError::SearchFailed(e.to_string()))?;
 

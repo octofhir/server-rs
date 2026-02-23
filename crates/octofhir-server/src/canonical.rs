@@ -5,8 +5,6 @@ use arc_swap::ArcSwap;
 use octofhir_core::fhir::FhirVersion;
 use octofhir_db_postgres::PostgresPackageStore;
 use octofhir_fhirschema::types::StructureDefinition;
-use octofhir_search::loader::parse_search_parameter;
-use octofhir_search::registry::SearchParameterRegistry;
 use std::str::FromStr;
 
 /// Information about a loaded canonical package.
@@ -1494,93 +1492,3 @@ pub async fn search_registry_packages(query: &str) -> Result<Vec<RegistrySearchR
         .collect())
 }
 
-// ============================================================================
-// Search Parameter Registry Building
-// ============================================================================
-
-/// Build a SearchParameterRegistry by loading ALL SearchParameter resources from the canonical manager.
-///
-/// This function queries all SearchParameter resources from the canonical manager and registers
-/// them in the search registry. The registry can then be used for validating and executing
-/// FHIR search queries.
-///
-/// # Errors
-/// Returns an error if:
-/// - The canonical manager is unavailable
-/// - No search parameters could be loaded
-pub async fn build_search_registry(
-    manager: &octofhir_canonical_manager::CanonicalManager,
-) -> Result<SearchParameterRegistry, String> {
-    let registry = SearchParameterRegistry::new();
-
-    // Query ALL SearchParameter resources from canonical manager with pagination
-    // The canonical manager has a max limit of 1000, so we need to paginate
-    const PAGE_SIZE: usize = 1000;
-    let mut offset = 0;
-    let mut loaded_count = 0;
-    let mut skipped_count = 0;
-
-    loop {
-        let search_results = manager
-            .search()
-            .await
-            .resource_type("SearchParameter")
-            .limit(PAGE_SIZE)
-            .offset(offset)
-            .execute()
-            .await
-            .map_err(|e| {
-                format!(
-                    "failed to query SearchParameter resources at offset {}: {e}",
-                    offset
-                )
-            })?;
-
-        let page_count = search_results.resources.len();
-        tracing::debug!(
-            offset = offset,
-            page_count = page_count,
-            "fetched SearchParameter page"
-        );
-
-        // Process this page
-        for resource_match in &search_results.resources {
-            match parse_search_parameter(&resource_match.resource.content) {
-                Ok(param) => {
-                    registry.register(param);
-                    loaded_count += 1;
-                }
-                Err(e) => {
-                    skipped_count += 1;
-                    let url = resource_match
-                        .resource
-                        .content
-                        .get("url")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("unknown");
-                    tracing::warn!(url = %url, error = %e, "failed to parse SearchParameter resource");
-                }
-            }
-        }
-
-        // If we got fewer results than the page size, we've reached the end
-        if page_count < PAGE_SIZE {
-            break;
-        }
-
-        offset += PAGE_SIZE;
-    }
-
-    if registry.is_empty() {
-        return Err("no search parameters loaded from canonical manager".to_string());
-    }
-
-    tracing::info!(
-        loaded = loaded_count,
-        skipped = skipped_count,
-        total_in_registry = registry.len(),
-        "search parameter registry built from canonical manager with pagination"
-    );
-
-    Ok(registry)
-}
