@@ -1,0 +1,16 @@
+{
+    "name": "octofhir-monorepo",
+    "private": true,
+    "scripts": {
+        "dev": "pnpm -C ui dev",
+        "build": "pnpm -C ui build",
+        "typecheck": "pnpm -r typecheck",
+        "lint": "pnpm -r lint",
+        "format": "pnpm -r format",
+        "test": "pnpm -r test"
+    },
+    "devDependencies": {
+        "oxlint": "1.50.0",
+        "typescript": "5.9.3"
+    }
+}

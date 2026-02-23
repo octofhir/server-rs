@@ -1,18 +1,17 @@
-import { useMemo } from "react";
+import { IconRefresh, IconSwitch } from "@tabler/icons-react";
 import { useUnit } from "effector-react";
-import { IconSwitch, IconRefresh, IconCode, IconWand } from "@tabler/icons-react";
-import { $method, $mode, resetDraft } from "../../state/consoleStore";
-import type { ConsoleCommand } from "../types";
+import { useMemo } from "react";
 import type { HttpMethod } from "@/shared/api";
+import { $method, resetDraft } from "../../state/consoleStore";
+import type { ConsoleCommand } from "../types";
 
 /**
- * Provides commands for builder actions (method switching, mode toggle, reset)
+ * Provides commands for builder actions (method switching, reset)
  * @returns Array of builder-related commands
  */
 export function useBuilderCommands(): ConsoleCommand[] {
-  const { method, mode, resetDraft: resetDraftEvent } = useUnit({
+  const { method, resetDraft: resetDraftEvent } = useUnit({
     method: $method,
-    mode: $mode,
     resetDraft,
   });
 
@@ -44,29 +43,6 @@ export function useBuilderCommands(): ConsoleCommand[] {
       }
     }
 
-    // Mode toggle command
-    const targetMode = mode === "smart" ? "raw" : "smart";
-    const modeIcon = mode === "smart" ? <IconCode size={16} /> : <IconWand size={16} />;
-
-    commands.push({
-      id: "toggle-mode",
-      label: `Switch to ${targetMode === "smart" ? "Smart" : "Raw"} Mode`,
-      description: targetMode === "smart" ? "Use autocomplete builder" : "Enter URLs manually",
-      category: "builder",
-      badge: targetMode === "smart" ? "Smart" : "Raw",
-      badgeColor: targetMode === "smart" ? "violet" : "gray",
-      keywords: ["mode", "builder", "raw", "smart"],
-      icon: modeIcon,
-      execute: (ctx) => {
-        ctx.setMode(targetMode);
-        ctx.closePalette();
-        ctx.trackEvent?.("rest_console.command_palette.action", {
-          action: "toggle_mode",
-          mode: targetMode,
-        });
-      },
-    });
-
     // Reset builder command
     commands.push({
       id: "reset-builder",
@@ -85,5 +61,5 @@ export function useBuilderCommands(): ConsoleCommand[] {
     });
 
     return commands;
-  }, [method, mode, resetDraftEvent]);
+  }, [method, resetDraftEvent]);
 }

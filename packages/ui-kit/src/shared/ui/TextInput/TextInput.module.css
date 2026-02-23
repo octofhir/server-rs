@@ -1,0 +1,24 @@
+.root {
+    margin-bottom: var(--octo-spacing-sm);
+}
+
+.input {
+    border: 1px solid var(--octo-border-subtle);
+    background-color: var(--octo-surface-1);
+    border-radius: var(--octo-radius-md);
+    transition: border-color var(--octo-motion-normal) var(--octo-motion-ease),
+        box-shadow var(--octo-motion-normal) var(--octo-motion-ease);
+    color: var(--octo-text-primary);
+}
+
+.input:focus {
+    border-color: var(--octo-accent-primary);
+    box-shadow: 0 0 0 2px var(--octo-focus-ring);
+}
+
+.label {
+    font-weight: 600;
+    font-size: 0.875rem;
+    margin-bottom: 4px;
+    color: var(--octo-text-secondary);
+}

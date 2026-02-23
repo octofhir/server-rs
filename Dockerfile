@@ -14,17 +14,20 @@ WORKDIR /app
 # Install pnpm via npm
 RUN npm install -g pnpm
 
-# Copy package files first for layer caching
-COPY ui/package.json ui/pnpm-lock.yaml ./
+# Copy workspace package files first for layer caching
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY ui/package.json ./ui/
+COPY packages/ui-kit/package.json ./packages/ui-kit/
 
-# Install dependencies
+# Install all workspace dependencies
 RUN pnpm install --frozen-lockfile
 
-# Copy UI source
-COPY ui/ ./
+# Copy source files
+COPY ui/ ./ui/
+COPY packages/ui-kit/ ./packages/ui-kit/
 
 # Build production bundle
-RUN pnpm build
+RUN pnpm -C ui build
 
 # -----------------------------------------------------------------------------
 # Stage 2: Build Rust binary

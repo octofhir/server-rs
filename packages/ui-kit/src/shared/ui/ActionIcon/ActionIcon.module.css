@@ -1,0 +1,8 @@
+.root {
+    transition: transform var(--octo-motion-fast) var(--octo-motion-ease),
+        background-color var(--octo-motion-normal) var(--octo-motion-ease);
+}
+
+.root:active {
+    transform: scale(0.94);
+}

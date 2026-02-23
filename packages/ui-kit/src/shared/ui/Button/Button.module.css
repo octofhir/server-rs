@@ -1,0 +1,57 @@
+.root {
+	transition: background-color var(--octo-motion-normal) var(--octo-motion-ease),
+		box-shadow var(--octo-motion-normal) var(--octo-motion-ease),
+		transform var(--octo-motion-fast) var(--octo-motion-ease);
+	font-weight: 600;
+	border: 1px solid transparent;
+	border-radius: var(--octo-radius-md);
+}
+
+.root[data-octo-variant="primary"] {
+	background-color: var(--octo-brand-primary);
+	color: var(--octo-text-inverse);
+}
+
+.root[data-octo-variant="primary"]:hover {
+	background-color: var(--octo-brand-primary-hover);
+	transform: translateY(-1px);
+}
+
+.root[data-octo-variant="primary"]:active {
+	background-color: var(--octo-brand-primary-active);
+	transform: translateY(0);
+}
+
+.root[data-octo-variant="fire"] {
+	background-color: var(--octo-brand-fire);
+	color: var(--octo-text-inverse);
+}
+
+.root[data-octo-variant="fire"]:hover {
+	background-color: var(--octo-brand-fire-hover);
+	transform: translateY(-1px);
+}
+
+.root[data-octo-variant="secondary"] {
+	background-color: var(--octo-surface-2);
+	color: var(--octo-text-primary);
+	border-color: var(--octo-border-subtle);
+}
+
+.root[data-octo-variant="secondary"]:hover {
+	background-color: var(--octo-surface-3);
+}
+
+.root[data-octo-variant="secondary"]:active {
+	background-color: var(--octo-surface-4);
+}
+
+.root[data-octo-variant="ghost"] {
+	background-color: transparent;
+	color: var(--octo-accent-primary);
+	border-color: var(--octo-accent-primary);
+}
+
+.root[data-octo-variant="ghost"]:hover {
+	background-color: var(--octo-accent-primary-bg);
+}

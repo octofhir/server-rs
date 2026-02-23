@@ -3,37 +3,53 @@
     "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.app.tsbuildinfo",
     "target": "ES2022",
     "useDefineForClassFields": true,
-    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "lib": [
+      "ES2022",
+      "DOM",
+      "DOM.Iterable"
+    ],
     "module": "ESNext",
     "skipLibCheck": true,
-
     /* Bundler mode */
     "moduleResolution": "bundler",
     "allowImportingTsExtensions": true,
     "verbatimModuleSyntax": true,
     "moduleDetection": "force",
     "noEmit": true,
-
     /* React JSX */
     "jsx": "react-jsx",
     "jsxImportSource": "react",
-
     /* Path mapping */
     "baseUrl": ".",
     "paths": {
-      "@/*": ["src/*"],
-      "@/app/*": ["src/app/*"],
-      "@/processes/*": ["src/processes/*"],
-      "@/pages/*": ["src/pages/*"],
-      "@/widgets/*": ["src/widgets/*"],
-      "@/features/*": ["src/features/*"],
-      "@/entities/*": ["src/entities/*"],
-      "@/shared/*": ["src/shared/*"],
+      "@/*": [
+        "src/*"
+      ],
+      "@/app/*": [
+        "src/app/*"
+      ],
+      "@/processes/*": [
+        "src/processes/*"
+      ],
+      "@/pages/*": [
+        "src/pages/*"
+      ],
+      "@/widgets/*": [
+        "src/widgets/*"
+      ],
+      "@/features/*": [
+        "src/features/*"
+      ],
+      "@/entities/*": [
+        "src/entities/*"
+      ],
+      "@/shared/*": [
+        "src/shared/*"
+      ],
       "@codingame/monaco-vscode-api/default-extensions": [
         "src/shared/monaco/defaultExtensions.ts"
       ]
     },
-
     /* Linting */
     "strict": true,
     "noUnusedLocals": true,
@@ -42,5 +58,7 @@
     "noFallthroughCasesInSwitch": true,
     "noUncheckedSideEffectImports": true
   },
-  "include": ["src"]
+  "include": [
+    "src"
+  ]
 }

@@ -1,0 +1,16 @@
+.root {
+    text-transform: none;
+    font-weight: 500;
+    border-radius: var(--octo-radius-sm);
+    padding: 2px 8px;
+}
+
+.root[data-variant="light"] {
+    background-color: var(--octo-accent-primary-bg);
+    color: var(--octo-accent-primary);
+}
+
+.root[data-variant="outline"] {
+    border: 1px solid var(--octo-accent-primary);
+    color: var(--octo-accent-primary);
+}

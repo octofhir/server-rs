@@ -22,13 +22,15 @@ export interface RestConsoleMetaHookResult extends Omit<QueryResult, "data"> {
 }
 
 /**
- * Fetches REST console metadata from the introspection endpoint
+ * Fetches REST console metadata from the unified introspection endpoint.
+ * Returns autocomplete suggestions, search params, enriched capabilities
+ * (chains, includes, special params) — all in a single request.
  */
 export function useRestConsoleMeta(): RestConsoleMetaHookResult {
 	const query = useQuery({
 		queryKey: restConsoleKeys.meta(),
 		queryFn: () => serverApi.getRestConsoleMetadata(),
-		staleTime: 1000 * 60, // 1 minute
+		staleTime: 1000 * 60,
 	});
 
 	const payload = query.data;
@@ -42,10 +44,8 @@ export function useRestConsoleMeta(): RestConsoleMetaHookResult {
 			};
 		}
 
-		// Extract resource types from resource suggestions
 		const resourceTypes = payload.suggestions.resources.map((s) => s.label);
 
-		// Flatten all suggestions into a single array for easy filtering
 		const allSuggestions = [
 			...payload.suggestions.resources,
 			...payload.suggestions.system_operations,

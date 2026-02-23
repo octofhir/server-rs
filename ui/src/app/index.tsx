@@ -4,19 +4,11 @@ import "@/shared/monaco/config";
 import { StrictMode } from "react";
 import { BrowserRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { MantineProvider } from "@mantine/core";
-import { ModalsProvider } from "@mantine/modals";
-import { Notifications } from "@mantine/notifications";
 import { HelmetProvider } from "react-helmet-async";
-import { theme } from "./theme";
-import { ThemeCssVars } from "./themeCssVars";
+import { UIProvider } from "@octofhir/ui-kit";
 import { AppRoutes } from "./routes";
 import { useAuthInterceptor } from "@/shared/api/hooks";
 import { ErrorBoundary } from "@/shared/ui";
-
-// Import Mantine styles
-import "@mantine/core/styles.css";
-import "@mantine/notifications/styles.css";
 
 // Import existing global styles (CSS variables still work)
 import "@/shared/styles/global.css";
@@ -52,17 +44,13 @@ export function App() {
 		<StrictMode>
 			<HelmetProvider>
 				<QueryClientProvider client={queryClient}>
-					<MantineProvider theme={theme} defaultColorScheme="auto">
-						<ModalsProvider>
-							<ErrorBoundary>
-								<ThemeCssVars />
-								<Notifications position="top-right" />
-								<BrowserRouter basename="/ui">
-									<AppContent />
-								</BrowserRouter>
-							</ErrorBoundary>
-						</ModalsProvider>
-					</MantineProvider>
+					<UIProvider>
+						<ErrorBoundary>
+							<BrowserRouter basename="/ui">
+								<AppContent />
+							</BrowserRouter>
+						</ErrorBoundary>
+					</UIProvider>
 				</QueryClientProvider>
 			</HelmetProvider>
 		</StrictMode>

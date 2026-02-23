@@ -1,0 +1,13 @@
+.list {
+    border-bottom: 1px solid var(--octo-border-subtle);
+}
+
+.tab {
+    color: var(--octo-text-secondary);
+    font-weight: 500;
+}
+
+.tab[data-active] {
+    color: var(--octo-text-primary);
+    border-color: var(--octo-accent-primary);
+}

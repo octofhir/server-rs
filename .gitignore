@@ -54,3 +54,4 @@ scripts/inferno/tls/server.key
 # Helm chart dependencies
 helm/*/charts/
 helm/*/Chart.lock
+node_modules

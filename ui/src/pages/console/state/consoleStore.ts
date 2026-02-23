@@ -6,7 +6,7 @@ import type { ConsoleSearchParamToken } from "./searchParams";
 
 export type { ConsoleSearchParamToken } from "./searchParams";
 
-export type ConsoleMode = "smart" | "raw";
+export type ConsoleMode = "pro" | "builder" | "raw";
 
 export interface ConsoleResponseSnapshot {
 	status?: number;
@@ -66,7 +66,7 @@ export const $method = createStore<HttpMethod>("GET")
 	.on(setMethod, (_, method) => method)
 	.reset(resetDraft);
 
-export const $mode = createStore<ConsoleMode>("smart").on(
+export const $mode = createStore<ConsoleMode>("pro").on(
 	setMode,
 	(_, mode) => mode,
 );

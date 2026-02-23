@@ -1,23 +1,25 @@
-import { memo } from "react";
 import { SegmentedControl } from "@mantine/core";
 import { useUnit } from "effector-react";
-import { $mode, setMode } from "../state/consoleStore";
-import type { ConsoleMode } from "../state/consoleStore";
+import { $mode, setMode, type ConsoleMode } from "../state/consoleStore";
 
-const MODE_OPTIONS: Array<{ label: string; value: ConsoleMode }> = [
-	{ label: "Smart", value: "smart" },
-	{ label: "Raw", value: "raw" },
+const MODE_DATA = [
+  { label: "Pro", value: "pro" },
+  { label: "Builder", value: "builder" },
 ];
 
-export const ModeControl = memo(function ModeControl() {
-	const { mode, setMode: setModeEvent } = useUnit({ mode: $mode, setMode });
+export function ModeControl() {
+  const { mode, setMode: setModeEvent } = useUnit({
+    mode: $mode,
+    setMode,
+  });
 
-	return (
-		<SegmentedControl
-			value={mode}
-			onChange={(value) => setModeEvent(value as ConsoleMode)}
-			data={MODE_OPTIONS}
-			size="sm"
-		/>
-	);
-});
+  return (
+    <SegmentedControl
+      size="xs"
+      radius="md"
+      data={MODE_DATA}
+      value={mode}
+      onChange={(v) => setModeEvent(v as ConsoleMode)}
+    />
+  );
+}

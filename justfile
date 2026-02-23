@@ -20,7 +20,7 @@ run:
     OCTOFHIR_CONFIG={{CONFIG}} \
     RUST_LOG={{RUST_LOG}} \
     OTEL_EXPORTER_OTLP_ENDPOINT={{OTEL_EXPORTER_OTLP_ENDPOINT}} \
-    cd ui && pnpm run build && cd .. && cargo run --bin octofhir-server
+    pnpm install && pnpm -C ui build && cargo run --bin octofhir-server
 
 # Developer mode: auto-rebuild and run on changes (requires cargo-watch)
 dev:
@@ -231,6 +231,34 @@ bench-validate-verbose:
     BASE_URL={{K6_BASE_URL}} CLIENT_ID={{K6_CLIENT_ID}} \
     CLIENT_SECRET=$(cat .k6-secret) \
     k6 run --iterations 1 --vus 1 --no-thresholds --http-debug=full k6/benchmarks/crud.js
+
+# =============================================================================
+# UI Commands
+# =============================================================================
+
+# Install all workspace dependencies
+ui-install:
+    pnpm install
+
+# Build UI production bundle
+ui-build:
+    pnpm -C ui build
+
+# Run UI dev server
+ui-dev:
+    pnpm -C ui dev
+
+# Typecheck all packages
+ui-typecheck:
+    pnpm -r typecheck
+
+# Lint all packages
+ui-lint:
+    pnpm -r lint
+
+# Format all packages
+ui-format:
+    pnpm -r format
 
 # =============================================================================
 # Docker Commands (GitHub Container Registry)

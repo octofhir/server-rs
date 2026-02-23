@@ -1,0 +1,138 @@
+import { palette } from "./colors";
+
+export const tokens = {
+    brand: {
+        primary: palette.primary[5],
+        primaryHover: palette.primary[4],
+        primaryActive: palette.primary[6],
+        primarySoft: palette.primary[0],
+        primaryRing: palette.primary[2],
+        fire: palette.fire[5],
+        fireHover: palette.fire[4],
+        fireActive: palette.fire[6],
+        fireSoft: palette.fire[0],
+        warm: palette.warm[5],
+        warmSoft: palette.warm[0],
+        deep: palette.deep[8],
+        gradient: `linear-gradient(135deg, ${palette.primary[5]} 0%, ${palette.fire[5]} 100%)`,
+    },
+    scheme: {
+        light: {
+            surface: {
+                1: palette.gray[0],
+                2: palette.gray[1],
+                3: palette.gray[2],
+                4: palette.gray[3],
+            },
+            text: {
+                primary: palette.gray[9],
+                secondary: palette.gray[6],
+                muted: palette.gray[5],
+                inverse: "#ffffff",
+            },
+            border: {
+                subtle: palette.gray[2],
+                strong: palette.gray[3],
+            },
+            accent: {
+                primary: palette.primary[5],
+                fire: palette.fire[5],
+                warm: palette.warm[5],
+                primaryBg: palette.primary[0],
+                fireBg: palette.fire[0],
+                warmBg: palette.warm[0],
+            },
+            focus: {
+                ring: palette.primary[2],
+            },
+        },
+        dark: {
+            surface: {
+                1: "#0d0e1a",
+                2: "#141629",
+                3: "#1c1f40",
+                4: "#23264d",
+            },
+            text: {
+                primary: "#f8f9fe",
+                secondary: palette.gray[4],
+                muted: palette.gray[5],
+                inverse: "#0d0e1a",
+            },
+            border: {
+                subtle: "rgba(255, 255, 255, 0.08)",
+                strong: "rgba(255, 255, 255, 0.16)",
+            },
+            accent: {
+                primary: palette.primary[4],
+                fire: palette.fire[4],
+                warm: palette.warm[4],
+                primaryBg: "rgba(120, 140, 255, 0.16)",
+                fireBg: "rgba(255, 120, 110, 0.16)",
+                warmBg: "rgba(200, 165, 140, 0.18)",
+            },
+            focus: {
+                ring: palette.primary[4],
+            },
+        },
+    },
+    typography: {
+        family: '"Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+        heading: '"Outfit", "Inter", sans-serif',
+        mono: '"JetBrains Mono", "SF Mono", "Fira Code", Consolas, monospace',
+        weight: {
+            regular: 400,
+            medium: 500,
+            semibold: 600,
+            bold: 700,
+        },
+        size: {
+            xs: "0.75rem",
+            sm: "0.875rem",
+            md: "1rem",
+            lg: "1.125rem",
+            xl: "1.25rem",
+        },
+        lineHeight: {
+            tight: 1.2,
+            normal: 1.5,
+            relaxed: 1.65,
+        },
+        letterSpacing: {
+            tight: "-0.01em",
+            normal: "0",
+        },
+    },
+    spacing: {
+        xs: "0.5rem",
+        sm: "0.75rem",
+        md: "1.25rem",
+        lg: "2rem",
+        xl: "3rem",
+        "2xl": "4rem",
+    },
+    radius: {
+        xs: "2px",
+        sm: "4px",
+        md: "6px",
+        lg: "10px",
+        xl: "14px",
+        pill: "9999px",
+    },
+    shadow: {
+        xs: "0 1px 2px rgba(0, 0, 0, 0.04)",
+        sm: "0 1px 3px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.04)",
+        md: "0 4px 8px rgba(0, 0, 0, 0.08), 0 2px 4px rgba(0, 0, 0, 0.04)",
+        lg: "0 12px 24px rgba(0, 0, 0, 0.1), 0 4px 8px rgba(0, 0, 0, 0.04)",
+        xl: "0 20px 30px rgba(0, 0, 0, 0.12), 0 10px 16px rgba(0, 0, 0, 0.08)",
+    },
+    motion: {
+        fast: "100ms",
+        normal: "150ms",
+        slow: "200ms",
+        ease: "cubic-bezier(0.4, 0, 0.2, 1)",
+        easeOut: "cubic-bezier(0.16, 1, 0.3, 1)",
+    },
+} as const;
+
+export type OctoTokens = typeof tokens;

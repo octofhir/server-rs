@@ -1,0 +1,22 @@
+.root {
+    background-color: var(--octo-surface-2);
+    border: 1px solid var(--octo-border-subtle);
+    border-radius: var(--octo-radius-md);
+    padding: 2px;
+}
+
+.indicator {
+    background-color: var(--octo-accent-primary);
+    border-radius: var(--octo-radius-sm);
+    box-shadow: var(--mantine-shadow-xs);
+}
+
+.control {
+    color: var(--octo-text-secondary);
+    font-weight: 500;
+    transition: color var(--octo-motion-normal) var(--octo-motion-ease);
+}
+
+.control[data-active] {
+    color: var(--octo-text-inverse);
+}

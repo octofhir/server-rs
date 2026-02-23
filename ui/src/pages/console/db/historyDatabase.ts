@@ -17,7 +17,7 @@ export interface HistoryEntry {
 	note?: string;
 	resourceType?: string; // Extracted from path or body
 	timestamp: number; // Unix timestamp for sorting
-	mode?: "smart" | "raw"; // Console mode when request was made
+	mode?: "pro" | "builder" | "raw"; // Console mode when request was made
 }
 
 export class HistoryDatabase extends Dexie {

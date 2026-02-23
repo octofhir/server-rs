@@ -1,7 +1,5 @@
-export * from "./Button";
-export * from "./Badge";
+export { Button, Badge, TextInput, SegmentedControl } from "@octofhir/ui-kit";
 export * from "./Card";
-export * from "./TextInput";
 export * from "./ActionIcon";
 export * from "./Modal";
 export * from "./JsonViewer";

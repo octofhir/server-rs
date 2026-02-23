@@ -1,30 +1,35 @@
-import { SegmentedControl } from "@mantine/core";
+import { Select } from "@mantine/core";
 import type { HttpMethod } from "@/shared/api";
 import { useUnit } from "effector-react";
 import { $method, setMethod } from "../state/consoleStore";
 
-const METHOD_OPTIONS = [
-	"GET",
-	"POST",
-	"PUT",
-	"PATCH",
-	"DELETE",
-	"HEAD",
-	"OPTIONS",
-];
+const METHOD_OPTIONS = ["GET", "POST", "PUT", "PATCH", "DELETE"];
 
-export const MethodControl = () => {
+export function MethodControl() {
 	const { method, setMethod: setMethodEvent } = useUnit({
 		method: $method,
 		setMethod,
 	});
 
 	return (
-		<SegmentedControl
-			fullWidth
+		<Select
 			value={method}
-			onChange={(value) => setMethodEvent(value as HttpMethod)}
+			onChange={(v) => setMethodEvent((v ?? "GET") as HttpMethod)}
 			data={METHOD_OPTIONS}
+			size="sm"
+			variant="unstyled"
+			allowDeselect={false}
+			withCheckIcon={false}
+			styles={{
+				input: {
+					fontWeight: 700,
+					fontFamily: "var(--font-mono, 'JetBrains Mono', monospace)",
+					width: 90,
+					paddingLeft: 12,
+					paddingRight: 4,
+					fontSize: 13,
+				},
+			}}
 		/>
 	);
-};
+}

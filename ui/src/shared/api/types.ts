@@ -292,14 +292,17 @@ export interface HttpResponse<T = any> {
   config: HttpRequestConfig;
 }
 
-// REST console introspection types (normalized format)
+// REST console introspection types (unified v3)
 export interface RestConsoleResponse {
-  api_version: number;
+  schema_version: number;
   fhir_version: string;
   base_path: string;
   generated_at: string;
   suggestions: RestConsoleSuggestions;
   search_params: Record<string, RestConsoleSearchParam[]>;
+  resources: ResourceCapability[];
+  system_operations: OperationCapabilityInfo[];
+  special_params: SpecialParamInfo[];
 }
 
 export interface RestConsoleSuggestions {
@@ -343,6 +346,52 @@ export interface RestConsoleSearchParam {
 export interface ModifierSuggestion {
   code: string;
   description?: string;
+}
+
+export interface ResourceCapability {
+  resource_type: string;
+  search_params: EnrichedSearchParam[];
+  includes: IncludeCapability[];
+  rev_includes: IncludeCapability[];
+  sort_params: string[];
+  type_operations: OperationCapabilityInfo[];
+  instance_operations: OperationCapabilityInfo[];
+}
+
+export interface EnrichedSearchParam {
+  code: string;
+  param_type: string;
+  description?: string;
+  modifiers: ModifierSuggestion[];
+  comparators: string[];
+  targets: string[];
+  chains: ChainInfo[];
+  is_common: boolean;
+}
+
+export interface ChainInfo {
+  target_type: string;
+  target_params: string[];
+}
+
+export interface IncludeCapability {
+  param_code: string;
+  target_types: string[];
+}
+
+export interface OperationCapabilityInfo {
+  code: string;
+  method: string;
+  description?: string;
+  affects_state: boolean;
+  resource_types: string[];
+}
+
+export interface SpecialParamInfo {
+  name: string;
+  description?: string;
+  supported: boolean;
+  examples: string[];
 }
 
 // Package management types
