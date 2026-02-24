@@ -1,4 +1,4 @@
-import { useRef, useEffect, useCallback } from "react";
+import { useRef, useEffect, useCallback, useState } from "react";
 import Editor, { type OnMount, type OnChange } from "@monaco-editor/react";
 import type * as Monaco from "monaco-editor";
 import { useMantineColorScheme } from "@octofhir/ui-kit";
@@ -10,6 +10,9 @@ import {
 	updateDiagnosticsFromContent,
 } from "../adapters/monaco";
 import type { QueryInputMetadata } from "../core/types";
+
+const MIN_HEIGHT = 36;
+const MAX_HEIGHT = 200;
 
 export interface QueryEditorProps {
 	value: string;
@@ -31,6 +34,7 @@ export function QueryEditor({
 	disabled = false,
 	borderless = false,
 }: QueryEditorProps) {
+	const [editorHeight, setEditorHeight] = useState(MIN_HEIGHT);
 	const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
 	const monacoRef = useRef<typeof Monaco | null>(null);
 	const disposablesRef = useRef<Monaco.IDisposable[]>([]);
@@ -78,6 +82,18 @@ export function QueryEditor({
 			if (model) {
 				updateDiagnosticsFromContent(monaco, model, metadataRef.current, basePath);
 			}
+
+			// Auto-expand height based on content
+			const updateHeight = () => {
+				const h = editor.getContentHeight();
+				setEditorHeight(Math.min(MAX_HEIGHT, Math.max(MIN_HEIGHT, h)));
+			};
+			updateHeight();
+			disposablesRef.current.push(
+				editor.onDidContentSizeChange((e) => {
+					if (e.contentHeightChanged) updateHeight();
+				}),
+			);
 
 			editor.focus();
 		},
@@ -131,7 +147,8 @@ export function QueryEditor({
 	return (
 		<div
 			style={{
-				height: 36,
+				height: editorHeight,
+				transition: "height 120ms ease-out",
 				width: "100%",
 				...(borderless
 					? {}
@@ -161,7 +178,8 @@ export function QueryEditor({
 					scrollBeyondLastLine: false,
 					scrollbar: {
 						horizontal: "hidden",
-						vertical: "hidden",
+						vertical: "auto",
+						verticalScrollbarSize: 6,
 					},
 					overviewRulerLanes: 0,
 					overviewRulerBorder: false,
@@ -170,7 +188,7 @@ export function QueryEditor({
 					fontSize: 13,
 					fontFamily:
 						"var(--font-mono, 'JetBrains Mono', 'Fira Code', monospace)",
-					wordWrap: "off",
+					wordWrap: "on",
 					readOnly: disabled,
 					padding: { top: 6, bottom: 6 },
 					suggestOnTriggerCharacters: true,

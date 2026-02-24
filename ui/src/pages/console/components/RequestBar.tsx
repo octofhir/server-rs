@@ -58,7 +58,7 @@ export function RequestBar({
 		<Box
 			style={{
 				display: "flex",
-				alignItems: "center",
+				alignItems: "flex-start",
 				border: "1px solid var(--octo-border-subtle)",
 				borderRadius: "var(--mantine-radius-md)",
 				backgroundColor: "var(--octo-surface-1)",
