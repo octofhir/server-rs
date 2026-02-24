@@ -7,8 +7,9 @@ import {
 	Text,
 	Kbd,
 	ScrollArea,
-} from "@mantine/core";
-import { Combobox, useCombobox } from "@mantine/core";
+	Combobox,
+} from "@/shared/ui";
+import { useCombobox } from "@octofhir/ui-kit";
 import { IconSearch } from "@tabler/icons-react";
 import { useUnit } from "effector-react";
 import {

@@ -3,15 +3,13 @@
   display: flex;
   flex-direction: column;
   height: 100vh;
-  background: var(--app-surface-1);
+  background: var(--octo-surface-1);
 }
 
 /* Header with glassmorphism */
 .header {
-  background: var(--app-glass-bg);
-  border-bottom: 1px solid var(--app-glass-border);
-  backdrop-filter: blur(var(--app-glass-blur));
-  -webkit-backdrop-filter: blur(var(--app-glass-blur));
+  background: var(--octo-surface-1);
+  border-bottom: 1px solid var(--octo-border-subtle);
   z-index: 10;
 }
 
@@ -29,7 +27,7 @@
   flex: 1;
   overflow: auto;
   padding: var(--mantine-spacing-md);
-  border-right: 1px solid var(--app-border-subtle);
+  border-right: 1px solid var(--octo-border-subtle);
 }
 
 /* Preview panel (right) */
@@ -37,7 +35,7 @@
   flex: 1;
   overflow: auto;
   padding: var(--mantine-spacing-md);
-  background: var(--app-surface-2);
+  background: var(--octo-surface-2);
 }
 
 /* Responsive adjustments */
@@ -49,6 +47,6 @@
   .editor,
   .preview {
     border-right: none;
-    border-bottom: 1px solid var(--app-border-subtle);
+    border-bottom: 1px solid var(--octo-border-subtle);
   }
 }

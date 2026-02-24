@@ -8,7 +8,7 @@ import {
   Stack,
   Text,
   Tooltip,
-} from "@mantine/core";
+} from "@/shared/ui";
 import { IconArrowsExchange, IconPlus, IconTrash } from "@tabler/icons-react";
 import { FHIRPathInput } from "./FHIRPathInput";
 import { ColumnRow } from "./ColumnRow";

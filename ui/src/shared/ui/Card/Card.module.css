@@ -1,6 +1,6 @@
 .root {
-    background-color: var(--app-surface-1);
-    border: 1px solid var(--app-glass-border);
+    background-color: var(--octo-surface-1);
+    border: 1px solid var(--octo-border-subtle);
     transition: transform 0.2s ease, box-shadow 0.2s ease;
 }
 

@@ -1,7 +1,6 @@
-import { Anchor, ScrollArea, Skeleton, Tabs } from "@mantine/core";
 import { IconAlertCircle, IconCheck, IconX } from "@tabler/icons-react";
 import { useNavigate } from "react-router-dom";
-import { Alert, Badge, Group, Paper, Stack, Table, Text } from "@/shared/ui";
+import { Alert, Anchor, Badge, Group, Paper, ScrollArea, Skeleton, Stack, Table, Tabs, Text } from "@/shared/ui";
 import { JsonViewer } from "@/shared/ui-react/JsonViewer";
 import type { FhirBundle, FhirResource } from "@/shared/api";
 import type { RequestResponse } from "../hooks/useSendConsoleRequest";
@@ -81,7 +80,7 @@ export function ResponseViewer({ response, isLoading }: ResponseViewerProps) {
 	return (
 		<Stack gap="md">
 			{/* Status header */}
-			<Paper p="sm" style={{ backgroundColor: "var(--app-surface-2)" }}>
+			<Paper p="sm" style={{ backgroundColor: "var(--octo-surface-2)" }}>
 				<Group justify="space-between">
 					<Group gap="sm">
 						<Badge

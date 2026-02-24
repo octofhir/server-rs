@@ -1,4 +1,4 @@
-import { Badge, type BadgeProps } from "@mantine/core";
+import { Badge, type BadgeProps } from "@/shared/ui";
 import type { AutomationStatus } from "@/shared/api/types";
 
 interface AutomationStatusBadgeProps extends Omit<BadgeProps, "color"> {

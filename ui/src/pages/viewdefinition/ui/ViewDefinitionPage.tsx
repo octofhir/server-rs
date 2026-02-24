@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect } from "react";
-import { Box, Group, Title, Button, Loader, Alert, Stack } from "@mantine/core";
+import { Box, Group, Title, Button, Loader, Alert, Stack } from "@/shared/ui";
 import {
   IconPlus,
   IconPlayerPlay,

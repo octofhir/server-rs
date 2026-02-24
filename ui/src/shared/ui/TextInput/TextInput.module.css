@@ -1,6 +1,6 @@
 .input {
-    background-color: var(--app-surface-2);
-    border: 1px solid var(--app-glass-border);
+    background-color: var(--octo-surface-2);
+    border: 1px solid var(--octo-border-subtle);
     transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
 
@@ -13,5 +13,5 @@
     font-weight: 600;
     margin-bottom: 4px;
     font-size: var(--mantine-font-size-xs);
-    color: var(--app-text-secondary);
+    color: var(--octo-text-secondary);
 }

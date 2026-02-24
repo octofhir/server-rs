@@ -1,4 +1,4 @@
-import { ActionIcon as MantineActionIcon, type ActionIconProps, createPolymorphicComponent } from "@mantine/core";
+import { ActionIcon as MantineActionIcon, type ActionIconProps, createPolymorphicComponent } from "@octofhir/ui-kit";
 import { forwardRef } from "react";
 import classes from "./ActionIcon.module.css";
 

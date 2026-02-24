@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { historyService } from "../services/historyService";
 import type { HistoryEntry } from "../db/historyDatabase";
-import { notifications } from "@mantine/notifications";
+import { notifications } from "@octofhir/ui-kit";
 
 const HISTORY_QUERY_KEY = ["console-history", "list"];
 

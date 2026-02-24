@@ -7,7 +7,7 @@ import {
 	Stack,
 	Text,
 	Title,
-} from "@mantine/core";
+} from "@/shared/ui";
 import { IconAlertCircle, IconPlayerPlay, IconX } from "@tabler/icons-react";
 import { useMutation } from "@tanstack/react-query";
 import { FhirPathEditor } from "@/shared/monaco/FhirPathEditor";

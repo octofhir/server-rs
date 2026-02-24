@@ -13,8 +13,8 @@ import {
   Textarea,
   TextInput,
   Tooltip,
-} from "@mantine/core";
-import { notifications } from "@mantine/notifications";
+} from "@/shared/ui";
+import { notifications } from "@octofhir/ui-kit";
 import { IconPlus, IconTrash, IconBolt, IconClock, IconHandClick } from "@tabler/icons-react";
 import { useAddTrigger, useDeleteTrigger } from "../../lib/useAutomations";
 import type { AutomationTrigger, AutomationTriggerType, CreateTriggerRequest } from "@/shared/api/types";

@@ -13,7 +13,7 @@ import {
 	ActionIcon,
 	Tooltip,
 	Paper,
-} from "@mantine/core";
+} from "@/shared/ui";
 import {
 	IconUser,
 	IconServer,

@@ -11,7 +11,7 @@ import {
 	ScrollArea,
 	Button,
 	Alert,
-} from "@mantine/core";
+} from "@/shared/ui";
 import {
 	IconCheck,
 	IconDownload,
@@ -102,7 +102,7 @@ function PackageProgressItem({ pkg }: { pkg: PackageProgress }) {
 	const isActive = ["downloading", "extracting", "indexing"].includes(pkg.status);
 
 	return (
-		<Paper p="sm" radius="sm" style={{ backgroundColor: "var(--app-surface-2)" }}>
+		<Paper p="sm" radius="sm" style={{ backgroundColor: "var(--octo-surface-2)" }}>
 			<Group justify="space-between" mb={isActive ? "xs" : 0}>
 				<Group gap="xs">
 					<ThemeIcon size="sm" variant="light" color={getStatusColor(pkg.status)}>
@@ -331,7 +331,7 @@ export function InstallProgressModal({
 			closeOnClickOutside={!isInstalling}
 			closeOnEscape={!isInstalling}
 			withCloseButton={!isInstalling}
-			styles={{ body: { backgroundColor: "var(--app-surface-1)" } }}
+			styles={{ body: { backgroundColor: "var(--octo-surface-1)" } }}
 		>
 			<Stack gap="md">
 				{/* Overall progress */}

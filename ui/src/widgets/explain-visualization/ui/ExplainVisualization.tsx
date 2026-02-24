@@ -7,8 +7,8 @@ import {
 	Stack,
 	UnstyledButton,
 	Code,
-	useMantineTheme,
-} from "@mantine/core";
+} from "@/shared/ui";
+import { useMantineTheme } from "@octofhir/ui-kit";
 import {
 	IconChevronRight,
 	IconChevronDown,
@@ -241,7 +241,7 @@ function ExplainTreeNode({ node }: { node: ExplainNode }) {
 					root: {
 						"&:hover": hasChildren
 							? {
-									backgroundColor: "var(--app-surface-3)",
+									backgroundColor: "var(--octo-surface-3)",
 								}
 							: {},
 					},
@@ -358,7 +358,7 @@ export function ExplainVisualization({
 			<Box
 				p="md"
 				style={{
-					backgroundColor: "var(--app-surface-2)",
+					backgroundColor: "var(--octo-surface-2)",
 					borderRadius: theme.radius.md,
 				}}
 			>
@@ -385,7 +385,7 @@ export function ExplainVisualization({
 			<Box
 				p="sm"
 				style={{
-					backgroundColor: "var(--app-surface-2)",
+					backgroundColor: "var(--octo-surface-2)",
 					borderRadius: theme.radius.md,
 				}}
 			>
@@ -405,7 +405,7 @@ export function ExplainVisualization({
 					mt="md"
 					p="md"
 					style={{
-						backgroundColor: "var(--app-surface-2)",
+						backgroundColor: "var(--octo-surface-2)",
 						borderRadius: theme.radius.md,
 					}}
 				>

@@ -1,6 +1,5 @@
-import { Tabs } from "@mantine/core";
 import { useUnit } from "effector-react";
-import { Badge, Group, Text } from "@/shared/ui";
+import { Badge, Group, Tabs, Text } from "@/shared/ui";
 import { $body, $customHeaders, $method } from "../state/consoleStore";
 import { BodyEditor } from "./BodyEditor";
 import { HeaderEditor } from "./HeaderEditor";

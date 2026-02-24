@@ -1,4 +1,4 @@
-import { Badge, Collapse, Group, Paper, Stack, Text } from "@mantine/core";
+import { Badge, Collapse, Group, Paper, Stack, Text } from "@/shared/ui";
 import { IconChevronDown, IconChevronRight } from "@tabler/icons-react";
 import { useState } from "react";
 import type { FhirPathMetadata } from "../types";

@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { notifications } from "@mantine/notifications";
+import { notifications } from "@octofhir/ui-kit";
 import { fhirClient } from "@/shared/api/fhirClient";
 import type { RoleResource, Bundle, Permission } from "@/shared/api/types";
 

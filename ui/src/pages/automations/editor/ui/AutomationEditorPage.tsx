@@ -17,8 +17,8 @@ import {
   Tooltip,
   Divider,
   Box,
-} from "@mantine/core";
-import { notifications } from "@mantine/notifications";
+} from "@/shared/ui";
+import { notifications } from "@octofhir/ui-kit";
 import {
   IconArrowLeft,
   IconDeviceFloppy,

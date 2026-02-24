@@ -1,9 +1,14 @@
 import {
     createTheme,
+    virtualColor,
     type MantineThemeOverride,
     type CSSVariablesResolver,
+    ActionIcon,
     Badge,
     Button,
+    Select,
+    Table,
+    Tabs,
     TextInput,
     SegmentedControl,
 } from "@mantine/core";
@@ -11,8 +16,12 @@ import { palette } from "./colors";
 import { tokens, type OctoTokens } from "./tokens";
 import { generateCSSVariables } from "./utils";
 
+import actionIconClasses from "../ui/ActionIcon/ActionIcon.module.css";
 import badgeClasses from "../ui/Badge/Badge.module.css";
 import buttonClasses from "../ui/Button/Button.module.css";
+import selectClasses from "../ui/Select/Select.module.css";
+import tableClasses from "../ui/Table/Table.module.css";
+import tabsClasses from "../ui/Tabs/Tabs.module.css";
 import textInputClasses from "../ui/TextInput/TextInput.module.css";
 import segmentedControlClasses from "../ui/SegmentedControl/SegmentedControl.module.css";
 
@@ -26,12 +35,17 @@ export const theme: MantineThemeOverride = createTheme({
     primaryColor: "primary",
     primaryShade: { light: 5, dark: 4 },
     defaultGradient: { from: "primary.5", to: "fire.5", deg: 135 },
-    colors: palette,
+    colors: {
+        ...palette,
+        success: virtualColor({ name: "success", dark: "primary", light: "primary" }),
+        warning: virtualColor({ name: "warning", dark: "warm", light: "warm" }),
+        error: virtualColor({ name: "error", dark: "fire", light: "fire" }),
+    },
     fontFamily: tokens.typography.family,
     fontFamilyMonospace: tokens.typography.mono,
     headings: {
         fontFamily: tokens.typography.heading,
-        fontWeight: tokens.typography.weight.semibold,
+        fontWeight: `${tokens.typography.weight.semibold}`,
     },
     fontSizes: tokens.typography.size,
     spacing: {
@@ -80,13 +94,14 @@ export const theme: MantineThemeOverride = createTheme({
                 radius: "md",
             },
         }),
-        ActionIcon: {
+        ActionIcon: ActionIcon.extend({
+            classNames: actionIconClasses,
             defaultProps: {
                 variant: "subtle",
                 radius: "md",
                 size: "md",
             },
-        },
+        }),
         Card: {
             defaultProps: {
                 radius: "lg",
@@ -110,24 +125,27 @@ export const theme: MantineThemeOverride = createTheme({
                 },
             },
         },
-        Select: {
+        Select: Select.extend({
+            classNames: selectClasses,
             defaultProps: {
                 radius: "md",
                 size: "sm",
             },
-        },
-        Tabs: {
+        }),
+        Tabs: Tabs.extend({
+            classNames: tabsClasses,
             defaultProps: {
                 variant: "outline",
             },
-        },
-        Table: {
+        }),
+        Table: Table.extend({
+            classNames: tableClasses,
             defaultProps: {
                 highlightOnHover: true,
                 verticalSpacing: "sm",
                 horizontalSpacing: "md",
             },
-        },
+        }),
         Divider: {
             styles: {
                 root: {
@@ -144,6 +162,70 @@ export const theme: MantineThemeOverride = createTheme({
         Loader: {
             defaultProps: {
                 color: "primary",
+            },
+        },
+        ScrollArea: {
+            defaultProps: {
+                scrollbarSize: 5,
+                type: "hover",
+            },
+        },
+        Alert: {
+            defaultProps: {
+                radius: "md",
+                variant: "light",
+            },
+        },
+        Menu: {
+            defaultProps: {
+                radius: "md",
+                shadow: "md",
+            },
+        },
+        NavLink: {
+            defaultProps: {
+                variant: "subtle",
+            },
+        },
+        PasswordInput: {
+            defaultProps: {
+                radius: "md",
+                size: "sm",
+            },
+        },
+        ThemeIcon: {
+            defaultProps: {
+                variant: "light",
+                radius: "md",
+            },
+        },
+        Checkbox: {
+            defaultProps: {
+                radius: "sm",
+            },
+        },
+        NumberInput: {
+            defaultProps: {
+                radius: "md",
+                size: "sm",
+            },
+        },
+        Textarea: {
+            defaultProps: {
+                radius: "md",
+                size: "sm",
+            },
+        },
+        DateInput: {
+            defaultProps: {
+                radius: "md",
+                size: "sm",
+            },
+        },
+        DateTimePicker: {
+            defaultProps: {
+                radius: "md",
+                size: "sm",
             },
         },
     },

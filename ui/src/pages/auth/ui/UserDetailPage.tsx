@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Stack, Title, Text, Group, Badge, Table, Loader } from "@mantine/core";
+import { Stack, Title, Text, Group, Badge, Table, Loader } from "@/shared/ui";
 import { useParams, useNavigate } from "react-router-dom";
 import {
 	IconArrowLeft,

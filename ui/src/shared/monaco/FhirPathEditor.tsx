@@ -9,7 +9,7 @@
 import { useRef, useEffect, useCallback, useState } from "react";
 import Editor, { type OnMount, type OnChange } from "@monaco-editor/react";
 import type * as Monaco from "monaco-editor";
-import { useMantineColorScheme } from "@mantine/core";
+import { useMantineColorScheme } from "@octofhir/ui-kit";
 
 import { ensureMonacoServices } from "./lspClient";
 import {

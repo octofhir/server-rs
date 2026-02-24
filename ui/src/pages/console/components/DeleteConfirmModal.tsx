@@ -1,4 +1,5 @@
-import { Button, Code, Group, Modal, Stack, Text, useMantineTheme } from "@mantine/core";
+import { Button, Code, Group, Modal, Stack, Text } from "@/shared/ui";
+import { useMantineTheme } from "@octofhir/ui-kit";
 import { IconAlertTriangle } from "@tabler/icons-react";
 
 interface DeleteConfirmModalProps {

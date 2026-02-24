@@ -1,4 +1,4 @@
-import { Stack, Text, TextInput } from "@mantine/core";
+import { Stack, Text, TextInput } from "@/shared/ui";
 import { useUnit } from "effector-react";
 import { $rawPath, setRawPath } from "../state/consoleStore";
 

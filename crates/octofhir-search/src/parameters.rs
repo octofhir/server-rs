@@ -37,7 +37,7 @@ impl SearchParameterType {
     }
 }
 
-/// Supported search modifiers (subset per FHIR R4B)
+/// Supported search modifiers (FHIR R4/R4B/R5)
 /// Applied as suffix to parameter name: `name:modifier`
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -54,6 +54,9 @@ pub enum SearchModifier {
     Type(String), // e.g., subject:Patient
     Missing,      // value should be boolean (handled during parsing)
     OfType,       // for token parameters
+    // R5+ modifiers
+    CodeText,     // for token parameters (R5) — search on code display text
+    TextAdvanced, // for token parameters (R5) — advanced text search
 }
 
 impl SearchModifier {
@@ -72,6 +75,8 @@ impl SearchModifier {
             "above" => Some(Self::Above),
             "identifier" => Some(Self::Identifier),
             "ofType" => Some(Self::OfType),
+            "code-text" => Some(Self::CodeText),
+            "text-advanced" => Some(Self::TextAdvanced),
             // Type modifier is handled separately during parsing
             _ => None,
         }
@@ -96,8 +101,15 @@ impl SearchModifier {
             Self::Type(_) | Self::Identifier => {
                 matches!(param_type, SearchParameterType::Reference)
             }
-            Self::OfType => matches!(param_type, SearchParameterType::Token),
+            Self::OfType | Self::CodeText | Self::TextAdvanced => {
+                matches!(param_type, SearchParameterType::Token)
+            }
         }
+    }
+
+    /// Whether this modifier requires FHIR R5+.
+    pub fn is_r5_only(&self) -> bool {
+        matches!(self, Self::CodeText | Self::TextAdvanced)
     }
 }
 

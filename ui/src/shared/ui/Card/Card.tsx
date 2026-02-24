@@ -1,4 +1,4 @@
-import { Card as MantineCard, type CardProps, type ElementProps } from "@mantine/core";
+import { Card as MantineCard, type CardProps, type ElementProps } from "@octofhir/ui-kit";
 import classes from "./Card.module.css";
 
 export interface AppCardProps extends CardProps, ElementProps<"div"> { }

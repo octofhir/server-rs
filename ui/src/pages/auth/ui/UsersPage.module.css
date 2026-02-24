@@ -51,12 +51,12 @@
 
 .userEmail {
 	font-size: var(--mantine-font-size-xs);
-	color: var(--app-text-secondary);
+	color: var(--octo-text-secondary);
 }
 
 .lastLogin {
 	font-size: var(--mantine-font-size-xs);
-	color: var(--app-text-secondary);
+	color: var(--octo-text-secondary);
 }
 
 .bulkActions {

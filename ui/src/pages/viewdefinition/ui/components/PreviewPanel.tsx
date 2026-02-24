@@ -1,4 +1,4 @@
-import { Stack, Tabs, Text, ScrollArea } from "@mantine/core";
+import { Stack, Tabs, Text, ScrollArea } from "@/shared/ui";
 import { SQLPreview } from "./SQLPreview";
 import { ResultTable } from "./ResultTable";
 import type { RunResult, SqlResult } from "../../lib/useViewDefinition";

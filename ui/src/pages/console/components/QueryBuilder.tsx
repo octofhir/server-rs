@@ -8,8 +8,8 @@ import {
 	SegmentedControl,
 	Badge,
 	Combobox,
-	useCombobox,
-} from "@mantine/core";
+} from "@/shared/ui";
+import { useCombobox } from "@octofhir/ui-kit";
 import { useUnit } from "effector-react";
 import {
 	$queryParams,

@@ -1,8 +1,49 @@
 .root {
-    transition: transform var(--octo-motion-fast) var(--octo-motion-ease),
-        background-color var(--octo-motion-normal) var(--octo-motion-ease);
+	transition: transform var(--octo-motion-fast) var(--octo-motion-ease),
+		background-color var(--octo-motion-normal) var(--octo-motion-ease);
 }
 
-.root:active {
-    transform: scale(0.94);
+.root:active:not([data-disabled]) {
+	transform: scale(0.94);
+}
+
+/* ── Subtle (default) ── */
+.root[data-variant="subtle"] {
+	color: var(--octo-text-secondary);
+}
+
+.root[data-variant="subtle"]:hover:not([data-disabled]) {
+	background-color: var(--octo-surface-2);
+	color: var(--octo-text-primary);
+}
+
+/* ── Light ── */
+.root[data-variant="light"] {
+	background-color: var(--octo-accent-primary-bg);
+	color: var(--octo-accent-primary);
+}
+
+.root[data-variant="light"]:hover:not([data-disabled]) {
+	background-color: var(--octo-accent-primary-bg-hover);
+}
+
+/* ── Default ── */
+.root[data-variant="default"] {
+	background-color: var(--octo-surface-1);
+	color: var(--octo-text-primary);
+	border: 1px solid var(--octo-border-subtle);
+}
+
+.root[data-variant="default"]:hover:not([data-disabled]) {
+	background-color: var(--octo-surface-2);
+}
+
+/* ── Filled ── */
+.root[data-variant="filled"] {
+	background-color: var(--octo-accent-primary);
+	color: var(--octo-text-inverse);
+}
+
+.root[data-variant="filled"]:hover:not([data-disabled]) {
+	background-color: var(--octo-accent-primary-hover);
 }

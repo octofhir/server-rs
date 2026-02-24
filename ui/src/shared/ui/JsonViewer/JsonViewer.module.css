@@ -2,8 +2,8 @@
     position: relative;
     border-radius: var(--mantine-radius-md);
     overflow: hidden;
-    border: 1px solid var(--app-border-subtle);
-    backgroundColor: var(--app-surface-2);
+    border: 1px solid var(--octo-border-subtle);
+    backgroundColor: var(--octo-surface-2);
 }
 
 .copyButton {
@@ -17,7 +17,7 @@
     white-space: pre-wrap;
     word-break: break-word;
     background-color: transparent;
-    color: var(--app-text-primary);
+    color: var(--octo-text-primary);
     font-size: var(--mantine-font-size-sm);
     line-height: 1.6;
     font-family: var(--mantine-font-family-monospace);
@@ -29,6 +29,6 @@
     top: 0;
     bottom: 0;
     width: 4px;
-    background: var(--app-brand-gradient);
+    background: var(--octo-brand-gradient);
     opacity: 0.6;
 }

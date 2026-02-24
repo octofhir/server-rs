@@ -1,5 +1,5 @@
 import { memo } from "react";
-import { Group, TextInput, Select, ActionIcon, Tooltip, Box } from "@mantine/core";
+import { Group, TextInput, Select, ActionIcon, Tooltip, Box } from "@/shared/ui";
 import { IconTrash, IconGripVertical } from "@tabler/icons-react";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";

@@ -1,4 +1,4 @@
-import { Group, Stack, Text, Badge, Box } from "@mantine/core";
+import { Group, Stack, Text, Badge, Box } from "@/shared/ui";
 import type { ConsoleCommand } from "../../commands/types";
 
 interface CommandItemProps {

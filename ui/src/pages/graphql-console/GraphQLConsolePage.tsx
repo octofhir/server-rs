@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import { GraphiQL } from "graphiql";
 import { createGraphiQLFetcher } from "@graphiql/toolkit";
-import { useMantineColorScheme } from "@mantine/core";
+import { useMantineColorScheme } from "@octofhir/ui-kit";
 import "graphiql/style.css";
 import { useUiSettings } from "@/shared";
 
@@ -49,7 +49,7 @@ export function GraphQLConsolePage() {
 	return (
 		<div
 			className={themeClass}
-			style={{ flex: 1, minHeight: 0, backgroundColor: "var(--app-surface-1)" }}
+			style={{ flex: 1, minHeight: 0, backgroundColor: "var(--octo-surface-1)" }}
 		>
 			<GraphiQL
 				fetcher={fetcher}

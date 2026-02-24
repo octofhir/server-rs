@@ -13,7 +13,7 @@ import {
   Select,
   Loader,
   Grid,
-} from '@mantine/core';
+} from '@/shared/ui';
 import { IconPlayerPlay, IconAlertCircle, IconCheck } from '@tabler/icons-react';
 import { Editor } from '@monaco-editor/react';
 import { useMutation } from '@tanstack/react-query';
@@ -158,7 +158,7 @@ export function CqlConsole() {
                 radius="md"
                 style={{
                   overflow: 'hidden',
-                  border: '1px solid var(--app-border-subtle)',
+                  border: '1px solid var(--octo-border-subtle)',
                 }}
               >
                 <Editor

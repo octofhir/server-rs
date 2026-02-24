@@ -1,4 +1,4 @@
-import { Table, Text, Code } from "@mantine/core";
+import { Table, Text, Code } from "@/shared/ui";
 import type { RunResult } from "../../lib/useViewDefinition";
 
 interface ResultTableProps {

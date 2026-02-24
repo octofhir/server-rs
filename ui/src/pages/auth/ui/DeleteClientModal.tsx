@@ -1,4 +1,4 @@
-import { Stack, Text, Group, Alert } from "@mantine/core";
+import { Stack, Text, Group, Alert } from "@/shared/ui";
 import { IconAlertTriangle } from "@tabler/icons-react";
 import { Modal } from "@/shared/ui/Modal/Modal";
 import { Button } from "@/shared/ui/Button/Button";

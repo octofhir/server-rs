@@ -1,7 +1,7 @@
 .container {
   padding: var(--mantine-spacing-sm) var(--mantine-spacing-md);
-  background: var(--app-surface-1);
-  border-bottom: 1px solid var(--app-border-subtle);
+  background: var(--octo-surface-1);
+  border-bottom: 1px solid var(--octo-border-subtle);
 }
 
 .filtersRow {
@@ -23,6 +23,6 @@
 .divider {
   width: 1px;
   height: 24px;
-  background: var(--app-border-subtle);
+  background: var(--octo-border-subtle);
   margin: 0 var(--mantine-spacing-xs);
 }

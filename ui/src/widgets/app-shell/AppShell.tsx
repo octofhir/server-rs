@@ -1,9 +1,6 @@
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
 import {
 	AppShell as MantineAppShell,
-	useMantineColorScheme,
-} from "@mantine/core";
-import {
 	Badge,
 	ActionIcon,
 	Burger,
@@ -16,7 +13,7 @@ import {
 	Divider,
 	ErrorBoundary,
 } from "@/shared/ui";
-import { useDisclosure } from "@mantine/hooks";
+import { useMantineColorScheme, useDisclosure } from "@octofhir/ui-kit";
 import {
 	IconHome,
 	IconFolder,
@@ -283,8 +280,8 @@ export function AppShell() {
 							paddingBottom: 4,
 							minHeight: 28,
 							"&[data-active]": {
-							backgroundColor: "var(--app-surface-3)",
-							color: "var(--app-text-primary)",
+							backgroundColor: "var(--octo-surface-3)",
+							color: "var(--octo-text-primary)",
 						},
 						"&:hover:not([data-active])": {
 							backgroundColor: "var(--app-header-hover-bg)",
@@ -317,8 +314,7 @@ export function AppShell() {
 				style={{
 					background: "var(--app-header-bg)",
 					color: "var(--app-header-fg)",
-					backdropFilter: "blur(var(--app-glass-blur))",
-					borderBottom: "1px solid var(--app-glass-border)",
+					borderBottom: "1px solid var(--octo-border-subtle)",
 					zIndex: 100,
 				}}
 			>
@@ -376,9 +372,8 @@ export function AppShell() {
 				style={{
 					display: "flex",
 					flexDirection: "column",
-					backgroundColor: "var(--app-glass-bg)",
-					backdropFilter: "blur(var(--app-glass-blur))",
-					borderRight: "1px solid var(--app-glass-border)",
+					backgroundColor: "var(--octo-surface-1)",
+					borderRight: "1px solid var(--octo-border-subtle)",
 					transition: "all 0.2s ease",
 				}}
 			>
@@ -446,7 +441,7 @@ export function AppShell() {
 					display: "flex",
 					flexDirection: "column",
 					height: "calc(100vh - 48px)",
-					backgroundColor: "var(--app-surface-1)",
+					backgroundColor: "var(--octo-surface-1)",
 				}}
 			>
 				<Box style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>

@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { Code, CopyButton, ActionIcon, Group, Tooltip, ScrollArea, Box } from "@mantine/core";
+import { Code, CopyButton, ActionIcon, Group, Tooltip, ScrollArea, Box } from "@octofhir/ui-kit";
 import { IconCopy, IconCheck } from "@tabler/icons-react";
 
 interface JsonViewerProps {
@@ -27,8 +27,8 @@ export function JsonViewer({ data, maxHeight = 400, className }: JsonViewerProps
 			style={{
 				borderRadius: "var(--mantine-radius-md)",
 				overflow: "hidden",
-				border: "1px solid var(--app-border-subtle)",
-				backgroundColor: "var(--app-surface-2)",
+				border: "1px solid var(--octo-border-subtle)",
+				backgroundColor: "var(--octo-surface-2)",
 			}}
 		>
 			<Group pos="absolute" top={12} right={12} style={{ zIndex: 5 }}>
@@ -60,7 +60,7 @@ export function JsonViewer({ data, maxHeight = 400, className }: JsonViewerProps
 							whiteSpace: "pre-wrap",
 							wordBreak: "break-word",
 							backgroundColor: "transparent",
-							color: "var(--app-text-primary)",
+							color: "var(--octo-text-primary)",
 							fontSize: "var(--mantine-font-size-sm)",
 							lineHeight: 1.6,
 							fontFamily: "var(--mantine-font-family-monospace)",
@@ -77,7 +77,7 @@ export function JsonViewer({ data, maxHeight = 400, className }: JsonViewerProps
 					top: 0,
 					bottom: 0,
 					width: 4,
-					background: "var(--app-brand-gradient)",
+					background: "var(--octo-brand-gradient)",
 					opacity: 0.6
 				}}
 			/>

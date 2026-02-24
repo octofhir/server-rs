@@ -12,7 +12,7 @@
 
 .label {
 	font-size: var(--mantine-font-size-xs);
-	color: var(--app-text-secondary);
+	color: var(--octo-text-secondary);
 	text-transform: uppercase;
 	letter-spacing: 0.5px;
 	margin-bottom: 2px;

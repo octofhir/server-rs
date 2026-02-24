@@ -1,6 +1,5 @@
 import { useCallback, useMemo } from "react";
-import { Group, Select, TextInput } from "@mantine/core";
-import { DateInput } from "@mantine/dates";
+import { Group, Select, TextInput, DateInput } from "@/shared/ui";
 
 const PREFIX_OPTIONS = [
 	{ value: "", label: "= (equals)" },

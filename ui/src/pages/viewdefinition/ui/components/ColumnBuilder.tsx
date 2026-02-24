@@ -1,5 +1,5 @@
 import { useCallback } from "react";
-import { Button, Group, Menu, Paper, Stack, Text } from "@mantine/core";
+import { Button, Group, Menu, Paper, Stack, Text } from "@/shared/ui";
 import { IconChevronDown, IconPlus, IconRepeat } from "@tabler/icons-react";
 import {
   closestCenter,

@@ -10,8 +10,8 @@ import {
 	Checkbox,
 	Textarea,
 	Alert,
-} from "@mantine/core";
-import { useDisclosure, useDebouncedValue } from "@mantine/hooks";
+} from "@/shared/ui";
+import { useDisclosure, useDebouncedValue } from "@octofhir/ui-kit";
 import { useForm } from "@mantine/form";
 import {
 	IconPlus,

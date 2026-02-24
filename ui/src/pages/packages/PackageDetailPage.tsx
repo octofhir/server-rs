@@ -22,7 +22,7 @@ import {
 	Modal,
 	ScrollArea,
 	Code,
-} from "@mantine/core";
+} from "@/shared/ui";
 import {
 	IconAlertCircle,
 	IconSearch,
@@ -116,7 +116,7 @@ function ResourceViewer({ packageName, packageVersion, resource, onClose }: Reso
 				</Group>
 			}
 			size="xl"
-			styles={{ body: { padding: 0, backgroundColor: "var(--app-surface-1)" } }}
+			styles={{ body: { padding: 0, backgroundColor: "var(--octo-surface-1)" } }}
 		>
 			<Tabs value={activeTab} onChange={setActiveTab}>
 				<Tabs.List>
@@ -246,7 +246,7 @@ function ResourcesTab({
 			)}
 
 			{!isLoading && !error && filteredResources && (
-				<Paper style={{ backgroundColor: "var(--app-surface-1)" }}>
+				<Paper style={{ backgroundColor: "var(--octo-surface-1)" }}>
 					<Table striped highlightOnHover>
 						<Table.Thead>
 							<Table.Tr>
@@ -395,7 +395,7 @@ export function PackageDetailPage() {
 
 					<Tabs.Panel value="overview" pt="md">
 						<Stack gap="md">
-							<Paper p="md" style={{ backgroundColor: "var(--app-surface-1)" }}>
+							<Paper p="md" style={{ backgroundColor: "var(--octo-surface-1)" }}>
 								<Stack gap="sm">
 									{data.description && (
 										<div>
@@ -427,7 +427,7 @@ export function PackageDetailPage() {
 								</Stack>
 							</Paper>
 
-							<Paper p="md" style={{ backgroundColor: "var(--app-surface-2)" }}>
+							<Paper p="md" style={{ backgroundColor: "var(--octo-surface-2)" }}>
 								<Text size="sm" fw={500} c="dimmed" mb="sm">
 									Resource Types
 								</Text>

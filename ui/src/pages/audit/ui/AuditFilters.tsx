@@ -12,8 +12,8 @@ import {
 	Text,
 	Chip,
 	Select,
-} from "@mantine/core";
-import { DateTimePicker } from "@mantine/dates";
+	DateTimePicker,
+} from "@/shared/ui";
 import {
 	IconSearch,
 	IconFilter,

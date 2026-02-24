@@ -9,8 +9,9 @@ import type {
 } from "@/shared/api";
 import type { QueryInputMetadata } from "@/shared/fhir-query-input";
 import { QueryEditor } from "@/shared/fhir-query-input/widgets/QueryEditor";
-import { Box, Button, Divider } from "@/shared/ui";
+import { Box, Divider } from "@/shared/ui";
 import { MethodControl } from "./MethodControl";
+import { Button } from "@octofhir/ui-kit";
 
 interface RequestBarProps {
 	allSuggestions: AutocompleteSuggestion[];
@@ -58,9 +59,9 @@ export function RequestBar({
 			style={{
 				display: "flex",
 				alignItems: "center",
-				border: "1px solid var(--app-border-subtle)",
+				border: "1px solid var(--octo-border-subtle)",
 				borderRadius: "var(--mantine-radius-md)",
-				backgroundColor: "var(--app-surface-1)",
+				backgroundColor: "var(--octo-surface-1)",
 				overflow: "visible",
 			}}
 		>
@@ -81,13 +82,7 @@ export function RequestBar({
 				onClick={onSend}
 				loading={isSending}
 				disabled={!rawPath}
-				leftSection={<IconPlayerPlay size={14} />}
-				style={{
-					borderRadius: 0,
-					borderTopRightRadius: "var(--mantine-radius-md)",
-					borderBottomRightRadius: "var(--mantine-radius-md)",
-					height: "100%",
-				}}
+				rightSection={<IconPlayerPlay size={14} />}
 			>
 				Send
 			</Button>

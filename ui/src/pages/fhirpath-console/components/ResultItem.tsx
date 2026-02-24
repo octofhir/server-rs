@@ -1,4 +1,4 @@
-import { Badge, Code, Collapse, Group, Paper, Stack, Text } from "@mantine/core";
+import { Badge, Code, Collapse, Group, Paper, Stack, Text } from "@/shared/ui";
 import { IconChevronDown, IconChevronRight } from "@tabler/icons-react";
 import { useState } from "react";
 import type { FhirPathResult } from "../types";
@@ -14,7 +14,7 @@ export function ResultItem({ result }: Props) {
 	const typeColor = getTypeColor(result.datatype);
 
 	return (
-		<Paper withBorder p="sm" bg="var(--app-surface-2)">
+		<Paper withBorder p="sm" bg="var(--octo-surface-2)">
 			<Stack gap="xs">
 				<Group gap="xs" align="center">
 					<Text size="xs" c="dimmed">

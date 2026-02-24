@@ -1,4 +1,4 @@
-import { Button as MantineButton, type ButtonProps, createPolymorphicComponent } from "@mantine/core";
+import { Button as MantineButton, type ButtonProps, createPolymorphicComponent } from "@octofhir/ui-kit";
 import { forwardRef } from "react";
 import classes from "./Button.module.css";
 

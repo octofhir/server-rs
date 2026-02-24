@@ -1,4 +1,4 @@
-import { Code, Text, Loader, Stack } from "@mantine/core";
+import { Code, Text, Loader, Stack } from "@/shared/ui";
 import type { SqlResult } from "../../lib/useViewDefinition";
 
 interface SQLPreviewProps {

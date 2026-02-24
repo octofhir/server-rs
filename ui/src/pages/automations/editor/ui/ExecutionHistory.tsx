@@ -11,7 +11,7 @@ import {
   Paper,
   Group,
   ActionIcon,
-} from "@mantine/core";
+} from "@/shared/ui";
 import { useState } from "react";
 import { IconChevronDown, IconChevronRight } from "@tabler/icons-react";
 import { useAutomationLogs } from "../../lib/useAutomations";

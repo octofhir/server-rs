@@ -1,4 +1,4 @@
-import { Paper, Text, Divider, Stack, Button, Loader } from "@mantine/core";
+import { Paper, Text, Divider, Stack, Button, Loader } from "@/shared/ui";
 import { IconCheck } from "@tabler/icons-react";
 import type { ViewDefinition } from "../../lib/useViewDefinition";
 

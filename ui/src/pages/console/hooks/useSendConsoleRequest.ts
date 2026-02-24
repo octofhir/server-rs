@@ -3,7 +3,7 @@ import { useUnit } from "effector-react";
 import { fhirClient, HttpError } from "@/shared/api/fhirClient";
 import { $mode, setLastResponse } from "../state/consoleStore";
 import { validateConsoleRequest } from "../utils/requestValidator";
-import { notifications } from "@mantine/notifications";
+import { notifications } from "@octofhir/ui-kit";
 import { useHistory } from "./useHistory";
 import type { HttpMethod } from "@/shared/api";
 import { useUiSettings } from "@/shared";

@@ -11,7 +11,7 @@ import {
 	Center,
 	Loader,
 	RingProgress,
-} from "@mantine/core";
+} from "@/shared/ui";
 import {
 	IconUser,
 	IconDatabase,

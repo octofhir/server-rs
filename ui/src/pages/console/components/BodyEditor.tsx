@@ -1,6 +1,6 @@
 import { Suspense, useState } from "react";
 import { useUnit } from "effector-react";
-import { Stack, Group, Text, Button, Alert, Skeleton } from "@mantine/core";
+import { Stack, Group, Text, Button, Alert, Skeleton } from "@/shared/ui";
 import { IconAlertCircle } from "@tabler/icons-react";
 import { JsonEditor } from "@/shared/monaco";
 import { $body, setBody } from "../state/consoleStore";

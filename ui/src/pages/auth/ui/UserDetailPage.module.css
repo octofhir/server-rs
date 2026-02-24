@@ -39,7 +39,7 @@
 }
 
 .userEmail {
-	color: var(--app-text-secondary);
+	color: var(--octo-text-secondary);
 	font-size: var(--mantine-font-size-sm);
 }
 
@@ -73,7 +73,7 @@
 
 .statLabel {
 	font-size: var(--mantine-font-size-xs);
-	color: var(--app-text-secondary);
+	color: var(--octo-text-secondary);
 	text-transform: uppercase;
 	letter-spacing: 0.5px;
 }
@@ -157,7 +157,7 @@
 
 .sessionMeta {
 	font-size: var(--mantine-font-size-xs);
-	color: var(--app-text-secondary);
+	color: var(--octo-text-secondary);
 }
 
 .infoGrid {
@@ -174,7 +174,7 @@
 
 .infoLabel {
 	font-size: var(--mantine-font-size-xs);
-	color: var(--app-text-secondary);
+	color: var(--octo-text-secondary);
 	text-transform: uppercase;
 	letter-spacing: 0.5px;
 }
@@ -187,7 +187,7 @@
 .emptyState {
 	text-align: center;
 	padding: var(--mantine-spacing-xl);
-	color: var(--app-text-secondary);
+	color: var(--octo-text-secondary);
 }
 
 @keyframes fadeIn {

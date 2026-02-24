@@ -19,7 +19,7 @@ import {
 	Select,
 	Anchor,
 	ScrollArea,
-} from "@mantine/core";
+} from "@/shared/ui";
 import {
 	IconAlertCircle,
 	IconSearch,
@@ -141,9 +141,9 @@ function OperationRow({
 			<Table.Td>
 				<Tooltip label={operation.public ? "Public (no auth required)" : "Protected (requires auth)"}>
 					{operation.public ? (
-						<IconLockOpen size={16} style={{ color: "var(--app-accent-primary)" }} />
+						<IconLockOpen size={16} style={{ color: "var(--octo-accent-primary)" }} />
 					) : (
-						<IconLock size={16} style={{ color: "var(--app-accent-warm)" }} />
+						<IconLock size={16} style={{ color: "var(--octo-accent-warm)" }} />
 					)}
 				</Tooltip>
 			</Table.Td>
@@ -290,7 +290,7 @@ export function OperationsPage() {
 				</Text>
 			</div>
 
-			<Paper p="md" style={{ backgroundColor: "var(--app-surface-2)" }}>
+			<Paper p="md" style={{ backgroundColor: "var(--octo-surface-2)" }}>
 				<Group gap="md">
 					<TextInput
 						placeholder="Search operations..."
@@ -346,7 +346,7 @@ export function OperationsPage() {
 					</Group>
 
 					{categories.length === 0 ? (
-						<Paper p="xl" style={{ backgroundColor: "var(--app-surface-2)" }}>
+						<Paper p="xl" style={{ backgroundColor: "var(--octo-surface-2)" }}>
 							<Text ta="center" c="dimmed">
 								No operations match your filters
 							</Text>

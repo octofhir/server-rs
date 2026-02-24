@@ -1,4 +1,4 @@
-import { SegmentedControl } from "@mantine/core";
+import { SegmentedControl } from "@/shared/ui";
 import { useUnit } from "effector-react";
 import { $mode, setMode, type ConsoleMode } from "../state/consoleStore";
 

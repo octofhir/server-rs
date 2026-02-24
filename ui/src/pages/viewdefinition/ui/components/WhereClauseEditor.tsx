@@ -1,4 +1,4 @@
-import { Stack, Button, Paper, Group, Text, ActionIcon, Tooltip, Box } from "@mantine/core";
+import { Stack, Button, Paper, Group, Text, ActionIcon, Tooltip, Box } from "@/shared/ui";
 import { IconPlus, IconTrash } from "@tabler/icons-react";
 import type { ViewDefinitionWhere, ViewDefinitionConstant } from "../../lib/useViewDefinition";
 import { FHIRPathInput } from "./FHIRPathInput";

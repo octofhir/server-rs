@@ -1,4 +1,4 @@
-import { Stack, Group, Text, TextInput, ActionIcon, Button, Alert } from "@mantine/core";
+import { Stack, Group, Text, TextInput, ActionIcon, Button, Alert } from "@/shared/ui";
 import { IconX, IconPlus, IconLock } from "@tabler/icons-react";
 import { useUnit } from "effector-react";
 import {

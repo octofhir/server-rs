@@ -10,7 +10,7 @@
 .thead {
   position: sticky;
   top: 0;
-  background: var(--app-surface-1);
+  background: var(--octo-surface-1);
   z-index: 10;
 }
 
@@ -20,7 +20,7 @@
   text-transform: uppercase;
   letter-spacing: 0.5px;
   color: var(--mantine-color-dimmed);
-  border-bottom: 1px solid var(--app-border-subtle);
+  border-bottom: 1px solid var(--octo-border-subtle);
 }
 
 .row {
@@ -29,7 +29,7 @@
 }
 
 .row:hover {
-  background-color: var(--app-surface-2);
+  background-color: var(--octo-surface-2);
 }
 
 .row[data-selected="true"] {
@@ -38,7 +38,7 @@
 
 .row td {
   padding: var(--mantine-spacing-sm) var(--mantine-spacing-md);
-  border-bottom: 1px solid var(--app-border-subtle);
+  border-bottom: 1px solid var(--octo-border-subtle);
 }
 
 .loadMore {

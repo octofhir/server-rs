@@ -1,5 +1,4 @@
-import { Collapse } from "@mantine/core";
-import { useDisclosure, useHotkeys } from "@mantine/hooks";
+import { useDisclosure, useHotkeys } from "@octofhir/ui-kit";
 import { IconEye, IconHistory } from "@tabler/icons-react";
 import { useUnit } from "effector-react";
 import { useCallback, useMemo } from "react";
@@ -7,7 +6,7 @@ import { Helmet } from "react-helmet-async";
 import type { QueryInputMetadata } from "@/shared/fhir-query-input";
 import { computeDiagnostics, parseQueryAst } from "@/shared/fhir-query-input";
 import { QueryInspector } from "@/shared/fhir-query-input/widgets/QueryInspector";
-import { Box, Button, Group, Stack, Text, Title } from "@/shared/ui";
+import { Box, Button, Collapse, Group, Stack, Text, Title } from "@/shared/ui";
 import { BuilderModeEditor } from "./components/BuilderModeEditor";
 import { CommandPalette } from "./components/CommandPalette";
 import { HistoryPanel } from "./components/HistoryPanel";
@@ -178,9 +177,9 @@ export function RestConsolePage() {
             <Box
               p="md"
               style={{
-                border: "1px solid var(--app-border-subtle)",
+                border: "1px solid var(--octo-border-subtle)",
                 borderRadius: "var(--mantine-radius-md)",
-                backgroundColor: "var(--app-surface-1)",
+                backgroundColor: "var(--octo-surface-1)",
               }}
             >
               <QueryInspector

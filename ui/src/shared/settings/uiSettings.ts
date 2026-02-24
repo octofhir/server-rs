@@ -1,4 +1,4 @@
-import { useLocalStorage } from "@mantine/hooks";
+import { useLocalStorage } from "@octofhir/ui-kit";
 
 export interface UiSettings {
 	requestTimeoutMs: number;

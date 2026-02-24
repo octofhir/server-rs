@@ -9,7 +9,7 @@ import {
 	Center,
 	Tooltip,
 	ThemeIcon,
-} from "@mantine/core";
+} from "@/shared/ui";
 import {
 	IconUser,
 	IconServer,

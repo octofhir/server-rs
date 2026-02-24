@@ -1,7 +1,7 @@
 import { useRef, useEffect, useCallback } from "react";
 import Editor, { type OnMount, type OnChange } from "@monaco-editor/react";
 import type * as Monaco from "monaco-editor";
-import { useMantineColorScheme } from "@mantine/core";
+import { useMantineColorScheme } from "@octofhir/ui-kit";
 
 // Monaco config is imported at app entry point (@/shared/monaco/config)
 

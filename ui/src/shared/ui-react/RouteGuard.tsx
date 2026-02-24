@@ -1,5 +1,5 @@
 import { Navigate, useLocation } from "react-router-dom";
-import { Center, Loader } from "@mantine/core";
+import { Center, Loader } from "@octofhir/ui-kit";
 import { useAuth } from "../api/hooks";
 
 interface RouteGuardProps {

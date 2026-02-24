@@ -1,5 +1,5 @@
 import { useCallback, useRef } from "react";
-import { Group, Select, Stack, Tabs, TextInput } from "@mantine/core";
+import { Group, Select, Stack, Tabs, TextInput } from "@/shared/ui";
 import { arrayMove } from "@dnd-kit/sortable";
 import { ColumnBuilder } from "./ColumnBuilder";
 import { ConstantsEditor } from "./ConstantsEditor";

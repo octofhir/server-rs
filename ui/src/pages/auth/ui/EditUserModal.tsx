@@ -1,5 +1,5 @@
 import { useState, useMemo } from "react";
-import { Modal, TextInput, Select, Group, Stack } from "@mantine/core";
+import { Modal, TextInput, Select, Group, Stack } from "@/shared/ui";
 import { Button } from "@/shared/ui/Button/Button";
 import { useUpdateUser, useSearchResources } from "../lib/useUsers";
 import type { UserResource } from "@/shared/api/types";

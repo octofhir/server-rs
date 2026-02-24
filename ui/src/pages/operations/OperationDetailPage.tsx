@@ -15,8 +15,8 @@ import {
 	Divider,
 	Breadcrumbs,
 	Anchor,
-	useMantineTheme,
-} from "@mantine/core";
+} from "@/shared/ui";
+import { useMantineTheme } from "@octofhir/ui-kit";
 import {
 	IconAlertCircle,
 	IconArrowLeft,
@@ -160,7 +160,7 @@ export function OperationDetailPage() {
 
 			{operation && (
 				<>
-					<Paper p="lg" style={{ backgroundColor: "var(--app-surface-1)" }}>
+					<Paper p="lg" style={{ backgroundColor: "var(--octo-surface-1)" }}>
 						<Stack gap="md">
 							<Group justify="space-between" align="flex-start">
 								<div>
@@ -215,7 +215,7 @@ export function OperationDetailPage() {
 						</Stack>
 					</Paper>
 
-					<Paper p="lg" style={{ backgroundColor: "var(--app-surface-2)" }}>
+					<Paper p="lg" style={{ backgroundColor: "var(--octo-surface-2)" }}>
 						<Title order={4} mb="md">
 							Settings
 						</Title>

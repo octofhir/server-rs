@@ -1,24 +1,24 @@
 .clientInfo {
     padding: var(--mantine-spacing-sm) var(--mantine-spacing-md);
-    background: var(--app-surface-2);
-    border: 1px solid var(--app-border-subtle);
+    background: var(--octo-surface-2);
+    border: 1px solid var(--octo-border-subtle);
     border-radius: var(--mantine-radius-md);
 }
 
 .label {
     font-size: var(--mantine-font-size-xs);
-    color: var(--app-text-secondary);
+    color: var(--octo-text-secondary);
     text-transform: uppercase;
     letter-spacing: 0.5px;
 }
 
 .value {
     font-size: var(--mantine-font-size-sm);
-    color: var(--app-text-primary);
+    color: var(--octo-text-primary);
     font-weight: 500;
 }
 
 .warningAlert {
-    background: var(--app-accent-fire-bg);
-    border: 1px solid var(--app-accent-fire);
+    background: var(--octo-accent-fireBg);
+    border: 1px solid var(--octo-accent-fire);
 }

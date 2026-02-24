@@ -36,10 +36,16 @@ export const tokens = {
             },
             accent: {
                 primary: palette.primary[5],
+                primaryHover: palette.primary[4],
+                primaryActive: palette.primary[6],
                 fire: palette.fire[5],
+                fireHover: palette.fire[4],
+                fireActive: palette.fire[6],
                 warm: palette.warm[5],
                 primaryBg: palette.primary[0],
+                primaryBgHover: palette.primary[1],
                 fireBg: palette.fire[0],
+                fireBgHover: palette.fire[1],
                 warmBg: palette.warm[0],
             },
             focus: {
@@ -60,16 +66,22 @@ export const tokens = {
                 inverse: "#0d0e1a",
             },
             border: {
-                subtle: "rgba(255, 255, 255, 0.08)",
-                strong: "rgba(255, 255, 255, 0.16)",
+                subtle: "#1e2038",
+                strong: "#2a2d52",
             },
             accent: {
                 primary: palette.primary[4],
+                primaryHover: palette.primary[3],
+                primaryActive: palette.primary[5],
                 fire: palette.fire[4],
+                fireHover: palette.fire[3],
+                fireActive: palette.fire[5],
                 warm: palette.warm[4],
-                primaryBg: "rgba(120, 140, 255, 0.16)",
-                fireBg: "rgba(255, 120, 110, 0.16)",
-                warmBg: "rgba(200, 165, 140, 0.18)",
+                primaryBg: "#1a1d3d",
+                primaryBgHover: "#222550",
+                fireBg: "#2a1a1a",
+                fireBgHover: "#3a2222",
+                warmBg: "#261f1a",
             },
             focus: {
                 ring: palette.primary[4],
@@ -132,6 +144,12 @@ export const tokens = {
         slow: "200ms",
         ease: "cubic-bezier(0.4, 0, 0.2, 1)",
         easeOut: "cubic-bezier(0.16, 1, 0.3, 1)",
+    },
+    layout: {
+        headerHeight: 48,
+        sidebarWidth: 240,
+        sidebarCollapsedWidth: 64,
+        contentMaxWidth: 1400,
     },
 } as const;
 

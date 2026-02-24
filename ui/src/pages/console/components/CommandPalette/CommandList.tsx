@@ -1,5 +1,4 @@
-import { Box, Text, Stack } from "@mantine/core";
-import { Combobox } from "@mantine/core";
+import { Box, Text, Stack, Combobox } from "@/shared/ui";
 import type { ConsoleCommand } from "../../commands/types";
 import { CommandItem } from "./CommandItem";
 

@@ -1,4 +1,4 @@
-import { notifications } from "@mantine/notifications";
+import { notifications } from "@octofhir/ui-kit";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { fhirClient } from "@/shared/api/fhirClient";

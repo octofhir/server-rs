@@ -1,5 +1,5 @@
 import { Routes, Route } from "react-router-dom";
-import { Center, Text, Stack, Title } from "@mantine/core";
+import { Center, Text, Stack, Title } from "@/shared/ui";
 import { RouteGuard } from "@/shared/ui-react/RouteGuard";
 import { AppShell } from "@/widgets/app-shell";
 

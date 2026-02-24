@@ -8,7 +8,7 @@ import {
   Group,
   Collapse,
   ActionIcon,
-} from '@mantine/core';
+} from '@/shared/ui';
 import { IconChevronDown, IconChevronRight } from '@tabler/icons-react';
 import { useState } from 'react';
 import {

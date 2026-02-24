@@ -9,10 +9,10 @@ import {
 	NumberInput,
 	Select,
 	Switch,
-	useMantineColorScheme,
 	Loader,
 	ScrollArea,
-} from "@mantine/core";
+} from "@/shared/ui";
+import { useMantineColorScheme } from "@octofhir/ui-kit";
 import { useHealth, useFormatterSettings } from "@/shared/api/hooks";
 import { useUiSettings } from "@/shared";
 import { FormatterSettings } from "@/shared/settings/FormatterSettings";
@@ -55,7 +55,7 @@ export function SettingsPage() {
 				shadow="sm"
 				padding="lg"
 				radius="md"
-				style={{ backgroundColor: "var(--app-surface-1)" }}
+				style={{ backgroundColor: "var(--octo-surface-1)" }}
 			>
 				<Title order={4} mb="md">
 					Connection
@@ -99,7 +99,7 @@ export function SettingsPage() {
 				shadow="sm"
 				padding="lg"
 				radius="md"
-				style={{ backgroundColor: "var(--app-surface-1)" }}
+				style={{ backgroundColor: "var(--octo-surface-1)" }}
 			>
 				<Title order={4} mb="md">
 					Appearance
@@ -119,7 +119,7 @@ export function SettingsPage() {
 				shadow="sm"
 				padding="lg"
 				radius="md"
-				style={{ backgroundColor: "var(--app-surface-1)" }}
+				style={{ backgroundColor: "var(--octo-surface-1)" }}
 			>
 				<Title order={4} mb="md">
 					SQL Formatter
@@ -145,7 +145,7 @@ export function SettingsPage() {
 				shadow="sm"
 				padding="lg"
 				radius="md"
-				style={{ backgroundColor: "var(--app-surface-1)" }}
+				style={{ backgroundColor: "var(--octo-surface-1)" }}
 			>
 				<Title order={4} mb="md">
 					Console
@@ -181,7 +181,7 @@ export function SettingsPage() {
 				shadow="sm"
 				padding="lg"
 				radius="md"
-				style={{ backgroundColor: "var(--app-surface-1)" }}
+				style={{ backgroundColor: "var(--octo-surface-1)" }}
 			>
 				<Title order={4} mb="md">
 					Authentication

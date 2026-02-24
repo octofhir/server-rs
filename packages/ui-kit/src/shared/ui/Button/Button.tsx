@@ -5,11 +5,10 @@ import {
 } from "@mantine/core";
 import { forwardRef } from "react";
 
+export type OctoVariant = "primary" | "secondary" | "fire" | "ghost";
+
 export interface OctoButtonProps {
-    /**
-     * Custom variant for OctoFHIR
-     */
-    octoVariant?: "primary" | "secondary" | "fire" | "ghost";
+    octoVariant?: OctoVariant;
 }
 
 declare module "@mantine/core" {
@@ -17,11 +16,11 @@ declare module "@mantine/core" {
 }
 
 const _Button = forwardRef<HTMLButtonElement, MantineButtonProps>(
-    ({ octoVariant = "primary", ...props }, ref) => (
+    ({ octoVariant, ...props }, ref) => (
         <MantineButton
             ref={ref}
             {...props}
-            data-octo-variant={octoVariant}
+            {...(octoVariant ? { "data-octo-variant": octoVariant } : {})}
         />
     )
 );

@@ -17,8 +17,8 @@ import {
   ActionIcon,
   Tooltip,
   Menu,
-} from "@mantine/core";
-import { useDisclosure, useLocalStorage } from "@mantine/hooks";
+} from "@/shared/ui";
+import { useDisclosure, useLocalStorage } from "@octofhir/ui-kit";
 import {
   IconAlertCircle,
   IconInfoCircle,
@@ -411,14 +411,14 @@ export function DbConsolePage() {
           display: "flex",
           flexDirection: "column",
           position: "relative",
-          backgroundColor: "var(--app-surface-1)",
+          backgroundColor: "var(--octo-surface-1)",
         }}
       >
         <Group
           px="sm"
           py="xs"
           justify="space-between"
-          style={{ backgroundColor: "var(--app-surface-2)" }}
+          style={{ backgroundColor: "var(--octo-surface-2)" }}
         >
           <Text size="xs" fw={500} c="dimmed">
             SQL Editor
@@ -454,16 +454,16 @@ export function DbConsolePage() {
             right: 0,
             height: "4px",
             cursor: "ns-resize",
-            backgroundColor: "var(--app-border-subtle)",
+            backgroundColor: "var(--octo-border-subtle)",
             transition: "background-color 0.2s",
             border: "none",
             padding: 0,
           }}
           onMouseEnter={(e) => {
-            e.currentTarget.style.backgroundColor = "var(--app-accent-warm)";
+            e.currentTarget.style.backgroundColor = "var(--octo-accent-warm)";
           }}
           onMouseLeave={(e) => {
-            e.currentTarget.style.backgroundColor = "var(--app-border-subtle)";
+            e.currentTarget.style.backgroundColor = "var(--octo-border-subtle)";
           }}
         />
       </Paper>
@@ -483,7 +483,7 @@ export function DbConsolePage() {
           overflow: "hidden",
           display: "flex",
           flexDirection: "column",
-          backgroundColor: "var(--app-surface-1)",
+          backgroundColor: "var(--octo-surface-1)",
         }}
       >
         {/* Results Header (Collapsible) */}
@@ -491,7 +491,7 @@ export function DbConsolePage() {
           onClick={toggleResults}
           style={{
             padding: "12px 16px",
-            backgroundColor: "var(--app-surface-2)",
+            backgroundColor: "var(--octo-surface-2)",
           }}
         >
           <Group justify="space-between">

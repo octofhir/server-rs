@@ -17,7 +17,7 @@
 .clientIdText {
     font-family: var(--mantine-font-family-monospace);
     font-size: var(--mantine-font-size-xs);
-    color: var(--app-text-secondary);
+    color: var(--octo-text-secondary);
 }
 
 @keyframes fadeIn {

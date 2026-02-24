@@ -10,8 +10,8 @@ import { AppRoutes } from "./routes";
 import { useAuthInterceptor } from "@/shared/api/hooks";
 import { ErrorBoundary } from "@/shared/ui";
 
-// Import existing global styles (CSS variables still work)
 import "@/shared/styles/global.css";
+import "@/shared/styles/app.css";
 
 // Create QueryClient with sensible defaults
 const queryClient = new QueryClient({

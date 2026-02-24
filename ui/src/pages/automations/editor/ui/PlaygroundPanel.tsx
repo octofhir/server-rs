@@ -12,8 +12,8 @@ import {
   Divider,
   Collapse,
   ActionIcon,
-} from "@mantine/core";
-import { notifications } from "@mantine/notifications";
+} from "@/shared/ui";
+import { notifications } from "@octofhir/ui-kit";
 import { IconPlayerPlay, IconTrash, IconChevronDown, IconChevronRight } from "@tabler/icons-react";
 import { JsonEditor } from "@/shared/monaco/JsonEditor";
 import { useTestAutomation } from "../../lib/useAutomations";

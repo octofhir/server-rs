@@ -1,16 +1,16 @@
+import { Drawer } from "@/shared/ui";
 import {
   ActionIcon,
   Badge,
   Button,
   Card,
-  Drawer,
   Group,
   Menu,
   Stack,
   Text,
   TextInput,
   Tooltip,
-} from "@mantine/core";
+} from "@/shared/ui";
 import {
   IconClock,
   IconDots,
@@ -149,7 +149,7 @@ function HistoryEntryCard({
   return (
     <Card
       p="sm"
-      style={{ cursor: "pointer", backgroundColor: "var(--app-surface-1)" }}
+      style={{ cursor: "pointer", backgroundColor: "var(--octo-surface-1)" }}
       onClick={() => onRestore(entry)}
     >
       <Stack gap="xs">

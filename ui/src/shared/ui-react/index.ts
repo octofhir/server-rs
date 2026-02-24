@@ -2,7 +2,7 @@
 export { RouteGuard } from "./RouteGuard";
 export { JsonViewer } from "./JsonViewer";
 
-// Re-export commonly used Mantine components for convenience
+// Re-export commonly used components for convenience
 export {
 	Button,
 	TextInput,
@@ -28,6 +28,6 @@ export {
 	CopyButton,
 	SimpleGrid,
 	NavLink,
-} from "@mantine/core";
+} from "@octofhir/ui-kit";
 
-export { notifications } from "@mantine/notifications";
+export { notifications } from "@octofhir/ui-kit";

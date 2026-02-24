@@ -8,7 +8,7 @@ use axum::{
     http::{HeaderValue, header},
     response::IntoResponse,
 };
-use octofhir_search::parameters::{SearchModifier, SearchParameterType};
+use octofhir_search::parameters::{SearchModifier, SearchParameter, SearchParameterType};
 use octofhir_search::registry::SearchParameterRegistry;
 use octofhir_storage::DynStorage;
 use serde::Serialize;
@@ -306,14 +306,7 @@ pub async fn build_unified_payload(state: &RestConsoleState) -> RestConsoleRespo
                 } else {
                     Some(param.description.clone())
                 },
-                modifiers: param
-                    .modifier
-                    .iter()
-                    .map(|m| ModifierSuggestion {
-                        code: modifier_to_string(m),
-                        description: None,
-                    })
-                    .collect(),
+                modifiers: get_modifier_suggestions(param, &state.fhir_version),
                 comparators: param.comparator.clone(),
                 targets: param.target.clone(),
                 is_common: param.is_common(),
@@ -347,14 +340,7 @@ pub async fn build_unified_payload(state: &RestConsoleState) -> RestConsoleRespo
                     } else {
                         Some(param.description.clone())
                     },
-                    modifiers: param
-                        .modifier
-                        .iter()
-                        .map(|m| EnrichedModifierSuggestion {
-                            code: modifier_to_string(m),
-                            description: None,
-                        })
-                        .collect(),
+                    modifiers: get_enriched_modifier_suggestions(param, &state.fhir_version),
                     comparators: param.comparator.clone(),
                     targets: param.target.clone(),
                     chains,
@@ -588,6 +574,81 @@ fn compute_etag(payload: &RestConsoleResponse) -> String {
     format!("W/\"rc-{hash:x}\"", hash = hasher.finish())
 }
 
+/// All known modifiers (excluding `Type` which is dynamic).
+const ALL_MODIFIERS: &[SearchModifier] = &[
+    SearchModifier::Missing,
+    SearchModifier::Exact,
+    SearchModifier::Contains,
+    SearchModifier::Text,
+    SearchModifier::Not,
+    SearchModifier::In,
+    SearchModifier::NotIn,
+    SearchModifier::Below,
+    SearchModifier::Above,
+    SearchModifier::Identifier,
+    SearchModifier::OfType,
+    // R5+
+    SearchModifier::CodeText,
+    SearchModifier::TextAdvanced,
+];
+
+/// Whether the FHIR version is R5 or later.
+fn is_r5_or_later(fhir_version: &str) -> bool {
+    let v = fhir_version.to_ascii_uppercase();
+    matches!(v.as_str(), "R5" | "R6" | "5.0.0" | "6.0.0")
+}
+
+/// Return modifier suggestions for a search parameter, respecting FHIR version.
+/// If the parameter has explicit modifiers, use those; otherwise infer from the parameter type.
+fn get_modifier_suggestions(param: &SearchParameter, fhir_version: &str) -> Vec<ModifierSuggestion> {
+    if !param.modifier.is_empty() {
+        return param
+            .modifier
+            .iter()
+            .filter(|m| !m.is_r5_only() || is_r5_or_later(fhir_version))
+            .map(|m| ModifierSuggestion {
+                code: modifier_to_string(m),
+                description: None,
+            })
+            .collect();
+    }
+
+    let r5 = is_r5_or_later(fhir_version);
+    ALL_MODIFIERS
+        .iter()
+        .filter(|m| m.applicable_to(&param.param_type) && (!m.is_r5_only() || r5))
+        .map(|m| ModifierSuggestion {
+            code: modifier_to_string(m),
+            description: None,
+        })
+        .collect()
+}
+
+/// Same as `get_modifier_suggestions` but returns `EnrichedModifierSuggestion`.
+fn get_enriched_modifier_suggestions(param: &SearchParameter, fhir_version: &str) -> Vec<EnrichedModifierSuggestion> {
+    if !param.modifier.is_empty() {
+        return param
+            .modifier
+            .iter()
+            .filter(|m| !m.is_r5_only() || is_r5_or_later(fhir_version))
+            .map(|m| EnrichedModifierSuggestion {
+                code: modifier_to_string(m),
+                description: None,
+            })
+            .collect();
+    }
+
+    let r5 = is_r5_or_later(fhir_version);
+    ALL_MODIFIERS
+        .iter()
+        .filter(|m| m.applicable_to(&param.param_type) && (!m.is_r5_only() || r5))
+        .map(|m| EnrichedModifierSuggestion {
+            code: modifier_to_string(m),
+            description: None,
+        })
+        .collect()
+}
+
 fn modifier_to_string(modifier: &SearchModifier) -> String {
     match modifier {
         SearchModifier::Exact => "exact",
@@ -602,6 +663,8 @@ fn modifier_to_string(modifier: &SearchModifier) -> String {
         SearchModifier::Type(_) => "type",
         SearchModifier::Missing => "missing",
         SearchModifier::OfType => "ofType",
+        SearchModifier::CodeText => "code-text",
+        SearchModifier::TextAdvanced => "text-advanced",
     }
     .to_string()
 }
@@ -953,6 +1016,36 @@ fn build_special_params() -> Vec<SpecialParamInfo> {
             description: Some("Request total count mode".into()),
             supported: true,
             examples: vec!["none".into(), "estimate".into(), "accurate".into()],
+        },
+        SpecialParamInfo {
+            name: "_has".into(),
+            description: Some(
+                "Reverse chaining — filter by resources that reference this one".into(),
+            ),
+            supported: true,
+            examples: vec![
+                "Observation:patient:code=1234-5".into(),
+            ],
+        },
+        SpecialParamInfo {
+            name: "_type".into(),
+            description: Some(
+                "Filter by resource type (system-level search)".into(),
+            ),
+            supported: true,
+            examples: vec!["Patient".into(), "Patient,Observation".into()],
+        },
+        SpecialParamInfo {
+            name: "_filter".into(),
+            description: Some(
+                "Advanced filter expression (FHIR _filter syntax)".into(),
+            ),
+            supported: true,
+            examples: vec![
+                "name eq \"Smith\"".into(),
+                "birthdate ge 1990-01-01".into(),
+                "status ne \"cancelled\" or priority eq \"urgent\"".into(),
+            ],
         },
         SpecialParamInfo {
             name: "_contained".into(),

@@ -1,1 +1,1 @@
-export { rem, em, px } from "@mantine/core";
+export { rem, em, px } from "@octofhir/ui-kit";

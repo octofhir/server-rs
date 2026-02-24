@@ -1,0 +1,21 @@
+/* App-specific CSS variables — header, login, and layout concerns */
+/* These reference --octo-* design tokens from ui-kit */
+
+:root,
+[data-mantine-color-scheme="light"] {
+    --app-header-bg: var(--octo-surface-1);
+    --app-header-fg: var(--octo-text-primary);
+    --app-header-hover-bg: var(--octo-surface-2);
+    --app-header-badge-bg: var(--octo-surface-3);
+    --app-login-bg: var(--octo-brand-gradient);
+    --app-login-panel-bg: var(--octo-surface-1);
+}
+
+[data-mantine-color-scheme="dark"] {
+    --app-header-bg: var(--octo-surface-1);
+    --app-header-fg: var(--octo-text-primary);
+    --app-header-hover-bg: rgba(255, 255, 255, 0.06);
+    --app-header-badge-bg: rgba(255, 255, 255, 0.04);
+    --app-login-bg: radial-gradient(circle at top left, var(--octo-surface-3), var(--octo-surface-1));
+    --app-login-panel-bg: var(--octo-surface-2);
+}

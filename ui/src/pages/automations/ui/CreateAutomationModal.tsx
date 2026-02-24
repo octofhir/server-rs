@@ -1,6 +1,6 @@
 import { useState } from "react";
-import { Modal, TextInput, Textarea, Button, Stack, Group } from "@mantine/core";
-import { notifications } from "@mantine/notifications";
+import { Modal, TextInput, Textarea, Button, Stack, Group } from "@/shared/ui";
+import { notifications } from "@octofhir/ui-kit";
 import { useNavigate } from "react-router-dom";
 import { useCreateAutomation } from "../lib/useAutomations";
 

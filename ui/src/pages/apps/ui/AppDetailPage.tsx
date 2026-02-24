@@ -18,7 +18,7 @@ import {
 	ThemeIcon,
 	SimpleGrid,
 	Box,
-} from "@mantine/core";
+} from "@/shared/ui";
 import {
 	IconAlertCircle,
 	IconArrowLeft,
@@ -121,7 +121,7 @@ export function AppDetailPage() {
 			{app && (
 				<>
 					{/* Header Card */}
-					<Paper p="lg" style={{ backgroundColor: "var(--app-surface-1)" }}>
+					<Paper p="lg" style={{ backgroundColor: "var(--octo-surface-1)" }}>
 						<Group justify="space-between" align="flex-start">
 							<Group gap="md">
 								<ThemeIcon size="xl" variant="light" color="primary" radius="md">
@@ -158,7 +158,7 @@ export function AppDetailPage() {
 					</Paper>
 
 					{/* Details Card */}
-					<Paper p="lg" style={{ backgroundColor: "var(--app-surface-2)" }}>
+					<Paper p="lg" style={{ backgroundColor: "var(--octo-surface-2)" }}>
 						<Title order={5} mb="md">Configuration</Title>
 						<SimpleGrid cols={{ base: 1, sm: 2, md: 4 }} spacing="lg">
 							<InfoItem
@@ -198,7 +198,7 @@ export function AppDetailPage() {
 					</Paper>
 
 					{/* Operations Section */}
-					<Paper p="lg" style={{ backgroundColor: "var(--app-surface-2)" }}>
+					<Paper p="lg" style={{ backgroundColor: "var(--octo-surface-2)" }}>
 						<Group justify="space-between" mb="md">
 							<Group gap="sm">
 								<IconApi size={20} color="var(--mantine-color-primary-6)" />
@@ -281,7 +281,7 @@ export function AppDetailPage() {
 					</Paper>
 
 					{/* Subscriptions Section */}
-					<Paper p="lg" style={{ backgroundColor: "var(--app-surface-2)" }}>
+					<Paper p="lg" style={{ backgroundColor: "var(--octo-surface-2)" }}>
 						<Group justify="space-between" mb="md">
 							<Group gap="sm">
 								<IconWebhook size={20} color="var(--mantine-color-warm-6)" />

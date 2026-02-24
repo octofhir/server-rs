@@ -1,4 +1,4 @@
-import { Stack, Button, Paper, Group, Text, TextInput, Select, ActionIcon, Tooltip } from "@mantine/core";
+import { Stack, Button, Paper, Group, Text, TextInput, Select, ActionIcon, Tooltip } from "@/shared/ui";
 import { IconPlus, IconTrash } from "@tabler/icons-react";
 import type { ViewDefinitionConstant } from "../../lib/useViewDefinition";
 

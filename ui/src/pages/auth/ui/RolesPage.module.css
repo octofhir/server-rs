@@ -32,7 +32,7 @@
 
 .roleDescription {
 	font-size: var(--mantine-font-size-xs);
-	color: var(--app-text-secondary);
+	color: var(--octo-text-secondary);
 }
 
 .permissionMatrix {
@@ -75,7 +75,7 @@
 	font-weight: 600;
 	text-transform: uppercase;
 	letter-spacing: 0.5px;
-	color: var(--app-text-secondary);
+	color: var(--octo-text-secondary);
 	margin-top: var(--mantine-spacing-sm);
 	margin-bottom: var(--mantine-spacing-xs);
 }

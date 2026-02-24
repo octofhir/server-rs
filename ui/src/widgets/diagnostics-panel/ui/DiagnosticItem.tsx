@@ -1,4 +1,5 @@
-import { Group, Text, Box, UnstyledButton, useMantineTheme } from "@mantine/core";
+import { Group, Text, Box, UnstyledButton } from "@/shared/ui";
+import { useMantineTheme } from "@octofhir/ui-kit";
 import {
 	IconAlertCircle,
 	IconAlertTriangle,
@@ -58,7 +59,7 @@ export function DiagnosticItem({ diagnostic, onClick }: DiagnosticItemProps) {
 					root: {
 						"&:hover": onClick
 							? {
-								backgroundColor: "var(--app-surface-3)",
+								backgroundColor: "var(--octo-surface-3)",
 							}
 							: {},
 					},

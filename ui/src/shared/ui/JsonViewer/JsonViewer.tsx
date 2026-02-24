@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { Code, CopyButton, ActionIcon, Group, Tooltip, ScrollArea, Box } from "@mantine/core";
+import { Code, CopyButton, ActionIcon, Group, Tooltip, ScrollArea, Box } from "@octofhir/ui-kit";
 import { IconCopy, IconCheck } from "@tabler/icons-react";
 import classes from "./JsonViewer.module.css";
 

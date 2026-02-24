@@ -13,7 +13,7 @@ import {
 	NumberInput,
 	SegmentedControl,
 	type ComboboxData,
-} from "@mantine/core";
+} from "@/shared/ui";
 import { IconPlus, IconTrash } from "@tabler/icons-react";
 import type { BuilderState, BuilderParam } from "../core/builder-model";
 import type { QueryInputMetadata } from "../core/types";
@@ -243,9 +243,9 @@ export function QueryChipsBuilder({
 			<Box
 				p="xs"
 				style={{
-					backgroundColor: "var(--app-surface-2)",
+					backgroundColor: "var(--octo-surface-2)",
 					borderRadius: "var(--mantine-radius-sm)",
-					border: "1px solid var(--app-border-subtle)",
+					border: "1px solid var(--octo-border-subtle)",
 				}}
 			>
 				<Text size="xs" fw={600} c="dimmed" mb={2}>
@@ -301,9 +301,9 @@ function ParamChip({
 			gap="xs"
 			p="xs"
 			style={{
-				backgroundColor: "var(--app-surface-2)",
+				backgroundColor: "var(--octo-surface-2)",
 				borderRadius: "var(--mantine-radius-sm)",
-				border: "1px solid var(--app-border-subtle)",
+				border: "1px solid var(--octo-border-subtle)",
 			}}
 		>
 			<Select
@@ -408,9 +408,9 @@ function SpecialParamChip({
 			gap="xs"
 			p="xs"
 			style={{
-				backgroundColor: "var(--app-surface-2)",
+				backgroundColor: "var(--octo-surface-2)",
 				borderRadius: "var(--mantine-radius-sm)",
-				border: "1px solid var(--app-border-subtle)",
+				border: "1px solid var(--octo-border-subtle)",
 			}}
 		>
 			<Badge size="sm" variant="light" color="orange" style={{ flexShrink: 0 }}>

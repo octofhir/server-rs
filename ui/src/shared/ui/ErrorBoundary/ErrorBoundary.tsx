@@ -11,7 +11,7 @@ import {
 	Center,
 	Collapse,
 	ScrollArea,
-} from "@mantine/core";
+} from "@octofhir/ui-kit";
 import { IconAlertTriangle, IconRefresh, IconHome, IconChevronDown, IconChevronUp } from "@tabler/icons-react";
 
 interface ErrorBoundaryProps {
@@ -123,8 +123,8 @@ function LayoutErrorFallback({ error, onRetry }: LayoutErrorFallbackProps) {
 				p="xl"
 				radius="lg"
 				style={{
-					background: "var(--app-surface-2)",
-					border: "1px solid var(--app-border-subtle)",
+					background: "var(--octo-surface-2)",
+					border: "1px solid var(--octo-border-subtle)",
 					maxWidth: 600,
 					width: "100%",
 				}}
@@ -179,8 +179,8 @@ function LayoutErrorFallback({ error, onRetry }: LayoutErrorFallbackProps) {
 									block
 									style={{
 										fontSize: "11px",
-										background: "var(--app-surface-3)",
-										border: "1px solid var(--app-border-subtle)",
+										background: "var(--octo-surface-3)",
+										border: "1px solid var(--octo-border-subtle)",
 									}}
 								>
 									{error.name}: {error.message}
@@ -191,8 +191,8 @@ function LayoutErrorFallback({ error, onRetry }: LayoutErrorFallbackProps) {
 											block
 											style={{
 												fontSize: "10px",
-												background: "var(--app-surface-3)",
-												border: "1px solid var(--app-border-subtle)",
+												background: "var(--octo-surface-3)",
+												border: "1px solid var(--octo-border-subtle)",
 											}}
 										>
 											{error.stack}

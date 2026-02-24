@@ -7,7 +7,7 @@ import {
   Tabs,
   Text,
   UnstyledButton,
-} from "@mantine/core";
+} from "@/shared/ui";
 import { IconChevronDown, IconChevronUp } from "@tabler/icons-react";
 import type * as monaco from "monaco-editor";
 import { useCallback, useState } from "react";
@@ -114,7 +114,7 @@ export function DiagnosticsPanel({
         overflow: "hidden",
         display: "flex",
         flexDirection: "column",
-        backgroundColor: "var(--app-surface-1)",
+        backgroundColor: "var(--octo-surface-1)",
       }}
     >
       {/* Header */}
@@ -122,7 +122,7 @@ export function DiagnosticsPanel({
         onClick={toggleCollapsed}
         style={{
           padding: "8px 12px",
-          backgroundColor: "var(--app-surface-2)",
+          backgroundColor: "var(--octo-surface-2)",
         }}
       >
         <Group justify="space-between">

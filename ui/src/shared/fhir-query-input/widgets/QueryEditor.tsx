@@ -1,7 +1,7 @@
 import { useRef, useEffect, useCallback } from "react";
 import Editor, { type OnMount, type OnChange } from "@monaco-editor/react";
 import type * as Monaco from "monaco-editor";
-import { useMantineColorScheme } from "@mantine/core";
+import { useMantineColorScheme } from "@octofhir/ui-kit";
 import {
 	registerFhirQueryLanguage,
 	LANGUAGE_ID,
@@ -137,7 +137,7 @@ export function QueryEditor({
 					? {}
 					: {
 							borderRadius: "var(--mantine-radius-md)",
-							border: "1px solid var(--app-border-subtle)",
+							border: "1px solid var(--octo-border-subtle)",
 						}),
 				position: "relative",
 			}}

@@ -129,7 +129,7 @@ export function DashboardPage() {
 								radius="lg"
 								className="dashboard-action-card"
 								style={{
-									backgroundColor: "var(--app-surface-1)",
+									backgroundColor: "var(--octo-surface-1)",
 									cursor: "pointer",
 									transition: "all 0.2s ease",
 								}}
@@ -174,7 +174,7 @@ export function DashboardPage() {
 				.dashboard-action-card:hover {
 					transform: translateY(-4px);
 					box-shadow: var(--mantine-shadow-md);
-					border-color: var(--app-accent-primary);
+					border-color: var(--octo-accent-primary);
 				}
 			`}} />
 		</Box>
@@ -196,7 +196,7 @@ function StatusCard() {
 			padding="xl"
 			radius="lg"
 			style={{
-				backgroundColor: "var(--app-surface-1)",
+				backgroundColor: "var(--octo-surface-1)",
 				position: "relative",
 				overflow: "hidden"
 			}}
@@ -245,7 +245,7 @@ function ResourceTypesCard() {
 			padding="xl"
 			radius="lg"
 			style={{
-				backgroundColor: "var(--app-surface-1)",
+				backgroundColor: "var(--octo-surface-1)",
 				position: "relative",
 				overflow: "hidden"
 			}}
@@ -257,7 +257,7 @@ function ResourceTypesCard() {
 					left: 0,
 					right: 0,
 					height: 4,
-					background: "var(--app-brand-gradient)"
+					background: "var(--octo-brand-gradient)"
 				}}
 			/>
 			<Group justify="space-between" align="flex-start" mb="md">

@@ -1,5 +1,5 @@
 .statCard {
-  background: var(--app-surface-1);
+  background: var(--octo-surface-1);
   transition: transform 150ms ease, box-shadow 150ms ease;
 }
 
@@ -9,7 +9,7 @@
 }
 
 .chartCard {
-  background: var(--app-surface-1);
+  background: var(--octo-surface-1);
 }
 
 .timeline {

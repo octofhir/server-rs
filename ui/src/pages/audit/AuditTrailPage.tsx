@@ -9,8 +9,8 @@ import {
 	Tabs,
 	ActionIcon,
 	Tooltip,
-} from "@mantine/core";
-import { notifications } from "@mantine/notifications";
+} from "@/shared/ui";
+import { notifications } from "@octofhir/ui-kit";
 import { IconShield, IconList, IconChartBar, IconX } from "@tabler/icons-react";
 import { useAuditEvents, useAuditAnalytics, exportAuditLogs } from "./lib/useAudit";
 import { AuditFilters } from "./ui/AuditFilters";

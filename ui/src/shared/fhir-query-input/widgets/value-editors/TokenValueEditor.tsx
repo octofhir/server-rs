@@ -1,5 +1,5 @@
 import { useCallback, useMemo } from "react";
-import { Group, TextInput, Text } from "@mantine/core";
+import { Group, TextInput, Text } from "@/shared/ui";
 
 export interface TokenValueEditorProps {
 	value: string;

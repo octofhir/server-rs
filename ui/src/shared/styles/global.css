@@ -1,6 +1,3 @@
-@import "./reset.css";
-@import "./variables.css";
-
 /* Load Fonts */
 @import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Outfit:wght@500;600;700&family=JetBrains+Mono:wght@400;500&display=swap");
 
@@ -20,8 +17,8 @@ html {
 }
 
 body {
-  background-color: var(--app-surface-1);
-  color: var(--app-text-primary);
+  background-color: var(--octo-surface-1);
+  color: var(--octo-text-primary);
   overflow-x: hidden;
 }
 
@@ -45,17 +42,17 @@ textarea {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: var(--app-border-subtle);
+  background: var(--octo-border-subtle);
   border-radius: 10px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--app-text-secondary);
+  background: var(--octo-text-secondary);
 }
 
 /* Selection */
 ::selection {
-  background-color: var(--app-accent-primary);
+  background-color: var(--octo-accent-primary);
   color: white;
 }
 
@@ -80,14 +77,6 @@ code {
   animation: softAppear 0.3s ease-out forwards;
 }
 
-/* Glassmorphism Utilities */
-.glass {
-  background: var(--app-glass-bg);
-  backdrop-filter: blur(var(--app-glass-blur));
-  -webkit-backdrop-filter: blur(var(--app-glass-blur));
-  border: 1px solid var(--app-glass-border);
-}
-
 /* Table Enhancements */
 .modern-table {
   width: 100%;
@@ -99,19 +88,19 @@ code {
   font-size: 12px;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  color: var(--app-text-secondary);
-  border-bottom: 1px solid var(--app-border-subtle);
+  color: var(--octo-text-secondary);
+  border-bottom: 1px solid var(--octo-border-subtle);
   font-weight: 600;
 }
 
 .modern-table td {
   padding: 14px 16px;
-  border-bottom: 1px solid var(--app-border-subtle);
+  border-bottom: 1px solid var(--octo-border-subtle);
   transition: background-color 0.1s ease;
 }
 
 .modern-table tr:hover td {
-  background-color: var(--app-surface-2);
+  background-color: var(--octo-surface-2);
 }
 
 /* Utility to remove all focus rings except for keyboard focus */
@@ -120,7 +109,7 @@ code {
 }
 
 :focus-visible {
-  outline: 2px solid var(--app-accent-primary);
+  outline: 2px solid var(--octo-accent-primary);
   outline-offset: 2px;
 }
 
@@ -134,7 +123,7 @@ code {
 }
 
 .custom-scrollbar:hover::-webkit-scrollbar-thumb {
-  background-color: var(--app-border-subtle);
+  background-color: var(--octo-border-subtle);
   border-radius: 4px;
 }
 
@@ -147,7 +136,7 @@ code {
   z-index: 9999 !important;
   border-radius: 6px !important;
   box-shadow: var(--mantine-shadow-lg) !important;
-  border: 1px solid var(--app-border-subtle) !important;
+  border: 1px solid var(--octo-border-subtle) !important;
 }
 
 /* Monaco Editor hover rendered at body level */

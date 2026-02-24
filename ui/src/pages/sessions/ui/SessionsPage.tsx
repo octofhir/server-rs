@@ -13,8 +13,8 @@ import {
   Text,
   Title,
   Tooltip,
-} from '@mantine/core';
-import { useDisclosure } from '@mantine/hooks';
+} from '@/shared/ui';
+import { useDisclosure } from '@octofhir/ui-kit';
 import {
   IconDeviceDesktop,
   IconDeviceMobile,
@@ -149,9 +149,8 @@ export function SessionsPage() {
             radius="lg"
             withBorder
             style={{
-              background: 'var(--app-glass-bg)',
-              backdropFilter: 'blur(var(--app-glass-blur))',
-              border: '1px solid var(--app-glass-border)',
+              background: 'var(--octo-surface-1)',
+              border: '1px solid var(--octo-border-subtle)',
             }}
           >
             <Stack gap="md">

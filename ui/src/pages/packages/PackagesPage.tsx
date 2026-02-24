@@ -21,7 +21,7 @@ import {
 	Button,
 	Select,
 } from "@/shared/ui";
-import { notifications } from "@mantine/notifications";
+import { notifications } from "@octofhir/ui-kit";
 import {
 	IconAlertCircle,
 	IconSearch,
@@ -111,7 +111,7 @@ function PackageCard({
 			shadow="sm"
 			padding="lg"
 			radius="md"
-			style={{ backgroundColor: "var(--app-surface-1)" }}
+			style={{ backgroundColor: "var(--octo-surface-1)" }}
 		>
 			<Group justify="space-between" mb="xs">
 				<Group gap="xs">
@@ -171,7 +171,7 @@ function PackageTableRow({
 				<Group gap="xs">
 					<IconPackage
 						size={16}
-						style={{ color: "var(--app-accent-primary)" }}
+						style={{ color: "var(--octo-accent-primary)" }}
 					/>
 					<Text fw={500}>{pkg.name}</Text>
 				</Group>
@@ -276,7 +276,7 @@ function InstalledPackagesTab({
 					</Text>
 
 					{filteredPackages.length === 0 ? (
-						<Paper p="xl" style={{ backgroundColor: "var(--app-surface-2)" }}>
+						<Paper p="xl" style={{ backgroundColor: "var(--octo-surface-2)" }}>
 							<Stack align="center" gap="md">
 								<ThemeIcon
 									size={rem(60)}
@@ -305,7 +305,7 @@ function InstalledPackagesTab({
 							))}
 						</SimpleGrid>
 					) : (
-						<Paper style={{ backgroundColor: "var(--app-surface-1)" }}>
+						<Paper style={{ backgroundColor: "var(--octo-surface-1)" }}>
 							<Table striped highlightOnHover>
 								<Table.Thead>
 									<Table.Tr>
@@ -391,7 +391,7 @@ function RegistryTab({
 
 	return (
 		<Stack gap="md">
-			<Paper p="md" style={{ backgroundColor: "var(--app-surface-2)" }}>
+			<Paper p="md" style={{ backgroundColor: "var(--octo-surface-2)" }}>
 				<Stack gap="md">
 					<Text size="sm" c="dimmed">
 						Search for packages in the FHIR Package Registry (fs.get-ig.org)
@@ -419,7 +419,7 @@ function RegistryTab({
 			)}
 
 			{searchData && searchData.packages.length > 0 && (
-				<Paper style={{ backgroundColor: "var(--app-surface-1)" }}>
+				<Paper style={{ backgroundColor: "var(--octo-surface-1)" }}>
 					<Table striped highlightOnHover>
 						<Table.Thead>
 							<Table.Tr>
@@ -437,7 +437,7 @@ function RegistryTab({
 										<Group gap="xs">
 											<IconPackage
 												size={16}
-												style={{ color: "var(--app-accent-primary)" }}
+												style={{ color: "var(--octo-accent-primary)" }}
 											/>
 											<Text fw={500} size="sm">
 												{pkg.name}
@@ -509,7 +509,7 @@ function RegistryTab({
 				)}
 
 			{!searchData && !searchLoading && (
-				<Paper p="xl" style={{ backgroundColor: "var(--app-surface-2)" }}>
+				<Paper p="xl" style={{ backgroundColor: "var(--octo-surface-2)" }}>
 					<Stack align="center" gap="md">
 						<ThemeIcon size={rem(60)} radius="xl" variant="light" color="fire">
 							<IconWorld size={30} />

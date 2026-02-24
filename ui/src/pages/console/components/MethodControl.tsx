@@ -1,4 +1,4 @@
-import { Select } from "@mantine/core";
+import { Select } from "@/shared/ui";
 import type { HttpMethod } from "@/shared/api";
 import { useUnit } from "effector-react";
 import { $method, setMethod } from "../state/consoleStore";

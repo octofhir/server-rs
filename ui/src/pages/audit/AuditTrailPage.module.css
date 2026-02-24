@@ -14,9 +14,8 @@
 
 .header {
   padding: var(--mantine-spacing-lg) var(--mantine-spacing-xl);
-  background: var(--app-glass-bg);
-  backdrop-filter: blur(var(--app-glass-blur));
-  border-bottom: 1px solid var(--app-glass-border);
+  background: var(--octo-surface-1);
+  border-bottom: 1px solid var(--octo-border-subtle);
   flex-shrink: 0;
 }
 
@@ -26,8 +25,8 @@
 
 .tabsList {
   padding: 0 var(--mantine-spacing-xl);
-  background: var(--app-surface-1);
-  border-bottom: 1px solid var(--app-border-subtle);
+  background: var(--octo-surface-1);
+  border-bottom: 1px solid var(--octo-border-subtle);
 }
 
 .content {
@@ -53,7 +52,7 @@
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  border-left: 1px solid var(--app-border-subtle);
+  border-left: 1px solid var(--octo-border-subtle);
 }
 
 .detailHeader {
@@ -61,13 +60,13 @@
   justify-content: space-between;
   align-items: center;
   padding: var(--mantine-spacing-sm) var(--mantine-spacing-md);
-  background: var(--app-surface-1);
-  border-bottom: 1px solid var(--app-border-subtle);
+  background: var(--octo-surface-1);
+  border-bottom: 1px solid var(--octo-border-subtle);
   flex-shrink: 0;
 }
 
 .analyticsContainer {
   flex: 1;
   overflow: auto;
-  background: var(--app-surface-2);
+  background: var(--octo-surface-2);
 }

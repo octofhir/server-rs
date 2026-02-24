@@ -1,5 +1,5 @@
 import { useCallback, useMemo } from "react";
-import { Group, Select, TextInput } from "@mantine/core";
+import { Group, Select, TextInput } from "@/shared/ui";
 import type { RestConsoleSearchParam } from "@/shared/api";
 
 export interface ReferenceValueEditorProps {

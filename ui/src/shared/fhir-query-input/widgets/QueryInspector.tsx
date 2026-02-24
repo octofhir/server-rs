@@ -8,7 +8,7 @@ import {
 	Box,
 	Code,
 	Table,
-} from "@mantine/core";
+} from "@/shared/ui";
 import {
 	IconCode,
 	IconMessageCircle,

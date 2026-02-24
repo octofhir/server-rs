@@ -19,8 +19,8 @@ import {
 	ScrollArea,
 	Alert,
 	Box,
-} from "@mantine/core";
-import { notifications } from "@mantine/notifications";
+} from "@/shared/ui";
+import { notifications } from "@octofhir/ui-kit";
 import {
 	IconSearch,
 	IconChevronLeft,
@@ -317,11 +317,11 @@ export function ResourceBrowserPage() {
 				display: "flex",
 				flexDirection: "column",
 				minHeight: 0,
-				backgroundColor: "var(--app-surface-1)",
+				backgroundColor: "var(--octo-surface-1)",
 				overflow: "hidden"
 			}}
 		>
-			<Box p="md" style={{ borderBottom: "1px solid var(--app-border-subtle)", backgroundColor: "var(--app-surface-2)" }}>
+			<Box p="md" style={{ borderBottom: "1px solid var(--octo-border-subtle)", backgroundColor: "var(--octo-surface-2)" }}>
 				<Group justify="space-between">
 					<Group gap="md">
 						<SegmentedControl
@@ -420,7 +420,7 @@ export function ResourceBrowserPage() {
 			withBorder
 			radius="lg"
 			style={{
-				backgroundColor: "var(--app-surface-1)",
+				backgroundColor: "var(--octo-surface-1)",
 				flex: 1,
 				display: "flex",
 				flexDirection: "column",
@@ -428,7 +428,7 @@ export function ResourceBrowserPage() {
 				overflow: "hidden"
 			}}
 		>
-			<Box p="md" style={{ borderBottom: "1px solid var(--app-border-subtle)", backgroundColor: "var(--app-surface-2)" }}>
+			<Box p="md" style={{ borderBottom: "1px solid var(--octo-border-subtle)", backgroundColor: "var(--octo-surface-2)" }}>
 				<Group justify="space-between">
 					<Group gap="sm">
 						{(hasNextPage || hasPrevPage) && (
@@ -496,7 +496,7 @@ export function ResourceBrowserPage() {
 										cursor: "pointer",
 										backgroundColor:
 											selectedId === resource.id
-												? "var(--app-accent-warm-bg)"
+												? "var(--octo-accent-warm-bg)"
 												: undefined,
 									}}
 								>
@@ -552,10 +552,10 @@ export function ResourceBrowserPage() {
 					position: "relative",
 					zIndex: 20,
 					transition: "background-color 0.2s ease",
-					backgroundColor: isResizing ? "var(--app-accent-primary)" : "transparent",
+					backgroundColor: isResizing ? "var(--octo-accent-primary)" : "transparent",
 				}}
 				onMouseEnter={(e) => {
-					if (!isResizing) e.currentTarget.style.backgroundColor = "var(--app-border-subtle)";
+					if (!isResizing) e.currentTarget.style.backgroundColor = "var(--octo-border-subtle)";
 				}}
 				onMouseLeave={(e) => {
 					if (!isResizing) e.currentTarget.style.backgroundColor = "transparent";
@@ -565,7 +565,7 @@ export function ResourceBrowserPage() {
 					style={{
 						width: 2,
 						height: 32,
-						backgroundColor: "var(--app-border-subtle)",
+						backgroundColor: "var(--octo-border-subtle)",
 						borderRadius: 2,
 						opacity: isResizing ? 0 : 1
 					}}
@@ -578,13 +578,13 @@ export function ResourceBrowserPage() {
 					width: panelWidth,
 					display: "flex",
 					flexDirection: "column",
-					backgroundColor: "var(--app-surface-1)",
+					backgroundColor: "var(--octo-surface-1)",
 					minHeight: 0,
 					overflow: "hidden",
 					boxShadow: "var(--mantine-shadow-xl)",
 				}}
 			>
-				<Box p="md" style={{ borderBottom: "1px solid var(--app-border-subtle)", backgroundColor: "var(--app-surface-2)" }}>
+				<Box p="md" style={{ borderBottom: "1px solid var(--octo-border-subtle)", backgroundColor: "var(--octo-surface-2)" }}>
 					<Group justify="space-between">
 						<Group gap="xs">
 							<Badge size="lg" radius="sm" variant="gradient" gradient={{ from: "primary", to: "fire", deg: 135 }}>
@@ -660,7 +660,7 @@ export function ResourceBrowserPage() {
 							/>
 						</Box>
 						{saveError && (
-							<Box p="md" style={{ borderTop: "1px solid var(--app-border-subtle)", backgroundColor: "var(--app-surface-2)" }}>
+							<Box p="md" style={{ borderTop: "1px solid var(--octo-border-subtle)", backgroundColor: "var(--octo-surface-2)" }}>
 								<Alert
 									color="red"
 									icon={<IconAlertCircle size={16} />}

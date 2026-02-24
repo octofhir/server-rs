@@ -8,7 +8,7 @@ import {
 	ActionIcon,
 	Tooltip,
 	Alert,
-} from "@mantine/core";
+} from "@/shared/ui";
 import { IconAlertTriangle, IconCopy, IconCheck } from "@tabler/icons-react";
 import { Modal } from "@/shared/ui/Modal/Modal";
 import { Button } from "@/shared/ui/Button/Button";

@@ -14,9 +14,8 @@ import {
   Loader,
   Center,
   Badge,
-} from "@mantine/core";
-import { modals } from "@mantine/modals";
-import { notifications } from "@mantine/notifications";
+} from "@/shared/ui";
+import { modals, notifications } from "@octofhir/ui-kit";
 import { useNavigate } from "react-router-dom";
 import {
   IconPlus,

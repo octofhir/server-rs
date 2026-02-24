@@ -304,6 +304,9 @@ fn convert_to_parsed_param(key: &str, values: &[String]) -> ParsedParam {
             "not" => Some(crate::parameters::SearchModifier::Not),
             "identifier" => Some(crate::parameters::SearchModifier::Identifier),
             "missing" => Some(crate::parameters::SearchModifier::Missing),
+            "ofType" => Some(crate::parameters::SearchModifier::OfType),
+            "code-text" => Some(crate::parameters::SearchModifier::CodeText),
+            "text-advanced" => Some(crate::parameters::SearchModifier::TextAdvanced),
             other if !other.is_empty() => {
                 Some(crate::parameters::SearchModifier::Type(other.to_string()))
             }
