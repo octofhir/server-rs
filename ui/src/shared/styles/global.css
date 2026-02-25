@@ -1,6 +1,3 @@
-/* Load Fonts */
-@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Outfit:wght@500;600;700&family=JetBrains+Mono:wght@400;500&display=swap");
-
 html,
 body,
 #root {
@@ -16,8 +13,26 @@ html {
   scroll-behavior: smooth;
 }
 
+:root,
+[data-mantine-color-scheme="light"] {
+  --octo-bg-grid-size: 56px;
+}
+
+[data-mantine-color-scheme="dark"] {
+  --octo-bg-grid-size: 42px;
+}
+
 body {
   background-color: var(--octo-surface-1);
+  background-image:
+    linear-gradient(to right, var(--octo-identity-grid) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--octo-identity-grid) 1px, transparent 1px),
+    radial-gradient(120% 70% at -5% -20%, var(--octo-identity-glow-primary) 0%, transparent 62%),
+    radial-gradient(90% 60% at 105% -5%, var(--octo-identity-glow-warm) 0%, transparent 66%),
+    linear-gradient(180deg, var(--octo-identity-base-top), var(--octo-identity-base-bottom));
+  background-size: var(--octo-bg-grid-size) var(--octo-bg-grid-size),
+    var(--octo-bg-grid-size) var(--octo-bg-grid-size), auto, auto, auto;
+  background-attachment: fixed;
   color: var(--octo-text-primary);
   overflow-x: hidden;
 }

@@ -1,11 +1,12 @@
 //! Background delivery processor for subscription events.
 //!
-//! Polls the event queue and delivers notifications with retry logic.
+//! Event-driven processor that wakes up when new events are enqueued
+//! instead of polling the database on a fixed interval.
 
 use std::sync::Arc;
 use std::time::Duration;
 
-use tokio::sync::watch;
+use tokio::sync::{watch, Notify};
 
 use super::websocket::WebSocketRegistry;
 use super::{DeliveryChannel, EmailChannel, RestHookChannel};
@@ -13,6 +14,9 @@ use crate::subscriptions::error::SubscriptionResult;
 use crate::subscriptions::storage::SubscriptionEventStorage;
 use crate::subscriptions::subscription_manager::SubscriptionManager;
 use crate::subscriptions::types::{DeliveryResult, SubscriptionChannel};
+
+/// Maximum idle timeout before a periodic check (catches retries with exponential backoff).
+const MAX_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Background delivery processor.
 pub struct DeliveryProcessor {
@@ -34,8 +38,8 @@ pub struct DeliveryProcessor {
     /// Batch size for claiming events
     batch_size: i32,
 
-    /// Poll interval when queue is empty
-    poll_interval: Duration,
+    /// Notify handle — wakes up the processor when new events are enqueued
+    event_notify: Arc<Notify>,
 }
 
 impl DeliveryProcessor {
@@ -45,6 +49,7 @@ impl DeliveryProcessor {
         subscription_manager: Arc<SubscriptionManager>,
         websocket_registry: Arc<WebSocketRegistry>,
     ) -> Self {
+        let event_notify = event_storage.event_notify();
         Self {
             event_storage,
             subscription_manager,
@@ -52,19 +57,13 @@ impl DeliveryProcessor {
             websocket_registry,
             email_channel: None,
             batch_size: 10,
-            poll_interval: Duration::from_secs(1),
+            event_notify,
         }
     }
 
     /// Set the batch size for claiming events.
     pub fn with_batch_size(mut self, batch_size: i32) -> Self {
         self.batch_size = batch_size;
-        self
-    }
-
-    /// Set the poll interval.
-    pub fn with_poll_interval(mut self, interval: Duration) -> Self {
-        self.poll_interval = interval;
         self
     }
 
@@ -90,14 +89,24 @@ impl DeliveryProcessor {
     }
 
     /// Start the delivery processor with a shutdown signal.
+    ///
+    /// The processor sleeps until woken by either:
+    /// - `event_notify` — a new event was enqueued
+    /// - `MAX_IDLE_TIMEOUT` — periodic check for events with retry backoff
+    /// - shutdown signal
     pub async fn run(self, mut shutdown: watch::Receiver<bool>) -> SubscriptionResult<()> {
-        tracing::info!("Starting subscription delivery processor");
+        tracing::info!("Starting subscription delivery processor (event-driven)");
 
         loop {
-            // Process a batch of events
-            self.process_batch().await;
+            // Process all available batches until the queue is drained
+            loop {
+                let processed = self.process_batch().await;
+                if !processed {
+                    break;
+                }
+            }
 
-            // Wait for shutdown signal or poll interval
+            // Wait for new events, periodic timeout, or shutdown
             tokio::select! {
                 biased;
 
@@ -111,14 +120,16 @@ impl DeliveryProcessor {
                             // Value changed but not to shutdown, continue
                         }
                         Err(_) => {
-                            // Sender was dropped - this means the server is shutting down
                             tracing::info!("Subscription delivery processor shutdown channel closed");
                             break;
                         }
                     }
                 }
-                _ = tokio::time::sleep(self.poll_interval) => {
-                    // Continue to next iteration
+                _ = self.event_notify.notified() => {
+                    // New event enqueued, process it
+                }
+                _ = tokio::time::sleep(MAX_IDLE_TIMEOUT) => {
+                    // Periodic check for events with retry backoff (next_retry_at may have arrived)
                 }
             }
         }
@@ -126,19 +137,19 @@ impl DeliveryProcessor {
         Ok(())
     }
 
-    /// Process a batch of events.
-    async fn process_batch(&self) {
+    /// Process a batch of events. Returns `true` if events were processed.
+    async fn process_batch(&self) -> bool {
         // Claim events from queue
         let events = match self.event_storage.claim_events(self.batch_size).await {
             Ok(events) => events,
             Err(e) => {
                 tracing::error!(error = %e, "Failed to claim subscription events");
-                return;
+                return false;
             }
         };
 
         if events.is_empty() {
-            return;
+            return false;
         }
 
         tracing::debug!(count = events.len(), "Processing subscription events");
@@ -272,5 +283,7 @@ impl DeliveryProcessor {
                 }
             }
         }
+
+        true
     }
 }

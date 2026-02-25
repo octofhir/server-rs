@@ -1,0 +1,37 @@
+.dropdown {
+    background-color: var(--octo-identity-panel);
+    border: 1px solid var(--octo-border-subtle);
+    box-shadow: var(--octo-effect-elevated);
+    backdrop-filter: blur(4px);
+}
+
+:global([data-mantine-color-scheme="dark"]) .dropdown {
+    backdrop-filter: blur(8px);
+    border-color: var(--octo-border-strong);
+}
+
+.label {
+    color: var(--octo-text-muted);
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+}
+
+.item {
+    border-radius: var(--octo-radius-sm);
+    color: var(--menu-item-color, var(--octo-text-primary));
+    transition: background-color var(--octo-motion-fast) var(--octo-motion-ease),
+        color var(--octo-motion-fast) var(--octo-motion-ease);
+}
+
+.item:where(:hover, :focus):where(:not(:disabled, [data-disabled])) {
+    background-color: var(--menu-item-hover, var(--octo-surface-2));
+}
+
+:global([data-mantine-color-scheme="dark"]) .item:where(:hover, :focus):where(:not(:disabled, [data-disabled])) {
+    background-color: var(--menu-item-hover, color-mix(in oklab, var(--octo-surface-3), transparent 8%));
+}
+
+.divider {
+    border-color: var(--octo-border-subtle);
+}

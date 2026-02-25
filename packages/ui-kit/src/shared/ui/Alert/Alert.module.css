@@ -1,0 +1,31 @@
+.root {
+    border: 1px solid var(--octo-border-subtle);
+    background-color: var(--octo-identity-panel);
+}
+
+.root[data-variant="light"] {
+    background-color: color-mix(in oklab, var(--alert-color), transparent 90%);
+    border-color: color-mix(in oklab, var(--alert-color), transparent 74%);
+}
+
+:global([data-mantine-color-scheme="dark"]) .root[data-variant="light"] {
+    background-color: color-mix(in oklab, var(--alert-color), transparent 84%);
+    border-color: color-mix(in oklab, var(--alert-color), transparent 66%);
+}
+
+.title {
+    font-weight: 600;
+    color: var(--octo-text-primary);
+}
+
+.label {
+    color: var(--octo-text-primary);
+}
+
+.message {
+    color: var(--octo-text-secondary);
+}
+
+.icon {
+    color: var(--alert-color);
+}

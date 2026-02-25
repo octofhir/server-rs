@@ -53,6 +53,19 @@ export {
 	useInstallPackageWithProgress,
 } from "./usePackageQueries";
 
+// DB Console queries (history, tables, active queries, index management)
+export {
+	dbConsoleKeys,
+	useQueryHistory,
+	useSaveHistory,
+	useClearHistory,
+	useDbTables,
+	useTableDetail,
+	useActiveQueries,
+	useTerminateQuery,
+	useDropIndex,
+} from "./useDbConsoleQueries";
+
 // Formatter configuration (LSP SQL formatting settings)
 export {
 	formatterKeys,

@@ -21,8 +21,11 @@ macro_rules! embedded_migrations {
                 "consolidated_schema",
                 include_str!("../../migrations/20241213000001_consolidated_schema.sql"),
             ),
-            // Add new migrations here:
-            // (20241214000001, "add_new_feature", include_str!("../../migrations/20241214000001_add_new_feature.sql")),
+            (
+                20260225000001i64,
+                "db_console_history",
+                include_str!("../../migrations/20260225000001_db_console_history.sql"),
+            ),
         ]
     };
 }

@@ -1,15 +1,18 @@
 .input {
     border: 1px solid var(--octo-border-subtle);
     background-color: var(--octo-surface-1);
+    background-image: linear-gradient(180deg, var(--octo-surface-1), color-mix(in oklab, var(--octo-surface-1), black 2%));
     border-radius: var(--octo-radius-md);
     transition: border-color var(--octo-motion-normal) var(--octo-motion-ease),
-        box-shadow var(--octo-motion-normal) var(--octo-motion-ease);
+        box-shadow var(--octo-motion-normal) var(--octo-motion-ease),
+        background-color var(--octo-motion-normal) var(--octo-motion-ease);
     color: var(--octo-text-primary);
+    box-shadow: var(--octo-effect-surface-inset);
 }
 
 .input:focus {
     border-color: var(--octo-accent-primary);
-    box-shadow: 0 0 0 2px var(--octo-focus-ring);
+    box-shadow: 0 0 0 2px var(--octo-focus-ring), var(--octo-effect-surface-inset);
 }
 
 .label {
@@ -17,12 +20,27 @@
     font-size: 0.875rem;
     margin-bottom: 4px;
     color: var(--octo-text-secondary);
+    letter-spacing: 0.01em;
+}
+
+.description {
+    color: var(--octo-text-muted);
+}
+
+.error {
+    color: var(--octo-accent-fire);
 }
 
 .dropdown {
-    background-color: var(--octo-surface-1);
+    background-color: var(--octo-identity-panel);
     border: 1px solid var(--octo-border-subtle);
-    box-shadow: var(--mantine-shadow-sm);
+    box-shadow: var(--octo-effect-elevated);
+    backdrop-filter: blur(4px);
+}
+
+:global([data-mantine-color-scheme="dark"]) .dropdown {
+    backdrop-filter: blur(8px);
+    border-color: var(--octo-border-strong);
 }
 
 .option[data-combobox-selected] {
@@ -32,4 +50,8 @@
 
 .option[data-combobox-active] {
     background-color: var(--octo-surface-2);
+}
+
+.section {
+    color: var(--octo-text-secondary);
 }

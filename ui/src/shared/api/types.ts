@@ -111,6 +111,95 @@ export interface SqlResponse {
   executionTimeMs: number;
 }
 
+// DB Console types
+export interface QueryHistoryEntry {
+  id: string;
+  userId: string;
+  query: string;
+  executionTimeMs?: number;
+  rowCount?: number;
+  isError: boolean;
+  errorMessage?: string;
+  createdAt: string;
+}
+
+export interface QueryHistoryResponse {
+  entries: QueryHistoryEntry[];
+}
+
+export interface SaveHistoryRequest {
+  query: string;
+  executionTimeMs?: number;
+  rowCount?: number;
+  isError: boolean;
+  errorMessage?: string;
+}
+
+export interface DbTableInfo {
+  schema: string;
+  name: string;
+  tableType: string;
+  rowEstimate?: number;
+}
+
+export interface TablesResponse {
+  tables: DbTableInfo[];
+}
+
+export interface DbColumnInfo {
+  name: string;
+  dataType: string;
+  isNullable: boolean;
+  defaultValue?: string;
+}
+
+export interface DbIndexInfo {
+  name: string;
+  columns: string[];
+  isUnique: boolean;
+  isPrimary: boolean;
+  indexType: string;
+  sizeBytes?: number;
+}
+
+export interface TableDetailResponse {
+  schema: string;
+  name: string;
+  columns: DbColumnInfo[];
+  indexes: DbIndexInfo[];
+}
+
+export interface ActiveQuery {
+  pid: number;
+  username?: string;
+  database?: string;
+  query?: string;
+  state?: string;
+  queryStart?: string;
+  durationMs?: number;
+  waitEventType?: string;
+  waitEvent?: string;
+}
+
+export interface ActiveQueriesResponse {
+  queries: ActiveQuery[];
+}
+
+export interface TerminateQueryRequest {
+  pid: number;
+  force?: boolean;
+}
+
+export interface TerminateQueryResponse {
+  success: boolean;
+  terminated: boolean;
+}
+
+export interface DropIndexResponse {
+  success: boolean;
+  message: string;
+}
+
 // Auth types
 export interface LoginRequest {
   grant_type: "password";

@@ -2,11 +2,14 @@
 //!
 //! Provides database operations for the subscription event queue using PostgreSQL.
 
+use std::sync::Arc;
+
 use sqlx_core::query::query;
 use sqlx_core::query_scalar::query_scalar;
 use sqlx_core::row::Row;
 use sqlx_postgres::{PgPool, PgRow};
 use time::OffsetDateTime;
+use tokio::sync::Notify;
 use uuid::Uuid;
 
 use super::error::{SubscriptionError, SubscriptionResult};
@@ -19,12 +22,22 @@ use super::types::{
 #[derive(Clone)]
 pub struct SubscriptionEventStorage {
     pool: PgPool,
+    /// Notify the delivery processor when new events are enqueued.
+    event_notify: Arc<Notify>,
 }
 
 impl SubscriptionEventStorage {
     /// Create a new event storage instance.
     pub fn new(pool: PgPool) -> Self {
-        Self { pool }
+        Self {
+            pool,
+            event_notify: Arc::new(Notify::new()),
+        }
+    }
+
+    /// Get the notify handle for waking up the delivery processor.
+    pub fn event_notify(&self) -> Arc<Notify> {
+        self.event_notify.clone()
     }
 
     /// Enqueue a new subscription event for delivery.
@@ -75,6 +88,8 @@ impl SubscriptionEventStorage {
         .bind(&notification_bundle)
         .execute(&self.pool)
         .await?;
+
+        self.event_notify.notify_one();
 
         Ok(id.to_string())
     }

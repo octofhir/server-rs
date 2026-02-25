@@ -1,6 +1,8 @@
 import type {
+  ActiveQueriesResponse,
   BuildInfo,
   CategorizedResourceTypesResponse,
+  DropIndexResponse,
   GraphQLResponse,
   HealthResponse,
   HttpResponse,
@@ -14,10 +16,16 @@ import type {
   PackageLookupResponse,
   PackageResourcesResponse,
   PackageSearchResponse,
+  QueryHistoryResponse,
   RestConsoleResponse,
+  SaveHistoryRequest,
   ServerSettings,
   SqlResponse,
   SqlValue,
+  TableDetailResponse,
+  TablesResponse,
+  TerminateQueryRequest,
+  TerminateQueryResponse,
 } from "./types";
 import { authInterceptor } from "./authInterceptor";
 
@@ -199,6 +207,63 @@ class ServerApiClient {
       method: "POST",
       body: JSON.stringify(body),
     });
+    return response.data;
+  }
+
+  // =========================================================================
+  // DB Console API
+  // =========================================================================
+
+  async getQueryHistory(): Promise<QueryHistoryResponse> {
+    const response = await this.request<QueryHistoryResponse>("/api/db-console/history");
+    return response.data;
+  }
+
+  async saveQueryHistory(req: SaveHistoryRequest): Promise<{ success: boolean }> {
+    const response = await this.request<{ success: boolean }>("/api/db-console/history", {
+      method: "POST",
+      body: JSON.stringify(req),
+    });
+    return response.data;
+  }
+
+  async clearQueryHistory(): Promise<{ success: boolean }> {
+    const response = await this.request<{ success: boolean }>("/api/db-console/history", {
+      method: "DELETE",
+    });
+    return response.data;
+  }
+
+  async getDbTables(): Promise<TablesResponse> {
+    const response = await this.request<TablesResponse>("/api/db-console/tables");
+    return response.data;
+  }
+
+  async getTableDetail(schema: string, table: string): Promise<TableDetailResponse> {
+    const response = await this.request<TableDetailResponse>(
+      `/api/db-console/tables/${encodeURIComponent(schema)}/${encodeURIComponent(table)}`,
+    );
+    return response.data;
+  }
+
+  async getActiveQueries(): Promise<ActiveQueriesResponse> {
+    const response = await this.request<ActiveQueriesResponse>("/api/db-console/active-queries");
+    return response.data;
+  }
+
+  async terminateQuery(req: TerminateQueryRequest): Promise<TerminateQueryResponse> {
+    const response = await this.request<TerminateQueryResponse>("/api/db-console/terminate-query", {
+      method: "POST",
+      body: JSON.stringify(req),
+    });
+    return response.data;
+  }
+
+  async dropIndex(schema: string, indexName: string): Promise<DropIndexResponse> {
+    const response = await this.request<DropIndexResponse>(
+      `/api/db-console/indexes/${encodeURIComponent(schema)}/${encodeURIComponent(indexName)}`,
+      { method: "DELETE" },
+    );
     return response.data;
   }
 

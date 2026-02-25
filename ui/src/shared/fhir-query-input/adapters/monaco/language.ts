@@ -48,7 +48,7 @@ export function registerFhirQueryLanguage(monaco: typeof Monaco): void {
 				[/[a-z][\w.-]*(?=[:=])/, "variable"],
 
 				// Values
-				[/[^\s?&=,:\/]+/, "string.value"],
+				[/[^\s?&=,:/]+/, "string.value"],
 			],
 		},
 	} as Monaco.languages.IMonarchLanguage);

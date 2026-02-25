@@ -1,0 +1,41 @@
+.root {
+    border: 1px solid transparent;
+    transition: background-color var(--octo-motion-normal) var(--octo-motion-ease),
+        border-color var(--octo-motion-normal) var(--octo-motion-ease),
+        transform var(--octo-motion-fast) var(--octo-motion-ease);
+}
+
+.root:active:not([data-disabled]) {
+    transform: scale(0.97);
+}
+
+.root[data-variant="light"] {
+    background-color: var(--ti-bg, var(--octo-accent-primary-bg));
+    color: var(--ti-color, var(--octo-accent-primary));
+    border-color: var(--ti-bd, color-mix(in oklab, var(--octo-accent-primary), transparent 78%));
+}
+
+.root[data-variant="light"]:hover:not([data-disabled]) {
+    background-color: color-mix(in oklab, var(--ti-bg, var(--octo-accent-primary-bg)), white 10%);
+}
+
+.root[data-variant="filled"] {
+    background-color: var(--ti-bg, var(--octo-accent-primary));
+    color: var(--ti-color, var(--octo-text-inverse));
+    border-color: var(--ti-bd, transparent);
+    box-shadow: var(--octo-effect-button-inset-top), var(--octo-effect-button-inset-bottom);
+}
+
+.root[data-variant="filled"]:hover:not([data-disabled]) {
+    background-color: color-mix(in oklab, var(--ti-bg, var(--octo-accent-primary)), white 6%);
+}
+
+.root[data-variant="outline"] {
+    background-color: transparent;
+    color: var(--ti-color, var(--octo-accent-primary));
+    border-color: var(--ti-bd, var(--octo-accent-primary));
+}
+
+.root[data-variant="outline"]:hover:not([data-disabled]) {
+    background-color: color-mix(in oklab, var(--ti-color, var(--octo-accent-primary)), transparent 90%);
+}

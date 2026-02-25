@@ -1830,6 +1830,33 @@ fn build_router(state: AppState, body_limit: usize, compression: bool) -> Router
             "/api/$sql",
             axum::routing::post(crate::operations::sql::sql_operation),
         )
+        // DB Console API endpoints
+        .route(
+            "/api/db-console/history",
+            get(crate::operations::db_console_api::list_history)
+                .post(crate::operations::db_console_api::save_history)
+                .delete(crate::operations::db_console_api::clear_history),
+        )
+        .route(
+            "/api/db-console/tables",
+            get(crate::operations::db_console_api::list_tables),
+        )
+        .route(
+            "/api/db-console/tables/{schema}/{table}",
+            get(crate::operations::db_console_api::get_table_detail),
+        )
+        .route(
+            "/api/db-console/active-queries",
+            get(crate::operations::db_console_api::list_active_queries),
+        )
+        .route(
+            "/api/db-console/terminate-query",
+            axum::routing::post(crate::operations::db_console_api::terminate_query),
+        )
+        .route(
+            "/api/db-console/indexes/{schema}/{index_name}",
+            axum::routing::delete(crate::operations::db_console_api::drop_index),
+        )
         // LSP WebSocket endpoints (authenticated)
         .route("/api/lsp/pg", get(crate::lsp::pg_lsp_websocket_handler))
         .route(

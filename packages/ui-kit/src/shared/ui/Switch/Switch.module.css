@@ -1,0 +1,31 @@
+.track {
+    border: 1px solid var(--octo-border-strong);
+    background-color: var(--octo-surface-3);
+    transition: background-color var(--octo-motion-normal) var(--octo-motion-ease),
+        border-color var(--octo-motion-normal) var(--octo-motion-ease),
+        box-shadow var(--octo-motion-normal) var(--octo-motion-ease);
+}
+
+.track[data-checked] {
+    border-color: var(--octo-accent-primary);
+    background-color: var(--octo-accent-primary);
+    box-shadow: var(--octo-effect-button-inset-top), var(--octo-effect-button-inset-bottom);
+}
+
+.root:focus-within .track {
+    box-shadow: 0 0 0 2px var(--octo-focus-ring);
+}
+
+.thumb {
+    background-color: oklch(100% 0 0);
+    border: 1px solid color-mix(in oklab, var(--octo-border-strong), transparent 42%);
+}
+
+.label {
+    color: var(--octo-text-primary);
+    font-weight: 500;
+}
+
+:global([data-mantine-color-scheme="dark"]) .track {
+    border-color: var(--octo-border-strong);
+}

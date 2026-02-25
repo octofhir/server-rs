@@ -1,0 +1,282 @@
+/* Terminal Fusion layout — CSS Grid with schema rail + main stream */
+
+.container {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  grid-template-rows: auto 1fr auto;
+  grid-template-areas:
+    "rail toolbar"
+    "rail stream"
+    "rail editor";
+  height: 100vh;
+  background: var(--octo-surface-1);
+  overflow: hidden;
+}
+
+/* ─── Toolbar ─── */
+
+.toolbar {
+  grid-area: toolbar;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 var(--mantine-spacing-md);
+  height: 40px;
+  border-bottom: 1px solid var(--octo-border-subtle);
+  flex-shrink: 0;
+  gap: var(--mantine-spacing-sm);
+  background: var(--octo-surface-1);
+}
+
+/* ─── Schema Rail ─── */
+
+.rail {
+  grid-area: rail;
+  width: 56px;
+  border-right: 1px solid var(--octo-border-subtle);
+  background: var(--octo-surface-1);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  transition: width var(--octo-motion-normal, 150ms) cubic-bezier(0.4, 0, 0.2, 1);
+  z-index: 10;
+}
+
+.railExpanded {
+  width: 320px;
+}
+
+/* ─── Execution Stream ─── */
+
+.stream {
+  grid-area: stream;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: var(--mantine-spacing-sm) var(--mantine-spacing-md);
+  display: flex;
+  flex-direction: column;
+  gap: var(--mantine-spacing-xs);
+}
+
+.historySectionToggle {
+  display: flex;
+  align-items: center;
+  padding: 4px 8px;
+  border-radius: var(--mantine-radius-sm);
+  color: var(--mantine-color-dimmed);
+}
+
+.historySectionToggle:hover {
+  background: var(--octo-surface-2);
+}
+
+.streamSeparator {
+  height: 1px;
+  background: var(--octo-border-subtle);
+  margin: 4px 0;
+}
+
+/* ─── Prompt Editor (bottom-pinned) ─── */
+
+.editor {
+  grid-area: editor;
+  background: var(--octo-surface-2);
+  border-top: 1px solid var(--octo-border-subtle);
+  box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.05);
+  border-radius: var(--mantine-radius-lg) var(--mantine-radius-lg) 0 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* ─── Stream Entry Card ─── */
+
+.entryCard {
+  background: var(--octo-surface-2);
+  border: 1px solid var(--octo-border-subtle);
+  border-radius: var(--mantine-radius-md);
+  transition: box-shadow var(--octo-motion-fast, 100ms) ease;
+}
+
+.entryCard:hover {
+  box-shadow: var(--octo-shadow-xs);
+}
+
+.entryCardSuccess {
+  border-left: 3px solid var(--octo-accent-primary);
+}
+
+.entryCardError {
+  border-left: 3px solid var(--octo-accent-fire);
+}
+
+.entryCardPending {
+  border-left: 3px solid var(--octo-accent-warm);
+}
+
+.entryQueryCode {
+  display: block;
+  width: 100%;
+  font-family: var(--font-mono, "JetBrains Mono", "Fira Code", monospace);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-all;
+  padding: 6px 10px 2px;
+  cursor: pointer;
+  transition: background var(--octo-motion-fast, 100ms) ease;
+  text-align: left;
+}
+
+.entryQueryCode:hover {
+  background: var(--octo-surface-3, var(--octo-surface-1));
+}
+
+.entryMeta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 2px 10px 4px;
+  opacity: 0.6;
+  transition: opacity var(--octo-motion-fast, 100ms) ease;
+}
+
+.entryActions {
+  opacity: 0;
+  transition: opacity var(--octo-motion-fast, 100ms) ease;
+}
+
+.entryCard:hover .entryMeta {
+  opacity: 1;
+}
+
+.entryCard:hover .entryActions {
+  opacity: 1;
+}
+
+/* ─── Prompt Glyph ─── */
+
+.promptContainer {
+  display: flex;
+  flex-direction: column;
+}
+
+.promptToolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 12px;
+  gap: var(--mantine-spacing-xs);
+}
+
+.promptBody {
+  display: flex;
+  align-items: stretch;
+  min-height: 60px;
+  max-height: 300px;
+}
+
+.promptGlyph {
+  display: flex;
+  align-items: flex-start;
+  padding: 16px 0 0 12px;
+  font-family: var(--font-mono, "JetBrains Mono", "Fira Code", monospace);
+  font-weight: 700;
+  font-size: 14px;
+  color: var(--octo-accent-primary);
+  user-select: none;
+  flex-shrink: 0;
+  width: 40px;
+}
+
+.promptEditorWrap {
+  flex: 1;
+  min-height: 60px;
+  overflow: hidden;
+}
+
+/* ─── Schema Rail Items ─── */
+
+.railHeader {
+  padding: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-bottom: 1px solid var(--octo-border-subtle);
+  flex-shrink: 0;
+  height: 40px;
+}
+
+.railContent {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.railBadge {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 600;
+  font-family: var(--font-mono, "JetBrains Mono", "Fira Code", monospace);
+  cursor: pointer;
+  transition: all var(--octo-motion-fast, 100ms) ease;
+  flex-shrink: 0;
+  text-transform: lowercase;
+}
+
+.railBadge:hover {
+  transform: scale(1.1);
+}
+
+.railBadgeFhir {
+  background: var(--mantine-color-primary-light);
+  color: var(--mantine-color-primary-light-color);
+}
+
+.railBadgeSystem {
+  background: var(--mantine-color-deep-light);
+  color: var(--mantine-color-deep-light-color);
+}
+
+.railItem {
+  display: flex;
+  align-items: center;
+  padding: 4px 8px;
+  justify-content: center;
+}
+
+.railItemExpanded {
+  justify-content: flex-start;
+  padding: 6px 12px;
+  gap: 8px;
+  cursor: pointer;
+  transition: background var(--octo-motion-fast, 100ms) ease;
+}
+
+.railItemExpanded:hover {
+  background: var(--octo-surface-2);
+}
+
+.railSeparator {
+  height: 1px;
+  background: var(--octo-border-subtle);
+  margin: 4px 8px;
+}
+
+/* ─── Empty State ─── */
+
+.emptyState {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  gap: var(--mantine-spacing-sm);
+  opacity: 0.6;
+}

@@ -1,0 +1,9 @@
+.root {
+    border: 1px solid var(--octo-border-subtle);
+    background-color: var(--octo-identity-panel);
+    box-shadow: var(--octo-effect-surface-inset);
+}
+
+:global([data-mantine-color-scheme="dark"]) .root {
+    border-color: var(--octo-border-strong);
+}

@@ -5,15 +5,23 @@
 .input {
     border: 1px solid var(--octo-border-subtle);
     background-color: var(--octo-surface-1);
+    background-image: linear-gradient(180deg, var(--octo-surface-1), color-mix(in oklab, var(--octo-surface-1), black 2%));
     border-radius: var(--octo-radius-md);
     transition: border-color var(--octo-motion-normal) var(--octo-motion-ease),
-        box-shadow var(--octo-motion-normal) var(--octo-motion-ease);
+        box-shadow var(--octo-motion-normal) var(--octo-motion-ease),
+        background-color var(--octo-motion-normal) var(--octo-motion-ease);
     color: var(--octo-text-primary);
+    box-shadow: var(--octo-effect-surface-inset);
 }
 
 .input:focus {
     border-color: var(--octo-accent-primary);
-    box-shadow: 0 0 0 2px var(--octo-focus-ring);
+    background-color: var(--octo-surface-1);
+    box-shadow: 0 0 0 2px var(--octo-focus-ring), var(--octo-effect-surface-inset);
+}
+
+.section {
+    color: var(--octo-text-secondary);
 }
 
 .label {
@@ -21,4 +29,13 @@
     font-size: 0.875rem;
     margin-bottom: 4px;
     color: var(--octo-text-secondary);
+    letter-spacing: 0.01em;
+}
+
+.description {
+    color: var(--octo-text-muted);
+}
+
+.error {
+    color: var(--octo-accent-fire);
 }

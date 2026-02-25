@@ -671,9 +671,23 @@ impl SqlMode {
 
         match self {
             SqlMode::Readonly => {
+                // Allow EXPLAIN/EXPLAIN ANALYZE for SELECT queries
+                let check_query = if query_upper.starts_with("EXPLAIN") {
+                    query_upper
+                        .strip_prefix("EXPLAIN ANALYZE")
+                        .or_else(|| query_upper.strip_prefix("EXPLAIN"))
+                        .map(|s| s.trim_start())
+                        .unwrap_or(&query_upper)
+                } else {
+                    &query_upper
+                };
+
                 // Must start with SELECT or WITH
-                if !query_upper.starts_with("SELECT") && !query_upper.starts_with("WITH") {
-                    return Err("Only SELECT queries are allowed in readonly mode".to_string());
+                if !check_query.starts_with("SELECT") && !check_query.starts_with("WITH") {
+                    return Err(
+                        "Only SELECT queries (and EXPLAIN of SELECT) are allowed in readonly mode"
+                            .to_string(),
+                    );
                 }
                 // Check for dangerous keywords that could be in subqueries
                 let forbidden = [
@@ -681,7 +695,7 @@ impl SqlMode {
                     "REVOKE",
                 ];
                 for kw in forbidden {
-                    if query_upper.contains(kw) {
+                    if check_query.contains(kw) {
                         return Err(format!("{} is not allowed in readonly mode", kw));
                     }
                 }

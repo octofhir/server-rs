@@ -1,6 +1,9 @@
 .table {
     width: 100%;
     border-spacing: 0;
+    border: 1px solid var(--octo-border-subtle);
+    border-radius: var(--octo-radius-md);
+    overflow: hidden;
 }
 
 .th {
@@ -11,6 +14,7 @@
     color: var(--octo-text-secondary);
     border-bottom: 1px solid var(--octo-border-subtle);
     font-weight: 600;
+    background-color: color-mix(in oklab, var(--octo-surface-2), var(--octo-accent-primary-bg) 10%);
 }
 
 .td {
@@ -22,4 +26,21 @@
 
 .tr:hover .td {
     background-color: var(--octo-surface-2);
+}
+
+.tr:nth-of-type(even) .td {
+    background-color: color-mix(in oklab, var(--octo-surface-1), var(--octo-accent-primary-bg) 8%);
+}
+
+:global([data-mantine-color-scheme="dark"]) .th {
+    background-color: color-mix(in oklab, var(--octo-surface-2), var(--octo-accent-primary-bg) 22%);
+    border-bottom-color: var(--octo-border-strong);
+}
+
+:global([data-mantine-color-scheme="dark"]) .tr:nth-of-type(even) .td {
+    background-color: color-mix(in oklab, var(--octo-surface-1), var(--octo-accent-primary-bg) 16%);
+}
+
+:global([data-mantine-color-scheme="dark"]) .table {
+    border-color: var(--octo-border-strong);
 }

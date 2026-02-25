@@ -1,22 +1,40 @@
 .root {
     background-color: var(--octo-surface-2);
+    background-image: linear-gradient(180deg, var(--octo-surface-1), var(--octo-surface-2));
     border: 1px solid var(--octo-border-subtle);
     border-radius: var(--octo-radius-md);
-    padding: 2px;
+    box-shadow: var(--octo-effect-surface-inset);
+    padding: 3px;
 }
 
 .indicator {
     background-color: var(--octo-accent-primary);
+    background-image: linear-gradient(
+        180deg,
+        var(--octo-accent-primary-gradient-from),
+        var(--octo-accent-primary-gradient-to)
+    );
     border-radius: var(--octo-radius-sm);
-    box-shadow: var(--mantine-shadow-xs);
+    box-shadow: var(--octo-effect-button-inset-top), var(--octo-effect-button-inset-bottom);
 }
 
 .control {
     color: var(--octo-text-secondary);
-    font-weight: 500;
-    transition: color var(--octo-motion-normal) var(--octo-motion-ease);
+    font-weight: 600;
+    letter-spacing: 0.01em;
+    transition: color var(--octo-motion-normal) var(--octo-motion-ease),
+        transform var(--octo-motion-fast) var(--octo-motion-ease);
+}
+
+.control:hover {
+    color: var(--octo-text-primary);
 }
 
 .control[data-active] {
     color: var(--octo-text-inverse);
+    transform: translateY(-1px);
+}
+
+:global([data-mantine-color-scheme="dark"]) .root {
+    border-color: var(--octo-border-strong);
 }

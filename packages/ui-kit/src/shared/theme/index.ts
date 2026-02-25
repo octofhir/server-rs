@@ -1,4 +1,5 @@
 import {
+    Alert,
     createTheme,
     virtualColor,
     type MantineThemeOverride,
@@ -6,23 +7,46 @@ import {
     ActionIcon,
     Badge,
     Button,
+    Card,
+    Checkbox,
+    Menu,
+    Modal,
+    MultiSelect,
+    NavLink,
+    NumberInput,
+    Paper,
+    PasswordInput,
     Select,
+    Switch,
     Table,
     Tabs,
+    Textarea,
     TextInput,
+    ThemeIcon,
     SegmentedControl,
 } from "@mantine/core";
+import { DateInput, DateTimePicker } from "@mantine/dates";
 import { palette } from "./colors";
 import { tokens, type OctoTokens } from "./tokens";
 import { generateCSSVariables } from "./utils";
 
+import alertClasses from "../ui/Alert/Alert.module.css";
 import actionIconClasses from "../ui/ActionIcon/ActionIcon.module.css";
 import badgeClasses from "../ui/Badge/Badge.module.css";
 import buttonClasses from "../ui/Button/Button.module.css";
+import cardClasses from "../ui/Card/Card.module.css";
+import checkboxClasses from "../ui/Checkbox/Checkbox.module.css";
+import menuClasses from "../ui/Menu/Menu.module.css";
+import modalClasses from "../ui/Modal/Modal.module.css";
+import multiSelectClasses from "../ui/MultiSelect/MultiSelect.module.css";
+import navLinkClasses from "../ui/NavLink/NavLink.module.css";
+import paperClasses from "../ui/Paper/Paper.module.css";
 import selectClasses from "../ui/Select/Select.module.css";
+import switchClasses from "../ui/Switch/Switch.module.css";
 import tableClasses from "../ui/Table/Table.module.css";
 import tabsClasses from "../ui/Tabs/Tabs.module.css";
 import textInputClasses from "../ui/TextInput/TextInput.module.css";
+import themeIconClasses from "../ui/ThemeIcon/ThemeIcon.module.css";
 import segmentedControlClasses from "../ui/SegmentedControl/SegmentedControl.module.css";
 
 export type OctoThemeOther = OctoTokens;
@@ -34,7 +58,7 @@ declare module "@mantine/core" {
 export const theme: MantineThemeOverride = createTheme({
     primaryColor: "primary",
     primaryShade: { light: 5, dark: 4 },
-    defaultGradient: { from: "primary.5", to: "fire.5", deg: 135 },
+    defaultGradient: { from: "primary.4", to: "warm.4", deg: 122 },
     colors: {
         ...palette,
         success: virtualColor({ name: "success", dark: "primary", light: "primary" }),
@@ -102,20 +126,23 @@ export const theme: MantineThemeOverride = createTheme({
                 size: "md",
             },
         }),
-        Card: {
+        Card: Card.extend({
+            classNames: cardClasses,
             defaultProps: {
                 radius: "lg",
                 shadow: "xs",
                 padding: "md",
             },
-        },
-        Paper: {
+        }),
+        Paper: Paper.extend({
+            classNames: paperClasses,
             defaultProps: {
                 radius: "lg",
                 shadow: "xs",
             },
-        },
-        Modal: {
+        }),
+        Modal: Modal.extend({
+            classNames: modalClasses,
             defaultProps: {
                 radius: "xl",
                 centered: true,
@@ -124,9 +151,55 @@ export const theme: MantineThemeOverride = createTheme({
                     opacity: 0.4,
                 },
             },
-        },
+        }),
+        Menu: Menu.extend({
+            classNames: menuClasses,
+            defaultProps: {
+                radius: "md",
+                shadow: "md",
+            },
+        }),
+        NavLink: NavLink.extend({
+            classNames: navLinkClasses,
+            defaultProps: {
+                variant: "subtle",
+            },
+        }),
+        Checkbox: Checkbox.extend({
+            classNames: checkboxClasses,
+            defaultProps: {
+                radius: "sm",
+            },
+        }),
+        Switch: Switch.extend({
+            classNames: switchClasses,
+            defaultProps: {
+                radius: "xl",
+            },
+        }),
+        Alert: Alert.extend({
+            classNames: alertClasses,
+            defaultProps: {
+                radius: "md",
+                variant: "light",
+            },
+        }),
+        ThemeIcon: ThemeIcon.extend({
+            classNames: themeIconClasses,
+            defaultProps: {
+                variant: "light",
+                radius: "md",
+            },
+        }),
         Select: Select.extend({
             classNames: selectClasses,
+            defaultProps: {
+                radius: "md",
+                size: "sm",
+            },
+        }),
+        MultiSelect: MultiSelect.extend({
+            classNames: multiSelectClasses,
             defaultProps: {
                 radius: "md",
                 size: "sm",
@@ -144,6 +217,41 @@ export const theme: MantineThemeOverride = createTheme({
                 highlightOnHover: true,
                 verticalSpacing: "sm",
                 horizontalSpacing: "md",
+            },
+        }),
+        Textarea: Textarea.extend({
+            classNames: textInputClasses,
+            defaultProps: {
+                radius: "md",
+                size: "sm",
+            },
+        }),
+        NumberInput: NumberInput.extend({
+            classNames: textInputClasses,
+            defaultProps: {
+                radius: "md",
+                size: "sm",
+            },
+        }),
+        PasswordInput: PasswordInput.extend({
+            classNames: textInputClasses,
+            defaultProps: {
+                radius: "md",
+                size: "sm",
+            },
+        }),
+        DateInput: DateInput.extend({
+            classNames: selectClasses,
+            defaultProps: {
+                radius: "md",
+                size: "sm",
+            },
+        }),
+        DateTimePicker: DateTimePicker.extend({
+            classNames: selectClasses,
+            defaultProps: {
+                radius: "md",
+                size: "sm",
             },
         }),
         Divider: {
@@ -168,64 +276,6 @@ export const theme: MantineThemeOverride = createTheme({
             defaultProps: {
                 scrollbarSize: 5,
                 type: "hover",
-            },
-        },
-        Alert: {
-            defaultProps: {
-                radius: "md",
-                variant: "light",
-            },
-        },
-        Menu: {
-            defaultProps: {
-                radius: "md",
-                shadow: "md",
-            },
-        },
-        NavLink: {
-            defaultProps: {
-                variant: "subtle",
-            },
-        },
-        PasswordInput: {
-            defaultProps: {
-                radius: "md",
-                size: "sm",
-            },
-        },
-        ThemeIcon: {
-            defaultProps: {
-                variant: "light",
-                radius: "md",
-            },
-        },
-        Checkbox: {
-            defaultProps: {
-                radius: "sm",
-            },
-        },
-        NumberInput: {
-            defaultProps: {
-                radius: "md",
-                size: "sm",
-            },
-        },
-        Textarea: {
-            defaultProps: {
-                radius: "md",
-                size: "sm",
-            },
-        },
-        DateInput: {
-            defaultProps: {
-                radius: "md",
-                size: "sm",
-            },
-        },
-        DateTimePicker: {
-            defaultProps: {
-                radius: "md",
-                size: "sm",
             },
         },
     },

@@ -1,8 +1,14 @@
 .root {
-    background-color: var(--octo-surface-1);
+    background-color: var(--octo-identity-panel);
     border: 1px solid var(--octo-border-subtle);
+    box-shadow: var(--octo-effect-surface-inset);
     transition: transform var(--octo-motion-normal) var(--octo-motion-ease),
-        box-shadow var(--octo-motion-normal) var(--octo-motion-ease);
+        box-shadow var(--octo-motion-normal) var(--octo-motion-ease),
+        border-color var(--octo-motion-normal) var(--octo-motion-ease);
+}
+
+:global([data-mantine-color-scheme="dark"]) .root {
+    border-color: var(--octo-border-strong);
 }
 
 .root[data-clickable] {
@@ -10,6 +16,7 @@
 }
 
 .root[data-clickable]:hover {
-    transform: translateY(-2px);
-    box-shadow: var(--mantine-shadow-md);
+    transform: translateY(-1px);
+    border-color: var(--octo-border-strong);
+    box-shadow: var(--octo-effect-surface-inset), var(--octo-effect-elevated);
 }

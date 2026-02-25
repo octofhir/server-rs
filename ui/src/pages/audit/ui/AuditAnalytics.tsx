@@ -112,25 +112,29 @@ function StatCard({
 	);
 }
 
-function OutcomeRing({ outcomeBreakdown }: { outcomeBreakdown: Record<AuditOutcome, number> }) {
-	const total = Object.values(outcomeBreakdown).reduce((a, b) => a + b, 0);
+function OutcomeRing({ outcomeBreakdown }: { outcomeBreakdown: Partial<Record<AuditOutcome, number>> }) {
+	const total = Object.values(outcomeBreakdown).reduce((a, b) => (a ?? 0) + (b ?? 0), 0) ?? 0;
 	if (total === 0) return null;
+
+	const success = outcomeBreakdown.success ?? 0;
+	const failure = outcomeBreakdown.failure ?? 0;
+	const partial = outcomeBreakdown.partial ?? 0;
 
 	const sections = [
 		{
-			value: (outcomeBreakdown.success / total) * 100,
+			value: (success / total) * 100,
 			color: "green",
-			tooltip: `Success: ${outcomeBreakdown.success.toLocaleString()}`,
+			tooltip: `Success: ${success.toLocaleString()}`,
 		},
 		{
-			value: (outcomeBreakdown.failure / total) * 100,
+			value: (failure / total) * 100,
 			color: "red",
-			tooltip: `Failure: ${outcomeBreakdown.failure.toLocaleString()}`,
+			tooltip: `Failure: ${failure.toLocaleString()}`,
 		},
 		{
-			value: (outcomeBreakdown.partial / total) * 100,
+			value: (partial / total) * 100,
 			color: "yellow",
-			tooltip: `Partial: ${outcomeBreakdown.partial.toLocaleString()}`,
+			tooltip: `Partial: ${partial.toLocaleString()}`,
 		},
 	].filter((s) => s.value > 0);
 
@@ -184,7 +188,7 @@ function OutcomeRing({ outcomeBreakdown }: { outcomeBreakdown: Record<AuditOutco
 	);
 }
 
-function ActionBreakdown({ actionBreakdown }: { actionBreakdown: Record<AuditAction, number> }) {
+function ActionBreakdown({ actionBreakdown }: { actionBreakdown: Partial<Record<AuditAction, number>> }) {
 	const sorted = useMemo(() => {
 		return Object.entries(actionBreakdown)
 			.sort(([, a], [, b]) => b - a)
@@ -398,9 +402,16 @@ function AuditAnalyticsComponent({ analytics, isLoading }: AuditAnalyticsProps) 
 		);
 	}
 
-	const totalEvents = Object.values(analytics.outcomeBreakdown).reduce((a, b) => a + b, 0);
+	const outcomeBreakdown = analytics.outcomeBreakdown ?? {};
+	const actionBreakdown = analytics.actionBreakdown ?? {};
+	const topUsers = analytics.topUsers ?? [];
+	const topResources = analytics.topResources ?? [];
+	const failedAttempts = analytics.failedAttempts ?? [];
+	const activityOverTime = analytics.activityOverTime ?? [];
+
+	const totalEvents = Object.values(outcomeBreakdown).reduce((a, b) => a + b, 0);
 	const successRate = totalEvents > 0
-		? ((analytics.outcomeBreakdown.success / totalEvents) * 100).toFixed(1)
+		? (((outcomeBreakdown.success ?? 0) / totalEvents) * 100).toFixed(1)
 		: "0";
 
 	return (
@@ -421,32 +432,32 @@ function AuditAnalyticsComponent({ analytics, isLoading }: AuditAnalyticsProps) 
 				/>
 				<StatCard
 					title="Active Users"
-					value={analytics.topUsers.length}
+					value={topUsers.length}
 					icon={IconUser}
 					color="violet"
 				/>
 				<StatCard
 					title="Resources Accessed"
-					value={analytics.topResources.length}
+					value={topResources.length}
 					icon={IconDatabase}
 					color="orange"
 				/>
 			</SimpleGrid>
 
 			{/* Activity Timeline */}
-			<ActivityTimeline activityOverTime={analytics.activityOverTime} />
+			<ActivityTimeline activityOverTime={activityOverTime} />
 
 			{/* Charts Grid */}
 			<SimpleGrid cols={{ base: 1, md: 2 }} spacing="md">
-				<OutcomeRing outcomeBreakdown={analytics.outcomeBreakdown} />
-				<ActionBreakdown actionBreakdown={analytics.actionBreakdown} />
-				<TopUsers topUsers={analytics.topUsers} />
-				<TopResources topResources={analytics.topResources} />
+				<OutcomeRing outcomeBreakdown={outcomeBreakdown} />
+				<ActionBreakdown actionBreakdown={actionBreakdown} />
+				<TopUsers topUsers={topUsers} />
+				<TopResources topResources={topResources} />
 			</SimpleGrid>
 
 			{/* Failed Attempts */}
-			{analytics.failedAttempts.length > 0 && (
-				<FailedAttempts failedAttempts={analytics.failedAttempts} />
+			{failedAttempts.length > 0 && (
+				<FailedAttempts failedAttempts={failedAttempts} />
 			)}
 		</Stack>
 	);

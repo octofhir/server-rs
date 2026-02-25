@@ -1,115 +1,228 @@
 .root {
+	position: relative;
+	isolation: isolate;
+	overflow: hidden;
+	border-radius: var(--octo-radius-md);
 	transition: background-color var(--octo-motion-normal) var(--octo-motion-ease),
+		background-image var(--octo-motion-normal) var(--octo-motion-ease),
+		border-color var(--octo-motion-normal) var(--octo-motion-ease),
 		box-shadow var(--octo-motion-normal) var(--octo-motion-ease),
+		filter var(--octo-motion-normal) var(--octo-motion-ease),
 		transform var(--octo-motion-fast) var(--octo-motion-ease);
 	font-weight: 600;
+	letter-spacing: 0.01em;
+}
+
+.root::before {
+	content: "";
+	position: absolute;
+	inset: 0;
+	border-radius: inherit;
+	background: linear-gradient(180deg, oklch(100% 0 0 / 0.2) 0%, transparent 55%);
+	opacity: 0;
+	transition: opacity var(--octo-motion-normal) var(--octo-motion-ease);
+	pointer-events: none;
+}
+
+.root::after {
+	content: "";
+	position: absolute;
+	inset: -2px;
+	border: 2px solid transparent;
+	border-radius: calc(var(--octo-radius-md) + 2px);
+	transition: border-color var(--octo-motion-fast) var(--octo-motion-ease);
+	pointer-events: none;
+}
+
+.root:focus-visible {
+	outline: none;
+}
+
+.root:focus-visible::after {
+	border-color: var(--octo-focus-ring);
 }
 
 .root:active:not([data-disabled]) {
-	transform: scale(0.98);
+	transform: translateY(1px);
 }
 
-/* ── Filled ── */
+.root[data-disabled] {
+	box-shadow: none;
+	background-image: none;
+	filter: none;
+}
+
+/* Filled */
 .root[data-variant="filled"] {
-	background-color: var(--octo-accent-primary);
-	color: var(--octo-text-inverse);
-	border: 1px solid transparent;
+	background-color: var(--button-bg, var(--octo-accent-primary));
+	background-image: linear-gradient(
+		180deg,
+		color-mix(in oklab, var(--button-bg, var(--octo-accent-primary)), white 12%) 0%,
+		var(--button-bg, var(--octo-accent-primary)) 100%
+	);
+	color: var(--button-color, var(--octo-text-inverse));
+	border: 1px solid var(--button-bd, transparent);
+	box-shadow: var(--octo-effect-button-inset-top), var(--octo-effect-button-inset-bottom);
+}
+
+.root[data-variant="filled"]::before {
+	opacity: 0.72;
 }
 
 .root[data-variant="filled"]:hover:not([data-disabled]) {
-	background-color: var(--octo-accent-primary-hover);
+	background-color: var(--button-hover, var(--button-bg, var(--octo-accent-primary)));
+	background-image: linear-gradient(
+		180deg,
+		color-mix(
+			in oklab,
+			var(--button-hover, var(--button-bg, var(--octo-accent-primary))),
+			white 9%
+		)
+		0%,
+		var(--button-hover, var(--button-bg, var(--octo-accent-primary))) 100%
+	);
 	transform: translateY(-1px);
-	box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+	box-shadow: var(--octo-effect-button-inset-top), var(--octo-effect-button-inset-bottom),
+		var(--octo-effect-elevated);
 }
 
 .root[data-variant="filled"]:active:not([data-disabled]) {
-	background-color: var(--octo-accent-primary-active);
-	transform: translateY(0);
+	background-color: var(--button-hover, var(--button-bg, var(--octo-accent-primary)));
+	background-image: linear-gradient(
+		180deg,
+		color-mix(
+			in oklab,
+			var(--button-hover, var(--button-bg, var(--octo-accent-primary))),
+			black 8%
+		)
+		0%,
+		var(--button-hover, var(--button-bg, var(--octo-accent-primary))) 100%
+	);
+	box-shadow: var(--octo-effect-button-pressed), var(--octo-effect-button-inset-top);
 }
 
-/* ── Light ── */
+/* Light */
 .root[data-variant="light"] {
-	background-color: var(--octo-accent-primary-bg);
-	color: var(--octo-accent-primary);
-	border: 1px solid transparent;
+	background-color: var(--button-bg, var(--octo-accent-primary-bg));
+	background-image: linear-gradient(
+		180deg,
+		color-mix(in oklab, var(--button-bg, var(--octo-accent-primary-bg)), white 20%) 0%,
+		var(--button-bg, var(--octo-accent-primary-bg)) 100%
+	);
+	color: var(--button-color, var(--octo-accent-primary));
+	border: 1px solid var(--button-bd, var(--octo-border-subtle));
+	box-shadow: var(--octo-effect-surface-inset);
+}
+
+.root[data-variant="light"]::before {
+	opacity: 0.55;
 }
 
 .root[data-variant="light"]:hover:not([data-disabled]) {
-	background-color: var(--octo-accent-primary-bg-hover);
+	background-color: var(--button-hover, var(--button-bg, var(--octo-accent-primary-bg-hover)));
+	border-color: var(--button-hover, var(--button-bg, var(--octo-accent-primary)));
 }
 
-/* ── Subtle ── */
+/* Subtle */
 .root[data-variant="subtle"] {
 	background-color: transparent;
-	color: var(--octo-accent-primary);
-}
-
-.root[data-variant="subtle"]:hover:not([data-disabled]) {
-	background-color: var(--octo-surface-2);
-}
-
-/* ── Default ── */
-.root[data-variant="default"] {
-	background-color: var(--octo-surface-1);
-	color: var(--octo-text-primary);
-	border: 1px solid var(--octo-border-subtle);
-}
-
-.root[data-variant="default"]:hover:not([data-disabled]) {
-	background-color: var(--octo-surface-2);
-}
-
-/* ── Outline ── */
-.root[data-variant="outline"] {
-	background-color: transparent;
-	color: var(--octo-accent-primary);
-	border: 1px solid var(--octo-accent-primary);
-}
-
-.root[data-variant="outline"]:hover:not([data-disabled]) {
-	background-color: var(--octo-accent-primary-bg);
-}
-
-/* ── OctoVariant: fire (destructive) ── */
-.root[data-octo-variant="fire"] {
-	background-color: var(--octo-accent-fire);
-	color: var(--octo-text-inverse);
+	color: var(--button-color, var(--octo-accent-primary));
 	border: 1px solid transparent;
 }
 
-.root[data-octo-variant="fire"]:hover:not([data-disabled]) {
-	background-color: var(--octo-accent-fire-hover);
-	transform: translateY(-1px);
-	box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+.root[data-variant="subtle"]:hover:not([data-disabled]) {
+	background-color: color-mix(
+		in oklab,
+		var(--button-color, var(--octo-accent-primary)),
+		transparent 90%
+	);
 }
 
-.root[data-octo-variant="fire"]:active:not([data-disabled]) {
-	background-color: var(--octo-accent-fire-active);
-	transform: translateY(0);
+/* Default */
+.root[data-variant="default"] {
+	background-color: var(--button-bg, var(--octo-surface-1));
+	background-image: linear-gradient(
+		180deg,
+		color-mix(in oklab, var(--button-bg, var(--octo-surface-1)), white 18%) 0%,
+		var(--button-bg, var(--octo-surface-1)) 100%
+	);
+	color: var(--button-color, var(--octo-text-primary));
+	border: 1px solid var(--button-bd, var(--octo-border-subtle));
+	box-shadow: var(--octo-effect-surface-inset);
 }
 
-/* ── OctoVariant: secondary ── */
-.root[data-octo-variant="secondary"] {
-	background-color: var(--octo-surface-2);
-	color: var(--octo-text-primary);
-	border: 1px solid var(--octo-border-subtle);
+.root[data-variant="default"]::before {
+	opacity: 0.5;
 }
 
-.root[data-octo-variant="secondary"]:hover:not([data-disabled]) {
-	background-color: var(--octo-surface-3);
+.root[data-variant="default"]:hover:not([data-disabled]) {
+	background-color: var(--button-hover, var(--octo-surface-2));
+	border-color: var(--button-hover, var(--octo-border-strong));
 }
 
-.root[data-octo-variant="secondary"]:active:not([data-disabled]) {
-	background-color: var(--octo-surface-4);
+:global([data-mantine-color-scheme="dark"]) .root[data-variant="default"] {
+	border-color: var(--button-bd, var(--octo-border-strong));
 }
 
-/* ── OctoVariant: ghost ── */
-.root[data-octo-variant="ghost"] {
+/* Outline */
+.root[data-variant="outline"] {
 	background-color: transparent;
-	color: var(--octo-accent-primary);
-	border: 1px solid var(--octo-accent-primary);
+	color: var(--button-color, var(--octo-accent-primary));
+	border: 1px solid var(--button-bd, var(--octo-accent-primary));
 }
 
-.root[data-octo-variant="ghost"]:hover:not([data-disabled]) {
-	background-color: var(--octo-accent-primary-bg);
+.root[data-variant="outline"]:hover:not([data-disabled]) {
+	background-color: color-mix(
+		in oklab,
+		var(--button-color, var(--octo-accent-primary)),
+		transparent 88%
+	);
+	color: var(--button-color, var(--octo-accent-primary));
+	border-color: var(--button-color, var(--octo-accent-primary));
+}
+
+/* Ghost / Link-like */
+.root[data-variant="transparent"] {
+	background-color: transparent;
+	color: var(--button-color, var(--octo-accent-primary));
+	border: 1px solid transparent;
+	box-shadow: none;
+}
+
+.root[data-variant="transparent"]:hover:not([data-disabled]) {
+	background-color: color-mix(
+		in oklab,
+		var(--button-color, var(--octo-accent-primary)),
+		transparent 93%
+	);
+	text-decoration: underline;
+	text-underline-offset: 3px;
+	text-decoration-thickness: 1.5px;
+}
+
+/* Contrast button for dark imagery */
+.root[data-variant="white"] {
+	background-color: oklch(100% 0 0 / 0.92);
+	color: var(--octo-text-primary);
+	border: 1px solid oklch(88% 0.01 230 / 0.45);
+}
+
+.root[data-variant="white"]:hover:not([data-disabled]) {
+	background-color: oklch(100% 0 0 / 1);
+	border-color: oklch(84% 0.01 230 / 0.6);
+}
+
+/* Keep Mantine gradient variant with flat tactile treatment */
+.root[data-variant="gradient"] {
+	background-image: var(--button-bg, var(--octo-brand-gradient));
+	color: var(--button-color, var(--octo-text-inverse));
+	border: 1px solid transparent;
+	box-shadow: var(--octo-effect-button-inset-top), var(--octo-effect-button-inset-bottom);
+}
+
+.root[data-variant="gradient"]:hover:not([data-disabled]) {
+	filter: saturate(1.04) brightness(1.02);
+	transform: translateY(-1px);
+	box-shadow: var(--octo-effect-button-inset-top), var(--octo-effect-button-inset-bottom),
+		var(--octo-effect-elevated);
 }

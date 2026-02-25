@@ -1,0 +1,39 @@
+.root {
+    border-radius: var(--octo-radius-md);
+    border: 1px solid transparent;
+    color: var(--octo-text-secondary);
+    transition: background-color var(--octo-motion-normal) var(--octo-motion-ease),
+        border-color var(--octo-motion-normal) var(--octo-motion-ease),
+        color var(--octo-motion-normal) var(--octo-motion-ease);
+}
+
+.root:hover {
+    background-color: var(--octo-surface-2);
+    color: var(--octo-text-primary);
+}
+
+.root[data-active] {
+    background-color: var(--octo-accent-primary-bg);
+    border-color: color-mix(in oklab, var(--octo-accent-primary), transparent 76%);
+    color: var(--octo-accent-primary);
+}
+
+:global([data-mantine-color-scheme="dark"]) .root[data-active] {
+    border-color: var(--octo-border-strong);
+}
+
+.label {
+    font-weight: 600;
+}
+
+.description {
+    color: var(--octo-text-muted);
+}
+
+.section {
+    color: inherit;
+}
+
+.chevron {
+    color: var(--octo-text-muted);
+}

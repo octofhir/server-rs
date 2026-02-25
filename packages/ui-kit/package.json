@@ -19,6 +19,7 @@
     "#/*": "./src/*"
   },
   "scripts": {
+    "fonts:sync": "node ./scripts/vendor-fonts.mjs",
     "lint": "oxlint src",
     "format": "oxlint --fix src",
     "typecheck": "tsc --noEmit"
@@ -27,19 +28,22 @@
     "@mantine/core": "^8.3.15",
     "@mantine/dates": "^8.3.15",
     "@mantine/hooks": "^8.3.15",
-    "@mantine/notifications": "^8.3.15",
     "@mantine/modals": "^8.3.15",
+    "@mantine/notifications": "^8.3.15",
     "@tabler/icons-react": "^3.37.1"
   },
   "devDependencies": {
-    "typescript": "~5.9.3",
+    "@fontsource-variable/jetbrains-mono": "^5.2.8",
+    "@fontsource-variable/manrope": "^5.2.8",
+    "@fontsource-variable/rubik": "^5.2.8",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
-    "oxlint": "latest"
+    "oxlint": "latest",
+    "typescript": "~5.9.3"
   },
   "peerDependencies": {
+    "dayjs": ">=1.11",
     "react": ">=19",
-    "react-dom": ">=19",
-    "dayjs": ">=1.11"
+    "react-dom": ">=19"
   }
 }

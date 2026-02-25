@@ -43,6 +43,7 @@
 pub mod auth_session;
 pub mod bulk;
 pub mod cql;
+pub mod db_console_api;
 pub mod definition;
 pub mod evaluate_measure;
 pub mod everything;

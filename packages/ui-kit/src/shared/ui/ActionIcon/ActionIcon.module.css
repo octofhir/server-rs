@@ -1,49 +1,112 @@
 .root {
+	position: relative;
+	overflow: hidden;
+	border-radius: var(--octo-radius-md);
+	border: 1px solid transparent;
 	transition: transform var(--octo-motion-fast) var(--octo-motion-ease),
-		background-color var(--octo-motion-normal) var(--octo-motion-ease);
+		background-color var(--octo-motion-normal) var(--octo-motion-ease),
+		background-image var(--octo-motion-normal) var(--octo-motion-ease),
+		border-color var(--octo-motion-normal) var(--octo-motion-ease),
+		box-shadow var(--octo-motion-normal) var(--octo-motion-ease);
 }
 
 .root:active:not([data-disabled]) {
-	transform: scale(0.94);
+	transform: scale(0.96);
 }
 
-/* ── Subtle (default) ── */
+.root:focus-visible {
+	outline: none;
+	box-shadow: 0 0 0 2px var(--octo-focus-ring);
+}
+
+/* Subtle (default) */
 .root[data-variant="subtle"] {
-	color: var(--octo-text-secondary);
+	color: var(--ai-color, var(--octo-text-secondary));
 }
 
 .root[data-variant="subtle"]:hover:not([data-disabled]) {
-	background-color: var(--octo-surface-2);
-	color: var(--octo-text-primary);
+	background-color: var(--ai-hover, var(--octo-surface-2));
 }
 
-/* ── Light ── */
+.root[data-variant="transparent"] {
+	color: var(--ai-color, var(--octo-text-secondary));
+}
+
+.root[data-variant="transparent"]:hover:not([data-disabled]) {
+	background-color: var(--ai-hover, var(--octo-surface-2));
+}
+
+/* Light */
 .root[data-variant="light"] {
-	background-color: var(--octo-accent-primary-bg);
-	color: var(--octo-accent-primary);
+	background-color: var(--ai-bg, var(--octo-accent-primary-bg));
+	background-image: linear-gradient(
+		180deg,
+		color-mix(in oklab, var(--ai-bg, var(--octo-accent-primary-bg)), white 16%),
+		var(--ai-bg, var(--octo-accent-primary-bg))
+	);
+	color: var(--ai-color, var(--octo-accent-primary));
+	border-color: var(--ai-bd, var(--octo-border-subtle));
+	box-shadow: var(--octo-effect-surface-inset);
 }
 
 .root[data-variant="light"]:hover:not([data-disabled]) {
-	background-color: var(--octo-accent-primary-bg-hover);
+	background-color: var(--ai-hover, var(--octo-accent-primary-bg-hover));
 }
 
-/* ── Default ── */
+/* Default */
 .root[data-variant="default"] {
-	background-color: var(--octo-surface-1);
-	color: var(--octo-text-primary);
-	border: 1px solid var(--octo-border-subtle);
+	background-color: var(--ai-bg, var(--octo-surface-1));
+	background-image: linear-gradient(
+		180deg,
+		color-mix(in oklab, var(--ai-bg, var(--octo-surface-1)), white 16%),
+		var(--ai-bg, var(--octo-surface-1))
+	);
+	color: var(--ai-color, var(--octo-text-primary));
+	border-color: var(--ai-bd, var(--octo-border-subtle));
+	box-shadow: var(--octo-effect-surface-inset);
 }
 
 .root[data-variant="default"]:hover:not([data-disabled]) {
-	background-color: var(--octo-surface-2);
+	background-color: var(--ai-hover, var(--octo-surface-2));
+	border-color: var(--ai-hover, var(--octo-border-strong));
 }
 
-/* ── Filled ── */
+/* Filled */
 .root[data-variant="filled"] {
-	background-color: var(--octo-accent-primary);
-	color: var(--octo-text-inverse);
+	background-color: var(--ai-bg, var(--octo-accent-primary));
+	background-image: linear-gradient(
+		180deg,
+		color-mix(in oklab, var(--ai-bg, var(--octo-accent-primary)), white 12%),
+		var(--ai-bg, var(--octo-accent-primary))
+	);
+	color: var(--ai-color, var(--octo-text-inverse));
+	border-color: var(--ai-bd, transparent);
+	box-shadow: var(--octo-effect-button-inset-top), var(--octo-effect-button-inset-bottom);
 }
 
 .root[data-variant="filled"]:hover:not([data-disabled]) {
-	background-color: var(--octo-accent-primary-hover);
+	background-color: var(--ai-hover, var(--ai-bg, var(--octo-accent-primary-hover)));
+	background-image: linear-gradient(
+		180deg,
+		color-mix(in oklab, var(--ai-hover, var(--ai-bg, var(--octo-accent-primary-hover))), white 8%),
+		var(--ai-hover, var(--ai-bg, var(--octo-accent-primary-hover)))
+	);
+	box-shadow: var(--octo-effect-button-inset-top), var(--octo-effect-button-inset-bottom),
+		var(--octo-effect-elevated);
+}
+
+/* Outline */
+.root[data-variant="outline"] {
+	color: var(--ai-color, var(--octo-accent-primary));
+	border-color: var(--ai-bd, var(--octo-accent-primary));
+}
+
+.root[data-variant="outline"]:hover:not([data-disabled]) {
+	background-color: color-mix(in oklab, var(--ai-color, var(--octo-accent-primary)), transparent 88%);
+	color: var(--ai-color, var(--octo-accent-primary));
+	border-color: var(--ai-color, var(--octo-accent-primary));
+}
+
+:global([data-mantine-color-scheme="dark"]) .root[data-variant="default"] {
+	border-color: var(--ai-bd, var(--octo-border-strong));
 }

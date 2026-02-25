@@ -3,19 +3,23 @@
 
 :root,
 [data-mantine-color-scheme="light"] {
-    --app-header-bg: var(--octo-surface-1);
+    --app-header-bg: var(--octo-identity-panel);
     --app-header-fg: var(--octo-text-primary);
-    --app-header-hover-bg: var(--octo-surface-2);
+    --app-header-hover-bg: color-mix(in oklab, var(--octo-surface-2), var(--octo-accent-primary-bg) 10%);
     --app-header-badge-bg: var(--octo-surface-3);
     --app-login-bg: var(--octo-brand-gradient);
-    --app-login-panel-bg: var(--octo-surface-1);
+    --app-login-panel-bg: var(--octo-identity-panel);
 }
 
 [data-mantine-color-scheme="dark"] {
-    --app-header-bg: var(--octo-surface-1);
+    --app-header-bg: var(--octo-identity-panel);
     --app-header-fg: var(--octo-text-primary);
-    --app-header-hover-bg: rgba(255, 255, 255, 0.06);
+    --app-header-hover-bg: color-mix(in oklab, var(--octo-surface-3), var(--octo-accent-primary-bg) 24%);
     --app-header-badge-bg: rgba(255, 255, 255, 0.04);
-    --app-login-bg: radial-gradient(circle at top left, var(--octo-surface-3), var(--octo-surface-1));
-    --app-login-panel-bg: var(--octo-surface-2);
+    --app-login-bg: linear-gradient(
+        160deg,
+        color-mix(in oklab, var(--octo-accent-primary), transparent 65%),
+        color-mix(in oklab, var(--octo-accent-warm), transparent 72%)
+    );
+    --app-login-panel-bg: var(--octo-identity-panel);
 }

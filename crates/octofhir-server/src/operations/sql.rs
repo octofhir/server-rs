@@ -342,4 +342,45 @@ mod tests {
         assert!(mode.is_query_allowed("CREATE TABLE test (id INT)").is_ok());
         assert!(mode.is_query_allowed("TRUNCATE TABLE users").is_ok());
     }
+
+    #[test]
+    fn test_sql_mode_readonly_allows_explain_select() {
+        let mode = SqlMode::Readonly;
+        assert!(mode.is_query_allowed("EXPLAIN SELECT * FROM users").is_ok());
+        assert!(
+            mode.is_query_allowed("EXPLAIN WITH cte AS (SELECT 1) SELECT * FROM cte")
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn test_sql_mode_readonly_allows_explain_analyze_select() {
+        let mode = SqlMode::Readonly;
+        assert!(
+            mode.is_query_allowed("EXPLAIN ANALYZE SELECT * FROM users")
+                .is_ok()
+        );
+        assert!(
+            mode.is_query_allowed("explain analyze select * from patient")
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn test_sql_mode_readonly_blocks_explain_insert() {
+        let mode = SqlMode::Readonly;
+        assert!(
+            mode.is_query_allowed("EXPLAIN INSERT INTO users VALUES (1)")
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn test_sql_mode_readonly_blocks_explain_analyze_delete() {
+        let mode = SqlMode::Readonly;
+        assert!(
+            mode.is_query_allowed("EXPLAIN ANALYZE DELETE FROM users")
+                .is_err()
+        );
+    }
 }
