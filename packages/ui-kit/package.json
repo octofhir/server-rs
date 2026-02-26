@@ -22,7 +22,9 @@
     "fonts:sync": "node ./scripts/vendor-fonts.mjs",
     "lint": "oxlint src",
     "format": "oxlint --fix src",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "storybook": "storybook dev -p 6006",
+    "storybook:build": "storybook build -o storybook-static"
   },
   "dependencies": {
     "@mantine/core": "^8.3.15",
@@ -36,10 +38,18 @@
     "@fontsource-variable/jetbrains-mono": "^5.2.8",
     "@fontsource-variable/manrope": "^5.2.8",
     "@fontsource-variable/rubik": "^5.2.8",
+    "@storybook/addon-a11y": "^10.2",
+    "@storybook/addon-docs": "^10.2",
+    "@storybook/addon-themes": "^10.2",
+    "@storybook/react": "^10.2",
+    "@storybook/react-vite": "^10.2",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^4",
     "oxlint": "latest",
-    "typescript": "~5.9.3"
+    "storybook": "^10.2",
+    "typescript": "~5.9.3",
+    "vite": "^7.3"
   },
   "peerDependencies": {
     "dayjs": ">=1.11",

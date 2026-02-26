@@ -261,6 +261,18 @@ ui-format:
     pnpm -r format
 
 # =============================================================================
+# Storybook Commands
+# =============================================================================
+
+# Run Storybook dev server
+storybook:
+    pnpm -C packages/ui-kit storybook
+
+# Build Storybook static site
+storybook-build:
+    pnpm -C packages/ui-kit storybook:build
+
+# =============================================================================
 # Docker Commands (GitHub Container Registry)
 # =============================================================================
 

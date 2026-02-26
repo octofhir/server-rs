@@ -27,15 +27,29 @@ jobs:
         with:
           node-version: 22
           cache: 'pnpm'
-          cache-dependency-path: docs/pnpm-lock.yaml
 
-      - name: Install deps
+      # Build documentation (Astro/Starlight)
+      - name: Install docs deps
         working-directory: docs
         run: pnpm install --no-frozen-lockfile
 
-      - name: Build
+      - name: Build docs
         working-directory: docs
         run: pnpm build
+
+      # Build Storybook
+      - name: Install workspace deps
+        run: pnpm install --no-frozen-lockfile
+
+      - name: Build Storybook
+        working-directory: packages/ui-kit
+        run: pnpm storybook:build
+
+      # Merge outputs
+      - name: Copy Storybook into docs output
+        run: |
+          mkdir -p docs/dist/storybook
+          cp -r packages/ui-kit/storybook-static/* docs/dist/storybook/
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3

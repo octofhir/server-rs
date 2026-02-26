@@ -55,3 +55,6 @@ scripts/inferno/tls/server.key
 helm/*/charts/
 helm/*/Chart.lock
 node_modules
+
+# Storybook
+storybook-static/
