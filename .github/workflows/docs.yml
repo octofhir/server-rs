@@ -27,8 +27,19 @@ jobs:
         with:
           node-version: 22
           cache: 'pnpm'
+          cache-dependency-path: |
+            pnpm-lock.yaml
+            docs/pnpm-lock.yaml
 
-      # Build documentation (Astro/Starlight)
+      # Build Storybook (workspace install first)
+      - name: Install workspace deps
+        run: pnpm install --no-frozen-lockfile
+
+      - name: Build Storybook
+        working-directory: packages/ui-kit
+        run: pnpm storybook:build
+
+      # Build documentation (Astro/Starlight — separate lockfile)
       - name: Install docs deps
         working-directory: docs
         run: pnpm install --no-frozen-lockfile
@@ -37,15 +48,7 @@ jobs:
         working-directory: docs
         run: pnpm build
 
-      # Build Storybook
-      - name: Install workspace deps
-        run: pnpm install --no-frozen-lockfile
-
-      - name: Build Storybook
-        working-directory: packages/ui-kit
-        run: pnpm storybook:build
-
-      # Merge outputs
+      # Merge Storybook into docs output
       - name: Copy Storybook into docs output
         run: |
           mkdir -p docs/dist/storybook
