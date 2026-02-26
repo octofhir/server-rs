@@ -39,14 +39,14 @@ jobs:
         working-directory: packages/ui-kit
         run: pnpm storybook:build
 
-      # Build documentation (Astro/Starlight — separate lockfile)
+      # Build documentation (Astro/Starlight — separate project outside workspace)
       - name: Install docs deps
         working-directory: docs
-        run: pnpm install --no-frozen-lockfile
+        run: pnpm install --no-frozen-lockfile --force
 
       - name: Build docs
         working-directory: docs
-        run: pnpm build
+        run: pnpm exec astro build
 
       # Merge Storybook into docs output
       - name: Copy Storybook into docs output
