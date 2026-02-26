@@ -10,9 +10,9 @@ export default defineConfig({
       title: 'Abyxon',
       description: 'Core FHIR server of the OctoFHIR ecosystem, built in Rust',
       social: [
+          { label: 'Storybook', icon: 'external', href: 'https://octofhir.github.io/server-rs/storybook/'},
           { label: 'Boosty', icon: 'external', href: 'https://boosty.to/octoshikari'},
           { label: 'Github', icon: 'github', href: 'https://github.com/octofhir/server-rs'},
-
       ],
       logo: {
         src: './src/assets/logo.png',

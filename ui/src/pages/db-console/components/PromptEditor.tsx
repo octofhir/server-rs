@@ -1,7 +1,17 @@
-import { useCallback, useEffect, useState } from "react";
-import { Group, Text, Button, ActionIcon, Tooltip, Popover, Box } from "@/shared/ui";
-import { IconCode, IconSettings } from "@tabler/icons-react";
-import { useDisclosure } from "@octofhir/ui-kit";
+import { useCallback, useEffect, useRef } from "react";
+import {
+	Group,
+	Text,
+	Button,
+	ActionIcon,
+	Tooltip,
+	Popover,
+	Box,
+	Select,
+	UnstyledButton,
+} from "@/shared/ui";
+import { IconCode, IconGripVertical, IconSettings } from "@tabler/icons-react";
+import { useDisclosure, useLocalStorage } from "@octofhir/ui-kit";
 import type * as monaco from "monaco-editor";
 import { SqlEditor } from "@/shared/monaco/SqlEditor";
 import { DiagnosticsPanel } from "@/widgets/diagnostics-panel";
@@ -13,6 +23,10 @@ import classes from "../DbConsolePage.module.css";
 interface PromptEditorProps {
 	initialQuery: string;
 	onQueryChange: (value: string) => void;
+	resultLimit: string;
+	onResultLimitChange: (value: string) => void;
+	sqlTimeout: string;
+	onSqlTimeoutChange: (value: string) => void;
 	onExecute: (value?: string) => void;
 	onEditorMount: (
 		editor: monaco.editor.IStandaloneCodeEditor,
@@ -23,13 +37,32 @@ interface PromptEditorProps {
 	isPending: boolean;
 }
 
-const MIN_HEIGHT = 60;
-const MAX_HEIGHT = 300;
-const LINE_HEIGHT = 20;
+const RESULT_LIMIT_OPTIONS = [
+	{ value: "50", label: "Limit 50" },
+	{ value: "100", label: "Limit 100" },
+	{ value: "200", label: "Limit 200" },
+	{ value: "500", label: "Limit 500" },
+	{ value: "1000", label: "Limit 1000" },
+	{ value: "none", label: "No limit" },
+];
+const TIMEOUT_OPTIONS = [
+	{ value: "10000", label: "10s timeout" },
+	{ value: "30000", label: "30s timeout" },
+	{ value: "60000", label: "60s timeout" },
+	{ value: "120000", label: "120s timeout" },
+];
+const DEFAULT_LIMIT = "200";
+const DEFAULT_TIMEOUT = "120000";
+const DIAGNOSTICS_MIN = 24;
+const DIAGNOSTICS_MAX = 60;
 
 export function PromptEditor({
 	initialQuery,
 	onQueryChange,
+	resultLimit,
+	onResultLimitChange,
+	sqlTimeout,
+	onSqlTimeoutChange,
 	onExecute,
 	onEditorMount,
 	editorInstance,
@@ -38,9 +71,13 @@ export function PromptEditor({
 }: PromptEditorProps) {
 	const [formatterOpened, { toggle: toggleFormatter, close: closeFormatter }] =
 		useDisclosure(false);
+	const workspaceRef = useRef<HTMLDivElement>(null);
+	const [diagnosticsSize, setDiagnosticsSize] = useLocalStorage({
+		key: "db-console-diagnostics-size",
+		defaultValue: 38,
+	});
 	const { config: formatterConfig, saveConfig: saveFormatterConfig } =
 		useFormatterSettings();
-	const [editorHeight, setEditorHeight] = useState(MIN_HEIGHT);
 
 	useEffect(() => {
 		setLspFormatterConfig(formatterConfig);
@@ -50,27 +87,56 @@ export function PromptEditor({
 		editorInstance?.getAction("editor.action.formatDocument")?.run();
 	}, [editorInstance]);
 
-	// Auto-grow: listen to editor content changes and adjust height
-	useEffect(() => {
-		if (!editorInstance) return;
+	const clampDiagnosticsSize = useCallback((value: number) => {
+		return Math.max(DIAGNOSTICS_MIN, Math.min(DIAGNOSTICS_MAX, value));
+	}, []);
 
-		const disposable = editorInstance.onDidChangeModelContent(() => {
-			const lineCount = editorInstance.getModel()?.getLineCount() ?? 1;
-			const contentHeight = Math.max(
-				MIN_HEIGHT,
-				Math.min(MAX_HEIGHT, lineCount * LINE_HEIGHT + 24),
+	const handleSplitterMouseDown = useCallback(
+		(event: React.MouseEvent) => {
+			event.preventDefault();
+			const workspace = workspaceRef.current;
+			if (!workspace) return;
+
+			const rect = workspace.getBoundingClientRect();
+			const vertical = window.matchMedia("(max-width: 1400px)").matches;
+
+			const handleMouseMove = (moveEvent: MouseEvent) => {
+				const rawSize = vertical
+					? ((rect.bottom - moveEvent.clientY) / rect.height) * 100
+					: ((rect.right - moveEvent.clientX) / rect.width) * 100;
+				setDiagnosticsSize(clampDiagnosticsSize(rawSize));
+			};
+
+			const handleMouseUp = () => {
+				document.removeEventListener("mousemove", handleMouseMove);
+				document.removeEventListener("mouseup", handleMouseUp);
+				document.body.style.cursor = "";
+				document.body.style.userSelect = "";
+			};
+
+			document.body.style.cursor = vertical ? "row-resize" : "col-resize";
+			document.body.style.userSelect = "none";
+			document.addEventListener("mousemove", handleMouseMove);
+			document.addEventListener("mouseup", handleMouseUp);
+		},
+		[clampDiagnosticsSize, setDiagnosticsSize],
+	);
+
+	const handleSplitterKeyDown = useCallback(
+		(event: React.KeyboardEvent<HTMLButtonElement>) => {
+			const vertical = window.matchMedia("(max-width: 1400px)").matches;
+			const increase = vertical ? event.key === "ArrowUp" : event.key === "ArrowLeft";
+			const decrease =
+				vertical ? event.key === "ArrowDown" : event.key === "ArrowRight";
+			if (!increase && !decrease) return;
+
+			event.preventDefault();
+			setDiagnosticsSize((prev) =>
+				clampDiagnosticsSize(prev + (increase ? 2 : -2)),
 			);
-			setEditorHeight(contentHeight);
-		});
-
-		// Set initial height
-		const lineCount = editorInstance.getModel()?.getLineCount() ?? 1;
-		setEditorHeight(
-			Math.max(MIN_HEIGHT, Math.min(MAX_HEIGHT, lineCount * LINE_HEIGHT + 24)),
-		);
-
-		return () => disposable.dispose();
-	}, [editorInstance]);
+		},
+		[clampDiagnosticsSize, setDiagnosticsSize],
+	);
 
 	return (
 		<div className={classes.promptContainer}>
@@ -138,6 +204,30 @@ export function PromptEditor({
 						</Popover.Dropdown>
 					</Popover>
 
+					<Tooltip label="Auto-limit for SELECT/WITH queries without LIMIT">
+						<Select
+							size="xs"
+							w={112}
+							value={resultLimit}
+							onChange={(value) => onResultLimitChange(value ?? DEFAULT_LIMIT)}
+							data={RESULT_LIMIT_OPTIONS}
+							allowDeselect={false}
+							aria-label="SQL result limit"
+						/>
+					</Tooltip>
+
+					<Tooltip label="Client-side timeout for SQL execution">
+						<Select
+							size="xs"
+							w={126}
+							value={sqlTimeout}
+							onChange={(value) => onSqlTimeoutChange(value ?? DEFAULT_TIMEOUT)}
+							data={TIMEOUT_OPTIONS}
+							allowDeselect={false}
+							aria-label="SQL timeout"
+						/>
+					</Tooltip>
+
 					<Button
 						size="compact-xs"
 						onClick={() => onExecute()}
@@ -151,29 +241,43 @@ export function PromptEditor({
 				</Group>
 			</div>
 
-			{/* Editor with prompt glyph */}
-			<div className={classes.promptBody} style={{ height: editorHeight + 8 }}>
-				<div className={classes.promptGlyph}>{`>>>`}</div>
-				<div className={classes.promptEditorWrap}>
-					<SqlEditor
-						defaultValue={initialQuery}
-						onChange={onQueryChange}
-						onExecute={onExecute}
-						onEditorMount={onEditorMount}
-						enableLsp
-					/>
+			<div
+				ref={workspaceRef}
+				className={classes.promptWorkspace}
+				style={{ "--diagnostics-size": `${diagnosticsSize}%` } as React.CSSProperties}
+			>
+				{/* Editor with prompt glyph */}
+				<div className={classes.promptBody}>
+					<div className={classes.promptGlyph}>{`>>>`}</div>
+					<div className={classes.promptEditorWrap}>
+						<SqlEditor
+							defaultValue={initialQuery}
+							onChange={onQueryChange}
+							onExecute={onExecute}
+							onEditorMount={onEditorMount}
+							enableLsp
+						/>
+					</div>
 				</div>
-			</div>
 
-			{/* Diagnostics */}
-			<Box px="xs" pb="xs">
-				<DiagnosticsPanel
-					model={modelInstance}
-					editor={editorInstance}
-					defaultCollapsed
-					height={120}
-				/>
-			</Box>
+				<UnstyledButton
+					className={classes.promptSplitter}
+					onMouseDown={handleSplitterMouseDown}
+					onKeyDown={handleSplitterKeyDown}
+					aria-label="Resize diagnostics panel"
+				>
+					<IconGripVertical size={14} />
+				</UnstyledButton>
+
+				{/* Diagnostics */}
+				<Box className={classes.diagnosticsPane} style={{ flex: 1, minHeight: 0 }}>
+					<DiagnosticsPanel
+						model={modelInstance}
+						editor={editorInstance}
+						height="100%"
+					/>
+				</Box>
+			</div>
 		</div>
 	);
 }

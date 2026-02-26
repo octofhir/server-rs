@@ -146,9 +146,7 @@ impl OperationHandler for ReindexOperation {
             .read(resource_type, id)
             .await
             .map_err(|e| OperationError::Internal(format!("Storage error: {e}")))?
-            .ok_or_else(|| {
-                OperationError::NotFound(format!("{resource_type}/{id} not found"))
-            })?;
+            .ok_or_else(|| OperationError::NotFound(format!("{resource_type}/{id} not found")))?;
 
         let pool = state.db_pool.as_ref();
         let registry = state.search_config.config().registry.clone();
@@ -218,14 +216,9 @@ async fn reindex_single_resource(
     .await
     .map_err(|e| OperationError::Internal(format!("Failed to write reference index: {e}")))?;
 
-    octofhir_db_postgres::search_index::write_date_index(
-        pool,
-        resource_type,
-        resource_id,
-        &dates,
-    )
-    .await
-    .map_err(|e| OperationError::Internal(format!("Failed to write date index: {e}")))?;
+    octofhir_db_postgres::search_index::write_date_index(pool, resource_type, resource_id, &dates)
+        .await
+        .map_err(|e| OperationError::Internal(format!("Failed to write date index: {e}")))?;
 
     Ok(())
 }
@@ -284,7 +277,18 @@ pub async fn execute_reindex(
             total_types
         );
 
-        match reindex_resource_type(pool, &registry, resource_type, batch_size, &state, job_id, type_idx, total_types).await {
+        match reindex_resource_type(
+            pool,
+            &registry,
+            resource_type,
+            batch_size,
+            &state,
+            job_id,
+            type_idx,
+            total_types,
+        )
+        .await
+        {
             Ok((reindexed, errors)) => {
                 total_reindexed += reindexed;
                 total_errors += errors;
@@ -302,7 +306,9 @@ pub async fn execute_reindex(
 
     // Optional consistency check
     let drift = if consistency_check {
-        check_index_consistency(pool, &resource_types).await.unwrap_or(0)
+        check_index_consistency(pool, &resource_types)
+            .await
+            .unwrap_or(0)
     } else {
         0
     };
@@ -434,8 +440,7 @@ async fn reindex_resource_type(
         } else {
             1.0
         };
-        let overall_progress =
-            (type_idx as f32 + type_progress) / total_types as f32;
+        let overall_progress = (type_idx as f32 + type_progress) / total_types as f32;
         state
             .async_job_manager
             .update_progress(job_id, overall_progress)
@@ -602,9 +607,6 @@ mod tests {
             table_name_to_resource_type("medication_request"),
             "MedicationRequest"
         );
-        assert_eq!(
-            table_name_to_resource_type("care_plan"),
-            "CarePlan"
-        );
+        assert_eq!(table_name_to_resource_type("care_plan"), "CarePlan");
     }
 }

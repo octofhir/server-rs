@@ -6,6 +6,7 @@ import {
 	useSqlMutation,
 	useQueryHistory,
 } from "@/shared/api/hooks";
+import { ApiResponseError } from "@/shared/api/serverApi";
 import { Badge, Group, Kbd, Text, Tooltip } from "@/shared/ui";
 import type { SqlResponse } from "@/shared/api/types";
 import { ExecutionStream } from "./components/ExecutionStream";
@@ -16,6 +17,151 @@ import type { StreamEntry } from "./components/StreamEntryCard";
 import classes from "./DbConsolePage.module.css";
 
 const INITIAL_QUERY = "SELECT * FROM patient LIMIT 10;";
+const DEFAULT_RESULT_LIMIT = "200";
+const DEFAULT_SQL_TIMEOUT = "120000";
+const QUERY_TIMEOUT_MESSAGE =
+	"Request timeout. Query may still be running. Check Active queries.";
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null;
+}
+
+function getString(value: unknown): string | undefined {
+	return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function formatOperationOutcomeDetails(payload: Record<string, unknown>): string | null {
+	if (payload.resourceType !== "OperationOutcome" || !Array.isArray(payload.issue)) {
+		return null;
+	}
+
+	const lines = payload.issue
+		.map((rawIssue) => {
+			if (!isRecord(rawIssue)) return null;
+			const severity = getString(rawIssue.severity);
+			const code = getString(rawIssue.code);
+			const diagnostics = getString(rawIssue.diagnostics);
+			const detailsText = isRecord(rawIssue.details)
+				? getString(rawIssue.details.text)
+				: undefined;
+			const location = Array.isArray(rawIssue.location)
+				? rawIssue.location.filter(
+						(v): v is string => typeof v === "string" && v.trim().length > 0,
+					)
+				: [];
+			const expression = Array.isArray(rawIssue.expression)
+				? rawIssue.expression.filter(
+						(v): v is string => typeof v === "string" && v.trim().length > 0,
+					)
+				: [];
+
+			const parts: string[] = [];
+			if (severity || code) {
+				parts.push(
+					`[${severity ?? "unknown"}${code ? `/${code}` : ""}]`,
+				);
+			}
+			if (diagnostics || detailsText) {
+				parts.push(diagnostics ?? detailsText ?? "");
+			}
+			if (expression.length > 0) {
+				parts.push(`expr: ${expression.join(", ")}`);
+			} else if (location.length > 0) {
+				parts.push(`loc: ${location.join(", ")}`);
+			}
+
+			if (parts.length === 0) return null;
+			return parts.join(" ");
+		})
+		.filter((line): line is string => Boolean(line));
+
+	if (lines.length === 0) {
+		return null;
+	}
+	return lines.join("\n");
+}
+
+function formatApiErrorPayload(payload: unknown): string | null {
+	if (typeof payload === "string" && payload.trim()) {
+		return payload.trim();
+	}
+	if (!isRecord(payload)) {
+		return null;
+	}
+
+	const operationOutcomeDetails = formatOperationOutcomeDetails(payload);
+	if (operationOutcomeDetails) {
+		return operationOutcomeDetails;
+	}
+
+	const fallbackMessage =
+		getString(payload.message) ??
+		getString(payload.error) ??
+		getString(payload.diagnostics);
+
+	if (fallbackMessage) {
+		return fallbackMessage;
+	}
+
+	try {
+		return JSON.stringify(payload, null, 2);
+	} catch {
+		return null;
+	}
+}
+
+function formatSqlError(error: unknown): string {
+	if (error instanceof Error && error.message === "Request timeout") {
+		return QUERY_TIMEOUT_MESSAGE;
+	}
+
+	if (error instanceof ApiResponseError) {
+		const details = formatApiErrorPayload(error.responseData);
+		return details ? `${error.message}\n${details}` : error.message;
+	}
+
+	if (error instanceof Error) {
+		return error.message;
+	}
+
+	return "Unknown error";
+}
+
+function isSelectLikeQuery(query: string): boolean {
+	const trimmed = query.trimStart().toUpperCase();
+	return trimmed.startsWith("SELECT") || trimmed.startsWith("WITH");
+}
+
+function applyResultLimit(query: string, limitValue: string): string {
+	if (limitValue === "none") {
+		return query;
+	}
+	if (!isSelectLikeQuery(query) || /\bLIMIT\b/i.test(query)) {
+		return query;
+	}
+
+	const limit = Number.parseInt(limitValue, 10);
+	if (!Number.isFinite(limit) || limit <= 0) {
+		return query;
+	}
+
+	const trimmed = query.trimEnd();
+	if (!trimmed) {
+		return query;
+	}
+
+	const hasSemicolon = trimmed.endsWith(";");
+	const baseQuery = hasSemicolon ? trimmed.slice(0, -1) : trimmed;
+	return `${baseQuery}\nLIMIT ${limit}${hasSemicolon ? ";" : ""}`;
+}
+
+function parseTimeoutMs(timeoutValue: string): number | undefined {
+	const parsed = Number.parseInt(timeoutValue, 10);
+	if (!Number.isFinite(parsed) || parsed <= 0) {
+		return undefined;
+	}
+	return parsed;
+}
 
 // ─── Stream Reducer ───
 
@@ -89,6 +235,14 @@ export function DbConsolePage() {
 		key: "db-console-rail-expanded",
 		defaultValue: false,
 	});
+	const [resultLimit, setResultLimit] = useLocalStorage({
+		key: "db-console-result-limit",
+		defaultValue: DEFAULT_RESULT_LIMIT,
+	});
+	const [sqlTimeout, setSqlTimeout] = useLocalStorage({
+		key: "db-console-sql-timeout",
+		defaultValue: DEFAULT_SQL_TIMEOUT,
+	});
 	const [searchFocusKey, setSearchFocusKey] = useState(0);
 	const [historySeeded, setHistorySeeded] = useState(false);
 
@@ -139,6 +293,20 @@ export function DbConsolePage() {
 		queryRef.current = value;
 	}, []);
 
+	const handleResultLimitChange = useCallback(
+		(value: string) => {
+			setResultLimit(value);
+		},
+		[setResultLimit],
+	);
+
+	const handleSqlTimeoutChange = useCallback(
+		(value: string) => {
+			setSqlTimeout(value);
+		},
+		[setSqlTimeout],
+	);
+
 	const handleEditorMount = useCallback(
 		(
 			editor: monaco.editor.IStandaloneCodeEditor,
@@ -172,9 +340,11 @@ export function DbConsolePage() {
 	const handleExecute = useCallback(
 		(value?: string) => {
 			if (sqlMutation.isPending) return; // prevent double-execution
-			const queryToRun = value ?? queryRef.current;
-			if (!queryToRun.trim()) return;
-			queryRef.current = queryToRun;
+			const sourceQuery = value ?? queryRef.current;
+			if (!sourceQuery.trim()) return;
+			const queryToRun = applyResultLimit(sourceQuery, resultLimit);
+			const timeoutMs = parseTimeoutMs(sqlTimeout);
+			queryRef.current = sourceQuery;
 
 			const entryId = crypto.randomUUID();
 
@@ -192,7 +362,7 @@ export function DbConsolePage() {
 
 			// Execute SQL
 			sqlMutation.mutate(
-				{ query: queryToRun },
+				{ query: queryToRun, timeoutMs },
 				{
 					onSuccess: (data) => {
 						dispatch({
@@ -210,16 +380,17 @@ export function DbConsolePage() {
 						});
 					},
 					onError: (error) => {
+						const errorMessage = formatSqlError(error);
 						dispatch({
 							type: "update",
 							id: entryId,
-							error: error.message,
+							error: errorMessage,
 							status: "error",
 						});
 						saveHistory.mutate({
 							query: queryToRun,
 							isError: true,
-							errorMessage: error.message,
+							errorMessage,
 						});
 					},
 				},
@@ -229,7 +400,7 @@ export function DbConsolePage() {
 			const trimmed = queryToRun.trim().toUpperCase();
 			if (trimmed.startsWith("SELECT")) {
 				explainMutation.mutate(
-					{ query: `EXPLAIN ANALYZE ${queryToRun}` },
+					{ query: `EXPLAIN ANALYZE ${queryToRun}`, timeoutMs },
 					{
 						onSuccess: (data) => {
 							dispatch({
@@ -242,14 +413,15 @@ export function DbConsolePage() {
 				);
 			}
 
-			// Clear editor after execution
-			if (editorInstance) {
-				editorInstance.setValue("");
-				queryRef.current = "";
-			}
-		},
-		[sqlMutation, explainMutation, saveHistory, editorInstance],
-	);
+			},
+			[
+				sqlMutation,
+				explainMutation,
+				saveHistory,
+				resultLimit,
+				sqlTimeout,
+			],
+		);
 
 	const handleClearStream = useCallback(() => {
 		dispatch({ type: "clear" });
@@ -313,25 +485,30 @@ export function DbConsolePage() {
 				</Group>
 			</div>
 
-			{/* Execution Stream */}
-			<ExecutionStream
-				entries={stream}
-				onReplayQuery={handleReplayQuery}
-				onToggleExpand={handleToggleExpand}
-				onRemoveEntry={handleRemoveEntry}
-			/>
-
-			{/* Prompt Editor */}
-			<div className={classes.editor}>
-				<PromptEditor
-					initialQuery={INITIAL_QUERY}
-					onQueryChange={handleQueryChange}
-					onExecute={handleExecute}
-					onEditorMount={handleEditorMount}
-					editorInstance={editorInstance}
-					modelInstance={modelInstance}
-					isPending={sqlMutation.isPending}
-				/>
+			<div className={classes.workspace}>
+				<div className={classes.streamPanel}>
+					<ExecutionStream
+						entries={stream}
+						onReplayQuery={handleReplayQuery}
+						onToggleExpand={handleToggleExpand}
+						onRemoveEntry={handleRemoveEntry}
+					/>
+				</div>
+				<div className={classes.studioPanel}>
+					<PromptEditor
+						initialQuery={INITIAL_QUERY}
+						onQueryChange={handleQueryChange}
+						resultLimit={resultLimit}
+						onResultLimitChange={handleResultLimitChange}
+						sqlTimeout={sqlTimeout}
+						onSqlTimeoutChange={handleSqlTimeoutChange}
+						onExecute={handleExecute}
+						onEditorMount={handleEditorMount}
+						editorInstance={editorInstance}
+						modelInstance={modelInstance}
+						isPending={sqlMutation.isPending}
+					/>
+				</div>
 			</div>
 		</div>
 	);

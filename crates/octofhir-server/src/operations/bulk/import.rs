@@ -55,18 +55,19 @@ impl ImportOperation {
         // OperationParams wraps non-Parameters bodies as:
         // {"resourceType":"Parameters","parameter":[{"name":"resource","resource":{...}}]}
         // Unwrap if the body was auto-wrapped
-        let effective_params = if let Some(parameter) = params.get("parameter").and_then(|v| v.as_array()) {
-            if parameter.len() == 1
-                && parameter[0].get("name").and_then(|v| v.as_str()) == Some("resource")
-            {
-                // Unwrap the auto-wrapped resource
-                parameter[0].get("resource").unwrap_or(params)
+        let effective_params =
+            if let Some(parameter) = params.get("parameter").and_then(|v| v.as_array()) {
+                if parameter.len() == 1
+                    && parameter[0].get("name").and_then(|v| v.as_str()) == Some("resource")
+                {
+                    // Unwrap the auto-wrapped resource
+                    parameter[0].get("resource").unwrap_or(params)
+                } else {
+                    params
+                }
             } else {
                 params
-            }
-        } else {
-            params
-        };
+            };
         let params = effective_params;
 
         // Support both direct JSON format and FHIR Parameters resource

@@ -7,6 +7,7 @@ import type {
 	HttpResponse,
 } from "./types";
 import { authInterceptor } from "./authInterceptor";
+import { refreshAuthSession } from "./authSession";
 
 export class HttpError extends Error {
 	response: HttpResponse<unknown>;
@@ -45,73 +46,82 @@ export class FhirClient {
 		} = config;
 		const fullUrl = url.startsWith("http") ? url : `${this.baseUrl}${url}`;
 
-		const controller = new AbortController();
-		const timeoutId = setTimeout(() => controller.abort(), timeout);
-
 		// GET and HEAD requests cannot have a body
 		const shouldIncludeBody = method !== "GET" && method !== "HEAD";
 
-		try {
-			const response = await fetch(fullUrl, {
-				method,
-				credentials,
-				headers: {
-					...this.defaultHeaders,
-					...headers,
-				},
-				body: shouldIncludeBody && data ? JSON.stringify(data) : undefined,
-				signal: controller.signal,
-			});
+		const executeFetch = async (): Promise<Response> => {
+			const controller = new AbortController();
+			const timeoutId = setTimeout(() => controller.abort(), timeout);
 
-			clearTimeout(timeoutId);
-
-			// Check for auth errors (401/403) and notify interceptor
-			authInterceptor.handleResponse(response);
-
-			// Parse response headers
-			const responseHeaders: Record<string, string> = {};
-			response.headers.forEach((value, key) => {
-				responseHeaders[key] = value;
-			});
-
-			// Parse response data
-			let responseData: T;
-			const contentType = response.headers.get("content-type");
-
-			if (
-				contentType?.includes("application/json") ||
-				contentType?.includes("application/fhir+json")
-			) {
-				responseData = await response.json();
-			} else {
-				responseData = (await response.text()) as unknown as T;
+			try {
+				return await fetch(fullUrl, {
+					method,
+					credentials,
+					headers: {
+						...this.defaultHeaders,
+						...headers,
+					},
+					body: shouldIncludeBody && data ? JSON.stringify(data) : undefined,
+					signal: controller.signal,
+				});
+			} catch (error) {
+				if (error instanceof Error && error.name === "AbortError") {
+					throw new Error("Request timeout");
+				}
+				throw error;
+			} finally {
+				clearTimeout(timeoutId);
 			}
+		};
 
-			const result: HttpResponse<T> = {
-				data: responseData,
-				status: response.status,
-				statusText: response.statusText,
-				headers: responseHeaders,
-				config,
-			};
+		let response = await executeFetch();
 
-			if (!response.ok) {
-				throw new HttpError(
-					`HTTP ${response.status}: ${response.statusText}`,
-					result,
-				);
+		if (response.status === 401 || response.status === 403) {
+			const refreshed = await refreshAuthSession(true);
+			if (refreshed) {
+				response = await executeFetch();
 			}
-
-			return result;
-		} catch (error) {
-			clearTimeout(timeoutId);
-
-			if (error instanceof Error && error.name === "AbortError") {
-				throw new Error("Request timeout");
-			}
-
-			throw error;
 		}
+
+		if (response.status === 401 || response.status === 403) {
+			authInterceptor.handleResponse(response);
+		}
+
+		// Parse response headers
+		const responseHeaders: Record<string, string> = {};
+		response.headers.forEach((value, key) => {
+			responseHeaders[key] = value;
+		});
+
+		// Parse response data
+		let responseData: T;
+		const contentType = response.headers.get("content-type");
+
+		if (
+			contentType?.includes("application/json") ||
+			contentType?.includes("application/fhir+json")
+		) {
+			responseData = await response.json();
+		} else {
+			responseData = (await response.text()) as unknown as T;
+		}
+
+		const result: HttpResponse<T> = {
+			data: responseData,
+			status: response.status,
+			statusText: response.statusText,
+			headers: responseHeaders,
+			config,
+		};
+
+		if (!response.ok) {
+			throw new HttpError(
+				`HTTP ${response.status}: ${response.statusText}`,
+				result,
+			);
+		}
+
+		return result;
 	}
 
 	// FHIR REST API methods

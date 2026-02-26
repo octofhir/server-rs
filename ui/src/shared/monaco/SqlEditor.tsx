@@ -10,6 +10,7 @@ import {
 	bindModelToLanguageServer,
 	ensureMonacoServices,
 	ensurePgLanguageRegistered,
+	forceSyncModelToLanguageServer,
 	buildPgLspUrl,
 	startPgLsp,
 	stopPgLsp,
@@ -90,6 +91,12 @@ export function SqlEditor({
 					const model = editor.getModel();
 					if (model) {
 						disposeModelBindingRef.current = bindModelToLanguageServer(model);
+						// Force-send current content after LSP init to refresh diagnostics.
+						// This clears stale "unknown table" markers after schema cache refresh.
+						forceSyncModelToLanguageServer(model);
+						window.setTimeout(() => {
+							forceSyncModelToLanguageServer(model);
+						}, 900);
 					}
 				} catch (error) {
 					console.warn("[SqlEditor.react] PostgreSQL LSP unavailable:", error);

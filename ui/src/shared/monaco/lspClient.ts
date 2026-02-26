@@ -195,6 +195,15 @@ export function bindModelToLanguageServer(
 	return activeConnection.bindModel(model);
 }
 
+export function forceSyncModelToLanguageServer(
+	model: monaco.editor.ITextModel,
+): void {
+	if (!activeConnection) {
+		return;
+	}
+	activeConnection.forceSyncModel(model);
+}
+
 /**
  * Set the formatter configuration to use for LSP formatting requests.
  * This config is passed in the options of textDocument/formatting requests.
@@ -347,6 +356,10 @@ class PgLspConnection {
 				textDocument: { uri },
 			});
 		};
+	}
+
+	public forceSyncModel(model: monaco.editor.ITextModel): void {
+		this.sendDidChange(model);
 	}
 
 	private async connect(): Promise<void> {

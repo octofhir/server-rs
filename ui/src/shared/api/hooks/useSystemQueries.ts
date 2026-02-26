@@ -105,8 +105,15 @@ export function useJsonSchema(resourceType: string | undefined) {
  */
 export function useSqlMutation() {
 	return useMutation({
-		mutationFn: ({ query, params }: { query: string; params?: SqlValue[] }) =>
-			serverApi.executeSql(query, params),
+		mutationFn: ({
+			query,
+			params,
+			timeoutMs,
+		}: {
+			query: string;
+			params?: SqlValue[];
+			timeoutMs?: number;
+		}) => serverApi.executeSql(query, params, timeoutMs),
 	});
 }
 

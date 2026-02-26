@@ -1491,4 +1491,3 @@ pub async fn search_registry_packages(query: &str) -> Result<Vec<RegistrySearchR
         })
         .collect())
 }
-

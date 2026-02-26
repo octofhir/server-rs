@@ -78,11 +78,11 @@ pub use loader::{LoadError, load_operations};
 pub use meta::{MetaAddOperation, MetaDeleteOperation, MetaOperation};
 pub use params::OperationParams;
 pub use registry::OperationRegistry;
+pub use reindex::{ReindexOperation, execute_reindex};
 pub use router::{
-    compartment_post_handler, instance_operation_handler,
-    instance_operation_or_history_handler, is_operation, merged_root_get_handler,
-    merged_root_post_handler, merged_type_get_handler, merged_type_post_handler,
-    system_operation_handler, type_operation_handler,
+    compartment_post_handler, instance_operation_handler, instance_operation_or_history_handler,
+    is_operation, merged_root_get_handler, merged_root_post_handler, merged_type_get_handler,
+    merged_type_post_handler, system_operation_handler, type_operation_handler,
 };
 pub use sof::{
     ViewDefinitionRunOperation, ViewDefinitionSqlOperation, execute_viewdefinition_export,
@@ -91,7 +91,6 @@ pub use terminology::{
     ClosureOperation, ExpandOperation, LookupOperation, SubsumesOperation, TranslateOperation,
     ValidateCodeOperation,
 };
-pub use reindex::{ReindexOperation, execute_reindex};
 pub use validate::{Issue, Severity, ValidateOperation};
 
 use std::collections::HashMap;

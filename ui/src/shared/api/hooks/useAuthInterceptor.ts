@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { authInterceptor } from "../authInterceptor";
+import { clearStoredAuthSession } from "../authSession";
 import { authKeys } from "./useAuth";
 import { useUiSettings } from "@/shared";
 
@@ -26,6 +27,8 @@ export function useAuthInterceptor() {
 			console.log(
 				`[Auth] Session expired (${event.status}), logging out and redirecting to login`,
 			);
+
+			clearStoredAuthSession();
 
 			// Clear user data from cache
 			queryClient.setQueryData(authKeys.user(), null);

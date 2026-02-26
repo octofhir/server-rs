@@ -6,7 +6,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use tokio::sync::{watch, Notify};
+use tokio::sync::{Notify, watch};
 
 use super::websocket::WebSocketRegistry;
 use super::{DeliveryChannel, EmailChannel, RestHookChannel};

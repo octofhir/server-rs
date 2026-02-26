@@ -1972,28 +1972,23 @@ fn build_router(state: AppState, body_limit: usize, compression: bool) -> Router
         // POST /Patient/123/$reindex - instance-level operation
         .route(
             "/Patient/{id}/{resource_type}",
-            get(handlers::compartment_search)
-                .post(crate::operations::compartment_post_handler),
+            get(handlers::compartment_search).post(crate::operations::compartment_post_handler),
         )
         .route(
             "/Encounter/{id}/{resource_type}",
-            get(handlers::compartment_search)
-                .post(crate::operations::compartment_post_handler),
+            get(handlers::compartment_search).post(crate::operations::compartment_post_handler),
         )
         .route(
             "/Practitioner/{id}/{resource_type}",
-            get(handlers::compartment_search)
-                .post(crate::operations::compartment_post_handler),
+            get(handlers::compartment_search).post(crate::operations::compartment_post_handler),
         )
         .route(
             "/RelatedPerson/{id}/{resource_type}",
-            get(handlers::compartment_search)
-                .post(crate::operations::compartment_post_handler),
+            get(handlers::compartment_search).post(crate::operations::compartment_post_handler),
         )
         .route(
             "/Device/{id}/{resource_type}",
-            get(handlers::compartment_search)
-                .post(crate::operations::compartment_post_handler),
+            get(handlers::compartment_search).post(crate::operations::compartment_post_handler),
         )
         // CRUD, search, and system operations
         // This merged route handles both /$operation and /ResourceType

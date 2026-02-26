@@ -208,10 +208,7 @@ pub async fn build_unified_payload(state: &RestConsoleState) -> RestConsoleRespo
                             ),
                             methods: vec![op.method.clone()],
                             placeholders: vec!["resourceType".to_string(), "id".to_string()],
-                            description: Some(format!(
-                                "{} for {} instance",
-                                code, resource_type
-                            )),
+                            description: Some(format!("{} for {} instance", code, resource_type)),
                             metadata: SuggestionMetadata {
                                 resource_type: Some(resource_type.clone()),
                                 affects_state: op.affects_state,
@@ -600,7 +597,10 @@ fn is_r5_or_later(fhir_version: &str) -> bool {
 
 /// Return modifier suggestions for a search parameter, respecting FHIR version.
 /// If the parameter has explicit modifiers, use those; otherwise infer from the parameter type.
-fn get_modifier_suggestions(param: &SearchParameter, fhir_version: &str) -> Vec<ModifierSuggestion> {
+fn get_modifier_suggestions(
+    param: &SearchParameter,
+    fhir_version: &str,
+) -> Vec<ModifierSuggestion> {
     if !param.modifier.is_empty() {
         return param
             .modifier
@@ -625,7 +625,10 @@ fn get_modifier_suggestions(param: &SearchParameter, fhir_version: &str) -> Vec<
 }
 
 /// Same as `get_modifier_suggestions` but returns `EnrichedModifierSuggestion`.
-fn get_enriched_modifier_suggestions(param: &SearchParameter, fhir_version: &str) -> Vec<EnrichedModifierSuggestion> {
+fn get_enriched_modifier_suggestions(
+    param: &SearchParameter,
+    fhir_version: &str,
+) -> Vec<EnrichedModifierSuggestion> {
     if !param.modifier.is_empty() {
         return param
             .modifier
@@ -973,9 +976,7 @@ fn build_special_params() -> Vec<SpecialParamInfo> {
         },
         SpecialParamInfo {
             name: "_sort".into(),
-            description: Some(
-                "Sort results by parameter (prefix with - for desc)".into(),
-            ),
+            description: Some("Sort results by parameter (prefix with - for desc)".into()),
             supported: true,
             examples: vec!["-_lastUpdated".into(), "_id".into()],
         },
@@ -1005,9 +1006,7 @@ fn build_special_params() -> Vec<SpecialParamInfo> {
         },
         SpecialParamInfo {
             name: "_revinclude".into(),
-            description: Some(
-                "Include resources that reference current results".into(),
-            ),
+            description: Some("Include resources that reference current results".into()),
             supported: true,
             examples: vec![],
         },
@@ -1023,23 +1022,17 @@ fn build_special_params() -> Vec<SpecialParamInfo> {
                 "Reverse chaining — filter by resources that reference this one".into(),
             ),
             supported: true,
-            examples: vec![
-                "Observation:patient:code=1234-5".into(),
-            ],
+            examples: vec!["Observation:patient:code=1234-5".into()],
         },
         SpecialParamInfo {
             name: "_type".into(),
-            description: Some(
-                "Filter by resource type (system-level search)".into(),
-            ),
+            description: Some("Filter by resource type (system-level search)".into()),
             supported: true,
             examples: vec!["Patient".into(), "Patient,Observation".into()],
         },
         SpecialParamInfo {
             name: "_filter".into(),
-            description: Some(
-                "Advanced filter expression (FHIR _filter syntax)".into(),
-            ),
+            description: Some("Advanced filter expression (FHIR _filter syntax)".into()),
             supported: true,
             examples: vec![
                 "name eq \"Smith\"".into(),

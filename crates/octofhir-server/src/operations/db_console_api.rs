@@ -300,9 +300,7 @@ pub async fn get_table_detail(
         .iter()
         .map(|row| DbIndexInfo {
             name: row.try_get::<String, _>("index_name").unwrap_or_default(),
-            columns: row
-                .try_get::<Vec<String>, _>("columns")
-                .unwrap_or_default(),
+            columns: row.try_get::<Vec<String>, _>("columns").unwrap_or_default(),
             is_unique: row.try_get::<bool, _>("is_unique").unwrap_or(false),
             is_primary: row.try_get::<bool, _>("is_primary").unwrap_or(false),
             index_type: row.try_get::<String, _>("index_type").unwrap_or_default(),
@@ -404,7 +402,10 @@ pub async fn terminate_query(
     check_db_console_access(&state.config.db_console, &auth_context)?;
 
     // Require at least readwrite mode for query termination
-    if matches!(state.config.db_console.sql_mode, crate::config::SqlMode::Readonly) {
+    if matches!(
+        state.config.db_console.sql_mode,
+        crate::config::SqlMode::Readonly
+    ) {
         return Err(ApiError::forbidden(
             "Query termination requires readwrite or admin mode",
         ));
@@ -445,9 +446,10 @@ pub async fn terminate_query(
 /// Validate that an identifier is safe (letters, digits, underscores).
 fn is_valid_identifier(s: &str) -> bool {
     !s.is_empty()
+        && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
         && s.chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '_')
-        && s.chars().next().map_or(false, |c| c.is_ascii_alphabetic() || c == '_')
+            .next()
+            .map_or(false, |c| c.is_ascii_alphabetic() || c == '_')
 }
 
 /// DELETE /api/db-console/indexes/{schema}/{index_name}
@@ -459,17 +461,16 @@ pub async fn drop_index(
     check_db_console_access(&state.config.db_console, &auth_context)?;
 
     // Require admin mode for DDL operations
-    if !matches!(state.config.db_console.sql_mode, crate::config::SqlMode::Admin) {
-        return Err(ApiError::forbidden(
-            "Index management requires admin mode",
-        ));
+    if !matches!(
+        state.config.db_console.sql_mode,
+        crate::config::SqlMode::Admin
+    ) {
+        return Err(ApiError::forbidden("Index management requires admin mode"));
     }
 
     // Validate identifiers to prevent SQL injection
     if !is_valid_identifier(&schema) || !is_valid_identifier(&index_name) {
-        return Err(ApiError::bad_request(
-            "Invalid schema or index name",
-        ));
+        return Err(ApiError::bad_request("Invalid schema or index name"));
     }
 
     warn!(

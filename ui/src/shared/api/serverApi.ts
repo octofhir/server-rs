@@ -28,6 +28,11 @@ import type {
   TerminateQueryResponse,
 } from "./types";
 import { authInterceptor } from "./authInterceptor";
+import { refreshAuthSession } from "./authSession";
+
+interface RequestOptions {
+  timeoutMs?: number;
+}
 
 /**
  * Custom error class that includes the parsed response body (e.g., OperationOutcome).
@@ -53,75 +58,90 @@ class ServerApiClient {
     this.defaultTimeout = timeout;
   }
 
-  private async request<T>(endpoint: string, options: RequestInit = {}): Promise<HttpResponse<T>> {
+  private async request<T>(
+    endpoint: string,
+    options: RequestInit = {},
+    requestOptions: RequestOptions = {},
+  ): Promise<HttpResponse<T>> {
     const url = `${this.baseUrl}${endpoint}`;
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), this.defaultTimeout);
+    const timeoutMs = requestOptions.timeoutMs ?? this.defaultTimeout;
 
-    try {
-      const response = await fetch(url, {
-        ...options,
-        signal: controller.signal,
-        credentials: "include", // Include cookies for auth
-        headers: {
-          "Content-Type": "application/json",
-          ...options.headers,
-        },
-      });
+    const executeFetch = async (): Promise<Response> => {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
-      clearTimeout(timeoutId);
-
-      // Check for auth errors (401/403) and notify interceptor
-      authInterceptor.handleResponse(response);
-
-      // Parse response headers
-      const headers: Record<string, string> = {};
-      response.headers.forEach((value, key) => {
-        headers[key] = value;
-      });
-
-      // Parse response data
-      let data: T;
-      const contentType = response.headers.get("content-type");
-
-      if (contentType?.includes("application/json") || contentType?.includes("application/fhir+json")) {
-        data = await response.json();
-      } else {
-        data = (await response.text()) as unknown as T;
+      try {
+        return await fetch(url, {
+          ...options,
+          signal: controller.signal,
+          credentials: "include", // Include cookies for auth
+          headers: {
+            "Content-Type": "application/json",
+            ...options.headers,
+          },
+        });
+      } catch (error) {
+        if (error instanceof Error && error.name === "AbortError") {
+          throw new Error("Request timeout");
+        }
+        throw error;
+      } finally {
+        clearTimeout(timeoutId);
       }
+    };
 
-      const result: HttpResponse<T> = {
-        data,
-        status: response.status,
-        statusText: response.statusText,
-        headers,
-        config: {
-          method: (options.method || "GET") as any,
-          url,
-          headers: options.headers as Record<string, string>,
-          data: options.body,
-        },
-      };
+    let response = await executeFetch();
 
-      if (!response.ok) {
-        throw new ApiResponseError(
-          `HTTP ${response.status}: ${response.statusText}`,
-          response.status,
-          response.statusText,
-          data,
-        );
+    if (response.status === 401 || response.status === 403) {
+      const refreshed = await refreshAuthSession(true);
+      if (refreshed) {
+        response = await executeFetch();
       }
-
-      return result;
-    } catch (error) {
-      clearTimeout(timeoutId);
-
-      if (error instanceof Error && error.name === "AbortError") {
-        throw new Error("Request timeout");
-      }
-
-      throw error;
     }
+
+    if (response.status === 401 || response.status === 403) {
+      authInterceptor.handleResponse(response);
+    }
+
+    // Parse response headers
+    const headers: Record<string, string> = {};
+    response.headers.forEach((value, key) => {
+      headers[key] = value;
+    });
+
+    // Parse response data
+    let data: T;
+    const contentType = response.headers.get("content-type");
+
+    if (contentType?.includes("application/json") || contentType?.includes("application/fhir+json")) {
+      data = await response.json();
+    } else {
+      data = (await response.text()) as unknown as T;
+    }
+
+    const result: HttpResponse<T> = {
+      data,
+      status: response.status,
+      statusText: response.statusText,
+      headers,
+      config: {
+        method: (options.method || "GET") as any,
+        url,
+        headers: options.headers as Record<string, string>,
+        data: options.body,
+      },
+    };
+
+    if (!response.ok) {
+      throw new ApiResponseError(
+        `HTTP ${response.status}: ${response.statusText}`,
+        response.status,
+        response.statusText,
+        data,
+      );
+    }
+
+    return result;
   }
 
   async getHealth(): Promise<HealthResponse> {
@@ -198,14 +218,24 @@ class ServerApiClient {
    *   ["123", "active"]
    * );
    */
-  async executeSql(query: string, params?: SqlValue[]): Promise<SqlResponse> {
+  async executeSql(
+    query: string,
+    params?: SqlValue[],
+    timeoutMs?: number,
+  ): Promise<SqlResponse> {
     const body: { query: string; params?: SqlValue[] } = { query };
     if (params && params.length > 0) {
       body.params = params;
     }
+    const safeTimeoutMs =
+      timeoutMs != null && Number.isFinite(timeoutMs) && timeoutMs > 0
+        ? timeoutMs
+        : undefined;
     const response = await this.request<SqlResponse>("/api/$sql", {
       method: "POST",
       body: JSON.stringify(body),
+    }, {
+      timeoutMs: safeTimeoutMs,
     });
     return response.data;
   }

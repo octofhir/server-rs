@@ -167,11 +167,7 @@ fn resolve_json_path<'a>(value: &'a Value, path: &str) -> Vec<&'a Value> {
 ///
 /// The path may start with a `ResourceType.` prefix (e.g. `"Patient.managingOrganization"`)
 /// which is stripped before navigating the JSON.
-fn extract_references_at_path(
-    resource: &Value,
-    path: &str,
-    base_url: &str,
-) -> Vec<FhirReference> {
+fn extract_references_at_path(resource: &Value, path: &str, base_url: &str) -> Vec<FhirReference> {
     // Strip leading ResourceType. prefix if present
     let field_path = if let Some(dot_pos) = path.find('.') {
         let first_segment = &path[..dot_pos];
@@ -245,10 +241,12 @@ async fn resolve_graph_by_string(
 
     // Try as a canonical URL
     if value.starts_with("http") {
-        let search_params = SearchParams::new()
-            .with_count(1)
-            .with_param("url", value);
-        if let Ok(result) = state.storage.search("GraphDefinition", &search_params).await {
+        let search_params = SearchParams::new().with_count(1).with_param("url", value);
+        if let Ok(result) = state
+            .storage
+            .search("GraphDefinition", &search_params)
+            .await
+        {
             if let Some(entry) = result.entries.first() {
                 return parse_graph_definition(&entry.resource);
             }
@@ -326,7 +324,10 @@ async fn traverse(
             if work.depth >= MAX_DEPTH {
                 tracing::warn!(depth = work.depth, "Graph traversal depth limit reached");
             } else {
-                tracing::warn!(count = results.len(), "Graph traversal resource limit reached");
+                tracing::warn!(
+                    count = results.len(),
+                    "Graph traversal resource limit reached"
+                );
             }
             break;
         }
@@ -441,7 +442,10 @@ fn build_collection_bundle(
     let entries = resources
         .into_iter()
         .map(|stored| BundleEntry {
-            full_url: Some(format!("{}/{}/{}", base_url, stored.resource_type, stored.id)),
+            full_url: Some(format!(
+                "{}/{}/{}",
+                base_url, stored.resource_type, stored.id
+            )),
             resource: Some(RawJson::from(stored.resource)),
             search: None,
             request: None,
@@ -581,7 +585,11 @@ mod tests {
             "resourceType": "Patient",
             "managingOrganization": {"reference": "Organization/1"}
         });
-        let refs = extract_references_at_path(&resource, "Patient.managingOrganization", "http://localhost");
+        let refs = extract_references_at_path(
+            &resource,
+            "Patient.managingOrganization",
+            "http://localhost",
+        );
         assert_eq!(refs.len(), 1);
         assert_eq!(refs[0].resource_type, "Organization");
         assert_eq!(refs[0].id, "1");
@@ -686,10 +694,7 @@ mod tests {
         });
         let model = parse_graph_definition(&gd).unwrap();
         assert!(model.links[0].path.is_none());
-        assert_eq!(
-            model.links[0].targets[0].params.as_deref(),
-            Some("patient")
-        );
+        assert_eq!(model.links[0].targets[0].params.as_deref(), Some("patient"));
     }
 
     #[test]

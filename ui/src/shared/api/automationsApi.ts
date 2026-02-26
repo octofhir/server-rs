@@ -13,6 +13,7 @@ import type {
 } from "./types";
 import { ApiResponseError } from "./serverApi";
 import { authInterceptor } from "./authInterceptor";
+import { refreshAuthSession } from "./authSession";
 
 class AutomationsApiClient {
   private baseUrl: string;
@@ -25,54 +26,63 @@ class AutomationsApiClient {
 
   private async request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
     const url = `${this.baseUrl}${endpoint}`;
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), this.defaultTimeout);
+    const executeFetch = async (): Promise<Response> => {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), this.defaultTimeout);
 
-    try {
-      const response = await fetch(url, {
-        ...options,
-        signal: controller.signal,
-        credentials: "include",
-        headers: {
-          "Content-Type": "application/json",
-          ...options.headers,
-        },
-      });
-
-      clearTimeout(timeoutId);
-
-      // Check for auth errors
-      authInterceptor.handleResponse(response);
-
-      // Parse response
-      let data: T;
-      const contentType = response.headers.get("content-type");
-
-      if (contentType?.includes("application/json")) {
-        data = await response.json();
-      } else {
-        data = (await response.text()) as unknown as T;
+      try {
+        return await fetch(url, {
+          ...options,
+          signal: controller.signal,
+          credentials: "include",
+          headers: {
+            "Content-Type": "application/json",
+            ...options.headers,
+          },
+        });
+      } catch (error) {
+        if (error instanceof Error && error.name === "AbortError") {
+          throw new Error("Request timeout");
+        }
+        throw error;
+      } finally {
+        clearTimeout(timeoutId);
       }
+    };
 
-      if (!response.ok) {
-        throw new ApiResponseError(
-          `HTTP ${response.status}: ${response.statusText}`,
-          response.status,
-          response.statusText,
-          data,
-        );
+    let response = await executeFetch();
+
+    if (response.status === 401 || response.status === 403) {
+      const refreshed = await refreshAuthSession(true);
+      if (refreshed) {
+        response = await executeFetch();
       }
-
-      return data;
-    } catch (error) {
-      clearTimeout(timeoutId);
-
-      if (error instanceof Error && error.name === "AbortError") {
-        throw new Error("Request timeout");
-      }
-
-      throw error;
     }
+
+    if (response.status === 401 || response.status === 403) {
+      authInterceptor.handleResponse(response);
+    }
+
+    // Parse response
+    let data: T;
+    const contentType = response.headers.get("content-type");
+
+    if (contentType?.includes("application/json")) {
+      data = await response.json();
+    } else {
+      data = (await response.text()) as unknown as T;
+    }
+
+    if (!response.ok) {
+      throw new ApiResponseError(
+        `HTTP ${response.status}: ${response.statusText}`,
+        response.status,
+        response.statusText,
+        data,
+      );
+    }
+
+    return data;
   }
 
   // ============ Automation CRUD ============

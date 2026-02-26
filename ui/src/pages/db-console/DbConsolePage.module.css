@@ -1,13 +1,12 @@
-/* Terminal Fusion layout — CSS Grid with schema rail + main stream */
+/* Command Studio layout: schema rail + split workspace */
 
 .container {
   display: grid;
   grid-template-columns: auto 1fr;
-  grid-template-rows: auto 1fr auto;
+  grid-template-rows: auto 1fr;
   grid-template-areas:
     "rail toolbar"
-    "rail stream"
-    "rail editor";
+    "rail workspace";
   height: 100vh;
   background: var(--octo-surface-1);
   overflow: hidden;
@@ -26,6 +25,39 @@
   flex-shrink: 0;
   gap: var(--mantine-spacing-sm);
   background: var(--octo-surface-1);
+}
+
+.workspace {
+  grid-area: workspace;
+  min-height: 0;
+  padding: var(--mantine-spacing-sm);
+  display: grid;
+  gap: var(--mantine-spacing-sm);
+  grid-template-columns: minmax(320px, 40%) minmax(480px, 1fr);
+  background:
+    radial-gradient(120% 120% at 100% 0%, color-mix(in srgb, var(--octo-accent-primary) 7%, transparent) 0%, transparent 55%),
+    radial-gradient(100% 100% at 0% 100%, color-mix(in srgb, var(--octo-accent-warm) 7%, transparent) 0%, transparent 60%),
+    var(--octo-surface-1);
+}
+
+.streamPanel,
+.studioPanel {
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--octo-border-subtle);
+  border-radius: var(--mantine-radius-lg);
+  background: color-mix(in srgb, var(--octo-surface-2) 82%, var(--octo-surface-1));
+  box-shadow: 0 12px 24px rgba(10, 20, 40, 0.05);
+}
+
+.streamPanel {
+  backdrop-filter: blur(6px);
+}
+
+.studioPanel {
+  border-color: color-mix(in srgb, var(--octo-accent-primary) 22%, var(--octo-border-subtle));
 }
 
 /* ─── Schema Rail ─── */
@@ -49,7 +81,7 @@
 /* ─── Execution Stream ─── */
 
 .stream {
-  grid-area: stream;
+  flex: 1;
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
@@ -75,19 +107,6 @@
   height: 1px;
   background: var(--octo-border-subtle);
   margin: 4px 0;
-}
-
-/* ─── Prompt Editor (bottom-pinned) ─── */
-
-.editor {
-  grid-area: editor;
-  background: var(--octo-surface-2);
-  border-top: 1px solid var(--octo-border-subtle);
-  box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.05);
-  border-radius: var(--mantine-radius-lg) var(--mantine-radius-lg) 0 0;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
 }
 
 /* ─── Stream Entry Card ─── */
@@ -160,27 +179,39 @@
 .promptContainer {
   display: flex;
   flex-direction: column;
+  flex: 1;
+  min-height: 0;
 }
 
 .promptToolbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 6px 12px;
+  padding: 8px 12px;
   gap: var(--mantine-spacing-xs);
+  border-bottom: 1px solid var(--octo-border-subtle);
+  background: color-mix(in srgb, var(--octo-surface-3) 45%, transparent);
+}
+
+.promptWorkspace {
+  --diagnostics-size: 38%;
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(320px, 1fr) 10px minmax(300px, var(--diagnostics-size));
 }
 
 .promptBody {
   display: flex;
   align-items: stretch;
-  min-height: 60px;
-  max-height: 300px;
+  min-height: 0;
+  background: color-mix(in srgb, var(--octo-surface-1) 75%, transparent);
 }
 
 .promptGlyph {
   display: flex;
   align-items: flex-start;
-  padding: 16px 0 0 12px;
+  padding: 16px 0 0 14px;
   font-family: var(--font-mono, "JetBrains Mono", "Fira Code", monospace);
   font-weight: 700;
   font-size: 14px;
@@ -192,8 +223,37 @@
 
 .promptEditorWrap {
   flex: 1;
-  min-height: 60px;
+  min-height: 0;
   overflow: hidden;
+  padding-right: 8px;
+}
+
+.promptSplitter {
+  border: none;
+  border-left: 1px solid var(--octo-border-subtle);
+  border-right: 1px solid var(--octo-border-subtle);
+  background: color-mix(in srgb, var(--octo-surface-2) 75%, transparent);
+  color: var(--mantine-color-dimmed);
+  cursor: col-resize;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background-color var(--octo-motion-fast, 100ms) ease;
+}
+
+.promptSplitter:hover,
+.promptSplitter:focus-visible {
+  background: color-mix(in srgb, var(--octo-accent-primary) 18%, var(--octo-surface-2));
+  color: var(--octo-accent-primary);
+  outline: none;
+}
+
+.diagnosticsPane {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 8px;
+  background: color-mix(in srgb, var(--octo-surface-2) 88%, transparent);
 }
 
 /* ─── Schema Rail Items ─── */
@@ -212,6 +272,32 @@
   flex: 1;
   overflow-y: auto;
   overflow-x: hidden;
+}
+
+.railControls {
+  padding: 6px 8px 8px;
+  border-bottom: 1px solid var(--octo-border-subtle);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background: color-mix(in srgb, var(--octo-surface-2) 82%, transparent);
+}
+
+.railSchemaGroup {
+  padding-top: 2px;
+}
+
+.railSchemaHeader {
+  padding: 6px 10px 4px;
+  opacity: 0.75;
+  border-bottom: 1px dashed color-mix(in srgb, var(--octo-border-subtle) 60%, transparent);
+  margin-bottom: 4px;
+}
+
+.railEmpty {
+  padding: 20px 12px;
+  text-align: center;
+  opacity: 0.65;
 }
 
 .railBadge {
@@ -279,4 +365,49 @@
   flex: 1;
   gap: var(--mantine-spacing-sm);
   opacity: 0.6;
+}
+
+@media (max-width: 1400px) {
+  .workspace {
+    grid-template-columns: minmax(300px, 38%) minmax(420px, 1fr);
+  }
+
+  .promptWorkspace {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(260px, 1fr) 8px minmax(220px, var(--diagnostics-size));
+  }
+
+  .promptBody {
+    border-bottom: 1px solid var(--octo-border-subtle);
+  }
+
+  .promptSplitter {
+    border-left: none;
+    border-right: none;
+    border-top: 1px solid var(--octo-border-subtle);
+    border-bottom: 1px solid var(--octo-border-subtle);
+    cursor: row-resize;
+  }
+}
+
+@media (max-width: 1024px) {
+  .workspace {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(220px, 1fr) minmax(360px, 1.1fr);
+  }
+}
+
+@media (max-width: 768px) {
+  .toolbar {
+    height: auto;
+    min-height: 40px;
+    padding-top: 6px;
+    padding-bottom: 6px;
+    flex-wrap: wrap;
+  }
+
+  .workspace {
+    padding: 8px;
+    gap: 8px;
+  }
 }

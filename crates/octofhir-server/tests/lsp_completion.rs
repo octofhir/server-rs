@@ -765,9 +765,14 @@ async fn lsp_completion_suggests_jsonb_paths() {
         .expect("completion response");
 
     let items = completion_items(completion);
+    let name_item = items
+        .iter()
+        .find(|item| item.label == "name")
+        .expect("expected JSONB path completion for name");
+    let detail = name_item.detail.as_deref().unwrap_or_default();
     assert!(
-        items.iter().any(|item| item.label == "name"),
-        "expected JSONB path completion for name"
+        detail.contains("FHIR: HumanName[]"),
+        "expected FHIR type in completion detail, got: {detail}"
     );
 }
 
@@ -820,6 +825,15 @@ async fn lsp_completion_suggests_nested_jsonb_paths() {
         items.iter().any(|item| item.label == "family"),
         "expected JSONB path completion for family, got: {:?}",
         labels
+    );
+    let family_item = items
+        .iter()
+        .find(|item| item.label == "family")
+        .expect("family completion item");
+    let detail = family_item.detail.as_deref().unwrap_or_default();
+    assert!(
+        detail.contains("FHIR: string"),
+        "expected nested FHIR type in completion detail, got: {detail}"
     );
 }
 

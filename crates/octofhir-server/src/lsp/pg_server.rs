@@ -15,14 +15,61 @@ use futures::future::BoxFuture;
 use mold_completion::types::{CompletionItemKind, TableType};
 use mold_completion::{CompletionRequest, FunctionProvider, SchemaProvider, complete};
 use mold_hir::{
-    ColumnInfo as HirColumnInfo, DataType as HirDataType, SchemaProvider as HirSchemaProvider,
-    Severity as HirSeverity, TableInfo as HirTableInfo, TableType as HirTableType, analyze_query,
+    AnalysisOptions as HirAnalysisOptions, Analyzer as HirAnalyzer,
+    BuiltinLintPack as HirBuiltinLintPack, ColumnInfo as HirColumnInfo, DataType as HirDataType,
+    LintRulePack as HirLintRulePack, SchemaProvider as HirSchemaProvider, Severity as HirSeverity,
+    TableInfo as HirTableInfo, TableType as HirTableType, analyze_query_with_options,
 };
+use mold_syntax::SyntaxKind;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use text_size::{TextRange, TextSize};
 
 use super::SchemaCache;
+
+struct ResourceIdJsonbLintPack;
+
+impl HirLintRulePack for ResourceIdJsonbLintPack {
+    fn apply(&self, root: &mold_syntax::SyntaxNode, analyzer: &mut HirAnalyzer<'_>) {
+        let mut prev_non_trivia = None;
+        let mut prev_prev_non_trivia = None;
+
+        for element in root.descendants_with_tokens() {
+            let Some(token) = element.into_token() else {
+                continue;
+            };
+            if token.kind().is_trivia() {
+                continue;
+            }
+
+            if token.kind() == SyntaxKind::STRING
+                && token.text().trim_matches('\'').eq_ignore_ascii_case("id")
+                && prev_non_trivia
+                    .as_ref()
+                    .is_some_and(|t: &mold_syntax::SyntaxToken| t.kind() == SyntaxKind::ARROW_TEXT)
+                && prev_prev_non_trivia
+                    .as_ref()
+                    .is_some_and(|t: &mold_syntax::SyntaxToken| {
+                        t.kind() == SyntaxKind::IDENT && t.text().eq_ignore_ascii_case("resource")
+                    })
+            {
+                let start = prev_prev_non_trivia
+                    .as_ref()
+                    .expect("checked above")
+                    .text_range()
+                    .start();
+                let end = token.text_range().end();
+                analyzer.warning(
+                    "Prefer column `id` instead of `resource->>'id'` for filtering/joins",
+                    Some(TextRange::new(start, end)),
+                );
+            }
+
+            prev_prev_non_trivia = prev_non_trivia;
+            prev_non_trivia = Some(token.clone());
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 struct DocumentState {
@@ -148,7 +195,10 @@ impl PostgresLspServer {
         model_snapshot: &ModelSchemaSnapshot,
     ) -> Vec<Diagnostic> {
         let provider = HirSchemaProviderAdapter::new(schema_cache, model_snapshot);
-        let analysis = analyze_query(parse, &provider);
+        let options = HirAnalysisOptions::new()
+            .with_builtin_lint_packs([HirBuiltinLintPack::Core, HirBuiltinLintPack::Jsonb])
+            .with_external_lint_pack(Arc::new(ResourceIdJsonbLintPack));
+        let analysis = analyze_query_with_options(parse, &provider, &options);
 
         analysis
             .diagnostics
@@ -178,6 +228,123 @@ impl PostgresLspServer {
             .collect()
     }
 
+    fn is_word_char(byte: u8) -> bool {
+        byte.is_ascii_alphanumeric() || byte == b'_'
+    }
+
+    fn has_word_boundary(text: &str, start: usize, len: usize) -> bool {
+        let bytes = text.as_bytes();
+        let before_is_word = start > 0 && Self::is_word_char(bytes[start - 1]);
+        let after_idx = start + len;
+        let after_is_word = after_idx < bytes.len() && Self::is_word_char(bytes[after_idx]);
+        !before_is_word && !after_is_word
+    }
+
+    fn looks_like_non_boolean_jsonb_where_clause(clause: &str) -> bool {
+        if !clause.contains("->") && !clause.contains("#>") {
+            return false;
+        }
+
+        let upper = clause.to_ascii_uppercase();
+        let lower = clause.to_ascii_lowercase();
+
+        let bool_markers = [
+            "=",
+            "!=",
+            "<>",
+            ">=",
+            "<=",
+            " IS ",
+            " IN ",
+            " LIKE ",
+            " ILIKE ",
+            " BETWEEN ",
+            " EXISTS ",
+            " SIMILAR ",
+            "@>",
+            "<@",
+            "?|",
+            "?&",
+            " ? ",
+            "@?",
+            "@@",
+            "~",
+        ];
+
+        if bool_markers.iter().any(|m| upper.contains(m)) {
+            return false;
+        }
+
+        if lower.contains("::bool")
+            || lower.contains("::boolean")
+            || lower.contains(" as bool")
+            || lower.contains(" as boolean")
+        {
+            return false;
+        }
+
+        true
+    }
+
+    fn collect_where_jsonb_boolean_diagnostics(text: &str) -> Vec<Diagnostic> {
+        let mut diagnostics = Vec::new();
+        let upper = text.to_ascii_uppercase();
+        let mut search_from = 0usize;
+
+        while let Some(rel_idx) = upper[search_from..].find("WHERE") {
+            let where_start = search_from + rel_idx;
+            if !Self::has_word_boundary(&upper, where_start, 5) {
+                search_from = where_start + 5;
+                continue;
+            }
+
+            let clause_start = where_start + 5;
+            let clause_end = text[clause_start..]
+                .find(';')
+                .map(|idx| clause_start + idx)
+                .unwrap_or(text.len());
+            let clause = &text[clause_start..clause_end];
+
+            if Self::looks_like_non_boolean_jsonb_where_clause(clause) {
+                let trimmed_start = clause_start
+                    + clause
+                        .find(|c: char| !c.is_whitespace())
+                        .unwrap_or_default();
+                let trimmed_end = clause_start
+                    + clause
+                        .rfind(|c: char| !c.is_whitespace())
+                        .map(|idx| idx + 1)
+                        .unwrap_or_default();
+
+                if trimmed_end > trimmed_start {
+                    diagnostics.push(Diagnostic {
+                        range: Self::text_range_to_lsp_range(
+                            text,
+                            TextRange::new(
+                                TextSize::new(trimmed_start as u32),
+                                TextSize::new(trimmed_end as u32),
+                            ),
+                        ),
+                        severity: Some(DiagnosticSeverity::ERROR),
+                        code: None,
+                        code_description: None,
+                        source: Some("octofhir-lint".to_string()),
+                        message: "WHERE expects boolean expression. JSON extraction (`->`, `#>`) \
+                                  returns jsonb; compare/cast it (e.g. `->>`, `=`, `IS NOT NULL`)."
+                            .to_string(),
+                        related_information: None,
+                        tags: None,
+                        data: None,
+                    });
+                }
+            }
+
+            search_from = clause_end;
+        }
+
+        diagnostics
+    }
+
     fn publish_diagnostics(&self, uri: Url, version: i32, text: String) {
         let (parse, mut diagnostics) = Self::collect_parse_diagnostics(&text);
 
@@ -189,6 +356,7 @@ impl PostgresLspServer {
             &self.model_snapshot,
         );
         diagnostics.extend(semantic_diagnostics);
+        diagnostics.extend(Self::collect_where_jsonb_boolean_diagnostics(&text));
 
         let params = PublishDiagnosticsParams {
             uri,
@@ -530,8 +698,11 @@ impl ModelSchemaSnapshot {
                 let field_type = Self::jsonb_field_type(element);
                 let mut field = mold_completion::types::JsonbField::new(name.clone(), field_type);
 
-                if let Some(description) = &element.short {
-                    field = field.with_description(description.clone());
+                if let Some(description) = Self::jsonb_field_description(element) {
+                    field = field.with_description(description);
+                }
+                if let Some(fhir_type) = Self::fhir_type_label(element) {
+                    field = field.with_semantic_hint("FHIR", fhir_type);
                 }
 
                 // Handle inline nested elements (BackboneElement)
@@ -582,6 +753,33 @@ impl ModelSchemaSnapshot {
 
             schema
         })
+    }
+
+    fn jsonb_field_description(element: &octofhir_fhirschema::FhirSchemaElement) -> Option<String> {
+        element.short.as_ref().map(|s| s.trim()).and_then(|s| {
+            if s.is_empty() {
+                None
+            } else {
+                Some(s.to_string())
+            }
+        })
+    }
+
+    fn fhir_type_label(element: &octofhir_fhirschema::FhirSchemaElement) -> Option<String> {
+        let mut base_type = element.type_name.clone();
+
+        // Inline nested elements are BackboneElement-like structures.
+        if base_type.is_none() && element.elements.as_ref().is_some_and(|v| !v.is_empty()) {
+            base_type = Some("BackboneElement".to_string());
+        }
+
+        let base_type = base_type?;
+        let is_array = element.array.unwrap_or(false);
+        if is_array {
+            Some(format!("{base_type}[]"))
+        } else {
+            Some(base_type)
+        }
     }
 
     /// Check if a FHIR type is a primitive type (no nested elements).
@@ -1008,6 +1206,7 @@ fn parse_data_type(type_str: &str) -> HirDataType {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use mold_hir::{NullSchemaProvider, analyze_query_with_options};
 
     #[test]
     fn test_offset_to_position_simple() {
@@ -1149,6 +1348,70 @@ mod tests {
                 line: 1,
                 character: 0
             }
+        );
+    }
+
+    #[test]
+    fn test_resource_id_jsonb_lint_pack_warns_on_arrow_text_id() {
+        let parse = mold_parser::parse("SELECT resource->>'id' FROM patient");
+        let provider = NullSchemaProvider;
+        let options = HirAnalysisOptions::new()
+            .with_builtin_lint_packs(std::iter::empty())
+            .with_external_lint_pack(Arc::new(ResourceIdJsonbLintPack));
+
+        let analysis = analyze_query_with_options(&parse, &provider, &options);
+        assert!(
+            analysis
+                .diagnostics
+                .iter()
+                .any(|d| d.message.contains("Prefer column `id`")),
+            "expected resource id lint warning, got: {:?}",
+            analysis.diagnostics
+        );
+    }
+
+    #[test]
+    fn test_resource_id_jsonb_lint_pack_not_warn_on_json_value_extract() {
+        let parse = mold_parser::parse("SELECT resource->'id' FROM patient");
+        let provider = NullSchemaProvider;
+        let options = HirAnalysisOptions::new()
+            .with_builtin_lint_packs(std::iter::empty())
+            .with_external_lint_pack(Arc::new(ResourceIdJsonbLintPack));
+
+        let analysis = analyze_query_with_options(&parse, &provider, &options);
+        assert!(
+            analysis
+                .diagnostics
+                .iter()
+                .all(|d| !d.message.contains("Prefer column `id`")),
+            "did not expect resource id lint warning, got: {:?}",
+            analysis.diagnostics
+        );
+    }
+
+    #[test]
+    fn test_where_jsonb_boolean_lint_warns_for_bare_jsonb_predicate() {
+        let text = "SELECT * FROM patient WHERE resource->'name'->'' LIMIT 10;";
+        let diagnostics = PostgresLspServer::collect_where_jsonb_boolean_diagnostics(text);
+
+        assert!(
+            diagnostics
+                .iter()
+                .any(|d| d.message.contains("WHERE expects boolean expression")),
+            "expected WHERE jsonb lint warning, got: {:?}",
+            diagnostics
+        );
+    }
+
+    #[test]
+    fn test_where_jsonb_boolean_lint_does_not_warn_for_boolean_predicate() {
+        let text = "SELECT * FROM patient WHERE resource->>'name' = 'alex' LIMIT 10;";
+        let diagnostics = PostgresLspServer::collect_where_jsonb_boolean_diagnostics(text);
+
+        assert!(
+            diagnostics.is_empty(),
+            "did not expect WHERE jsonb lint warning, got: {:?}",
+            diagnostics
         );
     }
 }

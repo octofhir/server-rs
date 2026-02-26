@@ -1,5 +1,11 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { authApi } from "../authApi";
+import {
+	clearStoredAuthSession,
+	hasStoredRefreshToken,
+	refreshAuthSession,
+	saveAuthSessionFromToken,
+} from "../authSession";
 
 // Query keys for auth
 export const authKeys = {
@@ -16,7 +22,23 @@ export const authKeys = {
 export function useCurrentUser() {
 	return useQuery({
 		queryKey: authKeys.user(),
-		queryFn: () => authApi.getCurrentUser(),
+		queryFn: async () => {
+			const user = await authApi.getCurrentUser();
+			if (user) {
+				return user;
+			}
+
+			if (!hasStoredRefreshToken()) {
+				return null;
+			}
+
+			const refreshed = await refreshAuthSession(true);
+			if (!refreshed) {
+				return null;
+			}
+
+			return authApi.getCurrentUser();
+		},
 		retry: false,
 		staleTime: 1000 * 60 * 5, // 5 minutes
 		refetchInterval: 1000 * 60 * 5, // Refetch every 5 minutes to check session validity
@@ -35,7 +57,8 @@ export function useLogin() {
 	return useMutation({
 		mutationFn: ({ username, password }: { username: string; password: string }) =>
 			authApi.login(username, password),
-		onSuccess: async () => {
+		onSuccess: async (tokenResponse) => {
+			saveAuthSessionFromToken(tokenResponse);
 			// Refetch user info after successful login
 			// Wait for the refetch to complete to ensure auth state is updated
 			await queryClient.invalidateQueries({ queryKey: authKeys.user() });
@@ -53,6 +76,7 @@ export function useLogout() {
 	return useMutation({
 		mutationFn: () => authApi.logout(),
 		onSuccess: () => {
+			clearStoredAuthSession();
 			// Clear user info and set to null
 			queryClient.setQueryData(authKeys.user(), null);
 			// Optionally clear all queries on logout
