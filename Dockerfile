@@ -54,7 +54,7 @@ COPY crates/ ./crates/
 COPY igs/ ./igs/
 
 # Copy built UI
-COPY --from=ui-builder /app/dist ./ui/dist
+COPY --from=ui-builder /app/ui/dist ./ui/dist
 
 # Build release binary with cached cargo registry and target dir
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
