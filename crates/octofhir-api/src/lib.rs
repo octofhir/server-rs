@@ -694,10 +694,18 @@ pub struct Bundle {
 
 impl Bundle {
     pub fn searchset(total: u64, entries: Vec<BundleEntry>, links: Vec<BundleLink>) -> Self {
+        Self::searchset_with_total(Some(total), entries, links)
+    }
+
+    pub fn searchset_with_total(
+        total: Option<u64>,
+        entries: Vec<BundleEntry>,
+        links: Vec<BundleLink>,
+    ) -> Self {
         Self {
             resource_type: "Bundle",
             bundle_type: "searchset".to_string(),
-            total: Some(total),
+            total,
             link: links,
             entry: entries,
         }
@@ -912,6 +920,36 @@ pub fn bundle_from_search_raw(
     count: usize,
     query_suffix: Option<&str>,
 ) -> Bundle {
+    bundle_from_search_raw_with_pagination(
+        Some(total),
+        true,
+        false,
+        resources,
+        resource_ids,
+        included,
+        base_url,
+        resource_type,
+        offset,
+        count,
+        query_suffix,
+    )
+}
+
+/// Create a search bundle from raw JSON resources with optional exact total metadata.
+#[allow(clippy::too_many_arguments)]
+pub fn bundle_from_search_raw_with_pagination(
+    total: Option<usize>,
+    total_is_exact: bool,
+    has_more: bool,
+    resources: Vec<RawJson>,
+    resource_ids: Vec<String>,
+    included: Vec<RawIncludedEntry>,
+    base_url: &str,
+    resource_type: &str,
+    offset: usize,
+    count: usize,
+    query_suffix: Option<&str>,
+) -> Bundle {
     let mut entries = Vec::with_capacity(resources.len() + included.len());
 
     // Add main match entries
@@ -947,8 +985,17 @@ pub fn bundle_from_search_raw(
         });
     }
 
-    let links = build_search_links(total, base_url, resource_type, offset, count, query_suffix);
-    Bundle::searchset(total as u64, entries, links)
+    let links = build_search_links_with_total_mode(
+        total,
+        total_is_exact,
+        has_more,
+        base_url,
+        resource_type,
+        offset,
+        count,
+        query_suffix,
+    );
+    Bundle::searchset_with_total(total.map(|value| value as u64), entries, links)
 }
 
 /// Create a search bundle from raw JSON resources with optional warnings.
@@ -962,6 +1009,38 @@ pub fn bundle_from_search_raw(
 #[allow(clippy::too_many_arguments)]
 pub fn bundle_from_search_raw_with_warnings(
     total: usize,
+    resources: Vec<RawJson>,
+    resource_ids: Vec<String>,
+    included: Vec<RawIncludedEntry>,
+    base_url: &str,
+    resource_type: &str,
+    offset: usize,
+    count: usize,
+    query_suffix: Option<&str>,
+    warnings: Option<OperationOutcome>,
+) -> Bundle {
+    bundle_from_search_raw_with_warnings_and_pagination(
+        Some(total),
+        true,
+        false,
+        resources,
+        resource_ids,
+        included,
+        base_url,
+        resource_type,
+        offset,
+        count,
+        query_suffix,
+        warnings,
+    )
+}
+
+/// Create a search bundle from raw JSON resources with warnings and optional exact total metadata.
+#[allow(clippy::too_many_arguments)]
+pub fn bundle_from_search_raw_with_warnings_and_pagination(
+    total: Option<usize>,
+    total_is_exact: bool,
+    has_more: bool,
     resources: Vec<RawJson>,
     resource_ids: Vec<String>,
     included: Vec<RawIncludedEntry>,
@@ -1025,8 +1104,17 @@ pub fn bundle_from_search_raw_with_warnings(
         });
     }
 
-    let links = build_search_links(total, base_url, resource_type, offset, count, query_suffix);
-    Bundle::searchset(total as u64, entries, links)
+    let links = build_search_links_with_total_mode(
+        total,
+        total_is_exact,
+        has_more,
+        base_url,
+        resource_type,
+        offset,
+        count,
+        query_suffix,
+    );
+    Bundle::searchset_with_total(total.map(|value| value as u64), entries, links)
 }
 
 pub fn bundle_from_search(
@@ -1181,6 +1269,29 @@ pub fn build_search_links(
     count: usize,
     query_suffix: Option<&str>,
 ) -> Vec<BundleLink> {
+    build_search_links_with_total_mode(
+        Some(total),
+        true,
+        false,
+        base_url,
+        resource_type,
+        offset,
+        count,
+        query_suffix,
+    )
+}
+
+/// Build pagination links for search results with optional exact total metadata.
+pub fn build_search_links_with_total_mode(
+    total: Option<usize>,
+    total_is_exact: bool,
+    has_more: bool,
+    base_url: &str,
+    resource_type: &str,
+    offset: usize,
+    count: usize,
+    query_suffix: Option<&str>,
+) -> Vec<BundleLink> {
     let mut links = Vec::new();
 
     // self
@@ -1196,16 +1307,19 @@ pub fn build_search_links(
     });
 
     // last
-    if count > 0 && total > 0 {
-        let last_offset = ((total - 1) / count) * count;
+    if total_is_exact {
+        let last_offset = if count > 0 {
+            total
+                .filter(|value| *value > 0)
+                .map(|value| ((value - 1) / count) * count)
+                .unwrap_or(0)
+        } else {
+            0
+        };
+
         links.push(BundleLink {
             relation: "last".to_string(),
             url: build_page_url(base_url, resource_type, last_offset, count, query_suffix),
-        });
-    } else {
-        links.push(BundleLink {
-            relation: "last".to_string(),
-            url: build_page_url(base_url, resource_type, 0, count, query_suffix),
         });
     }
 
@@ -1219,7 +1333,13 @@ pub fn build_search_links(
     }
 
     // next
-    if count > 0 && offset + count < total {
+    let should_include_next = if total_is_exact {
+        count > 0 && total.map(|value| offset + count < value).unwrap_or(false)
+    } else {
+        count > 0 && has_more
+    };
+
+    if should_include_next {
         let next_offset = offset + count;
         links.push(BundleLink {
             relation: "next".to_string(),
@@ -1591,6 +1711,27 @@ mod bundle_generation_tests {
         assert!(rels.contains_key("last"));
         assert!(!rels.contains_key("next"));
         assert!(!rels.contains_key("previous"));
+    }
+
+    #[test]
+    fn unknown_total_still_has_next_without_last() {
+        let links = build_search_links_with_total_mode(
+            None,
+            false,
+            true,
+            "http://example.org",
+            "Patient",
+            0,
+            10,
+            Some("name=John"),
+        );
+        let rels: std::collections::HashMap<_, _> = links
+            .iter()
+            .map(|l| (l.relation.clone(), l.url.clone()))
+            .collect();
+        assert!(rels.contains_key("next"));
+        assert!(!rels.contains_key("last"));
+        assert!(rels.get("self").unwrap().contains("name=John"));
     }
 
     #[test]

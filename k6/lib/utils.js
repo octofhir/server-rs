@@ -2,6 +2,33 @@
 
 import { check } from "k6";
 
+export const summaryTrendStats = ["avg", "min", "med", "max", "p(50)", "p(95)", "p(99)"];
+
+export function trendValue(metric, key, fallbackKey = null) {
+  const values = metric?.values || metric || {};
+  const primary = values[key];
+  if (primary !== undefined && primary !== null) {
+    return primary;
+  }
+
+  if (fallbackKey) {
+    const fallback = values[fallbackKey];
+    if (fallback !== undefined && fallback !== null) {
+      return fallback;
+    }
+  }
+
+  return 0;
+}
+
+export function trendPercentiles(metric) {
+  return {
+    p50: trendValue(metric, "p(50)", "med"),
+    p95: trendValue(metric, "p(95)"),
+    p99: trendValue(metric, "p(99)"),
+  };
+}
+
 // Extract resource ID from Location header or full URL
 export function extractId(location) {
   if (!location) return null;

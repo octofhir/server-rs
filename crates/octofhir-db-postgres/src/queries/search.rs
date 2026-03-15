@@ -51,16 +51,20 @@ pub async fn execute_search(
     params: &SearchParams,
     registry: Option<&Arc<SearchParameterRegistry>>,
 ) -> Result<SearchResult, StorageError> {
+    let requested_limit = params.count.unwrap_or(10) as usize;
+    let mut effective_params = params.clone();
+    effective_params.count = Some(params.count.unwrap_or(10).saturating_add(1));
+
     // Use default registry if none provided
     let empty_registry = SearchParameterRegistry::new();
     let registry = registry.map(|r| r.as_ref()).unwrap_or(&empty_registry);
 
     // Convert SearchParams to SQL query using the params converter
-    let converted =
-        build_query_from_params(resource_type, params, registry, "public").map_err(|e| {
-            tracing::warn!(error = %e, "Failed to build search query");
-            StorageError::invalid_resource(format!("Invalid search parameters: {e}"))
-        })?;
+    let converted = build_query_from_params(resource_type, &effective_params, registry, "public")
+        .map_err(|e| {
+        tracing::warn!(error = %e, "Failed to build search query");
+        StorageError::invalid_resource(format!("Invalid search parameters: {e}"))
+    })?;
 
     // Build the SQL query
     let built_query = converted.builder.build().map_err(|e| {
@@ -76,12 +80,11 @@ pub async fn execute_search(
     );
 
     // Execute the main query
-    let limit = params.count.unwrap_or(10) as usize;
     let entries = execute_query(pool, &built_query, resource_type).await?;
 
     // Determine if there are more results
-    let has_more = entries.len() > limit;
-    let entries: Vec<StoredResource> = entries.into_iter().take(limit).collect();
+    let has_more = entries.len() > requested_limit;
+    let entries: Vec<StoredResource> = entries.into_iter().take(requested_limit).collect();
 
     // Execute count query if requested
     let total = if matches!(converted.total_mode, Some(TotalMode::Accurate)) {
@@ -157,6 +160,10 @@ pub async fn execute_search_raw_with_config(
     unknown_param_handling: Option<UnknownParamHandling>,
     query_cache: Option<&QueryCache>,
 ) -> Result<RawSearchResult, StorageError> {
+    let requested_limit = params.count.unwrap_or(10) as usize;
+    let mut effective_params = params.clone();
+    effective_params.count = Some(params.count.unwrap_or(10).saturating_add(1));
+
     // Use default registry if none provided
     let empty_registry = Arc::new(SearchParameterRegistry::new());
     let registry_arc = registry.unwrap_or(&empty_registry);
@@ -170,7 +177,7 @@ pub async fn execute_search_raw_with_config(
     // Convert SearchParams to SQL query using the params converter
     let converted = build_query_from_params_with_config(
         resource_type,
-        params,
+        &effective_params,
         registry,
         "public",
         &search_config,
@@ -257,6 +264,7 @@ pub async fn execute_search_raw_with_config(
             params.count.is_some() || params.offset.is_some(),
             sort_fields,
         )
+        .with_pagination(effective_params.count, effective_params.offset)
     });
 
     // Try cache hit for main query SQL template
@@ -317,12 +325,11 @@ pub async fn execute_search_raw_with_config(
     );
 
     // Execute the main query with raw JSON (SQL already emits resource::text)
-    let limit = params.count.unwrap_or(10) as usize;
     let entries = execute_query_raw(pool, &built_query, resource_type).await?;
 
     // Determine if there are more results
-    let has_more = entries.len() > limit;
-    let entries: Vec<RawStoredResource> = entries.into_iter().take(limit).collect();
+    let has_more = entries.len() > requested_limit;
+    let entries: Vec<RawStoredResource> = entries.into_iter().take(requested_limit).collect();
 
     // Execute count query if requested
     let total = if let Some(cq) = count_query {

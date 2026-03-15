@@ -893,6 +893,15 @@ pub async fn update_with_tx(
     tx: &mut PgTransaction<'_>,
     resource: &Value,
 ) -> Result<StoredResource, StorageError> {
+    update_with_tx_if_match(tx, resource, None).await
+}
+
+/// Updates a resource within a transaction with optional optimistic locking.
+pub async fn update_with_tx_if_match(
+    tx: &mut PgTransaction<'_>,
+    resource: &Value,
+    if_match: Option<&str>,
+) -> Result<StoredResource, StorageError> {
     let resource_type = resource["resourceType"]
         .as_str()
         .ok_or_else(|| StorageError::invalid_resource("Missing or invalid resourceType field"))?;
@@ -904,38 +913,86 @@ pub async fn update_with_tx(
     let table = SchemaManager::table_name(resource_type);
     let now = Utc::now();
 
-    // Use CTE + SQL jsonb_set to avoid Rust-side resource.clone()
-    let update_sql = format!(
-        r#"WITH new_tx AS (
-               INSERT INTO _transaction (status) VALUES ('committed') RETURNING txid
-           )
-           UPDATE "{table}" t
-           SET txid = new_tx.txid,
-               resource = jsonb_set(
-                   jsonb_set($1::jsonb, '{{meta}}', '{{}}'::jsonb, true),
-                   '{{meta}}',
-                   jsonb_build_object(
-                       'versionId', new_tx.txid::text,
-                       'lastUpdated', to_char($2 AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
-                   ),
-                   true
-               ),
-               status = 'updated'
-           FROM new_tx
-           WHERE t.id = $3 AND t.status != 'deleted'
-           RETURNING t.id, new_tx.txid, t.created_at, t.updated_at, t.resource"#
-    );
+    let (update_sql, has_version_check) = if let Some(expected_version) = if_match {
+        let expected_txid: i64 = expected_version.parse().map_err(|_| {
+            StorageError::invalid_resource(format!("Invalid version format: {expected_version}"))
+        })?;
 
-    let row: Option<(String, i64, DateTime<Utc>, DateTime<Utc>, Value)> = query_as(&update_sql)
-        .bind(resource)
-        .bind(now)
-        .bind(id)
-        .fetch_optional(&mut **tx)
-        .await
-        .map_err(|e| StorageError::internal(format!("Failed to update resource: {e}")))?;
+        (
+            format!(
+                r#"WITH new_tx AS (
+                       INSERT INTO _transaction (status) VALUES ('committed') RETURNING txid
+                   ),
+                   current AS (
+                       SELECT id, txid, created_at FROM "{table}"
+                       WHERE id = $1 AND status != 'deleted'
+                   )
+                   UPDATE "{table}" t
+                   SET txid = new_tx.txid,
+                       resource = jsonb_set(
+                           jsonb_set($2::jsonb, '{{meta}}', '{{}}'::jsonb, true),
+                           '{{meta}}',
+                           jsonb_build_object(
+                               'versionId', new_tx.txid::text,
+                               'lastUpdated', to_char($3 AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+                           ),
+                           true
+                       ),
+                       status = 'updated'
+                   FROM new_tx, current
+                   WHERE t.id = $1
+                     AND t.status != 'deleted'
+                     AND t.txid = {expected_txid}
+                   RETURNING t.id, new_tx.txid, t.created_at, t.updated_at, t.resource,
+                             (SELECT txid FROM current) as old_txid"#
+            ),
+            true,
+        )
+    } else {
+        (
+            format!(
+                r#"WITH new_tx AS (
+                       INSERT INTO _transaction (status) VALUES ('committed') RETURNING txid
+                   )
+                   UPDATE "{table}" t
+                   SET txid = new_tx.txid,
+                       resource = jsonb_set(
+                           jsonb_set($2::jsonb, '{{meta}}', '{{}}'::jsonb, true),
+                           '{{meta}}',
+                           jsonb_build_object(
+                               'versionId', new_tx.txid::text,
+                               'lastUpdated', to_char($3 AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+                           ),
+                           true
+                       ),
+                       status = 'updated'
+                   FROM new_tx
+                   WHERE t.id = $1 AND t.status != 'deleted'
+                   RETURNING t.id, new_tx.txid, t.created_at, t.updated_at, t.resource,
+                             0::bigint as old_txid"#
+            ),
+            false,
+        )
+    };
+
+    let row: Option<(String, i64, DateTime<Utc>, DateTime<Utc>, Value, i64)> =
+        query_as(&update_sql)
+            .bind(id)
+            .bind(resource)
+            .bind(now)
+            .fetch_optional(&mut **tx)
+            .await
+            .map_err(|e| StorageError::internal(format!("Failed to update resource: {e}")))?;
 
     match row {
-        Some((_returned_id, returned_txid, created_at, updated_at, updated_resource)) => {
+        Some((
+            _returned_id,
+            returned_txid,
+            created_at,
+            updated_at,
+            updated_resource,
+            _old_txid,
+        )) => {
             let created_at_time = chrono_to_time(created_at);
             let updated_at_time = chrono_to_time(updated_at);
             Ok(StoredResource {
@@ -947,7 +1004,29 @@ pub async fn update_with_tx(
                 created_at: created_at_time,
             })
         }
-        None => Err(StorageError::not_found(resource_type, id)),
+        None => {
+            if has_version_check {
+                let check_sql =
+                    format!(r#"SELECT txid FROM "{table}" WHERE id = $1 AND status != 'deleted'"#);
+                let current: Option<i64> = query_scalar(&check_sql)
+                    .bind(id)
+                    .fetch_optional(&mut **tx)
+                    .await
+                    .map_err(|e| {
+                        StorageError::internal(format!("Failed to check resource: {e}"))
+                    })?;
+
+                match current {
+                    Some(v) => Err(StorageError::version_conflict(
+                        if_match.unwrap_or(""),
+                        v.to_string(),
+                    )),
+                    None => Err(StorageError::not_found(resource_type, id)),
+                }
+            } else {
+                Err(StorageError::not_found(resource_type, id))
+            }
+        }
     }
 }
 

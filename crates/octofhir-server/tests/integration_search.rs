@@ -673,14 +673,11 @@ async fn test_pagination_count() {
     let entries = get_bundle_entries(&bundle);
     assert_eq!(entries.len(), 2, "Should return exactly 2 entries");
 
-    // Should have next link if more results
-    if get_bundle_total(&bundle) > 2 {
-        let has_next = bundle["link"]
-            .as_array()
-            .map(|links| links.iter().any(|l| l["relation"] == "next"))
-            .unwrap_or(false);
-        assert!(has_next, "Should have next link for pagination");
-    }
+    let has_next = bundle["link"]
+        .as_array()
+        .map(|links| links.iter().any(|l| l["relation"] == "next"))
+        .unwrap_or(false);
+    assert!(has_next, "Should have next link for pagination");
 
     let _ = shutdown_tx.send(());
 }

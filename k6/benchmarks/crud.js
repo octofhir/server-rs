@@ -15,6 +15,7 @@ import { check, group, sleep } from 'k6'
 import { Counter, Trend, Rate } from 'k6/metrics'
 
 import { headers, generateUUID, jsonPatch, getRef } from '../util.js'
+import { summaryTrendStats, trendPercentiles } from '../lib/utils.js'
 import patient from '../seed/patient.js'
 import observation from '../seed/observation.js'
 import organization from '../seed/organization.js'
@@ -36,6 +37,7 @@ const operationSuccess = new Rate('operation_success_rate')
 
 export const options = {
   discardResponseBodies: false,
+  summaryTrendStats,
   scenarios: {
     // Standard load test
     crud_load: {
@@ -322,38 +324,33 @@ export default function({ baseUrl, params }) {
 }
 
 export function handleSummary(data) {
+  const createLatencySummary = trendPercentiles(data.metrics.create_latency_ms)
+  const readLatencySummary = trendPercentiles(data.metrics.read_latency_ms)
+  const updateLatencySummary = trendPercentiles(data.metrics.update_latency_ms)
+  const deleteLatencySummary = trendPercentiles(data.metrics.delete_latency_ms)
+  const searchLatencySummary = trendPercentiles(data.metrics.search_latency_ms)
   const summary = {
     timestamp: new Date().toISOString(),
     test: 'crud',
     metrics: {
       create: {
         count: data.metrics.create_success?.values?.count || 0,
-        p50: data.metrics.create_latency_ms?.values?.['p(50)'] || 0,
-        p95: data.metrics.create_latency_ms?.values?.['p(95)'] || 0,
-        p99: data.metrics.create_latency_ms?.values?.['p(99)'] || 0,
+        ...createLatencySummary,
       },
       read: {
         count: data.metrics.read_success?.values?.count || 0,
-        p50: data.metrics.read_latency_ms?.values?.['p(50)'] || 0,
-        p95: data.metrics.read_latency_ms?.values?.['p(95)'] || 0,
-        p99: data.metrics.read_latency_ms?.values?.['p(99)'] || 0,
+        ...readLatencySummary,
       },
       update: {
         count: data.metrics.update_success?.values?.count || 0,
-        p50: data.metrics.update_latency_ms?.values?.['p(50)'] || 0,
-        p95: data.metrics.update_latency_ms?.values?.['p(95)'] || 0,
-        p99: data.metrics.update_latency_ms?.values?.['p(99)'] || 0,
+        ...updateLatencySummary,
       },
       delete: {
         count: data.metrics.delete_success?.values?.count || 0,
-        p50: data.metrics.delete_latency_ms?.values?.['p(50)'] || 0,
-        p95: data.metrics.delete_latency_ms?.values?.['p(95)'] || 0,
-        p99: data.metrics.delete_latency_ms?.values?.['p(99)'] || 0,
+        ...deleteLatencySummary,
       },
       search: {
-        p50: data.metrics.search_latency_ms?.values?.['p(50)'] || 0,
-        p95: data.metrics.search_latency_ms?.values?.['p(95)'] || 0,
-        p99: data.metrics.search_latency_ms?.values?.['p(99)'] || 0,
+        ...searchLatencySummary,
       },
       overall: {
         success_rate: data.metrics.operation_success_rate?.values?.rate || 0,

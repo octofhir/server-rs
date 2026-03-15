@@ -7,8 +7,10 @@
 use async_trait::async_trait;
 use serde_json::Value;
 use sqlx_postgres::PgTransaction;
+use std::sync::Arc;
 use tokio::sync::Mutex;
 
+use octofhir_search::SearchParameterRegistry;
 use octofhir_storage::{StorageError, StoredResource, Transaction};
 
 use crate::queries;
@@ -27,13 +29,19 @@ pub struct PostgresTransaction {
     /// Wrapped in Option so we can take ownership during commit/rollback.
     /// Box allows us to work without lifetime parameters.
     tx: Mutex<Option<Box<PgTransaction<'static>>>>,
+    /// Registry used to keep search indexes in sync inside the same transaction.
+    search_registry: Option<Arc<SearchParameterRegistry>>,
 }
 
 impl PostgresTransaction {
     /// Creates a new PostgreSQL transaction.
-    pub fn new(tx: PgTransaction<'static>) -> Self {
+    pub fn new(
+        tx: PgTransaction<'static>,
+        search_registry: Option<Arc<SearchParameterRegistry>>,
+    ) -> Self {
         Self {
             tx: Mutex::new(Some(Box::new(tx))),
+            search_registry,
         }
     }
 }
@@ -67,7 +75,29 @@ impl Transaction for PostgresTransaction {
                 "Transaction already completed (committed or rolled back)",
             )
         })?;
-        queries::crud::create_with_tx(tx, resource).await
+        let result = queries::crud::create_with_tx(tx, resource).await?;
+        if let Some(registry) = &self.search_registry {
+            let (refs, dates) = crate::search_index::extract_search_index_rows(
+                registry,
+                &result.resource_type,
+                &result.resource,
+            );
+            crate::search_index::write_reference_index_with_tx(
+                tx,
+                &result.resource_type,
+                &result.id,
+                &refs,
+            )
+            .await?;
+            crate::search_index::write_date_index_with_tx(
+                tx,
+                &result.resource_type,
+                &result.id,
+                &dates,
+            )
+            .await?;
+        }
+        Ok(result)
     }
 
     async fn update(&mut self, resource: &Value) -> Result<StoredResource, StorageError> {
@@ -77,7 +107,29 @@ impl Transaction for PostgresTransaction {
                 "Transaction already completed (committed or rolled back)",
             )
         })?;
-        queries::crud::update_with_tx(tx, resource).await
+        let result = queries::crud::update_with_tx(tx, resource).await?;
+        if let Some(registry) = &self.search_registry {
+            let (refs, dates) = crate::search_index::extract_search_index_rows(
+                registry,
+                &result.resource_type,
+                &result.resource,
+            );
+            crate::search_index::write_reference_index_with_tx(
+                tx,
+                &result.resource_type,
+                &result.id,
+                &refs,
+            )
+            .await?;
+            crate::search_index::write_date_index_with_tx(
+                tx,
+                &result.resource_type,
+                &result.id,
+                &dates,
+            )
+            .await?;
+        }
+        Ok(result)
     }
 
     async fn delete(&mut self, resource_type: &str, id: &str) -> Result<(), StorageError> {
@@ -87,7 +139,8 @@ impl Transaction for PostgresTransaction {
                 "Transaction already completed (committed or rolled back)",
             )
         })?;
-        queries::crud::delete_with_tx(tx, resource_type, id).await
+        queries::crud::delete_with_tx(tx, resource_type, id).await?;
+        crate::search_index::delete_search_indexes_with_tx(tx, resource_type, id).await
     }
 
     async fn read(

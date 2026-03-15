@@ -18,6 +18,7 @@ import http from 'k6/http'
 import { check, group, sleep } from 'k6'
 import { Counter, Trend, Rate } from 'k6/metrics'
 
+import { summaryTrendStats, trendPercentiles } from '../lib/utils.js'
 import { headers, generateUUID } from '../util.js'
 import patient from '../seed/patient.js'
 
@@ -30,6 +31,7 @@ const successRate = new Rate('success_rate')
 
 export const options = {
   discardResponseBodies: false,
+  summaryTrendStats,
   scenarios: {
     // Ramp up test: 10 -> 50 -> 100 -> 300 VUs
     ramp_up: {
@@ -158,20 +160,18 @@ export function teardown(data) {
 }
 
 export function handleSummary(data) {
+  const readSummary = trendPercentiles(data.metrics.read_latency_ms)
+  const writeSummary = trendPercentiles(data.metrics.write_latency_ms)
   const summary = {
     timestamp: new Date().toISOString(),
     test: 'concurrent-users',
     metrics: {
       read: {
-        p50: data.metrics.read_latency_ms?.values?.['p(50)'] || 0,
-        p95: data.metrics.read_latency_ms?.values?.['p(95)'] || 0,
-        p99: data.metrics.read_latency_ms?.values?.['p(99)'] || 0,
+        ...readSummary,
         errors: data.metrics.read_errors?.values?.count || 0,
       },
       write: {
-        p50: data.metrics.write_latency_ms?.values?.['p(50)'] || 0,
-        p95: data.metrics.write_latency_ms?.values?.['p(95)'] || 0,
-        p99: data.metrics.write_latency_ms?.values?.['p(99)'] || 0,
+        ...writeSummary,
         errors: data.metrics.write_errors?.values?.count || 0,
       },
       overall: {

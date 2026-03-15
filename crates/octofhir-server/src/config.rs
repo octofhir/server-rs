@@ -923,6 +923,10 @@ pub struct BulkImportConfig {
     #[serde(default = "default_bulk_import_max_concurrent")]
     pub max_concurrent_jobs: usize,
 
+    /// Maximum number of resources processed concurrently within a single import job
+    #[serde(default = "default_bulk_import_parallelism")]
+    pub max_parallel_resources: usize,
+
     /// Skip FHIR validation for trusted data (can be overridden per-request)
     #[serde(default)]
     pub default_skip_validation: bool,
@@ -937,6 +941,9 @@ fn default_bulk_import_batch_size() -> usize {
 fn default_bulk_import_max_concurrent() -> usize {
     3
 }
+fn default_bulk_import_parallelism() -> usize {
+    32
+}
 
 impl Default for BulkImportConfig {
     fn default() -> Self {
@@ -944,6 +951,7 @@ impl Default for BulkImportConfig {
             enabled: default_bulk_import_enabled(),
             batch_size: default_bulk_import_batch_size(),
             max_concurrent_jobs: default_bulk_import_max_concurrent(),
+            max_parallel_resources: default_bulk_import_parallelism(),
             default_skip_validation: false,
         }
     }

@@ -4,9 +4,9 @@ use std::sync::{Arc, OnceLock};
 
 use async_trait::async_trait;
 use serde_json::Value;
-use sqlx_postgres::PgPool;
+use sqlx_postgres::{PgPool, PgTransaction};
 
-use octofhir_search::{QueryCache, SearchParameter, SearchParameterRegistry, SearchParameterType};
+use octofhir_search::{QueryCache, SearchParameter, SearchParameterRegistry};
 use octofhir_storage::{
     FhirStorage, HistoryParams, HistoryResult, RawHistoryResult, RawStoredResource, SearchParams,
     SearchResult, StorageError, StoredResource, Transaction,
@@ -37,6 +37,20 @@ pub struct PostgresStorage {
 }
 
 impl PostgresStorage {
+    fn stored_to_raw(result: StoredResource) -> Result<RawStoredResource, StorageError> {
+        let resource_json = serde_json::to_string(&result.resource)
+            .map_err(|e| StorageError::internal(format!("Failed to serialize resource: {e}")))?;
+
+        Ok(RawStoredResource {
+            id: result.id,
+            version_id: result.version_id,
+            resource_type: result.resource_type,
+            resource_json,
+            last_updated: result.last_updated,
+            created_at: result.created_at,
+        })
+    }
+
     /// Creates a new `PostgresStorage` with the given configuration.
     ///
     /// This will:
@@ -145,91 +159,35 @@ impl PostgresStorage {
             .and_then(|r| r.get(resource_type, code))
     }
 
-    /// Extract and write search indexes for a resource after create/update.
-    ///
-    /// Iterates over all search parameters for the resource type, extracts
-    /// reference/date/string values, and writes them to denormalized index tables.
-    /// Errors are logged but do not fail the CRUD operation.
-    async fn write_search_indexes(&self, resource_type: &str, resource_id: &str, resource: &Value) {
-        let registry = match self.search_registry.get() {
-            Some(r) => r,
-            None => return,
+    async fn write_search_indexes_with_tx(
+        &self,
+        tx: &mut PgTransaction<'_>,
+        resource_type: &str,
+        resource_id: &str,
+        resource: &Value,
+    ) -> Result<(), StorageError> {
+        let Some(registry) = self.search_registry.get() else {
+            return Ok(());
         };
 
-        let params = registry.get_all_for_type(resource_type);
+        let (refs, dates) =
+            crate::search_index::extract_search_index_rows(registry, resource_type, resource);
 
-        let mut refs = Vec::new();
-        let mut dates = Vec::new();
+        crate::search_index::write_reference_index_with_tx(tx, resource_type, resource_id, &refs)
+            .await?;
+        crate::search_index::write_date_index_with_tx(tx, resource_type, resource_id, &dates)
+            .await?;
 
-        for param in &params {
-            let expression = match &param.expression {
-                Some(e) => e.as_str(),
-                None => continue,
-            };
-
-            match param.param_type {
-                SearchParameterType::Reference => {
-                    refs.extend(octofhir_core::search_index::extract_references(
-                        resource,
-                        resource_type,
-                        &param.code,
-                        expression,
-                        None,
-                    ));
-                }
-                SearchParameterType::Date => {
-                    dates.extend(octofhir_core::search_index::extract_dates(
-                        resource,
-                        resource_type,
-                        &param.code,
-                        expression,
-                    ));
-                }
-                _ => {}
-            }
-        }
-
-        if let Err(e) = crate::search_index::write_reference_index(
-            &self.pool,
-            resource_type,
-            resource_id,
-            &refs,
-        )
-        .await
-        {
-            tracing::warn!(
-                "Failed to write reference index for {}/{}: {}",
-                resource_type,
-                resource_id,
-                e
-            );
-        }
-
-        if let Err(e) =
-            crate::search_index::write_date_index(&self.pool, resource_type, resource_id, &dates)
-                .await
-        {
-            tracing::warn!(
-                "Failed to write date index for {}/{}: {}",
-                resource_type,
-                resource_id,
-                e
-            );
-        }
+        Ok(())
     }
 
-    /// Delete all search indexes for a resource after delete.
-    async fn remove_search_indexes(&self, resource_type: &str, resource_id: &str) {
-        if let Err(e) =
-            crate::search_index::delete_search_indexes(&self.pool, resource_type, resource_id).await
-        {
-            tracing::warn!(
-                "Failed to delete search indexes for {}/{}: {}",
-                resource_type,
-                resource_id,
-                e
-            );
-        }
+    async fn remove_search_indexes_with_tx(
+        &self,
+        tx: &mut PgTransaction<'_>,
+        resource_type: &str,
+        resource_id: &str,
+    ) -> Result<(), StorageError> {
+        crate::search_index::delete_search_indexes_with_tx(tx, resource_type, resource_id).await
     }
 
     /// Reindex a single resource: delete old index rows, extract new ones, and write them.
@@ -242,42 +200,13 @@ impl PostgresStorage {
         resource_id: &str,
         resource: &Value,
     ) -> Result<(), StorageError> {
-        let registry = self.search_registry.get().ok_or_else(|| {
-            StorageError::internal("Search registry not initialized")
-        })?;
+        let registry = self
+            .search_registry
+            .get()
+            .ok_or_else(|| StorageError::internal("Search registry not initialized"))?;
 
-        let params = registry.get_all_for_type(resource_type);
-
-        let mut refs = Vec::new();
-        let mut dates = Vec::new();
-
-        for param in &params {
-            let expression = match &param.expression {
-                Some(e) => e.as_str(),
-                None => continue,
-            };
-
-            match param.param_type {
-                SearchParameterType::Reference => {
-                    refs.extend(octofhir_core::search_index::extract_references(
-                        resource,
-                        resource_type,
-                        &param.code,
-                        expression,
-                        None,
-                    ));
-                }
-                SearchParameterType::Date => {
-                    dates.extend(octofhir_core::search_index::extract_dates(
-                        resource,
-                        resource_type,
-                        &param.code,
-                        expression,
-                    ));
-                }
-                _ => {}
-            }
-        }
+        let (refs, dates) =
+            crate::search_index::extract_search_index_rows(registry, resource_type, resource);
 
         crate::search_index::write_reference_index(&self.pool, resource_type, resource_id, &refs)
             .await?;
@@ -310,9 +239,20 @@ impl PostgresStorage {
 #[async_trait]
 impl FhirStorage for PostgresStorage {
     async fn create(&self, resource: &Value) -> Result<StoredResource, StorageError> {
-        let result = queries::create(&self.pool, resource).await?;
-        self.write_search_indexes(&result.resource_type, &result.id, &result.resource)
-            .await;
+        let mut tx = self.pool.begin().await.map_err(|e| {
+            StorageError::transaction_error(format!("Failed to begin transaction: {e}"))
+        })?;
+        let result = queries::crud::create_with_tx(&mut tx, resource).await?;
+        self.write_search_indexes_with_tx(
+            &mut tx,
+            &result.resource_type,
+            &result.id,
+            &result.resource,
+        )
+        .await?;
+        tx.commit().await.map_err(|e| {
+            StorageError::transaction_error(format!("Failed to commit transaction: {e}"))
+        })?;
         Ok(result)
     }
 
@@ -320,11 +260,8 @@ impl FhirStorage for PostgresStorage {
         &self,
         resource: &Value,
     ) -> Result<octofhir_storage::RawStoredResource, StorageError> {
-        let result = queries::create_raw(&self.pool, resource).await?;
-        // Use the input resource for extraction (avoid parsing raw JSON back)
-        self.write_search_indexes(&result.resource_type, &result.id, resource)
-            .await;
-        Ok(result)
+        let stored = self.create(resource).await?;
+        Self::stored_to_raw(stored)
     }
 
     async fn read(
@@ -348,9 +285,20 @@ impl FhirStorage for PostgresStorage {
         resource: &Value,
         if_match: Option<&str>,
     ) -> Result<StoredResource, StorageError> {
-        let result = queries::update(&self.pool, resource, if_match).await?;
-        self.write_search_indexes(&result.resource_type, &result.id, &result.resource)
-            .await;
+        let mut tx = self.pool.begin().await.map_err(|e| {
+            StorageError::transaction_error(format!("Failed to begin transaction: {e}"))
+        })?;
+        let result = queries::crud::update_with_tx_if_match(&mut tx, resource, if_match).await?;
+        self.write_search_indexes_with_tx(
+            &mut tx,
+            &result.resource_type,
+            &result.id,
+            &result.resource,
+        )
+        .await?;
+        tx.commit().await.map_err(|e| {
+            StorageError::transaction_error(format!("Failed to commit transaction: {e}"))
+        })?;
         Ok(result)
     }
 
@@ -359,15 +307,20 @@ impl FhirStorage for PostgresStorage {
         resource: &Value,
         if_match: Option<&str>,
     ) -> Result<octofhir_storage::RawStoredResource, StorageError> {
-        let result = queries::update_raw(&self.pool, resource, if_match).await?;
-        self.write_search_indexes(&result.resource_type, &result.id, resource)
-            .await;
-        Ok(result)
+        let stored = self.update(resource, if_match).await?;
+        Self::stored_to_raw(stored)
     }
 
     async fn delete(&self, resource_type: &str, id: &str) -> Result<(), StorageError> {
-        queries::delete(&self.pool, resource_type, id).await?;
-        self.remove_search_indexes(resource_type, id).await;
+        let mut tx = self.pool.begin().await.map_err(|e| {
+            StorageError::transaction_error(format!("Failed to begin transaction: {e}"))
+        })?;
+        queries::crud::delete_with_tx(&mut tx, resource_type, id).await?;
+        self.remove_search_indexes_with_tx(&mut tx, resource_type, id)
+            .await?;
+        tx.commit().await.map_err(|e| {
+            StorageError::transaction_error(format!("Failed to commit transaction: {e}"))
+        })?;
         Ok(())
     }
 
@@ -439,7 +392,10 @@ impl FhirStorage for PostgresStorage {
         })?;
 
         // Wrap in our PostgresTransaction type
-        let pg_tx = crate::transaction::PostgresTransaction::new(sqlx_tx);
+        let pg_tx = crate::transaction::PostgresTransaction::new(
+            sqlx_tx,
+            self.search_registry.get().cloned(),
+        );
 
         Ok(Box::new(pg_tx))
     }

@@ -15,6 +15,7 @@ import http from 'k6/http'
 import { check, group, sleep } from 'k6'
 import { Counter, Trend, Rate } from 'k6/metrics'
 
+import { summaryTrendStats, trendPercentiles } from '../lib/utils.js'
 import { headers, generateUUID } from '../util.js'
 import patient from '../seed/patient.js'
 import observation from '../seed/observation.js'
@@ -28,6 +29,7 @@ const exportFailure = new Counter('export_failure')
 
 export const options = {
   discardResponseBodies: false,
+  summaryTrendStats,
   scenarios: {
     // Seed data first
     seed_data: {
@@ -219,6 +221,7 @@ export function exportTest({ baseUrl, params }) {
 }
 
 export function handleSummary(data) {
+  const exportInitSummary = trendPercentiles(data.metrics.export_init_time_ms)
   const summary = {
     timestamp: new Date().toISOString(),
     test: 'bulk-export',
@@ -228,8 +231,8 @@ export function handleSummary(data) {
         resources_per_sec_max: data.metrics.bulk_ingest_resources_per_sec?.values?.max || 0,
       },
       export: {
-        init_time_p50: data.metrics.export_init_time_ms?.values?.['p(50)'] || 0,
-        init_time_p95: data.metrics.export_init_time_ms?.values?.['p(95)'] || 0,
+        init_time_p50: exportInitSummary.p50,
+        init_time_p95: exportInitSummary.p95,
         poll_time_avg: data.metrics.export_poll_time_ms?.values?.avg || 0,
         success: data.metrics.export_success?.values?.count || 0,
         failure: data.metrics.export_failure?.values?.count || 0,

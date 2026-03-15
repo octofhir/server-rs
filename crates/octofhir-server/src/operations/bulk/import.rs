@@ -22,8 +22,9 @@
 
 use async_trait::async_trait;
 use chrono::Utc;
+use futures_util::{StreamExt, stream};
 use octofhir_db_postgres::SchemaManager;
-use octofhir_search::SearchParameterType;
+use octofhir_search::SearchParameterRegistry;
 use serde_json::{Value, json};
 use sqlx_core::query_as::query_as;
 use uuid::Uuid;
@@ -190,7 +191,13 @@ impl OperationHandler for ImportOperation {
         let batch_size = params
             .get("batchSize")
             .and_then(|v| v.as_u64())
-            .unwrap_or(self.config.batch_size as u64) as usize;
+            .unwrap_or(self.config.batch_size as u64)
+            .max(1) as usize;
+        let parallelism = params
+            .get("parallelism")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(self.config.max_parallel_resources as u64)
+            .max(1) as usize;
 
         // Build serializable input list for the job
         let input_list: Vec<Value> = inputs
@@ -206,6 +213,7 @@ impl OperationHandler for ImportOperation {
         let job_params = json!({
             "input": input_list,
             "batch_size": batch_size,
+            "parallelism": parallelism,
             "skip_validation": skip_validation,
         });
 
@@ -240,14 +248,20 @@ impl OperationHandler for ImportOperation {
 
 /// Upsert a resource via INSERT ... ON CONFLICT DO UPDATE.
 /// Handles new resources, existing resources, and previously-deleted resources.
-async fn upsert_resource(
+async fn upsert_resource_with_indexes(
     pool: &sqlx_postgres::PgPool,
+    registry: &SearchParameterRegistry,
     resource_type: &str,
     id: &str,
     resource: &Value,
 ) -> Result<String, octofhir_storage::StorageError> {
     let table = SchemaManager::table_name(resource_type);
     let now = Utc::now();
+    let mut tx = pool.begin().await.map_err(|e| {
+        octofhir_storage::StorageError::transaction_error(format!(
+            "Failed to begin import upsert transaction: {e}"
+        ))
+    })?;
 
     // Single query: create transaction + upsert resource with meta injection.
     // ON CONFLICT handles both existing and deleted resources by overwriting.
@@ -287,63 +301,192 @@ async fn upsert_resource(
         .bind(id)
         .bind(now)
         .bind(resource)
-        .fetch_one(pool)
+        .fetch_one(&mut *tx)
         .await
         .map_err(|e| {
             octofhir_storage::StorageError::internal(format!("Failed to upsert resource: {e}"))
         })?;
 
+    let (refs, dates) = octofhir_db_postgres::search_index::extract_search_index_rows(
+        registry,
+        resource_type,
+        resource,
+    );
+    octofhir_db_postgres::search_index::write_reference_index_with_tx(
+        &mut tx,
+        resource_type,
+        id,
+        &refs,
+    )
+    .await?;
+    octofhir_db_postgres::search_index::write_date_index_with_tx(
+        &mut tx,
+        resource_type,
+        id,
+        &dates,
+    )
+    .await?;
+
+    tx.commit().await.map_err(|e| {
+        octofhir_storage::StorageError::transaction_error(format!(
+            "Failed to commit import upsert transaction: {e}"
+        ))
+    })?;
+
     Ok(row.0)
 }
 
-/// Write search indexes for an imported resource.
-async fn write_search_indexes(state: &AppState, resource_type: &str, id: &str, resource: &Value) {
-    let registry = state.search_config.config().registry.clone();
-    let params = registry.get_all_for_type(resource_type);
-    let pool = state.db_pool.as_ref();
+struct ImportLineOutcome {
+    created: bool,
+    error: Option<Value>,
+}
 
-    let mut refs = Vec::new();
-    let mut dates = Vec::new();
+async fn process_import_line(
+    state: AppState,
+    job_id: Uuid,
+    resource_type: String,
+    source_url: String,
+    line_number: usize,
+    line: String,
+    skip_validation: bool,
+) -> ImportLineOutcome {
+    let resource: Value = match serde_json::from_str(&line) {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::warn!(
+                job_id = %job_id,
+                line = line_number,
+                error = %e,
+                "Invalid JSON line, skipping"
+            );
+            return ImportLineOutcome {
+                created: false,
+                error: Some(json!({
+                    "source": source_url,
+                    "line": line_number,
+                    "error": format!("Invalid JSON: {e}"),
+                })),
+            };
+        }
+    };
 
-    for param in &params {
-        let expression = match &param.expression {
-            Some(e) => e.as_str(),
-            None => continue,
+    let actual_type = resource.get("resourceType").and_then(|v| v.as_str());
+    if actual_type != Some(resource_type.as_str()) {
+        return ImportLineOutcome {
+            created: false,
+            error: Some(json!({
+                "source": source_url,
+                "line": line_number,
+                "error": format!(
+                    "Expected resourceType '{}', got '{}'",
+                    resource_type,
+                    actual_type.unwrap_or("null")
+                ),
+            })),
         };
-        match param.param_type {
-            SearchParameterType::Reference => {
-                refs.extend(octofhir_core::search_index::extract_references(
-                    resource,
-                    resource_type,
-                    &param.code,
-                    expression,
-                    None,
-                ));
-            }
-            SearchParameterType::Date => {
-                dates.extend(octofhir_core::search_index::extract_dates(
-                    resource,
-                    resource_type,
-                    &param.code,
-                    expression,
-                ));
-            }
-            _ => {}
+    }
+
+    if !skip_validation {
+        let validation_outcome = state.validation_service.validate(&resource).await;
+        if !validation_outcome.valid {
+            let diagnostics = validation_outcome
+                .issues
+                .iter()
+                .map(|issue| issue.diagnostics.clone())
+                .collect::<Vec<_>>()
+                .join("; ");
+
+            return ImportLineOutcome {
+                created: false,
+                error: Some(json!({
+                    "source": source_url,
+                    "line": line_number,
+                    "error": format!("Validation failed: {diagnostics}"),
+                })),
+            };
         }
     }
 
-    if let Err(e) =
-        octofhir_db_postgres::search_index::write_reference_index(pool, resource_type, id, &refs)
+    let id = resource.get("id").and_then(|v| v.as_str());
+    let result = if let Some(id) = id {
+        upsert_resource_with_indexes(
+            state.db_pool.as_ref(),
+            &state.search_config.config().registry,
+            &resource_type,
+            id,
+            &resource,
+        )
+        .await
+    } else {
+        state.storage.create(&resource).await.map(|s| s.id)
+    };
+
+    match result {
+        Ok(_) => ImportLineOutcome {
+            created: true,
+            error: None,
+        },
+        Err(e) => {
+            tracing::warn!(
+                job_id = %job_id,
+                line = line_number,
+                error = %e,
+                "Failed to create resource"
+            );
+            ImportLineOutcome {
+                created: false,
+                error: Some(json!({
+                    "source": source_url,
+                    "line": line_number,
+                    "error": format!("Create failed: {e}"),
+                })),
+            }
+        }
+    }
+}
+
+async fn process_import_batch(
+    state: AppState,
+    job_id: Uuid,
+    resource_type: &str,
+    source_url: &str,
+    lines: Vec<(usize, String)>,
+    parallelism: usize,
+    skip_validation: bool,
+) -> (usize, Vec<Value>) {
+    let concurrency = lines.len().min(parallelism).max(1);
+    let mut created = 0usize;
+    let mut errors = Vec::new();
+
+    let mut outcomes = stream::iter(lines.into_iter().map(|(line_number, line)| {
+        let state = state.clone();
+        let resource_type = resource_type.to_string();
+        let source_url = source_url.to_string();
+        async move {
+            process_import_line(
+                state,
+                job_id,
+                resource_type,
+                source_url,
+                line_number,
+                line,
+                skip_validation,
+            )
             .await
-    {
-        tracing::warn!(error = %e, resource_type, id, "Import: reference index write failed");
+        }
+    }))
+    .buffer_unordered(concurrency);
+
+    while let Some(outcome) = outcomes.next().await {
+        if outcome.created {
+            created += 1;
+        }
+        if let Some(error) = outcome.error {
+            errors.push(error);
+        }
     }
 
-    if let Err(e) =
-        octofhir_db_postgres::search_index::write_date_index(pool, resource_type, id, &dates).await
-    {
-        tracing::warn!(error = %e, resource_type, id, "Import: date index write failed");
-    }
+    (created, errors)
 }
 
 /// Execute a bulk import job (called by async job executor)
@@ -362,7 +505,13 @@ pub async fn execute_bulk_import(
     let batch_size = params
         .get("batch_size")
         .and_then(|v| v.as_u64())
-        .unwrap_or(1000) as usize;
+        .unwrap_or(1000)
+        .max(1) as usize;
+    let parallelism = params
+        .get("parallelism")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(32)
+        .max(1) as usize;
 
     let skip_validation = params
         .get("skip_validation")
@@ -412,118 +561,158 @@ pub async fn execute_bulk_import(
             continue;
         }
 
-        let body = response
-            .text()
+        let content_length = response.content_length();
+        let mut response = response;
+        let mut buffered = Vec::new();
+        let mut line_number = 0usize;
+        let mut processed_lines = 0usize;
+        let mut source_created = 0usize;
+        let mut bytes_read = 0u64;
+        let mut pending_batch: Vec<(usize, String)> = Vec::with_capacity(batch_size);
+        let progress_start = (idx as f32 / inputs.len() as f32) * 100.0;
+        let progress_end = ((idx + 1) as f32 / inputs.len() as f32) * 100.0;
+
+        while let Some(chunk) = response
+            .chunk()
             .await
-            .map_err(|e| format!("Failed to read body from {url}: {e}"))?;
+            .map_err(|e| format!("Failed to read chunk from {url}: {e}"))?
+        {
+            bytes_read = bytes_read.saturating_add(chunk.len() as u64);
 
-        // Parse and import NDJSON lines in batches
-        let lines: Vec<&str> = body.lines().filter(|l| !l.trim().is_empty()).collect();
-        let total_lines = lines.len();
+            buffered.extend_from_slice(&chunk);
 
-        tracing::info!(
-            job_id = %job_id,
-            resource_type = %resource_type,
-            lines = total_lines,
-            "Parsed NDJSON lines"
-        );
+            while let Some(newline_pos) = buffered.iter().position(|byte| *byte == b'\n') {
+                let mut line_bytes: Vec<u8> = buffered.drain(..=newline_pos).collect();
+                if line_bytes.last() == Some(&b'\n') {
+                    line_bytes.pop();
+                }
+                if line_bytes.last() == Some(&b'\r') {
+                    line_bytes.pop();
+                }
 
-        for (batch_idx, chunk) in lines.chunks(batch_size).enumerate() {
-            let mut batch_created = 0;
-
-            for (line_idx, line) in chunk.iter().enumerate() {
-                let resource: Value = match serde_json::from_str(line) {
-                    Ok(v) => v,
+                let line = match String::from_utf8(line_bytes) {
+                    Ok(line) => line,
                     Err(e) => {
-                        let global_line = batch_idx * batch_size + line_idx + 1;
+                        line_number += 1;
+                        processed_lines += 1;
                         tracing::warn!(
                             job_id = %job_id,
-                            line = global_line,
+                            line = line_number,
                             error = %e,
-                            "Invalid JSON line, skipping"
+                            "Invalid UTF-8 line, skipping"
                         );
                         error_details.push(json!({
                             "source": url,
-                            "line": global_line,
-                            "error": format!("Invalid JSON: {e}"),
+                            "line": line_number,
+                            "error": format!("Invalid UTF-8: {e}"),
                         }));
                         total_errors += 1;
                         continue;
                     }
                 };
 
-                // Validate resourceType matches expected type
-                let actual_type = resource.get("resourceType").and_then(|v| v.as_str());
-                if actual_type != Some(resource_type) {
-                    let global_line = batch_idx * batch_size + line_idx + 1;
-                    error_details.push(json!({
-                        "source": url,
-                        "line": global_line,
-                        "error": format!(
-                            "Expected resourceType '{}', got '{}'",
-                            resource_type,
-                            actual_type.unwrap_or("null")
-                        ),
-                    }));
-                    total_errors += 1;
+                if line.trim().is_empty() {
                     continue;
                 }
 
-                // Upsert: INSERT ... ON CONFLICT to handle new, existing, and deleted resources.
-                let id = resource.get("id").and_then(|v| v.as_str());
-                let result = if let Some(id) = id {
-                    upsert_resource(state.db_pool.as_ref(), resource_type, id, &resource).await
-                } else {
-                    state.storage.create(&resource).await.map(|s| s.id)
-                };
-                match result {
-                    Ok(stored_id) => {
-                        batch_created += 1;
-                        write_search_indexes(&state, resource_type, &stored_id, &resource).await;
-                    }
-                    Err(e) => {
-                        let global_line = batch_idx * batch_size + line_idx + 1;
+                line_number += 1;
+                processed_lines += 1;
+                pending_batch.push((line_number, line));
+
+                if pending_batch.len() >= batch_size {
+                    let (batch_created, mut batch_errors) = process_import_batch(
+                        state.clone(),
+                        job_id,
+                        resource_type,
+                        url,
+                        std::mem::take(&mut pending_batch),
+                        parallelism,
+                        skip_validation,
+                    )
+                    .await;
+                    source_created += batch_created;
+                    total_errors += batch_errors.len();
+                    error_details.append(&mut batch_errors);
+
+                    let progress_pct = if let Some(total_bytes) = content_length {
+                        if total_bytes > 0 {
+                            progress_start
+                                + ((bytes_read as f32 / total_bytes as f32)
+                                    * (progress_end - progress_start))
+                        } else {
+                            progress_end
+                        }
+                    } else {
+                        progress_start
+                    };
+
+                    if let Err(e) = state
+                        .async_job_manager
+                        .update_progress(job_id, progress_pct)
+                        .await
+                    {
                         tracing::warn!(
                             job_id = %job_id,
-                            line = global_line,
                             error = %e,
-                            "Failed to create resource"
+                            "Failed to update progress"
                         );
-                        error_details.push(json!({
-                            "source": url,
-                            "line": global_line,
-                            "error": format!("Create failed: {e}"),
-                        }));
-                        total_errors += 1;
                     }
                 }
             }
-
-            total_created += batch_created;
-
-            // Update progress (as percentage)
-            let processed = std::cmp::min((batch_idx + 1) * batch_size, total_lines);
-            let progress_pct = if total_lines > 0 {
-                (processed as f32 / total_lines as f32) * 100.0
-            } else {
-                100.0
-            };
-
-            if let Err(e) = state
-                .async_job_manager
-                .update_progress(job_id, progress_pct)
-                .await
-            {
-                tracing::warn!(
-                    job_id = %job_id,
-                    error = %e,
-                    "Failed to update progress"
-                );
-            }
         }
-    }
 
-    let _ = skip_validation; // TODO: wire through to storage layer
+        if !buffered.iter().all(|byte| byte.is_ascii_whitespace()) {
+            line_number += 1;
+            processed_lines += 1;
+
+            if buffered.last() == Some(&b'\r') {
+                buffered.pop();
+            }
+
+            let trailing_line = String::from_utf8(buffered)
+                .map_err(|e| format!("Invalid UTF-8 in trailing NDJSON line from {url}: {e}"))?;
+
+            pending_batch.push((line_number, trailing_line));
+        }
+
+        if !pending_batch.is_empty() {
+            let (batch_created, mut batch_errors) = process_import_batch(
+                state.clone(),
+                job_id,
+                resource_type,
+                url,
+                std::mem::take(&mut pending_batch),
+                parallelism,
+                skip_validation,
+            )
+            .await;
+            source_created += batch_created;
+            total_errors += batch_errors.len();
+            error_details.append(&mut batch_errors);
+        }
+
+        total_created += source_created;
+
+        if let Err(e) = state
+            .async_job_manager
+            .update_progress(job_id, progress_end)
+            .await
+        {
+            tracing::warn!(
+                job_id = %job_id,
+                error = %e,
+                "Failed to update progress"
+            );
+        }
+
+        tracing::info!(
+            job_id = %job_id,
+            resource_type = %resource_type,
+            processed_lines = processed_lines,
+            created = source_created,
+            "Completed streaming NDJSON import source"
+        );
+    }
 
     let result = json!({
         "total_created": total_created,

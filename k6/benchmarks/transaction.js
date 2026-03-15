@@ -16,6 +16,7 @@ import http from 'k6/http'
 import { check, group, sleep } from 'k6'
 import { Counter, Trend } from 'k6/metrics'
 
+import { summaryTrendStats, trendPercentiles } from '../lib/utils.js'
 import { headers, generateUUID } from '../util.js'
 import patient from '../seed/patient.js'
 import observation from '../seed/observation.js'
@@ -32,6 +33,7 @@ const batchDuration = new Trend('batch_duration_ms')
 
 export const options = {
   discardResponseBodies: false,
+  summaryTrendStats,
   scenarios: {
     // Small bundles - high throughput test
     small_bundles: {
@@ -259,6 +261,8 @@ export default function({ baseUrl, params }) {
 }
 
 export function handleSummary(data) {
+  const transactionSummary = trendPercentiles(data.metrics.transaction_duration_ms)
+  const batchSummary = trendPercentiles(data.metrics.batch_duration_ms)
   const summary = {
     timestamp: new Date().toISOString(),
     test: 'transaction-batch',
@@ -266,16 +270,16 @@ export function handleSummary(data) {
       transaction: {
         success: data.metrics.transaction_success?.values?.count || 0,
         failure: data.metrics.transaction_failure?.values?.count || 0,
-        duration_p50: data.metrics.transaction_duration_ms?.values?.['p(50)'] || 0,
-        duration_p95: data.metrics.transaction_duration_ms?.values?.['p(95)'] || 0,
-        duration_p99: data.metrics.transaction_duration_ms?.values?.['p(99)'] || 0,
+        duration_p50: transactionSummary.p50,
+        duration_p95: transactionSummary.p95,
+        duration_p99: transactionSummary.p99,
       },
       batch: {
         success: data.metrics.batch_success?.values?.count || 0,
         failure: data.metrics.batch_failure?.values?.count || 0,
-        duration_p50: data.metrics.batch_duration_ms?.values?.['p(50)'] || 0,
-        duration_p95: data.metrics.batch_duration_ms?.values?.['p(95)'] || 0,
-        duration_p99: data.metrics.batch_duration_ms?.values?.['p(99)'] || 0,
+        duration_p50: batchSummary.p50,
+        duration_p95: batchSummary.p95,
+        duration_p99: batchSummary.p99,
       }
     }
   }

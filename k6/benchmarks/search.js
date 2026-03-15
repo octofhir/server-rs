@@ -18,6 +18,7 @@ import http from 'k6/http'
 import { check, group, sleep } from 'k6'
 import { Counter, Trend } from 'k6/metrics'
 
+import { summaryTrendStats, trendPercentiles } from '../lib/utils.js'
 import { headers, generateUUID } from '../util.js'
 import patient from '../seed/patient.js'
 import observation from '../seed/observation.js'
@@ -35,6 +36,7 @@ const searchFailure = new Counter('search_failure')
 
 export const options = {
   discardResponseBodies: false,
+  summaryTrendStats,
   scenarios: {
     // Seed data first
     seed: {
@@ -333,29 +335,25 @@ export function searchTest({ baseUrl, params, seedPatientFamily, seedOrgName }) 
 }
 
 export function handleSummary(data) {
+  const simpleSummary = trendPercentiles(data.metrics.simple_search_latency_ms)
+  const chainedSummary = trendPercentiles(data.metrics.chained_search_latency_ms)
+  const includeSummary = trendPercentiles(data.metrics.include_search_latency_ms)
+  const paginationSummary = trendPercentiles(data.metrics.pagination_latency_ms)
   const summary = {
     timestamp: new Date().toISOString(),
     test: 'search',
     metrics: {
       simple: {
-        p50: data.metrics.simple_search_latency_ms?.values?.['p(50)'] || 0,
-        p95: data.metrics.simple_search_latency_ms?.values?.['p(95)'] || 0,
-        p99: data.metrics.simple_search_latency_ms?.values?.['p(99)'] || 0,
+        ...simpleSummary,
       },
       chained: {
-        p50: data.metrics.chained_search_latency_ms?.values?.['p(50)'] || 0,
-        p95: data.metrics.chained_search_latency_ms?.values?.['p(95)'] || 0,
-        p99: data.metrics.chained_search_latency_ms?.values?.['p(99)'] || 0,
+        ...chainedSummary,
       },
       include: {
-        p50: data.metrics.include_search_latency_ms?.values?.['p(50)'] || 0,
-        p95: data.metrics.include_search_latency_ms?.values?.['p(95)'] || 0,
-        p99: data.metrics.include_search_latency_ms?.values?.['p(99)'] || 0,
+        ...includeSummary,
       },
       pagination: {
-        p50: data.metrics.pagination_latency_ms?.values?.['p(50)'] || 0,
-        p95: data.metrics.pagination_latency_ms?.values?.['p(95)'] || 0,
-        p99: data.metrics.pagination_latency_ms?.values?.['p(99)'] || 0,
+        ...paginationSummary,
       },
       overall: {
         success: data.metrics.search_success?.values?.count || 0,

@@ -59,8 +59,12 @@ pub struct QueryCacheKey {
     pub resource_type: String,
     /// Sorted list of (parameter_name, modifier, type) tuples
     pub parameters: Vec<QueryParamKey>,
-    /// Pagination key (limit presence, not actual value)
+    /// Whether the query uses pagination clauses.
     pub has_pagination: bool,
+    /// Pagination limit value when present.
+    pub pagination_count: Option<u32>,
+    /// Pagination offset value when present.
+    pub pagination_offset: Option<u32>,
     /// Sort fields (names only, not directions)
     pub sort_fields: Vec<String>,
 }
@@ -106,6 +110,8 @@ impl QueryCacheKey {
             resource_type: resource_type.to_string(),
             parameters,
             has_pagination,
+            pagination_count: None,
+            pagination_offset: None,
             sort_fields: sort_fields.to_vec(),
         }
     }
@@ -124,8 +130,18 @@ impl QueryCacheKey {
             resource_type: resource_type.to_string(),
             parameters,
             has_pagination,
+            pagination_count: None,
+            pagination_offset: None,
             sort_fields,
         }
+    }
+
+    /// Attach concrete pagination values to the cache key.
+    #[must_use]
+    pub fn with_pagination(mut self, count: Option<u32>, offset: Option<u32>) -> Self {
+        self.pagination_count = count;
+        self.pagination_offset = offset;
+        self
     }
 
     /// Infer parameter type from name (heuristic).
@@ -199,6 +215,8 @@ impl Hash for QueryCacheKey {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.resource_type.hash(state);
         self.has_pagination.hash(state);
+        self.pagination_count.hash(state);
+        self.pagination_offset.hash(state);
 
         for param in &self.parameters {
             param.hash(state);
@@ -641,6 +659,26 @@ mod tests {
 
         // Keys should be different with different modifiers
         assert_ne!(key1.cache_hash(), key2.cache_hash());
+    }
+
+    #[test]
+    fn test_cache_key_different_pagination_values() {
+        let base_key = QueryCacheKey::from_typed_params(
+            "Patient",
+            vec![QueryParamKey {
+                name: "name".to_string(),
+                modifier: None,
+                param_type: SearchParameterType::String,
+                value_count: 1,
+            }],
+            true,
+            vec!["name".to_string()],
+        );
+
+        let first_page = base_key.clone().with_pagination(Some(10), Some(0));
+        let second_page = base_key.with_pagination(Some(10), Some(10));
+
+        assert_ne!(first_page.cache_hash(), second_page.cache_hash());
     }
 
     #[test]

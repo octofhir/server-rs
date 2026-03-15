@@ -2250,10 +2250,8 @@ pub async fn search_resource(
     .await
     .map_err(|e| ApiError::bad_request(e.to_string()))?;
 
-    let total = result
-        .total
-        .map(|t| t as usize)
-        .unwrap_or(result.entries.len());
+    let total = result.total.map(|t| t as usize);
+    let total_is_exact = total.is_some();
 
     // Convert main entries to RawJson
     let (resources, ids): (Vec<_>, Vec<_>) = result
@@ -2280,8 +2278,10 @@ pub async fn search_resource(
         None
     };
 
-    let bundle = octofhir_api::bundle_from_search_raw_with_warnings(
+    let bundle = octofhir_api::bundle_from_search_raw_with_warnings_and_pagination(
         total,
+        total_is_exact,
+        result.has_more,
         resources,
         ids,
         included,
@@ -2348,10 +2348,8 @@ pub async fn search_resource_post(
     .await
     .map_err(|e| ApiError::bad_request(e.to_string()))?;
 
-    let total = result
-        .total
-        .map(|t| t as usize)
-        .unwrap_or(result.entries.len());
+    let total = result.total.map(|t| t as usize);
+    let total_is_exact = total.is_some();
 
     // Convert main entries to RawJson
     let (resources, ids): (Vec<_>, Vec<_>) = result
@@ -2378,8 +2376,10 @@ pub async fn search_resource_post(
         None
     };
 
-    let bundle = octofhir_api::bundle_from_search_raw_with_warnings(
+    let bundle = octofhir_api::bundle_from_search_raw_with_warnings_and_pagination(
         total,
+        total_is_exact,
+        result.has_more,
         resources,
         ids,
         included,
@@ -4251,10 +4251,8 @@ async fn process_get_search_entry(
 
     let offset = search_params.offset.unwrap_or(0) as usize;
     let count = search_params.count.unwrap_or(10) as usize;
-    let total = result
-        .total
-        .map(|t| t as usize)
-        .unwrap_or(result.entries.len());
+    let total = result.total.map(|t| t as usize);
+    let total_is_exact = total.is_some();
 
     let (resources, ids): (Vec<_>, Vec<_>) = result
         .entries
@@ -4262,8 +4260,10 @@ async fn process_get_search_entry(
         .map(|e| (octofhir_api::RawJson::from_string(e.resource_json), e.id))
         .unzip();
 
-    let search_bundle = octofhir_api::bundle_from_search_raw(
+    let search_bundle = octofhir_api::bundle_from_search_raw_with_pagination(
         total,
+        total_is_exact,
+        result.has_more,
         resources,
         ids,
         vec![],
