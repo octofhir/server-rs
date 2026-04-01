@@ -221,7 +221,9 @@ pub async fn build_capability_statement(
         .kind("instance")
         .date(chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string())
         .add_format("application/fhir+json")
-        .add_format("application/json");
+        .add_format("application/json")
+        .add_patch_format("application/json-patch+json")
+        .add_patch_format("application/fhir+json");
 
     // Apply FHIR version field
     builder = builder.fhir_version(match fhir_version {
@@ -331,11 +333,19 @@ pub async fn build_capability_statement(
                     "search-type",
                     "create",
                     "update",
+                    "patch",
                     "delete",
                     "history-instance",
                     "history-type",
                 ][..],
             )
+            .with_versioning("versioned-update")
+            .with_read_history(true)
+            .with_update_create(true)
+            .with_conditional_create(true)
+            .with_conditional_read("full-support")
+            .with_conditional_update(true)
+            .with_conditional_delete("single")
             .with_search_params(mapped)
             .with_profile(base_profiles.get(*rt).cloned())
             .with_supported_profiles(supported_profiles.get(*rt).cloned().unwrap_or_default());
@@ -652,10 +662,16 @@ pub async fn create_resource(
                     }
 
                     // Content-Location
-                    let content_loc = format!("/{}/{}", resource_type, existing.id);
-                    if let Ok(val) = header::HeaderValue::from_str(&content_loc) {
-                        response_headers.insert(header::CONTENT_LOCATION, val);
-                    }
+                    insert_header_if_valid(
+                        &mut response_headers,
+                        header::CONTENT_LOCATION,
+                        fhir_versioned_resource_url(
+                            &state.base_url,
+                            &resource_type,
+                            &existing.id,
+                            version_id,
+                        ),
+                    );
 
                     // Content-Type
                     response_headers.insert(
@@ -709,10 +725,11 @@ pub async fn create_resource(
             let mut response_headers = HeaderMap::new();
 
             // Location header
-            let loc = format!("/{resource_type}/{id}");
-            if let Ok(val) = header::HeaderValue::from_str(&loc) {
-                response_headers.insert(header::LOCATION, val);
-            }
+            insert_header_if_valid(
+                &mut response_headers,
+                header::LOCATION,
+                fhir_versioned_resource_url(&state.base_url, &resource_type, &id, &version_id),
+            );
 
             // ETag
             let etag = format!("W/\"{}\"", version_id);
@@ -785,13 +802,103 @@ pub enum PreferReturn {
 
 /// Parse Prefer header for return preference
 fn parse_prefer_return(header: &str) -> PreferReturn {
-    if header.contains("return=minimal") {
+    let normalized = header.to_ascii_lowercase();
+    if normalized.contains("return=minimal") {
         PreferReturn::Minimal
-    } else if header.contains("return=OperationOutcome") {
+    } else if normalized.contains("return=operationoutcome") {
         PreferReturn::OperationOutcome
     } else {
         PreferReturn::Representation
     }
+}
+
+fn fhir_versioned_resource_url(
+    base_url: &str,
+    resource_type: &str,
+    id: &str,
+    version_id: &str,
+) -> String {
+    format!(
+        "{}/{}/{}/_history/{}",
+        base_url.trim_end_matches('/'),
+        resource_type,
+        id,
+        version_id
+    )
+}
+
+fn insert_header_if_valid(headers: &mut HeaderMap, name: header::HeaderName, value: String) {
+    if let Ok(val) = header::HeaderValue::from_str(&value) {
+        headers.insert(name, val);
+    }
+}
+
+fn add_subsetted_tag(resource: &mut Value) {
+    let Some(obj) = resource.as_object_mut() else {
+        return;
+    };
+
+    let meta = obj.entry("meta".to_string()).or_insert_with(|| json!({}));
+    let Some(meta_obj) = meta.as_object_mut() else {
+        return;
+    };
+
+    let tags = meta_obj
+        .entry("tag".to_string())
+        .or_insert_with(|| Value::Array(Vec::new()));
+    let Some(tags_arr) = tags.as_array_mut() else {
+        return;
+    };
+
+    let has_subsetted = tags_arr.iter().any(|tag| {
+        tag["system"].as_str() == Some("http://terminology.hl7.org/CodeSystem/v3-ObservationValue")
+            && tag["code"].as_str() == Some("SUBSETTED")
+    });
+
+    if !has_subsetted {
+        tags_arr.push(json!({
+            "system": "http://terminology.hl7.org/CodeSystem/v3-ObservationValue",
+            "code": "SUBSETTED",
+        }));
+    }
+}
+
+fn should_tag_subsetted(params: &HashMap<String, String>) -> bool {
+    if params.contains_key("_elements") {
+        return true;
+    }
+
+    match params.get("_summary").map(|s| s.as_str()) {
+        Some("true" | "text" | "data") => true,
+        Some("false" | "count") | None => false,
+        Some(_) => true,
+    }
+}
+
+fn apply_result_params_to_resource(
+    resource_json: &str,
+    params: &HashMap<String, String>,
+) -> Result<Option<Vec<u8>>, ApiError> {
+    if !params.contains_key("_summary") && !params.contains_key("_elements") {
+        return Ok(None);
+    }
+
+    let mut resource: Value =
+        serde_json::from_str(resource_json).map_err(|e| ApiError::internal(e.to_string()))?;
+
+    if let Some(summary) = params.get("_summary") {
+        resource = apply_summary(&resource, summary);
+    }
+    if let Some(elements) = params.get("_elements") {
+        resource = apply_elements_filter(&resource, elements);
+    }
+    if should_tag_subsetted(params) {
+        add_subsetted_tag(&mut resource);
+    }
+
+    serde_json::to_vec(&resource)
+        .map(Some)
+        .map_err(|e| ApiError::internal(e.to_string()))
 }
 
 // ---- History Query Parameters ----
@@ -846,6 +953,7 @@ pub async fn read_resource(
     State(state): State<crate::server::AppState>,
     Path((resource_type, id)): Path<(String, String)>,
     headers: HeaderMap,
+    Query(params): Query<HashMap<String, String>>,
 ) -> Result<Response, ApiError> {
     // Try resource cache first
     let stored = if let Some(cache) = &state.resource_cache {
@@ -912,7 +1020,12 @@ pub async fn read_resource(
             );
             builder = builder.header(header::LAST_MODIFIED, last_modified);
 
-            Ok(builder.body(Body::from(stored.resource_json)).unwrap())
+            let body = match apply_result_params_to_resource(&stored.resource_json, &params)? {
+                Some(filtered) => Body::from(filtered),
+                None => Body::from(stored.resource_json),
+            };
+
+            Ok(builder.body(body).unwrap())
         }
         None => Err(ApiError::not_found(format!(
             "{resource_type} with id '{id}' not found"
@@ -925,6 +1038,7 @@ pub async fn read_resource(
 pub async fn vread_resource(
     State(state): State<crate::server::AppState>,
     Path((resource_type, id, version_id)): Path<(String, String, String)>,
+    Query(params): Query<HashMap<String, String>>,
 ) -> Result<impl IntoResponse, ApiError> {
     // Use vread_raw to get the specific version as raw JSON (no Value round-trip)
     match state
@@ -949,7 +1063,12 @@ pub async fn vread_resource(
             );
             builder = builder.header(header::LAST_MODIFIED, last_modified);
 
-            Ok(builder.body(Body::from(stored.resource_json)).unwrap())
+            let body = match apply_result_params_to_resource(&stored.resource_json, &params)? {
+                Some(filtered) => Body::from(filtered),
+                None => Body::from(stored.resource_json),
+            };
+
+            Ok(builder.body(body).unwrap())
         }
         Ok(None) => Err(ApiError::not_found(format!(
             "{resource_type}/{id}/_history/{version_id} not found"
@@ -1317,6 +1436,17 @@ pub async fn update_resource(
 
             let mut response_headers = HeaderMap::new();
 
+            insert_header_if_valid(
+                &mut response_headers,
+                header::CONTENT_LOCATION,
+                fhir_versioned_resource_url(
+                    &state.base_url,
+                    &resource_type,
+                    &id,
+                    &stored.version_id,
+                ),
+            );
+
             // ETag
             let etag = format!("W/\"{}\"", stored.version_id);
             if let Ok(val) = header::HeaderValue::from_str(&etag) {
@@ -1381,10 +1511,16 @@ pub async fn update_resource(
                     let mut response_headers = HeaderMap::new();
 
                     // Location header (for create)
-                    let loc = format!("/{resource_type}/{id}");
-                    if let Ok(val) = header::HeaderValue::from_str(&loc) {
-                        response_headers.insert(header::LOCATION, val);
-                    }
+                    insert_header_if_valid(
+                        &mut response_headers,
+                        header::LOCATION,
+                        fhir_versioned_resource_url(
+                            &state.base_url,
+                            &resource_type,
+                            &id,
+                            &stored.version_id,
+                        ),
+                    );
 
                     // ETag
                     let etag = format!("W/\"{}\"", stored.version_id);
@@ -1527,10 +1663,16 @@ pub async fn conditional_update_resource(
                         let mut response_headers = HeaderMap::new();
 
                         // Location header
-                        let loc = format!("/{resource_type}/{}", stored.id);
-                        if let Ok(val) = header::HeaderValue::from_str(&loc) {
-                            response_headers.insert(header::LOCATION, val);
-                        }
+                        insert_header_if_valid(
+                            &mut response_headers,
+                            header::LOCATION,
+                            fhir_versioned_resource_url(
+                                &state.base_url,
+                                &resource_type,
+                                &stored.id,
+                                &stored.version_id,
+                            ),
+                        );
 
                         // ETag
                         let etag = format!("W/\"{}\"", stored.version_id);
@@ -1617,10 +1759,16 @@ pub async fn conditional_update_resource(
                         let mut response_headers = HeaderMap::new();
 
                         // Content-Location header
-                        let content_loc = format!("/{resource_type}/{id}");
-                        if let Ok(val) = header::HeaderValue::from_str(&content_loc) {
-                            response_headers.insert(header::CONTENT_LOCATION, val);
-                        }
+                        insert_header_if_valid(
+                            &mut response_headers,
+                            header::CONTENT_LOCATION,
+                            fhir_versioned_resource_url(
+                                &state.base_url,
+                                &resource_type,
+                                &id,
+                                &stored.version_id,
+                            ),
+                        );
 
                         // ETag
                         let etag = format!("W/\"{}\"", stored.version_id);
@@ -1937,6 +2085,12 @@ pub async fn patch_resource(
 
             let mut response_headers = HeaderMap::new();
 
+            insert_header_if_valid(
+                &mut response_headers,
+                header::CONTENT_LOCATION,
+                fhir_versioned_resource_url(&state.base_url, &resource_type, &id, version_id),
+            );
+
             // ETag
             let etag = format!("W/\"{}\"", version_id);
             if let Ok(val) = header::HeaderValue::from_str(&etag) {
@@ -2127,10 +2281,16 @@ pub async fn conditional_patch_resource(
                         let mut response_headers = HeaderMap::new();
 
                         // Content-Location header
-                        let content_loc = format!("/{resource_type}/{id}");
-                        if let Ok(val) = header::HeaderValue::from_str(&content_loc) {
-                            response_headers.insert(header::CONTENT_LOCATION, val);
-                        }
+                        insert_header_if_valid(
+                            &mut response_headers,
+                            header::CONTENT_LOCATION,
+                            fhir_versioned_resource_url(
+                                &state.base_url,
+                                &resource_type,
+                                &id,
+                                &stored.version_id,
+                            ),
+                        );
 
                         // ETag
                         let etag = format!("W/\"{}\"", version_id);
@@ -2568,6 +2728,10 @@ fn apply_result_params(
                 // Apply _elements
                 if let Some(elems) = elements {
                     *resource = apply_elements_filter(resource, elems);
+                }
+
+                if should_tag_subsetted(params) {
+                    add_subsetted_tag(resource);
                 }
             }
         }
@@ -6046,9 +6210,24 @@ pub async fn internal_read_resource(
     request: Request<Body>,
 ) -> Result<Response, ApiError> {
     if is_internal_resource_type(&resource_type) {
-        return read_resource(state, Path((resource_type, id)), headers)
-            .await
-            .map(IntoResponse::into_response);
+        let query_params = request
+            .uri()
+            .query()
+            .map(|q| {
+                url::form_urlencoded::parse(q.as_bytes())
+                    .into_owned()
+                    .collect::<HashMap<String, String>>()
+            })
+            .unwrap_or_default();
+
+        return read_resource(
+            state,
+            Path((resource_type, id)),
+            headers,
+            Query(query_params),
+        )
+        .await
+        .map(IntoResponse::into_response);
     }
 
     // Not an internal resource - try gateway
@@ -6297,5 +6476,55 @@ mod tests {
             !octofhir_auth::verify_app_secret("wrong_secret", hashed_secret).unwrap(),
             "Wrong secret should not verify"
         );
+    }
+
+    #[test]
+    fn test_parse_prefer_return_is_case_insensitive() {
+        assert!(matches!(
+            parse_prefer_return("respond-async, RETURN=OperationOutcome"),
+            PreferReturn::OperationOutcome
+        ));
+        assert!(matches!(
+            parse_prefer_return("RETURN=MINIMAL"),
+            PreferReturn::Minimal
+        ));
+        assert!(matches!(
+            parse_prefer_return("return=representation"),
+            PreferReturn::Representation
+        ));
+    }
+
+    #[test]
+    fn test_fhir_versioned_resource_url_uses_base_path() {
+        let url = fhir_versioned_resource_url("http://localhost:8080/fhir", "Patient", "123", "7");
+        assert_eq!(url, "http://localhost:8080/fhir/Patient/123/_history/7");
+    }
+
+    #[test]
+    fn test_apply_result_params_to_resource_marks_subsetted() {
+        let resource_json = serde_json::to_string(&json!({
+            "resourceType": "Patient",
+            "id": "123",
+            "name": [{"family": "Subset"}],
+            "telecom": [{"system": "phone", "value": "+10000000000"}]
+        }))
+        .unwrap();
+
+        let params = HashMap::from([("_elements".to_string(), "name".to_string())]);
+        let filtered = apply_result_params_to_resource(&resource_json, &params)
+            .unwrap()
+            .expect("filtered result");
+        let filtered: Value = serde_json::from_slice(&filtered).unwrap();
+
+        assert!(filtered.get("name").is_some());
+        assert!(filtered.get("telecom").is_none());
+        let tags = filtered["meta"]["tag"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
+        assert!(tags.iter().any(|tag| {
+            tag["system"] == "http://terminology.hl7.org/CodeSystem/v3-ObservationValue"
+                && tag["code"] == "SUBSETTED"
+        }));
     }
 }

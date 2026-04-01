@@ -1827,6 +1827,8 @@ pub struct CapabilityStatementRest {
     pub resource: Option<Vec<CapabilityStatementRestResource>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub operation: Option<Vec<CapabilityStatementRestOperation>>,
+    #[serde(rename = "patchFormat", skip_serializing_if = "Option::is_none")]
+    pub patch_format: Option<Vec<String>>,
 }
 
 impl CapabilityStatementRest {
@@ -1835,6 +1837,7 @@ impl CapabilityStatementRest {
             mode: "server".to_string(),
             resource: Some(vec![]),
             operation: None,
+            patch_format: None,
         }
     }
 }
@@ -1864,6 +1867,20 @@ pub struct CapabilityStatementRestResource {
         default
     )]
     pub supported_profile: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub versioning: Option<String>,
+    #[serde(rename = "readHistory", skip_serializing_if = "Option::is_none")]
+    pub read_history: Option<bool>,
+    #[serde(rename = "updateCreate", skip_serializing_if = "Option::is_none")]
+    pub update_create: Option<bool>,
+    #[serde(rename = "conditionalCreate", skip_serializing_if = "Option::is_none")]
+    pub conditional_create: Option<bool>,
+    #[serde(rename = "conditionalRead", skip_serializing_if = "Option::is_none")]
+    pub conditional_read: Option<String>,
+    #[serde(rename = "conditionalUpdate", skip_serializing_if = "Option::is_none")]
+    pub conditional_update: Option<bool>,
+    #[serde(rename = "conditionalDelete", skip_serializing_if = "Option::is_none")]
+    pub conditional_delete: Option<String>,
 }
 
 impl CapabilityStatementRestResource {
@@ -1874,6 +1891,13 @@ impl CapabilityStatementRestResource {
             search_param: Vec::new(),
             profile: None,
             supported_profile: Vec::new(),
+            versioning: None,
+            read_history: None,
+            update_create: None,
+            conditional_create: None,
+            conditional_read: None,
+            conditional_update: None,
+            conditional_delete: None,
         }
     }
 
@@ -1899,6 +1923,41 @@ impl CapabilityStatementRestResource {
 
     pub fn with_supported_profiles(mut self, profiles: Vec<String>) -> Self {
         self.supported_profile = profiles;
+        self
+    }
+
+    pub fn with_versioning(mut self, versioning: impl Into<String>) -> Self {
+        self.versioning = Some(versioning.into());
+        self
+    }
+
+    pub fn with_read_history(mut self, enabled: bool) -> Self {
+        self.read_history = Some(enabled);
+        self
+    }
+
+    pub fn with_update_create(mut self, enabled: bool) -> Self {
+        self.update_create = Some(enabled);
+        self
+    }
+
+    pub fn with_conditional_create(mut self, enabled: bool) -> Self {
+        self.conditional_create = Some(enabled);
+        self
+    }
+
+    pub fn with_conditional_read(mut self, mode: impl Into<String>) -> Self {
+        self.conditional_read = Some(mode.into());
+        self
+    }
+
+    pub fn with_conditional_update(mut self, enabled: bool) -> Self {
+        self.conditional_update = Some(enabled);
+        self
+    }
+
+    pub fn with_conditional_delete(mut self, mode: impl Into<String>) -> Self {
+        self.conditional_delete = Some(mode.into());
         self
     }
 }
@@ -1927,6 +1986,13 @@ mod capability_statement_tests {
         // Add one resource capability (Patient with read + search)
         let res = CapabilityStatementRestResource::new("Patient")
             .with_interactions(&["read", "search-type"])
+            .with_versioning("versioned-update")
+            .with_read_history(true)
+            .with_update_create(true)
+            .with_conditional_create(true)
+            .with_conditional_read("full-support")
+            .with_conditional_update(true)
+            .with_conditional_delete("single")
             .with_search_params(vec![SearchParam {
                 name: "_id".to_string(),
                 type_: "token".to_string(),
@@ -1956,6 +2022,19 @@ mod capability_statement_tests {
         assert!(interactions.iter().any(|v| v["code"] == "search-type"));
         // searchParam exists with name _id
         assert_eq!(j["rest"][0]["resource"][0]["searchParam"][0]["name"], "_id");
+        assert_eq!(
+            j["rest"][0]["resource"][0]["versioning"],
+            "versioned-update"
+        );
+        assert_eq!(j["rest"][0]["resource"][0]["readHistory"], true);
+        assert_eq!(j["rest"][0]["resource"][0]["updateCreate"], true);
+        assert_eq!(j["rest"][0]["resource"][0]["conditionalCreate"], true);
+        assert_eq!(
+            j["rest"][0]["resource"][0]["conditionalRead"],
+            "full-support"
+        );
+        assert_eq!(j["rest"][0]["resource"][0]["conditionalUpdate"], true);
+        assert_eq!(j["rest"][0]["resource"][0]["conditionalDelete"], "single");
     }
 }
 
@@ -1971,6 +2050,7 @@ pub struct CapabilityStatementBuilder {
     formats: Vec<String>,
     resources: Vec<CapabilityStatementRestResource>,
     operations: Vec<CapabilityStatementRestOperation>,
+    patch_formats: Vec<String>,
 }
 
 impl CapabilityStatementBuilder {
@@ -1983,6 +2063,7 @@ impl CapabilityStatementBuilder {
             formats: vec!["application/fhir+json".to_string()],
             resources: Vec::new(),
             operations: Vec::new(),
+            patch_formats: Vec::new(),
         }
     }
 
@@ -2025,6 +2106,11 @@ impl CapabilityStatementBuilder {
         self
     }
 
+    pub fn add_patch_format(mut self, format: impl Into<String>) -> Self {
+        self.patch_formats.push(format.into());
+        self
+    }
+
     /// Add an operation to the capability statement
     pub fn add_operation(mut self, name: impl Into<String>, definition: impl Into<String>) -> Self {
         self.operations.push(CapabilityStatementRestOperation {
@@ -2040,6 +2126,11 @@ impl CapabilityStatementBuilder {
         } else {
             Some(self.operations)
         };
+        let patch_format = if self.patch_formats.is_empty() {
+            None
+        } else {
+            Some(self.patch_formats)
+        };
 
         let mut cs = CapabilityStatement {
             resource_type: "CapabilityStatement",
@@ -2052,6 +2143,7 @@ impl CapabilityStatementBuilder {
                 mode: "server".to_string(),
                 resource: Some(self.resources),
                 operation: operations,
+                patch_format,
             }],
         };
         // Ensure formats has at least application/fhir+json
@@ -2071,6 +2163,7 @@ mod capability_statement_builder_tests {
         let builder = CapabilityStatementBuilder::new_json_r4b()
             .status("active")
             .kind("instance")
+            .add_patch_format("application/json-patch+json")
             .add_resource(
                 "Patient",
                 &["read", "search-type"],
@@ -2104,6 +2197,10 @@ mod capability_statement_builder_tests {
         assert_eq!(cs.rest.len(), 1);
         let rest = &cs.rest[0];
         assert_eq!(rest.mode, "server");
+        assert_eq!(
+            rest.patch_format.as_ref().unwrap(),
+            &vec!["application/json-patch+json".to_string()]
+        );
         let resources = rest.resource.as_ref().unwrap();
         assert_eq!(resources.len(), 2);
         assert_eq!(resources[0].type_, "Patient");

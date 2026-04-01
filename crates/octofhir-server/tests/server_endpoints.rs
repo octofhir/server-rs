@@ -84,6 +84,31 @@ async fn server_endpoints_work() {
     assert!(resp.status().is_success());
     let body: Value = resp.json().await.unwrap();
     assert_eq!(body["resourceType"], "CapabilityStatement");
+    assert_eq!(
+        body["rest"][0]["patchFormat"][0],
+        "application/json-patch+json"
+    );
+    assert_eq!(body["rest"][0]["patchFormat"][1], "application/fhir+json");
+
+    let patient = body["rest"][0]["resource"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|resource| resource["type"] == "Patient")
+        .expect("Patient capability");
+    let interactions = patient["interaction"].as_array().unwrap();
+    assert!(
+        interactions
+            .iter()
+            .any(|interaction| interaction["code"] == "patch")
+    );
+    assert_eq!(patient["versioning"], "versioned-update");
+    assert_eq!(patient["readHistory"], true);
+    assert_eq!(patient["updateCreate"], true);
+    assert_eq!(patient["conditionalCreate"], true);
+    assert_eq!(patient["conditionalRead"], "full-support");
+    assert_eq!(patient["conditionalUpdate"], true);
+    assert_eq!(patient["conditionalDelete"], "single");
 
     // GET /fhir/Patient (search placeholder)
     let resp = client

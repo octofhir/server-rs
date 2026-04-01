@@ -303,7 +303,13 @@ pub async fn merged_type_get_handler(
         Ok(result.into_response())
     } else {
         // Dispatch to resource read handler (param is the resource id)
-        let result = handlers::read_resource(state, Path((resource_type, param)), headers).await?;
+        let result = handlers::read_resource(
+            state,
+            Path((resource_type, param)),
+            headers,
+            Query(query_params),
+        )
+        .await?;
         Ok(result.into_response())
     }
 }
