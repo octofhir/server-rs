@@ -328,7 +328,11 @@ pub trait Transaction: Send + Sync {
     /// Updates an existing resource within this transaction.
     ///
     /// See `FhirStorage::update` for details.
-    async fn update(&mut self, resource: &Value) -> Result<StoredResource, StorageError>;
+    async fn update(
+        &mut self,
+        resource: &Value,
+        if_match: Option<&str>,
+    ) -> Result<StoredResource, StorageError>;
 
     /// Deletes a resource within this transaction.
     ///
@@ -343,6 +347,35 @@ pub trait Transaction: Send + Sync {
         resource_type: &str,
         id: &str,
     ) -> Result<Option<StoredResource>, StorageError>;
+
+    /// Searches for resources within this transaction.
+    ///
+    /// Search results must include uncommitted changes made earlier in the same transaction.
+    async fn search(
+        &self,
+        resource_type: &str,
+        params: &SearchParams,
+    ) -> Result<SearchResult, StorageError>;
+
+    /// Bulk-creates many resources of the same `resource_type` within this
+    /// transaction.
+    ///
+    /// All resources must share the same `resourceType` (or be missing one,
+    /// in which case `resource_type` is set on the stored resource). Backends
+    /// SHOULD use a single batched INSERT round-trip and a single search-index
+    /// flush. The default implementation falls back to `create()` per resource
+    /// for backends that don't support batching.
+    async fn create_batch(
+        &mut self,
+        _resource_type: &str,
+        resources: &[Value],
+    ) -> Result<Vec<StoredResource>, StorageError> {
+        let mut out = Vec::with_capacity(resources.len());
+        for r in resources {
+            out.push(self.create(r).await?);
+        }
+        Ok(out)
+    }
 }
 
 /// Extension trait for storage with capability queries.

@@ -8,7 +8,7 @@ use chrono::{DateTime, Utc};
 use serde_json::Value;
 use sqlx_core::query_as::query_as;
 use sqlx_core::query_scalar::query_scalar;
-use sqlx_postgres::PgPool;
+use sqlx_postgres::{PgPool, PgTransaction};
 use time::OffsetDateTime;
 
 use octofhir_search::{
@@ -114,6 +114,56 @@ pub async fn execute_search(
 
     Ok(SearchResult {
         entries: all_entries,
+        total,
+        has_more,
+    })
+}
+
+/// Execute a FHIR search query within an existing PostgreSQL transaction.
+///
+/// This is used by native Bundle transactions so conditional operations can see
+/// resources created or updated earlier in the same transaction.
+pub async fn execute_search_with_tx(
+    tx: &mut PgTransaction<'_>,
+    resource_type: &str,
+    params: &SearchParams,
+    registry: Option<&Arc<SearchParameterRegistry>>,
+) -> Result<SearchResult, StorageError> {
+    let requested_limit = params.count.unwrap_or(10) as usize;
+    let mut effective_params = params.clone();
+    effective_params.count = Some(params.count.unwrap_or(10).saturating_add(1));
+
+    let empty_registry = SearchParameterRegistry::new();
+    let registry = registry.map(|r| r.as_ref()).unwrap_or(&empty_registry);
+
+    let converted = build_query_from_params(resource_type, &effective_params, registry, "public")
+        .map_err(|e| {
+        tracing::warn!(error = %e, "Failed to build transaction search query");
+        StorageError::invalid_resource(format!("Invalid search parameters: {e}"))
+    })?;
+
+    let built_query = converted.builder.build().map_err(|e| {
+        tracing::warn!(error = %e, "Failed to build transaction search SQL");
+        StorageError::internal(format!("Failed to build search SQL: {e}"))
+    })?;
+
+    let entries = execute_query_with_tx(tx, &built_query, resource_type).await?;
+    let has_more = entries.len() > requested_limit;
+    let entries = entries.into_iter().take(requested_limit).collect();
+
+    let total = if matches!(converted.total_mode, Some(TotalMode::Accurate)) {
+        let count_query = converted.builder.build_count().map_err(|e| {
+            tracing::warn!(error = %e, "Failed to build transaction count SQL");
+            StorageError::internal(format!("Failed to build count SQL: {e}"))
+        })?;
+
+        Some(execute_count_query_with_tx(tx, &count_query).await?)
+    } else {
+        None
+    };
+
+    Ok(SearchResult {
+        entries,
         total,
         has_more,
     })
@@ -420,6 +470,45 @@ async fn execute_query(
     Ok(entries)
 }
 
+async fn execute_query_with_tx(
+    tx: &mut PgTransaction<'_>,
+    query: &BuiltQuery,
+    resource_type: &str,
+) -> Result<Vec<StoredResource>, StorageError> {
+    let rows: Vec<(Value, String, i64, DateTime<Utc>, DateTime<Utc>)> = query_as(&query.sql)
+        .bind_all_params(&query.params)
+        .fetch_all(&mut **tx)
+        .await
+        .map_err(|e| {
+            tracing::warn!(error = %e, sql = %query.sql, "Transaction search query failed");
+            if is_undefined_table(&e) {
+                return StorageError::internal(format!(
+                    "Table for {} does not exist",
+                    resource_type
+                ));
+            }
+            StorageError::internal(format!("Search query failed: {e}"))
+        })?;
+
+    let entries = rows
+        .into_iter()
+        .map(|(resource, id, txid, created_at, updated_at)| {
+            let created_at_time = chrono_to_time(created_at);
+            let updated_at_time = chrono_to_time(updated_at);
+            StoredResource {
+                id,
+                version_id: txid.to_string(),
+                resource_type: resource_type.to_string(),
+                resource,
+                last_updated: updated_at_time,
+                created_at: created_at_time,
+            }
+        })
+        .collect();
+
+    Ok(entries)
+}
+
 /// Execute a search query and return raw JSON entries (optimized path).
 ///
 /// Expects SQL that already selects `resource::text` (via `with_raw_resource(true)`
@@ -473,6 +562,22 @@ async fn execute_count_query(pool: &PgPool, query: &BuiltQuery) -> Result<u32, S
         .await
         .map_err(|e| {
             tracing::warn!(error = %e, "Count query failed");
+            StorageError::internal(format!("Count query failed: {e}"))
+        })?;
+
+    Ok(count as u32)
+}
+
+async fn execute_count_query_with_tx(
+    tx: &mut PgTransaction<'_>,
+    query: &BuiltQuery,
+) -> Result<u32, StorageError> {
+    let count: i64 = query_scalar(&query.sql)
+        .bind_all_params(&query.params)
+        .fetch_one(&mut **tx)
+        .await
+        .map_err(|e| {
+            tracing::warn!(error = %e, "Transaction count query failed");
             StorageError::internal(format!("Count query failed: {e}"))
         })?;
 

@@ -947,6 +947,260 @@ async fn test_transaction_conditional_create() {
     let _ = shutdown_tx.send(());
 }
 
+#[tokio::test]
+async fn test_transaction_conditional_update() {
+    let (_container, postgres_url) = start_postgres().await;
+    let config = create_config(&postgres_url);
+    let (base, shutdown_tx, _handle) = start_server(&config).await;
+    let client = reqwest::Client::new();
+
+    let patient = json!({
+        "resourceType": "Patient",
+        "identifier": [{"system": "http://example.org/mrn", "value": "COND-UPD-001"}],
+        "name": [{"family": "ConditionalUpdate", "given": ["Before"]}]
+    });
+
+    let resp = client
+        .post(format!("{base}/Patient"))
+        .header("content-type", "application/fhir+json")
+        .json(&patient)
+        .send()
+        .await
+        .expect("create patient");
+
+    assert!(resp.status().is_success());
+
+    let bundle = json!({
+        "resourceType": "Bundle",
+        "type": "transaction",
+        "entry": [
+            {
+                "resource": {
+                    "resourceType": "Patient",
+                    "identifier": [{"system": "http://example.org/mrn", "value": "COND-UPD-001"}],
+                    "name": [{"family": "ConditionalUpdate", "given": ["After"]}]
+                },
+                "request": {
+                    "method": "PUT",
+                    "url": "Patient?identifier=http://example.org/mrn|COND-UPD-001"
+                }
+            }
+        ]
+    });
+
+    let resp = client
+        .post(format!("{base}/"))
+        .header("content-type", "application/fhir+json")
+        .json(&bundle)
+        .send()
+        .await
+        .expect("transaction request");
+
+    assert!(
+        resp.status().is_success(),
+        "Conditional update should succeed"
+    );
+
+    let search_resp = client
+        .get(format!(
+            "{base}/Patient?identifier=http://example.org/mrn|COND-UPD-001"
+        ))
+        .header("accept", "application/fhir+json")
+        .send()
+        .await
+        .expect("search request");
+
+    let search_bundle: Value = search_resp.json().await.expect("parse");
+    assert_eq!(search_bundle["total"].as_u64().unwrap_or(0), 1);
+    assert_eq!(
+        search_bundle["entry"][0]["resource"]["name"][0]["given"][0],
+        "After"
+    );
+
+    let _ = shutdown_tx.send(());
+}
+
+#[tokio::test]
+async fn test_transaction_conditional_delete() {
+    let (_container, postgres_url) = start_postgres().await;
+    let config = create_config(&postgres_url);
+    let (base, shutdown_tx, _handle) = start_server(&config).await;
+    let client = reqwest::Client::new();
+
+    let patient = json!({
+        "resourceType": "Patient",
+        "identifier": [{"system": "http://example.org/mrn", "value": "COND-DEL-001"}],
+        "name": [{"family": "ConditionalDelete"}]
+    });
+
+    let resp = client
+        .post(format!("{base}/Patient"))
+        .header("content-type", "application/fhir+json")
+        .json(&patient)
+        .send()
+        .await
+        .expect("create patient");
+
+    assert!(resp.status().is_success());
+
+    let bundle = json!({
+        "resourceType": "Bundle",
+        "type": "transaction",
+        "entry": [
+            {
+                "request": {
+                    "method": "DELETE",
+                    "url": "Patient?identifier=http://example.org/mrn|COND-DEL-001"
+                }
+            }
+        ]
+    });
+
+    let resp = client
+        .post(format!("{base}/"))
+        .header("content-type", "application/fhir+json")
+        .json(&bundle)
+        .send()
+        .await
+        .expect("transaction request");
+
+    assert!(
+        resp.status().is_success(),
+        "Conditional delete should succeed"
+    );
+
+    let search_resp = client
+        .get(format!(
+            "{base}/Patient?identifier=http://example.org/mrn|COND-DEL-001"
+        ))
+        .header("accept", "application/fhir+json")
+        .send()
+        .await
+        .expect("search request");
+
+    let search_bundle: Value = search_resp.json().await.expect("parse");
+    assert_eq!(search_bundle["total"].as_u64().unwrap_or(0), 0);
+
+    let _ = shutdown_tx.send(());
+}
+
+#[tokio::test]
+async fn test_transaction_patch_entry() {
+    let (_container, postgres_url) = start_postgres().await;
+    let config = create_config(&postgres_url);
+    let (base, shutdown_tx, _handle) = start_server(&config).await;
+    let client = reqwest::Client::new();
+
+    let patient = json!({
+        "resourceType": "Patient",
+        "name": [{"family": "PatchInTransaction", "given": ["Before"]}]
+    });
+
+    let resp = client
+        .post(format!("{base}/Patient"))
+        .header("content-type", "application/fhir+json")
+        .json(&patient)
+        .send()
+        .await
+        .expect("create patient");
+
+    assert!(resp.status().is_success());
+    let created: Value = resp.json().await.expect("parse");
+    let patient_id = created["id"].as_str().expect("id");
+
+    let bundle = json!({
+        "resourceType": "Bundle",
+        "type": "transaction",
+        "entry": [
+            {
+                "resource": [
+                    {"op": "replace", "path": "/name/0/given/0", "value": "After"}
+                ],
+                "request": {
+                    "method": "PATCH",
+                    "url": format!("Patient/{}", patient_id)
+                }
+            }
+        ]
+    });
+
+    let resp = client
+        .post(format!("{base}/"))
+        .header("content-type", "application/fhir+json")
+        .json(&bundle)
+        .send()
+        .await
+        .expect("transaction request");
+
+    assert!(
+        resp.status().is_success(),
+        "PATCH in transaction should succeed"
+    );
+
+    let patched = read_resource(&client, &base, "Patient", patient_id)
+        .await
+        .expect("patient should exist");
+
+    assert_eq!(patched["name"][0]["given"][0], "After");
+
+    let _ = shutdown_tx.send(());
+}
+
+#[tokio::test]
+async fn test_transaction_get_search_sees_uncommitted_create() {
+    let (_container, postgres_url) = start_postgres().await;
+    let config = create_config(&postgres_url);
+    let (base, shutdown_tx, _handle) = start_server(&config).await;
+    let client = reqwest::Client::new();
+
+    let bundle = json!({
+        "resourceType": "Bundle",
+        "type": "transaction",
+        "entry": [
+            {
+                "resource": {
+                    "resourceType": "Patient",
+                    "identifier": [{"system": "http://example.org/mrn", "value": "TX-SEARCH-001"}],
+                    "name": [{"family": "TxSearch"}]
+                },
+                "request": {
+                    "method": "POST",
+                    "url": "Patient"
+                }
+            },
+            {
+                "request": {
+                    "method": "GET",
+                    "url": "Patient?identifier=http://example.org/mrn|TX-SEARCH-001"
+                }
+            }
+        ]
+    });
+
+    let resp = client
+        .post(format!("{base}/"))
+        .header("content-type", "application/fhir+json")
+        .json(&bundle)
+        .send()
+        .await
+        .expect("transaction request");
+
+    assert!(
+        resp.status().is_success(),
+        "GET search in transaction should succeed"
+    );
+
+    let response_bundle: Value = resp.json().await.expect("parse response");
+    let entries = response_bundle["entry"].as_array().expect("entries");
+    let search_bundle = &entries[1]["resource"];
+
+    assert_eq!(search_bundle["resourceType"], "Bundle");
+    assert_eq!(search_bundle["type"], "searchset");
+    assert_eq!(search_bundle["total"].as_u64().unwrap_or(0), 1);
+
+    let _ = shutdown_tx.send(());
+}
+
 // =============================================================================
 // Large Transaction Tests
 // =============================================================================

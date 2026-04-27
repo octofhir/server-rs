@@ -4,7 +4,7 @@ use std::sync::{Arc, OnceLock};
 
 use async_trait::async_trait;
 use serde_json::Value;
-use sqlx_postgres::{PgPool, PgTransaction};
+use sqlx_postgres::PgPool;
 
 use octofhir_search::{QueryCache, SearchParameter, SearchParameterRegistry};
 use octofhir_storage::{
@@ -13,6 +13,7 @@ use octofhir_storage::{
 };
 
 use crate::config::PostgresConfig;
+use crate::index_writer::{AsyncIndexWriter, IndexJob, IndexOp};
 use crate::migrations;
 use crate::pool;
 use crate::queries;
@@ -34,6 +35,9 @@ pub struct PostgresStorage {
     search_registry: Arc<OnceLock<Arc<SearchParameterRegistry>>>,
     /// Query cache for search SQL template reuse
     query_cache: Option<Arc<QueryCache>>,
+    /// When set, `create / update / delete` enqueue index jobs here after the
+    /// resource transaction commits. Unset → indexing runs inline.
+    async_indexer: Option<AsyncIndexWriter>,
 }
 
 impl PostgresStorage {
@@ -71,12 +75,15 @@ impl PostgresStorage {
 
         let schema_manager = SchemaManager::new(pool.clone());
 
+        crate::gin_maintenance::spawn_gin_cleaner(pool.clone());
+
         Ok(Self {
             pool,
             read_pool: None,
             schema_manager,
             search_registry: Arc::new(OnceLock::new()),
             query_cache: None,
+            async_indexer: None,
         })
     }
 
@@ -93,7 +100,21 @@ impl PostgresStorage {
             schema_manager,
             search_registry: Arc::new(OnceLock::new()),
             query_cache: None,
+            async_indexer: None,
         }
+    }
+
+    /// Plug an async, batched search-index writer into this storage. With
+    /// it set, `create / update / delete` enqueue index jobs after the
+    /// resource transaction commits; without it, indexing runs inline.
+    #[must_use]
+    pub fn with_async_indexer(mut self, indexer: AsyncIndexWriter) -> Self {
+        self.async_indexer = Some(indexer);
+        self
+    }
+
+    pub fn set_async_indexer(&mut self, indexer: AsyncIndexWriter) {
+        self.async_indexer = Some(indexer);
     }
 
     /// Sets the read replica pool for routing read operations.
@@ -159,9 +180,11 @@ impl PostgresStorage {
             .and_then(|r| r.get(resource_type, code))
     }
 
-    async fn write_search_indexes_with_tx(
+    /// Extract index rows on the caller side, then hand off to the async
+    /// indexer (or flush inline when no indexer is set).
+    async fn dispatch_index_write(
         &self,
-        tx: &mut PgTransaction<'_>,
+        op: IndexOp,
         resource_type: &str,
         resource_id: &str,
         resource: &Value,
@@ -169,25 +192,78 @@ impl PostgresStorage {
         let Some(registry) = self.search_registry.get() else {
             return Ok(());
         };
-
         let (refs, dates) =
             crate::search_index::extract_search_index_rows(registry, resource_type, resource);
 
-        crate::search_index::write_reference_index_with_tx(tx, resource_type, resource_id, &refs)
-            .await?;
-        crate::search_index::write_date_index_with_tx(tx, resource_type, resource_id, &dates)
-            .await?;
+        let job = IndexJob {
+            op,
+            resource_type: resource_type.to_string(),
+            resource_id: resource_id.to_string(),
+            refs,
+            dates,
+        };
 
-        Ok(())
+        if let Some(indexer) = &self.async_indexer {
+            indexer.submit(job).await
+        } else {
+            self.write_index_job_inline(&job).await
+        }
     }
 
-    async fn remove_search_indexes_with_tx(
+    async fn dispatch_index_delete(
         &self,
-        tx: &mut PgTransaction<'_>,
         resource_type: &str,
         resource_id: &str,
     ) -> Result<(), StorageError> {
-        crate::search_index::delete_search_indexes_with_tx(tx, resource_type, resource_id).await
+        let job = IndexJob {
+            op: IndexOp::Delete,
+            resource_type: resource_type.to_string(),
+            resource_id: resource_id.to_string(),
+            refs: Vec::new(),
+            dates: Vec::new(),
+        };
+
+        if let Some(indexer) = &self.async_indexer {
+            indexer.submit(job).await
+        } else {
+            self.write_index_job_inline(&job).await
+        }
+    }
+
+    /// Inline, non-batched index flush for one job. `Create` skips the
+    /// leading DELETE since no rows can exist yet.
+    async fn write_index_job_inline(&self, job: &IndexJob) -> Result<(), StorageError> {
+        let mut tx = self.pool.begin().await.map_err(|e| {
+            StorageError::transaction_error(format!(
+                "Failed to begin search-index transaction: {e}"
+            ))
+        })?;
+
+        if matches!(job.op, IndexOp::Update | IndexOp::Delete) {
+            crate::search_index::delete_search_indexes_with_tx(
+                &mut tx,
+                &job.resource_type,
+                &job.resource_id,
+            )
+            .await?;
+        }
+
+        if matches!(job.op, IndexOp::Create | IndexOp::Update) {
+            // Insert-only buffer; the Update branch already deleted above,
+            // so we never DELETE on Create.
+            let mut buffer = crate::search_index::BatchIndexBuffer::new();
+            buffer.extend_with(&job.resource_type, &job.resource_id, &job.refs, &job.dates);
+            if !buffer.is_empty() {
+                buffer.flush_with_tx(&mut tx).await?;
+            }
+        }
+
+        tx.commit().await.map_err(|e| {
+            StorageError::transaction_error(format!(
+                "Failed to commit search-index transaction: {e}"
+            ))
+        })?;
+        Ok(())
     }
 
     /// Reindex a single resource: delete old index rows, extract new ones, and write them.
@@ -239,20 +315,36 @@ impl PostgresStorage {
 #[async_trait]
 impl FhirStorage for PostgresStorage {
     async fn create(&self, resource: &Value) -> Result<StoredResource, StorageError> {
-        let mut tx = self.pool.begin().await.map_err(|e| {
-            StorageError::transaction_error(format!("Failed to begin transaction: {e}"))
-        })?;
-        let result = queries::crud::create_with_tx(&mut tx, resource).await?;
-        self.write_search_indexes_with_tx(
-            &mut tx,
-            &result.resource_type,
-            &result.id,
-            &result.resource,
-        )
-        .await?;
-        tx.commit().await.map_err(|e| {
-            StorageError::transaction_error(format!("Failed to commit transaction: {e}"))
-        })?;
+        // Resource tx commits first; index write follows separately so the
+        // connection isn't held across FHIRPath + index I/O.
+        let result = {
+            let mut tx = self.pool.begin().await.map_err(|e| {
+                StorageError::transaction_error(format!("Failed to begin transaction: {e}"))
+            })?;
+            let result = queries::crud::create_with_tx(&mut tx, resource, None).await?;
+            tx.commit().await.map_err(|e| {
+                StorageError::transaction_error(format!("Failed to commit transaction: {e}"))
+            })?;
+            result
+        };
+
+        if let Err(e) = self
+            .dispatch_index_write(
+                IndexOp::Create,
+                &result.resource_type,
+                &result.id,
+                &result.resource,
+            )
+            .await
+        {
+            tracing::warn!(
+                error = %e,
+                resource_type = %result.resource_type,
+                resource_id = %result.id,
+                "search index write failed after create commit"
+            );
+        }
+
         Ok(result)
     }
 
@@ -285,20 +377,35 @@ impl FhirStorage for PostgresStorage {
         resource: &Value,
         if_match: Option<&str>,
     ) -> Result<StoredResource, StorageError> {
-        let mut tx = self.pool.begin().await.map_err(|e| {
-            StorageError::transaction_error(format!("Failed to begin transaction: {e}"))
-        })?;
-        let result = queries::crud::update_with_tx_if_match(&mut tx, resource, if_match).await?;
-        self.write_search_indexes_with_tx(
-            &mut tx,
-            &result.resource_type,
-            &result.id,
-            &result.resource,
-        )
-        .await?;
-        tx.commit().await.map_err(|e| {
-            StorageError::transaction_error(format!("Failed to commit transaction: {e}"))
-        })?;
+        let result = {
+            let mut tx = self.pool.begin().await.map_err(|e| {
+                StorageError::transaction_error(format!("Failed to begin transaction: {e}"))
+            })?;
+            let result =
+                queries::crud::update_with_tx_if_match(&mut tx, resource, if_match, None).await?;
+            tx.commit().await.map_err(|e| {
+                StorageError::transaction_error(format!("Failed to commit transaction: {e}"))
+            })?;
+            result
+        };
+
+        if let Err(e) = self
+            .dispatch_index_write(
+                IndexOp::Update,
+                &result.resource_type,
+                &result.id,
+                &result.resource,
+            )
+            .await
+        {
+            tracing::warn!(
+                error = %e,
+                resource_type = %result.resource_type,
+                resource_id = %result.id,
+                "search index write failed after update commit"
+            );
+        }
+
         Ok(result)
     }
 
@@ -312,15 +419,27 @@ impl FhirStorage for PostgresStorage {
     }
 
     async fn delete(&self, resource_type: &str, id: &str) -> Result<(), StorageError> {
-        let mut tx = self.pool.begin().await.map_err(|e| {
-            StorageError::transaction_error(format!("Failed to begin transaction: {e}"))
-        })?;
-        queries::crud::delete_with_tx(&mut tx, resource_type, id).await?;
-        self.remove_search_indexes_with_tx(&mut tx, resource_type, id)
-            .await?;
-        tx.commit().await.map_err(|e| {
-            StorageError::transaction_error(format!("Failed to commit transaction: {e}"))
-        })?;
+        // Soft-delete commits first; index cleanup follows. Orphaned index
+        // rows after a failure can be reaped with `$reindex`.
+        {
+            let mut tx = self.pool.begin().await.map_err(|e| {
+                StorageError::transaction_error(format!("Failed to begin transaction: {e}"))
+            })?;
+            queries::crud::delete_with_tx(&mut tx, resource_type, id, None).await?;
+            tx.commit().await.map_err(|e| {
+                StorageError::transaction_error(format!("Failed to commit transaction: {e}"))
+            })?;
+        }
+
+        if let Err(e) = self.dispatch_index_delete(resource_type, id).await {
+            tracing::warn!(
+                error = %e,
+                resource_type = %resource_type,
+                resource_id = %id,
+                "search index delete failed after resource delete commit"
+            );
+        }
+
         Ok(())
     }
 

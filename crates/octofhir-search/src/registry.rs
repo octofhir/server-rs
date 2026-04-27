@@ -23,6 +23,9 @@ use crate::parameters::SearchParameter;
 pub struct SearchParameterRegistry {
     /// Parameters indexed by (resource_type, code) as composite key
     by_resource: DashMap<(String, String), Arc<SearchParameter>>,
+    /// Parameters grouped by resource type. Built at registration time so
+    /// `get_all_for_type` is O(params for type) instead of O(total params).
+    by_type: DashMap<String, Vec<Arc<SearchParameter>>>,
     /// All parameters by canonical URL
     by_url: DashMap<String, Arc<SearchParameter>>,
     /// Common parameters (apply to all resources: base includes "Resource" or "DomainResource")
@@ -34,6 +37,7 @@ impl SearchParameterRegistry {
     pub fn new() -> Self {
         Self {
             by_resource: DashMap::new(),
+            by_type: DashMap::new(),
             by_url: DashMap::new(),
             common: DashMap::new(),
         }
@@ -58,10 +62,18 @@ impl SearchParameterRegistry {
             self.common.insert(param.code.clone(), param.clone());
         }
 
-        // Store by resource type with composite key (resource_type, code)
+        // Store by resource type with composite key (resource_type, code),
+        // and also by base type alone so `get_all_for_type` is O(1).
+        // Replace (not append) on re-registration of the same (base, code).
         for base in &param.base {
             self.by_resource
                 .insert((base.clone(), param.code.clone()), param.clone());
+            let mut entry = self.by_type.entry(base.clone()).or_default();
+            if let Some(slot) = entry.iter_mut().find(|p| p.code == param.code) {
+                *slot = param.clone();
+            } else {
+                entry.push(param.clone());
+            }
         }
     }
 
@@ -77,12 +89,14 @@ impl SearchParameterRegistry {
     /// Returns true if the parameter was found and removed.
     pub fn remove_by_url(&self, url: &str) -> bool {
         if let Some((_, param)) = self.by_url.remove(url) {
-            // Remove from resource indices
             for base in &param.base {
                 if base == "Resource" || base == "DomainResource" {
                     self.common.remove(&param.code);
                 } else {
                     self.by_resource.remove(&(base.clone(), param.code.clone()));
+                }
+                if let Some(mut entry) = self.by_type.get_mut(base) {
+                    entry.retain(|p| p.url != param.url);
                 }
             }
             true
@@ -107,22 +121,31 @@ impl SearchParameterRegistry {
 
     /// Get all search parameters applicable to a resource type.
     ///
-    /// Returns both resource-specific and common parameters.
+    /// Returns resource-specific parameters merged with common parameters,
+    /// deduplicated by `code` (resource-specific wins on collision). O(1)
+    /// lookup for the resource-specific group via the `by_type` index.
     pub fn get_all_for_type(&self, resource_type: &str) -> Vec<Arc<SearchParameter>> {
-        let mut params: Vec<_> = self
-            .common
-            .iter()
+        let type_specific = self
+            .by_type
+            .get(resource_type)
             .map(|entry| entry.value().clone())
-            .collect();
+            .unwrap_or_default();
 
-        // Iterate over all entries and filter by resource type
-        params.extend(
-            self.by_resource
-                .iter()
-                .filter(|entry| entry.key().0 == resource_type)
-                .map(|entry| entry.value().clone()),
-        );
+        let mut seen: std::collections::HashSet<String> =
+            std::collections::HashSet::with_capacity(type_specific.len() + self.common.len());
+        let mut params = Vec::with_capacity(type_specific.len() + self.common.len());
 
+        for p in type_specific {
+            if seen.insert(p.code.clone()) {
+                params.push(p);
+            }
+        }
+        for entry in self.common.iter() {
+            let p = entry.value().clone();
+            if seen.insert(p.code.clone()) {
+                params.push(p);
+            }
+        }
         params
     }
 
@@ -152,10 +175,10 @@ impl SearchParameterRegistry {
     /// Get the number of parameters for a specific resource type.
     pub fn count_for_type(&self, resource_type: &str) -> usize {
         let type_count = self
-            .by_resource
-            .iter()
-            .filter(|entry| entry.key().0 == resource_type)
-            .count();
+            .by_type
+            .get(resource_type)
+            .map(|entry| entry.value().len())
+            .unwrap_or(0);
         type_count + self.common.len()
     }
 

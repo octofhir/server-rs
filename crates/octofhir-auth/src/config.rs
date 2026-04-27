@@ -257,6 +257,14 @@ pub struct PolicyConfig {
 
     /// QuickJS scripting configuration.
     pub quickjs: QuickJsConfig,
+
+    /// Allow unauthenticated requests with synthetic system context.
+    ///
+    /// When `true`, requests without an `Authorization` header are processed
+    /// with a synthetic `system/*.cruds`-scoped `AuthContext` and policy
+    /// evaluation is skipped. Intended for testing, benchmarking, and other
+    /// trusted-network deployments — never enable in production.
+    pub anonymous_access: bool,
 }
 
 impl Default for PolicyConfig {
@@ -265,6 +273,7 @@ impl Default for PolicyConfig {
             default_deny: true,
             quickjs_enabled: true,
             quickjs: QuickJsConfig::default(),
+            anonymous_access: false,
         }
     }
 }

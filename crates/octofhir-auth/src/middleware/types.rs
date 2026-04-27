@@ -7,7 +7,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::token::jwt::AccessTokenClaims;
-use crate::types::Client;
+use crate::types::{Client, GrantType};
 
 // =============================================================================
 // User Context
@@ -220,6 +220,57 @@ impl AuthContext {
         match &self.encounter {
             Some(ctx_encounter) => ctx_encounter == encounter_id,
             None => true,
+        }
+    }
+
+    /// Builds a synthetic system-scoped `AuthContext` for the anonymous-access
+    /// mode used in benchmarks and trusted-network deployments.
+    ///
+    /// The returned context has scope `system/*.cruds`, no user, and a
+    /// stub OAuth client. It does not require any database lookups.
+    #[must_use]
+    pub fn system_anonymous() -> Self {
+        let now = time::OffsetDateTime::now_utc().unix_timestamp();
+        let claims = Arc::new(AccessTokenClaims {
+            iss: "octofhir-anonymous".to_string(),
+            sub: "anonymous".to_string(),
+            aud: vec![],
+            exp: now + 3600,
+            iat: now,
+            jti: format!("anonymous-{now}"),
+            scope: "system/*.cruds".to_string(),
+            client_id: "anonymous".to_string(),
+            patient: None,
+            encounter: None,
+            fhir_user: None,
+            sid: None,
+        });
+
+        let client = Client {
+            client_id: "anonymous".to_string(),
+            client_secret: None,
+            name: "Anonymous Access".to_string(),
+            description: Some("Synthetic client for anonymous access mode".to_string()),
+            grant_types: vec![GrantType::ClientCredentials],
+            redirect_uris: vec![],
+            post_logout_redirect_uris: vec![],
+            scopes: vec![],
+            confidential: false,
+            active: true,
+            access_token_lifetime: None,
+            refresh_token_lifetime: None,
+            pkce_required: None,
+            allowed_origins: vec![],
+            jwks: None,
+            jwks_uri: None,
+        };
+
+        Self {
+            token_claims: claims,
+            client,
+            user: None,
+            patient: None,
+            encounter: None,
         }
     }
 }

@@ -18,7 +18,7 @@ use mime_guess::MimeGuess;
 use octofhir_api::ApiError;
 use octofhir_core::ResourceType;
 use octofhir_fhir_model::ModelProvider;
-use octofhir_storage::{FhirStorage, StorageError}; // For begin_transaction method and error mapping
+use octofhir_storage::StorageError;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
@@ -3447,6 +3447,15 @@ pub async fn transaction_handler(
         })
         .unwrap_or(false);
 
+    // FHIR R4 default for transaction-response entries is `return=representation`
+    // (each entry's response includes the stored resource). Clients that
+    // explicitly request `Prefer: return=minimal` get only status/location/etag.
+    let bundle_include_resource = headers
+        .get("prefer")
+        .and_then(|v| v.to_str().ok())
+        .map(|v| !v.to_ascii_lowercase().contains("return=minimal"))
+        .unwrap_or(true);
+
     // Validate bundle structure
     let resource_type = bundle["resourceType"].as_str();
     if resource_type != Some("Bundle") {
@@ -3482,11 +3491,12 @@ pub async fn transaction_handler(
     // Otherwise, process synchronously
     match bundle_type {
         "transaction" => {
-            let (status, json) = process_transaction(&state, &bundle).await?;
+            let (status, json) =
+                process_transaction(&state, &bundle, bundle_include_resource).await?;
             Ok((status, HeaderMap::new(), json))
         }
         "batch" => {
-            let (status, json) = process_batch(&state, &bundle).await?;
+            let (status, json) = process_batch(&state, &bundle, bundle_include_resource).await?;
             Ok((status, HeaderMap::new(), json))
         }
         _ => Err(ApiError::bad_request(format!(
@@ -3505,6 +3515,7 @@ pub async fn transaction_handler(
 async fn process_transaction(
     state: &crate::server::AppState,
     bundle: &Value,
+    include_resource: bool,
 ) -> Result<(StatusCode, Json<Value>), ApiError> {
     let entries = bundle["entry"]
         .as_array()
@@ -3522,22 +3533,68 @@ async fn process_transaction(
     // Sort entries by HTTP method for proper processing order
     let sorted_entries = sort_transaction_entries(entries);
 
-    // Phase 1: Pre-scan — build complete reference map before creating anything
+    // Phase 1: Pre-scan — build complete reference map before creating anything,
+    // and resolve any conditional creates against existing data so we don't
+    // search twice (once here, once during entry processing).
     let mut reference_map: std::collections::HashMap<String, String> =
         std::collections::HashMap::new();
     let mut pre_assigned_ids: std::collections::HashMap<String, String> =
         std::collections::HashMap::new();
+    let mut matched_conditional: std::collections::HashMap<usize, MatchedExisting> =
+        std::collections::HashMap::new();
 
-    for entry in &sorted_entries {
+    for (idx, entry) in sorted_entries.iter().enumerate() {
         let method = entry["request"]["method"].as_str().unwrap_or("");
+        let request = &entry["request"];
         let full_url = entry["fullUrl"].as_str();
-        let url = entry["request"]["url"].as_str().unwrap_or("");
+        let url = request["url"].as_str().unwrap_or("");
 
         match method.to_uppercase().as_str() {
             "POST" => {
-                if let Some(fu) = full_url {
-                    // Extract resource type from request URL (e.g. "Organization" or "Organization?...")
-                    let resource_type = url.split('?').next().unwrap_or(url);
+                let resource_type = url.split('?').next().unwrap_or(url);
+                if let Some(condition) = transaction_post_condition(request, url) {
+                    let search_params = octofhir_search::parse_query_string(condition, 2, 10);
+                    let result = state
+                        .storage
+                        .search(resource_type, &search_params)
+                        .await
+                        .map_err(|e| ApiError::bad_request(e.to_string()))?;
+
+                    match result.entries.len() {
+                        0 => {
+                            let new_id = octofhir_core::generate_id();
+                            if let Some(fu) = full_url {
+                                reference_map.insert(
+                                    fu.to_string(),
+                                    format!("{}/{}", resource_type, new_id),
+                                );
+                                pre_assigned_ids.insert(fu.to_string(), new_id);
+                            }
+                        }
+                        1 => {
+                            let existing = &result.entries[0];
+                            if let Some(fu) = full_url {
+                                reference_map.insert(
+                                    fu.to_string(),
+                                    format!("{}/{}", resource_type, existing.id),
+                                );
+                            }
+                            matched_conditional.insert(
+                                idx,
+                                MatchedExisting {
+                                    id: existing.id.clone(),
+                                    version_id: existing.version_id.clone(),
+                                    resource: existing.resource.clone(),
+                                },
+                            );
+                        }
+                        _ => {
+                            return Err(ApiError::precondition_failed(
+                                "Multiple matches for conditional create",
+                            ));
+                        }
+                    }
+                } else if let Some(fu) = full_url {
                     let new_id = octofhir_core::generate_id();
                     reference_map.insert(fu.to_string(), format!("{}/{}", resource_type, new_id));
                     pre_assigned_ids.insert(fu.to_string(), new_id);
@@ -3575,28 +3632,110 @@ async fn process_transaction(
         resolved_entries.push(resolved_entry);
     }
 
-    // Phase 3: Execute all entries in one database transaction
+    // Phase 3: Execute all entries in one database transaction.
+    //
+    // POST entries are gathered into per-resource-type batches and inserted
+    // via `tx.create_batch` (one INSERT ... SELECT FROM UNNEST(...) per type).
+    // All other methods are processed individually via the per-entry path.
     tracing::debug!("Beginning native PostgreSQL transaction for Bundle processing");
-    let mut tx = octofhir_db_postgres::PostgresStorage::from_pool((*state.db_pool).clone())
+    let mut tx = state
+        .storage
         .begin_transaction()
         .await
         .map_err(|e| ApiError::internal(format!("Failed to begin transaction: {}", e)))?;
 
-    let mut response_entries: Vec<Value> = Vec::new();
+    let mut response_entries: Vec<Option<Value>> = vec![None; resolved_entries.len()];
+    let mut post_batches: std::collections::HashMap<String, Vec<(usize, Value)>> =
+        std::collections::HashMap::new();
 
-    for entry in &resolved_entries {
-        let result = process_transaction_entry_with_tx(&mut *tx, state, entry).await;
+    for (idx, entry) in resolved_entries.iter().enumerate() {
+        let method = entry["request"]["method"]
+            .as_str()
+            .unwrap_or("")
+            .to_uppercase();
 
-        match result {
-            Ok(response_entry) => {
-                response_entries.push(response_entry);
+        if method == "POST" {
+            // Conditional create that matched in pre-scan — return existing
+            if let Some(matched) = matched_conditional.get(&idx) {
+                let url = entry["request"]["url"].as_str().unwrap_or("");
+                let resource_type = url.split('?').next().unwrap_or(url);
+                response_entries[idx] = Some(build_transaction_response_entry(
+                    if include_resource {
+                        Some(&matched.resource)
+                    } else {
+                        None
+                    },
+                    "200 OK",
+                    Some(resource_type),
+                    Some(&matched.id),
+                    Some(&matched.version_id),
+                ));
+                continue;
             }
+
+            let url = entry["request"]["url"].as_str().unwrap_or("");
+            let resource_type = url.split('?').next().unwrap_or(url).to_string();
+
+            resource_type.parse::<ResourceType>().map_err(|_| {
+                ApiError::bad_request(format!("Unknown resource type: {}", resource_type))
+            })?;
+
+            let mut resource = entry
+                .get("resource")
+                .cloned()
+                .ok_or_else(|| ApiError::bad_request("POST entry requires a resource"))?;
+            resource["resourceType"] = json!(resource_type);
+
+            post_batches
+                .entry(resource_type)
+                .or_default()
+                .push((idx, resource));
+        }
+    }
+
+    // Flush all POST batches.
+    for (resource_type, items) in post_batches {
+        let resources: Vec<Value> = items.iter().map(|(_, r)| r.clone()).collect();
+        let stored = tx
+            .create_batch(&resource_type, &resources)
+            .await
+            .map_err(|e| {
+                tracing::warn!("Transaction batch-create failed, will auto-rollback: {}", e);
+                map_storage_error(e)
+            })?;
+        for ((idx, _), s) in items.iter().zip(stored) {
+            response_entries[*idx] = Some(build_transaction_response_entry(
+                if include_resource {
+                    Some(&s.resource)
+                } else {
+                    None
+                },
+                "201 Created",
+                Some(&s.resource_type),
+                Some(&s.id),
+                Some(&s.version_id),
+            ));
+        }
+    }
+
+    // Process non-POST entries (DELETE/PUT/PATCH/GET) individually.
+    for (idx, entry) in resolved_entries.iter().enumerate() {
+        if response_entries[idx].is_some() {
+            continue;
+        }
+        match process_transaction_entry_with_tx(&mut *tx, state, entry).await {
+            Ok(response_entry) => response_entries[idx] = Some(response_entry),
             Err(e) => {
                 tracing::warn!("Transaction failed, will auto-rollback: {}", e);
                 return Err(e);
             }
         }
     }
+
+    let response_entries: Vec<Value> = response_entries
+        .into_iter()
+        .map(|opt| opt.unwrap_or_else(|| json!({"response": {"status": "500 Internal Server Error"}})))
+        .collect();
 
     // Commit transaction
     tx.commit()
@@ -3617,13 +3756,38 @@ async fn process_transaction(
     Ok((StatusCode::OK, Json(response_bundle)))
 }
 
+/// Snapshot of an existing resource captured during conditional-create
+/// pre-scan, so we don't re-issue the same search inside the transaction.
+struct MatchedExisting {
+    id: String,
+    version_id: String,
+    resource: Value,
+}
+
+fn parse_bundle_if_match(request: &Value) -> Option<String> {
+    request["ifMatch"].as_str().map(|im| {
+        im.trim_start_matches("W/\"")
+            .trim_end_matches('"')
+            .trim_start_matches('"')
+            .to_string()
+    })
+}
+
+fn transaction_post_condition<'a>(request: &'a Value, url: &'a str) -> Option<&'a str> {
+    request["ifNoneExist"].as_str().or_else(|| {
+        url.find('?')
+            .map(|idx| &url[idx + 1..])
+            .filter(|condition| !condition.is_empty())
+    })
+}
+
 /// Process a single transaction entry using a transaction object.
 ///
 /// Resources are expected to already have pre-assigned IDs and resolved references
 /// (done in the pre-scan phase of process_transaction).
 async fn process_transaction_entry_with_tx(
     tx: &mut dyn octofhir_storage::Transaction,
-    _state: &crate::server::AppState,
+    state: &crate::server::AppState,
     entry: &Value,
 ) -> Result<Value, ApiError> {
     let request = &entry["request"];
@@ -3638,23 +3802,44 @@ async fn process_transaction_entry_with_tx(
 
     match method.to_uppercase().as_str() {
         "POST" => {
-            let resource =
+            let mut resource =
                 resource.ok_or_else(|| ApiError::bad_request("POST entry requires a resource"))?;
 
-            let (resource_type, _condition) = if let Some(idx) = url.find('?') {
-                (&url[..idx], Some(&url[idx + 1..]))
-            } else {
-                (url, None)
-            };
+            let resource_type = url.split('?').next().unwrap_or(url);
 
             let _rt = resource_type.parse::<ResourceType>().map_err(|_| {
                 ApiError::bad_request(format!("Unknown resource type: {}", resource_type))
             })?;
 
-            let stored = tx
-                .create(&resource)
-                .await
-                .map_err(|e| ApiError::internal(format!("Failed to create resource: {}", e)))?;
+            if let Some(condition) = transaction_post_condition(request, url) {
+                let search_params = octofhir_search::parse_query_string(condition, 2, 10);
+                let result = tx
+                    .search(resource_type, &search_params)
+                    .await
+                    .map_err(|e| ApiError::bad_request(e.to_string()))?;
+
+                match result.entries.len() {
+                    0 => {}
+                    1 => {
+                        let existing = &result.entries[0];
+                        return Ok(build_transaction_response_entry(
+                            Some(&existing.resource),
+                            "200 OK",
+                            Some(resource_type),
+                            Some(&existing.id),
+                            Some(&existing.version_id),
+                        ));
+                    }
+                    _ => {
+                        return Err(ApiError::precondition_failed(
+                            "Multiple matches for conditional create",
+                        ));
+                    }
+                }
+            }
+
+            resource["resourceType"] = json!(resource_type);
+            let stored = tx.create(&resource).await.map_err(map_storage_error)?;
 
             Ok(build_transaction_response_entry(
                 Some(&stored.resource),
@@ -3665,79 +3850,246 @@ async fn process_transaction_entry_with_tx(
             ))
         }
         "PUT" => {
-            // PUT in a transaction bundle is an upsert (create-or-update) per FHIR spec
-            let resource =
+            let mut resource =
                 resource.ok_or_else(|| ApiError::bad_request("PUT entry requires a resource"))?;
+            let if_match = parse_bundle_if_match(request);
 
-            // Try update first; if resource doesn't exist, create it
-            match tx.update(&resource).await {
-                Ok(stored) => {
-                    let resource_type = stored.resource_type.clone();
-                    Ok(build_transaction_response_entry(
+            let parts: Vec<&str> = url.split('/').collect();
+
+            if parts.len() == 2 && !parts[1].contains('?') {
+                let resource_type = parts[0];
+                let id = parts[1];
+
+                let _rt = resource_type.parse::<ResourceType>().map_err(|_| {
+                    ApiError::bad_request(format!("Unknown resource type: {}", resource_type))
+                })?;
+
+                if resource_type == "AccessPolicy" && id == ADMIN_ACCESS_POLICY_ID {
+                    return Err(ApiError::forbidden(
+                        "The default admin access policy cannot be modified",
+                    ));
+                }
+
+                resource["id"] = json!(id);
+                resource["resourceType"] = json!(resource_type);
+
+                match tx.update(&resource, if_match.as_deref()).await {
+                    Ok(stored) => Ok(build_transaction_response_entry(
                         Some(&stored.resource),
                         "200 OK",
-                        Some(&resource_type),
+                        Some(resource_type),
                         Some(&stored.id),
                         Some(&stored.version_id),
-                    ))
-                }
-                Err(e) if e.to_string().contains("not found") => {
-                    // Resource doesn't exist — create it (PUT as create with client-assigned ID)
-                    let stored = tx.create(&resource).await.map_err(|e| {
-                        ApiError::internal(format!("Failed to create resource via PUT: {}", e))
-                    })?;
+                    )),
+                    Err(StorageError::NotFound { .. }) => {
+                        let stored = tx.create(&resource).await.map_err(map_storage_error)?;
 
-                    let resource_type = stored.resource_type.clone();
-                    Ok(build_transaction_response_entry(
-                        Some(&stored.resource),
-                        "201 Created",
-                        Some(&resource_type),
-                        Some(&stored.id),
-                        Some(&stored.version_id),
-                    ))
+                        Ok(build_transaction_response_entry(
+                            Some(&stored.resource),
+                            "201 Created",
+                            Some(resource_type),
+                            Some(&stored.id),
+                            Some(&stored.version_id),
+                        ))
+                    }
+                    Err(e) => Err(map_storage_error(e)),
                 }
-                Err(e) => Err(ApiError::internal(format!(
-                    "Failed to update resource: {}",
-                    e
-                ))),
+            } else if url.contains('?') {
+                let (resource_type, condition) = url
+                    .find('?')
+                    .map(|idx| (&url[..idx], &url[idx + 1..]))
+                    .ok_or_else(|| ApiError::bad_request(format!("Invalid PUT URL: {}", url)))?;
+
+                let _rt = resource_type.parse::<ResourceType>().map_err(|_| {
+                    ApiError::bad_request(format!("Unknown resource type: {}", resource_type))
+                })?;
+
+                let search_params = octofhir_search::parse_query_string(condition, 2, 10);
+                let result = tx
+                    .search(resource_type, &search_params)
+                    .await
+                    .map_err(|e| ApiError::bad_request(e.to_string()))?;
+
+                match result.entries.len() {
+                    0 => {
+                        resource["resourceType"] = json!(resource_type);
+                        let stored = tx.create(&resource).await.map_err(map_storage_error)?;
+
+                        Ok(build_transaction_response_entry(
+                            Some(&stored.resource),
+                            "201 Created",
+                            Some(resource_type),
+                            Some(&stored.id),
+                            Some(&stored.version_id),
+                        ))
+                    }
+                    1 => {
+                        let existing = &result.entries[0];
+                        if resource_type == "AccessPolicy" && existing.id == ADMIN_ACCESS_POLICY_ID
+                        {
+                            return Err(ApiError::forbidden(
+                                "The default admin access policy cannot be modified",
+                            ));
+                        }
+
+                        resource["id"] = json!(existing.id.clone());
+                        resource["resourceType"] = json!(resource_type);
+
+                        let stored = tx
+                            .update(&resource, if_match.as_deref())
+                            .await
+                            .map_err(map_storage_error)?;
+
+                        Ok(build_transaction_response_entry(
+                            Some(&stored.resource),
+                            "200 OK",
+                            Some(resource_type),
+                            Some(&stored.id),
+                            Some(&stored.version_id),
+                        ))
+                    }
+                    _ => Err(ApiError::precondition_failed(
+                        "Multiple matches for conditional update",
+                    )),
+                }
+            } else {
+                Err(ApiError::bad_request(format!("Invalid PUT URL: {}", url)))
             }
         }
         "DELETE" => {
-            // Delete operation
             let parts: Vec<&str> = url.split('/').collect();
-            if parts.len() != 2 {
-                return Err(ApiError::bad_request(format!(
+            if parts.len() == 2 && !parts[1].contains('?') {
+                let resource_type = parts[0];
+                let id = parts[1];
+
+                let _rt = resource_type.parse::<ResourceType>().map_err(|_| {
+                    ApiError::bad_request(format!("Unknown resource type: {}", resource_type))
+                })?;
+
+                if resource_type == "AccessPolicy" && id == ADMIN_ACCESS_POLICY_ID {
+                    return Err(ApiError::forbidden(
+                        "The default admin access policy cannot be deleted",
+                    ));
+                }
+
+                tx.delete(resource_type, id)
+                    .await
+                    .map_err(map_storage_error)?;
+
+                Ok(build_transaction_response_entry(
+                    None,
+                    "204 No Content",
+                    Some(resource_type),
+                    Some(id),
+                    None,
+                ))
+            } else if url.contains('?') {
+                let (resource_type, condition) = url
+                    .find('?')
+                    .map(|idx| (&url[..idx], &url[idx + 1..]))
+                    .ok_or_else(|| ApiError::bad_request(format!("Invalid DELETE URL: {}", url)))?;
+
+                let _rt = resource_type.parse::<ResourceType>().map_err(|_| {
+                    ApiError::bad_request(format!("Unknown resource type: {}", resource_type))
+                })?;
+
+                let search_params = octofhir_search::parse_query_string(condition, 2, 10);
+                let result = tx
+                    .search(resource_type, &search_params)
+                    .await
+                    .map_err(|e| ApiError::bad_request(e.to_string()))?;
+
+                match result.entries.len() {
+                    0 => Ok(build_transaction_response_entry(
+                        None,
+                        "204 No Content",
+                        Some(resource_type),
+                        None,
+                        None,
+                    )),
+                    1 => {
+                        let id = &result.entries[0].id;
+                        if resource_type == "AccessPolicy" && id == ADMIN_ACCESS_POLICY_ID {
+                            return Err(ApiError::forbidden(
+                                "The default admin access policy cannot be deleted",
+                            ));
+                        }
+
+                        tx.delete(resource_type, id)
+                            .await
+                            .map_err(map_storage_error)?;
+
+                        Ok(build_transaction_response_entry(
+                            None,
+                            "204 No Content",
+                            Some(resource_type),
+                            None,
+                            None,
+                        ))
+                    }
+                    _ => Err(ApiError::precondition_failed(
+                        "Multiple matches for conditional delete",
+                    )),
+                }
+            } else {
+                Err(ApiError::bad_request(format!(
                     "Invalid DELETE url format: {}",
                     url
-                )));
+                )))
             }
-
-            let resource_type = parts[0];
-            let id = parts[1];
-
-            let _rt = resource_type.parse::<ResourceType>().map_err(|_| {
-                ApiError::bad_request(format!("Unknown resource type: {}", resource_type))
-            })?;
-
-            // Delete using transaction
-            tx.delete(resource_type, id).await.map_err(|e| {
-                if e.to_string().contains("not found") || e.to_string().contains("deleted") {
-                    ApiError::not_found(format!("{}/{}", resource_type, id))
-                } else {
-                    ApiError::internal(format!("Failed to delete resource: {}", e))
-                }
-            })?;
-
-            Ok(build_transaction_response_entry(
-                None,
-                "204 No Content",
-                Some(resource_type),
-                Some(id),
-                None,
-            ))
         }
         "GET" => {
-            // Read operation
+            if url.contains('?') {
+                let (resource_type, query) = url
+                    .find('?')
+                    .map(|idx| (&url[..idx], &url[idx + 1..]))
+                    .ok_or_else(|| ApiError::bad_request("Invalid search URL"))?;
+
+                let _rt = resource_type.parse::<ResourceType>().map_err(|_| {
+                    ApiError::bad_request(format!("Unknown resource type: {}", resource_type))
+                })?;
+
+                let cfg = state.search_config.config();
+                let search_params = octofhir_search::parse_query_string(
+                    query,
+                    cfg.default_count as u32,
+                    cfg.max_count as u32,
+                );
+
+                let result = tx
+                    .search(resource_type, &search_params)
+                    .await
+                    .map_err(|e| ApiError::bad_request(e.to_string()))?;
+
+                let offset = search_params.offset.unwrap_or(0) as usize;
+                let count = search_params.count.unwrap_or(10) as usize;
+                let total = result.total.unwrap_or(result.entries.len() as u32) as usize;
+
+                let search_bundle = octofhir_api::bundle_from_search(
+                    total,
+                    result
+                        .entries
+                        .into_iter()
+                        .map(|entry| entry.resource)
+                        .collect(),
+                    &state.base_url,
+                    resource_type,
+                    offset,
+                    count,
+                    None,
+                );
+
+                let search_bundle_json = serde_json::to_value(search_bundle)
+                    .map_err(|e| ApiError::internal(e.to_string()))?;
+
+                return Ok(json!({
+                    "response": {
+                        "status": "200 OK"
+                    },
+                    "resource": search_bundle_json
+                }));
+            }
+
             let parts: Vec<&str> = url.split('/').collect();
             if parts.len() != 2 {
                 return Err(ApiError::bad_request(format!(
@@ -3775,9 +4127,63 @@ async fn process_transaction_entry_with_tx(
             ))
         }
         "PATCH" => {
-            // Patch is typically converted to PUT in FHIR
-            Err(ApiError::bad_request(
-                "PATCH not yet supported in transaction bundles with native transactions",
+            let patch =
+                resource.ok_or_else(|| ApiError::bad_request("PATCH entry requires a resource"))?;
+
+            if url.contains('?') {
+                return Err(ApiError::bad_request(
+                    "Conditional PATCH is not supported in transaction bundles",
+                ));
+            }
+
+            let parts: Vec<&str> = url.split('/').collect();
+            if parts.len() != 2 {
+                return Err(ApiError::bad_request(format!("Invalid PATCH URL: {}", url)));
+            }
+
+            let resource_type = parts[0];
+            let id = parts[1];
+            let if_match = parse_bundle_if_match(request);
+
+            let _rt = resource_type.parse::<ResourceType>().map_err(|_| {
+                ApiError::bad_request(format!("Unknown resource type: {}", resource_type))
+            })?;
+
+            if resource_type == "AccessPolicy" && id == ADMIN_ACCESS_POLICY_ID {
+                return Err(ApiError::forbidden(
+                    "The default admin access policy cannot be modified",
+                ));
+            }
+
+            let existing = tx
+                .read(resource_type, id)
+                .await
+                .map_err(map_storage_error)?
+                .ok_or_else(|| {
+                    ApiError::not_found(format!("{}/{} not found", resource_type, id))
+                })?;
+
+            let mut patched_json = existing.resource.clone();
+            let patch_ops: Vec<json_patch::PatchOperation> = serde_json::from_value(patch)
+                .map_err(|e| ApiError::bad_request(format!("Invalid JSON Patch: {}", e)))?;
+
+            json_patch::patch(&mut patched_json, &patch_ops)
+                .map_err(|e| ApiError::bad_request(format!("Patch failed: {}", e)))?;
+
+            patched_json["id"] = json!(id);
+            patched_json["resourceType"] = json!(resource_type);
+
+            let stored = tx
+                .update(&patched_json, if_match.as_deref())
+                .await
+                .map_err(map_storage_error)?;
+
+            Ok(build_transaction_response_entry(
+                Some(&stored.resource),
+                "200 OK",
+                Some(resource_type),
+                Some(id),
+                Some(&stored.version_id),
             ))
         }
         _ => Err(ApiError::bad_request(format!(
@@ -3791,6 +4197,7 @@ async fn process_transaction_entry_with_tx(
 async fn process_batch(
     state: &crate::server::AppState,
     bundle: &Value,
+    _include_resource: bool,
 ) -> Result<(StatusCode, Json<Value>), ApiError> {
     let entries = bundle["entry"]
         .as_array()

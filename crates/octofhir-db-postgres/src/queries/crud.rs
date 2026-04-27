@@ -813,9 +813,16 @@ pub async fn vread_raw(
 /// This variant uses an existing transaction instead of the pool,
 /// allowing multiple operations to be grouped atomically.
 /// Uses SQL `jsonb_set` to inject id/meta without cloning the resource in Rust.
+///
+/// When `txid` is `Some(t)`, the provided transaction id is reused (no new
+/// `_transaction` row is created). This is the hot path for Bundle imports —
+/// one txid is allocated once for the whole bundle and shared across all
+/// resource inserts. When `txid` is `None`, a new `_transaction` row is
+/// allocated via CTE (legacy single-resource behaviour).
 pub async fn create_with_tx(
     tx: &mut PgTransaction<'_>,
     resource: &Value,
+    txid: Option<i64>,
 ) -> Result<StoredResource, StorageError> {
     let resource_type = resource["resourceType"]
         .as_str()
@@ -829,34 +836,59 @@ pub async fn create_with_tx(
 
     let now = Utc::now();
 
-    // Use SQL jsonb_set to inject id and meta atomically, avoiding Rust-side resource.clone()
     let table = SchemaManager::table_name(resource_type);
-    let sql = format!(
-        r#"WITH new_tx AS (
-               INSERT INTO _transaction (status) VALUES ('committed') RETURNING txid
-           )
-           INSERT INTO "{table}" (id, txid, created_at, updated_at, resource, status)
-           SELECT
-               $1,
-               new_tx.txid,
-               $2,
-               $2,
-               jsonb_set(
+    let sql = if let Some(t) = txid {
+        format!(
+            r#"INSERT INTO "{table}" (id, txid, created_at, updated_at, resource, status)
+               VALUES (
+                   $1,
+                   {t}::bigint,
+                   $2,
+                   $2,
                    jsonb_set(
-                       jsonb_set($3::jsonb, '{{id}}', to_jsonb($1::text)),
-                       '{{meta}}', '{{}}'::jsonb, true
+                       jsonb_set(
+                           jsonb_set($3::jsonb, '{{id}}', to_jsonb($1::text)),
+                           '{{meta}}', '{{}}'::jsonb, true
+                       ),
+                       '{{meta}}',
+                       jsonb_build_object(
+                           'versionId', '{t}',
+                           'lastUpdated', to_char($2 AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+                       ),
+                       true
                    ),
-                   '{{meta}}',
-                   jsonb_build_object(
-                       'versionId', new_tx.txid::text,
-                       'lastUpdated', to_char($2 AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+                   'created'
+               )
+               RETURNING id, txid, created_at, updated_at, resource"#
+        )
+    } else {
+        format!(
+            r#"WITH new_tx AS (
+                   INSERT INTO _transaction (status) VALUES ('committed') RETURNING txid
+               )
+               INSERT INTO "{table}" (id, txid, created_at, updated_at, resource, status)
+               SELECT
+                   $1,
+                   new_tx.txid,
+                   $2,
+                   $2,
+                   jsonb_set(
+                       jsonb_set(
+                           jsonb_set($3::jsonb, '{{id}}', to_jsonb($1::text)),
+                           '{{meta}}', '{{}}'::jsonb, true
+                       ),
+                       '{{meta}}',
+                       jsonb_build_object(
+                           'versionId', new_tx.txid::text,
+                           'lastUpdated', to_char($2 AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+                       ),
+                       true
                    ),
-                   true
-               ),
-               'created'
-           FROM new_tx
-           RETURNING id, txid, created_at, updated_at, resource"#
-    );
+                   'created'
+               FROM new_tx
+               RETURNING id, txid, created_at, updated_at, resource"#
+        )
+    };
 
     let row: (String, i64, DateTime<Utc>, DateTime<Utc>, Value) = query_as(&sql)
         .bind(&id)
@@ -886,6 +918,94 @@ pub async fn create_with_tx(
     })
 }
 
+/// Bulk-creates many resources of the same type within a transaction.
+///
+/// All resources must share the same `resourceType`. The provided `txid` is
+/// reused for every row (no `_transaction` rows are allocated). One `INSERT
+/// ... SELECT FROM UNNEST(...)` round-trip is used for the whole batch and
+/// no JSONB is pulled back over the wire — `id` / `meta` are injected
+/// client-side so the returned `StoredResource` reflects what's stored.
+///
+/// IDs are taken from `resource["id"]` if present, otherwise generated.
+pub async fn create_batch_with_tx(
+    tx: &mut PgTransaction<'_>,
+    resource_type: &str,
+    txid: i64,
+    resources: &[Value],
+) -> Result<Vec<StoredResource>, StorageError> {
+    if resources.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let now = Utc::now();
+    let last_updated_str = now.format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string();
+    let version_id = txid.to_string();
+
+    let mut ids: Vec<String> = Vec::with_capacity(resources.len());
+    let mut payloads: Vec<Value> = Vec::with_capacity(resources.len());
+    for r in resources {
+        let id = r["id"]
+            .as_str()
+            .map(String::from)
+            .unwrap_or_else(|| Uuid::new_v4().to_string());
+        let mut owned = r.clone();
+        owned["id"] = Value::String(id.clone());
+        owned["meta"] = serde_json::json!({
+            "versionId": version_id,
+            "lastUpdated": last_updated_str,
+        });
+        ids.push(id);
+        payloads.push(owned);
+    }
+
+    let table = SchemaManager::table_name(resource_type);
+    let sql = format!(
+        r#"INSERT INTO "{table}" (id, txid, created_at, updated_at, resource, status)
+           SELECT t.id, {txid}::bigint, $3::timestamptz, $3::timestamptz, t.resource, 'created'
+           FROM UNNEST($1::text[], $2::jsonb[]) AS t(id, resource)"#
+    );
+
+    let result = query(&sql)
+        .bind(&ids)
+        .bind(&payloads)
+        .bind(now)
+        .execute(&mut **tx)
+        .await
+        .map_err(|e| {
+            if e.to_string().contains("duplicate key") {
+                StorageError::already_exists(resource_type, "<batch>")
+            } else {
+                StorageError::internal(format!("Failed to batch-create resources: {e}"))
+            }
+        })?;
+
+    if result.rows_affected() as usize != ids.len() {
+        return Err(StorageError::internal(format!(
+            "Batch insert affected {} rows, expected {}",
+            result.rows_affected(),
+            ids.len()
+        )));
+    }
+
+    let last_updated_time = chrono_to_time(now);
+    let created_at_time = chrono_to_time(now);
+
+    let out = ids
+        .into_iter()
+        .zip(payloads)
+        .map(|(id, resource)| StoredResource {
+            id,
+            version_id: version_id.clone(),
+            resource_type: resource_type.to_string(),
+            resource,
+            last_updated: last_updated_time,
+            created_at: created_at_time,
+        })
+        .collect();
+
+    Ok(out)
+}
+
 /// Updates a resource within a transaction.
 ///
 /// Uses SQL `jsonb_set` to inject meta without cloning the resource in Rust.
@@ -893,14 +1013,20 @@ pub async fn update_with_tx(
     tx: &mut PgTransaction<'_>,
     resource: &Value,
 ) -> Result<StoredResource, StorageError> {
-    update_with_tx_if_match(tx, resource, None).await
+    update_with_tx_if_match(tx, resource, None, None).await
 }
 
-/// Updates a resource within a transaction with optional optimistic locking.
+/// Updates a resource within a transaction with optional optimistic locking
+/// and an optional pre-allocated `txid`.
+///
+/// When `txid` is `Some(t)`, the provided transaction id is reused (no new
+/// `_transaction` row is created). When `txid` is `None`, a new `_transaction`
+/// row is allocated via CTE.
 pub async fn update_with_tx_if_match(
     tx: &mut PgTransaction<'_>,
     resource: &Value,
     if_match: Option<&str>,
+    txid: Option<i64>,
 ) -> Result<StoredResource, StorageError> {
     let resource_type = resource["resourceType"]
         .as_str()
@@ -913,43 +1039,99 @@ pub async fn update_with_tx_if_match(
     let table = SchemaManager::table_name(resource_type);
     let now = Utc::now();
 
-    let (update_sql, has_version_check) = if let Some(expected_version) = if_match {
-        let expected_txid: i64 = expected_version.parse().map_err(|_| {
-            StorageError::invalid_resource(format!("Invalid version format: {expected_version}"))
-        })?;
-
-        (
+    let (update_sql, has_version_check) = match (if_match, txid) {
+        (Some(expected_version), Some(t)) => {
+            let expected_txid: i64 = expected_version.parse().map_err(|_| {
+                StorageError::invalid_resource(format!(
+                    "Invalid version format: {expected_version}"
+                ))
+            })?;
+            (
+                format!(
+                    r#"WITH current AS (
+                           SELECT id, txid, created_at FROM "{table}"
+                           WHERE id = $1 AND status != 'deleted'
+                       )
+                       UPDATE "{table}" t
+                       SET txid = {t}::bigint,
+                           resource = jsonb_set(
+                               jsonb_set($2::jsonb, '{{meta}}', '{{}}'::jsonb, true),
+                               '{{meta}}',
+                               jsonb_build_object(
+                                   'versionId', '{t}',
+                                   'lastUpdated', to_char($3 AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+                               ),
+                               true
+                           ),
+                           status = 'updated'
+                       FROM current
+                       WHERE t.id = $1
+                         AND t.status != 'deleted'
+                         AND t.txid = {expected_txid}
+                       RETURNING t.id, t.txid, t.created_at, t.updated_at, t.resource,
+                                 (SELECT txid FROM current) as old_txid"#
+                ),
+                true,
+            )
+        }
+        (Some(expected_version), None) => {
+            let expected_txid: i64 = expected_version.parse().map_err(|_| {
+                StorageError::invalid_resource(format!(
+                    "Invalid version format: {expected_version}"
+                ))
+            })?;
+            (
+                format!(
+                    r#"WITH new_tx AS (
+                           INSERT INTO _transaction (status) VALUES ('committed') RETURNING txid
+                       ),
+                       current AS (
+                           SELECT id, txid, created_at FROM "{table}"
+                           WHERE id = $1 AND status != 'deleted'
+                       )
+                       UPDATE "{table}" t
+                       SET txid = new_tx.txid,
+                           resource = jsonb_set(
+                               jsonb_set($2::jsonb, '{{meta}}', '{{}}'::jsonb, true),
+                               '{{meta}}',
+                               jsonb_build_object(
+                                   'versionId', new_tx.txid::text,
+                                   'lastUpdated', to_char($3 AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+                               ),
+                               true
+                           ),
+                           status = 'updated'
+                       FROM new_tx, current
+                       WHERE t.id = $1
+                         AND t.status != 'deleted'
+                         AND t.txid = {expected_txid}
+                       RETURNING t.id, new_tx.txid, t.created_at, t.updated_at, t.resource,
+                                 (SELECT txid FROM current) as old_txid"#
+                ),
+                true,
+            )
+        }
+        (None, Some(t)) => (
             format!(
-                r#"WITH new_tx AS (
-                       INSERT INTO _transaction (status) VALUES ('committed') RETURNING txid
-                   ),
-                   current AS (
-                       SELECT id, txid, created_at FROM "{table}"
-                       WHERE id = $1 AND status != 'deleted'
-                   )
-                   UPDATE "{table}" t
-                   SET txid = new_tx.txid,
+                r#"UPDATE "{table}" t
+                   SET txid = {t}::bigint,
                        resource = jsonb_set(
                            jsonb_set($2::jsonb, '{{meta}}', '{{}}'::jsonb, true),
                            '{{meta}}',
                            jsonb_build_object(
-                               'versionId', new_tx.txid::text,
+                               'versionId', '{t}',
                                'lastUpdated', to_char($3 AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
                            ),
                            true
                        ),
                        status = 'updated'
-                   FROM new_tx, current
-                   WHERE t.id = $1
-                     AND t.status != 'deleted'
-                     AND t.txid = {expected_txid}
-                   RETURNING t.id, new_tx.txid, t.created_at, t.updated_at, t.resource,
-                             (SELECT txid FROM current) as old_txid"#
+                   WHERE t.id = $1 AND t.status != 'deleted'
+                   RETURNING t.id, t.txid, t.created_at, t.updated_at, t.resource,
+                             0::bigint as old_txid"#
             ),
-            true,
-        )
-    } else {
-        (
+            false,
+        ),
+        (None, None) => (
             format!(
                 r#"WITH new_tx AS (
                        INSERT INTO _transaction (status) VALUES ('committed') RETURNING txid
@@ -972,7 +1154,7 @@ pub async fn update_with_tx_if_match(
                              0::bigint as old_txid"#
             ),
             false,
-        )
+        ),
     };
 
     let row: Option<(String, i64, DateTime<Utc>, DateTime<Utc>, Value, i64)> =
@@ -1032,24 +1214,33 @@ pub async fn update_with_tx_if_match(
 
 /// Deletes a resource within a transaction.
 ///
-/// Uses CTE to combine transaction creation + delete in a single query.
+/// When `txid` is `Some(t)`, the provided transaction id is reused. Otherwise
+/// a new `_transaction` row is allocated via CTE.
 pub async fn delete_with_tx(
     tx: &mut PgTransaction<'_>,
     resource_type: &str,
     id: &str,
+    txid: Option<i64>,
 ) -> Result<(), StorageError> {
     let table = SchemaManager::table_name(resource_type);
 
-    // Single CTE query: create transaction + update atomically
-    let sql = format!(
-        r#"WITH new_tx AS (
-               INSERT INTO _transaction (status) VALUES ('committed') RETURNING txid
-           )
-           UPDATE "{table}"
-           SET txid = new_tx.txid, status = 'deleted'
-           FROM new_tx
-           WHERE id = $1 AND status != 'deleted'"#
-    );
+    let sql = if let Some(t) = txid {
+        format!(
+            r#"UPDATE "{table}"
+               SET txid = {t}::bigint, status = 'deleted'
+               WHERE id = $1 AND status != 'deleted'"#
+        )
+    } else {
+        format!(
+            r#"WITH new_tx AS (
+                   INSERT INTO _transaction (status) VALUES ('committed') RETURNING txid
+               )
+               UPDATE "{table}"
+               SET txid = new_tx.txid, status = 'deleted'
+               FROM new_tx
+               WHERE id = $1 AND status != 'deleted'"#
+        )
+    };
 
     let _result = query(&sql).bind(id).execute(&mut **tx).await.map_err(|e| {
         if e.to_string().contains("does not exist") {

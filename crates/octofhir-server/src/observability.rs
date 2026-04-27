@@ -34,8 +34,12 @@ pub fn init_tracing_with_options(
     let (reload_layer, handle) = reload::Layer::new(base_filter);
     let _ = LOG_RELOAD_HANDLE.set(handle);
 
-    // Use non-blocking writer to avoid blocking the tokio runtime on log I/O
-    let (non_blocking, guard) = tracing_appender::non_blocking(std::io::stdout());
+    // Lossy: drop log lines instead of blocking the producer when the
+    // writer thread can't keep up.
+    let (non_blocking, guard) = tracing_appender::non_blocking::NonBlockingBuilder::default()
+        .lossy(true)
+        .buffered_lines_limit(32_768)
+        .finish(std::io::stdout());
 
     // Initialize log broadcast for WebSocket streaming
     let log_sender = init_log_broadcast();

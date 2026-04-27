@@ -409,7 +409,7 @@ impl QueryAnalyzer {
             columns: vec!["resource".to_string()],
             index_name: format!("idx_{}_resource_gin", table_lower),
             create_statement: format!(
-                "CREATE INDEX IF NOT EXISTS idx_{}_resource_gin ON \"{}\" USING GIN (resource jsonb_path_ops)",
+                "CREATE INDEX IF NOT EXISTS idx_{}_resource_gin ON \"{}\" USING GIN (resource jsonb_path_ops) WITH (fastupdate=on, gin_pending_list_limit=131072)",
                 table_lower, table_lower
             ),
             reason: "GIN index for efficient JSONB containment queries".to_string(),

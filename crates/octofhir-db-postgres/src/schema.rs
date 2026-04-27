@@ -127,11 +127,13 @@ impl SchemaManager {
     async fn create_resource_table(&self, resource_type: &str) -> Result<()> {
         let table = Self::table_name(resource_type);
 
+        // No FK on `txid → _transaction(txid)`: append-only relationship,
+        // FK validation cost on every write is not worth its guarantee.
         let sql = format!(
             r#"
             CREATE TABLE IF NOT EXISTS "{table}" (
                 id TEXT PRIMARY KEY,
-                txid BIGINT NOT NULL REFERENCES _transaction(txid),
+                txid BIGINT NOT NULL,
                 created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                 updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                 resource JSONB NOT NULL,
@@ -187,8 +189,10 @@ impl SchemaManager {
         let table = Self::table_name(resource_type);
 
         // GIN index for JSONB search (enables efficient @>, ?, ?& operators)
+        // fastupdate=on + larger pending list amortizes bulk-write cost; flushed
+        // by autovacuum or gin_clean_pending_list() before read-heavy workloads.
         let gin_sql = format!(
-            r#"CREATE INDEX IF NOT EXISTS "idx_{table}_gin" ON "{table}" USING GIN (resource jsonb_path_ops)"#
+            r#"CREATE INDEX IF NOT EXISTS "idx_{table}_gin" ON "{table}" USING GIN (resource jsonb_path_ops) WITH (fastupdate=on, gin_pending_list_limit=131072)"#
         );
         sqlx_core::query::query(&gin_sql)
             .execute(&self.pool)

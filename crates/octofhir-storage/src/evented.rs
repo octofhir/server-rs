@@ -350,8 +350,12 @@ impl Transaction for EventedTransaction {
         Ok(result)
     }
 
-    async fn update(&mut self, resource: &Value) -> Result<StoredResource, StorageError> {
-        let result = self.inner.update(resource).await?;
+    async fn update(
+        &mut self,
+        resource: &Value,
+        if_match: Option<&str>,
+    ) -> Result<StoredResource, StorageError> {
+        let result = self.inner.update(resource, if_match).await?;
 
         // Queue event for emission on commit
         let resource_type = result
@@ -384,6 +388,32 @@ impl Transaction for EventedTransaction {
         id: &str,
     ) -> Result<Option<StoredResource>, StorageError> {
         self.inner.read(resource_type, id).await
+    }
+
+    async fn search(
+        &self,
+        resource_type: &str,
+        params: &SearchParams,
+    ) -> Result<SearchResult, StorageError> {
+        self.inner.search(resource_type, params).await
+    }
+
+    async fn create_batch(
+        &mut self,
+        resource_type: &str,
+        resources: &[Value],
+    ) -> Result<Vec<StoredResource>, StorageError> {
+        let stored = self.inner.create_batch(resource_type, resources).await?;
+        for s in &stored {
+            let rt = s
+                .resource
+                .get("resourceType")
+                .and_then(|v| v.as_str())
+                .unwrap_or(resource_type)
+                .to_string();
+            self.queue_event(ResourceEvent::created(rt, &s.id, s.resource.clone()));
+        }
+        Ok(stored)
     }
 }
 

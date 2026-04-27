@@ -23,7 +23,10 @@ pub async fn create_pool(config: &PostgresConfig) -> Result<PgPool> {
         "Creating PostgreSQL connection pool"
     );
 
-    let min_connections = config.min_connections.unwrap_or(0);
+    // Warm pool on startup: default min_connections to pool_size/4 (floor 2).
+    let min_connections = config
+        .min_connections
+        .unwrap_or_else(|| (config.pool_size / 4).max(2));
 
     let max_lifetime_secs = config.max_lifetime_secs.unwrap_or(3600);
 

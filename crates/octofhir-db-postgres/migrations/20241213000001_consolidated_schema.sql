@@ -41,7 +41,8 @@ CREATE TABLE IF NOT EXISTS _configuration (
     value JSONB NOT NULL,
     description TEXT,
     is_secret BOOLEAN DEFAULT FALSE,
-    txid BIGINT NOT NULL REFERENCES _transaction(txid),
+    -- No FK on txid: append-only relationship; see schema.rs.
+    txid BIGINT NOT NULL,
     ts TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_by TEXT,
     CONSTRAINT valid_category CHECK (category IN (
@@ -282,8 +283,8 @@ CREATE INDEX IF NOT EXISTS idx_fcm_resource_package ON fcm.resources(package_nam
 CREATE INDEX IF NOT EXISTS idx_fcm_resource_fhir_version ON fcm.resources(fhir_version);
 CREATE INDEX IF NOT EXISTS idx_fcm_resource_status ON fcm.resources(status);
 CREATE INDEX IF NOT EXISTS idx_fcm_resource_content_hash ON fcm.resources(content_hash);
-CREATE INDEX IF NOT EXISTS idx_fcm_resource_content ON fcm.resources USING GIN (content jsonb_path_ops);
-CREATE INDEX IF NOT EXISTS idx_fcm_resource_search ON fcm.resources USING GIN (search_vector);
+CREATE INDEX IF NOT EXISTS idx_fcm_resource_content ON fcm.resources USING GIN (content jsonb_path_ops) WITH (fastupdate=on, gin_pending_list_limit=131072);
+CREATE INDEX IF NOT EXISTS idx_fcm_resource_search ON fcm.resources USING GIN (search_vector) WITH (fastupdate=on, gin_pending_list_limit=131072);
 CREATE INDEX IF NOT EXISTS idx_fcm_resource_type_fhir_flavor ON fcm.resources(resource_type, fhir_version, sd_flavor);
 CREATE INDEX IF NOT EXISTS idx_fcm_resource_priority_lookup ON fcm.resources(url, package_name, package_version)
     INCLUDE (resource_type, sd_flavor);

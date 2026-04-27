@@ -115,8 +115,13 @@ async fn handle_fhirpath_lsp_connection(
 
     // Create FHIRPath LSP handlers
     let function_registry = Arc::new(create_function_registry());
-    let completion_provider = CompletionProvider::new(model_provider, function_registry);
-    let handlers = Arc::new(Mutex::new(LspHandlers::new(completion_provider)));
+    let completion_provider =
+        CompletionProvider::new(model_provider.clone(), function_registry.clone());
+    let handlers = Arc::new(Mutex::new(LspHandlers::new(
+        completion_provider,
+        model_provider,
+        function_registry,
+    )));
 
     // Spawn task to forward responses to WebSocket
     let send_task = tokio::spawn(async move {
@@ -230,7 +235,7 @@ async fn process_lsp_message(
             let params: DidOpenTextDocumentParams = serde_json::from_value(params?.clone()).ok()?;
             let uri = params.text_document.uri.clone();
             let mut handlers = handlers.lock().await;
-            let diagnostics = handlers.did_open(params);
+            let diagnostics = handlers.did_open(params).await;
             // Send diagnostics notification
             let notification = serde_json::json!({
                 "jsonrpc": "2.0",
@@ -248,7 +253,7 @@ async fn process_lsp_message(
                 serde_json::from_value(params?.clone()).ok()?;
             let uri = params.text_document.uri.clone();
             let mut handlers = handlers.lock().await;
-            let diagnostics = handlers.did_change(params);
+            let diagnostics = handlers.did_change(params).await;
             // Send diagnostics notification
             let notification = serde_json::json!({
                 "jsonrpc": "2.0",

@@ -150,6 +150,9 @@ pub struct AppStateInner {
     /// Terminology provider for $expand, $validate-code, $subsumes, $translate, $lookup
     /// This is the HybridTerminologyProvider with local + cached remote support
     pub terminology_provider: Option<Arc<dyn TerminologyProvider>>,
+    /// Shared anonymous AuthContext used in anonymous-access mode. Built once
+    /// at startup so the auth middleware just `Arc::clone`s it.
+    pub anonymous_auth_context: Arc<octofhir_auth::middleware::AuthContext>,
     // pub automation_state: Option<crate::automations::AutomationState>,
 }
 
@@ -182,6 +185,8 @@ impl FromRef<AppState> for crate::middleware::CombinedAuthState {
             auth_cache: state.auth_cache.clone(),
             jwt_cache: state.jwt_cache.clone(),
             policy_evaluator: state.policy_evaluator.clone(),
+            anonymous_access: state.config.auth.policy.anonymous_access,
+            anonymous_context: state.anonymous_auth_context.clone(),
         }
     }
 }
@@ -544,6 +549,12 @@ async fn create_storage(
     let mut pg_storage = PostgresStorage::new(postgres_config)
         .await
         .map_err(|e| anyhow::anyhow!("Failed to create PostgreSQL storage: {e}"))?;
+
+    let index_writer = octofhir_db_postgres::AsyncIndexWriter::start(
+        pg_storage.pool().clone(),
+        octofhir_db_postgres::IndexWriterConfig::default(),
+    );
+    pg_storage.set_async_indexer(index_writer);
 
     let primary_pool = Arc::new(pg_storage.pool().clone());
 
@@ -1710,6 +1721,9 @@ pub async fn build_app(
         package_store,
         subscription_state,
         terminology_provider,
+        anonymous_auth_context: Arc::new(
+            octofhir_auth::middleware::AuthContext::system_anonymous(),
+        ),
         // automation_state,
     }));
 

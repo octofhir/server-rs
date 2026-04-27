@@ -48,6 +48,8 @@
 mod config;
 mod error;
 mod fcm_storage;
+pub mod gin_maintenance;
+pub mod index_writer;
 mod notification_storage;
 pub mod pool;
 mod query_analyzer;
@@ -71,6 +73,7 @@ pub use query_analyzer::{
     AnalyzerConfig, AnalyzerError, AnalyzerStatsSnapshot, BufferStats, IndexSuggestion, IndexUsage,
     QueryAnalysis, QueryAnalyzer, SeqScanInfo, SlowQueryRecord, SuggestionImpact,
 };
+pub use index_writer::{AsyncIndexWriter, IndexJob, IndexOp, IndexWriterConfig};
 pub use schema::SchemaManager;
 pub use storage::PostgresStorage;
 

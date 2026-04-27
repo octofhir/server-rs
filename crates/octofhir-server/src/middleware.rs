@@ -547,13 +547,14 @@ pub async fn trace_metrics_middleware(req: Request<Body>, next: Next) -> Respons
     let method = req.method().clone();
     let uri = req.uri().clone();
 
-    // Generate or extract request ID
+    // 64-bit random hex is unique enough for in-flight tracing and ~3x
+    // cheaper than UUID v4.
     let req_id = req
         .headers()
         .get("x-request-id")
         .and_then(|v| v.to_str().ok())
         .map(String::from)
-        .unwrap_or_else(|| Uuid::new_v4().to_string());
+        .unwrap_or_else(|| format!("{:016x}", rand::random::<u64>()));
 
     // Create tracing span
     let span = tracing::info_span!(
@@ -576,14 +577,28 @@ pub async fn trace_metrics_middleware(req: Request<Body>, next: Next) -> Respons
     let status = response.status().as_u16();
     let duration = start.elapsed();
 
-    // Record status on span and log
+    // Success path at debug; 4xx → warn; 5xx → error.
     span.record("http.status_code", tracing::field::display(status));
     let _enter = span.enter();
-    tracing::info!(
-        http.status = %status,
-        elapsed_ms = %duration.as_millis(),
-        "request handled"
-    );
+    if status >= 500 {
+        tracing::error!(
+            http.status = %status,
+            elapsed_ms = %duration.as_millis(),
+            "request handled"
+        );
+    } else if status >= 400 {
+        tracing::warn!(
+            http.status = %status,
+            elapsed_ms = %duration.as_millis(),
+            "request handled"
+        );
+    } else {
+        tracing::debug!(
+            http.status = %status,
+            elapsed_ms = %duration.as_millis(),
+            "request handled"
+        );
+    }
     drop(_enter);
 
     // Record metrics and mirror request ID on response
@@ -781,6 +796,11 @@ pub struct CombinedAuthState {
     pub jwt_cache: Arc<JwtVerificationCache>,
     /// Policy evaluator for access control.
     pub policy_evaluator: Arc<PolicyEvaluator>,
+    /// When `true`, requests bypass authentication and authorization with a
+    /// synthetic system context. Intended for benchmarks and trusted networks.
+    pub anonymous_access: bool,
+    /// Shared anonymous AuthContext used when `anonymous_access` is true.
+    pub anonymous_context: Arc<AuthContext>,
 }
 
 /// Authorization middleware that enforces policy-based access control.
@@ -910,6 +930,12 @@ pub async fn auth_middleware(
 
     // Single public-path check (replaces two separate checks in authn + authz)
     if should_skip_auth(&req, &state.operation_registry) {
+        return next.run(req).await;
+    }
+
+    // Inject the shared anonymous AuthContext; Arc::clone is one atomic.
+    if state.anonymous_access {
+        req.extensions_mut().insert(Arc::clone(&state.anonymous_context));
         return next.run(req).await;
     }
 
@@ -1360,6 +1386,11 @@ pub async fn audit_middleware(
         AuditSource, action_from_request, actor_from_auth_context, outcome_from_status,
         parse_fhir_path,
     };
+
+    // Skip the middleware entirely when audit is globally disabled.
+    if !state.audit_service.is_enabled() {
+        return next.run(req).await;
+    }
 
     // Check auditability first with borrowed &str to avoid allocations
     // for non-auditable requests (healthz, UI, API, static assets)

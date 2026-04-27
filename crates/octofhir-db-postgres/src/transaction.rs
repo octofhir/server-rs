@@ -6,12 +6,13 @@
 
 use async_trait::async_trait;
 use serde_json::Value;
+use sqlx_core::query_scalar::query_scalar;
 use sqlx_postgres::PgTransaction;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
 use octofhir_search::SearchParameterRegistry;
-use octofhir_storage::{StorageError, StoredResource, Transaction};
+use octofhir_storage::{SearchParams, SearchResult, StorageError, StoredResource, Transaction};
 
 use crate::queries;
 
@@ -31,6 +32,11 @@ pub struct PostgresTransaction {
     tx: Mutex<Option<Box<PgTransaction<'static>>>>,
     /// Registry used to keep search indexes in sync inside the same transaction.
     search_registry: Option<Arc<SearchParameterRegistry>>,
+    /// Lazily allocated `_transaction` row id reused across all writes inside
+    /// this transaction. Allocated on the first create/update/delete call —
+    /// subsequent writes reuse it instead of inserting a new `_transaction`
+    /// row per operation.
+    txid: Mutex<Option<i64>>,
 }
 
 impl PostgresTransaction {
@@ -42,8 +48,26 @@ impl PostgresTransaction {
         Self {
             tx: Mutex::new(Some(Box::new(tx))),
             search_registry,
+            txid: Mutex::new(None),
         }
     }
+}
+
+/// Allocates a `_transaction` row inside the given sqlx transaction if no
+/// `txid` has been cached yet, and returns the cached/allocated value.
+async fn ensure_txid(
+    txid_slot: &mut Option<i64>,
+    tx: &mut PgTransaction<'_>,
+) -> Result<i64, StorageError> {
+    if let Some(t) = *txid_slot {
+        return Ok(t);
+    }
+    let t: i64 = query_scalar("INSERT INTO _transaction (status) VALUES ('committed') RETURNING txid")
+        .fetch_one(&mut **tx)
+        .await
+        .map_err(|e| StorageError::internal(format!("Failed to allocate txid: {e}")))?;
+    *txid_slot = Some(t);
+    Ok(t)
 }
 
 #[async_trait]
@@ -75,7 +99,10 @@ impl Transaction for PostgresTransaction {
                 "Transaction already completed (committed or rolled back)",
             )
         })?;
-        let result = queries::crud::create_with_tx(tx, resource).await?;
+        let mut txid_guard = self.txid.lock().await;
+        let txid = ensure_txid(&mut txid_guard, tx).await?;
+        drop(txid_guard);
+        let result = queries::crud::create_with_tx(tx, resource, Some(txid)).await?;
         if let Some(registry) = &self.search_registry {
             let (refs, dates) = crate::search_index::extract_search_index_rows(
                 registry,
@@ -100,14 +127,22 @@ impl Transaction for PostgresTransaction {
         Ok(result)
     }
 
-    async fn update(&mut self, resource: &Value) -> Result<StoredResource, StorageError> {
+    async fn update(
+        &mut self,
+        resource: &Value,
+        if_match: Option<&str>,
+    ) -> Result<StoredResource, StorageError> {
         let mut tx_guard = self.tx.lock().await;
         let tx = tx_guard.as_deref_mut().ok_or_else(|| {
             StorageError::transaction_error(
                 "Transaction already completed (committed or rolled back)",
             )
         })?;
-        let result = queries::crud::update_with_tx(tx, resource).await?;
+        let mut txid_guard = self.txid.lock().await;
+        let txid = ensure_txid(&mut txid_guard, tx).await?;
+        drop(txid_guard);
+        let result =
+            queries::crud::update_with_tx_if_match(tx, resource, if_match, Some(txid)).await?;
         if let Some(registry) = &self.search_registry {
             let (refs, dates) = crate::search_index::extract_search_index_rows(
                 registry,
@@ -139,7 +174,10 @@ impl Transaction for PostgresTransaction {
                 "Transaction already completed (committed or rolled back)",
             )
         })?;
-        queries::crud::delete_with_tx(tx, resource_type, id).await?;
+        let mut txid_guard = self.txid.lock().await;
+        let txid = ensure_txid(&mut txid_guard, tx).await?;
+        drop(txid_guard);
+        queries::crud::delete_with_tx(tx, resource_type, id, Some(txid)).await?;
         crate::search_index::delete_search_indexes_with_tx(tx, resource_type, id).await
     }
 
@@ -156,6 +194,65 @@ impl Transaction for PostgresTransaction {
             )
         })?;
         queries::crud::read_with_tx(tx, resource_type, id).await
+    }
+
+    async fn search(
+        &self,
+        resource_type: &str,
+        params: &SearchParams,
+    ) -> Result<SearchResult, StorageError> {
+        let mut tx_guard = self.tx.lock().await;
+        let tx = tx_guard.as_deref_mut().ok_or_else(|| {
+            StorageError::transaction_error(
+                "Transaction already completed (committed or rolled back)",
+            )
+        })?;
+        queries::search::execute_search_with_tx(
+            tx,
+            resource_type,
+            params,
+            self.search_registry.as_ref(),
+        )
+        .await
+    }
+
+    async fn create_batch(
+        &mut self,
+        resource_type: &str,
+        resources: &[Value],
+    ) -> Result<Vec<StoredResource>, StorageError> {
+        if resources.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut tx_guard = self.tx.lock().await;
+        let tx = tx_guard.as_deref_mut().ok_or_else(|| {
+            StorageError::transaction_error(
+                "Transaction already completed (committed or rolled back)",
+            )
+        })?;
+        let mut txid_guard = self.txid.lock().await;
+        let txid = ensure_txid(&mut txid_guard, tx).await?;
+        drop(txid_guard);
+
+        let stored =
+            queries::crud::create_batch_with_tx(tx, resource_type, txid, resources).await?;
+
+        if let Some(registry) = &self.search_registry {
+            let mut buffer = crate::search_index::BatchIndexBuffer::new();
+            for s in &stored {
+                let (refs, dates) = crate::search_index::extract_search_index_rows(
+                    registry,
+                    &s.resource_type,
+                    &s.resource,
+                );
+                buffer.extend_with(&s.resource_type, &s.id, &refs, &dates);
+            }
+            if !buffer.is_empty() {
+                buffer.flush_with_tx(tx).await?;
+            }
+        }
+
+        Ok(stored)
     }
 }
 
