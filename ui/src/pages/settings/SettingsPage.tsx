@@ -12,7 +12,7 @@ import {
 	Loader,
 	ScrollArea,
 } from "@/shared/ui";
-import { useMantineColorScheme } from "@octofhir/ui-kit";
+import { useColorScheme } from "@octofhir/ui-kit";
 import { useHealth, useFormatterSettings } from "@/shared/api/hooks";
 import { useUiSettings } from "@/shared";
 import { FormatterSettings } from "@/shared/settings/FormatterSettings";
@@ -25,7 +25,7 @@ const themeOptions = [
 
 export function SettingsPage() {
 	const { data: health, refetch, isRefetching } = useHealth({ refetchInterval: false });
-	const { colorScheme, setColorScheme } = useMantineColorScheme();
+	const { colorScheme, setColorScheme } = useColorScheme();
 	const [settings, setSettings] = useUiSettings();
 	const {
 		config: formatterConfig,

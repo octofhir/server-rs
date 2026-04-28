@@ -1,7 +1,7 @@
 import { useRef, useEffect, useCallback, useState } from "react";
 import Editor, { type OnMount, type OnChange } from "@monaco-editor/react";
 import type * as Monaco from "monaco-editor";
-import { useMantineColorScheme } from "@octofhir/ui-kit";
+import { useColorScheme } from "@octofhir/ui-kit";
 import {
 	registerFhirQueryLanguage,
 	LANGUAGE_ID,
@@ -43,7 +43,7 @@ export function QueryEditor({
 	const onExecuteRef = useRef(onExecute);
 	onExecuteRef.current = onExecute;
 
-	const { colorScheme } = useMantineColorScheme();
+	const { colorScheme } = useColorScheme();
 	const editorTheme = colorScheme === "dark" ? "vs-dark" : "vs";
 
 	const handleMount: OnMount = useCallback(

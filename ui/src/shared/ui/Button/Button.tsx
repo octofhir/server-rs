@@ -1,9 +1,16 @@
-import { Button as MantineButton, type ButtonProps, createPolymorphicComponent } from "@octofhir/ui-kit";
 import { forwardRef } from "react";
+import { Button as KitButton, type ButtonProps } from "@octofhir/ui-kit";
 import classes from "./Button.module.css";
 
-const _Button = forwardRef<HTMLButtonElement, ButtonProps>((props, ref) => {
-    return <MantineButton ref={ref} {...props} classNames={classes} />;
-});
-
-export const Button = createPolymorphicComponent<"button", ButtonProps>(_Button);
+export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
+    ({ className, ...props }, ref) => {
+        return (
+            <KitButton
+                ref={ref}
+                {...(props as ButtonProps)}
+                className={[classes.button, className].filter(Boolean).join(" ")}
+            />
+        );
+    },
+);
+Button.displayName = "Button";

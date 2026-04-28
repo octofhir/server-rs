@@ -1,6 +1,11 @@
-import { Badge as MantineBadge, type BadgeProps } from "@octofhir/ui-kit";
+import { Badge as KitBadge, type BadgeProps } from "@octofhir/ui-kit";
 import classes from "./Badge.module.css";
 
-export function Badge(props: BadgeProps) {
-    return <MantineBadge {...props} classNames={classes} />;
+export function Badge({ className, ...props }: BadgeProps) {
+    return (
+        <KitBadge
+            {...props}
+            className={[classes.root, className].filter(Boolean).join(" ")}
+        />
+    );
 }

@@ -1,2 +1,2 @@
-export { Button } from "@mantine/core";
-export type { ButtonProps } from "@mantine/core";
+export { Button } from "@gravity-ui/uikit";
+export type { ButtonProps } from "@gravity-ui/uikit";

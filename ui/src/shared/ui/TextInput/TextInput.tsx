@@ -1,6 +1,11 @@
-import { TextInput as MantineTextInput, type TextInputProps } from "@octofhir/ui-kit";
+import { TextInput as KitTextInput, type TextInputProps } from "@octofhir/ui-kit";
 import classes from "./TextInput.module.css";
 
-export function TextInput(props: TextInputProps) {
-    return <MantineTextInput {...props} classNames={classes} />;
+export function TextInput({ className, ...props }: TextInputProps) {
+    return (
+        <KitTextInput
+            {...props}
+            className={[classes.root, className].filter(Boolean).join(" ")}
+        />
+    );
 }

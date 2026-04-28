@@ -1,7 +1,7 @@
 import { useRef, useEffect, useCallback } from "react";
 import Editor, { type OnMount, type OnChange } from "@monaco-editor/react";
 import type * as Monaco from "monaco-editor";
-import { useMantineColorScheme } from "@octofhir/ui-kit";
+import { useColorScheme } from "@octofhir/ui-kit";
 
 // Monaco config is imported at app entry point (@/shared/monaco/config)
 
@@ -62,7 +62,7 @@ export function SqlEditor({
 	const monacoRef = useRef<typeof Monaco | null>(null);
 	const disposeLspRef = useRef<(() => void) | null>(null);
 	const disposeModelBindingRef = useRef<(() => void) | null>(null);
-	const { colorScheme } = useMantineColorScheme();
+	const { colorScheme } = useColorScheme();
 
 	// Setup Monaco and LSP when editor mounts
 	const handleEditorDidMount: OnMount = useCallback(

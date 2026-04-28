@@ -1,5 +1,5 @@
 import { Group, Text, Box, UnstyledButton } from "@/shared/ui";
-import { useMantineTheme } from "@octofhir/ui-kit";
+import { useDesignTokens } from "@octofhir/ui-kit";
 import {
 	IconAlertCircle,
 	IconAlertTriangle,
@@ -18,7 +18,7 @@ interface DiagnosticItemProps {
  * Severity icon component
  */
 function SeverityIcon({ severity }: { severity: monaco.MarkerSeverity }) {
-	const theme = useMantineTheme();
+	const theme = useDesignTokens();
 	const size = 16;
 
 	switch (severity) {
@@ -39,7 +39,7 @@ function SeverityIcon({ severity }: { severity: monaco.MarkerSeverity }) {
  * Individual diagnostic item with click-to-navigate functionality
  */
 export function DiagnosticItem({ diagnostic, onClick }: DiagnosticItemProps) {
-	const theme = useMantineTheme();
+	const theme = useDesignTokens();
 
 	const handleClick = () => {
 		onClick?.();

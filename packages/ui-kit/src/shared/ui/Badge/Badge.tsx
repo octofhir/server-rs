@@ -1,7 +1,2 @@
-import { Badge as MantineBadge, type BadgeProps } from "@mantine/core";
-
-export function Badge(props: BadgeProps) {
-    return <MantineBadge {...props} />;
-}
-
-export type { BadgeProps };
+export { Label as Badge } from "@gravity-ui/uikit";
+export type { LabelProps as BadgeProps } from "@gravity-ui/uikit";

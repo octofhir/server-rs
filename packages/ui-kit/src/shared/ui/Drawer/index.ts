@@ -1,1 +1,1 @@
-export * from "./Drawer";
+export { Drawer, type DrawerProps } from "@gravity-ui/uikit";

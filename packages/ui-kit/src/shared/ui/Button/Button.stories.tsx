@@ -1,41 +1,54 @@
-import type { Meta, StoryObj } from "@storybook/react";
+import type { Meta, StoryObj } from "@storybook/react-vite";
 import { Button } from "./Button";
-import { Group, Stack } from "@mantine/core";
-import { IconPlus, IconDownload, IconTrash } from "@tabler/icons-react";
 
 const meta: Meta<typeof Button> = {
   title: "Form Controls/Button",
   component: Button,
   tags: ["autodocs"],
   argTypes: {
-    variant: {
+    view: {
       control: "select",
       options: [
-        "filled",
-        "light",
-        "outline",
-        "subtle",
-        "default",
-        "transparent",
-        "white",
-        "gradient",
+        "normal",
+        "action",
+        "outlined",
+        "outlined-info",
+        "outlined-danger",
+        "raised",
+        "flat",
+        "flat-info",
+        "flat-danger",
+        "flat-secondary",
+        "normal-contrast",
+        "outlined-contrast",
+        "flat-contrast",
       ],
     },
     size: {
       control: "select",
-      options: ["xs", "sm", "md", "lg", "xl"],
+      options: ["xs", "s", "m", "l", "xl"],
     },
-    color: {
+    pin: {
       control: "select",
-      options: ["primary", "fire", "warm", "deep", "gray"],
-    },
-    radius: {
-      control: "select",
-      options: ["xs", "sm", "md", "lg", "xl"],
+      options: [
+        "round-round",
+        "brick-brick",
+        "clear-clear",
+        "round-brick",
+        "brick-round",
+        "round-clear",
+        "clear-round",
+        "brick-clear",
+        "clear-brick",
+      ],
     },
     disabled: { control: "boolean" },
     loading: { control: "boolean" },
-    fullWidth: { control: "boolean" },
+    selected: { control: "boolean" },
+    width: {
+      control: "select",
+      options: ["auto", "max"],
+    },
   },
 };
 
@@ -45,102 +58,63 @@ type Story = StoryObj<typeof Button>;
 export const Default: Story = {
   args: {
     children: "Button",
-    variant: "filled",
+    view: "normal",
   },
 };
 
-export const AllVariants: Story = {
+export const Views: Story = {
   render: () => (
-    <Group>
-      <Button variant="filled">Filled</Button>
-      <Button variant="light">Light</Button>
-      <Button variant="outline">Outline</Button>
-      <Button variant="subtle">Subtle</Button>
-      <Button variant="default">Default</Button>
-      <Button variant="transparent">Transparent</Button>
-      <Button variant="white">White</Button>
-      <Button variant="gradient">Gradient</Button>
-    </Group>
-  ),
-};
-
-export const ColorVariants: Story = {
-  render: () => (
-    <Stack>
-      <Group>
-        <Button color="primary">Primary</Button>
-        <Button color="fire">Fire</Button>
-        <Button color="warm">Warm</Button>
-        <Button color="deep">Deep</Button>
-      </Group>
-      <Group>
-        <Button variant="light" color="primary">
-          Primary
-        </Button>
-        <Button variant="light" color="fire">
-          Fire
-        </Button>
-        <Button variant="light" color="warm">
-          Warm
-        </Button>
-        <Button variant="light" color="deep">
-          Deep
-        </Button>
-      </Group>
-      <Group>
-        <Button variant="outline" color="primary">
-          Primary
-        </Button>
-        <Button variant="outline" color="fire">
-          Fire
-        </Button>
-        <Button variant="outline" color="warm">
-          Warm
-        </Button>
-        <Button variant="outline" color="deep">
-          Deep
-        </Button>
-      </Group>
-    </Stack>
+    <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+      <Button view="normal">Normal</Button>
+      <Button view="action">Action</Button>
+      <Button view="outlined">Outlined</Button>
+      <Button view="outlined-info">Outlined Info</Button>
+      <Button view="outlined-danger">Outlined Danger</Button>
+      <Button view="raised">Raised</Button>
+      <Button view="flat">Flat</Button>
+      <Button view="flat-info">Flat Info</Button>
+      <Button view="flat-danger">Flat Danger</Button>
+      <Button view="flat-secondary">Flat Secondary</Button>
+    </div>
   ),
 };
 
 export const Sizes: Story = {
   render: () => (
-    <Group align="center">
-      <Button size="xs">Extra Small</Button>
-      <Button size="sm">Small</Button>
-      <Button size="md">Medium</Button>
-      <Button size="lg">Large</Button>
-      <Button size="xl">Extra Large</Button>
-    </Group>
-  ),
-};
-
-export const WithIcons: Story = {
-  render: () => (
-    <Group>
-      <Button leftSection={<IconPlus size={16} />}>Create</Button>
-      <Button rightSection={<IconDownload size={16} />} variant="light">
-        Download
-      </Button>
-      <Button
-        leftSection={<IconTrash size={16} />}
-        color="fire"
-        variant="light"
-      >
-        Delete
-      </Button>
-    </Group>
+    <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+      <Button size="xs">Extra Small (xs)</Button>
+      <Button size="s">Small (s)</Button>
+      <Button size="m">Medium (m)</Button>
+      <Button size="l">Large (l)</Button>
+      <Button size="xl">Extra Large (xl)</Button>
+    </div>
   ),
 };
 
 export const States: Story = {
   render: () => (
-    <Group>
+    <div style={{ display: "flex", gap: "8px" }}>
       <Button>Normal</Button>
       <Button disabled>Disabled</Button>
       <Button loading>Loading</Button>
-    </Group>
+      <Button selected>Selected</Button>
+    </div>
+  ),
+};
+
+export const Pins: Story = {
+  render: () => (
+    <div style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+      <div style={{ display: "flex", gap: "1px" }}>
+        <Button pin="round-brick">Round Brick</Button>
+        <Button pin="brick-brick">Brick Brick</Button>
+        <Button pin="brick-round">Brick Round</Button>
+      </div>
+      <div style={{ display: "flex", gap: "1px" }}>
+        <Button pin="round-clear">Round Clear</Button>
+        <Button pin="clear-clear">Clear Clear</Button>
+        <Button pin="clear-round">Clear Round</Button>
+      </div>
+    </div>
   ),
 };

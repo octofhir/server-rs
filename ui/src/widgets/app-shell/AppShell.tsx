@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
 import {
-	AppShell as MantineAppShell,
+	AppShell as KitAppShell,
 	Badge,
 	ActionIcon,
 	Burger,
@@ -15,7 +15,7 @@ import {
 	ErrorBoundary,
 } from "@/shared/ui";
 import {
-	useMantineColorScheme,
+	useColorScheme,
 	useDisclosure,
 	useLocalStorage,
 } from "@octofhir/ui-kit";
@@ -222,7 +222,7 @@ function HealthBadge() {
 }
 
 function ThemeToggle() {
-	const { colorScheme, toggleColorScheme } = useMantineColorScheme();
+	const { colorScheme, toggleColorScheme } = useColorScheme();
 
 	return (
 		<Tooltip label={`Switch to ${colorScheme === "dark" ? "light" : "dark"} mode`}>
@@ -378,7 +378,7 @@ export function AppShell() {
 	);
 
 	return (
-		<MantineAppShell
+		<KitAppShell
 			header={{ height: 48 }}
 			navbar={{
 				width: navbarWidth,
@@ -387,7 +387,7 @@ export function AppShell() {
 			}}
 			padding="0" // Set to 0 because we handle padding in pages
 		>
-			<MantineAppShell.Header
+			<KitAppShell.Header
 				style={{
 					background: "var(--app-header-bg)",
 					color: "var(--app-header-fg)",
@@ -449,9 +449,9 @@ export function AppShell() {
 						)}
 					</Group>
 				</Group>
-			</MantineAppShell.Header>
+			</KitAppShell.Header>
 
-			<MantineAppShell.Navbar
+			<KitAppShell.Navbar
 				p="xs"
 				onMouseEnter={() => {
 					if (sidebarCompact && !opened) {
@@ -560,9 +560,9 @@ export function AppShell() {
 						)}
 					</Stack>
 				</Box>
-			</MantineAppShell.Navbar>
+			</KitAppShell.Navbar>
 
-			<MantineAppShell.Main
+			<KitAppShell.Main
 				style={{
 					display: "flex",
 					flexDirection: "column",
@@ -582,7 +582,7 @@ export function AppShell() {
 						<Outlet />
 					</ErrorBoundary>
 				</Box>
-			</MantineAppShell.Main>
-		</MantineAppShell>
+			</KitAppShell.Main>
+		</KitAppShell>
 	);
 }

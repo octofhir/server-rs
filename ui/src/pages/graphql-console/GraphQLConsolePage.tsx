@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import { GraphiQL } from "graphiql";
 import { createGraphiQLFetcher } from "@graphiql/toolkit";
-import { useMantineColorScheme } from "@octofhir/ui-kit";
+import { useColorScheme } from "@octofhir/ui-kit";
 import "graphiql/style.css";
 import { useUiSettings } from "@/shared";
 
@@ -28,7 +28,7 @@ query {
 const graphQLEndpoint = `${window.location.origin}/$graphql`;
 
 export function GraphQLConsolePage() {
-	const { colorScheme } = useMantineColorScheme();
+	const { colorScheme } = useColorScheme();
 	const [settings] = useUiSettings();
 	const fetcher = useMemo(
 		() =>

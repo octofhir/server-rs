@@ -9,7 +9,7 @@
 import { useRef, useEffect, useCallback, useState } from "react";
 import Editor, { type OnMount, type OnChange } from "@monaco-editor/react";
 import type * as Monaco from "monaco-editor";
-import { useMantineColorScheme } from "@octofhir/ui-kit";
+import { useColorScheme } from "@octofhir/ui-kit";
 
 import { ensureMonacoServices } from "./lspClient";
 import {
@@ -107,7 +107,7 @@ export function FhirPathEditor({
 	const monacoRef = useRef<typeof Monaco | null>(null);
 	const disposeModelRef = useRef<(() => void) | null>(null);
 	const [editorReady, setEditorReady] = useState(false);
-	const { colorScheme } = useMantineColorScheme();
+	const { colorScheme } = useColorScheme();
 
 	// Update LSP context when resourceType, constants, or forEachContext change
 	useEffect(() => {

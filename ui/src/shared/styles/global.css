@@ -14,11 +14,11 @@ html {
 }
 
 :root,
-[data-mantine-color-scheme="light"] {
+[data-theme="light"] {
   --octo-bg-grid-size: 56px;
 }
 
-[data-mantine-color-scheme="dark"] {
+[data-theme="dark"] {
   --octo-bg-grid-size: 42px;
 }
 
@@ -73,7 +73,7 @@ textarea {
 
 /* Code Styles */
 code {
-  font-family: var(--mantine-font-family-monospace) !important;
+  font-family: var(--octo-typography-mono) !important;
 }
 
 /* Page Transition Animation — opacity only, no transform (transform creates
@@ -150,7 +150,7 @@ code {
 .monaco-editor .overflowingContentWidgets {
   z-index: 9999 !important;
   border-radius: 6px !important;
-  box-shadow: var(--mantine-shadow-lg) !important;
+  box-shadow: var(--octo-shadow-lg) !important;
   border: 1px solid var(--octo-border-subtle) !important;
 }
 

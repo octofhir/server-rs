@@ -1,11 +1,13 @@
-import type { Preview, ReactRenderer } from "@storybook/react";
+import type { Preview, ReactRenderer } from "@storybook/react-vite";
 import { withThemeByDataAttribute } from "@storybook/addon-themes";
-import { MantineProvider, type MantineColorScheme } from "@mantine/core";
-import { theme, resolver } from "../src/shared/theme";
+import { ThemeProvider, ToasterProvider, ToasterComponent, Toaster } from "@gravity-ui/uikit";
 
-import "@mantine/core/styles.layer.css";
-import "@mantine/dates/styles.layer.css";
-import "@mantine/notifications/styles.layer.css";
+import "@gravity-ui/uikit/styles/fonts.css";
+import "@gravity-ui/uikit/styles/styles.css";
+import "../src/shared/theme/fonts.css";
+import "../src/shared/theme/gravity-overrides.css";
+
+const toaster = new Toaster();
 
 const preview: Preview = {
   parameters: {
@@ -22,17 +24,14 @@ const preview: Preview = {
   },
   decorators: [
     (Story, context) => {
-      const colorScheme = (context.globals.theme ||
-        "light") as MantineColorScheme;
+      const colorScheme = context.globals.theme || "light";
       return (
-        <MantineProvider
-          theme={theme}
-          cssVariablesResolver={resolver}
-          defaultColorScheme={colorScheme}
-          forceColorScheme={colorScheme}
-        >
-          <Story />
-        </MantineProvider>
+        <ThemeProvider theme={colorScheme}>
+          <ToasterProvider toaster={toaster}>
+            <Story />
+            <ToasterComponent />
+          </ToasterProvider>
+        </ThemeProvider>
       );
     },
     withThemeByDataAttribute<ReactRenderer>({
@@ -41,7 +40,7 @@ const preview: Preview = {
         dark: "dark",
       },
       defaultTheme: "light",
-      attributeName: "data-mantine-color-scheme",
+      attributeName: "data-theme",
     }),
   ],
   tags: ["autodocs"],

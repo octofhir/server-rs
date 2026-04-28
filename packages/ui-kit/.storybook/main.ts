@@ -2,16 +2,22 @@ import type { StorybookConfig } from "@storybook/react-vite";
 import path from "node:path";
 
 const config: StorybookConfig = {
-  stories: ["../src/**/*.stories.@(ts|tsx)"],
+  stories: [
+    "../src/**/*.mdx",
+    "../src/**/*.stories.@(ts|tsx)",
+  ],
+
   addons: [
     "@storybook/addon-docs",
     "@storybook/addon-a11y",
     "@storybook/addon-themes",
   ],
+
   framework: {
     name: "@storybook/react-vite",
     options: {},
   },
+
   viteFinal: async (config, { configType }) => {
     config.css = {
       ...config.css,
@@ -35,19 +41,17 @@ const config: StorybookConfig = {
 
     return config;
   },
-  docs: {
-    autodocs: "tag",
-  },
+
   typescript: {
     reactDocgen: "react-docgen-typescript",
     reactDocgenTypescriptOptions: {
       shouldExtractLiteralValuesFromEnum: true,
       propFilter: (prop) =>
         prop.parent
-          ? !/node_modules\/(?!@mantine)/.test(prop.parent.fileName)
+          ? !/node_modules\/(?!@gravity-ui)/.test(prop.parent.fileName)
           : true,
     },
-  },
+  }
 };
 
 export default config;

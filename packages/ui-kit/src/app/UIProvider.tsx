@@ -1,47 +1,56 @@
-import {
-    MantineProvider,
-    ColorSchemeScript,
-    mergeThemeOverrides,
-    type MantineProviderProps,
-    type MantineThemeOverride,
-} from "@mantine/core";
-import { ModalsProvider } from "@mantine/modals";
-import { Notifications } from "@mantine/notifications";
-import { theme as baseTheme, resolver } from "#/shared/theme";
 import { useMemo, type ReactNode } from "react";
+import { ThemeProvider, ToasterComponent, ToasterProvider } from "@gravity-ui/uikit";
+import { ConfirmModalHost } from "#/shared/lib/confirm-modal";
+import { toaster } from "#/shared/lib/toaster";
+import {
+    ColorSchemeProvider,
+    tokens,
+    useColorScheme,
+    type ColorSchemePreference,
+} from "#/shared/theme";
+import { generateCSSVariables } from "#/shared/theme/utils";
 
-import "@mantine/core/styles.layer.css";
-import "@mantine/dates/styles.layer.css";
-import "@mantine/notifications/styles.layer.css";
+import "@gravity-ui/uikit/styles/fonts.css";
+import "@gravity-ui/uikit/styles/styles.css";
 import "#/shared/theme/fonts.css";
+import "#/shared/theme/gravity-overrides.css";
 
-export interface UIProviderProps extends Omit<MantineProviderProps, "theme" | "cssVariablesResolver"> {
+export interface UIProviderProps {
     children: ReactNode;
-    defaultColorScheme?: "light" | "dark" | "auto";
-    /** Optional theme overrides — deep-merged with the base OctoFHIR theme */
-    theme?: MantineThemeOverride;
+    /** Initial color-scheme preference if none has been persisted yet. */
+    defaultColorScheme?: ColorSchemePreference;
 }
 
-export function UIProvider({ children, defaultColorScheme = "light", theme: userTheme, ...props }: UIProviderProps) {
-    const mergedTheme = useMemo(
-        () => (userTheme ? mergeThemeOverrides(baseTheme, userTheme) : baseTheme),
-        [userTheme],
+export function UIProvider({ children, defaultColorScheme = "light" }: UIProviderProps) {
+    return (
+        <ColorSchemeProvider defaultColorScheme={defaultColorScheme}>
+            <UIProviderInner>{children}</UIProviderInner>
+        </ColorSchemeProvider>
     );
+}
+
+function UIProviderInner({ children }: { children: ReactNode }) {
+    const { colorScheme, preference } = useColorScheme();
+
+    const cssVars = useMemo(() => {
+        const { scheme, ...rest } = tokens;
+        const globalVars = generateCSSVariables(rest);
+        const schemeVars = generateCSSVariables(scheme[colorScheme]);
+        return { ...globalVars, ...schemeVars };
+    }, [colorScheme]);
 
     return (
-        <>
-            <ColorSchemeScript defaultColorScheme={defaultColorScheme} />
-            <MantineProvider
-                theme={mergedTheme}
-                cssVariablesResolver={resolver}
-                defaultColorScheme={defaultColorScheme}
-                {...props}
+        <ThemeProvider theme={preference === "auto" ? "system" : preference}>
+            <div
+                className="octo-ui-provider g-root"
+                style={{ display: "contents", ...cssVars } as React.CSSProperties}
             >
-                <Notifications position="top-right" />
-                <ModalsProvider>
+                <ToasterProvider toaster={toaster}>
                     {children}
-                </ModalsProvider>
-            </MantineProvider>
-        </>
+                    <ToasterComponent />
+                    <ConfirmModalHost />
+                </ToasterProvider>
+            </div>
+        </ThemeProvider>
     );
 }

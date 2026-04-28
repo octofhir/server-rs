@@ -16,7 +16,7 @@ import {
 	Breadcrumbs,
 	Anchor,
 } from "@/shared/ui";
-import { useMantineTheme } from "@octofhir/ui-kit";
+import { useDesignTokens } from "@octofhir/ui-kit";
 import {
 	IconAlertCircle,
 	IconArrowLeft,
@@ -80,7 +80,7 @@ export function OperationDetailPage() {
 	const navigate = useNavigate();
 	const { data: operation, isLoading, error } = useOperation(id ?? "");
 	const updateMutation = useUpdateOperation();
-	const theme = useMantineTheme();
+	const theme = useDesignTokens();
 
 	const [isPublic, setIsPublic] = useState(false);
 	const [description, setDescription] = useState("");

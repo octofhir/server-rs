@@ -1,7 +1,7 @@
 import { useRef, useEffect, useCallback } from "react";
 import Editor, { type OnMount, type OnChange } from "@monaco-editor/react";
 import type * as Monaco from "monaco-editor";
-import { useMantineColorScheme } from "@octofhir/ui-kit";
+import { useColorScheme } from "@octofhir/ui-kit";
 
 export interface AutomationScriptEditorProps {
   /** Script content */
@@ -474,7 +474,7 @@ export function AutomationScriptEditor({
 }: AutomationScriptEditorProps) {
   const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
   const monacoRef = useRef<typeof Monaco | null>(null);
-  const { colorScheme } = useMantineColorScheme();
+  const { colorScheme } = useColorScheme();
   const editorTheme = colorScheme === "dark" ? "vs-dark" : "vs";
 
   // Setup Monaco when editor mounts

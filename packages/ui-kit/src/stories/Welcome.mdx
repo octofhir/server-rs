@@ -1,0 +1,42 @@
+import { Meta } from "@storybook/addon-docs/blocks";
+
+<Meta title="Foundations/Welcome" />
+
+# OctoFHIR UI Kit
+
+A thin, opinionated layer on top of [Gravity UI](https://gravity-ui.com) — the
+public design system from Yandex — tuned for the OctoFHIR admin surface.
+
+## What's in the box
+
+- **Brand-mapped Gravity UI** — every `@gravity-ui/uikit` component inherits the
+  OctoFHIR palette via `gravity-overrides.css`. No CSS-in-JS, no runtime cost.
+- **Composition primitives** — `Box`, `Flex`, `Stack`, `Group`, `Center`,
+  `Container`, `Grid`, `SimpleGrid` with familiar `w/h/p/m` spacing props.
+- **Form layout** — `FormRow` from `@gravity-ui/components` for vertical /
+  horizontal field layouts with required markers and field descriptions.
+- **Data table** — `DataTable` (re-export of `@gravity-ui/table`) for grids
+  with sorting, selection, virtualization, drag-and-drop, settings.
+- **Empty / not-found / error states** — `EmptyState` (re-export of
+  Gravity `PlaceholderContainer`).
+- **Color scheme** — `UIProvider` + `useColorScheme()` hook, persisted to
+  `localStorage`, supports `light` / `dark` / `auto` (system).
+
+## Foundations
+
+- **Foundations / Colors** — palette, semantic stops, dark/light mapping.
+- **Foundations / Typography** — type scale, weight, line-height.
+- **Foundations / Spacing** — design-token spacing scale.
+- **Foundations / Radius & Elevation** — border radii and shadow recipes.
+
+## Component categories
+
+- **Form Controls** — Button, TextInput, NumberInput, PasswordInput,
+  TextArea, Select, Checkbox, Switch, SegmentedRadioGroup, DatePicker,
+  ActionIcon, Burger, FormRow.
+- **Data Display** — Card, Table, DataTable, Tabs, Accordion, Code,
+  Hotkey, Skeleton, Badge, Chip, ThemeIcon.
+- **Navigation** — Breadcrumbs, Link, Tabs.
+- **Feedback** — Alert, Spin, Progress, EmptyState, ClipboardButton.
+- **Overlays** — Modal, Drawer, Tooltip, Menu, Popover, Portal.
+- **Layout** — Box, Flex, Grid, Container, Burger, AppShell.

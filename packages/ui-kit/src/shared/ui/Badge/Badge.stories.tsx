@@ -1,24 +1,33 @@
-import type { Meta, StoryObj } from "@storybook/react";
-import { Badge } from "@mantine/core";
-import { Group, Stack, Text } from "@mantine/core";
+import type { Meta, StoryObj } from "@storybook/react-vite";
+import { Badge } from "./Badge";
 
 const meta: Meta<typeof Badge> = {
   title: "Data Display/Badge",
   component: Badge,
   tags: ["autodocs"],
   argTypes: {
-    variant: {
+    theme: {
       control: "select",
-      options: ["filled", "light", "outline", "dot", "default", "transparent"],
+      options: [
+        "normal",
+        "info",
+        "danger",
+        "warning",
+        "success",
+        "unknown",
+        "clear",
+      ],
     },
     size: {
       control: "select",
-      options: ["xs", "sm", "md", "lg", "xl"],
+      options: ["xs", "s", "m"],
     },
-    color: {
+    type: {
       control: "select",
-      options: ["primary", "fire", "warm", "deep", "gray"],
+      options: ["default", "copy", "close"],
     },
+    interactive: { control: "boolean" },
+    disabled: { control: "boolean" },
   },
 };
 
@@ -27,64 +36,41 @@ type Story = StoryObj<typeof Badge>;
 
 export const Default: Story = {
   args: {
-    children: "Active",
+    children: "Badge",
+    theme: "normal",
   },
 };
 
-export const AllVariants: Story = {
+export const Themes: Story = {
   render: () => (
-    <Group>
-      <Badge variant="filled">Filled</Badge>
-      <Badge variant="light">Light</Badge>
-      <Badge variant="outline">Outline</Badge>
-      <Badge variant="dot">Dot</Badge>
-      <Badge variant="default">Default</Badge>
-      <Badge variant="transparent">Transparent</Badge>
-    </Group>
-  ),
-};
-
-export const Colors: Story = {
-  render: () => (
-    <Stack>
-      <Group>
-        <Badge color="primary">Primary</Badge>
-        <Badge color="fire">Fire</Badge>
-        <Badge color="warm">Warm</Badge>
-        <Badge color="deep">Deep</Badge>
-        <Badge color="gray">Gray</Badge>
-      </Group>
-      <Group>
-        <Badge variant="filled" color="primary">Primary</Badge>
-        <Badge variant="filled" color="fire">Fire</Badge>
-        <Badge variant="filled" color="warm">Warm</Badge>
-        <Badge variant="filled" color="deep">Deep</Badge>
-      </Group>
-    </Stack>
-  ),
-};
-
-export const FhirStatuses: Story = {
-  render: () => (
-    <Group>
-      <Badge color="primary">Active</Badge>
-      <Badge color="gray">Inactive</Badge>
-      <Badge color="fire">Entered in Error</Badge>
-      <Badge color="warm">Draft</Badge>
-      <Badge color="primary" variant="filled">Final</Badge>
-      <Badge color="deep">Retired</Badge>
-    </Group>
+    <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+      <Badge theme="normal">Normal</Badge>
+      <Badge theme="info">Info</Badge>
+      <Badge theme="success">Success</Badge>
+      <Badge theme="warning">Warning</Badge>
+      <Badge theme="danger">Danger</Badge>
+      <Badge theme="unknown">Unknown</Badge>
+      <Badge theme="clear">Clear</Badge>
+    </div>
   ),
 };
 
 export const Sizes: Story = {
   render: () => (
-    <Group align="center">
-      <Badge size="xs">XS</Badge>
-      <Badge size="sm">SM</Badge>
-      <Badge size="md">MD</Badge>
-      <Badge size="lg">LG</Badge>
-      <Badge size="xl">XL</Badge>
-    </Group>
+    <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+      <Badge size="xs">Extra Small (xs)</Badge>
+      <Badge size="s">Small (s)</Badge>
+      <Badge size="m">Medium (m)</Badge>
+    </div>
+  ),
+};
+
+export const Types: Story = {
+  render: () => (
+    <div style={{ display: "flex", gap: "8px" }}>
+      <Badge type="default">Default</Badge>
+      <Badge type="copy" copyText="Copied text">Copy</Badge>
+      <Badge type="close" onCloseClick={() => alert("Closed!")}>Close</Badge>
+    </div>
   ),
 };

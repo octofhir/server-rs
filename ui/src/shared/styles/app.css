@@ -2,7 +2,7 @@
 /* These reference --octo-* design tokens from ui-kit */
 
 :root,
-[data-mantine-color-scheme="light"] {
+[data-theme="light"] {
     --app-header-bg: var(--octo-identity-panel);
     --app-header-fg: var(--octo-text-primary);
     --app-header-hover-bg: color-mix(in oklab, var(--octo-surface-2), var(--octo-accent-primary-bg) 10%);
@@ -11,7 +11,7 @@
     --app-login-panel-bg: var(--octo-identity-panel);
 }
 
-[data-mantine-color-scheme="dark"] {
+[data-theme="dark"] {
     --app-header-bg: var(--octo-identity-panel);
     --app-header-fg: var(--octo-text-primary);
     --app-header-hover-bg: color-mix(in oklab, var(--octo-surface-3), var(--octo-accent-primary-bg) 24%);

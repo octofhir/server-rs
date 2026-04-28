@@ -1,1 +1,1 @@
-export * from "./Accordion";
+export { Accordion, type AccordionProps } from "@gravity-ui/uikit";

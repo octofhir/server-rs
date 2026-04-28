@@ -1,9 +1,16 @@
-import { ActionIcon as MantineActionIcon, type ActionIconProps, createPolymorphicComponent } from "@octofhir/ui-kit";
 import { forwardRef } from "react";
+import { ActionIcon as KitActionIcon, type ActionIconProps } from "@octofhir/ui-kit";
 import classes from "./ActionIcon.module.css";
 
-const _ActionIcon = forwardRef<HTMLButtonElement, ActionIconProps>((props, ref) => {
-    return <MantineActionIcon ref={ref} {...props} classNames={classes} />;
-});
-
-export const ActionIcon = createPolymorphicComponent<"button", ActionIconProps>(_ActionIcon);
+export const ActionIcon = forwardRef<HTMLButtonElement, ActionIconProps>(
+    ({ className, ...props }, ref) => {
+        return (
+            <KitActionIcon
+                ref={ref}
+                {...(props as ActionIconProps)}
+                className={[classes.actionIcon, className].filter(Boolean).join(" ")}
+            />
+        );
+    },
+);
+ActionIcon.displayName = "ActionIcon";

@@ -1,1 +1,1 @@
-export * from "./Card";
+export { Card, type CardProps } from "@gravity-ui/uikit";

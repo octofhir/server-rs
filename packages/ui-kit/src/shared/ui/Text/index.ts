@@ -1,1 +1,1 @@
-export * from "./Text";
+export { Text, type TextProps } from "@gravity-ui/uikit";

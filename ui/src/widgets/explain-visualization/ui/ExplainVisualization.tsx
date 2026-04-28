@@ -8,7 +8,7 @@ import {
 	UnstyledButton,
 	Code,
 } from "@/shared/ui";
-import { useMantineTheme } from "@octofhir/ui-kit";
+import { useDesignTokens } from "@octofhir/ui-kit";
 import {
 	IconChevronRight,
 	IconChevronDown,
@@ -221,7 +221,7 @@ function getOperationIcon(operation: string) {
  * Individual tree node component
  */
 function ExplainTreeNode({ node }: { node: ExplainNode }) {
-	const theme = useMantineTheme();
+	const theme = useDesignTokens();
 	const [expanded, setExpanded] = useState(true);
 
 	const hasChildren = node.children.length > 0;
@@ -349,7 +349,7 @@ function ExplainTreeNode({ node }: { node: ExplainNode }) {
 export function ExplainVisualization({
 	explainText,
 }: ExplainVisualizationProps) {
-	const theme = useMantineTheme();
+	const theme = useDesignTokens();
 
 	const { nodes, metadata } = useMemo(() => parseExplainText(explainText), [explainText]);
 

@@ -1,6 +1,5 @@
-import type { Meta, StoryObj } from "@storybook/react";
-import { ActionIcon } from "@mantine/core";
-import { Group, Stack, Text } from "@mantine/core";
+import type { Meta, StoryObj } from "@storybook/react-vite";
+import { ActionIcon } from "./ActionIcon";
 import {
   IconSettings,
   IconTrash,
@@ -15,20 +14,31 @@ const meta: Meta<typeof ActionIcon> = {
   component: ActionIcon,
   tags: ["autodocs"],
   argTypes: {
-    variant: {
+    view: {
       control: "select",
-      options: ["filled", "light", "outline", "subtle", "default", "transparent"],
+      options: [
+        "normal",
+        "action",
+        "outlined",
+        "outlined-info",
+        "outlined-danger",
+        "raised",
+        "flat",
+        "flat-info",
+        "flat-danger",
+        "flat-secondary",
+        "normal-contrast",
+        "outlined-contrast",
+        "flat-contrast",
+      ],
     },
     size: {
       control: "select",
-      options: ["xs", "sm", "md", "lg", "xl"],
-    },
-    color: {
-      control: "select",
-      options: ["primary", "fire", "warm", "deep", "gray"],
+      options: ["xs", "s", "m", "l", "xl"],
     },
     disabled: { control: "boolean" },
     loading: { control: "boolean" },
+    selected: { control: "boolean" },
   },
 };
 
@@ -38,74 +48,42 @@ type Story = StoryObj<typeof ActionIcon>;
 export const Default: Story = {
   args: {
     children: <IconSettings size={18} />,
-    variant: "subtle",
+    view: "flat",
   },
 };
 
-export const AllVariants: Story = {
+export const Views: Story = {
   render: () => (
-    <Group>
-      <ActionIcon variant="filled">
-        <IconPlus size={18} />
-      </ActionIcon>
-      <ActionIcon variant="light">
-        <IconEdit size={18} />
-      </ActionIcon>
-      <ActionIcon variant="outline">
-        <IconCopy size={18} />
-      </ActionIcon>
-      <ActionIcon variant="subtle">
-        <IconSettings size={18} />
-      </ActionIcon>
-      <ActionIcon variant="default">
-        <IconRefresh size={18} />
-      </ActionIcon>
-      <ActionIcon variant="transparent">
-        <IconTrash size={18} />
-      </ActionIcon>
-    </Group>
-  ),
-};
-
-export const Colors: Story = {
-  render: () => (
-    <Stack>
-      <Group>
-        <Text size="sm" w={60}>Filled</Text>
-        <ActionIcon variant="filled" color="primary"><IconPlus size={18} /></ActionIcon>
-        <ActionIcon variant="filled" color="fire"><IconTrash size={18} /></ActionIcon>
-        <ActionIcon variant="filled" color="warm"><IconRefresh size={18} /></ActionIcon>
-        <ActionIcon variant="filled" color="deep"><IconSettings size={18} /></ActionIcon>
-      </Group>
-      <Group>
-        <Text size="sm" w={60}>Light</Text>
-        <ActionIcon variant="light" color="primary"><IconPlus size={18} /></ActionIcon>
-        <ActionIcon variant="light" color="fire"><IconTrash size={18} /></ActionIcon>
-        <ActionIcon variant="light" color="warm"><IconRefresh size={18} /></ActionIcon>
-        <ActionIcon variant="light" color="deep"><IconSettings size={18} /></ActionIcon>
-      </Group>
-    </Stack>
+    <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
+      <ActionIcon view="normal"><IconPlus size={18} /></ActionIcon>
+      <ActionIcon view="action"><IconEdit size={18} /></ActionIcon>
+      <ActionIcon view="outlined"><IconCopy size={18} /></ActionIcon>
+      <ActionIcon view="flat"><IconSettings size={18} /></ActionIcon>
+      <ActionIcon view="flat-info"><IconRefresh size={18} /></ActionIcon>
+      <ActionIcon view="flat-danger"><IconTrash size={18} /></ActionIcon>
+    </div>
   ),
 };
 
 export const Sizes: Story = {
   render: () => (
-    <Group align="center">
+    <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
       <ActionIcon size="xs"><IconSettings size={14} /></ActionIcon>
-      <ActionIcon size="sm"><IconSettings size={16} /></ActionIcon>
-      <ActionIcon size="md"><IconSettings size={18} /></ActionIcon>
-      <ActionIcon size="lg"><IconSettings size={20} /></ActionIcon>
+      <ActionIcon size="s"><IconSettings size={16} /></ActionIcon>
+      <ActionIcon size="m"><IconSettings size={18} /></ActionIcon>
+      <ActionIcon size="l"><IconSettings size={20} /></ActionIcon>
       <ActionIcon size="xl"><IconSettings size={24} /></ActionIcon>
-    </Group>
+    </div>
   ),
 };
 
 export const States: Story = {
   render: () => (
-    <Group>
-      <ActionIcon variant="light"><IconSettings size={18} /></ActionIcon>
-      <ActionIcon variant="light" disabled><IconSettings size={18} /></ActionIcon>
-      <ActionIcon variant="light" loading><IconSettings size={18} /></ActionIcon>
-    </Group>
+    <div style={{ display: "flex", gap: "8px" }}>
+      <ActionIcon view="flat"><IconSettings size={18} /></ActionIcon>
+      <ActionIcon view="flat" disabled><IconSettings size={18} /></ActionIcon>
+      <ActionIcon view="flat" loading><IconSettings size={18} /></ActionIcon>
+      <ActionIcon view="flat" selected><IconSettings size={18} /></ActionIcon>
+    </div>
   ),
 };

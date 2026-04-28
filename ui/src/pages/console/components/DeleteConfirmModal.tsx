@@ -1,5 +1,5 @@
 import { Button, Code, Group, Modal, Stack, Text } from "@/shared/ui";
-import { useMantineTheme } from "@octofhir/ui-kit";
+import { useDesignTokens } from "@octofhir/ui-kit";
 import { IconAlertTriangle } from "@tabler/icons-react";
 
 interface DeleteConfirmModalProps {
@@ -17,7 +17,7 @@ export function DeleteConfirmModal({
 	path,
 	resourceType,
 }: DeleteConfirmModalProps) {
-	const theme = useMantineTheme();
+	const theme = useDesignTokens();
 
 	const handleConfirm = () => {
 		onConfirm();

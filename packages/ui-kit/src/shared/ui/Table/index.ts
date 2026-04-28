@@ -1,1 +1,1 @@
-export * from "./Table";
+export { Table, type TableProps } from "@gravity-ui/uikit";

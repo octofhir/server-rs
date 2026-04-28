@@ -1,1 +1,1 @@
-export * from "./Portal";
+export { Portal, type PortalProps } from "@gravity-ui/uikit";
