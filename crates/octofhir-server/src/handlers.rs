@@ -694,8 +694,10 @@ pub async fn create_resource(
                 }
             },
             Err(e) => {
-                tracing::warn!("If-None-Exist search failed: {}, proceeding with create", e);
-                // Proceed with create if search fails
+                tracing::warn!(error = %e, "If-None-Exist search failed; rejecting create");
+                return Err(ApiError::internal(format!(
+                    "If-None-Exist search failed: {e}"
+                )));
             }
         }
     }
@@ -916,7 +918,7 @@ pub struct HistoryQueryParams {
     #[serde(rename = "_count")]
     pub count: Option<u32>,
     /// Number of entries to skip for pagination
-    #[serde(rename = "__offset")]
+    #[serde(rename = "_offset", alias = "__offset")]
     pub offset: Option<u32>,
 }
 
@@ -1754,6 +1756,9 @@ pub async fn conditional_update_resource(
                     return Err(ApiError::bad_request(err));
                 }
 
+                let mut payload = payload;
+                payload["id"] = json!(id);
+
                 match state.storage.update(&payload, if_match.as_deref()).await {
                     Ok(stored) => {
                         let mut response_headers = HeaderMap::new();
@@ -2469,7 +2474,8 @@ pub async fn search_resource(
 pub async fn search_resource_post(
     State(state): State<crate::server::AppState>,
     Path(resource_type): Path<String>,
-    axum::Form(params): axum::Form<HashMap<String, String>>,
+    RawQuery(raw): RawQuery,
+    body: Bytes,
 ) -> Result<impl IntoResponse, ApiError> {
     // Validate resource type
     if resource_type.parse::<ResourceType>().is_err() {
@@ -2478,12 +2484,21 @@ pub async fn search_resource_post(
         )));
     }
 
-    // Convert params to query string format
-    let raw_q: String = params
-        .iter()
-        .map(|(k, v)| format!("{}={}", urlencoding::encode(k), urlencoding::encode(v)))
-        .collect::<Vec<_>>()
-        .join("&");
+    let body_q = std::str::from_utf8(&body)
+        .map_err(|_| ApiError::bad_request("Search form body must be valid UTF-8"))?;
+    let url_q = raw.unwrap_or_default();
+    let raw_q = match (url_q.is_empty(), body_q.is_empty()) {
+        (true, true) => String::new(),
+        (true, false) => body_q.to_string(),
+        (false, true) => url_q,
+        (false, false) => {
+            let mut merged = String::with_capacity(url_q.len() + 1 + body_q.len());
+            merged.push_str(&url_q);
+            merged.push('&');
+            merged.push_str(body_q);
+            merged
+        }
+    };
 
     let cfg = state.search_config.config();
 
@@ -2551,10 +2566,19 @@ pub async fn search_resource_post(
         warnings,
     );
 
-    // Apply _summary and _elements filters if present
-    let has_result_params = params.contains_key("_summary") || params.contains_key("_elements");
-    if has_result_params {
-        let bundle_value = apply_result_params(bundle, &params)?;
+    let result_params: HashMap<String, String> = ["_summary", "_elements"]
+        .into_iter()
+        .filter_map(|key| {
+            search_params
+                .parameters
+                .get(key)
+                .and_then(|values| values.first())
+                .map(|value| (key.to_string(), value.clone()))
+        })
+        .collect();
+
+    if !result_params.is_empty() {
+        let bundle_value = apply_result_params(bundle, &result_params)?;
         return Ok((StatusCode::OK, Json(bundle_value)).into_response());
     }
 
@@ -2673,10 +2697,12 @@ pub async fn system_search(
     );
     let bundle = octofhir_api::Bundle::searchset(total_count as u64, paginated, links);
 
-    // Apply _summary and _elements filters
-    let bundle_value = apply_result_params(bundle, &params)?;
+    if params.contains_key("_summary") || params.contains_key("_elements") {
+        let bundle_value = apply_result_params(bundle, &params)?;
+        return Ok((StatusCode::OK, Json(bundle_value)).into_response());
+    }
 
-    Ok((StatusCode::OK, Json(bundle_value)))
+    Ok((StatusCode::OK, Json(bundle)).into_response())
 }
 
 /// Build query suffix for pagination links, stripping result params
@@ -3530,7 +3556,8 @@ async fn process_transaction(
         return Ok((StatusCode::OK, Json(response_bundle)));
     }
 
-    // Sort entries by HTTP method for proper processing order
+    // Sort entries by HTTP method for execution, while retaining the original
+    // request index so the transaction-response can preserve FHIR response order.
     let sorted_entries = sort_transaction_entries(entries);
 
     // Phase 1: Pre-scan — build complete reference map before creating anything,
@@ -3543,7 +3570,7 @@ async fn process_transaction(
     let mut matched_conditional: std::collections::HashMap<usize, MatchedExisting> =
         std::collections::HashMap::new();
 
-    for (idx, entry) in sorted_entries.iter().enumerate() {
+    for (original_idx, entry) in &sorted_entries {
         let method = entry["request"]["method"].as_str().unwrap_or("");
         let request = &entry["request"];
         let full_url = entry["fullUrl"].as_str();
@@ -3580,7 +3607,7 @@ async fn process_transaction(
                                 );
                             }
                             matched_conditional.insert(
-                                idx,
+                                *original_idx,
                                 MatchedExisting {
                                     id: existing.id.clone(),
                                     version_id: existing.version_id.clone(),
@@ -3611,8 +3638,8 @@ async fn process_transaction(
     }
 
     // Phase 2: Build resolved entries — replace all urn:uuid references using the complete map
-    let mut resolved_entries: Vec<Value> = Vec::new();
-    for entry in &sorted_entries {
+    let mut resolved_entries: Vec<(usize, Value)> = Vec::new();
+    for (original_idx, entry) in &sorted_entries {
         let mut resolved_entry = (*entry).clone();
 
         // Inject pre-assigned ID into POST resources
@@ -3629,7 +3656,7 @@ async fn process_transaction(
             resolve_references_recursive(res, &reference_map)?;
         }
 
-        resolved_entries.push(resolved_entry);
+        resolved_entries.push((*original_idx, resolved_entry));
     }
 
     // Phase 3: Execute all entries in one database transaction.
@@ -3648,7 +3675,7 @@ async fn process_transaction(
     let mut post_batches: std::collections::HashMap<String, Vec<(usize, Value)>> =
         std::collections::HashMap::new();
 
-    for (idx, entry) in resolved_entries.iter().enumerate() {
+    for (original_idx, entry) in &resolved_entries {
         let method = entry["request"]["method"]
             .as_str()
             .unwrap_or("")
@@ -3656,10 +3683,10 @@ async fn process_transaction(
 
         if method == "POST" {
             // Conditional create that matched in pre-scan — return existing
-            if let Some(matched) = matched_conditional.get(&idx) {
+            if let Some(matched) = matched_conditional.get(original_idx) {
                 let url = entry["request"]["url"].as_str().unwrap_or("");
                 let resource_type = url.split('?').next().unwrap_or(url);
-                response_entries[idx] = Some(build_transaction_response_entry(
+                response_entries[*original_idx] = Some(build_transaction_response_entry(
                     if include_resource {
                         Some(&matched.resource)
                     } else {
@@ -3689,7 +3716,7 @@ async fn process_transaction(
             post_batches
                 .entry(resource_type)
                 .or_default()
-                .push((idx, resource));
+                .push((*original_idx, resource));
         }
     }
 
@@ -3719,12 +3746,12 @@ async fn process_transaction(
     }
 
     // Process non-POST entries (DELETE/PUT/PATCH/GET) individually.
-    for (idx, entry) in resolved_entries.iter().enumerate() {
-        if response_entries[idx].is_some() {
+    for (original_idx, entry) in &resolved_entries {
+        if response_entries[*original_idx].is_some() {
             continue;
         }
         match process_transaction_entry_with_tx(&mut *tx, state, entry).await {
-            Ok(response_entry) => response_entries[idx] = Some(response_entry),
+            Ok(response_entry) => response_entries[*original_idx] = Some(response_entry),
             Err(e) => {
                 tracing::warn!("Transaction failed, will auto-rollback: {}", e);
                 return Err(e);
@@ -3734,7 +3761,9 @@ async fn process_transaction(
 
     let response_entries: Vec<Value> = response_entries
         .into_iter()
-        .map(|opt| opt.unwrap_or_else(|| json!({"response": {"status": "500 Internal Server Error"}})))
+        .map(|opt| {
+            opt.unwrap_or_else(|| json!({"response": {"status": "500 Internal Server Error"}}))
+        })
         .collect();
 
     // Commit transaction
@@ -4212,12 +4241,12 @@ async fn process_batch(
         return Ok((StatusCode::OK, Json(response_bundle)));
     }
 
-    let mut reference_map: std::collections::HashMap<String, String> =
-        std::collections::HashMap::new();
     let mut response_entries: Vec<Value> = Vec::new();
 
     // Process each entry independently (no rollback on failure)
     for entry in entries {
+        let mut reference_map: std::collections::HashMap<String, String> =
+            std::collections::HashMap::new();
         let result = process_transaction_entry(state, entry, &mut reference_map).await;
 
         match result {
@@ -4247,17 +4276,17 @@ async fn process_batch(
 
 /// Sort transaction entries by HTTP method order per FHIR spec
 /// Order: DELETE, POST, PUT, PATCH, GET, HEAD
-fn sort_transaction_entries(entries: &[Value]) -> Vec<&Value> {
-    let mut sorted: Vec<_> = entries.iter().collect();
+fn sort_transaction_entries(entries: &[Value]) -> Vec<(usize, &Value)> {
+    let mut sorted: Vec<_> = entries.iter().enumerate().collect();
 
     sorted.sort_by(|a, b| {
-        let method_a = a["request"]["method"].as_str().unwrap_or("");
-        let method_b = b["request"]["method"].as_str().unwrap_or("");
+        let method_a = a.1["request"]["method"].as_str().unwrap_or("");
+        let method_b = b.1["request"]["method"].as_str().unwrap_or("");
 
         let order_a = transaction_method_order(method_a);
         let order_b = transaction_method_order(method_b);
 
-        order_a.cmp(&order_b)
+        order_a.cmp(&order_b).then_with(|| a.0.cmp(&b.0))
     });
 
     sorted
@@ -6790,6 +6819,38 @@ async fn reconcile_app_operations(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn test_sort_transaction_entries_preserves_original_indexes() {
+        let entries = vec![
+            json!({"request": {"method": "GET", "url": "Patient/p1"}}),
+            json!({"request": {"method": "POST", "url": "Patient"}}),
+            json!({"request": {"method": "DELETE", "url": "Patient/p2"}}),
+        ];
+
+        let sorted = sort_transaction_entries(&entries);
+        let original_indexes: Vec<usize> = sorted.iter().map(|(idx, _)| *idx).collect();
+
+        assert_eq!(original_indexes, vec![2, 1, 0]);
+    }
+
+    #[test]
+    fn test_history_query_params_accept_offset_aliases() {
+        let standard: HistoryQueryParams = serde_json::from_value(json!({
+            "_count": 10,
+            "_offset": 25
+        }))
+        .unwrap();
+        assert_eq!(standard.count, Some(10));
+        assert_eq!(standard.offset, Some(25));
+
+        let legacy: HistoryQueryParams = serde_json::from_value(json!({
+            "_count": 10,
+            "__offset": 30
+        }))
+        .unwrap();
+        assert_eq!(legacy.offset, Some(30));
+    }
 
     #[tokio::test]
     async fn test_preprocess_app_secret_plaintext() {

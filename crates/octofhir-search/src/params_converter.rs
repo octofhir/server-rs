@@ -263,9 +263,10 @@ pub fn build_query_from_params_with_config(
             }
         }
     } else {
-        // Default sort by _lastUpdated desc
-        if let Ok(path) = JsonbPath::new(vec!["meta".to_string(), "lastUpdated".to_string()]) {
-            builder = builder.sort_by(SortSpec::desc(path));
+        // Default FHIR ordering is latest updates first. Use the row column so
+        // PostgreSQL can use the per-resource updated_at B-tree index.
+        if let Ok(sort) = SortSpec::column("updated_at", SortOrder::Desc) {
+            builder = builder.sort_by(sort);
         }
     }
 
@@ -399,29 +400,38 @@ fn build_sort_spec(
     registry: &SearchParameterRegistry,
     resource_type: &str,
 ) -> Option<SortSpec> {
-    // Handle special sort fields
-    let path_segments = match field {
-        "_lastUpdated" | "_id" => {
-            // These are stored directly on the row, not in JSONB
-            // Return None and handle separately in the query
-            return None;
+    match field {
+        "_lastUpdated" => {
+            let order = if descending {
+                SortOrder::Desc
+            } else {
+                SortOrder::Asc
+            };
+            return SortSpec::column("updated_at", order).ok();
+        }
+        "_id" => {
+            let order = if descending {
+                SortOrder::Desc
+            } else {
+                SortOrder::Asc
+            };
+            return SortSpec::column("id", order).ok();
         }
         _ => {
             // Look up the field in the registry
             let param_def = registry.get(resource_type, field)?;
             let expr = param_def.expression.as_deref()?;
-            fhirpath_to_jsonb_path(expr, resource_type)
+            let path_segments = fhirpath_to_jsonb_path(expr, resource_type);
+            let path = JsonbPath::new(path_segments).ok()?;
+            let order = if descending {
+                SortOrder::Desc
+            } else {
+                SortOrder::Asc
+            };
+
+            Some(SortSpec::new(path, order))
         }
-    };
-
-    let path = JsonbPath::new(path_segments).ok()?;
-    let order = if descending {
-        SortOrder::Desc
-    } else {
-        SortOrder::Asc
-    };
-
-    Some(SortSpec::new(path, order))
+    }
 }
 
 /// Extract _include specifications from params.
@@ -667,6 +677,41 @@ mod tests {
         );
         assert_eq!(converted.includes[0].source_type, "Observation");
         assert_eq!(converted.includes[0].param_name, "subject");
+    }
+
+    #[test]
+    fn test_default_sort_uses_updated_at_column() {
+        let registry = SearchParameterRegistry::new();
+        let params = parse_query_string("_count=5", 10, 100);
+        let converted = build_query_from_params("Patient", &params, &registry, "public").unwrap();
+        let built = converted.builder.with_raw_resource(true).build().unwrap();
+
+        assert!(
+            built.sql.contains("ORDER BY \"r\".\"updated_at\" DESC"),
+            "expected updated_at column sort, got: {}",
+            built.sql
+        );
+        assert!(
+            !built.sql.contains("meta"),
+            "default sort should not use JSONB meta path, got: {}",
+            built.sql
+        );
+    }
+
+    #[test]
+    fn test_last_updated_and_id_sort_use_columns() {
+        let registry = SearchParameterRegistry::new();
+        let params = parse_query_string("_sort=-_lastUpdated,_id&_count=5", 10, 100);
+        let converted = build_query_from_params("Patient", &params, &registry, "public").unwrap();
+        let built = converted.builder.with_raw_resource(true).build().unwrap();
+
+        assert!(
+            built
+                .sql
+                .contains("ORDER BY \"r\".\"updated_at\" DESC NULLS LAST, \"r\".\"id\" ASC"),
+            "expected _lastUpdated/_id column sort, got: {}",
+            built.sql
+        );
     }
 
     #[test]

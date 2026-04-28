@@ -392,42 +392,47 @@ fn flatten_reference(
     resource_id: &str,
     r: &ExtractedReference,
 ) -> ReferenceIndexRow {
-    let (target_type, target_id, external_url, canonical_url, canonical_version, identifier_system, identifier_value) =
-        match &r.normalized {
-            NormalizedRef::Local {
-                target_type,
-                target_id,
-            } => (
-                Some(target_type.clone()),
-                Some(target_id.clone()),
-                None,
-                None,
-                None,
-                None,
-                None,
-            ),
-            NormalizedRef::External { url } => {
-                (None, None, Some(url.clone()), None, None, None, None)
-            }
-            NormalizedRef::Canonical { url, version } => (
-                None,
-                None,
-                None,
-                Some(url.clone()),
-                version.clone(),
-                None,
-                None,
-            ),
-            NormalizedRef::Identifier { system, value } => (
-                None,
-                None,
-                None,
-                None,
-                None,
-                system.clone(),
-                Some(value.clone()),
-            ),
-        };
+    let (
+        target_type,
+        target_id,
+        external_url,
+        canonical_url,
+        canonical_version,
+        identifier_system,
+        identifier_value,
+    ) = match &r.normalized {
+        NormalizedRef::Local {
+            target_type,
+            target_id,
+        } => (
+            Some(target_type.clone()),
+            Some(target_id.clone()),
+            None,
+            None,
+            None,
+            None,
+            None,
+        ),
+        NormalizedRef::External { url } => (None, None, Some(url.clone()), None, None, None, None),
+        NormalizedRef::Canonical { url, version } => (
+            None,
+            None,
+            None,
+            Some(url.clone()),
+            version.clone(),
+            None,
+            None,
+        ),
+        NormalizedRef::Identifier { system, value } => (
+            None,
+            None,
+            None,
+            None,
+            None,
+            system.clone(),
+            Some(value.clone()),
+        ),
+    };
 
     ReferenceIndexRow {
         resource_type: resource_type.to_string(),
@@ -499,10 +504,7 @@ impl BatchIndexBuffer {
     /// Flush all accumulated rows to the search index tables in one pair of
     /// UNNEST inserts (reference + date). Caller is responsible for any
     /// upstream `DELETE` of stale rows; for fresh CREATEs none is needed.
-    pub async fn flush_with_tx(
-        self,
-        tx: &mut PgTransaction<'_>,
-    ) -> Result<(), StorageError> {
+    pub async fn flush_with_tx(self, tx: &mut PgTransaction<'_>) -> Result<(), StorageError> {
         let BatchIndexBuffer { refs, dates } = self;
 
         if !refs.is_empty() {

@@ -100,7 +100,9 @@ impl AsyncIndexWriter {
     pub async fn submit(&self, job: IndexJob) -> Result<(), StorageError> {
         match self.inner.sender.try_send(job) {
             Ok(()) => Ok(()),
-            Err(mpsc::error::TrySendError::Full(job)) => flush_one(&self.inner.fallback_pool, &job).await,
+            Err(mpsc::error::TrySendError::Full(job)) => {
+                flush_one(&self.inner.fallback_pool, &job).await
+            }
             Err(mpsc::error::TrySendError::Closed(_)) => Err(StorageError::internal(
                 "async index worker channel is closed",
             )),

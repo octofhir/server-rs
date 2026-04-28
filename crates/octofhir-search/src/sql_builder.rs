@@ -319,7 +319,8 @@ impl SortOrder {
 /// Sort specification.
 #[derive(Debug, Clone)]
 pub struct SortSpec {
-    pub path: JsonbPath,
+    pub path: Option<JsonbPath>,
+    pub column: Option<String>,
     pub order: SortOrder,
     pub nulls_last: bool,
 }
@@ -327,7 +328,8 @@ pub struct SortSpec {
 impl SortSpec {
     pub fn new(path: JsonbPath, order: SortOrder) -> Self {
         Self {
-            path,
+            path: Some(path),
+            column: None,
             order,
             nulls_last: true,
         }
@@ -339,6 +341,17 @@ impl SortSpec {
 
     pub fn desc(path: JsonbPath) -> Self {
         Self::new(path, SortOrder::Desc)
+    }
+
+    pub fn column(column: impl Into<String>, order: SortOrder) -> Result<Self, SqlBuilderError> {
+        let column = column.into();
+        validate_identifier(&column)?;
+        Ok(Self {
+            path: None,
+            column: Some(column),
+            order,
+            nulls_last: true,
+        })
     }
 }
 
@@ -666,7 +679,7 @@ impl FhirQueryBuilder {
         let where_clause = self.build_where_clause(&resource_col, &mut params)?;
 
         // Build ORDER BY clause
-        let order_clause = self.build_order_clause(&resource_col);
+        let order_clause = self.build_order_clause(&resource_col, alias)?;
 
         // Build LIMIT/OFFSET clause
         let limit_clause = self.build_limit_clause();
@@ -893,20 +906,38 @@ impl FhirQueryBuilder {
         }
     }
 
-    fn build_order_clause(&self, resource_col: &str) -> String {
+    fn build_order_clause(
+        &self,
+        resource_col: &str,
+        alias: &str,
+    ) -> Result<String, SqlBuilderError> {
         if self.sort.is_empty() {
-            return String::new();
+            return Ok(String::new());
         }
 
-        self.sort
+        let parts = self
+            .sort
             .iter()
             .map(|s| {
-                let accessor = s.path.to_accessor(resource_col, true);
+                let accessor = if let Some(column) = &s.column {
+                    format!(
+                        "{}.{}",
+                        escape_identifier(alias)?,
+                        escape_identifier(column)?
+                    )
+                } else if let Some(path) = &s.path {
+                    path.to_accessor(resource_col, true)
+                } else {
+                    return Err(SqlBuilderError::InvalidPath(
+                        "SortSpec has neither column nor JSONB path".to_string(),
+                    ));
+                };
                 let nulls = if s.nulls_last { " NULLS LAST" } else { "" };
-                format!("{accessor} {}{nulls}", s.order.as_sql())
+                Ok(format!("{accessor} {}{nulls}", s.order.as_sql()))
             })
-            .collect::<Vec<_>>()
-            .join(", ")
+            .collect::<Result<Vec<_>, SqlBuilderError>>()?;
+
+        Ok(parts.join(", "))
     }
 
     fn build_limit_clause(&self) -> String {
@@ -1706,6 +1737,16 @@ mod tests {
         assert!(query.sql.contains("ORDER BY"));
         assert!(query.sql.contains("ASC"));
         assert!(query.sql.contains("NULLS LAST"));
+    }
+
+    #[test]
+    fn test_fhir_query_builder_with_column_sort() {
+        let query = FhirQueryBuilder::new("Patient", "public")
+            .sort_by(SortSpec::column("updated_at", SortOrder::Desc).unwrap())
+            .build()
+            .unwrap();
+
+        assert!(query.sql.contains("ORDER BY \"r\".\"updated_at\" DESC"));
     }
 
     #[test]

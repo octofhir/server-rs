@@ -62,10 +62,11 @@ async fn ensure_txid(
     if let Some(t) = *txid_slot {
         return Ok(t);
     }
-    let t: i64 = query_scalar("INSERT INTO _transaction (status) VALUES ('committed') RETURNING txid")
-        .fetch_one(&mut **tx)
-        .await
-        .map_err(|e| StorageError::internal(format!("Failed to allocate txid: {e}")))?;
+    let t: i64 =
+        query_scalar("INSERT INTO _transaction (status) VALUES ('committed') RETURNING txid")
+            .fetch_one(&mut **tx)
+            .await
+            .map_err(|e| StorageError::internal(format!("Failed to allocate txid: {e}")))?;
     *txid_slot = Some(t);
     Ok(t)
 }

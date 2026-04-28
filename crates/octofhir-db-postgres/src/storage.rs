@@ -3,8 +3,9 @@
 use std::sync::{Arc, OnceLock};
 
 use async_trait::async_trait;
-use serde_json::Value;
+use serde_json::{Map, Value};
 use sqlx_postgres::PgPool;
+use time::format_description::well_known::Rfc3339;
 
 use octofhir_search::{QueryCache, SearchParameter, SearchParameterRegistry};
 use octofhir_storage::{
@@ -41,18 +42,35 @@ pub struct PostgresStorage {
 }
 
 impl PostgresStorage {
-    fn stored_to_raw(result: StoredResource) -> Result<RawStoredResource, StorageError> {
-        let resource_json = serde_json::to_string(&result.resource)
-            .map_err(|e| StorageError::internal(format!("Failed to serialize resource: {e}")))?;
+    fn resource_for_index(
+        resource: &Value,
+        stored: &RawStoredResource,
+    ) -> Result<Value, StorageError> {
+        let mut indexed = resource.clone();
+        let obj = indexed.as_object_mut().ok_or_else(|| {
+            StorageError::invalid_resource("Cannot index non-object FHIR resource")
+        })?;
 
-        Ok(RawStoredResource {
-            id: result.id,
-            version_id: result.version_id,
-            resource_type: result.resource_type,
-            resource_json,
-            last_updated: result.last_updated,
-            created_at: result.created_at,
-        })
+        obj.insert("id".to_string(), Value::String(stored.id.clone()));
+
+        let mut meta = obj
+            .get("meta")
+            .and_then(Value::as_object)
+            .cloned()
+            .unwrap_or_else(Map::new);
+        meta.insert(
+            "versionId".to_string(),
+            Value::String(stored.version_id.clone()),
+        );
+        meta.insert(
+            "lastUpdated".to_string(),
+            Value::String(stored.last_updated.format(&Rfc3339).map_err(|e| {
+                StorageError::internal(format!("Failed to format lastUpdated for indexing: {e}"))
+            })?),
+        );
+        obj.insert("meta".to_string(), Value::Object(meta));
+
+        Ok(indexed)
     }
 
     /// Creates a new `PostgresStorage` with the given configuration.
@@ -352,8 +370,27 @@ impl FhirStorage for PostgresStorage {
         &self,
         resource: &Value,
     ) -> Result<octofhir_storage::RawStoredResource, StorageError> {
-        let stored = self.create(resource).await?;
-        Self::stored_to_raw(stored)
+        let result = queries::crud::create_raw(&self.pool, resource).await?;
+        let indexed_resource = Self::resource_for_index(resource, &result)?;
+
+        if let Err(e) = self
+            .dispatch_index_write(
+                IndexOp::Create,
+                &result.resource_type,
+                &result.id,
+                &indexed_resource,
+            )
+            .await
+        {
+            tracing::warn!(
+                error = %e,
+                resource_type = %result.resource_type,
+                resource_id = %result.id,
+                "search index write failed after raw create"
+            );
+        }
+
+        Ok(result)
     }
 
     async fn read(
@@ -414,8 +451,27 @@ impl FhirStorage for PostgresStorage {
         resource: &Value,
         if_match: Option<&str>,
     ) -> Result<octofhir_storage::RawStoredResource, StorageError> {
-        let stored = self.update(resource, if_match).await?;
-        Self::stored_to_raw(stored)
+        let result = queries::crud::update_raw(&self.pool, resource, if_match).await?;
+        let indexed_resource = Self::resource_for_index(resource, &result)?;
+
+        if let Err(e) = self
+            .dispatch_index_write(
+                IndexOp::Update,
+                &result.resource_type,
+                &result.id,
+                &indexed_resource,
+            )
+            .await
+        {
+            tracing::warn!(
+                error = %e,
+                resource_type = %result.resource_type,
+                resource_id = %result.id,
+                "search index write failed after raw update"
+            );
+        }
+
+        Ok(result)
     }
 
     async fn delete(&self, resource_type: &str, id: &str) -> Result<(), StorageError> {

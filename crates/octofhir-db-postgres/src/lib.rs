@@ -68,12 +68,12 @@ pub mod queries;
 pub use config::PostgresConfig;
 pub use error::{PostgresError, Result};
 pub use fcm_storage::{FhirSchemaInfo, FhirSchemaRecord, PostgresPackageStore};
+pub use index_writer::{AsyncIndexWriter, IndexJob, IndexOp, IndexWriterConfig};
 pub use notification_storage::PostgresNotificationStorage;
 pub use query_analyzer::{
     AnalyzerConfig, AnalyzerError, AnalyzerStatsSnapshot, BufferStats, IndexSuggestion, IndexUsage,
     QueryAnalysis, QueryAnalyzer, SeqScanInfo, SlowQueryRecord, SuggestionImpact,
 };
-pub use index_writer::{AsyncIndexWriter, IndexJob, IndexOp, IndexWriterConfig};
 pub use schema::SchemaManager;
 pub use storage::PostgresStorage;
 

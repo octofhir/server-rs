@@ -1721,9 +1721,7 @@ pub async fn build_app(
         package_store,
         subscription_state,
         terminology_provider,
-        anonymous_auth_context: Arc::new(
-            octofhir_auth::middleware::AuthContext::system_anonymous(),
-        ),
+        anonymous_auth_context: Arc::new(octofhir_auth::middleware::AuthContext::system_anonymous()),
         // automation_state,
     }));
 

@@ -935,7 +935,8 @@ pub async fn auth_middleware(
 
     // Inject the shared anonymous AuthContext; Arc::clone is one atomic.
     if state.anonymous_access {
-        req.extensions_mut().insert(Arc::clone(&state.anonymous_context));
+        req.extensions_mut()
+            .insert(Arc::clone(&state.anonymous_context));
         return next.run(req).await;
     }
 
