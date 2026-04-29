@@ -6,12 +6,12 @@ import {
     type MenuGroup as AsideMenuGroup,
     type MenuItem as AsideMenuItem,
 } from "@gravity-ui/navigation";
-import classes from "./TrackerLayout.module.css";
+import classes from "./AppLayout.module.css";
 
-export type TrackerNavItem = AsideMenuItem;
-export type TrackerNavGroup = AsideMenuGroup;
+export type AppNavItem = AsideMenuItem;
+export type AppNavGroup = AsideMenuGroup;
 
-export interface TrackerLayoutProps
+export interface AppLayoutProps
     extends Omit<AsideHeaderProps, "renderContent" | "pinned" | "menuGroups" | "className"> {
     defaultPinned?: boolean;
     pinned?: boolean;
@@ -24,6 +24,7 @@ export interface TrackerLayoutProps
     /** Persist pinned + collapsed group state to localStorage under this key prefix. */
     persistKey?: string;
     children?: ReactNode;
+    renderFooter?: (props: { isPinned: boolean }) => ReactNode;
 }
 
 interface PersistedState {
@@ -68,11 +69,15 @@ function useMediaQuery(query: string) {
     return matches;
 }
 
-export const TrackerLayout = forwardRef<HTMLDivElement, TrackerLayoutProps>(
-    function TrackerLayout(
+/**
+ * Modern Application Layout renamed from TrackerLayout to AppLayout.
+ * Provides consistent sidebar, theme management, and responsive behaviors.
+ */
+export const AppLayout = forwardRef<HTMLDivElement, AppLayoutProps>(
+    function AppLayout(
         {
             defaultPinned = true,
-            pinned,
+            pinned: controlledPinned,
             children,
             onChangePinned,
             menuGroups,
@@ -80,9 +85,10 @@ export const TrackerLayout = forwardRef<HTMLDivElement, TrackerLayoutProps>(
             onMenuGroupsChanged,
             className,
             contentClassName,
-            collapseBelow,
+            collapseBelow = 900,
             topAlert,
             isCompactMode,
+            renderFooter,
             ...rest
         },
         ref,
@@ -92,38 +98,26 @@ export const TrackerLayout = forwardRef<HTMLDivElement, TrackerLayoutProps>(
         const [internalPinned, setInternalPinned] = useState<boolean>(
             persisted.pinned ?? defaultPinned,
         );
-        const isControlled = pinned !== undefined;
-        const shouldCollapseByViewport = useMediaQuery(
-            collapseBelow ? `(max-width: ${collapseBelow}px)` : "(max-width: 0px)",
-        );
-        const resolvedPinned = isControlled ? (pinned as boolean) : internalPinned;
+        const isControlled = controlledPinned !== undefined;
+        const shouldCollapseByViewport = useMediaQuery(`(max-width: ${collapseBelow}px)`);
+        
+        const resolvedPinned = isControlled ? (controlledPinned as boolean) : internalPinned;
         const effectivePinned = shouldCollapseByViewport ? false : resolvedPinned;
 
         const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>(
             persisted.collapsedGroups ?? {},
         );
 
-        const persist = useCallback(
-            (next: PersistedState) => {
-                if (!persistKey) return;
-                writeState(persistKey, {
-                    pinned: effectivePinned,
-                    collapsedGroups,
-                    ...next,
-                });
-            },
-            [persistKey, effectivePinned, collapsedGroups],
-        );
-
         useEffect(() => {
-            if (persistKey) writeState(persistKey, { pinned: effectivePinned, collapsedGroups });
-        }, [persistKey, effectivePinned, collapsedGroups]);
+            if (persistKey) {
+                writeState(persistKey, { pinned: internalPinned, collapsedGroups });
+            }
+        }, [persistKey, internalPinned, collapsedGroups]);
 
         const handlePinnedChange = (next: boolean) => {
             if (shouldCollapseByViewport) return;
             if (!isControlled) setInternalPinned(next);
             onChangePinned?.(next);
-            persist({ pinned: next });
         };
 
         const resolvedGroups = useMemo<AsideMenuGroup[] | undefined>(() => {
@@ -152,17 +146,16 @@ export const TrackerLayout = forwardRef<HTMLDivElement, TrackerLayoutProps>(
 
         return (
             <PageLayout
-                className={className}
+                className={[classes.layout, className].filter(Boolean).join(" ")}
                 pinned={effectivePinned}
                 onChangePinned={handlePinnedChange}
                 topAlert={topAlert}
-                isCompactMode={isCompactMode}
             >
                 <PageLayoutAside
                     ref={ref}
                     menuGroups={resolvedGroups}
                     onMenuGroupsChanged={handleGroupsChanged}
-                    isCompactMode={isCompactMode}
+                    renderFooter={renderFooter ? () => renderFooter({ isPinned: effectivePinned }) : undefined}
                     {...rest}
                 />
                 <PageLayout.Content>

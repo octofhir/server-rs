@@ -1,23 +1,11 @@
-import { useState } from "react";
+import { useMemo } from "react";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
 import {
-	AppShell as KitAppShell,
-	Badge,
-	ActionIcon,
-	Burger,
-	Group,
-	NavLink,
-	Text,
-	Tooltip,
-	Box,
-	Stack,
-	Divider,
+	Flex,
 	ErrorBoundary,
 } from "@/shared/ui";
 import {
-	useColorScheme,
-	useDisclosure,
-	useLocalStorage,
+	DashboardShell,
 } from "@octofhir/ui-kit";
 import {
 	House,
@@ -30,558 +18,233 @@ import {
 	Code,
 	Sun,
 	Moon,
-	ArrowRightFromSquare,
-	Pulse,
 	Persons,
 	Key,
 	Shield,
-	Globe,
 	FileText,
 	SquareListUl,
-	Smartphone,
-	FaceRobot,
-	LayoutSideContentRight,
-	LayoutSideContentLeft,
+	Cubes3Overlap,
+	Function as FunctionIcon,
+	Receipt,
+	Globe,
+	Display,
 } from "@gravity-ui/icons";
-import { useHealth, useAuth, useBuildInfo, useSettings } from "@/shared/api/hooks";
+import { useHealth, useAuth, useSettings } from "@/shared/api/hooks";
+import { useColorScheme } from "@octofhir/ui-kit";
 
-interface NavItem {
-	label: string;
-	path: string;
-	description: string;
-	icon: typeof House;
-}
 const logoUrl = `${import.meta.env.BASE_URL}logo.png`;
-const SIDEBAR_WIDTH_EXPANDED = 240;
-const SIDEBAR_WIDTH_COLLAPSED = 68;
 
-
-const mainNavigation: NavItem[] = [
-	{
-		label: "Dashboard",
-		path: "/",
-		description: "Overview and quick actions",
-		icon: House,
-	},
-	{
-		label: "Resource Browser",
-		path: "/resources",
-		description: "Browse FHIR resources",
-		icon: Folder,
-	},
-	{
-		label: "REST Console",
-		path: "/console",
-		description: "Test FHIR API endpoints",
-		icon: Terminal,
-	},
-];
-
-const packagesNavigation: NavItem[] = [
-	{
-		label: "Packages",
-		path: "/packages",
-		description: "Manage FHIR packages",
-		icon: Box,
-	},
-];
-
-const adminNavigation: NavItem[] = [
-	{
-		label: "Operations",
-		path: "/operations",
-		description: "View server API operations",
-		icon: Cpu,
-	},
-	{
-		label: "Apps",
-		path: "/apps",
-		description: "Manage applications",
-		icon: Boxes3,
-	},
-	{
-		label: "Automations",
-		path: "/automations",
-		description: "Event-driven automation scripts",
-		icon: FaceRobot,
-	},
-	{
-		label: "Audit Trail",
-		path: "/audit",
-		description: "Track system activity",
-		icon: Shield,
-	},
-];
-
-const authNavigation: NavItem[] = [
-	{
-		label: "Identity Providers",
-		path: "/auth/providers",
-		description: "External auth providers",
-		icon: Globe,
-	},
-	{
-		label: "Clients",
-		path: "/auth/clients",
-		description: "OAuth clients & apps",
-		icon: Key,
-	},
-	{
-		label: "Users",
-		path: "/auth/users",
-		description: "User accounts",
-		icon: Persons,
-	},
-	{
-		label: "Sessions",
-		path: "/auth/sessions",
-		description: "Active login sessions",
-		icon: Smartphone,
-	},
-	{
-		label: "Roles",
-		path: "/auth/roles",
-		description: "Manage roles & permissions",
-		icon: Shield,
-	},
-	{
-		label: "Access Policies",
-		path: "/auth/policies",
-		description: "Access control policies",
-		icon: Shield,
-	},
-];
-
-const toolsNavigation: NavItem[] = [
-	{
-		label: "DB Console",
-		path: "/db-console",
-		description: "SQL Editor & Query Tool",
-		icon: Database,
-	},
-	{
-		label: "GraphQL",
-		path: "/graphql",
-		description: "GraphQL Query Console",
-		icon: Code,
-	},
-	{
-		label: "FHIRPath Console",
-		path: "/fhirpath",
-		description: "FHIRPath Expression Evaluator",
-		icon: Terminal,
-	},
-	{
-		label: "CQL Console",
-		path: "/cql",
-		description: "Clinical Quality Language Evaluator",
-		icon: Code,
-	},
-	{
-		label: "ViewDefinition",
-		path: "/viewdefinition",
-		description: "SQL on FHIR ViewDefinition Editor",
-		icon: SquareListUl,
-	},
-	{
-		label: "System Logs",
-		path: "/logs",
-		description: "Real-time server logs",
-		icon: FileText,
-	},
-	{
-		label: "Settings",
-		path: "/settings",
-		description: "Configure server settings",
-		icon: Gear,
-	},
-];
-
-function HealthBadge() {
-	const { data: health } = useHealth();
-
-	const statusColor = {
-		ok: "green",
-		degraded: "yellow",
-		down: "red",
-	}[health?.status ?? "down"];
-
-	return (
-		<Tooltip label={`Server: ${health?.status ?? "unknown"}`}>
-			<Badge
-				size="sm"
-				color={statusColor}
-				variant="light"
-				leftSection={<Pulse size={12} />}
-			>
-				{health?.status ?? "..."}
-			</Badge>
-		</Tooltip>
-	);
-}
-
-function ThemeToggle() {
-	const { colorScheme, toggleColorScheme } = useColorScheme();
-
-	return (
-		<Tooltip label={`Switch to ${colorScheme === "dark" ? "light" : "dark"} mode`}>
-			<ActionIcon
-				variant="subtle"
-				size="lg"
-				onClick={() => toggleColorScheme()}
-				aria-label="Toggle color scheme"
-				style={{ color: "var(--app-header-fg)" }}
-			>
-				{colorScheme === "dark" ? <Sun size={18} /> : <Moon size={18} />}
-			</ActionIcon>
-		</Tooltip>
-	);
-}
-
+/**
+ * AppShell provides the top-level navigation and layout for the console.
+ * Utilizes the DashboardShell from our UI kit.
+ */
 export function AppShell() {
-	const [opened, { toggle, close }] = useDisclosure();
-	const [sidebarCompact, setSidebarCompact] = useLocalStorage({
-		key: "app-shell-sidebar-compact",
-		defaultValue: true,
-	});
-	const [sidebarHovered, setSidebarHovered] = useState(false);
 	const location = useLocation();
 	const navigate = useNavigate();
 	const { logout, user } = useAuth();
-	const { data: buildInfo } = useBuildInfo();
+	const { colorScheme, toggleColorScheme } = useColorScheme();
+	const { data: health } = useHealth();
 	const { data: settings } = useSettings();
 
-	// Check if CQL feature is enabled
-	const cqlEnabled = settings?.features?.cql ?? false;
-	const isNavbarCompact = sidebarCompact && !sidebarHovered && !opened;
-	const navbarWidth = isNavbarCompact
-		? SIDEBAR_WIDTH_COLLAPSED
-		: SIDEBAR_WIDTH_EXPANDED;
+	const menuItems = useMemo(() => [
+		{
+			id: "dashboard",
+			title: "Dashboard",
+			icon: House,
+			active: location.pathname === "/" || location.pathname === "/ui/",
+			onItemClick: () => navigate("/"),
+		},
+		{
+			id: "resources",
+			title: "Resources",
+			icon: Folder,
+			active: location.pathname.startsWith("/resources"),
+			onItemClick: () => navigate("/resources"),
+		},
+		{
+			id: "console",
+			title: "REST Console",
+			icon: Terminal,
+			active: location.pathname.startsWith("/console"),
+			onItemClick: () => navigate("/console"),
+		},
+		{
+			id: "packages",
+			title: "Packages",
+			icon: Boxes3,
+			active: location.pathname.startsWith("/packages"),
+			onItemClick: () => navigate("/packages"),
+		},
+	], [location.pathname, navigate]);
 
-	const isActive = (path: string) => {
-		if (path === "/") {
-			return location.pathname === "/";
-		}
-		return location.pathname.startsWith(path);
-	};
+	const menuGroups = useMemo(() => [
+		{
+			id: "admin",
+			title: "Administration",
+			items: [
+				{
+					id: "operations",
+					title: "Operations",
+					icon: FunctionIcon,
+					active: location.pathname.startsWith("/operations"),
+					onItemClick: () => navigate("/operations"),
+				},
+				{
+					id: "apps",
+					title: "Apps",
+					icon: Cubes3Overlap,
+					active: location.pathname.startsWith("/apps"),
+					onItemClick: () => navigate("/apps"),
+				},
+				{
+					id: "automations",
+					title: "Automations",
+					icon: Cpu,
+					active: location.pathname.startsWith("/automations"),
+					onItemClick: () => navigate("/automations"),
+				},
+				{
+					id: "audit",
+					title: "Audit Trail",
+					icon: Receipt,
+					active: location.pathname.startsWith("/audit"),
+					onItemClick: () => navigate("/audit"),
+				},
+			],
+		},
+		{
+			id: "auth",
+			title: "Auth & Security",
+			items: [
+				{
+					id: "providers",
+					title: "Identity Providers",
+					icon: Globe,
+					active: location.pathname.startsWith("/auth/providers"),
+					onItemClick: () => navigate("/auth/providers"),
+				},
+				{
+					id: "clients",
+					title: "Clients",
+					icon: Key,
+					active: location.pathname.startsWith("/auth/clients") || location.pathname.startsWith("/clients"),
+					onItemClick: () => navigate("/auth/clients"),
+				},
+				{
+					id: "users",
+					title: "Users",
+					icon: Persons,
+					active: location.pathname.startsWith("/auth/users") || location.pathname.startsWith("/users"),
+					onItemClick: () => navigate("/auth/users"),
+				},
+				{
+					id: "roles",
+					title: "Roles",
+					icon: Shield,
+					active: location.pathname.startsWith("/auth/roles"),
+					onItemClick: () => navigate("/auth/roles"),
+				},
+				{
+					id: "policies",
+					title: "Access Policies",
+					icon: Shield,
+					active: location.pathname.startsWith("/auth/policies") || location.pathname.startsWith("/access-policies"),
+					onItemClick: () => navigate("/auth/policies"),
+				},
+				{
+					id: "sessions",
+					title: "Sessions",
+					icon: Display,
+					active: location.pathname.startsWith("/auth/sessions"),
+					onItemClick: () => navigate("/auth/sessions"),
+				},
+			],
+		},
+		{
+			id: "tools",
+			title: "Tools",
+			items: [
+				{
+					id: "db-console",
+					title: "DB Console",
+					icon: Database,
+					active: location.pathname.startsWith("/db-console"),
+					onItemClick: () => navigate("/db-console"),
+				},
+				{
+					id: "graphql",
+					title: "GraphQL",
+					icon: Code,
+					active: location.pathname.startsWith("/graphql"),
+					onItemClick: () => navigate("/graphql"),
+				},
+				{
+					id: "fhirpath",
+					title: "FHIRPath",
+					icon: Terminal,
+					active: location.pathname.startsWith("/fhirpath"),
+					onItemClick: () => navigate("/fhirpath"),
+				},
+				{
+					id: "viewdefinition",
+					title: "ViewDefinition",
+					icon: SquareListUl,
+					active: location.pathname.startsWith("/viewdefinition"),
+					onItemClick: () => navigate("/viewdefinition"),
+				},
+				{
+					id: "logs",
+					title: "System Logs",
+					icon: FileText,
+					active: location.pathname.startsWith("/logs"),
+					onItemClick: () => navigate("/logs"),
+				},
+				{
+					id: "settings",
+					title: "Settings",
+					icon: Gear,
+					active: location.pathname.startsWith("/settings"),
+					onItemClick: () => navigate("/settings"),
+				},
+			],
+		},
+	], [location.pathname, navigate]);
 
-	const handleLogout = async () => {
-		await logout();
-		navigate("/login");
-	};
-
-	const toggleSidebarCompact = () => {
-		setSidebarCompact((prev) => !prev);
-		setSidebarHovered(false);
-	};
-
-	const renderNavItems = (items: NavItem[]) =>
-		items
-			.filter((item) => {
-				// Hide CQL console if CQL feature is disabled
-				if (item.path === "/cql" && !cqlEnabled) {
-					return false;
-				}
-				return true;
-			})
-			.map((item) => {
-				const navItem = (
-					<NavLink
-						key={item.path}
-						label={item.label}
-						leftSection={<item.icon size={15} stroke={1.55} />}
-						active={isActive(item.path)}
-						onClick={() => {
-							navigate(item.path);
-							close();
-						}}
-						variant="subtle"
-						styles={{
-							root: {
-								borderRadius: "var(--octo-radius-sm)",
-								paddingTop: 4,
-								paddingBottom: 4,
-								paddingLeft: 8,
-								paddingRight: 8,
-								minHeight: 34,
-								overflow: "hidden",
-								"&[data-active]": {
-									backgroundColor: "var(--octo-surface-3)",
-									color: "var(--octo-text-primary)",
-								},
-								"&:hover:not([data-active])": {
-									backgroundColor: "var(--app-header-hover-bg)",
-								},
-							},
-							body: {
-								overflow: "hidden",
-							},
-							label: {
-								fontSize: "12px",
-								fontWeight: 500,
-								whiteSpace: "nowrap",
-								maxWidth: isNavbarCompact ? 0 : 168,
-								opacity: isNavbarCompact ? 0 : 1,
-								transform: isNavbarCompact ? "translateX(-4px)" : "translateX(0)",
-								marginLeft: isNavbarCompact ? 0 : 2,
-								transition:
-									"max-width 180ms ease, opacity 140ms ease, transform 180ms ease, margin-left 180ms ease",
-							},
-							section: {
-								marginRight: isNavbarCompact ? 0 : 8,
-								opacity: 0.85,
-								transition: "margin-right 180ms ease",
-							},
-						}}
-					/>
-				);
-
-				if (!isNavbarCompact) {
-					return navItem;
-				}
-
-				return (
-					<Tooltip
-						key={item.path}
-						label={`${item.label} — ${item.description}`}
-						position="right"
-						openDelay={200}
-					>
-						<Box>{navItem}</Box>
-					</Tooltip>
-				);
-			});
-
-	const renderSection = (title: string, items: NavItem[]) => (
-		<>
-			<Text
-				size="11px"
-				fw={600}
-				c="dimmed"
-				tt="uppercase"
-				px="xs"
-				style={{
-					letterSpacing: "0.05em",
-					height: 14,
-					overflow: "hidden",
-					opacity: isNavbarCompact ? 0 : 1,
-					transform: isNavbarCompact ? "translateX(-6px)" : "translateX(0)",
-					transition: "opacity 160ms ease, transform 160ms ease",
-					pointerEvents: "none",
-				}}
-			>
-				{title}
-			</Text>
-			{renderNavItems(items)}
-		</>
-	);
+	const statusColor = {
+		ok: "success",
+		degraded: "warning",
+		down: "danger",
+	}[health?.status ?? "down"];
 
 	return (
-		<KitAppShell
-			header={{ height: 48 }}
-			navbar={{
-				width: navbarWidth,
-				breakpoint: "sm",
-				collapsed: { mobile: !opened },
+		<DashboardShell
+			logo={{
+				text: settings?.serverName ?? "Abyxon",
+				iconSrc: logoUrl,
+				onClick: () => navigate("/"),
 			}}
-			padding="0" // Set to 0 because we handle padding in pages
+			menuItems={menuItems}
+			menuGroups={menuGroups}
+			persistKey="octofhir-sidebar"
+			themeAction={{
+				label: `Switch to ${colorScheme === "dark" ? "light" : "dark"} mode`,
+				icon: colorScheme === "dark" ? <Sun size={18} /> : <Moon size={18} />,
+				onClick: toggleColorScheme,
+			}}
+			status={{
+				label: health?.status?.toUpperCase() ?? "UNKNOWN",
+				theme: statusColor as any,
+			}}
+			account={user ? {
+				name: user.name || user.username,
+				onSignOut: logout,
+			} : null}
 		>
-			<KitAppShell.Header
-				style={{
-					background: "var(--app-header-bg)",
-					color: "var(--app-header-fg)",
-					borderBottom: "1px solid var(--octo-border-subtle)",
-					zIndex: 100,
-				}}
-			>
-				<Group h="100%" px="md" justify="space-between">
-					<Group>
-						<Burger
-							opened={opened}
-							onClick={toggle}
-							hiddenFrom="sm"
-							size="sm"
-							color="var(--app-header-fg)"
-						/>
-						<Group gap="xs">
-							<Box
-								component="img"
-								src={logoUrl}
-								alt="Abyxon logo"
-								h={32}
-								style={{ width: "auto" }}
-							/>
-							<Text
-								fw={700}
-								size="md"
-								style={{
-									color: "var(--app-header-fg)",
-									letterSpacing: "-0.02em",
-								}}
-							>
-								Abyxon
-							</Text>
-						</Group>
-					</Group>
-					<Group gap="sm">
-						<HealthBadge />
-						<ThemeToggle />
-						{user && (
-							<Tooltip label={`Logged in as ${user.preferred_username || user.sub}`}>
-								<ActionIcon
-									variant="subtle"
-									size="lg"
-									onClick={handleLogout}
-									style={{ color: "var(--app-header-fg)" }}
-									styles={{
-										root: {
-											borderRadius: "10px",
-											"&:hover": {
-												backgroundColor: "var(--app-header-hover-bg)",
-											},
-										},
-									}}
-								>
-									<ArrowRightFromSquare size={18} />
-								</ActionIcon>
-							</Tooltip>
-						)}
-					</Group>
-				</Group>
-			</KitAppShell.Header>
-
-			<KitAppShell.Navbar
-				p="xs"
-				onMouseEnter={() => {
-					if (sidebarCompact && !opened) {
-						setSidebarHovered(true);
-					}
-				}}
-				onMouseLeave={() => {
-					setSidebarHovered(false);
-				}}
-				style={{
-					display: "flex",
-					flexDirection: "column",
-					backgroundColor: "var(--octo-surface-1)",
-					borderRight: "1px solid var(--octo-border-subtle)",
-					transition: "width 0.28s cubic-bezier(0.2, 0.8, 0.2, 1)",
-				}}
-			>
-				<Box pb="xs" style={{ flexShrink: 0 }}>
-					<Group
-						justify={isNavbarCompact ? "center" : "space-between"}
-						px={isNavbarCompact ? 0 : "xs"}
-					>
-						{!isNavbarCompact && (
-							<Text
-								size="11px"
-								fw={600}
-								c="dimmed"
-								tt="uppercase"
-								style={{ letterSpacing: "0.05em" }}
-							>
-								Navigation
-							</Text>
-						)}
-						<Tooltip
-							label={sidebarCompact ? "Pin sidebar open" : "Collapse to icons"}
-						>
-							<ActionIcon
-								variant="subtle"
-								size="sm"
-								onClick={toggleSidebarCompact}
-							>
-								{sidebarCompact ? (
-									<LayoutSideContentLeft size={14} />
-								) : (
-									<LayoutSideContentRight size={14} />
-								)}
-							</ActionIcon>
-						</Tooltip>
-					</Group>
-				</Box>
-
-				<Box
-					style={{ flex: 1, overflowY: "auto", overflowX: "hidden" }}
-					className="custom-scrollbar"
-				>
-					<Stack gap={4}>
-						{renderSection("Main", mainNavigation)}
-						<Divider my={4} styles={{ root: { opacity: 0.3 } }} />
-
-						{renderSection("Packages", packagesNavigation)}
-						<Divider my={4} styles={{ root: { opacity: 0.3 } }} />
-
-						{renderSection("Admin", adminNavigation)}
-						<Divider my={4} styles={{ root: { opacity: 0.3 } }} />
-
-						{renderSection("Auth", authNavigation)}
-						<Divider my={4} styles={{ root: { opacity: 0.3 } }} />
-
-						{renderSection("Tools", toolsNavigation)}
-					</Stack>
-				</Box>
-
-				<Box pt="md" style={{ flexShrink: 0 }}>
-					<Divider mb="sm" styles={{ root: { opacity: 0.5 } }} />
-					<Stack gap={4} align="center">
-						{!isNavbarCompact && (
-							<Text size="xs" fw={500} c="dimmed">
-								FHIR R4 Server
-							</Text>
-						)}
-						{buildInfo && (
-							<Tooltip
-								label={`Server v${buildInfo.serverVersion}${
-									buildInfo.commit ? ` (${buildInfo.commit.substring(0, 7)})` : ""
-								}`}
-							>
-								<Group gap={4} justify="center">
-									<Badge variant="dot" size="xs" color="primary">
-										v{buildInfo.serverVersion}
-									</Badge>
-									{!isNavbarCompact && buildInfo.commit && (
-										<Text
-											size="xs"
-											c="dimmed"
-											style={{
-												fontFamily:
-													"var(--octo-typography-mono)",
-												opacity: 0.6,
-											}}
-										>
-											{buildInfo.commit.substring(0, 7)}
-										</Text>
-									)}
-								</Group>
-							</Tooltip>
-						)}
-					</Stack>
-				</Box>
-			</KitAppShell.Navbar>
-
-			<KitAppShell.Main
-				style={{
-					display: "flex",
-					flexDirection: "column",
-					height: "calc(100vh - 48px)",
-					backgroundColor: "var(--octo-surface-1)",
-				}}
-			>
-				<Box
-					style={{
-						flex: 1,
-						display: "flex",
-						flexDirection: "column",
-						overflow: "hidden",
-					}}
-				>
-					<ErrorBoundary layout resetKey={location.pathname}>
-						<Outlet />
-					</ErrorBoundary>
-				</Box>
-			</KitAppShell.Main>
-		</KitAppShell>
+			<Flex direction="column" style={{ minHeight: "100%", backgroundColor: "var(--g-color-base-background)" }}>
+				<ErrorBoundary>
+					<Outlet />
+				</ErrorBoundary>
+			</Flex>
+		</DashboardShell>
 	);
 }

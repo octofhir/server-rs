@@ -59,8 +59,8 @@ export * from "./EmptyState";
 // === Data table (TanStack-driven, for grids) ===
 export * from "./DataTable";
 
-// === Tracker layout (AsideHeader-based admin shell) ===
-export * from "./TrackerLayout";
+// === App layout (AsideHeader-based admin shell) ===
+export * from "./AppLayout";
 
 // === Misc ===
 export * from "./Divider";
@@ -90,10 +90,6 @@ export { TextArea as Textarea, type TextAreaProps as TextareaProps } from "./Tex
 export { TextArea as JsonInput, type TextAreaProps as JsonInputProps } from "./TextArea";
 /** @deprecated use {@link Select} */
 export { Select as MultiSelect, type SelectProps as MultiSelectProps } from "./Select";
-/** @deprecated use {@link Select} */
-export { Select as Combobox, type SelectProps as ComboboxProps } from "./Select";
-/** @deprecated use {@link Select} */
-export type ComboboxData = unknown;
 /** @deprecated use {@link DatePicker} */
 export { DatePicker as DateInput, type DatePickerProps as DateInputProps } from "./DatePicker";
 /** @deprecated use {@link DatePicker} */

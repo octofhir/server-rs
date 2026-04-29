@@ -4,43 +4,47 @@ import {
     Badge,
     Button,
     Text,
-    TrackerLayout,
-    type TrackerLayoutProps,
-    type TrackerNavGroup,
-    type TrackerNavItem,
+    AppLayout,
+    type AppLayoutProps,
+    type AppNavGroup,
+    type AppNavItem,
 } from "#/shared/ui";
-import classes from "./TrackerAppShell.module.css";
+import classes from "./AppShell.module.css";
 
-export interface TrackerAppShellStatus {
+export interface DashboardShellStatus {
     label: ReactNode;
     theme: LabelProps["theme"];
 }
 
-export interface TrackerAppShellAction {
+export interface DashboardShellAction {
     icon: ReactNode;
     label: string;
     onClick: () => void;
 }
 
-export interface TrackerAppShellAccount {
+export interface DashboardShellAccount {
     name: ReactNode;
     signOutLabel?: string;
     onSignOut?: () => void;
 }
 
-export interface TrackerAppShellProps
+export interface DashboardShellProps
     extends Pick<
-        TrackerLayoutProps,
+        AppLayoutProps,
         "logo" | "defaultPinned" | "persistKey" | "collapseBelow" | "children"
     > {
-    menuItems: TrackerNavItem[];
-    menuGroups?: TrackerNavGroup[];
-    themeAction?: TrackerAppShellAction;
-    status?: TrackerAppShellStatus;
-    account?: TrackerAppShellAccount | null;
+    menuItems: AppNavItem[];
+    menuGroups?: AppNavGroup[];
+    themeAction?: DashboardShellAction;
+    status?: DashboardShellStatus;
+    account?: DashboardShellAccount | null;
 }
 
-export function TrackerAppShell({
+/**
+ * DashboardShell provides the high-level application structure.
+ * Composes AppLayout with status indicators, theme toggles, and account management.
+ */
+export function DashboardShell({
     logo,
     menuItems,
     menuGroups,
@@ -51,9 +55,9 @@ export function TrackerAppShell({
     status,
     account,
     children,
-}: TrackerAppShellProps) {
+}: DashboardShellProps) {
     return (
-        <TrackerLayout
+        <AppLayout
             logo={logo}
             menuItems={menuItems}
             menuGroups={menuGroups}
@@ -112,6 +116,6 @@ export function TrackerAppShell({
             )}
         >
             {children}
-        </TrackerLayout>
+        </AppLayout>
     );
 }

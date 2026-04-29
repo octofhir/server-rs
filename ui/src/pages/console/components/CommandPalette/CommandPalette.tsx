@@ -3,13 +3,11 @@ import {
 	Modal,
 	TextInput,
 	Stack,
-	Group,
+	Flex,
 	Text,
 	Kbd,
-	ScrollArea,
-	Combobox,
+	Box,
 } from "@/shared/ui";
-import { useCombobox } from "@octofhir/ui-kit";
 import { IconSearch } from "@octofhir/ui-kit";
 import { useUnit } from "effector-react";
 import {
@@ -53,19 +51,10 @@ export function CommandPalette() {
 		setMode,
 		setCustomHeaders,
 	});
+
 	const [query, setQuery] = useState("");
+	const [selectedIndex, setSelectedIndex] = useState(0);
 	const inputRef = useRef<HTMLInputElement>(null);
-
-	// Debug logging
-	useEffect(() => {
-		console.log("[CommandPalette] opened state:", opened);
-	}, [opened]);
-
-	const combobox = useCombobox({
-		onDropdownClose: () => {
-			combobox.resetSelectedOption();
-		},
-	});
 
 	// Get commands from all providers
 	const builderCommands = useBuilderCommands();
@@ -83,17 +72,10 @@ export function CommandPalette() {
 		[allCommands, query],
 	);
 
-	// Group commands by category
-	const groupedCommands = useMemo(() => {
-		const groups = new Map<string, ConsoleCommand[]>();
-
-		for (const cmd of filteredCommands) {
-			const existing = groups.get(cmd.category) || [];
-			groups.set(cmd.category, [...existing, cmd]);
-		}
-
-		return groups;
-	}, [filteredCommands]);
+	// Reset selection when query changes
+	useEffect(() => {
+		setSelectedIndex(0);
+	}, [query]);
 
 	// Create command execution context
 	const commandContext = useMemo(
@@ -126,78 +108,76 @@ export function CommandPalette() {
 
 	const handleExecute = (command: ConsoleCommand) => {
 		command.execute(commandContext);
+		setOpened(false);
 	};
 
-	// Focus input and open dropdown when palette opens
+	const handleKeyDown = (e: React.KeyboardEvent) => {
+		if (e.key === "ArrowDown") {
+			e.preventDefault();
+			setSelectedIndex((prev) => (prev + 1) % filteredCommands.length);
+		} else if (e.key === "ArrowUp") {
+			e.preventDefault();
+			setSelectedIndex((prev) => (prev - 1 + filteredCommands.length) % filteredCommands.length);
+		} else if (e.key === "Enter") {
+			e.preventDefault();
+			const selected = filteredCommands[selectedIndex];
+			if (selected) handleExecute(selected);
+		} else if (e.key === "Escape") {
+			setOpened(false);
+		}
+	};
+
+	// Focus input when palette opens
 	useEffect(() => {
 		if (opened) {
 			setTimeout(() => {
 				inputRef.current?.focus();
-				combobox.openDropdown();
 			}, 0);
 		} else {
 			setQuery("");
-			combobox.closeDropdown();
 		}
-	}, [opened, combobox]);
+	}, [opened]);
 
 	return (
 		<Modal
 			opened={opened}
 			onClose={() => setOpened(false)}
-			title="Command Palette"
+			title={
+				<Flex alignItems="center" gap="2">
+					<IconSearch size={16} />
+					<Text variant="subheader-1">Command Palette</Text>
+				</Flex>
+			}
 			size="lg"
 			trapFocus
 			withCloseButton
-			aria-labelledby="command-palette-title"
 		>
 			<Stack gap="md">
-				<Combobox
-					store={combobox}
-					onOptionSubmit={(optionId) => {
-						const command = allCommands.find((c) => c.id === optionId);
-						if (command) {
-							handleExecute(command);
-						}
-					}}
-				>
-					<Combobox.Target>
-						<TextInput
-							ref={inputRef}
-							placeholder="Type to search commands..."
-							value={query}
-							onChange={(e) => setQuery(e.currentTarget.value)}
-							leftSection={<IconSearch size={16} />}
-							onKeyDown={(e) => {
-								if (e.key === "Escape") {
-									e.preventDefault();
-									setOpened(false);
-								}
-							}}
-						/>
-					</Combobox.Target>
+				<TextInput
+					ref={inputRef}
+					placeholder="Search commands (e.g. 'GET patient', 'clear history')..."
+					value={query}
+					onChange={(e) => setQuery(e.currentTarget.value)}
+					onKeyDown={handleKeyDown}
+					size="l"
+					autoFocus
+				/>
 
-					<Combobox.Dropdown>
-						<ScrollArea.Autosize mah={400}>
-							<CommandList
-								grouped={groupedCommands}
-								onExecute={handleExecute}
-							/>
-						</ScrollArea.Autosize>
-					</Combobox.Dropdown>
-				</Combobox>
+				<Box style={{ maxHeight: 400, overflowY: "auto" }}>
+					<CommandList
+						commands={filteredCommands}
+						selectedIndex={selectedIndex}
+						onExecute={handleExecute}
+					/>
+				</Box>
 
-				<Group justify="space-between" c="dimmed" fz="xs">
-					<Text>
-						<Kbd>↑</Kbd> <Kbd>↓</Kbd> Navigate
-					</Text>
-					<Text>
-						<Kbd>Enter</Kbd> Execute
-					</Text>
-					<Text>
-						<Kbd>Esc</Kbd> Close
-					</Text>
-				</Group>
+				<Flex justifyContent="space-between" style={{ opacity: 0.6, fontSize: "11px", borderTop: "1px solid var(--g-color-line-generic-subtle)", paddingTop: "12px" }}>
+					<Flex gap="3">
+						<Text><Kbd>↑↓</Kbd> Navigate</Text>
+						<Text><Kbd>Enter</Kbd> Execute</Text>
+					</Flex>
+					<Text><Kbd>Esc</Kbd> Close</Text>
+				</Flex>
 			</Stack>
 		</Modal>
 	);

@@ -1,26 +1,18 @@
-import { Box, Text, Stack, Combobox } from "@/shared/ui";
+import { Box, Text, Stack } from "@/shared/ui";
 import type { ConsoleCommand } from "../../commands/types";
 import { CommandItem } from "./CommandItem";
 
 interface CommandListProps {
-	grouped: Map<string, ConsoleCommand[]>;
+	commands: ConsoleCommand[];
+	selectedIndex: number;
 	onExecute: (command: ConsoleCommand) => void;
 }
 
-const CATEGORY_LABELS: Record<string, string> = {
-	history: "Recent History",
-	builder: "Builder Actions",
-	snippet: "Saved Snippets",
-	navigation: "Navigation",
-};
-
-const CATEGORY_ORDER = ["history", "builder", "snippet", "navigation"];
-
-export function CommandList({ grouped, onExecute }: CommandListProps) {
-	if (grouped.size === 0) {
+export function CommandList({ commands, selectedIndex, onExecute }: CommandListProps) {
+	if (commands.length === 0) {
 		return (
 			<Box py="xl">
-				<Text c="dimmed" ta="center">
+				<Text color="secondary" style={{ textAlign: "center" }}>
 					No commands found
 				</Text>
 			</Box>
@@ -28,26 +20,23 @@ export function CommandList({ grouped, onExecute }: CommandListProps) {
 	}
 
 	return (
-		<Stack gap="md" py="sm">
-			{CATEGORY_ORDER.map((category) => {
-				const commands = grouped.get(category);
-				if (!commands || commands.length === 0) return null;
-
-				return (
-					<Box key={category}>
-						<Text size="xs" fw={600} c="dimmed" mb="xs" px="sm">
-							{CATEGORY_LABELS[category] || category}
-						</Text>
-						<Combobox.Options>
-							{commands.map((command) => (
-								<Combobox.Option key={command.id} value={command.id}>
-									<CommandItem command={command} />
-								</Combobox.Option>
-							))}
-						</Combobox.Options>
-					</Box>
-				);
-			})}
+		<Stack gap="1">
+			{commands.map((command, index) => (
+				<Box
+					key={command.id}
+					onClick={() => onExecute(command)}
+					style={{
+						padding: "8px 12px",
+						borderRadius: "8px",
+						cursor: "pointer",
+						backgroundColor: index === selectedIndex ? "var(--g-color-base-selection)" : "transparent",
+						transition: "background-color 0.1s ease",
+					}}
+					onMouseEnter={() => {}} // Could sync selectedIndex here if desired
+				>
+					<CommandItem command={command} />
+				</Box>
+			))}
 		</Stack>
 	);
 }

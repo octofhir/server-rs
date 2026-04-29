@@ -200,7 +200,3 @@ export function useScrollIntoView() {
 export function useElementSize() {
     return { ref: useRef(null), width: 0, height: 0 };
 }
-/** @deprecated unused legacy combobox shim */
-export function useCombobox() {
-    return { store: {} };
-}

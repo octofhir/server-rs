@@ -10,13 +10,13 @@ export function CommandItem({ command }: CommandItemProps) {
 		<Group justify="space-between" wrap="nowrap">
 			<Group gap="sm" wrap="nowrap" style={{ flex: 1, minWidth: 0 }}>
 				{command.icon && (
-					<Box c="dimmed" style={{ flexShrink: 0 }}>
+					<Box color="secondary" style={{ flexShrink: 0 }}>
 						{command.icon}
 					</Box>
 				)}
-				<Stack gap={0} style={{ flex: 1, minWidth: 0 }}>
+				<Stack gap="0" style={{ flex: 1, minWidth: 0 }}>
 					<Text
-						size="sm"
+						variant="body-1"
 						style={{
 							overflow: "hidden",
 							textOverflow: "ellipsis",
@@ -27,8 +27,8 @@ export function CommandItem({ command }: CommandItemProps) {
 					</Text>
 					{command.description && (
 						<Text
-							size="xs"
-							c="dimmed"
+							variant="caption-1"
+							color="secondary"
 							style={{
 								overflow: "hidden",
 								textOverflow: "ellipsis",
@@ -43,9 +43,8 @@ export function CommandItem({ command }: CommandItemProps) {
 
 			{command.badge && (
 				<Badge
-					size="sm"
-					variant="light"
-					color={command.badgeColor || "gray"}
+					size="s"
+					theme={command.badgeColor as any || "normal"}
 					style={{ flexShrink: 0 }}
 				>
 					{command.badge}

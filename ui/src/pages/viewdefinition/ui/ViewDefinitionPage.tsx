@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect } from "react";
-import { Box, Group, Title, Button, Loader, Alert, Stack } from "@/shared/ui";
+import { Box, Flex, Text, Button, Spin, Alert } from "@/shared/ui";
 import {
   IconPlus,
   IconPlayerPlay,
@@ -30,8 +30,7 @@ function FeatureDisabledBanner() {
     <Alert
       icon={<IconAlertCircle size={16} />}
       title="SQL on FHIR Disabled"
-      color="yellow"
-      variant="light"
+      color="warning"
     >
       SQL on FHIR must be enabled in server configuration:
       <pre style={{ marginTop: 8 }}>
@@ -102,154 +101,156 @@ export function ViewDefinitionPage() {
     }
   }, [saveMutation, current]);
 
-  const handleNew = useCallback(() => {
-    setCurrent(createEmptyViewDefinition());
-    setSelectedId(null);
-    setRunResult(null);
-    setSqlResult(null);
+  const handleDelete = useCallback(
+    async (id: string) => {
+      if (confirm("Are you sure you want to delete this ViewDefinition?")) {
+        try {
+          await deleteMutation.mutateAsync(id);
+          if (selectedId === id) {
+            setSelectedId(null);
+            setCurrent(createEmptyViewDefinition());
+          }
+        } catch {
+          // Error handled by mutation
+        }
+      }
+    },
+    [deleteMutation, selectedId]
+  );
+
+  const handleSelect = useCallback(
+    (id: string | null) => {
+      setSelectedId(id);
+      const found = viewDefinitions?.find((v) => v.id === id);
+      if (found) {
+        // Ensure stable IDs for list items
+        const viewDefWithIds = {
+          ...found,
+          select: found.select.map((s) => ({
+            ...s,
+            column: s.column?.map((c) => ({ ...c, _id: c._id || crypto.randomUUID() })),
+          })),
+          where: found.where?.map((w) => ({ ...w, _id: w._id || crypto.randomUUID() })),
+          constant: found.constant?.map((c) => ({ ...c, _id: c._id || crypto.randomUUID() })),
+        };
+        setCurrent(viewDefWithIds);
+        setRunResult(null);
+        setSqlResult(null);
+      } else {
+        setCurrent(createEmptyViewDefinition());
+        setRunResult(null);
+        setSqlResult(null);
+      }
+    },
+    [viewDefinitions]
+  );
+
+  const handleUpdate = useCallback((val: ViewDefinition) => {
+    setCurrent(val);
   }, []);
 
-  const handleSelect = useCallback((viewDef: ViewDefinition) => {
-    // Ensure all columns have stable IDs for React keys
-    const viewDefWithIds = {
-      ...viewDef,
-      select: viewDef.select.map((s) => ({
-        ...s,
-        column: s.column?.map((c) => ({ ...c, _id: c._id || crypto.randomUUID() })),
-      })),
-      where: viewDef.where?.map((w) => ({ ...w, _id: w._id || crypto.randomUUID() })),
-      constant: viewDef.constant?.map((c) => ({ ...c, _id: c._id || crypto.randomUUID() })),
-    };
-    setCurrent(viewDefWithIds);
-    setSelectedId(viewDef.id || null);
-    setRunResult(null);
-  }, []);
-
-  const handleDelete = useCallback(async () => {
-    if (selectedId) {
-      await deleteMutation.mutateAsync(selectedId);
-      setCurrent(createEmptyViewDefinition());
-      setSelectedId(null);
-      setRunResult(null);
-      setSqlResult(null);
-    }
-  }, [deleteMutation, selectedId]);
-
-  // Check if feature is enabled
   if (settingsLoading) {
     return (
-      <Box p="xl" ta="center">
-        <Loader />
-      </Box>
+      <Flex grow alignItems="center" justifyContent="center" style={{ height: "100%" }}>
+        <Spin size="l" />
+      </Flex>
     );
   }
 
-  if (!settings?.features.sqlOnFhir) {
-    return (
-      <Box p="xl" className="page-enter">
-        <Stack gap="lg">
-          <Title order={2}>ViewDefinition Editor</Title>
-          <FeatureDisabledBanner />
-        </Stack>
-      </Box>
-    );
-  }
+  const isDisabled = settings?.sqlOnFhir?.enabled === false;
 
   return (
-    <Box className={`${classes.container} page-enter`}>
-      {/* Header */}
-      <Group justify="space-between" p="md" className={classes.header}>
-        <Title order={3}>ViewDefinition Editor</Title>
-        <Group gap="xs">
-          <Button
-            variant="subtle"
-            size="xs"
-            leftSection={<IconPlus size={14} />}
-            onClick={handleNew}
-          >
-            New
-          </Button>
-          <Button
-            variant="light"
-            size="xs"
-            leftSection={<IconDeviceFloppy size={14} />}
-            onClick={handleSave}
-            loading={saveMutation.isPending}
-            disabled={!current.name}
-          >
-            Save
-          </Button>
-          {selectedId && (
+    <Box className={classes.container}>
+      <Flex direction="column" gap="0" style={{ height: "100%" }}>
+        {/* Header */}
+        <Flex justifyContent="space-between" alignItems="center" px="4" py="2" style={{ borderBottom: "1px solid var(--g-color-line-base)" }}>
+          <Flex gap="4" alignItems="center">
+            <Text variant="header-2">ViewDefinition Editor</Text>
+            {listLoading && <Spin size="s" />}
+          </Flex>
+
+          <Flex gap="2">
             <Button
-              variant="light"
-              color="red"
-              size="xs"
-              leftSection={<IconTrash size={14} />}
-              onClick={handleDelete}
-              loading={deleteMutation.isPending}
+              view="action"
+              size="m"
+              loading={runMutation.isPending}
+              onClick={handleRun}
             >
-              Delete
+              <Button.Icon>
+                <IconPlayerPlay size={14} />
+              </Button.Icon>
+              Run
             </Button>
-          )}
-          <Button
-            variant="filled"
-            size="xs"
-            leftSection={<IconPlayerPlay size={14} />}
-            onClick={handleRun}
-            loading={runMutation.isPending}
-          >
-            Run
-          </Button>
-        </Group>
-      </Group>
+            <Button
+              view="normal"
+              size="m"
+              loading={saveMutation.isPending}
+              onClick={handleSave}
+            >
+              <Button.Icon>
+                <IconDeviceFloppy size={14} />
+              </Button.Icon>
+              Save
+            </Button>
+            {selectedId && (
+              <Button
+                view="flat-danger"
+                size="m"
+                loading={deleteMutation.isPending}
+                onClick={() => handleDelete(selectedId)}
+              >
+                <Button.Icon>
+                  <IconTrash size={14} />
+                </Button.Icon>
+              </Button>
+            )}
+            <Button
+              view="flat"
+              size="m"
+              onClick={() => handleSelect(null)}
+            >
+              <Button.Icon>
+                <IconPlus size={14} />
+              </Button.Icon>
+              New
+            </Button>
+          </Flex>
+        </Flex>
 
-      {/* 3-panel layout */}
-      <Box className={classes.content}>
-        {/* Left sidebar - Saved views list */}
-        <Sidebar
-          viewDefinitions={viewDefinitions}
-          selectedId={selectedId}
-          isLoading={listLoading}
-          onSelect={handleSelect}
-        />
+        {isDisabled && (
+          <Box px="4" py="2">
+            <FeatureDisabledBanner />
+          </Box>
+        )}
 
-        {/* Center panel - Editor */}
-        <Box className={classes.editor}>
-          <EditorPanel
-            viewDef={current}
-            resourceTypes={resourceTypes}
-            onChange={setCurrent}
+        <Flex gap="0" style={{ flex: 1, minHeight: 0 }}>
+          {/* Sidebar */}
+          <Sidebar
+            items={viewDefinitions || []}
+            selectedId={selectedId}
+            onSelect={handleSelect}
           />
-        </Box>
 
-        {/* Right panel - Preview */}
-        <Box className={classes.preview}>
-          <PreviewPanel
-            sqlResult={sqlResult}
-            sqlLoading={sqlMutation.isPending}
-            sqlError={sqlMutation.error}
-            runResult={runResult}
-            onGenerateSql={handleGenerateSql}
-          />
-        </Box>
-      </Box>
-
-      {/* Error displays */}
-      {runMutation.isError && (
-        <Box p="md">
-          <Alert icon={<IconAlertCircle size={16} />} color="red" title="Error">
-            {runMutation.error?.message || "An error occurred"}
-          </Alert>
-        </Box>
-      )}
-
-      {saveMutation.isError && (
-        <Box p="md">
-          <Alert icon={<IconAlertCircle size={16} />} color="red" title="Save Error">
-            {saveMutation.error?.message || "Failed to save"}
-          </Alert>
-        </Box>
-      )}
+          {/* Main Editor / Preview Split */}
+          <Flex gap="0" style={{ flex: 1 }}>
+            <Box className={classes.editorSection}>
+              <EditorPanel
+                value={current}
+                onChange={handleUpdate}
+                resourceTypes={resourceTypes}
+              />
+            </Box>
+            <Box className={classes.previewSection}>
+              <PreviewPanel
+                runResult={runResult}
+                sqlResult={sqlResult}
+                onRefreshSql={handleGenerateSql}
+                isLoading={runMutation.isPending || sqlMutation.isPending}
+              />
+            </Box>
+          </Flex>
+        </Flex>
+      </Flex>
     </Box>
   );
 }

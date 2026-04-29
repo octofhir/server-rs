@@ -1,17 +1,7 @@
+import { Badge, Box, Flex, Text } from "@/shared/ui";
 import { useNavigate } from "react-router-dom";
-import {
-	Stack,
-	Title,
-	Text,
-	SimpleGrid,
-	Card,
-	Group,
-	Badge,
-	Button,
-	Loader,
-	ThemeIcon,
-	Box,
-} from "@/shared/ui";
+
+import { MetricCard, ActionCard } from "@octofhir/ui-kit";
 import {
 	Folder,
 	Terminal,
@@ -28,7 +18,7 @@ interface QuickAction {
 	title: string;
 	description: string;
 	href: string;
-	icon: typeof Folder;
+	icon: any;
 	color: string;
 }
 
@@ -95,88 +85,59 @@ export function DashboardPage() {
 	const navigate = useNavigate();
 
 	return (
-		<Box p="xl" className="page-enter" style={{ height: "100%", overflow: "auto" }}>
-			<Stack gap="xl">
+		<Box p="6" className="page-enter" style={{ height: "100%", overflow: "auto" }}>
+			<Flex direction="column" gap="8" style={{ maxWidth: 1200, margin: "0 auto" }}>
+				{/* Welcome Header */}
 				<Box>
-					<Title order={1} style={{ letterSpacing: "-0.03em", fontWeight: 700 }}>
-						Dashboard
-					</Title>
-					<Text c="dimmed" size="lg">
-						Welcome to Abyxon Server Console
+					<Text variant="header-2" style={{ letterSpacing: "-0.03em", fontWeight: 700 }}>
+						System Dashboard
+					</Text>
+					<Text color="secondary" variant="body-2">
+						Welcome to Abyxon FHIR Server Console. Monitor system health and access administrative tools.
 					</Text>
 				</Box>
 
-				<SimpleGrid cols={{ base: 1, sm: 2 }} spacing="lg">
-					<StatusCard />
-					<ResourceTypesCard />
-				</SimpleGrid>
+				{/* Status Cards - Horizontal Row for KPI metrics */}
+				<Flex gap="6" wrap="wrap">
+					<Box style={{ flex: "1 1 300px" }}>
+						<StatusCard />
+					</Box>
+					<Box style={{ flex: "1 1 300px" }}>
+						<ResourceTypesCard />
+					</Box>
+				</Flex>
 
+				{/* Quick Actions - Vertical list of functional blocks */}
 				<Box>
-					<Group justify="space-between" mb="lg">
-						<Title order={3} style={{ letterSpacing: "-0.02em" }}>
-							Quick Actions
-						</Title>
-						<Badge variant="light" size="lg" radius="sm">
-							Frequently Used
+					<Flex justifyContent="space-between" alignItems="center" mb="4">
+						<Text variant="header-2" style={{ letterSpacing: "-0.02em" }}>
+							Administrative Tools
+						</Text>
+						<Badge color="info" size="m">
+							8 Active Modules
 						</Badge>
-					</Group>
-					<SimpleGrid cols={{ base: 1, sm: 2, lg: 4 }} spacing="lg">
+					</Flex>
+					
+					<Box
+						style={{
+							display: "grid",
+							gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))",
+							gap: "20px",
+						}}
+					>
 						{quickActions.map((action) => (
-							<Card
+							<ActionCard
 								key={action.href}
-								withBorder
-								padding="xl"
-								radius="lg"
-								className="dashboard-action-card"
-								style={{
-									backgroundColor: "var(--octo-surface-1)",
-									cursor: "pointer",
-									transition: "all 0.2s ease",
-								}}
+								title={action.title}
+								description={action.description}
+								icon={action.icon}
+								color={action.color as any}
 								onClick={() => navigate(action.href)}
-							>
-								<ThemeIcon
-									variant="light"
-									color={action.color}
-									size={52}
-									radius="md"
-									mb="lg"
-									style={{
-										boxShadow: "0 8px 16px var(--g-color-base-brand-light-hover)",
-									}}
-								>
-									<action.icon size={28} />
-								</ThemeIcon>
-								<Text fw={600} size="lg" mb="xs" style={{ letterSpacing: "-0.01em" }}>
-									{action.title}
-								</Text>
-								<Text size="sm" c="dimmed" mb="md" style={{ lineHeight: 1.5 }}>
-									{action.description}
-								</Text>
-								<Button
-									variant="subtle"
-									color={action.color}
-									size="sm"
-									rightSection={<Pulse size={14} />}
-									p={0}
-									style={{ width: "fit-content" }}
-								>
-									Open Tool
-								</Button>
-							</Card>
+							/>
 						))}
-					</SimpleGrid>
+					</Box>
 				</Box>
-			</Stack>
-
-			<style dangerouslySetInnerHTML={{
-				__html: `
-				.dashboard-action-card:hover {
-					transform: translateY(-4px);
-					box-shadow: var(--octo-shadow-md);
-					border-color: var(--octo-accent-primary);
-				}
-			`}} />
+			</Flex>
 		</Box>
 	);
 }
@@ -185,61 +146,20 @@ function StatusCard() {
 	const { data: health, isLoading } = useHealth();
 
 	const statusColor = {
-		ok: "primary",
-		degraded: "warm",
-		down: "fire",
+		ok: "success",
+		degraded: "warning",
+		down: "danger",
 	}[health?.status ?? "down"];
 
 	return (
-		<Card
-			withBorder
-			padding="xl"
-			radius="lg"
-			style={{
-				backgroundColor: "var(--octo-surface-1)",
-				position: "relative",
-				overflow: "hidden"
-			}}
-		>
-			<Box
-				style={{
-					position: "absolute",
-					top: 0,
-					left: 0,
-					right: 0,
-					height: 4,
-					background: statusColor === "primary"
-						? "var(--g-color-base-brand)"
-						: statusColor === "warm"
-							? "var(--g-color-base-warning-medium)"
-							: "var(--g-color-base-danger-medium)"
-				}}
-			/>
-			<Group justify="space-between" align="flex-start" mb="md">
-				<div>
-					<Text size="sm" fw={600} c="dimmed" tt="uppercase" style={{ letterSpacing: "0.05em" }} mb={4}>
-						Server Status
-					</Text>
-					{isLoading ? (
-						<Loader size="sm" variant="dots" />
-					) : (
-						<Title order={2} style={{ color: statusColor === "primary"
-							? "var(--g-color-text-brand)"
-							: statusColor === "warm"
-								? "var(--g-color-text-warning)"
-								: "var(--g-color-text-danger)" }}>
-							{health?.status?.toUpperCase() ?? "UNKNOWN"}
-						</Title>
-					)}
-				</div>
-				<ThemeIcon variant="light" color={statusColor} size={48} radius="md">
-					<Server size={24} />
-				</ThemeIcon>
-			</Group>
-			<Text size="xs" c="dimmed">
-				Last check: {new Date().toLocaleTimeString()}
-			</Text>
-		</Card>
+		<MetricCard
+			title="Server Status"
+			value={health?.status?.toUpperCase() ?? "UNKNOWN"}
+			isLoading={isLoading}
+			icon={Server}
+			color={statusColor as any}
+			description={`Live health check active`}
+		/>
 	);
 }
 
@@ -248,46 +168,13 @@ function ResourceTypesCard() {
 	const resourceCount = resourceTypes.length;
 
 	return (
-		<Card
-			withBorder
-			padding="xl"
-			radius="lg"
-			style={{
-				backgroundColor: "var(--octo-surface-1)",
-				position: "relative",
-				overflow: "hidden"
-			}}
-		>
-			<Box
-				style={{
-					position: "absolute",
-					top: 0,
-					left: 0,
-					right: 0,
-					height: 4,
-					background: "var(--octo-brand-gradient)"
-				}}
-			/>
-			<Group justify="space-between" align="flex-start" mb="md">
-				<div>
-					<Text size="sm" fw={600} c="dimmed" tt="uppercase" style={{ letterSpacing: "0.05em" }} mb={4}>
-						FHIR Resources
-					</Text>
-					{isLoading ? (
-						<Loader size="sm" variant="dots" />
-					) : (
-						<Title order={2} style={{ letterSpacing: "-0.02em" }}>
-							{resourceCount} Types
-						</Title>
-					)}
-				</div>
-				<ThemeIcon variant="light" color="primary" size={48} radius="md">
-					<Database size={24} />
-				</ThemeIcon>
-			</Group>
-			<Text size="xs" c="dimmed">
-				Available in current schema
-			</Text>
-		</Card>
+		<MetricCard
+			title="FHIR Schema"
+			value={`${resourceCount} Profiles`}
+			isLoading={isLoading}
+			icon={Database}
+			color="info"
+			description="Canonical resource definitions"
+		/>
 	);
 }

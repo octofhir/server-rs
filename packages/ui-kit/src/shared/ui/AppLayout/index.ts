@@ -1,9 +1,9 @@
 export {
-    TrackerLayout,
-    type TrackerLayoutProps,
-    type TrackerNavItem,
-    type TrackerNavGroup,
-} from "./TrackerLayout";
+    AppLayout,
+    type AppLayoutProps,
+    type AppNavItem,
+    type AppNavGroup,
+} from "./AppLayout";
 
 export {
     ActionBar,

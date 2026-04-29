@@ -1,48 +1,64 @@
-import { Paper, Text, Divider, Stack, Button, Loader } from "@/shared/ui";
+import { Box, Text, Divider, Flex, Button } from "@/shared/ui";
 import { IconCheck } from "@octofhir/ui-kit";
 import type { ViewDefinition } from "../../lib/useViewDefinition";
 
 interface SidebarProps {
-  viewDefinitions: ViewDefinition[] | undefined;
+  items: ViewDefinition[];
   selectedId: string | null;
-  isLoading: boolean;
-  onSelect: (viewDef: ViewDefinition) => void;
+  onSelect: (id: string) => void;
 }
 
-export function Sidebar({ viewDefinitions, selectedId, isLoading, onSelect }: SidebarProps) {
+export function Sidebar({ items, selectedId, onSelect }: SidebarProps) {
   return (
-    <Paper withBorder style={{ width: 220, height: "100%", display: "flex", flexDirection: "column" }}>
-      <Text size="sm" fw={500} p="xs" c="dimmed">
-        Saved Views
-      </Text>
+    <Box
+      style={{
+        width: 240,
+        height: "100%",
+        display: "flex",
+        flexDirection: "column",
+        borderRight: "1px solid var(--g-color-line-base)",
+        backgroundColor: "var(--g-color-base-generic-ultralight)",
+      }}
+    >
+      <Box px="4" py="2">
+        <Text variant="body-1" color="secondary" style={{ fontWeight: 600 }}>
+          Saved Views
+        </Text>
+      </Box>
       <Divider />
-      <Stack gap={0} p="xs" style={{ flex: 1, overflow: "auto" }}>
-        {isLoading ? (
-          <Loader size="sm" />
-        ) : viewDefinitions?.length === 0 ? (
-          <Text size="xs" c="dimmed" ta="center" py="md">
-            No saved views
-          </Text>
+      <Box style={{ flex: 1, overflow: "auto" }} py="2">
+        {items.length === 0 ? (
+          <Box px="4" py="4">
+            <Text variant="body-1" color="secondary" style={{ textAlign: "center" }}>
+              No saved views
+            </Text>
+          </Box>
         ) : (
-          viewDefinitions?.map((vd) => (
-            <Button
-              key={vd.id}
-              variant={selectedId === vd.id ? "light" : "subtle"}
-              size="xs"
-              justify="flex-start"
-              fullWidth
-              onClick={() => onSelect(vd)}
-              leftSection={
-                vd.status === "active" ? (
-                  <IconCheck size={12} color="green" />
-                ) : null
-              }
-            >
-              {vd.name || "Untitled"}
-            </Button>
-          ))
+          <Flex direction="column" gap="1">
+            {items.map((vd) => (
+              <Button
+                key={vd.id}
+                view={selectedId === vd.id ? "flat-action" : "flat"}
+                size="m"
+                style={{
+                  justifyContent: "flex-start",
+                  margin: "0 8px",
+                  borderRadius: "6px",
+                  backgroundColor: selectedId === vd.id ? "var(--g-color-base-brand-light)" : undefined,
+                }}
+                onClick={() => vd.id && onSelect(vd.id)}
+              >
+                {vd.status === "active" && (
+                   <Button.Icon><IconCheck size={14} style={{ color: "var(--g-color-text-success)" }} /></Button.Icon>
+                )}
+                <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {vd.name || "Untitled"}
+                </span>
+              </Button>
+            ))}
+          </Flex>
         )}
-      </Stack>
-    </Paper>
+      </Box>
+    </Box>
   );
 }

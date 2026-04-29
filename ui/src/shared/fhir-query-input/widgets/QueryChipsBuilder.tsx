@@ -11,8 +11,8 @@ import {
 	Code,
 	Box,
 	NumberInput,
-	SegmentedControl,
-	type ComboboxData,
+	SegmentedRadioGroup as SegmentedControl,
+	type SelectProps,
 } from "@/shared/ui";
 import { Plus, TrashBin } from "@gravity-ui/icons";
 import type { BuilderState, BuilderParam } from "../core/builder-model";
@@ -261,7 +261,7 @@ export function QueryChipsBuilder({
 
 interface ParamChipProps {
 	param: BuilderParam;
-	availableParams: ComboboxData;
+	availableParams: SelectProps["data"];
 	metadata: QueryInputMetadata;
 	resourceType?: string;
 	onUpdate: (updates: Partial<BuilderParam>) => void;
