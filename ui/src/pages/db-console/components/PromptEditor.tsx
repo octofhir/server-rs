@@ -10,7 +10,7 @@ import {
 	Select,
 	UnstyledButton,
 } from "@/shared/ui";
-import { IconCode, IconGripVertical, IconSettings } from "@tabler/icons-react";
+import { IconCode, IconGripVertical, IconSettings } from "@gravity-ui/icons";
 import { useDisclosure, useLocalStorage } from "@octofhir/ui-kit";
 import type * as monaco from "monaco-editor";
 import { SqlEditor } from "@/shared/monaco/SqlEditor";

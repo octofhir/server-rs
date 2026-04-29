@@ -19,7 +19,7 @@ import {
   IconPinFilled,
   IconSearch,
   IconTrash,
-} from "@tabler/icons-react";
+} from "@gravity-ui/icons";
 import { useUnit } from "effector-react";
 import { useState } from "react";
 import type { HistoryEntry } from "../db/historyDatabase";

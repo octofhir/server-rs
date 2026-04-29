@@ -27,7 +27,7 @@ import {
   IconClock,
   IconBolt,
   IconHandClick,
-} from "@tabler/icons-react";
+} from "@gravity-ui/icons";
 import { useAutomations, useDeleteAutomation, useDeployAutomation } from "../lib/useAutomations";
 import { AutomationStatusBadge } from "./AutomationStatusBadge";
 import { CreateAutomationModal } from "./CreateAutomationModal";

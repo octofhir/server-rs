@@ -1,6 +1,6 @@
 import { useCallback } from "react";
 import { Stack, Text, Group, Badge, ActionIcon, ScrollArea, Box, Tooltip } from "@/shared/ui";
-import { IconTrash, IconClock } from "@tabler/icons-react";
+import { IconTrash, IconClock } from "@gravity-ui/icons";
 import { useQueryHistory, useClearHistory } from "@/shared/api/hooks";
 import { modals } from "@octofhir/ui-kit";
 import type { QueryHistoryEntry } from "@/shared/api/types";

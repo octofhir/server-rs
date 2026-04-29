@@ -21,7 +21,7 @@ import {
 	IconSettings,
 	IconCode,
 	IconServer,
-} from "@tabler/icons-react";
+} from "@gravity-ui/icons";
 import { useHealth, useResourceTypes } from "@/shared/api/hooks";
 
 interface QuickAction {
@@ -142,7 +142,7 @@ export function DashboardPage() {
 									radius="md"
 									mb="lg"
 									style={{
-										boxShadow: `0 8px 16px var(--mantine-color-${action.color}-light-hover)`,
+										boxShadow: "0 8px 16px var(--g-color-base-brand-light-hover)",
 									}}
 								>
 									<action.icon size={28} />
@@ -173,7 +173,7 @@ export function DashboardPage() {
 				__html: `
 				.dashboard-action-card:hover {
 					transform: translateY(-4px);
-					box-shadow: var(--mantine-shadow-md);
+					box-shadow: var(--octo-shadow-md);
 					border-color: var(--octo-accent-primary);
 				}
 			`}} />
@@ -208,7 +208,11 @@ function StatusCard() {
 					left: 0,
 					right: 0,
 					height: 4,
-					background: `var(--mantine-color-${statusColor}-filled)`
+					background: statusColor === "primary"
+						? "var(--g-color-base-brand)"
+						: statusColor === "warm"
+							? "var(--g-color-base-warning-medium)"
+							: "var(--g-color-base-danger-medium)"
 				}}
 			/>
 			<Group justify="space-between" align="flex-start" mb="md">
@@ -219,7 +223,11 @@ function StatusCard() {
 					{isLoading ? (
 						<Loader size="sm" variant="dots" />
 					) : (
-						<Title order={2} style={{ color: `var(--mantine-color-${statusColor}-filled)` }}>
+						<Title order={2} style={{ color: statusColor === "primary"
+							? "var(--g-color-text-brand)"
+							: statusColor === "warm"
+								? "var(--g-color-text-warning)"
+								: "var(--g-color-text-danger)" }}>
 							{health?.status?.toUpperCase() ?? "UNKNOWN"}
 						</Title>
 					)}

@@ -5,13 +5,13 @@
 }
 
 .input:focus {
-    border-color: var(--mantine-color-primary-filled);
-    box-shadow: 0 0 0 2px var(--mantine-color-primary-light-hover);
+    border-color: var(--g-color-base-brand);
+    box-shadow: 0 0 0 2px var(--g-color-base-brand-light-hover);
 }
 
 .label {
     font-weight: 600;
     margin-bottom: 4px;
-    font-size: var(--mantine-font-size-xs);
+    font-size: var(--octo-typography-size-xs);
     color: var(--octo-text-secondary);
 }

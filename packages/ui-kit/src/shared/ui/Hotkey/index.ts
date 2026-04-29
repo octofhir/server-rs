@@ -1,1 +1,1 @@
-export { Hotkey, type HotkeyProps } from "@gravity-ui/uikit";
+export { Hotkey, type HotkeyProps } from "./Hotkey";

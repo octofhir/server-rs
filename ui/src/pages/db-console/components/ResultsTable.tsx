@@ -1,5 +1,5 @@
 import { Table, Text, Badge, ScrollArea, Alert } from "@/shared/ui";
-import { IconAlertCircle, IconInfoCircle } from "@tabler/icons-react";
+import { IconAlertCircle, IconInfoCircle } from "@gravity-ui/icons";
 import type { SqlResponse, SqlValue } from "@/shared/api/types";
 import { JsonCellViewer } from "./JsonCellViewer";
 

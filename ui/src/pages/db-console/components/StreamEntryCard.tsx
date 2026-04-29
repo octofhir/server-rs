@@ -17,7 +17,7 @@ import {
 	IconPlayerPlay,
 	IconChartTreemap,
 	IconX,
-} from "@tabler/icons-react";
+} from "@gravity-ui/icons";
 import type { SqlResponse, SqlValue } from "@/shared/api/types";
 import { ResultsTable } from "./ResultsTable";
 import { ExplainPane } from "./ExplainPane";

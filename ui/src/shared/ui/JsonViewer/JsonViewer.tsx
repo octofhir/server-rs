@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { Code, CopyButton, ActionIcon, Group, Tooltip, ScrollArea, Box } from "@octofhir/ui-kit";
-import { IconCopy, IconCheck } from "@tabler/icons-react";
+import { IconCopy, IconCheck } from "@gravity-ui/icons";
 import classes from "./JsonViewer.module.css";
 
 interface JsonViewerProps {
@@ -34,7 +34,7 @@ export function JsonViewer({ data, maxHeight = 400, className }: JsonViewerProps
                                 size="md"
                                 radius="md"
                                 style={{
-                                    boxShadow: "var(--mantine-shadow-xs)",
+                                    boxShadow: "var(--octo-shadow-xs)",
                                     backdropFilter: "blur(4px)",
                                 }}
                             >

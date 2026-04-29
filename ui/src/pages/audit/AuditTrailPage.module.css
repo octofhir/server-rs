@@ -13,7 +13,7 @@
 }
 
 .header {
-  padding: var(--mantine-spacing-lg) var(--mantine-spacing-xl);
+  padding: var(--octo-spacing-lg) var(--octo-spacing-xl);
   background: var(--octo-surface-1);
   border-bottom: 1px solid var(--octo-border-subtle);
   flex-shrink: 0;
@@ -24,7 +24,7 @@
 }
 
 .tabsList {
-  padding: 0 var(--mantine-spacing-xl);
+  padding: 0 var(--octo-spacing-xl);
   background: var(--octo-surface-1);
   border-bottom: 1px solid var(--octo-border-subtle);
 }
@@ -59,7 +59,7 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: var(--mantine-spacing-sm) var(--mantine-spacing-md);
+  padding: var(--octo-spacing-sm) var(--octo-spacing-md);
   background: var(--octo-surface-1);
   border-bottom: 1px solid var(--octo-border-subtle);
   flex-shrink: 0;

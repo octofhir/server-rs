@@ -5,79 +5,79 @@
 }
 
 .tableContainer {
-	padding: var(--mantine-spacing-md);
+	padding: var(--octo-spacing-md);
 }
 
 .roleIcon {
 	width: 36px;
 	height: 36px;
-	border-radius: var(--mantine-radius-md);
-	background: var(--mantine-color-indigo-light);
+	border-radius: var(--octo-radius-md);
+	background: var(--g-color-base-brand-light);
 	display: flex;
 	align-items: center;
 	justify-content: center;
-	color: var(--mantine-color-indigo-filled);
+	color: var(--g-color-base-brand);
 }
 
 .roleInfo {
 	display: flex;
 	align-items: center;
-	gap: var(--mantine-spacing-sm);
+	gap: var(--octo-spacing-sm);
 }
 
 .roleName {
 	font-weight: 500;
-	font-size: var(--mantine-font-size-sm);
+	font-size: var(--octo-typography-size-sm);
 }
 
 .roleDescription {
-	font-size: var(--mantine-font-size-xs);
+	font-size: var(--octo-typography-size-xs);
 	color: var(--octo-text-secondary);
 }
 
 .permissionMatrix {
 	display: grid;
 	grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-	gap: var(--mantine-spacing-sm);
+	gap: var(--octo-spacing-sm);
 	max-height: 300px;
 	overflow-y: auto;
-	padding: var(--mantine-spacing-xs);
-	background: var(--mantine-color-gray-0);
-	border-radius: var(--mantine-radius-md);
+	padding: var(--octo-spacing-xs);
+	background: var(--octo-surface-1);
+	border-radius: var(--octo-radius-md);
 }
 
-[data-mantine-color-scheme="dark"] .permissionMatrix {
-	background: var(--mantine-color-dark-6);
+[data-theme="dark"] .permissionMatrix {
+	background: var(--octo-surface-2);
 }
 
 .permissionItem {
 	display: flex;
 	align-items: center;
-	gap: var(--mantine-spacing-xs);
-	padding: var(--mantine-spacing-xs);
-	border-radius: var(--mantine-radius-sm);
-	background: var(--mantine-color-white);
-	border: 1px solid var(--mantine-color-gray-3);
+	gap: var(--octo-spacing-xs);
+	padding: var(--octo-spacing-xs);
+	border-radius: var(--octo-radius-sm);
+	background: var(--g-color-text-light-primary);
+	border: 1px solid var(--octo-border-subtle);
 }
 
-[data-mantine-color-scheme="dark"] .permissionItem {
-	background: var(--mantine-color-dark-5);
-	border-color: var(--mantine-color-dark-4);
+[data-theme="dark"] .permissionItem {
+	background: var(--octo-surface-3);
+	border-color: var(--octo-surface-4);
 }
 
 .permissionLabel {
-	font-size: var(--mantine-font-size-xs);
+	font-size: var(--octo-typography-size-xs);
 	flex: 1;
 }
 
 .categoryHeader {
-	font-size: var(--mantine-font-size-xs);
+	font-size: var(--octo-typography-size-xs);
 	font-weight: 600;
 	text-transform: uppercase;
 	letter-spacing: 0.5px;
 	color: var(--octo-text-secondary);
-	margin-top: var(--mantine-spacing-sm);
-	margin-bottom: var(--mantine-spacing-xs);
+	margin-top: var(--octo-spacing-sm);
+	margin-bottom: var(--octo-spacing-xs);
 }
 
 .categoryHeader:first-child {

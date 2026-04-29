@@ -16,10 +16,10 @@
 
 .thead th {
   font-weight: 600;
-  font-size: var(--mantine-font-size-xs);
+  font-size: var(--octo-typography-size-xs);
   text-transform: uppercase;
   letter-spacing: 0.5px;
-  color: var(--mantine-color-dimmed);
+  color: var(--g-color-text-secondary);
   border-bottom: 1px solid var(--octo-border-subtle);
 }
 
@@ -33,11 +33,11 @@
 }
 
 .row[data-selected="true"] {
-  background-color: var(--mantine-primary-color-light);
+  background-color: var(--g-color-base-brand-light);
 }
 
 .row td {
-  padding: var(--mantine-spacing-sm) var(--mantine-spacing-md);
+  padding: var(--octo-spacing-sm) var(--octo-spacing-md);
   border-bottom: 1px solid var(--octo-border-subtle);
 }
 

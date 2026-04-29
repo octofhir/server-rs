@@ -15,7 +15,7 @@ import {
   Tooltip,
 } from "@/shared/ui";
 import { notifications } from "@octofhir/ui-kit";
-import { IconPlus, IconTrash, IconBolt, IconClock, IconHandClick } from "@tabler/icons-react";
+import { IconPlus, IconTrash, IconBolt, IconClock, IconHandClick } from "@gravity-ui/icons";
 import { useAddTrigger, useDeleteTrigger } from "../../lib/useAutomations";
 import type { AutomationTrigger, AutomationTriggerType, CreateTriggerRequest } from "@/shared/api/types";
 import { useResourceTypes } from "@/shared/api/hooks/useSystemQueries";
@@ -219,7 +219,7 @@ export function TriggerConfig({ automationId, triggers }: TriggerConfigProps) {
       {isAdding && (
         <>
           <Divider />
-          <Paper withBorder p="md" radius="md" bg="var(--mantine-color-gray-light)">
+          <Paper withBorder p="md" radius="md" bg="var(--octo-surface-2)">
             <Stack gap="md">
               <Text fw={500} size="sm">
                 New Trigger

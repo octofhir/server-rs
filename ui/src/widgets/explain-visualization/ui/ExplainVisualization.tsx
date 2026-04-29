@@ -17,7 +17,7 @@ import {
 	IconFilter,
 	IconArrowsSort,
 	IconCircleDot,
-} from "@tabler/icons-react";
+} from "@gravity-ui/icons";
 
 interface ExplainNode {
 	operation: string;

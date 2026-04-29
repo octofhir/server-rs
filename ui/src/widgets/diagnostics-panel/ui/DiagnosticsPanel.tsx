@@ -8,7 +8,7 @@ import {
   Text,
   UnstyledButton,
 } from "@/shared/ui";
-import { IconChevronDown, IconChevronUp } from "@tabler/icons-react";
+import { IconChevronDown, IconChevronUp } from "@gravity-ui/icons";
 import type * as monaco from "monaco-editor";
 import { useCallback, useState } from "react";
 import {

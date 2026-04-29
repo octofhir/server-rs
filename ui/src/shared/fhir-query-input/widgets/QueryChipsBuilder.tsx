@@ -14,7 +14,7 @@ import {
 	SegmentedControl,
 	type ComboboxData,
 } from "@/shared/ui";
-import { IconPlus, IconTrash } from "@tabler/icons-react";
+import { IconPlus, IconTrash } from "@gravity-ui/icons";
 import type { BuilderState, BuilderParam } from "../core/builder-model";
 import type { QueryInputMetadata } from "../core/types";
 import type { RestConsoleSearchParam } from "@/shared/api";
@@ -244,7 +244,7 @@ export function QueryChipsBuilder({
 				p="xs"
 				style={{
 					backgroundColor: "var(--octo-surface-2)",
-					borderRadius: "var(--mantine-radius-sm)",
+					borderRadius: "var(--octo-radius-sm)",
 					border: "1px solid var(--octo-border-subtle)",
 				}}
 			>
@@ -302,7 +302,7 @@ function ParamChip({
 			p="xs"
 			style={{
 				backgroundColor: "var(--octo-surface-2)",
-				borderRadius: "var(--mantine-radius-sm)",
+				borderRadius: "var(--octo-radius-sm)",
 				border: "1px solid var(--octo-border-subtle)",
 			}}
 		>
@@ -409,7 +409,7 @@ function SpecialParamChip({
 			p="xs"
 			style={{
 				backgroundColor: "var(--octo-surface-2)",
-				borderRadius: "var(--mantine-radius-sm)",
+				borderRadius: "var(--octo-radius-sm)",
 				border: "1px solid var(--octo-border-subtle)",
 			}}
 		>

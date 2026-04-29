@@ -31,7 +31,7 @@ import {
 	IconAlertTriangle,
 	IconDownload,
 	IconWorld,
-} from "@tabler/icons-react";
+} from "@gravity-ui/icons";
 import {
 	usePackages,
 	usePackageLookup,

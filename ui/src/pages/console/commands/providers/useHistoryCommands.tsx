@@ -1,4 +1,4 @@
-import { IconClock, IconPinFilled } from "@tabler/icons-react";
+import { IconClock, IconPinFilled } from "@gravity-ui/icons";
 import { useMemo } from "react";
 import type { HttpMethod } from "@/shared/api";
 import { useHistory } from "../../hooks/useHistory";

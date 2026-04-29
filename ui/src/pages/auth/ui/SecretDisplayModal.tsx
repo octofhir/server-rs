@@ -9,7 +9,7 @@ import {
 	Tooltip,
 	Alert,
 } from "@/shared/ui";
-import { IconAlertTriangle, IconCopy, IconCheck } from "@tabler/icons-react";
+import { IconAlertTriangle, IconCopy, IconCheck } from "@gravity-ui/icons";
 import { Modal } from "@/shared/ui/Modal/Modal";
 import { Button } from "@/shared/ui/Button/Button";
 import classes from "./SecretDisplayModal.module.css";

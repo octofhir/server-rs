@@ -26,7 +26,7 @@
 .editor {
   flex: 1;
   overflow: auto;
-  padding: var(--mantine-spacing-md);
+  padding: var(--octo-spacing-md);
   border-right: 1px solid var(--octo-border-subtle);
 }
 
@@ -34,7 +34,7 @@
 .preview {
   flex: 1;
   overflow: auto;
-  padding: var(--mantine-spacing-md);
+  padding: var(--octo-spacing-md);
   background: var(--octo-surface-2);
 }
 

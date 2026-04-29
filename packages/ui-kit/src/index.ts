@@ -1,3 +1,7 @@
+// Base Gravity UI stylesheet + OctoFHIR overrides — must load before any
+// component import so Gravity's `.g-root` tokens are present in the DOM.
+import "./styles";
+
 // App layer
 export * from "./app";
 

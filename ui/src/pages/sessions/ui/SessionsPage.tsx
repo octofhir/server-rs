@@ -22,7 +22,7 @@ import {
   IconLogout,
   IconRefresh,
   IconTrash,
-} from '@tabler/icons-react';
+} from '@gravity-ui/icons';
 import dayjs from 'dayjs';
 import relativeTime from 'dayjs/plugin/relativeTime';
 import { useState } from 'react';

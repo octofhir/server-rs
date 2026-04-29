@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Group, Kbd, Text, UnstyledButton } from "@/shared/ui";
-import { IconHistory, IconTerminal2, IconChevronRight, IconChevronDown } from "@tabler/icons-react";
+import { IconHistory, IconTerminal2, IconChevronRight, IconChevronDown } from "@gravity-ui/icons";
 import { StreamEntryCard, type StreamEntry } from "./StreamEntryCard";
 import classes from "../DbConsolePage.module.css";
 

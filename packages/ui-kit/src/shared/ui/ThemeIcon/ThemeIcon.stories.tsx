@@ -6,7 +6,7 @@ import {
   IconStethoscope,
   IconPill,
   IconActivity,
-} from "@tabler/icons-react";
+} from "@gravity-ui/icons";
 
 const meta: Meta<typeof ThemeIcon> = {
   title: "Data Display/ThemeIcon",

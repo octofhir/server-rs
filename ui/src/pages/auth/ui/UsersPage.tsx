@@ -27,7 +27,7 @@ import {
 	IconUserCheck,
 	IconUserX,
 	IconFilter,
-} from "@tabler/icons-react";
+} from "@gravity-ui/icons";
 import { Card } from "@/shared/ui/Card/Card";
 import { Modal } from "@/shared/ui/Modal/Modal";
 import { Button } from "@/shared/ui/Button/Button";

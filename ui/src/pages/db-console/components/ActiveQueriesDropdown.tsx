@@ -10,7 +10,7 @@ import {
 	Tooltip,
 	UnstyledButton,
 } from "@/shared/ui";
-import { IconActivity, IconPlayerStop } from "@tabler/icons-react";
+import { IconActivity, IconPlayerStop } from "@gravity-ui/icons";
 import { modals, notifications, useDisclosure } from "@octofhir/ui-kit";
 import { useActiveQueries, useTerminateQuery } from "@/shared/api/hooks";
 import type { ActiveQuery } from "@/shared/api/types";
@@ -158,7 +158,7 @@ export function ActiveQueriesDropdown() {
 							alignItems: "center",
 							gap: 4,
 							padding: "2px 6px",
-							borderRadius: "var(--mantine-radius-sm)",
+							borderRadius: "var(--octo-radius-sm)",
 						}}
 					>
 						<IconActivity

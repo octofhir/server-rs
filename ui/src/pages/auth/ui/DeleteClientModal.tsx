@@ -1,5 +1,5 @@
 import { Stack, Text, Group, Alert } from "@/shared/ui";
-import { IconAlertTriangle } from "@tabler/icons-react";
+import { IconAlertTriangle } from "@gravity-ui/icons";
 import { Modal } from "@/shared/ui/Modal/Modal";
 import { Button } from "@/shared/ui/Button/Button";
 import classes from "./DeleteClientModal.module.css";

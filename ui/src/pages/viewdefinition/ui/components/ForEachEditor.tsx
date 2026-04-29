@@ -9,7 +9,7 @@ import {
   Text,
   Tooltip,
 } from "@/shared/ui";
-import { IconArrowsExchange, IconPlus, IconTrash } from "@tabler/icons-react";
+import { IconArrowsExchange, IconPlus, IconTrash } from "@gravity-ui/icons";
 import { FHIRPathInput } from "./FHIRPathInput";
 import { ColumnRow } from "./ColumnRow";
 import type {

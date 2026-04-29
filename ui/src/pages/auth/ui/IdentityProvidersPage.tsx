@@ -27,7 +27,7 @@ import {
 	IconEdit,
 	IconTrash,
 	IconWorld,
-} from "@tabler/icons-react";
+} from "@gravity-ui/icons";
 import { useIdentityProviders, useCreateIdentityProvider, useUpdateIdentityProvider, useDeleteIdentityProvider, type IdentityProviderResource } from "../lib/useIdentityProviders";
 
 export function IdentityProvidersPage() {

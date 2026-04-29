@@ -7,7 +7,7 @@ import {
   IconCopy,
   IconRefresh,
   IconPlus,
-} from "@tabler/icons-react";
+} from "@gravity-ui/icons";
 
 const meta: Meta<typeof ActionIcon> = {
   title: "Form Controls/ActionIcon",

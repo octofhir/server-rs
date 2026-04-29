@@ -32,7 +32,7 @@ import {
 	IconBell,
 	IconEdit,
 	IconExternalLink,
-} from "@tabler/icons-react";
+} from "@gravity-ui/icons";
 import { useApp } from "../lib/useApps";
 
 const STATUS_COLORS: Record<string, string> = {
@@ -177,22 +177,22 @@ export function AppDetailPage() {
 										<Text size="sm" c="dimmed">Not configured</Text>
 									)
 								}
-								icon={<IconWorld size={14} color="var(--mantine-color-dimmed)" />}
+								icon={<IconWorld size={14} color="var(--g-color-text-secondary)" />}
 							/>
 							<InfoItem
 								label="Timeout"
 								value={app.endpoint?.timeout ? `${app.endpoint.timeout}s` : "Default (30s)"}
-								icon={<IconClock size={14} color="var(--mantine-color-dimmed)" />}
+								icon={<IconClock size={14} color="var(--g-color-text-secondary)" />}
 							/>
 							<InfoItem
 								label="API Version"
 								value={app.apiVersion ?? 1}
-								icon={<IconApi size={14} color="var(--mantine-color-dimmed)" />}
+								icon={<IconApi size={14} color="var(--g-color-text-secondary)" />}
 							/>
 							<InfoItem
 								label="Base Path"
 								value={app.basePath || "None"}
-								icon={<IconWorld size={14} color="var(--mantine-color-dimmed)" />}
+								icon={<IconWorld size={14} color="var(--g-color-text-secondary)" />}
 							/>
 						</SimpleGrid>
 					</Paper>
@@ -201,7 +201,7 @@ export function AppDetailPage() {
 					<Paper p="lg" style={{ backgroundColor: "var(--octo-surface-2)" }}>
 						<Group justify="space-between" mb="md">
 							<Group gap="sm">
-								<IconApi size={20} color="var(--mantine-color-primary-6)" />
+								<IconApi size={20} color="var(--octo-brand-primary-active)" />
 								<Title order={5}>Operations</Title>
 								<Badge size="sm" variant="light" color="gray">
 									{operations.length}
@@ -284,7 +284,7 @@ export function AppDetailPage() {
 					<Paper p="lg" style={{ backgroundColor: "var(--octo-surface-2)" }}>
 						<Group justify="space-between" mb="md">
 							<Group gap="sm">
-								<IconWebhook size={20} color="var(--mantine-color-warm-6)" />
+								<IconWebhook size={20} color="var(--g-color-base-warning-medium-hover)" />
 								<Title order={5}>Subscriptions</Title>
 								<Badge size="sm" variant="light" color="gray">
 									{subscriptions.length}
@@ -356,7 +356,7 @@ export function AppDetailPage() {
 													</Group>
 												) : sub.notification ? (
 													<Group gap={4}>
-														<IconBell size={12} color="var(--mantine-color-warm-6)" />
+														<IconBell size={12} color="var(--g-color-base-warning-medium-hover)" />
 														<Badge size="xs" variant="light" color="warm">
 															notification
 														</Badge>

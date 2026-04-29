@@ -28,7 +28,7 @@ import {
 	IconShield,
 	IconApps,
 	IconApi,
-} from "@tabler/icons-react";
+} from "@gravity-ui/icons";
 import { useOperation, useUpdateOperation } from "@/shared/api/hooks";
 import { useState, useEffect } from "react";
 

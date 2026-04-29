@@ -11,7 +11,7 @@ import {
 	IconUser,
 	IconInfoCircle,
 	IconShieldCheck,
-} from "@tabler/icons-react";
+} from "@gravity-ui/icons";
 import { Card } from "@/shared/ui/Card/Card";
 import { Button } from "@/shared/ui/Button/Button";
 import { ActionIcon } from "@/shared/ui/ActionIcon/ActionIcon";

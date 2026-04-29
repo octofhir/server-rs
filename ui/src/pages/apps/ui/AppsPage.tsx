@@ -30,7 +30,7 @@ import {
 	IconEye,
 	IconApi,
 	IconWebhook,
-} from "@tabler/icons-react";
+} from "@gravity-ui/icons";
 import { useApps, useCreateApp, useUpdateApp, useDeleteApp, type AppResource } from "../lib/useApps";
 
 const STATUS_COLORS: Record<string, string> = {
@@ -133,7 +133,7 @@ export function AppsPage() {
 									>
 										<Table.Td>
 											<Group gap="xs">
-												<IconRocket size={16} color="var(--mantine-color-primary-6)" />
+												<IconRocket size={16} color="var(--octo-brand-primary-active)" />
 												<div>
 													<Text size="sm" fw={500}>
 														{app.name}

@@ -1,5 +1,5 @@
 import { useDisclosure, useHotkeys } from "@octofhir/ui-kit";
-import { IconEye, IconHistory } from "@tabler/icons-react";
+import { IconEye, IconHistory } from "@gravity-ui/icons";
 import { useUnit } from "effector-react";
 import { useCallback, useMemo } from "react";
 import { Helmet } from "react-helmet-async";
@@ -178,7 +178,7 @@ export function RestConsolePage() {
               p="md"
               style={{
                 border: "1px solid var(--octo-border-subtle)",
-                borderRadius: "var(--mantine-radius-md)",
+                borderRadius: "var(--octo-radius-md)",
                 backgroundColor: "var(--octo-surface-1)",
               }}
             >

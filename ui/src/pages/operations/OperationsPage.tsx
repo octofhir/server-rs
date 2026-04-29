@@ -32,7 +32,7 @@ import {
 	IconShield,
 	IconApps,
 	IconApi,
-} from "@tabler/icons-react";
+} from "@gravity-ui/icons";
 import { useOperations } from "@/shared/api/hooks";
 import type { OperationDefinition } from "@/shared/api/types";
 
@@ -177,7 +177,7 @@ function CategorySection({
 		<Accordion.Item value={category}>
 			<Accordion.Control>
 				<Group gap="sm">
-					<Icon size={20} color={`var(--mantine-color-${color}-6)`} />
+					<Icon size={20} color="var(--g-color-text-secondary)" />
 					<Text fw={500}>{label}</Text>
 					<Badge size="sm" variant="light" color={color}>
 						{operations.length}

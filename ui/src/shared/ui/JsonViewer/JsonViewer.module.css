@@ -1,6 +1,6 @@
 .root {
     position: relative;
-    border-radius: var(--mantine-radius-md);
+    border-radius: var(--octo-radius-md);
     overflow: hidden;
     border: 1px solid var(--octo-border-subtle);
     backgroundColor: var(--octo-surface-2);
@@ -18,9 +18,9 @@
     word-break: break-word;
     background-color: transparent;
     color: var(--octo-text-primary);
-    font-size: var(--mantine-font-size-sm);
+    font-size: var(--octo-typography-size-sm);
     line-height: 1.6;
-    font-family: var(--mantine-font-family-monospace);
+    font-family: var(--octo-typography-mono);
 }
 
 .indicator {

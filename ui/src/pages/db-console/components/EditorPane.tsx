@@ -1,6 +1,6 @@
 import { useCallback, useEffect } from "react";
 import { Group, Text, Button, ActionIcon, Tooltip, Popover, UnstyledButton, Box } from "@/shared/ui";
-import { IconCode, IconSettings } from "@tabler/icons-react";
+import { IconCode, IconSettings } from "@gravity-ui/icons";
 import { useDisclosure } from "@octofhir/ui-kit";
 import type * as monaco from "monaco-editor";
 import { SqlEditor } from "@/shared/monaco/SqlEditor";

@@ -5,7 +5,7 @@ import {
 	IconAlertTriangle,
 	IconInfoCircle,
 	IconBulb,
-} from "@tabler/icons-react";
+} from "@gravity-ui/icons";
 import type * as monaco from "monaco-editor";
 import type { DiagnosticInfo } from "@/shared/monaco/lib/useLspDiagnostics";
 
@@ -86,7 +86,7 @@ export function DiagnosticItem({ diagnostic, onClick }: DiagnosticItemProps) {
 							<Text
 								size="xs"
 								c="dimmed"
-								style={{ fontFamily: "var(--mantine-font-family-monospace)" }}
+								style={{ fontFamily: "var(--octo-typography-mono)" }}
 							>
 								[{diagnostic.code}]
 							</Text>

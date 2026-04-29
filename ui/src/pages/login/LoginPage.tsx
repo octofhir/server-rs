@@ -12,7 +12,7 @@ import {
 	Alert,
 	Box,
 } from "@/shared/ui";
-import { IconAlertCircle } from "@tabler/icons-react";
+import { IconAlertCircle } from "@gravity-ui/icons";
 import { useAuth } from "@/shared/api/hooks";
 
 export function LoginPage() {

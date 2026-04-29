@@ -20,7 +20,7 @@ import {
 	IconLoader,
 	IconDatabase,
 	IconArchive,
-} from "@tabler/icons-react";
+} from "@gravity-ui/icons";
 import type { InstallEvent } from "@/shared/api/types";
 
 interface InstallProgressModalProps {

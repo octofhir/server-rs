@@ -1,5 +1,5 @@
 .container {
-  padding: var(--mantine-spacing-sm) var(--mantine-spacing-md);
+  padding: var(--octo-spacing-sm) var(--octo-spacing-md);
   background: var(--octo-surface-1);
   border-bottom: 1px solid var(--octo-border-subtle);
 }
@@ -24,5 +24,5 @@
   width: 1px;
   height: 24px;
   background: var(--octo-border-subtle);
-  margin: 0 var(--mantine-spacing-xs);
+  margin: 0 var(--octo-spacing-xs);
 }

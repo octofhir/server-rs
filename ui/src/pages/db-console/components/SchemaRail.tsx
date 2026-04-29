@@ -17,7 +17,7 @@ import {
 	IconLayoutSidebarLeftCollapse,
 	IconLayoutSidebarLeftExpand,
 	IconSearch,
-} from "@tabler/icons-react";
+} from "@gravity-ui/icons";
 import { useDbTables } from "@/shared/api/hooks";
 import type { DbTableInfo } from "@/shared/api/types";
 import { TableDetailView } from "./TableDetailView";

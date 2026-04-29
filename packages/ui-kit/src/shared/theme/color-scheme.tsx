@@ -43,15 +43,29 @@ function resolveSystemScheme(): ColorScheme {
 export interface ColorSchemeProviderProps {
     children: ReactNode;
     defaultColorScheme?: ColorSchemePreference;
+    /**
+     * When provided, switches the provider to controlled mode. Useful for
+     * Storybook globals or top-level apps that source the scheme from a router
+     * / settings page. `setColorScheme` is forwarded to `onColorSchemeChange`.
+     */
+    colorScheme?: ColorSchemePreference;
+    onColorSchemeChange?: (next: ColorSchemePreference) => void;
+    /** Disable persistence to `localStorage`. Useful for storybook decorators. */
+    persist?: boolean;
 }
 
 export function ColorSchemeProvider({
     children,
     defaultColorScheme = "light",
+    colorScheme: controlledScheme,
+    onColorSchemeChange,
+    persist = true,
 }: ColorSchemeProviderProps) {
-    const [preference, setPreference] = useState<ColorSchemePreference>(() =>
-        readStoredPreference(defaultColorScheme),
+    const isControlled = controlledScheme !== undefined;
+    const [internalPreference, setInternalPreference] = useState<ColorSchemePreference>(() =>
+        persist ? readStoredPreference(defaultColorScheme) : defaultColorScheme,
     );
+    const preference = isControlled ? (controlledScheme as ColorSchemePreference) : internalPreference;
     const [systemScheme, setSystemScheme] = useState<ColorScheme>(() => resolveSystemScheme());
 
     useEffect(() => {
@@ -64,16 +78,20 @@ export function ColorSchemeProvider({
 
     const colorScheme: ColorScheme = preference === "auto" ? systemScheme : preference;
 
-    const setColorScheme = useCallback((next: ColorSchemePreference) => {
-        setPreference(next);
-        if (typeof window !== "undefined") {
-            try {
-                window.localStorage.setItem(STORAGE_KEY, next);
-            } catch {
-                /* ignore */
+    const setColorScheme = useCallback(
+        (next: ColorSchemePreference) => {
+            if (!isControlled) setInternalPreference(next);
+            onColorSchemeChange?.(next);
+            if (persist && typeof window !== "undefined") {
+                try {
+                    window.localStorage.setItem(STORAGE_KEY, next);
+                } catch {
+                    /* ignore */
+                }
             }
-        }
-    }, []);
+        },
+        [isControlled, onColorSchemeChange, persist],
+    );
 
     const toggleColorScheme = useCallback(() => {
         setColorScheme(colorScheme === "dark" ? "light" : "dark");

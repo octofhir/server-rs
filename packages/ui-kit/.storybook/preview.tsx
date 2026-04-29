@@ -1,49 +1,50 @@
 import type { Preview, ReactRenderer } from "@storybook/react-vite";
 import { withThemeByDataAttribute } from "@storybook/addon-themes";
-import { ThemeProvider, ToasterProvider, ToasterComponent, Toaster } from "@gravity-ui/uikit";
+import { ColorSchemeProvider } from "../src/shared/theme/color-scheme";
+import { UIProviderInner } from "../src/app/UIProvider";
 
-import "@gravity-ui/uikit/styles/fonts.css";
-import "@gravity-ui/uikit/styles/styles.css";
-import "../src/shared/theme/fonts.css";
-import "../src/shared/theme/gravity-overrides.css";
-
-const toaster = new Toaster();
+// Single source of truth for Gravity + Octo styles.
+import "../src/styles";
 
 const preview: Preview = {
-  parameters: {
-    controls: {
-      matchers: {
-        color: /(background|color)$/i,
-        date: /Date$/i,
-      },
+    parameters: {
+        controls: {
+            matchers: {
+                color: /(background|color)$/i,
+                date: /Date$/i,
+            },
+        },
+        layout: "padded",
+        docs: { toc: true },
+        backgrounds: { disable: true },
     },
-    layout: "centered",
-    docs: {
-      toc: true,
-    },
-  },
-  decorators: [
-    (Story, context) => {
-      const colorScheme = context.globals.theme || "light";
-      return (
-        <ThemeProvider theme={colorScheme}>
-          <ToasterProvider toaster={toaster}>
-            <Story />
-            <ToasterComponent />
-          </ToasterProvider>
-        </ThemeProvider>
-      );
-    },
-    withThemeByDataAttribute<ReactRenderer>({
-      themes: {
-        light: "light",
-        dark: "dark",
-      },
-      defaultTheme: "light",
-      attributeName: "data-theme",
-    }),
-  ],
-  tags: ["autodocs"],
+    decorators: [
+        (Story, context) => {
+            const colorScheme = (context.globals.theme as "light" | "dark") || "light";
+            return (
+                <ColorSchemeProvider colorScheme={colorScheme} persist={false}>
+                    <UIProviderInner>
+                        <div
+                            style={{
+                                minHeight: "100vh",
+                                padding: 16,
+                                background: "var(--g-color-base-background)",
+                                color: "var(--g-color-text-primary)",
+                            }}
+                        >
+                            <Story />
+                        </div>
+                    </UIProviderInner>
+                </ColorSchemeProvider>
+            );
+        },
+        withThemeByDataAttribute<ReactRenderer>({
+            themes: { light: "light", dark: "dark" },
+            defaultTheme: "light",
+            attributeName: "data-theme",
+        }),
+    ],
+    tags: ["autodocs"],
 };
 
 export default preview;

@@ -13,7 +13,7 @@ import {
   ActionIcon,
 } from "@/shared/ui";
 import { useState } from "react";
-import { IconChevronDown, IconChevronRight } from "@tabler/icons-react";
+import { IconChevronDown, IconChevronRight } from "@gravity-ui/icons";
 import { useAutomationLogs } from "../../lib/useAutomations";
 import type { AutomationExecution, AutomationExecutionStatus } from "@/shared/api/types";
 
@@ -83,7 +83,7 @@ function ExecutionRow({ execution }: { execution: AutomationExecution }) {
       {expanded && (
         <Table.Tr>
           <Table.Td colSpan={4} p={0}>
-            <Paper p="md" bg="var(--mantine-color-gray-light)">
+            <Paper p="md" bg="var(--octo-surface-2)">
               <Stack gap="sm">
                 {execution.error && (
                   <div>

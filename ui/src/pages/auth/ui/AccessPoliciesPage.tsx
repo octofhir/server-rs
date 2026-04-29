@@ -35,7 +35,7 @@ import {
 	IconCode,
 	IconCheck,
 	IconX,
-} from "@tabler/icons-react";
+} from "@gravity-ui/icons";
 import {
 	useAccessPolicies,
 	useCreateAccessPolicy,
@@ -442,7 +442,7 @@ function PolicyModal({
 					{form.values.engineType === "quickjs" && (
 						<Box>
 							<Text size="sm" fw={500} mb={4}>
-								Policy Script <span style={{ color: "var(--mantine-color-red-6)" }}>*</span>
+								Policy Script <span style={{ color: "var(--g-color-base-danger-medium)" }}>*</span>
 							</Text>
 							<Text size="xs" c="dimmed" mb="xs">
 								Write JavaScript to evaluate access. Use{" "}

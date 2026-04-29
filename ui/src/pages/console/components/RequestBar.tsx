@@ -1,5 +1,5 @@
 import { useCallback, useMemo } from "react";
-import { IconPlayerPlay } from "@tabler/icons-react";
+import { IconPlayerPlay } from "@gravity-ui/icons";
 import { useUnit } from "effector-react";
 import { $rawPath, setRawPath } from "../state/consoleStore";
 import type {
@@ -60,7 +60,7 @@ export function RequestBar({
 				display: "flex",
 				alignItems: "flex-start",
 				border: "1px solid var(--octo-border-subtle)",
-				borderRadius: "var(--mantine-radius-md)",
+				borderRadius: "var(--octo-radius-md)",
 				backgroundColor: "var(--octo-surface-1)",
 				overflow: "visible",
 			}}

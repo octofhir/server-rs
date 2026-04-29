@@ -1,5 +1,5 @@
 import { modals, notifications } from "@octofhir/ui-kit";
-import { IconActivity, IconPlayerStop } from "@tabler/icons-react";
+import { IconActivity, IconPlayerStop } from "@gravity-ui/icons";
 import { useCallback } from "react";
 import { useActiveQueries, useTerminateQuery } from "@/shared/api/hooks";
 import type { ActiveQuery } from "@/shared/api/types";

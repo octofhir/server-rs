@@ -5,12 +5,12 @@
 }
 
 .tableContainer {
-	padding: var(--mantine-spacing-md);
+	padding: var(--octo-spacing-md);
 }
 
 .filterBar {
 	display: flex;
-	gap: var(--mantine-spacing-sm);
+	gap: var(--octo-spacing-sm);
 	align-items: center;
 	flex-wrap: wrap;
 }
@@ -23,20 +23,20 @@
 .userCell {
 	display: flex;
 	align-items: center;
-	gap: var(--mantine-spacing-sm);
+	gap: var(--octo-spacing-sm);
 }
 
 .avatar {
 	width: 36px;
 	height: 36px;
 	border-radius: 50%;
-	background: var(--mantine-color-indigo-light);
+	background: var(--g-color-base-brand-light);
 	display: flex;
 	align-items: center;
 	justify-content: center;
-	color: var(--mantine-color-indigo-filled);
+	color: var(--g-color-base-brand);
 	font-weight: 600;
-	font-size: var(--mantine-font-size-sm);
+	font-size: var(--octo-typography-size-sm);
 }
 
 .userInfo {
@@ -46,33 +46,33 @@
 
 .userName {
 	font-weight: 500;
-	font-size: var(--mantine-font-size-sm);
+	font-size: var(--octo-typography-size-sm);
 }
 
 .userEmail {
-	font-size: var(--mantine-font-size-xs);
+	font-size: var(--octo-typography-size-xs);
 	color: var(--octo-text-secondary);
 }
 
 .lastLogin {
-	font-size: var(--mantine-font-size-xs);
+	font-size: var(--octo-typography-size-xs);
 	color: var(--octo-text-secondary);
 }
 
 .bulkActions {
 	display: flex;
-	gap: var(--mantine-spacing-sm);
-	padding: var(--mantine-spacing-sm) var(--mantine-spacing-md);
-	background: var(--mantine-color-indigo-light);
-	border-radius: var(--mantine-radius-md);
-	margin-bottom: var(--mantine-spacing-md);
+	gap: var(--octo-spacing-sm);
+	padding: var(--octo-spacing-sm) var(--octo-spacing-md);
+	background: var(--g-color-base-brand-light);
+	border-radius: var(--octo-radius-md);
+	margin-bottom: var(--octo-spacing-md);
 	align-items: center;
 }
 
 .selectedCount {
-	font-size: var(--mantine-font-size-sm);
+	font-size: var(--octo-typography-size-sm);
 	font-weight: 500;
-	color: var(--mantine-color-indigo-filled);
+	color: var(--g-color-base-brand);
 }
 
 .passwordStrength {
@@ -85,28 +85,28 @@
 	height: 4px;
 	flex: 1;
 	border-radius: 2px;
-	background: var(--mantine-color-gray-3);
+	background: var(--octo-border-subtle);
 	transition: background-color 0.2s ease;
 }
 
 .strengthBar[data-active="true"][data-strength="weak"] {
-	background: var(--mantine-color-red-6);
+	background: var(--g-color-base-danger-medium);
 }
 
 .strengthBar[data-active="true"][data-strength="fair"] {
-	background: var(--mantine-color-orange-6);
+	background: var(--g-color-base-warning-medium-hover);
 }
 
 .strengthBar[data-active="true"][data-strength="good"] {
-	background: var(--mantine-color-yellow-6);
+	background: var(--g-color-base-warning-medium);
 }
 
 .strengthBar[data-active="true"][data-strength="strong"] {
-	background: var(--mantine-color-green-6);
+	background: var(--g-color-base-positive-medium-hover);
 }
 
 .strengthLabel {
-	font-size: var(--mantine-font-size-xs);
+	font-size: var(--octo-typography-size-xs);
 	margin-top: 4px;
 }
 

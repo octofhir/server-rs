@@ -1,4 +1,4 @@
-import { IconSearch, IconTable } from "@tabler/icons-react";
+import { IconSearch, IconTable } from "@gravity-ui/icons";
 import { useMemo, useState } from "react";
 import { useDbTables } from "@/shared/api/hooks";
 import { Badge, Box, Group, Loader, ScrollArea, Stack, Text, TextInput } from "@/shared/ui";

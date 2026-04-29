@@ -1,6 +1,6 @@
 import { useState, useCallback } from "react";
 import { Tabs, Group, Text, Badge, ActionIcon, Tooltip, Box } from "@/shared/ui";
-import { IconDownload } from "@tabler/icons-react";
+import { IconDownload } from "@gravity-ui/icons";
 import type { SqlResponse, SqlValue } from "@/shared/api/types";
 import { ResultsTable } from "./ResultsTable";
 import { ExplainPane } from "./ExplainPane";
@@ -110,7 +110,7 @@ export function ResultsPane({
 					</Group>
 				</Group>
 
-				<Box style={{ flex: 1, overflow: "auto", padding: "var(--mantine-spacing-sm)" }}>
+				<Box style={{ flex: 1, overflow: "auto", padding: "var(--octo-spacing-sm)" }}>
 					<Tabs.Panel value="results" style={{ height: "100%" }}>
 						<ResultsTable data={sqlData} error={sqlError} isPending={sqlPending} />
 					</Tabs.Panel>

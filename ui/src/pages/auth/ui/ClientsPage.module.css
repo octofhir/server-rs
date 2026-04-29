@@ -5,18 +5,18 @@
 }
 
 .tableContainer {
-    padding: var(--mantine-spacing-md);
+    padding: var(--octo-spacing-md);
 }
 
 .clientIdCell {
     display: flex;
     align-items: center;
-    gap: var(--mantine-spacing-xs);
+    gap: var(--octo-spacing-xs);
 }
 
 .clientIdText {
-    font-family: var(--mantine-font-family-monospace);
-    font-size: var(--mantine-font-size-xs);
+    font-family: var(--octo-typography-mono);
+    font-size: var(--octo-typography-size-xs);
     color: var(--octo-text-secondary);
 }
 

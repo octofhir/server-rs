@@ -43,7 +43,7 @@ import {
 	IconRobot,
 	IconLayoutSidebarLeftCollapse,
 	IconLayoutSidebarLeftExpand,
-} from "@tabler/icons-react";
+} from "@gravity-ui/icons";
 import { useHealth, useAuth, useBuildInfo, useSettings } from "@/shared/api/hooks";
 
 interface NavItem {
@@ -299,7 +299,7 @@ export function AppShell() {
 						variant="subtle"
 						styles={{
 							root: {
-								borderRadius: "var(--mantine-radius-sm)",
+								borderRadius: "var(--octo-radius-sm)",
 								paddingTop: 4,
 								paddingBottom: 4,
 								paddingLeft: 8,
@@ -548,7 +548,7 @@ export function AppShell() {
 											c="dimmed"
 											style={{
 												fontFamily:
-													"var(--mantine-font-family-monospace)",
+													"var(--octo-typography-mono)",
 												opacity: 0.6,
 											}}
 										>

@@ -14,7 +14,7 @@ import {
   ActionIcon,
 } from "@/shared/ui";
 import { notifications } from "@octofhir/ui-kit";
-import { IconPlayerPlay, IconTrash, IconChevronDown, IconChevronRight } from "@tabler/icons-react";
+import { IconPlayerPlay, IconTrash, IconChevronDown, IconChevronRight } from "@gravity-ui/icons";
 import { JsonEditor } from "@/shared/monaco/JsonEditor";
 import { useTestAutomation } from "../../lib/useAutomations";
 import type { ExecuteAutomationResponse, AutomationLogEntry } from "@/shared/api/types";
@@ -215,7 +215,7 @@ export function PlaygroundPanel({ automationId, sourceCode }: PlaygroundPanelPro
 
           {/* Error */}
           {result.error && (
-            <Paper withBorder p="sm" radius="md" bg="var(--mantine-color-red-light)">
+            <Paper withBorder p="sm" radius="md" bg="var(--g-color-base-danger-light)">
               <Text size="sm" c="red" fw={500}>Error:</Text>
               <Code block color="red" mt="xs">
                 {result.error}

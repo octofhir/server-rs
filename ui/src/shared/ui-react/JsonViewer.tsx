@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { Code, CopyButton, ActionIcon, Group, Tooltip, ScrollArea, Box } from "@octofhir/ui-kit";
-import { IconCopy, IconCheck } from "@tabler/icons-react";
+import { IconCopy, IconCheck } from "@gravity-ui/icons";
 
 interface JsonViewerProps {
 	data: unknown;
@@ -25,7 +25,7 @@ export function JsonViewer({ data, maxHeight = 400, className }: JsonViewerProps
 			className={className}
 			pos="relative"
 			style={{
-				borderRadius: "var(--mantine-radius-md)",
+				borderRadius: "var(--octo-radius-md)",
 				overflow: "hidden",
 				border: "1px solid var(--octo-border-subtle)",
 				backgroundColor: "var(--octo-surface-2)",
@@ -42,7 +42,7 @@ export function JsonViewer({ data, maxHeight = 400, className }: JsonViewerProps
 								size="md"
 								radius="md"
 								style={{
-									boxShadow: "var(--mantine-shadow-xs)",
+									boxShadow: "var(--octo-shadow-xs)",
 									backdropFilter: "blur(4px)",
 								}}
 							>
@@ -61,9 +61,9 @@ export function JsonViewer({ data, maxHeight = 400, className }: JsonViewerProps
 							wordBreak: "break-word",
 							backgroundColor: "transparent",
 							color: "var(--octo-text-primary)",
-							fontSize: "var(--mantine-font-size-sm)",
+							fontSize: "var(--octo-typography-size-sm)",
 							lineHeight: 1.6,
-							fontFamily: "var(--mantine-font-family-monospace)",
+							fontFamily: "var(--octo-typography-mono)",
 						}}
 					>
 						{formattedJson}

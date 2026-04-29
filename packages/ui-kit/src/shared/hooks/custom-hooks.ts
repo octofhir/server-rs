@@ -1,45 +1,57 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { tokens } from "../theme";
-
-// Note: `useColorScheme` lives in `shared/theme/color-scheme.tsx` and is the
-// canonical source — re-exported via `shared/theme/index.ts`. Importing it
-// here would cause a duplicate star-export from the package root.
 
 /** Octo design tokens (typography, spacing, radius, shadows, motion, layout). */
 export function useDesignTokens() {
     return tokens;
 }
 
-export function useDisclosure(initialState = false) {
+export interface DisclosureState {
+    isOpen: boolean;
+    open: () => void;
+    close: () => void;
+    toggle: () => void;
+}
+
+/** Boolean state machine for modals/dropdowns/drawers. */
+export function useDisclosureState(initialState = false): DisclosureState {
     const [isOpen, setIsOpen] = useState(initialState);
     const open = useCallback(() => setIsOpen(true), []);
     const close = useCallback(() => setIsOpen(false), []);
     const toggle = useCallback(() => setIsOpen((prev) => !prev), []);
-    return [isOpen, { open, close, toggle }] as const;
+    return useMemo(() => ({ isOpen, open, close, toggle }), [isOpen, open, close, toggle]);
 }
 
-export function useToggle<T = boolean>(options: readonly T[] = [false as T, true as T]) {
-    const [value, setValue] = useState(options[0]);
-    const toggle = useCallback((val?: React.SetStateAction<T>) => {
-        if (typeof val !== 'undefined') setValue(val);
-        else setValue((current) => current === options[0] ? options[1] : options[0]);
-    }, [options]);
-    return [value, toggle] as const;
+export interface PersistentStateOptions<T> {
+    key: string;
+    defaultValue: T;
 }
 
-export function useLocalStorage<T>({ key, defaultValue }: { key: string, defaultValue: T }) {
+/** Persisted state synced to localStorage. */
+export function usePersistentState<T>({ key, defaultValue }: PersistentStateOptions<T>) {
     const [value, setValue] = useState<T>(() => {
         if (typeof window === "undefined") return defaultValue;
-        try { const item = localStorage.getItem(key); return item ? JSON.parse(item) : defaultValue; } 
-        catch { return defaultValue; }
+        try {
+            const item = localStorage.getItem(key);
+            return item ? (JSON.parse(item) as T) : defaultValue;
+        } catch {
+            return defaultValue;
+        }
     });
-    const setItem = useCallback((val: T | ((prev: T) => T)) => {
-        setValue((prev) => {
-            const next = val instanceof Function ? val(prev) : val;
-            localStorage.setItem(key, JSON.stringify(next));
-            return next;
-        });
-    }, [key]);
+    const setItem = useCallback(
+        (val: T | ((prev: T) => T)) => {
+            setValue((prev) => {
+                const next = val instanceof Function ? val(prev) : val;
+                try {
+                    localStorage.setItem(key, JSON.stringify(next));
+                } catch {
+                    /* quota / disabled */
+                }
+                return next;
+            });
+        },
+        [key],
+    );
     return [value, setItem] as const;
 }
 
@@ -55,7 +67,12 @@ export function useMediaQuery(query: string, initialValue = false) {
     return matches;
 }
 
-export function useClipboard() {
+export interface UseClipboardResult {
+    copy: (text: string) => void;
+    copied: boolean;
+}
+
+export function useClipboard(): UseClipboardResult {
     const [copied, setCopied] = useState(false);
     const copy = useCallback((text: string) => {
         navigator.clipboard.writeText(text).then(() => {
@@ -66,16 +83,18 @@ export function useClipboard() {
     return { copy, copied };
 }
 
-export function useDebouncedValue<T>(value: T, delay: number) {
-    const [debouncedValue, setDebouncedValue] = useState(value);
+/** Returns a value debounced by `delay` milliseconds. */
+export function useDebouncedValue<T>(value: T, delay: number): T {
+    const [debounced, setDebounced] = useState(value);
     useEffect(() => {
-        const handler = setTimeout(() => setDebouncedValue(value), delay);
-        return () => clearTimeout(handler);
+        const handle = setTimeout(() => setDebounced(value), delay);
+        return () => clearTimeout(handle);
     }, [value, delay]);
-    return [debouncedValue];
+    return debounced;
 }
 
-export function useClickOutside<T extends HTMLElement = any>(handler: () => void) {
+/** Attach a ref to an element to invoke `handler` when a click lands outside it. */
+export function useOutsideClick<T extends HTMLElement = HTMLElement>(handler: () => void) {
     const ref = useRef<T>(null);
     useEffect(() => {
         const listener = (event: MouseEvent | TouchEvent) => {
@@ -92,36 +111,34 @@ export function useClickOutside<T extends HTMLElement = any>(handler: () => void
     return ref;
 }
 
-export function useViewportSize() {
-    const [windowSize, setWindowSize] = useState({ 
-        width: typeof window !== "undefined" ? window.innerWidth : 0, 
-        height: typeof window !== "undefined" ? window.innerHeight : 0 
-    });
+export interface ViewportSize {
+    width: number;
+    height: number;
+}
+
+export function useViewportSize(): ViewportSize {
+    const [size, setSize] = useState<ViewportSize>(() => ({
+        width: typeof window !== "undefined" ? window.innerWidth : 0,
+        height: typeof window !== "undefined" ? window.innerHeight : 0,
+    }));
     useEffect(() => {
-        const handleResize = () => setWindowSize({ width: window.innerWidth, height: window.innerHeight });
-        window.addEventListener("resize", handleResize);
-        return () => window.removeEventListener("resize", handleResize);
+        const handler = () => setSize({ width: window.innerWidth, height: window.innerHeight });
+        window.addEventListener("resize", handler);
+        return () => window.removeEventListener("resize", handler);
     }, []);
-    return windowSize;
+    return size;
 }
 
-export function useInputState<T>(initialState: T) {
-    const [value, setValue] = useState(initialState);
-    const handleChange = useCallback((val: T | React.ChangeEvent<any>) => {
-        if (val && typeof val === 'object' && 'target' in val && 'value' in val.target) {
-            setValue(val.target.value);
-        } else {
-            setValue(val as T);
-        }
-    }, []);
-    return [value, handleChange] as const;
-}
-
-export function useHotkeys(hotkeys: [string, (e: KeyboardEvent) => void][]) {
+/** Listens for keyboard shortcuts. Format: `["mod+k", () => …]`. */
+export function useHotkeys(hotkeys: ReadonlyArray<readonly [string, (e: KeyboardEvent) => void]>) {
     useEffect(() => {
         const handler = (e: KeyboardEvent) => {
-            for (const [key, cb] of hotkeys) {
-                if (e.key.toLowerCase() === key.toLowerCase()) cb(e);
+            const isMod = e.metaKey || e.ctrlKey;
+            for (const [combo, cb] of hotkeys) {
+                const parts = combo.toLowerCase().split("+").map((s) => s.trim());
+                const wantsMod = parts.includes("mod") || parts.includes("ctrl") || parts.includes("cmd");
+                const key = parts[parts.length - 1];
+                if (e.key.toLowerCase() === key && (!wantsMod || isMod)) cb(e);
             }
         };
         document.addEventListener("keydown", handler);
@@ -129,7 +146,61 @@ export function useHotkeys(hotkeys: [string, (e: KeyboardEvent) => void][]) {
     }, [hotkeys]);
 }
 
-export function useFocusTrap() { return useRef(null); }
-export function useScrollIntoView() { return { scrollIntoView: () => {}, targetRef: useRef(null), scrollableRef: useRef(null) }; }
-export function useElementSize() { return { ref: useRef(null), width: 0, height: 0 }; }
-export function useCombobox() { return { store: {} }; }
+// =====================================================================
+// === DEPRECATED legacy hooks — to be removed in a follow-up sweep ===
+// =====================================================================
+
+/** @deprecated use {@link useDisclosureState} */
+export function useDisclosure(initialState = false) {
+    const state = useDisclosureState(initialState);
+    return [state.isOpen, { open: state.open, close: state.close, toggle: state.toggle }] as const;
+}
+
+/** @deprecated use {@link usePersistentState} */
+export const useLocalStorage = usePersistentState;
+
+/** @deprecated use {@link useOutsideClick} */
+export const useClickOutside = useOutsideClick;
+
+/** @deprecated implement inline */
+export function useToggle<T = boolean>(options: readonly T[] = [false as T, true as T]) {
+    const [value, setValue] = useState(options[0]);
+    const toggle = useCallback(
+        (val?: React.SetStateAction<T>) => {
+            if (typeof val !== "undefined") setValue(val);
+            else setValue((current) => (current === options[0] ? options[1] : options[0]));
+        },
+        [options],
+    );
+    return [value, toggle] as const;
+}
+
+/** @deprecated implement inline */
+export function useInputState<T>(initialState: T) {
+    const [value, setValue] = useState(initialState);
+    const handleChange = useCallback((val: T | React.ChangeEvent<HTMLInputElement>) => {
+        if (val && typeof val === "object" && "target" in val) {
+            setValue((val as React.ChangeEvent<HTMLInputElement>).target.value as T);
+        } else {
+            setValue(val as T);
+        }
+    }, []);
+    return [value, handleChange] as const;
+}
+
+/** @deprecated unused */
+export function useFocusTrap() {
+    return useRef(null);
+}
+/** @deprecated unused */
+export function useScrollIntoView() {
+    return { scrollIntoView: () => {}, targetRef: useRef(null), scrollableRef: useRef(null) };
+}
+/** @deprecated unused */
+export function useElementSize() {
+    return { ref: useRef(null), width: 0, height: 0 };
+}
+/** @deprecated unused legacy combobox shim */
+export function useCombobox() {
+    return { store: {} };
+}

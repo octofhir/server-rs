@@ -5,26 +5,26 @@
 }
 
 .headerCard {
-	padding: var(--mantine-spacing-lg);
+	padding: var(--octo-spacing-lg);
 }
 
 .profileHeader {
 	display: flex;
 	align-items: flex-start;
-	gap: var(--mantine-spacing-lg);
+	gap: var(--octo-spacing-lg);
 }
 
 .avatar {
 	width: 80px;
 	height: 80px;
 	border-radius: 50%;
-	background: var(--mantine-color-indigo-light);
+	background: var(--g-color-base-brand-light);
 	display: flex;
 	align-items: center;
 	justify-content: center;
-	color: var(--mantine-color-indigo-filled);
+	color: var(--g-color-base-brand);
 	font-weight: 600;
-	font-size: var(--mantine-font-size-xl);
+	font-size: var(--octo-typography-size-xl);
 	flex-shrink: 0;
 }
 
@@ -33,32 +33,32 @@
 }
 
 .userName {
-	font-size: var(--mantine-font-size-xl);
+	font-size: var(--octo-typography-size-xl);
 	font-weight: 600;
 	margin-bottom: 4px;
 }
 
 .userEmail {
 	color: var(--octo-text-secondary);
-	font-size: var(--mantine-font-size-sm);
+	font-size: var(--octo-typography-size-sm);
 }
 
 .profileActions {
 	display: flex;
-	gap: var(--mantine-spacing-sm);
+	gap: var(--octo-spacing-sm);
 }
 
 .statsGrid {
 	display: grid;
 	grid-template-columns: repeat(4, 1fr);
-	gap: var(--mantine-spacing-md);
-	margin-top: var(--mantine-spacing-lg);
-	padding-top: var(--mantine-spacing-lg);
-	border-top: 1px solid var(--mantine-color-gray-3);
+	gap: var(--octo-spacing-md);
+	margin-top: var(--octo-spacing-lg);
+	padding-top: var(--octo-spacing-lg);
+	border-top: 1px solid var(--octo-border-subtle);
 }
 
-[data-mantine-color-scheme="dark"] .statsGrid {
-	border-top-color: var(--mantine-color-dark-4);
+[data-theme="dark"] .statsGrid {
+	border-top-color: var(--octo-surface-4);
 }
 
 .statItem {
@@ -66,13 +66,13 @@
 }
 
 .statValue {
-	font-size: var(--mantine-font-size-xl);
+	font-size: var(--octo-typography-size-xl);
 	font-weight: 600;
-	color: var(--mantine-color-indigo-filled);
+	color: var(--g-color-base-brand);
 }
 
 .statLabel {
-	font-size: var(--mantine-font-size-xs);
+	font-size: var(--octo-typography-size-xs);
 	color: var(--octo-text-secondary);
 	text-transform: uppercase;
 	letter-spacing: 0.5px;
@@ -81,7 +81,7 @@
 .contentGrid {
 	display: grid;
 	grid-template-columns: 1fr 1fr;
-	gap: var(--mantine-spacing-md);
+	gap: var(--octo-spacing-md);
 }
 
 @media (max-width: 900px) {
@@ -95,35 +95,35 @@
 }
 
 .sectionCard {
-	padding: var(--mantine-spacing-md);
+	padding: var(--octo-spacing-md);
 }
 
 .sectionTitle {
-	font-size: var(--mantine-font-size-md);
+	font-size: var(--octo-typography-size-md);
 	font-weight: 600;
-	margin-bottom: var(--mantine-spacing-md);
+	margin-bottom: var(--octo-spacing-md);
 	display: flex;
 	align-items: center;
-	gap: var(--mantine-spacing-xs);
+	gap: var(--octo-spacing-xs);
 }
 
 .rolesList {
 	display: flex;
 	flex-direction: column;
-	gap: var(--mantine-spacing-sm);
+	gap: var(--octo-spacing-sm);
 }
 
 .roleItem {
 	display: flex;
 	align-items: center;
 	justify-content: space-between;
-	padding: var(--mantine-spacing-sm);
-	background: var(--mantine-color-gray-0);
-	border-radius: var(--mantine-radius-md);
+	padding: var(--octo-spacing-sm);
+	background: var(--octo-surface-1);
+	border-radius: var(--octo-radius-md);
 }
 
-[data-mantine-color-scheme="dark"] .roleItem {
-	background: var(--mantine-color-dark-6);
+[data-theme="dark"] .roleItem {
+	background: var(--octo-surface-2);
 }
 
 .roleName {
@@ -134,14 +134,14 @@
 	display: flex;
 	align-items: center;
 	justify-content: space-between;
-	padding: var(--mantine-spacing-sm);
-	background: var(--mantine-color-gray-0);
-	border-radius: var(--mantine-radius-md);
-	margin-bottom: var(--mantine-spacing-sm);
+	padding: var(--octo-spacing-sm);
+	background: var(--octo-surface-1);
+	border-radius: var(--octo-radius-md);
+	margin-bottom: var(--octo-spacing-sm);
 }
 
-[data-mantine-color-scheme="dark"] .sessionItem {
-	background: var(--mantine-color-dark-6);
+[data-theme="dark"] .sessionItem {
+	background: var(--octo-surface-2);
 }
 
 .sessionInfo {
@@ -152,18 +152,18 @@
 
 .sessionDevice {
 	font-weight: 500;
-	font-size: var(--mantine-font-size-sm);
+	font-size: var(--octo-typography-size-sm);
 }
 
 .sessionMeta {
-	font-size: var(--mantine-font-size-xs);
+	font-size: var(--octo-typography-size-xs);
 	color: var(--octo-text-secondary);
 }
 
 .infoGrid {
 	display: grid;
 	grid-template-columns: 1fr 1fr;
-	gap: var(--mantine-spacing-md);
+	gap: var(--octo-spacing-md);
 }
 
 .infoItem {
@@ -173,20 +173,20 @@
 }
 
 .infoLabel {
-	font-size: var(--mantine-font-size-xs);
+	font-size: var(--octo-typography-size-xs);
 	color: var(--octo-text-secondary);
 	text-transform: uppercase;
 	letter-spacing: 0.5px;
 }
 
 .infoValue {
-	font-size: var(--mantine-font-size-sm);
+	font-size: var(--octo-typography-size-sm);
 	font-weight: 500;
 }
 
 .emptyState {
 	text-align: center;
-	padding: var(--mantine-spacing-xl);
+	padding: var(--octo-spacing-xl);
 	color: var(--octo-text-secondary);
 }
 

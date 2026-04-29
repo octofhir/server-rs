@@ -33,7 +33,7 @@ import {
 	IconEye,
 	IconFile,
 	IconCode,
-} from "@tabler/icons-react";
+} from "@gravity-ui/icons";
 import {
 	usePackageDetails,
 	usePackageResources,

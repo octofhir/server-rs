@@ -12,7 +12,7 @@ import {
 	Collapse,
 	ScrollArea,
 } from "@octofhir/ui-kit";
-import { IconAlertTriangle, IconRefresh, IconHome, IconChevronDown, IconChevronUp } from "@tabler/icons-react";
+import { IconAlertTriangle, IconRefresh, IconHome, IconChevronDown, IconChevronUp } from "@gravity-ui/icons";
 
 interface ErrorBoundaryProps {
 	children: ReactNode;
@@ -133,11 +133,11 @@ function LayoutErrorFallback({ error, onRetry }: LayoutErrorFallbackProps) {
 					<Box
 						p="md"
 						style={{
-							background: "var(--mantine-color-red-light)",
-							borderRadius: "var(--mantine-radius-lg)",
+							background: "var(--g-color-base-danger-light)",
+							borderRadius: "var(--octo-radius-lg)",
 						}}
 					>
-						<IconAlertTriangle size={32} color="var(--mantine-color-red-filled)" />
+						<IconAlertTriangle size={32} color="var(--g-color-base-danger-medium)" />
 					</Box>
 
 					<Stack gap="xs" align="center">
@@ -223,8 +223,8 @@ function GlobalErrorFallback({ error, errorInfo, onRetry, onGoHome }: GlobalErro
 				display: "flex",
 				alignItems: "center",
 				justifyContent: "center",
-				background: "var(--mantine-color-body)",
-				padding: "var(--mantine-spacing-xl)",
+				background: "var(--g-color-base-background)",
+				padding: "var(--octo-spacing-xl)",
 			}}
 		>
 			<Paper
@@ -234,18 +234,18 @@ function GlobalErrorFallback({ error, errorInfo, onRetry, onGoHome }: GlobalErro
 				style={{
 					maxWidth: 600,
 					width: "100%",
-					border: "1px solid var(--mantine-color-default-border)",
+					border: "1px solid var(--octo-border-subtle)",
 				}}
 			>
 				<Stack gap="lg" align="center">
 					<Box
 						p="lg"
 						style={{
-							background: "var(--mantine-color-red-light)",
-							borderRadius: "var(--mantine-radius-xl)",
+							background: "var(--g-color-base-danger-light)",
+							borderRadius: "var(--octo-radius-xl)",
 						}}
 					>
-						<IconAlertTriangle size={48} color="var(--mantine-color-red-filled)" />
+						<IconAlertTriangle size={48} color="var(--g-color-base-danger-medium)" />
 					</Box>
 
 					<Stack gap="xs" align="center">

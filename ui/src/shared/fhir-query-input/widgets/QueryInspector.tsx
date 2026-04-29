@@ -13,7 +13,7 @@ import {
 	IconCode,
 	IconMessageCircle,
 	IconCloudComputing,
-} from "@tabler/icons-react";
+} from "@gravity-ui/icons";
 import type { QueryAst, Diagnostic, QueryInputMetadata } from "../core/types";
 import { explainQuery, type ExplainItem } from "../core/explain";
 import { diffSelfLink, type SelfLinkDiff } from "../core/self-link-diff";
@@ -146,7 +146,7 @@ function ParsedTab({
 							striped
 							highlightOnHover
 							withTableBorder={false}
-							styles={{ table: { fontSize: "var(--mantine-font-size-xs)" } }}
+							styles={{ table: { fontSize: "var(--octo-typography-size-xs)" } }}
 						>
 							<Table.Thead>
 								<Table.Tr>

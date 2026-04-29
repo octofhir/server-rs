@@ -6,7 +6,7 @@ import {
   IconDeviceFloppy,
   IconTrash,
   IconAlertCircle,
-} from "@tabler/icons-react";
+} from "@gravity-ui/icons";
 import { useSettings } from "../lib/useSettings";
 import {
   useViewDefinitions,

@@ -1,5 +1,5 @@
 import { Badge, Code, Collapse, Group, Paper, Stack, Text } from "@/shared/ui";
-import { IconChevronDown, IconChevronRight } from "@tabler/icons-react";
+import { IconChevronDown, IconChevronRight } from "@gravity-ui/icons";
 import { useState } from "react";
 import type { FhirPathResult } from "../types";
 

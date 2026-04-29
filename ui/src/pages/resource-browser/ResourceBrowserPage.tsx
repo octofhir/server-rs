@@ -29,7 +29,7 @@ import {
 	IconAlertCircle,
 	IconFileDescription,
 	IconCode,
-} from "@tabler/icons-react";
+} from "@gravity-ui/icons";
 import {
 	useResourceTypesCategorized,
 	useResourceSearch,
@@ -581,7 +581,7 @@ export function ResourceBrowserPage() {
 					backgroundColor: "var(--octo-surface-1)",
 					minHeight: 0,
 					overflow: "hidden",
-					boxShadow: "var(--mantine-shadow-xl)",
+					boxShadow: "var(--octo-shadow-xl)",
 				}}
 			>
 				<Box p="md" style={{ borderBottom: "1px solid var(--octo-border-subtle)", backgroundColor: "var(--octo-surface-2)" }}>

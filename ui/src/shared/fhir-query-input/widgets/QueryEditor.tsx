@@ -153,7 +153,7 @@ export function QueryEditor({
 				...(borderless
 					? {}
 					: {
-							borderRadius: "var(--mantine-radius-md)",
+							borderRadius: "var(--octo-radius-md)",
 							border: "1px solid var(--octo-border-subtle)",
 						}),
 				position: "relative",

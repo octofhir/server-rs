@@ -21,7 +21,7 @@ function highlightJson(json: string): React.ReactNode[] {
     if (match[1] !== undefined) {
       // Property key
       nodes.push(
-        <span key={key++} style={{ color: "var(--mantine-color-blue-4)" }}>
+        <span key={key++} style={{ color: "var(--g-color-base-info-medium)" }}>
           {match[1]}
         </span>
       );
@@ -29,28 +29,28 @@ function highlightJson(json: string): React.ReactNode[] {
     } else if (match[2] !== undefined) {
       // String value
       nodes.push(
-        <span key={key++} style={{ color: "var(--mantine-color-green-5)" }}>
+        <span key={key++} style={{ color: "var(--g-color-base-positive-medium)" }}>
           {match[2]}
         </span>
       );
     } else if (match[3] !== undefined) {
       // Boolean
       nodes.push(
-        <span key={key++} style={{ color: "var(--mantine-color-orange-5)" }}>
+        <span key={key++} style={{ color: "var(--g-color-base-warning-medium)" }}>
           {match[3]}
         </span>
       );
     } else if (match[4] !== undefined) {
       // Null
       nodes.push(
-        <span key={key++} style={{ color: "var(--mantine-color-dimmed)" }}>
+        <span key={key++} style={{ color: "var(--g-color-text-secondary)" }}>
           {match[4]}
         </span>
       );
     } else if (match[5] !== undefined) {
       // Number
       nodes.push(
-        <span key={key++} style={{ color: "var(--mantine-color-violet-5)" }}>
+        <span key={key++} style={{ color: "var(--g-color-base-misc-medium)" }}>
           {match[5]}
         </span>
       );
@@ -76,7 +76,7 @@ export function JsonCellViewer({ value }: JsonCellViewerProps) {
         style={{
           margin: 0,
           fontSize: 11,
-          fontFamily: "var(--mantine-font-family-monospace)",
+          fontFamily: "var(--octo-typography-mono)",
           whiteSpace: "pre-wrap",
           wordBreak: "break-all",
         }}

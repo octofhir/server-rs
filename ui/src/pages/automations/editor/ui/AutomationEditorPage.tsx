@@ -27,7 +27,7 @@ import {
   IconSettings,
   IconBolt,
   IconHistory,
-} from "@tabler/icons-react";
+} from "@gravity-ui/icons";
 import { useAutomation, useUpdateAutomation, useDeployAutomation } from "../../lib/useAutomations";
 import { AutomationScriptEditor } from "@/shared/monaco/AutomationScriptEditor";
 import { TriggerConfig } from "./TriggerConfig";

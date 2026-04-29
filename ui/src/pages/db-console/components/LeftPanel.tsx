@@ -1,4 +1,4 @@
-import { IconActivity, IconClock, IconTable, IconX } from "@tabler/icons-react";
+import { IconActivity, IconClock, IconTable, IconX } from "@gravity-ui/icons";
 import { ActionIcon, Box, Tabs, Tooltip } from "@/shared/ui";
 import { ActiveQueriesTab } from "./ActiveQueriesTab";
 import { HistoryTab } from "./HistoryTab";

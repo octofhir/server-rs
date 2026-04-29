@@ -20,7 +20,7 @@ import {
 	IconAlertTriangle,
 	IconTrendingUp,
 	IconClock,
-} from "@tabler/icons-react";
+} from "@gravity-ui/icons";
 import type { AuditAnalytics as AuditAnalyticsType, AuditAction, AuditOutcome } from "@/shared/api/types";
 import classes from "./AuditAnalytics.module.css";
 
@@ -97,7 +97,7 @@ function StatCard({
 					</Text>
 					{trend && (
 						<Group gap={4} mt={4}>
-							<IconTrendingUp size={12} color={trend.value >= 0 ? "var(--mantine-color-green-6)" : "var(--mantine-color-red-6)"} />
+							<IconTrendingUp size={12} color={trend.value >= 0 ? "var(--g-color-base-positive-medium-hover)" : "var(--g-color-base-danger-medium)"} />
 							<Text size="xs" c={trend.value >= 0 ? "green" : "red"}>
 								{trend.value > 0 ? "+" : ""}{trend.value}% {trend.label}
 							</Text>

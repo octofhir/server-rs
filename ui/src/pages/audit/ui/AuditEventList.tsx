@@ -27,7 +27,7 @@ import {
 	IconX,
 	IconCheck,
 	IconAlertTriangle,
-} from "@tabler/icons-react";
+} from "@gravity-ui/icons";
 import type { AuditEvent, AuditAction, AuditOutcome } from "@/shared/api/types";
 import classes from "./AuditEventList.module.css";
 

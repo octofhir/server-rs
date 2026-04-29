@@ -11,7 +11,7 @@ import {
 	Tooltip,
 } from "@/shared/ui";
 import { notifications } from "@octofhir/ui-kit";
-import { IconShield, IconList, IconChartBar, IconX } from "@tabler/icons-react";
+import { IconShield, IconList, IconChartBar, IconX } from "@gravity-ui/icons";
 import { useAuditEvents, useAuditAnalytics, exportAuditLogs } from "./lib/useAudit";
 import { AuditFilters } from "./ui/AuditFilters";
 import { AuditEventList } from "./ui/AuditEventList";

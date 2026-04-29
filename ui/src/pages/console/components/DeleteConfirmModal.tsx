@@ -1,6 +1,6 @@
 import { Button, Code, Group, Modal, Stack, Text } from "@/shared/ui";
 import { useDesignTokens } from "@octofhir/ui-kit";
-import { IconAlertTriangle } from "@tabler/icons-react";
+import { IconAlertTriangle } from "@gravity-ui/icons";
 
 interface DeleteConfirmModalProps {
 	opened: boolean;

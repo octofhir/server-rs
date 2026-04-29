@@ -1,33 +1,42 @@
-import { useEffect, useState, type ReactNode } from "react";
 import { ConfirmDialog } from "@gravity-ui/components";
 import type { ButtonProps } from "@gravity-ui/uikit";
+import { useEffect, useState, type ReactNode } from "react";
 
-export interface OpenConfirmModalOptions {
-    title?: ReactNode;
-    /** Free-form body content rendered above the action buttons. */
-    children?: ReactNode;
-    /** Mantine-flavoured alias for `children`. */
+export type ConfirmTheme = "info" | "danger" | "success" | "warning" | "default";
+
+export interface ConfirmOptions {
+    title?: string;
+    /** Body content rendered above the action buttons. */
     message?: ReactNode;
-    labels?: { confirm?: string; cancel?: string };
-    confirmProps?: ButtonProps;
-    cancelProps?: ButtonProps;
-    onConfirm?: () => void;
+    /** Text for the confirm button. Default "OK". */
+    confirmText?: string;
+    /** Text for the cancel button. Default "Cancel". */
+    cancelText?: string;
+    /** Visual theme of the confirm button. Default `info`. */
+    theme?: ConfirmTheme;
+    onConfirm?: () => void | Promise<void>;
     onCancel?: () => void;
-    /** Maps Mantine-style `color: "red"` to Gravity Button view. */
-    confirmColor?: "red" | "blue" | "green" | "default";
 }
 
-interface InternalEntry extends OpenConfirmModalOptions {
+interface InternalEntry extends ConfirmOptions {
     id: string;
 }
 
 type Listener = (entries: InternalEntry[]) => void;
 
-class ConfirmModalStore {
+const themeToView = (t?: ConfirmTheme): ButtonProps["view"] | undefined => {
+    if (t === "danger") return "outlined-danger";
+    if (t === "success") return "outlined-success";
+    if (t === "info") return "outlined-info";
+    if (t === "warning") return "outlined-warning";
+    return undefined;
+};
+
+class ConfirmStore {
     private entries: InternalEntry[] = [];
     private listeners = new Set<Listener>();
 
-    open(options: OpenConfirmModalOptions): string {
+    open(options: ConfirmOptions): string {
         const id = Math.random().toString(36).slice(2);
         this.entries = [...this.entries, { ...options, id }];
         this.emit();
@@ -46,6 +55,7 @@ class ConfirmModalStore {
 
     subscribe(listener: Listener) {
         this.listeners.add(listener);
+        listener(this.entries);
         return () => {
             this.listeners.delete(listener);
         };
@@ -56,27 +66,10 @@ class ConfirmModalStore {
     }
 }
 
-const store = new ConfirmModalStore();
-
-const reactNodeToString = (n?: ReactNode): string | undefined => {
-    if (n === null || n === undefined) return undefined;
-    if (typeof n === "string") return n;
-    if (typeof n === "number" || typeof n === "boolean") return String(n);
-    return undefined;
-};
-
-const colorToView = (
-    c?: OpenConfirmModalOptions["confirmColor"],
-): ButtonProps["view"] | undefined => {
-    if (c === "red") return "outlined-danger";
-    if (c === "green") return "outlined-success";
-    if (c === "blue") return "outlined-info";
-    return undefined;
-};
+const store = new ConfirmStore();
 
 /**
- * Mounted once by `UIProvider`. Renders any modals that consumers open via
- * the imperative `modals.openConfirmModal()` / `modals.confirm()` API.
+ * Mounted once by `UIProvider`. Renders any modals opened via the imperative `confirm()` API.
  */
 export function ConfirmModalHost() {
     const [entries, setEntries] = useState<InternalEntry[]>([]);
@@ -87,11 +80,8 @@ export function ConfirmModalHost() {
         <>
             {entries.map((e) => {
                 const close = () => store.close(e.id);
-                const propsButtonApply: ButtonProps = {
-                    ...(e.confirmProps ?? {}),
-                };
-                const colorView = colorToView(e.confirmColor);
-                if (colorView && !propsButtonApply.view) propsButtonApply.view = colorView;
+                const view = themeToView(e.theme);
+                const propsButtonApply: ButtonProps | undefined = view ? { view } : undefined;
                 return (
                     <ConfirmDialog
                         key={e.id}
@@ -100,12 +90,12 @@ export function ConfirmModalHost() {
                             e.onCancel?.();
                             close();
                         }}
-                        title={reactNodeToString(e.title)}
-                        message={e.message ?? e.children}
-                        textButtonApply={e.labels?.confirm ?? "OK"}
-                        textButtonCancel={e.labels?.cancel ?? "Cancel"}
-                        onClickButtonApply={() => {
-                            e.onConfirm?.();
+                        title={e.title}
+                        message={e.message}
+                        textButtonApply={e.confirmText ?? "OK"}
+                        textButtonCancel={e.cancelText ?? "Cancel"}
+                        onClickButtonApply={async () => {
+                            await e.onConfirm?.();
                             close();
                         }}
                         onClickButtonCancel={() => {
@@ -113,7 +103,6 @@ export function ConfirmModalHost() {
                             close();
                         }}
                         propsButtonApply={propsButtonApply}
-                        propsButtonCancel={e.cancelProps}
                     />
                 );
             })}
@@ -122,13 +111,20 @@ export function ConfirmModalHost() {
 }
 
 /**
- * Imperative confirm-modal API.
- * Use {@link ConfirmModalHost} once at the root (already done by `UIProvider`)
- * and call `modals.openConfirmModal(...)` from anywhere in the React tree.
+ * Imperative confirm dialog. Returns the dialog id; pass to `confirm.close(id)` to close early.
+ *
+ * @example
+ *   confirm({
+ *     title: "Delete user?",
+ *     message: "This action cannot be undone.",
+ *     theme: "danger",
+ *     confirmText: "Delete",
+ *     onConfirm: () => deleteUser(id),
+ *   });
  */
-export const modals = {
-    openConfirmModal: (options: OpenConfirmModalOptions) => store.open(options),
-    confirm: (options: OpenConfirmModalOptions) => store.open(options),
-    closeAll: () => store.closeAll(),
-    close: (id: string) => store.close(id),
-};
+export function confirm(options: ConfirmOptions): string {
+    return store.open(options);
+}
+
+confirm.close = (id: string) => store.close(id);
+confirm.closeAll = () => store.closeAll();

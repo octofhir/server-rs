@@ -16,7 +16,7 @@ import {
 	IconTrash,
 	IconKey,
 	IconFingerprint,
-} from "@tabler/icons-react";
+} from "@gravity-ui/icons";
 import { useTableDetail, useDropIndex } from "@/shared/api/hooks";
 import { modals, notifications } from "@octofhir/ui-kit";
 
@@ -147,7 +147,7 @@ export function TableDetailView({ schema, table, onBack }: TableDetailViewProps)
 											key={idx.name}
 											p="xs"
 											style={{
-												borderRadius: "var(--mantine-radius-sm)",
+												borderRadius: "var(--octo-radius-sm)",
 												border: "1px solid var(--octo-border-subtle)",
 											}}
 										>

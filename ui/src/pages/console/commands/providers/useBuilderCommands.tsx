@@ -1,4 +1,4 @@
-import { IconRefresh, IconSwitch } from "@tabler/icons-react";
+import { IconRefresh, IconSwitch } from "@gravity-ui/icons";
 import { useUnit } from "effector-react";
 import { useMemo } from "react";
 import type { HttpMethod } from "@/shared/api";

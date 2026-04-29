@@ -8,7 +8,7 @@ import {
 	Text,
 	Title,
 } from "@/shared/ui";
-import { IconAlertCircle, IconPlayerPlay, IconX } from "@tabler/icons-react";
+import { IconAlertCircle, IconPlayerPlay, IconX } from "@gravity-ui/icons";
 import { useMutation } from "@tanstack/react-query";
 import { FhirPathEditor } from "@/shared/monaco/FhirPathEditor";
 import { JsonEditor } from "@/shared/monaco/JsonEditor";

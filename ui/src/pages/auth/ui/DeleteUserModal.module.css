@@ -1,17 +1,17 @@
 .userInfo {
-	padding: var(--mantine-spacing-md);
-	background: var(--mantine-color-gray-0);
-	border-radius: var(--mantine-radius-md);
-	border: 1px solid var(--mantine-color-gray-3);
+	padding: var(--octo-spacing-md);
+	background: var(--octo-surface-1);
+	border-radius: var(--octo-radius-md);
+	border: 1px solid var(--octo-border-subtle);
 }
 
-[data-mantine-color-scheme="dark"] .userInfo {
-	background: var(--mantine-color-dark-6);
-	border-color: var(--mantine-color-dark-4);
+[data-theme="dark"] .userInfo {
+	background: var(--octo-surface-2);
+	border-color: var(--octo-surface-4);
 }
 
 .label {
-	font-size: var(--mantine-font-size-xs);
+	font-size: var(--octo-typography-size-xs);
 	color: var(--octo-text-secondary);
 	text-transform: uppercase;
 	letter-spacing: 0.5px;
@@ -19,7 +19,7 @@
 }
 
 .value {
-	font-size: var(--mantine-font-size-sm);
+	font-size: var(--octo-typography-size-sm);
 	font-weight: 500;
 }
 

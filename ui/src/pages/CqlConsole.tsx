@@ -14,7 +14,7 @@ import {
   Loader,
   Grid,
 } from '@/shared/ui';
-import { IconPlayerPlay, IconAlertCircle, IconCheck } from '@tabler/icons-react';
+import { IconPlayerPlay, IconAlertCircle, IconCheck } from '@gravity-ui/icons';
 import { Editor } from '@monaco-editor/react';
 import { useMutation } from '@tanstack/react-query';
 import { fhirClient } from '@/shared/api/fhirClient';
@@ -275,7 +275,7 @@ export function CqlConsole() {
         )}
 
         {!evaluateMutation.isPending && !evaluateMutation.isError && !evaluateMutation.isSuccess && (
-          <Box style={{ textAlign: 'center', padding: '3rem', color: 'var(--mantine-color-dimmed)' }}>
+          <Box style={{ textAlign: 'center', padding: '3rem', color: 'var(--g-color-text-secondary)' }}>
             <Text size="sm">
               Enter a CQL expression and click "Evaluate" to see results
             </Text>

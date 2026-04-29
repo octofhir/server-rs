@@ -26,7 +26,7 @@ import {
 	IconUser,
 	IconServer,
 	IconAppWindow,
-} from "@tabler/icons-react";
+} from "@gravity-ui/icons";
 import type { AuditEventUIFilters, AuditAction, AuditOutcome } from "@/shared/api/types";
 import classes from "./AuditFilters.module.css";
 
