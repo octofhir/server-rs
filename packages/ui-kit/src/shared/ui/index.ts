@@ -69,6 +69,9 @@ export * from "./ClipboardButton";
 export * from "./Collapse";
 export * from "./Chip";
 
+// === Icons (Tabler-compat aliases mapped to @gravity-ui/icons) ===
+export * from "./Icons";
+
 // =====================================================================
 // === DEPRECATED legacy aliases — to be removed in a follow-up sweep ===
 // =====================================================================

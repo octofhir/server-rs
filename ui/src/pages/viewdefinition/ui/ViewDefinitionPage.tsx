@@ -6,7 +6,7 @@ import {
   IconDeviceFloppy,
   IconTrash,
   IconAlertCircle,
-} from "@gravity-ui/icons";
+} from "@octofhir/ui-kit";
 import { useSettings } from "../lib/useSettings";
 import {
   useViewDefinitions,

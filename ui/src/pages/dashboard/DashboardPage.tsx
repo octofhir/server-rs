@@ -13,14 +13,14 @@ import {
 	Box,
 } from "@/shared/ui";
 import {
-	IconFolder,
-	IconTerminal,
-	IconDatabase,
-	IconActivity,
-	IconFileDescription,
-	IconSettings,
-	IconCode,
-	IconServer,
+	Folder,
+	Terminal,
+	Database,
+	Pulse,
+	FileText,
+	Gear,
+	Code,
+	Server,
 } from "@gravity-ui/icons";
 import { useHealth, useResourceTypes } from "@/shared/api/hooks";
 
@@ -28,7 +28,7 @@ interface QuickAction {
 	title: string;
 	description: string;
 	href: string;
-	icon: typeof IconFolder;
+	icon: typeof Folder;
 	color: string;
 }
 
@@ -37,56 +37,56 @@ const quickActions: QuickAction[] = [
 		title: "Browse Resources",
 		description: "View and search FHIR resources",
 		href: "/resources",
-		icon: IconFolder,
+		icon: Folder,
 		color: "primary",
 	},
 	{
 		title: "REST Console",
 		description: "Test FHIR API endpoints",
 		href: "/console",
-		icon: IconTerminal,
+		icon: Terminal,
 		color: "deep",
 	},
 	{
 		title: "DB Console",
 		description: "Execute SQL queries",
 		href: "/db-console",
-		icon: IconDatabase,
+		icon: Database,
 		color: "warm",
 	},
 	{
 		title: "GraphQL",
 		description: "GraphQL query console",
 		href: "/graphql",
-		icon: IconCode,
+		icon: Code,
 		color: "primary",
 	},
 	{
 		title: "API Gateway",
 		description: "Manage custom endpoints",
 		href: "/gateway",
-		icon: IconServer,
+		icon: Server,
 		color: "fire",
 	},
 	{
 		title: "System Logs",
 		description: "View server activity logs",
 		href: "/logs",
-		icon: IconActivity,
+		icon: Pulse,
 		color: "warm",
 	},
 	{
 		title: "Capability Statement",
 		description: "View server metadata",
 		href: "/metadata",
-		icon: IconFileDescription,
+		icon: FileText,
 		color: "deep",
 	},
 	{
 		title: "Settings",
 		description: "Configure server settings",
 		href: "/settings",
-		icon: IconSettings,
+		icon: Gear,
 		color: "deep",
 	},
 ];
@@ -157,7 +157,7 @@ export function DashboardPage() {
 									variant="subtle"
 									color={action.color}
 									size="sm"
-									rightSection={<IconActivity size={14} />}
+									rightSection={<Pulse size={14} />}
 									p={0}
 									style={{ width: "fit-content" }}
 								>
@@ -233,7 +233,7 @@ function StatusCard() {
 					)}
 				</div>
 				<ThemeIcon variant="light" color={statusColor} size={48} radius="md">
-					<IconServer size={24} />
+					<Server size={24} />
 				</ThemeIcon>
 			</Group>
 			<Text size="xs" c="dimmed">
@@ -282,7 +282,7 @@ function ResourceTypesCard() {
 					)}
 				</div>
 				<ThemeIcon variant="light" color="primary" size={48} radius="md">
-					<IconDatabase size={24} />
+					<Database size={24} />
 				</ThemeIcon>
 			</Group>
 			<Text size="xs" c="dimmed">

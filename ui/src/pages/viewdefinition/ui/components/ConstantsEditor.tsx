@@ -1,5 +1,5 @@
 import { Stack, Button, Paper, Group, Text, TextInput, Select, ActionIcon, Tooltip } from "@/shared/ui";
-import { IconPlus, IconTrash } from "@gravity-ui/icons";
+import { IconPlus, IconTrash } from "@octofhir/ui-kit";
 import type { ViewDefinitionConstant } from "../../lib/useViewDefinition";
 
 interface ConstantsEditorProps {

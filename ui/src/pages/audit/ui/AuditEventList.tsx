@@ -11,22 +11,22 @@ import {
 	ThemeIcon,
 } from "@/shared/ui";
 import {
-	IconUser,
-	IconServer,
-	IconAppWindow,
-	IconLogin,
-	IconLogout,
-	IconPlus,
-	IconEye,
-	IconPencil,
-	IconTrash,
-	IconSearch,
-	IconShield,
-	IconSettings,
-	IconPower,
-	IconX,
-	IconCheck,
-	IconAlertTriangle,
+	Person,
+	Server,
+	Display,
+	ArrowRightToSquare,
+	ArrowRightFromSquare,
+	Plus,
+	Eye,
+	Pencil,
+	TrashBin,
+	Magnifier,
+	Shield,
+	Gear,
+	Power,
+	Xmark,
+	Check,
+	TriangleExclamation,
 } from "@gravity-ui/icons";
 import type { AuditEvent, AuditAction, AuditOutcome } from "@/shared/api/types";
 import classes from "./AuditEventList.module.css";
@@ -42,25 +42,25 @@ interface AuditEventListProps {
 }
 
 function getActionIcon(action: AuditAction) {
-	const icons: Record<AuditAction, typeof IconUser> = {
-		"user.login": IconLogin,
-		"user.logout": IconLogout,
-		"user.login_failed": IconX,
-		"resource.create": IconPlus,
-		"resource.read": IconEye,
-		"resource.update": IconPencil,
-		"resource.delete": IconTrash,
-		"resource.search": IconSearch,
-		"policy.evaluate": IconShield,
-		"client.auth": IconAppWindow,
-		"client.create": IconPlus,
-		"client.update": IconPencil,
-		"client.delete": IconTrash,
-		"config.change": IconSettings,
-		"system.startup": IconPower,
-		"system.shutdown": IconPower,
+	const icons: Record<AuditAction, typeof Person> = {
+		"user.login": ArrowRightToSquare,
+		"user.logout": ArrowRightFromSquare,
+		"user.login_failed": Xmark,
+		"resource.create": Plus,
+		"resource.read": Eye,
+		"resource.update": Pencil,
+		"resource.delete": TrashBin,
+		"resource.search": Magnifier,
+		"policy.evaluate": Shield,
+		"client.auth": Display,
+		"client.create": Plus,
+		"client.update": Pencil,
+		"client.delete": TrashBin,
+		"config.change": Gear,
+		"system.startup": Power,
+		"system.shutdown": Power,
 	};
-	return icons[action] || IconServer;
+	return icons[action] || Server;
 }
 
 function getActionColor(action: AuditAction): string {
@@ -98,11 +98,11 @@ function getActionLabel(action: AuditAction): string {
 function getOutcomeIcon(outcome: AuditOutcome) {
 	switch (outcome) {
 		case "success":
-			return IconCheck;
+			return Check;
 		case "failure":
-			return IconX;
+			return Xmark;
 		case "partial":
-			return IconAlertTriangle;
+			return TriangleExclamation;
 	}
 }
 
@@ -120,11 +120,11 @@ function getOutcomeColor(outcome: AuditOutcome): string {
 function getActorIcon(type: "user" | "client" | "system") {
 	switch (type) {
 		case "user":
-			return IconUser;
+			return Person;
 		case "client":
-			return IconAppWindow;
+			return Display;
 		case "system":
-			return IconServer;
+			return Server;
 	}
 }
 
@@ -201,7 +201,7 @@ function AuditEventListComponent({
 			<Center py="xl">
 				<Stack align="center" gap="sm">
 					<ThemeIcon size={48} variant="light" color="gray" radius="xl">
-						<IconShield size={24} />
+						<Shield size={24} />
 					</ThemeIcon>
 					<Text c="dimmed">No audit events found</Text>
 					<Text size="xs" c="dimmed">

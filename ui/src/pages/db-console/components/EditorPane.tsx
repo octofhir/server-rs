@@ -1,6 +1,6 @@
 import { useCallback, useEffect } from "react";
 import { Group, Text, Button, ActionIcon, Tooltip, Popover, UnstyledButton, Box } from "@/shared/ui";
-import { IconCode, IconSettings } from "@gravity-ui/icons";
+import { Code, Gear } from "@gravity-ui/icons";
 import { useDisclosure } from "@octofhir/ui-kit";
 import type * as monaco from "monaco-editor";
 import { SqlEditor } from "@/shared/monaco/SqlEditor";
@@ -76,7 +76,7 @@ export function EditorPane({
 				<Group gap={4}>
 					<Tooltip label="Format SQL (Shift+Alt+F)">
 						<ActionIcon variant="subtle" size="xs" onClick={handleFormat} disabled={!editorInstance}>
-							<IconCode size={14} />
+							<Code size={14} />
 						</ActionIcon>
 					</Tooltip>
 
@@ -84,7 +84,7 @@ export function EditorPane({
 						<Popover.Target>
 							<Tooltip label="Formatter Settings">
 								<ActionIcon variant="subtle" size="xs" onClick={toggleFormatter}>
-									<IconSettings size={14} />
+									<Gear size={14} />
 								</ActionIcon>
 							</Tooltip>
 						</Popover.Target>

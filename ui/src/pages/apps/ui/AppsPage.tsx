@@ -17,8 +17,7 @@ import {
 	Select,
 	Code,
 } from "@/shared/ui";
-import { useDisclosure, useDebouncedValue } from "@octofhir/ui-kit";
-import { useForm } from "@mantine/form";
+import { Field, Form, useDebouncedValue, useDisclosure } from "@octofhir/ui-kit";
 import {
 	IconPlus,
 	IconSearch,
@@ -30,7 +29,7 @@ import {
 	IconEye,
 	IconApi,
 	IconWebhook,
-} from "@gravity-ui/icons";
+} from "@octofhir/ui-kit";
 import { useApps, useCreateApp, useUpdateApp, useDeleteApp, type AppResource } from "../lib/useApps";
 
 const STATUS_COLORS: Record<string, string> = {
@@ -242,6 +241,44 @@ export function AppsPage() {
 	);
 }
 
+interface AppFormValues {
+	name: string;
+	description: string;
+	endpointUrl: string;
+	endpointTimeout: number;
+	secret: string;
+	status: "active" | "inactive" | "suspended";
+}
+
+const APP_DEFAULTS: AppFormValues = {
+	name: "",
+	description: "",
+	endpointUrl: "",
+	endpointTimeout: 30,
+	secret: "",
+	status: "active",
+};
+
+function makeAppValidator(isEditing: boolean) {
+	return (values: AppFormValues) => {
+		const errors: Partial<Record<keyof AppFormValues, string>> = {};
+		if (!values.name || values.name.length < 3) errors.name = "Name must be at least 3 characters";
+		if (!values.endpointUrl) {
+			errors.endpointUrl = "Endpoint URL is required";
+		} else {
+			try {
+				new URL(values.endpointUrl);
+			} catch {
+				errors.endpointUrl = "Must be a valid URL";
+			}
+		}
+		if (!isEditing && !values.secret) errors.secret = "Secret is required";
+		else if (values.secret && values.secret.length < 8)
+			errors.secret = "Secret must be at least 8 characters";
+		return errors;
+	};
+}
+
 function AppModal({
 	opened,
 	onClose,
@@ -255,51 +292,18 @@ function AppModal({
 	const update = useUpdateApp();
 	const isEditing = !!app;
 
-	const form = useForm({
-		initialValues: {
-			name: "",
-			description: "",
-			endpointUrl: "",
-			endpointTimeout: 30,
-			secret: "",
-			status: "active" as "active" | "inactive" | "suspended",
-		},
-		validate: {
-			name: (value) => (value.length < 3 ? "Name must be at least 3 characters" : null),
-			endpointUrl: (value) => {
-				if (!value) return "Endpoint URL is required";
-				try {
-					new URL(value);
-					return null;
-				} catch {
-					return "Must be a valid URL";
-				}
-			},
-			secret: (value) => {
-				// Secret is required for new apps, optional for editing
-				if (!isEditing && !value) return "Secret is required";
-				if (value && value.length < 8) return "Secret must be at least 8 characters";
-				return null;
-			},
-		},
-	});
-
-	useMemo(() => {
-		if (app) {
-			form.setValues({
+	const initialValues: AppFormValues = app
+		? {
 				name: app.name,
-				description: app.description || "",
-				endpointUrl: app.endpoint?.url || "",
-				endpointTimeout: app.endpoint?.timeout || 30,
-				secret: "", // Don't populate secret for editing
-				status: app.status || (app.active ? "active" : "inactive"),
-			});
-		} else {
-			form.reset();
-		}
-	}, [app]);
+				description: app.description ?? "",
+				endpointUrl: app.endpoint?.url ?? "",
+				endpointTimeout: app.endpoint?.timeout ?? 30,
+				secret: "",
+				status: app.status ?? (app.active ? "active" : "inactive"),
+			}
+		: APP_DEFAULTS;
 
-	const handleSubmit = async (values: typeof form.values) => {
+	const handleSubmit = async (values: AppFormValues) => {
 		const payload: Partial<AppResource> = {
 			resourceType: "App",
 			name: values.name,
@@ -310,12 +314,7 @@ function AppModal({
 				timeout: values.endpointTimeout,
 			},
 		};
-
-		// Only include secret if provided
-		if (values.secret) {
-			payload.secret = values.secret;
-		}
-
+		if (values.secret) payload.secret = values.secret;
 		try {
 			if (isEditing && app?.id) {
 				await update.mutateAsync({ ...payload, id: app.id } as AppResource);
@@ -324,7 +323,7 @@ function AppModal({
 			}
 			onClose();
 		} catch {
-			// Handled by hook
+			/* surfaced by mutation */
 		}
 	};
 
@@ -335,66 +334,115 @@ function AppModal({
 			title={isEditing ? "Edit Application" : "Create Application"}
 			size="md"
 		>
-			<form onSubmit={form.onSubmit(handleSubmit)}>
-				<Stack gap="md">
-					<TextInput
-						label="App Name"
-						required
-						placeholder="My Application"
-						{...form.getInputProps("name")}
-					/>
+			<Form<AppFormValues>
+				key={app?.id ?? "new"}
+				onSubmit={handleSubmit}
+				validate={makeAppValidator(isEditing)}
+				initialValues={initialValues}
+				render={({ handleSubmit: submit, submitting }) => (
+					<form onSubmit={submit}>
+						<Stack gap="md">
+							<Field<string> name="name">
+								{({ input, meta }) => (
+									<TextInput
+										label="App Name"
+										required
+										placeholder="My Application"
+										value={input.value}
+										onChange={input.onChange}
+										onBlur={input.onBlur}
+										error={meta.touched && meta.error ? meta.error : undefined}
+									/>
+								)}
+							</Field>
 
-					<Textarea
-						label="Description"
-						placeholder="Brief description of your application"
-						{...form.getInputProps("description")}
-					/>
+							<Field<string> name="description">
+								{({ input }) => (
+									<Textarea
+										label="Description"
+										placeholder="Brief description of your application"
+										value={input.value}
+										onChange={input.onChange}
+									/>
+								)}
+							</Field>
 
-					<TextInput
-						label="Endpoint URL"
-						required
-						placeholder="http://backend:3000/api"
-						description="Backend URL for proxying requests"
-						{...form.getInputProps("endpointUrl")}
-					/>
+							<Field<string> name="endpointUrl">
+								{({ input, meta }) => (
+									<TextInput
+										label="Endpoint URL"
+										required
+										placeholder="http://backend:3000/api"
+										description="Backend URL for proxying requests"
+										value={input.value}
+										onChange={input.onChange}
+										onBlur={input.onBlur}
+										error={meta.touched && meta.error ? meta.error : undefined}
+									/>
+								)}
+							</Field>
 
-					<TextInput
-						label="Timeout (seconds)"
-						type="number"
-						placeholder="30"
-						description="Request timeout in seconds"
-						{...form.getInputProps("endpointTimeout")}
-					/>
+							<Field<number> name="endpointTimeout">
+								{({ input }) => (
+									<TextInput
+										label="Timeout (seconds)"
+										type="number"
+										placeholder="30"
+										description="Request timeout in seconds"
+										value={String(input.value)}
+										onChange={(v) =>
+											input.onChange(Number.parseInt((v as unknown as string) ?? "0", 10) || 0)
+										}
+									/>
+								)}
+							</Field>
 
-					<TextInput
-						label={isEditing ? "Secret (leave empty to keep current)" : "Secret"}
-						required={!isEditing}
-						type="password"
-						placeholder="Enter app secret"
-						description="Used to authenticate requests from the backend"
-						{...form.getInputProps("secret")}
-					/>
+							<Field<string> name="secret">
+								{({ input, meta }) => (
+									<TextInput
+										label={isEditing ? "Secret (leave empty to keep current)" : "Secret"}
+										required={!isEditing}
+										type="password"
+										placeholder="Enter app secret"
+										description="Used to authenticate requests from the backend"
+										value={input.value}
+										onChange={input.onChange}
+										onBlur={input.onBlur}
+										error={meta.touched && meta.error ? meta.error : undefined}
+									/>
+								)}
+							</Field>
 
-					<Select
-						label="Status"
-						data={[
-							{ label: "Active", value: "active" },
-							{ label: "Inactive", value: "inactive" },
-							{ label: "Suspended", value: "suspended" },
-						]}
-						{...form.getInputProps("status")}
-					/>
+							<Field<string> name="status">
+								{({ input }) => (
+									<Select
+										label="Status"
+										data={[
+											{ label: "Active", value: "active" },
+											{ label: "Inactive", value: "inactive" },
+											{ label: "Suspended", value: "suspended" },
+										]}
+										value={input.value}
+										onChange={input.onChange}
+									/>
+								)}
+							</Field>
 
-					<Group justify="flex-end" mt="md">
-						<Button variant="light" onClick={onClose}>
-							Cancel
-						</Button>
-						<Button type="submit" loading={create.isPending || update.isPending}>
-							{isEditing ? "Update" : "Create"}
-						</Button>
-					</Group>
-				</Stack>
-			</form>
+							<Group justify="flex-end" mt="md">
+								<Button variant="light" onClick={onClose} type="button">
+									Cancel
+								</Button>
+								<Button
+									type="submit"
+									loading={submitting || create.isPending || update.isPending}
+								>
+									{isEditing ? "Update" : "Create"}
+								</Button>
+							</Group>
+						</Stack>
+					</form>
+				)}
+			/>
 		</Modal>
 	);
 }

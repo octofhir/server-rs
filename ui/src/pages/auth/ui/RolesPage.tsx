@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useMemo, useState } from "react";
 import {
 	Stack,
 	Title,
@@ -11,16 +11,15 @@ import {
 	Textarea,
 	Alert,
 } from "@/shared/ui";
-import { useDisclosure, useDebouncedValue } from "@octofhir/ui-kit";
-import { useForm } from "@mantine/form";
+import { Field, Form, type FormApi, useDebouncedValue, useDisclosure } from "@octofhir/ui-kit";
 import {
-	IconPlus,
-	IconSearch,
-	IconDotsVertical,
-	IconEdit,
-	IconTrash,
-	IconShield,
-	IconAlertTriangle,
+	Plus,
+	Magnifier,
+	EllipsisVertical,
+	Pencil,
+	TrashBin,
+	Shield,
+	TriangleExclamation,
 } from "@gravity-ui/icons";
 import { Card } from "@/shared/ui/Card/Card";
 import { Modal } from "@/shared/ui/Modal/Modal";
@@ -81,7 +80,7 @@ export function RolesPage() {
 						Manage roles and permissions
 					</Text>
 				</div>
-				<Button leftSection={<IconPlus size={16} />} onClick={open}>
+				<Button leftSection={<Plus size={16} />} onClick={open}>
 					Create Role
 				</Button>
 			</Group>
@@ -90,7 +89,7 @@ export function RolesPage() {
 				<Group mb="md">
 					<TextInput
 						placeholder="Search roles..."
-						leftSection={<IconSearch size={16} />}
+						leftSection={<Magnifier size={16} />}
 						value={search}
 						onChange={(e) => setSearch(e.currentTarget.value)}
 						style={{ flex: 1 }}
@@ -124,7 +123,7 @@ export function RolesPage() {
 									<Table.Td>
 										<div className={classes.roleInfo}>
 											<div className={classes.roleIcon}>
-												<IconShield size={18} />
+												<Shield size={18} />
 											</div>
 											<div>
 												<Text className={classes.roleName}>{role.name}</Text>
@@ -165,12 +164,12 @@ export function RolesPage() {
 										<Menu position="bottom-end" withinPortal>
 											<Menu.Target>
 												<ActionIcon variant="subtle" color="gray">
-													<IconDotsVertical size={16} />
+													<EllipsisVertical size={16} />
 												</ActionIcon>
 											</Menu.Target>
 											<Menu.Dropdown>
 												<Menu.Item
-													leftSection={<IconEdit size={14} />}
+													leftSection={<Pencil size={14} />}
 													onClick={() => handleEdit(role)}
 													disabled={role.isSystem}
 												>
@@ -178,7 +177,7 @@ export function RolesPage() {
 												</Menu.Item>
 												<Menu.Divider />
 												<Menu.Item
-													leftSection={<IconTrash size={14} />}
+													leftSection={<TrashBin size={14} />}
 													color="red"
 													onClick={() => handleDeleteClick(role)}
 													disabled={role.isSystem}
@@ -208,6 +207,28 @@ export function RolesPage() {
 	);
 }
 
+interface RoleFormValues {
+	name: string;
+	description: string;
+	permissions: string[];
+	active: boolean;
+}
+
+const ROLE_FORM_DEFAULTS: RoleFormValues = {
+	name: "",
+	description: "",
+	permissions: [],
+	active: true,
+};
+
+function validateRoleForm(values: RoleFormValues) {
+	const errors: Partial<Record<keyof RoleFormValues, string>> = {};
+	if (!values.name || values.name.length < 2) {
+		errors.name = "Name must be at least 2 characters";
+	}
+	return errors;
+}
+
 function RoleModal({
 	opened,
 	onClose,
@@ -222,48 +243,26 @@ function RoleModal({
 	const { data: permissions } = usePermissions();
 	const isEditing = !!role;
 
-	const form = useForm({
-		initialValues: {
-			name: "",
-			description: "",
-			permissions: [] as string[],
-			active: true,
-		},
-		validate: {
-			name: (value) => (value.length < 2 ? "Name must be at least 2 characters" : null),
-		},
-	});
-
-	// Reset form when modal opens/closes or role changes
-	useEffect(() => {
-		if (opened) {
-			if (role) {
-				form.setValues({
-					name: role.name,
-					description: role.description ?? "",
-					permissions: role.permissions ?? [],
-					active: role.active,
-				});
-			} else {
-				form.reset();
+	const initialValues: RoleFormValues = role
+		? {
+				name: role.name,
+				description: role.description ?? "",
+				permissions: role.permissions ?? [],
+				active: role.active,
 			}
-		}
-	}, [opened, role, form.setValues, form.reset]);
+		: ROLE_FORM_DEFAULTS;
 
-	// Group permissions by category
 	const groupedPermissions = useMemo(() => {
 		const perms = permissions || DEFAULT_PERMISSIONS;
 		const groups: Record<string, Permission[]> = {};
 		for (const perm of perms) {
-			if (!groups[perm.category]) {
-				groups[perm.category] = [];
-			}
+			if (!groups[perm.category]) groups[perm.category] = [];
 			groups[perm.category].push(perm);
 		}
 		return groups;
 	}, [permissions]);
 
-	const handleSubmit = async (values: typeof form.values) => {
+	const handleSubmit = async (values: RoleFormValues) => {
 		const roleData: Partial<RoleResource> = {
 			resourceType: "Role",
 			name: values.name,
@@ -271,7 +270,6 @@ function RoleModal({
 			permissions: values.permissions,
 			active: values.active,
 		};
-
 		try {
 			if (isEditing && role?.id) {
 				await update.mutateAsync({ ...roleData, id: role.id } as RoleResource);
@@ -280,19 +278,7 @@ function RoleModal({
 			}
 			onClose();
 		} catch {
-			// Error handled by mutation hook
-		}
-	};
-
-	const handleTogglePermission = (permCode: string, checked: boolean) => {
-		const currentPerms = form.values.permissions;
-		if (checked) {
-			form.setFieldValue("permissions", [...currentPerms, permCode]);
-		} else {
-			form.setFieldValue(
-				"permissions",
-				currentPerms.filter((p) => p !== permCode)
-			);
+			/* surfaced by mutation hook */
 		}
 	};
 
@@ -303,59 +289,101 @@ function RoleModal({
 			title={isEditing ? "Edit Role" : "Create Role"}
 			size="lg"
 		>
-			<form onSubmit={form.onSubmit(handleSubmit)}>
-				<Stack gap="md">
-					<TextInput label="Role Name" required {...form.getInputProps("name")} />
+			<Form<RoleFormValues>
+				key={role?.id ?? "new"}
+				onSubmit={handleSubmit}
+				validate={validateRoleForm}
+				initialValues={initialValues}
+				render={({ handleSubmit: submit, values, form: api, submitting }) => (
+					<form onSubmit={submit}>
+						<Stack gap="md">
+							<Field<string> name="name">
+								{({ input, meta }) => (
+									<TextInput
+										label="Role Name"
+										required
+										value={input.value}
+										onChange={input.onChange}
+										onBlur={input.onBlur}
+										error={meta.touched && meta.error ? meta.error : undefined}
+									/>
+								)}
+							</Field>
 
-					<Textarea
-						label="Description"
-						placeholder="Optional description for this role"
-						{...form.getInputProps("description")}
-					/>
+							<Field<string> name="description">
+								{({ input }) => (
+									<Textarea
+										label="Description"
+										placeholder="Optional description for this role"
+										value={input.value}
+										onChange={input.onChange}
+									/>
+								)}
+							</Field>
 
-					<div>
-						<Text size="sm" fw={500} mb="xs">
-							Permissions
-						</Text>
-						<div className={classes.permissionMatrix}>
-							{Object.entries(groupedPermissions).map(([category, perms]) => (
-								<div key={category}>
-									<Text className={classes.categoryHeader}>{category}</Text>
-									{perms.map((perm) => (
-										<div key={perm.code} className={classes.permissionItem}>
-											<Checkbox
-												size="xs"
-												checked={form.values.permissions.includes(perm.code)}
-												onChange={(e) =>
-													handleTogglePermission(perm.code, e.currentTarget.checked)
-												}
-											/>
-											<Text className={classes.permissionLabel}>{perm.display}</Text>
+							<div>
+								<Text size="sm" fw={500} mb="xs">
+									Permissions
+								</Text>
+								<div className={classes.permissionMatrix}>
+									{Object.entries(groupedPermissions).map(([category, perms]) => (
+										<div key={category}>
+											<Text className={classes.categoryHeader}>{category}</Text>
+											{perms.map((perm) => (
+												<div key={perm.code} className={classes.permissionItem}>
+													<Checkbox
+														size="xs"
+														checked={values.permissions.includes(perm.code)}
+														onChange={(e) =>
+															togglePermission(api, values.permissions, perm.code, e.currentTarget.checked)
+														}
+													/>
+													<Text className={classes.permissionLabel}>{perm.display}</Text>
+												</div>
+											))}
 										</div>
 									))}
 								</div>
-							))}
-						</div>
-					</div>
+							</div>
 
-					<Checkbox
-						label="Active"
-						description="Role can be assigned to users"
-						{...form.getInputProps("active", { type: "checkbox" })}
-					/>
+							<Field<boolean> name="active" type="checkbox">
+								{({ input }) => (
+									<Checkbox
+										label="Active"
+										description="Role can be assigned to users"
+										checked={input.checked ?? false}
+										onChange={input.onChange}
+									/>
+								)}
+							</Field>
 
-					<Group justify="flex-end" mt="md">
-						<Button variant="light" onClick={onClose}>
-							Cancel
-						</Button>
-						<Button type="submit" loading={create.isPending || update.isPending}>
-							{isEditing ? "Update" : "Create"}
-						</Button>
-					</Group>
-				</Stack>
-			</form>
+							<Group justify="flex-end" mt="md">
+								<Button variant="light" onClick={onClose} type="button">
+									Cancel
+								</Button>
+								<Button
+									type="submit"
+									loading={submitting || create.isPending || update.isPending}
+								>
+									{isEditing ? "Update" : "Create"}
+								</Button>
+							</Group>
+						</Stack>
+					</form>
+				)}
+			/>
 		</Modal>
 	);
+}
+
+function togglePermission(
+	api: FormApi<RoleFormValues>,
+	current: string[],
+	code: string,
+	checked: boolean,
+) {
+	const next = checked ? [...current, code] : current.filter((p) => p !== code);
+	api.change("permissions", next);
 }
 
 function DeleteRoleModal({
@@ -379,7 +407,7 @@ function DeleteRoleModal({
 				</Text>
 
 				<Alert
-					icon={<IconAlertTriangle size={20} />}
+					icon={<TriangleExclamation size={20} />}
 					color="red"
 					variant="light"
 				>

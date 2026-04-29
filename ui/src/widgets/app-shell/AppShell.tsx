@@ -20,29 +20,28 @@ import {
 	useLocalStorage,
 } from "@octofhir/ui-kit";
 import {
-	IconHome,
-	IconFolder,
-	IconTerminal,
-	IconApi,
-	IconApps,
-	IconSettings,
-	IconDatabase,
-	IconCode,
-	IconSun,
-	IconMoon,
-	IconLogout,
-	IconActivity,
-	IconUsers,
-	IconKey,
-	IconShield,
-	IconPackage,
-	IconWorld,
-	IconFileText,
-	IconTable,
-	IconDevices,
-	IconRobot,
-	IconLayoutSidebarLeftCollapse,
-	IconLayoutSidebarLeftExpand,
+	House,
+	Folder,
+	Terminal,
+	Cpu,
+	Boxes3,
+	Gear,
+	Database,
+	Code,
+	Sun,
+	Moon,
+	ArrowRightFromSquare,
+	Pulse,
+	Persons,
+	Key,
+	Shield,
+	Globe,
+	FileText,
+	SquareListUl,
+	Smartphone,
+	FaceRobot,
+	LayoutSideContentRight,
+	LayoutSideContentLeft,
 } from "@gravity-ui/icons";
 import { useHealth, useAuth, useBuildInfo, useSettings } from "@/shared/api/hooks";
 
@@ -50,7 +49,7 @@ interface NavItem {
 	label: string;
 	path: string;
 	description: string;
-	icon: typeof IconHome;
+	icon: typeof House;
 }
 const logoUrl = `${import.meta.env.BASE_URL}logo.png`;
 const SIDEBAR_WIDTH_EXPANDED = 240;
@@ -62,19 +61,19 @@ const mainNavigation: NavItem[] = [
 		label: "Dashboard",
 		path: "/",
 		description: "Overview and quick actions",
-		icon: IconHome,
+		icon: House,
 	},
 	{
 		label: "Resource Browser",
 		path: "/resources",
 		description: "Browse FHIR resources",
-		icon: IconFolder,
+		icon: Folder,
 	},
 	{
 		label: "REST Console",
 		path: "/console",
 		description: "Test FHIR API endpoints",
-		icon: IconTerminal,
+		icon: Terminal,
 	},
 ];
 
@@ -83,7 +82,7 @@ const packagesNavigation: NavItem[] = [
 		label: "Packages",
 		path: "/packages",
 		description: "Manage FHIR packages",
-		icon: IconPackage,
+		icon: Box,
 	},
 ];
 
@@ -92,25 +91,25 @@ const adminNavigation: NavItem[] = [
 		label: "Operations",
 		path: "/operations",
 		description: "View server API operations",
-		icon: IconApi,
+		icon: Cpu,
 	},
 	{
 		label: "Apps",
 		path: "/apps",
 		description: "Manage applications",
-		icon: IconApps,
+		icon: Boxes3,
 	},
 	{
 		label: "Automations",
 		path: "/automations",
 		description: "Event-driven automation scripts",
-		icon: IconRobot,
+		icon: FaceRobot,
 	},
 	{
 		label: "Audit Trail",
 		path: "/audit",
 		description: "Track system activity",
-		icon: IconShield,
+		icon: Shield,
 	},
 ];
 
@@ -119,37 +118,37 @@ const authNavigation: NavItem[] = [
 		label: "Identity Providers",
 		path: "/auth/providers",
 		description: "External auth providers",
-		icon: IconWorld,
+		icon: Globe,
 	},
 	{
 		label: "Clients",
 		path: "/auth/clients",
 		description: "OAuth clients & apps",
-		icon: IconKey,
+		icon: Key,
 	},
 	{
 		label: "Users",
 		path: "/auth/users",
 		description: "User accounts",
-		icon: IconUsers,
+		icon: Persons,
 	},
 	{
 		label: "Sessions",
 		path: "/auth/sessions",
 		description: "Active login sessions",
-		icon: IconDevices,
+		icon: Smartphone,
 	},
 	{
 		label: "Roles",
 		path: "/auth/roles",
 		description: "Manage roles & permissions",
-		icon: IconShield,
+		icon: Shield,
 	},
 	{
 		label: "Access Policies",
 		path: "/auth/policies",
 		description: "Access control policies",
-		icon: IconShield,
+		icon: Shield,
 	},
 ];
 
@@ -158,43 +157,43 @@ const toolsNavigation: NavItem[] = [
 		label: "DB Console",
 		path: "/db-console",
 		description: "SQL Editor & Query Tool",
-		icon: IconDatabase,
+		icon: Database,
 	},
 	{
 		label: "GraphQL",
 		path: "/graphql",
 		description: "GraphQL Query Console",
-		icon: IconCode,
+		icon: Code,
 	},
 	{
 		label: "FHIRPath Console",
 		path: "/fhirpath",
 		description: "FHIRPath Expression Evaluator",
-		icon: IconTerminal,
+		icon: Terminal,
 	},
 	{
 		label: "CQL Console",
 		path: "/cql",
 		description: "Clinical Quality Language Evaluator",
-		icon: IconCode,
+		icon: Code,
 	},
 	{
 		label: "ViewDefinition",
 		path: "/viewdefinition",
 		description: "SQL on FHIR ViewDefinition Editor",
-		icon: IconTable,
+		icon: SquareListUl,
 	},
 	{
 		label: "System Logs",
 		path: "/logs",
 		description: "Real-time server logs",
-		icon: IconFileText,
+		icon: FileText,
 	},
 	{
 		label: "Settings",
 		path: "/settings",
 		description: "Configure server settings",
-		icon: IconSettings,
+		icon: Gear,
 	},
 ];
 
@@ -213,7 +212,7 @@ function HealthBadge() {
 				size="sm"
 				color={statusColor}
 				variant="light"
-				leftSection={<IconActivity size={12} />}
+				leftSection={<Pulse size={12} />}
 			>
 				{health?.status ?? "..."}
 			</Badge>
@@ -233,7 +232,7 @@ function ThemeToggle() {
 				aria-label="Toggle color scheme"
 				style={{ color: "var(--app-header-fg)" }}
 			>
-				{colorScheme === "dark" ? <IconSun size={18} /> : <IconMoon size={18} />}
+				{colorScheme === "dark" ? <Sun size={18} /> : <Moon size={18} />}
 			</ActionIcon>
 		</Tooltip>
 	);
@@ -443,7 +442,7 @@ export function AppShell() {
 										},
 									}}
 								>
-									<IconLogout size={18} />
+									<ArrowRightFromSquare size={18} />
 								</ActionIcon>
 							</Tooltip>
 						)}
@@ -494,9 +493,9 @@ export function AppShell() {
 								onClick={toggleSidebarCompact}
 							>
 								{sidebarCompact ? (
-									<IconLayoutSidebarLeftExpand size={14} />
+									<LayoutSideContentLeft size={14} />
 								) : (
-									<IconLayoutSidebarLeftCollapse size={14} />
+									<LayoutSideContentRight size={14} />
 								)}
 							</ActionIcon>
 						</Tooltip>

@@ -1,4 +1,4 @@
-import { IconActivity, IconClock, IconTable, IconX } from "@gravity-ui/icons";
+import { Pulse, Clock, SquareListUl, Xmark } from "@gravity-ui/icons";
 import { ActionIcon, Box, Tabs, Tooltip } from "@/shared/ui";
 import { ActiveQueriesTab } from "./ActiveQueriesTab";
 import { HistoryTab } from "./HistoryTab";
@@ -20,18 +20,18 @@ export function LeftPanel({ activeTab, onTabChange, onSelectQuery, onClose }: Le
       style={{ display: "flex", flexDirection: "column", height: "100%" }}
     >
       <Tabs.List grow style={{ flexShrink: 0 }}>
-        <Tabs.Tab value="history" leftSection={<IconClock size={14} />}>
+        <Tabs.Tab value="history" leftSection={<Clock size={14} />}>
           History
         </Tabs.Tab>
-        <Tabs.Tab value="tables" leftSection={<IconTable size={14} />}>
+        <Tabs.Tab value="tables" leftSection={<SquareListUl size={14} />}>
           Tables
         </Tabs.Tab>
-        <Tabs.Tab value="queries" leftSection={<IconActivity size={14} />}>
+        <Tabs.Tab value="queries" leftSection={<Pulse size={14} />}>
           Queries
         </Tabs.Tab>
         <Tooltip label="Close sidebar (Ctrl+B)">
           <ActionIcon variant="subtle" size="xs" c="dimmed" onClick={onClose} ml="auto">
-            <IconX size={14} />
+            <Xmark size={14} />
           </ActionIcon>
         </Tooltip>
       </Tabs.List>

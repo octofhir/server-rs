@@ -1,5 +1,5 @@
 import { forwardRef, type CSSProperties, type ReactNode } from "react";
-import { Button, type ButtonProps } from "@gravity-ui/uikit";
+import { Button, type ButtonProps } from "../Button";
 
 /**
  * Square icon button — wraps Gravity `Button` with matching width/height
@@ -27,11 +27,8 @@ export const ActionIcon = forwardRef<HTMLButtonElement, ActionIconProps>(
             justifyContent: "center",
             ...style,
         };
-        // Gravity Button is a discriminated union (button vs anchor).
-        // ActionIcon is button-only, so we cast through `unknown` to satisfy the union.
-        const ButtonAny = Button as unknown as React.ComponentType<Record<string, unknown>>;
         return (
-            <ButtonAny
+            <Button
                 ref={ref}
                 view={view}
                 size={size}

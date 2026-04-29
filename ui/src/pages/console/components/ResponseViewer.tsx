@@ -1,4 +1,4 @@
-import { IconAlertCircle, IconCheck, IconX } from "@gravity-ui/icons";
+import { IconAlertCircle, IconCheck, IconX } from "@octofhir/ui-kit";
 import { useNavigate } from "react-router-dom";
 import { Alert, Anchor, Badge, Group, Paper, ScrollArea, Skeleton, Stack, Table, Tabs, Text } from "@/shared/ui";
 import { JsonViewer } from "@/shared/ui-react/JsonViewer";

@@ -15,17 +15,17 @@ import {
 	DateTimePicker,
 } from "@/shared/ui";
 import {
-	IconSearch,
-	IconFilter,
-	IconDownload,
-	IconRefresh,
-	IconX,
-	IconClock,
-	IconBraces,
-	IconFileSpreadsheet,
-	IconUser,
-	IconServer,
-	IconAppWindow,
+	Magnifier,
+	FunnelXmark,
+	ArrowDownToLine,
+	ArrowRotateRight,
+	Xmark,
+	Clock,
+	CurlyBrackets,
+	FileText,
+	Person,
+	Server,
+	Display,
 } from "@gravity-ui/icons";
 import type { AuditEventUIFilters, AuditAction, AuditOutcome } from "@/shared/api/types";
 import classes from "./AuditFilters.module.css";
@@ -42,12 +42,12 @@ interface AuditFiltersProps {
 const ACTION_CATEGORIES = {
 	user: {
 		label: "User Actions",
-		icon: IconUser,
+		icon: Person,
 		actions: ["user.login", "user.logout", "user.login_failed"] as AuditAction[],
 	},
 	resource: {
 		label: "Resource Actions",
-		icon: IconServer,
+		icon: Server,
 		actions: [
 			"resource.create",
 			"resource.read",
@@ -58,7 +58,7 @@ const ACTION_CATEGORIES = {
 	},
 	client: {
 		label: "Client Actions",
-		icon: IconAppWindow,
+		icon: Display,
 		actions: [
 			"client.auth",
 			"client.create",
@@ -68,7 +68,7 @@ const ACTION_CATEGORIES = {
 	},
 	system: {
 		label: "System Actions",
-		icon: IconServer,
+		icon: Server,
 		actions: [
 			"policy.evaluate",
 			"config.change",
@@ -175,7 +175,7 @@ function AuditFiltersComponent({
 			<Group gap="sm" wrap="nowrap" className={classes.filtersRow}>
 				<TextInput
 					placeholder="Search events..."
-					leftSection={<IconSearch size={14} />}
+					leftSection={<Magnifier size={14} />}
 					value={filters.search || ""}
 					onChange={(e) => handleSearchChange(e.currentTarget.value)}
 					className={classes.searchInput}
@@ -187,7 +187,7 @@ function AuditFiltersComponent({
 					<Menu.Target>
 						<Button
 							variant="light"
-							leftSection={<IconFilter size={14} />}
+							leftSection={<FunnelXmark size={14} />}
 							size="sm"
 							className={classes.filterButton}
 						>
@@ -272,7 +272,7 @@ function AuditFiltersComponent({
 					<Popover.Target>
 						<Button
 							variant="light"
-							leftSection={<IconClock size={14} />}
+							leftSection={<Clock size={14} />}
 							size="sm"
 							className={classes.filterButton}
 						>
@@ -315,7 +315,7 @@ function AuditFiltersComponent({
 								<Button
 									variant="subtle"
 									size="xs"
-									leftSection={<IconX size={12} />}
+									leftSection={<Xmark size={12} />}
 									onClick={() =>
 										onFiltersChange({ startTime: undefined, endTime: undefined })
 									}
@@ -334,7 +334,7 @@ function AuditFiltersComponent({
 						variant="subtle"
 						size="sm"
 						color="gray"
-						leftSection={<IconX size={14} />}
+						leftSection={<Xmark size={14} />}
 						onClick={clearAllFilters}
 					>
 						Clear filters
@@ -361,7 +361,7 @@ function AuditFiltersComponent({
 							onClick={onRefresh}
 							loading={isLoading}
 						>
-							<IconRefresh size={18} />
+							<ArrowRotateRight size={18} />
 						</ActionIcon>
 					</Tooltip>
 
@@ -369,20 +369,20 @@ function AuditFiltersComponent({
 						<Menu.Target>
 							<Tooltip label="Export audit logs">
 								<ActionIcon variant="light" color="gray" size="lg">
-									<IconDownload size={18} />
+									<ArrowDownToLine size={18} />
 								</ActionIcon>
 							</Tooltip>
 						</Menu.Target>
 						<Menu.Dropdown>
 							<Menu.Label>Export Format</Menu.Label>
 							<Menu.Item
-								leftSection={<IconBraces size={14} />}
+								leftSection={<CurlyBrackets size={14} />}
 								onClick={() => onExport("json")}
 							>
 								JSON
 							</Menu.Item>
 							<Menu.Item
-								leftSection={<IconFileSpreadsheet size={14} />}
+								leftSection={<FileText size={14} />}
 								onClick={() => onExport("csv")}
 							>
 								CSV

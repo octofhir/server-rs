@@ -16,18 +16,17 @@ import {
 	CopyButton,
 	Tooltip,
 } from "@/shared/ui";
-import { useDisclosure, useDebouncedValue } from "@octofhir/ui-kit";
-import { useForm } from "@mantine/form";
+import { Field, Form, useDebouncedValue, useDisclosure } from "@octofhir/ui-kit";
 import {
-	IconPlus,
-	IconSearch,
-	IconDotsVertical,
-	IconEdit,
-	IconTrash,
-	IconAppWindow,
-	IconRefresh,
-	IconCopy,
-	IconCheck,
+	Plus,
+	Magnifier,
+	EllipsisVertical,
+	Pencil,
+	TrashBin,
+	Display,
+	ArrowRotateRight,
+	Copy,
+	Check,
 } from "@gravity-ui/icons";
 import { Card } from "@/shared/ui/Card/Card";
 import { Modal } from "@/shared/ui/Modal/Modal";
@@ -112,7 +111,7 @@ export function ClientsPage() {
 						Manage OAuth 2.0 applications and credentials
 					</Text>
 				</div>
-				<Button leftSection={<IconPlus size={16} />} onClick={open}>
+				<Button leftSection={<Plus size={16} />} onClick={open}>
 					Register Client
 				</Button>
 			</Group>
@@ -121,7 +120,7 @@ export function ClientsPage() {
 				<Group mb="md">
 					<TextInput
 						placeholder="Search by name..."
-						leftSection={<IconSearch size={16} />}
+						leftSection={<Magnifier size={16} />}
 						value={search}
 						onChange={(e) => setSearch(e.currentTarget.value)}
 						style={{ flex: 1 }}
@@ -154,7 +153,7 @@ export function ClientsPage() {
 								<Table.Tr key={client.id}>
 									<Table.Td>
 										<Group gap="xs">
-											<IconAppWindow size={16} color="gray" />
+											<Display size={16} color="gray" />
 											<div>
 												<Text size="sm" fw={500}>
 													{client.name}
@@ -177,9 +176,9 @@ export function ClientsPage() {
 																	onClick={copy}
 																>
 																	{copied ? (
-																		<IconCheck size={12} />
+																		<Check size={12} />
 																	) : (
-																		<IconCopy size={12} />
+																		<Copy size={12} />
 																	)}
 																</ActionIcon>
 															</Tooltip>
@@ -218,19 +217,19 @@ export function ClientsPage() {
 										<Menu position="bottom-end" withinPortal>
 											<Menu.Target>
 												<ActionIcon variant="subtle" color="gray">
-													<IconDotsVertical size={16} />
+													<EllipsisVertical size={16} />
 												</ActionIcon>
 											</Menu.Target>
 											<Menu.Dropdown>
 												<Menu.Item
-													leftSection={<IconEdit size={14} />}
+													leftSection={<Pencil size={14} />}
 													onClick={() => handleEdit(client)}
 												>
 													Edit
 												</Menu.Item>
 												{client.confidential && (
 													<Menu.Item
-														leftSection={<IconRefresh size={14} />}
+														leftSection={<ArrowRotateRight size={14} />}
 														onClick={() => handleRegenerateSecret(client)}
 													>
 														Regenerate Secret
@@ -238,7 +237,7 @@ export function ClientsPage() {
 												)}
 												<Menu.Divider />
 												<Menu.Item
-													leftSection={<IconTrash size={14} />}
+													leftSection={<TrashBin size={14} />}
 													color="red"
 													onClick={() => handleDeleteClick(client)}
 												>
@@ -305,75 +304,33 @@ function ClientModal({
 	const update = useUpdateClient();
 	const isEditing = !!client;
 
-	const form = useForm({
-		initialValues: {
-			clientId: "",
-			clientSecret: "",
-			name: "",
-			description: "",
-			grantTypes: ["authorization_code", "refresh_token"] as string[],
-			redirectUris: [] as string[],
-			postLogoutRedirectUris: [] as string[],
-			scopes: [] as string[],
-			confidential: false,
-			active: true,
-			accessTokenLifetime: 3600,
-			refreshTokenLifetime: 2592000,
-			pkceRequired: true,
-			allowedOrigins: [] as string[],
-			jwksUri: "",
-		},
-		validate: {
-			clientId: (value) =>
-				value.length < 3 ? "Client ID must be at least 3 characters" : null,
-			name: (value) =>
-				value.length < 3 ? "Name must be at least 3 characters" : null,
-			grantTypes: (value) =>
-				value.length === 0 ? "Select at least one grant type" : null,
-		},
-	});
-
-	useMemo(() => {
-		if (client) {
-			form.setValues({
+	const initialValues: ClientFormValues = client
+		? {
 				clientId: client.clientId,
 				clientSecret: "",
 				name: client.name,
-				description: client.description || "",
-				grantTypes: client.grantTypes || [],
-				redirectUris: client.redirectUris || [],
-				postLogoutRedirectUris: client.postLogoutRedirectUris || [],
-				scopes: client.scopes || [],
+				description: client.description ?? "",
+				grantTypes: client.grantTypes ?? [],
+				redirectUris: client.redirectUris ?? [],
+				postLogoutRedirectUris: client.postLogoutRedirectUris ?? [],
+				scopes: client.scopes ?? [],
 				confidential: client.confidential,
 				active: client.active,
-				accessTokenLifetime: client.accessTokenLifetime || 3600,
-				refreshTokenLifetime: client.refreshTokenLifetime || 2592000,
+				accessTokenLifetime: client.accessTokenLifetime ?? 3600,
+				refreshTokenLifetime: client.refreshTokenLifetime ?? 2592000,
 				pkceRequired: client.pkceRequired ?? true,
-				allowedOrigins: client.allowedOrigins || [],
-				jwksUri: client.jwksUri || "",
-			});
-		} else {
-			form.reset();
-		}
-	}, [client]);
+				allowedOrigins: client.allowedOrigins ?? [],
+				jwksUri: client.jwksUri ?? "",
+			}
+		: CLIENT_DEFAULTS;
 
-	const handleSubmit = async (values: typeof form.values) => {
+	const handleSubmit = async (values: ClientFormValues) => {
 		const payload: Record<string, unknown> = {
 			resourceType: "Client",
 			...values,
 		};
-
-		// Remove empty jwksUri
-		if (!values.jwksUri) {
-			delete payload.jwksUri;
-		}
-
-		if (isEditing) {
-			if (!values.clientSecret) {
-				delete payload.clientSecret;
-			}
-		}
-
+		if (!values.jwksUri) delete payload.jwksUri;
+		if (isEditing && !values.clientSecret) delete payload.clientSecret;
 		try {
 			if (isEditing && client?.id) {
 				await update.mutateAsync({ ...payload, id: client.id } as ClientResource);
@@ -381,13 +338,12 @@ function ClientModal({
 			} else {
 				const result = await create.mutateAsync(payload as Partial<ClientResource>);
 				onClose();
-				// If confidential client was created and we have a secret, show it
 				if (values.confidential && values.clientSecret) {
 					onSecretCreated(result.clientId, values.clientSecret);
 				}
 			}
 		} catch {
-			// Handled by hook
+			/* surfaced by mutation */
 		}
 	};
 
@@ -398,126 +354,229 @@ function ClientModal({
 			title={isEditing ? "Edit OAuth Client" : "Register OAuth Client"}
 			size="lg"
 		>
-			<form onSubmit={form.onSubmit(handleSubmit)}>
-				<Stack gap="md">
-					<Group grow>
-						<TextInput
-							label="Client ID"
-							required
-							{...form.getInputProps("clientId")}
-							disabled={isEditing}
-						/>
-						<TextInput
-							label="Name"
-							required
-							{...form.getInputProps("name")}
-						/>
-					</Group>
+			<Form<ClientFormValues>
+				key={client?.id ?? "new"}
+				onSubmit={handleSubmit}
+				validate={validateClientForm}
+				initialValues={initialValues}
+				render={({ handleSubmit: submit, submitting }) => (
+					<form onSubmit={submit}>
+						<Stack gap="md">
+							<Group grow>
+								<Field<string> name="clientId">
+									{({ input, meta }) => (
+										<TextInput
+											label="Client ID"
+											required
+											value={input.value}
+											onChange={input.onChange}
+											onBlur={input.onBlur}
+											disabled={isEditing}
+											error={meta.touched && meta.error ? meta.error : undefined}
+										/>
+									)}
+								</Field>
+								<Field<string> name="name">
+									{({ input, meta }) => (
+										<TextInput
+											label="Name"
+											required
+											value={input.value}
+											onChange={input.onChange}
+											onBlur={input.onBlur}
+											error={meta.touched && meta.error ? meta.error : undefined}
+										/>
+									)}
+								</Field>
+							</Group>
 
-					<Textarea
-						label="Description"
-						{...form.getInputProps("description")}
-					/>
+							<Field<string> name="description">
+								{({ input }) => (
+									<Textarea label="Description" value={input.value} onChange={input.onChange} />
+								)}
+							</Field>
 
-					<Group grow>
-						<PasswordInput
-							label={isEditing ? "New Client Secret" : "Client Secret"}
-							placeholder={
-								isEditing
-									? "Leave blank to keep current"
-									: "Required for confidential clients"
-							}
-							{...form.getInputProps("clientSecret")}
-						/>
-						<Stack gap={0} pt="xs">
-							<Checkbox
-								label="Confidential Client"
-								description="Has a secret, for server-side apps"
-								{...form.getInputProps("confidential", { type: "checkbox" })}
-							/>
+							<Group grow>
+								<Field<string> name="clientSecret">
+									{({ input }) => (
+										<PasswordInput
+											label={isEditing ? "New Client Secret" : "Client Secret"}
+											placeholder={isEditing ? "Leave blank to keep current" : "Required for confidential clients"}
+											value={input.value}
+											onChange={input.onChange}
+										/>
+									)}
+								</Field>
+								<Stack gap={0} pt="xs">
+									<Field<boolean> name="confidential" type="checkbox">
+										{({ input }) => (
+											<Checkbox
+												label="Confidential Client"
+												description="Has a secret, for server-side apps"
+												checked={input.checked ?? false}
+												onChange={input.onChange}
+											/>
+										)}
+									</Field>
+								</Stack>
+							</Group>
+
+							<Field<string[]> name="grantTypes">
+								{({ input, meta }) => (
+									<MultiSelect
+										label="Grant Types"
+										required
+										data={GRANT_TYPES}
+										value={input.value}
+										onChange={input.onChange}
+										error={meta.touched && meta.error ? meta.error : undefined}
+									/>
+								)}
+							</Field>
+
+							<Field<string[]> name="redirectUris">
+								{({ input }) => (
+									<MultiSelect
+										label="Redirect URIs"
+										placeholder="Add URI and press Enter"
+										data={input.value}
+										searchable
+										value={input.value}
+										onChange={input.onChange}
+									/>
+								)}
+							</Field>
+
+							<Field<string[]> name="postLogoutRedirectUris">
+								{({ input }) => (
+									<MultiSelect
+										label="Post-Logout Redirect URIs"
+										placeholder="Add URI and press Enter"
+										description="Allowed URIs to redirect after logout"
+										data={input.value}
+										searchable
+										value={input.value}
+										onChange={input.onChange}
+									/>
+								)}
+							</Field>
+
+							<Field<string[]> name="allowedOrigins">
+								{({ input }) => (
+									<MultiSelect
+										label="Allowed Origins (CORS)"
+										placeholder="Add origin and press Enter"
+										data={input.value}
+										searchable
+										value={input.value}
+										onChange={input.onChange}
+									/>
+								)}
+							</Field>
+
+							<Field<string> name="jwksUri">
+								{({ input }) => (
+									<TextInput
+										label="JWKS URL"
+										placeholder="https://example.com/.well-known/jwks.json"
+										description="For private_key_jwt authentication"
+										value={input.value}
+										onChange={input.onChange}
+									/>
+								)}
+							</Field>
+
+							<Group grow>
+								<Field<number> name="accessTokenLifetime">
+									{({ input }) => (
+										<NumberInput
+											label="Access Token Lifetime (s)"
+											value={input.value}
+											onChange={input.onChange}
+										/>
+									)}
+								</Field>
+								<Field<number> name="refreshTokenLifetime">
+									{({ input }) => (
+										<NumberInput
+											label="Refresh Token Lifetime (s)"
+											value={input.value}
+											onChange={input.onChange}
+										/>
+									)}
+								</Field>
+							</Group>
+
+							<Group grow>
+								<Field<boolean> name="active" type="checkbox">
+									{({ input }) => (
+										<Switch label="Active" checked={input.checked ?? false} onChange={input.onChange} />
+									)}
+								</Field>
+								<Field<boolean> name="pkceRequired" type="checkbox">
+									{({ input }) => (
+										<Switch label="Require PKCE" checked={input.checked ?? false} onChange={input.onChange} />
+									)}
+								</Field>
+							</Group>
+
+							<Group justify="flex-end" mt="md">
+								<Button variant="light" onClick={onClose} type="button">
+									Cancel
+								</Button>
+								<Button type="submit" loading={submitting || create.isPending || update.isPending}>
+									{isEditing ? "Update" : "Register"}
+								</Button>
+							</Group>
 						</Stack>
-					</Group>
-
-					<MultiSelect
-						label="Grant Types"
-						required
-						data={GRANT_TYPES}
-						{...form.getInputProps("grantTypes")}
-					/>
-
-					<MultiSelect
-						label="Redirect URIs"
-						placeholder="Add URI and press Enter"
-						data={form.values.redirectUris}
-						searchable
-						creatable
-						getCreateLabel={(query) => `+ Add ${query}`}
-						onCreate={(query) => query}
-						{...form.getInputProps("redirectUris")}
-					/>
-
-					<MultiSelect
-						label="Post-Logout Redirect URIs"
-						placeholder="Add URI and press Enter"
-						description="Allowed URIs to redirect after logout"
-						data={form.values.postLogoutRedirectUris}
-						searchable
-						creatable
-						getCreateLabel={(query) => `+ Add ${query}`}
-						onCreate={(query) => query}
-						{...form.getInputProps("postLogoutRedirectUris")}
-					/>
-
-					<MultiSelect
-						label="Allowed Origins (CORS)"
-						placeholder="Add origin and press Enter"
-						data={form.values.allowedOrigins}
-						searchable
-						creatable
-						getCreateLabel={(query) => `+ Add ${query}`}
-						onCreate={(query) => query}
-						{...form.getInputProps("allowedOrigins")}
-					/>
-
-					<TextInput
-						label="JWKS URL"
-						placeholder="https://example.com/.well-known/jwks.json"
-						description="For private_key_jwt authentication"
-						{...form.getInputProps("jwksUri")}
-					/>
-
-					<Group grow>
-						<NumberInput
-							label="Access Token Lifetime (s)"
-							{...form.getInputProps("accessTokenLifetime")}
-						/>
-						<NumberInput
-							label="Refresh Token Lifetime (s)"
-							{...form.getInputProps("refreshTokenLifetime")}
-						/>
-					</Group>
-
-					<Group grow>
-						<Switch
-							label="Active"
-							{...form.getInputProps("active", { type: "checkbox" })}
-						/>
-						<Switch
-							label="Require PKCE"
-							{...form.getInputProps("pkceRequired", { type: "checkbox" })}
-						/>
-					</Group>
-
-					<Group justify="flex-end" mt="md">
-						<Button variant="light" onClick={onClose}>
-							Cancel
-						</Button>
-						<Button type="submit" loading={create.isPending || update.isPending}>
-							{isEditing ? "Update" : "Register"}
-						</Button>
-					</Group>
-				</Stack>
-			</form>
+					</form>
+				)}
+			/>
 		</Modal>
 	);
+}
+
+interface ClientFormValues {
+	clientId: string;
+	clientSecret: string;
+	name: string;
+	description: string;
+	grantTypes: string[];
+	redirectUris: string[];
+	postLogoutRedirectUris: string[];
+	scopes: string[];
+	confidential: boolean;
+	active: boolean;
+	accessTokenLifetime: number;
+	refreshTokenLifetime: number;
+	pkceRequired: boolean;
+	allowedOrigins: string[];
+	jwksUri: string;
+}
+
+const CLIENT_DEFAULTS: ClientFormValues = {
+	clientId: "",
+	clientSecret: "",
+	name: "",
+	description: "",
+	grantTypes: ["authorization_code", "refresh_token"],
+	redirectUris: [],
+	postLogoutRedirectUris: [],
+	scopes: [],
+	confidential: false,
+	active: true,
+	accessTokenLifetime: 3600,
+	refreshTokenLifetime: 2592000,
+	pkceRequired: true,
+	allowedOrigins: [],
+	jwksUri: "",
+};
+
+function validateClientForm(values: ClientFormValues) {
+	const errors: Partial<Record<keyof ClientFormValues, string>> = {};
+	if (!values.clientId || values.clientId.length < 3) errors.clientId = "Client ID must be at least 3 characters";
+	if (!values.name || values.name.length < 3) errors.name = "Name must be at least 3 characters";
+	if (!values.grantTypes || values.grantTypes.length === 0)
+		errors.grantTypes = "Select at least one grant type";
+	return errors;
 }

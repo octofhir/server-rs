@@ -18,15 +18,14 @@ import {
 	PasswordInput,
 	MultiSelect,
 } from "@/shared/ui";
-import { useDisclosure, useDebouncedValue } from "@octofhir/ui-kit";
-import { useForm } from "@mantine/form";
+import { Field, Form, useDebouncedValue, useDisclosure } from "@octofhir/ui-kit";
 import {
-	IconPlus,
-	IconSearch,
-	IconDotsVertical,
-	IconEdit,
-	IconTrash,
-	IconWorld,
+	Plus,
+	Magnifier,
+	EllipsisVertical,
+	Pencil,
+	TrashBin,
+	Globe,
 } from "@gravity-ui/icons";
 import { useIdentityProviders, useCreateIdentityProvider, useUpdateIdentityProvider, useDeleteIdentityProvider, type IdentityProviderResource } from "../lib/useIdentityProviders";
 
@@ -66,7 +65,7 @@ export function IdentityProvidersPage() {
 						Manage external OIDC/OAuth2 authentication providers
 					</Text>
 				</div>
-				<Button leftSection={<IconPlus size={16} />} onClick={open}>
+				<Button leftSection={<Plus size={16} />} onClick={open}>
 					Add Provider
 				</Button>
 			</Group>
@@ -75,7 +74,7 @@ export function IdentityProvidersPage() {
 				<Group mb="md">
 					<TextInput
 						placeholder="Search by name..."
-						leftSection={<IconSearch size={16} />}
+						leftSection={<Magnifier size={16} />}
 						value={search}
 						onChange={(e) => setSearch(e.currentTarget.value)}
 						style={{ flex: 1 }}
@@ -107,7 +106,7 @@ export function IdentityProvidersPage() {
 								<Table.Tr key={idp.id}>
 									<Table.Td>
 										<Group gap="xs">
-											<IconWorld size={16} color="blue" />
+											<Globe size={16} color="blue" />
 											<div>
 												<Text size="sm" fw={500}>
 													{idp.name}
@@ -133,18 +132,18 @@ export function IdentityProvidersPage() {
 										<Menu position="bottom-end" withinPortal>
 											<Menu.Target>
 												<ActionIcon variant="subtle" color="gray">
-													<IconDotsVertical size={16} />
+													<EllipsisVertical size={16} />
 												</ActionIcon>
 											</Menu.Target>
 											<Menu.Dropdown>
 												<Menu.Item
-													leftSection={<IconEdit size={14} />}
+													leftSection={<Pencil size={14} />}
 													onClick={() => handleEdit(idp)}
 												>
 													Edit
 												</Menu.Item>
 												<Menu.Item
-													leftSection={<IconTrash size={14} />}
+													leftSection={<TrashBin size={14} />}
 													color="red"
 													onClick={() => handleDelete(idp.id!)}
 												>
@@ -169,6 +168,46 @@ export function IdentityProvidersPage() {
 	);
 }
 
+interface IdpFormValues {
+	name: string;
+	title: string;
+	description: string;
+	type: "oidc" | "oauth2" | "saml2";
+	issuer: string;
+	clientId: string;
+	clientSecret: string;
+	authorizeUrl: string;
+	tokenUrl: string;
+	jwksUrl: string;
+	userInfoUrl: string;
+	scopes: string[];
+	active: boolean;
+}
+
+const IDP_DEFAULTS: IdpFormValues = {
+	name: "",
+	title: "",
+	description: "",
+	type: "oidc",
+	issuer: "",
+	clientId: "",
+	clientSecret: "",
+	authorizeUrl: "",
+	tokenUrl: "",
+	jwksUrl: "",
+	userInfoUrl: "",
+	scopes: ["openid", "profile", "email"],
+	active: true,
+};
+
+function validateIdp(values: IdpFormValues) {
+	const errors: Partial<Record<keyof IdpFormValues, string>> = {};
+	if (!values.name || values.name.length < 2) errors.name = "Name too short";
+	if (!values.issuer || !values.issuer.startsWith("http")) errors.issuer = "Must be a valid URL";
+	if (!values.clientId) errors.clientId = "Client ID required";
+	return errors;
+}
+
 function IdpModal({
 	opened,
 	onClose,
@@ -182,70 +221,39 @@ function IdpModal({
 	const update = useUpdateIdentityProvider();
 	const isEditing = !!idp;
 
-	const form = useForm({
-		initialValues: {
-			name: "",
-			title: "",
-			description: "",
-			type: "oidc" as "oidc" | "oauth2" | "saml2",
-			issuer: "",
-			clientId: "",
-			clientSecret: "",
-			authorizeUrl: "",
-			tokenUrl: "",
-			jwksUrl: "",
-			userInfoUrl: "",
-			scopes: ["openid", "profile", "email"],
-			active: true,
-		},
-		validate: {
-			name: (value) => (value.length < 2 ? "Name too short" : null),
-			issuer: (value) => (value.startsWith("http") ? null : "Must be a valid URL"),
-			clientId: (value) => (value ? null : "Client ID required"),
-		},
-	});
-
-	useMemo(() => {
-		if (idp) {
-			form.setValues({
+	const initialValues: IdpFormValues = idp
+		? {
 				name: idp.name,
-				title: idp.title || "",
-				description: idp.description || "",
-				type: idp.type || "oidc",
+				title: idp.title ?? "",
+				description: idp.description ?? "",
+				type: idp.type ?? "oidc",
 				issuer: idp.issuer,
 				clientId: idp.clientId,
-				clientSecret: "", // Hide secret
-				authorizeUrl: idp.authorizeUrl || "",
-				tokenUrl: idp.tokenUrl || "",
-				jwksUrl: idp.jwksUrl || "",
-				userInfoUrl: idp.userInfoUrl || "",
-				scopes: idp.scopes || ["openid", "profile", "email"],
+				clientSecret: "",
+				authorizeUrl: idp.authorizeUrl ?? "",
+				tokenUrl: idp.tokenUrl ?? "",
+				jwksUrl: idp.jwksUrl ?? "",
+				userInfoUrl: idp.userInfoUrl ?? "",
+				scopes: idp.scopes ?? ["openid", "profile", "email"],
 				active: idp.active,
-			});
-		} else {
-			form.reset();
-		}
-	}, [idp]);
+			}
+		: IDP_DEFAULTS;
 
-	const handleSubmit = async (values: typeof form.values) => {
-		const payload: any = {
+	const handleSubmit = async (values: IdpFormValues) => {
+		const payload: Record<string, unknown> = {
 			resourceType: "IdentityProvider",
 			...values,
 		};
-
-		if (isEditing && !values.clientSecret) {
-			delete payload.clientSecret;
-		}
-
+		if (isEditing && !values.clientSecret) delete payload.clientSecret;
 		try {
 			if (isEditing && idp?.id) {
-				await update.mutateAsync({ ...payload, id: idp.id });
+				await update.mutateAsync({ ...payload, id: idp.id } as IdentityProviderResource);
 			} else {
-				await create.mutateAsync(payload);
+				await create.mutateAsync(payload as IdentityProviderResource);
 			}
 			onClose();
-		} catch (e) {
-			// Handled by hook
+		} catch {
+			/* surfaced by mutation */
 		}
 	};
 
@@ -256,66 +264,150 @@ function IdpModal({
 			title={isEditing ? "Edit Identity Provider" : "Add Identity Provider"}
 			size="lg"
 		>
-			<form onSubmit={form.onSubmit(handleSubmit)}>
-				<Stack gap="md">
-					<Group grow>
-						<TextInput label="Internal Name" required {...form.getInputProps("name")} />
-						<TextInput label="Display Title" {...form.getInputProps("title")} />
-					</Group>
+			<Form<IdpFormValues>
+				key={idp?.id ?? "new"}
+				onSubmit={handleSubmit}
+				validate={validateIdp}
+				initialValues={initialValues}
+				render={({ handleSubmit: submit, submitting }) => (
+					<form onSubmit={submit}>
+						<Stack gap="md">
+							<Group grow>
+								<Field<string> name="name">
+									{({ input, meta }) => (
+										<TextInput
+											label="Internal Name"
+											required
+											value={input.value}
+											onChange={input.onChange}
+											onBlur={input.onBlur}
+											error={meta.touched && meta.error ? meta.error : undefined}
+										/>
+									)}
+								</Field>
+								<Field<string> name="title">
+									{({ input }) => (
+										<TextInput
+											label="Display Title"
+											value={input.value}
+											onChange={input.onChange}
+										/>
+									)}
+								</Field>
+							</Group>
 
-					<Select
-						label="Type"
-						data={[
-							{ label: "OpenID Connect", value: "oidc" },
-							{ label: "OAuth 2.0", value: "oauth2" },
-							{ label: "SAML 2.0", value: "saml2" },
-						]}
-						{...form.getInputProps("type")}
-					/>
+							<Field<string> name="type">
+								{({ input }) => (
+									<Select
+										label="Type"
+										data={[
+											{ label: "OpenID Connect", value: "oidc" },
+											{ label: "OAuth 2.0", value: "oauth2" },
+											{ label: "SAML 2.0", value: "saml2" },
+										]}
+										value={input.value}
+										onChange={input.onChange}
+									/>
+								)}
+							</Field>
 
-					<TextInput label="Issuer URL" required {...form.getInputProps("issuer")} />
+							<Field<string> name="issuer">
+								{({ input, meta }) => (
+									<TextInput
+										label="Issuer URL"
+										required
+										value={input.value}
+										onChange={input.onChange}
+										onBlur={input.onBlur}
+										error={meta.touched && meta.error ? meta.error : undefined}
+									/>
+								)}
+							</Field>
 
-					<Group grow>
-						<TextInput label="Client ID" required {...form.getInputProps("clientId")} />
-						<PasswordInput 
-							label="Client Secret" 
-							placeholder={isEditing ? "Leave blank to keep current" : ""}
-							{...form.getInputProps("clientSecret")} 
-						/>
-					</Group>
+							<Group grow>
+								<Field<string> name="clientId">
+									{({ input, meta }) => (
+										<TextInput
+											label="Client ID"
+											required
+											value={input.value}
+											onChange={input.onChange}
+											onBlur={input.onBlur}
+											error={meta.touched && meta.error ? meta.error : undefined}
+										/>
+									)}
+								</Field>
+								<Field<string> name="clientSecret">
+									{({ input }) => (
+										<PasswordInput
+											label="Client Secret"
+											placeholder={isEditing ? "Leave blank to keep current" : ""}
+											value={input.value}
+											onChange={input.onChange}
+										/>
+									)}
+								</Field>
+							</Group>
 
-					<Group grow>
-						<TextInput label="Authorize URL" {...form.getInputProps("authorizeUrl")} />
-						<TextInput label="Token URL" {...form.getInputProps("tokenUrl")} />
-					</Group>
+							<Group grow>
+								<Field<string> name="authorizeUrl">
+									{({ input }) => (
+										<TextInput label="Authorize URL" value={input.value} onChange={input.onChange} />
+									)}
+								</Field>
+								<Field<string> name="tokenUrl">
+									{({ input }) => (
+										<TextInput label="Token URL" value={input.value} onChange={input.onChange} />
+									)}
+								</Field>
+							</Group>
 
-					<Group grow>
-						<TextInput label="JWKS URL" {...form.getInputProps("jwksUrl")} />
-						<TextInput label="User Info URL" {...form.getInputProps("userInfoUrl")} />
-					</Group>
+							<Group grow>
+								<Field<string> name="jwksUrl">
+									{({ input }) => (
+										<TextInput label="JWKS URL" value={input.value} onChange={input.onChange} />
+									)}
+								</Field>
+								<Field<string> name="userInfoUrl">
+									{({ input }) => (
+										<TextInput label="User Info URL" value={input.value} onChange={input.onChange} />
+									)}
+								</Field>
+							</Group>
 
-					<MultiSelect
-						label="Default Scopes"
-						data={form.values.scopes}
-						searchable
-						creatable
-						getCreateLabel={(query) => `+ Add ${query}`}
-						onCreate={(query) => query}
-						{...form.getInputProps("scopes")}
-					/>
+							<Field<string[]> name="scopes">
+								{({ input }) => (
+									<MultiSelect
+										label="Default Scopes"
+										data={input.value}
+										searchable
+										value={input.value}
+										onChange={input.onChange}
+									/>
+								)}
+							</Field>
 
-					<Switch label="Active" {...form.getInputProps("active", { type: "checkbox" })} />
+							<Field<boolean> name="active" type="checkbox">
+								{({ input }) => (
+									<Switch label="Active" checked={input.checked ?? false} onChange={input.onChange} />
+								)}
+							</Field>
 
-					<Group justify="flex-end" mt="md">
-						<Button variant="light" onClick={onClose}>
-							Cancel
-						</Button>
-						<Button type="submit" loading={create.isPending || update.isPending}>
-							{isEditing ? "Update" : "Create"}
-						</Button>
-					</Group>
-				</Stack>
-			</form>
+							<Group justify="flex-end" mt="md">
+								<Button variant="light" onClick={onClose} type="button">
+									Cancel
+								</Button>
+								<Button
+									type="submit"
+									loading={submitting || create.isPending || update.isPending}
+								>
+									{isEditing ? "Update" : "Create"}
+								</Button>
+							</Group>
+						</Stack>
+					</form>
+				)}
+			/>
 		</Modal>
 	);
 }

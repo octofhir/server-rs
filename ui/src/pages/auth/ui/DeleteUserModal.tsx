@@ -1,5 +1,5 @@
 import { Stack, Text, Group, Alert } from "@/shared/ui";
-import { IconAlertTriangle } from "@gravity-ui/icons";
+import { TriangleExclamation } from "@gravity-ui/icons";
 import { Modal } from "@/shared/ui/Modal/Modal";
 import { Button } from "@/shared/ui/Button/Button";
 import classes from "./DeleteUserModal.module.css";
@@ -42,7 +42,7 @@ export function DeleteUserModal({
 				</div>
 
 				<Alert
-					icon={<IconAlertTriangle size={20} />}
+					icon={<TriangleExclamation size={20} />}
 					color="red"
 					variant="light"
 					className={classes.warningAlert}

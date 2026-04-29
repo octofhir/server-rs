@@ -1,6 +1,6 @@
 import { useCallback } from "react";
 import { Button, Group, Menu, Paper, Stack, Text } from "@/shared/ui";
-import { IconChevronDown, IconPlus, IconRepeat } from "@gravity-ui/icons";
+import { IconChevronDown, IconPlus, IconRepeat } from "@octofhir/ui-kit";
 import {
   closestCenter,
   DndContext,

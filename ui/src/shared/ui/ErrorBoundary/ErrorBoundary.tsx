@@ -1,28 +1,13 @@
-import { Component, type ReactNode, type ErrorInfo, useState } from "react";
-import {
-	Stack,
-	Title,
-	Text,
-	Button,
-	Paper,
-	Group,
-	Code,
-	Box,
-	Center,
-	Collapse,
-	ScrollArea,
-} from "@octofhir/ui-kit";
-import { IconAlertTriangle, IconRefresh, IconHome, IconChevronDown, IconChevronUp } from "@gravity-ui/icons";
+import { Component, type ErrorInfo, type ReactNode, useState } from "react";
+import { ArrowRotateRight, ChevronDown, ChevronUp, House, TriangleExclamation } from "@gravity-ui/icons";
+import { Button } from "../Button";
+import classes from "./ErrorBoundary.module.css";
 
 interface ErrorBoundaryProps {
 	children: ReactNode;
-	/** Custom fallback component */
 	fallback?: ReactNode;
-	/** Called when error is caught */
 	onError?: (error: Error, errorInfo: ErrorInfo) => void;
-	/** Whether this is a layout-level boundary (shows compact error) */
 	layout?: boolean;
-	/** Reset key - when this changes, the boundary resets */
 	resetKey?: string | number;
 }
 
@@ -50,14 +35,12 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
 		this.setState({ errorInfo });
 		this.props.onError?.(error, errorInfo);
 
-		// Log to console in development
 		if (import.meta.env.DEV) {
 			console.error("ErrorBoundary caught an error:", error, errorInfo);
 		}
 	}
 
 	componentDidUpdate(prevProps: ErrorBoundaryProps) {
-		// Reset error state when resetKey changes
 		if (prevProps.resetKey !== this.props.resetKey && this.state.hasError) {
 			this.reset();
 		}
@@ -71,41 +54,32 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
 		});
 	};
 
-	handleRetry = () => {
-		this.reset();
-	};
-
 	handleGoHome = () => {
 		this.reset();
-		window.location.href = "/ui";
+		window.location.assign("/ui");
 	};
 
 	render() {
-		if (this.state.hasError) {
-			if (this.props.fallback) {
-				return this.props.fallback;
-			}
-
-			const { error, errorInfo } = this.state;
-			const { layout } = this.props;
-
-			if (layout) {
-				// Compact error for layout-level boundaries
-				return <LayoutErrorFallback error={error} onRetry={this.handleRetry} />;
-			}
-
-			// Full-page error for global boundaries
-			return (
-				<GlobalErrorFallback
-					error={error}
-					errorInfo={errorInfo}
-					onRetry={this.handleRetry}
-					onGoHome={this.handleGoHome}
-				/>
-			);
+		if (!this.state.hasError) {
+			return this.props.children;
 		}
 
-		return this.props.children;
+		if (this.props.fallback) {
+			return this.props.fallback;
+		}
+
+		if (this.props.layout) {
+			return <LayoutErrorFallback error={this.state.error} onRetry={this.reset} />;
+		}
+
+		return (
+			<GlobalErrorFallback
+				error={this.state.error}
+				errorInfo={this.state.errorInfo}
+				onRetry={this.reset}
+				onGoHome={this.handleGoHome}
+			/>
+		);
 	}
 }
 
@@ -118,93 +92,31 @@ function LayoutErrorFallback({ error, onRetry }: LayoutErrorFallbackProps) {
 	const [showDetails, setShowDetails] = useState(false);
 
 	return (
-		<Center h="100%" p="xl" className="page-enter">
-			<Paper
-				p="xl"
-				radius="lg"
-				style={{
-					background: "var(--octo-surface-2)",
-					border: "1px solid var(--octo-border-subtle)",
-					maxWidth: 600,
-					width: "100%",
-				}}
-			>
-				<Stack gap="md" align="center">
-					<Box
-						p="md"
-						style={{
-							background: "var(--g-color-base-danger-light)",
-							borderRadius: "var(--octo-radius-lg)",
-						}}
-					>
-						<IconAlertTriangle size={32} color="var(--g-color-base-danger-medium)" />
-					</Box>
+		<section className={`${classes.shell} ${classes.layoutShell}`} role="alert">
+			<div className={classes.panel}>
+				<ErrorHeader
+					title="Page failed to render"
+					description="The current section crashed while rendering. Retry the section or move to another page."
+				/>
 
-					<Stack gap="xs" align="center">
-						<Title order={4}>Something went wrong</Title>
-						<Text size="sm" c="dimmed" ta="center">
-							An error occurred while rendering this page. Try refreshing or navigate to another section.
-						</Text>
-					</Stack>
-
-					<Group gap="sm">
+				<div className={classes.actions}>
+					<Button view="action" leftSection={<ArrowRotateRight size={16} />} onClick={onRetry}>
+						Retry
+					</Button>
+					{error ? (
 						<Button
-							leftSection={<IconRefresh size={16} />}
-							onClick={onRetry}
-							variant="light"
-							radius="md"
+							view="flat-secondary"
+							leftSection={showDetails ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+							onClick={() => setShowDetails((value) => !value)}
 						>
-							Try Again
+							Details
 						</Button>
-						{error && (
-							<Button
-								leftSection={showDetails ? <IconChevronUp size={16} /> : <IconChevronDown size={16} />}
-								onClick={() => setShowDetails((v) => !v)}
-								variant="subtle"
-								radius="md"
-								color="gray"
-							>
-								{showDetails ? "Hide Details" : "Show Details"}
-							</Button>
-						)}
-					</Group>
+					) : null}
+				</div>
 
-					{error && (
-						<Collapse in={showDetails} w="100%">
-							<Stack gap="xs" w="100%">
-								<Text size="xs" fw={600} tt="uppercase" c="dimmed">
-									Error Details
-								</Text>
-								<Code
-									block
-									style={{
-										fontSize: "11px",
-										background: "var(--octo-surface-3)",
-										border: "1px solid var(--octo-border-subtle)",
-									}}
-								>
-									{error.name}: {error.message}
-								</Code>
-								{error.stack && (
-									<ScrollArea h={150}>
-										<Code
-											block
-											style={{
-												fontSize: "10px",
-												background: "var(--octo-surface-3)",
-												border: "1px solid var(--octo-border-subtle)",
-											}}
-										>
-											{error.stack}
-										</Code>
-									</ScrollArea>
-								)}
-							</Stack>
-						</Collapse>
-					)}
-				</Stack>
-			</Paper>
-		</Center>
+				{showDetails && error ? <ErrorDetails error={error} /> : null}
+			</div>
+		</section>
 	);
 }
 
@@ -216,95 +128,62 @@ interface GlobalErrorFallbackProps {
 }
 
 function GlobalErrorFallback({ error, errorInfo, onRetry, onGoHome }: GlobalErrorFallbackProps) {
+	const [showDetails, setShowDetails] = useState(import.meta.env.DEV);
+
 	return (
-		<Box
-			style={{
-				minHeight: "100vh",
-				display: "flex",
-				alignItems: "center",
-				justifyContent: "center",
-				background: "var(--g-color-base-background)",
-				padding: "var(--octo-spacing-xl)",
-			}}
-		>
-			<Paper
-				p="xl"
-				radius="lg"
-				shadow="lg"
-				style={{
-					maxWidth: 600,
-					width: "100%",
-					border: "1px solid var(--octo-border-subtle)",
-				}}
-			>
-				<Stack gap="lg" align="center">
-					<Box
-						p="lg"
-						style={{
-							background: "var(--g-color-base-danger-light)",
-							borderRadius: "var(--octo-radius-xl)",
-						}}
-					>
-						<IconAlertTriangle size={48} color="var(--g-color-base-danger-medium)" />
-					</Box>
+		<main className={classes.shell} role="alert">
+			<div className={`${classes.panel} ${classes.globalPanel}`}>
+				<ErrorHeader
+					title="Application error"
+					description="The UI hit an unexpected state. Retry the render, or return to the main workspace."
+				/>
 
-					<Stack gap="xs" align="center">
-						<Title order={2}>Application Error</Title>
-						<Text c="dimmed" ta="center">
-							The application encountered an unexpected error. Please try refreshing the page or return to the home screen.
-						</Text>
-					</Stack>
-
-					{error && import.meta.env.DEV && (
-						<Stack gap="xs" w="100%">
-							<Text size="xs" fw={600} tt="uppercase" c="dimmed">
-								Error Details (Development Only)
-							</Text>
-							<Code
-								block
-								style={{
-									maxHeight: 150,
-									overflow: "auto",
-									fontSize: "11px",
-								}}
-							>
-								{error.name}: {error.message}
-							</Code>
-							{errorInfo?.componentStack && (
-								<Code
-									block
-									style={{
-										maxHeight: 200,
-										overflow: "auto",
-										fontSize: "10px",
-									}}
-								>
-									{errorInfo.componentStack}
-								</Code>
-							)}
-						</Stack>
-					)}
-
-					<Group gap="md">
+				<div className={classes.actions}>
+					<Button view="action" leftSection={<ArrowRotateRight size={16} />} onClick={onRetry}>
+						Retry
+					</Button>
+					<Button view="outlined" leftSection={<House size={16} />} onClick={onGoHome}>
+						Home
+					</Button>
+					{error ? (
 						<Button
-							leftSection={<IconRefresh size={16} />}
-							onClick={onRetry}
-							variant="light"
-							radius="md"
+							view="flat-secondary"
+							leftSection={showDetails ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+							onClick={() => setShowDetails((value) => !value)}
 						>
-							Try Again
+							Details
 						</Button>
-						<Button
-							leftSection={<IconHome size={16} />}
-							onClick={onGoHome}
-							radius="md"
-						>
-							Go to Home
-						</Button>
-					</Group>
-				</Stack>
-			</Paper>
-		</Box>
+					) : null}
+				</div>
+
+				{showDetails && error ? <ErrorDetails error={error} componentStack={errorInfo?.componentStack} /> : null}
+			</div>
+		</main>
+	);
+}
+
+function ErrorHeader({ title, description }: { title: string; description: string }) {
+	return (
+		<div className={classes.header}>
+			<div className={classes.icon}>
+				<TriangleExclamation size={24} />
+			</div>
+			<div className={classes.copy}>
+				<h1>{title}</h1>
+				<p>{description}</p>
+			</div>
+		</div>
+	);
+}
+
+function ErrorDetails({ error, componentStack }: { error: Error; componentStack?: string | null }) {
+	return (
+		<div className={classes.details}>
+			<div className={classes.detailHeader}>Diagnostics</div>
+			<pre>{`${error.name}: ${error.message}`}</pre>
+			{error.stack ? <pre>{error.stack}</pre> : null}
+			{componentStack ? <pre>{componentStack}</pre> : null}
+		</div>
 	);
 }
 

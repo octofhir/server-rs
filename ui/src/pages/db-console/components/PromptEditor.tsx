@@ -10,7 +10,7 @@ import {
 	Select,
 	UnstyledButton,
 } from "@/shared/ui";
-import { IconCode, IconGripVertical, IconSettings } from "@gravity-ui/icons";
+import { Code, GripHorizontal, Gear } from "@gravity-ui/icons";
 import { useDisclosure, useLocalStorage } from "@octofhir/ui-kit";
 import type * as monaco from "monaco-editor";
 import { SqlEditor } from "@/shared/monaco/SqlEditor";
@@ -155,7 +155,7 @@ export function PromptEditor({
 							onClick={handleFormat}
 							disabled={!editorInstance}
 						>
-							<IconCode size={14} />
+							<Code size={14} />
 						</ActionIcon>
 					</Tooltip>
 
@@ -173,7 +173,7 @@ export function PromptEditor({
 									size="xs"
 									onClick={toggleFormatter}
 								>
-									<IconSettings size={14} />
+									<Gear size={14} />
 								</ActionIcon>
 							</Tooltip>
 						</Popover.Target>
@@ -266,7 +266,7 @@ export function PromptEditor({
 					onKeyDown={handleSplitterKeyDown}
 					aria-label="Resize diagnostics panel"
 				>
-					<IconGripVertical size={14} />
+					<GripHorizontal size={14} />
 				</UnstyledButton>
 
 				{/* Diagnostics */}

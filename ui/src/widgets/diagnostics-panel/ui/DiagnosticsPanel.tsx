@@ -8,7 +8,7 @@ import {
   Text,
   UnstyledButton,
 } from "@/shared/ui";
-import { IconChevronDown, IconChevronUp } from "@gravity-ui/icons";
+import { ChevronDown, ChevronUp } from "@gravity-ui/icons";
 import type * as monaco from "monaco-editor";
 import { useCallback, useState } from "react";
 import {
@@ -127,7 +127,7 @@ export function DiagnosticsPanel({
       >
         <Group justify="space-between">
           <Group gap="xs">
-            {collapsed ? <IconChevronUp size={16} /> : <IconChevronDown size={16} />}
+            {collapsed ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
             <Text size="sm" fw={500}>
               Problems
             </Text>

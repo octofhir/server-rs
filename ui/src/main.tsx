@@ -2,6 +2,7 @@
 // is set up before any component-local CSS modules run.
 import "@octofhir/ui-kit/styles";
 
+import "./shared/lib/react-dom-legacy-compat";
 import { createRoot } from "react-dom/client";
 import { App } from "./app";
 

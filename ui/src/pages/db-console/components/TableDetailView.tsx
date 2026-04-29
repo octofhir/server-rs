@@ -12,10 +12,10 @@ import {
 	Loader,
 } from "@/shared/ui";
 import {
-	IconArrowLeft,
-	IconTrash,
-	IconKey,
-	IconFingerprint,
+	ArrowLeft,
+	TrashBin,
+	Key,
+	Fingerprint,
 } from "@gravity-ui/icons";
 import { useTableDetail, useDropIndex } from "@/shared/api/hooks";
 import { modals, notifications } from "@octofhir/ui-kit";
@@ -78,7 +78,7 @@ export function TableDetailView({ schema, table, onBack }: TableDetailViewProps)
 		<Stack gap={0} h="100%">
 			<Group gap="xs" px="sm" py="xs" style={{ flexShrink: 0, borderBottom: "1px solid var(--octo-border-subtle)" }}>
 				<ActionIcon variant="subtle" size="sm" onClick={onBack}>
-					<IconArrowLeft size={14} />
+					<ArrowLeft size={14} />
 				</ActionIcon>
 				<Text size="xs" fw={600} truncate style={{ flex: 1 }}>
 					{schema}.{table}
@@ -154,9 +154,9 @@ export function TableDetailView({ schema, table, onBack }: TableDetailViewProps)
 											<Group justify="space-between" wrap="nowrap">
 												<Group gap={6} wrap="nowrap" style={{ minWidth: 0 }}>
 													{idx.isPrimary ? (
-														<IconKey size={12} style={{ flexShrink: 0, opacity: 0.6 }} />
+														<Key size={12} style={{ flexShrink: 0, opacity: 0.6 }} />
 													) : idx.isUnique ? (
-														<IconFingerprint size={12} style={{ flexShrink: 0, opacity: 0.6 }} />
+														<Fingerprint size={12} style={{ flexShrink: 0, opacity: 0.6 }} />
 													) : null}
 													<Text size="xs" ff="monospace" truncate>
 														{idx.name}
@@ -171,7 +171,7 @@ export function TableDetailView({ schema, table, onBack }: TableDetailViewProps)
 															onClick={() => handleDropIndex(idx.name)}
 															loading={dropIndexMutation.isPending}
 														>
-															<IconTrash size={12} />
+															<TrashBin size={12} />
 														</ActionIcon>
 													</Tooltip>
 												)}

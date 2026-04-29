@@ -1,38 +1,32 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import {
-	Stack,
-	Title,
 	Text,
-	Group,
+	Flex,
 	Table,
 	Badge,
-	Menu,
 	Checkbox,
 	Select,
 	PasswordInput,
-	MultiSelect,
 	Switch,
+	Card,
 } from "@/shared/ui";
-import { useDisclosure, useDebouncedValue } from "@octofhir/ui-kit";
-import { useForm } from "@mantine/form";
+import { Field, Form, FormSpy, useDebouncedValue, useDisclosure } from "@octofhir/ui-kit";
+import { DropdownMenu } from "@gravity-ui/uikit";
 import { useNavigate } from "react-router-dom";
 import {
-	IconPlus,
-	IconSearch,
-	IconDotsVertical,
-	IconEdit,
-	IconTrash,
-	IconKey,
-	IconEye,
-	IconUserCheck,
-	IconUserX,
-	IconFilter,
+	Plus,
+	Magnifier,
+	EllipsisVertical,
+	Pencil,
+	TrashBin,
+	Key,
+	Eye,
+	PersonPencil,
+	PersonXmark,
 } from "@gravity-ui/icons";
-import { Card } from "@/shared/ui/Card/Card";
 import { Modal } from "@/shared/ui/Modal/Modal";
 import { Button } from "@/shared/ui/Button/Button";
 import { TextInput } from "@/shared/ui/TextInput/TextInput";
-import { ActionIcon } from "@/shared/ui/ActionIcon/ActionIcon";
 import {
 	useUsers,
 	useCreateUser,
@@ -184,79 +178,85 @@ export function UsersPage() {
 	const someSelected = selectedUsers.size > 0;
 
 	return (
-		<Stack gap="md" className={classes.pageRoot}>
-			<Group justify="space-between">
-				<div>
-					<Title order={2}>Users</Title>
-					<Text c="dimmed" size="sm">
+		<div className={classes.pageRoot}>
+			<Flex justify="space-between" align="flex-start" gap="m" wrap="nowrap" className={classes.pageHeader}>
+				<div className={classes.heading}>
+					<Text as="h1" variant="header-2" className={classes.pageTitle}>
+						Users
+					</Text>
+					<Text as="p" color="secondary" variant="body-1" className={classes.pageDescription}>
 						Manage user accounts, roles, and credentials
 					</Text>
 				</div>
-				<Button leftSection={<IconPlus size={16} />} onClick={open}>
+				<Button view="action" onClick={open}>
+					<Button.Icon>
+						<Plus width={16} />
+					</Button.Icon>
 					Create User
 				</Button>
-			</Group>
+			</Flex>
 
-			<Card className={classes.tableContainer}>
-				<Group mb="md" className={classes.filterBar}>
+			<Card type="container" view="outlined" className={classes.tableContainer}>
+				<div className={classes.filterBar}>
 					<TextInput
 						placeholder="Search by username or email..."
-						leftSection={<IconSearch size={16} />}
+						startContent={<Magnifier width={16} />}
 						value={search}
 						onChange={(e) => setSearch(e.currentTarget.value)}
 						className={classes.searchInput}
 					/>
 					<Select
 						placeholder="Filter by role"
-						leftSection={<IconFilter size={16} />}
-						data={availableRoles.map((r) => ({ value: r, label: r }))}
-						value={roleFilter}
-						onChange={setRoleFilter}
-						clearable
-						w={180}
+						options={availableRoles.map((r) => ({ value: r, content: r }))}
+						value={roleFilter ? [roleFilter] : []}
+						onUpdate={(value) => setRoleFilter(value[0] ?? null)}
+						hasClear
+						filterable
+						width={180}
 					/>
 					<Select
 						placeholder="Status"
-						data={[
-							{ value: "active", label: "Active" },
-							{ value: "inactive", label: "Inactive" },
+						options={[
+							{ value: "active", content: "Active" },
+							{ value: "inactive", content: "Inactive" },
 						]}
-						value={statusFilter}
-						onChange={setStatusFilter}
-						clearable
-						w={140}
+						value={statusFilter ? [statusFilter] : []}
+						onUpdate={(value) => setStatusFilter(value[0] ?? null)}
+						hasClear
+						width={140}
 					/>
-				</Group>
+				</div>
 
 				{someSelected && (
 					<div className={classes.bulkActions}>
-						<Text className={classes.selectedCount}>
+						<Text variant="body-1" className={classes.selectedCount}>
 							{selectedUsers.size} user{selectedUsers.size !== 1 ? "s" : ""} selected
 						</Text>
 						<Button
 							size="xs"
-							variant="light"
-							color="green"
-							leftSection={<IconUserCheck size={14} />}
+							view="outlined-success"
 							onClick={handleBulkActivate}
 							loading={bulkUpdate.isPending}
 						>
+							<Button.Icon>
+								<PersonPencil width={14} />
+							</Button.Icon>
 							Activate
 						</Button>
 						<Button
 							size="xs"
-							variant="light"
-							color="orange"
-							leftSection={<IconUserX size={14} />}
+							view="outlined-warning"
 							onClick={handleBulkDeactivate}
 							loading={bulkUpdate.isPending}
 						>
+							<Button.Icon>
+								<PersonXmark width={14} />
+							</Button.Icon>
 							Deactivate
 						</Button>
 						<Button
 							size="xs"
-							variant="subtle"
-							color="gray"
+							view="flat-secondary"
 							onClick={() => setSelectedUsers(new Set())}
 						>
 							Clear selection
@@ -264,128 +264,129 @@ export function UsersPage() {
 					</div>
 				)}
 
-				<Table>
-					<Table.Thead>
-						<Table.Tr>
-							<Table.Th style={{ width: 40 }}>
-								<Checkbox
-									checked={allSelected}
-									indeterminate={someSelected && !allSelected}
-									onChange={(e) => handleSelectAll(e.currentTarget.checked)}
-								/>
-							</Table.Th>
-							<Table.Th>User</Table.Th>
-							<Table.Th>Roles</Table.Th>
-							<Table.Th>Status</Table.Th>
-							<Table.Th>Last Login</Table.Th>
-							<Table.Th style={{ width: 50 }} />
-						</Table.Tr>
-					</Table.Thead>
-					<Table.Tbody>
-						{isLoading ? (
+				<Table.ScrollContainer minWidth={860}>
+					<Table verticalSpacing="md" highlightOnHover>
+						<Table.Thead>
 							<Table.Tr>
-								<Table.Td colSpan={6}>Loading...</Table.Td>
+								<Table.Th className={classes.selectionCell}>
+									<Checkbox
+										checked={allSelected}
+										indeterminate={someSelected && !allSelected}
+										onChange={(e) => handleSelectAll(e.currentTarget.checked)}
+									/>
+								</Table.Th>
+								<Table.Th>User</Table.Th>
+								<Table.Th>Roles</Table.Th>
+								<Table.Th>Status</Table.Th>
+								<Table.Th>Last login</Table.Th>
+								<Table.Th className={classes.actionsCell} />
 							</Table.Tr>
-						) : users.length === 0 ? (
-							<Table.Tr>
-								<Table.Td colSpan={6} style={{ textAlign: "center" }}>
-									No users found
-								</Table.Td>
-							</Table.Tr>
-						) : (
-							users.map((user) => (
-								<Table.Tr key={user.id}>
-									<Table.Td>
-										<Checkbox
-											checked={user.id ? selectedUsers.has(user.id) : false}
-											onChange={(e) => user.id && handleSelectUser(user.id, e.currentTarget.checked)}
-										/>
-									</Table.Td>
-									<Table.Td>
-										<div className={classes.userCell}>
-											<div className={classes.avatar}>{getUserInitials(user)}</div>
-											<div className={classes.userInfo}>
-												<Text className={classes.userName}>
-													{user.name || user.username}
-												</Text>
-												<Text className={classes.userEmail}>
-													{user.email || user.username}
-												</Text>
-											</div>
-										</div>
-									</Table.Td>
-									<Table.Td>
-										<Group gap={4}>
-											{user.roles?.map((role) => (
-												<Badge
-													key={role}
-													size="sm"
-													variant={role === "admin" ? "filled" : "dot"}
-													color={role === "admin" ? "red" : "blue"}
-												>
-													{role}
-												</Badge>
-											))}
-											{(!user.roles || user.roles.length === 0) && (
-												<Text size="xs" c="dimmed">
-													No roles
-												</Text>
-											)}
-										</Group>
-									</Table.Td>
-									<Table.Td>
-										<Badge
-											color={user.active ? "green" : user.status === "locked" ? "red" : "gray"}
-											variant="light"
-										>
-											{user.status === "locked" ? "Locked" : user.active ? "Active" : "Inactive"}
-										</Badge>
-									</Table.Td>
-									<Table.Td>
-										<Text className={classes.lastLogin}>{formatLastLogin(user.lastLogin)}</Text>
-									</Table.Td>
-									<Table.Td>
-										<Menu position="bottom-end" withinPortal>
-											<Menu.Target>
-												<ActionIcon variant="subtle" color="gray">
-													<IconDotsVertical size={16} />
-												</ActionIcon>
-											</Menu.Target>
-											<Menu.Dropdown>
-												<Menu.Item
-													leftSection={<IconEye size={14} />}
-													onClick={() => handleViewDetails(user)}
-												>
-													View Details
-												</Menu.Item>
-												<Menu.Item
-													leftSection={<IconEdit size={14} />}
-													onClick={() => handleEdit(user)}
-												>
-													Edit
-												</Menu.Item>
-												<Menu.Item
-													leftSection={<IconKey size={14} />}
-													onClick={() => handleResetPasswordClick(user)}
-												>
-													Reset Password
-												</Menu.Item>
-												<Menu.Divider />
-												<Menu.Item
-													leftSection={<IconTrash size={14} />}
-													color="red"
-													onClick={() => handleDeleteClick(user)}
-												>
-													Delete
-												</Menu.Item>
-											</Menu.Dropdown>
-										</Menu>
+						</Table.Thead>
+						<Table.Tbody>
+							{isLoading ? (
+								<Table.Tr>
+									<Table.Td colSpan={6} className={classes.emptyCell}>
+										Loading users...
 									</Table.Td>
 								</Table.Tr>
-							))
-						)}
-					</Table.Tbody>
-				</Table>
+							) : users.length === 0 ? (
+								<Table.Tr>
+									<Table.Td colSpan={6} className={classes.emptyCell}>
+										No users found
+									</Table.Td>
+								</Table.Tr>
+							) : (
+								users.map((user) => (
+									<Table.Tr key={user.id}>
+										<Table.Td className={classes.selectionCell}>
+											<Checkbox
+												checked={user.id ? selectedUsers.has(user.id) : false}
+												onChange={(e) => user.id && handleSelectUser(user.id, e.currentTarget.checked)}
+											/>
+										</Table.Td>
+										<Table.Td>
+											<div className={classes.userCell}>
+												<div className={classes.avatar}>{getUserInitials(user)}</div>
+												<div className={classes.userInfo}>
+													<Text variant="body-2" className={classes.userName}>
+														{user.name || user.username}
+													</Text>
+													<Text variant="body-1" color="secondary" className={classes.userEmail}>
+														{user.email || user.username}
+													</Text>
+												</div>
+											</div>
+										</Table.Td>
+										<Table.Td>
+											<div className={classes.roleList}>
+												{user.roles?.map((role) => (
+													<Badge
+														key={role}
+														size="s"
+														theme={role === "admin" ? "danger" : "info"}
+													>
+														{role}
+													</Badge>
+												))}
+												{(!user.roles || user.roles.length === 0) && (
+													<Text variant="body-1" color="secondary">
+														No roles
+													</Text>
+												)}
+											</div>
+										</Table.Td>
+										<Table.Td>
+											<Badge
+												size="s"
+												theme={user.active ? "success" : user.status === "locked" ? "danger" : "unknown"}
+											>
+												{user.status === "locked" ? "Locked" : user.active ? "Active" : "Inactive"}
+											</Badge>
+										</Table.Td>
+										<Table.Td>
+											<Text variant="body-1" color="secondary" className={classes.lastLogin}>
+												{formatLastLogin(user.lastLogin)}
+											</Text>
+										</Table.Td>
+										<Table.Td className={classes.actionsCell}>
+											<DropdownMenu
+												size="s"
+												icon={<EllipsisVertical width={16} />}
+												defaultSwitcherProps={{ view: "flat-secondary", size: "s", "aria-label": "User actions" }}
+												popupProps={{ placement: "bottom-end" }}
+												items={[
+													{
+														text: "View details",
+														iconStart: <Eye width={14} />,
+														action: () => handleViewDetails(user),
+													},
+													{
+														text: "Edit",
+														iconStart: <Pencil width={14} />,
+														action: () => handleEdit(user),
+													},
+													{
+														text: "Reset password",
+														iconStart: <Key width={14} />,
+														action: () => handleResetPasswordClick(user),
+													},
+													[
+														{
+															text: "Delete",
+															iconStart: <TrashBin width={14} />,
+															theme: "danger",
+															action: () => handleDeleteClick(user),
+														},
+													],
+												]}
+											/>
+										</Table.Td>
+									</Table.Tr>
+								))
+							)}
+						</Table.Tbody>
+					</Table>
+				</Table.ScrollContainer>
 			</Card>
 
 			<UserModal
@@ -412,7 +413,7 @@ export function UsersPage() {
 				}}
 				user={resetPasswordTarget}
 			/>
-		</Stack>
+		</div>
 	);
 }
 
@@ -430,52 +431,32 @@ function UserModal({
 	const create = useCreateUser();
 	const update = useUpdateUser();
 	const isEditing = !!user;
-	const [password, setPassword] = useState("");
 
-	const form = useForm({
-		initialValues: {
-			username: "",
-			name: "",
-			email: "",
-			password: "",
-			active: true,
-			roles: [] as string[],
-			mfaEnabled: false,
-		},
-		validate: {
-			username: (value) => (value.length < 3 ? "Username must be at least 3 characters" : null),
-			email: (value) => (value && !/^\S+@\S+$/.test(value) ? "Invalid email" : null),
-			password: (value) => {
-				if (!isEditing && value.length < 8) return "Password must be at least 8 characters";
-				if (value && getPasswordStrength(value).score < 2) return "Password is too weak";
-				return null;
-			},
-		},
-	});
-
-	const passwordStrength = getPasswordStrength(password);
-
-	// Reset form when modal opens/closes or user changes
-	useEffect(() => {
-		if (opened) {
-			if (user) {
-				form.setValues({
-					username: user.username,
-					name: user.name ?? "",
-					email: user.email ?? "",
-					password: "",
-					active: user.active,
-					roles: user.roles ?? [],
-					mfaEnabled: user.mfaEnabled ?? false,
-				});
-			} else {
-				form.reset();
+	const initialValues: UserFormValues = user
+		? {
+				username: user.username,
+				name: user.name ?? "",
+				email: user.email ?? "",
+				password: "",
+				active: user.active,
+				roles: user.roles ?? [],
+				mfaEnabled: user.mfaEnabled ?? false,
 			}
-			setPassword("");
-		}
-	}, [opened, user, form.setValues, form.reset]);
+		: USER_DEFAULTS;
 
-	const handleSubmit = async (values: typeof form.values) => {
+	const validate = (values: UserFormValues) => {
+		const errors: Partial<Record<keyof UserFormValues, string>> = {};
+		if (!values.username || values.username.length < 3)
+			errors.username = "Username must be at least 3 characters";
+		if (values.email && !/^\S+@\S+$/.test(values.email)) errors.email = "Invalid email";
+		if (!isEditing && (!values.password || values.password.length < 8))
+			errors.password = "Password must be at least 8 characters";
+		else if (values.password && getPasswordStrength(values.password).score < 2)
+			errors.password = "Password is too weak";
+		return errors;
+	};
+
+	const handleSubmit = async (values: UserFormValues) => {
 		const userData: Partial<UserResource> = {
 			resourceType: "User",
 			username: values.username,
@@ -485,11 +466,7 @@ function UserModal({
 			roles: values.roles,
 			mfaEnabled: values.mfaEnabled,
 		};
-
-		if (values.password) {
-			userData.password = values.password;
-		}
-
+		if (values.password) userData.password = values.password;
 		try {
 			if (isEditing && user?.id) {
 				await update.mutateAsync({ ...userData, id: user.id } as UserResource);
@@ -498,103 +475,190 @@ function UserModal({
 			}
 			onClose();
 		} catch {
-			// Error handled by mutation hook
+			/* surfaced by mutation */
 		}
 	};
 
 	return (
-		<Modal opened={opened} onClose={onClose} title={isEditing ? "Edit User" : "Create User"} size="lg">
-			<form onSubmit={form.onSubmit(handleSubmit)}>
-				<Stack gap="md">
-					<Group grow>
-						<TextInput
-							label="Username"
-							required
-							{...form.getInputProps("username")}
-							disabled={isEditing}
-						/>
-						<TextInput label="Full Name" {...form.getInputProps("name")} />
-					</Group>
-
-					<TextInput label="Email" type="email" {...form.getInputProps("email")} />
-
-					<div>
-						<PasswordInput
-							label={isEditing ? "New Password" : "Password"}
-							placeholder={isEditing ? "Leave blank to keep current" : "Enter password"}
-							required={!isEditing}
-							{...form.getInputProps("password")}
-							onChange={(e) => {
-								form.setFieldValue("password", e.currentTarget.value);
-								setPassword(e.currentTarget.value);
-							}}
-						/>
-						{password && (
-							<>
-								<div className={classes.passwordStrength}>
-									{[0, 1, 2, 3].map((i) => (
-										<div
-											key={i}
-											className={classes.strengthBar}
-											data-active={i < passwordStrength.score}
-											data-strength={passwordStrength.label}
+		<Modal
+			opened={opened}
+			onClose={onClose}
+			title={isEditing ? "Edit User" : "Create User"}
+			size="lg"
+		>
+			<Form<UserFormValues>
+				key={user?.id ?? "new"}
+				onSubmit={handleSubmit}
+				validate={validate}
+				initialValues={initialValues}
+				render={({ handleSubmit: submit, submitting }) => (
+					<form onSubmit={submit}>
+						<Flex direction="column" gap="m">
+							<Flex gap="m" className={classes.formGrid}>
+								<Field<string> name="username">
+									{({ input, meta }) => (
+										<TextInput
+											label="Username"
+											required
+											value={input.value}
+											onChange={input.onChange}
+											onBlur={input.onBlur}
+											disabled={isEditing}
+											error={meta.touched && meta.error ? meta.error : undefined}
 										/>
-									))}
-								</div>
-								<Text
-									className={classes.strengthLabel}
-									c={
-										passwordStrength.label === "weak"
-											? "red"
-											: passwordStrength.label === "fair"
-												? "orange"
-												: passwordStrength.label === "good"
-													? "yellow"
-													: "green"
-									}
+									)}
+								</Field>
+								<Field<string> name="name">
+									{({ input }) => (
+										<TextInput label="Full Name" value={input.value} onChange={input.onChange} />
+									)}
+								</Field>
+							</Flex>
+
+							<Field<string> name="email">
+								{({ input, meta }) => (
+									<TextInput
+										label="Email"
+										type="email"
+										value={input.value}
+										onChange={input.onChange}
+										onBlur={input.onBlur}
+										error={meta.touched && meta.error ? meta.error : undefined}
+									/>
+								)}
+							</Field>
+
+							<div>
+								<Field<string> name="password">
+									{({ input, meta }) => (
+										<PasswordInput
+											label={isEditing ? "New Password" : "Password"}
+											placeholder={
+												isEditing ? "Leave blank to keep current" : "Enter password"
+											}
+											required={!isEditing}
+											value={input.value}
+											onChange={input.onChange}
+											onBlur={input.onBlur}
+											error={meta.touched && meta.error ? meta.error : undefined}
+										/>
+									)}
+								</Field>
+								<FormSpy<UserFormValues> subscription={{ values: true }}>
+									{({ values: v }) => {
+										if (!v.password) return null;
+										const strength = getPasswordStrength(v.password);
+										return (
+											<>
+												<div className={classes.passwordStrength}>
+													{[0, 1, 2, 3].map((i) => (
+														<div
+															key={i}
+															className={classes.strengthBar}
+															data-active={i < strength.score}
+															data-strength={strength.label}
+														/>
+													))}
+												</div>
+												<Text
+													className={classes.strengthLabel}
+													color={
+														strength.label === "weak"
+															? "danger"
+															: strength.label === "fair"
+																? "warning"
+																: strength.label === "good"
+																	? "warning"
+																	: "positive"
+													}
+												>
+													Password strength: {strength.label}
+												</Text>
+											</>
+										);
+									}}
+								</FormSpy>
+							</div>
+
+							<Field<string[]> name="roles">
+								{({ input }) => (
+									<Select
+										label="Roles"
+										options={availableRoles.map((r) => ({ value: r, content: r }))}
+										filterable
+										multiple
+										value={input.value}
+										onUpdate={input.onChange}
+									/>
+								)}
+							</Field>
+
+							<Flex gap="m" className={classes.switchGrid}>
+								<Field<boolean> name="active" type="checkbox">
+									{({ input }) => (
+										<label className={classes.switchCard}>
+											<Switch
+												content="Active"
+												checked={input.checked ?? false}
+												onChange={input.onChange}
+											/>
+											<Text color="secondary" variant="body-1">User can log in</Text>
+										</label>
+									)}
+								</Field>
+								<Field<boolean> name="mfaEnabled" type="checkbox">
+									{({ input }) => (
+										<label className={classes.switchCard}>
+											<Switch
+												content="MFA enabled"
+												checked={input.checked ?? false}
+												onChange={input.onChange}
+											/>
+											<Text color="secondary" variant="body-1">Require two-factor authentication</Text>
+										</label>
+									)}
+								</Field>
+							</Flex>
+
+							<Flex justify="flex-end" gap="s" className={classes.modalActions}>
+								<Button view="flat-secondary" onClick={onClose} type="button">
+									Cancel
+								</Button>
+								<Button
+									view="action"
+									type="submit"
+									loading={submitting || create.isPending || update.isPending}
 								>
-									Password strength: {passwordStrength.label}
-								</Text>
-							</>
-						)}
-					</div>
-
-					<MultiSelect
-						label="Roles"
-						data={availableRoles.map((r) => ({ value: r, label: r }))}
-						searchable
-						creatable
-						getCreateLabel={(query) => `+ Create "${query}"`}
-						onCreate={(query) => query}
-						{...form.getInputProps("roles")}
-					/>
-
-					<Group grow>
-						<Switch
-							label="Active"
-							description="User can log in"
-							{...form.getInputProps("active", { type: "checkbox" })}
-						/>
-						<Switch
-							label="MFA Enabled"
-							description="Require two-factor authentication"
-							{...form.getInputProps("mfaEnabled", { type: "checkbox" })}
-						/>
-					</Group>
-
-					<Group justify="flex-end" mt="md">
-						<Button variant="light" onClick={onClose}>
-							Cancel
-						</Button>
-						<Button type="submit" loading={create.isPending || update.isPending}>
-							{isEditing ? "Update" : "Create"}
-						</Button>
-					</Group>
-				</Stack>
-			</form>
+									{isEditing ? "Update" : "Create"}
+								</Button>
+							</Flex>
+						</Flex>
+					</form>
+				)}
+			/>
 		</Modal>
 	);
 }
+
+interface UserFormValues {
+	username: string;
+	name: string;
+	email: string;
+	password: string;
+	active: boolean;
+	roles: string[];
+	mfaEnabled: boolean;
+}
+
+const USER_DEFAULTS: UserFormValues = {
+	username: "",
+	name: "",
+	email: "",
+	password: "",
+	active: true,
+	roles: [],
+	mfaEnabled: false,
+};
 
 function ResetPasswordModal({
 	opened,
@@ -607,96 +671,113 @@ function ResetPasswordModal({
 }) {
 	const resetPassword = useResetPassword();
 
-	const form = useForm({
-		initialValues: {
-			newPassword: "",
-			confirmPassword: "",
-		},
-		validate: {
-			newPassword: (value) => {
-				if (value.length < 8) return "Password must be at least 8 characters";
-				if (getPasswordStrength(value).score < 2) return "Password is too weak";
-				return null;
-			},
-			confirmPassword: (value, values) =>
-				value !== values.newPassword ? "Passwords do not match" : null,
-		},
-	});
+	const validate = (values: ResetPasswordValues) => {
+		const errors: Partial<Record<keyof ResetPasswordValues, string>> = {};
+		if (values.newPassword.length < 8) errors.newPassword = "Password must be at least 8 characters";
+		else if (getPasswordStrength(values.newPassword).score < 2) errors.newPassword = "Password is too weak";
+		if (values.confirmPassword !== values.newPassword)
+			errors.confirmPassword = "Passwords do not match";
+		return errors;
+	};
 
-	const passwordStrength = getPasswordStrength(form.values.newPassword);
-
-	const handleSubmit = async (values: typeof form.values) => {
+	const handleSubmit = async (values: ResetPasswordValues, api: { reset: () => void }) => {
 		if (!user?.id) return;
-
 		try {
 			await resetPassword.mutateAsync({ userId: user.id, newPassword: values.newPassword });
-			form.reset();
+			api.reset();
 			onClose();
 		} catch {
-			// Error handled by hook
+			/* surfaced by mutation */
 		}
 	};
 
 	return (
 		<Modal opened={opened} onClose={onClose} title="Reset Password">
-			<form onSubmit={form.onSubmit(handleSubmit)}>
-				<Stack gap="md">
-					<Text size="sm">
-						Reset password for user: <strong>{user?.name || user?.username}</strong>
-					</Text>
+			<Form<ResetPasswordValues>
+				onSubmit={(values, api) => handleSubmit(values, api)}
+				validate={validate}
+				initialValues={{ newPassword: "", confirmPassword: "" }}
+				render={({ handleSubmit: submit, submitting }) => (
+					<form onSubmit={submit}>
+						<Flex direction="column" gap="m">
+							<Text variant="body-1">
+								Reset password for user: <strong>{user?.name || user?.username}</strong>
+							</Text>
 
-					<div>
-						<PasswordInput
-							label="New Password"
-							required
-							{...form.getInputProps("newPassword")}
-						/>
-						{form.values.newPassword && (
-							<>
-								<div className={classes.passwordStrength}>
-									{[0, 1, 2, 3].map((i) => (
-										<div
-											key={i}
-											className={classes.strengthBar}
-											data-active={i < passwordStrength.score}
-											data-strength={passwordStrength.label}
+							<div>
+								<Field<string> name="newPassword">
+									{({ input, meta }) => (
+										<PasswordInput
+											label="New Password"
+											required
+											value={input.value}
+											onChange={input.onChange}
+											onBlur={input.onBlur}
+											error={meta.touched && meta.error ? meta.error : undefined}
 										/>
-									))}
-								</div>
-								<Text
-									className={classes.strengthLabel}
-									c={
-										passwordStrength.label === "weak"
-											? "red"
-											: passwordStrength.label === "fair"
-												? "orange"
-												: passwordStrength.label === "good"
-													? "yellow"
-													: "green"
-									}
-								>
-									Password strength: {passwordStrength.label}
-								</Text>
-							</>
-						)}
-					</div>
+									)}
+								</Field>
+								<FormSpy<ResetPasswordValues> subscription={{ values: true }}>
+									{({ values: v }) => {
+										if (!v.newPassword) return null;
+										const strength = getPasswordStrength(v.newPassword);
+										return (
+											<>
+												<div className={classes.passwordStrength}>
+													{[0, 1, 2, 3].map((i) => (
+														<div
+															key={i}
+															className={classes.strengthBar}
+															data-active={i < strength.score}
+															data-strength={strength.label}
+														/>
+													))}
+												</div>
+												<Text
+													className={classes.strengthLabel}
+													color={
+														strength.label === "weak"
+															? "danger"
+															: strength.label === "fair"
+																? "warning"
+																: strength.label === "good"
+																	? "warning"
+																	: "positive"
+													}
+												>
+													Password strength: {strength.label}
+												</Text>
+											</>
+										);
+									}}
+								</FormSpy>
+							</div>
 
-					<PasswordInput
-						label="Confirm Password"
-						required
-						{...form.getInputProps("confirmPassword")}
-					/>
+							<Field<string> name="confirmPassword">
+								{({ input, meta }) => (
+									<PasswordInput
+										label="Confirm Password"
+										required
+										value={input.value}
+										onChange={input.onChange}
+										onBlur={input.onBlur}
+										error={meta.touched && meta.error ? meta.error : undefined}
+									/>
+								)}
+							</Field>
 
-					<Group justify="flex-end" mt="md">
-						<Button variant="light" onClick={onClose}>
-							Cancel
-						</Button>
-						<Button type="submit" loading={resetPassword.isPending}>
-							Reset Password
-						</Button>
-					</Group>
-				</Stack>
-			</form>
+							<Flex justify="flex-end" gap="s" className={classes.modalActions}>
+								<Button view="flat-secondary" onClick={onClose} type="button">
+									Cancel
+								</Button>
+								<Button view="action" type="submit" loading={submitting || resetPassword.isPending}>
+									Reset Password
+								</Button>
+							</Flex>
+						</Flex>
+					</form>
+				)}
+			/>
 		</Modal>
 	);
 }

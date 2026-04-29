@@ -1,6 +1,6 @@
 import { useCallback } from "react";
 import { Stack, Text, Group, Badge, ActionIcon, ScrollArea, Box, Tooltip } from "@/shared/ui";
-import { IconTrash, IconClock } from "@gravity-ui/icons";
+import { TrashBin, Clock } from "@gravity-ui/icons";
 import { useQueryHistory, useClearHistory } from "@/shared/api/hooks";
 import { modals } from "@octofhir/ui-kit";
 import type { QueryHistoryEntry } from "@/shared/api/types";
@@ -95,7 +95,7 @@ export function HistoryTab({ onSelectQuery }: HistoryTabProps) {
 		<Stack gap={0} h="100%">
 			<Group justify="space-between" px="sm" py="xs" style={{ flexShrink: 0 }}>
 				<Group gap={4}>
-					<IconClock size={14} style={{ opacity: 0.5 }} />
+					<Clock size={14} style={{ opacity: 0.5 }} />
 					<Text size="xs" fw={500} c="dimmed">
 						History
 					</Text>
@@ -109,7 +109,7 @@ export function HistoryTab({ onSelectQuery }: HistoryTabProps) {
 							onClick={handleClear}
 							loading={clearMutation.isPending}
 						>
-							<IconTrash size={12} />
+							<TrashBin size={12} />
 						</ActionIcon>
 					</Tooltip>
 				)}

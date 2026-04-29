@@ -1,4 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
+import { useState } from "react";
 import { Chip } from "./Chip";
 
 const meta: Meta<typeof Chip> = {
@@ -8,25 +9,13 @@ const meta: Meta<typeof Chip> = {
   argTypes: {
     theme: {
       control: "select",
-      options: [
-        "normal",
-        "info",
-        "danger",
-        "warning",
-        "success",
-        "unknown",
-        "clear",
-      ],
+      options: ["normal", "info", "danger", "warning", "success", "unknown", "clear"],
     },
     size: {
       control: "select",
       options: ["xs", "s", "m"],
     },
-    type: {
-      control: "select",
-      options: ["default", "copy", "close"],
-    },
-    interactive: { control: "boolean" },
+    checked: { control: "boolean" },
     disabled: { control: "boolean" },
   },
 };
@@ -37,17 +26,32 @@ type Story = StoryObj<typeof Chip>;
 export const Default: Story = {
   args: {
     children: "Chip",
-    theme: "normal",
-    interactive: true,
+    theme: "info",
+    checked: true,
   },
 };
 
-export const Types: Story = {
+export const Toggleable: Story = {
+  render: () => {
+    const [a, setA] = useState(true);
+    const [b, setB] = useState(false);
+    const [c, setC] = useState(false);
+    return (
+      <div style={{ display: "flex", gap: 8 }}>
+        <Chip checked={a} onChange={setA} theme="info">Info</Chip>
+        <Chip checked={b} onChange={setB} theme="warning">Warning</Chip>
+        <Chip checked={c} onChange={setC} theme="danger">Danger</Chip>
+      </div>
+    );
+  },
+};
+
+export const Sizes: Story = {
   render: () => (
-    <div style={{ display: "flex", gap: "8px" }}>
-      <Chip type="default" interactive>Default</Chip>
-      <Chip type="copy" copyText="Copied text" interactive>Copy</Chip>
-      <Chip type="close" onCloseClick={() => alert("Closed!")} interactive>Close</Chip>
+    <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+      <Chip size="xs" checked>XS</Chip>
+      <Chip size="s" checked>S</Chip>
+      <Chip size="m" checked>M</Chip>
     </div>
   ),
 };

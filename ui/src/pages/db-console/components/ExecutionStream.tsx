@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Group, Kbd, Text, UnstyledButton } from "@/shared/ui";
-import { IconHistory, IconTerminal2, IconChevronRight, IconChevronDown } from "@gravity-ui/icons";
+import { ClockArrowRotateLeft, Terminal, ChevronRight, ChevronDown } from "@gravity-ui/icons";
 import { StreamEntryCard, type StreamEntry } from "./StreamEntryCard";
 import classes from "../DbConsolePage.module.css";
 
@@ -51,7 +51,7 @@ export function ExecutionStream({
 		return (
 			<div className={classes.stream}>
 				<div className={classes.emptyState}>
-					<IconTerminal2 size={40} stroke={1.2} />
+					<Terminal size={40} stroke={1.2} />
 					<Text size="sm" fw={500}>
 						Run your first query
 					</Text>
@@ -75,11 +75,11 @@ export function ExecutionStream({
 					>
 						<Group gap={6}>
 							{historyOpen ? (
-								<IconChevronDown size={14} />
+								<ChevronDown size={14} />
 							) : (
-								<IconChevronRight size={14} />
+								<ChevronRight size={14} />
 							)}
-							<IconHistory size={14} />
+							<ClockArrowRotateLeft size={14} />
 							<Text size="xs" fw={500}>
 								Previous sessions
 							</Text>

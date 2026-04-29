@@ -15,7 +15,7 @@ import {
   Tooltip,
 } from "@/shared/ui";
 import { notifications } from "@octofhir/ui-kit";
-import { IconPlus, IconTrash, IconBolt, IconClock, IconHandClick } from "@gravity-ui/icons";
+import { IconPlus, IconTrash, IconBolt, IconClock, IconHandClick } from "@octofhir/ui-kit";
 import { useAddTrigger, useDeleteTrigger } from "../../lib/useAutomations";
 import type { AutomationTrigger, AutomationTriggerType, CreateTriggerRequest } from "@/shared/api/types";
 import { useResourceTypes } from "@/shared/api/hooks/useSystemQueries";

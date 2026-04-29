@@ -1,32 +1,58 @@
 .pageRoot {
 	flex: 1;
 	min-height: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 20px;
 	animation: fadeIn 0.2s ease-out;
 }
 
+.pageHeader {
+	min-width: 0;
+}
+
+.heading {
+	min-width: 0;
+}
+
+.pageTitle {
+	margin: 0;
+}
+
+.pageDescription {
+	margin: 4px 0 0;
+}
+
 .tableContainer {
-	padding: var(--octo-spacing-md);
+	display: flex;
+	flex-direction: column;
+	min-width: 0;
+	padding: 16px;
 }
 
 .filterBar {
 	display: flex;
-	gap: var(--octo-spacing-sm);
+	gap: 8px;
 	align-items: center;
 	flex-wrap: wrap;
+	padding-bottom: 16px;
 }
 
 .searchInput {
 	flex: 1;
-	min-width: 200px;
+	min-width: min(100%, 280px);
+	max-width: 520px;
 }
 
 .userCell {
 	display: flex;
 	align-items: center;
-	gap: var(--octo-spacing-sm);
+	gap: 12px;
+	min-width: 0;
 }
 
 .avatar {
+	flex: 0 0 36px;
 	width: 36px;
 	height: 36px;
 	border-radius: 50%;
@@ -36,43 +62,92 @@
 	justify-content: center;
 	color: var(--g-color-base-brand);
 	font-weight: 600;
-	font-size: var(--octo-typography-size-sm);
+	font-size: 13px;
 }
 
 .userInfo {
 	display: flex;
 	flex-direction: column;
+	gap: 2px;
+	min-width: 0;
 }
 
 .userName {
 	font-weight: 500;
-	font-size: var(--octo-typography-size-sm);
 }
 
 .userEmail {
-	font-size: var(--octo-typography-size-xs);
-	color: var(--octo-text-secondary);
+	max-width: 320px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.roleList {
+	display: flex;
+	gap: 6px;
+	align-items: center;
+	flex-wrap: wrap;
 }
 
 .lastLogin {
-	font-size: var(--octo-typography-size-xs);
-	color: var(--octo-text-secondary);
+	white-space: nowrap;
+}
+
+.selectionCell {
+	width: 44px;
+	text-align: center;
+}
+
+.actionsCell {
+	width: 48px;
+	text-align: right;
+}
+
+.emptyCell {
+	height: 160px;
+	text-align: center;
+	color: var(--g-color-text-secondary);
 }
 
 .bulkActions {
 	display: flex;
-	gap: var(--octo-spacing-sm);
-	padding: var(--octo-spacing-sm) var(--octo-spacing-md);
+	gap: 8px;
+	padding: 10px 12px;
 	background: var(--g-color-base-brand-light);
-	border-radius: var(--octo-radius-md);
-	margin-bottom: var(--octo-spacing-md);
+	border: 1px solid var(--g-color-line-brand);
+	border-radius: var(--g-border-radius-l);
+	margin-bottom: 16px;
 	align-items: center;
+	flex-wrap: wrap;
 }
 
 .selectedCount {
-	font-size: var(--octo-typography-size-sm);
 	font-weight: 500;
 	color: var(--g-color-base-brand);
+	margin-right: 4px;
+}
+
+.formGrid,
+.switchGrid {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+	width: 100%;
+}
+
+.switchCard {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	padding: 12px;
+	border: 1px solid var(--g-color-line-generic);
+	border-radius: var(--g-border-radius-l);
+	background: var(--g-color-base-generic-ultralight);
+	cursor: pointer;
+}
+
+.modalActions {
+	padding-top: 4px;
 }
 
 .passwordStrength {
@@ -85,7 +160,7 @@
 	height: 4px;
 	flex: 1;
 	border-radius: 2px;
-	background: var(--octo-border-subtle);
+	background: var(--g-color-line-generic);
 	transition: background-color 0.2s ease;
 }
 
@@ -106,8 +181,18 @@
 }
 
 .strengthLabel {
-	font-size: var(--octo-typography-size-xs);
 	margin-top: 4px;
+}
+
+@media (max-width: 760px) {
+	.pageHeader {
+		flex-direction: column;
+	}
+
+	.formGrid,
+	.switchGrid {
+		grid-template-columns: 1fr;
+	}
 }
 
 @keyframes fadeIn {

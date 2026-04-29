@@ -13,7 +13,7 @@ import {
   ActionIcon,
 } from "@/shared/ui";
 import { useState } from "react";
-import { IconChevronDown, IconChevronRight } from "@gravity-ui/icons";
+import { ChevronDown, ChevronRight } from "@gravity-ui/icons";
 import { useAutomationLogs } from "../../lib/useAutomations";
 import type { AutomationExecution, AutomationExecutionStatus } from "@/shared/api/types";
 
@@ -57,7 +57,7 @@ function ExecutionRow({ execution }: { execution: AutomationExecution }) {
         <Table.Td>
           <Group gap={4}>
             <ActionIcon variant="subtle" size="xs">
-              {expanded ? <IconChevronDown size={14} /> : <IconChevronRight size={14} />}
+              {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
             </ActionIcon>
             <Text size="sm">{formatDate(execution.started_at)}</Text>
           </Group>

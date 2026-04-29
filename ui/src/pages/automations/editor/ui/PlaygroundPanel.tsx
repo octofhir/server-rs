@@ -14,7 +14,7 @@ import {
   ActionIcon,
 } from "@/shared/ui";
 import { notifications } from "@octofhir/ui-kit";
-import { IconPlayerPlay, IconTrash, IconChevronDown, IconChevronRight } from "@gravity-ui/icons";
+import { IconPlayerPlay, IconTrash, IconChevronDown, IconChevronRight } from "@octofhir/ui-kit";
 import { JsonEditor } from "@/shared/monaco/JsonEditor";
 import { useTestAutomation } from "../../lib/useAutomations";
 import type { ExecuteAutomationResponse, AutomationLogEntry } from "@/shared/api/types";

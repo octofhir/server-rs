@@ -1,5 +1,5 @@
 import { Stack, Group, Text, TextInput, ActionIcon, Button, Alert } from "@/shared/ui";
-import { IconX, IconPlus, IconLock } from "@gravity-ui/icons";
+import { IconX, IconPlus, IconLock } from "@octofhir/ui-kit";
 import { useUnit } from "effector-react";
 import {
 	$customHeaders,

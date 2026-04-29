@@ -13,10 +13,10 @@ import {
 	UnstyledButton,
 } from "@/shared/ui";
 import {
-	IconDatabase,
-	IconLayoutSidebarLeftCollapse,
-	IconLayoutSidebarLeftExpand,
-	IconSearch,
+	Database,
+	LayoutSideContentRight,
+	LayoutSideContentLeft,
+	Magnifier,
 } from "@gravity-ui/icons";
 import { useDbTables } from "@/shared/api/hooks";
 import type { DbTableInfo } from "@/shared/api/types";
@@ -236,7 +236,7 @@ export function SchemaRail({
 				{expanded ? (
 					<Group justify="space-between" w="100%" px={4}>
 						<Group gap={6}>
-							<IconDatabase size={14} style={{ opacity: 0.5 }} />
+							<Database size={14} style={{ opacity: 0.5 }} />
 							<Text size="xs" fw={600} c="dimmed">
 								Tables
 							</Text>
@@ -248,14 +248,14 @@ export function SchemaRail({
 						</Group>
 						<Tooltip label="Collapse (Ctrl+B)">
 							<ActionIcon variant="subtle" size="xs" onClick={onToggle}>
-								<IconLayoutSidebarLeftCollapse size={14} />
+								<LayoutSideContentRight size={14} />
 							</ActionIcon>
 						</Tooltip>
 					</Group>
 				) : (
 					<Tooltip label="Expand schema (Ctrl+B)" position="right">
 						<ActionIcon variant="subtle" size="xs" onClick={onToggle}>
-							<IconLayoutSidebarLeftExpand size={14} />
+							<LayoutSideContentLeft size={14} />
 						</ActionIcon>
 					</Tooltip>
 				)}
@@ -267,7 +267,7 @@ export function SchemaRail({
 					<TextInput
 						size="xs"
 						placeholder="Search tables..."
-						leftSection={<IconSearch size={13} />}
+						leftSection={<Magnifier size={13} />}
 						value={search}
 						onChange={(e) => setSearch(e.currentTarget.value)}
 						key={searchFocusKey}

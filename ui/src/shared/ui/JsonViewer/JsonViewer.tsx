@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { Code, CopyButton, ActionIcon, Group, Tooltip, ScrollArea, Box } from "@octofhir/ui-kit";
-import { IconCopy, IconCheck } from "@gravity-ui/icons";
+import { Copy, Check } from "@gravity-ui/icons";
 import classes from "./JsonViewer.module.css";
 
 interface JsonViewerProps {
@@ -38,7 +38,7 @@ export function JsonViewer({ data, maxHeight = 400, className }: JsonViewerProps
                                     backdropFilter: "blur(4px)",
                                 }}
                             >
-                                {copied ? <IconCheck size={16} /> : <IconCopy size={16} />}
+                                {copied ? <Check size={16} /> : <Copy size={16} />}
                             </ActionIcon>
                         </Tooltip>
                     )}

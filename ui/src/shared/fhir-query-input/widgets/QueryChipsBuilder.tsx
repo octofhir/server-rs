@@ -14,7 +14,7 @@ import {
 	SegmentedControl,
 	type ComboboxData,
 } from "@/shared/ui";
-import { IconPlus, IconTrash } from "@gravity-ui/icons";
+import { Plus, TrashBin } from "@gravity-ui/icons";
 import type { BuilderState, BuilderParam } from "../core/builder-model";
 import type { QueryInputMetadata } from "../core/types";
 import type { RestConsoleSearchParam } from "@/shared/api";
@@ -167,7 +167,7 @@ export function QueryChipsBuilder({
 						<Button
 							variant="light"
 							size="xs"
-							leftSection={<IconPlus size={14} />}
+							leftSection={<Plus size={14} />}
 							onClick={handleAddParam}
 						>
 							Add Parameter
@@ -339,7 +339,7 @@ function ParamChip({
 				size="sm"
 				onClick={onRemove}
 			>
-				<IconTrash size={14} />
+				<TrashBin size={14} />
 			</ActionIcon>
 		</Group>
 	);
@@ -429,7 +429,7 @@ function SpecialParamChip({
 				size="sm"
 				onClick={onRemove}
 			>
-				<IconTrash size={14} />
+				<TrashBin size={14} />
 			</ActionIcon>
 		</Group>
 	);

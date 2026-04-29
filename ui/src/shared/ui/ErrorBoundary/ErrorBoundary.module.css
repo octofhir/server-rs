@@ -1,0 +1,116 @@
+.shell {
+	min-height: 100%;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	padding: 32px;
+	background: var(--g-color-base-background);
+}
+
+.layoutShell {
+	min-height: 360px;
+}
+
+.panel {
+	width: min(100%, 680px);
+	border: 1px solid var(--g-color-line-generic);
+	border-radius: var(--g-border-radius-xl);
+	background: var(--g-color-base-float);
+	box-shadow: 0 10px 30px rgba(0, 0, 0, 0.08);
+	padding: 24px;
+}
+
+.globalPanel {
+	width: min(100%, 760px);
+}
+
+.header {
+	display: grid;
+	grid-template-columns: 44px 1fr;
+	gap: 16px;
+	align-items: start;
+}
+
+.icon {
+	width: 44px;
+	height: 44px;
+	border-radius: var(--g-border-radius-l);
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	color: var(--g-color-text-danger);
+	background: var(--g-color-base-danger-light);
+}
+
+.copy h1 {
+	margin: 0;
+	color: var(--g-color-text-primary);
+	font: var(--g-text-header-1-font-weight) var(--g-text-header-1-font-size) /
+		var(--g-text-header-1-line-height) var(--g-font-family-sans);
+	letter-spacing: 0;
+}
+
+.copy p {
+	margin: 6px 0 0;
+	color: var(--g-color-text-secondary);
+	font: var(--g-text-body-2-font-weight) var(--g-text-body-2-font-size) /
+		var(--g-text-body-2-line-height) var(--g-font-family-sans);
+}
+
+.actions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+	margin-top: 20px;
+}
+
+.details {
+	margin-top: 20px;
+	border: 1px solid var(--g-color-line-generic);
+	border-radius: var(--g-border-radius-l);
+	background: var(--g-color-base-generic-ultralight);
+	overflow: hidden;
+}
+
+.detailHeader {
+	padding: 10px 12px;
+	border-bottom: 1px solid var(--g-color-line-generic);
+	color: var(--g-color-text-secondary);
+	font-size: 12px;
+	font-weight: 600;
+	text-transform: uppercase;
+}
+
+.details pre {
+	margin: 0;
+	padding: 12px;
+	max-height: 220px;
+	overflow: auto;
+	border-bottom: 1px solid var(--g-color-line-generic);
+	color: var(--g-color-text-primary);
+	background: transparent;
+	font-family: var(--g-font-family-monospace);
+	font-size: 12px;
+	line-height: 1.45;
+	white-space: pre-wrap;
+	word-break: break-word;
+}
+
+.details pre:last-child {
+	border-bottom: 0;
+}
+
+@media (max-width: 640px) {
+	.shell {
+		padding: 16px;
+		align-items: stretch;
+	}
+
+	.panel {
+		padding: 18px;
+	}
+
+	.header {
+		grid-template-columns: 1fr;
+	}
+}

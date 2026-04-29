@@ -18,15 +18,15 @@ import {
 import { modals, notifications } from "@octofhir/ui-kit";
 import { useNavigate } from "react-router-dom";
 import {
-  IconPlus,
-  IconSearch,
-  IconEdit,
-  IconTrash,
-  IconPlayerPlay,
-  IconRocket,
-  IconClock,
-  IconBolt,
-  IconHandClick,
+  Plus,
+  Magnifier,
+  Pencil,
+  TrashBin,
+  Play,
+  Rocket,
+  Clock,
+  Thunderbolt,
+  HandPointRight,
 } from "@gravity-ui/icons";
 import { useAutomations, useDeleteAutomation, useDeployAutomation } from "../lib/useAutomations";
 import { AutomationStatusBadge } from "./AutomationStatusBadge";
@@ -42,9 +42,9 @@ const statusOptions = [
 ];
 
 const triggerTypeIcons: Record<AutomationTriggerType, React.ReactNode> = {
-  resource_event: <IconBolt size={14} />,
-  cron: <IconClock size={14} />,
-  manual: <IconHandClick size={14} />,
+  resource_event: <Thunderbolt size={14} />,
+  cron: <Clock size={14} />,
+  manual: <HandPointRight size={14} />,
 };
 
 const triggerTypeLabels: Record<AutomationTriggerType, string> = {
@@ -245,7 +245,7 @@ export function AutomationsPage() {
       {/* Header */}
       <Group justify="space-between">
         <Title order={2}>Automations</Title>
-        <Button leftSection={<IconPlus size={16} />} onClick={() => setCreateModalOpen(true)}>
+        <Button leftSection={<Plus size={16} />} onClick={() => setCreateModalOpen(true)}>
           New Automation
         </Button>
       </Group>
@@ -254,7 +254,7 @@ export function AutomationsPage() {
       <Group gap="md">
         <TextInput
           placeholder="Search automations..."
-          leftSection={<IconSearch size={16} />}
+          leftSection={<Magnifier size={16} />}
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           style={{ flex: 1, maxWidth: 400 }}
@@ -281,7 +281,7 @@ export function AutomationsPage() {
               <Text c="dimmed">No automations found</Text>
               <Button
                 variant="light"
-                leftSection={<IconPlus size={16} />}
+                leftSection={<Plus size={16} />}
                 onClick={() => setCreateModalOpen(true)}
               >
                 Create your first automation
@@ -331,7 +331,7 @@ export function AutomationsPage() {
                           color="gray"
                           onClick={() => handleEdit(automation)}
                         >
-                          <IconEdit size={16} />
+                          <Pencil size={16} />
                         </ActionIcon>
                       </Tooltip>
                       <Tooltip label={automation.status === "active" ? "Re-deploy" : "Deploy"}>
@@ -341,7 +341,7 @@ export function AutomationsPage() {
                           onClick={() => handleDeploy(automation)}
                           loading={deployMutation.isPending}
                         >
-                          <IconRocket size={16} />
+                          <Rocket size={16} />
                         </ActionIcon>
                       </Tooltip>
                       <Tooltip label="Test">
@@ -350,7 +350,7 @@ export function AutomationsPage() {
                           color="green"
                           onClick={() => navigate(`/automations/${automation.id}?tab=playground`)}
                         >
-                          <IconPlayerPlay size={16} />
+                          <Play size={16} />
                         </ActionIcon>
                       </Tooltip>
                       <Tooltip label="Delete">
@@ -359,7 +359,7 @@ export function AutomationsPage() {
                           color="red"
                           onClick={() => handleDelete(automation)}
                         >
-                          <IconTrash size={16} />
+                          <TrashBin size={16} />
                         </ActionIcon>
                       </Tooltip>
                     </Group>

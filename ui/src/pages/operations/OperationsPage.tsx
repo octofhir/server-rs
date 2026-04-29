@@ -21,28 +21,28 @@ import {
 	ScrollArea,
 } from "@/shared/ui";
 import {
-	IconAlertCircle,
-	IconSearch,
-	IconEye,
-	IconLock,
-	IconLockOpen,
-	IconServer,
-	IconCode,
-	IconDatabase,
-	IconShield,
-	IconApps,
-	IconApi,
+	CircleExclamation,
+	Magnifier,
+	Eye,
+	Lock,
+	LockOpen,
+	Server,
+	Code as CodeIcon,
+	Database,
+	Shield,
+	Boxes3,
+	Cpu,
 } from "@gravity-ui/icons";
 import { useOperations } from "@/shared/api/hooks";
 import type { OperationDefinition } from "@/shared/api/types";
 
-const CATEGORY_ICONS: Record<string, typeof IconServer> = {
-	fhir: IconServer,
-	graphql: IconCode,
-	system: IconDatabase,
-	auth: IconShield,
-	ui: IconApps,
-	api: IconApi,
+const CATEGORY_ICONS: Record<string, typeof Server> = {
+	fhir: Server,
+	graphql: CodeIcon,
+	system: Database,
+	auth: Shield,
+	ui: Boxes3,
+	api: Cpu,
 };
 
 const CATEGORY_COLORS: Record<string, string> = {
@@ -141,16 +141,16 @@ function OperationRow({
 			<Table.Td>
 				<Tooltip label={operation.public ? "Public (no auth required)" : "Protected (requires auth)"}>
 					{operation.public ? (
-						<IconLockOpen size={16} style={{ color: "var(--octo-accent-primary)" }} />
+						<LockOpen size={16} style={{ color: "var(--octo-accent-primary)" }} />
 					) : (
-						<IconLock size={16} style={{ color: "var(--octo-accent-warm)" }} />
+						<Lock size={16} style={{ color: "var(--octo-accent-warm)" }} />
 					)}
 				</Tooltip>
 			</Table.Td>
 			<Table.Td>
 				<Tooltip label="View details">
 					<ActionIcon variant="subtle" size="sm" onClick={() => onView(operation.id)}>
-						<IconEye size={16} />
+						<Eye size={16} />
 					</ActionIcon>
 				</Tooltip>
 			</Table.Td>
@@ -169,7 +169,7 @@ function CategorySection({
 	onViewOperation: (id: string) => void;
 	onNavigateToApp: (appId: string) => void;
 }) {
-	const Icon = CATEGORY_ICONS[category] ?? IconApi;
+	const Icon = CATEGORY_ICONS[category] ?? Cpu;
 	const color = CATEGORY_COLORS[category] ?? "gray";
 	const label = CATEGORY_LABELS[category] ?? category;
 
@@ -294,7 +294,7 @@ export function OperationsPage() {
 				<Group gap="md">
 					<TextInput
 						placeholder="Search operations..."
-						leftSection={<IconSearch size={16} />}
+						leftSection={<Magnifier size={16} />}
 						value={search}
 						onChange={(e) => setSearch(e.currentTarget.value)}
 						style={{ flex: 1 }}
@@ -327,7 +327,7 @@ export function OperationsPage() {
 			)}
 
 			{error && (
-				<Alert icon={<IconAlertCircle size={16} />} color="fire" variant="light">
+				<Alert icon={<CircleExclamation size={16} />} color="fire" variant="light">
 					{error instanceof Error ? error.message : "Failed to load operations"}
 				</Alert>
 			)}

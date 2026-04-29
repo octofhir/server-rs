@@ -16,3 +16,6 @@ export * from "./shared/hooks";
 
 // Shared layer — lib/utilities
 export * from "./shared/lib";
+
+// Widgets layer — composed product UI patterns
+export * from "./widgets";

@@ -1,5 +1,5 @@
 import { useDisclosure, useHotkeys } from "@octofhir/ui-kit";
-import { IconEye, IconHistory } from "@gravity-ui/icons";
+import { Eye, ClockArrowRotateLeft } from "@gravity-ui/icons";
 import { useUnit } from "effector-react";
 import { useCallback, useMemo } from "react";
 import { Helmet } from "react-helmet-async";
@@ -121,7 +121,7 @@ export function RestConsolePage() {
               <Button
                 variant="subtle"
                 size="xs"
-                leftSection={<IconEye size={14} />}
+                leftSection={<Eye size={14} />}
                 onClick={toggleInspector}
               >
                 Inspector
@@ -129,7 +129,7 @@ export function RestConsolePage() {
               <Button
                 variant="subtle"
                 size="xs"
-                leftSection={<IconHistory size={14} />}
+                leftSection={<ClockArrowRotateLeft size={14} />}
                 onClick={historyHandlers.open}
               >
                 History

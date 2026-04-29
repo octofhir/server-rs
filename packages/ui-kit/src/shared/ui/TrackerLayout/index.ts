@@ -2,21 +2,21 @@ export {
     TrackerLayout,
     type TrackerLayoutProps,
     type TrackerNavItem,
+    type TrackerNavGroup,
 } from "./TrackerLayout";
 
-// Re-export the supporting Gravity navigation primitives that callers usually
-// need alongside the layout (footer bars, action bars, mobile header, etc.).
 export {
     ActionBar,
     Footer,
-    FooterItem,
     HotkeysPanel,
     Logo,
     MobileHeader,
+    MobileHeaderFooterItem as FooterItem,
     MobileLogo,
     Settings,
     Title as TrackerTitle,
     type LogoProps,
-    type MenuItem as AsideHeaderMenuItem,
     type MenuGroup as AsideHeaderMenuGroup,
+    type MenuItem as AsideHeaderMenuItem,
+    type MobileHeaderFooterItemProps as FooterItemProps,
 } from "@gravity-ui/navigation";

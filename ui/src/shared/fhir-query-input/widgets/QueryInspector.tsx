@@ -10,9 +10,9 @@ import {
 	Table,
 } from "@/shared/ui";
 import {
-	IconCode,
-	IconMessageCircle,
-	IconCloudComputing,
+	Code as CodeIcon,
+	Comment,
+	Cloud,
 } from "@gravity-ui/icons";
 import type { QueryAst, Diagnostic, QueryInputMetadata } from "../core/types";
 import { explainQuery, type ExplainItem } from "../core/explain";
@@ -61,7 +61,7 @@ export function QueryInspector({
 			<Tabs.List>
 				<Tabs.Tab
 					value="parsed"
-					leftSection={<IconCode size={14} />}
+					leftSection={<CodeIcon width={14} />}
 					rightSection={
 						diagnostics.length > 0 ? (
 							<Badge
@@ -79,14 +79,14 @@ export function QueryInspector({
 				</Tabs.Tab>
 				<Tabs.Tab
 					value="explain"
-					leftSection={<IconMessageCircle size={14} />}
+					leftSection={<Comment size={14} />}
 				>
 					Explain
 				</Tabs.Tab>
 				{response && (
 					<Tabs.Tab
 						value="response"
-						leftSection={<IconCloudComputing size={14} />}
+						leftSection={<Cloud size={14} />}
 					>
 						Response
 					</Tabs.Tab>

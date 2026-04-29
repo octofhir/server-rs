@@ -13,13 +13,13 @@ import {
 	RingProgress,
 } from "@/shared/ui";
 import {
-	IconUser,
-	IconDatabase,
-	IconCheck,
-	IconX,
-	IconAlertTriangle,
-	IconTrendingUp,
-	IconClock,
+	Person,
+	Database,
+	Check,
+	Xmark,
+	TriangleExclamation,
+	ChartLineArrowUp,
+	Clock,
 } from "@gravity-ui/icons";
 import type { AuditAnalytics as AuditAnalyticsType, AuditAction, AuditOutcome } from "@/shared/api/types";
 import classes from "./AuditAnalytics.module.css";
@@ -81,7 +81,7 @@ function StatCard({
 }: {
 	title: string;
 	value: string | number;
-	icon: typeof IconUser;
+	icon: typeof Person;
 	color?: string;
 	trend?: { value: number; label: string };
 }) {
@@ -97,7 +97,7 @@ function StatCard({
 					</Text>
 					{trend && (
 						<Group gap={4} mt={4}>
-							<IconTrendingUp size={12} color={trend.value >= 0 ? "var(--g-color-base-positive-medium-hover)" : "var(--g-color-base-danger-medium)"} />
+							<ChartLineArrowUp size={12} color={trend.value >= 0 ? "var(--g-color-base-positive-medium-hover)" : "var(--g-color-base-danger-medium)"} />
 							<Text size="xs" c={trend.value >= 0 ? "green" : "red"}>
 								{trend.value > 0 ? "+" : ""}{trend.value}% {trend.label}
 							</Text>
@@ -166,7 +166,7 @@ function OutcomeRing({ outcomeBreakdown }: { outcomeBreakdown: Partial<Record<Au
 					{(["success", "failure", "partial"] as const).map((outcome) => {
 						const count = outcomeBreakdown[outcome] || 0;
 						const percent = total > 0 ? ((count / total) * 100).toFixed(1) : "0";
-						const Icon = outcome === "success" ? IconCheck : outcome === "failure" ? IconX : IconAlertTriangle;
+						const Icon = outcome === "success" ? Check : outcome === "failure" ? Xmark : TriangleExclamation;
 
 						return (
 							<Group key={outcome} gap="sm">
@@ -320,7 +320,7 @@ function FailedAttempts({ failedAttempts }: { failedAttempts: AuditAnalyticsType
 					<Group key={attempt.action} justify="space-between">
 						<Group gap="xs">
 							<ThemeIcon size="sm" color="red" variant="light">
-								<IconX size={12} />
+								<Xmark size={12} />
 							</ThemeIcon>
 							<Text size="sm">{getActionLabel(attempt.action)}</Text>
 						</Group>
@@ -394,7 +394,7 @@ function AuditAnalyticsComponent({ analytics, isLoading }: AuditAnalyticsProps) 
 			<Center py="xl">
 				<Stack align="center" gap="sm">
 					<ThemeIcon size={48} variant="light" color="gray" radius="xl">
-						<IconTrendingUp size={24} />
+						<ChartLineArrowUp size={24} />
 					</ThemeIcon>
 					<Text c="dimmed">No analytics data available</Text>
 				</Stack>
@@ -421,25 +421,25 @@ function AuditAnalyticsComponent({ analytics, isLoading }: AuditAnalyticsProps) 
 				<StatCard
 					title="Total Events"
 					value={totalEvents}
-					icon={IconClock}
+					icon={Clock}
 					color="blue"
 				/>
 				<StatCard
 					title="Success Rate"
 					value={`${successRate}%`}
-					icon={IconCheck}
+					icon={Check}
 					color="green"
 				/>
 				<StatCard
 					title="Active Users"
 					value={topUsers.length}
-					icon={IconUser}
+					icon={Person}
 					color="violet"
 				/>
 				<StatCard
 					title="Resources Accessed"
 					value={topResources.length}
-					icon={IconDatabase}
+					icon={Database}
 					color="orange"
 				/>
 			</SimpleGrid>

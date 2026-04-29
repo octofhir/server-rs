@@ -22,13 +22,13 @@ import {
 } from "@/shared/ui";
 import { notifications } from "@octofhir/ui-kit";
 import {
-	IconSearch,
-	IconChevronLeft,
-	IconChevronRight,
-	IconGripVertical,
-	IconAlertCircle,
-	IconFileDescription,
-	IconCode,
+	Magnifier,
+	ChevronLeft,
+	ChevronRight,
+	GripHorizontal,
+	CircleExclamation,
+	FileText,
+	Code,
 } from "@gravity-ui/icons";
 import {
 	useResourceTypesCategorized,
@@ -335,7 +335,7 @@ export function ResourceBrowserPage() {
 							placeholder="Search resources..."
 							size="sm"
 							radius="md"
-							leftSection={<IconSearch size={14} />}
+							leftSection={<Magnifier size={14} />}
 							value={typeFilter}
 							onChange={(e) => setTypeFilter(e.currentTarget.value)}
 							style={{ width: 240 }}
@@ -354,7 +354,7 @@ export function ResourceBrowserPage() {
 			) : filteredTypes.length === 0 ? (
 				<Center py={100}>
 					<Stack align="center" gap="xs">
-						<IconSearch size={40} style={{ opacity: 0.2 }} />
+						<Magnifier size={40} style={{ opacity: 0.2 }} />
 						<Text c="dimmed" fw={500}>No resource types found</Text>
 					</Stack>
 				</Center>
@@ -440,7 +440,7 @@ export function ResourceBrowserPage() {
 									disabled={!hasPrevPage || followLinkMutation.isPending}
 									onClick={handlePrevPage}
 								>
-									<IconChevronLeft size={16} />
+									<ChevronLeft size={16} />
 								</ActionIcon>
 								<ActionIcon
 									variant="light"
@@ -449,7 +449,7 @@ export function ResourceBrowserPage() {
 									disabled={!hasNextPage || followLinkMutation.isPending}
 									onClick={handleNextPage}
 								>
-									<IconChevronRight size={16} />
+									<ChevronRight size={16} />
 								</ActionIcon>
 							</Group>
 						)}
@@ -472,7 +472,7 @@ export function ResourceBrowserPage() {
 			) : resources.length === 0 ? (
 				<Center py={100}>
 					<Stack align="center" gap="xs">
-						<IconFileDescription size={40} style={{ opacity: 0.2 }} />
+						<FileText size={40} style={{ opacity: 0.2 }} />
 						<Text c="dimmed" fw={500}>No resources found</Text>
 					</Stack>
 				</Center>
@@ -621,7 +621,7 @@ export function ResourceBrowserPage() {
 									size="xs"
 									variant="light"
 									radius="md"
-									leftSection={<IconCode size={14} />}
+									leftSection={<Code size={14} />}
 									onClick={() => {
 										setSaveError(null);
 										setIsEditMode(true);
@@ -637,7 +637,7 @@ export function ResourceBrowserPage() {
 								size="md"
 								onClick={handleCloseDetails}
 							>
-								<IconGripVertical size={16} style={{ transform: "rotate(90deg)" }} />
+								<GripHorizontal size={16} style={{ transform: "rotate(90deg)" }} />
 							</ActionIcon>
 						</Group>
 					</Group>
@@ -663,7 +663,7 @@ export function ResourceBrowserPage() {
 							<Box p="md" style={{ borderTop: "1px solid var(--octo-border-subtle)", backgroundColor: "var(--octo-surface-2)" }}>
 								<Alert
 									color="red"
-									icon={<IconAlertCircle size={16} />}
+									icon={<CircleExclamation size={16} />}
 									radius="md"
 									title={saveError.message}
 								>
@@ -708,7 +708,7 @@ export function ResourceBrowserPage() {
 					{selectedType && !selectedId && (
 						<Button
 							variant="subtle"
-							leftSection={<IconChevronLeft size={16} />}
+							leftSection={<ChevronLeft size={16} />}
 							onClick={handleBackToTypes}
 							radius="md"
 						>

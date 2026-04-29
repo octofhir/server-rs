@@ -1,5 +1,5 @@
 import { useCallback, useMemo } from "react";
-import { IconPlayerPlay } from "@gravity-ui/icons";
+import { IconPlayerPlay } from "@octofhir/ui-kit";
 import { useUnit } from "effector-react";
 import { $rawPath, setRawPath } from "../state/consoleStore";
 import type {

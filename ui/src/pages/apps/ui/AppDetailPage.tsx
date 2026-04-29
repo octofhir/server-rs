@@ -32,7 +32,7 @@ import {
 	IconBell,
 	IconEdit,
 	IconExternalLink,
-} from "@gravity-ui/icons";
+} from "@octofhir/ui-kit";
 import { useApp } from "../lib/useApps";
 
 const STATUS_COLORS: Record<string, string> = {

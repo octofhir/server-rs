@@ -13,13 +13,13 @@ import {
 	Alert,
 } from "@/shared/ui";
 import {
-	IconCheck,
-	IconDownload,
-	IconPackage,
-	IconAlertCircle,
-	IconLoader,
-	IconDatabase,
-	IconArchive,
+	Check,
+	ArrowDownToLine,
+	Box,
+	CircleExclamation,
+	Pulse,
+	Database,
+	Archive,
 } from "@gravity-ui/icons";
 import type { InstallEvent } from "@/shared/api/types";
 
@@ -46,19 +46,19 @@ interface PackageProgress {
 function getStatusIcon(status: PackageProgress["status"]) {
 	switch (status) {
 		case "downloading":
-			return <IconDownload size={16} />;
+			return <ArrowDownToLine size={16} />;
 		case "extracting":
-			return <IconArchive size={16} />;
+			return <Archive size={16} />;
 		case "indexing":
-			return <IconDatabase size={16} />;
+			return <Database size={16} />;
 		case "completed":
-			return <IconCheck size={16} />;
+			return <Check size={16} />;
 		case "skipped":
-			return <IconCheck size={16} />;
+			return <Check size={16} />;
 		case "error":
-			return <IconAlertCircle size={16} />;
+			return <CircleExclamation size={16} />;
 		default:
-			return <IconLoader size={16} className="animate-spin" />;
+			return <Pulse size={16} className="animate-spin" />;
 	}
 }
 
@@ -320,7 +320,7 @@ export function InstallProgressModal({
 			title={
 				<Group gap="xs">
 					<ThemeIcon size="md" variant="light" color="warm">
-						<IconPackage size={16} />
+						<Box size={16} />
 					</ThemeIcon>
 					<Text fw={500}>
 						Installing {packageName}@{packageVersion}
@@ -362,14 +362,14 @@ export function InstallProgressModal({
 
 				{/* Error display */}
 				{error && (
-					<Alert icon={<IconAlertCircle size={16} />} color="fire" variant="light">
+					<Alert icon={<CircleExclamation size={16} />} color="fire" variant="light">
 						{error.message}
 					</Alert>
 				)}
 
 				{/* Completion stats */}
 				{isCompleted && (
-					<Alert icon={<IconCheck size={16} />} color="primary" variant="light">
+					<Alert icon={<Check size={16} />} color="primary" variant="light">
 						Successfully installed {completedPackages} packages with {completionStats.totalResources}{" "}
 						resources in {(completionStats.durationMs / 1000).toFixed(1)}s
 					</Alert>

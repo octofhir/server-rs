@@ -24,15 +24,15 @@ import {
 	Code,
 } from "@/shared/ui";
 import {
-	IconAlertCircle,
-	IconSearch,
-	IconPackage,
-	IconArrowLeft,
-	IconCheck,
-	IconAlertTriangle,
-	IconEye,
-	IconFile,
-	IconCode,
+	CircleExclamation,
+	Magnifier,
+	Box as BoxIcon,
+	ArrowLeft,
+	Check,
+	TriangleExclamation,
+	Eye,
+	File,
+	Code as CodeIcon,
 } from "@gravity-ui/icons";
 import {
 	usePackageDetails,
@@ -55,7 +55,7 @@ function FhirVersionBadge({
 				size="md"
 				variant="light"
 				color={isCompatible ? "primary" : "warm"}
-				leftSection={isCompatible ? <IconCheck size={14} /> : <IconAlertTriangle size={14} />}
+				leftSection={isCompatible ? <Check size={14} /> : <TriangleExclamation size={14} />}
 			>
 				FHIR {packageVersion || "unknown"}
 			</Badge>
@@ -77,7 +77,7 @@ function ResourceTypeIcon({ resourceType }: { resourceType: string }) {
 
 	return (
 		<ThemeIcon variant="light" size="sm" color={colors[resourceType] || "deep"}>
-			<IconFile size={14} />
+			<File size={14} />
 		</ThemeIcon>
 	);
 }
@@ -120,11 +120,11 @@ function ResourceViewer({ packageName, packageVersion, resource, onClose }: Reso
 		>
 			<Tabs value={activeTab} onChange={setActiveTab}>
 				<Tabs.List>
-					<Tabs.Tab value="json" leftSection={<IconCode size={14} />}>
+					<Tabs.Tab value="json" leftSection={<CodeIcon width={14} />}>
 						JSON
 					</Tabs.Tab>
 					{resource.resourceType === "StructureDefinition" && (
-						<Tabs.Tab value="fhirschema" leftSection={<IconCode size={14} />}>
+						<Tabs.Tab value="fhirschema" leftSection={<CodeIcon width={14} />}>
 							FHIRSchema
 						</Tabs.Tab>
 					)}
@@ -215,7 +215,7 @@ function ResourcesTab({
 			<Group gap="md">
 				<TextInput
 					placeholder="Search resources..."
-					leftSection={<IconSearch size={16} />}
+					leftSection={<Magnifier size={16} />}
 					value={search}
 					onChange={(e) => setSearch(e.currentTarget.value)}
 					style={{ flex: 1 }}
@@ -240,7 +240,7 @@ function ResourcesTab({
 			)}
 
 			{error && (
-				<Alert icon={<IconAlertCircle size={16} />} color="fire" variant="light">
+				<Alert icon={<CircleExclamation size={16} />} color="fire" variant="light">
 					{error instanceof Error ? error.message : "Failed to load resources"}
 				</Alert>
 			)}
@@ -295,7 +295,7 @@ function ResourcesTab({
 													size="sm"
 													onClick={() => setSelectedResource(resource)}
 												>
-													<IconEye size={16} />
+													<Eye size={16} />
 												</ActionIcon>
 											</Tooltip>
 										</Table.Td>
@@ -328,7 +328,7 @@ export function PackageDetailPage() {
 
 	if (!name || !version) {
 		return (
-			<Alert icon={<IconAlertCircle size={16} />} color="fire" variant="light">
+			<Alert icon={<CircleExclamation size={16} />} color="fire" variant="light">
 				Invalid package parameters
 			</Alert>
 		);
@@ -345,14 +345,14 @@ export function PackageDetailPage() {
 				<Group gap="md">
 					<Button
 						variant="subtle"
-						leftSection={<IconArrowLeft size={16} />}
+						leftSection={<ArrowLeft size={16} />}
 						onClick={() => navigate("/packages")}
 					>
 						Back
 					</Button>
 					<Group gap="xs">
 						<ThemeIcon variant="light" size="lg" color="warm">
-							<IconPackage size={20} />
+							<BoxIcon width={20} />
 						</ThemeIcon>
 						<div>
 							<Title order={2}>{name}</Title>
@@ -376,7 +376,7 @@ export function PackageDetailPage() {
 			)}
 
 			{error && (
-				<Alert icon={<IconAlertCircle size={16} />} color="fire" variant="light">
+				<Alert icon={<CircleExclamation size={16} />} color="fire" variant="light">
 					{error instanceof Error ? error.message : "Failed to load package"}
 				</Alert>
 			)}

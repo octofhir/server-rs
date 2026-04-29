@@ -9,7 +9,7 @@ import {
   Collapse,
   ActionIcon,
 } from '@/shared/ui';
-import { IconChevronDown, IconChevronRight } from '@gravity-ui/icons';
+import { ChevronDown, ChevronRight } from '@gravity-ui/icons';
 import { useState } from 'react';
 import {
   type FormatterConfig,
@@ -190,7 +190,7 @@ function SqlStyleSettings({
           <Divider />
           <Group gap="xs" style={{ cursor: 'pointer' }} onClick={onToggleAdvanced}>
             <ActionIcon variant="subtle" size="xs">
-              {showAdvanced ? <IconChevronDown size={14} /> : <IconChevronRight size={14} />}
+              {showAdvanced ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
             </ActionIcon>
             <Text size="sm" fw={500}>
               Advanced Options
@@ -329,7 +329,7 @@ function PgFormatterSettings({
           <Divider />
           <Group gap="xs" style={{ cursor: 'pointer' }} onClick={onToggleAdvanced}>
             <ActionIcon variant="subtle" size="xs">
-              {showAdvanced ? <IconChevronDown size={14} /> : <IconChevronRight size={14} />}
+              {showAdvanced ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
             </ActionIcon>
             <Text size="sm" fw={500}>
               Advanced Options

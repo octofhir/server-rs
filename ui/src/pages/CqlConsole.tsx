@@ -14,7 +14,7 @@ import {
   Loader,
   Grid,
 } from '@/shared/ui';
-import { IconPlayerPlay, IconAlertCircle, IconCheck } from '@gravity-ui/icons';
+import { Play, CircleExclamation, Check } from '@gravity-ui/icons';
 import { Editor } from '@monaco-editor/react';
 import { useMutation } from '@tanstack/react-query';
 import { fhirClient } from '@/shared/api/fhirClient';
@@ -215,7 +215,7 @@ export function CqlConsole() {
             />
 
             <Button
-              leftSection={evaluateMutation.isPending ? <Loader size="xs" /> : <IconPlayerPlay size={16} />}
+              leftSection={evaluateMutation.isPending ? <Loader size="xs" /> : <Play size={16} />}
               onClick={handleEvaluate}
               disabled={!expression.trim() || evaluateMutation.isPending}
               fullWidth
@@ -255,7 +255,7 @@ export function CqlConsole() {
 
         {evaluateMutation.isError && (
           <Alert
-            icon={<IconAlertCircle size={16} />}
+            icon={<CircleExclamation size={16} />}
             title="Evaluation Error"
             color="red"
             radius="md"

@@ -16,12 +16,11 @@ import {
 } from '@/shared/ui';
 import { useDisclosure } from '@octofhir/ui-kit';
 import {
-  IconDeviceDesktop,
-  IconDeviceMobile,
-  IconDeviceTablet,
-  IconLogout,
-  IconRefresh,
-  IconTrash,
+  Display,
+  Smartphone,
+  ArrowRightFromSquare,
+  ArrowRotateRight,
+  TrashBin,
 } from '@gravity-ui/icons';
 import dayjs from 'dayjs';
 import relativeTime from 'dayjs/plugin/relativeTime';
@@ -44,12 +43,12 @@ import {
 function getDeviceIcon(userAgent: string = '') {
   const ua = userAgent.toLowerCase();
   if (ua.includes('mobile') || ua.includes('android') || ua.includes('iphone')) {
-    return <IconDeviceMobile size={20} />;
+    return <Smartphone size={20} />;
   }
   if (ua.includes('tablet') || ua.includes('ipad')) {
-    return <IconDeviceTablet size={20} />;
+    return <Smartphone size={20} />;
   }
-  return <IconDeviceDesktop size={20} />;
+  return <Display size={20} />;
 }
 
 /**
@@ -131,11 +130,11 @@ export function SessionsPage() {
             </Text>
           </div>
           <Group>
-            <Button variant="subtle" leftSection={<IconRefresh size={16} />} onClick={() => refetch()}>
+            <Button variant="subtle" leftSection={<ArrowRotateRight size={16} />} onClick={() => refetch()}>
               Refresh
             </Button>
             {otherSessions.length > 0 && (
-              <Button variant="light" color="red" leftSection={<IconLogout size={16} />} onClick={handleRevokeAll}>
+              <Button variant="light" color="red" leftSection={<ArrowRightFromSquare size={16} />} onClick={handleRevokeAll}>
                 Revoke All Other Sessions
               </Button>
             )}
@@ -259,7 +258,7 @@ export function SessionsPage() {
                               onClick={() => handleRevokeSession(session)}
                               loading={revokeSessionMutation.isPending}
                             >
-                              <IconTrash size={18} />
+                              <TrashBin size={18} />
                             </ActionIcon>
                           </Tooltip>
                         </Table.Td>

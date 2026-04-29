@@ -1,4 +1,4 @@
-import { IconSearch, IconTable } from "@gravity-ui/icons";
+import { Magnifier, SquareListUl } from "@gravity-ui/icons";
 import { useMemo, useState } from "react";
 import { useDbTables } from "@/shared/api/hooks";
 import { Badge, Box, Group, Loader, ScrollArea, Stack, Text, TextInput } from "@/shared/ui";
@@ -38,7 +38,7 @@ function TableListItem({
       }}
     >
       <Group gap={6} wrap="nowrap">
-        <IconTable size={12} style={{ flexShrink: 0, opacity: 0.4 }} />
+        <SquareListUl size={12} style={{ flexShrink: 0, opacity: 0.4 }} />
         <Text size="xs" ff="monospace" truncate style={{ flex: 1 }}>
           {schema !== "public" ? `${schema}.` : ""}
           {name}
@@ -89,7 +89,7 @@ export function TablesTab() {
         <TextInput
           size="xs"
           placeholder="Search tables..."
-          leftSection={<IconSearch size={14} />}
+          leftSection={<Magnifier size={14} />}
           value={search}
           onChange={(e) => setSearch(e.currentTarget.value)}
         />

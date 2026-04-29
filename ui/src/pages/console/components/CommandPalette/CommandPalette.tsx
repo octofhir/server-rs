@@ -10,7 +10,7 @@ import {
 	Combobox,
 } from "@/shared/ui";
 import { useCombobox } from "@octofhir/ui-kit";
-import { IconSearch } from "@gravity-ui/icons";
+import { IconSearch } from "@octofhir/ui-kit";
 import { useUnit } from "effector-react";
 import {
 	$commandPaletteOpen,

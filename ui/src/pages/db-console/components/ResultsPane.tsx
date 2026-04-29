@@ -1,6 +1,6 @@
 import { useState, useCallback } from "react";
 import { Tabs, Group, Text, Badge, ActionIcon, Tooltip, Box } from "@/shared/ui";
-import { IconDownload } from "@gravity-ui/icons";
+import { ArrowDownToLine } from "@gravity-ui/icons";
 import type { SqlResponse, SqlValue } from "@/shared/api/types";
 import { ResultsTable } from "./ResultsTable";
 import { ExplainPane } from "./ExplainPane";
@@ -103,7 +103,7 @@ export function ResultsPane({
 						{sqlData && sqlData.rowCount > 0 && (
 							<Tooltip label="Export to CSV">
 								<ActionIcon variant="subtle" size="xs" onClick={handleExport}>
-									<IconDownload size={14} />
+									<ArrowDownToLine size={14} />
 								</ActionIcon>
 							</Tooltip>
 						)}

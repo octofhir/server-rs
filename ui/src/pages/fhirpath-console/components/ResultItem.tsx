@@ -1,5 +1,5 @@
 import { Badge, Code, Collapse, Group, Paper, Stack, Text } from "@/shared/ui";
-import { IconChevronDown, IconChevronRight } from "@gravity-ui/icons";
+import { ChevronDown, ChevronRight } from "@gravity-ui/icons";
 import { useState } from "react";
 import type { FhirPathResult } from "../types";
 
@@ -31,9 +31,9 @@ export function ResultItem({ result }: Props) {
 							style={{ cursor: "pointer", flex: 1 }}
 						>
 							{expanded ? (
-								<IconChevronDown size={14} />
+								<ChevronDown size={14} />
 							) : (
-								<IconChevronRight size={14} />
+								<ChevronRight size={14} />
 							)}
 							<Text size="sm" c="dimmed">
 								{result.datatype} object

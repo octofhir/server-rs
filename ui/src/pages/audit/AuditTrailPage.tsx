@@ -11,7 +11,7 @@ import {
 	Tooltip,
 } from "@/shared/ui";
 import { notifications } from "@octofhir/ui-kit";
-import { IconShield, IconList, IconChartBar, IconX } from "@gravity-ui/icons";
+import { Shield, ListUl, ChartBar, Xmark } from "@gravity-ui/icons";
 import { useAuditEvents, useAuditAnalytics, exportAuditLogs } from "./lib/useAudit";
 import { AuditFilters } from "./ui/AuditFilters";
 import { AuditEventList } from "./ui/AuditEventList";
@@ -108,7 +108,7 @@ export function AuditTrailPage() {
 					<Group justify="space-between" align="flex-start">
 						<Group gap="md">
 							<ThemeIcon variant="light" color="primary" size={48} radius="md">
-								<IconShield size={24} />
+								<Shield size={24} />
 							</ThemeIcon>
 							<div>
 								<Title order={2} style={{ letterSpacing: "-0.02em" }}>
@@ -129,10 +129,10 @@ export function AuditTrailPage() {
 					className={classes.tabs}
 				>
 					<Tabs.List className={classes.tabsList}>
-						<Tabs.Tab value="events" leftSection={<IconList size={16} />}>
+						<Tabs.Tab value="events" leftSection={<ListUl size={16} />}>
 							Events
 						</Tabs.Tab>
-						<Tabs.Tab value="analytics" leftSection={<IconChartBar size={16} />}>
+						<Tabs.Tab value="analytics" leftSection={<ChartBar size={16} />}>
 							Analytics
 						</Tabs.Tab>
 					</Tabs.List>
@@ -179,7 +179,7 @@ export function AuditTrailPage() {
 												size="sm"
 												onClick={handleCloseDetail}
 											>
-												<IconX size={14} />
+												<Xmark size={14} />
 											</ActionIcon>
 										</Tooltip>
 									</div>

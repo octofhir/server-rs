@@ -15,20 +15,19 @@ import {
 	Paper,
 } from "@/shared/ui";
 import {
-	IconUser,
-	IconServer,
-	IconAppWindow,
-	IconClock,
-	IconNetwork,
-	IconDeviceDesktop,
-	IconCheck,
-	IconX,
-	IconAlertTriangle,
-	IconCopy,
-	IconPlus,
-	IconMinus,
-	IconArrowRight,
-	IconArrowsExchange,
+	Person,
+	Server,
+	Display,
+	Clock,
+	BranchesRight,
+	Check,
+	Xmark,
+	TriangleExclamation,
+	Copy,
+	Plus,
+	Minus,
+	ArrowRight,
+	ArrowRightArrowLeft,
 } from "@gravity-ui/icons";
 import type { AuditEvent, AuditAction, AuditOutcome } from "@/shared/api/types";
 import classes from "./AuditEventDetail.module.css";
@@ -73,22 +72,22 @@ function getOutcomeColor(outcome: AuditOutcome): string {
 function getOutcomeIcon(outcome: AuditOutcome) {
 	switch (outcome) {
 		case "success":
-			return IconCheck;
+			return Check;
 		case "failure":
-			return IconX;
+			return Xmark;
 		case "partial":
-			return IconAlertTriangle;
+			return TriangleExclamation;
 	}
 }
 
 function getActorIcon(type: "user" | "client" | "system") {
 	switch (type) {
 		case "user":
-			return IconUser;
+			return Person;
 		case "client":
-			return IconAppWindow;
+			return Display;
 		case "system":
-			return IconServer;
+			return Server;
 	}
 }
 
@@ -105,7 +104,7 @@ function DetailRow({
 }: {
 	label: string;
 	value?: string | null;
-	icon?: typeof IconUser;
+	icon?: typeof Person;
 	copyable?: boolean;
 }) {
 	if (!value) return null;
@@ -129,7 +128,7 @@ function DetailRow({
 						{({ copied, copy }) => (
 							<Tooltip label={copied ? "Copied" : "Copy"}>
 								<ActionIcon size="xs" variant="subtle" onClick={copy}>
-									{copied ? <IconCheck size={12} /> : <IconCopy size={12} />}
+									{copied ? <Check size={12} /> : <Copy size={12} />}
 								</ActionIcon>
 							</Tooltip>
 						)}
@@ -168,11 +167,11 @@ function DiffViewer({
 								}
 								leftSection={
 									change.op === "add" ? (
-										<IconPlus size={10} />
+										<Plus size={10} />
 									) : change.op === "remove" ? (
-										<IconMinus size={10} />
+										<Minus size={10} />
 									) : (
-										<IconArrowsExchange size={10} />
+										<ArrowRightArrowLeft size={10} />
 									)
 								}
 							>
@@ -226,7 +225,7 @@ function DiffViewer({
 				)}
 				{before && after && (
 					<ThemeIcon size="lg" variant="light" color="gray" className={classes.diffArrow}>
-						<IconArrowRight size={16} />
+						<ArrowRight size={16} />
 					</ThemeIcon>
 				)}
 				{after && (
@@ -320,7 +319,7 @@ function AuditEventDetailComponent({ event }: AuditEventDetailProps) {
 									<DetailRow
 										label="When"
 										value={formatDateTime(event.timestamp)}
-										icon={IconClock}
+										icon={Clock}
 									/>
 								</div>
 
@@ -356,13 +355,13 @@ function AuditEventDetailComponent({ event }: AuditEventDetailProps) {
 										<DetailRow
 											label="IP Address"
 											value={event.source.ipAddress}
-											icon={IconNetwork}
+											icon={BranchesRight}
 											copyable
 										/>
 										<DetailRow
 											label="User Agent"
 											value={event.source.userAgent}
-											icon={IconDeviceDesktop}
+											icon={Display}
 										/>
 										{event.source.site && (
 											<DetailRow label="Site" value={event.source.site} />

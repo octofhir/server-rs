@@ -1,64 +1,176 @@
-import { forwardRef, useState, type ReactNode } from "react";
+import { forwardRef, useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import {
-    AsideHeader,
+    PageLayout,
+    PageLayoutAside,
     type AsideHeaderProps,
+    type MenuGroup as AsideMenuGroup,
     type MenuItem as AsideMenuItem,
 } from "@gravity-ui/navigation";
-
-// `@gravity-ui/navigation` ships CSS co-located with each component and pulls
-// it in via the JS module graph (sideEffects). No global stylesheet to import.
+import classes from "./TrackerLayout.module.css";
 
 export type TrackerNavItem = AsideMenuItem;
-export type TrackerLayoutProps = Omit<AsideHeaderProps, "renderContent" | "pinned"> & {
-    /** Initial pinned state (controlled fallback). Default `true`. */
+export type TrackerNavGroup = AsideMenuGroup;
+
+export interface TrackerLayoutProps
+    extends Omit<AsideHeaderProps, "renderContent" | "pinned" | "menuGroups" | "className"> {
     defaultPinned?: boolean;
-    /** Controlled pinned state. */
     pinned?: boolean;
-    /** Main page content. Receives layout helpers from `AsideHeader`. */
+    className?: string;
+    contentClassName?: string;
+    /** Collapse navigation below this viewport width. */
+    collapseBelow?: number;
+    /** Group definitions. Add `collapsible: true` to make a group collapsible. */
+    menuGroups?: AsideMenuGroup[];
+    /** Persist pinned + collapsed group state to localStorage under this key prefix. */
+    persistKey?: string;
     children?: ReactNode;
+}
+
+interface PersistedState {
+    pinned?: boolean;
+    collapsedGroups?: Record<string, boolean>;
+}
+
+const readState = (key: string): PersistedState => {
+    if (typeof window === "undefined") return {};
+    try {
+        const raw = window.localStorage.getItem(key);
+        return raw ? (JSON.parse(raw) as PersistedState) : {};
+    } catch {
+        return {};
+    }
 };
 
-/**
- * Tracker-style admin layout — wraps `@gravity-ui/navigation` `AsideHeader`.
- *
- * Provides the canonical Gravity admin shell: collapsible sidebar with logo +
- * menu items + footer slot, sticky header, and a content area. Use this as the
- * top-level layout for `/ui` routes.
- *
- * @example
- *   <TrackerLayout
- *     logo={{ text: "OctoFHIR", icon: LogoIcon, iconSize: 32, href: "/ui" }}
- *     menuItems={[
- *       { id: "dashboard", title: "Dashboard", icon: HouseIcon, current: true },
- *       { id: "patients", title: "Patients", icon: PersonsIcon },
- *     ]}
- *     renderFooter={({ isPinned }) => isPinned ? <UserMenu /> : <UserAvatar />}
- *   >
- *     <Outlet />
- *   </TrackerLayout>
- */
+const writeState = (key: string, value: PersistedState) => {
+    if (typeof window === "undefined") return;
+    try {
+        window.localStorage.setItem(key, JSON.stringify(value));
+    } catch {
+        /* quota / disabled */
+    }
+};
+
+function useMediaQuery(query: string) {
+    const [matches, setMatches] = useState(() =>
+        typeof window === "undefined" ? false : window.matchMedia(query).matches,
+    );
+
+    useEffect(() => {
+        if (typeof window === "undefined") return undefined;
+
+        const media = window.matchMedia(query);
+        const handleChange = () => setMatches(media.matches);
+        handleChange();
+        media.addEventListener("change", handleChange);
+        return () => media.removeEventListener("change", handleChange);
+    }, [query]);
+
+    return matches;
+}
+
 export const TrackerLayout = forwardRef<HTMLDivElement, TrackerLayoutProps>(
     function TrackerLayout(
-        { defaultPinned = true, pinned, children, onChangePinned, ...rest },
+        {
+            defaultPinned = true,
+            pinned,
+            children,
+            onChangePinned,
+            menuGroups,
+            persistKey,
+            onMenuGroupsChanged,
+            className,
+            contentClassName,
+            collapseBelow,
+            topAlert,
+            isCompactMode,
+            ...rest
+        },
         ref,
     ) {
-        const [internalPinned, setInternalPinned] = useState(defaultPinned);
+        const persisted = useMemo(() => (persistKey ? readState(persistKey) : {}), [persistKey]);
+
+        const [internalPinned, setInternalPinned] = useState<boolean>(
+            persisted.pinned ?? defaultPinned,
+        );
         const isControlled = pinned !== undefined;
-        const effectivePinned = isControlled ? (pinned as boolean) : internalPinned;
+        const shouldCollapseByViewport = useMediaQuery(
+            collapseBelow ? `(max-width: ${collapseBelow}px)` : "(max-width: 0px)",
+        );
+        const resolvedPinned = isControlled ? (pinned as boolean) : internalPinned;
+        const effectivePinned = shouldCollapseByViewport ? false : resolvedPinned;
+
+        const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>(
+            persisted.collapsedGroups ?? {},
+        );
+
+        const persist = useCallback(
+            (next: PersistedState) => {
+                if (!persistKey) return;
+                writeState(persistKey, {
+                    pinned: effectivePinned,
+                    collapsedGroups,
+                    ...next,
+                });
+            },
+            [persistKey, effectivePinned, collapsedGroups],
+        );
+
+        useEffect(() => {
+            if (persistKey) writeState(persistKey, { pinned: effectivePinned, collapsedGroups });
+        }, [persistKey, effectivePinned, collapsedGroups]);
 
         const handlePinnedChange = (next: boolean) => {
+            if (shouldCollapseByViewport) return;
             if (!isControlled) setInternalPinned(next);
             onChangePinned?.(next);
+            persist({ pinned: next });
         };
 
+        const resolvedGroups = useMemo<AsideMenuGroup[] | undefined>(() => {
+            if (!menuGroups) return undefined;
+            return menuGroups.map((g) =>
+                g.collapsible
+                    ? {
+                          ...g,
+                          collapsed: collapsedGroups[g.id] ?? g.collapsedByDefault ?? false,
+                      }
+                    : g,
+            );
+        }, [menuGroups, collapsedGroups]);
+
+        const handleGroupsChanged = useCallback(
+            (groups: AsideMenuGroup[]) => {
+                const next: Record<string, boolean> = {};
+                for (const g of groups) {
+                    if (g.collapsible) next[g.id] = g.collapsed ?? g.collapsedByDefault ?? false;
+                }
+                setCollapsedGroups(next);
+                onMenuGroupsChanged?.(groups);
+            },
+            [onMenuGroupsChanged],
+        );
+
         return (
-            <AsideHeader
-                ref={ref}
+            <PageLayout
+                className={className}
                 pinned={effectivePinned}
                 onChangePinned={handlePinnedChange}
-                renderContent={() => <>{children}</>}
-                {...rest}
-            />
+                topAlert={topAlert}
+                isCompactMode={isCompactMode}
+            >
+                <PageLayoutAside
+                    ref={ref}
+                    menuGroups={resolvedGroups}
+                    onMenuGroupsChanged={handleGroupsChanged}
+                    isCompactMode={isCompactMode}
+                    {...rest}
+                />
+                <PageLayout.Content>
+                    <main className={[classes.content, contentClassName].filter(Boolean).join(" ")}>
+                        {children}
+                    </main>
+                </PageLayout.Content>
+            </PageLayout>
         );
     },
 );

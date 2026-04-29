@@ -10,7 +10,7 @@ import {
 	Tooltip,
 	UnstyledButton,
 } from "@/shared/ui";
-import { IconActivity, IconPlayerStop } from "@gravity-ui/icons";
+import { Pulse, Stop } from "@gravity-ui/icons";
 import { modals, notifications, useDisclosure } from "@octofhir/ui-kit";
 import { useActiveQueries, useTerminateQuery } from "@/shared/api/hooks";
 import type { ActiveQuery } from "@/shared/api/types";
@@ -72,7 +72,7 @@ function QueryItem({
 							onClick={() => onTerminate(query.pid)}
 							loading={isTerminating}
 						>
-							<IconPlayerStop size={12} />
+							<Stop size={12} />
 						</ActionIcon>
 					</Tooltip>
 				</Group>
@@ -161,7 +161,7 @@ export function ActiveQueriesDropdown() {
 							borderRadius: "var(--octo-radius-sm)",
 						}}
 					>
-						<IconActivity
+						<Pulse
 							size={15}
 							style={{ opacity: queries.length > 0 ? 1 : 0.5 }}
 						/>

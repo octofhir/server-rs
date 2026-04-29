@@ -53,7 +53,6 @@ export interface ConsoleCommand {
 	/** Optional badge text (e.g., "200 OK", "POST") */
 	badge?: string;
 
-	/** Mantine color for the badge */
 	badgeColor?: string;
 
 	/** Optional icon to display */

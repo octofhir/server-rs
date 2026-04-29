@@ -8,7 +8,7 @@ import {
 	Text,
 	Title,
 } from "@/shared/ui";
-import { IconAlertCircle, IconPlayerPlay, IconX } from "@gravity-ui/icons";
+import { CircleExclamation, Play, Xmark } from "@gravity-ui/icons";
 import { useMutation } from "@tanstack/react-query";
 import { FhirPathEditor } from "@/shared/monaco/FhirPathEditor";
 import { JsonEditor } from "@/shared/monaco/JsonEditor";
@@ -126,7 +126,7 @@ export function FhirPathConsolePage() {
 			{/* Actions */}
 			<Group>
 				<Button
-					leftSection={<IconPlayerPlay size={16} />}
+					leftSection={<Play size={16} />}
 					onClick={handleExecute}
 					loading={evaluateMutation.isPending}
 				>
@@ -134,7 +134,7 @@ export function FhirPathConsolePage() {
 				</Button>
 				<Button
 					variant="subtle"
-					leftSection={<IconX size={16} />}
+					leftSection={<Xmark size={16} />}
 					onClick={handleClear}
 				>
 					Clear
@@ -144,7 +144,7 @@ export function FhirPathConsolePage() {
 			{/* Results */}
 			<Stack gap="sm" style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
 				{evaluateMutation.error && (
-					<Alert icon={<IconAlertCircle />} color="red">
+					<Alert icon={<CircleExclamation />} color="red">
 						<Text fw={500}>Evaluation Error</Text>
 						<Text size="sm">{evaluateMutation.error.message}</Text>
 					</Alert>

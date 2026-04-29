@@ -23,14 +23,14 @@ import {
 } from "@/shared/ui";
 import { notifications } from "@octofhir/ui-kit";
 import {
-	IconAlertCircle,
-	IconSearch,
-	IconPackage,
-	IconEye,
-	IconCheck,
-	IconAlertTriangle,
-	IconDownload,
-	IconWorld,
+	CircleExclamation,
+	Magnifier,
+	Box,
+	Eye,
+	Check,
+	TriangleExclamation,
+	ArrowDownToLine,
+	Globe,
 } from "@gravity-ui/icons";
 import {
 	usePackages,
@@ -85,9 +85,9 @@ function FhirVersionBadge({
 				color={isCompatible ? "primary" : "warm"}
 				leftSection={
 					isCompatible ? (
-						<IconCheck size={12} />
+						<Check size={12} />
 					) : (
-						<IconAlertTriangle size={12} />
+						<TriangleExclamation size={12} />
 					)
 				}
 			>
@@ -116,7 +116,7 @@ function PackageCard({
 			<Group justify="space-between" mb="xs">
 				<Group gap="xs">
 					<ThemeIcon variant="light" size="md" color="warm">
-						<IconPackage size={16} />
+						<Box size={16} />
 					</ThemeIcon>
 					<Text fw={500} lineClamp={1}>
 						{pkg.name}
@@ -128,7 +128,7 @@ function PackageCard({
 						size="sm"
 						onClick={() => onView(pkg.name, pkg.version)}
 					>
-						<IconEye size={16} />
+						<Eye size={16} />
 					</ActionIcon>
 				</Tooltip>
 			</Group>
@@ -169,7 +169,7 @@ function PackageTableRow({
 		<Table.Tr>
 			<Table.Td>
 				<Group gap="xs">
-					<IconPackage
+					<Box
 						size={16}
 						style={{ color: "var(--octo-accent-primary)" }}
 					/>
@@ -208,7 +208,7 @@ function PackageTableRow({
 						size="sm"
 						onClick={() => onView(pkg.name, pkg.version)}
 					>
-						<IconEye size={16} />
+						<Eye size={16} />
 					</ActionIcon>
 				</Tooltip>
 			</Table.Td>
@@ -243,7 +243,7 @@ function InstalledPackagesTab({
 		<Stack gap="md">
 			<TextInput
 				placeholder="Search installed packages..."
-				leftSection={<IconSearch size={16} />}
+				leftSection={<Magnifier size={16} />}
 				value={search}
 				onChange={(e) => setSearch(e.currentTarget.value)}
 			/>
@@ -259,7 +259,7 @@ function InstalledPackagesTab({
 
 			{error && (
 				<Alert
-					icon={<IconAlertCircle size={16} />}
+					icon={<CircleExclamation size={16} />}
 					color="fire"
 					variant="light"
 				>
@@ -284,7 +284,7 @@ function InstalledPackagesTab({
 									variant="light"
 									color="warm"
 								>
-									<IconPackage size={30} />
+									<Box size={30} />
 								</ThemeIcon>
 								<Text ta="center" c="dimmed">
 									{search
@@ -398,7 +398,7 @@ function RegistryTab({
 					</Text>
 					<TextInput
 						placeholder="Search packages... (e.g., us core, hl7.fhir)"
-						leftSection={<IconSearch size={16} />}
+						leftSection={<Magnifier size={16} />}
 						value={searchQuery}
 						onChange={(e) => {
 							setSearchQuery(e.currentTarget.value);
@@ -435,7 +435,7 @@ function RegistryTab({
 								<Table.Tr key={pkg.name}>
 									<Table.Td>
 										<Group gap="xs">
-											<IconPackage
+											<Box
 												size={16}
 												style={{ color: "var(--octo-accent-primary)" }}
 											/>
@@ -479,7 +479,7 @@ function RegistryTab({
 									<Table.Td>
 										<Button
 											size="xs"
-											leftSection={<IconDownload size={14} />}
+											leftSection={<ArrowDownToLine size={14} />}
 											onClick={handleStartInstall}
 											disabled={
 												selectedPackage !== pkg.name || !selectedVersion
@@ -499,7 +499,7 @@ function RegistryTab({
 				searchData.packages.length === 0 &&
 				searchQuery.length >= 2 && (
 					<Alert
-						icon={<IconAlertCircle size={16} />}
+						icon={<CircleExclamation size={16} />}
 						color="warm"
 						variant="light"
 					>
@@ -512,7 +512,7 @@ function RegistryTab({
 				<Paper p="xl" style={{ backgroundColor: "var(--octo-surface-2)" }}>
 					<Stack align="center" gap="md">
 						<ThemeIcon size={rem(60)} radius="xl" variant="light" color="fire">
-							<IconWorld size={30} />
+							<Globe size={30} />
 						</ThemeIcon>
 						<Text ta="center" c="dimmed">
 							Enter a search term to find packages in the FHIR registry
@@ -568,7 +568,7 @@ export function PackagesPage() {
 
 			<Tabs value={activeTab} onChange={setActiveTab}>
 				<Tabs.List>
-					<Tabs.Tab value="installed" leftSection={<IconPackage size={14} />}>
+					<Tabs.Tab value="installed" leftSection={<Box size={14} />}>
 						Installed
 						{data && (
 							<Badge size="xs" variant="light" ml="xs">
@@ -576,7 +576,7 @@ export function PackagesPage() {
 							</Badge>
 						)}
 					</Tabs.Tab>
-					<Tabs.Tab value="registry" leftSection={<IconWorld size={14} />}>
+					<Tabs.Tab value="registry" leftSection={<Globe size={14} />}>
 						Registry
 					</Tabs.Tab>
 				</Tabs.List>

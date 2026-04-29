@@ -18,27 +18,27 @@ import {
 } from "@/shared/ui";
 import { useDesignTokens } from "@octofhir/ui-kit";
 import {
-	IconAlertCircle,
-	IconArrowLeft,
-	IconLock,
-	IconLockOpen,
-	IconServer,
-	IconCode,
-	IconDatabase,
-	IconShield,
-	IconApps,
-	IconApi,
+	CircleExclamation,
+	ArrowLeft,
+	Lock,
+	LockOpen,
+	Server,
+	Code as CodeIcon,
+	Database,
+	Shield,
+	Boxes3,
+	Cpu,
 } from "@gravity-ui/icons";
 import { useOperation, useUpdateOperation } from "@/shared/api/hooks";
 import { useState, useEffect } from "react";
 
-const CATEGORY_ICONS: Record<string, typeof IconServer> = {
-	fhir: IconServer,
-	graphql: IconCode,
-	system: IconDatabase,
-	auth: IconShield,
-	ui: IconApps,
-	api: IconApi,
+const CATEGORY_ICONS: Record<string, typeof Server> = {
+	fhir: Server,
+	graphql: CodeIcon,
+	system: Database,
+	auth: Shield,
+	ui: Boxes3,
+	api: Cpu,
 };
 
 const CATEGORY_COLORS: Record<string, string> = {
@@ -120,13 +120,13 @@ export function OperationDetailPage() {
 
 	if (!id) {
 		return (
-			<Alert icon={<IconAlertCircle size={16} />} color="fire" variant="light">
+			<Alert icon={<CircleExclamation size={16} />} color="fire" variant="light">
 				Operation ID is required
 			</Alert>
 		);
 	}
 
-	const CategoryIcon = operation ? CATEGORY_ICONS[operation.category] ?? IconApi : IconApi;
+	const CategoryIcon = operation ? CATEGORY_ICONS[operation.category] ?? Cpu : Cpu;
 	const categoryColor = operation ? CATEGORY_COLORS[operation.category] ?? "gray" : "gray";
 	const categoryLabel = operation ? CATEGORY_LABELS[operation.category] ?? operation.category : "";
 
@@ -138,7 +138,7 @@ export function OperationDetailPage() {
 			</Breadcrumbs>
 
 			<Group>
-				<Button variant="subtle" leftSection={<IconArrowLeft size={16} />} onClick={() => navigate("/operations")}>
+				<Button variant="subtle" leftSection={<ArrowLeft size={16} />} onClick={() => navigate("/operations")}>
 					Back
 				</Button>
 			</Group>
@@ -153,7 +153,7 @@ export function OperationDetailPage() {
 			)}
 
 			{error && (
-				<Alert icon={<IconAlertCircle size={16} />} color="fire" variant="light">
+				<Alert icon={<CircleExclamation size={16} />} color="fire" variant="light">
 					{error instanceof Error ? error.message : "Failed to load operation"}
 				</Alert>
 			)}
@@ -175,11 +175,11 @@ export function OperationDetailPage() {
 										{categoryLabel}
 									</Badge>
 									{operation.public ? (
-										<Badge color="primary" variant="light" leftSection={<IconLockOpen size={12} />}>
+										<Badge color="primary" variant="light" leftSection={<LockOpen size={12} />}>
 											Public
 										</Badge>
 									) : (
-										<Badge color="deep" variant="light" leftSection={<IconLock size={12} />}>
+										<Badge color="deep" variant="light" leftSection={<Lock size={12} />}>
 											Protected
 										</Badge>
 									)}
@@ -251,7 +251,7 @@ export function OperationDetailPage() {
 							)}
 
 							{updateMutation.isError && (
-								<Alert icon={<IconAlertCircle size={16} />} color="fire" variant="light">
+								<Alert icon={<CircleExclamation size={16} />} color="fire" variant="light">
 									{updateMutation.error instanceof Error ? updateMutation.error.message : "Failed to update operation"}
 								</Alert>
 							)}

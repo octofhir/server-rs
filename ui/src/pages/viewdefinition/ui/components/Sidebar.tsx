@@ -1,5 +1,5 @@
 import { Paper, Text, Divider, Stack, Button, Loader } from "@/shared/ui";
-import { IconCheck } from "@gravity-ui/icons";
+import { IconCheck } from "@octofhir/ui-kit";
 import type { ViewDefinition } from "../../lib/useViewDefinition";
 
 interface SidebarProps {

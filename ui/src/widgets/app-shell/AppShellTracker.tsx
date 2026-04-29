@@ -2,12 +2,8 @@ import { useMemo } from "react";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
 import {
     type AsideHeaderMenuItem,
-    Badge,
-    Button,
-    Flex,
-    TrackerLayout,
+    TrackerAppShell,
     useColorScheme,
-    useLocalStorage,
 } from "@octofhir/ui-kit";
 import { ErrorBoundary } from "@/shared/ui";
 import {
@@ -78,23 +74,15 @@ const NAV_ITEMS: NavLink[] = [
     { id: "policies", title: "Access Policies", path: "/auth/policies", icon: Shield, groupId: "auth" },
 ];
 
-function HealthChip() {
-    const { data: health } = useHealth();
-    const status = health?.status ?? "down";
-    const theme: "success" | "warning" | "danger" =
-        status === "ok" ? "success" : status === "degraded" ? "warning" : "danger";
-    return <Badge theme={theme} size="s">{status}</Badge>;
-}
-
 export function AppShellTracker() {
     const navigate = useNavigate();
     const location = useLocation();
     const { logout, user } = useAuth();
     const { colorScheme, toggleColorScheme } = useColorScheme();
-    const [pinned, setPinned] = useLocalStorage<boolean>({
-        key: "octofhir.tracker.pinned",
-        defaultValue: true,
-    });
+    const { data: health } = useHealth();
+    const status = health?.status ?? "down";
+    const statusTheme: "success" | "warning" | "danger" =
+        status === "ok" ? "success" : status === "degraded" ? "warning" : "danger";
 
     const menuItems: AsideHeaderMenuItem[] = useMemo(() => {
         const isActive = (path: string): boolean =>
@@ -111,7 +99,7 @@ export function AppShellTracker() {
     }, [location.pathname, navigate]);
 
     return (
-        <TrackerLayout
+        <TrackerAppShell
             logo={{
                 text: "OctoFHIR",
                 iconSrc: logoUrl,
@@ -120,38 +108,27 @@ export function AppShellTracker() {
             }}
             menuItems={menuItems}
             menuGroups={NAV_GROUPS}
-            pinned={pinned}
-            onChangePinned={setPinned}
-            renderFooter={({ isPinned }) => (
-                <Flex gap={8} align="center" justify={isPinned ? "space-between" : "center"} p={isPinned ? 12 : 8}>
-                    <Button
-                        view="flat"
-                        size="m"
-                        onClick={toggleColorScheme}
-                        aria-label="Toggle color scheme"
-                    >
-                        {colorScheme === "dark" ? <Sun width={18} /> : <Moon width={18} />}
-                        {isPinned ? <span style={{ marginLeft: 8 }}>{colorScheme === "dark" ? "Light" : "Dark"}</span> : null}
-                    </Button>
-                    {isPinned && <HealthChip />}
-                </Flex>
-            )}
-            renderFooterAfter={() =>
-                user ? (
-                    <Flex p={12} gap={8} align="center" justify="space-between">
-                        <span style={{ fontSize: 13, color: "var(--g-color-text-secondary)" }}>
-                            {user.username}
-                        </span>
-                        <Button view="flat" size="s" onClick={() => logout().then(() => navigate("/login"))}>
-                            Sign out
-                        </Button>
-                    </Flex>
-                ) : null
+            defaultPinned
+            persistKey="octofhir.tracker"
+            collapseBelow={900}
+            status={{ label: status, theme: statusTheme }}
+            themeAction={{
+                icon: colorScheme === "dark" ? <Sun width={18} /> : <Moon width={18} />,
+                label: colorScheme === "dark" ? "Light" : "Dark",
+                onClick: toggleColorScheme,
+            }}
+            account={
+                user
+                    ? {
+                          name: user.username,
+                          onSignOut: () => void logout().then(() => navigate("/login")),
+                      }
+                    : null
             }
         >
             <ErrorBoundary>
                 <Outlet />
             </ErrorBoundary>
-        </TrackerLayout>
+        </TrackerAppShell>
     );
 }

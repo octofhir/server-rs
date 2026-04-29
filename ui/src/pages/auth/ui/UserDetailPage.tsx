@@ -2,15 +2,15 @@ import { useState } from "react";
 import { Stack, Title, Text, Group, Badge, Table, Loader } from "@/shared/ui";
 import { useParams, useNavigate } from "react-router-dom";
 import {
-	IconArrowLeft,
-	IconEdit,
-	IconKey,
-	IconTrash,
-	IconShield,
-	IconDevices,
-	IconUser,
-	IconInfoCircle,
-	IconShieldCheck,
+	ArrowLeft,
+	Pencil,
+	Key,
+	TrashBin,
+	Shield,
+	Smartphone,
+	Person,
+	CircleInfo,
+	ShieldCheck,
 } from "@gravity-ui/icons";
 import { Card } from "@/shared/ui/Card/Card";
 import { Button } from "@/shared/ui/Button/Button";
@@ -114,7 +114,7 @@ export function UserDetailPage() {
 			<Group>
 				<Button
 					variant="subtle"
-					leftSection={<IconArrowLeft size={16} />}
+					leftSection={<ArrowLeft size={16} />}
 					onClick={() => navigate("/auth/users")}
 				>
 					Back to Users
@@ -133,21 +133,21 @@ export function UserDetailPage() {
 								{user.status === "locked" ? "Locked" : user.active ? "Active" : "Inactive"}
 							</Badge>
 							{user.mfaEnabled && (
-								<Badge color="blue" variant="light" leftSection={<IconShieldCheck size={12} />}>
+								<Badge color="blue" variant="light" leftSection={<ShieldCheck size={12} />}>
 									MFA Enabled
 								</Badge>
 							)}
 						</Group>
 					</div>
 					<div className={classes.profileActions}>
-						<Button variant="light" leftSection={<IconEdit size={16} />} onClick={() => setEditModalOpened(true)}>
+						<Button variant="light" leftSection={<Pencil size={16} />} onClick={() => setEditModalOpened(true)}>
 							Edit
 						</Button>
-						<Button variant="light" leftSection={<IconKey size={16} />}>
+						<Button variant="light" leftSection={<Key size={16} />}>
 							Reset Password
 						</Button>
 						<ActionIcon variant="light" color="red" size="lg">
-							<IconTrash size={16} />
+							<TrashBin size={16} />
 						</ActionIcon>
 					</div>
 				</div>
@@ -180,7 +180,7 @@ export function UserDetailPage() {
 					{/* Profile Info */}
 					<Card className={classes.sectionCard}>
 						<Title order={4} className={classes.sectionTitle}>
-							<IconInfoCircle size={18} />
+							<CircleInfo size={18} />
 							Profile Information
 						</Title>
 						<div className={classes.infoGrid}>
@@ -222,7 +222,7 @@ export function UserDetailPage() {
 					{/* Roles */}
 					<Card className={classes.sectionCard}>
 						<Title order={4} className={classes.sectionTitle}>
-							<IconShield size={18} />
+							<Shield size={18} />
 							Assigned Roles
 						</Title>
 						{user.roles && user.roles.length > 0 ? (
@@ -255,7 +255,7 @@ export function UserDetailPage() {
 					{/* Active Sessions */}
 					<Card className={classes.sectionCard}>
 						<Title order={4} className={classes.sectionTitle}>
-							<IconDevices size={18} />
+							<Smartphone size={18} />
 							Active Sessions
 						</Title>
 						{sessionsLoading ? (
@@ -306,7 +306,7 @@ export function UserDetailPage() {
 					{/* Linked Identities */}
 					<Card className={classes.sectionCard}>
 						<Title order={4} className={classes.sectionTitle}>
-							<IconUser size={18} />
+							<Person size={18} />
 							Linked Identities
 						</Title>
 						{user.identity && user.identity.length > 0 ? (

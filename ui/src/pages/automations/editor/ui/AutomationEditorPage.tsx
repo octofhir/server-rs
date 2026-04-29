@@ -20,13 +20,13 @@ import {
 } from "@/shared/ui";
 import { notifications } from "@octofhir/ui-kit";
 import {
-  IconArrowLeft,
-  IconDeviceFloppy,
-  IconRocket,
-  IconPlayerPlay,
-  IconSettings,
-  IconBolt,
-  IconHistory,
+  ArrowLeft,
+  FloppyDisk,
+  Rocket,
+  Play,
+  Gear,
+  Thunderbolt,
+  ClockArrowRotateLeft,
 } from "@gravity-ui/icons";
 import { useAutomation, useUpdateAutomation, useDeployAutomation } from "../../lib/useAutomations";
 import { AutomationScriptEditor } from "@/shared/monaco/AutomationScriptEditor";
@@ -178,7 +178,7 @@ export function AutomationEditorPage() {
       <Group className={classes.header} justify="space-between" p="md" pb="sm">
         <Group gap="md">
           <ActionIcon variant="subtle" onClick={() => navigate("/automations")}>
-            <IconArrowLeft size={20} />
+            <ArrowLeft size={20} />
           </ActionIcon>
           <Title order={3}>{name || "Untitled Automation"}</Title>
           {isDirty && (
@@ -192,7 +192,7 @@ export function AutomationEditorPage() {
             <Button
               variant={isDirty ? "filled" : "default"}
               color={isDirty ? "blue" : undefined}
-              leftSection={<IconDeviceFloppy size={16} />}
+              leftSection={<FloppyDisk size={16} />}
               onClick={handleSave}
               loading={updateMutation.isPending}
             >
@@ -203,7 +203,7 @@ export function AutomationEditorPage() {
             <Button
               variant="light"
               color="blue"
-              leftSection={<IconRocket size={16} />}
+              leftSection={<Rocket size={16} />}
               onClick={handleDeploy}
               loading={deployMutation.isPending}
             >
@@ -213,7 +213,7 @@ export function AutomationEditorPage() {
           <Tooltip label="Test (Ctrl+Enter)">
             <Button
               color="green"
-              leftSection={<IconPlayerPlay size={16} />}
+              leftSection={<Play size={16} />}
               onClick={handleExecute}
             >
               Test
@@ -241,16 +241,16 @@ export function AutomationEditorPage() {
       <Box className={classes.bottomPanel}>
         <Tabs value={activeTab} onChange={setActiveTab} h="100%">
           <Tabs.List>
-            <Tabs.Tab value="settings" leftSection={<IconSettings size={14} />}>
+            <Tabs.Tab value="settings" leftSection={<Gear size={14} />}>
               Settings
             </Tabs.Tab>
-            <Tabs.Tab value="triggers" leftSection={<IconBolt size={14} />}>
+            <Tabs.Tab value="triggers" leftSection={<Thunderbolt size={14} />}>
               Triggers ({automation.triggers?.length || 0})
             </Tabs.Tab>
-            <Tabs.Tab value="playground" leftSection={<IconPlayerPlay size={14} />}>
+            <Tabs.Tab value="playground" leftSection={<Play size={14} />}>
               Playground
             </Tabs.Tab>
-            <Tabs.Tab value="history" leftSection={<IconHistory size={14} />}>
+            <Tabs.Tab value="history" leftSection={<ClockArrowRotateLeft size={14} />}>
               History
             </Tabs.Tab>
           </Tabs.List>

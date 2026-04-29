@@ -42,7 +42,6 @@
     "@gravity-ui/navigation": "^5.0.0",
     "@gravity-ui/table": "^1.15.3",
     "@gravity-ui/uikit": "^7.38.0",
-    "@tabler/icons-react": "^3.37.1",
     "final-form": "^5.0.0",
     "final-form-arrays": "^4.0.0",
     "final-form-calculate": "^2.0.0",

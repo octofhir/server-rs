@@ -1,5 +1,5 @@
 import { Table, Text, Badge, ScrollArea, Alert } from "@/shared/ui";
-import { IconAlertCircle, IconInfoCircle } from "@gravity-ui/icons";
+import { CircleExclamation, CircleInfo } from "@gravity-ui/icons";
 import type { SqlResponse, SqlValue } from "@/shared/api/types";
 import { JsonCellViewer } from "./JsonCellViewer";
 
@@ -41,7 +41,7 @@ export function ResultsTable({ data, error, isPending }: ResultsTableProps) {
 
 	if (error) {
 		return (
-			<Alert icon={<IconAlertCircle size={16} />} color="fire" title="Query Error">
+			<Alert icon={<CircleExclamation size={16} />} color="fire" title="Query Error">
 				{error.message}
 			</Alert>
 		);
@@ -57,7 +57,7 @@ export function ResultsTable({ data, error, isPending }: ResultsTableProps) {
 
 	if (data.rowCount === 0) {
 		return (
-			<Alert icon={<IconInfoCircle size={16} />} color="primary">
+			<Alert icon={<CircleInfo size={16} />} color="primary">
 				Query executed successfully. No rows returned.
 			</Alert>
 		);

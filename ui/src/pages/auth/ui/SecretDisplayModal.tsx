@@ -9,7 +9,7 @@ import {
 	Tooltip,
 	Alert,
 } from "@/shared/ui";
-import { IconAlertTriangle, IconCopy, IconCheck } from "@gravity-ui/icons";
+import { TriangleExclamation, Copy, Check } from "@gravity-ui/icons";
 import { Modal } from "@/shared/ui/Modal/Modal";
 import { Button } from "@/shared/ui/Button/Button";
 import classes from "./SecretDisplayModal.module.css";
@@ -51,7 +51,7 @@ export function SecretDisplayModal({
 		>
 			<Stack gap="md">
 				<Alert
-					icon={<IconAlertTriangle size={20} />}
+					icon={<TriangleExclamation size={20} />}
 					color="orange"
 					variant="light"
 					className={classes.warningAlert}
@@ -80,7 +80,7 @@ export function SecretDisplayModal({
 										color={copied ? "teal" : "gray"}
 										onClick={copy}
 									>
-										{copied ? <IconCheck size={16} /> : <IconCopy size={16} />}
+										{copied ? <Check size={16} /> : <Copy size={16} />}
 									</ActionIcon>
 								</Tooltip>
 							)}
@@ -103,7 +103,7 @@ export function SecretDisplayModal({
 										color={copied ? "teal" : "gray"}
 										onClick={copy}
 									>
-										{copied ? <IconCheck size={16} /> : <IconCopy size={16} />}
+										{copied ? <Check size={16} /> : <Copy size={16} />}
 									</ActionIcon>
 								</Tooltip>
 							)}

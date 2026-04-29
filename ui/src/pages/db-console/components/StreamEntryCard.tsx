@@ -10,13 +10,13 @@ import {
 	UnstyledButton,
 } from "@/shared/ui";
 import {
-	IconChevronDown,
-	IconChevronRight,
-	IconCopy,
-	IconDownload,
-	IconPlayerPlay,
-	IconChartTreemap,
-	IconX,
+	ChevronDown,
+	ChevronRight,
+	Copy,
+	ArrowDownToLine,
+	Play,
+	ChartTreemap,
+	Xmark,
 } from "@gravity-ui/icons";
 import type { SqlResponse, SqlValue } from "@/shared/api/types";
 import { ResultsTable } from "./ResultsTable";
@@ -177,7 +177,7 @@ export function StreamEntryCard({
 					<Group gap={2} wrap="nowrap" className={classes.entryActions}>
 						<Tooltip label="Copy query">
 							<ActionIcon variant="subtle" size="xs" onClick={handleCopy}>
-								<IconCopy size={12} />
+								<Copy size={12} />
 							</ActionIcon>
 						</Tooltip>
 						<Tooltip label="Re-run">
@@ -186,13 +186,13 @@ export function StreamEntryCard({
 								size="xs"
 								onClick={() => onReplayQuery(entry.query)}
 							>
-								<IconPlayerPlay size={12} />
+								<Play size={12} />
 							</ActionIcon>
 						</Tooltip>
 						{hasResults && (
 							<Tooltip label="Export CSV">
 								<ActionIcon variant="subtle" size="xs" onClick={handleExport}>
-									<IconDownload size={12} />
+									<ArrowDownToLine size={12} />
 								</ActionIcon>
 							</Tooltip>
 						)}
@@ -204,7 +204,7 @@ export function StreamEntryCard({
 									onClick={() => setShowExplain((v) => !v)}
 									color={showExplain ? "primary" : undefined}
 								>
-									<IconChartTreemap size={12} />
+									<ChartTreemap size={12} />
 								</ActionIcon>
 							</Tooltip>
 						)}
@@ -215,9 +215,9 @@ export function StreamEntryCard({
 								onClick={() => onToggleExpand(entry.id)}
 							>
 								{shouldShow ? (
-									<IconChevronDown size={13} />
+									<ChevronDown size={13} />
 								) : (
-									<IconChevronRight size={13} />
+									<ChevronRight size={13} />
 								)}
 							</ActionIcon>
 						)}
@@ -227,7 +227,7 @@ export function StreamEntryCard({
 								size="xs"
 								onClick={() => onRemoveEntry(entry.id)}
 							>
-								<IconX size={12} />
+								<Xmark size={12} />
 							</ActionIcon>
 						</Tooltip>
 					</Group>

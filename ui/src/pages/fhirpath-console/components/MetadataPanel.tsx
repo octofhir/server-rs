@@ -1,5 +1,5 @@
 import { Badge, Collapse, Group, Paper, Stack, Text } from "@/shared/ui";
-import { IconChevronDown, IconChevronRight } from "@gravity-ui/icons";
+import { ChevronDown, ChevronRight } from "@gravity-ui/icons";
 import { useState } from "react";
 import type { FhirPathMetadata } from "../types";
 
@@ -19,9 +19,9 @@ export function MetadataPanel({ metadata }: Props) {
 			>
 				<Group gap="xs">
 					{expanded ? (
-						<IconChevronDown size={16} />
+						<ChevronDown size={16} />
 					) : (
-						<IconChevronRight size={16} />
+						<ChevronRight size={16} />
 					)}
 					<Text fw={500}>Metadata</Text>
 				</Group>

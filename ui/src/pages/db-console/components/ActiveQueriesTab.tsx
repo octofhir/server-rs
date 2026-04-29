@@ -1,5 +1,5 @@
 import { modals, notifications } from "@octofhir/ui-kit";
-import { IconActivity, IconPlayerStop } from "@gravity-ui/icons";
+import { Pulse, Stop } from "@gravity-ui/icons";
 import { useCallback } from "react";
 import { useActiveQueries, useTerminateQuery } from "@/shared/api/hooks";
 import type { ActiveQuery } from "@/shared/api/types";
@@ -78,7 +78,7 @@ function QueryItem({
               onClick={() => onTerminate(query.pid)}
               loading={isTerminating}
             >
-              <IconPlayerStop size={12} />
+              <Stop size={12} />
             </ActionIcon>
           </Tooltip>
         </Group>
@@ -143,7 +143,7 @@ export function ActiveQueriesTab({ isActive }: ActiveQueriesTabProps) {
   return (
     <Stack gap={0} h="100%">
       <Group gap={4} px="sm" py="xs" style={{ flexShrink: 0 }}>
-        <IconActivity size={14} style={{ opacity: 0.5 }} />
+        <Pulse size={14} style={{ opacity: 0.5 }} />
         <Text size="xs" fw={500} c="dimmed">
           Active Queries
         </Text>

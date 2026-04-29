@@ -10,13 +10,13 @@ import {
 } from "@/shared/ui";
 import { useDesignTokens } from "@octofhir/ui-kit";
 import {
-	IconChevronRight,
-	IconChevronDown,
-	IconSearch,
-	IconTable,
-	IconFilter,
-	IconArrowsSort,
-	IconCircleDot,
+	ChevronRight,
+	ChevronDown,
+	Magnifier,
+	SquareListUl,
+	FunnelXmark,
+	BarsAscendingAlignCenter,
+	CircleFill,
 } from "@gravity-ui/icons";
 
 interface ExplainNode {
@@ -209,12 +209,12 @@ function getOperationIcon(operation: string) {
 	const op = operation.toLowerCase();
 	const size = 14;
 
-	if (op.includes("scan")) return <IconSearch size={size} />;
-	if (op.includes("join")) return <IconTable size={size} />;
-	if (op.includes("filter")) return <IconFilter size={size} />;
-	if (op.includes("sort")) return <IconArrowsSort size={size} />;
+	if (op.includes("scan")) return <Magnifier size={size} />;
+	if (op.includes("join")) return <SquareListUl size={size} />;
+	if (op.includes("filter")) return <FunnelXmark size={size} />;
+	if (op.includes("sort")) return <BarsAscendingAlignCenter size={size} />;
 
-	return <IconCircleDot size={size} />;
+	return <CircleFill size={size} />;
 }
 
 /**
@@ -252,9 +252,9 @@ function ExplainTreeNode({ node }: { node: ExplainNode }) {
 					<Box style={{ width: 16, height: 16, flexShrink: 0 }}>
 						{hasChildren &&
 							(expanded ? (
-								<IconChevronDown size={16} />
+								<ChevronDown size={16} />
 							) : (
-								<IconChevronRight size={16} />
+								<ChevronRight size={16} />
 							))}
 					</Box>
 
