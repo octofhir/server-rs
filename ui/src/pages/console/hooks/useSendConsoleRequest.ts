@@ -1,5 +1,6 @@
 import { useMutation } from "@tanstack/react-query";
 import { useUnit } from "effector-react";
+import type { RequestResponse } from "@/entities/rest-console-response";
 import { fhirClient, HttpError } from "@/shared/api/fhirClient";
 import { $mode, setLastResponse } from "../state/consoleStore";
 import { validateConsoleRequest } from "../utils/requestValidator";
@@ -13,20 +14,6 @@ export interface SendRequestParams {
 	path: string;
 	body?: string;
 	headers?: Record<string, string>;
-}
-
-export interface RequestResponse {
-	id: string; // UUID
-	status: number;
-	statusText: string;
-	durationMs: number;
-	body?: unknown;
-	headers?: Record<string, string>;
-	requestedAt: string; // ISO timestamp
-	requestMethod: HttpMethod;
-	requestPath: string;
-	requestBody?: string;
-	requestHeaders?: Record<string, string>;
 }
 
 export function useSendConsoleRequest() {

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import { useUnit } from "effector-react";
-import { Badge, Group, Stack, Text } from "@/shared/ui";
+import { Badge, Flex, Stack, Text } from "@/shared/ui";
 import { $method, $rawPath, setRawPath } from "../state/consoleStore";
 import type {
 	AutocompleteSuggestion,
@@ -84,15 +84,15 @@ export function BuilderModeEditor({
 	);
 
 	return (
-		<Stack gap="xs">
-			<Group justify="space-between">
-				<Text fw={500} size="sm">
+		<Stack gap="4">
+			<Flex justifyContent="space-between" alignItems="center">
+				<Text variant="subheader-1">
 					Visual Query Builder
 				</Text>
-				<Badge variant="light" size="sm">
+				<Badge theme="info" size="m">
 					{method}
 				</Badge>
-			</Group>
+			</Flex>
 			<QueryChipsBuilder
 				state={builderState}
 				onChange={handleStateChange}

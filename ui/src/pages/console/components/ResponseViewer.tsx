@@ -1,41 +1,30 @@
-import { IconAlertCircle, IconCheck, IconX } from "@octofhir/ui-kit";
+import { IconCheck, IconX, OperationOutcomePanel } from "@octofhir/ui-kit";
 import { useNavigate } from "react-router-dom";
-import { Alert, Anchor, Badge, Group, Paper, ScrollArea, Skeleton, Stack, Table, Tabs, Text } from "@/shared/ui";
+import { 
+	Link, 
+	Badge, 
+	Flex, 
+	Skeleton, 
+	Stack, 
+	Tabs, 
+	Text,
+	Box,
+	DataPreview,
+} from "@/shared/ui";
+import {
+	getBundleResourceEntries,
+	getConsoleResponseStatusTone,
+	getResponseDefaultTab,
+	isConsoleResponseError,
+	isConsoleResponseSuccess,
+	isFhirOperationOutcome,
+	type RequestResponse,
+} from "@/entities/rest-console-response";
 import { JsonViewer } from "@/shared/ui-react/JsonViewer";
-import type { FhirBundle, FhirResource } from "@/shared/api";
-import type { RequestResponse } from "../hooks/useSendConsoleRequest";
 
 interface ResponseViewerProps {
 	response?: RequestResponse;
 	isLoading?: boolean;
-}
-
-interface FhirOperationOutcome {
-	resourceType: "OperationOutcome";
-	issue?: Array<{
-		severity?: "fatal" | "error" | "warning" | "information";
-		code?: string;
-		diagnostics?: string;
-		location?: string[];
-	}>;
-}
-
-function isFhirOperationOutcome(body: unknown): body is FhirOperationOutcome {
-	return (
-		typeof body === "object" &&
-		body !== null &&
-		"resourceType" in body &&
-		body.resourceType === "OperationOutcome"
-	);
-}
-
-function isFhirBundle(body: unknown): body is FhirBundle {
-	return (
-		typeof body === "object" &&
-		body !== null &&
-		"resourceType" in body &&
-		body.resourceType === "Bundle"
-	);
 }
 
 export function ResponseViewer({ response, isLoading }: ResponseViewerProps) {
@@ -43,185 +32,154 @@ export function ResponseViewer({ response, isLoading }: ResponseViewerProps) {
 
 	if (isLoading) {
 		return (
-			<Stack gap="md">
-				<Skeleton height={60} />
-				<Skeleton height={300} />
+			<Stack gap="4" style={{ padding: "20px" }}>
+				<Skeleton style={{ height: "40px", borderRadius: "8px" }} />
+				<Skeleton style={{ height: "300px", borderRadius: "8px" }} />
 			</Stack>
 		);
 	}
 
 	if (!response) {
 		return (
-			<Stack gap="sm" align="center" py="xl">
-				<Text size="sm" c="dimmed">
-					No response yet. Send a request to see results.
-				</Text>
-			</Stack>
+			<Flex direction="column" alignItems="center" style={{ padding: "40px 0", opacity: 0.5 }}>
+				<Text variant="body-2">No response data available.</Text>
+			</Flex>
 		);
 	}
 
-	const isSuccess = response.status >= 200 && response.status < 300;
-	const isError = response.status >= 400;
-	const isOperationOutcome = isFhirOperationOutcome(response.body);
-
-	const bundle = isFhirBundle(response.body) ? response.body : null;
-	const bundleEntries = bundle?.entry ?? [];
-	const resourceEntries = bundleEntries.filter(
-		(entry): entry is { resource: FhirResource; fullUrl?: string } =>
-			Boolean(entry.resource?.resourceType),
-	);
+	const isSuccess = isConsoleResponseSuccess(response.status);
+	const isError = isConsoleResponseError(response.status);
+	const operationOutcome = isFhirOperationOutcome(response.body) ? response.body : null;
+	const resourceEntries = getBundleResourceEntries(response.body);
 	const hasResultEntries = resourceEntries.length > 0;
-	const defaultTab = hasResultEntries ? "results" : "body";
+	const defaultTab = getResponseDefaultTab(response);
 
 	const handleOpenResource = (resourceType: string, resourceId: string) => {
 		navigate(`/resources/${resourceType}/${resourceId}`);
 	};
 
+	const statusTheme = getConsoleResponseStatusTone(response.status);
+
 	return (
-		<Stack gap="md">
+		<Box>
 			{/* Status header */}
-			<Paper p="sm" style={{ backgroundColor: "var(--octo-surface-2)" }}>
-				<Group justify="space-between">
-					<Group gap="sm">
+			<Box style={{ padding: "12px 20px", borderBottom: "1px solid var(--g-color-line-generic-subtle)", backgroundColor: "var(--g-color-base-generic-subtle)" }}>
+				<Flex justifyContent="space-between" alignItems="center">
+					<Flex gap="3" alignItems="center">
 						<Badge
-							color={isSuccess ? "primary" : isError ? "fire" : "warm"}
-							leftSection={
-								isSuccess ? (
-									<IconCheck size={14} />
-								) : isError ? (
-									<IconX size={14} />
-								) : null
-							}
+							theme={statusTheme as any}
+							size="l"
 						>
-							{response.status} {response.statusText}
+							<Flex gap="1" alignItems="center">
+								{isSuccess ? <IconCheck size={14} /> : isError ? <IconX size={14} /> : null}
+								{response.status} {response.statusText}
+							</Flex>
 						</Badge>
-						<Text size="sm" c="dimmed">
+						<Text color="secondary" variant="caption-1">
 							{response.durationMs}ms
 						</Text>
-					</Group>
+					</Flex>
 
-					<Text size="xs" c="dimmed">
+					<Text color="secondary" variant="caption-1">
 						{new Date(response.requestedAt).toLocaleString()}
 					</Text>
-				</Group>
-			</Paper>
+				</Flex>
+			</Box>
 
 			{/* OperationOutcome extraction */}
-			{isError && isOperationOutcome && (
-				<Alert color="fire" icon={<IconAlertCircle size={16} />} title="FHIR Error">
-					{response.body.issue?.[0]?.diagnostics || "An error occurred"}
-					{response.body.issue?.[0]?.severity && (
-						<Text size="xs" mt="xs">
-							Severity: {response.body.issue[0].severity}
-						</Text>
-					)}
-				</Alert>
+			{isError && operationOutcome && (
+				<Box style={{ padding: "16px" }}>
+					<OperationOutcomePanel outcome={operationOutcome} title="FHIR error" maxIssues={4} />
+				</Box>
 			)}
 
 			{/* Response tabs */}
-			<Tabs defaultValue={defaultTab} variant="outline">
-				<Tabs.List>
-					{hasResultEntries && <Tabs.Tab value="results">Results</Tabs.Tab>}
-					<Tabs.Tab value="body">Response Body</Tabs.Tab>
-					<Tabs.Tab value="headers">Headers</Tabs.Tab>
-				</Tabs.List>
+			<Box style={{ padding: "0 20px 20px 20px" }}>
+				<Tabs defaultValue={defaultTab} size="l">
+					<Tabs.List>
+						{hasResultEntries && <Tabs.Tab value="results">Results</Tabs.Tab>}
+						<Tabs.Tab value="body">Response Body</Tabs.Tab>
+						<Tabs.Tab value="headers">Headers</Tabs.Tab>
+					</Tabs.List>
 
-				{hasResultEntries && (
-					<Tabs.Panel value="results" pt="md">
-						<ScrollArea.Autosize mah={320} type="auto">
-							<Table striped highlightOnHover>
-								<Table.Thead>
-									<Table.Tr>
-										<Table.Th>Type</Table.Th>
-										<Table.Th>ID</Table.Th>
-										<Table.Th>Full URL</Table.Th>
-									</Table.Tr>
-								</Table.Thead>
-								<Table.Tbody>
-									{resourceEntries.map((entry, index) => {
-										const resource = entry.resource;
-										const key = resource.id ?? entry.fullUrl ?? `entry-${index}`;
-										return (
-											<Table.Tr key={key}>
-												<Table.Td>
-													<Text size="sm" fw={500}>
-														{resource.resourceType}
-													</Text>
-												</Table.Td>
-												<Table.Td>
-													{resource.id ? (
-														<Anchor
-															component="button"
-															type="button"
-															onClick={() =>
-																handleOpenResource(resource.resourceType, resource.id)
-															}
-														>
-															{resource.id}
-														</Anchor>
-													) : (
-														<Text size="sm" c="dimmed">
-															-
-														</Text>
-													)}
-												</Table.Td>
-												<Table.Td>
-													<Text size="sm" c="dimmed" lineClamp={1}>
-														{entry.fullUrl ?? "-"}
-													</Text>
-												</Table.Td>
-											</Table.Tr>
-										);
-									})}
-								</Table.Tbody>
-							</Table>
-						</ScrollArea.Autosize>
+					{hasResultEntries && (
+						<Tabs.Panel value="results" style={{ paddingTop: "16px" }}>
+							<DataPreview
+								columns={[
+									{ id: "type", label: "Type", width: 160 },
+									{ id: "id", label: "ID", width: 220 },
+									{ id: "fullUrl", label: "Full URL" },
+								]}
+								rows={resourceEntries.map((entry) => ({
+									type: (
+										<Text variant="body-2" style={{ fontWeight: 500 }}>
+											{entry.resource.resourceType}
+										</Text>
+									),
+									id: entry.resource.id ? (
+										<Link
+											onClick={() =>
+												handleOpenResource(entry.resource.resourceType, entry.resource.id)
+											}
+											style={{ cursor: "pointer" }}
+										>
+											{entry.resource.id}
+										</Link>
+									) : (
+										<Text color="secondary">-</Text>
+									),
+									fullUrl: (
+										<Text color="secondary" variant="caption-1">
+											{entry.fullUrl ?? "-"}
+										</Text>
+									),
+								}))}
+								getRowKey={(row, index) =>
+									resourceEntries[index]?.resource.id ??
+									resourceEntries[index]?.fullUrl ??
+									`entry-${index}`
+								}
+							/>
+						</Tabs.Panel>
+					)}
+
+					<Tabs.Panel value="body" style={{ paddingTop: "16px" }}>
+						{response.body ? (
+							<Box style={{ borderRadius: "8px", overflow: "hidden", border: "1px solid var(--g-color-line-generic-subtle)" }}>
+								<JsonViewer data={response.body} maxHeight={600} />
+							</Box>
+						) : (
+							<Text color="secondary">No response body</Text>
+						)}
 					</Tabs.Panel>
-				)}
 
-				<Tabs.Panel value="body" pt="md">
-					{response.body ? (
-						<JsonViewer data={response.body} maxHeight={500} />
-					) : (
-						<Text size="sm" c="dimmed">
-							No response body
-						</Text>
-					)}
-				</Tabs.Panel>
-
-				<Tabs.Panel value="headers" pt="md">
-					{response.headers ? (
-						<Table striped highlightOnHover>
-							<Table.Thead>
-								<Table.Tr>
-									<Table.Th>Header</Table.Th>
-									<Table.Th>Value</Table.Th>
-								</Table.Tr>
-							</Table.Thead>
-							<Table.Tbody>
-								{Object.entries(response.headers).map(([key, value]) => (
-									<Table.Tr key={key}>
-										<Table.Td>
-											<Text size="sm" fw={500}>
-												{key}
-											</Text>
-										</Table.Td>
-										<Table.Td>
-											<Text size="sm" c="dimmed">
-												{value}
-											</Text>
-										</Table.Td>
-									</Table.Tr>
-								))}
-							</Table.Tbody>
-						</Table>
-					) : (
-						<Text size="sm" c="dimmed">
-							No headers
-						</Text>
-					)}
-				</Tabs.Panel>
-			</Tabs>
-		</Stack>
+					<Tabs.Panel value="headers" style={{ paddingTop: "16px" }}>
+						{response.headers ? (
+							<DataPreview
+								columns={[
+									{ id: "header", label: "Header", width: 260 },
+									{ id: "value", label: "Value" },
+								]}
+								rows={Object.entries(response.headers).map(([key, value]) => ({
+									header: (
+										<Text variant="body-2" style={{ fontWeight: 500 }}>
+											{key}
+										</Text>
+									),
+									value: (
+										<Text color="secondary" variant="body-2">
+											{value}
+										</Text>
+									),
+								}))}
+								getRowKey={(_row, index) => Object.keys(response.headers ?? {})[index] ?? `${index}`}
+							/>
+						) : (
+							<Text color="secondary">No headers</Text>
+						)}
+					</Tabs.Panel>
+				</Tabs>
+			</Box>
+		</Box>
 	);
 }

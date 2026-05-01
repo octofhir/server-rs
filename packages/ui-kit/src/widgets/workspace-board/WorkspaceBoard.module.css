@@ -1,0 +1,100 @@
+.root {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+    width: 100%;
+    max-width: 1440px;
+    margin: 0 auto;
+}
+
+.metrics {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 12px;
+}
+
+.content {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(280px, 340px);
+    gap: 16px;
+    align-items: start;
+}
+
+.board {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(220px, 1fr));
+    gap: 12px;
+    min-width: 0;
+}
+
+.column {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    min-width: 0;
+}
+
+.columnHeader {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    min-height: 28px;
+}
+
+.columnTitle {
+    color: var(--g-color-text-primary);
+    font-size: 14px;
+    font-weight: 600;
+    line-height: 20px;
+}
+
+.columnCaption {
+    color: var(--g-color-text-secondary);
+    font-size: 12px;
+    line-height: 16px;
+}
+
+.items {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.aside {
+    position: sticky;
+    top: 0;
+    min-width: 0;
+}
+
+.emptyColumn {
+    min-height: 94px;
+    display: grid;
+    place-items: center;
+    color: var(--g-color-text-secondary);
+    font-size: 13px;
+    line-height: 18px;
+    text-align: center;
+}
+
+@media (max-width: 1200px) {
+    .content {
+        grid-template-columns: 1fr;
+    }
+
+    .aside {
+        position: static;
+    }
+}
+
+@media (max-width: 840px) {
+    .board {
+        grid-template-columns: 1fr;
+    }
+}
+
+@media (max-width: 560px) {
+    .root {
+        gap: 16px;
+    }
+}

@@ -1,14 +1,17 @@
-import React from "react";
+import type { ComponentType, ReactNode } from "react";
 import { Card, Text, ThemeIcon, Button, Box } from "../../shared/ui";
+import classes from "./DashboardCards.module.css";
+
+type ActionCardTone = "primary" | "positive" | "warning" | "danger" | "neutral";
 
 export interface ActionCardProps {
     title: string;
     description: string;
-    icon: React.ComponentType<any>;
-    color?: string;
+    icon: ComponentType<{ size?: number | string }>;
+    color?: ActionCardTone;
     onClick?: () => void;
     buttonText?: string;
-    buttonIcon?: React.ReactNode;
+    buttonIcon?: ReactNode;
 }
 
 export function ActionCard({
@@ -24,33 +27,27 @@ export function ActionCard({
         <Card
             withBorder
             padding="xl"
-            radius="lg"
-            className="octo-action-card"
-            style={{
-                cursor: onClick ? "pointer" : "default",
-                transition: "all 0.2s ease",
-            }}
+            radius={8}
+            className={classes.actionCard}
+            data-clickable={onClick ? "true" : "false"}
             onClick={onClick}
         >
-            <Box mb="lg">
+            <Box className={classes.actionIcon}>
                 <ThemeIcon
                     view="light"
-                    color={color as any}
+                    color={color}
                     size="xl"
-                    style={{
-                        boxShadow: "0 8px 16px var(--g-color-base-brand-light-hover)",
-                    }}
                 >
                     <Icon size={24} />
                 </ThemeIcon>
             </Box>
-            <Box mb="xs">
-                <Text variant="subheader-1" style={{ letterSpacing: "-0.01em" }}>
+            <Box className={classes.actionTitle}>
+                <Text variant="subheader-1">
                     {title}
                 </Text>
             </Box>
-            <Box mb="md">
-                <Text variant="body-1" color="secondary" style={{ lineHeight: 1.5 }}>
+            <Box className={classes.actionDescription}>
+                <Text variant="body-1" color="secondary">
                     {description}
                 </Text>
             </Box>
@@ -58,18 +55,10 @@ export function ActionCard({
                 view="flat"
                 size="s"
                 rightSection={buttonIcon}
-                style={{ width: "fit-content", padding: 0 }}
+                className={classes.actionButton}
             >
                 {buttonText}
             </Button>
-            <style dangerouslySetInnerHTML={{
-                __html: `
-                .octo-action-card:hover {
-                    transform: translateY(-4px);
-                    box-shadow: var(--octo-shadow-md);
-                    border-color: var(--octo-accent-primary);
-                }
-            `}} />
         </Card>
     );
 }

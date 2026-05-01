@@ -15,7 +15,7 @@ import {
 	Select,
 	Stack,
 	Switch,
-	Table,
+	DataPreview,
 	Text,
 	Textarea,
 	TextInput,
@@ -40,12 +40,18 @@ import {
 	useCreateAccessPolicy,
 	useUpdateAccessPolicy,
 	useDeleteAccessPolicy,
-	type AccessPolicyResource,
-	type MatcherElement,
-	type EngineElement,
-	VALID_OPERATIONS,
-	VALID_USER_TYPES,
 } from "../lib/useAccessPolicies";
+import {
+	accessPolicyOperations,
+	accessPolicyUserTypes,
+	getAccessPolicyEngineView,
+	getAccessPolicyPriority,
+	getAccessPolicyStatusView,
+	type AccessPolicyEngineType,
+	type AccessPolicyResource,
+	type EngineElement,
+	type MatcherElement,
+} from "@/entities/access-policy";
 import { useClients } from "../lib/useClients";
 import { useResourceTypes } from "@/shared/api/hooks";
 import { Button } from "@/shared/ui/Button/Button";
@@ -103,86 +109,72 @@ export function AccessPoliciesPage() {
 					/>
 				</Group>
 
-				<Table>
-					<Table.Thead>
-						<Table.Tr>
-							<Table.Th>Name</Table.Th>
-							<Table.Th>Engine</Table.Th>
-							<Table.Th>Priority</Table.Th>
-							<Table.Th>Status</Table.Th>
-							<Table.Th style={{ width: 50 }} />
-						</Table.Tr>
-					</Table.Thead>
-					<Table.Tbody>
-						{isLoading ? (
-							<Table.Tr>
-								<Table.Td colSpan={5}>Loading...</Table.Td>
-							</Table.Tr>
-						) : policies.length === 0 ? (
-							<Table.Tr>
-								<Table.Td colSpan={5} style={{ textAlign: "center" }}>
-									No policies found
-								</Table.Td>
-							</Table.Tr>
-						) : (
-							policies.map((policy) => (
-								<Table.Tr key={policy.id}>
-									<Table.Td>
-										<Group gap="xs">
-											<ShieldCheck size={16} color="green" />
-											<div>
-												<Text size="sm" fw={500}>
-													{policy.name}
-												</Text>
-												<Text size="xs" c="dimmed">
-													{policy.description || "No description"}
-												</Text>
-											</div>
-										</Group>
-									</Table.Td>
-									<Table.Td>
-										<EngineTypeBadge type={policy.engine?.type} />
-									</Table.Td>
-									<Table.Td>
-										<Text size="sm">{policy.priority ?? 100}</Text>
-									</Table.Td>
-									<Table.Td>
-										<Badge
-											color={policy.active !== false ? "green" : "gray"}
-											variant="light"
-										>
-											{policy.active !== false ? "Active" : "Inactive"}
-										</Badge>
-									</Table.Td>
-									<Table.Td>
-										<Menu position="bottom-end" withinPortal>
-											<Menu.Target>
-												<ActionIcon variant="subtle" color="gray">
-													<EllipsisVertical size={16} />
-												</ActionIcon>
-											</Menu.Target>
-											<Menu.Dropdown>
-												<Menu.Item
-													leftSection={<Pencil size={14} />}
-													onClick={() => handleEdit(policy)}
-												>
-													Edit
-												</Menu.Item>
-												<Menu.Item
-													leftSection={<TrashBin size={14} />}
-													color="red"
-													onClick={() => policy.id && handleDelete(policy.id)}
-												>
-													Delete
-												</Menu.Item>
-											</Menu.Dropdown>
-										</Menu>
-									</Table.Td>
-								</Table.Tr>
-							))
-						)}
-					</Table.Tbody>
-				</Table>
+				<DataPreview
+					columns={[
+						{ id: "name", label: "Name" },
+						{ id: "engine", label: "Engine", width: 150 },
+						{ id: "priority", label: "Priority", width: 96 },
+						{ id: "status", label: "Status", width: 110 },
+						{ id: "actions", label: "", width: 48 },
+					]}
+					rows={
+						isLoading
+							? []
+							: policies.map((policy) => {
+									const statusView = getAccessPolicyStatusView(policy);
+
+									return {
+										id: policy.id ?? policy.name,
+										name: (
+											<Group gap="xs">
+												<ShieldCheck size={16} color="green" />
+												<div>
+													<Text size="sm" fw={500}>
+														{policy.name}
+													</Text>
+													<Text size="xs" c="dimmed">
+														{policy.description || "No description"}
+													</Text>
+												</div>
+											</Group>
+										),
+										engine: <EngineTypeBadge type={policy.engine?.type} />,
+										priority: <Text size="sm">{getAccessPolicyPriority(policy)}</Text>,
+										status: (
+											<Badge color={statusView.color} variant="light">
+												{statusView.label}
+											</Badge>
+										),
+										actions: (
+											<Menu position="bottom-end" withinPortal>
+												<Menu.Target>
+													<ActionIcon variant="subtle" color="gray">
+														<EllipsisVertical size={16} />
+													</ActionIcon>
+												</Menu.Target>
+												<Menu.Dropdown>
+													<Menu.Item
+														leftSection={<Pencil size={14} />}
+														onClick={() => handleEdit(policy)}
+													>
+														Edit
+													</Menu.Item>
+													<Menu.Item
+														leftSection={<TrashBin size={14} />}
+														color="red"
+														onClick={() => policy.id && handleDelete(policy.id)}
+													>
+														Delete
+													</Menu.Item>
+												</Menu.Dropdown>
+											</Menu>
+										),
+									};
+								})
+					}
+					emptyText={isLoading ? "Loading policies..." : "No policies found"}
+					getRowKey={(row, index) => String(row.id ?? policies[index]?.id ?? index)}
+				/>
 			</Paper>
 
 			<PolicyModal opened={opened} onClose={handleClose} policy={editingPolicy} />
@@ -190,28 +182,30 @@ export function AccessPoliciesPage() {
 	);
 }
 
-function EngineTypeBadge({ type }: { type?: string }) {
+function EngineTypeBadge({ type }: { type?: AccessPolicyEngineType }) {
+	const view = getAccessPolicyEngineView(type);
+
 	switch (type) {
 		case "allow":
 			return (
-				<Badge color="green" variant="light" leftSection={<Check size={12} />}>
-					Allow
+				<Badge color={view.color} variant="light" leftSection={<Check size={12} />}>
+					{view.label}
 				</Badge>
 			);
 		case "deny":
 			return (
-				<Badge color="red" variant="light" leftSection={<Xmark size={12} />}>
-					Deny
+				<Badge color={view.color} variant="light" leftSection={<Xmark size={12} />}>
+					{view.label}
 				</Badge>
 			);
 		case "quickjs":
 			return (
-				<Badge color="blue" variant="light" leftSection={<CodeIcon width={12} />}>
-					QuickJS Script
+				<Badge color={view.color} variant="light" leftSection={<CodeIcon width={12} />}>
+					{view.label}
 				</Badge>
 			);
 		default:
-			return <Badge color="gray">Unknown</Badge>;
+			return <Badge color={view.color}>{view.label}</Badge>;
 	}
 }
 
@@ -314,8 +308,8 @@ function PolicyModal({
 	}, [clientsData]);
 
 	const typeOptions = useMemo(() => ["*", ...(resourceTypes ?? [])], [resourceTypes]);
-	const operationOptions = VALID_OPERATIONS.map((op) => ({ label: op, value: op }));
-	const userTypeOptions = VALID_USER_TYPES.map((ut) => ({ label: ut, value: ut }));
+	const operationOptions = accessPolicyOperations.map((op) => ({ label: op, value: op }));
+	const userTypeOptions = accessPolicyUserTypes.map((ut) => ({ label: ut, value: ut }));
 
 	const handleSubmit = async (values: PolicyFormValues) => {
 		const matcherEl: MatcherElement = {};

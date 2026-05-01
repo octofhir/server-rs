@@ -1,61 +1,25 @@
 import { Magnifier, SquareListUl } from "@gravity-ui/icons";
 import { useMemo, useState } from "react";
+import {
+  filterDbSchemaTables,
+  getDbSchemaTableViews,
+} from "@/entities/db-schema";
 import { useDbTables } from "@/shared/api/hooks";
-import { Badge, Box, Group, Loader, ScrollArea, Stack, Text, TextInput } from "@/shared/ui";
+import {
+  Box,
+  Group,
+  Loader,
+  RecordList,
+  ScrollArea,
+  Stack,
+  Text,
+  TextInput,
+} from "@/shared/ui";
 import { TableDetailView } from "./TableDetailView";
 
 interface SelectedTable {
   schema: string;
   name: string;
-}
-
-function TableListItem({
-  schema,
-  name,
-  tableType,
-  rowEstimate,
-  onClick,
-}: {
-  schema: string;
-  name: string;
-  tableType: string;
-  rowEstimate?: number;
-  onClick: () => void;
-}) {
-  return (
-    <Box
-      onClick={onClick}
-      style={{
-        padding: "6px 12px",
-        cursor: "pointer",
-        borderBottom: "1px solid var(--octo-border-subtle)",
-      }}
-      onMouseEnter={(e) => {
-        (e.currentTarget as HTMLElement).style.backgroundColor = "var(--octo-surface-2)";
-      }}
-      onMouseLeave={(e) => {
-        (e.currentTarget as HTMLElement).style.backgroundColor = "transparent";
-      }}
-    >
-      <Group gap={6} wrap="nowrap">
-        <SquareListUl size={12} style={{ flexShrink: 0, opacity: 0.4 }} />
-        <Text size="xs" ff="monospace" truncate style={{ flex: 1 }}>
-          {schema !== "public" ? `${schema}.` : ""}
-          {name}
-        </Text>
-        {tableType === "VIEW" && (
-          <Badge size="xs" variant="light" color="deep">
-            view
-          </Badge>
-        )}
-      </Group>
-      {rowEstimate != null && rowEstimate > 0 && (
-        <Text size="xs" c="dimmed" ml={18}>
-          ~{rowEstimate.toLocaleString()} rows
-        </Text>
-      )}
-    </Box>
-  );
 }
 
 export function TablesTab() {
@@ -66,12 +30,26 @@ export function TablesTab() {
   const tables = data?.tables ?? [];
 
   const filtered = useMemo(() => {
-    if (!search.trim()) return tables;
-    const q = search.toLowerCase();
-    return tables.filter(
-      (t) => t.name.toLowerCase().includes(q) || t.schema.toLowerCase().includes(q)
-    );
+    return filterDbSchemaTables(tables, search);
   }, [tables, search]);
+
+  const tableViews = useMemo(() => getDbSchemaTableViews(filtered), [filtered]);
+
+  const tableItems = useMemo(
+    () =>
+      tableViews.map((table) => ({
+        id: table.id,
+        title: table.displayName,
+        subtitle: table.kind,
+        description: table.rowEstimateLabel,
+        leading: <SquareListUl size={14} />,
+        meta:
+          table.isView
+            ? [{ id: "view", label: "view", tone: "info" as const }]
+            : undefined,
+      })),
+    [tableViews],
+  );
 
   if (selected) {
     return (
@@ -106,21 +84,21 @@ export function TablesTab() {
             <Loader size="sm" />
           </Box>
         )}
-        {!isLoading && filtered.length === 0 && (
-          <Text size="xs" c="dimmed" ta="center" py="xl">
-            {search ? "No tables matching filter" : "No tables found"}
-          </Text>
+        {!isLoading && (
+          <Box p="xs">
+            <RecordList
+              density="compact"
+              items={tableItems}
+              emptyText={search ? "No tables matching filter" : "No tables found"}
+              onSelect={(item) => {
+                const table = tableViews.find((candidate) => candidate.id === item.id);
+                if (table) {
+                  setSelected({ schema: table.schema, name: table.name });
+                }
+              }}
+            />
+          </Box>
         )}
-        {filtered.map((t) => (
-          <TableListItem
-            key={`${t.schema}.${t.name}`}
-            schema={t.schema}
-            name={t.name}
-            tableType={t.tableType}
-            rowEstimate={t.rowEstimate}
-            onClick={() => setSelected({ schema: t.schema, name: t.name })}
-          />
-        ))}
       </ScrollArea>
     </Stack>
   );

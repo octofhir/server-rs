@@ -7,7 +7,7 @@ import {
 	Group,
 	Button,
 	TextInput,
-	Table,
+	DataPreview,
 	Badge,
 	ActionIcon,
 	Menu,
@@ -27,7 +27,14 @@ import {
 	TrashBin,
 	Globe,
 } from "@gravity-ui/icons";
-import { useIdentityProviders, useCreateIdentityProvider, useUpdateIdentityProvider, useDeleteIdentityProvider, type IdentityProviderResource } from "../lib/useIdentityProviders";
+import {
+	getIdentityProviderStatusView,
+	getIdentityProviderTypeView,
+	identityProviderTypeOptions,
+	type IdentityProviderResource,
+	type IdentityProviderType,
+} from "@/entities/identity-provider";
+import { useIdentityProviders, useCreateIdentityProvider, useUpdateIdentityProvider, useDeleteIdentityProvider } from "../lib/useIdentityProviders";
 
 export function IdentityProvidersPage() {
 	const [search, setSearch] = useState("");
@@ -81,82 +88,74 @@ export function IdentityProvidersPage() {
 					/>
 				</Group>
 
-				<Table>
-					<Table.Thead>
-						<Table.Tr>
-							<Table.Th>Name / Issuer</Table.Th>
-							<Table.Th>Type</Table.Th>
-							<Table.Th>Status</Table.Th>
-							<Table.Th style={{ width: 50 }} />
-						</Table.Tr>
-					</Table.Thead>
-					<Table.Tbody>
-						{isLoading ? (
-							<Table.Tr>
-								<Table.Td colSpan={4}>Loading...</Table.Td>
-							</Table.Tr>
-						) : providers.length === 0 ? (
-							<Table.Tr>
-								<Table.Td colSpan={4} style={{ textAlign: "center" }}>
-									No providers found
-								</Table.Td>
-							</Table.Tr>
-						) : (
-							providers.map((idp) => (
-								<Table.Tr key={idp.id}>
-									<Table.Td>
-										<Group gap="xs">
-											<Globe size={16} color="blue" />
-											<div>
-												<Text size="sm" fw={500}>
-													{idp.name}
-												</Text>
-												<Text size="xs" c="dimmed">
-													{idp.issuer}
-												</Text>
-											</div>
-										</Group>
-									</Table.Td>
-									<Table.Td>
-										<Badge variant="outline">{idp.type?.toUpperCase()}</Badge>
-									</Table.Td>
-									<Table.Td>
-										<Badge
-											color={idp.active ? "green" : "gray"}
-											variant="light"
-										>
-											{idp.active ? "Active" : "Inactive"}
-										</Badge>
-									</Table.Td>
-									<Table.Td>
-										<Menu position="bottom-end" withinPortal>
-											<Menu.Target>
-												<ActionIcon variant="subtle" color="gray">
-													<EllipsisVertical size={16} />
-												</ActionIcon>
-											</Menu.Target>
-											<Menu.Dropdown>
-												<Menu.Item
-													leftSection={<Pencil size={14} />}
-													onClick={() => handleEdit(idp)}
-												>
-													Edit
-												</Menu.Item>
-												<Menu.Item
-													leftSection={<TrashBin size={14} />}
-													color="red"
-													onClick={() => handleDelete(idp.id!)}
-												>
-													Delete
-												</Menu.Item>
-											</Menu.Dropdown>
-										</Menu>
-									</Table.Td>
-								</Table.Tr>
-							))
-						)}
-					</Table.Tbody>
-				</Table>
+				<DataPreview
+					columns={[
+						{ id: "provider", label: "Name / Issuer" },
+						{ id: "type", label: "Type", width: 130 },
+						{ id: "status", label: "Status", width: 110 },
+						{ id: "actions", label: "", width: 48 },
+					]}
+					rows={
+						isLoading
+							? []
+							: providers.map((provider) => {
+									const typeView = getIdentityProviderTypeView(provider.type);
+									const statusView = getIdentityProviderStatusView(provider);
+
+									return {
+										provider: (
+											<Group gap="xs">
+												<Globe size={16} color="blue" />
+												<div>
+													<Text size="sm" fw={500}>
+														{provider.name}
+													</Text>
+													<Text size="xs" c="dimmed">
+														{provider.issuer}
+													</Text>
+												</div>
+											</Group>
+										),
+										type: (
+											<Badge variant="outline" color={typeView.color}>
+												{typeView.label}
+											</Badge>
+										),
+										status: (
+											<Badge color={statusView.color} variant="light">
+												{statusView.label}
+											</Badge>
+										),
+										actions: (
+											<Menu position="bottom-end" withinPortal>
+												<Menu.Target>
+													<ActionIcon variant="subtle" color="gray">
+														<EllipsisVertical size={16} />
+													</ActionIcon>
+												</Menu.Target>
+												<Menu.Dropdown>
+													<Menu.Item
+														leftSection={<Pencil size={14} />}
+														onClick={() => handleEdit(provider)}
+													>
+														Edit
+													</Menu.Item>
+													<Menu.Item
+														leftSection={<TrashBin size={14} />}
+														color="red"
+														onClick={() => provider.id && handleDelete(provider.id)}
+													>
+														Delete
+													</Menu.Item>
+												</Menu.Dropdown>
+											</Menu>
+										),
+									};
+								})
+					}
+					emptyText={isLoading ? "Loading providers..." : "No providers found"}
+					getRowKey={(_row, index) => providers[index]?.id ?? providers[index]?.name ?? `${index}`}
+				/>
 			</Paper>
 
 			<IdpModal
@@ -172,7 +171,7 @@ interface IdpFormValues {
 	name: string;
 	title: string;
 	description: string;
-	type: "oidc" | "oauth2" | "saml2";
+	type: IdentityProviderType;
 	issuer: string;
 	clientId: string;
 	clientSecret: string;
@@ -300,11 +299,7 @@ function IdpModal({
 								{({ input }) => (
 									<Select
 										label="Type"
-										data={[
-											{ label: "OpenID Connect", value: "oidc" },
-											{ label: "OAuth 2.0", value: "oauth2" },
-											{ label: "SAML 2.0", value: "saml2" },
-										]}
+										data={identityProviderTypeOptions}
 										value={input.value}
 										onChange={input.onChange}
 									/>

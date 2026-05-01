@@ -1,15 +1,15 @@
-import { useCallback } from "react";
+import { useCallback, useMemo } from "react";
 import {
 	Stack,
 	Text,
 	Group,
-	Badge,
 	ActionIcon,
 	ScrollArea,
 	Box,
 	Tooltip,
-	Table,
 	Loader,
+	DataPreview,
+	RecordList,
 } from "@/shared/ui";
 import {
 	ArrowLeft,
@@ -17,6 +17,7 @@ import {
 	Key,
 	Fingerprint,
 } from "@gravity-ui/icons";
+import { getDbColumnViews, getDbIndexViews } from "@/entities/db-schema";
 import { useTableDetail, useDropIndex } from "@/shared/api/hooks";
 import { modals, notifications } from "@octofhir/ui-kit";
 
@@ -26,15 +27,17 @@ interface TableDetailViewProps {
 	onBack: () => void;
 }
 
-function formatBytes(bytes: number): string {
-	if (bytes < 1024) return `${bytes} B`;
-	if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-	return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
 export function TableDetailView({ schema, table, onBack }: TableDetailViewProps) {
 	const { data, isLoading } = useTableDetail(schema, table);
 	const dropIndexMutation = useDropIndex();
+	const columnViews = useMemo(
+		() => getDbColumnViews(data?.columns ?? []),
+		[data?.columns],
+	);
+	const indexViews = useMemo(
+		() => getDbIndexViews(data?.indexes ?? []),
+		[data?.indexes],
+	);
 
 	const handleDropIndex = useCallback(
 		(indexName: string) => {
@@ -99,36 +102,31 @@ export function TableDetailView({ schema, table, onBack }: TableDetailViewProps)
 							<Text size="xs" fw={600} c="dimmed" mb={4} tt="uppercase" lts={0.5}>
 								Columns ({data.columns.length})
 							</Text>
-							<Table>
-								<Table.Thead>
-									<Table.Tr>
-										<Table.Th>Name</Table.Th>
-										<Table.Th>Type</Table.Th>
-										<Table.Th>Null</Table.Th>
-									</Table.Tr>
-								</Table.Thead>
-								<Table.Tbody>
-									{data.columns.map((col) => (
-										<Table.Tr key={col.name}>
-											<Table.Td>
-												<Text size="xs" ff="monospace">
-													{col.name}
-												</Text>
-											</Table.Td>
-											<Table.Td>
-												<Text size="xs" c="dimmed">
-													{col.dataType}
-												</Text>
-											</Table.Td>
-											<Table.Td>
-												{!col.isNullable && (
-													<Text size="xs" c="red" fw={500}>NN</Text>
-												)}
-											</Table.Td>
-										</Table.Tr>
-									))}
-								</Table.Tbody>
-							</Table>
+							<DataPreview
+								columns={[
+									{ id: "name", label: "Name", width: "45%" },
+									{ id: "type", label: "Type", width: "40%" },
+									{ id: "null", label: "Null", width: 56 },
+								]}
+								rows={columnViews.map((column) => ({
+									name: (
+										<Text size="xs" ff="monospace">
+											{column.name}
+										</Text>
+									),
+									type: (
+										<Text size="xs" c="dimmed">
+											{column.dataType}
+										</Text>
+									),
+									null: column.nullability === "required" ? (
+										<Text size="xs" c="red" fw={500}>
+											NN
+										</Text>
+									) : null,
+								}))}
+								getRowKey={(_row, rowIndex) => columnViews[rowIndex]?.id ?? `${rowIndex}`}
+							/>
 						</Box>
 
 						{/* Indexes */}
@@ -136,73 +134,52 @@ export function TableDetailView({ schema, table, onBack }: TableDetailViewProps)
 							<Text size="xs" fw={600} c="dimmed" mb={4} tt="uppercase" lts={0.5}>
 								Indexes ({data.indexes.length})
 							</Text>
-							{data.indexes.length === 0 ? (
-								<Text size="xs" c="dimmed" ta="center" py="sm">
-									No indexes
-								</Text>
-							) : (
-								<Stack gap={4}>
-									{data.indexes.map((idx) => (
-										<Box
-											key={idx.name}
-											p="xs"
-											style={{
-												borderRadius: "var(--octo-radius-sm)",
-												border: "1px solid var(--octo-border-subtle)",
-											}}
-										>
-											<Group justify="space-between" wrap="nowrap">
-												<Group gap={6} wrap="nowrap" style={{ minWidth: 0 }}>
-													{idx.isPrimary ? (
-														<Key size={12} style={{ flexShrink: 0, opacity: 0.6 }} />
-													) : idx.isUnique ? (
-														<Fingerprint size={12} style={{ flexShrink: 0, opacity: 0.6 }} />
-													) : null}
-													<Text size="xs" ff="monospace" truncate>
-														{idx.name}
-													</Text>
-												</Group>
-												{!idx.isPrimary && (
-													<Tooltip label="Drop index">
-														<ActionIcon
-															variant="subtle"
-															size="xs"
-															color="fire"
-															onClick={() => handleDropIndex(idx.name)}
-															loading={dropIndexMutation.isPending}
-														>
-															<TrashBin size={12} />
-														</ActionIcon>
-													</Tooltip>
-												)}
-											</Group>
-											<Group gap={6} mt={4}>
-												<Badge size="xs" variant="light">
-													{idx.indexType}
-												</Badge>
-												{idx.isPrimary && (
-													<Badge size="xs" variant="light" color="warm">
-														PK
-													</Badge>
-												)}
-												{idx.isUnique && !idx.isPrimary && (
-													<Badge size="xs" variant="light" color="primary">
-														unique
-													</Badge>
-												)}
-												{idx.sizeBytes != null && (
-													<Text size="xs" c="dimmed">
-														{formatBytes(idx.sizeBytes)}
-													</Text>
-												)}
-											</Group>
-											<Text size="xs" c="dimmed" mt={2} ff="monospace">
-												({idx.columns.join(", ")})
-											</Text>
-										</Box>
-									))}
-								</Stack>
-							)}
+							<RecordList
+								density="compact"
+								emptyText="No indexes"
+								items={indexViews.map((index) => ({
+									id: index.id,
+									title: index.name,
+									subtitle: index.indexType,
+									description: index.columnList,
+									leading: index.isPrimary ? (
+										<Key size={14} />
+									) : index.isUnique ? (
+										<Fingerprint size={14} />
+									) : null,
+									meta: [
+										{ id: "type", label: index.indexType, tone: "neutral" as const },
+										...(index.isPrimary
+											? [{ id: "pk", label: "PK", tone: "warning" as const }]
+											: []),
+										...(index.isUnique && !index.isPrimary
+											? [{ id: "unique", label: "unique", tone: "info" as const }]
+											: []),
+										...(index.sizeLabel
+											? [
+													{
+														id: "size",
+														label: index.sizeLabel,
+														tone: "neutral" as const,
+													},
+												]
+											: []),
+									],
+									aside: !index.isPrimary ? (
+										<Tooltip label="Drop index">
+											<ActionIcon
+												variant="subtle"
+												size="xs"
+												color="fire"
+												onClick={() => handleDropIndex(index.name)}
+												loading={dropIndexMutation.isPending}
+											>
+												<TrashBin size={12} />
+											</ActionIcon>
+										</Tooltip>
+									) : null,
+								}))}
+							/>
 						</Box>
 					</Stack>
 				)}

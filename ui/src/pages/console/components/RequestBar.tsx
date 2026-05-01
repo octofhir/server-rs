@@ -1,5 +1,5 @@
 import { useCallback, useMemo } from "react";
-import { IconPlayerPlay } from "@octofhir/ui-kit";
+import { Play } from "@gravity-ui/icons";
 import { useUnit } from "effector-react";
 import { $rawPath, setRawPath } from "../state/consoleStore";
 import type {
@@ -9,9 +9,8 @@ import type {
 } from "@/shared/api";
 import type { QueryInputMetadata } from "@/shared/fhir-query-input";
 import { QueryEditor } from "@/shared/fhir-query-input/widgets/QueryEditor";
-import { Box, Divider } from "@/shared/ui";
+import { Box, Flex, Divider, Button } from "@/shared/ui";
 import { MethodControl } from "./MethodControl";
-import { Button } from "@octofhir/ui-kit";
 
 interface RequestBarProps {
 	allSuggestions: AutocompleteSuggestion[];
@@ -55,18 +54,11 @@ export function RequestBar({
 	);
 
 	return (
-		<Box
-			style={{
-				display: "flex",
-				alignItems: "flex-start",
-				border: "1px solid var(--octo-border-subtle)",
-				borderRadius: "var(--octo-radius-md)",
-				backgroundColor: "var(--octo-surface-1)",
-				overflow: "visible",
-			}}
-		>
-			<MethodControl />
-			<Divider orientation="vertical" style={{ alignSelf: "stretch" }} />
+		<Flex alignItems="center" style={{ padding: "4px" }}>
+			<Box style={{ padding: "0 8px" }}>
+				<MethodControl />
+			</Box>
+			<Divider orientation="vertical" style={{ height: "24px" }} />
 			<Box style={{ flex: 1, minWidth: 0 }}>
 				<QueryEditor
 					value={rawPath}
@@ -77,15 +69,18 @@ export function RequestBar({
 					borderless
 				/>
 			</Box>
-			<Divider orientation="vertical" style={{ alignSelf: "stretch" }} />
-			<Button
-				onClick={onSend}
-				loading={isSending}
-				disabled={!rawPath}
-				rightSection={<IconPlayerPlay size={14} />}
-			>
-				Send
-			</Button>
-		</Box>
+			<Box style={{ paddingLeft: "8px" }}>
+				<Button
+					view="action"
+					size="l"
+					onClick={onSend}
+					loading={isSending}
+					disabled={!rawPath}
+				>
+					<Button.Icon><Play size={18} /></Button.Icon>
+					Send
+				</Button>
+			</Box>
+		</Flex>
 	);
 }

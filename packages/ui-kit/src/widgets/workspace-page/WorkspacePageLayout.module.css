@@ -1,0 +1,161 @@
+.root {
+    box-sizing: border-box;
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+    min-height: 100%;
+    min-width: 0;
+    background: var(--g-color-base-background);
+    color: var(--g-color-text-primary);
+}
+
+.header {
+    border-bottom: 1px solid var(--g-color-line-generic);
+    background: var(--g-color-base-background);
+}
+
+.headerInner {
+    box-sizing: border-box;
+    display: grid;
+    gap: 16px;
+    width: 100%;
+    max-width: var(--workspace-page-max-width, 1440px);
+    margin: 0 auto;
+    padding: 20px 24px;
+}
+
+.headingRow {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: start;
+    gap: 20px;
+}
+
+.titleBlock {
+    display: grid;
+    gap: 6px;
+    min-width: 0;
+}
+
+.kickerRow {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+}
+
+.title {
+    margin: 0;
+    overflow-wrap: anywhere;
+}
+
+.description {
+    max-width: 760px;
+}
+
+.actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 8px;
+}
+
+.meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.toolbar {
+    min-width: 0;
+}
+
+.body {
+    min-height: 0;
+    overflow: auto;
+}
+
+.bodyInner {
+    box-sizing: border-box;
+    display: grid;
+    gap: 20px;
+    width: 100%;
+    max-width: var(--workspace-page-max-width, 1440px);
+    margin: 0 auto;
+    padding: 24px;
+}
+
+.bodyWithAside {
+    grid-template-columns: minmax(0, 1fr) minmax(280px, 360px);
+    align-items: start;
+}
+
+.main {
+    display: grid;
+    gap: 20px;
+    min-width: 0;
+}
+
+.aside {
+    position: sticky;
+    top: 20px;
+    display: grid;
+    gap: 16px;
+    min-width: 0;
+}
+
+.section {
+    display: grid;
+    gap: 12px;
+    min-width: 0;
+}
+
+.sectionHeader {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: end;
+    gap: 16px;
+}
+
+.sectionTitleBlock {
+    display: grid;
+    gap: 4px;
+    min-width: 0;
+}
+
+.sectionActions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 8px;
+}
+
+.sectionContent {
+    min-width: 0;
+}
+
+@media (max-width: 960px) {
+    .headingRow,
+    .sectionHeader,
+    .bodyWithAside {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .actions,
+    .sectionActions {
+        justify-content: flex-start;
+    }
+
+    .aside {
+        position: static;
+    }
+}
+
+@media (max-width: 640px) {
+    .headerInner {
+        padding: 16px;
+    }
+
+    .bodyInner {
+        padding: 16px;
+    }
+}

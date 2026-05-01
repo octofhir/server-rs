@@ -4,10 +4,12 @@ import { ConfirmModalHost } from "#/shared/lib/confirm-modal";
 import { toaster } from "#/shared/lib/toaster";
 import {
     ColorSchemeProvider,
-    tokens,
+    createOctoTheme,
+    getThemeCssVariables,
     useColorScheme,
     type ColorScheme,
     type ColorSchemePreference,
+    type OctoThemeInput,
 } from "#/shared/theme";
 import { generateCSSVariables } from "#/shared/theme/utils";
 
@@ -19,12 +21,18 @@ export interface UIProviderProps {
     children: ReactNode;
     /** Initial color-scheme preference if none has been persisted yet. */
     defaultColorScheme?: ColorSchemePreference;
+    /**
+     * Theme override merged over the built-in OctoFHIR design tokens.
+     * Pass `{tokens: ...}` for structured overrides and `cssVariables` for
+     * explicit custom CSS vars.
+     */
+    theme?: OctoThemeInput;
 }
 
-export function UIProvider({ children, defaultColorScheme = "light" }: UIProviderProps) {
+export function UIProvider({ children, defaultColorScheme = "light", theme }: UIProviderProps) {
     return (
         <ColorSchemeProvider defaultColorScheme={defaultColorScheme}>
-            <UIProviderInner>{children}</UIProviderInner>
+            <UIProviderInner theme={theme}>{children}</UIProviderInner>
         </ColorSchemeProvider>
     );
 }
@@ -50,15 +58,23 @@ function applyBodyClasses(scheme: ColorScheme) {
     };
 }
 
-export function UIProviderInner({ children }: { children: ReactNode }) {
+export function UIProviderInner({
+    children,
+    theme,
+}: {
+    children: ReactNode;
+    theme?: OctoThemeInput;
+}) {
     const { colorScheme, preference } = useColorScheme();
 
     const cssVars = useMemo(() => {
-        const { scheme, ...rest } = tokens;
+        const resolvedTheme = createOctoTheme(theme);
+        const { scheme, ...rest } = resolvedTheme;
         const globalVars = generateCSSVariables(rest);
         const schemeVars = generateCSSVariables(scheme[colorScheme]);
-        return { ...globalVars, ...schemeVars };
-    }, [colorScheme]);
+        const explicitVars = getThemeCssVariables(theme);
+        return { ...globalVars, ...schemeVars, ...explicitVars };
+    }, [colorScheme, theme]);
 
     // Belt + suspenders: explicitly add `g-root g-root_theme_<scheme>` to
     // <body> and `data-theme` to <html>. Gravity's `<ThemeProvider>` does this

@@ -3,7 +3,6 @@ import {
 	Stack,
 	Title,
 	Text,
-	Paper,
 	Group,
 	Badge,
 	Loader,
@@ -15,8 +14,9 @@ import {
 	Divider,
 	Breadcrumbs,
 	Anchor,
+	KeyValueList,
+	SectionPanel,
 } from "@/shared/ui";
-import { useDesignTokens } from "@octofhir/ui-kit";
 import {
 	CircleExclamation,
 	ArrowLeft,
@@ -29,6 +29,11 @@ import {
 	Boxes3,
 	Cpu,
 } from "@gravity-ui/icons";
+import {
+	getOperationAccessView,
+	getOperationCategoryView,
+	getOperationMethodView,
+} from "@/entities/operation-catalog";
 import { useOperation, useUpdateOperation } from "@/shared/api/hooks";
 import { useState, useEffect } from "react";
 
@@ -41,36 +46,12 @@ const CATEGORY_ICONS: Record<string, typeof Server> = {
 	api: Cpu,
 };
 
-const CATEGORY_COLORS: Record<string, string> = {
-	fhir: "primary",
-	graphql: "deep",
-	system: "warm",
-	auth: "fire",
-	ui: "warm",
-	api: "gray",
-};
-
-const CATEGORY_LABELS: Record<string, string> = {
-	fhir: "FHIR REST API",
-	graphql: "GraphQL",
-	system: "System",
-	auth: "Authentication",
-	ui: "UI API",
-	api: "Custom API",
-};
-
 function MethodBadge({ method }: { method: string }) {
-	const colors: Record<string, string> = {
-		GET: "primary",
-		POST: "fire",
-		PUT: "deep",
-		DELETE: "fire",
-		PATCH: "warm",
-	};
+	const methodView = getOperationMethodView(method);
 
 	return (
-		<Badge size="sm" variant="light" color={colors[method] ?? "gray"}>
-			{method}
+		<Badge size="sm" variant="light" color={methodView.color}>
+			{methodView.method}
 		</Badge>
 	);
 }
@@ -80,7 +61,6 @@ export function OperationDetailPage() {
 	const navigate = useNavigate();
 	const { data: operation, isLoading, error } = useOperation(id ?? "");
 	const updateMutation = useUpdateOperation();
-	const theme = useDesignTokens();
 
 	const [isPublic, setIsPublic] = useState(false);
 	const [description, setDescription] = useState("");
@@ -127,8 +107,8 @@ export function OperationDetailPage() {
 	}
 
 	const CategoryIcon = operation ? CATEGORY_ICONS[operation.category] ?? Cpu : Cpu;
-	const categoryColor = operation ? CATEGORY_COLORS[operation.category] ?? "gray" : "gray";
-	const categoryLabel = operation ? CATEGORY_LABELS[operation.category] ?? operation.category : "";
+	const categoryView = operation ? getOperationCategoryView(operation.category) : null;
+	const accessView = operation ? getOperationAccessView(operation.public) : null;
 
 	return (
 		<Stack gap="md" style={{ flex: 1, minHeight: 0 }}>
@@ -160,33 +140,72 @@ export function OperationDetailPage() {
 
 			{operation && (
 				<>
-					<Paper p="lg" style={{ backgroundColor: "var(--octo-surface-1)" }}>
+					<SectionPanel
+						title="Operation summary"
+						description="Server route metadata and runtime ownership"
+						view="filled"
+						padding="l"
+					>
 						<Stack gap="md">
 							<Group justify="space-between" align="flex-start">
 								<div>
 									<Group gap="sm" mb="xs">
-										<CategoryIcon size={24} color={theme.colors[categoryColor][6]} />
+										<CategoryIcon size={24} color="var(--g-color-text-secondary)" />
 										<Title order={3}>{operation.name}</Title>
 									</Group>
 									<Code size="sm">{operation.id}</Code>
 								</div>
 								<Group gap="xs">
-									<Badge variant="light" color={categoryColor}>
-										{categoryLabel}
+									<Badge variant="light" color={categoryView?.color ?? "gray"}>
+										{categoryView?.label ?? operation.category}
 									</Badge>
 									{operation.public ? (
-										<Badge color="primary" variant="light" leftSection={<LockOpen size={12} />}>
-											Public
+										<Badge color={accessView?.color ?? "primary"} variant="light" leftSection={<LockOpen size={12} />}>
+											{accessView?.label}
 										</Badge>
 									) : (
-										<Badge color="deep" variant="light" leftSection={<Lock size={12} />}>
-											Protected
+										<Badge color={accessView?.color ?? "deep"} variant="light" leftSection={<Lock size={12} />}>
+											{accessView?.label}
 										</Badge>
 									)}
 								</Group>
 							</Group>
 
 							<Divider />
+
+							<KeyValueList
+								items={[
+									{
+										id: "path",
+										label: "Path pattern",
+										value: <Code>{operation.path_pattern}</Code>,
+									},
+									{
+										id: "module",
+										label: "Module",
+										value: <Code>{operation.module}</Code>,
+									},
+									{
+										id: "access",
+										label: "Access contract",
+										value: accessView?.label,
+										caption: accessView?.description,
+									},
+									...(operation.app
+										? [
+												{
+													id: "app",
+													label: "App",
+													value: (
+														<Anchor onClick={() => navigate(`/apps/${operation.app?.id}`)}>
+															{operation.app?.name}
+														</Anchor>
+													),
+												},
+											]
+										: []),
+								]}
+							/>
 
 							<div>
 								<Text size="sm" fw={500} mb="xs">
@@ -198,28 +217,15 @@ export function OperationDetailPage() {
 									))}
 								</Group>
 							</div>
-
-							<div>
-								<Text size="sm" fw={500} mb="xs">
-									Path Pattern
-								</Text>
-								<Code block>{operation.path_pattern}</Code>
-							</div>
-
-							<div>
-								<Text size="sm" fw={500} mb="xs">
-									Module
-								</Text>
-								<Code>{operation.module}</Code>
-							</div>
 						</Stack>
-					</Paper>
+					</SectionPanel>
 
-					<Paper p="lg" style={{ backgroundColor: "var(--octo-surface-2)" }}>
-						<Title order={4} mb="md">
-							Settings
-						</Title>
-
+					<SectionPanel
+						title="Settings"
+						description="Editable access policy and operator-facing description"
+						view="tinted"
+						padding="l"
+					>
 						<Stack gap="md">
 							<Switch
 								label="Public Access"
@@ -262,7 +268,7 @@ export function OperationDetailPage() {
 								</Alert>
 							)}
 						</Stack>
-					</Paper>
+					</SectionPanel>
 				</>
 			)}
 		</Stack>

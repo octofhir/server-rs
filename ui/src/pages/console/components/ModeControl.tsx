@@ -15,9 +15,8 @@ export function ModeControl() {
 
   return (
     <SegmentedControl
-      size="xs"
-      radius="md"
-      data={MODE_DATA}
+      size="s"
+      options={MODE_DATA}
       value={mode}
       onChange={(v) => setModeEvent(v as ConsoleMode)}
     />

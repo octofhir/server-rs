@@ -7,7 +7,7 @@ import {
 	Paper,
 	Group,
 	Badge,
-	Table,
+	DataPreview,
 	Loader,
 	Alert,
 	TextInput,
@@ -33,6 +33,16 @@ import {
 	Boxes3,
 	Cpu,
 } from "@gravity-ui/icons";
+import {
+	filterOperations,
+	getOperationAppOptions,
+	getOperationCategoryView,
+	getOperationMethodView,
+	groupOperationsByCategory,
+	operationAccessFilterOptions,
+	type GroupedOperations,
+	type OperationAccessFilter,
+} from "@/entities/operation-catalog";
 import { useOperations } from "@/shared/api/hooks";
 import type { OperationDefinition } from "@/shared/api/types";
 
@@ -45,116 +55,13 @@ const CATEGORY_ICONS: Record<string, typeof Server> = {
 	api: Cpu,
 };
 
-const CATEGORY_COLORS: Record<string, string> = {
-	fhir: "primary",
-	graphql: "deep",
-	system: "warm",
-	auth: "fire",
-	ui: "warm",
-	api: "deep",
-};
-
-const CATEGORY_LABELS: Record<string, string> = {
-	fhir: "FHIR REST API",
-	graphql: "GraphQL",
-	system: "System",
-	auth: "Authentication",
-	ui: "UI API",
-	api: "Custom API",
-};
-
-const ACCESS_FILTER_OPTIONS = [
-	{ label: "All", value: "all" },
-	{ label: "Public", value: "public" },
-	{ label: "Protected", value: "protected" },
-] as const;
-
-interface GroupedOperations {
-	[category: string]: OperationDefinition[];
-}
-
 function MethodBadge({ method }: { method: string }) {
-	const colors: Record<string, string> = {
-		GET: "primary",
-		POST: "warm",
-		PUT: "deep",
-		DELETE: "fire",
-		PATCH: "warm",
-	};
+	const methodView = getOperationMethodView(method);
 
 	return (
-		<Badge size="xs" variant="light" color={colors[method] ?? "gray"}>
-			{method}
+		<Badge size="xs" variant="light" color={methodView.color}>
+			{methodView.method}
 		</Badge>
-	);
-}
-
-function OperationRow({
-	operation,
-	onView,
-	onNavigateToApp,
-}: {
-	operation: OperationDefinition;
-	onView: (id: string) => void;
-	onNavigateToApp: (appId: string) => void;
-}) {
-	return (
-		<Table.Tr key={operation.id}>
-			<Table.Td>
-				<Group gap="xs">
-					<Code>{operation.id}</Code>
-				</Group>
-			</Table.Td>
-			<Table.Td>
-				<Text size="sm" fw={500}>
-					{operation.name}
-				</Text>
-				{operation.description && (
-					<Text size="xs" c="dimmed" lineClamp={1}>
-						{operation.description}
-					</Text>
-				)}
-			</Table.Td>
-			<Table.Td>
-				<Group gap={4}>
-					{operation.methods.map((method) => (
-						<MethodBadge key={method} method={method} />
-					))}
-				</Group>
-			</Table.Td>
-			<Table.Td>
-				<Code size="xs">{operation.path_pattern}</Code>
-			</Table.Td>
-			<Table.Td>
-				{operation.app ? (
-					<Anchor
-						size="sm"
-						onClick={() => onNavigateToApp(operation.app?.id ?? "")}
-						style={{ cursor: "pointer" }}
-					>
-						{operation.app.name}
-					</Anchor>
-				) : (
-					<Text size="sm" c="dimmed">—</Text>
-				)}
-			</Table.Td>
-			<Table.Td>
-				<Tooltip label={operation.public ? "Public (no auth required)" : "Protected (requires auth)"}>
-					{operation.public ? (
-						<LockOpen size={16} style={{ color: "var(--octo-accent-primary)" }} />
-					) : (
-						<Lock size={16} style={{ color: "var(--octo-accent-warm)" }} />
-					)}
-				</Tooltip>
-			</Table.Td>
-			<Table.Td>
-				<Tooltip label="View details">
-					<ActionIcon variant="subtle" size="sm" onClick={() => onView(operation.id)}>
-						<Eye size={16} />
-					</ActionIcon>
-				</Tooltip>
-			</Table.Td>
-		</Table.Tr>
 	);
 }
 
@@ -170,44 +77,82 @@ function CategorySection({
 	onNavigateToApp: (appId: string) => void;
 }) {
 	const Icon = CATEGORY_ICONS[category] ?? Cpu;
-	const color = CATEGORY_COLORS[category] ?? "gray";
-	const label = CATEGORY_LABELS[category] ?? category;
+	const categoryView = getOperationCategoryView(category);
 
 	return (
 		<Accordion.Item value={category}>
 			<Accordion.Control>
 				<Group gap="sm">
 					<Icon size={20} color="var(--g-color-text-secondary)" />
-					<Text fw={500}>{label}</Text>
-					<Badge size="sm" variant="light" color={color}>
+					<Text fw={500}>{categoryView.label}</Text>
+					<Badge size="sm" variant="light" color={categoryView.color}>
 						{operations.length}
 					</Badge>
 				</Group>
 			</Accordion.Control>
 			<Accordion.Panel>
-				<Table striped highlightOnHover>
-					<Table.Thead>
-						<Table.Tr>
-							<Table.Th>ID</Table.Th>
-							<Table.Th>Name</Table.Th>
-							<Table.Th>Methods</Table.Th>
-							<Table.Th>Path</Table.Th>
-							<Table.Th>App</Table.Th>
-							<Table.Th>Access</Table.Th>
-							<Table.Th w={50} />
-						</Table.Tr>
-					</Table.Thead>
-					<Table.Tbody>
-						{operations.map((op) => (
-							<OperationRow
-								key={op.id}
-								operation={op}
-								onView={onViewOperation}
-								onNavigateToApp={onNavigateToApp}
-							/>
-						))}
-					</Table.Tbody>
-				</Table>
+				<DataPreview
+					columns={[
+						{ id: "id", label: "ID", width: 180 },
+						{ id: "name", label: "Name" },
+						{ id: "methods", label: "Methods", width: 180 },
+						{ id: "path", label: "Path" },
+						{ id: "app", label: "App", width: 180 },
+						{ id: "access", label: "Access", width: 90 },
+						{ id: "actions", label: "", width: 50 },
+					]}
+					rows={operations.map((operation) => ({
+						id: <Code>{operation.id}</Code>,
+						name: (
+							<>
+								<Text size="sm" fw={500}>
+									{operation.name}
+								</Text>
+								{operation.description && (
+									<Text size="xs" c="dimmed" lineClamp={1}>
+										{operation.description}
+									</Text>
+								)}
+							</>
+						),
+						methods: (
+							<Group gap={4}>
+								{operation.methods.map((method) => (
+									<MethodBadge key={method} method={method} />
+								))}
+							</Group>
+						),
+						path: <Code size="xs">{operation.path_pattern}</Code>,
+						app: operation.app ? (
+							<Anchor
+								size="sm"
+								onClick={() => onNavigateToApp(operation.app?.id ?? "")}
+								style={{ cursor: "pointer" }}
+							>
+								{operation.app.name}
+							</Anchor>
+						) : (
+							<Text size="sm" c="dimmed">-</Text>
+						),
+						access: (
+							<Tooltip label={operation.public ? "Public (no auth required)" : "Protected (requires auth)"}>
+								{operation.public ? (
+									<LockOpen size={16} style={{ color: "var(--octo-accent-primary)" }} />
+								) : (
+									<Lock size={16} style={{ color: "var(--octo-accent-warm)" }} />
+								)}
+							</Tooltip>
+						),
+						actions: (
+							<Tooltip label="View details">
+								<ActionIcon variant="subtle" size="sm" onClick={() => onViewOperation(operation.id)}>
+									<Eye size={16} />
+								</ActionIcon>
+							</Tooltip>
+						),
+					}))}
+					getRowKey={(_row, index) => operations[index]?.id ?? `${index}`}
+				/>
 			</Accordion.Panel>
 		</Accordion.Item>
 	);
@@ -216,58 +161,20 @@ function CategorySection({
 export function OperationsPage() {
 	const navigate = useNavigate();
 	const [search, setSearch] = useState("");
-	const [filterAccess, setFilterAccess] = useState<string>("all");
+	const [filterAccess, setFilterAccess] = useState<OperationAccessFilter>("all");
 	const [filterApp, setFilterApp] = useState<string | null>(null);
 	const { data, isLoading, error } = useOperations();
 
 	// Extract unique apps for the filter dropdown
 	const appOptions = useMemo(() => {
-		if (!data?.operations) return [];
-		const apps = new Map<string, string>();
-		for (const op of data.operations) {
-			if (op.app) {
-				apps.set(op.app.id, op.app.name);
-			}
-		}
-		return Array.from(apps.entries()).map(([id, name]) => ({
-			value: id,
-			label: name,
-		}));
+		return getOperationAppOptions(data?.operations);
 	}, [data]);
 
 	const filteredAndGrouped = useMemo(() => {
 		if (!data?.operations) return {} as GroupedOperations;
-
-		const searchLower = search.toLowerCase();
-		const filtered = data.operations.filter((op) => {
-			// Search filter
-			const matchesSearch =
-				!search ||
-				op.id.toLowerCase().includes(searchLower) ||
-				op.name.toLowerCase().includes(searchLower) ||
-				op.description?.toLowerCase().includes(searchLower) ||
-				op.path_pattern.toLowerCase().includes(searchLower) ||
-				op.app?.name.toLowerCase().includes(searchLower);
-
-			// Access filter
-			const matchesAccess =
-				filterAccess === "all" ||
-				(filterAccess === "public" && op.public) ||
-				(filterAccess === "protected" && !op.public);
-
-			// App filter
-			const matchesApp = !filterApp || op.app?.id === filterApp;
-
-			return matchesSearch && matchesAccess && matchesApp;
-		});
-
-		// Group by category
-		return filtered.reduce((acc, op) => {
-			const cat = op.category || "other";
-			if (!acc[cat]) acc[cat] = [];
-			acc[cat].push(op);
-			return acc;
-		}, {} as GroupedOperations);
+		return groupOperationsByCategory(
+			filterOperations(data.operations, search, filterAccess, filterApp),
+		);
 	}, [data, search, filterAccess, filterApp]);
 
 	const totalFiltered = Object.values(filteredAndGrouped).flat().length;
@@ -311,8 +218,8 @@ export function OperationsPage() {
 					)}
 					<SegmentedControl
 						value={filterAccess}
-						onChange={setFilterAccess}
-						data={ACCESS_FILTER_OPTIONS}
+						onChange={(value) => setFilterAccess(value as OperationAccessFilter)}
+						data={operationAccessFilterOptions}
 					/>
 				</Group>
 			</Paper>
@@ -353,18 +260,18 @@ export function OperationsPage() {
 						</Paper>
 					) : (
 						<ScrollArea style={{ flex: 1 }} offsetScrollbars>
-						<Accordion multiple defaultValue={categories}>
-							{categories.map((category) => (
-								<CategorySection
-									key={category}
-									category={category}
-									operations={filteredAndGrouped[category]}
-									onViewOperation={handleViewOperation}
-									onNavigateToApp={handleNavigateToApp}
-								/>
-							))}
-						</Accordion>
-					</ScrollArea>
+							<Accordion multiple defaultValue={categories}>
+								{categories.map((category) => (
+									<CategorySection
+										key={category}
+										category={category}
+										operations={filteredAndGrouped[category]}
+										onViewOperation={handleViewOperation}
+										onNavigateToApp={handleNavigateToApp}
+									/>
+								))}
+							</Accordion>
+						</ScrollArea>
 					)}
 				</>
 			)}

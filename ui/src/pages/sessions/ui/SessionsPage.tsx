@@ -4,12 +4,13 @@ import {
   Button,
   Card,
   Container,
+  DataPreview,
   Flex,
   Group,
-  LoadingOverlay,
+  KeyValueList,
   Modal,
+  SectionPanel,
   Stack,
-  Table,
   Text,
   Title,
   Tooltip,
@@ -22,50 +23,25 @@ import {
   ArrowRotateRight,
   TrashBin,
 } from '@gravity-ui/icons';
-import dayjs from 'dayjs';
-import relativeTime from 'dayjs/plugin/relativeTime';
 import { useState } from 'react';
-
-dayjs.extend(relativeTime);
-import type { AuthSession } from '../lib/useSessions';
 import {
-  extractUserId,
+  getAuthSessionActivityView,
+  getAuthSessionDeviceView,
+  isCurrentAuthSession,
+  type AuthSession,
+  type SessionDeviceKind,
+} from '@/entities/auth-session';
+import {
   getCurrentSessionToken,
-  isCurrentSession,
   useRevokeAllSessions,
   useRevokeSession,
   useSessions,
 } from '../lib/useSessions';
 
-/**
- * Get device icon based on User-Agent string
- */
-function getDeviceIcon(userAgent: string = '') {
-  const ua = userAgent.toLowerCase();
-  if (ua.includes('mobile') || ua.includes('android') || ua.includes('iphone')) {
-    return <Smartphone size={20} />;
-  }
-  if (ua.includes('tablet') || ua.includes('ipad')) {
-    return <Smartphone size={20} />;
-  }
-  return <Display size={20} />;
+function DeviceIcon({ kind }: { kind: SessionDeviceKind }) {
+  return kind === 'mobile' ? <Smartphone size={20} /> : <Display size={20} />;
 }
 
-/**
- * Format browser name from User-Agent
- */
-function formatBrowserName(userAgent: string = ''): string {
-  const ua = userAgent.toLowerCase();
-  if (ua.includes('chrome')) return 'Chrome';
-  if (ua.includes('safari')) return 'Safari';
-  if (ua.includes('firefox')) return 'Firefox';
-  if (ua.includes('edge')) return 'Edge';
-  return 'Unknown Browser';
-}
-
-/**
- * Session management page component
- */
 export function SessionsPage() {
   // FIXME: Get actual user ID from auth context
   const userId = 'current-user-id'; // Replace with actual current user ID from auth context
@@ -80,10 +56,10 @@ export function SessionsPage() {
   const [selectedSession, setSelectedSession] = useState<AuthSession | null>(null);
 
   // Find current session
-  const currentSession = sessions.find((s) => isCurrentSession(s, currentSessionToken));
+  const currentSession = sessions.find((s) => isCurrentAuthSession(s, currentSessionToken));
 
   // Other sessions (not current)
-  const otherSessions = sessions.filter((s) => !isCurrentSession(s, currentSessionToken));
+  const otherSessions = sessions.filter((s) => !isCurrentAuthSession(s, currentSessionToken));
 
   const handleRevokeSession = async (session: AuthSession) => {
     setSelectedSession(session);
@@ -141,141 +117,109 @@ export function SessionsPage() {
           </Group>
         </Flex>
 
-        {/* Current Session Card (Glass Effect) */}
         {currentSession && (
-          <Card
-            shadow="sm"
-            radius="lg"
-            withBorder
-            style={{
-              background: 'var(--octo-surface-1)',
-              border: '1px solid var(--octo-border-subtle)',
-            }}
+          <SectionPanel
+            title="Current session"
+            description="The browser session currently attached to this control plane"
+            view="filled"
+            padding="l"
+            actions={
+              <Badge color="green" size="sm" variant="light">
+                Current
+              </Badge>
+            }
           >
-            <Stack gap="md">
-              <Group justify="space-between">
-                <Group>
-                  {getDeviceIcon(currentSession.userAgent)}
-                  <div>
-                    <Group gap={8}>
-                      <Text fw={600}>{currentSession.deviceName || 'Current Device'}</Text>
-                      <Badge color="green" size="sm" variant="light">
-                        Current Session
-                      </Badge>
-                    </Group>
-                    <Text size="sm" c="dimmed">
-                      {formatBrowserName(currentSession.userAgent)}
-                    </Text>
-                  </div>
-                </Group>
-              </Group>
+            {(() => {
+              const device = getAuthSessionDeviceView(currentSession);
+              const activity = getAuthSessionActivityView(currentSession);
 
-              <Group gap="xl">
-                {currentSession.ipAddress && (
-                  <div>
-                    <Text size="xs" c="dimmed">
-                      IP Address
-                    </Text>
-                    <Text size="sm">{currentSession.ipAddress}</Text>
-                  </div>
-                )}
-                <div>
-                  <Text size="xs" c="dimmed">
-                    Last Active
-                  </Text>
-                  <Text size="sm">
-                    {currentSession.lastActivityAt
-                      ? dayjs(currentSession.lastActivityAt).fromNow()
-                      : 'Just now'}
-                  </Text>
-                </div>
-                <div>
-                  <Text size="xs" c="dimmed">
-                    Expires
-                  </Text>
-                  <Text size="sm">
-                    {dayjs(currentSession.expiresAt).fromNow()}
-                  </Text>
-                </div>
-              </Group>
-            </Stack>
-          </Card>
+              return (
+                <Stack gap="md">
+                  <Group>
+                    <DeviceIcon kind={device.kind} />
+                    <div>
+                      <Text fw={600}>{device.deviceName}</Text>
+                      <Text size="sm" c="dimmed">
+                        {device.browser}
+                      </Text>
+                    </div>
+                  </Group>
+
+                  <KeyValueList
+                    items={[
+                      { id: 'location', label: 'IP Address', value: activity.location },
+                      { id: 'last-active', label: 'Last Active', value: activity.lastActive },
+                      { id: 'expires', label: 'Expires', value: activity.expires },
+                    ]}
+                  />
+                </Stack>
+              );
+            })()}
+          </SectionPanel>
         )}
 
-        {/* Other Sessions Table */}
-        {otherSessions.length > 0 ? (
-          <Card shadow="sm" radius="lg" withBorder>
-            <LoadingOverlay visible={isLoading} />
-            <Stack gap="md">
-              <Title order={4}>Other Sessions</Title>
-              <Table.ScrollContainer minWidth={700}>
-                <Table highlightOnHover>
-                  <Table.Thead>
-                    <Table.Tr>
-                      <Table.Th>Device</Table.Th>
-                      <Table.Th>Location</Table.Th>
-                      <Table.Th>Last Active</Table.Th>
-                      <Table.Th>Expires</Table.Th>
-                      <Table.Th>Actions</Table.Th>
-                    </Table.Tr>
-                  </Table.Thead>
-                  <Table.Tbody>
-                    {otherSessions.map((session) => (
-                      <Table.Tr key={session.id}>
-                        <Table.Td>
-                          <Group gap="sm">
-                            {getDeviceIcon(session.userAgent)}
-                            <div>
-                              <Text size="sm" fw={500}>
-                                {session.deviceName || 'Unknown Device'}
-                              </Text>
-                              <Text size="xs" c="dimmed">
-                                {formatBrowserName(session.userAgent)}
-                              </Text>
-                            </div>
-                          </Group>
-                        </Table.Td>
-                        <Table.Td>
-                          <Text size="sm">{session.ipAddress || 'Unknown'}</Text>
-                        </Table.Td>
-                        <Table.Td>
-                          <Text size="sm">
-                            {session.lastActivityAt
-                              ? dayjs(session.lastActivityAt).fromNow()
-                              : 'Unknown'}
-                          </Text>
-                        </Table.Td>
-                        <Table.Td>
-                          <Text size="sm">
-                            {dayjs(session.expiresAt).fromNow()}
-                          </Text>
-                        </Table.Td>
-                        <Table.Td>
-                          <Tooltip label="Revoke session">
-                            <ActionIcon
-                              variant="subtle"
-                              color="red"
-                              onClick={() => handleRevokeSession(session)}
-                              loading={revokeSessionMutation.isPending}
-                            >
-                              <TrashBin size={18} />
-                            </ActionIcon>
-                          </Tooltip>
-                        </Table.Td>
-                      </Table.Tr>
-                    ))}
-                  </Table.Tbody>
-                </Table>
-              </Table.ScrollContainer>
-            </Stack>
-          </Card>
-        ) : (
-          <Card shadow="sm" radius="lg" withBorder>
-            <Text c="dimmed" ta="center" py="xl">
-              No other active sessions found
-            </Text>
-          </Card>
-        )}
+        <SectionPanel
+          title="Other sessions"
+          description="Active sessions on other browsers and devices"
+          view="tinted"
+          padding="l"
+          actions={
+            <Badge size="sm" variant="light" color="gray">
+              {otherSessions.length}
+            </Badge>
+          }
+        >
+          <DataPreview
+            columns={[
+              { id: 'device', label: 'Device' },
+              { id: 'location', label: 'Location', width: 160 },
+              { id: 'lastActive', label: 'Last Active', width: 140 },
+              { id: 'expires', label: 'Expires', width: 140 },
+              { id: 'actions', label: 'Actions', width: 90 },
+            ]}
+            rows={
+              isLoading
+                ? []
+                : otherSessions.map((session) => {
+                    const device = getAuthSessionDeviceView(session);
+                    const activity = getAuthSessionActivityView(session);
+
+                    return {
+                      device: (
+                        <Group gap="sm">
+                          <DeviceIcon kind={device.kind} />
+                          <div>
+                            <Text size="sm" fw={500}>
+                              {device.deviceName}
+                            </Text>
+                            <Text size="xs" c="dimmed">
+                              {device.browser}
+                            </Text>
+                          </div>
+                        </Group>
+                      ),
+                      location: <Text size="sm">{activity.location}</Text>,
+                      lastActive: <Text size="sm">{activity.lastActive}</Text>,
+                      expires: <Text size="sm">{activity.expires}</Text>,
+                      actions: (
+                        <Tooltip label="Revoke session">
+                          <ActionIcon
+                            variant="subtle"
+                            color="red"
+                            onClick={() => handleRevokeSession(session)}
+                            loading={revokeSessionMutation.isPending}
+                          >
+                            <TrashBin size={18} />
+                          </ActionIcon>
+                        </Tooltip>
+                      ),
+                    };
+                  })
+            }
+            emptyText={isLoading ? 'Loading sessions...' : 'No other active sessions found'}
+            getRowKey={(_row, index) => otherSessions[index]?.id ?? `${index}`}
+          />
+        </SectionPanel>
       </Stack>
 
       {/* Revoke Single Session Modal */}
@@ -292,17 +236,24 @@ export function SessionsPage() {
           </Text>
           {selectedSession && (
             <Card withBorder radius="md" p="sm">
-              <Group gap="sm">
-                {getDeviceIcon(selectedSession.userAgent)}
-                <div>
-                  <Text size="sm" fw={500}>
-                    {selectedSession.deviceName || 'Unknown Device'}
-                  </Text>
-                  <Text size="xs" c="dimmed">
-                    {selectedSession.ipAddress || 'Unknown location'}
-                  </Text>
-                </div>
-              </Group>
+              {(() => {
+                const device = getAuthSessionDeviceView(selectedSession);
+                const activity = getAuthSessionActivityView(selectedSession);
+
+                return (
+                  <Group gap="sm">
+                    <DeviceIcon kind={device.kind} />
+                    <div>
+                      <Text size="sm" fw={500}>
+                        {device.deviceName}
+                      </Text>
+                      <Text size="xs" c="dimmed">
+                        {activity.location}
+                      </Text>
+                    </div>
+                  </Group>
+                );
+              })()}
             </Card>
           )}
           <Group justify="flex-end" mt="md">

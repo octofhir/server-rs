@@ -1,24 +1,10 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { notifications } from "@octofhir/ui-kit";
+import type { IdentityProviderResource } from "@/entities/identity-provider";
 import { fhirClient } from "@/shared/api/fhirClient";
-import type { Bundle, FhirResource } from "@/shared/api/types";
+import type { Bundle } from "@/shared/api/types";
 
-export interface IdentityProviderResource extends FhirResource {
-	resourceType: "IdentityProvider";
-	name: string;
-	title?: string;
-	description?: string;
-	type: "oidc" | "oauth2" | "saml2";
-	issuer: string;
-	clientId: string;
-	clientSecret?: string;
-	authorizeUrl: string;
-	tokenUrl: string;
-	jwksUrl?: string;
-	userInfoUrl?: string;
-	scopes?: string[];
-	active: boolean;
-}
+export type { IdentityProviderResource } from "@/entities/identity-provider";
 
 // Query keys
 export const idpKeys = {

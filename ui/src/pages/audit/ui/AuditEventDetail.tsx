@@ -29,44 +29,17 @@ import {
 	ArrowRight,
 	ArrowRightArrowLeft,
 } from "@gravity-ui/icons";
-import type { AuditEvent, AuditAction, AuditOutcome } from "@/shared/api/types";
+import {
+	getAuditActionDetailLabel,
+	getAuditOutcomeColor,
+	getAuditOutcomeLabel,
+	getAuditTimestampView,
+} from "@/entities/audit-event";
+import type { AuditEvent, AuditOutcome } from "@/shared/api/types";
 import classes from "./AuditEventDetail.module.css";
 
 interface AuditEventDetailProps {
 	event: AuditEvent;
-}
-
-function getActionLabel(action: AuditAction): string {
-	const labels: Record<AuditAction, string> = {
-		"user.login": "User Login",
-		"user.logout": "User Logout",
-		"user.login_failed": "Login Failed",
-		"resource.create": "Resource Created",
-		"resource.read": "Resource Read",
-		"resource.update": "Resource Updated",
-		"resource.delete": "Resource Deleted",
-		"resource.search": "Resource Search",
-		"policy.evaluate": "Policy Evaluated",
-		"client.auth": "Client Authentication",
-		"client.create": "Client Created",
-		"client.update": "Client Updated",
-		"client.delete": "Client Deleted",
-		"config.change": "Configuration Changed",
-		"system.startup": "System Started",
-		"system.shutdown": "System Stopped",
-	};
-	return labels[action] || action;
-}
-
-function getOutcomeColor(outcome: AuditOutcome): string {
-	switch (outcome) {
-		case "success":
-			return "green";
-		case "failure":
-			return "red";
-		case "partial":
-			return "yellow";
-	}
 }
 
 function getOutcomeIcon(outcome: AuditOutcome) {
@@ -89,11 +62,6 @@ function getActorIcon(type: "user" | "client" | "system") {
 		case "system":
 			return Server;
 	}
-}
-
-function formatDateTime(timestamp: string): string {
-	const d = new Date(timestamp);
-	return d.toLocaleString();
 }
 
 function DetailRow({
@@ -250,6 +218,7 @@ function DiffViewer({
 function AuditEventDetailComponent({ event }: AuditEventDetailProps) {
 	const OutcomeIcon = getOutcomeIcon(event.outcome);
 	const ActorIcon = getActorIcon(event.actor.type);
+	const timestamp = getAuditTimestampView(event.timestamp);
 	const hasChanges = event.changes && (event.changes.diff || event.changes.before || event.changes.after);
 	const hasContext = event.context && Object.keys(event.context).length > 0;
 
@@ -262,16 +231,16 @@ function AuditEventDetailComponent({ event }: AuditEventDetailProps) {
 						<Group justify="space-between" align="flex-start">
 							<Stack gap="xs">
 								<Text size="lg" fw={600}>
-									{getActionLabel(event.action)}
+									{getAuditActionDetailLabel(event.action)}
 								</Text>
 								<Group gap="xs">
 									<Badge
 										size="lg"
 										variant="light"
-										color={getOutcomeColor(event.outcome)}
+										color={getAuditOutcomeColor(event.outcome)}
 										leftSection={<OutcomeIcon size={12} />}
 									>
-										{event.outcome.charAt(0).toUpperCase() + event.outcome.slice(1)}
+										{getAuditOutcomeLabel(event.outcome)}
 									</Badge>
 									{event.outcomeDescription && (
 										<Text size="sm" c="dimmed">
@@ -318,7 +287,7 @@ function AuditEventDetailComponent({ event }: AuditEventDetailProps) {
 									</Text>
 									<DetailRow
 										label="When"
-										value={formatDateTime(event.timestamp)}
+										value={timestamp.full}
 										icon={Clock}
 									/>
 								</div>

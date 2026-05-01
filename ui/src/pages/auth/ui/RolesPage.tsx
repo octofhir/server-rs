@@ -4,7 +4,7 @@ import {
 	Title,
 	Text,
 	Group,
-	Table,
+	DataPreview,
 	Badge,
 	Menu,
 	Checkbox,
@@ -21,6 +21,13 @@ import {
 	Shield,
 	TriangleExclamation,
 } from "@gravity-ui/icons";
+import {
+	defaultRolePermissions,
+	getRolePermissionPreview,
+	getRoleStatusView,
+	getRoleTypeView,
+	groupRolePermissions,
+} from "@/entities/access-role";
 import { Card } from "@/shared/ui/Card/Card";
 import { Modal } from "@/shared/ui/Modal/Modal";
 import { Button } from "@/shared/ui/Button/Button";
@@ -32,9 +39,8 @@ import {
 	useUpdateRole,
 	useDeleteRole,
 	usePermissions,
-	DEFAULT_PERMISSIONS,
 } from "../lib/useRoles";
-import type { RoleResource, Permission } from "@/shared/api/types";
+import type { RoleResource } from "@/shared/api/types";
 import classes from "./RolesPage.module.css";
 
 export function RolesPage() {
@@ -96,102 +102,93 @@ export function RolesPage() {
 					/>
 				</Group>
 
-				<Table>
-					<Table.Thead>
-						<Table.Tr>
-							<Table.Th>Role</Table.Th>
-							<Table.Th>Permissions</Table.Th>
-							<Table.Th>Type</Table.Th>
-							<Table.Th>Status</Table.Th>
-							<Table.Th style={{ width: 50 }} />
-						</Table.Tr>
-					</Table.Thead>
-					<Table.Tbody>
-						{isLoading ? (
-							<Table.Tr>
-								<Table.Td colSpan={5}>Loading...</Table.Td>
-							</Table.Tr>
-						) : roles.length === 0 ? (
-							<Table.Tr>
-								<Table.Td colSpan={5} style={{ textAlign: "center" }}>
-									No roles found
-								</Table.Td>
-							</Table.Tr>
-						) : (
-							roles.map((role) => (
-								<Table.Tr key={role.id}>
-									<Table.Td>
-										<div className={classes.roleInfo}>
-											<div className={classes.roleIcon}>
-												<Shield size={18} />
+				<DataPreview
+					columns={[
+						{ id: "role", label: "Role" },
+						{ id: "permissions", label: "Permissions" },
+						{ id: "type", label: "Type", width: 110 },
+						{ id: "status", label: "Status", width: 110 },
+						{ id: "actions", label: "", width: 48 },
+					]}
+					rows={
+						isLoading
+							? []
+							: roles.map((role) => {
+									const permissionPreview = getRolePermissionPreview(role);
+									const typeView = getRoleTypeView(role);
+									const statusView = getRoleStatusView(role);
+
+									return {
+										role: (
+											<div className={classes.roleInfo}>
+												<div className={classes.roleIcon}>
+													<Shield size={18} />
+												</div>
+												<div>
+													<Text className={classes.roleName}>{role.name}</Text>
+													<Text className={classes.roleDescription}>
+														{role.description || "No description"}
+													</Text>
+												</div>
 											</div>
-											<div>
-												<Text className={classes.roleName}>{role.name}</Text>
-												<Text className={classes.roleDescription}>
-													{role.description || "No description"}
-												</Text>
-											</div>
-										</div>
-									</Table.Td>
-									<Table.Td>
-										<Group gap={4}>
-											{role.permissions?.slice(0, 3).map((perm) => (
-												<Badge key={perm} size="sm" variant="dot">
-													{perm}
-												</Badge>
-											))}
-											{(role.permissions?.length || 0) > 3 && (
-												<Badge size="sm" variant="light">
-													+{role.permissions.length - 3} more
-												</Badge>
-											)}
-										</Group>
-									</Table.Td>
-									<Table.Td>
-										<Badge
-											variant={role.isSystem ? "filled" : "light"}
-											color={role.isSystem ? "gray" : "blue"}
-										>
-											{role.isSystem ? "System" : "Custom"}
-										</Badge>
-									</Table.Td>
-									<Table.Td>
-										<Badge color={role.active ? "green" : "gray"} variant="light">
-											{role.active ? "Active" : "Inactive"}
-										</Badge>
-									</Table.Td>
-									<Table.Td>
-										<Menu position="bottom-end" withinPortal>
-											<Menu.Target>
-												<ActionIcon variant="subtle" color="gray">
-													<EllipsisVertical size={16} />
-												</ActionIcon>
-											</Menu.Target>
-											<Menu.Dropdown>
-												<Menu.Item
-													leftSection={<Pencil size={14} />}
-													onClick={() => handleEdit(role)}
-													disabled={role.isSystem}
-												>
-													Edit
-												</Menu.Item>
-												<Menu.Divider />
-												<Menu.Item
-													leftSection={<TrashBin size={14} />}
-													color="red"
-													onClick={() => handleDeleteClick(role)}
-													disabled={role.isSystem}
-												>
-													Delete
-												</Menu.Item>
-											</Menu.Dropdown>
-										</Menu>
-									</Table.Td>
-								</Table.Tr>
-							))
-						)}
-					</Table.Tbody>
-				</Table>
+										),
+										permissions: (
+											<Group gap={4}>
+												{permissionPreview.visible.map((permission) => (
+													<Badge key={permission} size="sm" variant="dot">
+														{permission}
+													</Badge>
+												))}
+												{permissionPreview.remaining > 0 && (
+													<Badge size="sm" variant="light">
+														+{permissionPreview.remaining} more
+													</Badge>
+												)}
+											</Group>
+										),
+										type: (
+											<Badge variant={typeView.variant} color={typeView.color}>
+												{typeView.label}
+											</Badge>
+										),
+										status: (
+											<Badge color={statusView.color} variant="light">
+												{statusView.label}
+											</Badge>
+										),
+										actions: (
+											<Menu position="bottom-end" withinPortal>
+												<Menu.Target>
+													<ActionIcon variant="subtle" color="gray">
+														<EllipsisVertical size={16} />
+													</ActionIcon>
+												</Menu.Target>
+												<Menu.Dropdown>
+													<Menu.Item
+														leftSection={<Pencil size={14} />}
+														onClick={() => handleEdit(role)}
+														disabled={role.isSystem}
+													>
+														Edit
+													</Menu.Item>
+													<Menu.Divider />
+													<Menu.Item
+														leftSection={<TrashBin size={14} />}
+														color="red"
+														onClick={() => handleDeleteClick(role)}
+														disabled={role.isSystem}
+													>
+														Delete
+													</Menu.Item>
+												</Menu.Dropdown>
+											</Menu>
+										),
+									};
+								})
+					}
+					emptyText={isLoading ? "Loading roles..." : "No roles found"}
+					getRowKey={(_row, index) => roles[index]?.id ?? roles[index]?.name ?? `${index}`}
+				/>
 			</Card>
 
 			<RoleModal opened={opened} onClose={handleClose} role={editingRole} />
@@ -253,13 +250,7 @@ function RoleModal({
 		: ROLE_FORM_DEFAULTS;
 
 	const groupedPermissions = useMemo(() => {
-		const perms = permissions || DEFAULT_PERMISSIONS;
-		const groups: Record<string, Permission[]> = {};
-		for (const perm of perms) {
-			if (!groups[perm.category]) groups[perm.category] = [];
-			groups[perm.category].push(perm);
-		}
-		return groups;
+		return groupRolePermissions(permissions || defaultRolePermissions);
 	}, [permissions]);
 
 	const handleSubmit = async (values: RoleFormValues) => {

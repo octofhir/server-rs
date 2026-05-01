@@ -24,6 +24,13 @@ import {
 	PersonPencil,
 	PersonXmark,
 } from "@gravity-ui/icons";
+import {
+	formatUserLastLogin,
+	getPasswordStrength,
+	getUserInitials,
+	getUserRoleView,
+	getUserStatusView,
+} from "@/entities/user-account";
 import { Modal } from "@/shared/ui/Modal/Modal";
 import { Button } from "@/shared/ui/Button/Button";
 import { TextInput } from "@/shared/ui/TextInput/TextInput";
@@ -40,47 +47,6 @@ import { useRoles } from "../lib/useRoles";
 import type { UserResource } from "@/shared/api/types";
 import { DeleteUserModal } from "./DeleteUserModal";
 import classes from "./UsersPage.module.css";
-
-// Password strength calculation
-function getPasswordStrength(password: string): { score: number; label: string } {
-	let score = 0;
-	if (password.length >= 8) score++;
-	if (password.length >= 12) score++;
-	if (/[a-z]/.test(password) && /[A-Z]/.test(password)) score++;
-	if (/\d/.test(password)) score++;
-	if (/[^a-zA-Z0-9]/.test(password)) score++;
-
-	const labels = ["weak", "weak", "fair", "good", "strong", "strong"];
-	return { score: Math.min(score, 4), label: labels[score] || "weak" };
-}
-
-// Get user initials for avatar
-function getUserInitials(user: UserResource): string {
-	if (user.name) {
-		return user.name
-			.split(" ")
-			.map((n) => n[0])
-			.join("")
-			.toUpperCase()
-			.slice(0, 2);
-	}
-	return user.username.slice(0, 2).toUpperCase();
-}
-
-// Format last login date
-function formatLastLogin(date: string | undefined): string {
-	if (!date) return "Never";
-	const d = new Date(date);
-	const now = new Date();
-	const diff = now.getTime() - d.getTime();
-	const days = Math.floor(diff / (1000 * 60 * 60 * 24));
-
-	if (days === 0) return "Today";
-	if (days === 1) return "Yesterday";
-	if (days < 7) return `${days} days ago`;
-	if (days < 30) return `${Math.floor(days / 7)} weeks ago`;
-	return d.toLocaleDateString();
-}
 
 export function UsersPage() {
 	const navigate = useNavigate();
@@ -296,7 +262,10 @@ export function UsersPage() {
 									</Table.Td>
 								</Table.Tr>
 							) : (
-								users.map((user) => (
+								users.map((user) => {
+									const statusView = getUserStatusView(user);
+
+									return (
 									<Table.Tr key={user.id}>
 										<Table.Td className={classes.selectionCell}>
 											<Checkbox
@@ -319,15 +288,18 @@ export function UsersPage() {
 										</Table.Td>
 										<Table.Td>
 											<div className={classes.roleList}>
-												{user.roles?.map((role) => (
+												{user.roles?.map((role) => {
+													const roleView = getUserRoleView(role);
+													return (
 													<Badge
 														key={role}
 														size="s"
-														theme={role === "admin" ? "danger" : "info"}
+														theme={roleView.theme}
 													>
-														{role}
+														{roleView.role}
 													</Badge>
-												))}
+													);
+												})}
 												{(!user.roles || user.roles.length === 0) && (
 													<Text variant="body-1" color="secondary">
 														No roles
@@ -338,14 +310,14 @@ export function UsersPage() {
 										<Table.Td>
 											<Badge
 												size="s"
-												theme={user.active ? "success" : user.status === "locked" ? "danger" : "unknown"}
+												theme={statusView.theme}
 											>
-												{user.status === "locked" ? "Locked" : user.active ? "Active" : "Inactive"}
+												{statusView.label}
 											</Badge>
 										</Table.Td>
 										<Table.Td>
 											<Text variant="body-1" color="secondary" className={classes.lastLogin}>
-												{formatLastLogin(user.lastLogin)}
+												{formatUserLastLogin(user.lastLogin)}
 											</Text>
 										</Table.Td>
 										<Table.Td className={classes.actionsCell}>
@@ -382,7 +354,8 @@ export function UsersPage() {
 											/>
 										</Table.Td>
 									</Table.Tr>
-								))
+									);
+								})
 							)}
 						</Table.Tbody>
 					</Table>

@@ -11,6 +11,9 @@ export * from "./shared/theme";
 // Shared layer — UI components
 export * from "./shared/ui";
 
+// Shared layer — FHIR-specific primitives
+export * from "./shared/fhir";
+
 // Shared layer — hooks
 export * from "./shared/hooks";
 

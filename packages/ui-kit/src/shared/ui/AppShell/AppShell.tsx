@@ -2,7 +2,7 @@ import { createContext, forwardRef, useContext, useMemo, type CSSProperties, typ
 import { cleanLayoutProps, getSpacingStyles } from "../layout-utils";
 
 /**
- * Tracker-style application shell.
+ * Product application shell.
  *
  * Layout (CSS grid):
  *   ┌────────────────────────────────┐

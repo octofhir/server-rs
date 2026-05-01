@@ -1,0 +1,71 @@
+.card {
+    position: relative;
+    height: 100%;
+    overflow: hidden;
+}
+
+.metricHeader {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 16px;
+}
+
+.metricTitle {
+    text-transform: uppercase;
+    font-weight: 600;
+    letter-spacing: 0;
+}
+
+.metricValue {
+    display: block;
+    color: var(--metric-value-color, var(--g-color-text-primary));
+    letter-spacing: 0;
+}
+
+.topBar {
+    position: absolute;
+    top: 0;
+    right: 0;
+    left: 0;
+    height: 4px;
+    background: var(--metric-accent-color, var(--g-color-base-brand));
+}
+
+.actionCard {
+    cursor: default;
+    transition:
+        transform var(--octo-motion-normal) var(--octo-motion-ease),
+        border-color var(--octo-motion-normal) var(--octo-motion-ease),
+        box-shadow var(--octo-motion-normal) var(--octo-motion-ease);
+}
+
+.actionCard[data-clickable="true"] {
+    cursor: pointer;
+}
+
+.actionCard[data-clickable="true"]:hover {
+    transform: translateY(-2px);
+    border-color: var(--g-color-line-brand);
+    box-shadow: var(--octo-shadow-sm);
+}
+
+.actionIcon {
+    margin-bottom: 20px;
+}
+
+.actionTitle {
+    margin-bottom: 8px;
+    letter-spacing: 0;
+}
+
+.actionDescription {
+    margin-bottom: 16px;
+    line-height: 1.5;
+}
+
+.actionButton {
+    width: fit-content;
+    padding: 0;
+}

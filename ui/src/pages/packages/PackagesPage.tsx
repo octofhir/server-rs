@@ -7,7 +7,7 @@ import {
 	Paper,
 	Group,
 	Badge,
-	Table,
+	DataPreview,
 	Loader,
 	Alert,
 	TextInput,
@@ -38,26 +38,15 @@ import {
 	usePackageSearch,
 	useInstallPackageWithProgress,
 } from "@/shared/api/hooks";
+import {
+	filterFhirPackages,
+	getFhirPackageInstalledViews,
+	getFhirPackageRegistryViews,
+	getFhirPackageVersionOptions,
+	getFhirVersionCompatibilityView,
+} from "@/entities/fhir-package";
 import type { PackageInfo } from "@/shared/api/types";
 import { InstallProgressModal } from "./InstallProgressModal";
-
-// Map FHIR version strings to their major version identifier
-function normalizeFhirVersion(version?: string): string {
-	if (!version) return "unknown";
-	const v = version.toLowerCase().trim();
-	// Handle semantic versions like "4.0.1", "4.3.0", "5.0.0"
-	if (v.startsWith("4.0")) return "R4";
-	if (v.startsWith("4.3")) return "R4B";
-	if (v.startsWith("5.0")) return "R5";
-	if (v.startsWith("6.0")) return "R6";
-	// Handle explicit R notation
-	if (v === "r4" || v === "r4.0.1") return "R4";
-	if (v === "r4b" || v === "r4.3.0") return "R4B";
-	if (v === "r5" || v === "r5.0.0") return "R5";
-	if (v === "r6") return "R6";
-	// Return original if unknown format
-	return version.toUpperCase();
-}
 
 function FhirVersionBadge({
 	packageVersion,
@@ -66,32 +55,23 @@ function FhirVersionBadge({
 	packageVersion?: string;
 	serverVersion: string;
 }) {
-	const normalizedPackage = normalizeFhirVersion(packageVersion);
-	const normalizedServer = normalizeFhirVersion(serverVersion);
-	const isCompatible =
-		!packageVersion || normalizedPackage === normalizedServer;
+	const compatibility = getFhirVersionCompatibilityView(packageVersion, serverVersion);
 
 	return (
-		<Tooltip
-			label={
-				isCompatible
-					? `Compatible with server(${serverVersion})`
-					: `Package is ${packageVersion}, server is ${serverVersion} `
-			}
-		>
+		<Tooltip label={compatibility.tooltip}>
 			<Badge
 				size="sm"
 				variant="light"
-				color={isCompatible ? "primary" : "warm"}
+				color={compatibility.isCompatible ? "primary" : "warm"}
 				leftSection={
-					isCompatible ? (
+					compatibility.isCompatible ? (
 						<Check size={12} />
 					) : (
 						<TriangleExclamation size={12} />
 					)
 				}
 			>
-				{packageVersion || "unknown"}
+				{compatibility.label}
 			</Badge>
 		</Tooltip>
 	);
@@ -156,66 +136,6 @@ function PackageCard({
 	);
 }
 
-function PackageTableRow({
-	pkg,
-	serverVersion,
-	onView,
-}: {
-	pkg: PackageInfo;
-	serverVersion: string;
-	onView: (name: string, version: string) => void;
-}) {
-	return (
-		<Table.Tr>
-			<Table.Td>
-				<Group gap="xs">
-					<Box
-						size={16}
-						style={{ color: "var(--octo-accent-primary)" }}
-					/>
-					<Text fw={500}>{pkg.name}</Text>
-				</Group>
-			</Table.Td>
-			<Table.Td>
-				<Badge size="sm" variant="outline">
-					{pkg.version}
-				</Badge>
-			</Table.Td>
-			<Table.Td>
-				<FhirVersionBadge
-					packageVersion={pkg.fhirVersion}
-					serverVersion={serverVersion}
-				/>
-			</Table.Td>
-			<Table.Td>
-				<Text size="sm">{pkg.resourceCount}</Text>
-			</Table.Td>
-			<Table.Td>
-				{pkg.installedAt ? (
-					<Text size="sm" c="dimmed">
-						{new Date(pkg.installedAt).toLocaleDateString()}
-					</Text>
-				) : (
-					<Text size="sm" c="dimmed">
-						-
-					</Text>
-				)}
-			</Table.Td>
-			<Table.Td>
-				<Tooltip label="View package details">
-					<ActionIcon
-						variant="subtle"
-						size="sm"
-						onClick={() => onView(pkg.name, pkg.version)}
-					>
-						<Eye size={16} />
-					</ActionIcon>
-				</Tooltip>
-			</Table.Td>
-		</Table.Tr>
-	);
-}
-
 function InstalledPackagesTab({
 	serverVersion,
 	onView,
@@ -228,16 +148,12 @@ function InstalledPackagesTab({
 	const { data, isLoading, error } = usePackages();
 
 	const filteredPackages = useMemo(() => {
-		if (!data?.packages) return [];
-
-		const searchLower = search.toLowerCase();
-		return data.packages.filter(
-			(pkg) =>
-				!search ||
-				pkg.name.toLowerCase().includes(searchLower) ||
-				pkg.version.toLowerCase().includes(searchLower),
-		);
+		return filterFhirPackages(data?.packages ?? [], search);
 	}, [data, search]);
+	const packageViews = useMemo(
+		() => getFhirPackageInstalledViews(filteredPackages, serverVersion),
+		[filteredPackages, serverVersion],
+	);
 
 	return (
 		<Stack gap="md">
@@ -306,28 +222,56 @@ function InstalledPackagesTab({
 						</SimpleGrid>
 					) : (
 						<Paper style={{ backgroundColor: "var(--octo-surface-1)" }}>
-							<Table striped highlightOnHover>
-								<Table.Thead>
-									<Table.Tr>
-										<Table.Th>Package</Table.Th>
-										<Table.Th>Version</Table.Th>
-										<Table.Th>FHIR Version</Table.Th>
-										<Table.Th>Resources</Table.Th>
-										<Table.Th>Installed</Table.Th>
-										<Table.Th w={50} />
-									</Table.Tr>
-								</Table.Thead>
-								<Table.Tbody>
-									{filteredPackages.map((pkg) => (
-										<PackageTableRow
-											key={`${pkg.name} @${pkg.version} `}
-											pkg={pkg}
+							<DataPreview
+								columns={[
+									{ id: "package", label: "Package" },
+									{ id: "version", label: "Version", width: 120 },
+									{ id: "fhirVersion", label: "FHIR Version", width: 150 },
+									{ id: "resources", label: "Resources", width: 110 },
+									{ id: "installed", label: "Installed", width: 140 },
+									{ id: "actions", label: "", width: 50 },
+								]}
+								rows={packageViews.map((pkg) => ({
+									package: (
+										<Group gap="xs">
+											<Box
+												size={16}
+												style={{ color: "var(--octo-accent-primary)" }}
+											/>
+											<Text fw={500}>{pkg.name}</Text>
+										</Group>
+									),
+									version: (
+										<Badge size="sm" variant="outline">
+											{pkg.versionLabel}
+										</Badge>
+									),
+									fhirVersion: (
+										<FhirVersionBadge
+											packageVersion={pkg.rawFhirVersion}
 											serverVersion={serverVersion}
-											onView={onView}
 										/>
-									))}
-								</Table.Tbody>
-							</Table>
+									),
+									resources: <Text size="sm">{pkg.resourceCountLabel}</Text>,
+									installed: (
+										<Text size="sm" c="dimmed">
+											{pkg.installedAtLabel}
+										</Text>
+									),
+									actions: (
+										<Tooltip label="View package details">
+											<ActionIcon
+												variant="subtle"
+												size="sm"
+												onClick={() => onView(pkg.name, pkg.rawVersion)}
+											>
+												<Eye size={16} />
+											</ActionIcon>
+										</Tooltip>
+									),
+								}))}
+								getRowKey={(_row, index) => packageViews[index]?.id ?? `${index}`}
+							/>
 						</Paper>
 					)}
 				</>
@@ -380,14 +324,11 @@ function RegistryTab({
 		}
 	};
 
-	const versionOptions = useMemo(() => {
-		if (!lookupData?.versions) return [];
-		return lookupData.versions.map((v) => ({
-			value: v,
-			label: lookupData.installedVersions.includes(v) ? `${v} (installed)` : v,
-			disabled: lookupData.installedVersions.includes(v),
-		}));
-	}, [lookupData]);
+	const registryViews = useMemo(
+		() => getFhirPackageRegistryViews(searchData?.packages ?? []),
+		[searchData?.packages],
+	);
+	const versionOptions = useMemo(() => getFhirPackageVersionOptions(lookupData), [lookupData]);
 
 	return (
 		<Stack gap="md">
@@ -420,78 +361,70 @@ function RegistryTab({
 
 			{searchData && searchData.packages.length > 0 && (
 				<Paper style={{ backgroundColor: "var(--octo-surface-1)" }}>
-					<Table striped highlightOnHover>
-						<Table.Thead>
-							<Table.Tr>
-								<Table.Th>Package</Table.Th>
-								<Table.Th>Description</Table.Th>
-								<Table.Th>Latest</Table.Th>
-								<Table.Th w={200}>Version</Table.Th>
-								<Table.Th w={100} />
-							</Table.Tr>
-						</Table.Thead>
-						<Table.Tbody>
-							{searchData.packages.map((pkg) => (
-								<Table.Tr key={pkg.name}>
-									<Table.Td>
-										<Group gap="xs">
-											<Box
-												size={16}
-												style={{ color: "var(--octo-accent-primary)" }}
-											/>
-											<Text fw={500} size="sm">
-												{pkg.name}
-											</Text>
-										</Group>
-									</Table.Td>
-									<Table.Td>
-										<Text size="sm" c="dimmed" lineClamp={1}>
-											{pkg.description || "-"}
-										</Text>
-									</Table.Td>
-									<Table.Td>
-										<Badge size="sm" variant="outline">
-											{pkg.latestVersion}
-										</Badge>
-									</Table.Td>
-									<Table.Td>
-										{selectedPackage === pkg.name ? (
-											<Select
-												size="xs"
-												placeholder="Select version"
-												data={versionOptions}
-												value={selectedVersion}
-												onChange={setSelectedVersion}
-											/>
-										) : (
-											<Button
-												size="xs"
-												variant="light"
-												onClick={() => {
-													setSelectedPackage(pkg.name);
-													setSelectedVersion(null);
-												}}
-											>
-												Select version
-											</Button>
-										)}
-									</Table.Td>
-									<Table.Td>
-										<Button
-											size="xs"
-											leftSection={<ArrowDownToLine size={14} />}
-											onClick={handleStartInstall}
-											disabled={
-												selectedPackage !== pkg.name || !selectedVersion
-											}
-										>
-											Install
-										</Button>
-									</Table.Td>
-								</Table.Tr>
-							))}
-						</Table.Tbody>
-					</Table>
+					<DataPreview
+						columns={[
+							{ id: "package", label: "Package", width: 260 },
+							{ id: "description", label: "Description" },
+							{ id: "latest", label: "Latest", width: 120 },
+							{ id: "version", label: "Version", width: 220 },
+							{ id: "actions", label: "", width: 110 },
+						]}
+						rows={registryViews.map((pkg) => ({
+							package: (
+								<Group gap="xs">
+									<Box
+										size={16}
+										style={{ color: "var(--octo-accent-primary)" }}
+									/>
+									<Text fw={500} size="sm">
+										{pkg.name}
+									</Text>
+								</Group>
+							),
+							description: (
+								<Text size="sm" c="dimmed" lineClamp={1}>
+									{pkg.descriptionLabel}
+								</Text>
+							),
+							latest: (
+								<Badge size="sm" variant="outline">
+									{pkg.latestVersionLabel}
+								</Badge>
+							),
+							version:
+								selectedPackage === pkg.name ? (
+									<Select
+										size="xs"
+										placeholder="Select version"
+										data={versionOptions}
+										value={selectedVersion}
+										onChange={setSelectedVersion}
+									/>
+								) : (
+									<Button
+										size="xs"
+										variant="light"
+										onClick={() => {
+											setSelectedPackage(pkg.name);
+											setSelectedVersion(null);
+										}}
+									>
+										Select version
+									</Button>
+								),
+							actions: (
+								<Button
+									size="xs"
+									leftSection={<ArrowDownToLine size={14} />}
+									onClick={handleStartInstall}
+									disabled={selectedPackage !== pkg.name || !selectedVersion}
+								>
+									Install
+								</Button>
+							),
+						}))}
+						getRowKey={(_row, index) => registryViews[index]?.id ?? `${index}`}
+					/>
 				</Paper>
 			)}
 

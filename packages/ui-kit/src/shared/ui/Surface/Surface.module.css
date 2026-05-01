@@ -1,0 +1,57 @@
+.surface {
+    box-sizing: border-box;
+    min-width: 0;
+    border-radius: 8px;
+    background: var(--g-color-base-float);
+}
+
+.viewPlain {
+    background: transparent;
+}
+
+.viewFilled {
+    background: var(--g-color-base-float);
+}
+
+.viewTinted {
+    background: var(--g-color-base-generic);
+}
+
+.viewOutlined {
+    border: 1px solid var(--g-color-line-generic);
+}
+
+.interactive {
+    cursor: pointer;
+    transition:
+        border-color 120ms ease,
+        box-shadow 120ms ease,
+        transform 120ms ease,
+        background-color 120ms ease;
+}
+
+.interactive:hover {
+    border-color: var(--g-color-line-brand);
+    box-shadow: var(--g-box-shadow-light);
+    transform: translateY(-1px);
+}
+
+.paddingNone {
+    padding: 0;
+}
+
+.paddingXs {
+    padding: 8px;
+}
+
+.paddingS {
+    padding: 12px;
+}
+
+.paddingM {
+    padding: 16px;
+}
+
+.paddingL {
+    padding: 20px;
+}

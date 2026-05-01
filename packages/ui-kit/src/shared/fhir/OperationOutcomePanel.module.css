@@ -1,0 +1,73 @@
+.root {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.title {
+    color: var(--g-color-text-primary);
+    font-size: 14px;
+    font-weight: 600;
+    line-height: 18px;
+}
+
+.list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.issue {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 10px;
+    border: 1px solid var(--g-color-line-generic);
+    border-radius: 8px;
+    background: var(--g-color-base-generic);
+}
+
+.issueHead {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+}
+
+.code {
+    color: var(--g-color-text-primary);
+    font-size: 12px;
+    font-weight: 600;
+    line-height: 16px;
+}
+
+.diagnostics {
+    color: var(--g-color-text-primary);
+    font-size: 12px;
+    line-height: 17px;
+    white-space: pre-wrap;
+}
+
+.path {
+    overflow: hidden;
+    color: var(--g-color-text-secondary);
+    font-family: var(--g-font-family-monospace);
+    font-size: 11px;
+    line-height: 15px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.empty {
+    color: var(--g-color-text-secondary);
+    font-size: 12px;
+    line-height: 16px;
+}
+

@@ -22,54 +22,17 @@ import {
 	Clock,
 } from "@gravity-ui/icons";
 import type { AuditAnalytics as AuditAnalyticsType, AuditAction, AuditOutcome } from "@/shared/api/types";
+import {
+	getAuditActionColor,
+	getAuditActionLabel,
+	getAuditOutcomeColor,
+	getAuditOutcomeLabel,
+} from "@/entities/audit-event";
 import classes from "./AuditAnalytics.module.css";
 
 interface AuditAnalyticsProps {
 	analytics: AuditAnalyticsType | undefined;
 	isLoading: boolean;
-}
-
-function getActionLabel(action: AuditAction): string {
-	const labels: Record<AuditAction, string> = {
-		"user.login": "Login",
-		"user.logout": "Logout",
-		"user.login_failed": "Login Failed",
-		"resource.create": "Create",
-		"resource.read": "Read",
-		"resource.update": "Update",
-		"resource.delete": "Delete",
-		"resource.search": "Search",
-		"policy.evaluate": "Policy Check",
-		"client.auth": "Client Auth",
-		"client.create": "Client Create",
-		"client.update": "Client Update",
-		"client.delete": "Client Delete",
-		"config.change": "Config Change",
-		"system.startup": "Startup",
-		"system.shutdown": "Shutdown",
-	};
-	return labels[action] || action;
-}
-
-function getActionColor(action: AuditAction): string {
-	if (action.includes("failed")) return "red";
-	if (action.includes("delete")) return "red";
-	if (action.includes("create")) return "green";
-	if (action.includes("update") || action.includes("change")) return "yellow";
-	if (action.includes("login")) return "teal";
-	if (action.includes("read") || action.includes("search")) return "blue";
-	return "gray";
-}
-
-function getOutcomeColor(outcome: AuditOutcome): string {
-	switch (outcome) {
-		case "success":
-			return "green";
-		case "failure":
-			return "red";
-		case "partial":
-			return "yellow";
-	}
 }
 
 function StatCard({
@@ -170,11 +133,11 @@ function OutcomeRing({ outcomeBreakdown }: { outcomeBreakdown: Partial<Record<Au
 
 						return (
 							<Group key={outcome} gap="sm">
-								<ThemeIcon size="xs" color={getOutcomeColor(outcome)} variant="filled">
+								<ThemeIcon size="xs" color={getAuditOutcomeColor(outcome)} variant="filled">
 									<Icon size={10} />
 								</ThemeIcon>
 								<Text size="sm" style={{ minWidth: 60 }}>
-									{outcome.charAt(0).toUpperCase() + outcome.slice(1)}
+									{getAuditOutcomeLabel(outcome)}
 								</Text>
 								<Text size="sm" c="dimmed">
 									{count.toLocaleString()} ({percent}%)
@@ -208,8 +171,8 @@ function ActionBreakdown({ actionBreakdown }: { actionBreakdown: Partial<Record<
 				{sorted.map(([action, count]) => (
 					<div key={action}>
 						<Group justify="space-between" mb={4}>
-							<Badge size="sm" variant="light" color={getActionColor(action as AuditAction)}>
-								{getActionLabel(action as AuditAction)}
+							<Badge size="sm" variant="light" color={getAuditActionColor(action as AuditAction)}>
+								{getAuditActionLabel(action as AuditAction)}
 							</Badge>
 							<Text size="xs" c="dimmed">
 								{count.toLocaleString()}
@@ -218,7 +181,7 @@ function ActionBreakdown({ actionBreakdown }: { actionBreakdown: Partial<Record<
 						<Progress
 							value={(count / max) * 100}
 							size="sm"
-							color={getActionColor(action as AuditAction)}
+							color={getAuditActionColor(action as AuditAction)}
 							radius="sm"
 						/>
 					</div>
@@ -322,7 +285,7 @@ function FailedAttempts({ failedAttempts }: { failedAttempts: AuditAnalyticsType
 							<ThemeIcon size="sm" color="red" variant="light">
 								<Xmark size={12} />
 							</ThemeIcon>
-							<Text size="sm">{getActionLabel(attempt.action)}</Text>
+							<Text size="sm">{getAuditActionLabel(attempt.action)}</Text>
 						</Group>
 						<Group gap="xs">
 							<Badge size="sm" color="red" variant="light">

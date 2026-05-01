@@ -1,87 +1,16 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { notifications } from "@octofhir/ui-kit";
+import {
+	accessPolicyOperations,
+	accessPolicyUserTypes,
+	type AccessPolicyResource,
+} from "@/entities/access-policy";
 import { fhirClient } from "@/shared/api/fhirClient";
 import type { Bundle, FhirResource } from "@/shared/api/types";
 
-/**
- * AccessPolicy resource matching backend structure.
- *
- * Uses matcher + engine pattern for policy evaluation.
- */
-export interface AccessPolicyResource extends FhirResource {
-	resourceType: "AccessPolicy";
-	name: string;
-	description?: string;
-	active?: boolean;
-	priority?: number;
-	matcher?: MatcherElement;
-	engine: EngineElement;
-	denyMessage?: string;
-}
-
-/**
- * Matcher element - determines when a policy applies.
- * All specified fields must match for the policy to apply (AND logic).
- */
-export interface MatcherElement {
-	/** Client ID patterns (supports wildcards with `*`). */
-	clients?: string[];
-	/** Required user roles (any role matches). */
-	roles?: string[];
-	/** User FHIR resource types (e.g., "Practitioner", "Patient"). */
-	userTypes?: string[];
-	/** Target FHIR resource types. */
-	resourceTypes?: string[];
-	/** FHIR operations (e.g., "read", "create", "search"). */
-	operations?: string[];
-	/** Operation IDs for more specific targeting (e.g., "fhir.read", "graphql.query"). */
-	operationIds?: string[];
-	/** Request path patterns (glob syntax). */
-	paths?: string[];
-	/** Source IP addresses in CIDR notation. */
-	sourceIps?: string[];
-}
-
-/**
- * Engine element - how the policy is evaluated.
- */
-export interface EngineElement {
-	/** Engine type: allow, deny, or quickjs for custom scripts. */
-	type: "allow" | "deny" | "quickjs";
-	/** Script content (required for QuickJS engine). */
-	script?: string;
-}
-
-/** Valid FHIR operations for policy matching. */
-export const VALID_OPERATIONS = [
-	"read",
-	"vread",
-	"update",
-	"patch",
-	"delete",
-	"history",
-	"history-instance",
-	"history-type",
-	"history-system",
-	"create",
-	"search",
-	"search-type",
-	"search-system",
-	"capabilities",
-	"batch",
-	"transaction",
-	"operation",
-	"*",
-] as const;
-
-/** Valid user types for policy matching. */
-export const VALID_USER_TYPES = [
-	"Practitioner",
-	"Patient",
-	"RelatedPerson",
-	"Person",
-	"*",
-] as const;
+export type { AccessPolicyResource, MatcherElement, EngineElement } from "@/entities/access-policy";
+export const VALID_OPERATIONS = accessPolicyOperations;
+export const VALID_USER_TYPES = accessPolicyUserTypes;
 
 // Query keys
 export const accessPolicyKeys = {

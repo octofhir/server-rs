@@ -13,23 +13,12 @@ export function MethodControl() {
 
 	return (
 		<Select
-			value={method}
-			onChange={(v) => setMethodEvent((v ?? "GET") as HttpMethod)}
-			data={METHOD_OPTIONS}
-			size="sm"
-			variant="unstyled"
-			allowDeselect={false}
-			withCheckIcon={false}
-			styles={{
-				input: {
-					fontWeight: 700,
-					fontFamily: "var(--font-mono, 'JetBrains Mono', monospace)",
-					width: 90,
-					paddingLeft: 12,
-					paddingRight: 4,
-					fontSize: 13,
-				},
-			}}
+			value={[method]}
+			onUpdate={(v) => setMethodEvent((v[0] ?? "GET") as HttpMethod)}
+			options={METHOD_OPTIONS.map(m => ({ value: m, content: m }))}
+			size="m"
+			view="flat"
+			style={{ width: 80, fontWeight: 700 }}
 		/>
 	);
 }

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import {
 	Stack,
@@ -7,7 +7,7 @@ import {
 	Paper,
 	Group,
 	Badge,
-	Table,
+	DataPreview,
 	Loader,
 	Alert,
 	TextInput,
@@ -23,6 +23,11 @@ import {
 	ScrollArea,
 	Code,
 } from "@/shared/ui";
+import {
+	filterFhirPackageResources,
+	getFhirPackageResourceTypeOptions,
+	getFhirPackageResourceViews,
+} from "@/entities/fhir-package";
 import {
 	CircleExclamation,
 	Magnifier,
@@ -192,23 +197,18 @@ function ResourcesTab({
 		limit: 100,
 	});
 
-	const filteredResources = data?.resources.filter((r) => {
-		if (!search) return true;
-		const searchLower = search.toLowerCase();
-		return (
-			r.name?.toLowerCase().includes(searchLower) ||
-			r.url?.toLowerCase().includes(searchLower) ||
-			r.id?.toLowerCase().includes(searchLower)
-		);
-	});
-
-	const typeOptions = [
-		{ value: "", label: "All types" },
-		...resourceTypes.map((rt) => ({
-			value: rt.resourceType,
-			label: `${rt.resourceType} (${rt.count})`,
-		})),
-	];
+	const filteredResources = useMemo(
+		() => filterFhirPackageResources(data?.resources ?? [], search),
+		[data?.resources, search],
+	);
+	const resourceViews = useMemo(
+		() => getFhirPackageResourceViews(filteredResources),
+		[filteredResources],
+	);
+	const typeOptions = useMemo(
+		() => getFhirPackageResourceTypeOptions(resourceTypes),
+		[resourceTypes],
+	);
 
 	return (
 		<Stack gap="md">
@@ -245,65 +245,52 @@ function ResourcesTab({
 				</Alert>
 			)}
 
-			{!isLoading && !error && filteredResources && (
+			{!isLoading && !error && (
 				<Paper style={{ backgroundColor: "var(--octo-surface-1)" }}>
-					<Table striped highlightOnHover>
-						<Table.Thead>
-							<Table.Tr>
-								<Table.Th>Type</Table.Th>
-								<Table.Th>Name</Table.Th>
-								<Table.Th>URL</Table.Th>
-								<Table.Th>Version</Table.Th>
-								<Table.Th w={50} />
-							</Table.Tr>
-						</Table.Thead>
-						<Table.Tbody>
-							{filteredResources.length === 0 ? (
-								<Table.Tr>
-									<Table.Td colSpan={5}>
-										<Text ta="center" c="dimmed" py="md">
-											No resources found
-										</Text>
-									</Table.Td>
-								</Table.Tr>
-							) : (
-								filteredResources.map((resource, idx) => (
-									<Table.Tr key={resource.url || resource.id || idx}>
-										<Table.Td>
-											<Group gap="xs">
-												<ResourceTypeIcon resourceType={resource.resourceType} />
-												<Text size="sm">{resource.resourceType}</Text>
-											</Group>
-										</Table.Td>
-										<Table.Td>
-											<Text size="sm" fw={500}>
-												{resource.name || "-"}
-											</Text>
-										</Table.Td>
-										<Table.Td>
-											<Text size="xs" c="dimmed" lineClamp={1}>
-												{resource.url || "-"}
-											</Text>
-										</Table.Td>
-										<Table.Td>
-											<Text size="sm">{resource.version || "-"}</Text>
-										</Table.Td>
-										<Table.Td>
-											<Tooltip label="View resource">
-												<ActionIcon
-													variant="subtle"
-													size="sm"
-													onClick={() => setSelectedResource(resource)}
-												>
-													<Eye size={16} />
-												</ActionIcon>
-											</Tooltip>
-										</Table.Td>
-									</Table.Tr>
-								))
-							)}
-						</Table.Tbody>
-					</Table>
+					<DataPreview
+						columns={[
+							{ id: "type", label: "Type", width: 220 },
+							{ id: "name", label: "Name", width: 240 },
+							{ id: "url", label: "URL" },
+							{ id: "version", label: "Version", width: 120 },
+							{ id: "actions", label: "", width: 50 },
+						]}
+						rows={resourceViews.map((resource, index) => ({
+							type: (
+								<Group gap="xs">
+									<ResourceTypeIcon resourceType={resource.resourceType} />
+									<Text size="sm">{resource.resourceType}</Text>
+								</Group>
+							),
+							name: (
+								<Text size="sm" fw={500}>
+									{resource.nameLabel}
+								</Text>
+							),
+							url: (
+								<Text size="xs" c="dimmed" lineClamp={1}>
+									{resource.urlLabel}
+								</Text>
+							),
+							version: <Text size="sm">{resource.versionLabel}</Text>,
+							actions: (
+								<Tooltip label="View resource">
+									<ActionIcon
+										variant="subtle"
+										size="sm"
+										onClick={() => {
+											const selected = filteredResources[index];
+											if (selected) setSelectedResource(selected);
+										}}
+									>
+										<Eye size={16} />
+									</ActionIcon>
+								</Tooltip>
+							),
+						}))}
+						emptyText="No resources found"
+						getRowKey={(_row, index) => resourceViews[index]?.id ?? `${index}`}
+					/>
 				</Paper>
 			)}
 

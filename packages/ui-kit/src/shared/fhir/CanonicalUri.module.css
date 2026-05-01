@@ -1,0 +1,16 @@
+.root {
+    display: inline-flex;
+    max-width: 100%;
+    min-width: 0;
+    align-items: center;
+    color: var(--g-color-text-secondary);
+    font-family: var(--octo-typography-mono, monospace);
+    font-size: 12px;
+    line-height: 16px;
+}
+
+.value {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}

@@ -1,33 +1,10 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { notifications } from "@octofhir/ui-kit";
+import type { ClientResource, RegenerateSecretResponse } from "@/entities/oauth-client";
 import { fhirClient } from "@/shared/api/fhirClient";
-import type { Bundle, FhirResource } from "@/shared/api/types";
+import type { Bundle } from "@/shared/api/types";
 
-// We'll define a Client interface that matches the backend
-export interface ClientResource extends FhirResource {
-	resourceType: "Client";
-	clientId: string;
-	clientSecret?: string;
-	name: string;
-	description?: string;
-	grantTypes: string[];
-	redirectUris: string[];
-	postLogoutRedirectUris: string[];
-	scopes: string[];
-	confidential: boolean;
-	active: boolean;
-	accessTokenLifetime?: number;
-	refreshTokenLifetime?: number;
-	pkceRequired?: boolean;
-	allowedOrigins: string[];
-	jwksUri?: string;
-}
-
-// Response from regenerate secret endpoint
-export interface RegenerateSecretResponse {
-	clientId: string;
-	clientSecret: string;
-}
+export type { ClientResource, RegenerateSecretResponse } from "@/entities/oauth-client";
 
 // Query keys
 export const clientKeys = {

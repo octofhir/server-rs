@@ -14,7 +14,7 @@ export {
     MobileHeaderFooterItem as FooterItem,
     MobileLogo,
     Settings,
-    Title as TrackerTitle,
+    Title as NavigationTitle,
     type LogoProps,
     type MenuGroup as AsideHeaderMenuGroup,
     type MenuItem as AsideHeaderMenuItem,

@@ -1,0 +1,40 @@
+.root {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    min-width: 0;
+}
+
+.item {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 12px;
+    align-items: center;
+    min-width: 0;
+}
+
+.label {
+    overflow: hidden;
+    color: var(--g-color-text-secondary);
+    font-size: 13px;
+    line-height: 18px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.value {
+    min-width: 0;
+    color: var(--g-color-text-primary);
+    font-size: 13px;
+    font-weight: 600;
+    line-height: 18px;
+    text-align: right;
+}
+
+.caption {
+    grid-column: 1 / -1;
+    margin-top: -6px;
+    color: var(--g-color-text-hint);
+    font-size: 12px;
+    line-height: 16px;
+}

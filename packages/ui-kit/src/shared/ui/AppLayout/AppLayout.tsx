@@ -70,8 +70,8 @@ function useMediaQuery(query: string) {
 }
 
 /**
- * Modern Application Layout renamed from TrackerLayout to AppLayout.
- * Provides consistent sidebar, theme management, and responsive behaviors.
+ * Modern application layout with consistent sidebar, theme management,
+ * and responsive behaviors.
  */
 export const AppLayout = forwardRef<HTMLDivElement, AppLayoutProps>(
     function AppLayout(
@@ -81,6 +81,7 @@ export const AppLayout = forwardRef<HTMLDivElement, AppLayoutProps>(
             children,
             onChangePinned,
             menuGroups,
+            menuItems,
             persistKey,
             onMenuGroupsChanged,
             className,
@@ -132,6 +133,12 @@ export const AppLayout = forwardRef<HTMLDivElement, AppLayoutProps>(
             );
         }, [menuGroups, collapsedGroups]);
 
+        const visibleMenuItems = useMemo<AsideMenuItem[] | undefined>(() => {
+            if (effectivePinned) return menuItems;
+
+            return menuItems?.map(({ groupId: _groupId, ...item }) => item);
+        }, [effectivePinned, menuItems]);
+
         const handleGroupsChanged = useCallback(
             (groups: AsideMenuGroup[]) => {
                 const next: Record<string, boolean> = {};
@@ -150,11 +157,14 @@ export const AppLayout = forwardRef<HTMLDivElement, AppLayoutProps>(
                 pinned={effectivePinned}
                 onChangePinned={handlePinnedChange}
                 topAlert={topAlert}
+                isCompactMode={isCompactMode}
             >
                 <PageLayoutAside
                     ref={ref}
-                    menuGroups={resolvedGroups}
+                    menuItems={visibleMenuItems}
+                    menuGroups={effectivePinned ? resolvedGroups : undefined}
                     onMenuGroupsChanged={handleGroupsChanged}
+                    isCompactMode={isCompactMode}
                     renderFooter={renderFooter ? () => renderFooter({ isPinned: effectivePinned }) : undefined}
                     {...rest}
                 />

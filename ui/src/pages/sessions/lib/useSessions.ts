@@ -1,50 +1,14 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import {
+  extractAuthSessionUserId,
+  isCurrentAuthSession,
+  parseAuthSession,
+  type AuthSession,
+} from '@/entities/auth-session';
 import { fhirClient } from '@/shared/api/fhirClient';
-import type { FhirResource } from '@/shared/api/types';
-
-/**
- * AuthSession resource type definition
- * Based on the FHIR StructureDefinition created in the IG
- */
-export interface AuthSession extends FhirResource {
-  resourceType: 'AuthSession';
-  status: 'active' | 'expired' | 'revoked';
-  sessionToken: string;
-  subject: {
-    reference: string; // e.g., "User/uuid"
-  };
-  deviceName?: string;
-  userAgent?: string;
-  ipAddress?: string;
-  createdAt: string; // ISO datetime
-  lastActivityAt?: string; // ISO datetime
-  expiresAt: string; // ISO datetime
-}
-
-/**
- * Parse AuthSession from FHIR Bundle entry
- */
-function parseAuthSession(resource: any): AuthSession {
-  return {
-    ...resource,
-    resourceType: 'AuthSession',
-  } as AuthSession;
-}
-
-/**
- * Extract user ID from subject reference
- */
-export function extractUserId(session: AuthSession): string {
-  const match = session.subject.reference.match(/User\/(.+)/);
-  return match ? match[1] : '';
-}
-
-/**
- * Check if session is the current one based on cookie
- */
-export function isCurrentSession(session: AuthSession, cookieToken?: string): boolean {
-  return cookieToken ? session.sessionToken === cookieToken : false;
-}
+export type { AuthSession } from '@/entities/auth-session';
+export const extractUserId = extractAuthSessionUserId;
+export const isCurrentSession = isCurrentAuthSession;
 
 /**
  * Get current session token from cookie

@@ -31,10 +31,16 @@ export {
     Container, type ContainerProps,
     Burger, type BurgerProps,
     Code, type CodeProps,
+    DataPreview, type DataPreviewProps, type DataPreviewColumn, type DataPreviewRow,
+    KeyValueList, type KeyValueListProps, type KeyValueListItem,
     SegmentedRadioGroup, type SegmentedRadioGroupProps,
     SegmentedRadioGroup as SegmentedControl, type SegmentedRadioGroupProps as SegmentedControlProps,
     ThemeIcon, type ThemeIconProps,
     PasswordInput, type PasswordInputProps,
+    RecordList, type RecordListProps, type RecordListItem,
+    SectionPanel, type SectionPanelProps,
+    StatGrid, type StatGridProps,
+    StatusBadge, type StatusBadgeProps,
 
     // Legacy aliases (deprecated, to be removed)
     Stack, type StackProps,

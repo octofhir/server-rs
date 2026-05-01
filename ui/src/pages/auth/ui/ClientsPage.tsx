@@ -4,7 +4,7 @@ import {
 	Title,
 	Text,
 	Group,
-	Table,
+	DataPreview,
 	Badge,
 	Menu,
 	PasswordInput,
@@ -28,6 +28,13 @@ import {
 	Copy,
 	Check,
 } from "@gravity-ui/icons";
+import {
+	getClientStatusView,
+	getClientTypeView,
+	oauthGrantTypeOptions,
+	type ClientResource,
+	type RegenerateSecretResponse,
+} from "@/entities/oauth-client";
 import { Card } from "@/shared/ui/Card/Card";
 import { Modal } from "@/shared/ui/Modal/Modal";
 import { Button } from "@/shared/ui/Button/Button";
@@ -39,8 +46,6 @@ import {
 	useUpdateClient,
 	useDeleteClient,
 	useRegenerateSecret,
-	type ClientResource,
-	type RegenerateSecretResponse,
 } from "../lib/useClients";
 import { SecretDisplayModal } from "./SecretDisplayModal";
 import { DeleteClientModal } from "./DeleteClientModal";
@@ -127,130 +132,117 @@ export function ClientsPage() {
 					/>
 				</Group>
 
-				<Table>
-					<Table.Thead>
-						<Table.Tr>
-							<Table.Th>Name / Client ID</Table.Th>
-							<Table.Th>Type</Table.Th>
-							<Table.Th>Grant Types</Table.Th>
-							<Table.Th>Status</Table.Th>
-							<Table.Th style={{ width: 50 }} />
-						</Table.Tr>
-					</Table.Thead>
-					<Table.Tbody>
-						{isLoading ? (
-							<Table.Tr>
-								<Table.Td colSpan={5}>Loading...</Table.Td>
-							</Table.Tr>
-						) : clients.length === 0 ? (
-							<Table.Tr>
-								<Table.Td colSpan={5} style={{ textAlign: "center" }}>
-									No clients found
-								</Table.Td>
-							</Table.Tr>
-						) : (
-							clients.map((client) => (
-								<Table.Tr key={client.id}>
-									<Table.Td>
-										<Group gap="xs">
-											<Display size={16} color="gray" />
-											<div>
-												<Text size="sm" fw={500}>
-													{client.name}
-												</Text>
-												<div className={classes.clientIdCell}>
-													<Text className={classes.clientIdText}>
-														{client.clientId}
+				<DataPreview
+					columns={[
+						{ id: "client", label: "Name / Client ID" },
+						{ id: "type", label: "Type", width: 130 },
+						{ id: "grantTypes", label: "Grant Types" },
+						{ id: "status", label: "Status", width: 110 },
+						{ id: "actions", label: "", width: 48 },
+					]}
+					rows={
+						isLoading
+							? []
+							: clients.map((client) => {
+									const typeView = getClientTypeView(client);
+									const statusView = getClientStatusView(client);
+
+									return {
+										client: (
+											<Group gap="xs">
+												<Display size={16} color="gray" />
+												<div>
+													<Text size="sm" fw={500}>
+														{client.name}
 													</Text>
-													<CopyButton value={client.clientId} timeout={2000}>
-														{({ copied, copy }) => (
-															<Tooltip
-																label={copied ? "Copied!" : "Copy Client ID"}
-																withArrow
-																position="right"
-															>
-																<ActionIcon
-																	variant="subtle"
-																	size="xs"
-																	color={copied ? "teal" : "gray"}
-																	onClick={copy}
+													<div className={classes.clientIdCell}>
+														<Text className={classes.clientIdText}>
+															{client.clientId}
+														</Text>
+														<CopyButton value={client.clientId} timeout={2000}>
+															{({ copied, copy }) => (
+																<Tooltip
+																	label={copied ? "Copied!" : "Copy Client ID"}
+																	withArrow
+																	position="right"
 																>
-																	{copied ? (
-																		<Check size={12} />
-																	) : (
-																		<Copy size={12} />
-																	)}
-																</ActionIcon>
-															</Tooltip>
-														)}
-													</CopyButton>
+																	<ActionIcon
+																		variant="subtle"
+																		size="xs"
+																		color={copied ? "teal" : "gray"}
+																		onClick={copy}
+																	>
+																		{copied ? (
+																			<Check size={12} />
+																		) : (
+																			<Copy size={12} />
+																		)}
+																	</ActionIcon>
+																</Tooltip>
+															)}
+														</CopyButton>
+													</div>
 												</div>
-											</div>
-										</Group>
-									</Table.Td>
-									<Table.Td>
-										<Badge
-											variant="outline"
-											color={client.confidential ? "blue" : "gray"}
-										>
-											{client.confidential ? "Confidential" : "Public"}
-										</Badge>
-									</Table.Td>
-									<Table.Td>
-										<Group gap={4}>
-											{client.grantTypes?.map((gt) => (
-												<Badge key={gt} size="sm" variant="dot">
-													{gt}
-												</Badge>
-											))}
-										</Group>
-									</Table.Td>
-									<Table.Td>
-										<Badge
-											color={client.active ? "green" : "gray"}
-											variant="light"
-										>
-											{client.active ? "Active" : "Inactive"}
-										</Badge>
-									</Table.Td>
-									<Table.Td>
-										<Menu position="bottom-end" withinPortal>
-											<Menu.Target>
-												<ActionIcon variant="subtle" color="gray">
-													<EllipsisVertical size={16} />
-												</ActionIcon>
-											</Menu.Target>
-											<Menu.Dropdown>
-												<Menu.Item
-													leftSection={<Pencil size={14} />}
-													onClick={() => handleEdit(client)}
-												>
-													Edit
-												</Menu.Item>
-												{client.confidential && (
+											</Group>
+										),
+										type: (
+											<Badge variant="outline" color={typeView.color}>
+												{typeView.label}
+											</Badge>
+										),
+										grantTypes: (
+											<Group gap={4}>
+												{client.grantTypes?.map((grantType) => (
+													<Badge key={grantType} size="sm" variant="dot">
+														{grantType}
+													</Badge>
+												))}
+											</Group>
+										),
+										status: (
+											<Badge color={statusView.color} variant="light">
+												{statusView.label}
+											</Badge>
+										),
+										actions: (
+											<Menu position="bottom-end" withinPortal>
+												<Menu.Target>
+													<ActionIcon variant="subtle" color="gray">
+														<EllipsisVertical size={16} />
+													</ActionIcon>
+												</Menu.Target>
+												<Menu.Dropdown>
 													<Menu.Item
-														leftSection={<ArrowRotateRight size={14} />}
-														onClick={() => handleRegenerateSecret(client)}
+														leftSection={<Pencil size={14} />}
+														onClick={() => handleEdit(client)}
 													>
-														Regenerate Secret
+														Edit
 													</Menu.Item>
-												)}
-												<Menu.Divider />
-												<Menu.Item
-													leftSection={<TrashBin size={14} />}
-													color="red"
-													onClick={() => handleDeleteClick(client)}
-												>
-													Delete
-												</Menu.Item>
-											</Menu.Dropdown>
-										</Menu>
-									</Table.Td>
-								</Table.Tr>
-							))
-						)}
-					</Table.Tbody>
-				</Table>
+													{client.confidential && (
+														<Menu.Item
+															leftSection={<ArrowRotateRight size={14} />}
+															onClick={() => handleRegenerateSecret(client)}
+														>
+															Regenerate Secret
+														</Menu.Item>
+													)}
+													<Menu.Divider />
+													<Menu.Item
+														leftSection={<TrashBin size={14} />}
+														color="red"
+														onClick={() => handleDeleteClick(client)}
+													>
+														Delete
+													</Menu.Item>
+												</Menu.Dropdown>
+											</Menu>
+										),
+									};
+								})
+					}
+					emptyText={isLoading ? "Loading clients..." : "No clients found"}
+					getRowKey={(_row, index) => clients[index]?.id ?? clients[index]?.clientId ?? `${index}`}
+				/>
 			</Card>
 
 			<ClientModal
@@ -281,13 +273,6 @@ export function ClientsPage() {
 		</Stack>
 	);
 }
-
-const GRANT_TYPES = [
-	{ label: "Authorization Code", value: "authorization_code" },
-	{ label: "Client Credentials", value: "client_credentials" },
-	{ label: "Refresh Token", value: "refresh_token" },
-	{ label: "Password", value: "password" },
-];
 
 function ClientModal({
 	opened,
@@ -426,7 +411,7 @@ function ClientModal({
 									<MultiSelect
 										label="Grant Types"
 										required
-										data={GRANT_TYPES}
+										data={oauthGrantTypeOptions}
 										value={input.value}
 										onChange={input.onChange}
 										error={meta.touched && meta.error ? meta.error : undefined}

@@ -28,13 +28,27 @@ export interface DashboardShellAccount {
     onSignOut?: () => void;
 }
 
+export interface DashboardShellMenuItem extends AppNavItem {
+    /** App-level alias for Gravity Navigation's `current` flag. */
+    active?: boolean;
+}
+
+export interface DashboardShellMenuGroup extends AppNavGroup {
+    /**
+     * Convenience API for application shells. Gravity Navigation itself expects
+     * flat menu items with `groupId`; DashboardShell accepts grouped items and
+     * normalizes them before rendering.
+     */
+    items?: DashboardShellMenuItem[];
+}
+
 export interface DashboardShellProps
     extends Pick<
         AppLayoutProps,
         "logo" | "defaultPinned" | "persistKey" | "collapseBelow" | "children"
     > {
-    menuItems: AppNavItem[];
-    menuGroups?: AppNavGroup[];
+    menuItems?: DashboardShellMenuItem[];
+    menuGroups?: DashboardShellMenuGroup[];
     themeAction?: DashboardShellAction;
     status?: DashboardShellStatus;
     account?: DashboardShellAccount | null;
@@ -56,11 +70,13 @@ export function DashboardShell({
     account,
     children,
 }: DashboardShellProps) {
+    const { normalizedMenuItems, normalizedMenuGroups } = normalizeNavigation(menuItems, menuGroups);
+
     return (
         <AppLayout
             logo={logo}
-            menuItems={menuItems}
-            menuGroups={menuGroups}
+            menuItems={normalizedMenuItems}
+            menuGroups={normalizedMenuGroups}
             defaultPinned={defaultPinned}
             persistKey={persistKey}
             collapseBelow={collapseBelow}
@@ -118,4 +134,44 @@ export function DashboardShell({
             {children}
         </AppLayout>
     );
+}
+
+function normalizeNavigation(
+    menuItems: DashboardShellMenuItem[] = [],
+    menuGroups?: DashboardShellMenuGroup[],
+): { normalizedMenuItems: AppNavItem[]; normalizedMenuGroups?: AppNavGroup[] } {
+    if (!menuGroups?.length) {
+        return {
+            normalizedMenuItems: menuItems.map(normalizeMenuItem),
+            normalizedMenuGroups: undefined,
+        };
+    }
+
+    const groupedItems = menuGroups.flatMap((group) =>
+        (group.items ?? []).map((item) =>
+            normalizeMenuItem({
+                ...item,
+                groupId: item.groupId ?? group.id,
+            }),
+        ),
+    );
+    const normalizedMenuItems = [...menuItems.map(normalizeMenuItem), ...groupedItems];
+    const usedGroupIds = new Set(
+        normalizedMenuItems.flatMap((item) => (item.groupId ? [item.groupId] : [])),
+    );
+    const normalizedMenuGroups = menuGroups
+        .filter((group) => usedGroupIds.has(group.id))
+        .map(({ items: _items, ...group }) => group);
+
+    return {
+        normalizedMenuItems,
+        normalizedMenuGroups: normalizedMenuGroups.length ? normalizedMenuGroups : undefined,
+    };
+}
+
+function normalizeMenuItem({ active, current, ...item }: DashboardShellMenuItem): AppNavItem {
+    return {
+        ...item,
+        current: current ?? active,
+    };
 }

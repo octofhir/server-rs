@@ -18,6 +18,8 @@ export * from "./Flex";
 export * from "./Grid";
 export * from "./Container";
 export * from "./Burger";
+export * from "./Surface";
+export * from "./PageHeader";
 
 // === Data display ===
 export * from "./Card";
@@ -26,10 +28,18 @@ export * from "./Tabs";
 export * from "./Accordion";
 export * from "./Text";
 export * from "./Code";
+export * from "./DataPreview";
 export * from "./Hotkey";
 export * from "./Breadcrumbs";
 export * from "./Skeleton";
 export * from "./AppShell";
+export * from "./MetricTile";
+export * from "./RecordList";
+export * from "./StatGrid";
+export * from "./StatusBadge";
+export * from "./KeyValueList";
+export * from "./CommandCard";
+export * from "./SectionPanel";
 
 // === Feedback ===
 export * from "./Alert";

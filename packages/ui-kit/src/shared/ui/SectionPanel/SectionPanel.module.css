@@ -1,0 +1,36 @@
+.root {
+    min-width: 0;
+}
+
+.header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 12px;
+}
+
+.titleBlock {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+}
+
+.title {
+    margin: 0;
+    color: var(--g-color-text-primary);
+    font-size: 14px;
+    font-weight: 600;
+    line-height: 20px;
+}
+
+.description {
+    color: var(--g-color-text-secondary);
+    font-size: 12px;
+    line-height: 16px;
+}
+
+.actions {
+    flex: 0 0 auto;
+}

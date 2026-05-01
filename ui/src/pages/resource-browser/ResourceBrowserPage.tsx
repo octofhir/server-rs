@@ -10,7 +10,6 @@ import {
 	Loader,
 	Center,
 	TextInput,
-	Table,
 	SegmentedControl,
 	ActionIcon,
 	Button,
@@ -19,8 +18,9 @@ import {
 	ScrollArea,
 	Alert,
 	Box,
+	RecordList,
 } from "@/shared/ui";
-import { notifications } from "@octofhir/ui-kit";
+import { OperationOutcomePanel, notifications } from "@octofhir/ui-kit";
 import {
 	Magnifier,
 	ChevronLeft,
@@ -38,11 +38,19 @@ import {
 	useFollowBundleLink,
 	useJsonSchema,
 } from "@/shared/api/hooks";
+import {
+	filterFhirCatalogTypes,
+	getFhirCatalogCategoryOptions,
+	getFhirCatalogTypeViews,
+	type FhirCatalogCategoryFilter,
+} from "@/entities/fhir-catalog";
+import {
+	getFhirBundleResources,
+	getFhirResourceListViews,
+} from "@/entities/fhir-resource";
 import { JsonEditor } from "@/shared/monaco/JsonEditor";
-import type { FhirResource, FhirBundle, FhirOperationOutcome } from "@/shared/api/types";
+import type { FhirBundle, FhirOperationOutcome } from "@/shared/api/types";
 import { HttpError } from "@/shared/api/fhirClient";
-
-type CategoryFilter = "all" | "fhir" | "system" | "custom";
 
 const MIN_PANEL_WIDTH = 400;
 const MAX_PANEL_WIDTH = 900;
@@ -55,7 +63,7 @@ export function ResourceBrowserPage() {
 	const selectedType = routeType ?? null;
 	const selectedId = routeId ?? null;
 	const [typeFilter, setTypeFilter] = useState("");
-	const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>("all");
+	const [categoryFilter, setCategoryFilter] = useState<FhirCatalogCategoryFilter>("all");
 	const [isEditMode, setIsEditMode] = useState(false);
 	const [editedResource, setEditedResource] = useState("");
 	const [currentBundle, setCurrentBundle] = useState<FhirBundle | null>(null);
@@ -121,60 +129,38 @@ export function ResourceBrowserPage() {
 		};
 
 		if (isResizing) {
-			document.addEventListener("mousemove", (e) => handleMouseMove(e as unknown as MouseEvent));
+			document.addEventListener("mousemove", handleMouseMove);
 			document.addEventListener("mouseup", handleMouseUp);
 		}
 
 		return () => {
-			document.removeEventListener("mousemove", (e) => handleMouseMove(e as unknown as MouseEvent));
+			document.removeEventListener("mousemove", handleMouseMove);
 			document.removeEventListener("mouseup", handleMouseUp);
 		};
 	}, [isResizing]);
 
 	// Memoize category filter data to avoid infinite re-renders
 	const categoryFilterData = useMemo(() => [
-		{
-			value: "all",
-			label: `All${categorizedTypes?.counts ? ` (${categorizedTypes.counts.all})` : ""}`,
-		},
-		{
-			value: "fhir",
-			label: `FHIR${categorizedTypes?.counts ? ` (${categorizedTypes.counts.fhir})` : ""}`,
-		},
-		{
-			value: "system",
-			label: `System${categorizedTypes?.counts ? ` (${categorizedTypes.counts.system})` : ""}`,
-		},
-		{
-			value: "custom",
-			label: `Custom${categorizedTypes?.counts ? ` (${categorizedTypes.counts.custom})` : ""}`,
-		},
-	], [categorizedTypes?.counts]);
+		...getFhirCatalogCategoryOptions(categorizedTypes),
+	], [categorizedTypes]);
 
 	// Filter resource types by category and search
 	const filteredTypes = useMemo(() => {
-		if (!categorizedTypes?.types) return [];
-
-		let types = categorizedTypes.types;
-
-		// Filter by category
-		if (categoryFilter !== "all") {
-			types = types.filter((t) => t.category === categoryFilter);
-		}
-
-		// Filter by search
-		if (typeFilter) {
-			const lower = typeFilter.toLowerCase();
-			types = types.filter((t) => t.name.toLowerCase().includes(lower));
-		}
-
-		return types;
+		return filterFhirCatalogTypes(categorizedTypes, categoryFilter, typeFilter);
 	}, [categorizedTypes, categoryFilter, typeFilter]);
+	const filteredTypeViews = useMemo(
+		() => getFhirCatalogTypeViews(filteredTypes),
+		[filteredTypes],
+	);
 
 	// Extract resources from current bundle
 	const resources = useMemo(() => {
-		return (currentBundle?.entry?.map((e) => e.resource).filter(Boolean) ?? []) as FhirResource[];
+		return getFhirBundleResources(currentBundle);
 	}, [currentBundle]);
+	const resourceViews = useMemo(
+		() => getFhirResourceListViews(resources),
+		[resources],
+	);
 
 	// Pagination state
 	const hasNextPage = currentBundle?.link?.some((l) => l.relation === "next") ?? false;
@@ -275,16 +261,6 @@ export function ResourceBrowserPage() {
 		setIsEditMode(false);
 	};
 
-	// Extract display value from resource
-	const getResourceDisplayValue = (resource: FhirResource, field: string): string => {
-		const value = resource[field];
-		if (value === undefined || value === null) return "-";
-		if (typeof value === "string") return value;
-		if (typeof value === "boolean") return value ? "true" : "false";
-		if (typeof value === "number") return String(value);
-		return JSON.stringify(value);
-	};
-
 	// Breadcrumb items
 	const breadcrumbItems = [
 		<Anchor key="root" onClick={handleBackToTypes} size="sm">
@@ -328,7 +304,7 @@ export function ResourceBrowserPage() {
 							size="sm"
 							radius="md"
 							value={categoryFilter}
-							onChange={(val) => setCategoryFilter(val as CategoryFilter)}
+							onChange={(val) => setCategoryFilter(val as FhirCatalogCategoryFilter)}
 							data={categoryFilterData}
 						/>
 						<TextInput
@@ -360,55 +336,24 @@ export function ResourceBrowserPage() {
 				</Center>
 			) : (
 				<ScrollArea style={{ flex: 1 }} className="custom-scrollbar">
-					<Table highlightOnHover verticalSpacing="md" className="modern-table">
-						<Table.Thead>
-							<Table.Tr>
-								<Table.Th style={{ width: 300 }}>Resource Type</Table.Th>
-								<Table.Th>Definition URL</Table.Th>
-								<Table.Th>Package</Table.Th>
-								<Table.Th style={{ width: 120 }}>Category</Table.Th>
-							</Table.Tr>
-						</Table.Thead>
-						<Table.Tbody>
-							{filteredTypes.map((item) => (
-								<Table.Tr
-									key={item.name}
-									onClick={() => handleTypeSelect(item.name)}
-									style={{ cursor: "pointer" }}
-								>
-									<Table.Td>
-										<Text fw={600} size="sm">{item.name}</Text>
-									</Table.Td>
-									<Table.Td>
-										<Text size="xs" c="dimmed" ff="monospace" lineClamp={1}>
-											{item.url ?? "-"}
-										</Text>
-									</Table.Td>
-									<Table.Td>
-										<Badge variant="light" size="xs" color="gray" radius="sm">
-											{item.package}
-										</Badge>
-									</Table.Td>
-									<Table.Td>
-										<Badge
-											size="xs"
-											variant="filled"
-											radius="sm"
-											color={
-												item.category === "fhir"
-													? "primary"
-													: item.category === "system"
-														? "warm"
-														: "fire"
-											}
-										>
-											{item.category}
-										</Badge>
-									</Table.Td>
-								</Table.Tr>
-							))}
-						</Table.Tbody>
-					</Table>
+					<Box p="md">
+						<RecordList
+							items={filteredTypeViews.map((item) => ({
+								id: item.id,
+								title: item.name,
+								subtitle: item.packageName,
+								description: item.definitionUrl ?? "No canonical URL",
+								meta: [
+									{
+										id: "category",
+										label: item.category,
+										tone: item.categoryTone,
+									},
+								],
+							}))}
+							onSelect={(item) => handleTypeSelect(item.id)}
+						/>
+					</Box>
 				</ScrollArea>
 			)}
 		</Paper>
@@ -478,54 +423,32 @@ export function ResourceBrowserPage() {
 				</Center>
 			) : (
 				<ScrollArea style={{ flex: 1 }} className="custom-scrollbar">
-					<Table highlightOnHover verticalSpacing="md" className="modern-table">
-						<Table.Thead>
-							<Table.Tr>
-								<Table.Th style={{ width: 220 }}>ID</Table.Th>
-								<Table.Th style={{ width: 120 }}>Status</Table.Th>
-								<Table.Th>Last Updated</Table.Th>
-								<Table.Th style={{ width: 100 }}>Version</Table.Th>
-							</Table.Tr>
-						</Table.Thead>
-						<Table.Tbody>
-							{resources.map((resource) => (
-								<Table.Tr
-									key={resource.id}
-									onClick={() => resource.id && handleResourceSelect(resource.id)}
-									style={{
-										cursor: "pointer",
-										backgroundColor:
-											selectedId === resource.id
-												? "var(--octo-accent-warm-bg)"
-												: undefined,
-									}}
-								>
-									<Table.Td>
-										<Text fw={600} size="xs" ff="monospace">
-											{resource.id}
-										</Text>
-									</Table.Td>
-									<Table.Td>
-										<Badge variant="outline" size="xs" radius="sm">
-											{getResourceDisplayValue(resource, "status")}
-										</Badge>
-									</Table.Td>
-									<Table.Td>
-										<Text size="xs" c="dimmed">
-											{resource.meta?.lastUpdated
-												? new Date(resource.meta.lastUpdated).toLocaleString()
-												: "-"}
-										</Text>
-									</Table.Td>
-									<Table.Td>
-										<Badge variant="light" size="xs" color="gray">
-											v{resource.meta?.versionId ?? "1"}
-										</Badge>
-									</Table.Td>
-								</Table.Tr>
-							))}
-						</Table.Tbody>
-					</Table>
+					<Box p="md">
+						<RecordList
+							density="compact"
+							selectedId={selectedId ?? undefined}
+							items={resourceViews.map((resource) => ({
+								id: resource.id,
+								title: resource.resourceId ?? "(no id)",
+								subtitle: resource.resourceType,
+								description: resource.lastUpdatedLabel,
+								disabled: !resource.canOpen,
+								meta: [
+									{
+										id: "status",
+										label: resource.statusLabel,
+										tone: "neutral",
+									},
+									{
+										id: "version",
+										label: resource.versionLabel,
+										tone: "info",
+									},
+								],
+							}))}
+							onSelect={(item) => handleResourceSelect(item.id)}
+						/>
+					</Box>
 				</ScrollArea>
 			)}
 		</Paper>
@@ -668,21 +591,10 @@ export function ResourceBrowserPage() {
 									title={saveError.message}
 								>
 									{saveError.operationOutcome?.issue ? (
-										<Stack gap="xs" mt="xs">
-											{saveError.operationOutcome.issue.slice(0, 3).map((issue, idx) => (
-												<Box key={idx} p="xs" style={{ backgroundColor: "rgba(255,0,0,0.05)", borderRadius: "8px", border: "1px solid rgba(255,0,0,0.1)" }}>
-													<Group gap="xs" mb={4}>
-														<Badge size="xs" color="red">{issue.severity}</Badge>
-														<Text size="xs" fw={700}>{issue.code}</Text>
-													</Group>
-													{issue.diagnostics && (
-														<Text size="xs" style={{ whiteSpace: "pre-wrap" }}>
-															{issue.diagnostics}
-														</Text>
-													)}
-												</Box>
-											))}
-										</Stack>
+										<OperationOutcomePanel
+											outcome={saveError.operationOutcome}
+											maxIssues={3}
+										/>
 									) : (
 										<Text size="xs">An error occurred while saving.</Text>
 									)}
@@ -700,7 +612,7 @@ export function ResourceBrowserPage() {
 			<Box mb="xl">
 				<Group justify="space-between" align="flex-end">
 					<Box>
-						<Title order={2} style={{ letterSpacing: "-0.02em" }}>Resource Browser</Title>
+						<Title order={2}>Resource Browser</Title>
 						<Breadcrumbs mt="xs" separator="→" style={{ fontSize: "12px" }}>
 							{breadcrumbItems}
 						</Breadcrumbs>

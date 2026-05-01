@@ -1,0 +1,44 @@
+.root {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 12px;
+    min-height: 116px;
+}
+
+.body {
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    gap: 12px;
+    min-width: 0;
+}
+
+.title {
+    color: var(--g-color-text-secondary);
+    font-size: 13px;
+    font-weight: 500;
+    line-height: 18px;
+}
+
+.value {
+    color: var(--g-color-text-primary);
+    font-size: 26px;
+    font-weight: 650;
+    line-height: 32px;
+}
+
+.caption {
+    color: var(--g-color-text-hint);
+    font-size: 12px;
+    line-height: 16px;
+}
+
+.icon {
+    display: grid;
+    place-items: center;
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    color: var(--g-color-text-info);
+    background: var(--g-color-base-info-light);
+}

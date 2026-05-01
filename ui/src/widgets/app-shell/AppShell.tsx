@@ -46,38 +46,41 @@ export function AppShell() {
 	const { data: health } = useHealth();
 	const { data: settings } = useSettings();
 
-	const menuItems = useMemo(() => [
-		{
-			id: "dashboard",
-			title: "Dashboard",
-			icon: House,
-			active: location.pathname === "/" || location.pathname === "/ui/",
-			onItemClick: () => navigate("/"),
-		},
-		{
-			id: "resources",
-			title: "Resources",
-			icon: Folder,
-			active: location.pathname.startsWith("/resources"),
-			onItemClick: () => navigate("/resources"),
-		},
-		{
-			id: "console",
-			title: "REST Console",
-			icon: Terminal,
-			active: location.pathname.startsWith("/console"),
-			onItemClick: () => navigate("/console"),
-		},
-		{
-			id: "packages",
-			title: "Packages",
-			icon: Boxes3,
-			active: location.pathname.startsWith("/packages"),
-			onItemClick: () => navigate("/packages"),
-		},
-	], [location.pathname, navigate]);
-
 	const menuGroups = useMemo(() => [
+		{
+			id: "main",
+			title: "Main",
+			items: [
+				{
+					id: "dashboard",
+					title: "Dashboard",
+					icon: House,
+					active: location.pathname === "/" || location.pathname === "/ui/",
+					onItemClick: () => navigate("/"),
+				},
+				{
+					id: "resources",
+					title: "Resources",
+					icon: Folder,
+					active: location.pathname.startsWith("/resources"),
+					onItemClick: () => navigate("/resources"),
+				},
+				{
+					id: "console",
+					title: "REST Console",
+					icon: Terminal,
+					active: location.pathname.startsWith("/console"),
+					onItemClick: () => navigate("/console"),
+				},
+				{
+					id: "packages",
+					title: "Packages",
+					icon: Boxes3,
+					active: location.pathname.startsWith("/packages"),
+					onItemClick: () => navigate("/packages"),
+				},
+			],
+		},
 		{
 			id: "admin",
 			title: "Administration",
@@ -223,7 +226,7 @@ export function AppShell() {
 				iconSrc: logoUrl,
 				onClick: () => navigate("/"),
 			}}
-			menuItems={menuItems}
+			menuItems={[]} // Move everything to groups to ensure they all render correctly
 			menuGroups={menuGroups}
 			persistKey="octofhir-sidebar"
 			themeAction={{

@@ -1,4 +1,5 @@
-import { Table, Text, Badge, ScrollArea, Alert } from "@/shared/ui";
+import type { ReactNode } from "react";
+import { Text, Badge, Alert, DataPreview } from "@/shared/ui";
 import { CircleExclamation, CircleInfo } from "@gravity-ui/icons";
 import type { SqlResponse, SqlValue } from "@/shared/api/types";
 import { JsonCellViewer } from "./JsonCellViewer";
@@ -9,7 +10,7 @@ interface ResultsTableProps {
 	isPending: boolean;
 }
 
-function renderCellValue(value: SqlValue): React.ReactNode {
+function renderCellValue(value: SqlValue): ReactNode {
 	if (value === null) {
 		return (
 			<Text span c="dimmed" fs="italic">
@@ -64,25 +65,22 @@ export function ResultsTable({ data, error, isPending }: ResultsTableProps) {
 	}
 
 	return (
-		<ScrollArea>
-			<Table striped highlightOnHover>
-				<Table.Thead>
-					<Table.Tr>
-						{data.columns.map((col) => (
-							<Table.Th key={col}>{col}</Table.Th>
-						))}
-					</Table.Tr>
-				</Table.Thead>
-				<Table.Tbody>
-					{data.rows.map((row, rowIdx) => (
-						<Table.Tr key={rowIdx}>
-							{row.map((cell, cellIdx) => (
-								<Table.Td key={cellIdx}>{renderCellValue(cell)}</Table.Td>
-							))}
-						</Table.Tr>
-					))}
-				</Table.Tbody>
-			</Table>
-		</ScrollArea>
+		<DataPreview
+			columns={data.columns.map((column, columnIndex) => ({
+				id: `${column}-${columnIndex}`,
+				label: column,
+				width: 160,
+			}))}
+			rows={data.rows.map((row) =>
+				Object.fromEntries(
+					data.columns.map((column, columnIndex) => [
+						`${column}-${columnIndex}`,
+						renderCellValue(row[columnIndex]),
+					]),
+				),
+			)}
+			getRowKey={(_row, rowIndex) => `${rowIndex}`}
+			maxHeight={400}
+		/>
 	);
 }

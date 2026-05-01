@@ -1,14 +1,18 @@
-import React from "react";
+import type { ComponentType, CSSProperties, ReactNode } from "react";
 import { Card, Text, Group, ThemeIcon, Box, Loader } from "../../shared/ui";
+import classes from "./DashboardCards.module.css";
+
+type MetricTone = "primary" | "warning" | "danger" | "success" | "info" | "octo-brand" | string;
+type MetricIconTone = "primary" | "positive" | "warning" | "danger" | "neutral";
 
 export interface MetricCardProps {
     title: string;
-    value: string | number | React.ReactNode;
-    icon: React.ComponentType<any>;
-    iconColor?: string;
+    value: string | number | ReactNode;
+    icon: ComponentType<{ size?: number | string }>;
+    iconColor?: MetricIconTone;
     description?: string;
     isLoading?: boolean;
-    gradientColor?: "primary" | "warning" | "danger" | "success" | "info" | string;
+    gradientColor?: MetricTone;
 }
 
 const gradientColors: Record<string, string> = {
@@ -45,39 +49,32 @@ export function MetricCard({
         <Card
             withBorder
             padding="xl"
-            radius="lg"
-            style={{
-                position: "relative",
-                overflow: "hidden",
-                height: "100%",
-            }}
+            radius={8}
+            className={classes.card}
+            style={
+                {
+                    "--metric-accent-color": topBarColor,
+                    "--metric-value-color": valueTextColor,
+                } as CSSProperties
+            }
         >
-            <Box
-                style={{
-                    position: "absolute",
-                    top: 0,
-                    left: 0,
-                    right: 0,
-                    height: 4,
-                    background: topBarColor,
-                }}
-            />
-            <Group justify="space-between" align="flex-start" mb="md">
+            <Box className={classes.topBar} />
+            <Group className={classes.metricHeader}>
                 <div>
                     <Box mb={4}>
-                        <Text variant="caption-2" color="secondary" style={{ letterSpacing: "0.05em", textTransform: "uppercase", fontWeight: 600 }}>
+                        <Text variant="caption-2" color="secondary" className={classes.metricTitle}>
                             {title}
                         </Text>
                     </Box>
                     {isLoading ? (
                         <Loader size="s" />
                     ) : (
-                        <Text variant="header-2" style={{ color: valueTextColor, letterSpacing: "-0.02em", display: "block" }}>
+                        <Text variant="header-2" className={classes.metricValue}>
                             {value}
                         </Text>
                     )}
                 </div>
-                <ThemeIcon view="light" color={iconColor as any} size="xl">
+                <ThemeIcon view="light" color={iconColor} size="xl">
                     <Icon size={24} />
                 </ThemeIcon>
             </Group>

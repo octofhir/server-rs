@@ -8,7 +8,7 @@ import {
 	Group,
 	Button,
 	TextInput,
-	Table,
+	DataPreview,
 	Badge,
 	ActionIcon,
 	Menu,
@@ -16,6 +16,7 @@ import {
 	Textarea,
 	Select,
 	Code,
+	Anchor,
 } from "@/shared/ui";
 import { Field, Form, useDebouncedValue, useDisclosure } from "@octofhir/ui-kit";
 import {
@@ -30,13 +31,12 @@ import {
 	IconApi,
 	IconWebhook,
 } from "@octofhir/ui-kit";
-import { useApps, useCreateApp, useUpdateApp, useDeleteApp, type AppResource } from "../lib/useApps";
-
-const STATUS_COLORS: Record<string, string> = {
-	active: "green",
-	inactive: "gray",
-	suspended: "fire",
-};
+import {
+	getAppEndpointDisplay,
+	getAppStatusView,
+	type AppResource,
+} from "@/entities/api-app";
+import { useApps, useCreateApp, useUpdateApp, useDeleteApp } from "../lib/useApps";
 
 export function AppsPage() {
 	const navigate = useNavigate();
@@ -70,11 +70,6 @@ export function AppsPage() {
 
 	const apps = data?.entry?.map((e) => e.resource) || [];
 
-	const getAppStatus = (app: AppResource) => {
-		if (app.status) return app.status;
-		return app.active ? "active" : "inactive";
-	};
-
 	return (
 		<Stack gap="md" style={{ flex: 1, minHeight: 0 }}>
 			<Group justify="space-between">
@@ -100,63 +95,46 @@ export function AppsPage() {
 					/>
 				</Group>
 
-				<Table striped highlightOnHover>
-					<Table.Thead>
-						<Table.Tr>
-							<Table.Th>Application</Table.Th>
-							<Table.Th>Endpoint</Table.Th>
-							<Table.Th>Operations</Table.Th>
-							<Table.Th>Status</Table.Th>
-							<Table.Th style={{ width: 50 }} />
-						</Table.Tr>
-					</Table.Thead>
-					<Table.Tbody>
-						{isLoading ? (
-							<Table.Tr>
-								<Table.Td colSpan={5}>Loading...</Table.Td>
-							</Table.Tr>
-						) : apps.length === 0 ? (
-							<Table.Tr>
-								<Table.Td colSpan={5} style={{ textAlign: "center" }}>
-									No applications found
-								</Table.Td>
-							</Table.Tr>
-						) : (
-							apps.map((app) => {
-								const status = getAppStatus(app);
-								return (
-									<Table.Tr
-										key={app.id}
-										style={{ cursor: "pointer" }}
-										onClick={() => app.id && handleView(app.id)}
-									>
-										<Table.Td>
+				<DataPreview
+					columns={[
+						{ id: "application", label: "Application" },
+						{ id: "endpoint", label: "Endpoint", width: 240 },
+						{ id: "operations", label: "Operations", width: 140 },
+						{ id: "status", label: "Status", width: 110 },
+						{ id: "actions", label: "", width: 48 },
+					]}
+					rows={
+						isLoading
+							? []
+							: apps.map((app) => {
+									const statusView = getAppStatusView(app);
+									const endpoint = getAppEndpointDisplay(app);
+
+									return {
+										application: (
 											<Group gap="xs">
 												<IconRocket size={16} color="var(--octo-brand-primary-active)" />
 												<div>
-													<Text size="sm" fw={500}>
+													<Anchor size="sm" onClick={() => app.id && handleView(app.id)}>
 														{app.name}
-													</Text>
+													</Anchor>
 													<Text size="xs" c="dimmed" maw={300} lineClamp={1}>
 														{app.description || "No description"}
 													</Text>
 												</div>
 											</Group>
-										</Table.Td>
-										<Table.Td>
-											{app.endpoint?.url ? (
-												<Code size="xs" style={{ maxWidth: 200 }} lineClamp={1}>
-													{app.endpoint.url}
+										),
+										endpoint:
+											app.endpoint?.url || app.basePath ? (
+												<Code size="xs" style={{ maxWidth: 220 }} lineClamp={1}>
+													{endpoint}
 												</Code>
-											) : app.basePath ? (
-												<Badge variant="light" radius="sm" size="sm">
-													{app.basePath}
-												</Badge>
 											) : (
-												<Text size="xs" c="dimmed">Not configured</Text>
-											)}
-										</Table.Td>
-										<Table.Td>
+												<Text size="xs" c="dimmed">
+													{endpoint}
+												</Text>
+											),
+										operations: (
 											<Group gap={4}>
 												{app.operations && app.operations.length > 0 && (
 													<Badge size="xs" variant="light" color="primary" leftSection={<IconApi size={10} />}>
@@ -170,20 +148,16 @@ export function AppsPage() {
 												)}
 												{(!app.operations || app.operations.length === 0) &&
 													(!app.subscriptions || app.subscriptions.length === 0) && (
-													<Text size="xs" c="dimmed">—</Text>
-												)}
+														<Text size="xs" c="dimmed">-</Text>
+													)}
 											</Group>
-										</Table.Td>
-										<Table.Td>
-											<Badge
-												color={STATUS_COLORS[status] ?? "gray"}
-												variant="light"
-												size="sm"
-											>
-												{status}
+										),
+										status: (
+											<Badge color={statusView.color} variant="light" size="sm">
+												{statusView.status}
 											</Badge>
-										</Table.Td>
-										<Table.Td onClick={(e) => e.stopPropagation()}>
+										),
+										actions: (
 											<Menu position="bottom-end" withinPortal>
 												<Menu.Target>
 													<ActionIcon variant="subtle" color="gray">
@@ -223,13 +197,13 @@ export function AppsPage() {
 													</Menu.Item>
 												</Menu.Dropdown>
 											</Menu>
-										</Table.Td>
-									</Table.Tr>
-								);
-							})
-						)}
-					</Table.Tbody>
-				</Table>
+										),
+									};
+								})
+					}
+					emptyText={isLoading ? "Loading applications..." : "No applications found"}
+					getRowKey={(_row, index) => apps[index]?.id ?? `${index}`}
+				/>
 			</Paper>
 
 			<AppModal

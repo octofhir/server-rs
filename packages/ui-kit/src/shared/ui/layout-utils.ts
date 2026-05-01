@@ -1,5 +1,26 @@
 import type React from 'react';
 
+const LAYOUT_PROP_KEYS = [
+    'w',
+    'h',
+    'p',
+    'px',
+    'py',
+    'pt',
+    'pb',
+    'pl',
+    'pr',
+    'm',
+    'mx',
+    'my',
+    'mt',
+    'mb',
+    'ml',
+    'mr',
+] as const;
+
+type LayoutPropKey = (typeof LAYOUT_PROP_KEYS)[number];
+
 export const mapSpaceValue = (val?: number | string): number | string | undefined => {
     if (typeof val === 'number') return val;
     switch(val) {
@@ -35,7 +56,12 @@ export const getSpacingStyles = (props: any): React.CSSProperties => {
     };
 };
 
-export const cleanLayoutProps = <T extends Record<string, any>>(props: T): Omit<T, 'w'|'h'|'p'|'px'|'py'|'pt'|'pb'|'pl'|'pr'|'m'|'mx'|'my'|'mt'|'mb'|'ml'|'mr'> => {
-    const { w, h, p, px, py, pt, pb, pl, pr, m, mx, my, mt, mb, ml, mr, ...rest } = props;
-    return rest as any;
+export const cleanLayoutProps = <T extends Record<string, any>>(
+    props: T,
+): Omit<T, LayoutPropKey> => {
+    const rest = { ...props };
+    for (const key of LAYOUT_PROP_KEYS) {
+        delete rest[key];
+    }
+    return rest;
 };

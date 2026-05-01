@@ -3,7 +3,6 @@ import {
 	Stack,
 	Title,
 	Text,
-	Paper,
 	Group,
 	Badge,
 	Loader,
@@ -13,11 +12,11 @@ import {
 	Divider,
 	Breadcrumbs,
 	Anchor,
-	Table,
 	Tooltip,
 	ThemeIcon,
-	SimpleGrid,
-	Box,
+	DataPreview,
+	KeyValueList,
+	SectionPanel,
 } from "@/shared/ui";
 import {
 	IconAlertCircle,
@@ -33,43 +32,23 @@ import {
 	IconEdit,
 	IconExternalLink,
 } from "@octofhir/ui-kit";
+import {
+	formatAppOperationPath,
+	getAppEndpointDisplay,
+	getAppMethodView,
+	getAppOperationAccessView,
+	getAppStatusView,
+	getSubscriptionEventView,
+} from "@/entities/api-app";
 import { useApp } from "../lib/useApps";
 
-const STATUS_COLORS: Record<string, string> = {
-	active: "green",
-	inactive: "gray",
-	suspended: "fire",
-};
-
-const METHOD_COLORS: Record<string, string> = {
-	GET: "primary",
-	POST: "warm",
-	PUT: "deep",
-	DELETE: "fire",
-	PATCH: "warm",
-};
-
 function MethodBadge({ method }: { method: string }) {
-	return (
-		<Badge size="xs" variant="light" color={METHOD_COLORS[method] ?? "gray"}>
-			{method}
-		</Badge>
-	);
-}
+	const methodView = getAppMethodView(method);
 
-function InfoItem({ label, value, icon }: { label: string; value: React.ReactNode; icon?: React.ReactNode }) {
 	return (
-		<Box>
-			<Group gap="xs" mb={4}>
-				{icon}
-				<Text size="xs" c="dimmed" tt="uppercase" fw={500}>
-					{label}
-				</Text>
-			</Group>
-			<Text size="sm" fw={500}>
-				{value}
-			</Text>
-		</Box>
+		<Badge size="xs" variant="light" color={methodView.color}>
+			{methodView.method}
+		</Badge>
 	);
 }
 
@@ -86,7 +65,7 @@ export function AppDetailPage() {
 		);
 	}
 
-	const status = app?.status ?? (app?.active ? "active" : "inactive");
+	const statusView = app ? getAppStatusView(app) : null;
 	const operations = app?.operations ?? [];
 	const subscriptions = app?.subscriptions ?? [];
 
@@ -120,8 +99,12 @@ export function AppDetailPage() {
 
 			{app && (
 				<>
-					{/* Header Card */}
-					<Paper p="lg" style={{ backgroundColor: "var(--octo-surface-1)" }}>
+					<SectionPanel
+						title="App summary"
+						description="FHIR App resource backing custom API surfaces"
+						view="filled"
+						padding="l"
+					>
 						<Group justify="space-between" align="flex-start">
 							<Group gap="md">
 								<ThemeIcon size="xl" variant="light" color="primary" radius="md">
@@ -141,9 +124,9 @@ export function AppDetailPage() {
 								<Badge
 									size="lg"
 									variant="light"
-									color={STATUS_COLORS[status] ?? "gray"}
+									color={statusView?.color ?? "gray"}
 								>
-									{status}
+									{statusView?.status}
 								</Badge>
 								<Button
 									variant="light"
@@ -155,16 +138,25 @@ export function AppDetailPage() {
 								</Button>
 							</Group>
 						</Group>
-					</Paper>
+					</SectionPanel>
 
-					{/* Details Card */}
-					<Paper p="lg" style={{ backgroundColor: "var(--octo-surface-2)" }}>
-						<Title order={5} mb="md">Configuration</Title>
-						<SimpleGrid cols={{ base: 1, sm: 2, md: 4 }} spacing="lg">
-							<InfoItem
-								label="Endpoint URL"
-								value={
-									app.endpoint?.url ? (
+					<SectionPanel
+						title="Configuration"
+						description="Endpoint, timeout, API version, and legacy base path"
+						view="tinted"
+						padding="l"
+					>
+						<KeyValueList
+							items={[
+								{
+									id: "endpoint",
+									label: (
+										<Group gap="xs">
+											<IconWorld size={14} color="var(--g-color-text-secondary)" />
+											Endpoint URL
+										</Group>
+									),
+									value: app.endpoint?.url ? (
 										<Group gap="xs">
 											<Code size="xs">{app.endpoint.url}</Code>
 											<Tooltip label="Open endpoint">
@@ -174,203 +166,184 @@ export function AppDetailPage() {
 											</Tooltip>
 										</Group>
 									) : (
-										<Text size="sm" c="dimmed">Not configured</Text>
-									)
-								}
-								icon={<IconWorld size={14} color="var(--g-color-text-secondary)" />}
-							/>
-							<InfoItem
-								label="Timeout"
-								value={app.endpoint?.timeout ? `${app.endpoint.timeout}s` : "Default (30s)"}
-								icon={<IconClock size={14} color="var(--g-color-text-secondary)" />}
-							/>
-							<InfoItem
-								label="API Version"
-								value={app.apiVersion ?? 1}
-								icon={<IconApi size={14} color="var(--g-color-text-secondary)" />}
-							/>
-							<InfoItem
-								label="Base Path"
-								value={app.basePath || "None"}
-								icon={<IconWorld size={14} color="var(--g-color-text-secondary)" />}
-							/>
-						</SimpleGrid>
-					</Paper>
+										<Text size="sm" c="dimmed">
+											{getAppEndpointDisplay(app)}
+										</Text>
+									),
+								},
+								{
+									id: "timeout",
+									label: (
+										<Group gap="xs">
+											<IconClock size={14} color="var(--g-color-text-secondary)" />
+											Timeout
+										</Group>
+									),
+									value: app.endpoint?.timeout ? `${app.endpoint.timeout}s` : "Default (30s)",
+								},
+								{
+									id: "api-version",
+									label: (
+										<Group gap="xs">
+											<IconApi size={14} color="var(--g-color-text-secondary)" />
+											API Version
+										</Group>
+									),
+									value: app.apiVersion ?? 1,
+								},
+								{
+									id: "base-path",
+									label: (
+										<Group gap="xs">
+											<IconWorld size={14} color="var(--g-color-text-secondary)" />
+											Base Path
+										</Group>
+									),
+									value: app.basePath || "None",
+								},
+							]}
+						/>
+					</SectionPanel>
 
-					{/* Operations Section */}
-					<Paper p="lg" style={{ backgroundColor: "var(--octo-surface-2)" }}>
-						<Group justify="space-between" mb="md">
+					<SectionPanel
+						title={
 							<Group gap="sm">
 								<IconApi size={20} color="var(--octo-brand-primary-active)" />
-								<Title order={5}>Operations</Title>
+								Operations
 								<Badge size="sm" variant="light" color="gray">
 									{operations.length}
 								</Badge>
 							</Group>
-						</Group>
+						}
+						description="Inline API operation contracts exposed by this App"
+						view="tinted"
+						padding="l"
+					>
+						<DataPreview
+							columns={[
+								{ id: "id", label: "ID", width: 180 },
+								{ id: "method", label: "Method", width: 100 },
+								{ id: "path", label: "Path" },
+								{ id: "access", label: "Access", width: 130 },
+								{ id: "policy", label: "Policy", width: 180 },
+							]}
+							rows={operations.map((op) => {
+								const accessView = getAppOperationAccessView(op.public);
 
-						{operations.length === 0 ? (
-							<Text size="sm" c="dimmed" ta="center" py="md">
-								No operations defined. Add operations to the App manifest to expose custom API endpoints.
-							</Text>
-						) : (
-							<Table striped highlightOnHover>
-								<Table.Thead>
-									<Table.Tr>
-										<Table.Th>ID</Table.Th>
-										<Table.Th>Method</Table.Th>
-										<Table.Th>Path</Table.Th>
-										<Table.Th>Access</Table.Th>
-										<Table.Th>Policy</Table.Th>
-									</Table.Tr>
-								</Table.Thead>
-								<Table.Tbody>
-									{operations.map((op) => (
-										<Table.Tr key={op.id}>
-											<Table.Td>
-												<Code size="xs">{op.id}</Code>
-											</Table.Td>
-											<Table.Td>
-												<MethodBadge method={op.method} />
-											</Table.Td>
-											<Table.Td>
-												<Code size="xs">
-													/{Array.isArray(op.path) ? op.path.map(seg =>
-														typeof seg === "string" ? seg : `:${seg.name}`
-													).join("/") : op.path}
-												</Code>
-											</Table.Td>
-											<Table.Td>
-												<Tooltip label={op.public ? "Public (no auth required)" : "Protected (requires auth)"}>
-													{op.public ? (
-														<Badge size="xs" color="primary" variant="light" leftSection={<IconLockOpen size={10} />}>
-															Public
-														</Badge>
-													) : (
-														<Badge size="xs" color="deep" variant="light" leftSection={<IconLock size={10} />}>
-															Protected
-														</Badge>
-													)}
+								return {
+									id: <Code size="xs">{op.id}</Code>,
+									method: <MethodBadge method={op.method} />,
+									path: <Code size="xs">{formatAppOperationPath(op.path)}</Code>,
+									access: (
+										<Tooltip label={accessView.description}>
+											<Badge
+												size="xs"
+												color={accessView.color}
+												variant="light"
+												leftSection={op.public ? <IconLockOpen size={10} /> : <IconLock size={10} />}
+											>
+												{accessView.label}
+											</Badge>
+										</Tooltip>
+									),
+									policy: op.policy ? (
+										<Group gap={4}>
+											{op.policy.roles && (
+												<Tooltip label={`Roles: ${op.policy.roles.join(", ")}`}>
+													<Badge size="xs" variant="outline" color="violet">
+														{op.policy.roles.length} role(s)
+													</Badge>
 												</Tooltip>
-											</Table.Td>
-											<Table.Td>
-												{op.policy ? (
-													<Group gap={4}>
-														{op.policy.roles && (
-															<Tooltip label={`Roles: ${op.policy.roles.join(", ")}`}>
-																<Badge size="xs" variant="outline" color="violet">
-																	{op.policy.roles.length} role(s)
-																</Badge>
-															</Tooltip>
-														)}
-														{op.policy.compartment && (
-															<Badge size="xs" variant="outline" color="blue">
-																{op.policy.compartment}
-															</Badge>
-														)}
-													</Group>
-												) : (
-													<Text size="xs" c="dimmed">—</Text>
-												)}
-											</Table.Td>
-										</Table.Tr>
-									))}
-								</Table.Tbody>
-							</Table>
-						)}
-					</Paper>
+											)}
+											{op.policy.compartment && (
+												<Badge size="xs" variant="outline" color="blue">
+													{op.policy.compartment}
+												</Badge>
+											)}
+										</Group>
+									) : (
+										<Text size="xs" c="dimmed">-</Text>
+									),
+								};
+							})}
+							emptyText="No operations defined. Add operations to the App manifest to expose custom API endpoints."
+							getRowKey={(_row, index) => operations[index]?.id ?? `${index}`}
+						/>
+					</SectionPanel>
 
-					{/* Subscriptions Section */}
-					<Paper p="lg" style={{ backgroundColor: "var(--octo-surface-2)" }}>
-						<Group justify="space-between" mb="md">
+					<SectionPanel
+						title={
 							<Group gap="sm">
 								<IconWebhook size={20} color="var(--g-color-base-warning-medium-hover)" />
-								<Title order={5}>Subscriptions</Title>
+								Subscriptions
 								<Badge size="sm" variant="light" color="gray">
 									{subscriptions.length}
 								</Badge>
 							</Group>
-						</Group>
+						}
+						description="FHIR event subscriptions and webhook or notification channels"
+						view="tinted"
+						padding="l"
+					>
+						<DataPreview
+							columns={[
+								{ id: "id", label: "ID", width: 180 },
+								{ id: "resource", label: "Resource", width: 130 },
+								{ id: "event", label: "Event", width: 100 },
+								{ id: "filter", label: "Filter" },
+								{ id: "channel", label: "Channel", width: 220 },
+							]}
+							rows={subscriptions.map((sub) => {
+								const eventView = getSubscriptionEventView(sub.trigger.event);
 
-						{subscriptions.length === 0 ? (
-							<Text size="sm" c="dimmed" ta="center" py="md">
-								No subscriptions defined. Add subscriptions to receive webhooks on FHIR resource events.
-							</Text>
-						) : (
-							<Table striped highlightOnHover>
-								<Table.Thead>
-									<Table.Tr>
-										<Table.Th>ID</Table.Th>
-										<Table.Th>Resource</Table.Th>
-										<Table.Th>Event</Table.Th>
-										<Table.Th>Filter</Table.Th>
-										<Table.Th>Channel</Table.Th>
-									</Table.Tr>
-								</Table.Thead>
-								<Table.Tbody>
-									{subscriptions.map((sub) => (
-										<Table.Tr key={sub.id}>
-											<Table.Td>
-												<Code size="xs">{sub.id}</Code>
-											</Table.Td>
-											<Table.Td>
-												<Badge size="xs" variant="light" color="primary">
-													{sub.trigger.resourceType}
-												</Badge>
-											</Table.Td>
-											<Table.Td>
-												<Badge
-													size="xs"
-													variant="outline"
-													color={
-														sub.trigger.event === "create" ? "green" :
-														sub.trigger.event === "update" ? "blue" :
-														sub.trigger.event === "delete" ? "fire" : "gray"
-													}
-												>
-													{sub.trigger.event}
-												</Badge>
-											</Table.Td>
-											<Table.Td>
-												{sub.trigger.fhirpath ? (
-													<Tooltip label={sub.trigger.fhirpath}>
-														<Code size="xs" style={{ maxWidth: 150 }} lineClamp={1}>
-															{sub.trigger.fhirpath}
-														</Code>
-													</Tooltip>
-												) : (
-													<Text size="xs" c="dimmed">All</Text>
-												)}
-											</Table.Td>
-											<Table.Td>
-												{sub.channel ? (
-													<Group gap={4}>
-														<Badge size="xs" variant="light" color="deep">
-															{sub.channel.type}
-														</Badge>
-														<Tooltip label={sub.channel.endpoint}>
-															<Code size="xs" style={{ maxWidth: 120 }} lineClamp={1}>
-																{sub.channel.endpoint}
-															</Code>
-														</Tooltip>
-													</Group>
-												) : sub.notification ? (
-													<Group gap={4}>
-														<IconBell size={12} color="var(--g-color-base-warning-medium-hover)" />
-														<Badge size="xs" variant="light" color="warm">
-															notification
-														</Badge>
-													</Group>
-												) : (
-													<Text size="xs" c="dimmed">—</Text>
-												)}
-											</Table.Td>
-										</Table.Tr>
-									))}
-								</Table.Tbody>
-							</Table>
-						)}
-					</Paper>
+								return {
+									id: <Code size="xs">{sub.id}</Code>,
+									resource: (
+										<Badge size="xs" variant="light" color="primary">
+											{sub.trigger.resourceType}
+										</Badge>
+									),
+									event: (
+										<Badge size="xs" variant="outline" color={eventView.color}>
+											{eventView.event}
+										</Badge>
+									),
+									filter: sub.trigger.fhirpath ? (
+										<Tooltip label={sub.trigger.fhirpath}>
+											<Code size="xs" style={{ maxWidth: 180 }} lineClamp={1}>
+												{sub.trigger.fhirpath}
+											</Code>
+										</Tooltip>
+									) : (
+										<Text size="xs" c="dimmed">All</Text>
+									),
+									channel: sub.channel ? (
+										<Group gap={4}>
+											<Badge size="xs" variant="light" color="deep">
+												{sub.channel.type}
+											</Badge>
+											<Tooltip label={sub.channel.endpoint}>
+												<Code size="xs" style={{ maxWidth: 140 }} lineClamp={1}>
+													{sub.channel.endpoint}
+												</Code>
+											</Tooltip>
+										</Group>
+									) : sub.notification ? (
+										<Group gap={4}>
+											<IconBell size={12} color="var(--g-color-base-warning-medium-hover)" />
+											<Badge size="xs" variant="light" color="warm">
+												notification
+											</Badge>
+										</Group>
+									) : (
+										<Text size="xs" c="dimmed">-</Text>
+									),
+								};
+							})}
+							emptyText="No subscriptions defined. Add subscriptions to receive webhooks on FHIR resource events."
+							getRowKey={(_row, index) => subscriptions[index]?.id ?? `${index}`}
+						/>
+					</SectionPanel>
 				</>
 			)}
 		</Stack>

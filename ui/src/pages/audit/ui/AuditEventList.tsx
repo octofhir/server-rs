@@ -29,6 +29,14 @@ import {
 	TriangleExclamation,
 } from "@gravity-ui/icons";
 import type { AuditEvent, AuditAction, AuditOutcome } from "@/shared/api/types";
+import {
+	getAuditActionColor,
+	getAuditActionLabel,
+	getAuditActorLabel,
+	getAuditOutcomeColor,
+	getAuditTargetView,
+	getAuditTimestampView,
+} from "@/entities/audit-event";
 import classes from "./AuditEventList.module.css";
 
 interface AuditEventListProps {
@@ -63,38 +71,6 @@ function getActionIcon(action: AuditAction) {
 	return icons[action] || Server;
 }
 
-function getActionColor(action: AuditAction): string {
-	if (action.startsWith("user.login_failed")) return "red";
-	if (action.includes("delete")) return "red";
-	if (action.includes("create")) return "green";
-	if (action.includes("update") || action.includes("change")) return "yellow";
-	if (action.includes("login")) return "teal";
-	if (action.includes("logout")) return "gray";
-	return "blue";
-}
-
-function getActionLabel(action: AuditAction): string {
-	const labels: Record<AuditAction, string> = {
-		"user.login": "User Login",
-		"user.logout": "User Logout",
-		"user.login_failed": "Login Failed",
-		"resource.create": "Create",
-		"resource.read": "Read",
-		"resource.update": "Update",
-		"resource.delete": "Delete",
-		"resource.search": "Search",
-		"policy.evaluate": "Policy Check",
-		"client.auth": "Client Auth",
-		"client.create": "Client Created",
-		"client.update": "Client Updated",
-		"client.delete": "Client Deleted",
-		"config.change": "Config Change",
-		"system.startup": "System Start",
-		"system.shutdown": "System Stop",
-	};
-	return labels[action] || action;
-}
-
 function getOutcomeIcon(outcome: AuditOutcome) {
 	switch (outcome) {
 		case "success":
@@ -103,17 +79,6 @@ function getOutcomeIcon(outcome: AuditOutcome) {
 			return Xmark;
 		case "partial":
 			return TriangleExclamation;
-	}
-}
-
-function getOutcomeColor(outcome: AuditOutcome): string {
-	switch (outcome) {
-		case "success":
-			return "green";
-		case "failure":
-			return "red";
-		case "partial":
-			return "yellow";
 	}
 }
 
@@ -126,30 +91,6 @@ function getActorIcon(type: "user" | "client" | "system") {
 		case "system":
 			return Server;
 	}
-}
-
-function formatTimestamp(timestamp: string): { date: string; time: string } {
-	const d = new Date(timestamp);
-	return {
-		date: d.toLocaleDateString(),
-		time: d.toLocaleTimeString(),
-	};
-}
-
-function formatRelativeTime(timestamp: string): string {
-	const now = new Date();
-	const then = new Date(timestamp);
-	const diff = now.getTime() - then.getTime();
-	const seconds = Math.floor(diff / 1000);
-	const minutes = Math.floor(seconds / 60);
-	const hours = Math.floor(minutes / 60);
-	const days = Math.floor(hours / 24);
-
-	if (seconds < 60) return "Just now";
-	if (minutes < 60) return `${minutes}m ago`;
-	if (hours < 24) return `${hours}h ago`;
-	if (days < 7) return `${days}d ago`;
-	return then.toLocaleDateString();
 }
 
 function AuditEventListComponent({
@@ -230,7 +171,8 @@ function AuditEventListComponent({
 						const ActionIcon = getActionIcon(event.action);
 						const OutcomeIcon = getOutcomeIcon(event.outcome);
 						const ActorIcon = getActorIcon(event.actor.type);
-						const { time } = formatTimestamp(event.timestamp);
+						const timestamp = getAuditTimestampView(event.timestamp);
+						const target = getAuditTargetView(event);
 						const isSelected = event.id === selectedEventId;
 
 						return (
@@ -241,13 +183,13 @@ function AuditEventListComponent({
 								data-selected={isSelected}
 							>
 								<Table.Td>
-									<Tooltip label={new Date(event.timestamp).toLocaleString()}>
+									<Tooltip label={timestamp.full}>
 										<Stack gap={0}>
 											<Text size="sm" fw={500}>
-												{time}
+												{timestamp.time}
 											</Text>
 											<Text size="xs" c="dimmed">
-												{formatRelativeTime(event.timestamp)}
+												{timestamp.relative}
 											</Text>
 										</Stack>
 									</Tooltip>
@@ -257,18 +199,18 @@ function AuditEventListComponent({
 										<ThemeIcon
 											size="sm"
 											variant="light"
-											color={getActionColor(event.action)}
+											color={getAuditActionColor(event.action)}
 										>
 											<ActionIcon size={12} />
 										</ThemeIcon>
-										<Text size="sm">{getActionLabel(event.action)}</Text>
+										<Text size="sm">{getAuditActionLabel(event.action)}</Text>
 									</Group>
 								</Table.Td>
 								<Table.Td>
 									<Badge
 										size="sm"
 										variant="light"
-										color={getOutcomeColor(event.outcome)}
+										color={getAuditOutcomeColor(event.outcome)}
 										leftSection={<OutcomeIcon size={10} />}
 									>
 										{event.outcome}
@@ -281,7 +223,7 @@ function AuditEventListComponent({
 										</ThemeIcon>
 										<Stack gap={0}>
 											<Text size="sm" lineClamp={1}>
-												{event.actor.name || event.actor.id || event.actor.type}
+												{getAuditActorLabel(event)}
 											</Text>
 											{event.actor.name && event.actor.id && (
 												<Text size="xs" c="dimmed" lineClamp={1}>
@@ -292,15 +234,14 @@ function AuditEventListComponent({
 									</Group>
 								</Table.Td>
 								<Table.Td>
-									{event.target ? (
+									{target ? (
 										<Stack gap={0}>
 											<Text size="sm" lineClamp={1}>
-												{event.target.resourceType}
-												{event.target.resourceId && `/${event.target.resourceId}`}
+												{target.primary}
 											</Text>
-											{event.target.query && (
+											{target.secondary && (
 												<Text size="xs" c="dimmed" lineClamp={1}>
-													{event.target.query}
+													{target.secondary}
 												</Text>
 											)}
 										</Stack>

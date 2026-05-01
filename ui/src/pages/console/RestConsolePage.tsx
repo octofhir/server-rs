@@ -1,12 +1,12 @@
 import { useDisclosure, useHotkeys } from "@octofhir/ui-kit";
-import { Eye, ClockArrowRotateLeft } from "@gravity-ui/icons";
+import { Eye, ClockArrowRotateLeft, Play } from "@gravity-ui/icons";
 import { useUnit } from "effector-react";
 import { useCallback, useMemo } from "react";
 import { Helmet } from "react-helmet-async";
 import type { QueryInputMetadata } from "@/shared/fhir-query-input";
 import { computeDiagnostics, parseQueryAst } from "@/shared/fhir-query-input";
 import { QueryInspector } from "@/shared/fhir-query-input/widgets/QueryInspector";
-import { Box, Button, Collapse, Group, Stack, Text, Title } from "@/shared/ui";
+import { Box, Button, Collapse, Flex, Stack, Text } from "@/shared/ui";
 import { BuilderModeEditor } from "./components/BuilderModeEditor";
 import { CommandPalette } from "./components/CommandPalette";
 import { HistoryPanel } from "./components/HistoryPanel";
@@ -102,121 +102,140 @@ export function RestConsolePage() {
   useHotkeys(hotkeys);
 
   return (
-    <Box className="page-enter" p="xl" style={{ height: "100%", overflow: "auto" }}>
+    <Box className="page-enter" style={{ height: "100%", overflow: "hidden", display: "flex", flexDirection: "column" }}>
       <Helmet>
         <title>REST Console</title>
       </Helmet>
 
-      <Box maw={960} mx="auto">
-        <Stack gap="lg">
-          {/* Header */}
-          <Group justify="space-between" align="center">
-            <Group gap="md" align="center">
-              <Title order={2} style={{ letterSpacing: "-0.02em", fontWeight: 700 }}>
-                REST Console
-              </Title>
-              <ModeControl />
-            </Group>
-            <Group gap="xs">
-              <Button
-                variant="subtle"
-                size="xs"
-                leftSection={<Eye size={14} />}
-                onClick={toggleInspector}
-              >
-                Inspector
-              </Button>
-              <Button
-                variant="subtle"
-                size="xs"
-                leftSection={<ClockArrowRotateLeft size={14} />}
-                onClick={historyHandlers.open}
-              >
-                History
-              </Button>
-            </Group>
-          </Group>
-
-          {/* Request Bar (Pro mode) */}
-          {mode === "pro" && (
-            <RequestBar
-              allSuggestions={allSuggestions}
-              searchParamsByResource={searchParamsByResource}
-              capabilities={data}
-              isLoading={isPending}
-              isSending={sendMutation.isPending}
-              onSend={handleSend}
-            />
-          )}
-
-          {/* Builder mode */}
-          {mode === "builder" && (
-            <Stack gap="sm">
-              <BuilderModeEditor
-                allSuggestions={allSuggestions}
-                searchParamsByResource={searchParamsByResource}
-                capabilities={data}
-                isLoading={isPending}
-              />
-              <Group justify="flex-end">
-                <Button
-                  onClick={handleSend}
-                  loading={sendMutation.isPending}
-                >
-                  Send
-                </Button>
-              </Group>
-            </Stack>
-          )}
-
-          {/* Headers / Body tabs — collapsed by default */}
-          <RequestOptionTabs />
-
-          {/* Inspector (collapsible) */}
-          <Collapse in={inspectorOpened}>
-            <Box
-              p="md"
-              style={{
-                border: "1px solid var(--octo-border-subtle)",
-                borderRadius: "var(--octo-radius-md)",
-                backgroundColor: "var(--octo-surface-1)",
-              }}
+      {/* Persistent Header */}
+      <Box style={{ padding: "16px 24px", borderBottom: "1px solid var(--g-color-line-generic-subtle)", backgroundColor: "var(--g-color-base-background)" }}>
+        <Flex justifyContent="space-between" alignItems="center">
+          <Flex gap="4" alignItems="center">
+            <Text variant="header-2" style={{ fontWeight: 700 }}>REST Console</Text>
+            <ModeControl />
+          </Flex>
+          <Flex gap="2">
+            <Button
+              view="flat"
+              size="m"
+              onClick={toggleInspector}
             >
-              <QueryInspector
-                ast={inspectorAst}
-                diagnostics={inspectorDiagnostics}
-                metadata={inspectorMetadata}
-                response={
-                  sendMutation.data
-                    ? {
-                        status: sendMutation.data.status,
-                        statusText: sendMutation.data.statusText,
-                        durationMs: sendMutation.data.durationMs,
-                        body: sendMutation.data.body,
-                        requestPath: sendMutation.data.requestPath,
-                      }
-                    : undefined
-                }
-              />
-            </Box>
-          </Collapse>
+              <Button.Icon><Eye size={16} /></Button.Icon>
+              Inspector
+            </Button>
+            <Button
+              view="flat"
+              size="m"
+              onClick={historyHandlers.open}
+            >
+              <Button.Icon><ClockArrowRotateLeft size={16} /></Button.Icon>
+              History
+            </Button>
+          </Flex>
+        </Flex>
+      </Box>
 
-          {/* Response */}
-          <Box>
-            {sendMutation.data || sendMutation.isPending ? (
-              <Stack gap="xs">
-                <Text size="xs" fw={600} c="dimmed" tt="uppercase">
-                  Response
-                </Text>
-                <ResponseViewer response={sendMutation.data} isLoading={sendMutation.isPending} />
-              </Stack>
-            ) : (
-              <Text size="sm" c="dimmed" ta="center" py="xl">
-                Send a request to see the response
-              </Text>
-            )}
-          </Box>
-        </Stack>
+      {/* Main Content Area */}
+      <Box style={{ flex: 1, overflowY: "auto", padding: "24px" }}>
+        <Box style={{ maxWidth: "1200px", margin: "0 auto" }}>
+          <Stack gap="6">
+            {/* Request Editor Section */}
+            <Box style={{ 
+              backgroundColor: "var(--g-color-base-background)", 
+              borderRadius: "12px", 
+              border: "1px solid var(--g-color-line-generic-subtle)",
+              overflow: "hidden",
+              boxShadow: "var(--g-shadow-low)"
+            }}>
+              {mode === "pro" ? (
+                <RequestBar
+                  allSuggestions={allSuggestions}
+                  searchParamsByResource={searchParamsByResource}
+                  capabilities={data}
+                  isLoading={isPending}
+                  isSending={sendMutation.isPending}
+                  onSend={handleSend}
+                />
+              ) : (
+                <Box style={{ padding: "20px" }}>
+                   <BuilderModeEditor
+                    allSuggestions={allSuggestions}
+                    searchParamsByResource={searchParamsByResource}
+                    capabilities={data}
+                    isLoading={isPending}
+                  />
+                  <Flex justifyContent="flex-end" mt="4">
+                    <Button
+                      size="l"
+                      view="action"
+                      onClick={handleSend}
+                      loading={sendMutation.isPending}
+                    >
+                      <Button.Icon><Play size={18} /></Button.Icon>
+                      Execute Request
+                    </Button>
+                  </Flex>
+                </Box>
+              )}
+              
+              {/* Additional request options (Tabs, Headers, Body) */}
+              <Box style={{ borderTop: "1px solid var(--g-color-line-generic-subtle)" }}>
+                <RequestOptionTabs />
+              </Box>
+            </Box>
+
+            {/* Inspector (collapsible) */}
+            <Collapse in={inspectorOpened}>
+              <Box style={{ 
+                padding: "20px", 
+                border: "1px solid var(--g-color-line-info-subtle)", 
+                borderRadius: "12px",
+                backgroundColor: "var(--g-color-base-info-subtle)" 
+              }}>
+                <QueryInspector
+                  ast={inspectorAst}
+                  diagnostics={inspectorDiagnostics}
+                  metadata={inspectorMetadata}
+                  response={
+                    sendMutation.data
+                      ? {
+                          status: sendMutation.data.status,
+                          statusText: sendMutation.data.statusText,
+                          durationMs: sendMutation.data.durationMs,
+                          body: sendMutation.data.body,
+                          requestPath: sendMutation.data.requestPath,
+                        }
+                      : undefined
+                  }
+                />
+              </Box>
+            </Collapse>
+
+            {/* Response Section */}
+            <Box>
+              {sendMutation.data || sendMutation.isPending ? (
+                <Stack gap="3">
+                  <Text variant="caption-1" style={{ textTransform: "uppercase", fontWeight: 700, color: "var(--g-color-text-secondary)" }}>
+                    Response
+                  </Text>
+                  <Box style={{ 
+                    borderRadius: "12px", 
+                    border: "1px solid var(--g-color-line-generic-subtle)",
+                    backgroundColor: "var(--g-color-base-background)",
+                    overflow: "hidden",
+                    boxShadow: "var(--g-shadow-low)"
+                  }}>
+                    <ResponseViewer response={sendMutation.data} isLoading={sendMutation.isPending} />
+                  </Box>
+                </Stack>
+              ) : (
+                <Flex direction="column" alignItems="center" style={{ padding: "60px 0", opacity: 0.5 }}>
+                  <Text variant="body-2">Execute a request to see the response payload here.</Text>
+                </Flex>
+              )}
+            </Box>
+          </Stack>
+        </Box>
       </Box>
 
       <CommandPalette />
