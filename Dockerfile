@@ -20,7 +20,7 @@ COPY ui/package.json ./ui/
 COPY packages/ui-kit/package.json ./packages/ui-kit/
 
 # Install all workspace dependencies
-RUN pnpm install --frozen-lockfile
+RUN pnpm config set strict-dep-builds false && pnpm install --frozen-lockfile
 
 # Copy source files
 COPY ui/ ./ui/
@@ -44,7 +44,7 @@ RUN apt-get update && apt-get install -y \
     libjavascriptcoregtk-4.1-dev \
     && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /build
+WORKDIR /work/server-rs
 
 # Copy Cargo files first for dependency caching
 COPY Cargo.toml Cargo.lock ./
@@ -59,12 +59,12 @@ COPY --from=ui-builder /app/ui/dist ./ui/dist
 # Build release binary with cached cargo registry and target dir
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
-    --mount=type=cache,target=/build/target \
+    --mount=type=cache,target=/work/server-rs/target \
     CARGO_PROFILE_RELEASE_LTO=thin \
     CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16 \
     CARGO_PROFILE_RELEASE_DEBUG=0 \
     cargo build --release --bin octofhir-server \
-    && cp /build/target/release/octofhir-server /usr/local/bin/octofhir-server
+    && cp /work/server-rs/target/release/octofhir-server /usr/local/bin/octofhir-server
 
 # -----------------------------------------------------------------------------
 # Stage 3: Runtime image (minimal)
