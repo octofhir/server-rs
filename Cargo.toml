@@ -35,7 +35,7 @@ octofhir-core = { path = "crates/octofhir-core" }
 octofhir-graphql = { path = "crates/octofhir-graphql" }
 octofhir-sof = { path = "crates/octofhir-sof" }
 octofhir-storage = { path = "crates/octofhir-storage" }
-octofhir-canonical-manager = { version = "0.1.26", default-features = false }
+octofhir-canonical-manager = { version = "0.2.1", default-features = false }
 octofhir-fhir-model = { version = "0.1.11", features = ["http-client", "caching"] }
 
 # async-lsp for SQL language server (better state management than tower-lsp)
@@ -132,7 +132,7 @@ debug = 2
 lto = true
 codegen-units = 1
 panic = "abort"
-# debug = true  # Enable debug symbols for profiling
+debug = 1  # full symbol table (no types) — needed for samply name resolution
 
 [profile.bench]
 inherits = "release"

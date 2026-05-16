@@ -244,6 +244,49 @@ impl PostgresPackageStore {
             resources.len()
         );
 
+        // Compute a content-derived manifest hash so warm-boots can short-circuit.
+        // We hash (resource_type, content) tuples in a stable order so identical
+        // embedded bundles produce the same hash regardless of vec ordering.
+        let manifest_hash = {
+            use std::collections::hash_map::DefaultHasher;
+            use std::hash::{Hash, Hasher};
+            let mut entries: Vec<(String, String)> = resources
+                .iter()
+                .map(|(rt, c)| (rt.clone(), serde_json::to_string(c).unwrap_or_default()))
+                .collect();
+            entries.sort();
+            let mut hasher = DefaultHasher::new();
+            name.hash(&mut hasher);
+            version.hash(&mut hasher);
+            fhir_version.hash(&mut hasher);
+            for (rt, body) in &entries {
+                rt.hash(&mut hasher);
+                body.hash(&mut hasher);
+            }
+            format!("embedded:{:016x}", hasher.finish())
+        };
+
+        // Fast path: if a row already exists with the same manifest hash AND fhir_version,
+        // nothing changed since the last install — skip the re-DELETE + re-INSERT churn.
+        // This is the dominant cost on warm-boot.
+        let existing: Option<(String, String)> = sqlx_core::query_as::query_as::<_, (String, String)>(
+            "SELECT manifest_hash, fhir_version FROM fcm.packages WHERE name = $1 AND version = $2",
+        )
+        .bind(name)
+        .bind(version)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        if let Some((existing_hash, existing_fhir)) = existing {
+            if existing_hash == manifest_hash && existing_fhir == fhir_version {
+                info!(
+                    "Embedded package {}@{} already at hash {} — skipping reload",
+                    name, version, manifest_hash
+                );
+                return Ok(());
+            }
+        }
+
         // Insert package metadata with priority 100 (higher than external packages)
         query(
             r#"
@@ -251,6 +294,7 @@ impl PostgresPackageStore {
             VALUES ($1, $2, $3, $4, $5, 100)
             ON CONFLICT (name, version) DO UPDATE SET
                 fhir_version = EXCLUDED.fhir_version,
+                manifest_hash = EXCLUDED.manifest_hash,
                 resource_count = EXCLUDED.resource_count,
                 priority = EXCLUDED.priority,
                 installed_at = NOW()
@@ -259,7 +303,7 @@ impl PostgresPackageStore {
         .bind(name)
         .bind(version)
         .bind(fhir_version)
-        .bind("embedded")
+        .bind(&manifest_hash)
         .bind(resources.len() as i32)
         .execute(&self.pool)
         .await?;
@@ -287,75 +331,111 @@ impl PostgresPackageStore {
             );
         }
 
-        // Insert all resources
+        // Batch insert all resources via UNNEST (one round-trip).
+        let len = resources.len();
+        let mut resource_types: Vec<String> = Vec::with_capacity(len);
+        let mut resource_ids: Vec<Option<String>> = Vec::with_capacity(len);
+        let mut urls: Vec<Option<String>> = Vec::with_capacity(len);
+        let mut names: Vec<Option<String>> = Vec::with_capacity(len);
+        let mut versions: Vec<Option<String>> = Vec::with_capacity(len);
+        let mut sd_kinds: Vec<Option<String>> = Vec::with_capacity(len);
+        let mut sd_derivations: Vec<Option<String>> = Vec::with_capacity(len);
+        let mut sd_types: Vec<Option<String>> = Vec::with_capacity(len);
+        let mut sd_base_defs: Vec<Option<String>> = Vec::with_capacity(len);
+        let mut sd_abstracts: Vec<Option<bool>> = Vec::with_capacity(len);
+        let mut sd_impose: Vec<Option<Value>> = Vec::with_capacity(len);
+        let mut sd_chars: Vec<Option<Value>> = Vec::with_capacity(len);
+        let mut sd_flavors: Vec<Option<String>> = Vec::with_capacity(len);
+        let mut content_hashes: Vec<String> = Vec::with_capacity(len);
+        let mut contents: Vec<Value> = Vec::with_capacity(len);
+
         for (resource_type, content) in &resources {
             let sd_fields = Self::extract_sd_fields(content);
+            resource_types.push(resource_type.clone());
+            resource_ids.push(content.get("id").and_then(|v| v.as_str()).map(String::from));
+            urls.push(content.get("url").and_then(|v| v.as_str()).map(String::from));
+            names.push(
+                content
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .map(String::from),
+            );
+            versions.push(
+                content
+                    .get("version")
+                    .and_then(|v| v.as_str())
+                    .map(String::from),
+            );
+            sd_kinds.push(sd_fields.kind);
+            sd_derivations.push(sd_fields.derivation);
+            sd_types.push(sd_fields.sd_type);
+            sd_base_defs.push(sd_fields.base_definition);
+            sd_abstracts.push(sd_fields.is_abstract);
+            sd_impose.push(
+                sd_fields
+                    .impose_profiles
+                    .and_then(|v| serde_json::to_value(v).ok()),
+            );
+            sd_chars.push(
+                sd_fields
+                    .characteristics
+                    .and_then(|v| serde_json::to_value(v).ok()),
+            );
+            sd_flavors.push(sd_fields.flavor);
 
-            // Extract standard FHIR resource fields
-            let resource_id = content.get("id").and_then(|v| v.as_str()).map(String::from);
-            let url = content
-                .get("url")
-                .and_then(|v| v.as_str())
-                .map(String::from);
-            let resource_version = content
-                .get("version")
-                .and_then(|v| v.as_str())
-                .map(String::from);
-
-            // Compute content hash
-            let content_str = serde_json::to_string(&content)?;
-            let content_hash = {
+            let content_str = serde_json::to_string(content)?;
+            let hash = {
                 use std::collections::hash_map::DefaultHasher;
                 use std::hash::{Hash, Hasher};
                 let mut hasher = DefaultHasher::new();
                 content_str.hash(&mut hasher);
                 format!("{:016x}", hasher.finish())
             };
-
-            query(
-                r#"
-                INSERT INTO fcm.resources (
-                    resource_type, resource_id, url, name, version,
-                    sd_kind, sd_derivation, sd_type, sd_base_definition, sd_abstract,
-                    sd_impose_profiles, sd_characteristics, sd_flavor,
-                    package_name, package_version, fhir_version, content_hash, content
-                ) VALUES (
-                    $1, $2, $3, $4, $5,
-                    $6, $7, $8, $9, $10,
-                    $11, $12, $13,
-                    $14, $15, $16, $17, $18
-                )
-                "#,
-            )
-            .bind(resource_type)
-            .bind(&resource_id)
-            .bind(&url)
-            .bind(content.get("name").and_then(|v| v.as_str()))
-            .bind(&resource_version)
-            .bind(&sd_fields.kind)
-            .bind(&sd_fields.derivation)
-            .bind(&sd_fields.sd_type)
-            .bind(&sd_fields.base_definition)
-            .bind(sd_fields.is_abstract)
-            .bind(
-                sd_fields
-                    .impose_profiles
-                    .and_then(|v| serde_json::to_value(v).ok()),
-            )
-            .bind(
-                sd_fields
-                    .characteristics
-                    .and_then(|v| serde_json::to_value(v).ok()),
-            )
-            .bind(&sd_fields.flavor)
-            .bind(name)
-            .bind(version)
-            .bind(fhir_version)
-            .bind(&content_hash)
-            .bind(content)
-            .execute(&self.pool)
-            .await?;
+            content_hashes.push(hash);
+            contents.push(content.clone());
         }
+
+        query(
+            r#"
+            INSERT INTO fcm.resources (
+                resource_type, resource_id, url, name, version,
+                sd_kind, sd_derivation, sd_type, sd_base_definition, sd_abstract,
+                sd_impose_profiles, sd_characteristics, sd_flavor,
+                package_name, package_version, fhir_version, content_hash, content
+            )
+            SELECT
+                t.rt, t.rid, t.url, t.nm, t.ver,
+                t.kind, t.deriv, t.styp, t.bdef, t.abs_,
+                t.imp, t.chr, t.flav,
+                $14, $15, $16, t.hsh, t.cnt
+            FROM UNNEST(
+                $1::text[], $2::text[], $3::text[], $4::text[], $5::text[],
+                $6::text[], $7::text[], $8::text[], $9::text[], $10::bool[],
+                $11::jsonb[], $12::jsonb[], $13::text[],
+                $17::text[], $18::jsonb[]
+            ) AS t(rt, rid, url, nm, ver, kind, deriv, styp, bdef, abs_, imp, chr, flav, hsh, cnt)
+            "#,
+        )
+        .bind(&resource_types)
+        .bind(&resource_ids)
+        .bind(&urls)
+        .bind(&names)
+        .bind(&versions)
+        .bind(&sd_kinds)
+        .bind(&sd_derivations)
+        .bind(&sd_types)
+        .bind(&sd_base_defs)
+        .bind(&sd_abstracts)
+        .bind(&sd_impose)
+        .bind(&sd_chars)
+        .bind(&sd_flavors)
+        .bind(name)
+        .bind(version)
+        .bind(fhir_version)
+        .bind(&content_hashes)
+        .bind(&contents)
+        .execute(&self.pool)
+        .await?;
 
         info!(
             "Successfully loaded embedded package {}@{} with {} resources to FCM",
@@ -414,21 +494,112 @@ impl PostgresPackageStore {
             resource_types.len()
         );
 
-        let schema_manager = SchemaManager::new(self.pool.clone());
-        let mut created_count = 0;
+        // Define the shared archive_to_history() function once before fanning
+        // out — every history trigger uses it, but defining it from many
+        // concurrent connections would serialize on the catalog lock.
+        SchemaManager::ensure_archive_function(&self.pool)
+            .await
+            .map_err(|e| {
+                FcmError::Storage(StorageError::DatabaseError {
+                    message: format!("ensure_archive_function failed: {e}"),
+                })
+            })?;
 
-        for resource_type in &resource_types {
-            match schema_manager.create_resource_schema(resource_type).await {
-                Ok(()) => {
-                    debug!("Created schema for resource type: {}", resource_type);
+        // Warm-DB fast path: query pg_class once to find which main tables and
+        // partitions already exist. Skip per-resource raw_sql for types whose
+        // entire schema is already in place. Partition creates on
+        // `search_idx_reference` / `search_idx_date` take AccessExclusiveLock
+        // on the parent, so even "CREATE TABLE IF NOT EXISTS" partitions
+        // serialize across the pool — avoiding the call is the only real win.
+        let existing_main: std::collections::HashSet<String> = match sqlx_core::query_as::query_as::<
+            _,
+            (String,),
+        >(
+            "SELECT tablename FROM pg_tables WHERE schemaname = 'public'",
+        )
+        .fetch_all(&self.pool)
+        .await
+        {
+            Ok(rows) => rows.into_iter().map(|(t,)| t).collect(),
+            Err(e) => {
+                warn!(error = %e, "Failed to probe existing tables; falling back to unconditional create");
+                std::collections::HashSet::new()
+            }
+        };
+
+        let need_create: Vec<String> = resource_types
+            .into_iter()
+            .filter(|rt| {
+                let table = rt.to_lowercase();
+                let main_present = existing_main.contains(&table);
+                let ref_part_present = existing_main.contains(&format!("search_idx_reference_{table}"));
+                let date_part_present = existing_main.contains(&format!("search_idx_date_{table}"));
+                let is_internal = matches!(
+                    table.as_str(),
+                    "user"
+                        | "client"
+                        | "session"
+                        | "authsession"
+                        | "accesspolicy"
+                        | "refreshtoken"
+                        | "revokedtoken"
+                        | "identityprovider"
+                        | "role"
+                        | "app"
+                        | "customoperation"
+                        | "appsubscription"
+                        | "notificationlog"
+                        | "notificationprovider"
+                        | "notificationtemplate"
+                );
+                // Internal resources don't get partitions — skip if main exists.
+                if is_internal {
+                    return !main_present;
+                }
+                !(main_present && ref_part_present && date_part_present)
+            })
+            .collect();
+
+        info!(
+            already_present = (existing_main.iter().filter(|t| !t.starts_with("search_idx_")).count()),
+            need_create = need_create.len(),
+            "Resource-schema cold/warm decision"
+        );
+
+        if need_create.is_empty() {
+            return Ok(0);
+        }
+
+        // Parallelize schema creation. Each call now issues one round-trip
+        // (multi-statement DDL via raw_sql). Concurrency is bounded so we
+        // don't exhaust the pool — leave headroom for the rest of bootstrap.
+        let concurrency = std::cmp::min(need_create.len(), 16);
+        let semaphore = std::sync::Arc::new(tokio::sync::Semaphore::new(concurrency.max(1)));
+        let mut set = tokio::task::JoinSet::new();
+
+        for resource_type in need_create {
+            let pool = self.pool.clone();
+            let sem = semaphore.clone();
+            set.spawn(async move {
+                let _permit = sem.acquire_owned().await.ok();
+                let schema_manager = SchemaManager::new(pool);
+                let result = schema_manager.create_resource_schema(&resource_type).await;
+                (resource_type, result)
+            });
+        }
+
+        let mut created_count = 0;
+        while let Some(join_result) = set.join_next().await {
+            match join_result {
+                Ok((rt, Ok(()))) => {
+                    debug!("Created schema for resource type: {}", rt);
                     created_count += 1;
                 }
+                Ok((rt, Err(e))) => {
+                    warn!(resource_type = %rt, error = %e, "Failed to create table for resource type");
+                }
                 Err(e) => {
-                    warn!(
-                        resource_type = %resource_type,
-                        error = %e,
-                        "Failed to create table for resource type"
-                    );
+                    warn!(error = %e, "Schema-creation task panicked");
                 }
             }
         }
@@ -514,9 +685,7 @@ impl PostgresPackageStore {
         Ok(())
     }
 
-    /// Store multiple FHIRSchemas in a batch for better performance.
-    ///
-    /// Uses a single transaction for all inserts.
+    /// Store multiple FHIRSchemas in a single UNNEST INSERT (one round-trip).
     #[instrument(skip(self, schemas), fields(count = schemas.len()))]
     pub async fn store_fhirschemas_batch(
         &self,
@@ -534,27 +703,80 @@ impl PostgresPackageStore {
             return Ok(0);
         }
 
-        info!("Storing {} FHIRSchemas in batch", schemas.len());
+        info!("Storing {} FHIRSchemas in batch (UNNEST)", schemas.len());
 
-        let mut stored = 0;
-        for (url, version, package_name, package_version, fhir_version, schema_type, content) in
-            schemas
-        {
-            self.store_fhirschema(
-                url,
-                *version,
-                package_name,
-                package_version,
-                fhir_version,
-                schema_type,
-                content,
-            )
-            .await?;
-            stored += 1;
+        let len = schemas.len();
+        let mut urls: Vec<&str> = Vec::with_capacity(len);
+        let mut versions: Vec<Option<&str>> = Vec::with_capacity(len);
+        let mut package_names: Vec<&str> = Vec::with_capacity(len);
+        let mut package_versions: Vec<&str> = Vec::with_capacity(len);
+        let mut fhir_versions: Vec<&str> = Vec::with_capacity(len);
+        let mut schema_types: Vec<&str> = Vec::with_capacity(len);
+        let mut contents: Vec<Value> = Vec::with_capacity(len);
+        let mut hashes: Vec<String> = Vec::with_capacity(len);
+
+        for (url, version, pkg_name, pkg_version, fhir_ver, schema_type, content) in schemas {
+            urls.push(url);
+            versions.push(*version);
+            package_names.push(pkg_name);
+            package_versions.push(pkg_version);
+            fhir_versions.push(fhir_ver);
+            schema_types.push(schema_type);
+            let content_str = serde_json::to_string(content).unwrap_or_default();
+            let hash = {
+                use std::collections::hash_map::DefaultHasher;
+                use std::hash::{Hash, Hasher};
+                let mut hasher = DefaultHasher::new();
+                content_str.hash(&mut hasher);
+                format!("{:016x}", hasher.finish())
+            };
+            hashes.push(hash);
+            contents.push((*content).clone());
         }
 
-        info!("Successfully stored {} FHIRSchemas", stored);
-        Ok(stored)
+        let owned_versions: Vec<Option<String>> =
+            versions.iter().map(|v| v.map(|s| s.to_string())).collect();
+        let owned_urls: Vec<String> = urls.iter().map(|s| s.to_string()).collect();
+        let owned_pkg_names: Vec<String> = package_names.iter().map(|s| s.to_string()).collect();
+        let owned_pkg_versions: Vec<String> = package_versions.iter().map(|s| s.to_string()).collect();
+        let owned_fhir_versions: Vec<String> = fhir_versions.iter().map(|s| s.to_string()).collect();
+        let owned_schema_types: Vec<String> = schema_types.iter().map(|s| s.to_string()).collect();
+
+        query(
+            r#"
+            INSERT INTO fcm.fhirschemas (
+                url, version, package_name, package_version, fhir_version,
+                schema_type, content, content_hash
+            )
+            SELECT t.url, t.version, t.pkg, t.pkg_ver, t.fhir, t.stype, t.content, t.hash
+            FROM UNNEST(
+                $1::text[], $2::text[], $3::text[], $4::text[],
+                $5::text[], $6::text[], $7::jsonb[], $8::text[]
+            ) AS t(url, version, pkg, pkg_ver, fhir, stype, content, hash)
+            ON CONFLICT (url, package_name, package_version) DO UPDATE SET
+                version = EXCLUDED.version,
+                fhir_version = EXCLUDED.fhir_version,
+                schema_type = EXCLUDED.schema_type,
+                content = EXCLUDED.content,
+                content_hash = EXCLUDED.content_hash,
+                created_at = NOW()
+            WHERE fcm.fhirschemas.content_hash != EXCLUDED.content_hash
+            "#,
+        )
+        .bind(&owned_urls)
+        .bind(&owned_versions)
+        .bind(&owned_pkg_names)
+        .bind(&owned_pkg_versions)
+        .bind(&owned_fhir_versions)
+        .bind(&owned_schema_types)
+        .bind(&contents)
+        .bind(&hashes)
+        .execute(&self.pool)
+        .await
+        .map_err(db_error)?;
+
+        info!("Successfully stored {} FHIRSchemas", len);
+        Ok(len)
     }
 
     /// Get a FHIRSchema by canonical URL.
@@ -769,6 +991,27 @@ impl PostgresPackageStore {
             .await
             .map_err(db_error)?;
 
+        Ok(count)
+    }
+
+    /// Count FHIRSchemas already stored for a specific (package, version).
+    ///
+    /// Lets cold-boot fast-path detect that a package's schemas are already
+    /// converted on warm DB, so the converter can skip the heavy
+    /// translate + serialize + UNNEST INSERT pipeline.
+    pub async fn count_fhirschemas_for_package(
+        &self,
+        package_name: &str,
+        package_version: &str,
+    ) -> Result<i64, FcmError> {
+        let count: i64 = query_scalar(
+            "SELECT COUNT(*) FROM fcm.fhirschemas WHERE package_name = $1 AND package_version = $2",
+        )
+        .bind(package_name)
+        .bind(package_version)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(db_error)?;
         Ok(count)
     }
 
@@ -1076,6 +1319,45 @@ impl PostgresPackageStore {
     ///
     /// Returns the raw JSON content of matching resources.
     #[instrument(skip(self))]
+    /// Bulk-fetch `content` for every resource of a given resource_type
+    /// across all packages, optionally restricted by FHIR version.
+    ///
+    /// `fhir_versions` accepts the set of strings that should match the
+    /// `fcm.resources.fhir_version` column. Pass both the long form
+    /// (e.g. `"4.0.1"` written by canonical-manager) and the short form
+    /// (e.g. `"R4"` used by our embedded IGs) so a single configured
+    /// version picks up both kinds of rows.
+    ///
+    /// One round-trip replaces the canonical-manager search path
+    /// (`get_cache_entries` → in-memory filter → per-match `get_resource`),
+    /// which costs 1+N round-trips. Used by the SearchParameter loader on
+    /// cold-boot — turning ~1400 SELECTs into one.
+    pub async fn find_resources_by_type_bulk(
+        &self,
+        resource_type: &str,
+        fhir_versions: Option<&[&str]>,
+    ) -> Result<Vec<Value>, FcmError> {
+        let rows: Vec<Value> = match fhir_versions {
+            Some(versions) if !versions.is_empty() => {
+                let owned: Vec<String> = versions.iter().map(|s| s.to_string()).collect();
+                query_scalar(
+                    "SELECT content FROM fcm.resources WHERE resource_type = $1 AND fhir_version = ANY($2)",
+                )
+                .bind(resource_type)
+                .bind(&owned)
+                .fetch_all(&self.pool)
+                .await
+                .map_err(db_error)?
+            }
+            _ => query_scalar("SELECT content FROM fcm.resources WHERE resource_type = $1")
+                .bind(resource_type)
+                .fetch_all(&self.pool)
+                .await
+                .map_err(db_error)?,
+        };
+        Ok(rows)
+    }
+
     pub async fn find_resources_by_package_and_type(
         &self,
         package_name: &str,
@@ -1227,21 +1509,77 @@ impl PackageStore for PostgresPackageStore {
             );
         }
 
-        // Insert resources
+        // Batch-insert resources via a single UNNEST INSERT. r4.core ships
+        // ~4581 resources; sending them one-at-a-time was ~13s of cold-boot
+        // — almost all of that is per-statement RTT, not Postgres CPU. The
+        // ON CONFLICT clause makes the batch idempotent against re-runs.
+        let n = package.resources.len();
+        let mut resource_types: Vec<String> = Vec::with_capacity(n);
+        let mut resource_ids: Vec<Option<String>> = Vec::with_capacity(n);
+        let mut urls: Vec<Option<String>> = Vec::with_capacity(n);
+        let mut names: Vec<Option<String>> = Vec::with_capacity(n);
+        let mut versions: Vec<Option<String>> = Vec::with_capacity(n);
+        let mut sd_kinds: Vec<Option<String>> = Vec::with_capacity(n);
+        let mut sd_derivations: Vec<Option<String>> = Vec::with_capacity(n);
+        let mut sd_types: Vec<Option<String>> = Vec::with_capacity(n);
+        let mut sd_base_defs: Vec<Option<String>> = Vec::with_capacity(n);
+        let mut sd_abstracts: Vec<Option<bool>> = Vec::with_capacity(n);
+        let mut sd_impose: Vec<Option<Value>> = Vec::with_capacity(n);
+        let mut sd_chars: Vec<Option<Value>> = Vec::with_capacity(n);
+        let mut sd_flavors: Vec<Option<String>> = Vec::with_capacity(n);
+        let mut content_hashes: Vec<String> = Vec::with_capacity(n);
+        let mut contents: Vec<Value> = Vec::with_capacity(n);
+
         for resource in &package.resources {
             let content = &resource.content;
             let sd_fields = Self::extract_sd_fields(content);
+            resource_types.push(resource.resource_type.clone());
+            resource_ids.push(Some(resource.id.clone()));
+            urls.push(resource.url.clone());
+            names.push(
+                content
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .map(String::from),
+            );
+            versions.push(resource.version.clone());
+            sd_kinds.push(sd_fields.kind);
+            sd_derivations.push(sd_fields.derivation);
+            sd_types.push(sd_fields.sd_type);
+            sd_base_defs.push(sd_fields.base_definition);
+            sd_abstracts.push(sd_fields.is_abstract);
+            sd_impose.push(
+                sd_fields
+                    .impose_profiles
+                    .and_then(|v| serde_json::to_value(v).ok()),
+            );
+            sd_chars.push(
+                sd_fields
+                    .characteristics
+                    .and_then(|v| serde_json::to_value(v).ok()),
+            );
+            sd_flavors.push(sd_fields.flavor);
 
-            // Compute content hash
-            let content_str = serde_json::to_string(content).unwrap_or_default();
-            let content_hash = {
+            // fcm.resources.content_hash is write-only here — never read on
+            // subsequent boots. Avoid the per-resource `serde_json::to_string`
+            // which on cold-boot dominated CPU (4581 R4 resources × full
+            // serialize). Hash only the stable identity (resource_type / id /
+            // url) instead.
+            let hash = {
                 use std::collections::hash_map::DefaultHasher;
                 use std::hash::{Hash, Hasher};
                 let mut hasher = DefaultHasher::new();
-                content_str.hash(&mut hasher);
+                resource.resource_type.hash(&mut hasher);
+                resource.id.hash(&mut hasher);
+                resource.url.hash(&mut hasher);
+                resource.version.hash(&mut hasher);
                 format!("{:016x}", hasher.finish())
             };
+            content_hashes.push(hash);
+            contents.push(content.clone());
+        }
 
+        if n > 0 {
             query(
                 r#"
                 INSERT INTO fcm.resources (
@@ -1249,40 +1587,38 @@ impl PackageStore for PostgresPackageStore {
                     sd_kind, sd_derivation, sd_type, sd_base_definition, sd_abstract,
                     sd_impose_profiles, sd_characteristics, sd_flavor,
                     package_name, package_version, fhir_version, content_hash, content
-                ) VALUES (
-                    $1, $2, $3, $4, $5,
-                    $6, $7, $8, $9, $10,
-                    $11, $12, $13,
-                    $14, $15, $16, $17, $18
                 )
+                SELECT
+                    t.rt, t.rid, t.url, t.nm, t.ver,
+                    t.kind, t.deriv, t.styp, t.bdef, t.abs_,
+                    t.imp, t.chr, t.flav,
+                    $14, $15, $16, t.hsh, t.cnt
+                FROM UNNEST(
+                    $1::text[], $2::text[], $3::text[], $4::text[], $5::text[],
+                    $6::text[], $7::text[], $8::text[], $9::text[], $10::bool[],
+                    $11::jsonb[], $12::jsonb[], $13::text[],
+                    $17::text[], $18::jsonb[]
+                ) AS t(rt, rid, url, nm, ver, kind, deriv, styp, bdef, abs_, imp, chr, flav, hsh, cnt)
                 "#,
             )
-            .bind(&resource.resource_type)
-            .bind(&resource.id)
-            .bind(&resource.url)
-            .bind(content.get("name").and_then(|v| v.as_str()))
-            .bind(&resource.version)
-            .bind(&sd_fields.kind)
-            .bind(&sd_fields.derivation)
-            .bind(&sd_fields.sd_type)
-            .bind(&sd_fields.base_definition)
-            .bind(sd_fields.is_abstract)
-            .bind(
-                sd_fields
-                    .impose_profiles
-                    .and_then(|v| serde_json::to_value(v).ok()),
-            )
-            .bind(
-                sd_fields
-                    .characteristics
-                    .and_then(|v| serde_json::to_value(v).ok()),
-            )
-            .bind(&sd_fields.flavor)
+            .bind(&resource_types)
+            .bind(&resource_ids)
+            .bind(&urls)
+            .bind(&names)
+            .bind(&versions)
+            .bind(&sd_kinds)
+            .bind(&sd_derivations)
+            .bind(&sd_types)
+            .bind(&sd_base_defs)
+            .bind(&sd_abstracts)
+            .bind(&sd_impose)
+            .bind(&sd_chars)
+            .bind(&sd_flavors)
             .bind(&package.name)
             .bind(&package.version)
             .bind(&fhir_version)
-            .bind(&content_hash)
-            .bind(content)
+            .bind(&content_hashes)
+            .bind(&contents)
             .execute(&self.pool)
             .await
             .map_err(db_error)?;

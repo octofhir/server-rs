@@ -14,6 +14,73 @@ use octofhir_storage::StorageError;
 use sqlx_core::query::query;
 use sqlx_postgres::PgPool;
 
+use dashmap::DashSet;
+use std::sync::OnceLock;
+
+/// Cache of `(resource_type)` for which the search-index partitions have
+/// already been created during this process lifetime. Avoids re-issuing
+/// `CREATE TABLE ... PARTITION OF` (which takes AccessExclusiveLock on
+/// the parent) on every CRUD insert.
+fn partition_cache() -> &'static DashSet<String> {
+    static CACHE: OnceLock<DashSet<String>> = OnceLock::new();
+    CACHE.get_or_init(DashSet::new)
+}
+
+/// Ensure `search_idx_reference_<rt>` and `search_idx_date_<rt>` exist.
+///
+/// Bootstrap no longer pre-creates these partitions because each `CREATE
+/// TABLE PARTITION OF` serialises on the parent's AccessExclusiveLock
+/// (~6s for 171×2 partitions). Per-process cache means we pay the
+/// ~17ms-per-resource-type cost exactly once, on the resource type's
+/// first write.
+async fn ensure_search_partition(pool: &PgPool, resource_type: &str) -> Result<(), StorageError> {
+    let cache = partition_cache();
+    if cache.contains(resource_type) {
+        return Ok(());
+    }
+    let table = resource_type.to_lowercase();
+    let sql = format!(
+        "CREATE TABLE IF NOT EXISTS \"search_idx_reference_{table}\" \
+            PARTITION OF search_idx_reference FOR VALUES IN ('{resource_type}'); \
+         CREATE TABLE IF NOT EXISTS \"search_idx_date_{table}\" \
+            PARTITION OF search_idx_date FOR VALUES IN ('{resource_type}');"
+    );
+    sqlx_core::raw_sql::raw_sql(&sql)
+        .execute(pool)
+        .await
+        .map_err(|e| StorageError::internal(format!("ensure_search_partition({resource_type}): {e}")))?;
+    cache.insert(resource_type.to_string());
+    Ok(())
+}
+
+/// Tx-bound variant: no process cache because a rollback would
+/// leave the cache out of sync with the catalog. `CREATE TABLE IF
+/// NOT EXISTS` is a cheap catalog lookup once the partition exists.
+async fn ensure_search_partition_in_tx(
+    conn: &mut sqlx_postgres::PgConnection,
+    resource_type: &str,
+) -> Result<(), StorageError> {
+    if partition_cache().contains(resource_type) {
+        return Ok(());
+    }
+    let table = resource_type.to_lowercase();
+    let ref_sql = format!(
+        r#"CREATE TABLE IF NOT EXISTS "search_idx_reference_{table}" PARTITION OF search_idx_reference FOR VALUES IN ('{resource_type}')"#
+    );
+    let date_sql = format!(
+        r#"CREATE TABLE IF NOT EXISTS "search_idx_date_{table}" PARTITION OF search_idx_date FOR VALUES IN ('{resource_type}')"#
+    );
+    query(&ref_sql)
+        .execute(&mut *conn)
+        .await
+        .map_err(|e| StorageError::internal(format!("ensure_search_partition_in_tx(ref/{resource_type}): {e}")))?;
+    query(&date_sql)
+        .execute(&mut *conn)
+        .await
+        .map_err(|e| StorageError::internal(format!("ensure_search_partition_in_tx(date/{resource_type}): {e}")))?;
+    Ok(())
+}
+
 /// Extract denormalized search index rows for a resource using the registry.
 pub fn extract_search_index_rows(
     registry: &SearchParameterRegistry,
@@ -75,6 +142,7 @@ pub async fn write_reference_index(
     resource_id: &str,
     refs: &[ExtractedReference],
 ) -> Result<(), StorageError> {
+    ensure_search_partition(pool, resource_type).await?;
     query("DELETE FROM search_idx_reference WHERE resource_type = $1 AND resource_id = $2")
         .bind(resource_type)
         .bind(resource_id)
@@ -212,6 +280,11 @@ pub async fn write_reference_index_with_tx(
     resource_id: &str,
     refs: &[ExtractedReference],
 ) -> Result<(), StorageError> {
+    // Lazy partition create inside the same tx — no process-global cache
+    // here because a tx-rollback would invalidate it. `CREATE TABLE IF
+    // NOT EXISTS` is cheap (catalog lookup) when the partition already
+    // exists.
+    ensure_search_partition_in_tx(&mut **tx, resource_type).await?;
     query("DELETE FROM search_idx_reference WHERE resource_type = $1 AND resource_id = $2")
         .bind(resource_type)
         .bind(resource_id)
@@ -270,6 +343,7 @@ pub async fn write_date_index(
     resource_id: &str,
     dates: &[ExtractedDate],
 ) -> Result<(), StorageError> {
+    ensure_search_partition(pool, resource_type).await?;
     query("DELETE FROM search_idx_date WHERE resource_type = $1 AND resource_id = $2")
         .bind(resource_type)
         .bind(resource_id)
@@ -311,6 +385,7 @@ pub async fn write_date_index_with_tx(
     resource_id: &str,
     dates: &[ExtractedDate],
 ) -> Result<(), StorageError> {
+    ensure_search_partition_in_tx(&mut **tx, resource_type).await?;
     query("DELETE FROM search_idx_date WHERE resource_type = $1 AND resource_id = $2")
         .bind(resource_type)
         .bind(resource_id)

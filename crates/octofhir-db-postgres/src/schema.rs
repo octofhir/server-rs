@@ -5,9 +5,33 @@
 //! pattern where each FHIR resource type gets its own table.
 
 use sqlx_postgres::PgPool;
-use tracing::{debug, info, instrument};
+use tracing::{debug, instrument};
 
 use crate::error::{PostgresError, Result};
+
+/// Shared `archive_to_history()` plpgsql function used by all history triggers.
+///
+/// Created once via `ensure_archive_function()` so per-resource schema creation
+/// doesn't redefine the same server-wide function from many concurrent
+/// connections (which would serialize).
+const ARCHIVE_FN_SQL: &str = r#"
+    CREATE OR REPLACE FUNCTION archive_to_history()
+    RETURNS TRIGGER AS $$
+    BEGIN
+        EXECUTE format(
+            'INSERT INTO %I_history (id, txid, created_at, updated_at, resource, status)
+             VALUES ($1, $2, $3, $4, $5, $6)
+             ON CONFLICT (id, txid) DO UPDATE SET
+                 created_at = EXCLUDED.created_at,
+                 updated_at = EXCLUDED.updated_at,
+                 resource = EXCLUDED.resource,
+                 status = EXCLUDED.status',
+            TG_TABLE_NAME
+        ) USING OLD.id, OLD.txid, OLD.created_at, OLD.updated_at, OLD.resource, OLD.status;
+        RETURN NEW;
+    END;
+    $$ LANGUAGE plpgsql;
+"#;
 
 /// Manages the database schema for FHIR resources.
 ///
@@ -52,40 +76,147 @@ impl SchemaManager {
 
     /// Creates the full schema for a resource type (idempotent).
     ///
-    /// Creates: resource table, history table, triggers, indexes, search index partitions.
-    /// All DDL uses `IF NOT EXISTS` / `CREATE OR REPLACE` for idempotency — no caching
-    /// or existence checks needed.
+    /// Builds a single multi-statement DDL block and runs it via `raw_sql` so
+    /// the whole resource_type costs one server round-trip instead of ~10.
+    ///
+    /// Pre-condition: `ensure_archive_function()` must have been called on
+    /// `pool` before this method runs for any resource that needs history.
+    ///
+    /// All DDL uses `IF NOT EXISTS` / `CREATE OR REPLACE` for idempotency.
     ///
     /// # Errors
     ///
     /// Returns an error if any DDL statement fails.
     #[instrument(skip(self), fields(resource_type = %resource_type))]
     pub async fn create_resource_schema(&self, resource_type: &str) -> Result<()> {
+        let sql = Self::build_resource_schema_sql(resource_type);
+        sqlx_core::raw_sql::raw_sql(&sql)
+            .execute(&self.pool)
+            .await
+            .map_err(PostgresError::from)?;
+        debug!("Ensured schema for resource type: {}", resource_type);
+        Ok(())
+    }
+
+    /// Build the multi-statement DDL string for one resource type.
+    ///
+    /// Combines table, triggers, indexes, partitions into one semicolon-
+    /// separated batch executable via `raw_sql`. Callers MUST invoke
+    /// `ensure_archive_function()` once on the pool before running this
+    /// concurrently — running `CREATE OR REPLACE FUNCTION
+    /// archive_to_history()` from many concurrent connections trips
+    /// "tuple concurrently updated" on `pg_proc`, dropping schema
+    /// creates on the floor.
+    fn build_resource_schema_sql(resource_type: &str) -> String {
         let table = Self::table_name(resource_type);
+        let history_table = format!("{}_history", table);
+        let is_internal = Self::is_internal_resource(&table);
+        let is_gateway = Self::is_gateway_resource(&table);
+        let is_policy = Self::is_policy_resource(&table);
 
-        self.create_resource_table(resource_type).await?;
-        self.create_update_trigger(resource_type).await?;
+        let mut sql = String::with_capacity(2048);
 
-        if !Self::is_internal_resource(&table) {
-            self.create_history_table(resource_type).await?;
-            self.create_history_trigger(resource_type).await?;
+        // Main table
+        sql.push_str(&format!(
+            "CREATE TABLE IF NOT EXISTS \"{table}\" (\n\
+                id TEXT PRIMARY KEY,\n\
+                txid BIGINT NOT NULL,\n\
+                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),\n\
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),\n\
+                resource JSONB NOT NULL,\n\
+                status resource_status NOT NULL DEFAULT 'created'\n\
+            );\n"
+        ));
+
+        // Update trigger (drop + create)
+        let update_trigger = format!("{}_update_timestamp", table);
+        sql.push_str(&format!(
+            "DROP TRIGGER IF EXISTS \"{update_trigger}\" ON \"{table}\";\n\
+             CREATE TRIGGER \"{update_trigger}\" BEFORE UPDATE ON \"{table}\" \
+             FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();\n"
+        ));
+
+        // History table + trigger (skipped for internal resources)
+        if !is_internal {
+            sql.push_str(&format!(
+                "CREATE TABLE IF NOT EXISTS \"{history_table}\" (\n\
+                    id TEXT NOT NULL,\n\
+                    txid BIGINT NOT NULL,\n\
+                    created_at TIMESTAMPTZ NOT NULL,\n\
+                    updated_at TIMESTAMPTZ NOT NULL,\n\
+                    resource JSONB NOT NULL,\n\
+                    status resource_status NOT NULL,\n\
+                    PRIMARY KEY (id, txid)\n\
+                );\n"
+            ));
+            let history_trigger = format!("{}_history_trigger", table);
+            sql.push_str(&format!(
+                "DROP TRIGGER IF EXISTS \"{history_trigger}\" ON \"{table}\";\n\
+                 CREATE TRIGGER \"{history_trigger}\" BEFORE UPDATE OR DELETE ON \"{table}\" \
+                 FOR EACH ROW EXECUTE FUNCTION archive_to_history();\n"
+            ));
         }
 
-        // Indexes after history table so history table indexes can be created
-        self.create_indexes(resource_type).await?;
+        // Indexes (main table)
+        sql.push_str(&format!(
+            "CREATE INDEX IF NOT EXISTS \"idx_{table}_gin\" ON \"{table}\" \
+             USING GIN (resource jsonb_path_ops) \
+             WITH (fastupdate=on, gin_pending_list_limit=131072);\n\
+             CREATE INDEX IF NOT EXISTS \"idx_{table}_txid\" ON \"{table}\"(txid);\n\
+             CREATE INDEX IF NOT EXISTS \"idx_{table}_created_at\" ON \"{table}\"(created_at);\n\
+             CREATE INDEX IF NOT EXISTS \"idx_{table}_updated_at\" ON \"{table}\"(updated_at);\n\
+             CREATE INDEX IF NOT EXISTS \"idx_{table}_status\" ON \"{table}\"(status);\n"
+        ));
 
-        if !Self::is_internal_resource(&table) {
-            self.ensure_search_index_partitions(resource_type).await?;
+        // History indexes
+        if !is_internal {
+            sql.push_str(&format!(
+                "CREATE INDEX IF NOT EXISTS \"idx_{history_table}_updated_at\" \
+                    ON \"{history_table}\"(updated_at);\n\
+                 CREATE INDEX IF NOT EXISTS \"idx_{history_table}_id\" \
+                    ON \"{history_table}\"(id);\n"
+            ));
         }
 
-        if Self::is_gateway_resource(&table) {
-            self.create_gateway_trigger(resource_type).await?;
+        // NOTE: search_idx_reference / search_idx_date partitions are NOT
+        // created here. Each `CREATE TABLE ... PARTITION OF` takes
+        // AccessExclusiveLock on the partitioned parent and serialises
+        // across resource types; on cold-boot this was ~6s for 171×2=342
+        // partitions. They're now created lazily on first index write
+        // (see `ensure_search_partition` in `search_index.rs`) and cached
+        // per-process, paying one-time ~17ms per resource type on its
+        // first CRUD insert instead of stalling startup.
+
+        // Gateway notify trigger
+        if is_gateway {
+            let trig = format!("{}_gateway_notify", table);
+            sql.push_str(&format!(
+                "DROP TRIGGER IF EXISTS \"{trig}\" ON \"{table}\";\n\
+                 CREATE TRIGGER \"{trig}\" AFTER INSERT OR UPDATE OR DELETE ON \"{table}\" \
+                 FOR EACH ROW EXECUTE FUNCTION notify_gateway_resource_change();\n"
+            ));
         }
 
-        if Self::is_policy_resource(&table) {
-            self.create_policy_trigger(resource_type).await?;
+        // Policy notify trigger
+        if is_policy {
+            let trig = format!("{}_policy_notify", table);
+            sql.push_str(&format!(
+                "DROP TRIGGER IF EXISTS \"{trig}\" ON \"{table}\";\n\
+                 CREATE TRIGGER \"{trig}\" AFTER INSERT OR UPDATE OR DELETE ON \"{table}\" \
+                 FOR EACH ROW EXECUTE FUNCTION notify_policy_change();\n"
+            ));
         }
 
+        sql
+    }
+
+    /// Ensure the shared `archive_to_history()` function exists. Call once
+    /// before parallel resource-schema creation.
+    pub async fn ensure_archive_function(pool: &PgPool) -> Result<()> {
+        sqlx_core::query::query(ARCHIVE_FN_SQL)
+            .execute(pool)
+            .await
+            .map_err(PostgresError::from)?;
         Ok(())
     }
 
@@ -120,318 +251,6 @@ impl SchemaManager {
                 | "notificationprovider"
                 | "notificationtemplate"
         )
-    }
-
-    /// Creates the main resource table.
-    #[instrument(skip(self))]
-    async fn create_resource_table(&self, resource_type: &str) -> Result<()> {
-        let table = Self::table_name(resource_type);
-
-        // No FK on `txid → _transaction(txid)`: append-only relationship,
-        // FK validation cost on every write is not worth its guarantee.
-        let sql = format!(
-            r#"
-            CREATE TABLE IF NOT EXISTS "{table}" (
-                id TEXT PRIMARY KEY,
-                txid BIGINT NOT NULL,
-                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                resource JSONB NOT NULL,
-                status resource_status NOT NULL DEFAULT 'created'
-            )
-            "#
-        );
-
-        sqlx_core::query::query(&sql)
-            .execute(&self.pool)
-            .await
-            .map_err(PostgresError::from)?;
-
-        debug!("Ensured table: {}", table);
-        Ok(())
-    }
-
-    /// Creates the history table for storing previous versions.
-    ///
-    /// Like the main table, resource_type is not stored since:
-    /// 1. The history table name indicates the resource type
-    /// 2. The JSONB resource field contains resourceType
-    #[instrument(skip(self))]
-    async fn create_history_table(&self, resource_type: &str) -> Result<()> {
-        let table = Self::table_name(resource_type);
-        let history_table = format!("{}_history", table);
-
-        let sql = format!(
-            r#"
-            CREATE TABLE IF NOT EXISTS "{history_table}" (
-                id TEXT NOT NULL,
-                txid BIGINT NOT NULL,
-                created_at TIMESTAMPTZ NOT NULL,
-                updated_at TIMESTAMPTZ NOT NULL,
-                resource JSONB NOT NULL,
-                status resource_status NOT NULL,
-                PRIMARY KEY (id, txid)
-            )
-            "#
-        );
-
-        sqlx_core::query::query(&sql)
-            .execute(&self.pool)
-            .await
-            .map_err(PostgresError::from)?;
-
-        Ok(())
-    }
-
-    /// Creates indexes for efficient querying.
-    #[instrument(skip(self))]
-    async fn create_indexes(&self, resource_type: &str) -> Result<()> {
-        let table = Self::table_name(resource_type);
-
-        // GIN index for JSONB search (enables efficient @>, ?, ?& operators)
-        // fastupdate=on + larger pending list amortizes bulk-write cost; flushed
-        // by autovacuum or gin_clean_pending_list() before read-heavy workloads.
-        let gin_sql = format!(
-            r#"CREATE INDEX IF NOT EXISTS "idx_{table}_gin" ON "{table}" USING GIN (resource jsonb_path_ops) WITH (fastupdate=on, gin_pending_list_limit=131072)"#
-        );
-        sqlx_core::query::query(&gin_sql)
-            .execute(&self.pool)
-            .await
-            .map_err(PostgresError::from)?;
-
-        // Index on txid for transaction-based queries
-        let txid_sql =
-            format!(r#"CREATE INDEX IF NOT EXISTS "idx_{table}_txid" ON "{table}"(txid)"#);
-        sqlx_core::query::query(&txid_sql)
-            .execute(&self.pool)
-            .await
-            .map_err(PostgresError::from)?;
-
-        // Index on created_at for time-based queries
-        let created_at_sql = format!(
-            r#"CREATE INDEX IF NOT EXISTS "idx_{table}_created_at" ON "{table}"(created_at)"#
-        );
-        sqlx_core::query::query(&created_at_sql)
-            .execute(&self.pool)
-            .await
-            .map_err(PostgresError::from)?;
-
-        // Index on updated_at for time-based sorting and filtering
-        let updated_at_sql = format!(
-            r#"CREATE INDEX IF NOT EXISTS "idx_{table}_updated_at" ON "{table}"(updated_at)"#
-        );
-        sqlx_core::query::query(&updated_at_sql)
-            .execute(&self.pool)
-            .await
-            .map_err(PostgresError::from)?;
-
-        // Index on status for filtering deleted resources
-        let status_sql =
-            format!(r#"CREATE INDEX IF NOT EXISTS "idx_{table}_status" ON "{table}"(status)"#);
-        sqlx_core::query::query(&status_sql)
-            .execute(&self.pool)
-            .await
-            .map_err(PostgresError::from)?;
-
-        // Skip history table indexes for internal resources
-        if !Self::is_internal_resource(&table) {
-            let history_table = format!("{}_history", table);
-
-            // History table index on updated_at for history queries
-            let history_updated_at_sql = format!(
-                r#"CREATE INDEX IF NOT EXISTS "idx_{history_table}_updated_at" ON "{history_table}"(updated_at)"#
-            );
-            sqlx_core::query::query(&history_updated_at_sql)
-                .execute(&self.pool)
-                .await
-                .map_err(PostgresError::from)?;
-
-            // History table index on id for resource-specific history
-            let history_id_sql = format!(
-                r#"CREATE INDEX IF NOT EXISTS "idx_{history_table}_id" ON "{history_table}"(id)"#
-            );
-            sqlx_core::query::query(&history_id_sql)
-                .execute(&self.pool)
-                .await
-                .map_err(PostgresError::from)?;
-        }
-
-        info!("Created indexes for: {}", table);
-        Ok(())
-    }
-
-    /// Creates the update timestamp trigger that automatically updates updated_at.
-    ///
-    /// Uses the shared `update_updated_at_column()` function created by migration.
-    #[instrument(skip(self))]
-    async fn create_update_trigger(&self, resource_type: &str) -> Result<()> {
-        let table = Self::table_name(resource_type);
-        let trigger_name = format!("{}_update_timestamp", table);
-
-        // Drop existing trigger first
-        let drop_sql = format!(r#"DROP TRIGGER IF EXISTS "{trigger_name}" ON "{table}""#);
-        sqlx_core::query::query(&drop_sql)
-            .execute(&self.pool)
-            .await
-            .map_err(PostgresError::from)?;
-
-        // Create the trigger using the shared function from migration
-        let create_sql = format!(
-            r#"CREATE TRIGGER "{trigger_name}"
-                BEFORE UPDATE ON "{table}"
-                FOR EACH ROW EXECUTE FUNCTION update_updated_at_column()"#
-        );
-        sqlx_core::query::query(&create_sql)
-            .execute(&self.pool)
-            .await
-            .map_err(PostgresError::from)?;
-
-        info!("Created update timestamp trigger for: {}", table);
-        Ok(())
-    }
-
-    /// Creates the history trigger that archives rows before UPDATE/DELETE.
-    #[instrument(skip(self))]
-    async fn create_history_trigger(&self, resource_type: &str) -> Result<()> {
-        let table = Self::table_name(resource_type);
-        let trigger_name = format!("{}_history_trigger", table);
-
-        // Create the archive function if it doesn't exist
-        // This function copies the OLD row to the history table
-        // Uses ON CONFLICT to overwrite existing history records (handles idempotent upserts)
-        let fn_sql = r#"
-            CREATE OR REPLACE FUNCTION archive_to_history()
-            RETURNS TRIGGER AS $$
-            BEGIN
-                EXECUTE format(
-                    'INSERT INTO %I_history (id, txid, created_at, updated_at, resource, status)
-                     VALUES ($1, $2, $3, $4, $5, $6)
-                     ON CONFLICT (id, txid) DO UPDATE SET
-                         created_at = EXCLUDED.created_at,
-                         updated_at = EXCLUDED.updated_at,
-                         resource = EXCLUDED.resource,
-                         status = EXCLUDED.status',
-                    TG_TABLE_NAME
-                ) USING OLD.id, OLD.txid, OLD.created_at, OLD.updated_at, OLD.resource, OLD.status;
-                RETURN NEW;
-            END;
-            $$ LANGUAGE plpgsql;
-        "#;
-        sqlx_core::query::query(fn_sql)
-            .execute(&self.pool)
-            .await
-            .map_err(PostgresError::from)?;
-
-        // Drop existing trigger first (separate query - PostgreSQL doesn't allow multiple commands)
-        let drop_sql = format!(r#"DROP TRIGGER IF EXISTS "{trigger_name}" ON "{table}""#);
-        sqlx_core::query::query(&drop_sql)
-            .execute(&self.pool)
-            .await
-            .map_err(PostgresError::from)?;
-
-        // Create the trigger
-        let create_sql = format!(
-            r#"CREATE TRIGGER "{trigger_name}"
-                BEFORE UPDATE OR DELETE ON "{table}"
-                FOR EACH ROW EXECUTE FUNCTION archive_to_history()"#
-        );
-        sqlx_core::query::query(&create_sql)
-            .execute(&self.pool)
-            .await
-            .map_err(PostgresError::from)?;
-
-        Ok(())
-    }
-
-    /// Creates gateway notification trigger for App and CustomOperation resources.
-    ///
-    /// This trigger calls `notify_gateway_resource_change()` (created by migration 003)
-    /// on INSERT/UPDATE/DELETE to enable hot-reload of gateway routes.
-    #[instrument(skip(self))]
-    async fn create_gateway_trigger(&self, resource_type: &str) -> Result<()> {
-        let table = Self::table_name(resource_type);
-        let trigger_name = format!("{}_gateway_notify", table);
-
-        // Drop existing trigger first (separate query - PostgreSQL doesn't allow multiple commands)
-        let drop_sql = format!(r#"DROP TRIGGER IF EXISTS "{trigger_name}" ON "{table}""#);
-        sqlx_core::query::query(&drop_sql)
-            .execute(&self.pool)
-            .await
-            .map_err(PostgresError::from)?;
-
-        // Create the trigger
-        // Uses notify_gateway_resource_change() function created by migration 003
-        let create_sql = format!(
-            r#"CREATE TRIGGER "{trigger_name}"
-                AFTER INSERT OR UPDATE OR DELETE ON "{table}"
-                FOR EACH ROW EXECUTE FUNCTION notify_gateway_resource_change()"#
-        );
-        sqlx_core::query::query(&create_sql)
-            .execute(&self.pool)
-            .await
-            .map_err(PostgresError::from)?;
-
-        info!("Created gateway notification trigger for: {}", table);
-        Ok(())
-    }
-
-    /// Creates policy notification trigger for AccessPolicy resources.
-    ///
-    /// This trigger calls `notify_policy_change()` (created by migration 009)
-    /// on INSERT/UPDATE/DELETE to enable hot-reload of access policies.
-    #[instrument(skip(self))]
-    async fn create_policy_trigger(&self, resource_type: &str) -> Result<()> {
-        let table = Self::table_name(resource_type);
-        let trigger_name = format!("{}_policy_notify", table);
-
-        // Drop existing trigger first (separate query - PostgreSQL doesn't allow multiple commands)
-        let drop_sql = format!(r#"DROP TRIGGER IF EXISTS "{trigger_name}" ON "{table}""#);
-        sqlx_core::query::query(&drop_sql)
-            .execute(&self.pool)
-            .await
-            .map_err(PostgresError::from)?;
-
-        // Create the trigger
-        // Uses notify_policy_change() function created by migration 009
-        let create_sql = format!(
-            r#"CREATE TRIGGER "{trigger_name}"
-                AFTER INSERT OR UPDATE OR DELETE ON "{table}"
-                FOR EACH ROW EXECUTE FUNCTION notify_policy_change()"#
-        );
-        sqlx_core::query::query(&create_sql)
-            .execute(&self.pool)
-            .await
-            .map_err(PostgresError::from)?;
-
-        info!("Created policy notification trigger for: {}", table);
-        Ok(())
-    }
-
-    /// Creates search index partitions for a resource type.
-    ///
-    /// Creates partitions of `search_idx_reference` and `search_idx_date`
-    /// for the given resource type. Uses `IF NOT EXISTS`
-    /// for idempotency.
-    #[instrument(skip(self))]
-    async fn ensure_search_index_partitions(&self, resource_type: &str) -> Result<()> {
-        let table = Self::table_name(resource_type);
-
-        let index_tables = ["search_idx_reference", "search_idx_date"];
-
-        for idx_table in &index_tables {
-            let partition_name = format!("{idx_table}_{table}");
-            let sql = format!(
-                r#"CREATE TABLE IF NOT EXISTS "{partition_name}"
-                   PARTITION OF {idx_table} FOR VALUES IN ('{resource_type}')"#
-            );
-            sqlx_core::query::query(&sql)
-                .execute(&self.pool)
-                .await
-                .map_err(PostgresError::from)?;
-        }
-
-        debug!("Created search index partitions for: {}", resource_type);
-        Ok(())
     }
 
     /// Lists all resource tables (excludes history and system tables).

@@ -1135,10 +1135,14 @@ pub mod loader {
             }
         }
         // Environment variable overrides, e.g., OCTOFHIR__SERVER__PORT=9090
+        // List values (e.g. OCTOFHIR__PACKAGES__LOAD=a,b,c) are split on `,`
+        // for the keys registered below.
         builder = builder.add_source(
             Environment::with_prefix("OCTOFHIR")
                 .try_parsing(true)
-                .separator("__"),
+                .separator("__")
+                .list_separator(",")
+                .with_list_parse_key("packages.load"),
         );
         let cfg = builder
             .build()

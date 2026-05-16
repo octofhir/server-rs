@@ -406,47 +406,83 @@ async fn build_registry_with_manager(cfg: &AppConfig) -> Result<CanonicalRegistr
 
     let mut successfully_installed: Vec<(String, String)> = Vec::new();
     if !batch_specs.is_empty() {
-        tracing::info!(count = batch_specs.len(), "Installing packages via batch");
-        // Keep track of names for logging
-        let spec_names: Vec<_> = batch_specs
-            .iter()
-            .map(|s| (s.name.clone(), s.version.clone()))
-            .collect();
+        // Split: registry-resolvable packages get the parallel pipeline
+        // (concurrent downloads + extracts + one DB batch); URL-pinned
+        // packages bypass it because `install_packages_parallel`'s Stage 0
+        // resolves dependencies via the registry and fails on URL-only
+        // entries (no metadata route). Doing them sequentially via the
+        // batch path keeps the URL package working while letting the
+        // registry-side packages parallelise.
+        let (url_specs, registry_specs): (Vec<_>, Vec<_>) =
+            batch_specs.into_iter().partition(|s| s.url.is_some());
 
-        match manager.install_packages_batch(batch_specs).await {
-            Ok(()) => {
-                tracing::info!(
-                    count = spec_names.len(),
-                    elapsed_ms = install_start.elapsed().as_millis(),
-                    "Successfully installed all packages in batch"
-                );
-                successfully_installed = spec_names;
-            }
-            Err(e) => {
-                tracing::error!(
-                    error = %e,
-                    error_debug = ?e,
-                    "Batch package installation failed, falling back to sequential"
-                );
-                // Fallback: install one by one
-                for pkg in &packages_to_install {
-                    let name = &pkg.id;
-                    let version = pkg.version.as_ref().unwrap();
-                    let spec = octofhir_canonical_manager::PackageSpec {
-                        name: name.clone(),
-                        version: version.clone(),
-                        priority: 1,
-                        url: pkg.url.clone(),
-                    };
-                    match manager.install_packages_batch(vec![spec]).await {
-                        Ok(()) => {
-                            tracing::info!(package = %name, version = %version, "installed package");
-                            successfully_installed.push((name.clone(), version.clone()));
-                        }
-                        Err(e) => {
-                            tracing::error!(package = %name, version = %version, error = %e, "failed to install package");
+        tracing::info!(
+            registry = registry_specs.len(),
+            url = url_specs.len(),
+            "Installing packages: registry batch in parallel, URL packages sequential"
+        );
+
+        // Registry batch
+        if !registry_specs.is_empty() {
+            let spec_names: Vec<_> = registry_specs
+                .iter()
+                .map(|s| (s.name.clone(), s.version.clone()))
+                .collect();
+            match manager.install_packages_parallel(registry_specs).await {
+                Ok(()) => {
+                    tracing::info!(
+                        count = spec_names.len(),
+                        elapsed_ms = install_start.elapsed().as_millis(),
+                        "Registry packages installed via parallel pipeline"
+                    );
+                    successfully_installed.extend(spec_names);
+                }
+                Err(e) => {
+                    tracing::error!(
+                        error = %e,
+                        "Parallel pipeline failed; falling back to per-package install"
+                    );
+                    for (name, version) in spec_names {
+                        let spec = octofhir_canonical_manager::PackageSpec {
+                            name: name.clone(),
+                            version: version.clone(),
+                            priority: 1,
+                            url: None,
+                        };
+                        match manager.install_packages_batch(vec![spec]).await {
+                            Ok(()) => {
+                                tracing::info!(package = %name, version = %version, "installed package");
+                                successfully_installed.push((name, version));
+                            }
+                            Err(e) => {
+                                tracing::error!(package = %name, version = %version, error = %e, "failed to install package");
+                            }
                         }
                     }
+                }
+            }
+        }
+
+        // URL packages — must go via batch (no registry metadata).
+        // Send them all in one batch call so they pipeline internally.
+        if !url_specs.is_empty() {
+            let url_names: Vec<_> = url_specs
+                .iter()
+                .map(|s| (s.name.clone(), s.version.clone()))
+                .collect();
+            match manager.install_packages_batch(url_specs).await {
+                Ok(()) => {
+                    tracing::info!(
+                        count = url_names.len(),
+                        "URL-pinned packages installed"
+                    );
+                    successfully_installed.extend(url_names);
+                }
+                Err(e) => {
+                    tracing::error!(
+                        error = %e,
+                        "URL-pinned package batch install failed"
+                    );
                 }
             }
         }
@@ -583,62 +619,64 @@ async fn build_registry_with_manager(cfg: &AppConfig) -> Result<CanonicalRegistr
         }
     }
 
-    // Load octofhir-auth package
-    load_embedded_package(
+    // Load embedded packages concurrently — each writes to disjoint package
+    // rows so there's no DB-side contention. Hot path on cold-boot.
+    let embedded_start = std::time::Instant::now();
+    let auth_fut = load_embedded_package(
         &postgres_store,
         "octofhir-auth",
         "0.1.0",
         fhir_version,
         crate::bootstrap::EMBEDDED_AUTH_RESOURCES,
-    )
-    .await;
-
-    // Load octofhir-app package
-    load_embedded_package(
+    );
+    let app_fut = load_embedded_package(
         &postgres_store,
         "octofhir-app",
         "0.1.0",
         fhir_version,
         crate::bootstrap::EMBEDDED_APP_RESOURCES,
-    )
-    .await;
-
-    // Load octofhir-notifications package
-    load_embedded_package(
+    );
+    let notif_fut = load_embedded_package(
         &postgres_store,
         "octofhir-notifications",
         "0.1.0",
         fhir_version,
         crate::bootstrap::EMBEDDED_NOTIFICATIONS_RESOURCES,
-    )
-    .await;
+    );
+    let need_subscription = fhir_version == "R4" || fhir_version == "R4B";
+    let need_sof_compat = cfg.sql_on_fhir.enabled && fhir_version == "R4";
 
-    // Load octofhir-subscription package for R4/R4B
-    // This provides the SubscriptionTopic logical model for topic-based subscriptions.
-    // R5+ has native SubscriptionTopic resource support in the core package.
-    if fhir_version == "R4" || fhir_version == "R4B" {
-        load_embedded_package(
-            &postgres_store,
-            "octofhir-subscription",
-            "0.1.0",
-            fhir_version,
-            crate::bootstrap::EMBEDDED_SUBSCRIPTION_RESOURCES,
-        )
-        .await;
-    }
+    // Build optional futures behind tokio::join! by lifting them to Option-returning closures.
+    let sub_fut = async {
+        if need_subscription {
+            load_embedded_package(
+                &postgres_store,
+                "octofhir-subscription",
+                "0.1.0",
+                fhir_version,
+                crate::bootstrap::EMBEDDED_SUBSCRIPTION_RESOURCES,
+            )
+            .await;
+        }
+    };
+    let sof_fut = async {
+        if need_sof_compat {
+            load_embedded_package(
+                &postgres_store,
+                "octofhir-sof-compat",
+                "0.1.0",
+                fhir_version,
+                crate::bootstrap::EMBEDDED_SOF_COMPAT_RESOURCES,
+            )
+            .await;
+        }
+    };
 
-    // Load CanonicalResource for R4 when SQL on FHIR is enabled
-    // CanonicalResource is an R4B/R5 abstract type that ViewDefinition depends on
-    if cfg.sql_on_fhir.enabled && fhir_version == "R4" {
-        load_embedded_package(
-            &postgres_store,
-            "octofhir-sof-compat",
-            "0.1.0",
-            fhir_version,
-            crate::bootstrap::EMBEDDED_SOF_COMPAT_RESOURCES,
-        )
-        .await;
-    }
+    let _ = tokio::join!(auth_fut, app_fut, notif_fut, sub_fut, sof_fut);
+    tracing::info!(
+        elapsed_ms = embedded_start.elapsed().as_millis(),
+        "Embedded packages loaded (parallel)"
+    );
 
     // Populate our registry view from manager
     let mut reg = CanonicalRegistry::new();
@@ -697,6 +735,26 @@ pub async fn convert_and_store_package_schemas(
     package_version: &str,
     fhir_version: &str,
 ) -> Result<usize, String> {
+    // Warm-DB fast path: if this package already has FHIRSchemas stored, the
+    // expensive translate+serialize+INSERT pipeline is wasted work.
+    // FHIRSchemas are invalidated when a package is reinstalled (DELETE in
+    // load_from_embedded / canonical-manager paths), so non-zero count means
+    // the cache is current.
+    if let Ok(existing) = postgres_store
+        .count_fhirschemas_for_package(package_name, package_version)
+        .await
+    {
+        if existing > 0 {
+            tracing::info!(
+                package = %package_name,
+                version = %package_version,
+                existing = existing,
+                "FHIRSchemas already stored — skipping conversion"
+            );
+            return Ok(existing as usize);
+        }
+    }
+
     tracing::info!(
         package = %package_name,
         version = %package_version,

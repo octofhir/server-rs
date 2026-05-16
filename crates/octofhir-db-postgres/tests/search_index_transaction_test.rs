@@ -32,6 +32,12 @@ async fn setup_storage() -> (testcontainers::ContainerAsync<Postgres>, PostgresS
         .expect("Migrations should succeed");
 
     let storage = PostgresStorage::from_pool(pool);
+    // Required precondition for any history-bearing resource: declares
+    // `archive_to_history()` once. Parallel callers must serialise this
+    // before running `create_resource_schema` concurrently.
+    octofhir_db_postgres::SchemaManager::ensure_archive_function(storage.pool())
+        .await
+        .expect("archive function should be created");
     storage
         .schema_manager()
         .create_resource_schema("Patient")

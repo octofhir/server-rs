@@ -130,6 +130,44 @@ impl OctoFhirModelProvider {
         self.url_cache.invalidate_all();
     }
 
+    /// Bulk-load every schema for this FHIR version into the LRU cache.
+    ///
+    /// Designed for the bootstrap path: `SearchParameter` loading needs
+    /// `resolver.resolve()` for ~1400 params, and on a cold cache each call
+    /// is a `SELECT` round-trip to `fcm.fhirschemas`. One bulk fetch +
+    /// in-process deserialise is dramatically cheaper than 1400 single-row
+    /// SELECTs. Tolerates failures silently — falls back to lazy fetch.
+    pub async fn prime_cache(&self) -> usize {
+        let store = PostgresPackageStore::new(self.pool.clone());
+        let records = match store
+            .bulk_load_fhirschemas_for_graphql(&self.fhir_version_str)
+            .await
+        {
+            Ok(r) => r,
+            Err(e) => {
+                warn!(error = %e, "prime_cache: bulk load failed, leaving cache cold");
+                return 0;
+            }
+        };
+
+        let mut loaded = 0usize;
+        for record in records {
+            let schema: FhirSchema = match serde_json::from_value(record.content) {
+                Ok(s) => s,
+                Err(_) => continue,
+            };
+            let schema = Arc::new(schema);
+            self.cache
+                .insert(schema.name.clone(), Some(schema.clone()))
+                .await;
+            self.url_cache
+                .insert(schema.url.clone(), Some(schema.clone()))
+                .await;
+            loaded += 1;
+        }
+        loaded
+    }
+
     /// Get a schema by name (e.g., "Patient", "Observation").
     ///
     /// Checks the cache first, then loads from database if not found.

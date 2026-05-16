@@ -118,7 +118,7 @@ pub async fn load_search_parameters(
                         .get("url")
                         .and_then(|v| v.as_str())
                         .unwrap_or("unknown");
-                    tracing::warn!(
+                    tracing::debug!(
                             url = %url,
                             error = %e,
                         "Failed to parse SearchParameter, skipping"
@@ -272,6 +272,13 @@ pub fn parse_search_parameter(value: &Value) -> Result<SearchParameter, LoaderEr
 /// Extracts resource type and element path from the FHIRPath expression,
 /// then queries the resolver for the FHIR element type. For multi-resource
 /// expressions, tries each expression to find a matching base type.
+pub async fn resolve_element_type_for_param_public(
+    param: &SearchParameter,
+    resolver: &dyn ElementTypeResolver,
+) -> ElementTypeHint {
+    resolve_element_type_for_param(param, resolver).await
+}
+
 async fn resolve_element_type_for_param(
     param: &SearchParameter,
     resolver: &dyn ElementTypeResolver,

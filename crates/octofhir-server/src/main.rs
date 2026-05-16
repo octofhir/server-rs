@@ -46,6 +46,7 @@ impl std::fmt::Display for ConfigSource {
 #[tokio::main]
 async fn main() {
     let startup_start = std::time::Instant::now();
+    let mut phase_ms: Vec<(&'static str, u128)> = Vec::new();
 
     println!("{STARTUP_BANNER}");
 
@@ -79,6 +80,7 @@ async fn main() {
         }
     };
 
+    phase_ms.push(("config_load", phase_start.elapsed().as_millis()));
     tracing::info!(
         path = %config_path,
         source = %source,
@@ -100,6 +102,7 @@ async fn main() {
         }
     };
 
+    phase_ms.push(("canonical_init", phase_start.elapsed().as_millis()));
     if let Ok(guard) = registry.read() {
         tracing::info!(
             fhir.version = %cfg.fhir.version,
@@ -140,9 +143,17 @@ async fn main() {
         }
     };
 
+    phase_ms.push(("server_build", phase_start.elapsed().as_millis()));
+    let total_ms = startup_start.elapsed().as_millis();
+    let summary: String = phase_ms
+        .iter()
+        .map(|(k, v)| format!("{k}={v}ms"))
+        .collect::<Vec<_>>()
+        .join(" ");
     tracing::info!(
         server_build_ms = phase_start.elapsed().as_millis(),
-        total_startup_ms = startup_start.elapsed().as_millis(),
+        total_startup_ms = total_ms,
+        phases = %summary,
         "Server startup complete"
     );
 

@@ -328,7 +328,9 @@ async fn bootstrap_conformance_if_postgres(
     use octofhir_auth_postgres::{ArcClientStorage, ArcUserStorage};
 
     // Create database tables for all FHIR resource types from FCM packages
-    // This includes all resource-kind and logical-kind StructureDefinitions
+    // This includes all resource-kind and logical-kind StructureDefinitions.
+    // Must complete BEFORE the auth bootstraps because they write into the
+    // User / Client / AccessPolicy tables managed by this routine.
     let fcm_storage = octofhir_db_postgres::PostgresPackageStore::new((*pool).clone());
     match fcm_storage.ensure_resource_tables().await {
         Ok(count) => {
@@ -345,47 +347,58 @@ async fn bootstrap_conformance_if_postgres(
         }
     }
 
-    // Bootstrap default UI client
+    // Fan-out remaining bootstrap steps. Each one operates on a different
+    // FHIR resource table (Client / User / AccessPolicy / Client policy) and
+    // is fully idempotent (existence check + insert), so they don't
+    // interfere with each other and can run concurrently.
     let client_storage = ArcClientStorage::new(pool.clone());
     let issuer = &cfg.auth.issuer;
-    match crate::bootstrap::bootstrap_default_ui_client(&client_storage, issuer).await {
-        Ok(true) => {
-            tracing::info!("Default UI client bootstrapped successfully");
+    let ui_client_fut = async {
+        match crate::bootstrap::bootstrap_default_ui_client(&client_storage, issuer).await {
+            Ok(true) => tracing::info!("Default UI client bootstrapped successfully"),
+            Ok(false) => tracing::debug!("Default UI client already exists"),
+            Err(e) => tracing::warn!(error = %e, "Failed to bootstrap default UI client"),
         }
-        Ok(false) => {
-            tracing::debug!("Default UI client already exists");
-        }
-        Err(e) => {
-            tracing::warn!(error = %e, "Failed to bootstrap default UI client");
-        }
-    }
+    };
 
-    // Bootstrap admin user if configured
-    if let Some(ref admin_config) = cfg.bootstrap.admin_user {
-        let user_storage = ArcUserStorage::new(pool.clone());
-        match crate::bootstrap::bootstrap_admin_user(&user_storage, admin_config).await {
-            Ok(true) => {
-                tracing::info!(
+    let admin_user_fut = async {
+        if let Some(ref admin_config) = cfg.bootstrap.admin_user {
+            let user_storage = ArcUserStorage::new(pool.clone());
+            match crate::bootstrap::bootstrap_admin_user(&user_storage, admin_config).await {
+                Ok(true) => tracing::info!(
                     username = %admin_config.username,
                     "Admin user bootstrapped successfully"
-                );
-            }
-            Ok(false) => {
-                tracing::debug!(
+                ),
+                Ok(false) => tracing::debug!(
                     username = %admin_config.username,
                     "Admin user already exists"
-                );
-            }
-            Err(e) => {
-                tracing::warn!(
+                ),
+                Err(e) => tracing::warn!(
                     error = %e,
                     username = %admin_config.username,
                     "Failed to bootstrap admin user"
-                );
+                ),
             }
         }
-    }
+    };
 
+    let _ = tokio::join!(ui_client_fut, admin_user_fut);
+
+    // Backend client + its access policy are sequentially dependent (policy
+    // references the client_id) but independent of the admin policy, so we
+    // launch the admin-policy upsert concurrently with this block.
+    let admin_policy_fut = {
+        let policy_storage = PostgresPolicyStorageAdapter::new(pool.clone());
+        async move {
+            match crate::bootstrap::bootstrap_admin_access_policy(&policy_storage).await {
+                Ok(true) => tracing::info!("Admin access policy bootstrapped successfully"),
+                Ok(false) => tracing::debug!("Admin access policy already exists"),
+                Err(e) => tracing::warn!(error = %e, "Failed to bootstrap admin access policy"),
+            }
+        }
+    };
+
+    let backend_fut = async {
     // Bootstrap backend service client if configured
     if let Some(ref backend_config) = cfg.bootstrap.backend_client {
         let client_storage = ArcClientStorage::new(pool.clone());
@@ -469,23 +482,9 @@ async fn bootstrap_conformance_if_postgres(
             }
         }
     }
+    };
 
-    // Bootstrap admin access policy
-    let policy_storage = PostgresPolicyStorageAdapter::new(pool);
-    match crate::bootstrap::bootstrap_admin_access_policy(&policy_storage).await {
-        Ok(true) => {
-            tracing::info!("Admin access policy bootstrapped successfully");
-        }
-        Ok(false) => {
-            tracing::debug!("Admin access policy already exists");
-        }
-        Err(e) => {
-            tracing::warn!(
-                error = %e,
-                "Failed to bootstrap admin access policy"
-            );
-        }
-    }
+    let _ = tokio::join!(backend_fut, admin_policy_fut);
 
     Ok(())
 }
@@ -620,10 +619,13 @@ pub async fn build_app(
     // ── Phase 1: Create lightweight components (instant, no I/O) ──
 
     // On-demand model provider with LRU cache (schemas loaded lazily from DB)
+    // LRU sized to comfortably hold every R4 core schema (~655) plus extras
+    // from terminology + SoF + embedded IGs. Sizing below the working set
+    // would force evictions during cold-boot prime, defeating the cache.
     let octofhir_provider = Arc::new(OctoFhirModelProvider::new(
         db_pool.as_ref().clone(),
         fhir_version.clone(),
-        500, // LRU cache size
+        2048,
     ));
     let model_provider = octofhir_provider;
     tracing::info!(
@@ -696,14 +698,34 @@ pub async fn build_app(
     let canonical_manager = crate::canonical::get_manager()
         .ok_or_else(|| anyhow::anyhow!("Canonical manager required for initialization"))?;
 
+    // Prime the schema LRU before parallel_init: SearchParameter loader
+    // calls `resolver.resolve()` ~1400×, each a SELECT against
+    // `fcm.fhirschemas` if the cache is cold. A single bulk load knocks
+    // ~2-3s off cold-boot.
+    let prime_start = std::time::Instant::now();
+    let primed = model_provider.prime_cache().await;
+    tracing::info!(
+        primed_schemas = primed,
+        elapsed_ms = prime_start.elapsed().as_millis(),
+        "Model provider LRU primed"
+    );
+
     // Launch all heavy init operations concurrently
     let parallel_start = std::time::Instant::now();
     tracing::info!("Starting parallel initialization of 8 components...");
     let bootstrap_fut = bootstrap_conformance_if_postgres(cfg, db_pool.clone());
-    let search_config_fut = ReloadableSearchConfig::new(
-        &canonical_manager,
-        search_options,
-        Some(model_provider.as_ref()),
+    // SearchParameter registry build (was the slowest future at 2.7s cold).
+    // Replaces `ReloadableSearchConfig::new(canonical_manager, …)` which
+    // walked `canonical-manager`'s text-search engine: one `SELECT *` over
+    // every fcm.resources row, plus one `SELECT content WHERE url …` per
+    // match. For ~1400 SearchParameters that was 1+1400 round-trips. Now:
+    // one `SELECT content … WHERE resource_type = 'SearchParameter'`,
+    // parse + register in-process.
+    let search_config_fut = build_search_registry_fast(
+        db_pool.clone(),
+        cfg.fhir.version.clone(),
+        model_provider.clone(),
+        search_options.clone(),
     );
     let auth_state_fut = initialize_auth_state(cfg, db_pool.clone());
     let policy_refresh_fut = policy_cache.refresh();
@@ -2303,4 +2325,83 @@ async fn initialize_auth_state(
         user_storage,
     )
     .with_cookie_config(cfg.auth.cookie.clone()))
+}
+
+/// Build the `SearchParameter` registry without going through
+/// canonical-manager's text-search engine.
+///
+/// `manager.search().resource_type("SearchParameter").execute()` walks every
+/// `fcm.resources` row, in-memory filters, then issues one extra `SELECT`
+/// per match — for R4 core that's 1+1400 round-trips. We instead pull every
+/// SearchParameter content for the configured FHIR version in a single
+/// `SELECT`, parse + resolve + register in-process, then build the
+/// reloadable config from the resulting registry.
+async fn build_search_registry_fast(
+    db_pool: Arc<sqlx_postgres::PgPool>,
+    fhir_version_str: String,
+    model_provider: Arc<OctoFhirModelProvider>,
+    options: octofhir_search::SearchOptions,
+) -> Result<octofhir_search::ReloadableSearchConfig, octofhir_search::LoaderError> {
+    use octofhir_search::{
+        SearchParameterRegistry, parse_search_parameter, register_common_parameters,
+        resolve_element_type_for_param_public,
+    };
+
+    let registry = SearchParameterRegistry::new();
+    register_common_parameters(&registry);
+
+    // `fcm.resources.fhir_version` is heterogeneous: canonical-manager
+    // writes the long form ("4.0.1") for downloaded packages while our
+    // embedded IGs write the short form ("R4"). Users may also have
+    // packages from other FHIR versions installed (e.g. left over from
+    // a previous config). Pass BOTH forms of the currently-configured
+    // version so the SQL filter accepts both kinds of rows yet still
+    // rejects rows pinned to a different FHIR version.
+    let short = fhir_version_str.as_str();
+    let long = match short {
+        "R4" | "4.0" | "4.0.1" => "4.0.1",
+        "R4B" | "4.3" | "4.3.0" => "4.3.0",
+        "R5" | "5.0" | "5.0.0" => "5.0.0",
+        "R6" | "6.0" | "6.0.0" => "6.0.0",
+        other => other,
+    };
+    let versions: Vec<&str> = if short == long {
+        vec![short]
+    } else {
+        vec![short, long]
+    };
+    let store = PostgresPackageStore::new((*db_pool).clone());
+    let rows = store
+        .find_resources_by_type_bulk("SearchParameter", Some(&versions))
+        .await
+        .map_err(|e| {
+            octofhir_search::LoaderError::QueryError(format!(
+                "bulk SearchParameter fetch failed: {e}"
+            ))
+        })?;
+
+    let mut loaded = 0usize;
+    let mut skipped = 0usize;
+    for content in rows {
+        match parse_search_parameter(&content) {
+            Ok(mut param) => {
+                param.element_type_hint =
+                    resolve_element_type_for_param_public(&param, model_provider.as_ref()).await;
+                registry.register(param);
+                loaded += 1;
+            }
+            Err(_) => skipped += 1,
+        }
+    }
+    tracing::info!(
+        loaded,
+        skipped,
+        total = registry.len(),
+        "Search parameters loaded via direct DB bulk path"
+    );
+
+    Ok(octofhir_search::ReloadableSearchConfig::with_registry(
+        Arc::new(registry),
+        options,
+    ))
 }
