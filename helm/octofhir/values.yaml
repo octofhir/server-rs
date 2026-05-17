@@ -3,7 +3,7 @@
 replicaCount: 1
 
 image:
-  repository: ghcr.io/octofhir/server-rs
+  repository: ghcr.io/octofhir/octofhir-server
   pullPolicy: IfNotPresent
   # Defaults to Chart appVersion
   tag: ""
