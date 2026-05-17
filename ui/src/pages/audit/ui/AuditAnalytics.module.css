@@ -1,5 +1,29 @@
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 16px;
+}
+
+.statsGrid,
+.chartGrid {
+  display: grid;
+  gap: 16px;
+}
+
+.statsGrid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.chartGrid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
 .statCard {
-  background: var(--octo-surface-1);
+  padding: 16px;
+  border: 1px solid var(--octo-border-subtle);
+  border-radius: 8px;
+  background: var(--g-color-base-background);
   transition: transform 150ms ease, box-shadow 150ms ease;
 }
 
@@ -9,7 +33,84 @@
 }
 
 .chartCard {
-  background: var(--octo-surface-1);
+  padding: 16px;
+  border: 1px solid var(--octo-border-subtle);
+  border-radius: 8px;
+  background: var(--g-color-base-background);
+}
+
+.statHeader,
+.ringLayout,
+.legendRow,
+.breakdownHeader,
+.rankLabel,
+.failedRow,
+.failedMeta,
+.timelineLabels,
+.trend {
+  display: flex;
+  align-items: center;
+}
+
+.statHeader,
+.breakdownHeader,
+.failedRow,
+.timelineLabels {
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.statMeta,
+.ringLabel,
+.legend,
+.breakdownList,
+.emptyState {
+  display: flex;
+  flex-direction: column;
+}
+
+.statMeta,
+.ringLabel {
+  min-width: 0;
+}
+
+.trend {
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.ringLayout {
+  justify-content: center;
+  gap: 32px;
+}
+
+.ringLabel {
+  align-items: center;
+}
+
+.legend,
+.breakdownList {
+  gap: 8px;
+}
+
+.legendRow,
+.rankLabel,
+.failedMeta {
+  gap: 8px;
+}
+
+.legendLabel {
+  min-width: 60px;
+}
+
+.breakdownItem {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.failedMeta {
+  justify-content: flex-end;
 }
 
 .timeline {
@@ -31,4 +132,73 @@
 
 .timelineBar:hover {
   opacity: 0.8;
+}
+
+.timelineBar1 {
+  height: 10%;
+}
+
+.timelineBar2 {
+  height: 20%;
+}
+
+.timelineBar3 {
+  height: 30%;
+}
+
+.timelineBar4 {
+  height: 40%;
+}
+
+.timelineBar5 {
+  height: 50%;
+}
+
+.timelineBar6 {
+  height: 60%;
+}
+
+.timelineBar7 {
+  height: 70%;
+}
+
+.timelineBar8 {
+  height: 80%;
+}
+
+.timelineBar9 {
+  height: 90%;
+}
+
+.timelineBar10 {
+  height: 100%;
+}
+
+.timelineLabels {
+  margin-top: 8px;
+}
+
+.emptyState {
+  align-items: center;
+  gap: 8px;
+}
+
+@media (max-width: 1100px) {
+  .statsGrid,
+  .chartGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 720px) {
+  .statsGrid,
+  .chartGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .ringLayout,
+  .failedRow {
+    align-items: flex-start;
+    flex-direction: column;
+  }
 }

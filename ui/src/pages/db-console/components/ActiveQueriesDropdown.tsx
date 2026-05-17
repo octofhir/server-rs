@@ -14,6 +14,7 @@ import { Pulse, Stop } from "@gravity-ui/icons";
 import { modals, notifications, useDisclosure } from "@octofhir/ui-kit";
 import { useActiveQueries, useTerminateQuery } from "@/shared/api/hooks";
 import type { ActiveQuery } from "@/shared/api/types";
+import classes from "../DbConsolePage.module.css";
 
 function formatDuration(ms?: number): string {
 	if (ms == null) return "-";
@@ -81,13 +82,7 @@ function QueryItem({
 				<Text
 					size="xs"
 					ff="monospace"
-					style={{
-						display: "-webkit-box",
-						WebkitBoxOrient: "vertical",
-						WebkitLineClamp: 2,
-						overflow: "hidden",
-						wordBreak: "break-all",
-					}}
+					className={classes.queryClamp2}
 				>
 					{query.query}
 				</Text>

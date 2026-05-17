@@ -152,6 +152,22 @@
   background: var(--octo-surface-3, var(--octo-surface-1));
 }
 
+.queryClamp2,
+.queryClamp3 {
+  display: -webkit-box;
+  overflow: hidden;
+  word-break: break-all;
+  -webkit-box-orient: vertical;
+}
+
+.queryClamp2 {
+  -webkit-line-clamp: 2;
+}
+
+.queryClamp3 {
+  -webkit-line-clamp: 3;
+}
+
 .entryMeta {
   display: flex;
   align-items: center;

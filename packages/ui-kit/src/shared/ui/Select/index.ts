@@ -26,7 +26,7 @@ export interface SelectProps
     defaultValue?: string | string[] | null;
     data?: LegacyDataItem[];
     options?: GravitySelectProps["options"];
-    onChange?: (value: any) => void;
+    onChange?: (value: string | null) => void;
     onUpdate?: (value: string[]) => void;
     searchable?: boolean;
     clearable?: boolean;
@@ -119,7 +119,9 @@ export function Select({
         hasClear: clearable || props.hasClear,
         onUpdate: (nextValue: string[]) => {
             onUpdate?.(nextValue);
-            onChange?.(multiple ? nextValue : nextValue[0] ?? null);
+            if (!multiple) {
+                onChange?.(nextValue[0] ?? null);
+            }
         },
     } satisfies GravitySelectProps);
 

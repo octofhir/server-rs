@@ -24,22 +24,34 @@
 }
 
 .mainRow {
-	padding: 6px 12px;
+	align-items: center;
+	display: grid;
+	gap: var(--g-spacing-1);
+	grid-template-columns: 18px 90px 50px minmax(120px, 220px) minmax(120px, 1fr) 28px;
 	min-height: 32px;
+	padding: 6px 12px;
+}
+
+.clickableRow {
+	cursor: pointer;
 }
 
 .expandIcon {
-	flex-shrink: 0;
+	justify-self: center;
+}
+
+.expandSpacer {
+	display: block;
+	height: 18px;
+	width: 18px;
 }
 
 .timestamp {
-	flex-shrink: 0;
-	width: 90px;
 	font-size: 11px;
+	min-width: 0;
 }
 
 .levelBadge {
-	flex-shrink: 0;
 	width: 50px;
 	text-align: center;
 	font-size: 9px;
@@ -47,14 +59,12 @@
 }
 
 .target {
-	flex-shrink: 0;
-	width: 220px;
 	font-size: 11px;
+	min-width: 0;
 	opacity: 0.7;
 }
 
 .message {
-	flex: 1;
 	min-width: 0;
 }
 
@@ -69,9 +79,18 @@
 }
 
 .details {
-	padding: 8px 12px 12px 42px;
 	background-color: var(--octo-surface-2);
 	border-top: 1px solid var(--octo-border-subtle);
+	display: flex;
+	flex-direction: column;
+	gap: var(--g-spacing-2);
+	padding: 8px 12px 12px 42px;
+}
+
+.detailBlock {
+	display: flex;
+	flex-direction: column;
+	gap: var(--g-spacing-1);
 }
 
 .fieldsContainer {
@@ -82,4 +101,25 @@
 	background-color: var(--octo-surface-1);
 	border-radius: 6px;
 	border: 1px solid var(--octo-border-subtle);
+}
+
+.fieldValue {
+	color: var(--octo-accent-primary);
+	overflow-wrap: anywhere;
+}
+
+.fieldRow {
+	display: grid;
+	gap: var(--g-spacing-1);
+	grid-template-columns: minmax(120px, max-content) minmax(0, 1fr);
+}
+
+@media (max-width: 960px) {
+	.mainRow {
+		grid-template-columns: 18px 90px 50px minmax(0, 1fr) 28px;
+	}
+
+	.target {
+		display: none;
+	}
 }

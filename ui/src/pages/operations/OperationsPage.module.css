@@ -1,0 +1,101 @@
+.toolbar {
+	align-items: center;
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--g-spacing-2);
+	min-width: 0;
+	width: 100%;
+}
+
+.searchInput {
+	flex: 1 1 280px;
+	max-width: 460px;
+	min-width: 220px;
+}
+
+.appFilter {
+	flex: 0 0 180px;
+}
+
+.loadingState {
+	align-items: center;
+	display: flex;
+	gap: var(--g-spacing-2);
+	justify-content: center;
+	padding: var(--g-spacing-8);
+}
+
+.resultSummary {
+	align-items: center;
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--g-spacing-2);
+	justify-content: space-between;
+}
+
+.categoryGrid {
+	display: grid;
+	gap: var(--g-spacing-3);
+}
+
+.categorySection {
+	background-color: var(--g-color-base-background);
+}
+
+.categoryHeader {
+	align-items: center;
+	display: flex;
+	justify-content: space-between;
+	margin-bottom: var(--g-spacing-3);
+	min-width: 0;
+}
+
+.categoryTitle,
+.methodList {
+	align-items: center;
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--g-spacing-2);
+	min-width: 0;
+}
+
+.nameCell {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	min-width: 0;
+}
+
+.truncateText {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.appLink {
+	cursor: pointer;
+}
+
+.publicIcon {
+	color: var(--octo-accent-primary);
+}
+
+.protectedIcon {
+	color: var(--octo-accent-warm);
+}
+
+.emptyState {
+	background: var(--octo-surface-2);
+	border: 1px solid var(--octo-border-subtle);
+	border-radius: var(--g-border-radius-m);
+	padding: var(--g-spacing-5);
+}
+
+@media (max-width: 760px) {
+	.searchInput,
+	.appFilter {
+		flex-basis: 100%;
+		max-width: none;
+	}
+}

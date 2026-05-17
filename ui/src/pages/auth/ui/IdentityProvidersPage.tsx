@@ -2,7 +2,6 @@ import { useState } from "react";
 import {
 	Stack,
 	Text,
-	Paper,
 	Group,
 	Button,
 	TextInput,
@@ -35,6 +34,8 @@ import {
 } from "@/entities/identity-provider";
 import { useIdentityProviders, useCreateIdentityProvider, useUpdateIdentityProvider, useDeleteIdentityProvider } from "../lib/useIdentityProviders";
 import { getBundleResources } from "@/shared/api/guards";
+import { Card } from "@/shared/ui/Card/Card";
+import classes from "./IdentityProvidersPage.module.css";
 
 export function IdentityProvidersPage() {
 	const [search, setSearch] = useState("");
@@ -73,19 +74,19 @@ export function IdentityProvidersPage() {
 				</Button>
 			}
 			toolbar={
-				<Group>
+				<div className={classes.toolbar}>
 					<TextInput
 						placeholder="Search by name..."
 						leftSection={<Magnifier size={16} />}
 						value={search}
 						onChange={(e) => setSearch(e.currentTarget.value)}
-						style={{ flex: 1, maxWidth: 460 }}
+						className={classes.search}
 					/>
-				</Group>
+				</div>
 			}
 		>
 
-			<Paper p="sm" withBorder>
+			<Card className={classes.tableContainer}>
 				<DataPreview
 					columns={[
 						{ id: "provider", label: "Name / Issuer" },
@@ -102,17 +103,17 @@ export function IdentityProvidersPage() {
 
 									return {
 										provider: (
-											<Group gap="xs">
+											<div className={classes.providerCell}>
 												<Globe size={16} color="blue" />
-												<div>
-													<Text size="sm" fw={500}>
+												<div className={classes.providerText}>
+													<Text size="sm" fw={500} className={classes.providerName}>
 														{provider.name}
 													</Text>
-													<Text size="xs" c="dimmed">
+													<Text size="xs" c="dimmed" className={classes.providerIssuer}>
 														{provider.issuer}
 													</Text>
 												</div>
-											</Group>
+											</div>
 										),
 										type: (
 											<Badge variant="outline" color={typeView.color}>
@@ -154,7 +155,7 @@ export function IdentityProvidersPage() {
 					emptyText={isLoading ? "Loading providers..." : "No providers found"}
 					getRowKey={(_row, index) => providers[index]?.id ?? providers[index]?.name ?? `${index}`}
 				/>
-			</Paper>
+			</Card>
 
 			<IdpModal
 				opened={opened}

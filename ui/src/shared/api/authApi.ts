@@ -4,12 +4,62 @@ import type {
 	TokenResponse,
 	UserInfo,
 } from "./types";
+import { isRecord } from "./guards";
 
 /**
  * Default OAuth client ID for the admin UI.
  * This should match an existing client configured in the server.
  */
 const DEFAULT_CLIENT_ID = "octofhir-ui";
+
+async function readJson(response: Response): Promise<unknown> {
+	const text = await response.text();
+	return text ? JSON.parse(text) : undefined;
+}
+
+function readAuthError(value: unknown, fallback: string): AuthError {
+	if (!isRecord(value)) {
+		return { error: "unknown_error", error_description: fallback };
+	}
+
+	const error = typeof value.error === "string" ? value.error : "unknown_error";
+	const errorDescription =
+		typeof value.error_description === "string" ? value.error_description : fallback;
+
+	return { error, error_description: errorDescription };
+}
+
+function isTokenResponse(value: unknown): value is TokenResponse {
+	return (
+		isRecord(value) &&
+		typeof value.access_token === "string" &&
+		value.token_type === "Bearer" &&
+		typeof value.expires_in === "number" &&
+		(value.refresh_token === undefined || typeof value.refresh_token === "string") &&
+		(value.scope === undefined || typeof value.scope === "string")
+	);
+}
+
+function isUserInfo(value: unknown): value is UserInfo {
+	return (
+		isRecord(value) &&
+		typeof value.sub === "string" &&
+		(value.name === undefined || typeof value.name === "string") &&
+		(value.preferred_username === undefined || typeof value.preferred_username === "string") &&
+		(value.email === undefined || typeof value.email === "string") &&
+		(value.fhirUser === undefined || typeof value.fhirUser === "string") &&
+		(value.roles === undefined ||
+			(Array.isArray(value.roles) && value.roles.every((role) => typeof role === "string")))
+	);
+}
+
+function isLogoutResponse(value: unknown): value is LogoutResponse {
+	return (
+		isRecord(value) &&
+		typeof value.success === "boolean" &&
+		typeof value.message === "string"
+	);
+}
 
 class AuthApiClient {
 	private baseUrl: string;
@@ -47,10 +97,10 @@ class AuthApiClient {
 			credentials: "include", // Important: include cookies
 		});
 
-		const data = await response.json();
+		const data = await readJson(response);
 
 		if (!response.ok) {
-			const authError = data as AuthError;
+			const authError = readAuthError(data, "Login failed");
 			throw new AuthApiError(
 				authError.error_description || authError.error || "Login failed",
 				authError.error || "unknown_error",
@@ -58,7 +108,11 @@ class AuthApiClient {
 			);
 		}
 
-		return data as TokenResponse;
+		if (!isTokenResponse(data)) {
+			throw new AuthApiError("Invalid login response", "invalid_response", response.status);
+		}
+
+		return data;
 	}
 
 	/**
@@ -85,10 +139,10 @@ class AuthApiClient {
 			credentials: "include",
 		});
 
-		const data = await response.json();
+		const data = await readJson(response);
 
 		if (!response.ok) {
-			const authError = data as AuthError;
+			const authError = readAuthError(data, "Token refresh failed");
 			throw new AuthApiError(
 				authError.error_description || authError.error || "Token refresh failed",
 				authError.error || "unknown_error",
@@ -96,7 +150,11 @@ class AuthApiClient {
 			);
 		}
 
-		return data as TokenResponse;
+		if (!isTokenResponse(data)) {
+			throw new AuthApiError("Invalid token refresh response", "invalid_response", response.status);
+		}
+
+		return data;
 	}
 
 	/**
@@ -112,17 +170,22 @@ class AuthApiClient {
 			credentials: "include", // Important: include cookies
 		});
 
-		const data = await response.json();
+		const data = await readJson(response);
 
 		if (!response.ok) {
+			const authError = readAuthError(data, "Logout failed");
 			throw new AuthApiError(
-				data.error_description || data.error || "Logout failed",
-				data.error || "unknown_error",
+				authError.error_description || authError.error || "Logout failed",
+				authError.error || "unknown_error",
 				response.status,
 			);
 		}
 
-		return data as LogoutResponse;
+		if (!isLogoutResponse(data)) {
+			throw new AuthApiError("Invalid logout response", "invalid_response", response.status);
+		}
+
+		return data;
 	}
 
 	/**
@@ -145,15 +208,17 @@ class AuthApiClient {
 			}
 
 			if (!response.ok) {
-				const data = await response.json();
+				const data = await readJson(response);
+				const authError = readAuthError(data, "Failed to get user info");
 				throw new AuthApiError(
-					data.error_description || data.error || "Failed to get user info",
-					data.error || "unknown_error",
+					authError.error_description || authError.error || "Failed to get user info",
+					authError.error || "unknown_error",
 					response.status,
 				);
 			}
 
-			return (await response.json()) as UserInfo;
+			const data = await readJson(response);
+			return isUserInfo(data) ? data : null;
 		} catch (error) {
 			if (error instanceof AuthApiError) {
 				throw error;

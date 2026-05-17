@@ -1,6 +1,6 @@
 import { Server, SquareListUl, Wrench } from "@gravity-ui/icons";
 import type { ReactNode } from "react";
-import { Badge, Box, Code, Flex, Loader, Text } from "@/shared/ui";
+import { Badge, Code, Loader, Text } from "@/shared/ui";
 import { useCapabilities } from "@/shared/api/hooks";
 import { WorkspacePageLayout, WorkspacePageSection } from "@/widgets/workspace-page";
 import classes from "./CapabilityStatementPage.module.css";
@@ -18,20 +18,20 @@ export function CapabilityStatementPage() {
 			description="FHIR server metadata, advertised formats, resources, and interactions"
 			maxWidth={1280}
 			meta={
-				<Flex gap="2" wrap="wrap">
+				<div className={classes.metaBadges}>
 					<Badge color="primary" variant="light">
 						{data?.fhirVersion ? `FHIR ${data.fhirVersion}` : "FHIR metadata"}
 					</Badge>
 					{data?.status ? <Badge variant="light">{data.status}</Badge> : null}
 					{data?.date ? <Badge variant="light">{data.date}</Badge> : null}
-				</Flex>
+				</div>
 			}
 		>
 			{isLoading ? (
-				<Flex alignItems="center" gap="2">
+				<div className={classes.loadingState}>
 					<Loader size="sm" />
 					<Text color="secondary">Loading capability statement...</Text>
-				</Flex>
+				</div>
 			) : error ? (
 				<Text color="danger">
 					{error instanceof Error ? error.message : "Failed to load capability statement"}
@@ -60,13 +60,13 @@ export function CapabilityStatementPage() {
 							{resources.map((resource) => (
 								<div key={resource.type} className={classes.resourceItem}>
 									<Text variant="subheader-1">{resource.type}</Text>
-									<Flex gap="1" wrap="wrap">
+									<div className={classes.interactionList}>
 										{(resource.interaction ?? []).map((interaction) => (
 											<Badge key={interaction.code} size="xs" variant="light">
 												{interaction.code}
 											</Badge>
 										))}
-									</Flex>
+									</div>
 								</div>
 							))}
 						</div>
@@ -91,15 +91,15 @@ function Metric({
 	value: number | string;
 }) {
 	return (
-		<Box className={classes.metric}>
-			<Flex alignItems="center" gap="2">
+		<div className={classes.metric}>
+			<div className={classes.metricHeader}>
 				<span className={classes.metricIcon}>{icon}</span>
 				<Text color="secondary" variant="body-1">
 					{label}
 				</Text>
-			</Flex>
+			</div>
 			<Text variant="header-1">{value}</Text>
-		</Box>
+		</div>
 	);
 }
 

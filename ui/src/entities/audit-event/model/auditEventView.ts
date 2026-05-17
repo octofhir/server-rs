@@ -53,6 +53,10 @@ export function getAuditActionLabel(action: AuditAction): string {
 	return actionLabels[action] || action;
 }
 
+export function isAuditAction(value: string): value is AuditAction {
+	return value in actionLabels;
+}
+
 export function getAuditActionDetailLabel(action: AuditAction): string {
 	return actionDetailLabels[action] || getAuditActionLabel(action);
 }

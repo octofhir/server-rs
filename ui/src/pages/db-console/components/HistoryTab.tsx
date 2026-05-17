@@ -4,6 +4,7 @@ import { TrashBin, Clock } from "@gravity-ui/icons";
 import { useQueryHistory, useClearHistory } from "@/shared/api/hooks";
 import { modals } from "@octofhir/ui-kit";
 import type { QueryHistoryEntry } from "@/shared/api/types";
+import classes from "../DbConsolePage.module.css";
 
 interface HistoryTabProps {
 	onSelectQuery: (query: string) => void;
@@ -44,13 +45,7 @@ function HistoryItem({
 			<Text
 				size="xs"
 				ff="monospace"
-				style={{
-					display: "-webkit-box",
-					WebkitBoxOrient: "vertical",
-					WebkitLineClamp: 2,
-					overflow: "hidden",
-					wordBreak: "break-all",
-				}}
+				className={classes.queryClamp2}
 			>
 				{entry.query}
 			</Text>

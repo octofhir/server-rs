@@ -1,52 +1,58 @@
-/* Container - full height layout */
-.container {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  background: var(--octo-surface-1);
+.loadingState {
+	height: 100%;
+	min-height: 360px;
 }
 
-/* Header with glassmorphism */
-.header {
-  background: var(--octo-surface-1);
-  border-bottom: 1px solid var(--octo-border-subtle);
-  z-index: 10;
+.configSnippet {
+	margin: var(--g-spacing-2) 0 0;
+	white-space: pre-wrap;
+	font-family: var(--octo-typography-mono);
+	font-size: 12px;
 }
 
-/* 3-panel layout */
 .content {
-  display: flex;
-  flex: 1;
-  gap: 0;
-  overflow: hidden;
-  min-height: 0;
+	flex: 1;
+	min-height: 0;
+	overflow: hidden;
+	border: 1px solid var(--g-color-line-generic);
+	border-radius: 8px;
+	background: var(--octo-surface-1);
 }
 
-/* Editor panel (center) */
-.editor {
-  flex: 1;
-  overflow: auto;
-  padding: var(--octo-spacing-md);
-  border-right: 1px solid var(--octo-border-subtle);
+.workspace {
+	flex: 1;
+	min-width: 0;
+	min-height: 0;
 }
 
-/* Preview panel (right) */
-.preview {
-  flex: 1;
-  overflow: auto;
-  padding: var(--octo-spacing-md);
-  background: var(--octo-surface-2);
+.editorSection,
+.previewSection {
+	flex: 1 1 0;
+	min-width: 0;
+	min-height: 0;
+	overflow: auto;
 }
 
-/* Responsive adjustments */
-@media (max-width: 1200px) {
-  .content {
-    flex-direction: column;
-  }
+.editorSection {
+	border-right: 1px solid var(--octo-border-subtle);
+}
 
-  .editor,
-  .preview {
-    border-right: none;
-    border-bottom: 1px solid var(--octo-border-subtle);
-  }
+.previewSection {
+	background: var(--octo-surface-2);
+}
+
+@media (max-width: 1180px) {
+	.content {
+		flex-direction: column;
+		overflow: auto;
+	}
+
+	.workspace {
+		flex-direction: column;
+	}
+
+	.editorSection {
+		border-right: 0;
+		border-bottom: 1px solid var(--octo-border-subtle);
+	}
 }

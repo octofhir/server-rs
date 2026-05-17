@@ -20,6 +20,7 @@ const LAYOUT_PROP_KEYS = [
 ] as const;
 
 type LayoutPropKey = (typeof LAYOUT_PROP_KEYS)[number];
+type LayoutProps = Partial<Record<LayoutPropKey, number | string>>;
 
 export const mapSpaceValue = (val?: number | string): number | string | undefined => {
     if (typeof val === 'number') return val;
@@ -34,7 +35,7 @@ export const mapSpaceValue = (val?: number | string): number | string | undefine
     }
 }
 
-export const getSpacingStyles = (props: any): React.CSSProperties => {
+export const getSpacingStyles = (props: LayoutProps): React.CSSProperties => {
     const { w, h, p, px, py, pt, pb, pl, pr, m, mx, my, mt, mb, ml, mr } = props;
     return {
         ...(w !== undefined ? { width: mapSpaceValue(w) } : {}),
@@ -56,8 +57,8 @@ export const getSpacingStyles = (props: any): React.CSSProperties => {
     };
 };
 
-export const cleanLayoutProps = <T extends Record<string, any>>(
-    props: T,
+export const cleanLayoutProps = <T extends object>(
+    props: T & LayoutProps,
 ): Omit<T, LayoutPropKey> => {
     const rest = { ...props };
     for (const key of LAYOUT_PROP_KEYS) {

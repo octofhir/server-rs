@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import { useUnit } from "effector-react";
-import { Badge, Flex, Stack, Text } from "@/shared/ui";
+import { Badge, Text } from "@/shared/ui";
 import { $method, $rawPath, setRawPath } from "../state/consoleStore";
 import type {
 	AutocompleteSuggestion,
@@ -16,6 +16,7 @@ import {
 } from "@/shared/fhir-query-input/core/builder-model";
 import { QueryChipsBuilder } from "@/shared/fhir-query-input/widgets/QueryChipsBuilder";
 import { useState } from "react";
+import styles from "./BuilderModeEditor.module.css";
 
 interface BuilderModeEditorProps {
 	allSuggestions: AutocompleteSuggestion[];
@@ -84,20 +85,20 @@ export function BuilderModeEditor({
 	);
 
 	return (
-		<Stack gap="4">
-			<Flex justifyContent="space-between" alignItems="center">
+		<div className={styles.root}>
+			<div className={styles.header}>
 				<Text variant="subheader-1">
 					Visual Query Builder
 				</Text>
 				<Badge theme="info" size="m">
 					{method}
 				</Badge>
-			</Flex>
+			</div>
 			<QueryChipsBuilder
 				state={builderState}
 				onChange={handleStateChange}
 				metadata={metadata}
 			/>
-		</Stack>
+		</div>
 	);
 }

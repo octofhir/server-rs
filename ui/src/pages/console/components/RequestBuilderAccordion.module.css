@@ -1,0 +1,26 @@
+.root {
+  background: var(--g-color-base-generic-subtle);
+}
+
+.tabList {
+  padding: 0 20px;
+}
+
+.tabLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.counter {
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  justify-content: center;
+}
+
+.panel {
+  padding: 16px 20px;
+  background: var(--g-color-base-background);
+}

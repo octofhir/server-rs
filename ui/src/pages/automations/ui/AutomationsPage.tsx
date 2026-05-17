@@ -1,7 +1,8 @@
 import { useState, useMemo } from "react";
 import {
-  Stack,
-  Group,
+  Alert,
+  Box,
+  Flex,
   Button,
   TextInput,
   Select,
@@ -9,14 +10,13 @@ import {
   ActionIcon,
   Text,
   Tooltip,
-  Paper,
   Loader,
-  Center,
   Badge,
 } from "@/shared/ui";
 import { WorkspacePageLayout } from "@/widgets/workspace-page";
 import { modals, notifications } from "@octofhir/ui-kit";
 import { useNavigate } from "react-router-dom";
+import { isAutomationFeatureUnavailableError } from "@/shared/api/automationsApi";
 import {
   Plus,
   Magnifier,
@@ -27,25 +27,26 @@ import {
   Clock,
   Thunderbolt,
   HandPointRight,
+  CircleExclamation,
 } from "@gravity-ui/icons";
 import { useAutomations, useDeleteAutomation, useDeployAutomation } from "../lib/useAutomations";
 import { AutomationStatusBadge } from "./AutomationStatusBadge";
 import { CreateAutomationModal } from "./CreateAutomationModal";
 import type { Automation, AutomationStatus, AutomationTriggerType } from "@/shared/api/types";
+import classes from "./AutomationsPage.module.css";
 
-const singleLineTextStyle = {
-  display: "-webkit-box",
-  WebkitBoxOrient: "vertical",
-  WebkitLineClamp: 1,
-  overflow: "hidden",
-};
+type StatusFilter = AutomationStatus | "";
 
-const statusOptions = [
+const statusOptions: Array<{ value: StatusFilter; label: string }> = [
   { value: "", label: "All statuses" },
   { value: "active", label: "Active" },
   { value: "inactive", label: "Inactive" },
   { value: "error", label: "Error" },
 ];
+
+function isStatusFilter(value: string | null): value is StatusFilter {
+  return value === "" || value === "active" || value === "inactive" || value === "error";
+}
 
 const triggerTypeIcons: Record<AutomationTriggerType, React.ReactNode> = {
   resource_event: <Thunderbolt size={14} />,
@@ -62,16 +63,17 @@ const triggerTypeLabels: Record<AutomationTriggerType, string> = {
 export function AutomationsPage() {
   const navigate = useNavigate();
   const [search, setSearch] = useState("");
-  const [statusFilter, setStatusFilter] = useState<string>("");
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("");
   const [createModalOpen, setCreateModalOpen] = useState(false);
 
   const { data, isLoading, error } = useAutomations({
-    status: statusFilter as AutomationStatus | undefined,
+    status: statusFilter || undefined,
     name: search || undefined,
   });
 
   const deleteMutation = useDeleteAutomation();
   const deployMutation = useDeployAutomation();
+  const isFeatureUnavailable = isAutomationFeatureUnavailableError(error);
 
   // Filter automations by search (client-side for responsiveness)
   const filteredAutomations = useMemo(() => {
@@ -143,7 +145,7 @@ export function AutomationsPage() {
     }
 
     return (
-      <Group gap={4}>
+      <Flex gap="1" wrap="wrap">
         {automation.triggers.map((trigger) => (
           <Tooltip
             key={trigger.id}
@@ -166,7 +168,7 @@ export function AutomationsPage() {
             </Badge>
           </Tooltip>
         ))}
-      </Group>
+      </Flex>
     );
   };
 
@@ -208,7 +210,7 @@ export function AutomationsPage() {
                         stats.last_execution_status === "failed" ? "Failed" : "Running";
 
     return (
-      <Group gap={6}>
+      <Flex gap="2" alignItems="center" wrap="wrap">
         <Tooltip
           label={stats.last_error || `Last run: ${formatDate(stats.last_execution_at || "")}`}
           multiline
@@ -231,20 +233,9 @@ export function AutomationsPage() {
             </Badge>
           </Tooltip>
         )}
-      </Group>
+      </Flex>
     );
   };
-
-  if (error) {
-    return (
-      <Center h={400}>
-        <Stack align="center" gap="md">
-          <Text c="red" size="lg">Failed to load automations</Text>
-          <Text c="dimmed">{error instanceof Error ? error.message : "Unknown error"}</Text>
-        </Stack>
-      </Center>
-    );
-  }
 
   return (
     <WorkspacePageLayout
@@ -252,38 +243,67 @@ export function AutomationsPage() {
       description="Create, deploy, and test event-driven automation workflows"
       className="page-enter"
       actions={
-        <Button leftSection={<Plus size={16} />} onClick={() => setCreateModalOpen(true)}>
-          New Automation
-        </Button>
+        isFeatureUnavailable ? null : (
+          <Button leftSection={<Plus size={16} />} onClick={() => setCreateModalOpen(true)}>
+            New Automation
+          </Button>
+        )
       }
       toolbar={
-        <Group gap="sm">
-          <TextInput
-            placeholder="Search automations..."
-            leftSection={<Magnifier size={16} />}
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            style={{ flex: 1, maxWidth: 460 }}
-          />
-          <Select
-            data={statusOptions}
-            value={statusFilter}
-            onChange={(value) => setStatusFilter(value || "")}
-            placeholder="Filter by status"
-            clearable
-            w={160}
-          />
-        </Group>
+        isFeatureUnavailable ? undefined : (
+          <Flex gap="2" wrap="wrap" alignItems="center" className={classes.toolbar}>
+            <TextInput
+              placeholder="Search automations..."
+              leftSection={<Magnifier size={16} />}
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className={classes.searchInput}
+            />
+            <Select
+              data={statusOptions}
+              value={statusFilter}
+              onChange={(value) => {
+                if (isStatusFilter(value)) {
+                  setStatusFilter(value);
+                }
+              }}
+              placeholder="Filter by status"
+              clearable
+              className={classes.statusSelect}
+            />
+          </Flex>
+        )
       }
     >
-      <Paper withBorder radius="md" style={{ overflow: "hidden" }}>
-        {isLoading ? (
-          <Center h={300}>
+      <Box className={classes.tablePanel}>
+        {isFeatureUnavailable ? (
+          <Alert
+            theme="warning"
+            icon={<CircleExclamation size={16} />}
+            title="Automations are disabled"
+            className={classes.unavailableAlert}
+          >
+            <Text variant="body-2">
+              The backend did not expose the automation API. Enable automations in server
+              configuration to create, deploy, and test workflows.
+            </Text>
+          </Alert>
+        ) : error ? (
+          <Alert
+            theme="danger"
+            icon={<CircleExclamation size={16} />}
+            title="Automation API is unavailable"
+          >
+            <Text variant="body-2">
+              {error instanceof Error ? error.message : "Failed to load automations"}
+            </Text>
+          </Alert>
+        ) : isLoading ? (
+          <Flex justifyContent="center" alignItems="center" className={classes.statePanel}>
             <Loader />
-          </Center>
+          </Flex>
         ) : filteredAutomations.length === 0 ? (
-          <Center h={200}>
-            <Stack align="center" gap="sm">
+          <Flex direction="column" alignItems="center" justifyContent="center" gap="3" className={classes.statePanel}>
               <Text c="dimmed">No automations found</Text>
               <Button
                 variant="light"
@@ -292,90 +312,91 @@ export function AutomationsPage() {
               >
                 Create your first automation
               </Button>
-            </Stack>
-          </Center>
+          </Flex>
         ) : (
-          <Table striped highlightOnHover>
-            <Table.Thead>
-              <Table.Tr>
-                <Table.Th>Name</Table.Th>
-                <Table.Th>Status</Table.Th>
-                <Table.Th>Last Run</Table.Th>
-                <Table.Th>Triggers</Table.Th>
-                <Table.Th>Updated</Table.Th>
-                <Table.Th w={140}>Actions</Table.Th>
-              </Table.Tr>
-            </Table.Thead>
-            <Table.Tbody>
-              {filteredAutomations.map((automation) => (
-                <Table.Tr key={automation.id}>
-                  <Table.Td>
-                    <Stack gap={2}>
-                      <Text fw={500}>{automation.name}</Text>
-                      {automation.description && (
-                        <Text size="xs" c="dimmed" style={singleLineTextStyle}>
-                          {automation.description}
-                        </Text>
-                      )}
-                    </Stack>
-                  </Table.Td>
-                  <Table.Td>
-                    <AutomationStatusBadge status={automation.status} />
-                  </Table.Td>
-                  <Table.Td>{formatLastRun(automation)}</Table.Td>
-                  <Table.Td>{formatTriggers(automation)}</Table.Td>
-                  <Table.Td>
-                    <Text size="sm" c="dimmed">
-                      {formatDate(automation.updated_at)}
-                    </Text>
-                  </Table.Td>
-                  <Table.Td>
-                    <Group gap={4}>
-                      <Tooltip label="Edit">
-                        <ActionIcon
-                          variant="subtle"
-                          color="gray"
-                          onClick={() => handleEdit(automation)}
-                        >
-                          <Pencil size={16} />
-                        </ActionIcon>
-                      </Tooltip>
-                      <Tooltip label={automation.status === "active" ? "Re-deploy" : "Deploy"}>
-                        <ActionIcon
-                          variant="subtle"
-                          color="blue"
-                          onClick={() => handleDeploy(automation)}
-                          loading={deployMutation.isPending}
-                        >
-                          <Rocket size={16} />
-                        </ActionIcon>
-                      </Tooltip>
-                      <Tooltip label="Test">
-                        <ActionIcon
-                          variant="subtle"
-                          color="green"
-                          onClick={() => navigate(`/automations/${automation.id}?tab=playground`)}
-                        >
-                          <Play size={16} />
-                        </ActionIcon>
-                      </Tooltip>
-                      <Tooltip label="Delete">
-                        <ActionIcon
-                          variant="subtle"
-                          color="red"
-                          onClick={() => handleDelete(automation)}
-                        >
-                          <TrashBin size={16} />
-                        </ActionIcon>
-                      </Tooltip>
-                    </Group>
-                  </Table.Td>
+          <Table.ScrollContainer minWidth={940}>
+            <Table striped highlightOnHover>
+              <Table.Thead>
+                <Table.Tr>
+                  <Table.Th>Name</Table.Th>
+                  <Table.Th>Status</Table.Th>
+                  <Table.Th>Last Run</Table.Th>
+                  <Table.Th>Triggers</Table.Th>
+                  <Table.Th>Updated</Table.Th>
+                  <Table.Th w={140}>Actions</Table.Th>
                 </Table.Tr>
-              ))}
-            </Table.Tbody>
-          </Table>
+              </Table.Thead>
+              <Table.Tbody>
+                {filteredAutomations.map((automation) => (
+                  <Table.Tr key={automation.id}>
+                    <Table.Td>
+                      <Flex direction="column" gap="1">
+                        <Text fw={500}>{automation.name}</Text>
+                        {automation.description && (
+                          <Text size="xs" c="dimmed" className={classes.truncateText}>
+                            {automation.description}
+                          </Text>
+                        )}
+                      </Flex>
+                    </Table.Td>
+                    <Table.Td>
+                      <AutomationStatusBadge status={automation.status} />
+                    </Table.Td>
+                    <Table.Td>{formatLastRun(automation)}</Table.Td>
+                    <Table.Td>{formatTriggers(automation)}</Table.Td>
+                    <Table.Td>
+                      <Text size="sm" c="dimmed">
+                        {formatDate(automation.updated_at)}
+                      </Text>
+                    </Table.Td>
+                    <Table.Td>
+                      <Flex gap="1">
+                        <Tooltip label="Edit">
+                          <ActionIcon
+                            variant="subtle"
+                            color="gray"
+                            onClick={() => handleEdit(automation)}
+                          >
+                            <Pencil size={16} />
+                          </ActionIcon>
+                        </Tooltip>
+                        <Tooltip label={automation.status === "active" ? "Re-deploy" : "Deploy"}>
+                          <ActionIcon
+                            variant="subtle"
+                            color="blue"
+                            onClick={() => handleDeploy(automation)}
+                            loading={deployMutation.isPending}
+                          >
+                            <Rocket size={16} />
+                          </ActionIcon>
+                        </Tooltip>
+                        <Tooltip label="Test">
+                          <ActionIcon
+                            variant="subtle"
+                            color="green"
+                            onClick={() => navigate(`/automations/${automation.id}?tab=playground`)}
+                          >
+                            <Play size={16} />
+                          </ActionIcon>
+                        </Tooltip>
+                        <Tooltip label="Delete">
+                          <ActionIcon
+                            variant="subtle"
+                            color="red"
+                            onClick={() => handleDelete(automation)}
+                          >
+                            <TrashBin size={16} />
+                          </ActionIcon>
+                        </Tooltip>
+                      </Flex>
+                    </Table.Td>
+                  </Table.Tr>
+                ))}
+              </Table.Tbody>
+            </Table>
+          </Table.ScrollContainer>
         )}
-      </Paper>
+      </Box>
 
       {/* Total count */}
       {data?.total !== undefined && (

@@ -2,8 +2,6 @@ import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
 	Text,
-	Paper,
-	Group,
 	Badge,
 	DataPreview,
 	Loader,
@@ -15,8 +13,10 @@ import {
 	Code,
 	Select,
 	Anchor,
+	SectionPanel,
 } from "@/shared/ui";
 import { WorkspacePageLayout } from "@/widgets/workspace-page";
+import classes from "./OperationsPage.module.css";
 import {
 	CircleExclamation,
 	Magnifier,
@@ -52,12 +52,9 @@ const CATEGORY_ICONS: Record<string, typeof Server> = {
 	api: Cpu,
 };
 
-const singleLineTextStyle = {
-	display: "-webkit-box",
-	WebkitBoxOrient: "vertical",
-	WebkitLineClamp: 1,
-	overflow: "hidden",
-};
+function isOperationAccessFilter(value: string): value is OperationAccessFilter {
+	return operationAccessFilterOptions.some((option) => option.value === value);
+}
 
 function MethodBadge({ method }: { method: string }) {
 	const methodView = getOperationMethodView(method);
@@ -84,16 +81,16 @@ function CategorySection({
 	const categoryView = getOperationCategoryView(category);
 
 	return (
-		<Paper p="sm" withBorder style={{ backgroundColor: "var(--g-color-base-background)" }}>
-			<Group justify="space-between" mb="sm">
-				<Group gap="sm">
+		<SectionPanel padding="s" className={classes.categorySection}>
+			<div className={classes.categoryHeader}>
+				<div className={classes.categoryTitle}>
 					<Icon size={20} color="var(--g-color-text-secondary)" />
 					<Text fw={500}>{categoryView.label}</Text>
 					<Badge size="sm" variant="light" color={categoryView.color}>
 						{operations.length}
 					</Badge>
-				</Group>
-			</Group>
+				</div>
+			</div>
 			<DataPreview
 				columns={[
 					{ id: "id", label: "ID", width: 180 },
@@ -107,30 +104,30 @@ function CategorySection({
 				rows={operations.map((operation) => ({
 					id: <Code>{operation.id}</Code>,
 					name: (
-						<>
+						<div className={classes.nameCell}>
 							<Text size="sm" fw={500}>
 								{operation.name}
 							</Text>
 							{operation.description && (
-								<Text size="xs" c="dimmed" style={singleLineTextStyle}>
+								<Text size="xs" c="dimmed" className={classes.truncateText}>
 									{operation.description}
 								</Text>
 							)}
-						</>
+						</div>
 					),
 					methods: (
-						<Group gap={4}>
+						<div className={classes.methodList}>
 							{operation.methods.map((method) => (
 								<MethodBadge key={method} method={method} />
 							))}
-						</Group>
+						</div>
 					),
 					path: <Code size="xs">{operation.path_pattern}</Code>,
 					app: operation.app ? (
 						<Anchor
 							size="sm"
 							onClick={() => onNavigateToApp(operation.app?.id ?? "")}
-							style={{ cursor: "pointer" }}
+							className={classes.appLink}
 						>
 							{operation.app.name}
 						</Anchor>
@@ -140,9 +137,9 @@ function CategorySection({
 					access: (
 						<Tooltip label={operation.public ? "Public (no auth required)" : "Protected (requires auth)"}>
 							{operation.public ? (
-								<LockOpen size={16} style={{ color: "var(--octo-accent-primary)" }} />
+								<LockOpen size={16} className={classes.publicIcon} />
 							) : (
-								<Lock size={16} style={{ color: "var(--octo-accent-warm)" }} />
+								<Lock size={16} className={classes.protectedIcon} />
 							)}
 						</Tooltip>
 					),
@@ -156,7 +153,7 @@ function CategorySection({
 				}))}
 				getRowKey={(_row, index) => operations[index]?.id ?? `${index}`}
 			/>
-		</Paper>
+		</SectionPanel>
 	);
 }
 
@@ -173,7 +170,10 @@ export function OperationsPage() {
 	}, [data]);
 
 	const filteredAndGrouped = useMemo(() => {
-		if (!data?.operations) return {} as GroupedOperations;
+		if (!data?.operations) {
+			const empty: GroupedOperations = {};
+			return empty;
+		}
 		return groupOperationsByCategory(
 			filterOperations(data.operations, search, filterAccess, filterApp),
 		);
@@ -195,13 +195,13 @@ export function OperationsPage() {
 			title="Operations"
 			description="View and manage server API operations"
 			toolbar={
-				<Group gap="sm">
+				<div className={classes.toolbar}>
 					<TextInput
 						placeholder="Search operations..."
 						leftSection={<Magnifier size={16} />}
 						value={search}
 						onChange={(e) => setSearch(e.currentTarget.value)}
-						style={{ flex: 1, maxWidth: 460 }}
+						className={classes.searchInput}
 					/>
 					{appOptions.length > 0 && (
 						<Select
@@ -210,25 +210,29 @@ export function OperationsPage() {
 							data={appOptions}
 							value={filterApp}
 							onChange={setFilterApp}
-							w={180}
+							className={classes.appFilter}
 						/>
 					)}
 					<SegmentedControl
 						value={filterAccess}
-						onChange={(value) => setFilterAccess(value as OperationAccessFilter)}
+						onChange={(value) => {
+							if (isOperationAccessFilter(value)) {
+								setFilterAccess(value);
+							}
+						}}
 						data={operationAccessFilterOptions}
 					/>
-				</Group>
+				</div>
 			}
 		>
 
 			{isLoading && (
-				<Group justify="center" py="xl">
+				<div className={classes.loadingState}>
 					<Loader size="sm" />
 					<Text size="sm" c="dimmed">
 						Loading operations...
 					</Text>
-				</Group>
+				</div>
 			)}
 
 			{error && (
@@ -239,7 +243,7 @@ export function OperationsPage() {
 
 			{!isLoading && !error && data && (
 				<>
-					<Group justify="space-between">
+					<div className={classes.resultSummary}>
 						<Text size="sm" c="dimmed">
 							{totalFiltered} operations in {categories.length} categories
 						</Text>
@@ -248,16 +252,16 @@ export function OperationsPage() {
 								(filtered from {data.total} total)
 							</Text>
 						)}
-					</Group>
+					</div>
 
 					{categories.length === 0 ? (
-						<Paper p="md" style={{ backgroundColor: "var(--octo-surface-2)" }}>
+						<div className={classes.emptyState}>
 							<Text ta="center" c="dimmed">
 								No operations match your filters
 							</Text>
-						</Paper>
+						</div>
 					) : (
-						<div style={{ display: "grid", gap: 12 }}>
+						<div className={classes.categoryGrid}>
 							{categories.map((category) => (
 								<CategorySection
 									key={category}

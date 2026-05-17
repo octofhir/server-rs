@@ -3,12 +3,9 @@ import { useNavigate } from "react-router-dom";
 import { 
 	Link, 
 	Badge, 
-	Flex, 
 	Skeleton, 
-	Stack, 
 	Tabs, 
 	Text,
-	Box,
 	DataPreview,
 } from "@/shared/ui";
 import {
@@ -21,6 +18,7 @@ import {
 	type RequestResponse,
 } from "@/entities/rest-console-response";
 import { JsonViewer } from "@/shared/ui-react/JsonViewer";
+import styles from "./ResponseViewer.module.css";
 
 interface ResponseViewerProps {
 	response?: RequestResponse;
@@ -32,18 +30,18 @@ export function ResponseViewer({ response, isLoading }: ResponseViewerProps) {
 
 	if (isLoading) {
 		return (
-			<Stack gap="4" style={{ padding: "20px" }}>
-				<Skeleton style={{ height: "40px", borderRadius: "8px" }} />
-				<Skeleton style={{ height: "300px", borderRadius: "8px" }} />
-			</Stack>
+			<div className={styles.loading}>
+				<Skeleton className={styles.skeletonHeader} />
+				<Skeleton className={styles.skeletonBody} />
+			</div>
 		);
 	}
 
 	if (!response) {
 		return (
-			<Flex direction="column" alignItems="center" style={{ padding: "40px 0", opacity: 0.5 }}>
+			<div className={styles.empty}>
 				<Text variant="body-2">No response data available.</Text>
-			</Flex>
+			</div>
 		);
 	}
 
@@ -61,40 +59,38 @@ export function ResponseViewer({ response, isLoading }: ResponseViewerProps) {
 	const statusTheme = getConsoleResponseStatusTone(response.status);
 
 	return (
-		<Box>
+		<div>
 			{/* Status header */}
-			<Box style={{ padding: "12px 20px", borderBottom: "1px solid var(--g-color-line-generic-subtle)", backgroundColor: "var(--g-color-base-generic-subtle)" }}>
-				<Flex justifyContent="space-between" alignItems="center">
-					<Flex gap="3" alignItems="center">
+			<div className={styles.header}>
+					<div className={styles.status}>
 						<Badge
 							theme={statusTheme}
 							size="l"
 						>
-							<Flex gap="1" alignItems="center">
+							<span className={styles.statusBadge}>
 								{isSuccess ? <IconCheck size={14} /> : isError ? <IconX size={14} /> : null}
 								{response.status} {response.statusText}
-							</Flex>
+							</span>
 						</Badge>
 						<Text color="secondary" variant="caption-1">
 							{response.durationMs}ms
 						</Text>
-					</Flex>
+					</div>
 
 					<Text color="secondary" variant="caption-1">
 						{new Date(response.requestedAt).toLocaleString()}
 					</Text>
-				</Flex>
-			</Box>
+			</div>
 
 			{/* OperationOutcome extraction */}
 			{isError && operationOutcome && (
-				<Box style={{ padding: "16px" }}>
+				<div className={styles.outcome}>
 					<OperationOutcomePanel outcome={operationOutcome} title="FHIR error" maxIssues={4} />
-				</Box>
+				</div>
 			)}
 
 			{/* Response tabs */}
-			<Box style={{ padding: "0 20px 20px 20px" }}>
+			<div className={styles.tabs}>
 				<Tabs defaultValue={defaultTab} size="l">
 					<Tabs.List>
 						{hasResultEntries && <Tabs.Tab value="results">Results</Tabs.Tab>}
@@ -103,7 +99,7 @@ export function ResponseViewer({ response, isLoading }: ResponseViewerProps) {
 					</Tabs.List>
 
 					{hasResultEntries && (
-						<Tabs.Panel value="results" style={{ paddingTop: "16px" }}>
+						<Tabs.Panel value="results" className={styles.tabPanel}>
 							<DataPreview
 								columns={[
 									{ id: "type", label: "Type", width: 160 },
@@ -112,7 +108,7 @@ export function ResponseViewer({ response, isLoading }: ResponseViewerProps) {
 								]}
 								rows={resourceEntries.map((entry) => ({
 									type: (
-										<Text variant="body-2" style={{ fontWeight: 500 }}>
+										<Text variant="body-2" className={styles.tableLabel}>
 											{entry.resource.resourceType}
 										</Text>
 									),
@@ -121,7 +117,7 @@ export function ResponseViewer({ response, isLoading }: ResponseViewerProps) {
 											onClick={() =>
 												handleOpenResource(entry.resource.resourceType, entry.resource.id)
 											}
-											style={{ cursor: "pointer" }}
+											className={styles.resourceLink}
 										>
 											{entry.resource.id}
 										</Link>
@@ -143,17 +139,17 @@ export function ResponseViewer({ response, isLoading }: ResponseViewerProps) {
 						</Tabs.Panel>
 					)}
 
-					<Tabs.Panel value="body" style={{ paddingTop: "16px" }}>
+					<Tabs.Panel value="body" className={styles.tabPanel}>
 						{response.body ? (
-							<Box style={{ borderRadius: "8px", overflow: "hidden", border: "1px solid var(--g-color-line-generic-subtle)" }}>
+							<div className={styles.jsonFrame}>
 								<JsonViewer data={response.body} maxHeight={600} />
-							</Box>
+							</div>
 						) : (
 							<Text color="secondary">No response body</Text>
 						)}
 					</Tabs.Panel>
 
-					<Tabs.Panel value="headers" style={{ paddingTop: "16px" }}>
+					<Tabs.Panel value="headers" className={styles.tabPanel}>
 						{response.headers ? (
 							<DataPreview
 								columns={[
@@ -162,7 +158,7 @@ export function ResponseViewer({ response, isLoading }: ResponseViewerProps) {
 								]}
 								rows={Object.entries(response.headers).map(([key, value]) => ({
 									header: (
-										<Text variant="body-2" style={{ fontWeight: 500 }}>
+										<Text variant="body-2" className={styles.tableLabel}>
 											{key}
 										</Text>
 									),
@@ -179,7 +175,7 @@ export function ResponseViewer({ response, isLoading }: ResponseViewerProps) {
 						)}
 					</Tabs.Panel>
 				</Tabs>
-			</Box>
-		</Box>
+			</div>
+		</div>
 	);
 }

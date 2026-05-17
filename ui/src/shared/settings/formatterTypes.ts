@@ -142,6 +142,84 @@ export type FormatterConfig = SqlStyleConfig | PgFormatterConfig | CompactConfig
  */
 export type FormatterStyle = 'sql_style' | 'pg_formatter' | 'compact';
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isKeywordCase(value: unknown): value is KeywordCase {
+  return value === 'upper' || value === 'lower' || value === 'preserve';
+}
+
+function isIdentifierCase(value: unknown): value is IdentifierCase {
+  return value === 'lower' || value === 'preserve';
+}
+
+function isCommaStyle(value: unknown): value is CommaStyle {
+  return value === 'trailing' || value === 'leading';
+}
+
+function isPgCaseOption(value: unknown): value is PgCaseOption {
+  return value === 0 || value === 1 || value === 2 || value === 3;
+}
+
+function isNullableNumber(value: unknown): value is number | null {
+  return value === null || typeof value === 'number';
+}
+
+export function isFormatterConfig(value: unknown): value is FormatterConfig {
+  if (!isRecord(value) || typeof value.style !== 'string') {
+    return false;
+  }
+
+  if (value.style === 'compact') {
+    return true;
+  }
+
+  if (value.style === 'sql_style') {
+    return (
+      isKeywordCase(value.keywordCase) &&
+      isIdentifierCase(value.identifierCase) &&
+      typeof value.indentSpaces === 'number' &&
+      typeof value.useTabs === 'boolean' &&
+      typeof value.maxWidth === 'number' &&
+      typeof value.riverAlignment === 'boolean' &&
+      typeof value.newlineBeforeLogical === 'boolean' &&
+      typeof value.spacesAroundOperators === 'boolean' &&
+      isCommaStyle(value.commaStyle) &&
+      typeof value.parenthesesSpacing === 'boolean' &&
+      typeof value.alignSelectItems === 'boolean' &&
+      typeof value.riverWidth === 'number'
+    );
+  }
+
+  if (value.style === 'pg_formatter') {
+    return (
+      isPgCaseOption(value.keywordCase) &&
+      isPgCaseOption(value.functionCase) &&
+      isPgCaseOption(value.typeCase) &&
+      typeof value.spaces === 'number' &&
+      typeof value.useTabs === 'boolean' &&
+      typeof value.commaStart === 'boolean' &&
+      typeof value.commaEnd === 'boolean' &&
+      typeof value.commaBreak === 'boolean' &&
+      isNullableNumber(value.wrapLimit) &&
+      isNullableNumber(value.wrapAfter) &&
+      typeof value.wrapComment === 'boolean' &&
+      typeof value.noComment === 'boolean' &&
+      typeof value.keepNewline === 'boolean' &&
+      typeof value.noExtraLine === 'boolean' &&
+      typeof value.noGrouping === 'boolean' &&
+      typeof value.noSpaceFunction === 'boolean' &&
+      typeof value.redundantParenthesis === 'boolean' &&
+      (value.placeholder === null || typeof value.placeholder === 'string') &&
+      typeof value.maxWidth === 'number' &&
+      typeof value.riverAlignment === 'boolean'
+    );
+  }
+
+  return false;
+}
+
 // =============================================================================
 // Default Configurations
 // =============================================================================

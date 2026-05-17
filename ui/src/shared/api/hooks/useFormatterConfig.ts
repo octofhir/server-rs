@@ -13,7 +13,9 @@ import type {
 import {
   DEFAULT_FORMATTER_CONFIG,
   getDefaultConfigForStyle,
+  isFormatterConfig,
 } from '../../settings/formatterTypes';
+import { isRecord } from '../guards';
 
 // =============================================================================
 // Constants
@@ -47,6 +49,17 @@ interface ConfigEntryResponse {
   is_secret: boolean;
 }
 
+function isConfigEntryResponse(value: unknown): value is ConfigEntryResponse {
+  return (
+    isRecord(value) &&
+    typeof value.key === 'string' &&
+    typeof value.category === 'string' &&
+    isFormatterConfig(value.value) &&
+    (value.description === null || typeof value.description === 'string') &&
+    typeof value.is_secret === 'boolean'
+  );
+}
+
 /**
  * Fetch formatter config from the server.
  * Falls back to local storage if not authenticated or on error.
@@ -77,7 +90,10 @@ async function fetchFormatterConfig(): Promise<FormatterConfig> {
       throw new Error(`HTTP ${response.status}: ${response.statusText}`);
     }
 
-    const data: ConfigEntryResponse = await response.json();
+    const data: unknown = await response.json();
+    if (!isConfigEntryResponse(data)) {
+      throw new Error('Invalid formatter config response');
+    }
     return data.value;
   } catch (error) {
     console.warn('Failed to fetch formatter config, using local storage:', error);
@@ -121,7 +137,10 @@ async function saveFormatterConfig(config: FormatterConfig): Promise<FormatterCo
       throw new Error(`HTTP ${response.status}: ${response.statusText}`);
     }
 
-    const data: ConfigEntryResponse = await response.json();
+    const data: unknown = await response.json();
+    if (!isConfigEntryResponse(data)) {
+      throw new Error('Invalid formatter config response');
+    }
     return data.value;
   } catch (error) {
     console.warn('Failed to save formatter config to server, using local storage:', error);
@@ -137,7 +156,8 @@ function getLocalConfig(): FormatterConfig | null {
   try {
     const stored = localStorage.getItem(LOCAL_STORAGE_KEY);
     if (stored) {
-      return JSON.parse(stored) as FormatterConfig;
+      const parsed: unknown = JSON.parse(stored);
+      return isFormatterConfig(parsed) ? parsed : null;
     }
   } catch {
     // Ignore parse errors

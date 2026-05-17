@@ -88,15 +88,15 @@ export function RolesPage() {
 				</Button>
 			}
 			toolbar={
-				<Group>
+				<div className={classes.toolbar}>
 					<TextInput
 						placeholder="Search roles..."
 						leftSection={<Magnifier size={16} />}
 						value={search}
 						onChange={(e) => setSearch(e.currentTarget.value)}
-						style={{ flex: 1, maxWidth: 460 }}
+						className={classes.search}
 					/>
-				</Group>
+				</div>
 			}
 		>
 
@@ -123,7 +123,7 @@ export function RolesPage() {
 												<div className={classes.roleIcon}>
 													<Shield size={18} />
 												</div>
-												<div>
+												<div className={classes.roleText}>
 													<Text className={classes.roleName}>{role.name}</Text>
 													<Text className={classes.roleDescription}>
 														{role.description || "No description"}
@@ -132,7 +132,7 @@ export function RolesPage() {
 											</div>
 										),
 										permissions: (
-											<Group gap={4}>
+											<div className={classes.badgeList}>
 												{permissionPreview.visible.map((permission) => (
 													<Badge key={permission} size="sm" variant="dot">
 														{permission}
@@ -143,7 +143,7 @@ export function RolesPage() {
 														+{permissionPreview.remaining} more
 													</Badge>
 												)}
-											</Group>
+											</div>
 										),
 										type: (
 											<Badge variant={typeView.variant} color={typeView.color}>
@@ -253,16 +253,21 @@ function RoleModal({
 	}, [permissions]);
 
 	const handleSubmit = async (values: RoleFormValues) => {
-		const roleData: Partial<RoleResource> = {
+		const roleData = {
 			resourceType: "Role",
 			name: values.name,
 			description: values.description || undefined,
 			permissions: values.permissions,
 			active: values.active,
-		};
+		} satisfies Partial<RoleResource>;
 		try {
 			if (isEditing && role?.id) {
-				await update.mutateAsync({ ...roleData, id: role.id } as RoleResource);
+				await update.mutateAsync({
+					...role,
+					...roleData,
+					id: role.id,
+					resourceType: "Role",
+				});
 			} else {
 				await create.mutateAsync(roleData);
 			}

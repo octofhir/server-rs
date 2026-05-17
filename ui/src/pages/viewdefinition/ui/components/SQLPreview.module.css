@@ -1,0 +1,12 @@
+.state {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	gap: var(--octo-spacing-xs);
+	min-height: 200px;
+}
+
+.sqlCode {
+	max-height: calc(100vh - 300px);
+	overflow: auto;
+}

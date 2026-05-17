@@ -1,4 +1,4 @@
-import { Stack, Group, Text, TextInput, ActionIcon, Button, Alert } from "@/shared/ui";
+import { Text, TextInput, ActionIcon, Button, Alert } from "@/shared/ui";
 import { IconX, IconPlus, IconLock } from "@octofhir/ui-kit";
 import { useUnit } from "effector-react";
 import {
@@ -9,6 +9,7 @@ import {
 	updateCustomHeader,
 } from "../state/consoleStore";
 import { validateHeaders } from "../utils/headerUtils";
+import styles from "./HeaderEditor.module.css";
 
 export function HeaderEditor() {
 	const {
@@ -33,39 +34,39 @@ export function HeaderEditor() {
 	};
 
 	return (
-		<Stack gap="sm">
+		<div className={styles.root}>
 			<Text fw={500} size="sm">
 				Headers
 			</Text>
 
 			{/* Default headers */}
-			<Stack gap="xs">
+			<div className={styles.section}>
 				<Text size="xs" c="dimmed">
 					Default FHIR headers
 				</Text>
 				{Object.entries(defaultHeaders).map(([key, value]) => (
-					<Group key={key} gap="xs">
-						<TextInput value={key} disabled size="xs" style={{ flex: 1 }} />
-						<TextInput value={value} disabled size="xs" style={{ flex: 2 }} />
+					<div key={key} className={styles.row}>
+						<TextInput value={key} disabled size="xs" />
+						<TextInput value={value} disabled size="xs" />
 						<ActionIcon variant="subtle" disabled size="sm">
 							<IconLock size={14} />
 						</ActionIcon>
-					</Group>
+					</div>
 				))}
-			</Stack>
+			</div>
 
 			{/* Custom headers */}
-			<Stack gap="xs">
-				<Group justify="space-between">
+			<div className={styles.section}>
+				<div className={styles.sectionHeader}>
 					<Text size="xs" c="dimmed">
 						Custom headers
 					</Text>
 					<Button size="xs" leftSection={<IconPlus size={14} />} onClick={handleAddHeader}>
 						Add
 					</Button>
-				</Group>
+				</div>
 				{Object.entries(customHeaders).map(([key, value]) => (
-					<Group key={key} gap="xs">
+					<div key={key} className={styles.row}>
 						<TextInput
 							placeholder="Header-Name"
 							value={key}
@@ -77,7 +78,6 @@ export function HeaderEditor() {
 								})
 							}
 							size="xs"
-							style={{ flex: 1 }}
 						/>
 						<TextInput
 							placeholder="value"
@@ -90,7 +90,6 @@ export function HeaderEditor() {
 								})
 							}
 							size="xs"
-							style={{ flex: 2 }}
 						/>
 						<ActionIcon
 							variant="subtle"
@@ -100,9 +99,9 @@ export function HeaderEditor() {
 						>
 							<IconX size={14} />
 						</ActionIcon>
-					</Group>
+					</div>
 				))}
-			</Stack>
+			</div>
 
 			{/* Validation warnings */}
 			{errors.length > 0 && (
@@ -115,9 +114,9 @@ export function HeaderEditor() {
 				</Alert>
 			)}
 
-			<Text size="xs" c="dimmed">
+			<Text size="xs" className={styles.footer}>
 				{Object.keys(customHeaders).length} custom headers
 			</Text>
-		</Stack>
+		</div>
 	);
 }

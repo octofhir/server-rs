@@ -1,10 +1,89 @@
-import { Stack, Button, Paper, Group, Text, TextInput, Select, ActionIcon, Tooltip } from "@/shared/ui";
+import { Button, Text, TextInput, Select, ActionIcon, Tooltip } from "@/shared/ui";
 import { IconPlus, IconTrash } from "@octofhir/ui-kit";
 import type { ViewDefinitionConstant } from "../../lib/useViewDefinition";
+import classes from "./ConstantsEditor.module.css";
 
 interface ConstantsEditorProps {
   constants: ViewDefinitionConstant[];
   onChange: (constants: ViewDefinitionConstant[]) => void;
+}
+
+type ConstantValueType = "string" | "integer" | "decimal" | "boolean";
+
+const VALUE_TYPE_OPTIONS: Array<{ value: ConstantValueType; label: string }> = [
+  { value: "string", label: "String" },
+  { value: "integer", label: "Integer" },
+  { value: "decimal", label: "Decimal" },
+  { value: "boolean", label: "Boolean" },
+];
+
+function getValueType(constant: ViewDefinitionConstant): ConstantValueType {
+  if (constant.valueInteger !== undefined) return "integer";
+  if (constant.valueDecimal !== undefined) return "decimal";
+  if (constant.valueBoolean !== undefined) return "boolean";
+  return "string";
+}
+
+function getValue(constant: ViewDefinitionConstant, valueType: ConstantValueType) {
+  switch (valueType) {
+    case "integer":
+      return constant.valueInteger ?? 0;
+    case "decimal":
+      return constant.valueDecimal ?? 0;
+    case "boolean":
+      return constant.valueBoolean ?? false;
+    case "string":
+      return constant.valueString ?? "";
+  }
+}
+
+function valueFromInput(valueType: ConstantValueType, value: string): string | number | boolean {
+  switch (valueType) {
+    case "integer":
+      return Number.parseInt(value, 10) || 0;
+    case "decimal":
+      return Number.parseFloat(value) || 0;
+    case "boolean":
+      return value === "true";
+    case "string":
+      return value;
+  }
+}
+
+function withConstantName(constant: ViewDefinitionConstant, name: string): ViewDefinitionConstant {
+  return { ...constant, name };
+}
+
+function withConstantValue(
+  constant: ViewDefinitionConstant,
+  valueType: ConstantValueType,
+  value: string | number | boolean,
+): ViewDefinitionConstant {
+  const next: ViewDefinitionConstant = {
+    name: constant.name,
+    _id: constant._id,
+  };
+
+  switch (valueType) {
+    case "integer":
+      next.valueInteger = typeof value === "number" ? Math.trunc(value) : 0;
+      break;
+    case "decimal":
+      next.valueDecimal = typeof value === "number" ? value : 0;
+      break;
+    case "boolean":
+      next.valueBoolean = typeof value === "boolean" ? value : false;
+      break;
+    case "string":
+      next.valueString = typeof value === "string" ? value : String(value);
+      break;
+  }
+
+  return next;
+}
+
+function isConstantValueType(value: string | null): value is ConstantValueType {
+  return VALUE_TYPE_OPTIONS.some((option) => option.value === value);
 }
 
 export function ConstantsEditor({ constants, onChange }: ConstantsEditorProps) {
@@ -12,25 +91,22 @@ export function ConstantsEditor({ constants, onChange }: ConstantsEditorProps) {
     onChange([...constants, { name: "", valueString: "", _id: crypto.randomUUID() }]);
   };
 
-  const handleChange = (index: number, field: keyof ViewDefinitionConstant, value: string | number | boolean) => {
+  const handleNameChange = (index: number, name: string) => {
     const updated = constants.map((constant, i) => {
       if (i !== index) return constant;
-
-      // Clear other value fields when type changes
-      const newConstant: ViewDefinitionConstant = { name: constant.name };
-      if (field === "name") {
-        newConstant.name = value as string;
-        // Preserve existing value
-        if (constant.valueString !== undefined) newConstant.valueString = constant.valueString;
-        if (constant.valueInteger !== undefined) newConstant.valueInteger = constant.valueInteger;
-        if (constant.valueBoolean !== undefined) newConstant.valueBoolean = constant.valueBoolean;
-        if (constant.valueDecimal !== undefined) newConstant.valueDecimal = constant.valueDecimal;
-      } else {
-        newConstant[field] = value as never;
-      }
-
-      return newConstant;
+      return withConstantName(constant, name);
     });
+    onChange(updated);
+  };
+
+  const handleValueChange = (
+    index: number,
+    valueType: ConstantValueType,
+    value: string | number | boolean,
+  ) => {
+    const updated = constants.map((constant, i) =>
+      i === index ? withConstantValue(constant, valueType, value) : constant,
+    );
     onChange(updated);
   };
 
@@ -39,8 +115,8 @@ export function ConstantsEditor({ constants, onChange }: ConstantsEditorProps) {
   };
 
   return (
-    <Stack gap="sm">
-      <Group justify="space-between">
+    <div className={classes.root}>
+      <div className={classes.header}>
         <Text size="sm" fw={500}>
           Constants
         </Text>
@@ -52,57 +128,40 @@ export function ConstantsEditor({ constants, onChange }: ConstantsEditorProps) {
         >
           Add Constant
         </Button>
-      </Group>
-      <Paper withBorder p="sm">
-        <Stack gap="xs">
+      </div>
+      <div className={classes.panel}>
+        <div className={classes.list}>
           {constants.map((constant, i) => {
-            const valueType =
-              constant.valueString !== undefined ? "string" :
-              constant.valueInteger !== undefined ? "integer" :
-              constant.valueDecimal !== undefined ? "decimal" :
-              constant.valueBoolean !== undefined ? "boolean" :
-              "string";
-
-            const value = constant[`value${valueType.charAt(0).toUpperCase()}${valueType.slice(1)}` as keyof ViewDefinitionConstant] as string | number | boolean;
+            const valueType = getValueType(constant);
+            const value = getValue(constant, valueType);
 
             return (
-              <Group key={constant._id || `const-${i}`} gap="xs" wrap="nowrap">
+              <div key={constant._id || `const-${i}`} className={classes.row}>
                 <TextInput
                   placeholder="Name"
                   value={constant.name}
-                  onChange={(e) => handleChange(i, "name", e.target.value)}
-                  style={{ flex: 1 }}
+                  onChange={(e) => handleNameChange(i, e.target.value)}
+                  className={classes.input}
                   size="xs"
                 />
                 <Select
                   value={valueType}
                   onChange={(type) => {
-                    if (type) {
-                      const field = `value${type.charAt(0).toUpperCase()}${type.slice(1)}` as keyof ViewDefinitionConstant;
-                      handleChange(i, field, type === "boolean" ? false : type === "integer" || type === "decimal" ? 0 : "");
+                    if (isConstantValueType(type)) {
+                      handleValueChange(i, type, type === "boolean" ? false : type === "integer" || type === "decimal" ? 0 : "");
                     }
                   }}
-                  data={[
-                    { value: "string", label: "String" },
-                    { value: "integer", label: "Integer" },
-                    { value: "decimal", label: "Decimal" },
-                    { value: "boolean", label: "Boolean" },
-                  ]}
+                  data={VALUE_TYPE_OPTIONS}
                   size="xs"
-                  style={{ width: 100 }}
+                  className={classes.typeSelect}
                 />
                 <TextInput
                   placeholder="Value"
                   value={String(value || "")}
                   onChange={(e) => {
-                    const field = `value${valueType.charAt(0).toUpperCase()}${valueType.slice(1)}` as keyof ViewDefinitionConstant;
-                    const newValue = valueType === "integer" ? parseInt(e.target.value) || 0 :
-                                     valueType === "decimal" ? parseFloat(e.target.value) || 0 :
-                                     valueType === "boolean" ? e.target.value === "true" :
-                                     e.target.value;
-                    handleChange(i, field, newValue);
+                    handleValueChange(i, valueType, valueFromInput(valueType, e.target.value));
                   }}
-                  style={{ flex: 1 }}
+                  className={classes.input}
                   size="xs"
                 />
                 <Tooltip label="Remove constant">
@@ -115,7 +174,7 @@ export function ConstantsEditor({ constants, onChange }: ConstantsEditorProps) {
                     <IconTrash size={14} />
                   </ActionIcon>
                 </Tooltip>
-              </Group>
+              </div>
             );
           })}
           {constants.length === 0 && (
@@ -123,8 +182,8 @@ export function ConstantsEditor({ constants, onChange }: ConstantsEditorProps) {
               No constants defined
             </Text>
           )}
-        </Stack>
-      </Paper>
-    </Stack>
+        </div>
+      </div>
+    </div>
   );
 }

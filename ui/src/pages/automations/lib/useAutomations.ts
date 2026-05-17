@@ -35,7 +35,12 @@ export function useAutomations(filters?: AutomationSearchParams) {
 export function useAutomation(id: string | undefined) {
   return useQuery({
     queryKey: automationKeys.detail(id ?? ""),
-    queryFn: () => automationsApi.get(id!),
+    queryFn: () => {
+      if (!id) {
+        throw new Error("Automation id is required");
+      }
+      return automationsApi.get(id);
+    },
     enabled: !!id,
   });
 }
@@ -137,7 +142,12 @@ export function useTestAutomation(automationId?: string) {
 export function useAutomationLogs(id: string | undefined, limit = 50) {
   return useQuery({
     queryKey: automationKeys.logs(id ?? ""),
-    queryFn: () => automationsApi.getLogs(id!, limit),
+    queryFn: () => {
+      if (!id) {
+        throw new Error("Automation id is required");
+      }
+      return automationsApi.getLogs(id, limit);
+    },
     enabled: !!id,
     refetchInterval: 10000, // Poll every 10 seconds for new executions
   });

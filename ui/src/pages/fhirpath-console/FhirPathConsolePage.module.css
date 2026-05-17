@@ -1,0 +1,81 @@
+.workspace {
+	display: grid;
+	grid-template-columns: minmax(320px, 1fr) minmax(320px, 420px);
+	grid-template-rows: auto minmax(0, 1fr);
+	gap: 12px;
+	min-height: 0;
+}
+
+.editorPanel,
+.panel,
+.resultItem,
+.emptyState {
+	border: 1px solid var(--g-color-line-generic);
+	border-radius: 8px;
+	background: var(--g-color-base-background);
+}
+
+.editorPanel {
+	overflow: hidden;
+}
+
+.panel,
+.resultItem,
+.emptyState {
+	padding: 12px;
+}
+
+.panelTitle {
+	display: block;
+	padding: 8px 12px;
+	border-bottom: 1px solid var(--g-color-line-generic);
+	background: var(--g-color-base-generic);
+}
+
+.editorPanel > .panelTitle {
+	margin: 0;
+}
+
+.resultsPanel {
+	display: flex;
+	min-height: 0;
+	flex-direction: column;
+	gap: 12px;
+	overflow: auto;
+	grid-column: 1 / -1;
+}
+
+.emptyState {
+	display: flex;
+	min-height: 140px;
+	align-items: center;
+	justify-content: center;
+}
+
+.collapsibleHeader,
+.resultToggle {
+	cursor: pointer;
+}
+
+.metadataBody {
+	padding-top: 12px;
+}
+
+.resultCode {
+	min-width: 0;
+	flex: 1;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.resultJson {
+	max-height: 400px;
+	overflow: auto;
+}
+
+@media (max-width: 980px) {
+	.workspace {
+		grid-template-columns: minmax(0, 1fr);
+	}
+}

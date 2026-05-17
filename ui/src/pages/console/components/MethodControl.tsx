@@ -2,6 +2,7 @@ import { Select } from "@/shared/ui";
 import { isHttpMethod } from "@/shared/api";
 import { useUnit } from "effector-react";
 import { $method, setMethod } from "../state/consoleStore";
+import styles from "./MethodControl.module.css";
 
 const METHOD_OPTIONS = ["GET", "POST", "PUT", "PATCH", "DELETE"];
 
@@ -21,7 +22,7 @@ export function MethodControl() {
 			options={METHOD_OPTIONS.map(m => ({ value: m, content: m }))}
 			size="m"
 			view="flat"
-			style={{ width: 80, fontWeight: 700 }}
+			className={styles.select}
 		/>
 	);
 }

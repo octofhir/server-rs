@@ -1,10 +1,9 @@
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
-	Stack,
+	Box,
+	Flex,
 	Text,
-	Paper,
-	Group,
 	Badge,
 	DataPreview,
 	Loader,
@@ -12,10 +11,6 @@ import {
 	TextInput,
 	ActionIcon,
 	Tooltip,
-	SimpleGrid,
-	Card,
-	ThemeIcon,
-	rem,
 	Tabs,
 	Button,
 	Select,
@@ -25,7 +20,7 @@ import { notifications } from "@octofhir/ui-kit";
 import {
 	CircleExclamation,
 	Magnifier,
-	Box,
+	Box as PackageIcon,
 	Eye,
 	Check,
 	TriangleExclamation,
@@ -45,15 +40,8 @@ import {
 	getFhirPackageVersionOptions,
 	getFhirVersionCompatibilityView,
 } from "@/entities/fhir-package";
-import type { PackageInfo } from "@/shared/api/types";
 import { InstallProgressModal } from "./InstallProgressModal";
-
-const singleLineTextStyle = {
-	display: "-webkit-box",
-	WebkitBoxOrient: "vertical",
-	WebkitLineClamp: 1,
-	overflow: "hidden",
-};
+import classes from "./PackagesPage.module.css";
 
 function FhirVersionBadge({
 	packageVersion,
@@ -84,65 +72,6 @@ function FhirVersionBadge({
 	);
 }
 
-function PackageCard({
-	pkg,
-	serverVersion,
-	onView,
-}: {
-	pkg: PackageInfo;
-	serverVersion: string;
-	onView: (name: string, version: string) => void;
-}) {
-	return (
-		<Card
-			shadow="sm"
-			padding="lg"
-			radius="md"
-			style={{ backgroundColor: "var(--octo-surface-1)" }}
-		>
-			<Group justify="space-between" mb="xs">
-				<Group gap="xs">
-					<ThemeIcon variant="light" size="md" color="warm">
-						<Box size={16} />
-					</ThemeIcon>
-					<Text fw={500} style={singleLineTextStyle}>
-						{pkg.name}
-					</Text>
-				</Group>
-				<Tooltip label="View package details">
-					<ActionIcon
-						variant="subtle"
-						size="sm"
-						onClick={() => onView(pkg.name, pkg.version)}
-					>
-						<Eye size={16} />
-					</ActionIcon>
-				</Tooltip>
-			</Group>
-
-			<Group gap="xs" mb="sm">
-				<Badge size="sm" variant="outline">
-					v{pkg.version}
-				</Badge>
-				<FhirVersionBadge
-					packageVersion={pkg.fhirVersion}
-					serverVersion={serverVersion}
-				/>
-			</Group>
-
-			<Text size="sm" c="dimmed">
-				{pkg.resourceCount} resources
-			</Text>
-
-			{pkg.installedAt && (
-				<Text size="xs" c="dimmed" mt="xs">
-					Installed: {new Date(pkg.installedAt).toLocaleDateString()}
-				</Text>
-			)}
-		</Card>
-	);
-}
-
 function InstalledPackagesTab({
 	serverVersion,
 	onView,
@@ -151,7 +80,6 @@ function InstalledPackagesTab({
 	onView: (name: string, version: string) => void;
 }) {
 	const [search, setSearch] = useState("");
-	const [viewMode] = useState<"grid" | "table">("table");
 	const { data, isLoading, error } = usePackages();
 
 	const filteredPackages = useMemo(() => {
@@ -163,22 +91,22 @@ function InstalledPackagesTab({
 	);
 
 	return (
-		<Stack gap="sm">
+		<Flex direction="column" gap="3">
 			<TextInput
 				placeholder="Search installed packages..."
 				leftSection={<Magnifier size={16} />}
 				value={search}
 				onChange={(e) => setSearch(e.currentTarget.value)}
-				style={{ maxWidth: 460 }}
+				className={classes.searchInput}
 			/>
 
 			{isLoading && (
-				<Group justify="center" py="xl">
+				<Flex justifyContent="center" alignItems="center" gap="2" className={classes.statePanel}>
 					<Loader size="sm" />
 					<Text size="sm" c="dimmed">
 						Loading packages...
 					</Text>
-				</Group>
+				</Flex>
 			)}
 
 			{error && (
@@ -193,43 +121,25 @@ function InstalledPackagesTab({
 
 			{!isLoading && !error && data && (
 				<>
-					<Text size="sm" c="dimmed">
+					<Text size="sm" c="dimmed" className={classes.resultCount}>
 						{filteredPackages.length} packages
 						{filteredPackages.length !== data.packages.length &&
 							` (filtered from ${data.packages.length})`}
 					</Text>
 
 					{filteredPackages.length === 0 ? (
-						<Paper p="md" style={{ backgroundColor: "var(--octo-surface-2)" }}>
-							<Stack align="center" gap="sm">
-								<ThemeIcon
-									size={rem(40)}
-									radius="xl"
-									variant="light"
-									color="warm"
-								>
-									<Box size={22} />
-								</ThemeIcon>
+						<Box className={classes.emptyPanel}>
+							<Flex direction="column" alignItems="center" gap="2">
+								<PackageIcon size={22} className={classes.emptyIcon} />
 								<Text ta="center" c="dimmed">
 									{search
 										? "No packages match your search"
 										: "No packages installed"}
 								</Text>
-							</Stack>
-						</Paper>
-					) : viewMode === "grid" ? (
-						<SimpleGrid cols={{ base: 1, sm: 2, md: 3, lg: 4 }}>
-							{filteredPackages.map((pkg) => (
-								<PackageCard
-									key={`${pkg.name} @${pkg.version} `}
-									pkg={pkg}
-									serverVersion={serverVersion}
-									onView={onView}
-								/>
-							))}
-						</SimpleGrid>
+							</Flex>
+						</Box>
 					) : (
-						<Paper style={{ backgroundColor: "var(--octo-surface-1)" }}>
+						<Box className={classes.tablePanel}>
 							<DataPreview
 								columns={[
 									{ id: "package", label: "Package" },
@@ -241,13 +151,13 @@ function InstalledPackagesTab({
 								]}
 								rows={packageViews.map((pkg) => ({
 									package: (
-										<Group gap="xs">
-											<Box
+										<Flex gap="2" alignItems="center">
+											<PackageIcon
 												size={16}
 												style={{ color: "var(--octo-accent-primary)" }}
 											/>
-											<Text fw={500}>{pkg.name}</Text>
-										</Group>
+											<Text fw={500} className={classes.truncateText}>{pkg.name}</Text>
+										</Flex>
 									),
 									version: (
 										<Badge size="sm" variant="outline">
@@ -280,11 +190,11 @@ function InstalledPackagesTab({
 								}))}
 								getRowKey={(_row, index) => packageViews[index]?.id ?? `${index}`}
 							/>
-						</Paper>
+						</Box>
 					)}
 				</>
 			)}
-		</Stack>
+		</Flex>
 	);
 }
 
@@ -339,7 +249,7 @@ function RegistryTab({
 	const versionOptions = useMemo(() => getFhirPackageVersionOptions(lookupData), [lookupData]);
 
 	return (
-		<Stack gap="sm">
+		<Flex direction="column" gap="3">
 			<TextInput
 				placeholder="Search packages... (e.g., us core, hl7.fhir)"
 				leftSection={<Magnifier size={16} />}
@@ -349,20 +259,20 @@ function RegistryTab({
 					setSelectedPackage(null);
 					setSelectedVersion(null);
 				}}
-				style={{ maxWidth: 520 }}
+				className={classes.registrySearchInput}
 			/>
 
 			{searchLoading && (
-				<Group justify="center" py="xl">
+				<Flex justifyContent="center" alignItems="center" gap="2" className={classes.statePanel}>
 					<Loader size="sm" />
 					<Text size="sm" c="dimmed">
 						Searching packages...
 					</Text>
-				</Group>
+				</Flex>
 			)}
 
 			{searchData && searchData.packages.length > 0 && (
-				<Paper style={{ backgroundColor: "var(--octo-surface-1)" }}>
+				<Box className={classes.tablePanel}>
 					<DataPreview
 						columns={[
 							{ id: "package", label: "Package", width: 260 },
@@ -373,18 +283,18 @@ function RegistryTab({
 						]}
 						rows={registryViews.map((pkg) => ({
 							package: (
-								<Group gap="xs">
-									<Box
+								<Flex gap="2" alignItems="center">
+									<PackageIcon
 										size={16}
 										style={{ color: "var(--octo-accent-primary)" }}
 									/>
-									<Text fw={500} size="sm">
+									<Text fw={500} size="sm" className={classes.truncateText}>
 										{pkg.name}
 									</Text>
-								</Group>
+								</Flex>
 							),
 							description: (
-								<Text size="sm" c="dimmed" style={singleLineTextStyle}>
+								<Text size="sm" c="dimmed" className={classes.truncateText}>
 									{pkg.descriptionLabel}
 								</Text>
 							),
@@ -427,7 +337,7 @@ function RegistryTab({
 						}))}
 						getRowKey={(_row, index) => registryViews[index]?.id ?? `${index}`}
 					/>
-				</Paper>
+				</Box>
 			)}
 
 			{searchData &&
@@ -444,19 +354,17 @@ function RegistryTab({
 				)}
 
 			{!searchData && !searchLoading && (
-				<Paper p="md" style={{ backgroundColor: "var(--octo-surface-2)" }}>
-					<Stack align="center" gap="sm">
-						<ThemeIcon size={rem(40)} radius="xl" variant="light" color="fire">
-							<Globe size={22} />
-						</ThemeIcon>
+				<Box className={classes.emptyPanel}>
+					<Flex direction="column" alignItems="center" gap="2">
+						<Globe size={22} className={classes.emptyIcon} />
 						<Text ta="center" c="dimmed">
 							Enter a search term to find packages in the FHIR registry
 						</Text>
 						<Text ta="center" size="xs" c="dimmed">
 							Examples: us core, hl7.fhir, terminology, mcode
 						</Text>
-					</Stack>
-				</Paper>
+					</Flex>
+				</Box>
 			)}
 
 			{/* Install Progress Modal */}
@@ -469,7 +377,7 @@ function RegistryTab({
 				packageName={selectedPackage || ""}
 				packageVersion={selectedVersion || ""}
 			/>
-		</Stack>
+		</Flex>
 	);
 }
 
@@ -490,6 +398,7 @@ export function PackagesPage() {
 		<WorkspacePageLayout
 			title="FHIR Packages"
 			description="Manage installed FHIR packages and install new packages from the registry"
+			maxWidth={1280}
 			actions={
 				<Badge size="lg" variant="light" color="warm">
 					Server: FHIR {serverVersion}
@@ -497,7 +406,7 @@ export function PackagesPage() {
 			}
 		>
 
-			<Tabs value={activeTab} onChange={setActiveTab}>
+			<Tabs value={activeTab} onChange={setActiveTab} className={classes.tabs}>
 				<Tabs.List>
 					<Tabs.Tab value="installed" leftSection={<Box size={14} />}>
 						Installed

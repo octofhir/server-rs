@@ -40,13 +40,7 @@ import {
 	getSubscriptionEventView,
 } from "@/entities/api-app";
 import { useApp } from "../lib/useApps";
-
-const singleLineTextStyle = {
-	display: "-webkit-box",
-	WebkitBoxOrient: "vertical",
-	WebkitLineClamp: 1,
-	overflow: "hidden",
-};
+import classes from "./AppDetailPage.module.css";
 
 function MethodBadge({ method }: { method: string }) {
 	const methodView = getAppMethodView(method);
@@ -321,7 +315,7 @@ export function AppDetailPage() {
 									),
 									filter: sub.trigger.fhirpath ? (
 										<Tooltip label={sub.trigger.fhirpath}>
-											<Code size="xs" style={{ maxWidth: 180, ...singleLineTextStyle }}>
+											<Code size="xs" className={classes.filterCode}>
 												{sub.trigger.fhirpath}
 											</Code>
 										</Tooltip>
@@ -334,7 +328,7 @@ export function AppDetailPage() {
 												{sub.channel.type}
 											</Badge>
 											<Tooltip label={sub.channel.endpoint}>
-												<Code size="xs" style={{ maxWidth: 140, ...singleLineTextStyle }}>
+												<Code size="xs" className={classes.endpointCode}>
 													{sub.channel.endpoint}
 												</Code>
 											</Tooltip>

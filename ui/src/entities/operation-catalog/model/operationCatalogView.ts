@@ -139,10 +139,13 @@ export function filterOperations(
 export function groupOperationsByCategory(
 	operations: OperationDefinition[],
 ): GroupedOperations {
-	return operations.reduce((acc, operation) => {
+	const grouped: GroupedOperations = {};
+
+	for (const operation of operations) {
 		const category = operation.category || "other";
-		acc[category] ??= [];
-		acc[category].push(operation);
-		return acc;
-	}, {} as GroupedOperations);
+		grouped[category] ??= [];
+		grouped[category].push(operation);
+	}
+
+	return grouped;
 }

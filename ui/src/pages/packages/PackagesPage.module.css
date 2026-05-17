@@ -1,0 +1,45 @@
+.tabs {
+	min-width: 0;
+}
+
+.searchInput {
+	width: min(100%, 460px);
+}
+
+.registrySearchInput {
+	width: min(100%, 520px);
+}
+
+.resultCount {
+	padding-left: 2px;
+}
+
+.tablePanel {
+	overflow: hidden;
+	border: 1px solid var(--g-color-line-generic);
+	border-radius: 8px;
+	background: var(--g-color-base-background);
+}
+
+.statePanel {
+	min-height: 220px;
+	padding: 24px;
+}
+
+.emptyPanel {
+	padding: 24px;
+	border: 1px solid var(--g-color-line-generic);
+	border-radius: 8px;
+	background: var(--g-color-base-generic);
+}
+
+.emptyIcon {
+	color: var(--g-color-text-hint);
+}
+
+.truncateText {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}

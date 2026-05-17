@@ -1,4 +1,5 @@
-import { ActionIcon, Badge, Button, Flex, Menu, TextInput, Tooltip } from "@/shared/ui";
+import { DropdownMenu } from "@gravity-ui/uikit";
+import { ActionIcon, Badge, Button, TextInput, Tooltip } from "@/shared/ui";
 import { memo } from "react";
 
 import {
@@ -61,8 +62,8 @@ function LogFiltersComponent({
 
 	return (
 		<div className={classes.container}>
-			<Flex gap="3" wrap="wrap" alignItems="center" className={classes.toolbar}>
-				<Flex gap="2" wrap="wrap" alignItems="center" className={classes.primaryControls}>
+			<div className={classes.toolbar}>
+				<div className={classes.primaryControls}>
 					<TextInput
 						placeholder="Search logs..."
 						leftSection={<Magnifier size={14} />}
@@ -71,42 +72,41 @@ function LogFiltersComponent({
 						className={classes.searchInput}
 					/>
 
-					<Menu>
-						<Menu.Trigger>
+					<DropdownMenu
+						size="s"
+						popupProps={{ placement: "bottom-start" }}
+						renderSwitcher={(switcherProps) => (
 							<Button
+								{...switcherProps}
 								view="flat-secondary"
+								leftSection={<FunnelXmark size={14} />}
+								className={classes.filterButton}
 							>
-								<Button.Icon><FunnelXmark size={14} /></Button.Icon>
 								Levels
 								{!allLevelsSelected && (
-									<Badge theme="info" style={{ marginLeft: "var(--g-spacing-1)" }}>
+									<Badge theme="info" className={classes.levelCount}>
 										{filters.levels.length}
 									</Badge>
 								)}
 							</Button>
-						</Menu.Trigger>
-						<Menu.Content>
-							{LOG_LEVELS.map((level) => (
-								<Menu.Item
-									key={level.value}
-									onClick={() => handleLevelToggle(level.value)}
-									selected={filters.levels.includes(level.value)}
-								>
-									{level.label}
-								</Menu.Item>
-							))}
-							<Menu.Divider />
-							<Menu.Item
-								onClick={() =>
-									onFiltersChange({
-										levels: allLevelsSelected ? [] : LOG_LEVELS.map((l) => l.value),
-									})
-								}
-							>
-								{allLevelsSelected ? "Deselect All" : "Select All"}
-							</Menu.Item>
-						</Menu.Content>
-					</Menu>
+						)}
+						items={[
+							...LOG_LEVELS.map((level) => ({
+								text: level.label,
+								action: () => handleLevelToggle(level.value),
+								selected: filters.levels.includes(level.value),
+							})),
+							[
+								{
+									text: allLevelsSelected ? "Deselect All" : "Select All",
+									action: () =>
+										onFiltersChange({
+											levels: allLevelsSelected ? [] : LOG_LEVELS.map((l) => l.value),
+										}),
+								},
+							],
+						]}
+					/>
 
 					<Badge
 						theme={noLevelsSelected ? "normal" : "info"}
@@ -119,9 +119,9 @@ function LogFiltersComponent({
 							+{pendingCount} pending
 						</Badge>
 					)}
-				</Flex>
+				</div>
 
-				<Flex gap="2" className={classes.actions}>
+				<div className={classes.actions}>
 					<Tooltip content={isPaused ? "Resume stream" : "Pause stream"}>
 						<ActionIcon
 							view={isPaused ? "action" : "flat-secondary"}
@@ -138,31 +138,34 @@ function LogFiltersComponent({
 						</ActionIcon>
 					</Tooltip>
 
-					<Menu>
-						<Menu.Trigger>
-							<Tooltip content="Export logs">
-								<ActionIcon view="flat-secondary" aria-label="Export logs">
-									<ArrowDownToLine size={18} />
-								</ActionIcon>
-							</Tooltip>
-						</Menu.Trigger>
-						<Menu.Content>
-							<Menu.Item
-								onClick={() => onExport("json")}
+					<DropdownMenu
+						size="s"
+						popupProps={{ placement: "bottom-end" }}
+						renderSwitcher={(switcherProps) => (
+							<Button
+								{...switcherProps}
+								view="flat-secondary"
+								leftSection={<ArrowDownToLine size={14} />}
+								className={classes.exportButton}
 							>
-								<Menu.Icon><CurlyBrackets size={14} /></Menu.Icon>
-								JSON
-							</Menu.Item>
-							<Menu.Item
-								onClick={() => onExport("text")}
-							>
-								<Menu.Icon><FileText size={14} /></Menu.Icon>
-								Plain Text
-							</Menu.Item>
-						</Menu.Content>
-					</Menu>
-				</Flex>
-			</Flex>
+								Export
+							</Button>
+						)}
+						items={[
+							{
+								text: "JSON",
+								iconStart: <CurlyBrackets size={14} />,
+								action: () => onExport("json"),
+							},
+							{
+								text: "Plain Text",
+								iconStart: <FileText size={14} />,
+								action: () => onExport("text"),
+							},
+						]}
+					/>
+				</div>
+			</div>
 		</div>
 	);
 }

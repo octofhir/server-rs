@@ -1,16 +1,16 @@
 import { useQuery, useInfiniteQuery } from "@tanstack/react-query";
 import {
 	buildAuditFhirSearchParams,
+	isAuditAction,
 	transformAuditBundleToList,
 	transformFhirAuditEvent,
 } from "@/entities/audit-event";
 import { fhirClient } from "@/shared/api/fhirClient";
+import { assertFhirBundle, isRecord } from "@/shared/api/guards";
 import type {
 	AuditEvent,
 	AuditEventUIFilters,
 	AuditAnalytics,
-	FhirBundle,
-	FhirResource,
 } from "@/shared/api/types";
 
 // Query keys
@@ -24,6 +24,62 @@ export const auditKeys = {
 		[...auditKeys.all, "analytics", timeRange] as const,
 };
 
+const INITIAL_AUDIT_PAGE_PARAM: string | undefined = undefined;
+
+function isAuditOutcome(value: unknown): value is "success" | "failure" | "partial" {
+	return value === "success" || value === "failure" || value === "partial";
+}
+
+function isNumberRecord(value: unknown, keyGuard: (key: string) => boolean): boolean {
+	return (
+		isRecord(value) &&
+		Object.entries(value).every(
+			([key, item]) => keyGuard(key) && typeof item === "number",
+		)
+	);
+}
+
+function isAuditAnalytics(value: unknown): value is AuditAnalytics {
+	return (
+		isRecord(value) &&
+		Array.isArray(value.activityOverTime) &&
+		value.activityOverTime.every(
+			(point) =>
+				isRecord(point) &&
+				typeof point.timestamp === "string" &&
+				typeof point.count === "number" &&
+				isNumberRecord(point.breakdown, isAuditAction),
+		) &&
+		Array.isArray(value.topUsers) &&
+		value.topUsers.every(
+			(user) =>
+				isRecord(user) &&
+				typeof user.userId === "string" &&
+				(user.userName === undefined || typeof user.userName === "string") &&
+				typeof user.count === "number",
+		) &&
+		Array.isArray(value.topResources) &&
+		value.topResources.every(
+			(resource) =>
+				isRecord(resource) &&
+				typeof resource.resourceType === "string" &&
+				(resource.resourceId === undefined || typeof resource.resourceId === "string") &&
+				typeof resource.count === "number",
+		) &&
+		isNumberRecord(value.outcomeBreakdown, isAuditOutcome) &&
+		isNumberRecord(value.actionBreakdown, isAuditAction) &&
+		Array.isArray(value.failedAttempts) &&
+		value.failedAttempts.every(
+			(attempt) =>
+				isRecord(attempt) &&
+				typeof attempt.action === "string" &&
+				isAuditAction(attempt.action) &&
+				typeof attempt.count === "number" &&
+				typeof attempt.lastAttempt === "string",
+		)
+	);
+}
+
 // API functions using FHIR client
 async function fetchAuditEvents(
 	filters: AuditEventUIFilters,
@@ -31,11 +87,11 @@ async function fetchAuditEvents(
 ): Promise<ReturnType<typeof transformAuditBundleToList>> {
 	// If we have a cursor (next page URL), use it directly
 	if (cursor) {
-		const response = await fhirClient.customRequest<FhirBundle>({
+		const response = await fhirClient.customRequest({
 			method: "GET",
 			url: cursor,
 		});
-		return transformAuditBundleToList(response.data);
+		return transformAuditBundleToList(assertFhirBundle(response.data, "fetch audit events"));
 	}
 
 	// Build search params from filters
@@ -45,7 +101,7 @@ async function fetchAuditEvents(
 }
 
 async function fetchAuditEvent(id: string): Promise<AuditEvent> {
-	const resource = await fhirClient.read<FhirResource>("AuditEvent", id);
+	const resource = await fhirClient.read("AuditEvent", id);
 	return transformFhirAuditEvent(resource);
 }
 
@@ -70,15 +126,20 @@ async function fetchAuditAnalytics(timeRange?: {
 		throw new Error(error.message || `HTTP ${response.status}`);
 	}
 
-	return response.json();
+	const data: unknown = await response.json();
+	if (!isAuditAnalytics(data)) {
+		throw new Error("Invalid audit analytics response");
+	}
+	return data;
 }
 
 // Hooks
 export function useAuditEvents(filters: AuditEventUIFilters = {}) {
 	return useInfiniteQuery({
 		queryKey: auditKeys.list(filters),
-		queryFn: ({ pageParam }) => fetchAuditEvents(filters, pageParam as string | undefined),
-		initialPageParam: undefined as string | undefined,
+		queryFn: ({ pageParam }) =>
+			fetchAuditEvents(filters, typeof pageParam === "string" ? pageParam : undefined),
+		initialPageParam: INITIAL_AUDIT_PAGE_PARAM,
 		getNextPageParam: (lastPage) => (lastPage.hasMore ? lastPage.nextCursor : undefined),
 	});
 }

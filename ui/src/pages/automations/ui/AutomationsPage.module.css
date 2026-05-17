@@ -1,4 +1,43 @@
-.container {
-  height: 100%;
-  overflow: auto;
+.toolbar {
+  min-width: 0;
+}
+
+.searchInput {
+  flex: 1 1 280px;
+  max-width: 460px;
+}
+
+.statusSelect {
+  flex: 0 0 180px;
+}
+
+.tablePanel {
+  overflow: hidden;
+  border: 1px solid var(--g-color-line-generic);
+  border-radius: 8px;
+  background: var(--g-color-base-background);
+}
+
+.statePanel {
+  min-height: 220px;
+  padding: 24px;
+}
+
+.unavailableAlert {
+  margin: 16px;
+}
+
+.truncateText {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 720px) {
+  .searchInput,
+  .statusSelect {
+    flex-basis: 100%;
+    max-width: none;
+  }
 }

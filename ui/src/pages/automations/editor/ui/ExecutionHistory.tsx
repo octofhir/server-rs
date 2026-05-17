@@ -1,21 +1,19 @@
 import {
-  Stack,
   Table,
   Text,
   Badge,
   Loader,
-  Center,
-  ScrollArea,
+  Box,
+  Flex,
   Tooltip,
   Code,
-  Paper,
-  Group,
   ActionIcon,
 } from "@/shared/ui";
 import { useState } from "react";
 import { ChevronDown, ChevronRight } from "@gravity-ui/icons";
 import { useAutomationLogs } from "../../lib/useAutomations";
 import type { AutomationExecution, AutomationExecutionStatus } from "@/shared/api/types";
+import classes from "./ExecutionHistory.module.css";
 
 interface ExecutionHistoryProps {
   automationId: string;
@@ -51,16 +49,16 @@ function ExecutionRow({ execution }: { execution: AutomationExecution }) {
   return (
     <>
       <Table.Tr
-        style={{ cursor: "pointer" }}
+        className={classes.clickableRow}
         onClick={() => setExpanded(!expanded)}
       >
         <Table.Td>
-          <Group gap={4}>
+          <Flex gap="1" alignItems="center">
             <ActionIcon variant="subtle" size="xs">
               {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
             </ActionIcon>
             <Text size="sm">{formatDate(execution.started_at)}</Text>
-          </Group>
+          </Flex>
         </Table.Td>
         <Table.Td>
           <Badge color={config.color} variant="light" size="sm">
@@ -83,8 +81,8 @@ function ExecutionRow({ execution }: { execution: AutomationExecution }) {
       {expanded && (
         <Table.Tr>
           <Table.Td colSpan={4} p={0}>
-            <Paper p="md" bg="var(--octo-surface-2)">
-              <Stack gap="sm">
+            <Box className={classes.details}>
+              <div className={classes.detailStack}>
                 {execution.error && (
                   <div>
                     <Text size="xs" fw={500} c="red">Error:</Text>
@@ -112,10 +110,10 @@ function ExecutionRow({ execution }: { execution: AutomationExecution }) {
                 {execution.logs && execution.logs.length > 0 && (
                   <div>
                     <Text size="xs" fw={500}>Execution Logs:</Text>
-                    <Stack gap={4} mt={4}>
+                    <div className={classes.logList}>
                       {execution.logs.map((log, index) => (
-                        <Paper key={`${index}-${log.timestamp ?? log.message.slice(0, 20)}`} p="xs" withBorder>
-                          <Group gap="xs" wrap="nowrap" align="flex-start">
+                        <Box key={`${index}-${log.timestamp ?? log.message.slice(0, 20)}`} className={classes.logItem}>
+                          <Flex gap="2" wrap="nowrap" alignItems="flex-start">
                             <Badge
                               size="xs"
                               color={
@@ -123,12 +121,12 @@ function ExecutionRow({ execution }: { execution: AutomationExecution }) {
                                 log.level === "warn" ? "yellow" :
                                 log.level === "debug" ? "gray" : "blue"
                               }
-                              style={{ flexShrink: 0 }}
+                              className={classes.logLevel}
                             >
                               {log.level}
                             </Badge>
-                            <Stack gap={2} style={{ flex: 1, minWidth: 0 }}>
-                              <Text size="xs" style={{ fontFamily: "monospace" }}>
+                            <div className={classes.logBody}>
+                              <Text size="xs" className={classes.logMessage}>
                                 {log.message}
                               </Text>
                               {log.data !== undefined && log.data !== null && (
@@ -136,20 +134,20 @@ function ExecutionRow({ execution }: { execution: AutomationExecution }) {
                                   {typeof log.data === "string" ? log.data : JSON.stringify(log.data, null, 2)}
                                 </Code>
                               )}
-                            </Stack>
+                            </div>
                             {log.timestamp && (
-                              <Text size="xs" c="dimmed" style={{ flexShrink: 0 }}>
+                              <Text size="xs" c="dimmed" className={classes.logTime}>
                                 {new Date(log.timestamp).toLocaleTimeString()}
                               </Text>
                             )}
-                          </Group>
-                        </Paper>
+                          </Flex>
+                        </Box>
                       ))}
-                    </Stack>
+                    </div>
                   </div>
                 )}
-              </Stack>
-            </Paper>
+              </div>
+            </Box>
           </Table.Td>
         </Table.Tr>
       )}
@@ -162,34 +160,34 @@ export function ExecutionHistory({ automationId }: ExecutionHistoryProps) {
 
   if (isLoading) {
     return (
-      <Center h={200}>
+      <Box className={classes.state}>
         <Loader size="sm" />
-      </Center>
+      </Box>
     );
   }
 
   if (error) {
     return (
-      <Center h={200}>
+      <Box className={classes.state}>
         <Text c="red" size="sm">
           Failed to load execution history
         </Text>
-      </Center>
+      </Box>
     );
   }
 
   if (!executions || executions.length === 0) {
     return (
-      <Center h={200}>
+      <Box className={classes.state}>
         <Text c="dimmed" size="sm">
           No execution history yet. Run the automation to see results here.
         </Text>
-      </Center>
+      </Box>
     );
   }
 
   return (
-    <ScrollArea h="100%">
+    <Box className={classes.scrollArea}>
       <Table striped>
         <Table.Thead>
           <Table.Tr>
@@ -205,6 +203,6 @@ export function ExecutionHistory({ automationId }: ExecutionHistoryProps) {
           ))}
         </Table.Tbody>
       </Table>
-    </ScrollArea>
+    </Box>
   );
 }

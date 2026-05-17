@@ -1,9 +1,5 @@
 import {
-	Stack,
-	Title,
 	Text,
-	Card,
-	Group,
 	Badge,
 	Button,
 	NumberInput,
@@ -11,17 +7,24 @@ import {
 	Switch,
 	Loader,
 } from "@/shared/ui";
-import { WorkspacePageLayout } from "@/widgets/workspace-page";
+import { WorkspacePageLayout, WorkspacePageSection } from "@/widgets/workspace-page";
 import { useColorScheme } from "@octofhir/ui-kit";
 import { useHealth, useFormatterSettings } from "@/shared/api/hooks";
 import { useUiSettings } from "@/shared";
 import { FormatterSettings } from "@/shared/settings/FormatterSettings";
+import classes from "./SettingsPage.module.css";
 
-const themeOptions = [
+type ThemeValue = "light" | "dark" | "auto";
+
+const themeOptions: Array<{ value: ThemeValue; label: string }> = [
 	{ value: "light", label: "Light" },
 	{ value: "dark", label: "Dark" },
 	{ value: "auto", label: "System" },
 ];
+
+function isThemeValue(value: string | null): value is ThemeValue {
+	return value === "light" || value === "dark" || value === "auto";
+}
 
 export function SettingsPage() {
 	const { data: health, refetch, isRefetching } = useHealth({ refetchInterval: false });
@@ -47,145 +50,128 @@ export function SettingsPage() {
 		<WorkspacePageLayout
 			title="Settings"
 			description="Configure server settings and preferences"
+			maxWidth={1120}
 		>
-			<Stack gap="lg" pb="xl">
-			<Card
-				shadow="sm"
-				padding="lg"
-				radius="md"
-				style={{ backgroundColor: "var(--octo-surface-1)" }}
-			>
-				<Title order={4} mb="md">
-					Connection
-				</Title>
-
-				<Group justify="space-between" mb="lg">
-					<Group>
-						<Text>Server Status:</Text>
-						<Badge color={statusColor} variant="light">
-							{health?.status ?? "Unknown"}
-						</Badge>
-					</Group>
+			<WorkspacePageSection
+				title="Connection"
+				description="Server reachability and request behavior."
+				actions={
 					<Button
 						size="sm"
-						variant="light"
+						view="flat-secondary"
 						onClick={handleTestConnection}
 						loading={isRefetching}
 					>
 						Test Connection
 					</Button>
-				</Group>
-
-				<NumberInput
-					label="Request Timeout (ms)"
-					description="How long to wait before a request is aborted"
-					value={settings.requestTimeoutMs}
-					onChange={(val) =>
-						setSettings((current) => ({
-							...current,
-							requestTimeoutMs: Number(val) || 30000,
-						}))
-					}
-					min={1000}
-					max={120000}
-					step={1000}
-					w={300}
-				/>
-			</Card>
-
-			<Card
-				shadow="sm"
-				padding="lg"
-				radius="md"
-				style={{ backgroundColor: "var(--octo-surface-1)" }}
+				}
 			>
-				<Title order={4} mb="md">
-					Appearance
-				</Title>
+				<div className={classes.panel}>
+					<div className={classes.connectionRow}>
+						<div className={classes.statusRow}>
+							<Text variant="body-2" color="secondary">
+								Server status
+							</Text>
+							<Badge color={statusColor} variant="light">
+								{health?.status ?? "Unknown"}
+							</Badge>
+						</div>
 
-				<Select
-					label="Theme"
-					description="Choose your preferred color scheme"
-					data={themeOptions}
-					value={colorScheme}
-					onChange={(val) => setColorScheme(val as "light" | "dark" | "auto")}
-					w={300}
-				/>
-			</Card>
+						<NumberInput
+							label="Request timeout"
+							description="Milliseconds before a request is aborted."
+							value={settings.requestTimeoutMs}
+							onChange={(val) =>
+								setSettings((current) => ({
+									...current,
+									requestTimeoutMs: Number(val) || 30000,
+								}))
+							}
+							min={1000}
+							max={120000}
+							step={1000}
+							className={classes.compactField}
+						/>
+					</div>
+				</div>
+			</WorkspacePageSection>
 
-			<Card
-				shadow="sm"
-				padding="lg"
-				radius="md"
-				style={{ backgroundColor: "var(--octo-surface-1)" }}
+			<WorkspacePageSection
+				title="Appearance"
+				description="Local display preferences for this browser."
 			>
-				<Title order={4} mb="md">
-					SQL Formatter
-				</Title>
-				<Text c="dimmed" size="sm" mb="md">
-					Configure SQL formatting options for the DB Console editor.
-				</Text>
-
-				{formatterLoading ? (
-					<Group>
-						<Loader size="sm" />
-						<Text size="sm" c="dimmed">Loading formatter settings...</Text>
-					</Group>
-				) : (
-					<FormatterSettings
-						value={formatterConfig}
-						onChange={saveFormatterConfig}
+				<div className={classes.panel}>
+					<Select
+						label="Theme"
+						description="Choose your preferred color scheme."
+						data={themeOptions}
+						value={colorScheme}
+						onChange={(val) => {
+							if (isThemeValue(val)) {
+								setColorScheme(val);
+							}
+						}}
+						className={classes.compactField}
 					/>
-				)}
-			</Card>
+				</div>
+			</WorkspacePageSection>
 
-			<Card
-				shadow="sm"
-				padding="lg"
-				radius="md"
-				style={{ backgroundColor: "var(--octo-surface-1)" }}
+			<WorkspacePageSection
+				title="SQL Formatter"
+				description="Formatting options for the DB Console editor."
 			>
-				<Title order={4} mb="md">
-					Console
-				</Title>
+				<div className={classes.panel}>
+					{formatterLoading ? (
+						<div className={classes.loadingState}>
+							<Loader size="sm" />
+							<Text variant="body-2" color="secondary">Loading formatter settings...</Text>
+						</div>
+					) : (
+						<FormatterSettings
+							value={formatterConfig}
+							onChange={saveFormatterConfig}
+						/>
+					)}
+				</div>
+			</WorkspacePageSection>
 
-				<Stack gap="md">
-					<Switch
-						label="Skip request validation"
-						description="Allows sending malformed paths or missing parameters."
-						checked={settings.skipConsoleValidation}
-						onChange={(event) =>
-							setSettings((current) => ({
-								...current,
-								skipConsoleValidation: event.currentTarget.checked,
-							}))
-						}
-					/>
-					<Switch
-						label="Allow anonymous REST console requests"
-						description="Send requests without cookies/credentials."
-						checked={settings.allowAnonymousConsoleRequests}
-						onChange={(event) =>
-							setSettings((current) => ({
-								...current,
-								allowAnonymousConsoleRequests: event.currentTarget.checked,
-							}))
-						}
-					/>
-				</Stack>
-			</Card>
-
-			<Card
-				shadow="sm"
-				padding="lg"
-				radius="md"
-				style={{ backgroundColor: "var(--octo-surface-1)" }}
+			<WorkspacePageSection
+				title="Console"
+				description="Request validation and credential behavior for interactive tools."
 			>
-				<Title order={4} mb="md">
-					Authentication
-				</Title>
+				<div className={classes.panel}>
+					<div className={classes.switchStack}>
+						<Switch
+							label="Skip request validation"
+							description="Allows sending malformed paths or missing parameters."
+							checked={settings.skipConsoleValidation}
+							onChange={(event) =>
+								setSettings((current) => ({
+									...current,
+									skipConsoleValidation: event.currentTarget.checked,
+								}))
+							}
+						/>
+						<Switch
+							label="Allow anonymous REST console requests"
+							description="Send requests without cookies/credentials."
+							checked={settings.allowAnonymousConsoleRequests}
+							onChange={(event) =>
+								setSettings((current) => ({
+									...current,
+									allowAnonymousConsoleRequests: event.currentTarget.checked,
+								}))
+							}
+						/>
+					</div>
+				</div>
+			</WorkspacePageSection>
 
-				<Stack gap="md">
+			<WorkspacePageSection
+				title="Authentication"
+				description="Session handling behavior in the UI."
+			>
+				<div className={classes.panel}>
 					<Switch
 						label="Disable auto-logout on 401/403"
 						description="Keeps the UI state when the session expires."
@@ -197,9 +183,8 @@ export function SettingsPage() {
 							}))
 						}
 					/>
-				</Stack>
-			</Card>
-			</Stack>
+				</div>
+			</WorkspacePageSection>
 		</WorkspacePageLayout>
 	);
 }

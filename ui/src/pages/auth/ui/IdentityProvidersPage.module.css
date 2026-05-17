@@ -1,0 +1,35 @@
+.toolbar {
+	display: flex;
+	align-items: center;
+	width: 100%;
+}
+
+.search {
+	width: min(460px, 100%);
+}
+
+.tableContainer {
+	padding: 10px 12px 12px;
+}
+
+.providerCell {
+	display: flex;
+	align-items: center;
+	gap: var(--octo-spacing-xs);
+	min-width: 0;
+}
+
+.providerText {
+	min-width: 0;
+}
+
+.providerName,
+.providerIssuer {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.providerIssuer {
+	max-width: 520px;
+}

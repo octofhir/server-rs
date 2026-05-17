@@ -1,4 +1,4 @@
-import { Box, Flex, Text, ThemeIcon } from "@/shared/ui";
+import { Text, ThemeIcon } from "@/shared/ui";
 import { useRef, useEffect, memo } from "react";
 
 import { Pulse, CircleExclamation } from "@gravity-ui/icons";
@@ -53,8 +53,8 @@ function LogStreamComponent({
 
 	if (connectionError) {
 		return (
-			<Flex justifyContent="center" alignItems="center" h="100%" className={classes.emptyState}>
-				<Flex direction="column" align="center" gap="md">
+			<div className={classes.emptyState}>
+				<div className={classes.emptyContent}>
 					<ThemeIcon variant="light" color="fire" size={64} radius="xl">
 						<CircleExclamation size={32} />
 					</ThemeIcon>
@@ -64,15 +64,15 @@ function LogStreamComponent({
 					<Text size="sm" c="dimmed" ta="center" maw={400}>
 						{connectionError}
 					</Text>
-				</Flex>
-			</Flex>
+				</div>
+			</div>
 		);
 	}
 
 	if (!isConnected) {
 		return (
-			<Flex justifyContent="center" alignItems="center" h="100%" className={classes.emptyState}>
-				<Flex direction="column" align="center" gap="md">
+			<div className={classes.emptyState}>
+				<div className={classes.emptyContent}>
 					<ThemeIcon variant="light" color="gray" size={64} radius="xl">
 						<Pulse size={32} />
 					</ThemeIcon>
@@ -82,15 +82,15 @@ function LogStreamComponent({
 					<Text size="sm" c="dimmed">
 						Establishing connection to log stream
 					</Text>
-				</Flex>
-			</Flex>
+				</div>
+			</div>
 		);
 	}
 
 	if (logs.length === 0) {
 		return (
-			<Flex justifyContent="center" alignItems="center" h="100%" className={classes.emptyState}>
-				<Flex direction="column" align="center" gap="md">
+			<div className={classes.emptyState}>
+				<div className={classes.emptyContent}>
 					<ThemeIcon variant="light" color="gray" size={64} radius="xl">
 						<Pulse size={32} />
 					</ThemeIcon>
@@ -102,20 +102,20 @@ function LogStreamComponent({
 							? "Stream is paused. Resume to see new logs."
 							: "Waiting for log events. Logs will appear here as they are generated."}
 					</Text>
-				</Flex>
-			</Flex>
+				</div>
+			</div>
 		);
 	}
 
 	return (
-		<Box ref={containerRef} className={classes.container}>
+		<div ref={containerRef} className={classes.container}>
 			<div className={classes.logList}>
 				{logs.map((log) => (
 					<LogEntry key={log.id} entry={log} />
 				))}
 				<div ref={bottomRef} className={classes.bottomAnchor} />
 			</div>
-		</Box>
+		</div>
 	);
 }
 

@@ -1,5 +1,6 @@
-import { Code, Text, Loader, Stack } from "@/shared/ui";
+import { Code, Text, Loader } from "@/shared/ui";
 import type { SqlResult } from "../../lib/useViewDefinition";
+import classes from "./SQLPreview.module.css";
 
 interface SQLPreviewProps {
   result: SqlResult | null;
@@ -10,12 +11,12 @@ interface SQLPreviewProps {
 export function SQLPreview({ result, isLoading, error }: SQLPreviewProps) {
   if (isLoading) {
     return (
-      <Stack align="center" justify="center" h={200}>
+      <div className={classes.state}>
         <Loader size="sm" />
         <Text size="sm" c="dimmed">
           Generating SQL...
         </Text>
-      </Stack>
+      </div>
     );
   }
 
@@ -36,7 +37,7 @@ export function SQLPreview({ result, isLoading, error }: SQLPreviewProps) {
   }
 
   return (
-    <Code block style={{ maxHeight: "calc(100vh - 300px)", overflow: "auto" }}>
+    <Code block className={classes.sqlCode}>
       {result.sql}
     </Code>
   );

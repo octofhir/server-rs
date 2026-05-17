@@ -1,0 +1,42 @@
+.root {
+  display: grid;
+  grid-template-columns: auto 1px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 4px;
+}
+
+.method {
+  padding: 0 4px;
+}
+
+.divider {
+  width: 1px;
+  height: 24px;
+  background: var(--g-color-line-generic);
+}
+
+.query {
+  min-width: 0;
+}
+
+.actions {
+  display: flex;
+  padding-left: 4px;
+}
+
+@media (max-width: 720px) {
+  .root {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .divider {
+    display: none;
+  }
+
+  .actions {
+    grid-column: 1 / -1;
+    justify-content: flex-end;
+    padding-left: 0;
+  }
+}

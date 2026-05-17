@@ -1,10 +1,9 @@
 import { useState } from "react";
 import {
 	Alert,
+	Box,
 	Button,
-	Group,
-	Paper,
-	Stack,
+	Flex,
 	Text,
 } from "@/shared/ui";
 import { ToolWorkspaceLayout } from "@/widgets/tool-workspace";
@@ -18,6 +17,8 @@ import {
 	parseParametersResponse,
 	type FhirPathEvaluationResponse,
 } from "./types";
+import { assertFhirResource } from "@/shared/api/guards";
+import classes from "./FhirPathConsolePage.module.css";
 
 export function FhirPathConsolePage() {
 	const [expression, setExpression] = useState("Patient.name.given");
@@ -53,7 +54,7 @@ export function FhirPathConsolePage() {
 
 			if (inputResource.trim()) {
 				try {
-					const resource = JSON.parse(inputResource);
+					const resource = assertFhirResource(JSON.parse(inputResource), "FHIRPath input resource");
 					body.parameter.push({ name: "resource", resource });
 				} catch {
 					throw new Error("Invalid JSON in input resource");
@@ -94,7 +95,7 @@ export function FhirPathConsolePage() {
 			description="Evaluate FHIRPath expressions against a sample or pasted resource"
 			className="page-enter"
 			actions={
-				<Group>
+				<Flex gap="2" wrap="wrap">
 					<Button
 						leftSection={<Play size={16} />}
 						onClick={handleExecute}
@@ -109,15 +110,14 @@ export function FhirPathConsolePage() {
 					>
 						Clear
 					</Button>
-				</Group>
+				</Flex>
 			}
 		>
-			{/* Expression Editor */}
-			<Stack gap="xs">
-				<Text size="sm" fw={500}>
-					Expression
-				</Text>
-				<Paper withBorder p={0}>
+			<Box className={classes.workspace}>
+				<Box className={classes.editorPanel}>
+					<Text size="sm" fw={500} className={classes.panelTitle}>
+						Expression
+					</Text>
 					<FhirPathEditor
 						value={expression}
 						onChange={(value) => setExpression(value)}
@@ -125,43 +125,38 @@ export function FhirPathConsolePage() {
 						height={120}
 						placeholder="Enter FHIRPath expression (e.g., Patient.name.given)"
 					/>
-				</Paper>
-			</Stack>
+				</Box>
 
-			{/* Input Resource */}
-			<Stack gap="xs" style={{ flex: "0 0 300px" }}>
-				<Text size="sm" fw={500}>
-					Input Resource (optional)
-				</Text>
-				<JsonEditor
-					value={inputResource}
-					onChange={(value) => setInputResource(value)}
-					onExecute={handleExecute}
-					height={300}
-				/>
-			</Stack>
+				<Box className={classes.editorPanel}>
+					<Text size="sm" fw={500} className={classes.panelTitle}>
+						Input Resource
+					</Text>
+					<JsonEditor
+						value={inputResource}
+						onChange={(value) => setInputResource(value)}
+						onExecute={handleExecute}
+						height={300}
+					/>
+				</Box>
 
-			{/* Results */}
-			<Stack gap="sm" style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
-				{evaluateMutation.error && (
-					<Alert icon={<CircleExclamation />} color="red">
-						<Text fw={500}>Evaluation Error</Text>
-						<Text size="sm">{evaluateMutation.error.message}</Text>
-					</Alert>
-				)}
+				<Box className={classes.resultsPanel}>
+					{evaluateMutation.error && (
+						<Alert icon={<CircleExclamation />} color="red">
+							<Text fw={500}>Evaluation Error</Text>
+							<Text size="sm">{evaluateMutation.error.message}</Text>
+						</Alert>
+					)}
 
-				{evaluateMutation.data && (
-					<>
-						<MetadataPanel metadata={evaluateMutation.data.metadata} />
+					{evaluateMutation.data ? (
+						<>
+							<MetadataPanel metadata={evaluateMutation.data.metadata} />
 
-						<Paper withBorder p="md">
-							<Group justify="space-between" mb="sm">
-								<Text fw={500}>
+							<Box className={classes.panel}>
+								<Text fw={500} className={classes.panelTitle}>
 									Results ({evaluateMutation.data.results.length})
 								</Text>
-							</Group>
 
-							<Stack gap="sm">
+								<Flex direction="column" gap="2">
 								{evaluateMutation.data.results.length === 0 ? (
 									<Text c="dimmed" size="sm">
 										No results (empty collection)
@@ -171,11 +166,18 @@ export function FhirPathConsolePage() {
 										<ResultItem key={result.index} result={result} />
 									))
 								)}
-							</Stack>
-						</Paper>
-					</>
-				)}
-			</Stack>
+								</Flex>
+							</Box>
+						</>
+					) : (
+						<Box className={classes.emptyState}>
+							<Text size="sm" c="dimmed">
+								Run an expression to see evaluation metadata and results.
+							</Text>
+						</Box>
+					)}
+				</Box>
+			</Box>
 		</ToolWorkspaceLayout>
 	);
 }

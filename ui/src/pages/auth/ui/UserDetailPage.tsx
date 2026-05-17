@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Stack, Title, Text, Group, Badge, Table, Loader } from "@/shared/ui";
+import { Stack, Text, Group, Badge, DataPreview, Loader } from "@/shared/ui";
 import { useParams, useNavigate } from "react-router-dom";
 import {
 	ArrowLeft,
@@ -70,7 +70,7 @@ export function UserDetailPage() {
 			title={user.name || user.username}
 			description={user.email || user.username}
 			meta={
-				<Group gap="xs">
+				<Group gap="xs" className={classes.metaBadges}>
 					<Badge color={statusView.color} variant="light">
 						{statusView.label}
 					</Badge>
@@ -91,7 +91,7 @@ export function UserDetailPage() {
 				</Group>
 			}
 			actions={
-				<Group gap="xs">
+				<Group gap="xs" className={classes.actions}>
 					<Button
 						variant="subtle"
 						leftSection={<ArrowLeft size={16} />}
@@ -114,10 +114,10 @@ export function UserDetailPage() {
 			<div className={classes.contentGrid}>
 				<Stack gap="sm">
 					<Card className={classes.sectionCard}>
-						<Title order={4} className={classes.sectionTitle}>
+						<Text as="h2" variant="subheader-3" className={classes.sectionTitle}>
 							<CircleInfo size={18} />
 							Profile Information
-						</Title>
+						</Text>
 						<div className={classes.infoGrid}>
 							<div className={classes.infoItem}>
 								<Text className={classes.infoLabel}>Username</Text>
@@ -156,10 +156,10 @@ export function UserDetailPage() {
 
 					{/* Roles */}
 					<Card className={classes.sectionCard}>
-						<Title order={4} className={classes.sectionTitle}>
+						<Text as="h2" variant="subheader-3" className={classes.sectionTitle}>
 							<Shield size={18} />
 							Assigned Roles
-						</Title>
+						</Text>
 						{user.roles && user.roles.length > 0 ? (
 							<div className={classes.rolesList}>
 								{user.roles.map((role) => {
@@ -191,10 +191,10 @@ export function UserDetailPage() {
 
 				<Stack gap="sm">
 					<Card className={classes.sectionCard}>
-						<Title order={4} className={classes.sectionTitle}>
+						<Text as="h2" variant="subheader-3" className={classes.sectionTitle}>
 							<Smartphone size={18} />
 							Active Sessions
-						</Title>
+						</Text>
 						{sessionsLoading ? (
 							<Stack align="center" py="md">
 								<Loader size="sm" />
@@ -241,29 +241,36 @@ export function UserDetailPage() {
 					</Card>
 
 					<Card className={classes.sectionCard}>
-						<Title order={4} className={classes.sectionTitle}>
+						<Text as="h2" variant="subheader-3" className={classes.sectionTitle}>
 							<Person size={18} />
 							Linked Identities
-						</Title>
+						</Text>
 						{user.identity && user.identity.length > 0 ? (
-							<Table>
-								<Table.Thead>
-									<Table.Tr>
-										<Table.Th>Provider</Table.Th>
-										<Table.Th>Email</Table.Th>
-										<Table.Th>Linked</Table.Th>
-									</Table.Tr>
-								</Table.Thead>
-								<Table.Tbody>
-									{user.identity.map((identity) => (
-										<Table.Tr key={identity.externalId}>
-											<Table.Td>{identity.provider?.display || "Unknown"}</Table.Td>
-											<Table.Td>{identity.email || "-"}</Table.Td>
-											<Table.Td>{formatUserRelativeTime(identity.linkedAt)}</Table.Td>
-										</Table.Tr>
-									))}
-								</Table.Tbody>
-							</Table>
+							<DataPreview
+								columns={[
+									{ id: "provider", label: "Provider" },
+									{ id: "email", label: "Email" },
+									{ id: "linked", label: "Linked", width: 130 },
+								]}
+								rows={user.identity.map((identity) => ({
+									provider: (
+										<Text size="sm" className={classes.tableText}>
+											{identity.provider?.display || "Unknown"}
+										</Text>
+									),
+									email: (
+										<Text size="sm" className={classes.tableText}>
+											{identity.email || "-"}
+										</Text>
+									),
+									linked: (
+										<Text size="sm">
+											{formatUserRelativeTime(identity.linkedAt)}
+										</Text>
+									),
+								}))}
+								getRowKey={(_row, index) => user.identity?.[index]?.externalId ?? `${index}`}
+							/>
 						) : (
 							<div className={classes.emptyState}>
 								<Text size="sm" c="dimmed">

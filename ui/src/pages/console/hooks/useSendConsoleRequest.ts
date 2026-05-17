@@ -8,6 +8,7 @@ import { notifications } from "@octofhir/ui-kit";
 import { useHistory } from "./useHistory";
 import type { HttpMethod } from "@/shared/api";
 import { useUiSettings } from "@/shared";
+import { isRecord } from "@/shared/api/guards";
 
 export interface SendRequestParams {
 	method: HttpMethod;
@@ -60,7 +61,7 @@ export function useSendConsoleRequest() {
 			}
 
 			try {
-				const response = await fhirClient.rawRequest<unknown>(
+				const response = await fhirClient.rawRequest(
 					params.method,
 					absolutePath,
 					parsedBody,
@@ -189,8 +190,8 @@ function extractResourceType(path: string, body?: unknown): string | undefined {
 	if (pathMatch) return pathMatch[1];
 
 	// Extract from body
-	if (body && typeof body === "object" && "resourceType" in body) {
-		return body.resourceType as string;
+	if (isRecord(body) && typeof body.resourceType === "string") {
+		return body.resourceType;
 	}
 
 	return undefined;

@@ -268,6 +268,32 @@ interface LspPublishDiagnosticsParams {
 	diagnostics: LspDiagnostic[];
 }
 
+interface JsonRpcMessage {
+	id?: string | number;
+	method?: string;
+	params?: unknown;
+	result?: unknown;
+	error?: {
+		message?: string;
+	};
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isJsonRpcMessage(value: unknown): value is JsonRpcMessage {
+	return isRecord(value);
+}
+
+function isPublishDiagnosticsParams(value: unknown): value is LspPublishDiagnosticsParams {
+	return (
+		isRecord(value) &&
+		typeof value.uri === "string" &&
+		Array.isArray(value.diagnostics)
+	);
+}
+
 interface PendingRequest {
 	resolve: (value: unknown) => void;
 	reject: (error: Error) => void;
@@ -528,13 +554,20 @@ class PgLspConnection {
 
 		logDebug("[pg-lsp] <= ", text);
 
-		let message: any;
+		let parsed: unknown;
 		try {
-			message = JSON.parse(text);
+			parsed = JSON.parse(text);
 		} catch (error) {
 			logDebug("[pg-lsp] failed to parse message", error);
 			return;
 		}
+
+		if (!isJsonRpcMessage(parsed)) {
+			logDebug("[pg-lsp] ignoring malformed message", parsed);
+			return;
+		}
+
+		const message = parsed;
 
 		if (typeof message.id !== "undefined") {
 			const pending = this.pendingRequests.get(Number(message.id));
@@ -554,8 +587,9 @@ class PgLspConnection {
 		}
 
 		if (message.method === "window/logMessage") {
-			const params = message.params ?? {};
-			logDebug(`[pg-lsp] server: ${params.message ?? "log message"}`);
+			const params = isRecord(message.params) ? message.params : {};
+			const text = typeof params.message === "string" ? params.message : "log message";
+			logDebug(`[pg-lsp] server: ${text}`);
 			return;
 		}
 
@@ -565,7 +599,9 @@ class PgLspConnection {
 		}
 
 		if (message.method === "textDocument/publishDiagnostics") {
-			this.handleDiagnostics(message.params);
+			if (isPublishDiagnosticsParams(message.params)) {
+				this.handleDiagnostics(message.params);
+			}
 			return;
 		}
 	}

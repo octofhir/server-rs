@@ -1,9 +1,6 @@
 import { useParams, useNavigate } from "react-router-dom";
 import {
-	Stack,
-	Title,
 	Text,
-	Group,
 	Badge,
 	Loader,
 	Alert,
@@ -37,6 +34,7 @@ import {
 } from "@/entities/operation-catalog";
 import { useOperation, useUpdateOperation } from "@/shared/api/hooks";
 import { useState, useEffect } from "react";
+import classes from "./OperationDetailPage.module.css";
 
 const CATEGORY_ICONS: Record<string, typeof Server> = {
 	fhir: Server,
@@ -129,12 +127,12 @@ export function OperationDetailPage() {
 		>
 
 			{isLoading && (
-				<Group justify="center" py="xl">
+				<div className={classes.loadingState}>
 					<Loader size="sm" />
 					<Text size="sm" c="dimmed">
 						Loading operation...
 					</Text>
-				</Group>
+				</div>
 			)}
 
 			{error && (
@@ -151,16 +149,18 @@ export function OperationDetailPage() {
 						view="filled"
 						padding="m"
 					>
-						<Stack gap="sm">
-							<Group justify="space-between" align="flex-start">
-								<div>
-									<Group gap="sm" mb="xs">
+						<div className={classes.summaryStack}>
+							<div className={classes.summaryHeader}>
+								<div className={classes.summaryIdentity}>
+									<div className={classes.titleRow}>
 										<CategoryIcon size={20} color="var(--g-color-text-secondary)" />
-										<Title order={3}>{operation.name}</Title>
-									</Group>
+										<Text as="h2" variant="subheader-3" className={classes.operationTitle}>
+											{operation.name}
+										</Text>
+									</div>
 									<Code size="sm">{operation.id}</Code>
 								</div>
-								<Group gap="xs">
+								<div className={classes.badgeRow}>
 									<Badge variant="light" color={categoryView?.color ?? "gray"}>
 										{categoryView?.label ?? operation.category}
 									</Badge>
@@ -173,8 +173,8 @@ export function OperationDetailPage() {
 											{accessView?.label}
 										</Badge>
 									)}
-								</Group>
-							</Group>
+								</div>
+							</div>
 
 							<Divider />
 
@@ -213,16 +213,16 @@ export function OperationDetailPage() {
 							/>
 
 							<div>
-								<Text size="sm" fw={500} mb="xs">
+								<Text size="sm" fw={500} className={classes.methodsLabel}>
 									HTTP Methods
 								</Text>
-								<Group gap="xs">
+								<div className={classes.methodList}>
 									{operation.methods.map((method) => (
 										<MethodBadge key={method} method={method} />
 									))}
-								</Group>
+								</div>
 							</div>
-						</Stack>
+						</div>
 					</SectionPanel>
 
 					<SectionPanel
@@ -231,7 +231,7 @@ export function OperationDetailPage() {
 						view="tinted"
 						padding="m"
 					>
-						<Stack gap="sm">
+						<div className={classes.settingsStack}>
 							<Switch
 								label="Public Access"
 								description="When enabled, this operation does not require authentication"
@@ -251,14 +251,14 @@ export function OperationDetailPage() {
 							/>
 
 							{hasChanges && (
-								<Group>
+								<div className={classes.formActions}>
 									<Button onClick={handleSave} loading={updateMutation.isPending}>
 										Save Changes
 									</Button>
 									<Button variant="subtle" onClick={handleReset}>
 										Reset
 									</Button>
-								</Group>
+								</div>
 							)}
 
 							{updateMutation.isError && (
@@ -272,7 +272,7 @@ export function OperationDetailPage() {
 									Operation updated successfully
 								</Alert>
 							)}
-						</Stack>
+						</div>
 					</SectionPanel>
 				</>
 			)}

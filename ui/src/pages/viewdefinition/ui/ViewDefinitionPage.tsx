@@ -34,7 +34,7 @@ function FeatureDisabledBanner() {
       color="warning"
     >
       SQL on FHIR must be enabled in server configuration:
-      <pre style={{ marginTop: 8 }}>
+      <pre className={classes.configSnippet}>
         [sql_on_fhir]
         enabled = true
       </pre>
@@ -152,7 +152,7 @@ export function ViewDefinitionPage() {
 
   if (settingsLoading) {
     return (
-      <Flex grow alignItems="center" justifyContent="center" style={{ height: "100%" }}>
+      <Flex grow alignItems="center" justifyContent="center" className={classes.loadingState}>
         <Spin size="l" />
       </Flex>
     );
@@ -222,7 +222,7 @@ export function ViewDefinitionPage() {
           </Box>
         )}
 
-        <Flex gap="0" style={{ flex: 1, minHeight: 0 }}>
+        <Flex gap="0" className={classes.content}>
           {/* Sidebar */}
           <Sidebar
             items={viewDefinitions || []}
@@ -231,7 +231,7 @@ export function ViewDefinitionPage() {
           />
 
           {/* Main Editor / Preview Split */}
-          <Flex gap="0" style={{ flex: 1 }}>
+          <Flex gap="0" className={classes.workspace}>
             <Box className={classes.editorSection}>
               <EditorPanel
                 value={current}

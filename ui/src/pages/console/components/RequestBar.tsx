@@ -9,8 +9,9 @@ import type {
 } from "@/shared/api";
 import type { QueryInputMetadata } from "@/shared/fhir-query-input";
 import { QueryEditor } from "@/shared/fhir-query-input/widgets/QueryEditor";
-import { Box, Flex, Divider, Button } from "@/shared/ui";
+import { Button } from "@/shared/ui";
 import { MethodControl } from "./MethodControl";
+import styles from "./RequestBar.module.css";
 
 interface RequestBarProps {
 	allSuggestions: AutocompleteSuggestion[];
@@ -54,12 +55,12 @@ export function RequestBar({
 	);
 
 	return (
-		<Flex alignItems="center" style={{ padding: "4px" }}>
-			<Box style={{ padding: "0 8px" }}>
+		<div className={styles.root}>
+			<div className={styles.method}>
 				<MethodControl />
-			</Box>
-			<Divider orientation="vertical" style={{ height: "24px" }} />
-			<Box style={{ flex: 1, minWidth: 0 }}>
+			</div>
+			<div className={styles.divider} />
+			<div className={styles.query}>
 				<QueryEditor
 					value={rawPath}
 					onChange={handleChange}
@@ -68,8 +69,8 @@ export function RequestBar({
 					disabled={isLoading}
 					borderless
 				/>
-			</Box>
-			<Box style={{ paddingLeft: "8px" }}>
+			</div>
+			<div className={styles.actions}>
 				<Button
 					view="action"
 					size="l"
@@ -80,7 +81,7 @@ export function RequestBar({
 					<Button.Icon><Play size={18} /></Button.Icon>
 					Send
 				</Button>
-			</Box>
-		</Flex>
+			</div>
+		</div>
 	);
 }

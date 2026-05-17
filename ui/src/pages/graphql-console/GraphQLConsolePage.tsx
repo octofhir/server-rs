@@ -5,6 +5,7 @@ import { useColorScheme } from "@octofhir/ui-kit";
 import "graphiql/style.css";
 import { useUiSettings } from "@/shared";
 import { ToolWorkspaceLayout } from "@/widgets/tool-workspace";
+import classes from "./GraphQLConsolePage.module.css";
 
 const DEFAULT_QUERY = `# Welcome to the Abyxon GraphQL Console!
 #
@@ -53,17 +54,7 @@ export function GraphQLConsolePage() {
 			description="Explore and execute GraphQL queries against the FHIR server"
 			maxWidth="none"
 		>
-			<div
-				className={themeClass}
-				style={{
-					flex: 1,
-					minHeight: 560,
-					backgroundColor: "var(--octo-surface-1)",
-					border: "1px solid var(--g-color-line-generic)",
-					borderRadius: 8,
-					overflow: "hidden",
-				}}
-			>
+			<div className={`${themeClass} ${classes.console}`}>
 				<GraphiQL
 					fetcher={fetcher}
 					defaultQuery={DEFAULT_QUERY}

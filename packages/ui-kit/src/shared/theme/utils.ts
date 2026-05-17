@@ -15,7 +15,7 @@ function camelToKebab(str: string): string {
  * { accent: { primaryBg: '#...' } } -> { '--octo-accent-primary-bg': '#...' }
  */
 export function generateCSSVariables(
-    obj: Record<string, any>,
+    obj: Record<string, unknown>,
     prefix: string = "--octo",
     parentKey: string = ""
 ): Record<string, string> {
@@ -27,7 +27,7 @@ export function generateCSSVariables(
             const kebabKey = camelToKebab(key);
             const currentKey = parentKey ? `${parentKey}-${kebabKey}` : kebabKey;
 
-            if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+            if (isPlainObject(value)) {
                 Object.assign(variables, generateCSSVariables(value, prefix, currentKey));
             } else {
                 variables[`${prefix}-${currentKey}`] = String(value);
@@ -45,25 +45,25 @@ type WidenLiteral<T> =
     T;
 
 export type DeepWiden<T> =
-    T extends (...args: any[]) => any ? T :
+    T extends (...args: unknown[]) => unknown ? T :
     T extends readonly (infer U)[] ? readonly DeepWiden<U>[] :
     T extends object ? { [K in keyof T]: DeepWiden<T[K]> } :
     WidenLiteral<T>;
 
 export type DeepPartial<T> =
-    T extends (...args: any[]) => any ? T :
-    T extends readonly any[] ? T :
+    T extends (...args: unknown[]) => unknown ? T :
+    T extends readonly unknown[] ? T :
     T extends object ? { [K in keyof T]?: DeepPartial<WidenLiteral<T[K]>> } :
     WidenLiteral<T>;
 
-export function mergeDeep<T extends Record<string, any>>(
+export function mergeDeep<T extends Record<string, unknown>>(
     base: T,
     override: DeepPartial<T> | undefined,
 ): T {
     if (!override) return base;
 
-    const result: Record<string, any> = { ...base };
-    const overrideRecord = override as Record<string, any>;
+    const result: Record<string, unknown> = { ...base };
+    const overrideRecord = override as Record<string, unknown>;
 
     for (const key of Object.keys(overrideRecord)) {
         const overrideValue = overrideRecord[key];
@@ -83,6 +83,6 @@ export function mergeDeep<T extends Record<string, any>>(
     return result as T;
 }
 
-function isPlainObject(value: unknown): value is Record<string, any> {
+function isPlainObject(value: unknown): value is Record<string, unknown> {
     return typeof value === "object" && value !== null && !Array.isArray(value);
 }

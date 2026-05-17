@@ -1,0 +1,40 @@
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sectionHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.row {
+  display: grid;
+  grid-template-columns: minmax(160px, 1fr) minmax(220px, 2fr) 32px;
+  align-items: center;
+  gap: 8px;
+}
+
+.footer {
+  color: var(--g-color-text-secondary);
+}
+
+@media (max-width: 720px) {
+  .row {
+    grid-template-columns: minmax(0, 1fr) 32px;
+  }
+
+  .row > :nth-child(2) {
+    grid-column: 1 / -1;
+    order: 3;
+  }
+}

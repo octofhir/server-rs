@@ -2,6 +2,16 @@
 	padding: 10px 12px 12px;
 }
 
+.toolbar {
+	display: flex;
+	align-items: center;
+	width: 100%;
+}
+
+.search {
+	width: min(460px, 100%);
+}
+
 .roleIcon {
 	width: 28px;
 	height: 28px;
@@ -17,16 +27,35 @@
 	display: flex;
 	align-items: center;
 	gap: 10px;
+	min-width: 0;
+}
+
+.roleText {
+	min-width: 0;
 }
 
 .roleName {
 	font-weight: 500;
 	font-size: var(--octo-typography-size-sm);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
 }
 
 .roleDescription {
 	font-size: var(--octo-typography-size-xs);
 	color: var(--octo-text-secondary);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	max-width: 360px;
+}
+
+.badgeList {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 4px;
+	max-width: 360px;
 }
 
 .permissionMatrix {

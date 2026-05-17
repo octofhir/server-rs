@@ -3,8 +3,6 @@ import {
 	Table,
 	Text,
 	Badge,
-	Group,
-	Stack,
 	Loader,
 	Center,
 	Tooltip,
@@ -38,13 +36,6 @@ import {
 	getAuditTimestampView,
 } from "@/entities/audit-event";
 import classes from "./AuditEventList.module.css";
-
-const singleLineTextStyle = {
-	display: "-webkit-box",
-	WebkitBoxOrient: "vertical",
-	WebkitLineClamp: 1,
-	overflow: "hidden",
-};
 
 interface AuditEventListProps {
 	events: AuditEvent[];
@@ -147,7 +138,7 @@ function AuditEventListComponent({
 	if (events.length === 0) {
 		return (
 			<Center py="xl">
-				<Stack align="center" gap="sm">
+				<div className={classes.emptyState}>
 					<ThemeIcon size={48} variant="light" color="gray" radius="xl">
 						<Shield size={24} />
 					</ThemeIcon>
@@ -155,7 +146,7 @@ function AuditEventListComponent({
 					<Text size="xs" c="dimmed">
 						Try adjusting your filters
 					</Text>
-				</Stack>
+				</div>
 			</Center>
 		);
 	}
@@ -165,12 +156,12 @@ function AuditEventListComponent({
 			<Table highlightOnHover className={classes.table}>
 				<Table.Thead className={classes.thead}>
 					<Table.Tr>
-						<Table.Th style={{ width: 180 }}>Time</Table.Th>
-						<Table.Th style={{ width: 140 }}>Action</Table.Th>
-						<Table.Th style={{ width: 80 }}>Outcome</Table.Th>
+						<Table.Th className={classes.timeCell}>Time</Table.Th>
+						<Table.Th className={classes.actionCell}>Action</Table.Th>
+						<Table.Th className={classes.outcomeCell}>Outcome</Table.Th>
 						<Table.Th>Actor</Table.Th>
 						<Table.Th>Target</Table.Th>
-						<Table.Th style={{ width: 120 }}>Source</Table.Th>
+						<Table.Th className={classes.sourceCell}>Source</Table.Th>
 					</Table.Tr>
 				</Table.Thead>
 				<Table.Tbody>
@@ -191,18 +182,18 @@ function AuditEventListComponent({
 							>
 								<Table.Td>
 									<Tooltip label={timestamp.full}>
-										<Stack gap={0}>
+										<div className={classes.cellStack}>
 											<Text size="sm" fw={500}>
 												{timestamp.time}
 											</Text>
 											<Text size="xs" c="dimmed">
 												{timestamp.relative}
 											</Text>
-										</Stack>
+										</div>
 									</Tooltip>
 								</Table.Td>
 								<Table.Td>
-									<Group gap="xs" wrap="nowrap">
+									<div className={classes.inlineCell}>
 										<ThemeIcon
 											size="sm"
 											variant="light"
@@ -211,7 +202,7 @@ function AuditEventListComponent({
 											<ActionIcon size={12} />
 										</ThemeIcon>
 										<Text size="sm">{getAuditActionLabel(event.action)}</Text>
-									</Group>
+									</div>
 								</Table.Td>
 								<Table.Td>
 									<Badge
@@ -224,34 +215,34 @@ function AuditEventListComponent({
 									</Badge>
 								</Table.Td>
 								<Table.Td>
-									<Group gap="xs" wrap="nowrap">
+									<div className={classes.inlineCell}>
 										<ThemeIcon size="sm" variant="subtle" color="gray">
 											<ActorIcon size={12} />
 										</ThemeIcon>
-										<Stack gap={0}>
-											<Text size="sm" style={singleLineTextStyle}>
+										<div className={classes.cellStack}>
+											<Text size="sm" className={classes.truncateText}>
 												{getAuditActorLabel(event)}
 											</Text>
 											{event.actor.name && event.actor.id && (
-												<Text size="xs" c="dimmed" style={singleLineTextStyle}>
+												<Text size="xs" c="dimmed" className={classes.truncateText}>
 													{event.actor.id}
 												</Text>
 											)}
-										</Stack>
-									</Group>
+										</div>
+									</div>
 								</Table.Td>
 								<Table.Td>
 									{target ? (
-										<Stack gap={0}>
-											<Text size="sm" style={singleLineTextStyle}>
+										<div className={classes.cellStack}>
+											<Text size="sm" className={classes.truncateText}>
 												{target.primary}
 											</Text>
 											{target.secondary && (
-												<Text size="xs" c="dimmed" style={singleLineTextStyle}>
+												<Text size="xs" c="dimmed" className={classes.truncateText}>
 													{target.secondary}
 												</Text>
 											)}
-										</Stack>
+										</div>
 									) : (
 										<Text size="sm" c="dimmed">
 											—
@@ -260,7 +251,7 @@ function AuditEventListComponent({
 								</Table.Td>
 								<Table.Td>
 									<Tooltip label={event.source.userAgent || "Unknown"}>
-										<Text size="xs" c="dimmed" style={singleLineTextStyle}>
+										<Text size="xs" c="dimmed" className={classes.truncateText}>
 											{event.source.ipAddress || "—"}
 										</Text>
 									</Tooltip>

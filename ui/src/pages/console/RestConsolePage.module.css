@@ -1,0 +1,70 @@
+.root {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.requestPanel,
+.responsePanel {
+  overflow: hidden;
+  border: 1px solid var(--g-color-line-generic-subtle);
+  border-radius: 8px;
+  background: var(--g-color-base-background);
+}
+
+.builderContent {
+  padding: 16px;
+}
+
+.builderActions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 16px;
+}
+
+.requestOptions {
+  border-top: 1px solid var(--g-color-line-generic-subtle);
+}
+
+.inspectorPanel {
+  padding: 16px;
+  border: 1px solid var(--g-color-line-info-subtle);
+  border-radius: 8px;
+  background: var(--g-color-base-info-subtle);
+}
+
+.responseSection {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.sectionLabel {
+  color: var(--g-color-text-secondary);
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.emptyResponse {
+  display: flex;
+  justify-content: center;
+  padding: 48px 0;
+  color: var(--g-color-text-secondary);
+}
+
+@media (max-width: 720px) {
+  .actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .builderActions {
+    justify-content: stretch;
+  }
+}

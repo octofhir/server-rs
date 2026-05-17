@@ -118,15 +118,15 @@ export function ClientsPage() {
 				</Button>
 			}
 			toolbar={
-				<Group>
+				<div className={classes.toolbar}>
 					<TextInput
 						placeholder="Search by name..."
 						leftSection={<Magnifier size={16} />}
 						value={search}
 						onChange={(e) => setSearch(e.currentTarget.value)}
-						style={{ flex: 1, maxWidth: 460 }}
+						className={classes.search}
 					/>
-				</Group>
+				</div>
 			}
 		>
 
@@ -148,10 +148,10 @@ export function ClientsPage() {
 
 									return {
 										client: (
-											<Group gap="xs">
+											<div className={classes.clientCell}>
 												<Display size={16} color="gray" />
-												<div>
-													<Text size="sm" fw={500}>
+												<div className={classes.clientText}>
+													<Text size="sm" fw={500} className={classes.clientName}>
 														{client.name}
 													</Text>
 													<div className={classes.clientIdCell}>
@@ -182,7 +182,7 @@ export function ClientsPage() {
 														</CopyButton>
 													</div>
 												</div>
-											</Group>
+											</div>
 										),
 										type: (
 											<Badge variant="outline" color={typeView.color}>
@@ -190,13 +190,13 @@ export function ClientsPage() {
 											</Badge>
 										),
 										grantTypes: (
-											<Group gap={4}>
+											<div className={classes.badgeList}>
 												{client.grantTypes?.map((grantType) => (
 													<Badge key={grantType} size="sm" variant="dot">
 														{grantType}
 													</Badge>
 												))}
-											</Group>
+											</div>
 										),
 										status: (
 											<Badge color={statusView.color} variant="light">

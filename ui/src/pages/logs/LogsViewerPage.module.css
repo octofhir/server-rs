@@ -3,12 +3,23 @@
 }
 
 .container {
+	height: 100%;
 	min-height: 0;
 	overflow: hidden;
 	padding-bottom: 0;
 }
 
+.actions {
+	align-items: center;
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--g-spacing-2);
+	justify-content: flex-end;
+}
+
 .stack {
+	display: flex;
+	flex-direction: column;
 	height: 100%;
 	min-height: 0;
 }

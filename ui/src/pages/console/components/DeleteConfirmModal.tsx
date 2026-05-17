@@ -1,6 +1,7 @@
-import { Button, Code, Group, Modal, Stack, Text } from "@/shared/ui";
+import { Button, Code, Modal, Text } from "@/shared/ui";
 import { useDesignTokens } from "@octofhir/ui-kit";
 import { IconAlertTriangle } from "@octofhir/ui-kit";
+import styles from "./DeleteConfirmModal.module.css";
 
 interface DeleteConfirmModalProps {
 	opened: boolean;
@@ -29,50 +30,50 @@ export function DeleteConfirmModal({
 			opened={opened}
 			onClose={onClose}
 			title={
-				<Group gap="xs">
+				<span className={styles.title}>
 					<IconAlertTriangle size={20} color={theme.colors.fire[6]} />
 					<Text fw={600}>Confirm Deletion</Text>
-				</Group>
+				</span>
 			}
 			centered
 			size="md"
 		>
-			<Stack gap="md">
+			<div className={styles.content}>
 				<Text size="sm">
 					You are about to delete a resource. This action cannot be undone.
 				</Text>
 
-				<Stack gap="xs">
+				<div className={styles.details}>
 					{resourceType && (
-						<Group gap="xs">
+						<div className={styles.detailRow}>
 							<Text size="sm" fw={500}>
 								Resource Type:
 							</Text>
 							<Code>{resourceType}</Code>
-						</Group>
+						</div>
 					)}
 
-					<Group gap="xs" align="flex-start">
+					<div className={styles.detailRow}>
 						<Text size="sm" fw={500}>
 							Path:
 						</Text>
-						<Code style={{ flex: 1, wordBreak: "break-all" }}>{path}</Code>
-					</Group>
-				</Stack>
+						<Code className={styles.path}>{path}</Code>
+					</div>
+				</div>
 
 				<Text size="sm" c="dimmed">
 					Are you sure you want to proceed with this DELETE request?
 				</Text>
 
-				<Group justify="flex-end" gap="sm">
+				<div className={styles.actions}>
 					<Button variant="default" onClick={onClose}>
 						Cancel
 					</Button>
 					<Button color="fire" onClick={handleConfirm}>
 						Delete Resource
 					</Button>
-				</Group>
-			</Stack>
+				</div>
+			</div>
 		</Modal>
 	);
 }

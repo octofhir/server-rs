@@ -69,7 +69,7 @@ function mapSize(size?: BadgeProps["size"]): LabelProps["size"] {
     return size;
 }
 
-export const Badge = forwardRef<HTMLDivElement, BadgeProps>(function Badge(
+export const Badge = forwardRef<HTMLSpanElement, BadgeProps>(function Badge(
     {
         color,
         theme,
@@ -85,9 +85,9 @@ export const Badge = forwardRef<HTMLDivElement, BadgeProps>(function Badge(
     },
     ref,
 ) {
-    const LabelAny = Label as unknown as React.ComponentType<Record<string, unknown>>;
     const cleaned = cleanLayoutProps(props);
     const mergedStyle: CSSProperties = {
+        display: "inline-flex",
         ...getSpacingStyles(props),
         ...(circle ? { borderRadius: 999 } : {}),
         ...(radius !== undefined ? { borderRadius: radius } : {}),
@@ -95,16 +95,16 @@ export const Badge = forwardRef<HTMLDivElement, BadgeProps>(function Badge(
     };
 
     return (
-        <LabelAny
-            ref={ref}
-            theme={mapTheme(color, theme)}
-            size={mapSize(size)}
-            icon={leftSection}
-            style={mergedStyle}
-            {...cleaned}
-        >
-            {children}
-            {rightSection}
-        </LabelAny>
+        <span ref={ref} style={mergedStyle}>
+            <Label
+                theme={mapTheme(color, theme)}
+                size={mapSize(size)}
+                icon={leftSection}
+                {...cleaned}
+            >
+                {children}
+                {rightSection}
+            </Label>
+        </span>
     );
 });

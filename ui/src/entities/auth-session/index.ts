@@ -2,6 +2,7 @@ export {
 	extractAuthSessionUserId,
 	getAuthSessionActivityView,
 	getAuthSessionDeviceView,
+	isAuthSession,
 	isCurrentAuthSession,
 	parseAuthSession,
 	type AuthSession,

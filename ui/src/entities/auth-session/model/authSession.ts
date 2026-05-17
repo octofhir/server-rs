@@ -1,5 +1,6 @@
 import dayjs from "dayjs";
 import relativeTime from "dayjs/plugin/relativeTime";
+import { isRecord } from "@/shared/api/guards";
 import type { FhirResource } from "@/shared/api/types";
 
 dayjs.extend(relativeTime);
@@ -33,11 +34,23 @@ export interface AuthSessionActivityView {
 	location: string;
 }
 
-export function parseAuthSession(resource: unknown): AuthSession {
-	return {
-		...(resource as Record<string, unknown>),
-		resourceType: "AuthSession",
-	} as AuthSession;
+export function isAuthSession(resource: unknown): resource is AuthSession {
+	return (
+		isRecord(resource) &&
+		resource.resourceType === "AuthSession" &&
+		typeof resource.sessionToken === "string" &&
+		isRecord(resource.subject) &&
+		typeof resource.subject.reference === "string" &&
+		typeof resource.createdAt === "string" &&
+		typeof resource.expiresAt === "string" &&
+		(resource.status === "active" ||
+			resource.status === "expired" ||
+			resource.status === "revoked")
+	);
+}
+
+export function parseAuthSession(resource: unknown): AuthSession | null {
+	return isAuthSession(resource) ? resource : null;
 }
 
 export function extractAuthSessionUserId(session: AuthSession): string {
@@ -81,4 +94,3 @@ function getBrowserName(userAgent = ""): string {
 	if (ua.includes("safari")) return "Safari";
 	return "Unknown Browser";
 }
-

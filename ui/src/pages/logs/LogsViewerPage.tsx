@@ -1,4 +1,4 @@
-import { Alert, Badge, Box, Flex, Switch, Text } from "@/shared/ui";
+import { Alert, Badge, Switch, Text } from "@/shared/ui";
 import { WorkspacePageLayout } from "@/widgets/workspace-page";
 import { useState } from "react";
 
@@ -36,7 +36,7 @@ export function LogsViewerPage() {
 			bodyClassName={classes.body}
 			contentClassName={classes.container}
 			actions={
-				<Flex gap="2" alignItems="center">
+				<div className={classes.actions}>
 					<Switch
 						content="Demo Mode"
 						checked={demoMode}
@@ -52,10 +52,10 @@ export function LogsViewerPage() {
 							Paused
 						</Badge>
 					)}
-				</Flex>
+				</div>
 			}
 		>
-			<Flex direction="column" gap="0" className={classes.stack}>
+			<div className={classes.stack}>
 				{demoMode && (
 					<Alert
 						icon={<CircleInfo size={16} />}
@@ -79,7 +79,7 @@ export function LogsViewerPage() {
 					onExport={exportLogs}
 				/>
 
-				<Box className={classes.streamContainer}>
+				<div className={classes.streamContainer}>
 					<LogStream
 						logs={logs}
 						isConnected={isConnected}
@@ -87,8 +87,8 @@ export function LogsViewerPage() {
 						connectionError={connectionError}
 						autoScroll={true}
 					/>
-				</Box>
-			</Flex>
+				</div>
+			</div>
 		</WorkspacePageLayout>
 	);
 }

@@ -1,8 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { useParams, useNavigate, useSearchParams } from "react-router-dom";
 import {
-  Stack,
-  Group,
   Button,
   TextInput,
   Textarea,
@@ -10,15 +8,16 @@ import {
   Switch,
   Tabs,
   Loader,
-  Center,
   Text,
   ActionIcon,
   Tooltip,
   Divider,
   Box,
+  Flex,
 } from "@/shared/ui";
 import { WorkspacePageLayout } from "@/widgets/workspace-page";
 import { notifications } from "@octofhir/ui-kit";
+import { isAutomationFeatureUnavailableError } from "@/shared/api/automationsApi";
 import {
   ArrowLeft,
   FloppyDisk,
@@ -28,8 +27,9 @@ import {
   Thunderbolt,
   ClockArrowRotateLeft,
 } from "@gravity-ui/icons";
-import { useAutomation, useUpdateAutomation, useDeployAutomation } from "../../lib/useAutomations";
+import { useAutomation, useCreateAutomation, useUpdateAutomation, useDeployAutomation } from "../../lib/useAutomations";
 import { AutomationScriptEditor } from "@/shared/monaco/AutomationScriptEditor";
+import { DEFAULT_AUTOMATION_SOURCE_CODE } from "../../ui/CreateAutomationModal";
 import { TriggerConfig } from "./TriggerConfig";
 import { PlaygroundPanel } from "./PlaygroundPanel";
 import { ExecutionHistory } from "./ExecutionHistory";
@@ -37,22 +37,24 @@ import classes from "./AutomationEditorPage.module.css";
 
 export function AutomationEditorPage() {
   const { id } = useParams<{ id: string }>();
+  const isNewAutomation = !id;
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
 
   const { data: automation, isLoading, error } = useAutomation(id);
+  const createMutation = useCreateAutomation();
   const updateMutation = useUpdateAutomation();
   const deployMutation = useDeployAutomation();
 
   // Local state for editing
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
-  const [sourceCode, setSourceCode] = useState("");
+  const [sourceCode, setSourceCode] = useState(DEFAULT_AUTOMATION_SOURCE_CODE);
   const [timeoutMs, setTimeoutMs] = useState<number>(5000);
   const [isDirty, setIsDirty] = useState(false);
 
   // Tab state
-  const activeTab = searchParams.get("tab") || "settings";
+  const activeTab = isNewAutomation ? "settings" : searchParams.get("tab") || "settings";
   const setActiveTab = (tab: string | null) => {
     if (tab) {
       setSearchParams({ tab });
@@ -67,8 +69,14 @@ export function AutomationEditorPage() {
       setSourceCode(automation.source_code);
       setTimeoutMs(automation.timeout_ms);
       setIsDirty(false);
+    } else if (isNewAutomation) {
+      setName("");
+      setDescription("");
+      setSourceCode(DEFAULT_AUTOMATION_SOURCE_CODE);
+      setTimeoutMs(5000);
+      setIsDirty(false);
     }
-  }, [automation]);
+  }, [automation, isNewAutomation]);
 
   // Track changes
   const handleNameChange = (value: string) => {
@@ -93,9 +101,27 @@ export function AutomationEditorPage() {
 
   // Save handler
   const handleSave = useCallback(async () => {
-    if (!id) return;
-
     try {
+      if (isNewAutomation) {
+        const created = await createMutation.mutateAsync({
+          name: name.trim() || "Untitled Automation",
+          description: description || undefined,
+          source_code: sourceCode,
+          timeout_ms: timeoutMs,
+        });
+
+        setIsDirty(false);
+        notifications.show({
+          title: "Created",
+          message: "Automation created successfully",
+          color: "green",
+        });
+        navigate(`/automations/${created.id}`);
+        return;
+      }
+
+      if (!id) return;
+
       await updateMutation.mutateAsync({
         id,
         data: {
@@ -114,12 +140,14 @@ export function AutomationEditorPage() {
       });
     } catch (error) {
       notifications.show({
-        title: "Save Failed",
-        message: error instanceof Error ? error.message : "Failed to save automation",
+        title: isAutomationFeatureUnavailableError(error) ? "Automations Disabled" : "Save Failed",
+        message: isAutomationFeatureUnavailableError(error)
+          ? "The backend did not expose the automation API."
+          : error instanceof Error ? error.message : "Failed to save automation",
         color: "red",
       });
     }
-  }, [id, name, description, sourceCode, timeoutMs, updateMutation]);
+  }, [id, isNewAutomation, name, description, sourceCode, timeoutMs, createMutation, updateMutation, navigate]);
 
   // Deploy handler
   const handleDeploy = async () => {
@@ -151,37 +179,43 @@ export function AutomationEditorPage() {
     setActiveTab("playground");
   };
 
-  if (isLoading) {
+  if (isLoading && !isNewAutomation) {
     return (
-      <Center h="100%">
+      <Box className={classes.stateContainer}>
         <Loader />
-      </Center>
+      </Box>
     );
   }
 
-  if (error || !automation) {
+  if (error || (!automation && !isNewAutomation)) {
     return (
-      <Center h="100%">
-        <Stack align="center" gap="md">
+      <Box className={classes.stateContainer}>
+        <div className={classes.errorState}>
           <Text c="red">Failed to load automation</Text>
           <Button variant="light" onClick={() => navigate("/automations")}>
             Back to list
           </Button>
-        </Stack>
-      </Center>
+        </div>
+      </Box>
     );
   }
 
   return (
     <WorkspacePageLayout
       title={name || "Untitled Automation"}
-      description={isDirty ? "Unsaved changes" : "Edit source, triggers, playground, and execution history"}
+      description={
+        isNewAutomation
+          ? "Create an automation script"
+          : isDirty
+            ? "Unsaved changes"
+            : "Edit source, triggers, playground, and execution history"
+      }
       className="page-enter"
       bodyClassName={classes.body}
       contentClassName={classes.container}
       actions={
-        <Group gap="sm">
-          <ActionIcon variant="subtle" onClick={() => navigate("/automations")}>
+        <Flex gap="2" alignItems="center" wrap="wrap">
+          <ActionIcon variant="subtle" onClick={() => navigate("/automations")} aria-label="Back to automations">
             <ArrowLeft size={20} />
           </ActionIcon>
           <Tooltip label={isDirty ? "Save changes (Ctrl+S)" : "No unsaved changes"}>
@@ -190,32 +224,36 @@ export function AutomationEditorPage() {
               color={isDirty ? "blue" : undefined}
               leftSection={<FloppyDisk size={16} />}
               onClick={handleSave}
-              loading={updateMutation.isPending}
+              loading={updateMutation.isPending || createMutation.isPending}
             >
-              Save
+              {isNewAutomation ? "Create" : "Save"}
             </Button>
           </Tooltip>
-          <Tooltip label="Deploy and activate">
-            <Button
-              variant="light"
-              color="blue"
-              leftSection={<Rocket size={16} />}
-              onClick={handleDeploy}
-              loading={deployMutation.isPending}
-            >
-              Deploy
-            </Button>
-          </Tooltip>
-          <Tooltip label="Test (Ctrl+Enter)">
-            <Button
-              color="green"
-              leftSection={<Play size={16} />}
-              onClick={handleExecute}
-            >
-              Test
-            </Button>
-          </Tooltip>
-        </Group>
+          {!isNewAutomation && (
+            <>
+              <Tooltip label="Deploy and activate">
+                <Button
+                  variant="light"
+                  color="blue"
+                  leftSection={<Rocket size={16} />}
+                  onClick={handleDeploy}
+                  loading={deployMutation.isPending}
+                >
+                  Deploy
+                </Button>
+              </Tooltip>
+              <Tooltip label="Test (Ctrl+Enter)">
+                <Button
+                  color="green"
+                  leftSection={<Play size={16} />}
+                  onClick={handleExecute}
+                >
+                  Test
+                </Button>
+              </Tooltip>
+            </>
+          )}
+        </Flex>
       }
     >
 
@@ -239,20 +277,24 @@ export function AutomationEditorPage() {
             <Tabs.Tab value="settings" leftSection={<Gear size={14} />}>
               Settings
             </Tabs.Tab>
-            <Tabs.Tab value="triggers" leftSection={<Thunderbolt size={14} />}>
-              Triggers ({automation.triggers?.length || 0})
-            </Tabs.Tab>
-            <Tabs.Tab value="playground" leftSection={<Play size={14} />}>
-              Playground
-            </Tabs.Tab>
-            <Tabs.Tab value="history" leftSection={<ClockArrowRotateLeft size={14} />}>
-              History
-            </Tabs.Tab>
+            {!isNewAutomation && (
+              <>
+                <Tabs.Tab value="triggers" leftSection={<Thunderbolt size={14} />}>
+                  Triggers ({automation?.triggers?.length || 0})
+                </Tabs.Tab>
+                <Tabs.Tab value="playground" leftSection={<Play size={14} />}>
+                  Playground
+                </Tabs.Tab>
+                <Tabs.Tab value="history" leftSection={<ClockArrowRotateLeft size={14} />}>
+                  History
+                </Tabs.Tab>
+              </>
+            )}
           </Tabs.List>
 
           <Box className={classes.tabContent}>
-            <Tabs.Panel value="settings" h="100%" p="md">
-              <Stack gap="md" maw={600}>
+            <Tabs.Panel value="settings" className={classes.tabPanel}>
+              <div className={classes.settingsForm}>
                 <TextInput
                   label="Name"
                   value={name}
@@ -274,34 +316,38 @@ export function AutomationEditorPage() {
                   step={100}
                   description="Maximum execution time in milliseconds"
                 />
-                <Group>
+                <Flex gap="2" alignItems="center" wrap="wrap">
                   <Text size="sm">Status:</Text>
                   <Switch
-                    checked={automation.status === "active"}
-                    label={automation.status === "active" ? "Active" : "Inactive"}
+                    checked={automation?.status === "active"}
+                    label={automation?.status === "active" ? "Active" : "Inactive"}
                     disabled
                   />
                   <Text size="xs" c="dimmed">
                     (Deploy to change status)
                   </Text>
-                </Group>
-              </Stack>
+                </Flex>
+              </div>
             </Tabs.Panel>
 
-            <Tabs.Panel value="triggers" h="100%" p="md">
-              <TriggerConfig
-                automationId={automation.id}
-                triggers={automation.triggers || []}
-              />
-            </Tabs.Panel>
+            {!isNewAutomation && automation && (
+              <>
+                <Tabs.Panel value="triggers" className={classes.tabPanel}>
+                  <TriggerConfig
+                    automationId={automation.id}
+                    triggers={automation.triggers || []}
+                  />
+                </Tabs.Panel>
 
-            <Tabs.Panel value="playground" h="100%" p="md">
-              <PlaygroundPanel automationId={automation.id} sourceCode={sourceCode} />
-            </Tabs.Panel>
+                <Tabs.Panel value="playground" className={classes.tabPanel}>
+                  <PlaygroundPanel automationId={automation.id} sourceCode={sourceCode} />
+                </Tabs.Panel>
 
-            <Tabs.Panel value="history" h="100%" p="md">
-              <ExecutionHistory automationId={automation.id} />
-            </Tabs.Panel>
+                <Tabs.Panel value="history" className={classes.tabPanel}>
+                  <ExecutionHistory automationId={automation.id} />
+                </Tabs.Panel>
+              </>
+            )}
           </Box>
         </Tabs>
       </Box>

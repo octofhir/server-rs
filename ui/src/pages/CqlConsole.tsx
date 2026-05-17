@@ -1,23 +1,21 @@
 import { useState } from 'react';
 import {
   Box,
-  Paper,
-  Stack,
   Button,
-  Group,
   Text,
   Alert,
   Code,
   JsonInput,
   Select,
   Loader,
-  Grid,
 } from '@/shared/ui';
 import { ToolWorkspaceLayout } from '@/widgets/tool-workspace';
 import { Play, CircleExclamation } from '@gravity-ui/icons';
 import { Editor } from '@monaco-editor/react';
 import { useMutation } from '@tanstack/react-query';
 import { fhirClient } from '@/shared/api/fhirClient';
+import { isRecord } from '@/shared/api/guards';
+import classes from './CqlConsole.module.css';
 
 interface CqlEvaluationResult {
   resourceType: string;
@@ -28,6 +26,15 @@ interface CqlEvaluationResult {
   }>;
 }
 
+function isCqlEvaluationResult(value: unknown): value is CqlEvaluationResult {
+  return (
+    isRecord(value) &&
+    typeof value.resourceType === 'string' &&
+    Array.isArray(value.parameter) &&
+    value.parameter.every((parameter) => isRecord(parameter) && typeof parameter.name === 'string')
+  );
+}
+
 export function CqlConsole() {
   const [expression, setExpression] = useState('1 + 1');
   const [contextType, setContextType] = useState<string | null>(null);
@@ -36,10 +43,6 @@ export function CqlConsole() {
 
   const evaluateMutation = useMutation({
     mutationFn: async () => {
-      console.log('=== CQL Evaluation Starting ===');
-      console.log('Expression:', expression);
-
-      // Build Parameters resource for $cql operation
       const requestBody: {
         resourceType: string;
         parameter: Array<{ name: string; valueString?: string; valueCode?: string; resource?: unknown }>;
@@ -53,9 +56,6 @@ export function CqlConsole() {
         ],
       };
 
-      console.log('Request body:', requestBody);
-
-      // Add context if provided
       if (contextType) {
         requestBody.parameter.push({
           name: 'context',
@@ -71,11 +71,10 @@ export function CqlConsole() {
             resource: contextJson,
           });
         } catch (error) {
-          throw new Error(`Invalid context JSON: ${error}`);
+          throw new Error(`Invalid context JSON: ${error instanceof Error ? error.message : 'Parse failed'}`);
         }
       }
 
-      // Add parameters if provided
       if (parameters.trim() && parameters !== '{}') {
         try {
           const paramsJson = JSON.parse(parameters);
@@ -89,25 +88,23 @@ export function CqlConsole() {
             });
           }
         } catch (error) {
-          throw new Error(`Invalid parameters JSON: ${error}`);
+          throw new Error(`Invalid parameters JSON: ${error instanceof Error ? error.message : 'Parse failed'}`);
         }
       }
 
-      // Call $cql operation
-      console.log('Calling API endpoint: POST /fhir/$cql');
-      const response = await fhirClient.customRequest<CqlEvaluationResult>({
+      const response = await fhirClient.customRequest({
         method: 'POST',
         url: '/fhir/$cql',
         data: requestBody,
       });
-      console.log('Response:', response);
+      if (!isCqlEvaluationResult(response.data)) {
+        throw new Error('Invalid CQL response');
+      }
       return response.data;
     },
   });
 
   const handleEvaluate = () => {
-    console.log('=== Button clicked ===');
-    console.log('Current expression:', expression);
     evaluateMutation.mutate();
   };
 
@@ -132,23 +129,14 @@ export function CqlConsole() {
       description="Evaluate Clinical Quality Language (CQL) expressions"
       className="page-enter"
     >
-        <Stack gap="lg" style={{ maxWidth: '100%', height: '100%' }}>
-        <Grid gutter="lg" style={{ flex: 1 }}>
-          <Grid.Col span={6}>
-            <Paper p="md" radius="lg" withBorder style={{ height: '100%' }}>
-          <Stack gap="md">
-            <div>
-              <Text size="sm" fw={500} mb="xs">
+      <div className={classes.workspace}>
+        <section className={classes.panel}>
+          <div className={classes.formStack}>
+            <div className={classes.fieldBlock}>
+              <Text size="sm" fw={500} className={classes.fieldLabel}>
                 CQL Expression
               </Text>
-              <Paper
-                withBorder
-                radius="md"
-                style={{
-                  overflow: 'hidden',
-                  border: '1px solid var(--octo-border-subtle)',
-                }}
-              >
+              <div className={classes.editorFrame}>
                 <Editor
                   height="200px"
                   defaultLanguage="plaintext"
@@ -163,10 +151,10 @@ export function CqlConsole() {
                     automaticLayout: true,
                   }}
                 />
-              </Paper>
+              </div>
             </div>
 
-            <Group grow align="flex-start">
+            <div className={classes.fieldBlock}>
               <Select
                 label="Context Type (optional)"
                 placeholder="Select resource type"
@@ -180,7 +168,7 @@ export function CqlConsole() {
                 ]}
                 clearable
               />
-            </Group>
+            </div>
 
             <JsonInput
               label="Context Value (optional JSON)"
@@ -211,69 +199,63 @@ export function CqlConsole() {
               {evaluateMutation.isPending ? 'Evaluating...' : 'Evaluate Expression'}
             </Button>
 
-            <Paper p="xs" radius="lg" withBorder>
-              <Stack gap="xs">
-                <Text size="xs" fw={600}>
-                  Example Expressions:
-                </Text>
-                <Code block style={{ fontSize: '11px' }}>1 + 1</Code>
-                <Code block style={{ fontSize: '11px' }}>true and false</Code>
-                <Code block style={{ fontSize: '11px' }}>&apos;Hello&apos; + &apos; &apos; + &apos;World&apos;</Code>
-                <Code block style={{ fontSize: '11px' }}>5 &gt; 3</Code>
-                <Code block style={{ fontSize: '11px' }}>&#123;1, 2, 3, 4, 5&#125;</Code>
-              </Stack>
-            </Paper>
-          </Stack>
-        </Paper>
-          </Grid.Col>
+            <div className={classes.examples}>
+              <Text size="xs" fw={600}>
+                Example expressions
+              </Text>
+              <Code block className={classes.exampleCode}>1 + 1</Code>
+              <Code block className={classes.exampleCode}>true and false</Code>
+              <Code block className={classes.exampleCode}>&apos;Hello&apos; + &apos; &apos; + &apos;World&apos;</Code>
+              <Code block className={classes.exampleCode}>5 &gt; 3</Code>
+              <Code block className={classes.exampleCode}>&#123;1, 2, 3, 4, 5&#125;</Code>
+            </div>
+          </div>
+        </section>
 
-          <Grid.Col span={6}>
-            <Paper p="md" radius="lg" withBorder style={{ height: '100%' }}>
-              <Stack gap="md" style={{ height: '100%' }}>
-                <Text size="sm" fw={600}>
-                  Result
-                </Text>
-
-        {evaluateMutation.isPending && (
-          <Box style={{ textAlign: 'center', padding: '2rem' }}>
-            <Loader size="md" />
-            <Text size="sm" c="dimmed" mt="md">Evaluating...</Text>
-          </Box>
-        )}
-
-        {evaluateMutation.isError && (
-          <Alert
-            icon={<CircleExclamation size={16} />}
-            title="Evaluation Error"
-            color="red"
-            radius="md"
-          >
-            {evaluateMutation.error instanceof Error
-              ? evaluateMutation.error.message
-              : 'An unknown error occurred'}
-          </Alert>
-        )}
-
-        {evaluateMutation.isSuccess && (
-          <Box>
-            <Code block style={{ maxHeight: '600px', overflow: 'auto' }}>
-              {JSON.stringify(result, null, 2)}
-            </Code>
-          </Box>
-        )}
-
-        {!evaluateMutation.isPending && !evaluateMutation.isError && !evaluateMutation.isSuccess && (
-          <Box style={{ textAlign: 'center', padding: '3rem', color: 'var(--g-color-text-secondary)' }}>
-            <Text size="sm">
-              Enter a CQL expression and click "Evaluate" to see results
+        <section className={classes.panel}>
+          <div className={classes.resultHeader}>
+            <Text size="sm" fw={600}>
+              Result
             </Text>
-          </Box>
-        )}
-              </Stack>
-            </Paper>
-          </Grid.Col>
-        </Grid>
-      </Stack>
+          </div>
+
+          {evaluateMutation.isPending && (
+            <Box className={classes.emptyState}>
+              <Loader size="md" />
+              <Text size="sm" c="dimmed">Evaluating...</Text>
+            </Box>
+          )}
+
+          {evaluateMutation.isError && (
+            <Alert
+              icon={<CircleExclamation size={16} />}
+              title="Evaluation Error"
+              color="red"
+              radius="md"
+            >
+              {evaluateMutation.error instanceof Error
+                ? evaluateMutation.error.message
+                : 'An unknown error occurred'}
+            </Alert>
+          )}
+
+          {evaluateMutation.isSuccess && (
+            <Box className={classes.resultCode}>
+              <Code block>
+                {JSON.stringify(result, null, 2)}
+              </Code>
+            </Box>
+          )}
+
+          {!evaluateMutation.isPending && !evaluateMutation.isError && !evaluateMutation.isSuccess && (
+            <Box className={classes.emptyState}>
+              <Text size="sm">
+                Enter a CQL expression and click "Evaluate" to see results
+              </Text>
+            </Box>
+          )}
+        </section>
+      </div>
     </ToolWorkspaceLayout>
   );
 }

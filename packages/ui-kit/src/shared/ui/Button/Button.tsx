@@ -127,12 +127,12 @@ const ButtonRoot = forwardRef<HTMLButtonElement, ButtonProps>(
         },
         ref,
     ) => {
-        const ButtonAny = GravityButton as unknown as React.ComponentType<Record<string, unknown>>;
+        const ButtonComponent: React.ElementType = GravityButton;
         const cleaned = cleanLayoutProps(props);
         const mergedStyle = { ...getSpacingStyles(props), ...style };
 
         return (
-            <ButtonAny
+            <ButtonComponent
                 ref={ref}
                 view={view ?? mapView(variant, color)}
                 width={fullWidth ? "max" : width}
@@ -142,7 +142,7 @@ const ButtonRoot = forwardRef<HTMLButtonElement, ButtonProps>(
                 {leftSection ? <GravityButton.Icon side="left">{leftSection}</GravityButton.Icon> : null}
                 {children}
                 {rightSection ? <GravityButton.Icon side="right">{rightSection}</GravityButton.Icon> : null}
-            </ButtonAny>
+            </ButtonComponent>
         );
     },
 );

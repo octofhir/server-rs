@@ -540,11 +540,19 @@ pub fn build_identifier_search(
         let condition = match &param.modifier {
             None => {
                 match system {
-                    Some(sys) if !sys.is_empty() => {
+                    Some(sys) if !sys.is_empty() && !code.is_empty() => {
                         // system|value
                         let json = serde_json::json!([{"system": sys, "value": code}]).to_string();
                         let p = builder.add_json_param(&json);
                         format!("{array_path} @> ${p}::jsonb")
+                    }
+                    Some(sys) if !sys.is_empty() => {
+                        // system| (empty value) — match any identifier with that system
+                        let p = builder.add_text_param(sys);
+                        format!(
+                            "EXISTS (SELECT 1 FROM jsonb_array_elements({array_path}) AS ident \
+                             WHERE ident->>'system' = ${p})"
+                        )
                     }
                     Some(_) => {
                         // |value - no system (empty string case)

@@ -1,12 +1,12 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
-	Stack,
+	Box,
+	Flex,
 	Text,
-	Paper,
-	Group,
 	Button,
 	TextInput,
+	NumberInput,
 	DataPreview,
 	Badge,
 	ActionIcon,
@@ -38,13 +38,7 @@ import {
 } from "@/entities/api-app";
 import { useApps, useCreateApp, useUpdateApp, useDeleteApp } from "../lib/useApps";
 import { getBundleResources } from "@/shared/api/guards";
-
-const singleLineTextStyle = {
-	display: "-webkit-box",
-	WebkitBoxOrient: "vertical",
-	WebkitLineClamp: 1,
-	overflow: "hidden",
-};
+import classes from "./AppsPage.module.css";
 
 export function AppsPage() {
 	const navigate = useNavigate();
@@ -88,19 +82,20 @@ export function AppsPage() {
 				</Button>
 			}
 			toolbar={
-				<Group>
+				<Flex className={classes.toolbar}>
 					<TextInput
 						placeholder="Search by name..."
 						leftSection={<IconSearch size={16} />}
 						value={search}
 						onChange={(e) => setSearch(e.currentTarget.value)}
-						style={{ flex: 1, maxWidth: 460 }}
+						className={classes.searchInput}
 					/>
-				</Group>
+				</Flex>
 			}
+			maxWidth={1280}
 		>
 
-			<Paper p="sm" withBorder>
+			<Box className={classes.tablePanel}>
 				<DataPreview
 					columns={[
 						{ id: "application", label: "Application" },
@@ -118,21 +113,21 @@ export function AppsPage() {
 
 									return {
 										application: (
-											<Group gap="xs">
+											<Flex gap="2" alignItems="center">
 												<IconRocket size={16} color="var(--octo-brand-primary-active)" />
-												<div>
+												<Box className={classes.appSummary}>
 													<Anchor size="sm" onClick={() => app.id && handleView(app.id)}>
 														{app.name}
 													</Anchor>
-													<Text size="xs" c="dimmed" maw={300} style={singleLineTextStyle}>
+													<Text size="xs" c="dimmed" className={classes.truncateText}>
 														{app.description || "No description"}
 													</Text>
-												</div>
-											</Group>
+												</Box>
+											</Flex>
 										),
 										endpoint:
 											app.endpoint?.url || app.basePath ? (
-												<Code size="xs" style={{ maxWidth: 220, ...singleLineTextStyle }}>
+												<Code size="xs" className={classes.endpointCode}>
 													{endpoint}
 												</Code>
 											) : (
@@ -141,7 +136,7 @@ export function AppsPage() {
 												</Text>
 											),
 										operations: (
-											<Group gap={4}>
+											<Flex gap="1" wrap="wrap">
 												{app.operations && app.operations.length > 0 && (
 													<Badge size="xs" variant="light" color="primary" leftSection={<IconApi size={10} />}>
 														{app.operations.length}
@@ -156,7 +151,7 @@ export function AppsPage() {
 													(!app.subscriptions || app.subscriptions.length === 0) && (
 														<Text size="xs" c="dimmed">-</Text>
 													)}
-											</Group>
+											</Flex>
 										),
 										status: (
 											<Badge color={statusView.color} variant="light" size="sm">
@@ -210,7 +205,7 @@ export function AppsPage() {
 					emptyText={isLoading ? "Loading applications..." : "No applications found"}
 					getRowKey={(_row, index) => apps[index]?.id ?? `${index}`}
 				/>
-			</Paper>
+			</Box>
 
 			<AppModal
 				opened={opened}
@@ -321,7 +316,7 @@ function AppModal({
 				initialValues={initialValues}
 				render={({ handleSubmit: submit, submitting }) => (
 					<form onSubmit={submit}>
-						<Stack gap="md">
+						<Flex direction="column" gap="4">
 							<Field<string> name="name">
 								{({ input, meta }) => (
 									<TextInput
@@ -364,15 +359,13 @@ function AppModal({
 
 							<Field<number> name="endpointTimeout">
 								{({ input }) => (
-									<TextInput
+									<NumberInput
 										label="Timeout (seconds)"
-										type="number"
-										placeholder="30"
 										description="Request timeout in seconds"
-										value={String(input.value)}
-										onChange={(v) =>
-											input.onChange(Number.parseInt((v as unknown as string) ?? "0", 10) || 0)
-										}
+										value={input.value}
+										onUpdate={(value) => input.onChange(value ?? 0)}
+										min={1}
+										max={300}
 									/>
 								)}
 							</Field>
@@ -408,7 +401,7 @@ function AppModal({
 								)}
 							</Field>
 
-							<Group justify="flex-end" mt="md">
+							<Flex justifyContent="flex-end" gap="2" className={classes.modalActions}>
 								<Button variant="light" onClick={onClose} type="button">
 									Cancel
 								</Button>
@@ -418,8 +411,8 @@ function AppModal({
 								>
 									{isEditing ? "Update" : "Create"}
 								</Button>
-							</Group>
-						</Stack>
+							</Flex>
+						</Flex>
 					</form>
 				)}
 			/>

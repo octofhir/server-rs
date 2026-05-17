@@ -37,9 +37,9 @@ export class FhirClient {
 		};
 	}
 
-	private async request<T = unknown>(
+	private async request(
 		config: HttpRequestConfig,
-	): Promise<HttpResponse<T>> {
+	): Promise<HttpResponse<unknown>> {
 		const {
 			method,
 			url,
@@ -99,22 +99,22 @@ export class FhirClient {
 
 		// Parse response data. FHIR DELETE/empty responses are valid and should not
 		// be forced through JSON.parse.
-		let responseData: T;
+		let responseData: unknown;
 		const contentType = response.headers.get("content-type");
 		const rawBody = await response.text();
 
 		if (!rawBody) {
-			responseData = undefined as T;
+			responseData = undefined;
 		} else if (
 			contentType?.includes("application/json") ||
 			contentType?.includes("application/fhir+json")
 		) {
-			responseData = JSON.parse(rawBody) as T;
+			responseData = JSON.parse(rawBody);
 		} else {
-			responseData = rawBody as T;
+			responseData = rawBody;
 		}
 
-		const result: HttpResponse<T> = {
+		const result: HttpResponse<unknown> = {
 			data: responseData,
 			status: response.status,
 			statusText: response.statusText,
@@ -137,7 +137,7 @@ export class FhirClient {
 		resourceType: string,
 		id: string,
 	): Promise<T> {
-		const response = await this.request<T>({
+		const response = await this.request({
 			method: "GET",
 			url: `/${resourceType}/${id}`,
 		});
@@ -158,7 +158,7 @@ export class FhirClient {
 		const queryString = searchParams.toString();
 		const url = `/${resourceType}${queryString ? `?${queryString}` : ""}`;
 
-		const response = await this.request<Bundle<T>>({
+		const response = await this.request({
 			method: "GET",
 			url,
 		});
@@ -169,7 +169,7 @@ export class FhirClient {
 	async create<T extends FhirResource = FhirResource>(
 		resource: FhirCreateResource<T>,
 	): Promise<T> {
-		const response = await this.request<T>({
+		const response = await this.request({
 			method: "POST",
 			url: `/${resource.resourceType}`,
 			data: resource,
@@ -182,7 +182,7 @@ export class FhirClient {
 			throw new Error("Resource must have an ID for update");
 		}
 
-		const response = await this.request<T>({
+		const response = await this.request({
 			method: "PUT",
 			url: `/${resource.resourceType}/${resource.id}`,
 			data: resource,
@@ -198,29 +198,33 @@ export class FhirClient {
 	}
 
 	async getCapabilities(): Promise<CapabilityStatement> {
-		const response = await this.request<CapabilityStatement>({
+		const response = await this.request({
 			method: "GET",
 			url: "/fhir/metadata",
 		});
-		return response.data;
+		const resource = assertFhirResource<CapabilityStatement>(response.data, "get capabilities");
+		if (resource.resourceType !== "CapabilityStatement") {
+			throw new Error("get capabilities: expected CapabilityStatement response");
+		}
+		return resource;
 	}
 
 	// Generic request method for custom operations
-	async customRequest<T = unknown>(
+	async customRequest(
 		config: Omit<HttpRequestConfig, "url"> & { url: string },
-	): Promise<HttpResponse<T>> {
-		return this.request<T>(config);
+	): Promise<HttpResponse<unknown>> {
+		return this.request(config);
 	}
 
 	// Raw request method for REST console with timing
-	async rawRequest<T = unknown>(
+	async rawRequest(
 		method: HttpMethod,
 		path: string,
 		body?: unknown,
 		options?: { timeout?: number; includeCredentials?: boolean; headers?: Record<string, string> },
-	): Promise<HttpResponse<T> & { responseTime: number }> {
+	): Promise<HttpResponse<unknown> & { responseTime: number }> {
 		const startTime = performance.now();
-		const response = await this.request<T>({
+		const response = await this.request({
 			method,
 			url: path,
 			data: body,
@@ -245,7 +249,7 @@ export class FhirClient {
 			return null;
 		}
 
-		const response = await this.request<FhirBundle>({
+		const response = await this.request({
 			method: "GET",
 			url: link.url,
 		});
@@ -293,7 +297,7 @@ class OctoFhirClient extends FhirClient {
 		id: string,
 	): Promise<T> {
 		const baseUrl = this.getBaseUrlForResource(resourceType);
-		const response = await this.customRequest<T>({
+		const response = await this.customRequest({
 			method: "GET",
 			url: `${baseUrl}/${resourceType}/${id}`,
 		});
@@ -314,7 +318,7 @@ class OctoFhirClient extends FhirClient {
 		const queryString = searchParams.toString();
 		const url = `${baseUrl}/${resourceType}${queryString ? `?${queryString}` : ""}`;
 
-		const response = await this.customRequest<FhirBundle>({
+		const response = await this.customRequest({
 			method: "GET",
 			url,
 		});
@@ -324,7 +328,7 @@ class OctoFhirClient extends FhirClient {
 
 	async create<T extends FhirResource = FhirResource>(resource: T): Promise<T> {
 		const baseUrl = this.getBaseUrlForResource(resource.resourceType);
-		const response = await this.customRequest<T>({
+		const response = await this.customRequest({
 			method: "POST",
 			url: `${baseUrl}/${resource.resourceType}`,
 			data: resource,
@@ -338,7 +342,7 @@ class OctoFhirClient extends FhirClient {
 		}
 
 		const baseUrl = this.getBaseUrlForResource(resource.resourceType);
-		const response = await this.customRequest<T>({
+		const response = await this.customRequest({
 			method: "PUT",
 			url: `${baseUrl}/${resource.resourceType}/${resource.id}`,
 			data: resource,

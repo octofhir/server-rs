@@ -13,6 +13,7 @@ export {
 	getAuditOutcomeLabel,
 	getAuditTargetView,
 	getAuditTimestampView,
+	isAuditAction,
 	type AuditTargetView,
 	type AuditTimestampView,
 } from "./model/auditEventView";

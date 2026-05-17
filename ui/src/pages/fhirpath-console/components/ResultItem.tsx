@@ -1,7 +1,8 @@
-import { Badge, Code, Collapse, Group, Paper, Stack, Text } from "@/shared/ui";
+import { Badge, Box, Code, Collapse, Flex, Text } from "@/shared/ui";
 import { ChevronDown, ChevronRight } from "@gravity-ui/icons";
 import { useState } from "react";
 import type { FhirPathResult } from "../types";
+import classes from "../FhirPathConsolePage.module.css";
 
 interface Props {
 	result: FhirPathResult;
@@ -14,9 +15,9 @@ export function ResultItem({ result }: Props) {
 	const typeColor = getTypeColor(result.datatype);
 
 	return (
-		<Paper withBorder p="sm" bg="var(--octo-surface-2)">
-			<Stack gap="xs">
-				<Group gap="xs" align="center">
+		<Box className={classes.resultItem}>
+			<Flex direction="column" gap="2">
+				<Flex gap="2" alignItems="center">
 					<Text size="xs" c="dimmed">
 						[{result.index}]
 					</Text>
@@ -25,10 +26,11 @@ export function ResultItem({ result }: Props) {
 					</Badge>
 
 					{isComplex ? (
-						<Group
-							gap="xs"
+						<Flex
+							gap="2"
+							alignItems="center"
 							onClick={() => setExpanded(!expanded)}
-							style={{ cursor: "pointer", flex: 1 }}
+							className={classes.resultToggle}
 						>
 							{expanded ? (
 								<ChevronDown size={14} />
@@ -38,23 +40,23 @@ export function ResultItem({ result }: Props) {
 							<Text size="sm" c="dimmed">
 								{result.datatype} object
 							</Text>
-						</Group>
+						</Flex>
 					) : (
-						<Code style={{ flex: 1 }}>
+						<Code className={classes.resultCode}>
 							{formatPrimitiveValue(result.value)}
 						</Code>
 					)}
-				</Group>
+				</Flex>
 
 				{isComplex && (
 					<Collapse in={expanded}>
-						<Code block style={{ maxHeight: 400, overflow: "auto" }}>
+						<Code block className={classes.resultJson}>
 							{JSON.stringify(result.value, null, 2)}
 						</Code>
 					</Collapse>
 				)}
-			</Stack>
-		</Paper>
+			</Flex>
+		</Box>
 	);
 }
 

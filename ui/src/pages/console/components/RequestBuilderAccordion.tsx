@@ -1,8 +1,9 @@
 import { useUnit } from "effector-react";
-import { Badge, Flex, Tabs, Text, Box } from "@/shared/ui";
+import { Badge, Tabs, Text } from "@/shared/ui";
 import { $body, $customHeaders, $method } from "../state/consoleStore";
 import { BodyEditor } from "./BodyEditor";
 import { HeaderEditor } from "./HeaderEditor";
+import styles from "./RequestBuilderAccordion.module.css";
 
 interface RequestOptionTabsProps {
   resourceType?: string;
@@ -19,34 +20,34 @@ export function RequestOptionTabs({ resourceType }: RequestOptionTabsProps) {
   const bodySize = body.length;
 
   return (
-    <Box style={{ backgroundColor: "var(--g-color-base-generic-subtle)" }}>
+    <div className={styles.root}>
       <Tabs defaultValue="headers">
-        <Box style={{ padding: "0 20px" }}>
+        <div className={styles.tabList}>
           <Tabs.List>
             <Tabs.Tab id="headers">
-              <Flex gap="2" alignItems="center">
+              <span className={styles.tabLabel}>
                 <Text variant="body-2">Headers</Text>
                 {customHeaderCount > 0 && (
-                  <Badge size="s" theme="info" style={{ borderRadius: "50%", width: 18, height: 18, padding: 0, justifyContent: "center" }}>
+                  <Badge size="s" theme="info" className={styles.counter}>
                     {customHeaderCount}
                   </Badge>
                 )}
-              </Flex>
+              </span>
             </Tabs.Tab>
             <Tabs.Tab id="body">
-              <Flex gap="2" alignItems="center">
+              <span className={styles.tabLabel}>
                 <Text variant="body-2">Body</Text>
                 {bodySize > 0 && (
-                  <Badge size="s" theme="warning" style={{ borderRadius: "50%", width: 18, height: 18, padding: 0, justifyContent: "center" }}>
+                  <Badge size="s" theme="warning" className={styles.counter}>
                     1
                   </Badge>
                 )}
-              </Flex>
+              </span>
             </Tabs.Tab>
           </Tabs.List>
-        </Box>
+        </div>
 
-        <Box style={{ padding: "16px 20px", backgroundColor: "var(--g-color-base-background)" }}>
+        <div className={styles.panel}>
           <Tabs.Panel value="headers">
             <HeaderEditor />
           </Tabs.Panel>
@@ -54,8 +55,8 @@ export function RequestOptionTabs({ resourceType }: RequestOptionTabsProps) {
           <Tabs.Panel value="body">
             <BodyEditor resourceType={resourceType} method={method} />
           </Tabs.Panel>
-        </Box>
+        </div>
       </Tabs>
-    </Box>
+    </div>
   );
 }

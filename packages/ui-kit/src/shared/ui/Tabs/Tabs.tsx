@@ -46,8 +46,7 @@ type LegacyTabProps = TabProps & {
 };
 
 function TabsTab({ leftSection, rightSection: _rightSection, icon, ...props }: LegacyTabProps) {
-    const TabAny = Tab as unknown as React.ComponentType<Record<string, unknown>>;
-    return <TabAny icon={icon ?? leftSection} {...props} />;
+    return <Tab icon={icon ?? leftSection} {...props} />;
 }
 
 interface LegacyPanelProps extends TabPanelProps {

@@ -1,10 +1,9 @@
 import { useMemo, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import {
-	Stack,
+	Box,
+	Flex,
 	Text,
-	Paper,
-	Group,
 	Badge,
 	DataPreview,
 	Loader,
@@ -17,9 +16,7 @@ import {
 	Select,
 	Breadcrumbs,
 	Anchor,
-	ThemeIcon,
 	Modal,
-	ScrollArea,
 	Code,
 } from "@/shared/ui";
 import { WorkspacePageLayout } from "@/widgets/workspace-page";
@@ -45,13 +42,7 @@ import {
 	usePackageFhirSchema,
 } from "@/shared/api/hooks";
 import type { PackageResourceSummary } from "@/shared/api/types";
-
-const singleLineTextStyle = {
-	display: "-webkit-box",
-	WebkitBoxOrient: "vertical",
-	WebkitLineClamp: 1,
-	overflow: "hidden",
-};
+import classes from "./PackageDetailPage.module.css";
 
 function FhirVersionBadge({
 	packageVersion,
@@ -75,21 +66,10 @@ function FhirVersionBadge({
 }
 
 function ResourceTypeIcon({ resourceType }: { resourceType: string }) {
-	const colors: Record<string, string> = {
-		StructureDefinition: "primary",
-		ValueSet: "deep",
-		CodeSystem: "warm",
-		SearchParameter: "primary",
-		OperationDefinition: "fire",
-		CapabilityStatement: "deep",
-		CompartmentDefinition: "warm",
-		NamingSystem: "fire",
-	};
-
 	return (
-		<ThemeIcon variant="light" size="sm" color={colors[resourceType] || "deep"}>
+		<Box className={classes.resourceTypeIcon} data-resource-type={resourceType}>
 			<File size={14} />
-		</ThemeIcon>
+		</Box>
 	);
 }
 
@@ -121,10 +101,10 @@ function ResourceViewer({ packageName, packageVersion, resource, onClose }: Reso
 			opened
 			onClose={onClose}
 			title={
-				<Group gap="xs">
+				<Flex gap="2" alignItems="center">
 					<ResourceTypeIcon resourceType={resource.resourceType} />
 					<Text fw={500}>{resource.name || resource.id || resourceUrl}</Text>
-				</Group>
+				</Flex>
 			}
 			size="xl"
 			styles={{ body: { padding: 0, backgroundColor: "var(--octo-surface-1)" } }}
@@ -143,18 +123,18 @@ function ResourceViewer({ packageName, packageVersion, resource, onClose }: Reso
 
 				<Tabs.Panel value="json" p="md">
 					{contentLoading ? (
-						<Group justify="center" py="xl">
+						<Flex justifyContent="center" alignItems="center" gap="2" className={classes.modalState}>
 							<Loader size="sm" />
 							<Text size="sm" c="dimmed">
 								Loading resource...
 							</Text>
-						</Group>
+						</Flex>
 					) : content ? (
-						<ScrollArea h={400}>
+						<Box className={classes.codeScroll}>
 							<Code block style={{ fontSize: "12px" }}>
 								{JSON.stringify(content, null, 2)}
 							</Code>
-						</ScrollArea>
+						</Box>
 					) : (
 						<Text c="dimmed">Failed to load resource content</Text>
 					)}
@@ -163,18 +143,18 @@ function ResourceViewer({ packageName, packageVersion, resource, onClose }: Reso
 				{resource.resourceType === "StructureDefinition" && (
 					<Tabs.Panel value="fhirschema" p="md">
 						{schemaLoading ? (
-							<Group justify="center" py="xl">
+							<Flex justifyContent="center" alignItems="center" gap="2" className={classes.modalState}>
 								<Loader size="sm" />
 								<Text size="sm" c="dimmed">
 									Loading FHIRSchema...
 								</Text>
-							</Group>
+							</Flex>
 						) : fhirSchema ? (
-							<ScrollArea h={400}>
+							<Box className={classes.codeScroll}>
 								<Code block style={{ fontSize: "12px" }}>
 									{JSON.stringify(fhirSchema, null, 2)}
 								</Code>
-							</ScrollArea>
+							</Box>
 						) : (
 							<Text c="dimmed">FHIRSchema not available for this resource</Text>
 						)}
@@ -217,14 +197,14 @@ function ResourcesTab({
 	);
 
 	return (
-		<Stack gap="sm">
-			<Group gap="sm">
+		<Flex direction="column" gap="3">
+			<Flex gap="2" wrap="wrap" alignItems="center">
 				<TextInput
 					placeholder="Search resources..."
 					leftSection={<Magnifier size={16} />}
 					value={search}
 					onChange={(e) => setSearch(e.currentTarget.value)}
-					style={{ flex: 1, maxWidth: 460 }}
+					className={classes.searchInput}
 				/>
 				<Select
 					placeholder="Filter by type"
@@ -232,17 +212,17 @@ function ResourcesTab({
 					value={filterType}
 					onChange={setFilterType}
 					clearable
-					w={250}
+					className={classes.typeSelect}
 				/>
-			</Group>
+			</Flex>
 
 			{isLoading && (
-				<Group justify="center" py="xl">
+				<Flex justifyContent="center" alignItems="center" gap="2" className={classes.statePanel}>
 					<Loader size="sm" />
 					<Text size="sm" c="dimmed">
 						Loading resources...
 					</Text>
-				</Group>
+				</Flex>
 			)}
 
 			{error && (
@@ -252,7 +232,7 @@ function ResourcesTab({
 			)}
 
 			{!isLoading && !error && (
-				<Paper style={{ backgroundColor: "var(--octo-surface-1)" }}>
+				<Box className={classes.tablePanel}>
 					<DataPreview
 						columns={[
 							{ id: "type", label: "Type", width: 220 },
@@ -263,10 +243,10 @@ function ResourcesTab({
 						]}
 						rows={resourceViews.map((resource, index) => ({
 							type: (
-								<Group gap="xs">
+								<Flex gap="2" alignItems="center">
 									<ResourceTypeIcon resourceType={resource.resourceType} />
 									<Text size="sm">{resource.resourceType}</Text>
-								</Group>
+								</Flex>
 							),
 							name: (
 								<Text size="sm" fw={500}>
@@ -274,7 +254,7 @@ function ResourcesTab({
 								</Text>
 							),
 							url: (
-								<Text size="xs" c="dimmed" style={singleLineTextStyle}>
+								<Text size="xs" c="dimmed" className={classes.truncateText}>
 									{resource.urlLabel}
 								</Text>
 							),
@@ -297,7 +277,7 @@ function ResourcesTab({
 						emptyText="No resources found"
 						getRowKey={(_row, index) => resourceViews[index]?.id ?? `${index}`}
 					/>
-				</Paper>
+				</Box>
 			)}
 
 			{selectedResource && (
@@ -308,7 +288,7 @@ function ResourcesTab({
 					onClose={() => setSelectedResource(null)}
 				/>
 			)}
-		</Stack>
+		</Flex>
 	);
 }
 
@@ -338,7 +318,7 @@ export function PackageDetailPage() {
 				</Breadcrumbs>
 			}
 			actions={
-				<Group gap="md">
+				<Flex gap="3" alignItems="center" wrap="wrap">
 					<Button
 						variant="subtle"
 						leftSection={<ArrowLeft size={16} />}
@@ -347,17 +327,18 @@ export function PackageDetailPage() {
 						Back
 					</Button>
 					{data && <FhirVersionBadge packageVersion={data.fhirVersion} isCompatible={data.isCompatible} />}
-				</Group>
+				</Flex>
 			}
+			maxWidth={1280}
 		>
 
 			{isLoading && (
-				<Group justify="center" py="xl">
+				<Flex justifyContent="center" alignItems="center" gap="2" className={classes.statePanel}>
 					<Loader size="sm" />
 					<Text size="sm" c="dimmed">
 						Loading package details...
 					</Text>
-				</Group>
+				</Flex>
 			)}
 
 			{error && (
@@ -379,9 +360,9 @@ export function PackageDetailPage() {
 					</Tabs.List>
 
 					<Tabs.Panel value="overview" pt="md">
-						<Stack gap="sm">
-							<Paper p="sm" style={{ backgroundColor: "var(--octo-surface-1)" }}>
-								<Stack gap="sm">
+						<Flex direction="column" gap="3">
+							<Box className={classes.panel}>
+								<Flex direction="column" gap="3">
 									{data.description && (
 										<div>
 											<Text size="sm" fw={500} c="dimmed">
@@ -391,7 +372,7 @@ export function PackageDetailPage() {
 										</div>
 									)}
 
-									<Group gap="lg">
+									<Flex gap="6" wrap="wrap">
 										<div>
 											<Text size="sm" fw={500} c="dimmed">
 												Total Resources
@@ -408,23 +389,23 @@ export function PackageDetailPage() {
 												<Text size="sm">{new Date(data.installedAt).toLocaleString()}</Text>
 											</div>
 										)}
-									</Group>
-								</Stack>
-							</Paper>
+									</Flex>
+								</Flex>
+							</Box>
 
-							<Paper p="sm" style={{ backgroundColor: "var(--octo-surface-2)" }}>
+							<Box className={classes.panelMuted}>
 								<Text size="sm" fw={500} c="dimmed" mb="sm">
 									Resource Types
 								</Text>
-								<Group gap="xs">
+								<Flex gap="2" wrap="wrap">
 									{data.resourceTypes.map((rt) => (
 										<Badge key={rt.resourceType} variant="light" size="lg" color="primary">
 											{rt.resourceType}: {rt.count}
 										</Badge>
 									))}
-								</Group>
-							</Paper>
-						</Stack>
+								</Flex>
+							</Box>
+						</Flex>
 					</Tabs.Panel>
 
 					<Tabs.Panel value="resources" pt="md">

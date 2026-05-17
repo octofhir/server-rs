@@ -1,11 +1,13 @@
 import { Suspense, useState } from "react";
 import { useUnit } from "effector-react";
-import { Stack, Group, Text, Button, Alert, Skeleton } from "@/shared/ui";
+import { Text, Button, Alert, Skeleton } from "@/shared/ui";
 import { IconAlertCircle } from "@octofhir/ui-kit";
 import { JsonEditor } from "@/shared/monaco";
 import { $body, setBody } from "../state/consoleStore";
 import { generateTemplate } from "../utils/templateGenerator";
 import { useJsonSchema } from "@/shared/api/hooks";
+import { isRecord } from "@/shared/api/guards";
+import styles from "./BodyEditor.module.css";
 
 interface BodyEditorProps {
 	resourceType?: string;
@@ -19,6 +21,7 @@ export function BodyEditor({ resourceType, method }: BodyEditorProps) {
 
 	const showBodyEditor = ["POST", "PUT", "PATCH"].includes(method);
 	const canInsertTemplate = resourceType && showBodyEditor;
+	const editorSchema = isRecord(jsonSchema) ? jsonSchema : undefined;
 
 	const handleInsertTemplate = () => {
 		if (!resourceType) return;
@@ -45,12 +48,12 @@ export function BodyEditor({ resourceType, method }: BodyEditorProps) {
 	}
 
 	return (
-		<Stack gap="sm">
-			<Group justify="space-between">
+		<div className={styles.root}>
+			<div className={styles.header}>
 				<Text fw={500} size="sm">
 					Request Body
 				</Text>
-				<Group gap="xs">
+				<div className={styles.actions}>
 					{canInsertTemplate && (
 						<Button size="xs" variant="light" onClick={handleInsertTemplate}>
 							Insert template
@@ -59,8 +62,8 @@ export function BodyEditor({ resourceType, method }: BodyEditorProps) {
 					<Button size="xs" variant="subtle" onClick={handleFormat}>
 						Format
 					</Button>
-				</Group>
-			</Group>
+				</div>
+			</div>
 
 			<Suspense fallback={<Skeleton height={300} />}>
 				<JsonEditor
@@ -68,7 +71,7 @@ export function BodyEditor({ resourceType, method }: BodyEditorProps) {
 					onChange={setBodyEvent}
 					height={300}
 					onValidationError={setValidationError}
-					schema={jsonSchema as object | undefined}
+					schema={editorSchema}
 					resourceType={resourceType}
 				/>
 			</Suspense>
@@ -79,9 +82,9 @@ export function BodyEditor({ resourceType, method }: BodyEditorProps) {
 				</Alert>
 			)}
 
-			<Text size="xs" c="dimmed">
+			<Text size="xs" className={styles.footer}>
 				{body.length} bytes
 			</Text>
-		</Stack>
+		</div>
 	);
 }

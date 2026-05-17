@@ -1,12 +1,5 @@
 import { useState, useCallback, useMemo } from "react";
-import {
-	Box,
-	Stack,
-	Text,
-	Tabs,
-	ActionIcon,
-	Tooltip,
-} from "@/shared/ui";
+import { Text, Tabs, ActionIcon, Tooltip } from "@/shared/ui";
 import { WorkspacePageLayout } from "@/widgets/workspace-page";
 import { notifications } from "@octofhir/ui-kit";
 import { ListUl, ChartBar, Xmark } from "@gravity-ui/icons";
@@ -106,7 +99,7 @@ export function AuditTrailPage() {
 			bodyClassName={classes.body}
 			contentClassName={classes.container}
 		>
-			<Stack gap={0} className={classes.stack}>
+			<div className={classes.stack}>
 				<Tabs
 					value={activeTab}
 					onChange={setActiveTab}
@@ -174,14 +167,14 @@ export function AuditTrailPage() {
 				)}
 
 				{activeTab === "analytics" && (
-					<Box className={classes.analyticsContainer}>
+					<div className={classes.analyticsContainer}>
 						<AuditAnalytics
 							analytics={analytics}
 							isLoading={isLoadingAnalytics}
 						/>
-					</Box>
+					</div>
 				)}
-			</Stack>
+			</div>
 		</WorkspacePageLayout>
 	);
 }

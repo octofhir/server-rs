@@ -1,5 +1,6 @@
-import { Group, Stack, Text, Badge, Box } from "@/shared/ui";
+import { Text, Badge } from "@/shared/ui";
 import type { ConsoleCommand } from "../../commands/types";
+import styles from "./CommandItem.module.css";
 
 interface CommandItemProps {
 	command: ConsoleCommand;
@@ -7,21 +8,17 @@ interface CommandItemProps {
 
 export function CommandItem({ command }: CommandItemProps) {
 	return (
-		<Group justify="space-between" wrap="nowrap">
-			<Group gap="sm" wrap="nowrap" style={{ flex: 1, minWidth: 0 }}>
+		<div className={styles.root}>
+			<div className={styles.main}>
 				{command.icon && (
-					<Box color="secondary" style={{ flexShrink: 0 }}>
+					<span className={styles.icon}>
 						{command.icon}
-					</Box>
+					</span>
 				)}
-				<Stack gap="0" style={{ flex: 1, minWidth: 0 }}>
+				<div className={styles.content}>
 					<Text
 						variant="body-1"
-						style={{
-							overflow: "hidden",
-							textOverflow: "ellipsis",
-							whiteSpace: "nowrap",
-						}}
+						className={styles.ellipsis}
 					>
 						{command.label}
 					</Text>
@@ -29,27 +26,23 @@ export function CommandItem({ command }: CommandItemProps) {
 						<Text
 							variant="caption-1"
 							color="secondary"
-							style={{
-								overflow: "hidden",
-								textOverflow: "ellipsis",
-								whiteSpace: "nowrap",
-							}}
+							className={styles.ellipsis}
 						>
 							{command.description}
 						</Text>
 					)}
-				</Stack>
-			</Group>
+				</div>
+			</div>
 
 			{command.badge && (
 				<Badge
 					size="s"
 					color={command.badgeColor ?? "gray"}
-					style={{ flexShrink: 0 }}
+					className={styles.badge}
 				>
 					{command.badge}
 				</Badge>
 			)}
-		</Group>
+		</div>
 	);
 }

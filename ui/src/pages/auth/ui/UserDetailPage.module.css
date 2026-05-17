@@ -2,6 +2,7 @@
 	display: grid;
 	grid-template-columns: 1fr 1fr;
 	gap: 12px;
+	align-items: start;
 }
 
 @media (max-width: 900px) {
@@ -11,14 +12,21 @@
 
 }
 
+.metaBadges,
+.actions {
+	flex-wrap: wrap;
+}
+
 .sectionCard {
 	padding: 14px;
+	min-width: 0;
 }
 
 .sectionTitle {
 	font-size: var(--octo-typography-size-md);
 	font-weight: 600;
 	margin-bottom: 10px;
+	margin-top: 0;
 	display: flex;
 	align-items: center;
 	gap: var(--octo-spacing-xs);
@@ -34,9 +42,11 @@
 	display: flex;
 	align-items: center;
 	justify-content: space-between;
+	gap: var(--octo-spacing-xs);
 	padding: 8px 10px;
 	background: var(--octo-surface-1);
 	border-radius: var(--g-border-radius-m);
+	min-width: 0;
 }
 
 [data-theme="dark"] .roleItem {
@@ -45,16 +55,21 @@
 
 .roleName {
 	font-weight: 500;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
 }
 
 .sessionItem {
 	display: flex;
 	align-items: center;
 	justify-content: space-between;
+	gap: var(--octo-spacing-sm);
 	padding: 8px 10px;
 	background: var(--octo-surface-1);
 	border-radius: var(--g-border-radius-m);
 	margin-bottom: 8px;
+	min-width: 0;
 }
 
 [data-theme="dark"] .sessionItem {
@@ -65,16 +80,23 @@
 	display: flex;
 	flex-direction: column;
 	gap: 2px;
+	min-width: 0;
 }
 
 .sessionDevice {
 	font-weight: 500;
 	font-size: var(--octo-typography-size-sm);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
 }
 
 .sessionMeta {
 	font-size: var(--octo-typography-size-xs);
 	color: var(--octo-text-secondary);
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
 }
 
 .infoGrid {
@@ -99,10 +121,21 @@
 .infoValue {
 	font-size: var(--octo-typography-size-sm);
 	font-weight: 500;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
 }
 
 .emptyState {
 	text-align: center;
 	padding: 20px;
 	color: var(--octo-text-secondary);
+}
+
+.tableText {
+	display: block;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	max-width: 240px;
 }

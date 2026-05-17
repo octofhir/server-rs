@@ -1,4 +1,5 @@
 import { Table, Text, Code } from "@/shared/ui";
+import { isRecord } from "@/shared/api/guards";
 import type { RunResult } from "../../lib/useViewDefinition";
 
 interface ResultTableProps {
@@ -34,7 +35,7 @@ export function ResultTable({ result }: ResultTableProps) {
             {result.columns.map((col) => (
               <Table.Td key={col.name}>
                 <Code size="xs">
-                  {JSON.stringify((row as Record<string, unknown>)[col.name])}
+                  {JSON.stringify(isRecord(row) ? row[col.name] : undefined)}
                 </Code>
               </Table.Td>
             ))}

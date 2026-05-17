@@ -1,0 +1,16 @@
+.filterCode,
+.endpointCode {
+	display: block;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.filterCode {
+	max-width: 180px;
+}
+
+.endpointCode {
+	max-width: 140px;
+}

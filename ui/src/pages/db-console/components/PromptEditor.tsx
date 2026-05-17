@@ -75,6 +75,7 @@ export function PromptEditor({
 	const [diagnosticsSize, setDiagnosticsSize] = useLocalStorage({
 		key: "db-console-diagnostics-size",
 		defaultValue: 38,
+		validate: (value): value is number => typeof value === "number" && Number.isFinite(value),
 	});
 	const { config: formatterConfig, saveConfig: saveFormatterConfig } =
 		useFormatterSettings();

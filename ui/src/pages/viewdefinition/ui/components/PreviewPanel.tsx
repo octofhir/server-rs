@@ -2,6 +2,7 @@ import { Flex, Tabs, Text, Box } from "@/shared/ui";
 import { SQLPreview } from "./SQLPreview";
 import { ResultTable } from "./ResultTable";
 import type { RunResult, SqlResult } from "../../lib/useViewDefinition";
+import classes from "./PreviewPanel.module.css";
 
 interface PreviewPanelProps {
   runResult: RunResult | null;
@@ -12,10 +13,10 @@ interface PreviewPanelProps {
 
 export function PreviewPanel({ runResult, sqlResult, onRefreshSql, isLoading }: PreviewPanelProps) {
   return (
-    <Flex direction="column" gap="4" style={{ flex: 1, height: "100%" }}>
+    <Flex direction="column" gap="4" className={classes.panel}>
       <Tabs
         defaultValue="sql"
-        style={{ flex: 1, display: "flex", flexDirection: "column" }}
+        className={classes.tabs}
         onUpdate={(value) => {
           if (value === "sql") {
             onRefreshSql();
@@ -27,13 +28,13 @@ export function PreviewPanel({ runResult, sqlResult, onRefreshSql, isLoading }: 
           <Tabs.Tab value="results">Results{runResult && ` (${runResult.rowCount})`}</Tabs.Tab>
         </Tabs.List>
 
-        <Tabs.Panel value="sql" style={{ flex: 1, overflow: "auto", paddingTop: 16 }}>
+        <Tabs.Panel value="sql" className={classes.tabPanel}>
           <SQLPreview result={sqlResult} isLoading={isLoading} error={null} />
         </Tabs.Panel>
 
-        <Tabs.Panel value="results" style={{ flex: 1, overflow: "hidden", paddingTop: 16 }}>
+        <Tabs.Panel value="results" className={classes.resultsPanel}>
           {runResult ? (
-            <Box style={{ height: "100%", overflow: "auto" }}>
+            <Box className={classes.resultsScroll}>
               <ResultTable result={runResult} />
             </Box>
           ) : (

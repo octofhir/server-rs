@@ -4,11 +4,9 @@ import {
   Button,
   Card,
   DataPreview,
-  Group,
   KeyValueList,
   Modal,
   SectionPanel,
-  Stack,
   Text,
   Tooltip,
 } from '@/shared/ui';
@@ -35,6 +33,7 @@ import {
   useRevokeSession,
   useSessions,
 } from '../lib/useSessions';
+import classes from './SessionsPage.module.css';
 
 function DeviceIcon({ kind }: { kind: SessionDeviceKind }) {
   return kind === 'mobile' ? <Smartphone size={20} /> : <Display size={20} />;
@@ -98,7 +97,7 @@ export function SessionsPage() {
       description="Manage your active login sessions across devices"
       className="page-enter"
       actions={
-          <Group>
+          <div className={classes.actions}>
             <Button variant="subtle" leftSection={<ArrowRotateRight size={16} />} onClick={() => refetch()}>
               Refresh
             </Button>
@@ -107,10 +106,10 @@ export function SessionsPage() {
                 Revoke All Other Sessions
               </Button>
             )}
-          </Group>
+          </div>
       }
     >
-      <Stack gap="sm">
+      <div className={classes.sections}>
         {currentSession && (
           <SectionPanel
             title="Current session"
@@ -128,16 +127,16 @@ export function SessionsPage() {
               const activity = getAuthSessionActivityView(currentSession);
 
               return (
-                <Stack gap="sm">
-                  <Group>
+                <div className={classes.currentSession}>
+                  <div className={classes.deviceCell}>
                     <DeviceIcon kind={device.kind} />
-                    <div>
-                      <Text fw={600}>{device.deviceName}</Text>
-                      <Text size="sm" c="dimmed">
+                    <div className={classes.deviceText}>
+                      <Text fw={600} className={classes.primaryText}>{device.deviceName}</Text>
+                      <Text size="sm" c="dimmed" className={classes.secondaryText}>
                         {device.browser}
                       </Text>
                     </div>
-                  </Group>
+                  </div>
 
                   <KeyValueList
                     items={[
@@ -146,7 +145,7 @@ export function SessionsPage() {
                       { id: 'expires', label: 'Expires', value: activity.expires },
                     ]}
                   />
-                </Stack>
+                </div>
               );
             })()}
           </SectionPanel>
@@ -180,21 +179,21 @@ export function SessionsPage() {
 
                     return {
                       device: (
-                        <Group gap="sm">
+                        <div className={classes.deviceCell}>
                           <DeviceIcon kind={device.kind} />
-                          <div>
-                            <Text size="sm" fw={500}>
+                          <div className={classes.deviceText}>
+                            <Text size="sm" fw={500} className={classes.primaryText}>
                               {device.deviceName}
                             </Text>
-                            <Text size="xs" c="dimmed">
+                            <Text size="xs" c="dimmed" className={classes.secondaryText}>
                               {device.browser}
                             </Text>
                           </div>
-                        </Group>
+                        </div>
                       ),
-                      location: <Text size="sm">{activity.location}</Text>,
-                      lastActive: <Text size="sm">{activity.lastActive}</Text>,
-                      expires: <Text size="sm">{activity.expires}</Text>,
+                      location: <Text size="sm" className={classes.tableText}>{activity.location}</Text>,
+                      lastActive: <Text size="sm" className={classes.tableText}>{activity.lastActive}</Text>,
+                      expires: <Text size="sm" className={classes.tableText}>{activity.expires}</Text>,
                       actions: (
                         <Tooltip label="Revoke session">
                           <ActionIcon
@@ -214,7 +213,7 @@ export function SessionsPage() {
             getRowKey={(_row, index) => otherSessions[index]?.id ?? `${index}`}
           />
         </SectionPanel>
-      </Stack>
+      </div>
 
       <Modal
         opened={revokeModalOpened}
@@ -223,41 +222,41 @@ export function SessionsPage() {
         centered
         radius="lg"
       >
-        <Stack gap="sm">
+        <div className={classes.modalBody}>
           <Text>
             Are you sure you want to revoke this session? The device will need to sign in again.
           </Text>
           {selectedSession && (
-            <Card withBorder radius="md" p="sm">
+            <Card className={classes.sessionPreview}>
               {(() => {
                 const device = getAuthSessionDeviceView(selectedSession);
                 const activity = getAuthSessionActivityView(selectedSession);
 
                 return (
-                  <Group gap="sm">
+                  <div className={classes.deviceCell}>
                     <DeviceIcon kind={device.kind} />
-                    <div>
-                      <Text size="sm" fw={500}>
+                    <div className={classes.deviceText}>
+                      <Text size="sm" fw={500} className={classes.primaryText}>
                         {device.deviceName}
                       </Text>
-                      <Text size="xs" c="dimmed">
+                      <Text size="xs" c="dimmed" className={classes.secondaryText}>
                         {activity.location}
                       </Text>
                     </div>
-                  </Group>
+                  </div>
                 );
               })()}
             </Card>
           )}
-          <Group justify="flex-end" mt="sm">
+          <div className={classes.modalActions}>
             <Button variant="subtle" onClick={closeRevokeModal}>
               Cancel
             </Button>
             <Button color="red" onClick={confirmRevoke} loading={revokeSessionMutation.isPending}>
               Revoke Session
             </Button>
-          </Group>
-        </Stack>
+          </div>
+        </div>
       </Modal>
 
       <Modal
@@ -267,22 +266,22 @@ export function SessionsPage() {
         centered
         radius="lg"
       >
-        <Stack gap="sm">
+        <div className={classes.modalBody}>
           <Text>
             Are you sure you want to revoke all other sessions? All other devices will need to sign in again.
           </Text>
           <Text size="sm" c="dimmed">
             This will affect {otherSessions.length} session{otherSessions.length !== 1 ? 's' : ''}.
           </Text>
-          <Group justify="flex-end" mt="sm">
+          <div className={classes.modalActions}>
             <Button variant="subtle" onClick={closeRevokeAllModal}>
               Cancel
             </Button>
             <Button color="red" onClick={confirmRevokeAll} loading={revokeAllMutation.isPending}>
               Revoke All
             </Button>
-          </Group>
-        </Stack>
+          </div>
+        </div>
       </Modal>
     </WorkspacePageLayout>
   );

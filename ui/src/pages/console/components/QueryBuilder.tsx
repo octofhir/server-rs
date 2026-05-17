@@ -2,8 +2,6 @@ import { useState, useMemo, useCallback } from "react";
 import {
 	TextInput,
 	Textarea,
-	Stack,
-	Flex,
 	Text,
 	SegmentedRadioGroup,
 	Badge,
@@ -19,6 +17,7 @@ import {
 	mergeSearchParamsAndQuery,
 } from "../utils/queryParser";
 import type { RestConsoleSearchParam } from "@/shared/api";
+import styles from "./QueryBuilder.module.css";
 
 interface QueryBuilderProps {
 	searchParamsByResource: Record<string, RestConsoleSearchParam[]>;
@@ -30,7 +29,11 @@ type QueryBuilderMode = "builder" | "raw";
 const MODE_OPTIONS = [
 	{ label: "Builder", value: "builder" },
 	{ label: "Raw", value: "raw" },
-];
+] satisfies Array<{ label: string; value: QueryBuilderMode }>;
+
+function isQueryBuilderMode(value: string): value is QueryBuilderMode {
+	return MODE_OPTIONS.some((option) => option.value === value);
+}
 
 export function QueryBuilder({
 	searchParamsByResource: _searchParamsByResource,
@@ -76,8 +79,8 @@ export function QueryBuilder({
 	);
 
 	return (
-		<Stack gap="xs">
-			<Flex justifyContent="space-between" alignItems="center">
+		<div className={styles.root}>
+			<div className={styles.header}>
 				<Text variant="subheader-1">
 					Query Parameters
 				</Text>
@@ -85,9 +88,13 @@ export function QueryBuilder({
 					size="s"
 					options={MODE_OPTIONS}
 					value={mode}
-					onChange={(value) => setMode(value as QueryBuilderMode)}
+					onChange={(value) => {
+						if (isQueryBuilderMode(value)) {
+							setMode(value);
+						}
+					}}
 				/>
-			</Flex>
+			</div>
 
 			{mode === "builder" ? (
 				<TextInput
@@ -108,14 +115,14 @@ export function QueryBuilder({
 				/>
 			)}
 
-			<Flex gap="2" alignItems="center">
+			<div className={styles.footer}>
 				<Badge size="s" theme="info">
 					{searchParams.length + Object.keys(queryParams).length} parameters
 				</Badge>
 				<Text variant="caption-1" color="secondary">
 					Press Enter or blur to apply changes
 				</Text>
-			</Flex>
-		</Stack>
+			</div>
+		</div>
 	);
 }

@@ -1,0 +1,62 @@
+.actions {
+	display: flex;
+	flex-wrap: wrap;
+	justify-content: flex-end;
+	gap: var(--octo-spacing-xs);
+}
+
+.sections {
+	display: flex;
+	flex-direction: column;
+	gap: var(--octo-spacing-sm);
+}
+
+.currentSession {
+	display: grid;
+	grid-template-columns: minmax(220px, 0.8fr) minmax(0, 1fr);
+	gap: var(--octo-spacing-md);
+	align-items: start;
+}
+
+.deviceCell {
+	display: flex;
+	align-items: center;
+	gap: var(--octo-spacing-sm);
+	min-width: 0;
+}
+
+.deviceText {
+	min-width: 0;
+}
+
+.primaryText,
+.secondaryText,
+.tableText {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.sessionPreview {
+	padding: var(--octo-spacing-sm);
+}
+
+.modalBody {
+	display: flex;
+	flex-direction: column;
+	gap: var(--octo-spacing-sm);
+}
+
+.modalActions {
+	display: flex;
+	flex-wrap: wrap;
+	justify-content: flex-end;
+	gap: var(--octo-spacing-xs);
+	margin-top: var(--octo-spacing-xs);
+}
+
+@media (max-width: 760px) {
+	.currentSession {
+		grid-template-columns: 1fr;
+	}
+}

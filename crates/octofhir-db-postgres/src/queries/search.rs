@@ -263,34 +263,51 @@ pub async fn execute_search_raw_with_config(
                     .unwrap_or_else(|| (key.clone(), None));
 
                 // SQL shape for token-like params can depend on raw value format
-                // (e.g. identifier=value vs identifier=system|value). Encode this
-                // in the cache key to avoid binding a text param to a cached JSON
-                // template (or vice versa).
+                // (e.g. identifier=value vs identifier=system|value vs identifier=system|).
+                // Encode this in the cache key to avoid binding a text param to a cached
+                // JSON template (or vice versa).
+                //
+                // Distinguish four shapes:
+                //   - "system|value" → JSON containment (@>) with system+value
+                //   - "system|"      → EXISTS with system-only text match
+                //   - "|value"       → EXISTS with empty-system text match
+                //   - "value"        → EXISTS with value-only text match
                 let token_shape = {
-                    let has_pipe = values.iter().any(|v| v.contains('|'));
                     let has_no_pipe = values.iter().any(|v| !v.contains('|'));
-                    let has_system = values.iter().any(|v| {
+                    let has_system_with_value = values.iter().any(|v| {
                         v.split_once('|')
-                            .map(|(left, _)| !left.is_empty())
+                            .map(|(left, right)| !left.is_empty() && !right.is_empty())
+                            .unwrap_or(false)
+                    });
+                    let has_system_only = values.iter().any(|v| {
+                        v.split_once('|')
+                            .map(|(left, right)| !left.is_empty() && right.is_empty())
                             .unwrap_or(false)
                     });
                     let has_empty_system = values.iter().any(|v| {
                         v.split_once('|')
-                            .map(|(left, _)| left.is_empty())
+                            .map(|(left, right)| left.is_empty() && !right.is_empty())
                             .unwrap_or(false)
                     });
 
-                    if has_pipe && has_no_pipe {
-                        "token-mixed"
-                    } else if has_pipe && has_system && !has_empty_system {
-                        "token-system"
-                    } else if has_pipe && has_empty_system && !has_system {
-                        "token-nosystem"
-                    } else if has_pipe {
-                        "token-pipe-mixed"
-                    } else {
-                        "token-plain"
+                    // Compose a tag that varies whenever any of the shape signals differ.
+                    // Each signal contributes a distinct letter so different combinations
+                    // (e.g. system|value alone vs alongside system|) produce different keys.
+                    let mut tag = String::with_capacity(8);
+                    tag.push_str("tok-");
+                    if has_system_with_value {
+                        tag.push_str("sv");
                     }
+                    if has_system_only {
+                        tag.push_str("s");
+                    }
+                    if has_empty_system {
+                        tag.push_str("es");
+                    }
+                    if has_no_pipe {
+                        tag.push_str("p");
+                    }
+                    tag
                 };
 
                 let cache_name = format!("{name}#{token_shape}");
@@ -303,10 +320,23 @@ pub async fn execute_search_raw_with_config(
                 }
             })
             .collect();
+        // Encode sort direction into the cache key — otherwise `_sort=birthdate`
+        // and `_sort=-birthdate` collide on the same template and the second
+        // query reuses the wrong ORDER BY clause.
         let sort_fields: Vec<String> = params
             .sort
             .as_ref()
-            .map(|s| s.iter().map(|f| f.field.clone()).collect())
+            .map(|s| {
+                s.iter()
+                    .map(|f| {
+                        if f.descending {
+                            format!("-{}", f.field)
+                        } else {
+                            f.field.clone()
+                        }
+                    })
+                    .collect()
+            })
             .unwrap_or_default();
         QueryCacheKey::from_typed_params(
             resource_type,

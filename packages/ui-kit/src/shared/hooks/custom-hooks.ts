@@ -25,15 +25,19 @@ export function useDisclosureState(initialState = false): DisclosureState {
 export interface PersistentStateOptions<T> {
     key: string;
     defaultValue: T;
+    validate?: (value: unknown) => value is T;
 }
 
 /** Persisted state synced to localStorage. */
-export function usePersistentState<T>({ key, defaultValue }: PersistentStateOptions<T>) {
+export function usePersistentState<T>({ key, defaultValue, validate }: PersistentStateOptions<T>) {
     const [value, setValue] = useState<T>(() => {
         if (typeof window === "undefined") return defaultValue;
         try {
             const item = localStorage.getItem(key);
-            return item ? (JSON.parse(item) as T) : defaultValue;
+            if (!item) return defaultValue;
+
+            const parsed: unknown = JSON.parse(item);
+            return validate?.(parsed) ? parsed : defaultValue;
         } catch {
             return defaultValue;
         }

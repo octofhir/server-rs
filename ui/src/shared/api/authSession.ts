@@ -1,5 +1,6 @@
 import type { TokenResponse } from "./types";
 import { AuthApiError, authApi } from "./authApi";
+import { isRecord } from "./guards";
 
 const SESSION_STORAGE_KEY = "octofhir.auth.session";
 const REFRESH_SKEW_MS = 30_000;
@@ -26,11 +27,19 @@ function readSession(): StoredAuthSession {
 	}
 
 	try {
-		const parsed = JSON.parse(raw) as StoredAuthSession;
-		if (typeof parsed !== "object" || parsed === null) {
+		const parsed: unknown = JSON.parse(raw);
+		if (!isRecord(parsed)) {
 			return {};
 		}
-		return parsed;
+
+		return {
+			refreshToken: typeof parsed.refreshToken === "string" ? parsed.refreshToken : undefined,
+			accessTokenExpiresAt:
+				typeof parsed.accessTokenExpiresAt === "number" &&
+				Number.isFinite(parsed.accessTokenExpiresAt)
+					? parsed.accessTokenExpiresAt
+					: undefined,
+		};
 	} catch {
 		return {};
 	}

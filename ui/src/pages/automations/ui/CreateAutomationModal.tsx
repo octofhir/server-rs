@@ -1,15 +1,17 @@
 import { useState } from "react";
-import { Modal, TextInput, Textarea, Button, Stack, Group } from "@/shared/ui";
+import { Modal, TextInput, Textarea, Button, Flex } from "@/shared/ui";
 import { notifications } from "@octofhir/ui-kit";
 import { useNavigate } from "react-router-dom";
+import { isAutomationFeatureUnavailableError } from "@/shared/api/automationsApi";
 import { useCreateAutomation } from "../lib/useAutomations";
+import classes from "./CreateAutomationModal.module.css";
 
 interface CreateAutomationModalProps {
   opened: boolean;
   onClose: () => void;
 }
 
-const DEFAULT_SOURCE_CODE = `/**
+export const DEFAULT_AUTOMATION_SOURCE_CODE = `/**
  * Automation Script
  *
  * Available global APIs:
@@ -63,7 +65,7 @@ export function CreateAutomationModal({ opened, onClose }: CreateAutomationModal
       const automation = await createMutation.mutateAsync({
         name: name.trim(),
         description: description.trim() || undefined,
-        source_code: DEFAULT_SOURCE_CODE,
+        source_code: DEFAULT_AUTOMATION_SOURCE_CODE,
         timeout_ms: 5000,
       });
 
@@ -81,8 +83,10 @@ export function CreateAutomationModal({ opened, onClose }: CreateAutomationModal
       navigate(`/automations/${automation.id}`);
     } catch (error) {
       notifications.show({
-        title: "Error",
-        message: error instanceof Error ? error.message : "Failed to create automation",
+        title: isAutomationFeatureUnavailableError(error) ? "Automations Disabled" : "Error",
+        message: isAutomationFeatureUnavailableError(error)
+          ? "The backend did not expose the automation API."
+          : error instanceof Error ? error.message : "Failed to create automation",
         color: "red",
       });
     }
@@ -96,7 +100,7 @@ export function CreateAutomationModal({ opened, onClose }: CreateAutomationModal
 
   return (
     <Modal opened={opened} onClose={handleClose} title="Create Automation" size="md">
-      <Stack gap="md">
+      <div className={classes.form}>
         <TextInput
           label="Name"
           placeholder="My Automation"
@@ -114,15 +118,15 @@ export function CreateAutomationModal({ opened, onClose }: CreateAutomationModal
           rows={3}
         />
 
-        <Group justify="flex-end" mt="md">
+        <Flex justifyContent="flex-end" gap="2" className={classes.actions}>
           <Button variant="default" onClick={handleClose}>
             Cancel
           </Button>
           <Button onClick={handleCreate} loading={createMutation.isPending}>
             Create
           </Button>
-        </Group>
-      </Stack>
+        </Flex>
+      </div>
     </Modal>
   );
 }

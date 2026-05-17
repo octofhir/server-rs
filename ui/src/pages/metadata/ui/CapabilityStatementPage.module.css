@@ -1,3 +1,18 @@
+.metaBadges,
+.interactionList,
+.metricHeader,
+.loadingState {
+	align-items: center;
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--g-spacing-2);
+	min-width: 0;
+}
+
+.loadingState {
+	padding: var(--g-spacing-6) 0;
+}
+
 .stats {
 	display: grid;
 	grid-template-columns: repeat(3, minmax(0, 1fr));

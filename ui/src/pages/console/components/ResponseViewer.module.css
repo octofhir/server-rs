@@ -1,0 +1,78 @@
+.loading {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 20px;
+}
+
+.skeletonHeader {
+  height: 40px;
+  border-radius: 8px;
+}
+
+.skeletonBody {
+  height: 300px;
+  border-radius: 8px;
+}
+
+.empty {
+  display: flex;
+  justify-content: center;
+  padding: 40px 0;
+  color: var(--g-color-text-secondary);
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--g-color-line-generic-subtle);
+  background: var(--g-color-base-generic-subtle);
+}
+
+.status {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.statusBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.outcome {
+  padding: 16px;
+}
+
+.tabs {
+  padding: 0 20px 20px;
+}
+
+.tabPanel {
+  padding-top: 16px;
+}
+
+.jsonFrame {
+  overflow: hidden;
+  border: 1px solid var(--g-color-line-generic-subtle);
+  border-radius: 8px;
+}
+
+.tableLabel {
+  font-weight: 500;
+}
+
+.resourceLink {
+  cursor: pointer;
+}
+
+@media (max-width: 720px) {
+  .header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}

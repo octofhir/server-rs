@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import type { LogEntry, LogLevel, LogFilters } from "@/shared/api/types";
+import { isRecord } from "@/shared/api/guards";
 
 // Generate a unique ID for log entries
 function generateId(): string {
@@ -57,6 +58,31 @@ const DEMO_MESSAGES: Record<LogLevel, string[]> = {
 		"Transaction rollback triggered",
 	],
 };
+
+const LOG_LEVELS: readonly string[] = ["trace", "debug", "info", "warn", "error"];
+
+function isLogLevel(value: unknown): value is LogLevel {
+	return typeof value === "string" && LOG_LEVELS.includes(value);
+}
+
+function isLogEntry(value: unknown): value is LogEntry {
+	if (!isRecord(value)) {
+		return false;
+	}
+
+	const span = value.span;
+
+	return (
+		typeof value.id === "string" &&
+		typeof value.timestamp === "string" &&
+		isLogLevel(value.level) &&
+		typeof value.target === "string" &&
+		typeof value.message === "string" &&
+		(value.fields === undefined || isRecord(value.fields)) &&
+		(span === undefined ||
+			(isRecord(span) && typeof span.name === "string" && typeof span.target === "string"))
+	);
+}
 
 // Generate a random demo log entry
 function generateDemoLogEntry(): LogEntry {
@@ -247,10 +273,13 @@ export function useLogStream(options: UseLogStreamOptions = {}): UseLogStreamRet
 
 			ws.onmessage = (event) => {
 				try {
-					const entry = JSON.parse(event.data) as LogEntry;
+					const entry = JSON.parse(event.data);
+					if (!isLogEntry(entry)) {
+						throw new Error("Invalid log entry payload");
+					}
 					addLogEntry(entry);
 				} catch {
-					console.error("Failed to parse log entry:", event.data);
+					setConnectionError("Received an invalid log entry");
 				}
 			};
 

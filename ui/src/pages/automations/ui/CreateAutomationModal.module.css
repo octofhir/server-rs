@@ -1,0 +1,8 @@
+.form {
+	display: grid;
+	gap: var(--g-spacing-4);
+}
+
+.actions {
+	margin-top: var(--g-spacing-4);
+}

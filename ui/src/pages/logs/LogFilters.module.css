@@ -8,12 +8,19 @@
 }
 
 .toolbar {
-	width: 100%;
+	align-items: center;
+	display: flex;
+	gap: var(--g-spacing-3);
 	justify-content: space-between;
+	width: 100%;
 }
 
 .primaryControls {
+	align-items: center;
+	display: flex;
 	flex: 1 1 420px;
+	flex-wrap: wrap;
+	gap: var(--g-spacing-2);
 	min-width: 0;
 }
 
@@ -22,13 +29,25 @@
 	flex: 1 1 260px;
 }
 
-.actions {
+.levelCount {
+	margin-left: var(--g-spacing-1);
+}
+
+.filterButton,
+.exportButton {
 	flex: 0 0 auto;
+}
+
+.actions {
+	display: flex;
+	flex: 0 0 auto;
+	gap: var(--g-spacing-2);
 }
 
 @media (max-width: 720px) {
 	.toolbar {
 		align-items: stretch;
+		flex-direction: column;
 	}
 
 	.primaryControls,

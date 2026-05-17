@@ -6,7 +6,7 @@ import { Helmet } from "react-helmet-async";
 import type { QueryInputMetadata } from "@/shared/fhir-query-input";
 import { computeDiagnostics, parseQueryAst } from "@/shared/fhir-query-input";
 import { QueryInspector } from "@/shared/fhir-query-input/widgets/QueryInspector";
-import { Box, Button, Collapse, Flex, Stack, Text } from "@/shared/ui";
+import { Button, Collapse, Text } from "@/shared/ui";
 import { BuilderModeEditor } from "./components/BuilderModeEditor";
 import { CommandPalette } from "./components/CommandPalette";
 import { HistoryPanel } from "./components/HistoryPanel";
@@ -25,6 +25,7 @@ import {
   $rawPath,
   setCommandPaletteOpen,
 } from "./state/consoleStore";
+import styles from "./RestConsolePage.module.css";
 
 export function RestConsolePage() {
   const { isPending, data, resourceTypes, allSuggestions, searchParamsByResource } =
@@ -110,7 +111,7 @@ export function RestConsolePage() {
       maxWidth={1280}
       toolbar={<ModeControl />}
       actions={
-        <Flex gap="2">
+        <div className={styles.actions}>
           <Button
             view="flat"
             size="m"
@@ -127,21 +128,16 @@ export function RestConsolePage() {
             <Button.Icon><ClockArrowRotateLeft size={16} /></Button.Icon>
             History
           </Button>
-        </Flex>
+        </div>
       }
     >
       <Helmet>
         <title>REST Console</title>
       </Helmet>
 
-          <Stack gap="6">
+          <div className={styles.root}>
             {/* Request Editor Section */}
-            <Box style={{ 
-              backgroundColor: "var(--g-color-base-background)", 
-              borderRadius: "8px",
-              border: "1px solid var(--g-color-line-generic-subtle)",
-              overflow: "hidden",
-            }}>
+            <section className={styles.requestPanel}>
               {mode === "pro" ? (
                 <RequestBar
                   allSuggestions={allSuggestions}
@@ -152,14 +148,14 @@ export function RestConsolePage() {
                   onSend={handleSend}
                 />
               ) : (
-                <Box style={{ padding: "16px" }}>
+                <div className={styles.builderContent}>
                    <BuilderModeEditor
                     allSuggestions={allSuggestions}
                     searchParamsByResource={searchParamsByResource}
                     capabilities={data}
                     isLoading={isPending}
                   />
-                  <Flex justifyContent="flex-end" mt="4">
+                  <div className={styles.builderActions}>
                     <Button
                       size="l"
                       view="action"
@@ -169,24 +165,19 @@ export function RestConsolePage() {
                       <Button.Icon><Play size={18} /></Button.Icon>
                       Execute Request
                     </Button>
-                  </Flex>
-                </Box>
+                  </div>
+                </div>
               )}
               
               {/* Additional request options (Tabs, Headers, Body) */}
-              <Box style={{ borderTop: "1px solid var(--g-color-line-generic-subtle)" }}>
+              <div className={styles.requestOptions}>
                 <RequestOptionTabs />
-              </Box>
-            </Box>
+              </div>
+            </section>
 
             {/* Inspector (collapsible) */}
             <Collapse in={inspectorOpened}>
-              <Box style={{ 
-                padding: "16px",
-                border: "1px solid var(--g-color-line-info-subtle)", 
-                borderRadius: "8px",
-                backgroundColor: "var(--g-color-base-info-subtle)" 
-              }}>
+              <section className={styles.inspectorPanel}>
                 <QueryInspector
                   ast={inspectorAst}
                   diagnostics={inspectorDiagnostics}
@@ -200,35 +191,30 @@ export function RestConsolePage() {
                           body: sendMutation.data.body,
                           requestPath: sendMutation.data.requestPath,
                         }
-                      : undefined
+                    : undefined
                   }
                 />
-              </Box>
+              </section>
             </Collapse>
 
             {/* Response Section */}
-            <Box>
+            <section>
               {sendMutation.data || sendMutation.isPending ? (
-                <Stack gap="3">
-                  <Text variant="caption-1" style={{ textTransform: "uppercase", fontWeight: 700, color: "var(--g-color-text-secondary)" }}>
+                <div className={styles.responseSection}>
+                  <Text variant="caption-1" className={styles.sectionLabel}>
                     Response
                   </Text>
-                  <Box style={{ 
-                    borderRadius: "8px",
-                    border: "1px solid var(--g-color-line-generic-subtle)",
-                    backgroundColor: "var(--g-color-base-background)",
-                    overflow: "hidden",
-                  }}>
+                  <div className={styles.responsePanel}>
                     <ResponseViewer response={sendMutation.data} isLoading={sendMutation.isPending} />
-                  </Box>
-                </Stack>
+                  </div>
+                </div>
               ) : (
-                <Flex direction="column" alignItems="center" style={{ padding: "60px 0", opacity: 0.5 }}>
+                <div className={styles.emptyResponse}>
                   <Text variant="body-2">Execute a request to see the response payload here.</Text>
-                </Flex>
+                </div>
               )}
-            </Box>
-          </Stack>
+            </section>
+          </div>
 
       <CommandPalette />
       <HistoryPanel opened={historyOpened} onClose={historyHandlers.close} />

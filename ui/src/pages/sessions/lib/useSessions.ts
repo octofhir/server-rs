@@ -36,7 +36,9 @@ export function useSessions(userId: string) {
       };
 
       const response = await fhirClient.search<AuthSession>('AuthSession', params);
-      return getBundleResources(response).map((resource) => parseAuthSession(resource));
+      return getBundleResources(response)
+        .map((resource) => parseAuthSession(resource))
+        .filter((session): session is AuthSession => session !== null);
     },
     enabled: Boolean(userId),
     refetchInterval: 30000, // Refresh every 30 seconds

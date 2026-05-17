@@ -1,4 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { isRecord } from "@/shared/api/guards";
 
 export interface ViewDefinitionColumn {
   name: string;
@@ -55,14 +56,79 @@ export interface SqlResult {
   columns: Array<{ name: string; type: string }>;
 }
 
+function isViewDefinition(value: unknown): value is ViewDefinition {
+  return (
+    isRecord(value) &&
+    value.resourceType === "ViewDefinition" &&
+    typeof value.name === "string" &&
+    typeof value.status === "string" &&
+    typeof value.resource === "string" &&
+    Array.isArray(value.select)
+  );
+}
+
+function readDiagnostics(value: unknown): string | undefined {
+  if (!isRecord(value) || !Array.isArray(value.issue)) {
+    return undefined;
+  }
+
+  const issue = value.issue.find(isRecord);
+  return typeof issue?.diagnostics === "string" ? issue.diagnostics : undefined;
+}
+
+function readParameters(value: unknown): Array<Record<string, unknown>> {
+  if (!isRecord(value) || !Array.isArray(value.parameter)) {
+    return [];
+  }
+  return value.parameter.filter(isRecord);
+}
+
+function findParameter(value: unknown, name: string): Record<string, unknown> | undefined {
+  return readParameters(value).find((parameter) => parameter.name === name);
+}
+
+function readColumns(parameter: Record<string, unknown> | undefined): SqlResult["columns"] {
+  if (!parameter || !Array.isArray(parameter.part)) {
+    return [];
+  }
+
+  return parameter.part.filter(isRecord).flatMap((part) => {
+    if (typeof part.name !== "string" || typeof part.valueString !== "string") {
+      return [];
+    }
+    return [{ name: part.name, type: part.valueString }];
+  });
+}
+
+function readRows(parameter: Record<string, unknown> | undefined): unknown[] {
+  const resource = parameter && isRecord(parameter.resource) ? parameter.resource : undefined;
+  const rowsData = resource?.data;
+  if (typeof rowsData !== "string") {
+    return [];
+  }
+
+  try {
+    const rows = JSON.parse(rowsData);
+    return Array.isArray(rows) ? rows : [];
+  } catch {
+    return [];
+  }
+}
+
 // Fetch all ViewDefinitions
 async function fetchViewDefinitions(): Promise<ViewDefinition[]> {
   const res = await fetch("/fhir/ViewDefinition?_count=100");
   if (!res.ok) {
     throw new Error("Failed to fetch ViewDefinitions");
   }
-  const bundle = await res.json();
-  return bundle.entry?.map((e: { resource: ViewDefinition }) => e.resource) || [];
+  const bundle: unknown = await res.json();
+  if (!isRecord(bundle) || !Array.isArray(bundle.entry)) {
+    return [];
+  }
+  return bundle.entry
+    .filter(isRecord)
+    .map((entry) => entry.resource)
+    .filter(isViewDefinition);
 }
 
 // Fetch a single ViewDefinition
@@ -71,7 +137,11 @@ async function fetchViewDefinition(id: string): Promise<ViewDefinition> {
   if (!res.ok) {
     throw new Error("Failed to fetch ViewDefinition");
   }
-  return res.json();
+  const viewDefinition: unknown = await res.json();
+  if (!isViewDefinition(viewDefinition)) {
+    throw new Error("Invalid ViewDefinition response");
+  }
+  return viewDefinition;
 }
 
 // Run a ViewDefinition
@@ -91,24 +161,17 @@ async function runViewDefinition(viewDefinition: ViewDefinition): Promise<RunRes
   });
 
   if (!res.ok) {
-    const error = await res.json();
-    throw new Error(error.issue?.[0]?.diagnostics || "Failed to run ViewDefinition");
+    const error: unknown = await res.json();
+    throw new Error(readDiagnostics(error) || "Failed to run ViewDefinition");
   }
 
-  const result = await res.json();
+  const result: unknown = await res.json();
 
   // Parse the result
-  const columns = result.parameter
-    ?.find((p: { name: string }) => p.name === "columns")
-    ?.part?.map((p: { name: string; valueString: string }) => ({
-      name: p.name,
-      type: p.valueString,
-    })) || [];
-
-  const rowCount = result.parameter?.find((p: { name: string }) => p.name === "rowCount")?.valueInteger || 0;
-
-  const rowsData = result.parameter?.find((p: { name: string }) => p.name === "rows")?.resource?.data;
-  const rows = rowsData ? JSON.parse(rowsData) : [];
+  const columns = readColumns(findParameter(result, "columns"));
+  const rowCountValue = findParameter(result, "rowCount")?.valueInteger;
+  const rowCount = typeof rowCountValue === "number" ? rowCountValue : 0;
+  const rows = readRows(findParameter(result, "rows"));
 
   return { columns, rowCount, rows };
 }
@@ -127,11 +190,15 @@ async function saveViewDefinition(viewDefinition: ViewDefinition): Promise<ViewD
   });
 
   if (!res.ok) {
-    const error = await res.json();
-    throw new Error(error.issue?.[0]?.diagnostics || "Failed to save ViewDefinition");
+    const error: unknown = await res.json();
+    throw new Error(readDiagnostics(error) || "Failed to save ViewDefinition");
   }
 
-  return res.json();
+  const saved: unknown = await res.json();
+  if (!isViewDefinition(saved)) {
+    throw new Error("Invalid ViewDefinition save response");
+  }
+  return saved;
 }
 
 // Delete a ViewDefinition
@@ -156,21 +223,16 @@ async function generateSql(viewDefinition: ViewDefinition): Promise<SqlResult> {
   });
 
   if (!res.ok) {
-    const error = await res.json();
-    throw new Error(error.issue?.[0]?.diagnostics || "Failed to generate SQL");
+    const error: unknown = await res.json();
+    throw new Error(readDiagnostics(error) || "Failed to generate SQL");
   }
 
-  const result = await res.json();
+  const result: unknown = await res.json();
 
   // Parse the result
-  const sql = result.parameter?.find((p: { name: string }) => p.name === "sql")?.valueString || "";
-
-  const columns = result.parameter
-    ?.find((p: { name: string }) => p.name === "columns")
-    ?.part?.map((p: { name: string; valueString: string }) => ({
-      name: p.name,
-      type: p.valueString,
-    })) || [];
+  const sqlValue = findParameter(result, "sql")?.valueString;
+  const sql = typeof sqlValue === "string" ? sqlValue : "";
+  const columns = readColumns(findParameter(result, "columns"));
 
   return { sql, columns };
 }
@@ -186,7 +248,12 @@ export function useViewDefinitions() {
 export function useViewDefinition(id: string | undefined) {
   return useQuery({
     queryKey: ["viewDefinition", id],
-    queryFn: () => fetchViewDefinition(id!),
+    queryFn: () => {
+      if (!id) {
+        throw new Error("ViewDefinition id is required");
+      }
+      return fetchViewDefinition(id);
+    },
     enabled: !!id,
   });
 }

@@ -1,13 +1,11 @@
 import { useState } from "react";
 import {
-  Stack,
-  Group,
-  Paper,
+  Box,
+  Flex,
   Text,
   Button,
   Select,
   Code,
-  ScrollArea,
   Badge,
   Divider,
   Collapse,
@@ -18,6 +16,8 @@ import { IconPlayerPlay, IconTrash, IconChevronDown, IconChevronRight } from "@o
 import { JsonEditor } from "@/shared/monaco/JsonEditor";
 import { useTestAutomation } from "../../lib/useAutomations";
 import type { ExecuteAutomationResponse, AutomationLogEntry } from "@/shared/api/types";
+import { isRecord } from "@/shared/api/guards";
+import classes from "./PlaygroundPanel.module.css";
 
 interface PlaygroundPanelProps {
   automationId: string;
@@ -115,12 +115,15 @@ export function PlaygroundPanel({ automationId, sourceCode }: PlaygroundPanelPro
 
   const handleExecute = async () => {
     try {
-      const input = JSON.parse(inputJson);
+      const input: unknown = JSON.parse(inputJson);
+      if (!isRecord(input)) {
+        throw new SyntaxError("Input JSON must be an object");
+      }
       // Use test endpoint with current source code from editor
       const response = await testMutation.mutateAsync({
         source_code: sourceCode,
         resource: input.resource,
-        event_type: input.event_type,
+        event_type: typeof input.event_type === "string" ? input.event_type : undefined,
       });
       setResult(response);
 
@@ -159,10 +162,10 @@ export function PlaygroundPanel({ automationId, sourceCode }: PlaygroundPanelPro
   };
 
   return (
-    <Stack gap="md" h="100%">
+    <div className={classes.root}>
       {/* Input section */}
-      <Stack gap="xs">
-        <Group justify="space-between">
+      <div className={classes.inputSection}>
+        <Flex justifyContent="space-between" alignItems="center" gap="2" wrap="wrap">
           <Text fw={500} size="sm">Input Context</Text>
           <Select
             size="xs"
@@ -170,17 +173,17 @@ export function PlaygroundPanel({ automationId, sourceCode }: PlaygroundPanelPro
             data={eventTemplates.map((t) => ({ value: t.value, label: t.label }))}
             onChange={handleTemplateChange}
             clearable
-            w={200}
+            className={classes.templateSelect}
           />
-        </Group>
-        <Paper withBorder radius="md" style={{ overflow: "hidden" }}>
+        </Flex>
+        <Box className={classes.editorFrame}>
           <JsonEditor
             value={inputJson}
             onChange={(value) => setInputJson(value || "")}
             height={180}
           />
-        </Paper>
-        <Group>
+        </Box>
+        <Flex gap="2" wrap="wrap">
           <Button
             leftSection={<IconPlayerPlay size={16} />}
             onClick={handleExecute}
@@ -193,16 +196,16 @@ export function PlaygroundPanel({ automationId, sourceCode }: PlaygroundPanelPro
               Clear Results
             </Button>
           )}
-        </Group>
-      </Stack>
+        </Flex>
+      </div>
 
       <Divider />
 
       {/* Results section */}
       {result && (
-        <Stack gap="sm" style={{ flex: 1, minHeight: 0 }}>
+        <div className={classes.results}>
           {/* Status */}
-          <Group gap="md">
+          <Flex gap="4" alignItems="center" wrap="wrap">
             <Badge color={result.success ? "green" : "red"} size="lg">
               {result.success ? "Success" : "Failed"}
             </Badge>
@@ -211,65 +214,67 @@ export function PlaygroundPanel({ automationId, sourceCode }: PlaygroundPanelPro
                 Duration: {result.duration_ms}ms
               </Text>
             )}
-          </Group>
+          </Flex>
 
           {/* Error */}
           {result.error && (
-            <Paper withBorder p="sm" radius="md" bg="var(--g-color-base-danger-light)">
+            <Box className={classes.errorCard}>
               <Text size="sm" c="red" fw={500}>Error:</Text>
               <Code block color="red" mt="xs">
                 {result.error}
               </Code>
-            </Paper>
+            </Box>
           )}
 
           {/* Output */}
           {result.output !== undefined && (
-            <Paper withBorder radius="md" p={0}>
-              <Group
-                p="xs"
-                style={{ cursor: "pointer" }}
+            <Box className={classes.resultCard}>
+              <Flex
+                alignItems="center"
+                gap="2"
+                className={classes.collapseHeader}
                 onClick={() => setOutputExpanded(!outputExpanded)}
               >
                 <ActionIcon variant="subtle" size="sm">
                   {outputExpanded ? <IconChevronDown size={16} /> : <IconChevronRight size={16} />}
                 </ActionIcon>
                 <Text size="sm" fw={500}>Output</Text>
-              </Group>
+              </Flex>
               <Collapse in={outputExpanded}>
                 <Divider />
-                <ScrollArea h={120} p="xs">
+                <div className={classes.outputScroll}>
                   <Code block>
                     {JSON.stringify(result.output, null, 2)}
                   </Code>
-                </ScrollArea>
+                </div>
               </Collapse>
-            </Paper>
+            </Box>
           )}
 
           {/* Execution Logs */}
           {result.logs && result.logs.length > 0 && (
-            <Paper withBorder radius="md" p={0}>
-              <Group
-                p="xs"
-                style={{ cursor: "pointer" }}
+            <Box className={classes.resultCard}>
+              <Flex
+                alignItems="center"
+                gap="2"
+                className={classes.collapseHeader}
                 onClick={() => setLogsExpanded(!logsExpanded)}
               >
                 <ActionIcon variant="subtle" size="sm">
                   {logsExpanded ? <IconChevronDown size={16} /> : <IconChevronRight size={16} />}
                 </ActionIcon>
                 <Text size="sm" fw={500}>Logs ({result.logs.length})</Text>
-              </Group>
+              </Flex>
               <Collapse in={logsExpanded}>
                 <Divider />
-                <ScrollArea h={180}>
-                  <Stack gap={4} p="xs">
+                <div className={classes.logsScroll}>
+                  <div className={classes.logsList}>
                     {result.logs.map((log, index) => (
-                      <Paper key={`${index}-${log.message.slice(0, 20)}`} p="xs" withBorder>
-                        <Group gap="xs" wrap="nowrap" align="flex-start">
+                      <Box key={`${index}-${log.message.slice(0, 20)}`} className={classes.logItem}>
+                        <Flex gap="2" wrap="nowrap" alignItems="flex-start">
                           <LogLevelBadge level={log.level} />
-                          <Stack gap={2} style={{ flex: 1, minWidth: 0 }}>
-                            <Text size="xs" style={{ fontFamily: "monospace" }}>
+                          <div className={classes.logBody}>
+                            <Text size="xs" className={classes.logMessage}>
                               {log.message}
                             </Text>
                             {log.data !== undefined && log.data !== null && (
@@ -277,33 +282,33 @@ export function PlaygroundPanel({ automationId, sourceCode }: PlaygroundPanelPro
                                 {typeof log.data === "string" ? log.data : JSON.stringify(log.data, null, 2)}
                               </Code>
                             )}
-                          </Stack>
+                          </div>
                           {log.timestamp && (
-                            <Text size="xs" c="dimmed" style={{ flexShrink: 0 }}>
+                            <Text size="xs" c="dimmed" className={classes.logTime}>
                               {new Date(log.timestamp).toLocaleTimeString()}
                             </Text>
                           )}
-                        </Group>
-                      </Paper>
+                        </Flex>
+                      </Box>
                     ))}
-                  </Stack>
-                </ScrollArea>
+                  </div>
+                </div>
               </Collapse>
-            </Paper>
+            </Box>
           )}
-        </Stack>
+        </div>
       )}
 
       {!result && (
-        <Paper withBorder p="xl" radius="md" ta="center">
+        <Box className={classes.emptyState}>
           <Text c="dimmed" size="sm">
             Click "Execute" to run the automation with the input context above.
           </Text>
           <Text c="dimmed" size="xs" mt="xs">
             Tip: Press Ctrl+Enter in the editor to execute
           </Text>
-        </Paper>
+        </Box>
       )}
-    </Stack>
+    </div>
   );
 }

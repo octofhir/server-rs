@@ -1,15 +1,5 @@
 import { Drawer } from "@/shared/ui";
-import {
-  ActionIcon,
-  Badge,
-  Button,
-  Card,
-  Group,
-  Menu,
-  Stack,
-  Text,
-  TextInput,
-} from "@/shared/ui";
+import { ActionIcon, Badge, Button, Card, Menu, Text, TextInput } from "@/shared/ui";
 import {
   IconClock,
   IconDots,
@@ -26,6 +16,7 @@ import type { HistoryEntry } from "../db/historyDatabase";
 import { useHistory } from "../hooks/useHistory";
 import { historyService } from "../services/historyService";
 import { setBody, setMethod, setMode, setRawPath } from "../state/consoleStore";
+import styles from "./HistoryPanel.module.css";
 
 interface HistoryPanelProps {
   opened: boolean;
@@ -78,8 +69,10 @@ export function HistoryPanel({ opened, onClose }: HistoryPanelProps) {
   };
 
   return (
-    <Drawer opened={opened} onClose={onClose} title="Request History" position="right" size="lg">
-      <Stack gap="md">
+    <Drawer open={opened} onOpenChange={(nextOpen) => !nextOpen && onClose()} placement="right">
+      <div className={styles.root}>
+        <h2 className={styles.title}>Request History</h2>
+
         {/* Search */}
         <TextInput
           placeholder="Search by path or method..."
@@ -89,11 +82,11 @@ export function HistoryPanel({ opened, onClose }: HistoryPanelProps) {
         />
 
         {/* Actions */}
-        <Group justify="space-between">
+        <div className={styles.summary}>
           <Text size="sm" c="dimmed">
             {filteredEntries.length} entries
           </Text>
-          <Group gap="xs">
+          <div className={styles.actions}>
             <Button
               size="xs"
               variant="light"
@@ -105,11 +98,11 @@ export function HistoryPanel({ opened, onClose }: HistoryPanelProps) {
             <Button size="xs" variant="light" color="fire" onClick={() => clearAll()}>
               Clear All
             </Button>
-          </Group>
-        </Group>
+          </div>
+        </div>
 
         {/* Entry list */}
-        <Stack gap="xs">
+        <div className={styles.list}>
           {filteredEntries.map((entry) => (
             <HistoryEntryCard
               key={entry.id}
@@ -119,14 +112,14 @@ export function HistoryPanel({ opened, onClose }: HistoryPanelProps) {
               onDelete={() => deleteEntry(entry.id)}
             />
           ))}
-        </Stack>
+        </div>
 
         {filteredEntries.length === 0 && (
-          <Text size="sm" c="dimmed" ta="center" py="xl">
+          <Text size="sm" c="dimmed" className={styles.empty}>
             No history entries
           </Text>
         )}
-      </Stack>
+      </div>
     </Drawer>
   );
 }
@@ -149,12 +142,12 @@ function HistoryEntryCard({
   return (
     <Card
       p="sm"
-      style={{ cursor: "pointer", backgroundColor: "var(--octo-surface-1)" }}
+      className={styles.card}
       onClick={() => onRestore(entry)}
     >
-      <Stack gap="xs">
-        <Group justify="space-between">
-          <Group gap="xs">
+      <div className={styles.cardContent}>
+        <div className={styles.cardHeader}>
+          <div className={styles.badges}>
             <Badge size="sm" variant="light">
               {entry.method}
             </Badge>
@@ -163,9 +156,9 @@ function HistoryEntryCard({
                 {entry.responseStatus}
               </Badge>
             )}
-          </Group>
+          </div>
 
-          <Group gap="xs">
+          <div className={styles.cardActions}>
             <ActionIcon
               size="sm"
               variant="subtle"
@@ -196,28 +189,28 @@ function HistoryEntryCard({
                 </Menu.Item>
               </Menu.Dropdown>
             </Menu>
-          </Group>
-        </Group>
+          </div>
+        </div>
 
         <Text size="sm" truncate>
           {entry.path}
         </Text>
 
-        <Group gap="xs">
-          <Group gap={4}>
+        <div className={styles.meta}>
+          <div className={styles.metaItem}>
             <IconClock size={12} />
             <Text size="xs" c="dimmed">
               {new Date(entry.requestedAt).toLocaleString()}
             </Text>
-          </Group>
+          </div>
 
           {entry.responseDurationMs && (
             <Text size="xs" c="dimmed">
               {entry.responseDurationMs}ms
             </Text>
           )}
-        </Group>
-      </Stack>
+        </div>
+      </div>
     </Card>
   );
 }

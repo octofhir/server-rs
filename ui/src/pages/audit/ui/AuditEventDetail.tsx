@@ -1,7 +1,5 @@
 import { memo } from "react";
 import {
-	Stack,
-	Group,
 	Text,
 	Badge,
 	Divider,
@@ -12,7 +10,6 @@ import {
 	CopyButton,
 	ActionIcon,
 	Tooltip,
-	Paper,
 } from "@/shared/ui";
 import {
 	Person,
@@ -78,7 +75,7 @@ function DetailRow({
 	if (!value) return null;
 
 	return (
-		<Group gap="sm" wrap="nowrap" className={classes.detailRow}>
+		<div className={classes.detailRow}>
 			{Icon && (
 				<ThemeIcon size="sm" variant="light" color="gray">
 					<Icon size={12} />
@@ -87,7 +84,7 @@ function DetailRow({
 			<Text size="sm" c="dimmed" className={classes.detailLabel}>
 				{label}
 			</Text>
-			<Group gap="xs" wrap="nowrap" style={{ flex: 1 }}>
+			<div className={classes.detailValueGroup}>
 				<Text size="sm" className={classes.detailValue}>
 					{value}
 				</Text>
@@ -102,8 +99,8 @@ function DetailRow({
 						)}
 					</CopyButton>
 				)}
-			</Group>
-		</Group>
+			</div>
+		</div>
 	);
 }
 
@@ -119,10 +116,10 @@ function DiffViewer({
 	// If we have a diff array, show it
 	if (diff && diff.length > 0) {
 		return (
-			<Stack gap="xs">
-				{diff.map((change) => (
-					<Paper key={`${change.op}-${change.path}`} className={classes.diffItem} p="xs" withBorder>
-						<Group gap="xs" wrap="nowrap" mb="xs">
+			<div className={classes.detailSection}>
+					{diff.map((change) => (
+						<div key={`${change.op}-${change.path}`} className={classes.diffItem}>
+						<div className={classes.diffHeader}>
 							<Badge
 								size="xs"
 								variant="light"
@@ -146,41 +143,41 @@ function DiffViewer({
 								{change.op}
 							</Badge>
 							<Code size="xs">{change.path}</Code>
-						</Group>
-						<Group gap="sm" wrap="nowrap" align="flex-start">
+						</div>
+						<div className={classes.diffColumns}>
 							{change.op !== "add" && change.oldValue !== undefined && (
-								<Paper className={classes.diffOld} p="xs" style={{ flex: 1 }}>
+								<div className={classes.diffOld}>
 									<Text size="xs" c="dimmed" mb={4}>
 										Before
 									</Text>
 									<Code block size="xs">
 										{JSON.stringify(change.oldValue, null, 2)}
 									</Code>
-								</Paper>
+								</div>
 							)}
 							{change.op !== "remove" && change.newValue !== undefined && (
-								<Paper className={classes.diffNew} p="xs" style={{ flex: 1 }}>
+								<div className={classes.diffNew}>
 									<Text size="xs" c="dimmed" mb={4}>
 										After
 									</Text>
 									<Code block size="xs">
 										{JSON.stringify(change.newValue, null, 2)}
 									</Code>
-								</Paper>
+								</div>
 							)}
-						</Group>
-					</Paper>
+						</div>
+					</div>
 				))}
-			</Stack>
+			</div>
 		);
 	}
 
 	// Fall back to before/after comparison
 	if (before || after) {
 		return (
-			<Group gap="md" align="flex-start" wrap="nowrap">
+			<div className={classes.diffColumns}>
 				{before && (
-					<Paper className={classes.diffOld} p="sm" style={{ flex: 1 }}>
+					<div className={classes.diffOld}>
 						<Text size="sm" fw={500} mb="sm">
 							Before
 						</Text>
@@ -189,7 +186,7 @@ function DiffViewer({
 								{JSON.stringify(before, null, 2)}
 							</Code>
 						</ScrollArea.Autosize>
-					</Paper>
+					</div>
 				)}
 				{before && after && (
 					<ThemeIcon size="lg" variant="light" color="gray" className={classes.diffArrow}>
@@ -197,7 +194,7 @@ function DiffViewer({
 					</ThemeIcon>
 				)}
 				{after && (
-					<Paper className={classes.diffNew} p="sm" style={{ flex: 1 }}>
+					<div className={classes.diffNew}>
 						<Text size="sm" fw={500} mb="sm">
 							After
 						</Text>
@@ -206,9 +203,9 @@ function DiffViewer({
 								{JSON.stringify(after, null, 2)}
 							</Code>
 						</ScrollArea.Autosize>
-					</Paper>
+					</div>
 				)}
-			</Group>
+			</div>
 		);
 	}
 
@@ -225,15 +222,15 @@ function AuditEventDetailComponent({ event }: AuditEventDetailProps) {
 	return (
 		<div className={classes.container}>
 			<ScrollArea className={classes.scrollArea}>
-				<Stack gap="md" p="md">
+				<div className={classes.content}>
 					{/* Header */}
 					<div className={classes.header}>
-						<Group justify="space-between" align="flex-start">
-							<Stack gap="xs">
+						<div className={classes.headerRow}>
+							<div className={classes.detailSection}>
 								<Text size="lg" fw={600}>
 									{getAuditActionDetailLabel(event.action)}
 								</Text>
-								<Group gap="xs">
+								<div className={classes.badgeRow}>
 									<Badge
 										size="lg"
 										variant="light"
@@ -247,8 +244,8 @@ function AuditEventDetailComponent({ event }: AuditEventDetailProps) {
 											{event.outcomeDescription}
 										</Text>
 									)}
-								</Group>
-							</Stack>
+								</div>
+							</div>
 							<CopyButton value={event.id}>
 								{({ copied, copy }) => (
 									<Tooltip label={copied ? "Copied!" : "Copy Event ID"}>
@@ -256,7 +253,7 @@ function AuditEventDetailComponent({ event }: AuditEventDetailProps) {
 											size="sm"
 											variant="light"
 											color="gray"
-											style={{ cursor: "pointer" }}
+											className={classes.copyBadge}
 											onClick={copy}
 										>
 											{event.id.slice(0, 8)}...
@@ -264,7 +261,7 @@ function AuditEventDetailComponent({ event }: AuditEventDetailProps) {
 									</Tooltip>
 								)}
 							</CopyButton>
-						</Group>
+						</div>
 					</div>
 
 					<Divider />
@@ -279,7 +276,7 @@ function AuditEventDetailComponent({ event }: AuditEventDetailProps) {
 						</Tabs.List>
 
 						<Tabs.Panel value="details" pt="md">
-							<Stack gap="lg">
+							<div className={classes.sectionList}>
 								{/* Timestamp */}
 								<div>
 									<Text size="xs" c="dimmed" tt="uppercase" mb="xs">
@@ -297,7 +294,7 @@ function AuditEventDetailComponent({ event }: AuditEventDetailProps) {
 									<Text size="xs" c="dimmed" tt="uppercase" mb="xs">
 										Actor
 									</Text>
-									<Stack gap="xs">
+									<div className={classes.detailSection}>
 										<DetailRow
 											label="Type"
 											value={event.actor.type.charAt(0).toUpperCase() + event.actor.type.slice(1)}
@@ -312,7 +309,7 @@ function AuditEventDetailComponent({ event }: AuditEventDetailProps) {
 										{event.actor.reference && (
 											<DetailRow label="Reference" value={event.actor.reference} copyable />
 										)}
-									</Stack>
+									</div>
 								</div>
 
 								{/* Source */}
@@ -320,7 +317,7 @@ function AuditEventDetailComponent({ event }: AuditEventDetailProps) {
 									<Text size="xs" c="dimmed" tt="uppercase" mb="xs">
 										Source
 									</Text>
-									<Stack gap="xs">
+									<div className={classes.detailSection}>
 										<DetailRow
 											label="IP Address"
 											value={event.source.ipAddress}
@@ -335,7 +332,7 @@ function AuditEventDetailComponent({ event }: AuditEventDetailProps) {
 										{event.source.site && (
 											<DetailRow label="Site" value={event.source.site} />
 										)}
-									</Stack>
+									</div>
 								</div>
 
 								{/* Target */}
@@ -344,7 +341,7 @@ function AuditEventDetailComponent({ event }: AuditEventDetailProps) {
 										<Text size="xs" c="dimmed" tt="uppercase" mb="xs">
 											Target
 										</Text>
-										<Stack gap="xs">
+										<div className={classes.detailSection}>
 											{event.target.resourceType && (
 												<DetailRow
 													label="Resource Type"
@@ -368,10 +365,10 @@ function AuditEventDetailComponent({ event }: AuditEventDetailProps) {
 											{event.target.query && (
 												<DetailRow label="Query" value={event.target.query} copyable />
 											)}
-										</Stack>
+										</div>
 									</div>
 								)}
-							</Stack>
+							</div>
 						</Tabs.Panel>
 
 						{hasChanges && (
@@ -382,7 +379,7 @@ function AuditEventDetailComponent({ event }: AuditEventDetailProps) {
 
 						{hasContext && (
 							<Tabs.Panel value="context" pt="md">
-								<Stack gap="xs">
+								<div className={classes.detailSection}>
 									{Object.entries(event.context || {}).map(([key, value]) => (
 										<DetailRow
 											key={key}
@@ -393,21 +390,21 @@ function AuditEventDetailComponent({ event }: AuditEventDetailProps) {
 											copyable={typeof value === "string"}
 										/>
 									))}
-								</Stack>
+								</div>
 							</Tabs.Panel>
 						)}
 
 						<Tabs.Panel value="raw" pt="md">
-							<Paper withBorder p="sm">
+							<div className={classes.rawFrame}>
 								<ScrollArea.Autosize mah={400}>
 									<Code block size="xs">
 										{JSON.stringify(event, null, 2)}
 									</Code>
 								</ScrollArea.Autosize>
-							</Paper>
+							</div>
 						</Tabs.Panel>
 					</Tabs>
-				</Stack>
+				</div>
 			</ScrollArea>
 		</div>
 	);

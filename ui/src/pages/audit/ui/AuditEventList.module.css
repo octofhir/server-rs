@@ -7,6 +7,22 @@
   table-layout: fixed;
 }
 
+.timeCell {
+  width: 160px;
+}
+
+.actionCell {
+  width: 150px;
+}
+
+.outcomeCell {
+  width: 110px;
+}
+
+.sourceCell {
+  width: 120px;
+}
+
 .thead {
   position: sticky;
   top: 0;
@@ -43,4 +59,40 @@
 
 .loadMore {
   min-height: 48px;
+}
+
+.emptyState,
+.cellStack {
+  display: flex;
+  flex-direction: column;
+}
+
+.emptyState {
+  align-items: center;
+  gap: 8px;
+}
+
+.inlineCell {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 8px;
+}
+
+.cellStack {
+  min-width: 0;
+}
+
+.truncateText {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 960px) {
+  .sourceCell,
+  .table td:nth-child(6) {
+    display: none;
+  }
 }

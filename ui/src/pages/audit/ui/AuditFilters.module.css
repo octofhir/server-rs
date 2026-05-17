@@ -1,11 +1,16 @@
 .container {
-  padding: 8px 0;
+  padding: 8px 0 10px;
   background: var(--octo-surface-1);
   border-bottom: 1px solid var(--octo-border-subtle);
 }
 
 .filtersRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   min-height: 40px;
+  overflow-x: auto;
+  padding-bottom: 2px;
 }
 
 .searchInput {
@@ -14,6 +19,15 @@
 
 .filterButton {
   flex-shrink: 0;
+}
+
+.countBadge {
+  margin-left: var(--g-spacing-1);
+}
+
+.actorSelect {
+  width: 140px;
+  flex: 0 0 140px;
 }
 
 .spacer {
@@ -25,4 +39,35 @@
   height: 24px;
   background: var(--octo-border-subtle);
   margin: 0 var(--octo-spacing-xs);
+}
+
+.chipGroup,
+.timeMenu,
+.iconActions {
+  display: flex;
+  gap: 8px;
+}
+
+.chipGroup {
+  flex-wrap: wrap;
+  padding: 8px;
+}
+
+.timeMenu {
+  flex-direction: column;
+}
+
+.iconActions {
+  align-items: center;
+  gap: 4px;
+}
+
+@media (max-width: 820px) {
+  .searchInput {
+    flex-basis: 220px;
+  }
+
+  .spacer {
+    display: none;
+  }
 }

@@ -39,14 +39,20 @@ pub fn build_reference_search(
 
         let condition = match &param.modifier {
             None => {
-                // Default: match reference via index table
-                build_index_reference_condition(
+                // Default: match reference via index table OR direct JSONB match.
+                // The direct JSONB fallback covers cases where the
+                // search_idx_reference index has not been populated for this
+                // resource (e.g., index extractor not run after insert).
+                let index_cond = build_index_reference_condition(
                     builder,
                     resource_type,
                     &param.name,
                     &value.raw,
                     target_types,
-                )
+                );
+                let jsonb_cond =
+                    build_jsonb_reference_condition(builder, jsonb_path, &value.raw, target_types);
+                format!("({index_cond} OR {jsonb_cond})")
             }
 
             Some(SearchModifier::Identifier) => {
@@ -95,6 +101,65 @@ pub fn build_reference_search(
     }
 
     Ok(())
+}
+
+/// Build a direct JSONB reference match condition.
+///
+/// This produces a condition that compares the `reference` string field of
+/// a Reference JSONB element directly. It supports both single Reference
+/// objects (jsonb_path->>'reference') and arrays of References
+/// (any element's 'reference' equals the search value). It accepts both
+/// `Type/id` form and bare `id` form (with single target type).
+fn build_jsonb_reference_condition(
+    builder: &mut SqlBuilder,
+    jsonb_path: &str,
+    ref_value: &str,
+    target_types: &[String],
+) -> String {
+    // Compose all the candidate reference string values to compare against.
+    let mut candidates: Vec<String> = Vec::new();
+
+    if ref_value.contains('/') {
+        // Already Type/id — match as-is.
+        candidates.push(ref_value.to_string());
+    } else if target_types.len() == 1 {
+        // Bare id with a single target type — accept both forms.
+        candidates.push(format!("{}/{}", target_types[0], ref_value));
+        candidates.push(ref_value.to_string());
+    } else {
+        // Bare id with multiple/no targets — try each known target type plus
+        // a bare-id form as a last resort.
+        for t in target_types {
+            candidates.push(format!("{}/{}", t, ref_value));
+        }
+        candidates.push(ref_value.to_string());
+    }
+
+    // Bind each candidate as a text parameter.
+    let mut param_nums: Vec<usize> = Vec::with_capacity(candidates.len());
+    for c in &candidates {
+        param_nums.push(builder.add_text_param(c));
+    }
+
+    // Build single-value and array-value match clauses. We can't know at SQL
+    // build time whether jsonb_path is an object or an array, so we OR a
+    // direct ->>'reference' compare with an EXISTS over jsonb_array_elements.
+    let single_match: String = param_nums
+        .iter()
+        .map(|p| format!("({jsonb_path}->>'reference' = ${p})"))
+        .collect::<Vec<_>>()
+        .join(" OR ");
+
+    let array_match: String = param_nums
+        .iter()
+        .map(|p| format!("e->>'reference' = ${p}"))
+        .collect::<Vec<_>>()
+        .join(" OR ");
+
+    format!(
+        "(({single_match}) OR (jsonb_typeof({jsonb_path}) = 'array' AND EXISTS (\
+         SELECT 1 FROM jsonb_array_elements({jsonb_path}) AS e WHERE {array_match})))"
+    )
 }
 
 /// Build default reference matching condition using index table.

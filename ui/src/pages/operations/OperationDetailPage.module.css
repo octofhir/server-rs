@@ -1,0 +1,69 @@
+.loadingState {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	gap: var(--octo-spacing-xs);
+	padding: var(--octo-spacing-xl);
+}
+
+.summaryStack,
+.settingsStack {
+	display: flex;
+	flex-direction: column;
+	gap: var(--octo-spacing-sm);
+	min-width: 0;
+}
+
+.summaryHeader {
+	display: flex;
+	align-items: flex-start;
+	justify-content: space-between;
+	gap: var(--octo-spacing-md);
+	min-width: 0;
+}
+
+.summaryIdentity {
+	min-width: 0;
+}
+
+.titleRow {
+	display: flex;
+	align-items: center;
+	gap: var(--octo-spacing-sm);
+	margin-bottom: var(--octo-spacing-xs);
+	min-width: 0;
+}
+
+.operationTitle {
+	margin: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.badgeRow,
+.methodList,
+.formActions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--octo-spacing-xs);
+}
+
+.badgeRow {
+	justify-content: flex-end;
+}
+
+.methodsLabel {
+	display: block;
+	margin-bottom: var(--octo-spacing-xs);
+}
+
+@media (max-width: 760px) {
+	.summaryHeader {
+		flex-direction: column;
+	}
+
+	.badgeRow {
+		justify-content: flex-start;
+	}
+}

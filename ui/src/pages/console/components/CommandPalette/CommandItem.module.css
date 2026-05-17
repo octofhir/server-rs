@@ -1,0 +1,38 @@
+.root,
+.main,
+.content {
+  display: flex;
+}
+
+.root {
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.main {
+  align-items: center;
+  min-width: 0;
+  gap: 12px;
+}
+
+.icon {
+  flex-shrink: 0;
+  color: var(--g-color-text-secondary);
+}
+
+.content {
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+}
+
+.ellipsis {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.badge {
+  flex-shrink: 0;
+}

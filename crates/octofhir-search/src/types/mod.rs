@@ -136,10 +136,18 @@ pub fn dispatch_search(
         SearchParameterType::Number => build_number_search(builder, param, &jsonb_path),
 
         SearchParameterType::Date => {
-            // Use the search_idx_date index table for all date searches.
-            // This correctly handles polymorphic date fields (e.g., effective[x])
-            // where the JSONB path would resolve to a non-existent field name.
-            build_index_date_search(builder, param, resource_type)
+            // _lastUpdated is a system search parameter that maps to the
+            // updated_at column, not a JSONB field — it isn't stored in the
+            // search_idx_date table. Handle it via direct column comparison.
+            if param.name == "_lastUpdated" {
+                return build_last_updated_search(builder, param);
+            }
+
+            // For non-polymorphic date fields, perform a direct JSONB
+            // comparison with a timestamptz cast — this works even when the
+            // search_idx_date table is empty or not populated for this param.
+            // The path looks like ["birthDate"] (Patient) or ["meta", "lastUpdated"].
+            build_date_search(builder, param, &jsonb_path)
         }
 
         SearchParameterType::Quantity => {
@@ -271,6 +279,124 @@ pub fn dispatch_search(
             }
         }
     }
+}
+
+/// Build a date search against the `updated_at` system column (used for the
+/// `_lastUpdated` search parameter). The column is a timestamptz, so we can
+/// compare it directly against a timestamptz bind parameter.
+fn build_last_updated_search(
+    builder: &mut SqlBuilder,
+    param: &ParsedParam,
+) -> Result<(), SqlBuilderError> {
+    use crate::parameters::SearchPrefix;
+    use crate::types::date::parse_date_range;
+
+    if param.values.is_empty() {
+        return Ok(());
+    }
+
+    // Determine the column accessor — match the alias used by the FhirQueryBuilder.
+    let column = {
+        let resource_col = builder.resource_column();
+        if let Some(dot_idx) = resource_col.find('.') {
+            format!("{}.updated_at", &resource_col[..dot_idx])
+        } else {
+            "updated_at".to_string()
+        }
+    };
+
+    // Handle :missing modifier — updated_at is always set, so :missing=true
+    // matches nothing and :missing=false matches everything.
+    if let Some(SearchModifier::Missing) = &param.modifier {
+        let is_missing = param
+            .values
+            .first()
+            .map(|v| v.raw.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
+        let condition = if is_missing {
+            format!("({column} IS NULL)")
+        } else {
+            format!("({column} IS NOT NULL)")
+        };
+        builder.add_condition(condition);
+        return Ok(());
+    }
+
+    let mut or_conditions = Vec::new();
+
+    for value in &param.values {
+        if value.raw.is_empty() {
+            continue;
+        }
+
+        let prefix = value.prefix.unwrap_or(SearchPrefix::Eq);
+        let range = parse_date_range(&value.raw)?;
+        let start = range
+            .start
+            .format(&time::format_description::well_known::Rfc3339)
+            .unwrap_or_else(|_| range.start.to_string());
+        let end = range
+            .end
+            .format(&time::format_description::well_known::Rfc3339)
+            .unwrap_or_else(|_| range.end.to_string());
+
+        let condition = match prefix {
+            SearchPrefix::Eq => {
+                let p1 = builder.add_timestamp_param(&start);
+                let p2 = builder.add_timestamp_param(&end);
+                format!(
+                    "({column} >= ${p1}::timestamptz AND {column} < ${p2}::timestamptz)"
+                )
+            }
+            SearchPrefix::Ne => {
+                let p1 = builder.add_timestamp_param(&start);
+                let p2 = builder.add_timestamp_param(&end);
+                format!(
+                    "NOT ({column} >= ${p1}::timestamptz AND {column} < ${p2}::timestamptz)"
+                )
+            }
+            SearchPrefix::Gt | SearchPrefix::Sa => {
+                let p = builder.add_timestamp_param(&end);
+                format!("({column} >= ${p}::timestamptz)")
+            }
+            SearchPrefix::Lt | SearchPrefix::Eb => {
+                let p = builder.add_timestamp_param(&start);
+                format!("({column} < ${p}::timestamptz)")
+            }
+            SearchPrefix::Ge => {
+                let p = builder.add_timestamp_param(&start);
+                format!("({column} >= ${p}::timestamptz)")
+            }
+            SearchPrefix::Le => {
+                let p = builder.add_timestamp_param(&end);
+                format!("({column} < ${p}::timestamptz)")
+            }
+            SearchPrefix::Ap => {
+                let duration: time::Duration = range.end - range.start;
+                let expansion = duration / 10;
+                let approx_start: time::OffsetDateTime = range.start - expansion;
+                let approx_end: time::OffsetDateTime = range.end + expansion;
+                let s = approx_start
+                    .format(&time::format_description::well_known::Rfc3339)
+                    .unwrap_or_default();
+                let e = approx_end
+                    .format(&time::format_description::well_known::Rfc3339)
+                    .unwrap_or_default();
+                let p1 = builder.add_timestamp_param(s);
+                let p2 = builder.add_timestamp_param(e);
+                format!(
+                    "({column} >= ${p1}::timestamptz AND {column} < ${p2}::timestamptz)"
+                )
+            }
+        };
+        or_conditions.push(condition);
+    }
+
+    if !or_conditions.is_empty() {
+        builder.add_condition(SqlBuilder::build_or_clause(&or_conditions));
+    }
+
+    Ok(())
 }
 
 /// Build GIN-optimized `:exact` string search using `resource @> '{...}'::jsonb`.

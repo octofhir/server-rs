@@ -1,0 +1,41 @@
+.toolbar {
+	display: flex;
+	align-items: center;
+	width: 100%;
+}
+
+.search {
+	width: min(460px, 100%);
+}
+
+.tableContainer {
+	padding: 10px 12px 12px;
+}
+
+.policyCell {
+	display: flex;
+	align-items: center;
+	gap: var(--octo-spacing-xs);
+	min-width: 0;
+}
+
+.policyText {
+	min-width: 0;
+}
+
+.policyName,
+.policyDescription {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.policyDescription {
+	max-width: 420px;
+}
+
+.editorFrame {
+	overflow: hidden;
+	border: 1px solid var(--octo-border-subtle);
+	border-radius: var(--octo-radius-md);
+}

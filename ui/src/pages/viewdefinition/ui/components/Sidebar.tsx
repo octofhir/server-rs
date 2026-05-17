@@ -1,6 +1,7 @@
 import { Box, Text, Divider, Flex, Button } from "@/shared/ui";
 import { IconCheck } from "@octofhir/ui-kit";
 import type { ViewDefinition } from "../../lib/useViewDefinition";
+import classes from "./Sidebar.module.css";
 
 interface SidebarProps {
   items: ViewDefinition[];
@@ -10,26 +11,17 @@ interface SidebarProps {
 
 export function Sidebar({ items, selectedId, onSelect }: SidebarProps) {
   return (
-    <Box
-      style={{
-        width: 240,
-        height: "100%",
-        display: "flex",
-        flexDirection: "column",
-        borderRight: "1px solid var(--g-color-line-base)",
-        backgroundColor: "var(--g-color-base-generic-ultralight)",
-      }}
-    >
+    <Box className={classes.sidebar}>
       <Box px="4" py="2">
-        <Text variant="body-1" color="secondary" style={{ fontWeight: 600 }}>
+        <Text variant="body-1" color="secondary" className={classes.title}>
           Saved Views
         </Text>
       </Box>
       <Divider />
-      <Box style={{ flex: 1, overflow: "auto" }} py="2">
+      <Box className={classes.list} py="2">
         {items.length === 0 ? (
           <Box px="4" py="4">
-            <Text variant="body-1" color="secondary" style={{ textAlign: "center" }}>
+            <Text variant="body-1" color="secondary" className={classes.empty}>
               No saved views
             </Text>
           </Box>
@@ -40,18 +32,14 @@ export function Sidebar({ items, selectedId, onSelect }: SidebarProps) {
                 key={vd.id}
                 view={selectedId === vd.id ? "flat-action" : "flat"}
                 size="m"
-                style={{
-                  justifyContent: "flex-start",
-                  margin: "0 8px",
-                  borderRadius: "6px",
-                  backgroundColor: selectedId === vd.id ? "var(--g-color-base-brand-light)" : undefined,
-                }}
+                className={classes.item}
+                data-selected={selectedId === vd.id ? "true" : undefined}
                 onClick={() => vd.id && onSelect(vd.id)}
               >
                 {vd.status === "active" && (
-                   <Button.Icon><IconCheck size={14} style={{ color: "var(--g-color-text-success)" }} /></Button.Icon>
+                   <Button.Icon><IconCheck size={14} className={classes.activeIcon} /></Button.Icon>
                 )}
-                <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                <span className={classes.itemLabel}>
                   {vd.name || "Untitled"}
                 </span>
               </Button>

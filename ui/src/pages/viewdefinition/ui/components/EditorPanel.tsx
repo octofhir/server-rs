@@ -9,6 +9,19 @@ import type {
   ViewDefinitionColumn,
   ViewDefinitionSelect,
 } from "../../lib/useViewDefinition";
+import classes from "./EditorPanel.module.css";
+
+type ViewDefinitionStatus = ViewDefinition["status"];
+
+const STATUS_OPTIONS = [
+  { value: "draft", label: "Draft" },
+  { value: "active", label: "Active" },
+  { value: "retired", label: "Retired" },
+] satisfies Array<{ value: ViewDefinitionStatus; label: string }>;
+
+function isViewDefinitionStatus(value: string | undefined): value is ViewDefinitionStatus {
+  return STATUS_OPTIONS.some((option) => option.value === value);
+}
 
 interface EditorPanelProps {
   value: ViewDefinition;
@@ -137,7 +150,7 @@ export function EditorPanel({ value: viewDef, resourceTypes, onChange }: EditorP
   );
 
   return (
-    <Flex direction="column" gap="4" style={{ flex: 1 }}>
+    <Flex direction="column" gap="4" className={classes.panel}>
       {/* Basic info */}
       <Flex gap="4" alignItems="flex-end" wrap="wrap">
         <TextInput
@@ -145,7 +158,7 @@ export function EditorPanel({ value: viewDef, resourceTypes, onChange }: EditorP
           placeholder="my_patient_view"
           value={viewDef.name}
           onChange={(e) => onChange({ ...viewDef, name: e.target.value })}
-          style={{ flex: 1, minWidth: 200 }}
+          className={classes.textField}
         />
         <Select
           label="Resource"
@@ -154,32 +167,29 @@ export function EditorPanel({ value: viewDef, resourceTypes, onChange }: EditorP
           onUpdate={(value) => onChange({ ...viewDef, resource: value[0] || "Patient" })}
           data={resourceTypes}
           searchable
-          style={{ flex: 1, minWidth: 200 }}
+          className={classes.textField}
         />
         <Select
           label="Status"
           value={viewDef.status}
-          onUpdate={(value) =>
-            onChange({ ...viewDef, status: (value[0] as "draft" | "active") || "draft" })
-          }
-          data={[
-            { value: "draft", label: "Draft" },
-            { value: "active", label: "Active" },
-            { value: "retired", label: "Retired" },
-          ]}
-          style={{ width: 120 }}
+          onUpdate={(value) => {
+            const nextStatus = value[0];
+            onChange({ ...viewDef, status: isViewDefinitionStatus(nextStatus) ? nextStatus : "draft" });
+          }}
+          data={STATUS_OPTIONS}
+          className={classes.statusField}
         />
       </Flex>
 
       {/* Tabs for different editors */}
-      <Tabs defaultValue="columns" style={{ flex: 1, display: "flex", flexDirection: "column" }}>
+      <Tabs defaultValue="columns" className={classes.tabs}>
         <Tabs.List>
           <Tabs.Tab value="columns">Columns</Tabs.Tab>
           <Tabs.Tab value="where">Where</Tabs.Tab>
           <Tabs.Tab value="constants">Constants</Tabs.Tab>
         </Tabs.List>
 
-        <Tabs.Panel value="columns" style={{ paddingTop: 16 }}>
+        <Tabs.Panel value="columns" className={classes.tabPanel}>
           <ColumnBuilder
             columns={columns}
             nestedSelects={nestedSelects}
@@ -195,7 +205,7 @@ export function EditorPanel({ value: viewDef, resourceTypes, onChange }: EditorP
           />
         </Tabs.Panel>
 
-        <Tabs.Panel value="where" style={{ paddingTop: 16 }}>
+        <Tabs.Panel value="where" className={classes.tabPanel}>
           <WhereClauseEditor
             whereClauses={viewDef.where || []}
             resourceType={viewDef.resource}
@@ -204,7 +214,7 @@ export function EditorPanel({ value: viewDef, resourceTypes, onChange }: EditorP
           />
         </Tabs.Panel>
 
-        <Tabs.Panel value="constants" style={{ paddingTop: 16 }}>
+        <Tabs.Panel value="constants" className={classes.tabPanel}>
           <ConstantsEditor
             constants={viewDef.constant || []}
             onChange={(constant) => onChange({ ...viewDef, constant })}

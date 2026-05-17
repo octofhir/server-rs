@@ -1,0 +1,29 @@
+.panel {
+	flex: 1;
+	min-height: 0;
+	padding: var(--g-spacing-4);
+}
+
+.textField {
+	flex: 1 1 200px;
+	min-width: 200px;
+}
+
+.statusField {
+	width: 120px;
+	flex: 0 0 120px;
+}
+
+.tabs {
+	flex: 1;
+	min-height: 0;
+	display: flex;
+	flex-direction: column;
+}
+
+.tabPanel {
+	flex: 1;
+	min-height: 0;
+	padding-top: var(--g-spacing-4);
+	overflow: auto;
+}

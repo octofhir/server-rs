@@ -1,10 +1,11 @@
 import { memo } from "react";
-import { Group, TextInput, Select, ActionIcon, Tooltip, Box } from "@/shared/ui";
+import { TextInput, Select, ActionIcon, Tooltip, Box } from "@/shared/ui";
 import { IconTrash, IconGripVertical } from "@octofhir/ui-kit";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { FHIRPathInput } from "./FHIRPathInput";
 import type { ViewDefinitionColumn, ViewDefinitionConstant } from "../../lib/useViewDefinition";
+import classes from "./ColumnRow.module.css";
 
 interface ColumnRowProps {
   column: ViewDefinitionColumn;
@@ -42,11 +43,12 @@ export const ColumnRow = memo(function ColumnRow({
 
   return (
     <Box ref={setNodeRef} style={style}>
-      <Group gap="xs" wrap="nowrap">
+      <div className={classes.row}>
         <ActionIcon
           variant="subtle"
           size="sm"
-          style={{ cursor: isDragging ? "grabbing" : "grab" }}
+          className={classes.dragHandle}
+          data-dragging={isDragging ? "true" : undefined}
           {...attributes}
           {...listeners}
         >
@@ -56,10 +58,10 @@ export const ColumnRow = memo(function ColumnRow({
           placeholder="Column name"
           value={column.name}
           onChange={(e) => onChange(index, { ...column, name: e.target.value })}
-          style={{ flex: 1 }}
+          className={classes.nameInput}
           size="xs"
         />
-        <Box style={{ flex: 2 }}>
+        <Box className={classes.pathInput}>
           <FHIRPathInput
             value={column.path}
             onChange={(path) => onChange(index, { ...column, path })}
@@ -84,7 +86,7 @@ export const ColumnRow = memo(function ColumnRow({
           ]}
           clearable
           size="xs"
-          style={{ width: 120 }}
+          className={classes.typeSelect}
         />
         <Tooltip label="Remove column">
           <ActionIcon
@@ -96,7 +98,7 @@ export const ColumnRow = memo(function ColumnRow({
             <IconTrash size={14} />
           </ActionIcon>
         </Tooltip>
-      </Group>
+      </div>
     </Box>
   );
 });

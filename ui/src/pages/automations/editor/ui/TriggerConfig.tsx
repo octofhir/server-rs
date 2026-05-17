@@ -3,12 +3,11 @@ import {
   ActionIcon,
   Badge,
   Button,
+  Box,
   Divider,
-  Group,
   MultiSelect,
-  Paper,
   Select,
-  Stack,
+  Flex,
   Text,
   Textarea,
   TextInput,
@@ -19,6 +18,7 @@ import { IconPlus, IconTrash, IconBolt, IconClock, IconHandClick } from "@octofh
 import { useAddTrigger, useDeleteTrigger } from "../../lib/useAutomations";
 import type { AutomationTrigger, AutomationTriggerType, CreateTriggerRequest } from "@/shared/api/types";
 import { useResourceTypes } from "@/shared/api/hooks/useSystemQueries";
+import classes from "./TriggerConfig.module.css";
 
 interface TriggerConfigProps {
   automationId: string;
@@ -29,7 +29,11 @@ const triggerTypeOptions = [
   { value: "resource_event", label: "Resource Event" },
   { value: "cron", label: "Scheduled (Cron)" },
   { value: "manual", label: "Manual" },
-];
+] satisfies Array<{ value: AutomationTriggerType; label: string }>;
+
+function isAutomationTriggerType(value: string | null): value is AutomationTriggerType {
+  return value !== null && triggerTypeOptions.some((option) => option.value === value);
+}
 
 const eventTypeOptions = [
   { value: "created", label: "Created" },
@@ -45,7 +49,7 @@ const triggerTypeIcons: Record<AutomationTriggerType, React.ReactNode> = {
 
 export function TriggerConfig({ automationId, triggers }: TriggerConfigProps) {
   const [isAdding, setIsAdding] = useState(false);
-  const [newTrigger, setNewTrigger] = useState<Partial<CreateTriggerRequest>>({
+  const [newTrigger, setNewTrigger] = useState<CreateTriggerRequest>({
     trigger_type: "resource_event",
   });
 
@@ -59,15 +63,6 @@ export function TriggerConfig({ automationId, triggers }: TriggerConfigProps) {
   }));
 
   const handleAdd = async () => {
-    if (!newTrigger.trigger_type) {
-      notifications.show({
-        title: "Validation Error",
-        message: "Select a trigger type",
-        color: "red",
-      });
-      return;
-    }
-
     if (newTrigger.trigger_type === "resource_event") {
       if (!newTrigger.resource_type) {
         notifications.show({
@@ -99,7 +94,7 @@ export function TriggerConfig({ automationId, triggers }: TriggerConfigProps) {
     try {
       await addMutation.mutateAsync({
         automationId,
-        trigger: newTrigger as CreateTriggerRequest,
+        trigger: newTrigger,
       });
 
       notifications.show({
@@ -152,8 +147,8 @@ export function TriggerConfig({ automationId, triggers }: TriggerConfigProps) {
   };
 
   return (
-    <Stack gap="md">
-      <Group justify="space-between">
+    <div className={classes.root}>
+      <Flex justifyContent="space-between" alignItems="center" gap="2">
         <Text fw={500}>Triggers</Text>
         {!isAdding && (
           <Button
@@ -165,7 +160,7 @@ export function TriggerConfig({ automationId, triggers }: TriggerConfigProps) {
             Add Trigger
           </Button>
         )}
-      </Group>
+      </Flex>
 
       {/* Existing triggers */}
       {triggers.length === 0 && !isAdding ? (
@@ -173,11 +168,11 @@ export function TriggerConfig({ automationId, triggers }: TriggerConfigProps) {
           No triggers configured. Add a trigger to automatically run this automation.
         </Text>
       ) : (
-        <Stack gap="xs">
+        <div className={classes.list}>
           {triggers.map((trigger) => (
-            <Paper key={trigger.id} withBorder p="sm" radius="md">
-              <Group justify="space-between">
-                <Group gap="sm">
+            <Box key={trigger.id} className={classes.triggerCard}>
+              <Flex justifyContent="space-between" alignItems="flex-start" gap="3">
+                <Flex gap="2" alignItems="flex-start" className={classes.triggerInfo}>
                   {triggerTypeIcons[trigger.trigger_type]}
                   <div>
                     <Badge size="sm" variant="light">
@@ -192,7 +187,7 @@ export function TriggerConfig({ automationId, triggers }: TriggerConfigProps) {
                     </Text>
                     {trigger.fhirpath_filter && (
                       <Tooltip label={trigger.fhirpath_filter} multiline w={300}>
-                        <Text size="xs" c="blue" mt={2} style={{ cursor: "help" }}>
+                        <Text size="xs" c="blue" mt={2} className={classes.filterText}>
                           Filter: {trigger.fhirpath_filter.length > 40
                             ? `${trigger.fhirpath_filter.slice(0, 40)}...`
                             : trigger.fhirpath_filter}
@@ -200,7 +195,7 @@ export function TriggerConfig({ automationId, triggers }: TriggerConfigProps) {
                       </Tooltip>
                     )}
                   </div>
-                </Group>
+                </Flex>
                 <ActionIcon
                   variant="subtle"
                   color="red"
@@ -209,18 +204,18 @@ export function TriggerConfig({ automationId, triggers }: TriggerConfigProps) {
                 >
                   <IconTrash size={16} />
                 </ActionIcon>
-              </Group>
-            </Paper>
+              </Flex>
+            </Box>
           ))}
-        </Stack>
+        </div>
       )}
 
       {/* Add new trigger form */}
       {isAdding && (
         <>
           <Divider />
-          <Paper withBorder p="md" radius="md" bg="var(--octo-surface-2)">
-            <Stack gap="md">
+          <Box className={classes.formCard}>
+            <div className={classes.form}>
               <Text fw={500} size="sm">
                 New Trigger
               </Text>
@@ -229,11 +224,11 @@ export function TriggerConfig({ automationId, triggers }: TriggerConfigProps) {
                 label="Trigger Type"
                 data={triggerTypeOptions}
                 value={newTrigger.trigger_type}
-                onChange={(value) =>
-                  setNewTrigger({
-                    trigger_type: value as AutomationTriggerType,
-                  })
-                }
+                onChange={(value) => {
+                  if (isAutomationTriggerType(value)) {
+                    setNewTrigger({ trigger_type: value });
+                  }
+                }}
                 required
               />
 
@@ -295,7 +290,7 @@ export function TriggerConfig({ automationId, triggers }: TriggerConfigProps) {
                 </Text>
               )}
 
-              <Group justify="flex-end" mt="sm">
+              <Flex justifyContent="flex-end" gap="2" className={classes.formActions}>
                 <Button
                   variant="default"
                   size="xs"
@@ -309,11 +304,11 @@ export function TriggerConfig({ automationId, triggers }: TriggerConfigProps) {
                 <Button size="xs" onClick={handleAdd} loading={addMutation.isPending}>
                   Add Trigger
                 </Button>
-              </Group>
-            </Stack>
-          </Paper>
+              </Flex>
+            </div>
+          </Box>
         </>
       )}
-    </Stack>
+    </div>
   );
 }

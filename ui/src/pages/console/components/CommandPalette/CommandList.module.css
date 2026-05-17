@@ -1,0 +1,21 @@
+.empty {
+  padding: 32px 0;
+  text-align: center;
+}
+
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.item {
+  padding: 8px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background-color 0.1s ease;
+}
+
+.itemSelected {
+  background: var(--g-color-base-selection);
+}

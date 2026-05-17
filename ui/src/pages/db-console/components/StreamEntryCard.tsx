@@ -121,18 +121,11 @@ export function StreamEntryCard({
 			{/* Query text */}
 			<Tooltip label="Click to load into editor" openDelay={500}>
 				<UnstyledButton
-					className={classes.entryQueryCode}
+					className={[
+						classes.entryQueryCode,
+						isLongQuery && !queryExpanded ? classes.queryClamp3 : undefined,
+					].filter(Boolean).join(" ")}
 					onClick={() => onReplayQuery(entry.query)}
-					style={
-						isLongQuery && !queryExpanded
-							? {
-									display: "-webkit-box",
-									WebkitLineClamp: 3,
-									WebkitBoxOrient: "vertical",
-									overflow: "hidden",
-								}
-							: undefined
-					}
 				>
 					{entry.query}
 				</UnstyledButton>

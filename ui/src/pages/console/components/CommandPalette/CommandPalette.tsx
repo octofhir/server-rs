@@ -1,13 +1,5 @@
 import { useState, useRef, useEffect, useMemo } from "react";
-import {
-	Modal,
-	TextInput,
-	Stack,
-	Flex,
-	Text,
-	Kbd,
-	Box,
-} from "@/shared/ui";
+import { Modal, TextInput, Text, Kbd } from "@/shared/ui";
 import { IconSearch } from "@octofhir/ui-kit";
 import { useUnit } from "effector-react";
 import {
@@ -26,6 +18,7 @@ import { useBuilderCommands, useHistoryCommands } from "../../commands/providers
 import { filterAndSortCommands } from "../../commands/fuzzySearch";
 import type { ConsoleCommand, CommandContext } from "../../commands/types";
 import { CommandList } from "./CommandList";
+import styles from "./CommandPalette.module.css";
 
 export function CommandPalette() {
 	const {
@@ -143,16 +136,16 @@ export function CommandPalette() {
 			opened={opened}
 			onClose={() => setOpened(false)}
 			title={
-				<Flex alignItems="center" gap="2">
+				<span className={styles.title}>
 					<IconSearch size={16} />
 					<Text variant="subheader-1">Command Palette</Text>
-				</Flex>
+				</span>
 			}
 			size="lg"
 			trapFocus
 			withCloseButton
 		>
-			<Stack gap="md">
+			<div className={styles.root}>
 				<TextInput
 					ref={inputRef}
 					placeholder="Search commands (e.g. 'GET patient', 'clear history')..."
@@ -163,22 +156,22 @@ export function CommandPalette() {
 					autoFocus
 				/>
 
-				<Box style={{ maxHeight: 400, overflowY: "auto" }}>
+				<div className={styles.list}>
 					<CommandList
 						commands={filteredCommands}
 						selectedIndex={selectedIndex}
 						onExecute={handleExecute}
 					/>
-				</Box>
+				</div>
 
-				<Flex justifyContent="space-between" style={{ opacity: 0.6, fontSize: "11px", borderTop: "1px solid var(--g-color-line-generic-subtle)", paddingTop: "12px" }}>
-					<Flex gap="3">
+				<div className={styles.footer}>
+					<div className={styles.footerKeys}>
 						<Text><Kbd>↑↓</Kbd> Navigate</Text>
 						<Text><Kbd>Enter</Kbd> Execute</Text>
-					</Flex>
+					</div>
 					<Text><Kbd>Esc</Kbd> Close</Text>
-				</Flex>
-			</Stack>
+				</div>
+			</div>
 		</Modal>
 	);
 }

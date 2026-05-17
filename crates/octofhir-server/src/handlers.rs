@@ -625,6 +625,11 @@ pub async fn create_resource(
     }
 
     let mut payload = payload;
+    // FHIR R4 §3.1.0.1.3 (create): server SHALL ignore any id provided by the client
+    // and assign its own. PUT (update or create-with-id) uses the URL id instead.
+    if let Some(obj) = payload.as_object_mut() {
+        obj.remove("id");
+    }
     preprocess_payload(&resource_type, &mut payload).await?;
 
     // Handle conditional create (If-None-Exist)

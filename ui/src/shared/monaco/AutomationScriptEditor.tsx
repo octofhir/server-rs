@@ -199,15 +199,15 @@ declare function fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Re
  */
 declare const console: {
   /** Log a message at info level */
-  log(...args: any[]): void;
+  log(...args: unknown[]): void;
   /** Log an info message */
-  info(...args: any[]): void;
+  info(...args: unknown[]): void;
   /** Log a debug message */
-  debug(...args: any[]): void;
+  debug(...args: unknown[]): void;
   /** Log a warning message */
-  warn(...args: any[]): void;
+  warn(...args: unknown[]): void;
   /** Log an error message */
-  error(...args: any[]): void;
+  error(...args: unknown[]): void;
 };
 
 // =============================================================================
@@ -293,7 +293,7 @@ interface FhirResource {
     profile?: string[];
   };
   /** Allow any additional properties */
-  [key: string]: any;
+  [key: string]: unknown;
 }
 
 interface FhirBundle {

@@ -1,0 +1,89 @@
+.root {
+	height: 100%;
+	min-height: 0;
+	display: flex;
+	flex-direction: column;
+	gap: var(--g-spacing-4);
+}
+
+.inputSection {
+	display: grid;
+	gap: var(--g-spacing-2);
+}
+
+.templateSelect {
+	width: 200px;
+}
+
+.editorFrame,
+.resultCard,
+.emptyState,
+.logItem {
+	border: 1px solid var(--g-color-line-generic);
+	border-radius: 8px;
+	background: var(--octo-surface-1);
+}
+
+.editorFrame {
+	overflow: hidden;
+}
+
+.results {
+	flex: 1;
+	min-height: 0;
+	display: grid;
+	gap: var(--g-spacing-3);
+}
+
+.errorCard {
+	padding: var(--g-spacing-3);
+	border: 1px solid var(--g-color-line-danger);
+	border-radius: 8px;
+	background: var(--g-color-base-danger-light);
+}
+
+.collapseHeader {
+	padding: var(--g-spacing-2);
+	cursor: pointer;
+}
+
+.outputScroll {
+	max-height: 120px;
+	overflow: auto;
+	padding: var(--g-spacing-2);
+}
+
+.logsScroll {
+	max-height: 180px;
+	overflow: auto;
+}
+
+.logsList {
+	display: grid;
+	gap: var(--g-spacing-1);
+	padding: var(--g-spacing-2);
+}
+
+.logItem {
+	padding: var(--g-spacing-2);
+}
+
+.logBody {
+	flex: 1;
+	min-width: 0;
+	display: grid;
+	gap: 2px;
+}
+
+.logMessage {
+	font-family: var(--octo-typography-mono);
+}
+
+.logTime {
+	flex-shrink: 0;
+}
+
+.emptyState {
+	padding: var(--g-spacing-8);
+	text-align: center;
+}

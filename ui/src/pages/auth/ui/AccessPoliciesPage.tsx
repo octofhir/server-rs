@@ -11,7 +11,6 @@ import {
 	Modal,
 	MultiSelect,
 	NumberInput,
-	Paper,
 	Select,
 	Stack,
 	Switch,
@@ -57,6 +56,8 @@ import { getBundleResources } from "@/shared/api/guards";
 import { useResourceTypes } from "@/shared/api/hooks";
 import { Button } from "@/shared/ui/Button/Button";
 import { PolicyScriptEditor } from "@/shared/monaco/PolicyScriptEditor";
+import { Card } from "@/shared/ui/Card/Card";
+import classes from "./AccessPoliciesPage.module.css";
 
 export function AccessPoliciesPage() {
 	const [search, setSearch] = useState("");
@@ -95,19 +96,19 @@ export function AccessPoliciesPage() {
 				</Button>
 			}
 			toolbar={
-				<Group>
+				<div className={classes.toolbar}>
 					<TextInput
 						placeholder="Search by name..."
 						leftSection={<Magnifier size={16} />}
 						value={search}
 						onChange={(e) => setSearch(e.currentTarget.value)}
-						style={{ flex: 1, maxWidth: 460 }}
+						className={classes.search}
 					/>
-				</Group>
+				</div>
 			}
 		>
 
-			<Paper p="sm" withBorder>
+			<Card className={classes.tableContainer}>
 				<DataPreview
 					columns={[
 						{ id: "name", label: "Name" },
@@ -125,17 +126,17 @@ export function AccessPoliciesPage() {
 									return {
 										id: policy.id ?? policy.name,
 										name: (
-											<Group gap="xs">
+											<div className={classes.policyCell}>
 												<ShieldCheck size={16} color="green" />
-												<div>
-													<Text size="sm" fw={500}>
+												<div className={classes.policyText}>
+													<Text size="sm" fw={500} className={classes.policyName}>
 														{policy.name}
 													</Text>
-													<Text size="xs" c="dimmed">
+													<Text size="xs" c="dimmed" className={classes.policyDescription}>
 														{policy.description || "No description"}
 													</Text>
 												</div>
-											</Group>
+											</div>
 										),
 										engine: <EngineTypeBadge type={policy.engine?.type} />,
 										priority: <Text size="sm">{getAccessPolicyPriority(policy)}</Text>,
@@ -174,7 +175,7 @@ export function AccessPoliciesPage() {
 					emptyText={isLoading ? "Loading policies..." : "No policies found"}
 					getRowKey={(row, index) => String(row.id ?? policies[index]?.id ?? index)}
 				/>
-			</Paper>
+			</Card>
 
 			<PolicyModal opened={opened} onClose={handleClose} policy={editingPolicy} />
 		</WorkspacePageLayout>
@@ -337,7 +338,13 @@ function PolicyModal({
 
 		try {
 			if (isEditing && policy?.id) {
-				await update.mutateAsync({ ...payload, id: policy.id } as AccessPolicyResource);
+				await update.mutateAsync({
+					...policy,
+					...payload,
+					id: policy.id,
+					resourceType: "AccessPolicy",
+					engine,
+				});
 			} else {
 				await create.mutateAsync(payload);
 			}
@@ -456,21 +463,23 @@ function PolicyModal({
 											Write JavaScript to evaluate access. Use <Code>allow()</Code>,{" "}
 											<Code>deny(reason)</Code>, <Code>abstain()</Code>. Press Ctrl+Space for autocomplete.
 										</Text>
-										<Paper withBorder style={{ overflow: "hidden", borderRadius: 8 }}>
+										<div className={classes.editorFrame}>
 											<PolicyScriptEditor
 												value={values.script}
 												onChange={(val) => api.change("script", val)}
 												height={200}
 											/>
-										</Paper>
+										</div>
 										<FormSpy<PolicyFormValues> subscription={{ errors: true, touched: true }}>
-											{({ errors, touched }) =>
-												errors?.script && touched?.script ? (
+											{({ errors, touched }) => {
+												const scriptError =
+													typeof errors?.script === "string" ? errors.script : undefined;
+												return scriptError && touched?.script ? (
 													<Text size="xs" c="red" mt={4}>
-														{errors.script as string}
+														{scriptError}
 													</Text>
-												) : null
-											}
+												) : null;
+											}}
 										</FormSpy>
 									</Box>
 								)}

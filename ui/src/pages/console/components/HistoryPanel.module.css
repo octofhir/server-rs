@@ -1,0 +1,58 @@
+.root,
+.list,
+.cardContent {
+  display: flex;
+  flex-direction: column;
+}
+
+.root {
+  gap: 16px;
+  width: min(520px, calc(100vw - 32px));
+  padding: 20px;
+}
+
+.title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.summary,
+.cardHeader,
+.meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.summary,
+.cardHeader {
+  justify-content: space-between;
+}
+
+.actions,
+.badges,
+.cardActions,
+.metaItem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.list {
+  gap: 8px;
+}
+
+.card {
+  cursor: pointer;
+  background: var(--octo-surface-1);
+}
+
+.cardContent {
+  gap: 8px;
+}
+
+.empty {
+  padding: 32px 0;
+  text-align: center;
+}

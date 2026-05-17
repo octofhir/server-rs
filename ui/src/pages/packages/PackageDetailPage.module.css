@@ -1,0 +1,87 @@
+.searchInput {
+	flex: 1 1 280px;
+	max-width: 460px;
+}
+
+.typeSelect {
+	flex: 0 0 250px;
+}
+
+.tablePanel,
+.panel,
+.panelMuted {
+	border: 1px solid var(--g-color-line-generic);
+	border-radius: 8px;
+	background: var(--g-color-base-background);
+}
+
+.tablePanel {
+	overflow: hidden;
+}
+
+.panel,
+.panelMuted {
+	padding: 12px;
+}
+
+.panelMuted {
+	background: var(--g-color-base-generic);
+}
+
+.statePanel,
+.modalState {
+	min-height: 220px;
+	padding: 24px;
+}
+
+.modalState {
+	min-height: 320px;
+}
+
+.codeScroll {
+	max-height: 400px;
+	overflow: auto;
+}
+
+.truncateText {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.resourceTypeIcon {
+	box-sizing: border-box;
+	display: inline-flex;
+	width: 22px;
+	height: 22px;
+	flex: 0 0 auto;
+	align-items: center;
+	justify-content: center;
+	border-radius: 6px;
+	background: var(--g-color-base-selection);
+	color: var(--g-color-text-link);
+}
+
+.resourceTypeIcon[data-resource-type="ValueSet"],
+.resourceTypeIcon[data-resource-type="CapabilityStatement"] {
+	color: var(--g-color-text-info);
+}
+
+.resourceTypeIcon[data-resource-type="CodeSystem"],
+.resourceTypeIcon[data-resource-type="CompartmentDefinition"] {
+	color: var(--g-color-text-warning);
+}
+
+.resourceTypeIcon[data-resource-type="OperationDefinition"],
+.resourceTypeIcon[data-resource-type="NamingSystem"] {
+	color: var(--g-color-text-danger);
+}
+
+@media (max-width: 720px) {
+	.searchInput,
+	.typeSelect {
+		flex-basis: 100%;
+		max-width: none;
+	}
+}

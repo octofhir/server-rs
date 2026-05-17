@@ -1,0 +1,43 @@
+.toolbar {
+	min-width: 0;
+}
+
+.searchInput {
+	flex: 1 1 280px;
+	max-width: 460px;
+}
+
+.tablePanel {
+	overflow: hidden;
+	border: 1px solid var(--g-color-line-generic);
+	border-radius: 8px;
+	background: var(--g-color-base-background);
+}
+
+.appSummary {
+	min-width: 0;
+	max-width: 320px;
+}
+
+.truncateText,
+.endpointCode {
+	display: block;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.endpointCode {
+	max-width: 220px;
+}
+
+.modalActions {
+	padding-top: 8px;
+}
+
+@media (max-width: 720px) {
+	.searchInput {
+		max-width: none;
+	}
+}

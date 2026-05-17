@@ -1,13 +1,11 @@
 import { memo } from "react";
 import {
-	Group,
 	TextInput,
 	Button,
 	Menu,
 	ActionIcon,
 	Tooltip,
 	Badge,
-	Stack,
 	Text,
 	Chip,
 	Select,
@@ -29,6 +27,8 @@ import {
 import type { AuditEventUIFilters, AuditAction, AuditOutcome } from "@/shared/api/types";
 import classes from "./AuditFilters.module.css";
 
+type ActorType = NonNullable<AuditEventUIFilters["actorType"]>[number];
+
 interface AuditFiltersProps {
 	filters: AuditEventUIFilters;
 	totalCount: number;
@@ -42,7 +42,7 @@ const ACTION_CATEGORIES = {
 	user: {
 		label: "User Actions",
 		icon: Person,
-		actions: ["user.login", "user.logout", "user.login_failed"] as AuditAction[],
+		actions: ["user.login", "user.logout", "user.login_failed"],
 	},
 	resource: {
 		label: "Resource Actions",
@@ -53,7 +53,7 @@ const ACTION_CATEGORIES = {
 			"resource.update",
 			"resource.delete",
 			"resource.search",
-		] as AuditAction[],
+		],
 	},
 	client: {
 		label: "Client Actions",
@@ -63,7 +63,7 @@ const ACTION_CATEGORIES = {
 			"client.create",
 			"client.update",
 			"client.delete",
-		] as AuditAction[],
+		],
 	},
 	system: {
 		label: "System Actions",
@@ -73,9 +73,9 @@ const ACTION_CATEGORIES = {
 			"config.change",
 			"system.startup",
 			"system.shutdown",
-		] as AuditAction[],
+		],
 	},
-};
+} satisfies Record<string, { label: string; icon: typeof Person; actions: AuditAction[] }>;
 
 const OUTCOMES: { value: AuditOutcome; label: string; color: string }[] = [
 	{ value: "success", label: "Success", color: "green" },
@@ -87,7 +87,13 @@ const ACTOR_TYPES = [
 	{ value: "user", label: "User" },
 	{ value: "client", label: "Client" },
 	{ value: "system", label: "System" },
-] as const;
+] satisfies Array<{ value: ActorType; label: string }>;
+
+const ACTOR_TYPE_VALUES: readonly string[] = ACTOR_TYPES.map((actorType) => actorType.value);
+
+function isActorType(value: string): value is ActorType {
+	return ACTOR_TYPE_VALUES.includes(value);
+}
 
 function getActionLabel(action: AuditAction): string {
 	const labels: Record<AuditAction, string> = {
@@ -137,7 +143,7 @@ function AuditFiltersComponent({
 
 	const handleActorTypeChange = (value: string | null) => {
 		onFiltersChange({
-			actorType: value ? [value as "user" | "client" | "system"] : undefined,
+			actorType: value && isActorType(value) ? [value] : undefined,
 		});
 	};
 
@@ -171,7 +177,7 @@ function AuditFiltersComponent({
 
 	return (
 		<div className={classes.container}>
-			<Group gap="sm" wrap="nowrap" className={classes.filtersRow}>
+			<div className={classes.filtersRow}>
 				<TextInput
 					placeholder="Search events..."
 					leftSection={<Magnifier size={14} />}
@@ -192,7 +198,7 @@ function AuditFiltersComponent({
 						>
 							Actions
 							{(filters.action?.length ?? 0) > 0 && (
-								<Badge size="xs" ml={4} variant="filled" color="primary">
+								<Badge size="xs" variant="filled" color="primary" className={classes.countBadge}>
 									{filters.action?.length}
 								</Badge>
 							)}
@@ -202,7 +208,7 @@ function AuditFiltersComponent({
 						{Object.entries(ACTION_CATEGORIES).map(([key, category]) => (
 							<div key={key}>
 								<Menu.Label>{category.label}</Menu.Label>
-								<Group gap={4} p="xs" wrap="wrap">
+								<div className={classes.chipGroup}>
 									{category.actions.map((action) => (
 										<Chip
 											key={action}
@@ -214,7 +220,7 @@ function AuditFiltersComponent({
 											{getActionLabel(action)}
 										</Chip>
 									))}
-								</Group>
+								</div>
 							</div>
 						))}
 					</Menu.Dropdown>
@@ -230,7 +236,7 @@ function AuditFiltersComponent({
 						>
 							Outcome
 							{(filters.outcome?.length ?? 0) > 0 && (
-								<Badge size="xs" ml={4} variant="filled" color="primary">
+								<Badge size="xs" variant="filled" color="primary" className={classes.countBadge}>
 									{filters.outcome?.length}
 								</Badge>
 							)}
@@ -238,7 +244,7 @@ function AuditFiltersComponent({
 					</Menu.Target>
 					<Menu.Dropdown>
 						<Menu.Label>Outcome</Menu.Label>
-						<Group gap={4} p="xs">
+						<div className={classes.chipGroup}>
 							{OUTCOMES.map((outcome) => (
 								<Chip
 									key={outcome.value}
@@ -251,7 +257,7 @@ function AuditFiltersComponent({
 									{outcome.label}
 								</Chip>
 							))}
-						</Group>
+						</div>
 					</Menu.Dropdown>
 				</Menu>
 
@@ -263,7 +269,7 @@ function AuditFiltersComponent({
 					onChange={handleActorTypeChange}
 					clearable
 					size="sm"
-					w={140}
+					className={classes.actorSelect}
 				/>
 
 				<Menu shadow="md" width={320} position="bottom-start" closeOnItemClick={false}>
@@ -276,14 +282,14 @@ function AuditFiltersComponent({
 						>
 							Time Range
 							{(filters.startTime || filters.endTime) && (
-								<Badge size="xs" ml={4} variant="filled" color="primary">
+								<Badge size="xs" variant="filled" color="primary" className={classes.countBadge}>
 									Set
 								</Badge>
 							)}
 						</Button>
 					</Menu.Target>
 					<Menu.Dropdown p="sm">
-						<Stack gap="sm">
+						<div className={classes.timeMenu}>
 							<Text size="sm" fw={600}>
 								Time Range Filter
 							</Text>
@@ -321,7 +327,7 @@ function AuditFiltersComponent({
 									Clear Time Range
 								</Button>
 							)}
-						</Stack>
+						</div>
 					</Menu.Dropdown>
 				</Menu>
 
@@ -350,7 +356,7 @@ function AuditFiltersComponent({
 
 				<div className={classes.divider} />
 
-				<Group gap={4}>
+				<div className={classes.iconActions}>
 					<Tooltip label="Refresh">
 						<ActionIcon
 							variant="light"
@@ -387,8 +393,8 @@ function AuditFiltersComponent({
 							</Menu.Item>
 						</Menu.Dropdown>
 					</Menu>
-				</Group>
-			</Group>
+				</div>
+			</div>
 		</div>
 	);
 }

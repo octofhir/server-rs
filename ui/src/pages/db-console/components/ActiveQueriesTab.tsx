@@ -14,6 +14,7 @@ import {
   Text,
   Tooltip,
 } from "@/shared/ui";
+import classes from "../DbConsolePage.module.css";
 
 interface ActiveQueriesTabProps {
   isActive: boolean;
@@ -87,13 +88,7 @@ function QueryItem({
         <Text
           size="xs"
           ff="monospace"
-          style={{
-            display: "-webkit-box",
-            WebkitBoxOrient: "vertical",
-            WebkitLineClamp: 3,
-            overflow: "hidden",
-            wordBreak: "break-all",
-          }}
+          className={classes.queryClamp3}
         >
           {query.query}
         </Text>

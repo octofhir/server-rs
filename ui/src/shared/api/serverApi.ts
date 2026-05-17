@@ -6,6 +6,8 @@ import type {
   GraphQLResponse,
   HealthResponse,
   HttpResponse,
+  HttpMethod,
+  InstallEvent,
   OperationDefinition,
   OperationsResponse,
   OperationUpdateRequest,
@@ -29,6 +31,7 @@ import type {
 } from "./types";
 import { authInterceptor } from "./authInterceptor";
 import { refreshAuthSession } from "./authSession";
+import { isRecord } from "./guards";
 
 interface RequestOptions {
   timeoutMs?: number;
@@ -66,6 +69,507 @@ function toHttpMethod(method: string | undefined): HttpMethod {
   }
 }
 
+function isString(value: unknown): value is string {
+  return typeof value === "string";
+}
+
+function isNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every(isString);
+}
+
+function isOptionalString(value: unknown): boolean {
+  return value === undefined || typeof value === "string";
+}
+
+function isOptionalNumber(value: unknown): boolean {
+  return value === undefined || isNumber(value);
+}
+
+function assertResponse<T>(
+  value: unknown,
+  guard: (item: unknown) => item is T,
+  context: string,
+): T {
+  if (!guard(value)) {
+    throw new Error(`${context}: invalid response`);
+  }
+  return value;
+}
+
+function isSuccessResponse(value: unknown): value is { success: boolean } {
+  return isRecord(value) && typeof value.success === "boolean";
+}
+
+function isHealthResponse(value: unknown): value is HealthResponse {
+  return (
+    isRecord(value) &&
+    (value.status === "ok" || value.status === "degraded" || value.status === "down") &&
+    isOptionalString(value.details)
+  );
+}
+
+function isBuildInfo(value: unknown): value is BuildInfo {
+  return (
+    isRecord(value) &&
+    typeof value.serverVersion === "string" &&
+    typeof value.commit === "string" &&
+    typeof value.commitTimestamp === "string" &&
+    isOptionalString(value.uiVersion)
+  );
+}
+
+function isServerSettings(value: unknown): value is ServerSettings {
+  return (
+    isRecord(value) &&
+    typeof value.fhirVersion === "string" &&
+    isRecord(value.features) &&
+    typeof value.features.sqlOnFhir === "boolean" &&
+    typeof value.features.graphql === "boolean" &&
+    typeof value.features.bulkExport === "boolean" &&
+    typeof value.features.dbConsole === "boolean" &&
+    typeof value.features.auth === "boolean" &&
+    typeof value.features.cql === "boolean"
+  );
+}
+
+function isCategorizedResourceTypesResponse(value: unknown): value is CategorizedResourceTypesResponse {
+  return (
+    isRecord(value) &&
+    Array.isArray(value.types) &&
+    value.types.every(
+      (item) =>
+        isRecord(item) &&
+        typeof item.name === "string" &&
+        (item.category === "fhir" || item.category === "system" || item.category === "custom") &&
+        isOptionalString(item.url) &&
+        typeof item.package === "string",
+    ) &&
+    isRecord(value.counts) &&
+    isNumber(value.counts.all) &&
+    isNumber(value.counts.fhir) &&
+    isNumber(value.counts.system) &&
+    isNumber(value.counts.custom)
+  );
+}
+
+function isAutocompleteSuggestion(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    typeof value.id === "string" &&
+    (value.kind === "resource" ||
+      value.kind === "system-op" ||
+      value.kind === "type-op" ||
+      value.kind === "instance-op" ||
+      value.kind === "api-endpoint") &&
+    typeof value.label === "string" &&
+    typeof value.path_template === "string" &&
+    isStringArray(value.methods) &&
+    isStringArray(value.placeholders) &&
+    isOptionalString(value.description) &&
+    isRecord(value.metadata) &&
+    isOptionalString(value.metadata.resource_type) &&
+    typeof value.metadata.affects_state === "boolean" &&
+    typeof value.metadata.requires_body === "boolean" &&
+    isOptionalString(value.metadata.category)
+  );
+}
+
+function isModifierSuggestion(value: unknown): boolean {
+  return isRecord(value) && typeof value.code === "string" && isOptionalString(value.description);
+}
+
+function isRestConsoleSearchParam(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    typeof value.code === "string" &&
+    typeof value.type === "string" &&
+    isOptionalString(value.description) &&
+    Array.isArray(value.modifiers) &&
+    value.modifiers.every(isModifierSuggestion) &&
+    isStringArray(value.comparators) &&
+    isStringArray(value.targets) &&
+    typeof value.is_common === "boolean"
+  );
+}
+
+function isOperationCapabilityInfo(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    typeof value.code === "string" &&
+    typeof value.method === "string" &&
+    isOptionalString(value.description) &&
+    typeof value.affects_state === "boolean" &&
+    isStringArray(value.resource_types)
+  );
+}
+
+function isEnrichedSearchParam(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    typeof value.code === "string" &&
+    typeof value.param_type === "string" &&
+    isOptionalString(value.description) &&
+    Array.isArray(value.modifiers) &&
+    value.modifiers.every(isModifierSuggestion) &&
+    isStringArray(value.comparators) &&
+    isStringArray(value.targets) &&
+    Array.isArray(value.chains) &&
+    value.chains.every(
+      (chain) =>
+        isRecord(chain) &&
+        typeof chain.target_type === "string" &&
+        isStringArray(chain.target_params),
+    ) &&
+    typeof value.is_common === "boolean"
+  );
+}
+
+function isRestConsoleResponse(value: unknown): value is RestConsoleResponse {
+  return (
+    isRecord(value) &&
+    typeof value.schema_version === "number" &&
+    typeof value.fhir_version === "string" &&
+    typeof value.base_path === "string" &&
+    typeof value.generated_at === "string" &&
+    isRecord(value.suggestions) &&
+    Array.isArray(value.suggestions.resources) &&
+    value.suggestions.resources.every(isAutocompleteSuggestion) &&
+    Array.isArray(value.suggestions.system_operations) &&
+    value.suggestions.system_operations.every(isAutocompleteSuggestion) &&
+    Array.isArray(value.suggestions.type_operations) &&
+    value.suggestions.type_operations.every(isAutocompleteSuggestion) &&
+    Array.isArray(value.suggestions.instance_operations) &&
+    value.suggestions.instance_operations.every(isAutocompleteSuggestion) &&
+    Array.isArray(value.suggestions.api_endpoints) &&
+    value.suggestions.api_endpoints.every(isAutocompleteSuggestion) &&
+    isRecord(value.search_params) &&
+    Object.values(value.search_params).every(
+      (params) => Array.isArray(params) && params.every(isRestConsoleSearchParam),
+    ) &&
+    Array.isArray(value.resources) &&
+    value.resources.every(
+      (resource) =>
+        isRecord(resource) &&
+        typeof resource.resource_type === "string" &&
+        Array.isArray(resource.search_params) &&
+        resource.search_params.every(isEnrichedSearchParam) &&
+        Array.isArray(resource.includes) &&
+        resource.includes.every(
+          (include) =>
+            isRecord(include) &&
+            typeof include.param_code === "string" &&
+            isStringArray(include.target_types),
+        ) &&
+        Array.isArray(resource.rev_includes) &&
+        resource.rev_includes.every(
+          (include) =>
+            isRecord(include) &&
+            typeof include.param_code === "string" &&
+            isStringArray(include.target_types),
+        ) &&
+        isStringArray(resource.sort_params) &&
+        Array.isArray(resource.type_operations) &&
+        resource.type_operations.every(isOperationCapabilityInfo) &&
+        Array.isArray(resource.instance_operations) &&
+        resource.instance_operations.every(isOperationCapabilityInfo),
+    ) &&
+    Array.isArray(value.system_operations) &&
+    value.system_operations.every(isOperationCapabilityInfo) &&
+    Array.isArray(value.special_params) &&
+    value.special_params.every(
+      (param) =>
+        isRecord(param) &&
+        typeof param.name === "string" &&
+        isOptionalString(param.description) &&
+        typeof param.supported === "boolean" &&
+        isStringArray(param.examples),
+    )
+  );
+}
+
+function isSqlValue(value: unknown): value is SqlValue {
+  return (
+    value === null ||
+    typeof value === "string" ||
+    typeof value === "number" ||
+    typeof value === "boolean" ||
+    isRecord(value)
+  );
+}
+
+function isSqlResponse(value: unknown): value is SqlResponse {
+  return (
+    isRecord(value) &&
+    isStringArray(value.columns) &&
+    Array.isArray(value.rows) &&
+    value.rows.every((row) => Array.isArray(row) && row.every(isSqlValue)) &&
+    isNumber(value.rowCount) &&
+    isNumber(value.executionTimeMs)
+  );
+}
+
+function isQueryHistoryResponse(value: unknown): value is QueryHistoryResponse {
+  return (
+    isRecord(value) &&
+    Array.isArray(value.entries) &&
+    value.entries.every(
+      (entry) =>
+        isRecord(entry) &&
+        typeof entry.id === "string" &&
+        typeof entry.userId === "string" &&
+        typeof entry.query === "string" &&
+        isOptionalNumber(entry.executionTimeMs) &&
+        isOptionalNumber(entry.rowCount) &&
+        typeof entry.isError === "boolean" &&
+        isOptionalString(entry.errorMessage) &&
+        typeof entry.createdAt === "string",
+    )
+  );
+}
+
+function isTablesResponse(value: unknown): value is TablesResponse {
+  return (
+    isRecord(value) &&
+    Array.isArray(value.tables) &&
+    value.tables.every(
+      (table) =>
+        isRecord(table) &&
+        typeof table.schema === "string" &&
+        typeof table.name === "string" &&
+        typeof table.tableType === "string" &&
+        isOptionalNumber(table.rowEstimate),
+    )
+  );
+}
+
+function isTableDetailResponse(value: unknown): value is TableDetailResponse {
+  return (
+    isRecord(value) &&
+    typeof value.schema === "string" &&
+    typeof value.name === "string" &&
+    Array.isArray(value.columns) &&
+    value.columns.every(
+      (column) =>
+        isRecord(column) &&
+        typeof column.name === "string" &&
+        typeof column.dataType === "string" &&
+        typeof column.isNullable === "boolean" &&
+        isOptionalString(column.defaultValue),
+    ) &&
+    Array.isArray(value.indexes) &&
+    value.indexes.every(
+      (index) =>
+        isRecord(index) &&
+        typeof index.name === "string" &&
+        isStringArray(index.columns) &&
+        typeof index.isUnique === "boolean" &&
+        typeof index.isPrimary === "boolean" &&
+        typeof index.indexType === "string" &&
+        isOptionalNumber(index.sizeBytes),
+    )
+  );
+}
+
+function isActiveQueriesResponse(value: unknown): value is ActiveQueriesResponse {
+  return (
+    isRecord(value) &&
+    Array.isArray(value.queries) &&
+    value.queries.every(
+      (query) =>
+        isRecord(query) &&
+        isNumber(query.pid) &&
+        isOptionalString(query.username) &&
+        isOptionalString(query.database) &&
+        isOptionalString(query.query) &&
+        isOptionalString(query.state) &&
+        isOptionalString(query.queryStart) &&
+        isOptionalNumber(query.durationMs) &&
+        isOptionalString(query.waitEventType) &&
+        isOptionalString(query.waitEvent),
+    )
+  );
+}
+
+function isTerminateQueryResponse(value: unknown): value is TerminateQueryResponse {
+  return isRecord(value) && typeof value.success === "boolean" && typeof value.terminated === "boolean";
+}
+
+function isDropIndexResponse(value: unknown): value is DropIndexResponse {
+  return isRecord(value) && typeof value.success === "boolean" && typeof value.message === "string";
+}
+
+function isGraphQLResponse(value: unknown): value is GraphQLResponse {
+  return (
+    isRecord(value) &&
+    (value.data === undefined || value.data === null || isRecord(value.data)) &&
+    (value.errors === undefined ||
+      (Array.isArray(value.errors) &&
+        value.errors.every(
+          (error) =>
+            isRecord(error) &&
+            typeof error.message === "string" &&
+            (error.locations === undefined ||
+              (Array.isArray(error.locations) &&
+                error.locations.every(
+                  (location) =>
+                    isRecord(location) &&
+                    isNumber(location.line) &&
+                    isNumber(location.column),
+                ))) &&
+            (error.path === undefined ||
+              (Array.isArray(error.path) &&
+                error.path.every((path) => typeof path === "string" || typeof path === "number"))) &&
+            (error.extensions === undefined || isRecord(error.extensions)),
+        ))) &&
+    (value.extensions === undefined || isRecord(value.extensions))
+  );
+}
+
+function isOperationDefinition(value: unknown): value is OperationDefinition {
+  return (
+    isRecord(value) &&
+    typeof value.id === "string" &&
+    typeof value.name === "string" &&
+    isOptionalString(value.description) &&
+    typeof value.category === "string" &&
+    isStringArray(value.methods) &&
+    typeof value.path_pattern === "string" &&
+    typeof value.public === "boolean" &&
+    typeof value.module === "string" &&
+    (value.app === undefined ||
+      (isRecord(value.app) && typeof value.app.id === "string" && typeof value.app.name === "string"))
+  );
+}
+
+function isOperationsResponse(value: unknown): value is OperationsResponse {
+  return (
+    isRecord(value) &&
+    Array.isArray(value.operations) &&
+    value.operations.every(isOperationDefinition) &&
+    isNumber(value.total)
+  );
+}
+
+function isPackageListResponse(value: unknown): value is PackageListResponse {
+  return (
+    isRecord(value) &&
+    Array.isArray(value.packages) &&
+    value.packages.every(
+      (pkg) =>
+        isRecord(pkg) &&
+        typeof pkg.name === "string" &&
+        typeof pkg.version === "string" &&
+        isOptionalString(pkg.fhirVersion) &&
+        isNumber(pkg.resourceCount) &&
+        isOptionalString(pkg.installedAt),
+    ) &&
+    typeof value.serverFhirVersion === "string"
+  );
+}
+
+function isPackageDetailResponse(value: unknown): value is PackageDetailResponse {
+  return (
+    isRecord(value) &&
+    typeof value.name === "string" &&
+    typeof value.version === "string" &&
+    isOptionalString(value.fhirVersion) &&
+    isOptionalString(value.description) &&
+    isNumber(value.resourceCount) &&
+    isOptionalString(value.installedAt) &&
+    typeof value.isCompatible === "boolean" &&
+    Array.isArray(value.resourceTypes) &&
+    value.resourceTypes.every(
+      (resource) =>
+        isRecord(resource) &&
+        typeof resource.resourceType === "string" &&
+        isNumber(resource.count),
+    )
+  );
+}
+
+function isPackageResourcesResponse(value: unknown): value is PackageResourcesResponse {
+  return (
+    isRecord(value) &&
+    Array.isArray(value.resources) &&
+    value.resources.every(
+      (resource) =>
+        isRecord(resource) &&
+        isOptionalString(resource.id) &&
+        isOptionalString(resource.url) &&
+        isOptionalString(resource.name) &&
+        isOptionalString(resource.version) &&
+        typeof resource.resourceType === "string",
+    ) &&
+    isNumber(value.total)
+  );
+}
+
+function isPackageLookupResponse(value: unknown): value is PackageLookupResponse {
+  return (
+    isRecord(value) &&
+    typeof value.name === "string" &&
+    isStringArray(value.versions) &&
+    isStringArray(value.installedVersions)
+  );
+}
+
+function isPackageSearchResponse(value: unknown): value is PackageSearchResponse {
+  return (
+    isRecord(value) &&
+    typeof value.query === "string" &&
+    Array.isArray(value.packages) &&
+    value.packages.every(
+      (pkg) =>
+        isRecord(pkg) &&
+        typeof pkg.name === "string" &&
+        isStringArray(pkg.versions) &&
+        isOptionalString(pkg.description) &&
+        typeof pkg.latestVersion === "string",
+    ) &&
+    isNumber(value.total)
+  );
+}
+
+function isPackageInstallResponse(value: unknown): value is PackageInstallResponse {
+  return (
+    isRecord(value) &&
+    typeof value.success === "boolean" &&
+    typeof value.name === "string" &&
+    typeof value.version === "string" &&
+    typeof value.fhirVersion === "string" &&
+    isNumber(value.resourceCount) &&
+    typeof value.message === "string"
+  );
+}
+
+function isInstallEvent(value: unknown): value is InstallEvent {
+  return isRecord(value) && typeof value.type === "string";
+}
+
+function readRequestHeaders(headers: HeadersInit | undefined): Record<string, string> | undefined {
+  if (!headers) {
+    return undefined;
+  }
+
+  if (headers instanceof Headers) {
+    const result: Record<string, string> = {};
+    headers.forEach((value, key) => {
+      result[key] = value;
+    });
+    return result;
+  }
+
+  if (Array.isArray(headers)) {
+    return Object.fromEntries(headers.map(([key, value]) => [key, value]));
+  }
+
+  return headers;
+}
+
 class ServerApiClient {
   private baseUrl: string;
   private defaultTimeout: number;
@@ -75,11 +579,11 @@ class ServerApiClient {
     this.defaultTimeout = timeout;
   }
 
-  private async request<T>(
+  private async request(
     endpoint: string,
     options: RequestInit = {},
     requestOptions: RequestOptions = {},
-  ): Promise<HttpResponse<T>> {
+  ): Promise<HttpResponse<unknown>> {
     const url = `${this.baseUrl}${endpoint}`;
     const timeoutMs = requestOptions.timeoutMs ?? this.defaultTimeout;
 
@@ -127,19 +631,19 @@ class ServerApiClient {
     });
 
     // Parse response data
-    let data: T;
+    let data: unknown;
     const contentType = response.headers.get("content-type");
     const rawBody = await response.text();
 
     if (!rawBody) {
-      data = undefined as T;
+      data = undefined;
     } else if (contentType?.includes("application/json") || contentType?.includes("application/fhir+json")) {
-      data = JSON.parse(rawBody) as T;
+      data = JSON.parse(rawBody);
     } else {
-      data = rawBody as T;
+      data = rawBody;
     }
 
-    const result: HttpResponse<T> = {
+    const result: HttpResponse<unknown> = {
       data,
       status: response.status,
       statusText: response.statusText,
@@ -147,7 +651,7 @@ class ServerApiClient {
       config: {
         method: toHttpMethod(options.method),
         url,
-        headers: options.headers as Record<string, string>,
+        headers: readRequestHeaders(options.headers),
         data: options.body,
       },
     };
@@ -166,8 +670,8 @@ class ServerApiClient {
 
   async getHealth(): Promise<HealthResponse> {
     try {
-      const response = await this.request<HealthResponse>("/api/health");
-      return response.data;
+      const response = await this.request("/api/health");
+      return assertResponse(response.data, isHealthResponse, "getHealth");
     } catch (error) {
       return {
         status: "down",
@@ -177,18 +681,18 @@ class ServerApiClient {
   }
 
   async getBuildInfo(): Promise<BuildInfo> {
-    const response = await this.request<BuildInfo>("/api/build-info");
-    return response.data;
+    const response = await this.request("/api/build-info");
+    return assertResponse(response.data, isBuildInfo, "getBuildInfo");
   }
 
   async getSettings(): Promise<ServerSettings> {
-    const response = await this.request<ServerSettings>("/api/settings");
-    return response.data;
+    const response = await this.request("/api/settings");
+    return assertResponse(response.data, isServerSettings, "getSettings");
   }
 
   async getResourceTypes(): Promise<string[]> {
-    const response = await this.request<string[]>("/api/resource-types");
-    return response.data;
+    const response = await this.request("/api/resource-types");
+    return assertResponse(response.data, isStringArray, "getResourceTypes");
   }
 
   /**
@@ -196,10 +700,12 @@ class ServerApiClient {
    * Categories: fhir, system, custom
    */
   async getResourceTypesCategorized(): Promise<CategorizedResourceTypesResponse> {
-    const response = await this.request<CategorizedResourceTypesResponse>(
-      "/api/resource-types-categorized"
+    const response = await this.request("/api/resource-types-categorized");
+    return assertResponse(
+      response.data,
+      isCategorizedResourceTypesResponse,
+      "getResourceTypesCategorized",
     );
-    return response.data;
   }
 
   /**
@@ -207,15 +713,13 @@ class ServerApiClient {
    * Used for Monaco editor autocomplete and validation.
    */
   async getJsonSchema(resourceType: string): Promise<unknown> {
-    const response = await this.request<unknown>(
-      `/api/json-schema/${encodeURIComponent(resourceType)}`
-    );
+    const response = await this.request(`/api/json-schema/${encodeURIComponent(resourceType)}`);
     return response.data;
   }
 
   async getRestConsoleMetadata(): Promise<RestConsoleResponse> {
-    const response = await this.request<RestConsoleResponse>("/api/__introspect/rest-console");
-    return response.data;
+    const response = await this.request("/api/__introspect/rest-console");
+    return assertResponse(response.data, isRestConsoleResponse, "getRestConsoleMetadata");
   }
 
   /**
@@ -251,13 +755,13 @@ class ServerApiClient {
       timeoutMs != null && Number.isFinite(timeoutMs) && timeoutMs > 0
         ? timeoutMs
         : undefined;
-    const response = await this.request<SqlResponse>("/api/$sql", {
+    const response = await this.request("/api/$sql", {
       method: "POST",
       body: JSON.stringify(body),
     }, {
       timeoutMs: safeTimeoutMs,
     });
-    return response.data;
+    return assertResponse(response.data, isSqlResponse, "executeSql");
   }
 
   // =========================================================================
@@ -265,56 +769,56 @@ class ServerApiClient {
   // =========================================================================
 
   async getQueryHistory(): Promise<QueryHistoryResponse> {
-    const response = await this.request<QueryHistoryResponse>("/api/db-console/history");
-    return response.data;
+    const response = await this.request("/api/db-console/history");
+    return assertResponse(response.data, isQueryHistoryResponse, "getQueryHistory");
   }
 
   async saveQueryHistory(req: SaveHistoryRequest): Promise<{ success: boolean }> {
-    const response = await this.request<{ success: boolean }>("/api/db-console/history", {
+    const response = await this.request("/api/db-console/history", {
       method: "POST",
       body: JSON.stringify(req),
     });
-    return response.data;
+    return assertResponse(response.data, isSuccessResponse, "saveQueryHistory");
   }
 
   async clearQueryHistory(): Promise<{ success: boolean }> {
-    const response = await this.request<{ success: boolean }>("/api/db-console/history", {
+    const response = await this.request("/api/db-console/history", {
       method: "DELETE",
     });
-    return response.data;
+    return assertResponse(response.data, isSuccessResponse, "clearQueryHistory");
   }
 
   async getDbTables(): Promise<TablesResponse> {
-    const response = await this.request<TablesResponse>("/api/db-console/tables");
-    return response.data;
+    const response = await this.request("/api/db-console/tables");
+    return assertResponse(response.data, isTablesResponse, "getDbTables");
   }
 
   async getTableDetail(schema: string, table: string): Promise<TableDetailResponse> {
-    const response = await this.request<TableDetailResponse>(
+    const response = await this.request(
       `/api/db-console/tables/${encodeURIComponent(schema)}/${encodeURIComponent(table)}`,
     );
-    return response.data;
+    return assertResponse(response.data, isTableDetailResponse, "getTableDetail");
   }
 
   async getActiveQueries(): Promise<ActiveQueriesResponse> {
-    const response = await this.request<ActiveQueriesResponse>("/api/db-console/active-queries");
-    return response.data;
+    const response = await this.request("/api/db-console/active-queries");
+    return assertResponse(response.data, isActiveQueriesResponse, "getActiveQueries");
   }
 
   async terminateQuery(req: TerminateQueryRequest): Promise<TerminateQueryResponse> {
-    const response = await this.request<TerminateQueryResponse>("/api/db-console/terminate-query", {
+    const response = await this.request("/api/db-console/terminate-query", {
       method: "POST",
       body: JSON.stringify(req),
     });
-    return response.data;
+    return assertResponse(response.data, isTerminateQueryResponse, "terminateQuery");
   }
 
   async dropIndex(schema: string, indexName: string): Promise<DropIndexResponse> {
-    const response = await this.request<DropIndexResponse>(
+    const response = await this.request(
       `/api/db-console/indexes/${encodeURIComponent(schema)}/${encodeURIComponent(indexName)}`,
       { method: "DELETE" },
     );
-    return response.data;
+    return assertResponse(response.data, isDropIndexResponse, "dropIndex");
   }
 
   /**
@@ -351,11 +855,11 @@ class ServerApiClient {
     if (operationName) {
       body.operationName = operationName;
     }
-    const response = await this.request<GraphQLResponse>("/$graphql", {
+    const response = await this.request("/$graphql", {
       method: "POST",
       body: JSON.stringify(body),
     });
-    return response.data;
+    return assertResponse(response.data, isGraphQLResponse, "executeGraphQL");
   }
 
   /**
@@ -450,16 +954,16 @@ class ServerApiClient {
     if (filters?.public !== undefined) params.set("public", String(filters.public));
     const queryString = params.toString();
     const url = `/api/operations${queryString ? `?${queryString}` : ""}`;
-    const response = await this.request<OperationsResponse>(url);
-    return response.data;
+    const response = await this.request(url);
+    return assertResponse(response.data, isOperationsResponse, "getOperations");
   }
 
   /**
    * Get a single operation by ID.
    */
   async getOperation(id: string): Promise<OperationDefinition> {
-    const response = await this.request<OperationDefinition>(`/api/operations/${encodeURIComponent(id)}`);
-    return response.data;
+    const response = await this.request(`/api/operations/${encodeURIComponent(id)}`);
+    return assertResponse(response.data, isOperationDefinition, "getOperation");
   }
 
   /**
@@ -467,11 +971,11 @@ class ServerApiClient {
    * Requires admin permissions.
    */
   async updateOperation(id: string, update: OperationUpdateRequest): Promise<OperationDefinition> {
-    const response = await this.request<OperationDefinition>(`/api/operations/${encodeURIComponent(id)}`, {
+    const response = await this.request(`/api/operations/${encodeURIComponent(id)}`, {
       method: "PATCH",
       body: JSON.stringify(update),
     });
-    return response.data;
+    return assertResponse(response.data, isOperationDefinition, "updateOperation");
   }
 
   // ============ Package Management API ============
@@ -480,18 +984,18 @@ class ServerApiClient {
    * List all installed FHIR packages.
    */
   async getPackages(): Promise<PackageListResponse> {
-    const response = await this.request<PackageListResponse>("/api/packages");
-    return response.data;
+    const response = await this.request("/api/packages");
+    return assertResponse(response.data, isPackageListResponse, "getPackages");
   }
 
   /**
    * Get details for a specific package.
    */
   async getPackageDetails(name: string, version: string): Promise<PackageDetailResponse> {
-    const response = await this.request<PackageDetailResponse>(
+    const response = await this.request(
       `/api/packages/${encodeURIComponent(name)}/${encodeURIComponent(version)}`,
     );
-    return response.data;
+    return assertResponse(response.data, isPackageDetailResponse, "getPackageDetails");
   }
 
   /**
@@ -508,15 +1012,15 @@ class ServerApiClient {
     if (params?.offset) queryParams.set("offset", String(params.offset));
     const queryString = queryParams.toString();
     const url = `/api/packages/${encodeURIComponent(name)}/${encodeURIComponent(version)}/resources${queryString ? `?${queryString}` : ""}`;
-    const response = await this.request<PackageResourcesResponse>(url);
-    return response.data;
+    const response = await this.request(url);
+    return assertResponse(response.data, isPackageResourcesResponse, "getPackageResources");
   }
 
   /**
    * Get full content of a specific resource from a package.
    */
   async getPackageResourceContent(name: string, version: string, resourceUrl: string): Promise<unknown> {
-    const response = await this.request<unknown>(
+    const response = await this.request(
       `/api/packages/${encodeURIComponent(name)}/${encodeURIComponent(version)}/resources/${encodeURIComponent(resourceUrl)}`,
     );
     return response.data;
@@ -526,7 +1030,7 @@ class ServerApiClient {
    * Get FHIRSchema for a resource from a package.
    */
   async getPackageFhirSchema(name: string, version: string, resourceUrl: string): Promise<unknown> {
-    const response = await this.request<unknown>(
+    const response = await this.request(
       `/api/packages/${encodeURIComponent(name)}/${encodeURIComponent(version)}/fhirschema/${encodeURIComponent(resourceUrl)}`,
     );
     return response.data;
@@ -536,10 +1040,10 @@ class ServerApiClient {
    * Lookup available versions for a package from the FHIR registry.
    */
   async lookupPackage(name: string): Promise<PackageLookupResponse> {
-    const response = await this.request<PackageLookupResponse>(
+    const response = await this.request(
       `/api/packages/lookup/${encodeURIComponent(name)}`,
     );
-    return response.data;
+    return assertResponse(response.data, isPackageLookupResponse, "lookupPackage");
   }
 
   /**
@@ -547,21 +1051,21 @@ class ServerApiClient {
    * Supports partial matching (ILIKE) - spaces in the query are treated as wildcards.
    */
   async searchPackages(query: string): Promise<PackageSearchResponse> {
-    const response = await this.request<PackageSearchResponse>(
+    const response = await this.request(
       `/api/packages/search?q=${encodeURIComponent(query)}`,
     );
-    return response.data;
+    return assertResponse(response.data, isPackageSearchResponse, "searchPackages");
   }
 
   /**
    * Install a package from the FHIR registry.
    */
   async installPackage(request: PackageInstallRequest): Promise<PackageInstallResponse> {
-    const response = await this.request<PackageInstallResponse>("/api/packages/install", {
+    const response = await this.request("/api/packages/install", {
       method: "POST",
       body: JSON.stringify(request),
     });
-    return response.data;
+    return assertResponse(response.data, isPackageInstallResponse, "installPackage");
   }
 
   /**
@@ -631,7 +1135,11 @@ class ServerApiClient {
             if (line.startsWith("data: ")) {
               try {
                 const data = JSON.parse(line.slice(6));
-                onEvent(data as import("./types").InstallEvent);
+                if (!isInstallEvent(data)) {
+                  continue;
+                }
+
+                onEvent(data);
 
                 // Check if this is the final event
                 if (data.type === "completed" || data.type === "error") {

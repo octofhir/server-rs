@@ -1,6 +1,7 @@
-import { Stack, Text, TextInput } from "@/shared/ui";
+import { Text, TextInput } from "@/shared/ui";
 import { useUnit } from "effector-react";
 import { $rawPath, setRawPath } from "../state/consoleStore";
+import styles from "./RawRequestInput.module.css";
 
 export function RawRequestInput() {
 	const { rawPath, setRawPath: setRawPathEvent } = useUnit({
@@ -9,7 +10,7 @@ export function RawRequestInput() {
 	});
 
 	return (
-		<Stack gap="xs">
+		<div className={styles.root}>
 			<Text fw={500} size="sm">
 				Raw Request Path
 			</Text>
@@ -19,9 +20,9 @@ export function RawRequestInput() {
 				onChange={(e) => setRawPathEvent(e.target.value)}
 				size="sm"
 			/>
-			<Text size="xs" c="dimmed">
+			<Text size="xs" className={styles.hint}>
 				Enter the full request path including /fhir prefix and query parameters
 			</Text>
-		</Stack>
+		</div>
 	);
 }

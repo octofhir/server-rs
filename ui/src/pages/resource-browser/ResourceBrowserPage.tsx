@@ -51,10 +51,19 @@ import {
 import { JsonEditor } from "@/shared/monaco/JsonEditor";
 import type { FhirBundle, FhirOperationOutcome } from "@/shared/api/types";
 import { HttpError } from "@/shared/api/fhirClient";
+import { assertFhirResource, isRecord } from "@/shared/api/guards";
 
 const MIN_PANEL_WIDTH = 400;
 const MAX_PANEL_WIDTH = 900;
 const DEFAULT_PANEL_WIDTH = 600;
+
+function isCatalogCategoryFilter(value: string): value is FhirCatalogCategoryFilter {
+	return value === "all" || value === "fhir" || value === "system" || value === "custom";
+}
+
+function isOperationOutcome(value: unknown): value is FhirOperationOutcome {
+	return isRecord(value) && value.resourceType === "OperationOutcome";
+}
 
 export function ResourceBrowserPage() {
 	const { type: routeType, id: routeId } = useParams<{ type?: string; id?: string }>();
@@ -87,6 +96,7 @@ export function ResourceBrowserPage() {
 		{ enabled: !!selectedType && !!selectedId },
 	);
 	const { data: jsonSchema } = useJsonSchema(selectedType ?? undefined);
+	const jsonSchemaObject = isRecord(jsonSchema) ? jsonSchema : undefined;
 	const updateMutation = useUpdateResource();
 	const followLinkMutation = useFollowBundleLink();
 
@@ -228,7 +238,7 @@ export function ResourceBrowserPage() {
 	const handleSave = async () => {
 		setSaveError(null);
 		try {
-			const parsed = JSON.parse(editedResource);
+			const parsed = assertFhirResource(JSON.parse(editedResource), "Resource editor save");
 			await updateMutation.mutateAsync(parsed);
 			setIsEditMode(false);
 			notifications.show({
@@ -238,11 +248,10 @@ export function ResourceBrowserPage() {
 			});
 		} catch (error) {
 			if (error instanceof HttpError) {
-				const responseData = error.response.data as FhirOperationOutcome | undefined;
-				if (responseData?.resourceType === "OperationOutcome") {
+				if (isOperationOutcome(error.response.data)) {
 					setSaveError({
 						message: error.message,
-						operationOutcome: responseData,
+						operationOutcome: error.response.data,
 					});
 				} else {
 					setSaveError({ message: error.message });
@@ -304,7 +313,11 @@ export function ResourceBrowserPage() {
 							size="sm"
 							radius="md"
 							value={categoryFilter}
-							onChange={(val) => setCategoryFilter(val as FhirCatalogCategoryFilter)}
+							onChange={(val) => {
+								if (isCatalogCategoryFilter(val)) {
+									setCategoryFilter(val);
+								}
+							}}
 							data={categoryFilterData}
 						/>
 						<TextInput
@@ -578,7 +591,7 @@ export function ResourceBrowserPage() {
 								onChange={isEditMode ? setEditedResource : undefined}
 								readOnly={!isEditMode}
 								height="100%"
-								schema={jsonSchema as object | undefined}
+								schema={jsonSchemaObject}
 								resourceType={selectedType ?? undefined}
 							/>
 						</Box>

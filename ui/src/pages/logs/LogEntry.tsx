@@ -1,4 +1,4 @@
-import { ActionIcon, Badge, Box, Collapse, CopyButton, Flex, Text, Tooltip } from "@/shared/ui";
+import { ActionIcon, Badge, Collapse, CopyButton, Text, Tooltip } from "@/shared/ui";
 import { useState, memo } from "react";
 
 import {
@@ -55,6 +55,13 @@ function formatFullTimestamp(timestamp: string): string {
 	});
 }
 
+function formatFieldValue(value: unknown): string {
+	if (typeof value === "object" && value !== null) {
+		return JSON.stringify(value);
+	}
+	return String(value);
+}
+
 function LogEntryComponent({ entry }: LogEntryProps) {
 	const [expanded, setExpanded] = useState(false);
 	const hasDetails = entry.fields || entry.span;
@@ -62,13 +69,10 @@ function LogEntryComponent({ entry }: LogEntryProps) {
 	const copyContent = JSON.stringify(entry, null, 2);
 
 	return (
-		<Box className={classes.entry} data-level={entry.level}>
-			<Flex
-				gap="xs"
-				wrap="nowrap"
-				className={classes.mainRow}
+		<div className={classes.entry} data-level={entry.level}>
+			<div
+				className={`${classes.mainRow} ${hasDetails ? classes.clickableRow : ""}`}
 				onClick={() => hasDetails && setExpanded(!expanded)}
-				style={{ cursor: hasDetails ? "pointer" : "default" }}
 			>
 				{hasDetails ? (
 					<ActionIcon
@@ -80,7 +84,7 @@ function LogEntryComponent({ entry }: LogEntryProps) {
 						{expanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
 					</ActionIcon>
 				) : (
-					<Box w={18} />
+					<span className={classes.expandSpacer} />
 				)}
 
 				<Tooltip label={formatFullTimestamp(entry.timestamp)} position="top" withArrow>
@@ -124,44 +128,44 @@ function LogEntryComponent({ entry }: LogEntryProps) {
 						</Tooltip>
 					)}
 				</CopyButton>
-			</Flex>
+			</div>
 
 			{hasDetails && (
 				<Collapse in={expanded}>
-					<Box className={classes.details}>
+					<div className={classes.details}>
 						{entry.span && (
-							<Box mb="xs">
+							<div className={classes.detailBlock}>
 								<Text size="xs" c="dimmed" fw={600}>
 									Span
 								</Text>
 								<Text size="xs" ff="monospace" c="dimmed">
 									{entry.span.name} ({entry.span.target})
 								</Text>
-							</Box>
+							</div>
 						)}
 						{entry.fields && (
-							<Box>
-								<Text size="xs" c="dimmed" fw={600} mb={4}>
+							<div className={classes.detailBlock}>
+								<Text size="xs" c="dimmed" fw={600}>
 									Fields
 								</Text>
-								<Box className={classes.fieldsContainer}>
+								<div className={classes.fieldsContainer}>
 									{Object.entries(entry.fields).map(([key, value]) => (
-										<Flex key={key} gap={4} wrap="nowrap">
+										<div key={key} className={classes.fieldRow}>
 											<Text size="xs" ff="monospace" c="dimmed">
 												{key}:
 											</Text>
-											<Text size="xs" ff="monospace" style={{ color: "var(--octo-accent-primary)" }}>
-												{typeof value === "object" ? JSON.stringify(value) : String(value)}
+											<Text size="xs" ff="monospace" className={classes.fieldValue}>
+												{formatFieldValue(value)}
 											</Text>
-										</Flex>
+										</div>
 									))}
-								</Box>
-							</Box>
+								</div>
+							</div>
 						)}
-					</Box>
+					</div>
 				</Collapse>
 			)}
-		</Box>
+		</div>
 	);
 }
 

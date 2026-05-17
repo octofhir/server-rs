@@ -1,10 +1,6 @@
 import { memo, useMemo } from "react";
 import {
-	Stack,
-	Group,
 	Text,
-	Paper,
-	SimpleGrid,
 	Progress,
 	Badge,
 	ThemeIcon,
@@ -27,6 +23,7 @@ import {
 	getAuditActionLabel,
 	getAuditOutcomeColor,
 	getAuditOutcomeLabel,
+	isAuditAction,
 } from "@/entities/audit-event";
 import classes from "./AuditAnalytics.module.css";
 
@@ -49,9 +46,9 @@ function StatCard({
 	trend?: { value: number; label: string };
 }) {
 	return (
-		<Paper className={classes.statCard} p="md" withBorder>
-			<Group justify="space-between" align="flex-start">
-				<div>
+		<div className={classes.statCard}>
+			<div className={classes.statHeader}>
+				<div className={classes.statMeta}>
 					<Text size="xs" c="dimmed" tt="uppercase" mb={4}>
 						{title}
 					</Text>
@@ -59,19 +56,19 @@ function StatCard({
 						{typeof value === "number" ? value.toLocaleString() : value}
 					</Text>
 					{trend && (
-						<Group gap={4} mt={4}>
+						<div className={classes.trend}>
 							<ChartLineArrowUp size={12} color={trend.value >= 0 ? "var(--g-color-base-positive-medium-hover)" : "var(--g-color-base-danger-medium)"} />
 							<Text size="xs" c={trend.value >= 0 ? "green" : "red"}>
 								{trend.value > 0 ? "+" : ""}{trend.value}% {trend.label}
 							</Text>
-						</Group>
+						</div>
 					)}
 				</div>
 				<ThemeIcon size="lg" variant="light" color={color} radius="md">
 					<Icon size={20} />
 				</ThemeIcon>
-			</Group>
-		</Paper>
+			</div>
+		</div>
 	);
 }
 
@@ -102,11 +99,11 @@ function OutcomeRing({ outcomeBreakdown }: { outcomeBreakdown: Partial<Record<Au
 	].filter((s) => s.value > 0);
 
 	return (
-		<Paper className={classes.chartCard} p="md" withBorder>
+		<div className={classes.chartCard}>
 			<Text size="sm" fw={600} mb="md">
 				Outcome Distribution
 			</Text>
-			<Group justify="center" gap="xl">
+			<div className={classes.ringLayout}>
 				<RingProgress
 					size={140}
 					thickness={16}
@@ -114,40 +111,40 @@ function OutcomeRing({ outcomeBreakdown }: { outcomeBreakdown: Partial<Record<Au
 					sections={sections}
 					label={
 						<Center>
-							<Stack gap={0} align="center">
+							<div className={classes.ringLabel}>
 								<Text size="lg" fw={700}>
 									{total.toLocaleString()}
 								</Text>
 								<Text size="xs" c="dimmed">
 									Total
 								</Text>
-							</Stack>
+							</div>
 						</Center>
 					}
 				/>
-				<Stack gap="xs">
+				<div className={classes.legend}>
 					{(["success", "failure", "partial"] as const).map((outcome) => {
 						const count = outcomeBreakdown[outcome] || 0;
 						const percent = total > 0 ? ((count / total) * 100).toFixed(1) : "0";
 						const Icon = outcome === "success" ? Check : outcome === "failure" ? Xmark : TriangleExclamation;
 
 						return (
-							<Group key={outcome} gap="sm">
+							<div key={outcome} className={classes.legendRow}>
 								<ThemeIcon size="xs" color={getAuditOutcomeColor(outcome)} variant="filled">
 									<Icon size={10} />
 								</ThemeIcon>
-								<Text size="sm" style={{ minWidth: 60 }}>
+								<Text size="sm" className={classes.legendLabel}>
 									{getAuditOutcomeLabel(outcome)}
 								</Text>
 								<Text size="sm" c="dimmed">
 									{count.toLocaleString()} ({percent}%)
 								</Text>
-							</Group>
+							</div>
 						);
 					})}
-				</Stack>
-			</Group>
-		</Paper>
+				</div>
+			</div>
+		</div>
 	);
 }
 
@@ -163,31 +160,36 @@ function ActionBreakdown({ actionBreakdown }: { actionBreakdown: Partial<Record<
 	if (sorted.length === 0) return null;
 
 	return (
-		<Paper className={classes.chartCard} p="md" withBorder>
+		<div className={classes.chartCard}>
 			<Text size="sm" fw={600} mb="md">
 				Actions by Type
 			</Text>
-			<Stack gap="sm">
-				{sorted.map(([action, count]) => (
-					<div key={action}>
-						<Group justify="space-between" mb={4}>
-							<Badge size="sm" variant="light" color={getAuditActionColor(action as AuditAction)}>
-								{getAuditActionLabel(action as AuditAction)}
-							</Badge>
-							<Text size="xs" c="dimmed">
-								{count.toLocaleString()}
-							</Text>
-						</Group>
-						<Progress
-							value={(count / max) * 100}
-							size="sm"
-							color={getAuditActionColor(action as AuditAction)}
-							radius="sm"
-						/>
-					</div>
-				))}
-			</Stack>
-		</Paper>
+			<div className={classes.breakdownList}>
+				{sorted.map(([action, count]) => {
+					const actionColor = isAuditAction(action) ? getAuditActionColor(action) : "gray";
+					const actionLabel = isAuditAction(action) ? getAuditActionLabel(action) : action;
+
+					return (
+						<div key={action} className={classes.breakdownItem}>
+							<div className={classes.breakdownHeader}>
+								<Badge size="sm" variant="light" color={actionColor}>
+									{actionLabel}
+								</Badge>
+								<Text size="xs" c="dimmed">
+									{count.toLocaleString()}
+								</Text>
+							</div>
+							<Progress
+								value={(count / max) * 100}
+								size="sm"
+								color={actionColor}
+								radius="sm"
+							/>
+						</div>
+					);
+				})}
+			</div>
+		</div>
 	);
 }
 
@@ -197,26 +199,26 @@ function TopUsers({ topUsers }: { topUsers: AuditAnalyticsType["topUsers"] }) {
 	const max = Math.max(...topUsers.map((u) => u.count));
 
 	return (
-		<Paper className={classes.chartCard} p="md" withBorder>
+		<div className={classes.chartCard}>
 			<Text size="sm" fw={600} mb="md">
 				Top Users by Activity
 			</Text>
-			<Stack gap="sm">
+			<div className={classes.breakdownList}>
 				{topUsers.slice(0, 5).map((user, index) => (
-					<div key={user.userId}>
-						<Group justify="space-between" mb={4}>
-							<Group gap="xs">
+					<div key={user.userId} className={classes.breakdownItem}>
+						<div className={classes.breakdownHeader}>
+							<div className={classes.rankLabel}>
 								<Badge size="xs" variant="filled" color="gray" circle>
 									{index + 1}
 								</Badge>
 								<Text size="sm">
 									{user.userName || user.userId}
 								</Text>
-							</Group>
+							</div>
 							<Text size="xs" c="dimmed">
 								{user.count.toLocaleString()} events
 							</Text>
-						</Group>
+						</div>
 						<Progress
 							value={(user.count / max) * 100}
 							size="sm"
@@ -225,8 +227,8 @@ function TopUsers({ topUsers }: { topUsers: AuditAnalyticsType["topUsers"] }) {
 						/>
 					</div>
 				))}
-			</Stack>
-		</Paper>
+			</div>
+		</div>
 	);
 }
 
@@ -236,15 +238,15 @@ function TopResources({ topResources }: { topResources: AuditAnalyticsType["topR
 	const max = Math.max(...topResources.map((r) => r.count));
 
 	return (
-		<Paper className={classes.chartCard} p="md" withBorder>
+		<div className={classes.chartCard}>
 			<Text size="sm" fw={600} mb="md">
 				Most Accessed Resources
 			</Text>
-			<Stack gap="sm">
+			<div className={classes.breakdownList}>
 				{topResources.slice(0, 5).map((resource, index) => (
-					<div key={`${resource.resourceType}-${resource.resourceId || index}`}>
-						<Group justify="space-between" mb={4}>
-							<Group gap="xs">
+					<div key={`${resource.resourceType}-${resource.resourceId || index}`} className={classes.breakdownItem}>
+						<div className={classes.breakdownHeader}>
+							<div className={classes.rankLabel}>
 								<Badge size="xs" variant="filled" color="gray" circle>
 									{index + 1}
 								</Badge>
@@ -252,11 +254,11 @@ function TopResources({ topResources }: { topResources: AuditAnalyticsType["topR
 									{resource.resourceType}
 									{resource.resourceId && `/${resource.resourceId.slice(0, 8)}...`}
 								</Text>
-							</Group>
+							</div>
 							<Text size="xs" c="dimmed">
 								{resource.count.toLocaleString()} events
 							</Text>
-						</Group>
+						</div>
 						<Progress
 							value={(resource.count / max) * 100}
 							size="sm"
@@ -265,8 +267,8 @@ function TopResources({ topResources }: { topResources: AuditAnalyticsType["topR
 						/>
 					</div>
 				))}
-			</Stack>
-		</Paper>
+			</div>
+		</div>
 	);
 }
 
@@ -274,31 +276,31 @@ function FailedAttempts({ failedAttempts }: { failedAttempts: AuditAnalyticsType
 	if (!failedAttempts || failedAttempts.length === 0) return null;
 
 	return (
-		<Paper className={classes.chartCard} p="md" withBorder>
+		<div className={classes.chartCard}>
 			<Text size="sm" fw={600} mb="md">
 				Failed Action Attempts
 			</Text>
-			<Stack gap="sm">
+			<div className={classes.breakdownList}>
 				{failedAttempts.slice(0, 5).map((attempt) => (
-					<Group key={attempt.action} justify="space-between">
-						<Group gap="xs">
+					<div key={attempt.action} className={classes.failedRow}>
+						<div className={classes.rankLabel}>
 							<ThemeIcon size="sm" color="red" variant="light">
 								<Xmark size={12} />
 							</ThemeIcon>
 							<Text size="sm">{getAuditActionLabel(attempt.action)}</Text>
-						</Group>
-						<Group gap="xs">
+						</div>
+						<div className={classes.failedMeta}>
 							<Badge size="sm" color="red" variant="light">
 								{attempt.count} failures
 							</Badge>
 							<Text size="xs" c="dimmed">
 								{new Date(attempt.lastAttempt).toLocaleDateString()}
 							</Text>
-						</Group>
-					</Group>
+						</div>
+					</div>
 				))}
-			</Stack>
-		</Paper>
+			</div>
+		</div>
 	);
 }
 
@@ -308,7 +310,7 @@ function ActivityTimeline({ activityOverTime }: { activityOverTime: AuditAnalyti
 	const max = Math.max(...activityOverTime.map((p) => p.count));
 
 	return (
-		<Paper className={classes.chartCard} p="md" withBorder>
+		<div className={classes.chartCard}>
 			<Text size="sm" fw={600} mb="md">
 				Activity Over Time
 			</Text>
@@ -316,18 +318,19 @@ function ActivityTimeline({ activityOverTime }: { activityOverTime: AuditAnalyti
 				{activityOverTime.slice(-24).map((point) => {
 					const height = max > 0 ? (point.count / max) * 100 : 0;
 					const date = new Date(point.timestamp);
+					const level = Math.max(1, Math.ceil(height / 10));
+					const barClassName = `${classes.timelineBar} ${classes[`timelineBar${level}`]}`;
 
 					return (
 						<div
 							key={point.timestamp}
-							className={classes.timelineBar}
-							style={{ height: `${Math.max(height, 2)}%` }}
+							className={barClassName}
 							title={`${date.toLocaleString()}: ${point.count} events`}
 						/>
 					);
 				})}
 			</div>
-			<Group justify="space-between" mt="xs">
+			<div className={classes.timelineLabels}>
 				<Text size="xs" c="dimmed">
 					{activityOverTime.length > 0
 						? new Date(activityOverTime[0].timestamp).toLocaleDateString()
@@ -338,8 +341,8 @@ function ActivityTimeline({ activityOverTime }: { activityOverTime: AuditAnalyti
 						? new Date(activityOverTime[activityOverTime.length - 1].timestamp).toLocaleDateString()
 						: ""}
 				</Text>
-			</Group>
-		</Paper>
+			</div>
+		</div>
 	);
 }
 
@@ -355,12 +358,12 @@ function AuditAnalyticsComponent({ analytics, isLoading }: AuditAnalyticsProps) 
 	if (!analytics) {
 		return (
 			<Center py="xl">
-				<Stack align="center" gap="sm">
+				<div className={classes.emptyState}>
 					<ThemeIcon size={48} variant="light" color="gray" radius="xl">
 						<ChartLineArrowUp size={24} />
 					</ThemeIcon>
 					<Text c="dimmed">No analytics data available</Text>
-				</Stack>
+				</div>
 			</Center>
 		);
 	}
@@ -378,9 +381,9 @@ function AuditAnalyticsComponent({ analytics, isLoading }: AuditAnalyticsProps) 
 		: "0";
 
 	return (
-		<Stack gap="md" p="md">
+		<div className={classes.root}>
 			{/* Summary Stats */}
-			<SimpleGrid cols={{ base: 1, sm: 2, md: 4 }} spacing="md">
+			<div className={classes.statsGrid}>
 				<StatCard
 					title="Total Events"
 					value={totalEvents}
@@ -405,24 +408,24 @@ function AuditAnalyticsComponent({ analytics, isLoading }: AuditAnalyticsProps) 
 					icon={Database}
 					color="orange"
 				/>
-			</SimpleGrid>
+			</div>
 
 			{/* Activity Timeline */}
 			<ActivityTimeline activityOverTime={activityOverTime} />
 
 			{/* Charts Grid */}
-			<SimpleGrid cols={{ base: 1, md: 2 }} spacing="md">
+			<div className={classes.chartGrid}>
 				<OutcomeRing outcomeBreakdown={outcomeBreakdown} />
 				<ActionBreakdown actionBreakdown={actionBreakdown} />
 				<TopUsers topUsers={topUsers} />
 				<TopResources topResources={topResources} />
-			</SimpleGrid>
+			</div>
 
 			{/* Failed Attempts */}
 			{failedAttempts.length > 0 && (
 				<FailedAttempts failedAttempts={failedAttempts} />
 			)}
-		</Stack>
+		</div>
 	);
 }
 

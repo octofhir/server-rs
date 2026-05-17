@@ -1,6 +1,7 @@
-import { Box, Text, Stack } from "@/shared/ui";
+import { Text } from "@/shared/ui";
 import type { ConsoleCommand } from "../../commands/types";
 import { CommandItem } from "./CommandItem";
+import styles from "./CommandList.module.css";
 
 interface CommandListProps {
 	commands: ConsoleCommand[];
@@ -11,32 +12,30 @@ interface CommandListProps {
 export function CommandList({ commands, selectedIndex, onExecute }: CommandListProps) {
 	if (commands.length === 0) {
 		return (
-			<Box py="xl">
-				<Text color="secondary" style={{ textAlign: "center" }}>
+			<div className={styles.empty}>
+				<Text color="secondary">
 					No commands found
 				</Text>
-			</Box>
+			</div>
 		);
 	}
 
 	return (
-		<Stack gap="1">
+		<div className={styles.list}>
 			{commands.map((command, index) => (
-				<Box
+				<div
 					key={command.id}
 					onClick={() => onExecute(command)}
-					style={{
-						padding: "8px 12px",
-						borderRadius: "8px",
-						cursor: "pointer",
-						backgroundColor: index === selectedIndex ? "var(--g-color-base-selection)" : "transparent",
-						transition: "background-color 0.1s ease",
-					}}
+					className={
+						index === selectedIndex
+							? `${styles.item} ${styles.itemSelected}`
+							: styles.item
+					}
 					onMouseEnter={() => {}} // Could sync selectedIndex here if desired
 				>
 					<CommandItem command={command} />
-				</Box>
+				</div>
 			))}
-		</Stack>
+		</div>
 	);
 }

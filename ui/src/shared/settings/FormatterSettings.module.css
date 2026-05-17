@@ -1,0 +1,55 @@
+.root,
+.compactRoot,
+.advancedPanel {
+	display: grid;
+	gap: var(--g-spacing-3);
+	min-width: 0;
+}
+
+.root {
+	grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.compactRoot {
+	gap: var(--g-spacing-2);
+	grid-template-columns: minmax(0, 1fr);
+	width: 100%;
+}
+
+.pairedControls {
+	align-items: end;
+	display: grid;
+	gap: var(--g-spacing-2);
+	grid-template-columns: minmax(0, 1fr) auto;
+	min-width: 0;
+}
+
+.inlineSwitch {
+	padding-bottom: 2px;
+}
+
+.advancedToggle {
+	align-items: center;
+	align-self: end;
+	background: transparent;
+	border: 0;
+	color: inherit;
+	cursor: pointer;
+	display: inline-flex;
+	font: inherit;
+	gap: var(--g-spacing-1);
+	justify-self: start;
+	padding: 0;
+}
+
+.advancedPanel {
+	grid-column: 1 / -1;
+	grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+@media (max-width: 640px) {
+	.root,
+	.advancedPanel {
+		grid-template-columns: minmax(0, 1fr);
+	}
+}

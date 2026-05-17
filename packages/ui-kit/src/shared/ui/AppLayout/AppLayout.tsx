@@ -32,11 +32,44 @@ interface PersistedState {
     collapsedGroups?: Record<string, boolean>;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function readCollapsedGroups(value: unknown): Record<string, boolean> | undefined {
+    if (!isRecord(value)) return undefined;
+
+    const groups: Record<string, boolean> = {};
+    for (const [key, item] of Object.entries(value)) {
+        if (typeof item === "boolean") {
+            groups[key] = item;
+        }
+    }
+
+    return groups;
+}
+
+function isPersistedState(value: unknown): value is PersistedState {
+    return (
+        isRecord(value) &&
+        (value.pinned === undefined || typeof value.pinned === "boolean") &&
+        (value.collapsedGroups === undefined || readCollapsedGroups(value.collapsedGroups) !== undefined)
+    );
+}
+
 const readState = (key: string): PersistedState => {
     if (typeof window === "undefined") return {};
     try {
         const raw = window.localStorage.getItem(key);
-        return raw ? (JSON.parse(raw) as PersistedState) : {};
+        if (!raw) return {};
+
+        const parsed: unknown = JSON.parse(raw);
+        if (!isPersistedState(parsed)) return {};
+
+        return {
+            pinned: parsed.pinned,
+            collapsedGroups: readCollapsedGroups(parsed.collapsedGroups),
+        };
     } catch {
         return {};
     }
@@ -102,7 +135,7 @@ export const AppLayout = forwardRef<HTMLDivElement, AppLayoutProps>(
         const isControlled = controlledPinned !== undefined;
         const shouldCollapseByViewport = useMediaQuery(`(max-width: ${collapseBelow}px)`);
         
-        const resolvedPinned = isControlled ? (controlledPinned as boolean) : internalPinned;
+        const resolvedPinned = controlledPinned ?? internalPinned;
         const effectivePinned = shouldCollapseByViewport ? false : resolvedPinned;
 
         const [collapsedGroups, setCollapsedGroups] = useState<Record<string, boolean>>(

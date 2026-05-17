@@ -1,7 +1,8 @@
-import { Badge, Collapse, Group, Paper, Stack, Text } from "@/shared/ui";
+import { Badge, Box, Collapse, Flex, Text } from "@/shared/ui";
 import { ChevronDown, ChevronRight } from "@gravity-ui/icons";
 import { useState } from "react";
 import type { FhirPathMetadata } from "../types";
+import classes from "../FhirPathConsolePage.module.css";
 
 interface Props {
 	metadata: FhirPathMetadata;
@@ -11,48 +12,49 @@ export function MetadataPanel({ metadata }: Props) {
 	const [expanded, setExpanded] = useState(true);
 
 	return (
-		<Paper withBorder p="sm">
-			<Group
-				justify="space-between"
+		<Box className={classes.panel}>
+			<Flex
+				justifyContent="space-between"
+				alignItems="center"
 				onClick={() => setExpanded(!expanded)}
-				style={{ cursor: "pointer" }}
+				className={classes.collapsibleHeader}
 			>
-				<Group gap="xs">
+				<Flex gap="2" alignItems="center">
 					{expanded ? (
 						<ChevronDown size={16} />
 					) : (
 						<ChevronRight size={16} />
 					)}
 					<Text fw={500}>Metadata</Text>
-				</Group>
-				<Group gap="xs">
+				</Flex>
+				<Flex gap="2">
 					<Badge size="xs" color="blue">
 						{metadata.timing.totalTime.toFixed(2)}ms
 					</Badge>
-				</Group>
-			</Group>
+				</Flex>
+			</Flex>
 
 			<Collapse in={expanded}>
-				<Stack gap="xs" mt="sm">
-					<Group gap="xs">
+				<Flex direction="column" gap="2" className={classes.metadataBody}>
+					<Flex gap="2" alignItems="center">
 						<Text size="sm" c="dimmed">
 							Evaluator:
 						</Text>
 						<Text size="sm" ff="monospace">
 							{metadata.evaluator}
 						</Text>
-					</Group>
+					</Flex>
 
-					<Group gap="xs">
+					<Flex gap="2" alignItems="center">
 						<Text size="sm" c="dimmed">
 							Result Count:
 						</Text>
 						<Badge size="sm" color="grape">
 							{metadata.resultCount}
 						</Badge>
-					</Group>
+					</Flex>
 
-					<Group gap="xs">
+					<Flex gap="2" alignItems="center" wrap="wrap">
 						<Text size="sm" c="dimmed">
 							Timing:
 						</Text>
@@ -65,9 +67,9 @@ export function MetadataPanel({ metadata }: Props) {
 						<Badge size="xs" color="blue">
 							Total: {metadata.timing.totalTime.toFixed(2)}ms
 						</Badge>
-					</Group>
-				</Stack>
+					</Flex>
+				</Flex>
 			</Collapse>
-		</Paper>
+		</Box>
 	);
 }

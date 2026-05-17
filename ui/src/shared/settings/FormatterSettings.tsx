@@ -1,11 +1,9 @@
 import {
-  Stack,
   Select,
   Switch,
   NumberInput,
   Text,
   Divider,
-  Group,
   Collapse,
   ActionIcon,
 } from '@/shared/ui';
@@ -27,6 +25,29 @@ import {
   PG_CASE_OPTION_LABELS,
   getDefaultConfigForStyle,
 } from './formatterTypes';
+import classes from './FormatterSettings.module.css';
+
+function isFormatterStyle(value: string | null): value is FormatterStyle {
+  return value !== null && value in FORMATTER_STYLE_LABELS;
+}
+
+function isKeywordCase(value: string | null): value is KeywordCase {
+  return value !== null && value in KEYWORD_CASE_LABELS;
+}
+
+function isIdentifierCase(value: string | null): value is IdentifierCase {
+  return value !== null && value in IDENTIFIER_CASE_LABELS;
+}
+
+function isCommaStyle(value: string | null): value is CommaStyle {
+  return value !== null && value in COMMA_STYLE_LABELS;
+}
+
+function parsePgCaseOption(value: string | null): PgCaseOption | null {
+  if (value === null) return null;
+  const numeric = Number(value);
+  return numeric === 0 || numeric === 1 || numeric === 2 || numeric === 3 ? numeric : null;
+}
 
 interface FormatterSettingsProps {
   value: FormatterConfig;
@@ -47,19 +68,19 @@ export function FormatterSettings({ value, onChange, compact = false }: Formatte
   const [showAdvanced, setShowAdvanced] = useState(false);
 
   const handleStyleChange = (style: string | null) => {
-    if (!style) return;
-    const newConfig = getDefaultConfigForStyle(style as FormatterStyle);
+    if (!isFormatterStyle(style)) return;
+    const newConfig = getDefaultConfigForStyle(style);
     onChange(newConfig);
   };
 
   const updateSqlStyle = (updates: Partial<SqlStyleConfig>) => {
     if (value.style !== 'sql_style') return;
-    onChange({ ...value, ...updates } as SqlStyleConfig);
+    onChange({ ...value, ...updates });
   };
 
   const updatePgFormatter = (updates: Partial<PgFormatterConfig>) => {
     if (value.style !== 'pg_formatter') return;
-    onChange({ ...value, ...updates } as PgFormatterConfig);
+    onChange({ ...value, ...updates });
   };
 
   const styleOptions = Object.entries(FORMATTER_STYLE_LABELS).map(([v, label]) => ({
@@ -68,7 +89,7 @@ export function FormatterSettings({ value, onChange, compact = false }: Formatte
   }));
 
   return (
-    <Stack gap={compact ? 'xs' : 'md'}>
+    <div className={compact ? classes.compactRoot : classes.root}>
       <Select
         label="Formatter Style"
         description={compact ? undefined : 'Choose the formatting style to use'}
@@ -103,7 +124,7 @@ export function FormatterSettings({ value, onChange, compact = false }: Formatte
           Compact style uses minimal whitespace with no additional options.
         </Text>
       )}
-    </Stack>
+    </div>
   );
 }
 
@@ -146,12 +167,16 @@ function SqlStyleSettings({
       <Select
         label="Keyword Case"
         value={config.keywordCase}
-        onChange={(v) => onChange({ keywordCase: v as KeywordCase })}
+        onChange={(value) => {
+          if (isKeywordCase(value)) {
+            onChange({ keywordCase: value });
+          }
+        }}
         data={keywordCaseOptions}
         size={compact ? 'xs' : 'sm'}
       />
 
-      <Group grow>
+      <div className={classes.pairedControls}>
         <NumberInput
           label="Indent Spaces"
           value={config.indentSpaces}
@@ -165,14 +190,18 @@ function SqlStyleSettings({
           checked={config.useTabs}
           onChange={(e) => onChange({ useTabs: e.currentTarget.checked })}
           size={compact ? 'xs' : 'sm'}
-          mt={compact ? 20 : 24}
+          className={classes.inlineSwitch}
         />
-      </Group>
+      </div>
 
       <Select
         label="Comma Style"
         value={config.commaStyle}
-        onChange={(v) => onChange({ commaStyle: v as CommaStyle })}
+        onChange={(value) => {
+          if (isCommaStyle(value)) {
+            onChange({ commaStyle: value });
+          }
+        }}
         data={commaStyleOptions}
         size={compact ? 'xs' : 'sm'}
       />
@@ -188,21 +217,25 @@ function SqlStyleSettings({
       {!compact && (
         <>
           <Divider />
-          <Group gap="xs" style={{ cursor: 'pointer' }} onClick={onToggleAdvanced}>
+          <button type="button" className={classes.advancedToggle} onClick={onToggleAdvanced}>
             <ActionIcon variant="subtle" size="xs">
               {showAdvanced ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
             </ActionIcon>
             <Text size="sm" fw={500}>
               Advanced Options
             </Text>
-          </Group>
+          </button>
 
           <Collapse in={showAdvanced}>
-            <Stack gap="md">
+            <div className={classes.advancedPanel}>
               <Select
                 label="Identifier Case"
                 value={config.identifierCase}
-                onChange={(v) => onChange({ identifierCase: v as IdentifierCase })}
+                onChange={(value) => {
+                  if (isIdentifierCase(value)) {
+                    onChange({ identifierCase: value });
+                  }
+                }}
                 data={identifierCaseOptions}
                 size="sm"
               />
@@ -252,7 +285,7 @@ function SqlStyleSettings({
                 max={20}
                 size="sm"
               />
-            </Stack>
+            </div>
           </Collapse>
         </>
       )}
@@ -289,12 +322,17 @@ function PgFormatterSettings({
       <Select
         label="Keyword Case"
         value={String(config.keywordCase)}
-        onChange={(v) => onChange({ keywordCase: Number(v) as PgCaseOption })}
+        onChange={(value) => {
+          const next = parsePgCaseOption(value);
+          if (next !== null) {
+            onChange({ keywordCase: next });
+          }
+        }}
         data={pgCaseOptions}
         size={compact ? 'xs' : 'sm'}
       />
 
-      <Group grow>
+      <div className={classes.pairedControls}>
         <NumberInput
           label="Indent Spaces"
           value={config.spaces}
@@ -308,9 +346,9 @@ function PgFormatterSettings({
           checked={config.useTabs}
           onChange={(e) => onChange({ useTabs: e.currentTarget.checked })}
           size={compact ? 'xs' : 'sm'}
-          mt={compact ? 20 : 24}
+          className={classes.inlineSwitch}
         />
-      </Group>
+      </div>
 
       <Switch
         label="Comma at Start of Line"
@@ -327,17 +365,17 @@ function PgFormatterSettings({
       {!compact && (
         <>
           <Divider />
-          <Group gap="xs" style={{ cursor: 'pointer' }} onClick={onToggleAdvanced}>
+          <button type="button" className={classes.advancedToggle} onClick={onToggleAdvanced}>
             <ActionIcon variant="subtle" size="xs">
               {showAdvanced ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
             </ActionIcon>
             <Text size="sm" fw={500}>
               Advanced Options
             </Text>
-          </Group>
+          </button>
 
           <Collapse in={showAdvanced}>
-            <Stack gap="md">
+            <div className={classes.advancedPanel}>
               <Text size="sm" fw={500} c="dimmed">
                 Case Options
               </Text>
@@ -345,7 +383,12 @@ function PgFormatterSettings({
               <Select
                 label="Function Case"
                 value={String(config.functionCase)}
-                onChange={(v) => onChange({ functionCase: Number(v) as PgCaseOption })}
+                onChange={(value) => {
+                  const next = parsePgCaseOption(value);
+                  if (next !== null) {
+                    onChange({ functionCase: next });
+                  }
+                }}
                 data={pgCaseOptions}
                 size="sm"
               />
@@ -353,7 +396,12 @@ function PgFormatterSettings({
               <Select
                 label="Type Case"
                 value={String(config.typeCase)}
-                onChange={(v) => onChange({ typeCase: Number(v) as PgCaseOption })}
+                onChange={(value) => {
+                  const next = parsePgCaseOption(value);
+                  if (next !== null) {
+                    onChange({ typeCase: next });
+                  }
+                }}
                 data={pgCaseOptions}
                 size="sm"
               />
@@ -457,7 +505,7 @@ function PgFormatterSettings({
                 max={200}
                 size="sm"
               />
-            </Stack>
+            </div>
           </Collapse>
         </>
       )}

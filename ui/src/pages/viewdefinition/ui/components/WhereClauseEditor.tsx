@@ -1,7 +1,8 @@
-import { Stack, Button, Paper, Group, Text, ActionIcon, Tooltip, Box } from "@/shared/ui";
+import { Button, Text, ActionIcon, Tooltip, Box } from "@/shared/ui";
 import { IconPlus, IconTrash } from "@octofhir/ui-kit";
 import type { ViewDefinitionWhere, ViewDefinitionConstant } from "../../lib/useViewDefinition";
 import { FHIRPathInput } from "./FHIRPathInput";
+import classes from "./WhereClauseEditor.module.css";
 
 interface WhereClauseEditorProps {
   whereClauses: ViewDefinitionWhere[];
@@ -32,8 +33,8 @@ export function WhereClauseEditor({
   };
 
   return (
-    <Stack gap="sm">
-      <Group justify="space-between">
+    <div className={classes.root}>
+      <div className={classes.header}>
         <Text size="sm" fw={500}>
           Where Clauses
         </Text>
@@ -45,12 +46,12 @@ export function WhereClauseEditor({
         >
           Add Where Clause
         </Button>
-      </Group>
-      <Paper withBorder p="sm">
-        <Stack gap="xs">
+      </div>
+      <div className={classes.panel}>
+        <div className={classes.list}>
           {whereClauses.map((clause, i) => (
-            <Group key={clause._id || `where-${i}`} gap="xs" wrap="nowrap" align="center">
-              <Box style={{ flex: 1 }}>
+            <div key={clause._id || `where-${i}`} className={classes.row}>
+              <Box className={classes.inputCell}>
                 <FHIRPathInput
                   value={clause.path}
                   onChange={(value) => handleChange(i, value)}
@@ -70,15 +71,15 @@ export function WhereClauseEditor({
                   <IconTrash size={14} />
                 </ActionIcon>
               </Tooltip>
-            </Group>
+            </div>
           ))}
           {whereClauses.length === 0 && (
             <Text size="sm" c="dimmed" ta="center" py="md">
               No where clauses defined
             </Text>
           )}
-        </Stack>
-      </Paper>
-    </Stack>
+        </div>
+      </div>
+    </div>
   );
 }

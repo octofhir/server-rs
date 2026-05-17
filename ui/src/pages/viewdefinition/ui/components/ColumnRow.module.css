@@ -1,0 +1,36 @@
+.row {
+	display: grid;
+	grid-template-columns: 28px minmax(120px, 1fr) minmax(180px, 2fr) 120px 28px;
+	gap: var(--octo-spacing-xs);
+	align-items: center;
+	min-width: 0;
+}
+
+.nameInput,
+.pathInput {
+	min-width: 0;
+}
+
+.typeSelect {
+	width: 120px;
+}
+
+.dragHandle {
+	cursor: grab;
+}
+
+.dragHandle[data-dragging="true"] {
+	cursor: grabbing;
+}
+
+@media (max-width: 860px) {
+	.row {
+		grid-template-columns: 28px 1fr 28px;
+	}
+
+	.pathInput,
+	.typeSelect {
+		grid-column: 2 / 3;
+		width: 100%;
+	}
+}
