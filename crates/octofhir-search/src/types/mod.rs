@@ -344,16 +344,12 @@ fn build_last_updated_search(
             SearchPrefix::Eq => {
                 let p1 = builder.add_timestamp_param(&start);
                 let p2 = builder.add_timestamp_param(&end);
-                format!(
-                    "({column} >= ${p1}::timestamptz AND {column} < ${p2}::timestamptz)"
-                )
+                format!("({column} >= ${p1}::timestamptz AND {column} < ${p2}::timestamptz)")
             }
             SearchPrefix::Ne => {
                 let p1 = builder.add_timestamp_param(&start);
                 let p2 = builder.add_timestamp_param(&end);
-                format!(
-                    "NOT ({column} >= ${p1}::timestamptz AND {column} < ${p2}::timestamptz)"
-                )
+                format!("NOT ({column} >= ${p1}::timestamptz AND {column} < ${p2}::timestamptz)")
             }
             SearchPrefix::Gt | SearchPrefix::Sa => {
                 let p = builder.add_timestamp_param(&end);
@@ -384,9 +380,7 @@ fn build_last_updated_search(
                     .unwrap_or_default();
                 let p1 = builder.add_timestamp_param(s);
                 let p2 = builder.add_timestamp_param(e);
-                format!(
-                    "({column} >= ${p1}::timestamptz AND {column} < ${p2}::timestamptz)"
-                )
+                format!("({column} >= ${p1}::timestamptz AND {column} < ${p2}::timestamptz)")
             }
         };
         or_conditions.push(condition);
@@ -482,15 +476,15 @@ fn build_gin_human_name_exact(
 ) -> String {
     let family_obj = serde_json::json!([{"family": value}]);
     let family_containment = build_string_nested_containment(path_segments, family_obj);
-    let p1 = builder.add_json_param(&family_containment.to_string());
+    let p1 = builder.add_json_param(family_containment.to_string());
 
     let text_obj = serde_json::json!([{"text": value}]);
     let text_containment = build_string_nested_containment(path_segments, text_obj);
-    let p2 = builder.add_json_param(&text_containment.to_string());
+    let p2 = builder.add_json_param(text_containment.to_string());
 
     let given_obj = serde_json::json!([{"given": [value]}]);
     let given_containment = build_string_nested_containment(path_segments, given_obj);
-    let p3 = builder.add_json_param(&given_containment.to_string());
+    let p3 = builder.add_json_param(given_containment.to_string());
 
     format!(
         "({resource_col} @> ${p1}::jsonb OR {resource_col} @> ${p2}::jsonb OR {resource_col} @> ${p3}::jsonb)"

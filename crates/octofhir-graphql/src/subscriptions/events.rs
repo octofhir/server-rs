@@ -143,10 +143,7 @@ impl ResourceEventBroadcaster {
     /// Returns the number of subscribers that received the event.
     /// Returns 0 if there are no active subscribers.
     pub fn send(&self, event: ResourceChangeEvent) -> usize {
-        match self.sender.send(event) {
-            Ok(count) => count,
-            Err(_) => 0, // No active receivers
-        }
+        self.sender.send(event).unwrap_or_default()
     }
 
     /// Send a "created" event.

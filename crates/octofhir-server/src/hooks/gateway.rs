@@ -80,11 +80,11 @@ impl ResourceHook for GatewayReloadHook {
         );
 
         // First, reload the gateway provider's cache from database
-        if let Some(ref provider) = self.gateway_provider {
-            if let Err(e) = provider.reload().await {
-                warn!(error = %e, "Failed to reload gateway provider cache");
-                // Continue anyway - old cache is better than nothing
-            }
+        if let Some(ref provider) = self.gateway_provider
+            && let Err(e) = provider.reload().await
+        {
+            warn!(error = %e, "Failed to reload gateway provider cache");
+            // Continue anyway - old cache is better than nothing
         }
 
         // Reload gateway routes
@@ -140,7 +140,7 @@ impl std::fmt::Debug for GatewayReloadHook {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+
     use octofhir_core::events::ResourceEvent;
     use serde_json::json;
 

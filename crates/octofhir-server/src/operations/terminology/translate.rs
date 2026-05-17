@@ -311,21 +311,21 @@ impl TranslateOperation {
         }
 
         // Try codeableConcept
-        if let Some(ref cc) = params.codeable_concept {
-            if let Some(codings) = cc.get("coding").and_then(|v| v.as_array()) {
-                for coding in codings {
-                    let code = coding
-                        .get("code")
-                        .and_then(|v| v.as_str())
-                        .map(String::from);
-                    let system = coding
-                        .get("system")
-                        .and_then(|v| v.as_str())
-                        .map(String::from);
+        if let Some(ref cc) = params.codeable_concept
+            && let Some(codings) = cc.get("coding").and_then(|v| v.as_array())
+        {
+            for coding in codings {
+                let code = coding
+                    .get("code")
+                    .and_then(|v| v.as_str())
+                    .map(String::from);
+                let system = coding
+                    .get("system")
+                    .and_then(|v| v.as_str())
+                    .map(String::from);
 
-                    if let (Some(code), Some(system)) = (code, system) {
-                        return Ok((code, system));
-                    }
+                if let (Some(code), Some(system)) = (code, system) {
+                    return Ok((code, system));
                 }
             }
         }
@@ -492,10 +492,9 @@ impl TranslateOperation {
         if let Some(source) = concept_map
             .get("sourceUri")
             .or(concept_map.get("sourceCanonical"))
+            && source.as_str() == Some(source_system)
         {
-            if source.as_str() == Some(source_system) {
-                return true;
-            }
+            return true;
         }
 
         // Check group[].source
@@ -516,10 +515,9 @@ impl TranslateOperation {
         if let Some(target) = concept_map
             .get("targetUri")
             .or(concept_map.get("targetCanonical"))
+            && target.as_str() == Some(target_system)
         {
-            if target.as_str() == Some(target_system) {
-                return true;
-            }
+            return true;
         }
 
         // Check group[].target

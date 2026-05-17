@@ -221,7 +221,7 @@ mod tests {
         assert_eq!(app_sub.app.reference, Some("App/test-app".to_string()));
         assert_eq!(app_sub.app.display, Some("Test App".to_string()));
         assert_eq!(app_sub.trigger.resource_type, "Patient");
-        assert_eq!(app_sub.active, true);
+        assert!(app_sub.active);
     }
 
     #[test]

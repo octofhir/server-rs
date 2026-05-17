@@ -136,14 +136,13 @@ pub fn validate_payload_structure(
         .map_err(|_| format!("invalid resourceType '{rt_str}'"))?;
 
     // Validate id policy (no allocation for common case)
-    if let IdPolicy::Update { path_id } = policy {
-        if let Some(bid) = obj.get("id").and_then(|v| v.as_str()) {
-            if bid != path_id {
-                return Err(format!(
-                    "id in body '{bid}' does not match URL id '{path_id}'"
-                ));
-            }
-        }
+    if let IdPolicy::Update { path_id } = policy
+        && let Some(bid) = obj.get("id").and_then(|v| v.as_str())
+        && bid != path_id
+    {
+        return Err(format!(
+            "id in body '{bid}' does not match URL id '{path_id}'"
+        ));
     }
 
     Ok(())

@@ -179,25 +179,25 @@ pub fn build_query_from_params_with_config(
         };
 
         // Validate modifier compatibility with parameter type
-        if let Some(ref modifier) = parsed.modifier {
-            if !modifier.applicable_to(&param_def.param_type) {
-                return Err(SqlBuilderError::InvalidSearchValue(format!(
-                    "Modifier ':{:?}' is not valid for {} parameter '{}' (type: {:?})",
-                    modifier, resource_type, parsed.name, param_def.param_type
-                )));
-            }
+        if let Some(ref modifier) = parsed.modifier
+            && !modifier.applicable_to(&param_def.param_type)
+        {
+            return Err(SqlBuilderError::InvalidSearchValue(format!(
+                "Modifier ':{:?}' is not valid for {} parameter '{}' (type: {:?})",
+                modifier, resource_type, parsed.name, param_def.param_type
+            )));
         }
 
         // Validate prefix compatibility with parameter type.
         // If a prefix is not applicable (e.g., UUID starting with "eb" parsed as "ends before"
         // for a reference param), revert it — treat the prefix chars as part of the value.
         for value in &mut parsed.values {
-            if let Some(ref prefix) = value.prefix {
-                if !prefix.applicable_to(&param_def.param_type) {
-                    // Restore the prefix as part of the raw value
-                    value.raw = format!("{}{}", prefix, value.raw);
-                    value.prefix = None;
-                }
+            if let Some(ref prefix) = value.prefix
+                && !prefix.applicable_to(&param_def.param_type)
+            {
+                // Restore the prefix as part of the raw value
+                value.raw = format!("{}{}", prefix, value.raw);
+                value.prefix = None;
             }
         }
 
@@ -407,7 +407,7 @@ fn build_sort_spec(
             } else {
                 SortOrder::Asc
             };
-            return SortSpec::column("updated_at", order).ok();
+            SortSpec::column("updated_at", order).ok()
         }
         "_id" => {
             let order = if descending {
@@ -415,7 +415,7 @@ fn build_sort_spec(
             } else {
                 SortOrder::Asc
             };
-            return SortSpec::column("id", order).ok();
+            SortSpec::column("id", order).ok()
         }
         _ => {
             // Look up the field in the registry
@@ -717,10 +717,8 @@ mod tests {
     #[test]
     fn test_identifier_system_value_through_query_builder() {
         use crate::parameters::{ElementTypeHint, SearchParameter, SearchParameterType};
-        use std::sync::Arc;
-
         // Set up registry with identifier search parameter
-        let mut registry = SearchParameterRegistry::new();
+        let registry = SearchParameterRegistry::new();
         registry.register(
             SearchParameter::new(
                 "identifier",
@@ -765,7 +763,7 @@ mod tests {
     fn test_identifier_without_element_hint_still_works() {
         // Test fallback: even without element_type_hint, identifier search
         // should use identifier-specific containment (not coding wrapper)
-        let mut registry = SearchParameterRegistry::new();
+        let registry = SearchParameterRegistry::new();
         registry.register(
             crate::parameters::SearchParameter::new(
                 "identifier",

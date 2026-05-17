@@ -143,7 +143,6 @@ impl SsoSessionStorage for PostgresSsoSessionStorage {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
 
     // TODO: Add integration tests when we have a test database setup
 }

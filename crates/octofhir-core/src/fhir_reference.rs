@@ -162,6 +162,11 @@ pub fn parse_reference(
 
     // Skip contained references (#id)
     if let Some(contained_id) = reference.strip_prefix('#') {
+        if contained_id.is_empty() {
+            return Err(UnresolvableReference::Invalid(
+                "contained reference id cannot be empty".to_string(),
+            ));
+        }
         return Err(UnresolvableReference::Contained(contained_id.to_string()));
     }
 
@@ -499,6 +504,12 @@ mod tests {
         assert!(
             matches!(result, Err(UnresolvableReference::Contained(id)) if id == "contained-id")
         );
+    }
+
+    #[test]
+    fn test_invalid_empty_contained_reference() {
+        let result = parse_reference("#", None);
+        assert!(matches!(result, Err(UnresolvableReference::Invalid(_))));
     }
 
     #[test]

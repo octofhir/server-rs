@@ -124,10 +124,10 @@ impl<S: FhirStorage> FhirStorage for EventedStorage<S> {
         let result = self.inner.create_raw(resource).await?;
 
         // Emit event only if there are subscribers (avoids JSON parse overhead)
-        if self.broadcaster.subscriber_count() > 0 {
-            if let Ok(value) = serde_json::from_str::<Value>(&result.resource_json) {
-                self.emit_created(&result.resource_type, &result.id, &value);
-            }
+        if self.broadcaster.subscriber_count() > 0
+            && let Ok(value) = serde_json::from_str::<Value>(&result.resource_json)
+        {
+            self.emit_created(&result.resource_type, &result.id, &value);
         }
 
         Ok(result)
@@ -176,10 +176,10 @@ impl<S: FhirStorage> FhirStorage for EventedStorage<S> {
         let result = self.inner.update_raw(resource, if_match).await?;
 
         // Emit event only if there are subscribers (avoids JSON parse overhead)
-        if self.broadcaster.subscriber_count() > 0 {
-            if let Ok(value) = serde_json::from_str::<Value>(&result.resource_json) {
-                self.emit_updated(&result.resource_type, &result.id, &value);
-            }
+        if self.broadcaster.subscriber_count() > 0
+            && let Ok(value) = serde_json::from_str::<Value>(&result.resource_json)
+        {
+            self.emit_updated(&result.resource_type, &result.id, &value);
         }
 
         Ok(result)

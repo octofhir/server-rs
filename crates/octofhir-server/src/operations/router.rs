@@ -373,9 +373,9 @@ pub async fn compartment_post_handler(
         let params = OperationParams::Post(value);
         instance_operation_handler_internal(&state, &compartment_type, &id, &param, params).await
     } else {
-        Err(ApiError::bad_request(format!(
-            "POST to this compartment path is not supported."
-        )))
+        Err(ApiError::bad_request(
+            "POST to this compartment path is not supported.".to_string(),
+        ))
     }
 }
 

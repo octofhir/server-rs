@@ -103,12 +103,11 @@ define Result:
             .terminology_provider(self.terminology_provider.clone());
 
         // Set context
-        if let Some(ct) = context_type {
-            if let Some(cv) = context_value {
-                if let Some(cql_val) = super::data_provider::json_to_cql_value(&cv) {
-                    ctx_builder = ctx_builder.context(ct, cql_val);
-                }
-            }
+        if let Some(ct) = context_type
+            && let Some(cv) = context_value
+            && let Some(cql_val) = super::data_provider::json_to_cql_value(&cv)
+        {
+            ctx_builder = ctx_builder.context(ct, cql_val);
         }
 
         // Set parameters
@@ -176,12 +175,11 @@ define Result:
             .data_provider(self.data_provider.clone())
             .terminology_provider(self.terminology_provider.clone());
 
-        if let Some(ct) = context_type {
-            if let Some(cv) = context_value {
-                if let Some(cql_val) = super::data_provider::json_to_cql_value(&cv) {
-                    ctx_builder = ctx_builder.context(ct, cql_val);
-                }
-            }
+        if let Some(ct) = context_type
+            && let Some(cv) = context_value
+            && let Some(cql_val) = super::data_provider::json_to_cql_value(&cv)
+        {
+            ctx_builder = ctx_builder.context(ct, cql_val);
         }
 
         for (name, value) in parameters {
@@ -220,6 +218,3 @@ define Result:
 
 #[cfg(test)]
 mod tests;
-
-#[cfg(test)]
-pub(crate) use tests::*;

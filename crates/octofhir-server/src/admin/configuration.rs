@@ -137,7 +137,7 @@ pub async fn list_config(
 
     // Get categories to list
     let categories: Vec<ConfigCategory> = if let Some(cat_str) = params.category {
-        match ConfigCategory::from_str(&cat_str) {
+        match ConfigCategory::parse(&cat_str) {
             Some(cat) => vec![cat],
             None => {
                 return Err(ApiError::bad_request(format!(
@@ -187,7 +187,7 @@ pub async fn get_category_config(
         "Getting category configuration"
     );
 
-    let cat = ConfigCategory::from_str(&category)
+    let cat = ConfigCategory::parse(&category)
         .ok_or_else(|| ApiError::bad_request(format!("Unknown category: {}", category)))?;
 
     let config = state.config_manager.config().await;
@@ -214,7 +214,7 @@ pub async fn get_config_value(
         "Getting configuration value"
     );
 
-    let cat = ConfigCategory::from_str(&category)
+    let cat = ConfigCategory::parse(&category)
         .ok_or_else(|| ApiError::bad_request(format!("Unknown category: {}", category)))?;
 
     match state.config_manager.get_stored_config(cat, &key).await {
@@ -287,7 +287,7 @@ pub async fn set_config_value(
         "Setting configuration value"
     );
 
-    let cat = ConfigCategory::from_str(&category)
+    let cat = ConfigCategory::parse(&category)
         .ok_or_else(|| ApiError::bad_request(format!("Unknown category: {}", category)))?;
 
     state
@@ -332,7 +332,7 @@ pub async fn delete_config_value(
         "Deleting configuration value"
     );
 
-    let cat = ConfigCategory::from_str(&category)
+    let cat = ConfigCategory::parse(&category)
         .ok_or_else(|| ApiError::bad_request(format!("Unknown category: {}", category)))?;
 
     let deleted = state

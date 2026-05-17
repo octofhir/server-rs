@@ -654,7 +654,7 @@ pub fn render_patient_picker(patients: &[PatientInfo], session_id: &str) -> Stri
         content.push_str("<label style=\"display: flex; align-items: center; padding: 0.75rem; background: var(--surface-2); border-radius: var(--radius-lg); margin-bottom: 0.5rem; cursor: pointer; border: 1px solid var(--border-subtle); transition: border-color 0.15s;\">\n");
         content.push_str("<input type=\"radio\" name=\"patient_id\" value=\"");
         content.push_str(&html_escape(&patient.id));
-        content.push_str("\"");
+        content.push('"');
         content.push_str(checked);
         content
             .push_str(" style=\"margin-right: 0.75rem; accent-color: var(--brand-primary);\">\n");

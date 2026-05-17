@@ -657,7 +657,7 @@ impl BasicAuthStorage for ArcBasicAuthStorage {
             // Verify client secret
             let is_valid = client_storage.verify_secret(entity_id, secret).await?;
             if is_valid {
-                return Ok(Some(BasicAuthEntity::Client(client)));
+                return Ok(Some(BasicAuthEntity::Client(Box::new(client))));
             }
         }
 

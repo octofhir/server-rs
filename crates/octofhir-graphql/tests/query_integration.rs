@@ -257,7 +257,7 @@ impl PolicyStorage for MockPolicyStorage {
 // =============================================================================
 
 fn create_test_registry() -> Arc<SearchParameterRegistry> {
-    let mut registry = SearchParameterRegistry::new();
+    let registry = SearchParameterRegistry::new();
 
     // Add Patient search parameters
     registry.register(SearchParameter::new(
@@ -1178,7 +1178,7 @@ async fn test_reference_loader_parses_references() {
 // =============================================================================
 
 fn create_test_registry_with_targets() -> Arc<SearchParameterRegistry> {
-    let mut registry = SearchParameterRegistry::new();
+    let registry = SearchParameterRegistry::new();
 
     // Add Patient search parameters
     registry.register(SearchParameter::new(
@@ -1471,7 +1471,7 @@ async fn test_nested_reference_resolution() {
 
 #[tokio::test]
 async fn test_chained_reference_resolution() {
-    let mut registry = SearchParameterRegistry::new();
+    let registry = SearchParameterRegistry::new();
 
     // Add Patient search parameters
     registry.register(SearchParameter::new(
@@ -2248,14 +2248,11 @@ async fn test_schema_builds_with_converted_schemas() {
                 .to_str()
                 .unwrap()
                 .starts_with("StructureDefinition-")
+            && let Ok(content) = std::fs::read_to_string(&path)
+            && let Ok(sd) = serde_json::from_str::<StructureDefinition>(&content)
+            && let Ok(schema) = translate(sd, None)
         {
-            if let Ok(content) = std::fs::read_to_string(&path) {
-                if let Ok(sd) = serde_json::from_str::<StructureDefinition>(&content) {
-                    if let Ok(schema) = translate(sd, None) {
-                        schemas.insert(schema.name.clone(), schema);
-                    }
-                }
-            }
+            schemas.insert(schema.name.clone(), schema);
         }
     }
 
@@ -2277,14 +2274,11 @@ async fn test_schema_builds_with_converted_schemas() {
                     .to_str()
                     .unwrap()
                     .starts_with("StructureDefinition-")
+                && let Ok(content) = std::fs::read_to_string(&path)
+                && let Ok(sd) = serde_json::from_str::<StructureDefinition>(&content)
+                && let Ok(schema) = translate(sd, None)
             {
-                if let Ok(content) = std::fs::read_to_string(&path) {
-                    if let Ok(sd) = serde_json::from_str::<StructureDefinition>(&content) {
-                        if let Ok(schema) = translate(sd, None) {
-                            schemas.insert(schema.name.clone(), schema);
-                        }
-                    }
-                }
+                schemas.insert(schema.name.clone(), schema);
             }
         }
     }
@@ -2292,13 +2286,12 @@ async fn test_schema_builds_with_converted_schemas() {
     println!("Loaded {} converted schemas", schemas.len());
 
     // Check Task.input in converted schema
-    if let Some(task_schema) = schemas.get("Task") {
-        if let Some(elements) = &task_schema.elements {
-            if let Some(input) = elements.get("input") {
-                println!("Task.input type_name: {:?}", input.type_name);
-                println!("Task.input has elements: {}", input.elements.is_some());
-            }
-        }
+    if let Some(task_schema) = schemas.get("Task")
+        && let Some(elements) = &task_schema.elements
+        && let Some(input) = elements.get("input")
+    {
+        println!("Task.input type_name: {:?}", input.type_name);
+        println!("Task.input has elements: {}", input.elements.is_some());
     }
 
     let provider = FhirSchemaModelProvider::new(schemas, FhirVersion::R4);
@@ -2339,16 +2332,15 @@ async fn debug_task_backbone_detection() {
     let embedded_schemas = get_schemas(octofhir_fhirschema::embedded::FhirVersion::R4).clone();
     let embedded_provider = FhirSchemaModelProvider::new(embedded_schemas.clone(), FhirVersion::R4);
 
-    if let Some(task_schema) = embedded_schemas.get("Task") {
-        if let Some(elements) = &task_schema.elements {
-            if let Some(input) = elements.get("input") {
-                println!("Embedded Task.input type_name: {:?}", input.type_name);
-                println!(
-                    "Embedded Task.input has elements: {}",
-                    input.elements.is_some()
-                );
-            }
-        }
+    if let Some(task_schema) = embedded_schemas.get("Task")
+        && let Some(elements) = &task_schema.elements
+        && let Some(input) = elements.get("input")
+    {
+        println!("Embedded Task.input type_name: {:?}", input.type_name);
+        println!(
+            "Embedded Task.input has elements: {}",
+            input.elements.is_some()
+        );
     }
 
     let elements = embedded_provider.get_elements("Task").await.unwrap();
@@ -2383,16 +2375,16 @@ async fn debug_task_backbone_detection() {
     let sd: StructureDefinition = serde_json::from_str(&task_sd_json).expect("Failed to parse");
     let converted_schema = translate(sd, None).expect("Failed to translate");
 
-    if let Some(elements) = &converted_schema.elements {
-        if let Some(input) = elements.get("input") {
-            println!("Converted Task.input type_name: {:?}", input.type_name);
-            println!(
-                "Converted Task.input has elements: {}",
-                input.elements.is_some()
-            );
-            if let Some(nested) = &input.elements {
-                println!("Converted Task.input nested count: {}", nested.len());
-            }
+    if let Some(elements) = &converted_schema.elements
+        && let Some(input) = elements.get("input")
+    {
+        println!("Converted Task.input type_name: {:?}", input.type_name);
+        println!(
+            "Converted Task.input has elements: {}",
+            input.elements.is_some()
+        );
+        if let Some(nested) = &input.elements {
+            println!("Converted Task.input nested count: {}", nested.len());
         }
     }
 

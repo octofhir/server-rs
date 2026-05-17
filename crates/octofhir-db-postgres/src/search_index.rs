@@ -48,7 +48,9 @@ async fn ensure_search_partition(pool: &PgPool, resource_type: &str) -> Result<(
     sqlx_core::raw_sql::raw_sql(&sql)
         .execute(pool)
         .await
-        .map_err(|e| StorageError::internal(format!("ensure_search_partition({resource_type}): {e}")))?;
+        .map_err(|e| {
+            StorageError::internal(format!("ensure_search_partition({resource_type}): {e}"))
+        })?;
     cache.insert(resource_type.to_string());
     Ok(())
 }
@@ -70,14 +72,16 @@ async fn ensure_search_partition_in_tx(
     let date_sql = format!(
         r#"CREATE TABLE IF NOT EXISTS "search_idx_date_{table}" PARTITION OF search_idx_date FOR VALUES IN ('{resource_type}')"#
     );
-    query(&ref_sql)
-        .execute(&mut *conn)
-        .await
-        .map_err(|e| StorageError::internal(format!("ensure_search_partition_in_tx(ref/{resource_type}): {e}")))?;
-    query(&date_sql)
-        .execute(&mut *conn)
-        .await
-        .map_err(|e| StorageError::internal(format!("ensure_search_partition_in_tx(date/{resource_type}): {e}")))?;
+    query(&ref_sql).execute(&mut *conn).await.map_err(|e| {
+        StorageError::internal(format!(
+            "ensure_search_partition_in_tx(ref/{resource_type}): {e}"
+        ))
+    })?;
+    query(&date_sql).execute(&mut *conn).await.map_err(|e| {
+        StorageError::internal(format!(
+            "ensure_search_partition_in_tx(date/{resource_type}): {e}"
+        ))
+    })?;
     Ok(())
 }
 
@@ -284,7 +288,7 @@ pub async fn write_reference_index_with_tx(
     // here because a tx-rollback would invalidate it. `CREATE TABLE IF
     // NOT EXISTS` is cheap (catalog lookup) when the partition already
     // exists.
-    ensure_search_partition_in_tx(&mut **tx, resource_type).await?;
+    ensure_search_partition_in_tx(tx, resource_type).await?;
     query("DELETE FROM search_idx_reference WHERE resource_type = $1 AND resource_id = $2")
         .bind(resource_type)
         .bind(resource_id)
@@ -385,7 +389,7 @@ pub async fn write_date_index_with_tx(
     resource_id: &str,
     dates: &[ExtractedDate],
 ) -> Result<(), StorageError> {
-    ensure_search_partition_in_tx(&mut **tx, resource_type).await?;
+    ensure_search_partition_in_tx(tx, resource_type).await?;
     query("DELETE FROM search_idx_date WHERE resource_type = $1 AND resource_id = $2")
         .bind(resource_type)
         .bind(resource_id)

@@ -157,23 +157,29 @@ mod tests {
 
     #[test]
     fn test_invalid_max_depth() {
-        let mut config = GraphQLConfig::default();
-        config.max_depth = 0;
+        let config = GraphQLConfig {
+            max_depth: 0,
+            ..Default::default()
+        };
         assert!(config.validate().is_err());
     }
 
     #[test]
     fn test_invalid_max_complexity() {
-        let mut config = GraphQLConfig::default();
-        config.max_complexity = 0;
+        let config = GraphQLConfig {
+            max_complexity: 0,
+            ..Default::default()
+        };
         assert!(config.validate().is_err());
     }
 
     #[test]
     fn test_invalid_batch_size() {
-        let mut config = GraphQLConfig::default();
-        config.batching = true;
-        config.max_batch_size = 0;
+        let config = GraphQLConfig {
+            batching: true,
+            max_batch_size: 0,
+            ..Default::default()
+        };
         assert!(config.validate().is_err());
     }
 

@@ -1,21 +1,17 @@
 //! Integration tests for REST console introspection endpoint.
 //!
 //! These tests verify the REST console metadata generation.
+#![allow(dead_code)]
 
 use std::sync::Arc;
 
-use axum::{
-    extract::State,
-    http::{HeaderValue, StatusCode},
-    response::IntoResponse,
-};
 use octofhir_search::{
     parameters::{SearchModifier, SearchParameter, SearchParameterType},
     registry::SearchParameterRegistry,
 };
 use octofhir_server::operations::definition::{OperationDefinition, OperationKind};
 use octofhir_server::operations::registry::OperationRegistry;
-use octofhir_server::rest_console::{self, RestConsoleState};
+use octofhir_server::rest_console::RestConsoleState;
 use octofhir_storage::{
     DynStorage, FhirStorage, HistoryParams, HistoryResult, RawHistoryResult, SearchParams,
     SearchResult, StorageError, StoredResource, Transaction,
@@ -156,7 +152,7 @@ async fn create_test_pool() -> Option<Arc<PgPool>> {
 
 /// Create test state with search parameters and operations.
 fn test_state(db_pool: Arc<PgPool>) -> RestConsoleState {
-    let mut registry = SearchParameterRegistry::new();
+    let registry = SearchParameterRegistry::new();
 
     // Register Patient name search param
     let name_param = SearchParameter::new(
@@ -213,7 +209,7 @@ fn test_state(db_pool: Arc<PgPool>) -> RestConsoleState {
 /// Test that search parameter registry correctly stores and retrieves parameters.
 #[test]
 fn test_search_parameter_registry() {
-    let mut registry = SearchParameterRegistry::new();
+    let registry = SearchParameterRegistry::new();
     let param = SearchParameter::new(
         "name",
         "http://hl7.org/fhir/SearchParameter/Patient-name",

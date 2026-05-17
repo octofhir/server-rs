@@ -208,10 +208,10 @@ impl Client {
                 return true;
             }
             // SMART semantic matching: wildcard + permission coverage
-            if let Some(ref req) = requested_smart {
-                if let Ok(allowed_smart) = SmartScope::parse(allowed) {
-                    return allowed_smart.covers(req);
-                }
+            if let Some(ref req) = requested_smart
+                && let Ok(allowed_smart) = SmartScope::parse(allowed)
+            {
+                return allowed_smart.covers(req);
             }
             false
         })

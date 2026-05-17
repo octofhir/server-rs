@@ -216,7 +216,7 @@ impl SubsumesOperation {
 
     /// Check if a system is a large terminology that should be delegated.
     fn is_large_terminology(system: &str) -> bool {
-        LARGE_TERMINOLOGY_SYSTEMS.iter().any(|s| *s == system)
+        LARGE_TERMINOLOGY_SYSTEMS.contains(&system)
     }
 
     /// Load a CodeSystem by URL from cache or canonical manager.
@@ -364,10 +364,10 @@ impl SubsumesOperation {
             }
 
             // Check children
-            if let Some(children) = concept.get("concept").and_then(|v| v.as_array()) {
-                if self.is_ancestor_of(children, ancestor_code, descendant_code, depth + 1) {
-                    return true;
-                }
+            if let Some(children) = concept.get("concept").and_then(|v| v.as_array())
+                && self.is_ancestor_of(children, ancestor_code, descendant_code, depth + 1)
+            {
+                return true;
             }
         }
 
@@ -480,12 +480,11 @@ impl SubsumesOperation {
         };
 
         // If we have a local CodeSystem with concepts, use local traversal
-        if let Some(ref cs) = code_system {
-            if let Some(concepts) = cs.get("concept").and_then(|v| v.as_array()) {
-                if !concepts.is_empty() {
-                    return Ok(self.check_local_subsumption(concepts, code_a, code_b));
-                }
-            }
+        if let Some(ref cs) = code_system
+            && let Some(concepts) = cs.get("concept").and_then(|v| v.as_array())
+            && !concepts.is_empty()
+        {
+            return Ok(self.check_local_subsumption(concepts, code_a, code_b));
         }
 
         // For large terminologies or when CodeSystem isn't loaded, delegate to external

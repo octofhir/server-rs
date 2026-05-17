@@ -41,15 +41,15 @@ pub async fn handle_websocket(
     let mut backend_url = ws_config.url.clone();
 
     // Forward original query parameters from client request
-    if let Some(query) = original_query {
-        if !query.is_empty() {
-            if backend_url.contains('?') {
-                backend_url = format!("{}&{}", backend_url, query);
-            } else {
-                backend_url = format!("{}?{}", backend_url, query);
-            }
-            debug!(original_query = %query, "Forwarded original query params");
+    if let Some(query) = original_query
+        && !query.is_empty()
+    {
+        if backend_url.contains('?') {
+            backend_url = format!("{}&{}", backend_url, query);
+        } else {
+            backend_url = format!("{}?{}", backend_url, query);
         }
+        debug!(original_query = %query, "Forwarded original query params");
     }
 
     // Forward auth info as query parameters if configured

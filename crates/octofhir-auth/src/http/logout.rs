@@ -208,10 +208,10 @@ pub async fn oidc_logout_handler(
     let token = extract_token_from_header(&headers)
         .or_else(|| extract_token_from_cookie(&headers, &state.cookie_config));
 
-    if let Some(token) = token {
-        if let Err(e) = revoke_token(&state, &token).await {
-            debug!(error = %e, "Failed to revoke access token during OIDC logout");
-        }
+    if let Some(token) = token
+        && let Err(e) = revoke_token(&state, &token).await
+    {
+        debug!(error = %e, "Failed to revoke access token during OIDC logout");
     }
 
     // Build response with cookies cleared
@@ -308,18 +308,18 @@ async fn extract_client_id(
 
     // If explicit client_id is provided, verify it matches the token
     if let Some(ref explicit_client_id) = params.client_id {
-        if let Some(ref token_aud) = token_client_id {
-            if explicit_client_id != token_aud {
-                warn!(
-                    explicit_client_id = %explicit_client_id,
-                    token_audience = %token_aud,
-                    "client_id does not match id_token_hint audience"
-                );
-                return Err(logout_error_response(
-                    "invalid_request",
-                    "client_id does not match id_token_hint audience",
-                ));
-            }
+        if let Some(ref token_aud) = token_client_id
+            && explicit_client_id != token_aud
+        {
+            warn!(
+                explicit_client_id = %explicit_client_id,
+                token_audience = %token_aud,
+                "client_id does not match id_token_hint audience"
+            );
+            return Err(logout_error_response(
+                "invalid_request",
+                "client_id does not match id_token_hint audience",
+            ));
         }
         return Ok(Some(explicit_client_id.clone()));
     }

@@ -277,14 +277,15 @@ impl PostgresPackageStore {
         .fetch_optional(&self.pool)
         .await?;
 
-        if let Some((existing_hash, existing_fhir)) = existing {
-            if existing_hash == manifest_hash && existing_fhir == fhir_version {
-                info!(
-                    "Embedded package {}@{} already at hash {} — skipping reload",
-                    name, version, manifest_hash
-                );
-                return Ok(());
-            }
+        if let Some((existing_hash, existing_fhir)) = existing
+            && existing_hash == manifest_hash
+            && existing_fhir == fhir_version
+        {
+            info!(
+                "Embedded package {}@{} already at hash {} — skipping reload",
+                name, version, manifest_hash
+            );
+            return Ok(());
         }
 
         // Insert package metadata with priority 100 (higher than external packages)
@@ -353,7 +354,12 @@ impl PostgresPackageStore {
             let sd_fields = Self::extract_sd_fields(content);
             resource_types.push(resource_type.clone());
             resource_ids.push(content.get("id").and_then(|v| v.as_str()).map(String::from));
-            urls.push(content.get("url").and_then(|v| v.as_str()).map(String::from));
+            urls.push(
+                content
+                    .get("url")
+                    .and_then(|v| v.as_str())
+                    .map(String::from),
+            );
             names.push(
                 content
                     .get("name")
@@ -511,28 +517,27 @@ impl PostgresPackageStore {
         // `search_idx_reference` / `search_idx_date` take AccessExclusiveLock
         // on the parent, so even "CREATE TABLE IF NOT EXISTS" partitions
         // serialize across the pool — avoiding the call is the only real win.
-        let existing_main: std::collections::HashSet<String> = match sqlx_core::query_as::query_as::<
-            _,
-            (String,),
-        >(
-            "SELECT tablename FROM pg_tables WHERE schemaname = 'public'",
-        )
-        .fetch_all(&self.pool)
-        .await
-        {
-            Ok(rows) => rows.into_iter().map(|(t,)| t).collect(),
-            Err(e) => {
-                warn!(error = %e, "Failed to probe existing tables; falling back to unconditional create");
-                std::collections::HashSet::new()
-            }
-        };
+        let existing_main: std::collections::HashSet<String> =
+            match sqlx_core::query_as::query_as::<_, (String,)>(
+                "SELECT tablename FROM pg_tables WHERE schemaname = 'public'",
+            )
+            .fetch_all(&self.pool)
+            .await
+            {
+                Ok(rows) => rows.into_iter().map(|(t,)| t).collect(),
+                Err(e) => {
+                    warn!(error = %e, "Failed to probe existing tables; falling back to unconditional create");
+                    std::collections::HashSet::new()
+                }
+            };
 
         let need_create: Vec<String> = resource_types
             .into_iter()
             .filter(|rt| {
                 let table = rt.to_lowercase();
                 let main_present = existing_main.contains(&table);
-                let ref_part_present = existing_main.contains(&format!("search_idx_reference_{table}"));
+                let ref_part_present =
+                    existing_main.contains(&format!("search_idx_reference_{table}"));
                 let date_part_present = existing_main.contains(&format!("search_idx_date_{table}"));
                 let is_internal = matches!(
                     table.as_str(),
@@ -561,7 +566,10 @@ impl PostgresPackageStore {
             .collect();
 
         info!(
-            already_present = (existing_main.iter().filter(|t| !t.starts_with("search_idx_")).count()),
+            already_present = (existing_main
+                .iter()
+                .filter(|t| !t.starts_with("search_idx_"))
+                .count()),
             need_create = need_create.len(),
             "Resource-schema cold/warm decision"
         );
@@ -628,6 +636,8 @@ impl PostgresPackageStore {
     /// * `fhir_version` - FHIR version (e.g., "4.0.1", "4.3.0", "5.0.0")
     /// * `schema_type` - Type of schema: "resource", "complex-type", "extension", etc.
     /// * `content` - The FHIRSchema JSON content
+    // Mirrors the fhirschema identity columns plus content payload.
+    #[allow(clippy::too_many_arguments)]
     #[instrument(skip(self, content), fields(url = %url, package = %format!("{}@{}", package_name, package_version)))]
     pub async fn store_fhirschema(
         &self,
@@ -738,8 +748,10 @@ impl PostgresPackageStore {
             versions.iter().map(|v| v.map(|s| s.to_string())).collect();
         let owned_urls: Vec<String> = urls.iter().map(|s| s.to_string()).collect();
         let owned_pkg_names: Vec<String> = package_names.iter().map(|s| s.to_string()).collect();
-        let owned_pkg_versions: Vec<String> = package_versions.iter().map(|s| s.to_string()).collect();
-        let owned_fhir_versions: Vec<String> = fhir_versions.iter().map(|s| s.to_string()).collect();
+        let owned_pkg_versions: Vec<String> =
+            package_versions.iter().map(|s| s.to_string()).collect();
+        let owned_fhir_versions: Vec<String> =
+            fhir_versions.iter().map(|s| s.to_string()).collect();
         let owned_schema_types: Vec<String> = schema_types.iter().map(|s| s.to_string()).collect();
 
         query(

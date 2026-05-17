@@ -198,7 +198,7 @@ impl ClosureOperation {
         let mut table = CLOSURE_TABLES
             .get(name)
             .map(|t| t.clone())
-            .unwrap_or_else(ClosureTable::new);
+            .unwrap_or_default();
 
         let mut new_mappings: Vec<Value> = Vec::new();
 

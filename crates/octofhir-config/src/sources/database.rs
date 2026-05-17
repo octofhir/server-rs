@@ -322,7 +322,7 @@ impl ConfigSource for DatabaseSource {
                                     // Parse payload
                                     match serde_json::from_str::<NotifyPayload>(notif.payload()) {
                                         Ok(payload) => {
-                                            let category = ConfigCategory::from_str(&payload.category)
+                                            let category = ConfigCategory::parse(&payload.category)
                                                 .unwrap_or(ConfigCategory::Server);
 
                                             let operation = match payload.operation.as_str() {

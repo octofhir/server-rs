@@ -57,10 +57,10 @@ impl JwtVerificationCache {
     /// # Arguments
     ///
     /// * `ttl` - Time-to-live for cached entries. Should be shorter than
-    ///           typical token lifetime to ensure revoked tokens don't
-    ///           stay cached too long.
+    ///   typical token lifetime to ensure revoked tokens don't
+    ///   stay cached too long.
     /// * `max_size` - Maximum number of entries. When exceeded, expired entries
-    ///                are cleaned up to make room.
+    ///   are cleaned up to make room.
     pub fn new(ttl: Duration, max_size: usize) -> Self {
         Self {
             cache: DashMap::new(),

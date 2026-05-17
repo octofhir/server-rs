@@ -189,10 +189,10 @@ fn extract_references_at_path(resource: &Value, path: &str, base_url: &str) -> V
     let mut refs = Vec::new();
     for val in values {
         // Reference object: { "reference": "Patient/123" }
-        if let Some(ref_str) = val.get("reference").and_then(|r| r.as_str()) {
-            if let Ok(parsed) = parse_reference(ref_str, Some(base_url)) {
-                refs.push(parsed);
-            }
+        if let Some(ref_str) = val.get("reference").and_then(|r| r.as_str())
+            && let Ok(parsed) = parse_reference(ref_str, Some(base_url))
+        {
+            refs.push(parsed);
         }
     }
     refs
@@ -233,10 +233,11 @@ async fn resolve_graph_by_string(
     value: &str,
 ) -> Result<GraphDefinitionModel, OperationError> {
     // First try as a direct ID
-    if !value.contains('/') && !value.starts_with("http") {
-        if let Ok(Some(stored)) = state.storage.read("GraphDefinition", value).await {
-            return parse_graph_definition(&stored.resource);
-        }
+    if !value.contains('/')
+        && !value.starts_with("http")
+        && let Ok(Some(stored)) = state.storage.read("GraphDefinition", value).await
+    {
+        return parse_graph_definition(&stored.resource);
     }
 
     // Try as a canonical URL
@@ -246,18 +247,17 @@ async fn resolve_graph_by_string(
             .storage
             .search("GraphDefinition", &search_params)
             .await
+            && let Some(entry) = result.entries.first()
         {
-            if let Some(entry) = result.entries.first() {
-                return parse_graph_definition(&entry.resource);
-            }
+            return parse_graph_definition(&entry.resource);
         }
     }
 
     // Try stripping "GraphDefinition/" prefix
-    if let Some(id) = value.strip_prefix("GraphDefinition/") {
-        if let Ok(Some(stored)) = state.storage.read("GraphDefinition", id).await {
-            return parse_graph_definition(&stored.resource);
-        }
+    if let Some(id) = value.strip_prefix("GraphDefinition/")
+        && let Ok(Some(stored)) = state.storage.read("GraphDefinition", id).await
+    {
+        return parse_graph_definition(&stored.resource);
     }
 
     Err(OperationError::NotFound(format!(

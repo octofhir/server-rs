@@ -915,10 +915,10 @@ fn compute_sort_params(
         match param.param_type {
             SearchParameterType::Date
             | SearchParameterType::String
-            | SearchParameterType::Number => {
-                if !param.is_common() {
-                    sort_params.push(param.code.clone());
-                }
+            | SearchParameterType::Number
+                if !param.is_common() =>
+            {
+                sort_params.push(param.code.clone());
             }
             _ => {}
         }

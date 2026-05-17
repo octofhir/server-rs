@@ -22,7 +22,7 @@ pub use refresh_token::RefreshToken;
 #[derive(Debug, Clone)]
 pub enum BasicAuthEntity {
     /// OAuth Client
-    Client(Client),
+    Client(Box<Client>),
     /// Application
     App(AppRecord),
 }

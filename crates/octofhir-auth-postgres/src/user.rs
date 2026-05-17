@@ -273,7 +273,7 @@ impl<'a> UserStorage<'a> {
             RETURNING id, txid, created_at, updated_at, resource, status::text
             "#,
         )
-        .bind(&id_str)
+        .bind(id_str)
         .bind(&resource)
         .fetch_one(self.pool)
         .await

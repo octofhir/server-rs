@@ -87,7 +87,7 @@ impl ConfigCategory {
     }
 
     /// Parse category from string
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn parse(s: &str) -> Option<Self> {
         match s.to_lowercase().as_str() {
             "server" => Some(Self::Server),
             "search" => Some(Self::Search),
@@ -238,14 +238,14 @@ mod tests {
     #[test]
     fn test_config_category_from_str() {
         assert_eq!(
-            ConfigCategory::from_str("server"),
+            ConfigCategory::parse("server"),
             Some(ConfigCategory::Server)
         );
         assert_eq!(
-            ConfigCategory::from_str("SEARCH"),
+            ConfigCategory::parse("SEARCH"),
             Some(ConfigCategory::Search)
         );
-        assert_eq!(ConfigCategory::from_str("unknown"), None);
+        assert_eq!(ConfigCategory::parse("unknown"), None);
     }
 
     #[test]

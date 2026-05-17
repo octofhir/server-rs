@@ -1,3 +1,12 @@
+// These APIs mirror FHIR/SMART operation shapes and storage row payloads; forcing
+// artificial parameter objects here would add churn without reducing risk.
+#![allow(
+    clippy::large_enum_variant,
+    clippy::too_many_arguments,
+    clippy::type_complexity,
+    clippy::wrong_self_convention
+)]
+
 pub mod admin;
 pub mod app_platform;
 pub mod async_jobs;

@@ -472,10 +472,7 @@ async fn build_registry_with_manager(cfg: &AppConfig) -> Result<CanonicalRegistr
                 .collect();
             match manager.install_packages_batch(url_specs).await {
                 Ok(()) => {
-                    tracing::info!(
-                        count = url_names.len(),
-                        "URL-pinned packages installed"
-                    );
+                    tracing::info!(count = url_names.len(), "URL-pinned packages installed");
                     successfully_installed.extend(url_names);
                 }
                 Err(e) => {
@@ -743,16 +740,15 @@ pub async fn convert_and_store_package_schemas(
     if let Ok(existing) = postgres_store
         .count_fhirschemas_for_package(package_name, package_version)
         .await
+        && existing > 0
     {
-        if existing > 0 {
-            tracing::info!(
-                package = %package_name,
-                version = %package_version,
-                existing = existing,
-                "FHIRSchemas already stored — skipping conversion"
-            );
-            return Ok(existing as usize);
-        }
+        tracing::info!(
+            package = %package_name,
+            version = %package_version,
+            existing = existing,
+            "FHIRSchemas already stored — skipping conversion"
+        );
+        return Ok(existing as usize);
     }
 
     tracing::info!(
@@ -1329,7 +1325,7 @@ pub async fn install_package_parallel_runtime(
         .iter()
         .filter(|p| {
             let key = format!("{}@{}", p.name, p.version);
-            !packages_before.contains(&key) && !(p.name == name && p.version == version)
+            !(packages_before.contains(&key) || p.name == name && p.version == version)
         })
         .map(|p| InstalledPackageInfo {
             name: p.name.clone(),

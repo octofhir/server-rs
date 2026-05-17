@@ -177,10 +177,10 @@ async fn build_app_request(
     let mut headers = HashMap::new();
     for (key, value) in &parts.headers {
         let key_str = key.as_str().to_lowercase();
-        if !hop_by_hop.contains(&key_str.as_str()) {
-            if let Ok(v) = value.to_str() {
-                headers.insert(key_str, v.to_string());
-            }
+        if !hop_by_hop.contains(&key_str.as_str())
+            && let Ok(v) = value.to_str()
+        {
+            headers.insert(key_str, v.to_string());
         }
     }
 

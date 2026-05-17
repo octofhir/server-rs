@@ -444,11 +444,6 @@ mod tests {
                 responses: std::collections::HashMap::new(),
             }
         }
-
-        fn with_response(mut self, key: &str, value: &str) -> Self {
-            self.responses.insert(key.to_string(), value.to_string());
-            self
-        }
     }
 
     #[async_trait]

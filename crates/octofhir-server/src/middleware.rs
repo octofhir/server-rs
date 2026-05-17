@@ -482,13 +482,14 @@ fn extract_token_from_query(req: &Request<Body>) -> Option<String> {
     let query = req.uri().query()?;
 
     for param in query.split('&') {
-        if let Some((key, value)) = param.split_once('=') {
-            if key == "token" && !value.is_empty() {
-                // URL-decode the token value
-                let decoded = urlencoding::decode(value).ok()?;
-                tracing::debug!("Token extracted from query parameter");
-                return Some(decoded.into_owned());
-            }
+        if let Some((key, value)) = param.split_once('=')
+            && key == "token"
+            && !value.is_empty()
+        {
+            // URL-decode the token value
+            let decoded = urlencoding::decode(value).ok()?;
+            tracing::debug!("Token extracted from query parameter");
+            return Some(decoded.into_owned());
         }
     }
 

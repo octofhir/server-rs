@@ -54,25 +54,24 @@ impl EventMatcher {
         };
 
         // Evaluate topic's FHIRPath criteria if present
-        if let Some(ref criteria) = trigger.fhirpath_criteria {
-            if !self.evaluate_fhirpath(criteria, resource).await? {
-                tracing::debug!(
-                    criteria = criteria,
-                    "Resource did not match topic FHIRPath criteria"
-                );
-                return Ok(false);
-            }
+        if let Some(ref criteria) = trigger.fhirpath_criteria
+            && !self.evaluate_fhirpath(criteria, resource).await?
+        {
+            tracing::debug!(
+                criteria = criteria,
+                "Resource did not match topic FHIRPath criteria"
+            );
+            return Ok(false);
         }
 
         // Evaluate topic's query criteria if present
-        if let Some(ref query_criteria) = trigger.query_criteria {
-            if !self
+        if let Some(ref query_criteria) = trigger.query_criteria
+            && !self
                 .evaluate_query_criteria(query_criteria, resource, previous, interaction)
                 .await?
-            {
-                tracing::debug!("Resource did not match topic query criteria");
-                return Ok(false);
-            }
+        {
+            tracing::debug!("Resource did not match topic query criteria");
+            return Ok(false);
         }
 
         // Evaluate subscription's filters
@@ -147,10 +146,10 @@ impl EventMatcher {
 
         // Handle delete - no current version
         if interaction == TriggerInteraction::Delete {
-            if let Some(ref previous_query) = criteria.previous {
-                if let Some(prev) = previous {
-                    return self.evaluate_query_string(previous_query, prev).await;
-                }
+            if let Some(ref previous_query) = criteria.previous
+                && let Some(prev) = previous
+            {
+                return self.evaluate_query_string(previous_query, prev).await;
             }
             return Ok(matches!(
                 criteria.result_for_delete,

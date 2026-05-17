@@ -1,12 +1,9 @@
 //! Debug test to check why name fields show only placeholder
 
-use async_graphql::dynamic::Schema;
-use async_graphql::{Value, Variables};
 use octofhir_fhir_model::provider::FhirVersion;
 use octofhir_fhirschema::{FhirSchemaModelProvider, get_schemas};
 use octofhir_graphql::{FhirSchemaBuilder, SchemaBuilderConfig};
 use octofhir_search::{SearchParameter, SearchParameterRegistry, SearchParameterType};
-use serde_json::json;
 use std::sync::Arc;
 
 #[tokio::test]
@@ -17,7 +14,7 @@ async fn debug_patient_name_introspection() {
     let provider = Arc::new(provider);
 
     // Create search registry with Patient
-    let mut registry = SearchParameterRegistry::new();
+    let registry = SearchParameterRegistry::new();
     registry.register(SearchParameter::new(
         "name",
         "http://hl7.org/fhir/SearchParameter/Patient-name",
@@ -69,21 +66,16 @@ async fn debug_patient_name_introspection() {
 
     let result = schema.execute(query).await;
     println!("Patient type fields:");
-    if let Some(data) = &result.data.into_json().ok() {
-        if let Some(type_data) = data.get("__type") {
-            if let Some(fields) = type_data.get("fields") {
-                if let Some(fields_array) = fields.as_array() {
-                    for field in fields_array {
-                        if let Some(name) = field.get("name").and_then(|n| n.as_str()) {
-                            if name == "name" || name == "address" {
-                                println!(
-                                    "  Field: {}",
-                                    serde_json::to_string_pretty(field).unwrap()
-                                );
-                            }
-                        }
-                    }
-                }
+    if let Some(data) = &result.data.into_json().ok()
+        && let Some(type_data) = data.get("__type")
+        && let Some(fields) = type_data.get("fields")
+        && let Some(fields_array) = fields.as_array()
+    {
+        for field in fields_array {
+            if let Some(name) = field.get("name").and_then(|n| n.as_str())
+                && (name == "name" || name == "address")
+            {
+                println!("  Field: {}", serde_json::to_string_pretty(field).unwrap());
             }
         }
     }
@@ -137,19 +129,17 @@ async fn debug_patient_name_introspection() {
     "#;
 
     let result = schema.execute(query).await;
-    if let Some(data) = &result.data.into_json().ok() {
-        if let Some(type_data) = data.get("__type") {
-            if let Some(fields) = type_data.get("fields") {
-                if let Some(fields_array) = fields.as_array() {
-                    for field in fields_array {
-                        if let Some(name) = field.get("name").and_then(|n| n.as_str()) {
-                            if name == "name" {
-                                println!("Patient.name field:");
-                                println!("{}", serde_json::to_string_pretty(field).unwrap());
-                            }
-                        }
-                    }
-                }
+    if let Some(data) = &result.data.into_json().ok()
+        && let Some(type_data) = data.get("__type")
+        && let Some(fields) = type_data.get("fields")
+        && let Some(fields_array) = fields.as_array()
+    {
+        for field in fields_array {
+            if let Some(name) = field.get("name").and_then(|n| n.as_str())
+                && name == "name"
+            {
+                println!("Patient.name field:");
+                println!("{}", serde_json::to_string_pretty(field).unwrap());
             }
         }
     }

@@ -426,8 +426,10 @@ mod tests {
 
     #[test]
     fn test_check_enabled_bulk_disabled() {
-        let mut config = BulkExportConfig::default();
-        config.enabled = false;
+        let config = BulkExportConfig {
+            enabled: false,
+            ..Default::default()
+        };
         let op = ViewDefinitionExportOperation::new(true, config);
 
         let result = op.check_enabled();

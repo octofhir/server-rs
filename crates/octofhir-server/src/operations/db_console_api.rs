@@ -449,7 +449,7 @@ fn is_valid_identifier(s: &str) -> bool {
         && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
         && s.chars()
             .next()
-            .map_or(false, |c| c.is_ascii_alphabetic() || c == '_')
+            .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
 }
 
 /// DELETE /api/db-console/indexes/{schema}/{index_name}

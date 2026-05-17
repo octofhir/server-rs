@@ -230,7 +230,7 @@ pub async fn get_audit_analytics(
                     count,
                 })
                 .collect();
-            top_resources.sort_by(|a, b| b.count.cmp(&a.count));
+            top_resources.sort_by_key(|item| std::cmp::Reverse(item.count));
             top_resources.truncate(10);
 
             let response = AnalyticsResponse {

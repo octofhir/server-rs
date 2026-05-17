@@ -26,6 +26,65 @@ pub struct StoredConfig {
     pub updated_by: Option<String>,
 }
 
+type StoredConfigRow = (
+    Uuid,
+    String,
+    String,
+    serde_json::Value,
+    Option<String>,
+    bool,
+    i64,
+    DateTime<Utc>,
+    Option<String>,
+);
+
+type StoredConfigHistoryRow = (
+    Uuid,
+    String,
+    String,
+    serde_json::Value,
+    Option<String>,
+    bool,
+    i64,
+    DateTime<Utc>,
+);
+
+impl From<StoredConfigRow> for StoredConfig {
+    fn from(
+        (id, key, category, value, description, is_secret, txid, ts, updated_by): StoredConfigRow,
+    ) -> Self {
+        Self {
+            id,
+            key,
+            category,
+            value,
+            description,
+            is_secret,
+            txid,
+            ts,
+            updated_by,
+        }
+    }
+}
+
+impl From<StoredConfigHistoryRow> for StoredConfig {
+    fn from(
+        (id, key, category, value, description, is_secret, txid, ts): StoredConfigHistoryRow,
+    ) -> Self {
+        Self {
+            id,
+            key,
+            category,
+            value,
+            description,
+            is_secret,
+            txid,
+            ts,
+            updated_by: None,
+        }
+    }
+}
+
 /// Configuration storage operations
 pub struct ConfigStorage {
     pool: PgPool,
@@ -55,17 +114,7 @@ impl ConfigStorage {
         category: &str,
         key: &str,
     ) -> Result<Option<StoredConfig>, ConfigError> {
-        let result: Option<(
-            Uuid,
-            String,
-            String,
-            serde_json::Value,
-            Option<String>,
-            bool,
-            i64,
-            DateTime<Utc>,
-            Option<String>,
-        )> = query_as(
+        let result: Option<StoredConfigRow> = query_as(
             r#"
                 SELECT id, key, category, value, description, is_secret, txid, ts, updated_by
                 FROM octofhir.configuration
@@ -78,21 +127,7 @@ impl ConfigStorage {
         .await
         .map_err(|e| ConfigError::database(format!("Failed to get config: {e}")))?;
 
-        Ok(result.map(
-            |(id, key, category, value, description, is_secret, txid, ts, updated_by)| {
-                StoredConfig {
-                    id,
-                    key,
-                    category,
-                    value,
-                    description,
-                    is_secret,
-                    txid,
-                    ts,
-                    updated_by,
-                }
-            },
-        ))
+        Ok(result.map(StoredConfig::from))
     }
 
     /// Get a decrypted configuration value
@@ -214,17 +249,7 @@ impl ConfigStorage {
 
     /// List all configuration for a category
     pub async fn list_category(&self, category: &str) -> Result<Vec<StoredConfig>, ConfigError> {
-        let rows: Vec<(
-            Uuid,
-            String,
-            String,
-            serde_json::Value,
-            Option<String>,
-            bool,
-            i64,
-            DateTime<Utc>,
-            Option<String>,
-        )> = query_as(
+        let rows: Vec<StoredConfigRow> = query_as(
             r#"
                 SELECT id, key, category, value, description, is_secret, txid, ts, updated_by
                 FROM octofhir.configuration
@@ -237,39 +262,12 @@ impl ConfigStorage {
         .await
         .map_err(|e| ConfigError::database(format!("Failed to list config: {e}")))?;
 
-        Ok(rows
-            .into_iter()
-            .map(
-                |(id, key, category, value, description, is_secret, txid, ts, updated_by)| {
-                    StoredConfig {
-                        id,
-                        key,
-                        category,
-                        value,
-                        description,
-                        is_secret,
-                        txid,
-                        ts,
-                        updated_by,
-                    }
-                },
-            )
-            .collect())
+        Ok(rows.into_iter().map(StoredConfig::from).collect())
     }
 
     /// List all configuration
     pub async fn list_all(&self) -> Result<Vec<StoredConfig>, ConfigError> {
-        let rows: Vec<(
-            Uuid,
-            String,
-            String,
-            serde_json::Value,
-            Option<String>,
-            bool,
-            i64,
-            DateTime<Utc>,
-            Option<String>,
-        )> = query_as(
+        let rows: Vec<StoredConfigRow> = query_as(
             r#"
                 SELECT id, key, category, value, description, is_secret, txid, ts, updated_by
                 FROM octofhir.configuration
@@ -280,24 +278,7 @@ impl ConfigStorage {
         .await
         .map_err(|e| ConfigError::database(format!("Failed to list config: {e}")))?;
 
-        Ok(rows
-            .into_iter()
-            .map(
-                |(id, key, category, value, description, is_secret, txid, ts, updated_by)| {
-                    StoredConfig {
-                        id,
-                        key,
-                        category,
-                        value,
-                        description,
-                        is_secret,
-                        txid,
-                        ts,
-                        updated_by,
-                    }
-                },
-            )
-            .collect())
+        Ok(rows.into_iter().map(StoredConfig::from).collect())
     }
 
     /// Get configuration history for a key
@@ -307,16 +288,7 @@ impl ConfigStorage {
         key: &str,
         limit: i64,
     ) -> Result<Vec<StoredConfig>, ConfigError> {
-        let rows: Vec<(
-            Uuid,
-            String,
-            String,
-            serde_json::Value,
-            Option<String>,
-            bool,
-            i64,
-            DateTime<Utc>,
-        )> = query_as(
+        let rows: Vec<StoredConfigHistoryRow> = query_as(
             r#"
                 SELECT id, key, category, value, description, is_secret, txid, ts
                 FROM octofhir.configuration_history
@@ -332,22 +304,7 @@ impl ConfigStorage {
         .await
         .map_err(|e| ConfigError::database(format!("Failed to get config history: {e}")))?;
 
-        Ok(rows
-            .into_iter()
-            .map(
-                |(id, key, category, value, description, is_secret, txid, ts)| StoredConfig {
-                    id,
-                    key,
-                    category,
-                    value,
-                    description,
-                    is_secret,
-                    txid,
-                    ts,
-                    updated_by: None,
-                },
-            )
-            .collect())
+        Ok(rows.into_iter().map(StoredConfig::from).collect())
     }
 }
 

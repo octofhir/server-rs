@@ -540,9 +540,11 @@ async fn export_resource_type(
 
     loop {
         // Build search parameters
-        let mut search_params = SearchParams::default();
-        search_params.count = Some(batch_size as u32);
-        search_params.offset = Some(offset as u32);
+        let mut search_params = SearchParams {
+            count: Some(batch_size as u32),
+            offset: Some(offset as u32),
+            ..Default::default()
+        };
 
         // Add _since filter if specified
         if let Some(since) = &params.since {

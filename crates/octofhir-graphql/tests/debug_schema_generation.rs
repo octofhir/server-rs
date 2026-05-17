@@ -14,7 +14,7 @@ async fn debug_humanname_in_schema() {
     let provider: Arc<dyn ModelProvider + Send + Sync> = Arc::new(provider);
 
     // Create search registry with Patient (which uses HumanName)
-    let mut registry = SearchParameterRegistry::new();
+    let registry = SearchParameterRegistry::new();
     registry.register(SearchParameter::new(
         "name",
         "http://hl7.org/fhir/SearchParameter/Patient-name",
@@ -40,11 +40,11 @@ async fn debug_humanname_in_schema() {
         println!("✅ HumanName type found in schema");
 
         // Extract and print the HumanName type definition
-        if let Some(start) = sdl.find("type HumanName") {
-            if let Some(end) = sdl[start..].find("\n\n") {
-                let humanname_def = &sdl[start..start + end];
-                println!("\n{}", humanname_def);
-            }
+        if let Some(start) = sdl.find("type HumanName")
+            && let Some(end) = sdl[start..].find("\n\n")
+        {
+            let humanname_def = &sdl[start..start + end];
+            println!("\n{}", humanname_def);
         }
     } else {
         println!("❌ HumanName type NOT found in schema");
@@ -55,11 +55,11 @@ async fn debug_humanname_in_schema() {
         println!("✅ Address type found in schema");
 
         // Extract and print the Address type definition
-        if let Some(start) = sdl.find("type Address") {
-            if let Some(end) = sdl[start..].find("\n\n") {
-                let address_def = &sdl[start..start + end];
-                println!("\n{}", address_def);
-            }
+        if let Some(start) = sdl.find("type Address")
+            && let Some(end) = sdl[start..].find("\n\n")
+        {
+            let address_def = &sdl[start..start + end];
+            println!("\n{}", address_def);
         }
     } else {
         println!("❌ Address type NOT found in schema");

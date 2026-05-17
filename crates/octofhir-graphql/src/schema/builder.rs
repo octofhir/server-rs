@@ -1136,7 +1136,7 @@ mod tests {
         use octofhir_search::SearchParameter;
 
         // Create a search registry with Patient parameters
-        let mut registry = SearchParameterRegistry::new();
+        let registry = SearchParameterRegistry::new();
         registry.register(SearchParameter::new(
             "name",
             "http://hl7.org/fhir/SearchParameter/Patient-name",

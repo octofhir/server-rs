@@ -554,29 +554,28 @@ impl ValidateCodeOperation {
         let mut systems: Vec<String> = Vec::new();
 
         // Check expansion first
-        if let Some(expansion) = value_set.get("expansion") {
-            if let Some(contains) = expansion.get("contains").and_then(|v| v.as_array()) {
-                for entry in contains {
-                    if let Some(system) = entry.get("system").and_then(|v| v.as_str()) {
-                        if !systems.contains(&system.to_string()) {
-                            systems.push(system.to_string());
-                        }
-                    }
+        if let Some(expansion) = value_set.get("expansion")
+            && let Some(contains) = expansion.get("contains").and_then(|v| v.as_array())
+        {
+            for entry in contains {
+                if let Some(system) = entry.get("system").and_then(|v| v.as_str())
+                    && !systems.contains(&system.to_string())
+                {
+                    systems.push(system.to_string());
                 }
             }
         }
 
         // Check compose if no expansion
-        if systems.is_empty() {
-            if let Some(compose) = value_set.get("compose") {
-                if let Some(includes) = compose.get("include").and_then(|v| v.as_array()) {
-                    for include in includes {
-                        if let Some(system) = include.get("system").and_then(|v| v.as_str()) {
-                            if !systems.contains(&system.to_string()) {
-                                systems.push(system.to_string());
-                            }
-                        }
-                    }
+        if systems.is_empty()
+            && let Some(compose) = value_set.get("compose")
+            && let Some(includes) = compose.get("include").and_then(|v| v.as_array())
+        {
+            for include in includes {
+                if let Some(system) = include.get("system").and_then(|v| v.as_str())
+                    && !systems.contains(&system.to_string())
+                {
+                    systems.push(system.to_string());
                 }
             }
         }

@@ -60,10 +60,10 @@ impl CqlOperation {
             })?;
 
         for param in parameters {
-            if param.get("name").and_then(|n| n.as_str()) == Some("expression") {
-                if let Some(expr) = param.get("valueString").and_then(|v| v.as_str()) {
-                    return Ok(expr.to_string());
-                }
+            if param.get("name").and_then(|n| n.as_str()) == Some("expression")
+                && let Some(expr) = param.get("valueString").and_then(|v| v.as_str())
+            {
+                return Ok(expr.to_string());
             }
         }
 

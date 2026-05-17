@@ -402,7 +402,7 @@ mod tests {
     fn create_test_registry() -> SearchParameterRegistry {
         use crate::parameters::ElementTypeHint;
 
-        let mut registry = SearchParameterRegistry::new();
+        let registry = SearchParameterRegistry::new();
 
         // Observation.subject -> Patient
         let subject_param = SearchParameter::new(

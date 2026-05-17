@@ -141,7 +141,7 @@ impl std::fmt::Debug for SearchParamHook {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+
     use octofhir_core::events::ResourceEvent;
     use serde_json::json;
 

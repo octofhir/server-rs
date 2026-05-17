@@ -62,10 +62,10 @@ impl FhirPathOperation {
             })?;
 
         for param in parameters {
-            if param.get("name").and_then(|n| n.as_str()) == Some("expression") {
-                if let Some(expr) = param.get("valueString").and_then(|v| v.as_str()) {
-                    return Ok(expr.to_string());
-                }
+            if param.get("name").and_then(|n| n.as_str()) == Some("expression")
+                && let Some(expr) = param.get("valueString").and_then(|v| v.as_str())
+            {
+                return Ok(expr.to_string());
             }
         }
 
@@ -79,10 +79,10 @@ impl FhirPathOperation {
         let parameters = params.get("parameter")?.as_array()?;
 
         for param in parameters {
-            if param.get("name").and_then(|n| n.as_str()) == Some("resource") {
-                if let Some(resource) = param.get("resource") {
-                    return Some(resource.clone());
-                }
+            if param.get("name").and_then(|n| n.as_str()) == Some("resource")
+                && let Some(resource) = param.get("resource")
+            {
+                return Some(resource.clone());
             }
         }
 

@@ -348,13 +348,13 @@ fn extract_token_from_query(parts: &Parts) -> Option<String> {
 
     // Parse query string (simple key=value&key=value format)
     for pair in query.split('&') {
-        if let Some((key, value)) = pair.split_once('=') {
-            if key == "token" {
-                let value = value.trim();
-                if !value.is_empty() {
-                    tracing::debug!("Token extracted from query parameter");
-                    return Some(value.to_string());
-                }
+        if let Some((key, value)) = pair.split_once('=')
+            && key == "token"
+        {
+            let value = value.trim();
+            if !value.is_empty() {
+                tracing::debug!("Token extracted from query parameter");
+                return Some(value.to_string());
             }
         }
     }

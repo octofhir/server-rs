@@ -540,7 +540,7 @@ mod tests {
     use crate::parameters::{SearchParameter, SearchParameterType};
 
     fn create_test_registry() -> SearchParameterRegistry {
-        let mut registry = SearchParameterRegistry::new();
+        let registry = SearchParameterRegistry::new();
 
         // Observation.patient -> Patient
         let patient_param = SearchParameter::new(

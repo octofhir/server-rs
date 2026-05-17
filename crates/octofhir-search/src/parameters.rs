@@ -253,7 +253,7 @@ pub struct SearchParameterComponent {
 ///
 /// Used by `dispatch_search` to choose the correct SQL builder for each search parameter
 /// instead of hardcoded path-based heuristics.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub enum ElementTypeHint {
     /// Simple scalar: code, id, boolean, string, etc. — use text extraction (->>) and equality
     SimpleCode,
@@ -269,13 +269,8 @@ pub enum ElementTypeHint {
     /// E.g., Array("Reference") for reference arrays, Array("uri") for URI arrays.
     Array(String),
     /// Not resolved from schema — use default behavior for the search parameter type
+    #[default]
     Unknown,
-}
-
-impl Default for ElementTypeHint {
-    fn default() -> Self {
-        Self::Unknown
-    }
 }
 
 /// Primitive FHIR types that map to simple scalar search (text extraction with ->>).

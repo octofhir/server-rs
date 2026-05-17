@@ -59,11 +59,11 @@ async fn setup_storage() -> (testcontainers::ContainerAsync<Postgres>, PostgresS
         .set(registry)
         .expect("registry should only be set once");
 
-    // Drop the Patient partition so index insert fails inside the CRUD transaction.
-    query(r#"DROP TABLE "search_idx_reference_patient""#)
+    // Drop the reference index parent so lazy partition creation fails inside the CRUD transaction.
+    query("DROP TABLE search_idx_reference CASCADE")
         .execute(storage.pool())
         .await
-        .expect("reference index partition should be dropped");
+        .expect("reference index table should be dropped");
 
     (container, storage)
 }
@@ -80,8 +80,13 @@ async fn create_rolls_back_when_search_index_write_fails() {
         }
     });
 
-    let result = storage.create(&patient).await;
+    let mut tx = storage
+        .begin_transaction()
+        .await
+        .expect("transaction should begin");
+    let result = tx.create(&patient).await;
     assert!(result.is_err(), "create should fail when index write fails");
+    let _ = tx.rollback().await;
 
     let stored = storage
         .read("Patient", "rollback-patient")

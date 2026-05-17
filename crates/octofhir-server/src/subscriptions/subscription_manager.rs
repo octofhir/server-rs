@@ -370,25 +370,23 @@ impl SubscriptionManager {
 
         // R4 Backport: Parse from criteria URL query string
         // e.g., "http://example.org/topic/patient-admission?patient=Patient/123"
-        if let Some(criteria) = resource.get("criteria").and_then(|v| v.as_str()) {
-            if let Some(query_start) = criteria.find('?') {
-                let query = &criteria[query_start + 1..];
-                return query
-                    .split('&')
-                    .filter_map(|param| {
-                        let mut parts = param.splitn(2, '=');
-                        let key = parts.next()?;
-                        let value = parts.next()?;
+        if let Some(criteria) = resource.get("criteria").and_then(|v| v.as_str())
+            && let Some(query_start) = criteria.find('?')
+        {
+            let query = &criteria[query_start + 1..];
+            return query
+                .split('&')
+                .filter_map(|param| {
+                    let (key, value) = param.split_once('=')?;
 
-                        Some(AppliedFilter {
-                            filter_parameter: key.to_string(),
-                            comparator: None,
-                            modifier: None,
-                            value: value.to_string(),
-                        })
+                    Some(AppliedFilter {
+                        filter_parameter: key.to_string(),
+                        comparator: None,
+                        modifier: None,
+                        value: value.to_string(),
                     })
-                    .collect();
-            }
+                })
+                .collect();
         }
 
         Vec::new()

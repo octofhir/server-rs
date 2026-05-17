@@ -44,17 +44,13 @@ pub struct ParsedSubscriptionTopic {
 /// Status of a subscription topic.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 pub enum TopicStatus {
     Draft,
     Active,
     Retired,
+    #[default]
     Unknown,
-}
-
-impl Default for TopicStatus {
-    fn default() -> Self {
-        Self::Unknown
-    }
 }
 
 impl From<&str> for TopicStatus {
@@ -233,8 +229,10 @@ pub struct ActiveSubscription {
 /// Status of a subscription.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 pub enum SubscriptionStatus {
     /// Initial state, waiting for server to activate
+    #[default]
     Requested,
     /// Active and receiving notifications
     Active,
@@ -244,12 +242,6 @@ pub enum SubscriptionStatus {
     Off,
     /// Subscription has been entered in error
     EnteredInError,
-}
-
-impl Default for SubscriptionStatus {
-    fn default() -> Self {
-        Self::Requested
-    }
 }
 
 impl From<&str> for SubscriptionStatus {
@@ -442,8 +434,10 @@ impl SubscriptionEventType {
 /// Status of a queued event.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 pub enum EventStatus {
     /// Waiting to be processed
+    #[default]
     Pending,
     /// Currently being delivered
     Processing,
@@ -453,12 +447,6 @@ pub enum EventStatus {
     Failed,
     /// TTL exceeded
     Expired,
-}
-
-impl Default for EventStatus {
-    fn default() -> Self {
-        Self::Pending
-    }
 }
 
 impl From<&str> for EventStatus {

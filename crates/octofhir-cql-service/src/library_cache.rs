@@ -63,11 +63,11 @@ impl LibraryCache {
         let cache_key = Self::make_cache_key(&library.url, &library.version);
 
         // Check capacity and evict if needed (simple FIFO for now)
-        if self.compiled.len() >= self.capacity {
-            if let Some(first_key) = self.compiled.iter().next().map(|e| e.key().clone()) {
-                self.compiled.remove(&first_key);
-                tracing::debug!(key = first_key, "Evicted library from cache");
-            }
+        if self.compiled.len() >= self.capacity
+            && let Some(first_key) = self.compiled.iter().next().map(|e| e.key().clone())
+        {
+            self.compiled.remove(&first_key);
+            tracing::debug!(key = first_key, "Evicted library from cache");
         }
 
         self.compiled.insert(cache_key, library);
@@ -90,13 +90,13 @@ impl LibraryCache {
 
         // L2: Check Redis cache (if enabled)
         #[cfg(feature = "redis-cache")]
-        if let Some(pool) = &self.redis_pool {
-            if let Ok(Some(lib)) = self.get_from_redis(&cache_key, pool).await {
-                tracing::debug!(url = url, version = version, "Library found in L2 cache");
-                let lib_arc = Arc::new(lib);
-                self.compiled.insert(cache_key.clone(), lib_arc.clone());
-                return Ok(lib_arc);
-            }
+        if let Some(pool) = &self.redis_pool
+            && let Ok(Some(lib)) = self.get_from_redis(&cache_key, pool).await
+        {
+            tracing::debug!(url = url, version = version, "Library found in L2 cache");
+            let lib_arc = Arc::new(lib);
+            self.compiled.insert(cache_key.clone(), lib_arc.clone());
+            return Ok(lib_arc);
         }
 
         // Compile from source
@@ -260,7 +260,7 @@ impl LibraryCache {
         key: &str,
         pool: &deadpool_redis::Pool,
     ) -> CqlResult<Option<CompiledLibrary>> {
-        use redis::AsyncCommands;
+        use deadpool_redis::redis::AsyncCommands;
 
         let mut conn = pool.get().await.map_err(|e| {
             crate::error::CqlError::CacheError(format!("Redis connection error: {}", e))
@@ -288,14 +288,15 @@ impl LibraryCache {
         library: &CompiledLibrary,
         pool: &deadpool_redis::Pool,
     ) -> CqlResult<()> {
-        use redis::AsyncCommands;
+        use deadpool_redis::redis::AsyncCommands;
 
         let json = serde_json::to_string(library)?;
         let mut conn = pool.get().await.map_err(|e| {
             crate::error::CqlError::CacheError(format!("Redis connection error: {}", e))
         })?;
 
-        conn.set_ex(format!("cql:library:{}", key), json, 3600) // 1 hour TTL
+        let _: () = conn
+            .set_ex(format!("cql:library:{}", key), json, 3600) // 1 hour TTL
             .await
             .map_err(|e| crate::error::CqlError::CacheError(format!("Redis set error: {}", e)))?;
 

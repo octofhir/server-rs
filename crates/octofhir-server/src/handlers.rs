@@ -245,43 +245,39 @@ pub async fn build_capability_statement(
         // Fetch ALL StructureDefinition resources at once (paginated)
         const PAGE_SIZE: usize = 1000;
         let mut offset = 0;
-        loop {
-            if let Ok(results) = mgr
-                .search()
-                .await
-                .resource_type("StructureDefinition")
-                .limit(PAGE_SIZE)
-                .offset(offset)
-                .execute()
-                .await
-            {
-                let page_count = results.resources.len();
-                for rm in &results.resources {
-                    let content = &rm.resource.content;
-                    if let Some(rt) = content.get("type").and_then(|v| v.as_str())
-                        && let Some(url) = content.get("url").and_then(|v| v.as_str())
-                    {
-                        match content.get("derivation").and_then(|v| v.as_str()) {
-                            Some("specialization") => {
-                                base_profiles.insert(rt.to_string(), url.to_string());
-                            }
-                            Some("constraint") => {
-                                supported_profiles
-                                    .entry(rt.to_string())
-                                    .or_default()
-                                    .push(url.to_string());
-                            }
-                            _ => {}
+        while let Ok(results) = mgr
+            .search()
+            .await
+            .resource_type("StructureDefinition")
+            .limit(PAGE_SIZE)
+            .offset(offset)
+            .execute()
+            .await
+        {
+            let page_count = results.resources.len();
+            for rm in &results.resources {
+                let content = &rm.resource.content;
+                if let Some(rt) = content.get("type").and_then(|v| v.as_str())
+                    && let Some(url) = content.get("url").and_then(|v| v.as_str())
+                {
+                    match content.get("derivation").and_then(|v| v.as_str()) {
+                        Some("specialization") => {
+                            base_profiles.insert(rt.to_string(), url.to_string());
                         }
+                        Some("constraint") => {
+                            supported_profiles
+                                .entry(rt.to_string())
+                                .or_default()
+                                .push(url.to_string());
+                        }
+                        _ => {}
                     }
                 }
-                if page_count < PAGE_SIZE {
-                    break;
-                }
-                offset += PAGE_SIZE;
-            } else {
+            }
+            if page_count < PAGE_SIZE {
                 break;
             }
+            offset += PAGE_SIZE;
         }
     }
 
@@ -1860,9 +1856,9 @@ pub async fn delete_resource(
     // For SearchParameter, read it first to get the URL for registry removal
     let search_param_url: Option<String> = if resource_type == "SearchParameter" {
         match state.storage.read_raw(&resource_type, &id).await {
-            Ok(Some(stored)) => octofhir_api::RawJson::from_string(stored.resource_json)
-                .get_str_field("url")
-                .map(String::from),
+            Ok(Some(stored)) => {
+                octofhir_api::RawJson::from_string(stored.resource_json).get_str_field("url")
+            }
             _ => None,
         }
     } else {
@@ -3324,14 +3320,16 @@ pub async fn api_operation_patch(
     use crate::operation_registry::{OperationStorage, OperationUpdate, PostgresOperationStorage};
 
     // If only updating public flag, use the registry service which also updates in-memory indexes
-    if body.description.is_none() && body.public.is_some() {
+    if body.description.is_none()
+        && let Some(public) = body.public
+    {
         match state
             .operation_registry
-            .set_operation_public(&id, body.public.unwrap())
+            .set_operation_public(&id, public)
             .await
         {
             Ok(Some(op)) => {
-                tracing::info!(operation_id = %id, public = body.public.unwrap(), "Operation public flag updated");
+                tracing::info!(operation_id = %id, public = public, "Operation public flag updated");
                 return (StatusCode::OK, Json(serde_json::to_value(op).unwrap()));
             }
             Ok(None) => {
@@ -3648,12 +3646,11 @@ async fn process_transaction(
         let mut resolved_entry = (*entry).clone();
 
         // Inject pre-assigned ID into POST resources
-        if let Some(fu) = entry["fullUrl"].as_str() {
-            if let Some(new_id) = pre_assigned_ids.get(fu) {
-                if let Some(res) = resolved_entry.get_mut("resource") {
-                    res["id"] = json!(new_id);
-                }
-            }
+        if let Some(fu) = entry["fullUrl"].as_str()
+            && let Some(new_id) = pre_assigned_ids.get(fu)
+            && let Some(res) = resolved_entry.get_mut("resource")
+        {
+            res["id"] = json!(new_id);
         }
 
         // Resolve all urn:uuid references in the resource
@@ -6453,7 +6450,7 @@ async fn dispatch_to_gateway_with_body_or_404(
 
         // Copy headers
         if let Some(headers_mut) = request_builder.headers_mut() {
-            headers_mut.extend(headers.into_iter());
+            headers_mut.extend(headers);
         }
 
         let request = request_builder

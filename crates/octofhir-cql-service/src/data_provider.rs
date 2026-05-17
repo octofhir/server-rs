@@ -34,6 +34,8 @@ impl FhirServerDataProvider {
     }
 
     /// Retrieve resources based on CQL retrieve parameters
+    // Mirrors the CQL DataProvider retrieve contract.
+    #[allow(clippy::too_many_arguments)]
     pub async fn retrieve(
         &self,
         data_type: &str,
@@ -50,13 +52,13 @@ impl FhirServerDataProvider {
         let mut search_params = SearchParams::new();
 
         // Context filtering
-        if let Some(ctx_value) = context_value {
-            if let Some(patient_id) = Self::extract_patient_id(ctx_value) {
-                if Self::has_subject_field(data_type) {
-                    search_params = search_params.with_param("subject", &patient_id);
-                } else if data_type == "Patient" {
-                    search_params = search_params.with_param("_id", &patient_id);
-                }
+        if let Some(ctx_value) = context_value
+            && let Some(patient_id) = Self::extract_patient_id(ctx_value)
+        {
+            if Self::has_subject_field(data_type) {
+                search_params = search_params.with_param("subject", &patient_id);
+            } else if data_type == "Patient" {
+                search_params = search_params.with_param("_id", &patient_id);
             }
         }
 
@@ -66,20 +68,20 @@ impl FhirServerDataProvider {
         }
 
         // Code filtering
-        if let Some(codes_val) = codes {
-            if let Some(code_param) = Self::build_code_param(codes_val, code_property) {
-                let param_name = code_property.unwrap_or("code");
-                search_params = search_params.with_param(param_name, &code_param);
-            }
+        if let Some(codes_val) = codes
+            && let Some(code_param) = Self::build_code_param(codes_val, code_property)
+        {
+            let param_name = code_property.unwrap_or("code");
+            search_params = search_params.with_param(param_name, &code_param);
         }
 
         // Date filtering
-        if let Some(range) = date_range {
-            if let Some((start, end)) = Self::extract_date_range(range) {
-                let param_name = date_property.unwrap_or("date");
-                search_params = search_params.with_param(param_name, &format!("ge{}", start));
-                search_params = search_params.with_param(param_name, &format!("le{}", end));
-            }
+        if let Some(range) = date_range
+            && let Some((start, end)) = Self::extract_date_range(range)
+        {
+            let param_name = date_property.unwrap_or("date");
+            search_params = search_params.with_param(param_name, format!("ge{}", start));
+            search_params = search_params.with_param(param_name, format!("le{}", end));
         }
 
         search_params = search_params.with_count(self.max_retrieve_size as u32);
@@ -101,10 +103,10 @@ impl FhirServerDataProvider {
     }
 
     fn extract_patient_id(context_value: &Value) -> Option<String> {
-        if let Some(reference) = context_value.get("reference").and_then(|r| r.as_str()) {
-            if reference.starts_with("Patient/") {
-                return Some(reference.to_string());
-            }
+        if let Some(reference) = context_value.get("reference").and_then(|r| r.as_str())
+            && reference.starts_with("Patient/")
+        {
+            return Some(reference.to_string());
         }
         if let Some(id) = context_value.as_str() {
             if id.starts_with("Patient/") {
@@ -169,9 +171,9 @@ impl DataProvider for FhirServerDataProvider {
         date_property: Option<&str>,
         date_range: Option<&CqlValue>,
     ) -> Vec<CqlValue> {
-        let context_json = context_value.and_then(|cv| cql_value_to_json(cv));
-        let codes_json = codes.and_then(|cv| cql_value_to_json(cv));
-        let date_range_json = date_range.and_then(|cv| cql_value_to_json(cv));
+        let context_json = context_value.and_then(cql_value_to_json);
+        let codes_json = codes.and_then(cql_value_to_json);
+        let date_range_json = date_range.and_then(cql_value_to_json);
 
         let rt = tokio::runtime::Handle::current();
         let resources = rt.block_on(async {
@@ -231,7 +233,7 @@ pub(crate) fn cql_value_to_json(value: &CqlValue) -> Option<Value> {
         CqlValue::Long(l) => Some(Value::Number((*l).into())),
         CqlValue::Decimal(d) => d
             .to_f64()
-            .and_then(|f| serde_json::Number::from_f64(f))
+            .and_then(serde_json::Number::from_f64)
             .map(Value::Number),
         CqlValue::String(s) => Some(Value::String(s.clone())),
         CqlValue::Date(d) => Some(Value::String(d.to_string())),
@@ -260,11 +262,8 @@ pub(crate) fn cql_value_to_json(value: &CqlValue) -> Option<Value> {
             Some(Value::Object(map))
         }
         CqlValue::List(list) => {
-            let json_items: Vec<Value> = list
-                .elements
-                .iter()
-                .filter_map(|item| cql_value_to_json(item))
-                .collect();
+            let json_items: Vec<Value> =
+                list.elements.iter().filter_map(cql_value_to_json).collect();
             Some(Value::Array(json_items))
         }
         CqlValue::Tuple(tuple) => {
@@ -299,10 +298,7 @@ pub(crate) fn json_to_cql_value(value: &Value) -> Option<CqlValue> {
         }
         Value::String(s) => Some(CqlValue::String(s.clone())),
         Value::Array(arr) => {
-            let items: Vec<CqlValue> = arr
-                .iter()
-                .filter_map(|item| json_to_cql_value(item))
-                .collect();
+            let items: Vec<CqlValue> = arr.iter().filter_map(json_to_cql_value).collect();
             Some(CqlValue::List(CqlList {
                 element_type: CqlType::Any,
                 elements: items,

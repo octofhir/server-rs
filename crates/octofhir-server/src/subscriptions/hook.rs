@@ -126,14 +126,14 @@ impl SubscriptionHook {
                 }
 
                 // Check if subscription has expired
-                if let Some(end_time) = subscription.end_time {
-                    if end_time < time::OffsetDateTime::now_utc() {
-                        tracing::debug!(
-                            subscription_id = subscription.id,
-                            "Subscription has expired, skipping"
-                        );
-                        continue;
-                    }
+                if let Some(end_time) = subscription.end_time
+                    && end_time < time::OffsetDateTime::now_utc()
+                {
+                    tracing::debug!(
+                        subscription_id = subscription.id,
+                        "Subscription has expired, skipping"
+                    );
+                    continue;
                 }
 
                 // Evaluate filters

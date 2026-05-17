@@ -1,5 +1,9 @@
 //! PostgreSQL storage backend for OctoFHIR server.
 //!
+//! The storage layer uses sqlx tuple row shapes heavily; aliases often obscure
+//! the query column order more than they help.
+#![allow(clippy::type_complexity)]
+//!
 //! This crate provides a PostgreSQL implementation of the `FhirStorage` trait
 //! from `octofhir-storage`, using sqlx for type-safe queries.
 //!

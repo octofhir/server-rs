@@ -953,7 +953,7 @@ pub fn bundle_from_search_raw_with_pagination(
     let mut entries = Vec::with_capacity(resources.len() + included.len());
 
     // Add main match entries
-    for (res, id) in resources.into_iter().zip(resource_ids.into_iter()) {
+    for (res, id) in resources.into_iter().zip(resource_ids) {
         let full_url = Some(join_url(base_url, &format!("{resource_type}/{id}")));
         entries.push(BundleEntry {
             full_url,
@@ -1072,7 +1072,7 @@ pub fn bundle_from_search_raw_with_warnings_and_pagination(
     }
 
     // Add main match entries
-    for (res, id) in resources.into_iter().zip(resource_ids.into_iter()) {
+    for (res, id) in resources.into_iter().zip(resource_ids) {
         let full_url = Some(join_url(base_url, &format!("{resource_type}/{id}")));
         entries.push(BundleEntry {
             full_url,
@@ -1282,6 +1282,8 @@ pub fn build_search_links(
 }
 
 /// Build pagination links for search results with optional exact total metadata.
+// Keep this signature aligned with the public bundle helpers above.
+#[allow(clippy::too_many_arguments)]
 pub fn build_search_links_with_total_mode(
     total: Option<usize>,
     total_is_exact: bool,

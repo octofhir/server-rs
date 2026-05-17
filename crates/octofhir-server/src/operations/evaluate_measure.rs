@@ -71,10 +71,10 @@ impl EvaluateMeasureOperation {
         let parameters = params.get("parameter")?.as_array()?;
 
         for param in parameters {
-            if param.get("name").and_then(|n| n.as_str()) == Some(name) {
-                if let Some(value) = param.get("valueString").and_then(|v| v.as_str()) {
-                    return Some(value.to_string());
-                }
+            if param.get("name").and_then(|n| n.as_str()) == Some(name)
+                && let Some(value) = param.get("valueString").and_then(|v| v.as_str())
+            {
+                return Some(value.to_string());
             }
         }
 
@@ -86,10 +86,10 @@ impl EvaluateMeasureOperation {
         let parameters = params.get("parameter")?.as_array()?;
 
         for param in parameters {
-            if param.get("name").and_then(|n| n.as_str()) == Some(name) {
-                if let Some(value) = param.get("valueCode").and_then(|v| v.as_str()) {
-                    return Some(value.to_string());
-                }
+            if param.get("name").and_then(|n| n.as_str()) == Some(name)
+                && let Some(value) = param.get("valueCode").and_then(|v| v.as_str())
+            {
+                return Some(value.to_string());
             }
         }
 
@@ -117,12 +117,12 @@ impl EvaluateMeasureOperation {
         });
 
         // Add subject reference for individual reports
-        if report_type == "individual" {
-            if let Some(subject_ref) = subject {
-                report["subject"] = json!({
-                    "reference": subject_ref
-                });
-            }
+        if report_type == "individual"
+            && let Some(subject_ref) = subject
+        {
+            report["subject"] = json!({
+                "reference": subject_ref
+            });
         }
 
         report

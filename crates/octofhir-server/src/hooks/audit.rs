@@ -105,7 +105,6 @@ impl std::fmt::Debug for AsyncAuditHook {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
 
     // Note: Full tests require mock AuditService.
     // Basic tests for matching logic.

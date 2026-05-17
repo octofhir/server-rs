@@ -299,13 +299,13 @@ pub async fn execute_search_raw_with_config(
                         tag.push_str("sv");
                     }
                     if has_system_only {
-                        tag.push_str("s");
+                        tag.push('s');
                     }
                     if has_empty_system {
                         tag.push_str("es");
                     }
                     if has_no_pipe {
-                        tag.push_str("p");
+                        tag.push('p');
                     }
                     tag
                 };
@@ -731,7 +731,7 @@ async fn query_include_for_target(
 
     let rows: Vec<(Value, String, i64, DateTime<Utc>, DateTime<Utc>)> = query_as(&sql)
         .bind(source_type)
-        .bind(&source_ids)
+        .bind(source_ids)
         .bind(param_name)
         .bind(target_type)
         .fetch_all(pool)
@@ -925,7 +925,7 @@ async fn query_include_for_target_raw(
 
     let rows: Vec<(String, String, i64, DateTime<Utc>, DateTime<Utc>)> = query_as(&sql)
         .bind(source_type)
-        .bind(&source_ids)
+        .bind(source_ids)
         .bind(param_name)
         .bind(target_type)
         .fetch_all(pool)

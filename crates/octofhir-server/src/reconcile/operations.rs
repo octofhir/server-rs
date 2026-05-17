@@ -297,8 +297,8 @@ mod tests {
         assert_eq!(custom_op.path, "/api/users");
         assert_eq!(custom_op.method, "POST");
         assert_eq!(custom_op.operation_type, "app");
-        assert_eq!(custom_op.active, true);
-        assert_eq!(custom_op.public, false);
+        assert!(custom_op.active);
+        assert!(!custom_op.public);
         assert!(custom_op.proxy.is_some());
         assert_eq!(custom_op.proxy.as_ref().unwrap().url, "http://backend:3000");
         assert_eq!(custom_op.proxy.as_ref().unwrap().timeout, Some(30));

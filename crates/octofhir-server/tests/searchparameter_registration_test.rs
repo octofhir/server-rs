@@ -99,7 +99,7 @@ async fn test_create_searchparameter_auto_registers() {
 
     // Create the SearchParameter via POST
     let response = client
-        .post(&format!("{}/fhir/SearchParameter", base_url))
+        .post(format!("{}/fhir/SearchParameter", base_url))
         .header("content-type", "application/fhir+json")
         .json(&search_param)
         .send()
@@ -129,7 +129,7 @@ async fn test_create_searchparameter_auto_registers() {
     });
 
     client
-        .post(&format!("{}/fhir/Patient", base_url))
+        .post(format!("{}/fhir/Patient", base_url))
         .header("content-type", "application/fhir+json")
         .json(&patient)
         .send()
@@ -142,7 +142,7 @@ async fn test_create_searchparameter_auto_registers() {
     // IMMEDIATELY try to use the custom search parameter
     // This should work without server restart!
     let search_response = client
-        .get(&format!(
+        .get(format!(
             "{}/fhir/Patient?custom-field=test-value-123",
             base_url
         ))
@@ -171,7 +171,7 @@ async fn test_create_searchparameter_auto_registers() {
 
     // Cleanup
     client
-        .delete(&format!(
+        .delete(format!(
             "{}/fhir/SearchParameter/{}",
             base_url, search_param_id
         ))
@@ -202,7 +202,7 @@ async fn test_invalid_fhirpath_expression_rejected() {
     });
 
     let response = client
-        .post(&format!("{}/fhir/SearchParameter", base_url))
+        .post(format!("{}/fhir/SearchParameter", base_url))
         .header("content-type", "application/fhir+json")
         .json(&invalid_param)
         .send()
@@ -249,7 +249,7 @@ async fn test_update_searchparameter_updates_registry() {
     });
 
     let create_response = client
-        .post(&format!("{}/fhir/SearchParameter", base_url))
+        .post(format!("{}/fhir/SearchParameter", base_url))
         .header("content-type", "application/fhir+json")
         .json(&search_param)
         .send()
@@ -266,7 +266,7 @@ async fn test_update_searchparameter_updates_registry() {
         json!("Patient.extension.where(url='http://example.org/field-v2').valueString");
 
     let update_response = client
-        .put(&format!("{}/fhir/SearchParameter/{}", base_url, param_id))
+        .put(format!("{}/fhir/SearchParameter/{}", base_url, param_id))
         .header("content-type", "application/fhir+json")
         .json(&updated_param)
         .send()
@@ -288,7 +288,7 @@ async fn test_update_searchparameter_updates_registry() {
     });
 
     client
-        .post(&format!("{}/fhir/Patient", base_url))
+        .post(format!("{}/fhir/Patient", base_url))
         .header("content-type", "application/fhir+json")
         .json(&patient)
         .send()
@@ -299,7 +299,7 @@ async fn test_update_searchparameter_updates_registry() {
 
     // Search using the updated parameter (should use new expression)
     let search_response = client
-        .get(&format!(
+        .get(format!(
             "{}/fhir/Patient?updateable-field=updated-value",
             base_url
         ))
@@ -311,7 +311,7 @@ async fn test_update_searchparameter_updates_registry() {
 
     // Cleanup
     client
-        .delete(&format!("{}/fhir/SearchParameter/{}", base_url, param_id))
+        .delete(format!("{}/fhir/SearchParameter/{}", base_url, param_id))
         .send()
         .await
         .ok();
@@ -339,7 +339,7 @@ async fn test_delete_searchparameter_removes_from_registry() {
     });
 
     let create_response = client
-        .post(&format!("{}/fhir/SearchParameter", base_url))
+        .post(format!("{}/fhir/SearchParameter", base_url))
         .header("content-type", "application/fhir+json")
         .json(&search_param)
         .send()
@@ -352,7 +352,7 @@ async fn test_delete_searchparameter_removes_from_registry() {
 
     // Verify the parameter works
     let search_response = client
-        .get(&format!("{}/fhir/Patient?deletable-field=test", base_url))
+        .get(format!("{}/fhir/Patient?deletable-field=test", base_url))
         .send()
         .await
         .expect("Failed to search");
@@ -364,7 +364,7 @@ async fn test_delete_searchparameter_removes_from_registry() {
 
     // Delete the SearchParameter
     let delete_response = client
-        .delete(&format!("{}/fhir/SearchParameter/{}", base_url, param_id))
+        .delete(format!("{}/fhir/SearchParameter/{}", base_url, param_id))
         .send()
         .await
         .expect("Failed to delete");
@@ -379,7 +379,7 @@ async fn test_delete_searchparameter_removes_from_registry() {
 
     // Try to use the deleted parameter - should fail or return error
     let search_after_delete = client
-        .get(&format!("{}/fhir/Patient?deletable-field=test", base_url))
+        .get(format!("{}/fhir/Patient?deletable-field=test", base_url))
         .send()
         .await
         .expect("Failed to search");
@@ -415,7 +415,7 @@ async fn test_searchparameter_with_multi_resource_base() {
     });
 
     let response = client
-        .post(&format!("{}/fhir/SearchParameter", base_url))
+        .post(format!("{}/fhir/SearchParameter", base_url))
         .header("content-type", "application/fhir+json")
         .json(&search_param)
         .send()
@@ -430,7 +430,7 @@ async fn test_searchparameter_with_multi_resource_base() {
 
     // Verify the parameter works for Observation
     let obs_search = client
-        .get(&format!(
+        .get(format!(
             "{}/fhir/Observation?custom-status=reviewed",
             base_url
         ))
@@ -442,7 +442,7 @@ async fn test_searchparameter_with_multi_resource_base() {
 
     // Verify the parameter works for Condition
     let cond_search = client
-        .get(&format!(
+        .get(format!(
             "{}/fhir/Condition?custom-status=reviewed",
             base_url
         ))
@@ -454,7 +454,7 @@ async fn test_searchparameter_with_multi_resource_base() {
 
     // Cleanup
     client
-        .delete(&format!("{}/fhir/SearchParameter/{}", base_url, param_id))
+        .delete(format!("{}/fhir/SearchParameter/{}", base_url, param_id))
         .send()
         .await
         .ok();
@@ -479,7 +479,7 @@ async fn test_searchparameter_validation_missing_required_fields() {
     });
 
     let response = client
-        .post(&format!("{}/fhir/SearchParameter", base_url))
+        .post(format!("{}/fhir/SearchParameter", base_url))
         .header("content-type", "application/fhir+json")
         .json(&missing_code)
         .send()
@@ -501,7 +501,7 @@ async fn test_searchparameter_validation_missing_required_fields() {
     });
 
     let response = client
-        .post(&format!("{}/fhir/SearchParameter", base_url))
+        .post(format!("{}/fhir/SearchParameter", base_url))
         .header("content-type", "application/fhir+json")
         .json(&missing_base)
         .send()

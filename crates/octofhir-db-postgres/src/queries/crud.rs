@@ -416,7 +416,7 @@ pub async fn update(
     let row: Option<(String, i64, DateTime<Utc>, DateTime<Utc>, Value, i64)> =
         query_as(&update_sql)
             .bind(id)
-            .bind(&resource)
+            .bind(resource)
             .bind(now)
             .fetch_optional(pool)
             .await
@@ -554,7 +554,7 @@ pub async fn update_raw(
     let row: Option<(String, i64, DateTime<Utc>, DateTime<Utc>, String, i64)> =
         query_as(&update_sql)
             .bind(id)
-            .bind(&resource)
+            .bind(resource)
             .bind(now)
             .fetch_optional(pool)
             .await

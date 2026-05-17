@@ -152,7 +152,7 @@ async fn test_automation_crud_operations() {
 
     assert_eq!(resp.status(), reqwest::StatusCode::OK);
     let list: Value = resp.json().await.unwrap();
-    assert!(list.as_array().unwrap().len() >= 1);
+    assert!(!list.as_array().unwrap().is_empty());
 
     // Delete the automation
     let resp = client
@@ -261,7 +261,7 @@ async fn test_automation_manual_execution() {
     assert_eq!(resp.status(), reqwest::StatusCode::OK);
     let logs: Value = resp.json().await.unwrap();
     let logs_array = logs.as_array().unwrap();
-    assert!(logs_array.len() >= 1);
+    assert!(!logs_array.is_empty());
 
     // Most recent execution should be completed
     let latest_log = &logs_array[0];

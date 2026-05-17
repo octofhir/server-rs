@@ -399,89 +399,90 @@ async fn bootstrap_conformance_if_postgres(
     };
 
     let backend_fut = async {
-    // Bootstrap backend service client if configured
-    if let Some(ref backend_config) = cfg.bootstrap.backend_client {
-        let client_storage = ArcClientStorage::new(pool.clone());
-        match crate::bootstrap::bootstrap_backend_client(&client_storage, backend_config).await {
-            Ok((true, Some(plaintext_secret))) => {
-                // Auto-generated secret - log it prominently
-                tracing::warn!(
-                    client_id = %backend_config.client_id,
-                    "================================================"
-                );
-                tracing::warn!(
-                    client_id = %backend_config.client_id,
-                    "Backend service client created with AUTO-GENERATED secret"
-                );
-                tracing::warn!(
-                    client_id = %backend_config.client_id,
-                    "Client ID: {}",
-                    backend_config.client_id
-                );
-                tracing::warn!(
-                    client_id = %backend_config.client_id,
-                    "Client Secret: {}",
-                    plaintext_secret
-                );
-                tracing::warn!(
-                    client_id = %backend_config.client_id,
-                    "SAVE THIS SECRET - IT WILL NOT BE SHOWN AGAIN"
-                );
-                tracing::warn!(
-                    client_id = %backend_config.client_id,
-                    "================================================"
-                );
+        // Bootstrap backend service client if configured
+        if let Some(ref backend_config) = cfg.bootstrap.backend_client {
+            let client_storage = ArcClientStorage::new(pool.clone());
+            match crate::bootstrap::bootstrap_backend_client(&client_storage, backend_config).await
+            {
+                Ok((true, Some(plaintext_secret))) => {
+                    // Auto-generated secret - log it prominently
+                    tracing::warn!(
+                        client_id = %backend_config.client_id,
+                        "================================================"
+                    );
+                    tracing::warn!(
+                        client_id = %backend_config.client_id,
+                        "Backend service client created with AUTO-GENERATED secret"
+                    );
+                    tracing::warn!(
+                        client_id = %backend_config.client_id,
+                        "Client ID: {}",
+                        backend_config.client_id
+                    );
+                    tracing::warn!(
+                        client_id = %backend_config.client_id,
+                        "Client Secret: {}",
+                        plaintext_secret
+                    );
+                    tracing::warn!(
+                        client_id = %backend_config.client_id,
+                        "SAVE THIS SECRET - IT WILL NOT BE SHOWN AGAIN"
+                    );
+                    tracing::warn!(
+                        client_id = %backend_config.client_id,
+                        "================================================"
+                    );
+                }
+                Ok((true, None)) => {
+                    tracing::info!(
+                        client_id = %backend_config.client_id,
+                        "Backend service client bootstrapped with configured secret"
+                    );
+                }
+                Ok((false, _)) => {
+                    tracing::debug!(
+                        client_id = %backend_config.client_id,
+                        "Backend service client already exists"
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        client_id = %backend_config.client_id,
+                        "Failed to bootstrap backend service client"
+                    );
+                }
             }
-            Ok((true, None)) => {
-                tracing::info!(
-                    client_id = %backend_config.client_id,
-                    "Backend service client bootstrapped with configured secret"
-                );
-            }
-            Ok((false, _)) => {
-                tracing::debug!(
-                    client_id = %backend_config.client_id,
-                    "Backend service client already exists"
-                );
-            }
-            Err(e) => {
-                tracing::warn!(
-                    error = %e,
-                    client_id = %backend_config.client_id,
-                    "Failed to bootstrap backend service client"
-                );
-            }
-        }
 
-        // Bootstrap backend access policy for the backend client
-        let policy_storage = PostgresPolicyStorageAdapter::new(pool.clone());
-        match crate::bootstrap::bootstrap_backend_access_policy(
-            &policy_storage,
-            &backend_config.client_id,
-        )
-        .await
-        {
-            Ok(true) => {
-                tracing::info!(
-                    client_id = %backend_config.client_id,
-                    "Backend access policy bootstrapped successfully"
-                );
-            }
-            Ok(false) => {
-                tracing::debug!(
-                    client_id = %backend_config.client_id,
-                    "Backend access policy already exists"
-                );
-            }
-            Err(e) => {
-                tracing::warn!(
-                    error = %e,
-                    client_id = %backend_config.client_id,
-                    "Failed to bootstrap backend access policy"
-                );
+            // Bootstrap backend access policy for the backend client
+            let policy_storage = PostgresPolicyStorageAdapter::new(pool.clone());
+            match crate::bootstrap::bootstrap_backend_access_policy(
+                &policy_storage,
+                &backend_config.client_id,
+            )
+            .await
+            {
+                Ok(true) => {
+                    tracing::info!(
+                        client_id = %backend_config.client_id,
+                        "Backend access policy bootstrapped successfully"
+                    );
+                }
+                Ok(false) => {
+                    tracing::debug!(
+                        client_id = %backend_config.client_id,
+                        "Backend access policy already exists"
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        client_id = %backend_config.client_id,
+                        "Failed to bootstrap backend access policy"
+                    );
+                }
             }
         }
-    }
     };
 
     let _ = tokio::join!(backend_fut, admin_policy_fut);
@@ -1504,12 +1505,11 @@ pub async fn build_app(
     .await;
 
     // Add SMART on FHIR security extensions (oauth-uris) to CapabilityStatement
-    if let Ok(base_url) = url::Url::parse(&cfg.base_url()) {
-        if let Err(e) =
+    if let Ok(base_url) = url::Url::parse(&cfg.base_url())
+        && let Err(e) =
             octofhir_auth::add_smart_security(&mut capability_statement, &cfg.auth.smart, &base_url)
-        {
-            tracing::warn!(error = %e, "Failed to add SMART security to CapabilityStatement");
-        }
+    {
+        tracing::warn!(error = %e, "Failed to add SMART security to CapabilityStatement");
     }
 
     let capability_statement = Arc::new(capability_statement);

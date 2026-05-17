@@ -6,9 +6,6 @@ use sqlx_core::error::Error as SqlxError;
 /// PostgreSQL error code for undefined table (42P01).
 pub const PG_UNDEFINED_TABLE: &str = "42P01";
 
-/// PostgreSQL error code for undefined function/operator (42883).
-pub const PG_UNDEFINED_FUNCTION: &str = "42883";
-
 /// Checks if a sqlx error has a specific PostgreSQL error code.
 pub fn has_pg_error_code(err: &SqlxError, code: &str) -> bool {
     if let SqlxError::Database(db_err) = err {
