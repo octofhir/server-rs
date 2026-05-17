@@ -7,7 +7,7 @@ import {
 	useQueryHistory,
 } from "@/shared/api/hooks";
 import { applyResultLimit, formatSqlError, parseTimeoutMs } from "@/entities/db-query";
-import { Badge, Group, Kbd, Text, Tooltip } from "@/shared/ui";
+import { Badge, Kbd, Text, Tooltip } from "@/shared/ui";
 import type { SqlResponse } from "@/shared/api/types";
 import { ExecutionStream } from "./components/ExecutionStream";
 import { PromptEditor } from "./components/PromptEditor";
@@ -312,37 +312,35 @@ export function DbConsolePage() {
 
 			{/* Toolbar */}
 			<div className={classes.toolbar}>
-				<Group gap="sm">
+				<div className={classes.toolbarTitle}>
 					<Text size="sm" fw={700}>
 						DB Console
 					</Text>
 					<Badge size="xs" variant="light" color="deep">
 						readonly
 					</Badge>
-				</Group>
-				<Group gap="sm">
+				</div>
+				<div className={classes.toolbarActions}>
 					<Tooltip label="Search tables (Ctrl+K)">
-						<Text
-							size="xs"
-							c="dimmed"
-							style={{ cursor: "pointer" }}
+						<button
+							type="button"
+							className={classes.shortcutButton}
 							onClick={handleSearchFocus}
 						>
 							<Kbd size="xs">⌘K</Kbd>
-						</Text>
+						</button>
 					</Tooltip>
 					<Tooltip label="Clear stream (Ctrl+L)">
-						<Text
-							size="xs"
-							c="dimmed"
-							style={{ cursor: "pointer" }}
+						<button
+							type="button"
+							className={classes.shortcutButton}
 							onClick={handleClearStream}
 						>
 							<Kbd size="xs">⌘L</Kbd>
-						</Text>
+						</button>
 					</Tooltip>
 					<ActiveQueriesDropdown />
-				</Group>
+				</div>
 			</div>
 
 			<div className={classes.workspace}>

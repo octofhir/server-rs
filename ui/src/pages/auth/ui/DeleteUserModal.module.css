@@ -1,3 +1,14 @@
+.content,
+.details {
+	display: flex;
+	flex-direction: column;
+	gap: var(--octo-spacing-md);
+}
+
+.details {
+	gap: var(--octo-spacing-xs);
+}
+
 .userInfo {
 	padding: var(--octo-spacing-md);
 	background: var(--octo-surface-1);
@@ -25,4 +36,10 @@
 
 .warningAlert {
 	border: none;
+}
+
+.actions {
+	display: flex;
+	justify-content: flex-end;
+	gap: var(--octo-spacing-sm);
 }

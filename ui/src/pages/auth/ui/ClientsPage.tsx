@@ -1,8 +1,6 @@
 import { useState } from "react";
 import {
-	Stack,
 	Text,
-	Group,
 	DataPreview,
 	Badge,
 	Menu,
@@ -350,8 +348,8 @@ function ClientModal({
 				initialValues={initialValues}
 				render={({ handleSubmit: submit, submitting }) => (
 					<form onSubmit={submit}>
-						<Stack gap="md">
-							<Group grow>
+						<div className={classes.clientForm}>
+							<div className={classes.formGrid}>
 								<Field<string> name="clientId">
 									{({ input, meta }) => (
 										<TextInput
@@ -377,7 +375,7 @@ function ClientModal({
 										/>
 									)}
 								</Field>
-							</Group>
+							</div>
 
 							<Field<string> name="description">
 								{({ input }) => (
@@ -385,7 +383,7 @@ function ClientModal({
 								)}
 							</Field>
 
-							<Group grow>
+							<div className={classes.formGrid}>
 								<Field<string> name="clientSecret">
 									{({ input }) => (
 										<PasswordInput
@@ -396,7 +394,7 @@ function ClientModal({
 										/>
 									)}
 								</Field>
-								<Stack gap={0} pt="xs">
+								<div className={classes.checkboxField}>
 									<Field<boolean> name="confidential" type="checkbox">
 										{({ input }) => (
 											<Checkbox
@@ -407,8 +405,8 @@ function ClientModal({
 											/>
 										)}
 									</Field>
-								</Stack>
-							</Group>
+								</div>
+							</div>
 
 							<Field<string[]> name="grantTypes">
 								{({ input, meta }) => (
@@ -475,7 +473,7 @@ function ClientModal({
 								)}
 							</Field>
 
-							<Group grow>
+							<div className={classes.formGrid}>
 								<Field<number> name="accessTokenLifetime">
 									{({ input }) => (
 										<NumberInput
@@ -494,9 +492,9 @@ function ClientModal({
 										/>
 									)}
 								</Field>
-							</Group>
+							</div>
 
-							<Group grow>
+							<div className={classes.switchGrid}>
 								<Field<boolean> name="active" type="checkbox">
 									{({ input }) => (
 										<Switch label="Active" checked={input.checked ?? false} onChange={input.onChange} />
@@ -507,17 +505,17 @@ function ClientModal({
 										<Switch label="Require PKCE" checked={input.checked ?? false} onChange={input.onChange} />
 									)}
 								</Field>
-							</Group>
+							</div>
 
-							<Group justify="flex-end" mt="md">
+							<div className={classes.formActions}>
 								<Button variant="light" onClick={onClose} type="button">
 									Cancel
 								</Button>
 								<Button type="submit" loading={submitting || create.isPending || update.isPending}>
 									{isEditing ? "Update" : "Register"}
 								</Button>
-							</Group>
-						</Stack>
+							</div>
+						</div>
 					</form>
 				)}
 			/>

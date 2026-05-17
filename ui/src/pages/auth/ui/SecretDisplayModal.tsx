@@ -1,9 +1,7 @@
 import { useState } from "react";
 import {
-	Stack,
 	Text,
 	Checkbox,
-	Group,
 	CopyButton,
 	ActionIcon,
 	Tooltip,
@@ -49,7 +47,7 @@ export function SecretDisplayModal({
 			closeOnClickOutside={false}
 			closeOnEscape={false}
 		>
-			<Stack gap="md">
+			<div className={classes.content}>
 				<Alert
 					icon={<TriangleExclamation size={20} />}
 					color="orange"
@@ -117,12 +115,12 @@ export function SecretDisplayModal({
 					onChange={(e) => setConfirmed(e.currentTarget.checked)}
 				/>
 
-				<Group justify="flex-end">
+				<div className={classes.actions}>
 					<Button onClick={handleClose} disabled={!confirmed}>
 						Close
 					</Button>
-				</Group>
-			</Stack>
+				</div>
+			</div>
 		</Modal>
 	);
 }

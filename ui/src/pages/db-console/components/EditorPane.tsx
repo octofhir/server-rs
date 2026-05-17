@@ -1,5 +1,5 @@
 import { useCallback, useEffect } from "react";
-import { Group, Text, Button, ActionIcon, Tooltip, Popover, UnstyledButton, Box } from "@/shared/ui";
+import { Text, Button, ActionIcon, Tooltip, Popover, UnstyledButton } from "@/shared/ui";
 import { Code, Gear } from "@gravity-ui/icons";
 import { useDisclosure } from "@octofhir/ui-kit";
 import type * as monaco from "monaco-editor";
@@ -8,6 +8,7 @@ import { DiagnosticsPanel } from "@/widgets/diagnostics-panel";
 import { setLspFormatterConfig } from "@/shared/monaco/lspClient";
 import { FormatterSettings } from "@/shared/settings/FormatterSettings";
 import { useFormatterSettings } from "@/shared/api/hooks";
+import classes from "../DbConsolePage.module.css";
 
 interface EditorPaneProps {
 	initialQuery: string;
@@ -67,13 +68,13 @@ export function EditorPane({
 	);
 
 	return (
-		<Box style={{ flex: `0 0 ${editorHeight + 40}px`, display: "flex", flexDirection: "column", position: "relative" }}>
+		<div className={classes.editorPane} style={{ flexBasis: editorHeight + 40 }}>
 			{/* Toolbar */}
-			<Group px="sm" py={4} justify="space-between" style={{ backgroundColor: "var(--octo-surface-2)", flexShrink: 0 }}>
+			<div className={classes.editorToolbar}>
 				<Text size="xs" fw={500} c="dimmed">
 					SQL Editor
 				</Text>
-				<Group gap={4}>
+				<div className={classes.editorActions}>
 					<Tooltip label="Format SQL (Shift+Alt+F)">
 						<ActionIcon variant="subtle" size="xs" onClick={handleFormat} disabled={!editorInstance}>
 							<Code size={14} />
@@ -86,7 +87,7 @@ export function EditorPane({
 						placement="bottom-end"
 						trigger="click"
 						content={
-							<Box p="3" style={{ width: 320 }}>
+							<div className={classes.formatterPopover}>
 								<Text size="sm" fw={500} mb="sm">
 									SQL Formatter Settings
 								</Text>
@@ -98,7 +99,7 @@ export function EditorPane({
 									}}
 									compact
 								/>
-								<Group justify="flex-end" mt="sm">
+								<div className={classes.popoverActions}>
 									<Button
 										size="xs"
 										variant="light"
@@ -109,8 +110,8 @@ export function EditorPane({
 									>
 										Apply & Format
 									</Button>
-								</Group>
-							</Box>
+								</div>
+							</div>
 						}
 					>
 						<Tooltip label="Formatter Settings">
@@ -123,11 +124,11 @@ export function EditorPane({
 					<Button size="compact-xs" onClick={() => onExecute()} loading={isPending}>
 						Execute
 					</Button>
-				</Group>
-			</Group>
+				</div>
+			</div>
 
 			{/* Editor */}
-			<div style={{ height: `${editorHeight}px`, flexShrink: 0 }}>
+			<div className={classes.editorSlot} style={{ height: editorHeight }}>
 				<SqlEditor
 					defaultValue={initialQuery}
 					onChange={onQueryChange}
@@ -145,25 +146,11 @@ export function EditorPane({
 					if (e.key === "ArrowUp") onEditorHeightChange(Math.max(200, editorHeight - 20));
 					else if (e.key === "ArrowDown") onEditorHeightChange(Math.min(800, editorHeight + 20));
 				}}
-				style={{
-					height: "4px",
-					cursor: "ns-resize",
-					backgroundColor: "var(--octo-border-subtle)",
-					transition: "background-color 0.15s",
-					border: "none",
-					padding: 0,
-					flexShrink: 0,
-				}}
-				onMouseEnter={(e) => {
-					e.currentTarget.style.backgroundColor = "var(--octo-accent-warm)";
-				}}
-				onMouseLeave={(e) => {
-					e.currentTarget.style.backgroundColor = "var(--octo-border-subtle)";
-				}}
+				className={classes.editorResizeHandle}
 			/>
 
 			{/* Diagnostics */}
 			<DiagnosticsPanel model={modelInstance} editor={editorInstance} defaultCollapsed height={140} />
-		</Box>
+		</div>
 	);
 }

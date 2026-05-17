@@ -1,0 +1,19 @@
+.content {
+	display: flex;
+	flex-direction: column;
+	gap: var(--octo-spacing-md);
+}
+
+.actions {
+	display: flex;
+	justify-content: flex-end;
+	gap: var(--octo-spacing-sm);
+	padding-top: var(--octo-spacing-lg);
+}
+
+@media (max-width: 720px) {
+	.actions {
+		flex-direction: column-reverse;
+		padding-top: var(--octo-spacing-sm);
+	}
+}

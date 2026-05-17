@@ -1,6 +1,7 @@
 import { useCallback, useMemo } from "react";
-import { Group, Select, TextInput } from "@/shared/ui";
+import { Select, TextInput } from "@/shared/ui";
 import type { RestConsoleSearchParam } from "@/shared/api";
+import classes from "./ValueEditor.module.css";
 
 export interface ReferenceValueEditorProps {
 	value: string;
@@ -72,7 +73,7 @@ export function ReferenceValueEditor({
 	}
 
 	return (
-		<Group gap={4} style={{ flex: 1 }} wrap="nowrap">
+		<div className={classes.root}>
 			{targets.length > 1 ? (
 				<Select
 					data={targetOptions}
@@ -92,6 +93,6 @@ export function ReferenceValueEditor({
 				placeholder={targets.length === 1 ? `${targets[0]} ID` : "ID"}
 				styles={{ root: { flex: 1 } }}
 			/>
-		</Group>
+		</div>
 	);
 }

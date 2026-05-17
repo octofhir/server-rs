@@ -1,8 +1,6 @@
 import { useState } from "react";
 import {
-	Stack,
 	Text,
-	Group,
 	Button,
 	TextInput,
 	DataPreview,
@@ -269,8 +267,8 @@ function IdpModal({
 				initialValues={initialValues}
 				render={({ handleSubmit: submit, submitting }) => (
 					<form onSubmit={submit}>
-						<Stack gap="md">
-							<Group grow>
+						<div className={classes.idpForm}>
+							<div className={classes.formGrid}>
 								<Field<string> name="name">
 									{({ input, meta }) => (
 										<TextInput
@@ -292,7 +290,7 @@ function IdpModal({
 										/>
 									)}
 								</Field>
-							</Group>
+							</div>
 
 							<Field<string> name="type">
 								{({ input }) => (
@@ -318,7 +316,7 @@ function IdpModal({
 								)}
 							</Field>
 
-							<Group grow>
+							<div className={classes.formGrid}>
 								<Field<string> name="clientId">
 									{({ input, meta }) => (
 										<TextInput
@@ -341,9 +339,9 @@ function IdpModal({
 										/>
 									)}
 								</Field>
-							</Group>
+							</div>
 
-							<Group grow>
+							<div className={classes.formGrid}>
 								<Field<string> name="authorizeUrl">
 									{({ input }) => (
 										<TextInput label="Authorize URL" value={input.value} onChange={input.onChange} />
@@ -354,9 +352,9 @@ function IdpModal({
 										<TextInput label="Token URL" value={input.value} onChange={input.onChange} />
 									)}
 								</Field>
-							</Group>
+							</div>
 
-							<Group grow>
+							<div className={classes.formGrid}>
 								<Field<string> name="jwksUrl">
 									{({ input }) => (
 										<TextInput label="JWKS URL" value={input.value} onChange={input.onChange} />
@@ -367,7 +365,7 @@ function IdpModal({
 										<TextInput label="User Info URL" value={input.value} onChange={input.onChange} />
 									)}
 								</Field>
-							</Group>
+							</div>
 
 							<Field<string[]> name="scopes">
 								{({ input }) => (
@@ -387,7 +385,7 @@ function IdpModal({
 								)}
 							</Field>
 
-							<Group justify="flex-end" mt="md">
+							<div className={classes.formActions}>
 								<Button variant="light" onClick={onClose} type="button">
 									Cancel
 								</Button>
@@ -397,8 +395,8 @@ function IdpModal({
 								>
 									{isEditing ? "Update" : "Create"}
 								</Button>
-							</Group>
-						</Stack>
+							</div>
+						</div>
 					</form>
 				)}
 			/>

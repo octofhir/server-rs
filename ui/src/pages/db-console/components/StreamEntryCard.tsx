@@ -1,11 +1,9 @@
 import { useCallback, useMemo, useState } from "react";
 import {
 	Text,
-	Group,
 	Badge,
 	ActionIcon,
 	Tooltip,
-	Box,
 	Collapse,
 	UnstyledButton,
 } from "@/shared/ui";
@@ -133,41 +131,41 @@ export function StreamEntryCard({
 
 			{/* Long query expand toggle */}
 			{isLongQuery && (
-				<Box px={10}>
+				<div className={classes.entryBlock}>
 					<UnstyledButton onClick={() => setQueryExpanded((v) => !v)}>
 						<Text size="xs" c="dimmed">
 							{queryExpanded ? "Collapse" : "Show full query..."}
 						</Text>
 					</UnstyledButton>
-				</Box>
+				</div>
 			)}
 
 			{/* Meta + actions row */}
 			<div className={classes.entryMeta}>
-				<Group gap={6} wrap="nowrap">
+				<div className={classes.entryMetaContent}>
 					{entry.status === "pending" && (
 						<Badge size="xs" variant="light" color="warm">
 							running...
 						</Badge>
 					)}
 					{entry.executionTimeMs != null && (
-						<Text size="xs" c="dimmed" style={{ whiteSpace: "nowrap" }}>
+						<Text size="xs" c="dimmed" className={classes.nowrap}>
 							{entry.executionTimeMs}ms
 						</Text>
 					)}
 					{entry.result && (
-						<Text size="xs" c="dimmed" style={{ whiteSpace: "nowrap" }}>
+						<Text size="xs" c="dimmed" className={classes.nowrap}>
 							{entry.result.rowCount} rows
 						</Text>
 					)}
-					<Text size="xs" c="dimmed" ff="monospace" style={{ whiteSpace: "nowrap" }}>
+					<Text size="xs" c="dimmed" ff="monospace" className={classes.nowrap}>
 						{formatTime(entry.timestamp)}
 					</Text>
-				</Group>
+				</div>
 
 				{/* Actions */}
 				{entry.status !== "pending" && (
-					<Group gap={2} wrap="nowrap" className={classes.entryActions}>
+					<div className={classes.entryActions}>
 						<Tooltip label="Copy query">
 							<ActionIcon variant="subtle" size="xs" onClick={handleCopy}>
 								<Copy size={12} />
@@ -223,59 +221,59 @@ export function StreamEntryCard({
 								<Xmark size={12} />
 							</ActionIcon>
 						</Tooltip>
-					</Group>
+					</div>
 				)}
 			</div>
 
 			{/* Error */}
 			{entry.status === "error" && entry.error && (
-				<Box px={10} pb={6}>
+				<div className={classes.entryBlockTight}>
 					<Text
 						size="xs"
 						ff="monospace"
 						c="var(--octo-accent-fire)"
-						style={{ whiteSpace: "pre-wrap" }}
+						className={classes.preWrap}
 					>
 						{entry.error}
 					</Text>
-				</Box>
+				</div>
 			)}
 
 			{/* Results */}
 			{entry.status === "success" && entry.result && (
 				<Collapse in={shouldShow}>
-					<Box px={10} pb={6}>
-						<div style={{ maxHeight: 400, overflow: "auto" }}>
+					<div className={classes.entryBlockTight}>
+						<div className={classes.entryResultPane}>
 							<ResultsTable
 								data={entry.result}
 								error={null}
 								isPending={false}
 							/>
 						</div>
-					</Box>
+					</div>
 				</Collapse>
 			)}
 
 			{/* Pending state */}
 			{entry.status === "pending" && (
-				<Box px={10} pb={6}>
+				<div className={classes.entryBlockTight}>
 					<Text size="xs" c="dimmed">
 						Executing...
 					</Text>
-				</Box>
+				</div>
 			)}
 
 			{/* Explain */}
 			{hasExplain && showExplain && (
-				<Box px={10} pb={6}>
-					<div style={{ maxHeight: 400, overflow: "auto" }}>
+				<div className={classes.entryBlockTight}>
+					<div className={classes.entryResultPane}>
 						<ExplainPane
 							data={entry.explainData}
 							error={null}
 							isPending={false}
 						/>
 					</div>
-				</Box>
+				</div>
 			)}
 		</div>
 	);

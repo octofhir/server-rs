@@ -1,8 +1,10 @@
 import { useState, useMemo } from "react";
-import { Modal, TextInput, Select, Group, Stack } from "@/shared/ui";
+import { Modal, TextInput, Select } from "@/shared/ui";
 import { Button } from "@/shared/ui/Button/Button";
 import { useUpdateUser, useSearchResources } from "../lib/useUsers";
-import type { UserResource } from "@/shared/api/types";
+import { getBundleResources, isRecord } from "@/shared/api/guards";
+import type { FhirResource, UserResource } from "@/shared/api/types";
+import classes from "./EditUserModal.module.css";
 
 interface EditUserModalProps {
 	user: UserResource;
@@ -21,35 +23,15 @@ export function EditUserModal({ user, opened, onClose }: EditUserModalProps) {
 
 	// Combine search results
 	const resourceOptions = useMemo(() => {
-		const options = [];
+		const results = [
+			...getBundleResources(practitioners, isSearchResource),
+			...getBundleResources(patients, isSearchResource),
+		];
 
-		// Add practitioners
-		if (practitioners?.entry) {
-			for (const entry of practitioners.entry) {
-				if (entry.resource) {
-					const name = entry.resource.name?.[0]?.text || entry.resource.id || "Unknown";
-					options.push({
-						value: `Practitioner/${entry.resource.id}`,
-						label: `Practitioner: ${name}`,
-					});
-				}
-			}
-		}
-
-		// Add patients
-		if (patients?.entry) {
-			for (const entry of patients.entry) {
-				if (entry.resource) {
-					const name = entry.resource.name?.[0]?.text || entry.resource.id || "Unknown";
-					options.push({
-						value: `Patient/${entry.resource.id}`,
-						label: `Patient: ${name}`,
-					});
-				}
-			}
-		}
-
-		return options;
+		return results.map((resource) => ({
+			value: `${resource.resourceType}/${resource.id}`,
+			label: `${resource.resourceType}: ${getResourceDisplayName(resource)}`,
+		}));
 	}, [practitioners, patients]);
 
 	const handleSubmit = () => {
@@ -67,7 +49,7 @@ export function EditUserModal({ user, opened, onClose }: EditUserModalProps) {
 
 	return (
 		<Modal opened={opened} onClose={onClose} title="Edit User" size="md">
-			<Stack gap="md">
+			<div className={classes.content}>
 				<TextInput label="Username" value={user.username} disabled />
 
 				<TextInput label="Email" value={user.email || ""} disabled />
@@ -85,15 +67,37 @@ export function EditUserModal({ user, opened, onClose }: EditUserModalProps) {
 					clearable
 				/>
 
-				<Group justify="flex-end" mt="xl">
+				<div className={classes.actions}>
 					<Button variant="light" onClick={onClose}>
 						Cancel
 					</Button>
 					<Button onClick={handleSubmit} loading={updateUser.isPending}>
 						Save Changes
 					</Button>
-				</Group>
-			</Stack>
+				</div>
+			</div>
 		</Modal>
 	);
+}
+
+interface SearchResource extends FhirResource {
+	resourceType: "Practitioner" | "Patient";
+	id: string;
+	name?: Array<{ text?: string }>;
+}
+
+function isSearchResource(value: unknown): value is SearchResource {
+	if (!isRecord(value)) return false;
+	if (value.resourceType !== "Practitioner" && value.resourceType !== "Patient") return false;
+	if (typeof value.id !== "string" || value.id.length === 0) return false;
+	if (value.name !== undefined && !Array.isArray(value.name)) return false;
+	return true;
+}
+
+function getResourceDisplayName(resource: SearchResource): string {
+	const firstName = resource.name?.[0];
+	if (isRecord(firstName) && typeof firstName.text === "string" && firstName.text.length > 0) {
+		return firstName.text;
+	}
+	return resource.id;
 }

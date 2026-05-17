@@ -1,4 +1,4 @@
-import { Stack, Text, Group, Alert } from "@/shared/ui";
+import { Text, Alert } from "@/shared/ui";
 import { TriangleExclamation } from "@gravity-ui/icons";
 import { Modal } from "@/shared/ui/Modal/Modal";
 import { Button } from "@/shared/ui/Button/Button";
@@ -23,11 +23,11 @@ export function DeleteUserModal({
 }: DeleteUserModalProps) {
 	return (
 		<Modal opened={opened} onClose={onClose} title="Delete User" size="md">
-			<Stack gap="md">
+			<div className={classes.content}>
 				<Text size="sm">You are about to delete the following user:</Text>
 
 				<div className={classes.userInfo}>
-					<Stack gap="xs">
+					<div className={classes.details}>
 						<div>
 							<Text className={classes.label}>Name</Text>
 							<Text className={classes.value}>{userName}</Text>
@@ -38,7 +38,7 @@ export function DeleteUserModal({
 								<Text className={classes.value}>{userEmail}</Text>
 							</div>
 						)}
-					</Stack>
+					</div>
 				</div>
 
 				<Alert
@@ -55,15 +55,15 @@ export function DeleteUserModal({
 					</Text>
 				</Alert>
 
-				<Group justify="flex-end" gap="sm">
+				<div className={classes.actions}>
 					<Button variant="light" onClick={onClose} disabled={isDeleting}>
 						Cancel
 					</Button>
 					<Button color="red" onClick={onConfirm} loading={isDeleting}>
 						Delete User
 					</Button>
-				</Group>
-			</Stack>
+				</div>
+			</div>
 		</Modal>
 	);
 }

@@ -1,4 +1,7 @@
 .panel {
+	display: flex;
+	flex-direction: column;
+	gap: var(--g-spacing-4);
 	flex: 1;
 	height: 100%;
 	min-height: 0;
@@ -30,4 +33,12 @@
 .resultsScroll {
 	height: 100%;
 	overflow: auto;
+}
+
+.emptyState {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	height: 100%;
+	padding: var(--g-spacing-10) 0;
 }

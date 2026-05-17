@@ -2,17 +2,14 @@ import { useState, useMemo } from "react";
 import {
 	ActionIcon,
 	Badge,
-	Box,
 	Code,
 	Collapse,
 	Divider,
-	Group,
 	Menu,
 	Modal,
 	MultiSelect,
 	NumberInput,
 	Select,
-	Stack,
 	Switch,
 	DataPreview,
 	Text,
@@ -52,11 +49,12 @@ import {
 	type MatcherElement,
 } from "@/entities/access-policy";
 import { useClients } from "../lib/useClients";
-import { getBundleResources } from "@/shared/api/guards";
+import { getBundleResources, isRecord } from "@/shared/api/guards";
 import { useResourceTypes } from "@/shared/api/hooks";
 import { Button } from "@/shared/ui/Button/Button";
 import { PolicyScriptEditor } from "@/shared/monaco/PolicyScriptEditor";
 import { Card } from "@/shared/ui/Card/Card";
+import type { ClientResource } from "@/entities/oauth-client";
 import classes from "./AccessPoliciesPage.module.css";
 
 export function AccessPoliciesPage() {
@@ -269,7 +267,7 @@ function PolicyModal({
 	const update = useUpdateAccessPolicy();
 	const { data: clientsData } = useClients({ count: 100 });
 	const { data: resourceTypes } = useResourceTypes();
-	const matcher = useDisclosure(false);
+	const [matcherOpen, matcherHandlers] = useDisclosure(false);
 
 	const isEditing = !!policy;
 
@@ -294,11 +292,10 @@ function PolicyModal({
 		: POLICY_DEFAULTS;
 
 	const baseClientOptions = useMemo(() => {
-		const serverClients =
-			clientsData?.entry?.map((e) => ({
-				label: e.resource.name,
-				value: e.resource.clientId,
-			})) || [];
+		const serverClients = getBundleResources(clientsData, isClientResource).map((client) => ({
+			label: client.name,
+			value: client.clientId,
+		}));
 		const seen = new Set<string>();
 		return serverClients.filter((c) => {
 			if (seen.has(c.value)) return false;
@@ -384,8 +381,8 @@ function PolicyModal({
 
 					return (
 						<form onSubmit={submit}>
-							<Stack gap="md">
-								<Group grow>
+							<div className={classes.policyForm}>
+								<div className={classes.formGrid}>
 									<Field<string> name="name">
 										{({ input, meta }) => (
 											<TextInput
@@ -411,7 +408,7 @@ function PolicyModal({
 											/>
 										)}
 									</Field>
-								</Group>
+								</div>
 
 								<Field<string> name="description">
 									{({ input }) => (
@@ -454,10 +451,10 @@ function PolicyModal({
 								</Field>
 
 								{values.engineType === "quickjs" && (
-									<Box>
+									<div className={classes.scriptSection}>
 										<Text size="sm" fw={500} mb={4}>
 											Policy Script{" "}
-											<span style={{ color: "var(--g-color-base-danger-medium)" }}>*</span>
+											<span className={classes.requiredMark}>*</span>
 										</Text>
 										<Text size="xs" c="dimmed" mb="xs">
 											Write JavaScript to evaluate access. Use <Code>allow()</Code>,{" "}
@@ -481,7 +478,7 @@ function PolicyModal({
 												) : null;
 											}}
 										</FormSpy>
-									</Box>
+									</div>
 								)}
 
 								{(values.engineType === "deny" || values.engineType === "quickjs") && (
@@ -497,31 +494,31 @@ function PolicyModal({
 									</Field>
 								)}
 
-								<Divider
-									label={
-										<Group gap="xs" style={{ cursor: "pointer" }} onClick={matcher.toggle}>
-											{matcher.isOpen ? <ChevronDown width={16} /> : <ChevronRight width={16} />}
-											<span>
-												Matcher{" "}
-												{hasMatcherValues && (
-													<Badge size="xs" variant="light" ml={4}>
-														Configured
-													</Badge>
-												)}
-											</span>
-										</Group>
-									}
-									labelPosition="center"
-								/>
+								<Divider label="Matcher" labelPosition="center" />
+
+								<button
+									type="button"
+									className={classes.matcherToggle}
+									onClick={matcherHandlers.toggle}
+									aria-expanded={matcherOpen}
+								>
+									{matcherOpen ? <ChevronDown width={16} /> : <ChevronRight width={16} />}
+									<span>Matcher</span>
+									{hasMatcherValues && (
+										<Badge size="xs" variant="light">
+											Configured
+										</Badge>
+									)}
+								</button>
 
 								<Text size="xs" c="dimmed">
 									Define when this policy applies. All specified conditions must match (AND logic).
 									Leave empty to match all requests.
 								</Text>
 
-								<Collapse in={matcher.isOpen}>
-									<Stack gap="md" pt="xs">
-										<Group grow align="flex-start">
+								<Collapse in={matcherOpen}>
+									<div className={classes.matcherFields}>
+										<div className={classes.formGrid}>
 											<Field<string[]> name="roles">
 												{({ input }) => (
 													<MultiSelect
@@ -548,9 +545,9 @@ function PolicyModal({
 													/>
 												)}
 											</Field>
-										</Group>
+										</div>
 
-										<Group grow align="flex-start">
+										<div className={classes.formGrid}>
 											<Field<string[]> name="userTypes">
 												{({ input }) => (
 													<MultiSelect
@@ -575,7 +572,7 @@ function PolicyModal({
 													/>
 												)}
 											</Field>
-										</Group>
+										</div>
 
 										<Field<string[]> name="operations">
 											{({ input }) => (
@@ -590,7 +587,7 @@ function PolicyModal({
 											)}
 										</Field>
 
-										<Group grow align="flex-start">
+										<div className={classes.formGrid}>
 											<Field<string[]> name="operationIds">
 												{({ input }) => (
 													<MultiSelect
@@ -617,7 +614,7 @@ function PolicyModal({
 													/>
 												)}
 											</Field>
-										</Group>
+										</div>
 
 										<Field<string[]> name="sourceIps">
 											{({ input }) => (
@@ -632,10 +629,10 @@ function PolicyModal({
 												/>
 											)}
 										</Field>
-									</Stack>
+									</div>
 								</Collapse>
 
-								<Group justify="flex-end" mt="md">
+								<div className={classes.formActions}>
 									<Button variant="light" onClick={onClose} type="button">
 										Cancel
 									</Button>
@@ -645,12 +642,21 @@ function PolicyModal({
 									>
 										{isEditing ? "Update" : "Create"}
 									</Button>
-								</Group>
-							</Stack>
+								</div>
+							</div>
 						</form>
 					);
 				}}
 			/>
 		</Modal>
+	);
+}
+
+function isClientResource(value: unknown): value is ClientResource {
+	return (
+		isRecord(value) &&
+		value.resourceType === "Client" &&
+		typeof value.name === "string" &&
+		typeof value.clientId === "string"
 	);
 }

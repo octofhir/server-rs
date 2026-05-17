@@ -12,8 +12,6 @@ import {
   ActionIcon,
   Tooltip,
   Divider,
-  Box,
-  Flex,
 } from "@/shared/ui";
 import { WorkspacePageLayout } from "@/widgets/workspace-page";
 import { notifications } from "@octofhir/ui-kit";
@@ -181,22 +179,22 @@ export function AutomationEditorPage() {
 
   if (isLoading && !isNewAutomation) {
     return (
-      <Box className={classes.stateContainer}>
+      <div className={classes.stateContainer}>
         <Loader />
-      </Box>
+      </div>
     );
   }
 
   if (error || (!automation && !isNewAutomation)) {
     return (
-      <Box className={classes.stateContainer}>
+      <div className={classes.stateContainer}>
         <div className={classes.errorState}>
           <Text c="red">Failed to load automation</Text>
           <Button variant="light" onClick={() => navigate("/automations")}>
             Back to list
           </Button>
         </div>
-      </Box>
+      </div>
     );
   }
 
@@ -214,7 +212,7 @@ export function AutomationEditorPage() {
       bodyClassName={classes.body}
       contentClassName={classes.container}
       actions={
-        <Flex gap="2" alignItems="center" wrap="wrap">
+        <div className={classes.headerActions}>
           <ActionIcon variant="subtle" onClick={() => navigate("/automations")} aria-label="Back to automations">
             <ArrowLeft size={20} />
           </ActionIcon>
@@ -253,12 +251,12 @@ export function AutomationEditorPage() {
               </Tooltip>
             </>
           )}
-        </Flex>
+        </div>
       }
     >
 
       {/* Editor */}
-      <Box className={classes.editorContainer}>
+      <div className={classes.editorContainer}>
         <AutomationScriptEditor
           value={sourceCode}
           onChange={handleCodeChange}
@@ -266,12 +264,12 @@ export function AutomationEditorPage() {
           onExecute={handleExecute}
           height="100%"
         />
-      </Box>
+      </div>
 
       <Divider />
 
       {/* Bottom panel with tabs */}
-      <Box className={classes.bottomPanel}>
+      <div className={classes.bottomPanel}>
         <Tabs value={activeTab} onChange={setActiveTab} h="100%">
           <Tabs.List>
             <Tabs.Tab value="settings" leftSection={<Gear size={14} />}>
@@ -292,7 +290,7 @@ export function AutomationEditorPage() {
             )}
           </Tabs.List>
 
-          <Box className={classes.tabContent}>
+          <div className={classes.tabContent}>
             <Tabs.Panel value="settings" className={classes.tabPanel}>
               <div className={classes.settingsForm}>
                 <TextInput
@@ -316,7 +314,7 @@ export function AutomationEditorPage() {
                   step={100}
                   description="Maximum execution time in milliseconds"
                 />
-                <Flex gap="2" alignItems="center" wrap="wrap">
+                <div className={classes.statusRow}>
                   <Text size="sm">Status:</Text>
                   <Switch
                     checked={automation?.status === "active"}
@@ -326,7 +324,7 @@ export function AutomationEditorPage() {
                   <Text size="xs" c="dimmed">
                     (Deploy to change status)
                   </Text>
-                </Flex>
+                </div>
               </div>
             </Tabs.Panel>
 
@@ -348,9 +346,9 @@ export function AutomationEditorPage() {
                 </Tabs.Panel>
               </>
             )}
-          </Box>
+          </div>
         </Tabs>
-      </Box>
+      </div>
     </WorkspacePageLayout>
   );
 }

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Modal, TextInput, Textarea, Button, Flex } from "@/shared/ui";
+import { Modal, TextInput, Textarea, Button } from "@/shared/ui";
 import { notifications } from "@octofhir/ui-kit";
 import { useNavigate } from "react-router-dom";
 import { isAutomationFeatureUnavailableError } from "@/shared/api/automationsApi";
@@ -118,14 +118,14 @@ export function CreateAutomationModal({ opened, onClose }: CreateAutomationModal
           rows={3}
         />
 
-        <Flex justifyContent="flex-end" gap="2" className={classes.actions}>
+        <div className={classes.actions}>
           <Button variant="default" onClick={handleClose}>
             Cancel
           </Button>
           <Button onClick={handleCreate} loading={createMutation.isPending}>
             Create
           </Button>
-        </Flex>
+        </div>
       </div>
     </Modal>
   );

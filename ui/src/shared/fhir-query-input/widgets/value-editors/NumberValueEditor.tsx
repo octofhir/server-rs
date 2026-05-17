@@ -1,5 +1,6 @@
 import { useCallback, useMemo } from "react";
-import { Group, Select, TextInput } from "@/shared/ui";
+import { Select, TextInput } from "@/shared/ui";
+import classes from "./ValueEditor.module.css";
 
 const PREFIX_OPTIONS = [
 	{ value: "", label: "= (equals)" },
@@ -44,7 +45,7 @@ export function NumberValueEditor({ value, onChange }: NumberValueEditorProps) {
 	);
 
 	return (
-		<Group gap={4} style={{ flex: 1 }} wrap="nowrap">
+		<div className={classes.root}>
 			<Select
 				data={PREFIX_OPTIONS}
 				value={prefix}
@@ -60,6 +61,6 @@ export function NumberValueEditor({ value, onChange }: NumberValueEditorProps) {
 				placeholder="Value"
 				styles={{ root: { flex: 1 } }}
 			/>
-		</Group>
+		</div>
 	);
 }

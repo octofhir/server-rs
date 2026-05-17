@@ -4,6 +4,28 @@
 	min-height: 0;
 }
 
+.header,
+.triggerCardContent,
+.triggerInfo,
+.formActions {
+	display: flex;
+	gap: 8px;
+}
+
+.header,
+.triggerCardContent {
+	justify-content: space-between;
+}
+
+.header {
+	align-items: center;
+}
+
+.triggerCardContent {
+	align-items: flex-start;
+	gap: 12px;
+}
+
 .list {
 	display: grid;
 	gap: var(--g-spacing-2);
@@ -21,6 +43,7 @@
 }
 
 .triggerInfo {
+	align-items: flex-start;
 	min-width: 0;
 }
 
@@ -39,5 +62,6 @@
 }
 
 .formActions {
+	justify-content: flex-end;
 	margin-top: var(--g-spacing-2);
 }

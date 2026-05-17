@@ -33,3 +33,32 @@
 .providerIssuer {
 	max-width: 520px;
 }
+
+.idpForm {
+	display: flex;
+	flex-direction: column;
+	gap: var(--octo-spacing-md);
+}
+
+.formGrid {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: var(--octo-spacing-md);
+}
+
+.formActions {
+	display: flex;
+	justify-content: flex-end;
+	gap: var(--octo-spacing-sm);
+	padding-top: var(--octo-spacing-sm);
+}
+
+@media (max-width: 720px) {
+	.formGrid {
+		grid-template-columns: 1fr;
+	}
+
+	.formActions {
+		flex-direction: column-reverse;
+	}
+}

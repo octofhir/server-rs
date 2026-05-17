@@ -1,4 +1,4 @@
-import { Button, Text, ActionIcon, Tooltip, Box } from "@/shared/ui";
+import { Button, Text, ActionIcon, Tooltip } from "@/shared/ui";
 import { IconPlus, IconTrash } from "@octofhir/ui-kit";
 import type { ViewDefinitionWhere, ViewDefinitionConstant } from "../../lib/useViewDefinition";
 import { FHIRPathInput } from "./FHIRPathInput";
@@ -51,7 +51,7 @@ export function WhereClauseEditor({
         <div className={classes.list}>
           {whereClauses.map((clause, i) => (
             <div key={clause._id || `where-${i}`} className={classes.row}>
-              <Box className={classes.inputCell}>
+              <div className={classes.inputCell}>
                 <FHIRPathInput
                   value={clause.path}
                   onChange={(value) => handleChange(i, value)}
@@ -60,7 +60,7 @@ export function WhereClauseEditor({
                   placeholder="FHIRPath expression (e.g., status = 'active')"
                   size="xs"
                 />
-              </Box>
+              </div>
               <Tooltip label="Remove clause">
                 <ActionIcon
                   variant="subtle"

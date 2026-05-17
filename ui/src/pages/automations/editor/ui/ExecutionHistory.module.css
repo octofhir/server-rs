@@ -2,6 +2,18 @@
 	cursor: pointer;
 }
 
+.timeCell,
+.logRow {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+}
+
+.logRow {
+	align-items: flex-start;
+	gap: 8px;
+}
+
 .details {
 	padding: var(--g-spacing-4);
 	background: var(--octo-surface-2);

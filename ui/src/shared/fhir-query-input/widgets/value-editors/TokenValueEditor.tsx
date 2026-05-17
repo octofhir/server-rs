@@ -1,5 +1,6 @@
 import { useCallback, useMemo } from "react";
-import { Group, TextInput, Text } from "@/shared/ui";
+import { TextInput, Text } from "@/shared/ui";
+import classes from "./ValueEditor.module.css";
 
 export interface TokenValueEditorProps {
 	value: string;
@@ -40,7 +41,7 @@ export function TokenValueEditor({ value, onChange }: TokenValueEditorProps) {
 	);
 
 	return (
-		<Group gap={4} style={{ flex: 1 }} wrap="nowrap">
+		<div className={classes.root}>
 			<TextInput
 				value={system}
 				onChange={handleSystemChange}
@@ -48,7 +49,7 @@ export function TokenValueEditor({ value, onChange }: TokenValueEditorProps) {
 				placeholder="system URI"
 				styles={{ root: { flex: 1 } }}
 			/>
-			<Text size="xs" c="dimmed" style={{ flexShrink: 0 }}>
+			<Text size="xs" c="dimmed" className={classes.separator}>
 				|
 			</Text>
 			<TextInput
@@ -58,6 +59,6 @@ export function TokenValueEditor({ value, onChange }: TokenValueEditorProps) {
 				placeholder="code"
 				styles={{ root: { flex: 1 } }}
 			/>
-		</Group>
+		</div>
 	);
 }

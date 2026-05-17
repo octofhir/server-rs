@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { Code, CopyButton, ActionIcon, Group, Tooltip, ScrollArea, Box } from "@octofhir/ui-kit";
+import { Code, CopyButton, ActionIcon, Tooltip, ScrollArea } from "@octofhir/ui-kit";
 import { Copy, Check } from "@gravity-ui/icons";
 import classes from "./JsonViewer.module.css";
 
@@ -22,8 +22,8 @@ export function JsonViewer({ data, maxHeight = 400, className }: JsonViewerProps
     }, [data]);
 
     return (
-        <Box className={`${classes.root} ${className || ""}`}>
-            <Group className={classes.copyButton}>
+        <div className={`${classes.root} ${className || ""}`}>
+            <div className={classes.copyButton}>
                 <CopyButton value={formattedJson} timeout={2000}>
                     {({ copied, copy }) => (
                         <Tooltip label={copied ? "Copied to clipboard" : "Copy JSON"} withArrow position="left">
@@ -33,25 +33,22 @@ export function JsonViewer({ data, maxHeight = 400, className }: JsonViewerProps
                                 onClick={copy}
                                 size="md"
                                 radius="md"
-                                style={{
-                                    boxShadow: "var(--octo-shadow-xs)",
-                                    backdropFilter: "blur(4px)",
-                                }}
+                                className={classes.copyAction}
                             >
                                 {copied ? <Check size={16} /> : <Copy size={16} />}
                             </ActionIcon>
                         </Tooltip>
                     )}
                 </CopyButton>
-            </Group>
+            </div>
             <ScrollArea h={maxHeight} type="auto">
-                <Box p="md">
+                <div className={classes.content}>
                     <Code block className={classes.code}>
                         {formattedJson}
                     </Code>
-                </Box>
+                </div>
             </ScrollArea>
-            <Box className={classes.indicator} />
-        </Box>
+            <div className={classes.indicator} />
+        </div>
     );
 }

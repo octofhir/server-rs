@@ -1,8 +1,6 @@
 import { useMemo, useState } from "react";
 import {
-	Stack,
 	Text,
-	Group,
 	DataPreview,
 	Badge,
 	Menu,
@@ -291,7 +289,7 @@ function RoleModal({
 				initialValues={initialValues}
 				render={({ handleSubmit: submit, values, form: api, submitting }) => (
 					<form onSubmit={submit}>
-						<Stack gap="md">
+						<div className={classes.roleForm}>
 							<Field<string> name="name">
 								{({ input, meta }) => (
 									<TextInput
@@ -317,7 +315,7 @@ function RoleModal({
 							</Field>
 
 							<div>
-								<Text size="sm" fw={500} mb="xs">
+								<Text size="sm" fw={500} className={classes.sectionLabel}>
 									Permissions
 								</Text>
 								<div className={classes.permissionMatrix}>
@@ -352,7 +350,7 @@ function RoleModal({
 								)}
 							</Field>
 
-							<Group justify="flex-end" mt="md">
+							<div className={classes.formActions}>
 								<Button variant="light" onClick={onClose} type="button">
 									Cancel
 								</Button>
@@ -362,8 +360,8 @@ function RoleModal({
 								>
 									{isEditing ? "Update" : "Create"}
 								</Button>
-							</Group>
-						</Stack>
+							</div>
+						</div>
 					</form>
 				)}
 			/>
@@ -396,7 +394,7 @@ function DeleteRoleModal({
 }) {
 	return (
 		<Modal opened={opened} onClose={onClose} title="Delete Role" size="md">
-			<Stack gap="md">
+			<div className={classes.deleteModalContent}>
 				<Text size="sm">
 					You are about to delete the role: <strong>{roleName}</strong>
 				</Text>
@@ -414,15 +412,15 @@ function DeleteRoleModal({
 					</Text>
 				</Alert>
 
-				<Group justify="flex-end" gap="sm">
+				<div className={classes.formActions}>
 					<Button variant="light" onClick={onClose} disabled={isDeleting}>
 						Cancel
 					</Button>
 					<Button color="red" onClick={onConfirm} loading={isDeleting}>
 						Delete Role
 					</Button>
-				</Group>
-			</Stack>
+				</div>
+			</div>
 		</Modal>
 	);
 }

@@ -2,10 +2,7 @@ import { useCallback } from "react";
 import {
   ActionIcon,
   Badge,
-  Box,
   Card,
-  Group,
-  Stack,
   Text,
   Tooltip,
 } from "@/shared/ui";
@@ -17,6 +14,7 @@ import type {
   ViewDefinitionConstant,
   ViewDefinitionSelect,
 } from "../../lib/useViewDefinition";
+import classes from "./ForEachEditor.module.css";
 
 interface ForEachEditorProps {
   selectNode: ViewDefinitionSelect;
@@ -122,10 +120,10 @@ export function ForEachEditor({
 
   return (
     <Card withBorder padding="sm" radius="md">
-      <Stack gap="sm">
+      <div className={classes.content}>
         {/* Header */}
-        <Group justify="space-between">
-          <Group gap="xs">
+        <div className={classes.header}>
+          <div className={classes.typeControls}>
             <Badge
               color={isForEachOrNull ? "orange" : "yellow"}
               variant="light"
@@ -144,7 +142,7 @@ export function ForEachEditor({
                 <IconArrowsExchange size={12} />
               </ActionIcon>
             </Tooltip>
-          </Group>
+          </div>
           <Tooltip label="Remove">
             <ActionIcon
               variant="subtle"
@@ -155,11 +153,11 @@ export function ForEachEditor({
               <IconTrash size={14} />
             </ActionIcon>
           </Tooltip>
-        </Group>
+        </div>
 
         {/* Path input */}
-        <Box>
-          <Text size="xs" c="dimmed" mb={4}>
+        <div className={classes.fieldBlock}>
+          <Text size="xs" c="dimmed" className={classes.fieldLabel}>
             Collection path
           </Text>
           <FHIRPathInput
@@ -171,15 +169,15 @@ export function ForEachEditor({
             placeholder="e.g., name, telecom, contact"
             size="xs"
           />
-        </Box>
+        </div>
 
         {/* Columns within this forEach */}
         {columns.length > 0 && (
-          <Box>
-            <Text size="xs" c="dimmed" mb={4}>
+          <div className={classes.fieldBlock}>
+            <Text size="xs" c="dimmed" className={classes.fieldLabel}>
               Columns
             </Text>
-            <Stack gap="xs">
+            <div className={classes.columnList}>
               {columns.map((col, i) => (
                 <ColumnRow
                   key={col._id || i}
@@ -192,8 +190,8 @@ export function ForEachEditor({
                   onRemove={handleColumnRemove}
                 />
               ))}
-            </Stack>
-          </Box>
+            </div>
+          </div>
         )}
 
         {/* Nested forEach */}
@@ -210,7 +208,7 @@ export function ForEachEditor({
         ))}
 
         {/* Add buttons */}
-        <Group gap="xs">
+        <div className={classes.addControls}>
           <Tooltip label="Add column">
             <ActionIcon variant="light" size="sm" onClick={handleColumnAdd}>
               <IconPlus size={12} />
@@ -235,8 +233,8 @@ export function ForEachEditor({
           <Text size="xs" c="dimmed">
             Add nested forEach
           </Text>
-        </Group>
-      </Stack>
+        </div>
+      </div>
     </Card>
   );
 }

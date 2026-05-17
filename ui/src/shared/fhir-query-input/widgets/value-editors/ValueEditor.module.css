@@ -1,0 +1,11 @@
+.root {
+	display: flex;
+	flex: 1;
+	flex-wrap: nowrap;
+	gap: 4px;
+	min-width: 0;
+}
+
+.separator {
+	flex-shrink: 0;
+}

@@ -11,6 +11,26 @@
 	gap: var(--g-spacing-2);
 }
 
+.inputHeader,
+.inputActions,
+.statusRow,
+.collapseHeader,
+.logRow {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+
+.inputHeader {
+	flex-wrap: wrap;
+	justify-content: space-between;
+}
+
+.inputActions,
+.statusRow {
+	flex-wrap: wrap;
+}
+
 .templateSelect {
 	width: 200px;
 }
@@ -66,6 +86,11 @@
 
 .logItem {
 	padding: var(--g-spacing-2);
+}
+
+.logRow {
+	align-items: flex-start;
+	flex-wrap: nowrap;
 }
 
 .logBody {

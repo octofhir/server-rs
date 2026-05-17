@@ -1,0 +1,63 @@
+.root {
+	display: flex;
+	flex-direction: column;
+	gap: 16px;
+}
+
+.resourceRow,
+.sectionHeader,
+.specialActions,
+.paramChip {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+
+.resourceRow {
+	align-items: flex-end;
+}
+
+.sectionHeader {
+	justify-content: space-between;
+	margin-bottom: 8px;
+}
+
+.specialActions {
+	flex-wrap: wrap;
+	gap: 4px;
+}
+
+.chipList {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+}
+
+.clickableBadge {
+	cursor: pointer;
+}
+
+.preview,
+.paramChip {
+	border: 1px solid var(--octo-border-subtle);
+	border-radius: var(--octo-radius-sm);
+	background-color: var(--octo-surface-2);
+}
+
+.preview,
+.paramChip {
+	padding: 8px;
+}
+
+.previewCode {
+	font-size: 11px;
+	word-break: break-all;
+}
+
+.paramChip {
+	flex-wrap: wrap;
+}
+
+.fixedBadge {
+	flex-shrink: 0;
+}

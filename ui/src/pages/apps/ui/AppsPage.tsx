@@ -1,8 +1,6 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
-	Box,
-	Flex,
 	Text,
 	Button,
 	TextInput,
@@ -82,7 +80,7 @@ export function AppsPage() {
 				</Button>
 			}
 			toolbar={
-				<Flex className={classes.toolbar}>
+				<div className={classes.toolbar}>
 					<TextInput
 						placeholder="Search by name..."
 						leftSection={<IconSearch size={16} />}
@@ -90,12 +88,12 @@ export function AppsPage() {
 						onChange={(e) => setSearch(e.currentTarget.value)}
 						className={classes.searchInput}
 					/>
-				</Flex>
+				</div>
 			}
 			maxWidth={1280}
 		>
 
-			<Box className={classes.tablePanel}>
+			<div className={classes.tablePanel}>
 				<DataPreview
 					columns={[
 						{ id: "application", label: "Application" },
@@ -113,17 +111,17 @@ export function AppsPage() {
 
 									return {
 										application: (
-											<Flex gap="2" alignItems="center">
+											<div className={classes.appCell}>
 												<IconRocket size={16} color="var(--octo-brand-primary-active)" />
-												<Box className={classes.appSummary}>
+												<div className={classes.appSummary}>
 													<Anchor size="sm" onClick={() => app.id && handleView(app.id)}>
 														{app.name}
 													</Anchor>
 													<Text size="xs" c="dimmed" className={classes.truncateText}>
 														{app.description || "No description"}
 													</Text>
-												</Box>
-											</Flex>
+												</div>
+											</div>
 										),
 										endpoint:
 											app.endpoint?.url || app.basePath ? (
@@ -136,7 +134,7 @@ export function AppsPage() {
 												</Text>
 											),
 										operations: (
-											<Flex gap="1" wrap="wrap">
+											<div className={classes.operationBadges}>
 												{app.operations && app.operations.length > 0 && (
 													<Badge size="xs" variant="light" color="primary" leftSection={<IconApi size={10} />}>
 														{app.operations.length}
@@ -151,7 +149,7 @@ export function AppsPage() {
 													(!app.subscriptions || app.subscriptions.length === 0) && (
 														<Text size="xs" c="dimmed">-</Text>
 													)}
-											</Flex>
+											</div>
 										),
 										status: (
 											<Badge color={statusView.color} variant="light" size="sm">
@@ -205,7 +203,7 @@ export function AppsPage() {
 					emptyText={isLoading ? "Loading applications..." : "No applications found"}
 					getRowKey={(_row, index) => apps[index]?.id ?? `${index}`}
 				/>
-			</Box>
+			</div>
 
 			<AppModal
 				opened={opened}
@@ -316,7 +314,7 @@ function AppModal({
 				initialValues={initialValues}
 				render={({ handleSubmit: submit, submitting }) => (
 					<form onSubmit={submit}>
-						<Flex direction="column" gap="4">
+						<div className={classes.modalForm}>
 							<Field<string> name="name">
 								{({ input, meta }) => (
 									<TextInput
@@ -401,7 +399,7 @@ function AppModal({
 								)}
 							</Field>
 
-							<Flex justifyContent="flex-end" gap="2" className={classes.modalActions}>
+							<div className={classes.modalActions}>
 								<Button variant="light" onClick={onClose} type="button">
 									Cancel
 								</Button>
@@ -411,8 +409,8 @@ function AppModal({
 								>
 									{isEditing ? "Update" : "Create"}
 								</Button>
-							</Flex>
-						</Flex>
+							</div>
+						</div>
 					</form>
 				)}
 			/>

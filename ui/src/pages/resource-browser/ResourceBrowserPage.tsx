@@ -1,10 +1,7 @@
 import { useState, useMemo, useEffect, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import {
-	Stack,
 	Text,
-	Paper,
-	Group,
 	Badge,
 	Loader,
 	Center,
@@ -16,7 +13,6 @@ import {
 	Anchor,
 	ScrollArea,
 	Alert,
-	Box,
 	RecordList,
 } from "@/shared/ui";
 import { ToolWorkspaceLayout } from "@/widgets/tool-workspace";
@@ -52,6 +48,7 @@ import { JsonEditor } from "@/shared/monaco/JsonEditor";
 import type { FhirBundle, FhirOperationOutcome } from "@/shared/api/types";
 import { HttpError } from "@/shared/api/fhirClient";
 import { assertFhirResource, isRecord } from "@/shared/api/guards";
+import classes from "./ResourceBrowserPage.module.css";
 
 const MIN_PANEL_WIDTH = 400;
 const MAX_PANEL_WIDTH = 900;
@@ -293,22 +290,10 @@ export function ResourceBrowserPage() {
 
 	// Resource Types Table
 	const renderResourceTypesTable = () => (
-		<Paper
-			withBorder
-			p="0"
-			radius="lg"
-			style={{
-				flex: 1,
-				display: "flex",
-				flexDirection: "column",
-				minHeight: 0,
-				backgroundColor: "var(--octo-surface-1)",
-				overflow: "hidden"
-			}}
-		>
-			<Box p="md" style={{ borderBottom: "1px solid var(--octo-border-subtle)", backgroundColor: "var(--octo-surface-2)" }}>
-				<Group justify="space-between">
-					<Group gap="md">
+		<div className={classes.tablePanel}>
+			<div className={classes.panelHeader}>
+				<div className={classes.toolbar}>
+					<div className={classes.filtersRow}>
 						<SegmentedControl
 							size="sm"
 							radius="md"
@@ -327,14 +312,14 @@ export function ResourceBrowserPage() {
 							leftSection={<Magnifier size={14} />}
 							value={typeFilter}
 							onChange={(e) => setTypeFilter(e.currentTarget.value)}
-							style={{ width: 240 }}
+							className={classes.searchInput}
 						/>
-					</Group>
+					</div>
 					<Badge size="lg" variant="dot" color="primary">
 						{filteredTypes.length} Types
 					</Badge>
-				</Group>
-			</Box>
+				</div>
+			</div>
 
 			{resourceTypesLoading ? (
 				<Center py={100}>
@@ -342,14 +327,14 @@ export function ResourceBrowserPage() {
 				</Center>
 			) : filteredTypes.length === 0 ? (
 				<Center py={100}>
-					<Stack align="center" gap="xs">
-						<Magnifier size={40} style={{ opacity: 0.2 }} />
+					<div className={classes.emptyContent}>
+						<Magnifier size={40} className={classes.faintIcon} />
 						<Text c="dimmed" fw={500}>No resource types found</Text>
-					</Stack>
+					</div>
 				</Center>
 			) : (
-				<ScrollArea style={{ flex: 1 }} className="custom-scrollbar">
-					<Box p="md">
+				<ScrollArea className={`${classes.scrollArea} custom-scrollbar`}>
+					<div className={classes.listPadding}>
 						<RecordList
 							items={filteredTypeViews.map((item) => ({
 								id: item.id,
@@ -366,31 +351,20 @@ export function ResourceBrowserPage() {
 							}))}
 							onSelect={(item) => handleTypeSelect(item.id)}
 						/>
-					</Box>
+					</div>
 				</ScrollArea>
 			)}
-		</Paper>
+		</div>
 	);
 
 	// Resources Table
 	const renderResourcesTable = () => (
-		<Paper
-			withBorder
-			radius="lg"
-			style={{
-				backgroundColor: "var(--octo-surface-1)",
-				flex: 1,
-				display: "flex",
-				flexDirection: "column",
-				minHeight: 0,
-				overflow: "hidden"
-			}}
-		>
-			<Box p="md" style={{ borderBottom: "1px solid var(--octo-border-subtle)", backgroundColor: "var(--octo-surface-2)" }}>
-				<Group justify="space-between">
-					<Group gap="sm">
+		<div className={classes.tablePanel}>
+			<div className={classes.panelHeader}>
+				<div className={classes.toolbar}>
+					<div className={classes.titleRow}>
 						{(hasNextPage || hasPrevPage) && (
-							<Group gap={4}>
+							<div className={classes.paginationActions}>
 								<ActionIcon
 									variant="light"
 									size="md"
@@ -409,19 +383,19 @@ export function ResourceBrowserPage() {
 								>
 									<ChevronRight size={16} />
 								</ActionIcon>
-							</Group>
+							</div>
 						)}
-						<Text size="sm" fw={600} c="dimmed" tt="uppercase" style={{ letterSpacing: "0.05em" }}>
+						<Text size="sm" fw={600} c="dimmed" tt="uppercase" className={classes.overline}>
 							{selectedType}s
 						</Text>
-					</Group>
+					</div>
 					{currentBundle && (
 						<Badge size="md" variant="light" radius="sm" color="primary">
 							{currentBundle.total ?? resources.length} Total
 						</Badge>
 					)}
-				</Group>
-			</Box>
+				</div>
+			</div>
 
 			{searchLoading ? (
 				<Center py={100}>
@@ -429,14 +403,14 @@ export function ResourceBrowserPage() {
 				</Center>
 			) : resources.length === 0 ? (
 				<Center py={100}>
-					<Stack align="center" gap="xs">
-						<FileText size={40} style={{ opacity: 0.2 }} />
+					<div className={classes.emptyContent}>
+						<FileText size={40} className={classes.faintIcon} />
 						<Text c="dimmed" fw={500}>No resources found</Text>
-					</Stack>
+					</div>
 				</Center>
 			) : (
-				<ScrollArea style={{ flex: 1 }} className="custom-scrollbar">
-					<Box p="md">
+				<ScrollArea className={`${classes.scrollArea} custom-scrollbar`}>
+					<div className={classes.listPadding}>
 						<RecordList
 							density="compact"
 							selectedId={selectedId ?? undefined}
@@ -461,78 +435,37 @@ export function ResourceBrowserPage() {
 							}))}
 							onSelect={(item) => handleResourceSelect(item.id)}
 						/>
-					</Box>
+					</div>
 				</ScrollArea>
 			)}
-		</Paper>
+		</div>
 	);
 
 	// Details Panel with resize handle
 	const renderDetailsPanel = () => (
-		<Box
-			style={{
-				display: "flex",
-				height: "100%",
-				animation: "softAppear 0.3s cubic-bezier(0.16, 1, 0.3, 1)"
-			}}
-		>
+		<div className={classes.detailsShell}>
 			{/* Resize handle */}
-			<Box
+			<div
 				onMouseDown={handleMouseDown}
-				style={{
-					width: 12,
-					cursor: "col-resize",
-					display: "flex",
-					alignItems: "center",
-					justifyContent: "center",
-					position: "relative",
-					zIndex: 20,
-					transition: "background-color 0.2s ease",
-					backgroundColor: isResizing ? "var(--octo-accent-primary)" : "transparent",
-				}}
-				onMouseEnter={(e) => {
-					if (!isResizing) e.currentTarget.style.backgroundColor = "var(--octo-border-subtle)";
-				}}
-				onMouseLeave={(e) => {
-					if (!isResizing) e.currentTarget.style.backgroundColor = "transparent";
-				}}
+				className={classes.resizeHandle}
+				data-resizing={isResizing ? "true" : undefined}
 			>
-				<Box
-					style={{
-						width: 2,
-						height: 32,
-						backgroundColor: "var(--octo-border-subtle)",
-						borderRadius: 2,
-						opacity: isResizing ? 0 : 1
-					}}
-				/>
-			</Box>
-			<Paper
-				withBorder
-				radius="lg"
-				style={{
-					width: panelWidth,
-					display: "flex",
-					flexDirection: "column",
-					backgroundColor: "var(--octo-surface-1)",
-					minHeight: 0,
-					overflow: "hidden",
-					boxShadow: "var(--octo-shadow-xl)",
-				}}
-			>
-				<Box p="md" style={{ borderBottom: "1px solid var(--octo-border-subtle)", backgroundColor: "var(--octo-surface-2)" }}>
-					<Group justify="space-between">
-						<Group gap="xs">
+				<div className={classes.resizeKnob} />
+			</div>
+			<div className={classes.detailsPanel} style={{ width: panelWidth }}>
+				<div className={classes.panelHeader}>
+					<div className={classes.toolbar}>
+						<div className={classes.resourceIdentity}>
 							<Badge size="lg" radius="sm" variant="gradient" gradient={{ from: "primary", to: "fire", deg: 135 }}>
 								{selectedType}
 							</Badge>
 							<Text fw={600} size="sm" ff="monospace" c="dimmed">
 								{selectedId}
 							</Text>
-						</Group>
-						<Group gap="xs">
+						</div>
+						<div className={classes.detailActions}>
 							{isEditMode ? (
-								<Group gap={6}>
+								<div className={classes.editActions}>
 									<Button
 										size="xs"
 										variant="subtle"
@@ -551,7 +484,7 @@ export function ResourceBrowserPage() {
 									>
 										Save Resource
 									</Button>
-								</Group>
+								</div>
 							) : (
 								<Button
 									size="xs"
@@ -573,19 +506,19 @@ export function ResourceBrowserPage() {
 								size="md"
 								onClick={handleCloseDetails}
 							>
-								<GripHorizontal size={16} style={{ transform: "rotate(90deg)" }} />
+								<GripHorizontal size={16} className={classes.closeIcon} />
 							</ActionIcon>
-						</Group>
-					</Group>
-				</Box>
+						</div>
+					</div>
+				</div>
 
 				{resourceLoading ? (
 					<Center py={100}>
 						<Loader size="lg" variant="dots" color="primary" />
 					</Center>
 				) : (
-					<Box style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
-						<Box style={{ flex: 1, minHeight: 0 }}>
+					<div className={classes.detailsBody}>
+						<div className={classes.editorFill}>
 							<JsonEditor
 								value={editedResource}
 								onChange={isEditMode ? setEditedResource : undefined}
@@ -594,9 +527,9 @@ export function ResourceBrowserPage() {
 								schema={jsonSchemaObject}
 								resourceType={selectedType ?? undefined}
 							/>
-						</Box>
+						</div>
 						{saveError && (
-							<Box p="md" style={{ borderTop: "1px solid var(--octo-border-subtle)", backgroundColor: "var(--octo-surface-2)" }}>
+							<div className={classes.errorPanel}>
 								<Alert
 									color="red"
 									icon={<CircleExclamation size={16} />}
@@ -612,12 +545,12 @@ export function ResourceBrowserPage() {
 										<Text size="xs">An error occurred while saving.</Text>
 									)}
 								</Alert>
-							</Box>
+							</div>
 						)}
-					</Box>
+					</div>
 				)}
-			</Paper>
-		</Box>
+			</div>
+		</div>
 	);
 
 	return (
@@ -626,7 +559,7 @@ export function ResourceBrowserPage() {
 			description="Browse, inspect, and edit FHIR resources"
 			className="page-enter"
 			kicker={
-				<Breadcrumbs separator="→" style={{ fontSize: "12px" }}>
+				<Breadcrumbs separator="→" className={classes.breadcrumbs}>
 					{breadcrumbItems}
 				</Breadcrumbs>
 			}
@@ -644,20 +577,20 @@ export function ResourceBrowserPage() {
 			}
 		>
 
-			<Box style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
+			<div className={classes.pageBody}>
 				{!selectedType ? (
 					// Level 1: Resource Types Table
 					renderResourceTypesTable()
 				) : (
 					// Level 2: Resources Table (+ optional Details Panel)
-					<Box style={{ display: "flex", flex: 1, minHeight: 0, gap: 0 }}>
-						<Box style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
+					<div className={classes.splitView}>
+						<div className={classes.listPane}>
 							{renderResourcesTable()}
-						</Box>
+						</div>
 						{selectedId && renderDetailsPanel()}
-					</Box>
+					</div>
 				)}
-			</Box>
+			</div>
 		</ToolWorkspaceLayout>
 	);
 }

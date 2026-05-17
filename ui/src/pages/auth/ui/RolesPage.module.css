@@ -58,6 +58,25 @@
 	max-width: 360px;
 }
 
+.roleForm,
+.deleteModalContent {
+	display: flex;
+	flex-direction: column;
+	gap: var(--octo-spacing-md);
+}
+
+.sectionLabel {
+	display: block;
+	margin-bottom: var(--octo-spacing-xs);
+}
+
+.formActions {
+	display: flex;
+	justify-content: flex-end;
+	gap: var(--octo-spacing-sm);
+	padding-top: var(--octo-spacing-sm);
+}
+
 .permissionMatrix {
 	display: grid;
 	grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
@@ -105,4 +124,10 @@
 
 .categoryHeader:first-child {
 	margin-top: 0;
+}
+
+@media (max-width: 720px) {
+	.formActions {
+		flex-direction: column-reverse;
+	}
 }

@@ -1,5 +1,5 @@
 import { useState, useCallback } from "react";
-import { Box, Flex, Button, Spin, Alert } from "@/shared/ui";
+import { Button, Spin, Alert } from "@/shared/ui";
 import { ToolWorkspaceLayout } from "@/widgets/tool-workspace";
 import {
   IconPlus,
@@ -152,9 +152,9 @@ export function ViewDefinitionPage() {
 
   if (settingsLoading) {
     return (
-      <Flex grow alignItems="center" justifyContent="center" className={classes.loadingState}>
+      <div className={classes.loadingState}>
         <Spin size="l" />
-      </Flex>
+      </div>
     );
   }
 
@@ -166,7 +166,7 @@ export function ViewDefinitionPage() {
       description="Build SQL on FHIR ViewDefinition resources and preview generated output"
       className="page-enter"
       actions={
-        <Flex gap="2">
+        <div className={classes.actions}>
             {listLoading && <Spin size="s" />}
             <Button
               view="action"
@@ -212,17 +212,17 @@ export function ViewDefinitionPage() {
               </Button.Icon>
               New
             </Button>
-          </Flex>
+          </div>
       }
     >
 
         {isDisabled && (
-          <Box pb="4">
+          <div className={classes.disabledBanner}>
             <FeatureDisabledBanner />
-          </Box>
+          </div>
         )}
 
-        <Flex gap="0" className={classes.content}>
+        <div className={classes.content}>
           {/* Sidebar */}
           <Sidebar
             items={viewDefinitions || []}
@@ -231,24 +231,24 @@ export function ViewDefinitionPage() {
           />
 
           {/* Main Editor / Preview Split */}
-          <Flex gap="0" className={classes.workspace}>
-            <Box className={classes.editorSection}>
+          <div className={classes.workspace}>
+            <div className={classes.editorSection}>
               <EditorPanel
                 value={current}
                 onChange={handleUpdate}
                 resourceTypes={resourceTypes}
               />
-            </Box>
-            <Box className={classes.previewSection}>
+            </div>
+            <div className={classes.previewSection}>
               <PreviewPanel
                 runResult={runResult}
                 sqlResult={sqlResult}
                 onRefreshSql={handleGenerateSql}
                 isLoading={runMutation.isPending || sqlMutation.isPending}
               />
-            </Box>
-          </Flex>
-        </Flex>
+            </div>
+          </div>
+        </div>
     </ToolWorkspaceLayout>
   );
 }

@@ -1,3 +1,14 @@
+.content,
+.details {
+    display: flex;
+    flex-direction: column;
+    gap: var(--octo-spacing-md);
+}
+
+.details {
+    gap: var(--octo-spacing-xs);
+}
+
 .clientInfo {
     padding: var(--octo-spacing-sm) var(--octo-spacing-md);
     background: var(--octo-surface-2);
@@ -21,4 +32,10 @@
 .warningAlert {
     background: var(--octo-accent-fireBg);
     border: 1px solid var(--octo-accent-fire);
+}
+
+.actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--octo-spacing-sm);
 }

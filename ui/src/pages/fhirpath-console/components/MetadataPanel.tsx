@@ -1,4 +1,4 @@
-import { Badge, Box, Collapse, Flex, Text } from "@/shared/ui";
+import { Badge, Collapse, Text } from "@/shared/ui";
 import { ChevronDown, ChevronRight } from "@gravity-ui/icons";
 import { useState } from "react";
 import type { FhirPathMetadata } from "../types";
@@ -12,49 +12,47 @@ export function MetadataPanel({ metadata }: Props) {
 	const [expanded, setExpanded] = useState(true);
 
 	return (
-		<Box className={classes.panel}>
-			<Flex
-				justifyContent="space-between"
-				alignItems="center"
+		<div className={classes.panel}>
+			<div
 				onClick={() => setExpanded(!expanded)}
 				className={classes.collapsibleHeader}
 			>
-				<Flex gap="2" alignItems="center">
+				<div className={classes.metadataHeaderTitle}>
 					{expanded ? (
 						<ChevronDown size={16} />
 					) : (
 						<ChevronRight size={16} />
 					)}
 					<Text fw={500}>Metadata</Text>
-				</Flex>
-				<Flex gap="2">
+				</div>
+				<div className={classes.metadataBadges}>
 					<Badge size="xs" color="blue">
 						{metadata.timing.totalTime.toFixed(2)}ms
 					</Badge>
-				</Flex>
-			</Flex>
+				</div>
+			</div>
 
 			<Collapse in={expanded}>
-				<Flex direction="column" gap="2" className={classes.metadataBody}>
-					<Flex gap="2" alignItems="center">
+				<div className={classes.metadataBody}>
+					<div className={classes.metadataRow}>
 						<Text size="sm" c="dimmed">
 							Evaluator:
 						</Text>
 						<Text size="sm" ff="monospace">
 							{metadata.evaluator}
 						</Text>
-					</Flex>
+					</div>
 
-					<Flex gap="2" alignItems="center">
+					<div className={classes.metadataRow}>
 						<Text size="sm" c="dimmed">
 							Result Count:
 						</Text>
 						<Badge size="sm" color="grape">
 							{metadata.resultCount}
 						</Badge>
-					</Flex>
+					</div>
 
-					<Flex gap="2" alignItems="center" wrap="wrap">
+					<div className={classes.metadataTiming}>
 						<Text size="sm" c="dimmed">
 							Timing:
 						</Text>
@@ -67,9 +65,9 @@ export function MetadataPanel({ metadata }: Props) {
 						<Badge size="xs" color="blue">
 							Total: {metadata.timing.totalTime.toFixed(2)}ms
 						</Badge>
-					</Flex>
-				</Flex>
+					</div>
+				</div>
 			</Collapse>
-		</Box>
+		</div>
 	);
 }

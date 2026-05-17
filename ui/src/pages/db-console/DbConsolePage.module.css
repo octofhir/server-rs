@@ -27,6 +27,31 @@
   background: var(--octo-surface-1);
 }
 
+.toolbarTitle,
+.toolbarActions {
+  display: flex;
+  align-items: center;
+  gap: var(--octo-spacing-sm);
+}
+
+.shortcutButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 28px;
+  height: 28px;
+  padding: 0 4px;
+  border: 0;
+  border-radius: var(--octo-radius-sm);
+  color: var(--g-color-text-secondary);
+  background: transparent;
+  cursor: pointer;
+}
+
+.shortcutButton:hover {
+  background: var(--octo-surface-2);
+}
+
 .workspace {
   grid-area: workspace;
   min-height: 0;
@@ -103,6 +128,12 @@
   background: var(--octo-surface-2);
 }
 
+.historyToggleContent {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
 .streamSeparator {
   height: 1px;
   background: var(--octo-border-subtle);
@@ -177,7 +208,19 @@
   transition: opacity var(--octo-motion-fast, 100ms) ease;
 }
 
+.entryMetaContent {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: nowrap;
+  min-width: 0;
+}
+
 .entryActions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-wrap: nowrap;
   opacity: 0;
   transition: opacity var(--octo-motion-fast, 100ms) ease;
 }
@@ -188,6 +231,27 @@
 
 .entryCard:hover .entryActions {
   opacity: 1;
+}
+
+.entryBlock {
+  padding: 0 10px;
+}
+
+.entryBlockTight {
+  padding: 0 10px 6px;
+}
+
+.entryResultPane {
+  max-height: 400px;
+  overflow: auto;
+}
+
+.nowrap {
+  white-space: nowrap;
+}
+
+.preWrap {
+  white-space: pre-wrap;
 }
 
 /* ─── Prompt Glyph ─── */
@@ -207,6 +271,34 @@
   gap: var(--octo-spacing-xs);
   border-bottom: 1px solid var(--octo-border-subtle);
   background: color-mix(in srgb, var(--octo-surface-3) 45%, transparent);
+}
+
+.promptTitle,
+.promptActions,
+.editorActions,
+.popoverActions {
+  display: flex;
+  align-items: center;
+}
+
+.promptTitle {
+  gap: 6px;
+}
+
+.promptActions,
+.editorActions {
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.formatterPopover {
+  width: 320px;
+  padding: var(--g-spacing-3);
+}
+
+.popoverActions {
+  justify-content: flex-end;
+  margin-top: var(--g-spacing-3);
 }
 
 .promptWorkspace {
@@ -265,11 +357,297 @@
 }
 
 .diagnosticsPane {
+  flex: 1;
   min-height: 0;
   display: flex;
   flex-direction: column;
   padding: 8px;
   background: color-mix(in srgb, var(--octo-surface-2) 88%, transparent);
+}
+
+/* ─── Editor Pane ─── */
+
+.editorPane {
+  position: relative;
+  display: flex;
+  flex-shrink: 0;
+  flex-direction: column;
+}
+
+.editorToolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-shrink: 0;
+  gap: var(--octo-spacing-sm);
+  padding: 4px var(--octo-spacing-sm);
+  background: var(--octo-surface-2);
+}
+
+.editorSlot {
+  flex-shrink: 0;
+}
+
+.editorResizeHandle {
+  flex-shrink: 0;
+  width: 100%;
+  height: 4px;
+  padding: 0;
+  border: none;
+  background: var(--octo-border-subtle);
+  cursor: ns-resize;
+  transition: background-color 0.15s;
+}
+
+.editorResizeHandle:hover,
+.editorResizeHandle:focus-visible {
+  background: var(--octo-accent-warm);
+  outline: none;
+}
+
+/* ─── Left Panel ─── */
+
+.leftTabs {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.leftTabsList {
+  flex-shrink: 0;
+}
+
+.leftTabsBody {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.leftTabsPanel {
+  height: 100%;
+}
+
+.sideTabRoot {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.sideTabHeader,
+.sideTabHeaderCompact,
+.sideTabSearch,
+.sideTabCount {
+  flex-shrink: 0;
+}
+
+.sideTabHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--octo-spacing-xs);
+  padding: var(--octo-spacing-xs) var(--octo-spacing-sm);
+}
+
+.sideTabHeaderCompact,
+.sideTabHeaderTitle,
+.sideTabCount,
+.historyMeta,
+.queryItemHeader,
+.queryItemMeta {
+  display: flex;
+  align-items: center;
+}
+
+.sideTabHeaderCompact {
+  gap: 4px;
+  padding: var(--octo-spacing-xs) var(--octo-spacing-sm);
+}
+
+.sideTabHeaderTitle {
+  gap: 4px;
+}
+
+.sideTabSearch {
+  padding: 6px var(--octo-spacing-xs);
+}
+
+.sideTabCount {
+  gap: 4px;
+  padding: 0 var(--octo-spacing-sm) 4px;
+}
+
+.sideTabScroll {
+  flex: 1;
+  min-height: 0;
+}
+
+.sideTabPadding {
+  padding: var(--octo-spacing-xs);
+}
+
+.centeredLoader {
+  padding: var(--octo-spacing-xl) 0;
+  text-align: center;
+}
+
+.mutedIcon {
+  opacity: 0.5;
+}
+
+.historyItem {
+  padding: 8px 12px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--octo-border-subtle);
+}
+
+.historyItem:hover {
+  background: var(--octo-surface-2);
+}
+
+.historyMeta {
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.queryItem {
+  padding: var(--octo-spacing-xs);
+  border-bottom: 1px solid var(--octo-border-subtle);
+}
+
+.queryItemHeader {
+  justify-content: space-between;
+  gap: var(--octo-spacing-xs);
+  margin-bottom: 4px;
+}
+
+.queryItemMeta {
+  gap: 6px;
+  min-width: 0;
+}
+
+.activeQueriesPopover {
+  width: 380px;
+}
+
+.activeQueriesHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--octo-spacing-xs);
+  padding: var(--octo-spacing-xs) var(--octo-spacing-sm);
+  border-bottom: 1px solid var(--octo-border-subtle);
+}
+
+.activeQueriesTrigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  border-radius: var(--octo-radius-sm);
+}
+
+/* ─── Explain Pane ─── */
+
+.explainPane {
+  display: flex;
+  flex-direction: column;
+  gap: var(--octo-spacing-sm);
+  min-height: 0;
+}
+
+.explainToolbar {
+  flex-shrink: 0;
+}
+
+.explainCode {
+  font-size: 12px;
+  white-space: pre;
+}
+
+/* ─── Results Pane ─── */
+
+.resultsPane,
+.resultsTabs {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.resultsTabs {
+  height: 100%;
+}
+
+.resultsHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-shrink: 0;
+  gap: var(--octo-spacing-sm);
+  padding: 0 var(--octo-spacing-sm);
+  border-bottom: 1px solid var(--octo-border-subtle);
+}
+
+.resultsTabsList {
+  border: none;
+}
+
+.tabLabel,
+.resultsActions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.resultsActions {
+  gap: 4px;
+}
+
+.resultsBody {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: var(--octo-spacing-sm);
+}
+
+.resultsPanel {
+  height: 100%;
+}
+
+/* ─── Table Detail ─── */
+
+.tableDetailRoot {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.tableDetailHeader {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  gap: var(--octo-spacing-xs);
+  padding: var(--octo-spacing-xs) var(--octo-spacing-sm);
+  border-bottom: 1px solid var(--octo-border-subtle);
+}
+
+.tableDetailTitle {
+  flex: 1;
+}
+
+.tableDetailScroll {
+  flex: 1;
+  min-height: 0;
+}
+
+.tableDetailContent {
+  display: flex;
+  flex-direction: column;
+  gap: var(--octo-spacing-md);
+  padding: var(--octo-spacing-xs);
 }
 
 /* ─── Schema Rail Items ─── */
@@ -282,6 +660,22 @@
   border-bottom: 1px solid var(--octo-border-subtle);
   flex-shrink: 0;
   height: 40px;
+}
+
+.railHeaderContent {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  gap: var(--octo-spacing-xs);
+  padding: 0 4px;
+}
+
+.railHeaderTitle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
 }
 
 .railContent {
@@ -297,6 +691,12 @@
   flex-direction: column;
   gap: 6px;
   background: color-mix(in srgb, var(--octo-surface-2) 82%, transparent);
+}
+
+.railFilterRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .railSchemaGroup {
@@ -363,6 +763,11 @@
 
 .railItemExpanded:hover {
   background: var(--octo-surface-2);
+}
+
+.railTableText {
+  flex: 1;
+  min-width: 0;
 }
 
 .railSeparator {

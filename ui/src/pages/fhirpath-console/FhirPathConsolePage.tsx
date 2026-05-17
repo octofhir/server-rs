@@ -1,9 +1,7 @@
 import { useState } from "react";
 import {
 	Alert,
-	Box,
 	Button,
-	Flex,
 	Text,
 } from "@/shared/ui";
 import { ToolWorkspaceLayout } from "@/widgets/tool-workspace";
@@ -95,7 +93,7 @@ export function FhirPathConsolePage() {
 			description="Evaluate FHIRPath expressions against a sample or pasted resource"
 			className="page-enter"
 			actions={
-				<Flex gap="2" wrap="wrap">
+				<div className={classes.actions}>
 					<Button
 						leftSection={<Play size={16} />}
 						onClick={handleExecute}
@@ -110,11 +108,11 @@ export function FhirPathConsolePage() {
 					>
 						Clear
 					</Button>
-				</Flex>
+				</div>
 			}
 		>
-			<Box className={classes.workspace}>
-				<Box className={classes.editorPanel}>
+			<div className={classes.workspace}>
+				<div className={classes.editorPanel}>
 					<Text size="sm" fw={500} className={classes.panelTitle}>
 						Expression
 					</Text>
@@ -125,9 +123,9 @@ export function FhirPathConsolePage() {
 						height={120}
 						placeholder="Enter FHIRPath expression (e.g., Patient.name.given)"
 					/>
-				</Box>
+				</div>
 
-				<Box className={classes.editorPanel}>
+				<div className={classes.editorPanel}>
 					<Text size="sm" fw={500} className={classes.panelTitle}>
 						Input Resource
 					</Text>
@@ -137,9 +135,9 @@ export function FhirPathConsolePage() {
 						onExecute={handleExecute}
 						height={300}
 					/>
-				</Box>
+				</div>
 
-				<Box className={classes.resultsPanel}>
+				<div className={classes.resultsPanel}>
 					{evaluateMutation.error && (
 						<Alert icon={<CircleExclamation />} color="red">
 							<Text fw={500}>Evaluation Error</Text>
@@ -151,33 +149,33 @@ export function FhirPathConsolePage() {
 						<>
 							<MetadataPanel metadata={evaluateMutation.data.metadata} />
 
-							<Box className={classes.panel}>
+							<div className={classes.panel}>
 								<Text fw={500} className={classes.panelTitle}>
 									Results ({evaluateMutation.data.results.length})
 								</Text>
 
-								<Flex direction="column" gap="2">
-								{evaluateMutation.data.results.length === 0 ? (
-									<Text c="dimmed" size="sm">
-										No results (empty collection)
-									</Text>
-								) : (
-									evaluateMutation.data.results.map((result) => (
-										<ResultItem key={result.index} result={result} />
-									))
-								)}
-								</Flex>
-							</Box>
+								<div className={classes.resultList}>
+									{evaluateMutation.data.results.length === 0 ? (
+										<Text c="dimmed" size="sm">
+											No results (empty collection)
+										</Text>
+									) : (
+										evaluateMutation.data.results.map((result) => (
+											<ResultItem key={result.index} result={result} />
+										))
+									)}
+								</div>
+							</div>
 						</>
 					) : (
-						<Box className={classes.emptyState}>
+						<div className={classes.emptyState}>
 							<Text size="sm" c="dimmed">
 								Run an expression to see evaluation metadata and results.
 							</Text>
-						</Box>
+						</div>
 					)}
-				</Box>
-			</Box>
+				</div>
+			</div>
 		</ToolWorkspaceLayout>
 	);
 }

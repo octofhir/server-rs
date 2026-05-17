@@ -1,7 +1,6 @@
 import { useState } from "react";
 import {
 	Text,
-	Flex,
 	Table,
 	Badge,
 	Checkbox,
@@ -470,8 +469,8 @@ function UserModal({
 				initialValues={initialValues}
 				render={({ handleSubmit: submit, submitting }) => (
 					<form onSubmit={submit}>
-						<Flex direction="column" gap="m">
-							<Flex gap="m" className={classes.formGrid}>
+						<div className={classes.modalForm}>
+							<div className={classes.formGrid}>
 								<Field<string> name="username">
 									{({ input, meta }) => (
 										<TextInput
@@ -490,7 +489,7 @@ function UserModal({
 										<TextInput label="Full Name" value={input.value} onChange={input.onChange} />
 									)}
 								</Field>
-							</Flex>
+							</div>
 
 							<Field<string> name="email">
 								{({ input, meta }) => (
@@ -570,7 +569,7 @@ function UserModal({
 								)}
 							</Field>
 
-							<Flex gap="m" className={classes.switchGrid}>
+							<div className={classes.switchGrid}>
 								<Field<boolean> name="active" type="checkbox">
 									{({ input }) => (
 										<label className={classes.switchCard}>
@@ -595,9 +594,9 @@ function UserModal({
 										</label>
 									)}
 								</Field>
-							</Flex>
+							</div>
 
-							<Flex justify="flex-end" gap="s" className={classes.modalActions}>
+							<div className={classes.modalActions}>
 								<Button view="flat-secondary" onClick={onClose} type="button">
 									Cancel
 								</Button>
@@ -608,8 +607,8 @@ function UserModal({
 								>
 									{isEditing ? "Update" : "Create"}
 								</Button>
-							</Flex>
-						</Flex>
+							</div>
+						</div>
 					</form>
 				)}
 			/>
@@ -676,7 +675,7 @@ function ResetPasswordModal({
 				initialValues={{ newPassword: "", confirmPassword: "" }}
 				render={({ handleSubmit: submit, submitting }) => (
 					<form onSubmit={submit}>
-						<Flex direction="column" gap="m">
+						<div className={classes.modalForm}>
 							<Text variant="body-1">
 								Reset password for user: <strong>{user?.name || user?.username}</strong>
 							</Text>
@@ -743,15 +742,15 @@ function ResetPasswordModal({
 								)}
 							</Field>
 
-							<Flex justify="flex-end" gap="s" className={classes.modalActions}>
+							<div className={classes.modalActions}>
 								<Button view="flat-secondary" onClick={onClose} type="button">
 									Cancel
 								</Button>
 								<Button view="action" type="submit" loading={submitting || resetPassword.isPending}>
 									Reset Password
 								</Button>
-							</Flex>
-						</Flex>
+							</div>
+						</div>
 					</form>
 				)}
 			/>

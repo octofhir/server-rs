@@ -1,9 +1,10 @@
 import { useState, useCallback } from "react";
-import { Tabs, Group, Text, Badge, ActionIcon, Tooltip, Box } from "@/shared/ui";
+import { Tabs, Text, Badge, ActionIcon, Tooltip } from "@/shared/ui";
 import { ArrowDownToLine } from "@gravity-ui/icons";
 import type { SqlResponse, SqlValue } from "@/shared/api/types";
 import { ResultsTable } from "./ResultsTable";
 import { ExplainPane } from "./ExplainPane";
+import classes from "../DbConsolePage.module.css";
 
 interface ResultsPaneProps {
 	sqlData: SqlResponse | undefined;
@@ -61,40 +62,40 @@ export function ResultsPane({
 	const hasExplain = explainData || explainPending || explainError;
 
 	return (
-		<Box style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+		<div className={classes.resultsPane}>
 			<Tabs
 				value={activeTab}
 				onChange={(v) => setActiveTab(v ?? "results")}
 				variant="outline"
-				style={{ display: "flex", flexDirection: "column", height: "100%" }}
+				className={classes.resultsTabs}
 			>
-				<Group justify="space-between" px="sm" style={{ flexShrink: 0, borderBottom: "1px solid var(--octo-border-subtle)" }}>
-					<Tabs.List style={{ border: "none" }}>
+				<div className={classes.resultsHeader}>
+					<Tabs.List className={classes.resultsTabsList}>
 						<Tabs.Tab value="results">
-							<Group gap={6}>
+							<div className={classes.tabLabel}>
 								<Text size="xs">Results</Text>
 								{sqlData && (
 									<Badge size="xs" variant="light">
 										{sqlData.rowCount} rows
 									</Badge>
 								)}
-							</Group>
+							</div>
 						</Tabs.Tab>
 						{hasExplain && (
 							<Tabs.Tab value="explain">
-								<Group gap={6}>
+								<div className={classes.tabLabel}>
 									<Text size="xs">Explain</Text>
 									{explainPending && (
 										<Badge size="xs" variant="light" color="warm">
 											...
 										</Badge>
 									)}
-								</Group>
+								</div>
 							</Tabs.Tab>
 						)}
 					</Tabs.List>
 
-					<Group gap={4}>
+					<div className={classes.resultsActions}>
 						{sqlData && (
 							<Text size="xs" c="dimmed">
 								{sqlData.executionTimeMs}ms
@@ -107,20 +108,20 @@ export function ResultsPane({
 								</ActionIcon>
 							</Tooltip>
 						)}
-					</Group>
-				</Group>
+					</div>
+				</div>
 
-				<Box style={{ flex: 1, overflow: "auto", padding: "var(--octo-spacing-sm)" }}>
-					<Tabs.Panel value="results" style={{ height: "100%" }}>
+				<div className={classes.resultsBody}>
+					<Tabs.Panel value="results" className={classes.resultsPanel}>
 						<ResultsTable data={sqlData} error={sqlError} isPending={sqlPending} />
 					</Tabs.Panel>
 					{hasExplain && (
-						<Tabs.Panel value="explain" style={{ height: "100%" }}>
+						<Tabs.Panel value="explain" className={classes.resultsPanel}>
 							<ExplainPane data={explainData} error={explainError} isPending={explainPending} />
 						</Tabs.Panel>
 					)}
-				</Box>
+				</div>
 			</Tabs>
-		</Box>
+		</div>
 	);
 }

@@ -2,8 +2,6 @@ import { useCallback, useState } from "react";
 import {
 	ActionIcon,
 	Badge,
-	Box,
-	Group,
 	Popover,
 	ScrollArea,
 	Text,
@@ -48,20 +46,17 @@ function QueryItem({
 	isTerminating: boolean;
 }) {
 	return (
-		<Box
-			p="xs"
-			style={{ borderBottom: "1px solid var(--octo-border-subtle)" }}
-		>
-			<Group justify="space-between" wrap="nowrap" mb={4}>
-				<Group gap={6} wrap="nowrap">
+		<div className={classes.queryItem}>
+			<div className={classes.queryItemHeader}>
+				<div className={classes.queryItemMeta}>
 					<Badge size="xs" variant="light" color={stateColor(query.state)}>
 						{query.state ?? "unknown"}
 					</Badge>
 					<Text size="xs" c="dimmed">
 						PID {query.pid}
 					</Text>
-				</Group>
-				<Group gap={4} wrap="nowrap">
+				</div>
+				<div className={classes.queryItemMeta}>
 					<Text size="xs" c="dimmed">
 						{formatDuration(query.durationMs)}
 					</Text>
@@ -76,8 +71,8 @@ function QueryItem({
 							<Stop size={12} />
 						</ActionIcon>
 					</Tooltip>
-				</Group>
-			</Group>
+				</div>
+			</div>
 			{query.query && (
 				<Text
 					size="xs"
@@ -87,7 +82,7 @@ function QueryItem({
 					{query.query}
 				</Text>
 			)}
-		</Box>
+		</div>
 	);
 }
 
@@ -148,15 +143,8 @@ export function ActiveQueriesDropdown() {
 			placement="bottom-end"
 			trigger="click"
 			content={
-				<Box style={{ width: 380 }}>
-					<Group
-						justify="space-between"
-						px="sm"
-						py="xs"
-						style={{
-							borderBottom: "1px solid var(--octo-border-subtle)",
-						}}
-					>
+				<div className={classes.activeQueriesPopover}>
+					<div className={classes.activeQueriesHeader}>
 						<Text size="xs" fw={600}>
 							Active Queries
 						</Text>
@@ -165,7 +153,7 @@ export function ActiveQueriesDropdown() {
 								{queries.length}
 							</Badge>
 						)}
-					</Group>
+					</div>
 					<ScrollArea.Autosize mah={300}>
 						{isLoading && (
 							<Text size="xs" c="dimmed" ta="center" py="md">
@@ -186,22 +174,16 @@ export function ActiveQueriesDropdown() {
 							/>
 						))}
 					</ScrollArea.Autosize>
-				</Box>
+				</div>
 			}
 		>
 			<Tooltip label="Active queries">
 				<UnstyledButton
-					style={{
-						display: "inline-flex",
-						alignItems: "center",
-						gap: 4,
-						padding: "2px 6px",
-						borderRadius: "var(--octo-radius-sm)",
-					}}
+					className={classes.activeQueriesTrigger}
 				>
 					<Pulse
 						size={15}
-						style={{ opacity: queries.length > 0 ? 1 : 0.5 }}
+						className={queries.length > 0 ? undefined : classes.mutedIcon}
 					/>
 					{queries.length > 0 && (
 						<Text

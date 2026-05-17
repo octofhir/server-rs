@@ -21,6 +21,14 @@
   gap: var(--g-spacing-4);
 }
 
+.headerActions,
+.statusRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
 .editorContainer {
   flex: 1;
   min-height: 200px;

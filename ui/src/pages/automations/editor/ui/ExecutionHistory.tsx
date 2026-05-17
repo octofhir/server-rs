@@ -3,8 +3,6 @@ import {
   Text,
   Badge,
   Loader,
-  Box,
-  Flex,
   Tooltip,
   Code,
   ActionIcon,
@@ -53,12 +51,12 @@ function ExecutionRow({ execution }: { execution: AutomationExecution }) {
         onClick={() => setExpanded(!expanded)}
       >
         <Table.Td>
-          <Flex gap="1" alignItems="center">
+          <div className={classes.timeCell}>
             <ActionIcon variant="subtle" size="xs">
               {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
             </ActionIcon>
             <Text size="sm">{formatDate(execution.started_at)}</Text>
-          </Flex>
+          </div>
         </Table.Td>
         <Table.Td>
           <Badge color={config.color} variant="light" size="sm">
@@ -81,7 +79,7 @@ function ExecutionRow({ execution }: { execution: AutomationExecution }) {
       {expanded && (
         <Table.Tr>
           <Table.Td colSpan={4} p={0}>
-            <Box className={classes.details}>
+            <div className={classes.details}>
               <div className={classes.detailStack}>
                 {execution.error && (
                   <div>
@@ -112,8 +110,8 @@ function ExecutionRow({ execution }: { execution: AutomationExecution }) {
                     <Text size="xs" fw={500}>Execution Logs:</Text>
                     <div className={classes.logList}>
                       {execution.logs.map((log, index) => (
-                        <Box key={`${index}-${log.timestamp ?? log.message.slice(0, 20)}`} className={classes.logItem}>
-                          <Flex gap="2" wrap="nowrap" alignItems="flex-start">
+                        <div key={`${index}-${log.timestamp ?? log.message.slice(0, 20)}`} className={classes.logItem}>
+                          <div className={classes.logRow}>
                             <Badge
                               size="xs"
                               color={
@@ -140,14 +138,14 @@ function ExecutionRow({ execution }: { execution: AutomationExecution }) {
                                 {new Date(log.timestamp).toLocaleTimeString()}
                               </Text>
                             )}
-                          </Flex>
-                        </Box>
+                          </div>
+                        </div>
                       ))}
                     </div>
                   </div>
                 )}
               </div>
-            </Box>
+            </div>
           </Table.Td>
         </Table.Tr>
       )}
@@ -160,34 +158,34 @@ export function ExecutionHistory({ automationId }: ExecutionHistoryProps) {
 
   if (isLoading) {
     return (
-      <Box className={classes.state}>
+      <div className={classes.state}>
         <Loader size="sm" />
-      </Box>
+      </div>
     );
   }
 
   if (error) {
     return (
-      <Box className={classes.state}>
+      <div className={classes.state}>
         <Text c="red" size="sm">
           Failed to load execution history
         </Text>
-      </Box>
+      </div>
     );
   }
 
   if (!executions || executions.length === 0) {
     return (
-      <Box className={classes.state}>
+      <div className={classes.state}>
         <Text c="dimmed" size="sm">
           No execution history yet. Run the automation to see results here.
         </Text>
-      </Box>
+      </div>
     );
   }
 
   return (
-    <Box className={classes.scrollArea}>
+    <div className={classes.scrollArea}>
       <Table striped>
         <Table.Thead>
           <Table.Tr>
@@ -203,6 +201,6 @@ export function ExecutionHistory({ automationId }: ExecutionHistoryProps) {
           ))}
         </Table.Tbody>
       </Table>
-    </Box>
+    </div>
   );
 }

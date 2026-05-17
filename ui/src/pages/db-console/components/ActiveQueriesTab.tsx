@@ -6,11 +6,8 @@ import type { ActiveQuery } from "@/shared/api/types";
 import {
   ActionIcon,
   Badge,
-  Box,
-  Group,
   Loader,
   ScrollArea,
-  Stack,
   Text,
   Tooltip,
 } from "@/shared/ui";
@@ -52,22 +49,17 @@ function QueryItem({
   isTerminating: boolean;
 }) {
   return (
-    <Box
-      p="xs"
-      style={{
-        borderBottom: "1px solid var(--octo-border-subtle)",
-      }}
-    >
-      <Group justify="space-between" wrap="nowrap" mb={4}>
-        <Group gap={6} wrap="nowrap">
+    <div className={classes.queryItem}>
+      <div className={classes.queryItemHeader}>
+        <div className={classes.queryItemMeta}>
           <Badge size="xs" variant="light" color={stateColor(query.state)}>
             {query.state ?? "unknown"}
           </Badge>
           <Text size="xs" c="dimmed">
             PID {query.pid}
           </Text>
-        </Group>
-        <Group gap={4} wrap="nowrap">
+        </div>
+        <div className={classes.queryItemMeta}>
           <Text size="xs" c="dimmed">
             {formatDuration(query.durationMs)}
           </Text>
@@ -82,8 +74,8 @@ function QueryItem({
               <Stop size={12} />
             </ActionIcon>
           </Tooltip>
-        </Group>
-      </Group>
+        </div>
+      </div>
       {query.query && (
         <Text
           size="xs"
@@ -98,7 +90,7 @@ function QueryItem({
           {query.username}
         </Text>
       )}
-    </Box>
+    </div>
   );
 }
 
@@ -146,9 +138,9 @@ export function ActiveQueriesTab({ isActive }: ActiveQueriesTabProps) {
   const queries = data?.queries ?? [];
 
   return (
-    <Stack gap={0} h="100%">
-      <Group gap={4} px="sm" py="xs" style={{ flexShrink: 0 }}>
-        <Pulse size={14} style={{ opacity: 0.5 }} />
+    <div className={classes.sideTabRoot}>
+      <div className={classes.sideTabHeaderCompact}>
+        <Pulse size={14} className={classes.mutedIcon} />
         <Text size="xs" fw={500} c="dimmed">
           Active Queries
         </Text>
@@ -161,12 +153,12 @@ export function ActiveQueriesTab({ isActive }: ActiveQueriesTabProps) {
             {queries.length}
           </Badge>
         )}
-      </Group>
-      <ScrollArea style={{ flex: 1 }}>
+      </div>
+      <ScrollArea className={classes.sideTabScroll}>
         {isLoading && (
-          <Box ta="center" py="xl">
+          <div className={classes.centeredLoader}>
             <Loader size="sm" />
-          </Box>
+          </div>
         )}
         {!isLoading && queries.length === 0 && (
           <Text size="xs" c="dimmed" ta="center" py="xl">
@@ -182,6 +174,6 @@ export function ActiveQueriesTab({ isActive }: ActiveQueriesTabProps) {
           />
         ))}
       </ScrollArea>
-    </Stack>
+    </div>
   );
 }

@@ -1,4 +1,4 @@
-import { Box, Text, Divider, Flex, Button } from "@/shared/ui";
+import { Text, Divider, Button } from "@/shared/ui";
 import { IconCheck } from "@octofhir/ui-kit";
 import type { ViewDefinition } from "../../lib/useViewDefinition";
 import classes from "./Sidebar.module.css";
@@ -11,22 +11,22 @@ interface SidebarProps {
 
 export function Sidebar({ items, selectedId, onSelect }: SidebarProps) {
   return (
-    <Box className={classes.sidebar}>
-      <Box px="4" py="2">
+    <aside className={classes.sidebar}>
+      <div className={classes.header}>
         <Text variant="body-1" color="secondary" className={classes.title}>
           Saved Views
         </Text>
-      </Box>
+      </div>
       <Divider />
-      <Box className={classes.list} py="2">
+      <div className={classes.list}>
         {items.length === 0 ? (
-          <Box px="4" py="4">
+          <div className={classes.emptyState}>
             <Text variant="body-1" color="secondary" className={classes.empty}>
               No saved views
             </Text>
-          </Box>
+          </div>
         ) : (
-          <Flex direction="column" gap="1">
+          <div className={classes.items}>
             {items.map((vd) => (
               <Button
                 key={vd.id}
@@ -44,9 +44,9 @@ export function Sidebar({ items, selectedId, onSelect }: SidebarProps) {
                 </span>
               </Button>
             ))}
-          </Flex>
+          </div>
         )}
-      </Box>
-    </Box>
+      </div>
+    </aside>
   );
 }

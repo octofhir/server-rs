@@ -1,7 +1,17 @@
 .panel {
+	display: flex;
+	flex-direction: column;
+	gap: var(--g-spacing-4);
 	flex: 1;
 	min-height: 0;
 	padding: var(--g-spacing-4);
+}
+
+.headerFields {
+	display: flex;
+	align-items: flex-end;
+	gap: var(--g-spacing-4);
+	flex-wrap: wrap;
 }
 
 .textField {

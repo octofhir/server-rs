@@ -1,7 +1,8 @@
 import { useState, useMemo } from "react";
-import { Stack, Text, Code, SegmentedControl, Box } from "@/shared/ui";
+import { Text, Code, SegmentedControl } from "@/shared/ui";
 import type { SqlResponse } from "@/shared/api/types";
 import { ExplainVisualization } from "@/widgets/explain-visualization";
+import classes from "../DbConsolePage.module.css";
 
 interface ExplainPaneProps {
 	data: SqlResponse | undefined;
@@ -42,8 +43,8 @@ export function ExplainPane({ data, error, isPending }: ExplainPaneProps) {
 	}
 
 	return (
-		<Stack gap="sm">
-			<Box style={{ flexShrink: 0 }}>
+		<div className={classes.explainPane}>
+			<div className={classes.explainToolbar}>
 				<SegmentedControl
 					value={mode}
 					onChange={setMode}
@@ -53,14 +54,14 @@ export function ExplainPane({ data, error, isPending }: ExplainPaneProps) {
 						{ label: "Raw", value: "raw" },
 					]}
 				/>
-			</Box>
+			</div>
 			{mode === "visual" ? (
 				<ExplainVisualization explainText={explainText} />
 			) : (
-				<Code block style={{ fontSize: 12, whiteSpace: "pre" }}>
+				<Code block className={classes.explainCode}>
 					{explainText}
 				</Code>
 			)}
-		</Stack>
+		</div>
 	);
 }

@@ -1,4 +1,8 @@
 .toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
   min-width: 0;
 }
 
@@ -19,12 +23,45 @@
 }
 
 .statePanel {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   min-height: 220px;
+  padding: 24px;
+}
+
+.emptyState {
+  display: flex;
+  min-height: 220px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
   padding: 24px;
 }
 
 .unavailableAlert {
   margin: 16px;
+}
+
+.triggerBadges,
+.lastRun,
+.rowActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+}
+
+.lastRun {
+  gap: 8px;
+}
+
+.nameCell {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 4px;
 }
 
 .truncateText {

@@ -3,11 +3,9 @@ import {
   ActionIcon,
   Badge,
   Button,
-  Box,
   Divider,
   MultiSelect,
   Select,
-  Flex,
   Text,
   Textarea,
   TextInput,
@@ -148,7 +146,7 @@ export function TriggerConfig({ automationId, triggers }: TriggerConfigProps) {
 
   return (
     <div className={classes.root}>
-      <Flex justifyContent="space-between" alignItems="center" gap="2">
+      <div className={classes.header}>
         <Text fw={500}>Triggers</Text>
         {!isAdding && (
           <Button
@@ -160,7 +158,7 @@ export function TriggerConfig({ automationId, triggers }: TriggerConfigProps) {
             Add Trigger
           </Button>
         )}
-      </Flex>
+      </div>
 
       {/* Existing triggers */}
       {triggers.length === 0 && !isAdding ? (
@@ -170,9 +168,9 @@ export function TriggerConfig({ automationId, triggers }: TriggerConfigProps) {
       ) : (
         <div className={classes.list}>
           {triggers.map((trigger) => (
-            <Box key={trigger.id} className={classes.triggerCard}>
-              <Flex justifyContent="space-between" alignItems="flex-start" gap="3">
-                <Flex gap="2" alignItems="flex-start" className={classes.triggerInfo}>
+            <div key={trigger.id} className={classes.triggerCard}>
+              <div className={classes.triggerCardContent}>
+                <div className={classes.triggerInfo}>
                   {triggerTypeIcons[trigger.trigger_type]}
                   <div>
                     <Badge size="sm" variant="light">
@@ -195,7 +193,7 @@ export function TriggerConfig({ automationId, triggers }: TriggerConfigProps) {
                       </Tooltip>
                     )}
                   </div>
-                </Flex>
+                </div>
                 <ActionIcon
                   variant="subtle"
                   color="red"
@@ -204,8 +202,8 @@ export function TriggerConfig({ automationId, triggers }: TriggerConfigProps) {
                 >
                   <IconTrash size={16} />
                 </ActionIcon>
-              </Flex>
-            </Box>
+              </div>
+            </div>
           ))}
         </div>
       )}
@@ -214,7 +212,7 @@ export function TriggerConfig({ automationId, triggers }: TriggerConfigProps) {
       {isAdding && (
         <>
           <Divider />
-          <Box className={classes.formCard}>
+          <div className={classes.formCard}>
             <div className={classes.form}>
               <Text fw={500} size="sm">
                 New Trigger
@@ -290,7 +288,7 @@ export function TriggerConfig({ automationId, triggers }: TriggerConfigProps) {
                 </Text>
               )}
 
-              <Flex justifyContent="flex-end" gap="2" className={classes.formActions}>
+              <div className={classes.formActions}>
                 <Button
                   variant="default"
                   size="xs"
@@ -304,9 +302,9 @@ export function TriggerConfig({ automationId, triggers }: TriggerConfigProps) {
                 <Button size="xs" onClick={handleAdd} loading={addMutation.isPending}>
                   Add Trigger
                 </Button>
-              </Flex>
+              </div>
             </div>
-          </Box>
+          </div>
         </>
       )}
     </div>

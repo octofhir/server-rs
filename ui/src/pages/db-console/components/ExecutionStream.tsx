@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Group, Kbd, Text, UnstyledButton } from "@/shared/ui";
+import { Kbd, Text, UnstyledButton } from "@/shared/ui";
 import { ClockArrowRotateLeft, Terminal, ChevronRight, ChevronDown } from "@gravity-ui/icons";
 import { StreamEntryCard, type StreamEntry } from "./StreamEntryCard";
 import classes from "../DbConsolePage.module.css";
@@ -73,7 +73,7 @@ export function ExecutionStream({
 						className={classes.historySectionToggle}
 						onClick={() => setHistoryOpen((v) => !v)}
 					>
-						<Group gap={6}>
+						<div className={classes.historyToggleContent}>
 							{historyOpen ? (
 								<ChevronDown size={14} />
 							) : (
@@ -86,7 +86,7 @@ export function ExecutionStream({
 							<Text size="xs" c="dimmed">
 								({historyEntries.length})
 							</Text>
-						</Group>
+						</div>
 					</UnstyledButton>
 
 					{historyOpen &&

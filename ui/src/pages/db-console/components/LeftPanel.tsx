@@ -1,8 +1,9 @@
 import { Pulse, Clock, SquareListUl, Xmark } from "@gravity-ui/icons";
-import { ActionIcon, Box, Tabs, Tooltip } from "@/shared/ui";
+import { ActionIcon, Tabs, Tooltip } from "@/shared/ui";
 import { ActiveQueriesTab } from "./ActiveQueriesTab";
 import { HistoryTab } from "./HistoryTab";
 import { TablesTab } from "./TablesTab";
+import classes from "../DbConsolePage.module.css";
 
 interface LeftPanelProps {
   activeTab: string;
@@ -17,9 +18,9 @@ export function LeftPanel({ activeTab, onTabChange, onSelectQuery, onClose }: Le
       value={activeTab}
       onChange={(v) => onTabChange(v ?? "history")}
       variant="outline"
-      style={{ display: "flex", flexDirection: "column", height: "100%" }}
+      className={classes.leftTabs}
     >
-      <Tabs.List grow style={{ flexShrink: 0 }}>
+      <Tabs.List grow className={classes.leftTabsList}>
         <Tabs.Tab value="history" leftSection={<Clock size={14} />}>
           History
         </Tabs.Tab>
@@ -36,17 +37,17 @@ export function LeftPanel({ activeTab, onTabChange, onSelectQuery, onClose }: Le
         </Tooltip>
       </Tabs.List>
 
-      <Box style={{ flex: 1, overflow: "hidden" }}>
-        <Tabs.Panel value="history" style={{ height: "100%" }}>
+      <div className={classes.leftTabsBody}>
+        <Tabs.Panel value="history" className={classes.leftTabsPanel}>
           <HistoryTab onSelectQuery={onSelectQuery} />
         </Tabs.Panel>
-        <Tabs.Panel value="tables" style={{ height: "100%" }}>
+        <Tabs.Panel value="tables" className={classes.leftTabsPanel}>
           <TablesTab />
         </Tabs.Panel>
-        <Tabs.Panel value="queries" style={{ height: "100%" }}>
+        <Tabs.Panel value="queries" className={classes.leftTabsPanel}>
           <ActiveQueriesTab isActive={activeTab === "queries"} />
         </Tabs.Panel>
-      </Box>
+      </div>
     </Tabs>
   );
 }

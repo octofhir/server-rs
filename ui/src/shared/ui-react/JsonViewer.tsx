@@ -1,6 +1,7 @@
 import { useMemo } from "react";
-import { Code, CopyButton, ActionIcon, Group, Tooltip, ScrollArea, Box } from "@octofhir/ui-kit";
+import { Code, CopyButton, ActionIcon, Tooltip, ScrollArea } from "@octofhir/ui-kit";
 import { Copy, Check } from "@gravity-ui/icons";
+import classes from "../ui/JsonViewer/JsonViewer.module.css";
 
 interface JsonViewerProps {
 	data: unknown;
@@ -21,17 +22,8 @@ export function JsonViewer({ data, maxHeight = 400, className }: JsonViewerProps
 	}, [data]);
 
 	return (
-		<Box
-			className={className}
-			pos="relative"
-			style={{
-				borderRadius: "var(--octo-radius-md)",
-				overflow: "hidden",
-				border: "1px solid var(--octo-border-subtle)",
-				backgroundColor: "var(--octo-surface-2)",
-			}}
-		>
-			<Group pos="absolute" top={12} right={12} style={{ zIndex: 5 }}>
+		<div className={`${classes.root} ${className || ""}`}>
+			<div className={classes.copyButton}>
 				<CopyButton value={formattedJson} timeout={2000}>
 					{({ copied, copy }) => (
 						<Tooltip label={copied ? "Copied to clipboard" : "Copy JSON"} withArrow position="left">
@@ -41,47 +33,22 @@ export function JsonViewer({ data, maxHeight = 400, className }: JsonViewerProps
 								onClick={copy}
 								size="md"
 								radius="md"
-								style={{
-									boxShadow: "var(--octo-shadow-xs)",
-									backdropFilter: "blur(4px)",
-								}}
+								className={classes.copyAction}
 							>
 								{copied ? <Check size={16} /> : <Copy size={16} />}
 							</ActionIcon>
 						</Tooltip>
 					)}
 				</CopyButton>
-			</Group>
+			</div>
 			<ScrollArea h={maxHeight} type="auto">
-				<Box p="md">
-					<Code
-						block
-						style={{
-							whiteSpace: "pre-wrap",
-							wordBreak: "break-word",
-							backgroundColor: "transparent",
-							color: "var(--octo-text-primary)",
-							fontSize: "var(--octo-typography-size-sm)",
-							lineHeight: 1.6,
-							fontFamily: "var(--octo-typography-mono)",
-						}}
-					>
+				<div className={classes.content}>
+					<Code block className={classes.code}>
 						{formattedJson}
 					</Code>
-				</Box>
+				</div>
 			</ScrollArea>
-			<Box
-				style={{
-					position: "absolute",
-					left: 0,
-					top: 0,
-					bottom: 0,
-					width: 4,
-					background: "var(--octo-brand-gradient)",
-					opacity: 0.6
-				}}
-			/>
-		</Box>
+			<div className={classes.indicator} />
+		</div>
 	);
 }
-

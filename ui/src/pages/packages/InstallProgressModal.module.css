@@ -1,0 +1,49 @@
+.modalTitle,
+.packageIdentity,
+.progressHeader,
+.actions {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+
+.content,
+.packageList {
+	display: flex;
+	flex-direction: column;
+}
+
+.content {
+	gap: 16px;
+}
+
+.packageList {
+	gap: 8px;
+}
+
+.packageItem {
+	padding: 8px;
+	border-radius: 6px;
+	background: var(--octo-surface-2);
+}
+
+.packageHeader,
+.packageHeaderActive {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+}
+
+.packageHeaderActive {
+	margin-bottom: 8px;
+}
+
+.progressHeader {
+	justify-content: space-between;
+	margin-bottom: 8px;
+}
+
+.actions {
+	justify-content: flex-end;
+}

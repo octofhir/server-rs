@@ -1,4 +1,8 @@
 .toolbar {
+	display: flex;
+	min-width: 0;
+	flex-wrap: wrap;
+	gap: 8px;
 	min-width: 0;
 }
 
@@ -19,6 +23,19 @@
 	max-width: 320px;
 }
 
+.appCell {
+	display: flex;
+	min-width: 0;
+	align-items: center;
+	gap: 8px;
+}
+
+.operationBadges {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 4px;
+}
+
 .truncateText,
 .endpointCode {
 	display: block;
@@ -32,7 +49,16 @@
 	max-width: 220px;
 }
 
+.modalForm {
+	display: flex;
+	flex-direction: column;
+	gap: 16px;
+}
+
 .modalActions {
+	display: flex;
+	justify-content: flex-end;
+	gap: 8px;
 	padding-top: 8px;
 }
 

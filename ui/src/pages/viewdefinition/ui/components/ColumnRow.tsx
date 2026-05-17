@@ -1,5 +1,5 @@
 import { memo } from "react";
-import { TextInput, Select, ActionIcon, Tooltip, Box } from "@/shared/ui";
+import { TextInput, Select, ActionIcon, Tooltip } from "@/shared/ui";
 import { IconTrash, IconGripVertical } from "@octofhir/ui-kit";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
@@ -42,7 +42,7 @@ export const ColumnRow = memo(function ColumnRow({
   };
 
   return (
-    <Box ref={setNodeRef} style={style}>
+    <div ref={setNodeRef} style={style}>
       <div className={classes.row}>
         <ActionIcon
           variant="subtle"
@@ -61,7 +61,7 @@ export const ColumnRow = memo(function ColumnRow({
           className={classes.nameInput}
           size="xs"
         />
-        <Box className={classes.pathInput}>
+        <div className={classes.pathInput}>
           <FHIRPathInput
             value={column.path}
             onChange={(path) => onChange(index, { ...column, path })}
@@ -71,7 +71,7 @@ export const ColumnRow = memo(function ColumnRow({
             placeholder="FHIRPath expression"
             size="xs"
           />
-        </Box>
+        </div>
         <Select
           placeholder="Type"
           value={column.type || null}
@@ -99,6 +99,6 @@ export const ColumnRow = memo(function ColumnRow({
           </ActionIcon>
         </Tooltip>
       </div>
-    </Box>
+    </div>
   );
 });

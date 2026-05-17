@@ -6,6 +6,12 @@
 	min-height: 0;
 }
 
+.actions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+}
+
 .editorPanel,
 .panel,
 .resultItem,
@@ -54,11 +60,42 @@
 
 .collapsibleHeader,
 .resultToggle {
+	display: flex;
+	align-items: center;
+	gap: 8px;
 	cursor: pointer;
 }
 
+.collapsibleHeader {
+	justify-content: space-between;
+}
+
+.metadataHeaderTitle,
+.metadataBadges,
+.metadataRow,
+.metadataTiming,
+.resultHeader {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+
 .metadataBody {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
 	padding-top: 12px;
+}
+
+.metadataTiming {
+	flex-wrap: wrap;
+}
+
+.resultList,
+.resultItemContent {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
 }
 
 .resultCode {

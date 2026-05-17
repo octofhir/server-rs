@@ -26,7 +26,7 @@ export interface SelectProps
     defaultValue?: string | string[] | null;
     data?: LegacyDataItem[];
     options?: GravitySelectProps["options"];
-    onChange?: (value: string | null) => void;
+    onChange?: (value: string | string[] | null) => void;
     onUpdate?: (value: string[]) => void;
     searchable?: boolean;
     clearable?: boolean;
@@ -55,6 +55,19 @@ export interface SelectProps
     mr?: number | string;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return typeof value === "object" && value !== null;
+}
+
+function isLegacyDataItem(item: unknown): item is LegacyDataItem {
+    if (typeof item === "string") return true;
+    if (!isRecord(item)) return false;
+    if ("group" in item) {
+        return typeof item.group === "string" && Array.isArray(item.items) && item.items.every(isLegacyDataItem);
+    }
+    return typeof item.value === "string";
+}
+
 function toGravityOption(item: LegacyDataItem): SelectOption | SelectOptionGroup {
     if (typeof item === "string") {
         return { value: item, content: item };
@@ -78,9 +91,10 @@ function toGravityValue(value: SelectProps["value"]): string[] {
     return value ? [value] : [];
 }
 
-function toGravityOptions(props: SelectProps): GravitySelectProps["options"] {
-    if (props.options) return props.options;
-    return props.data?.map(toGravityOption);
+function toGravityOptions(props: Pick<SelectProps, "data" | "options">): GravitySelectProps["options"] {
+    if (Array.isArray(props.options)) return props.options;
+    if (!Array.isArray(props.data)) return undefined;
+    return props.data.filter(isLegacyDataItem).map(toGravityOption);
 }
 
 export function Select({
@@ -119,9 +133,7 @@ export function Select({
         hasClear: clearable || props.hasClear,
         onUpdate: (nextValue: string[]) => {
             onUpdate?.(nextValue);
-            if (!multiple) {
-                onChange?.(nextValue[0] ?? null);
-            }
+            onChange?.(multiple ? nextValue : nextValue[0] ?? null);
         },
     } satisfies GravitySelectProps);
 
@@ -132,4 +144,8 @@ export function Select({
         },
         select,
     );
+}
+
+export function MultiSelect(props: SelectProps) {
+    return React.createElement(Select, { ...props, multiple: true });
 }

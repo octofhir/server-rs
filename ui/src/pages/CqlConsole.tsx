@@ -1,6 +1,5 @@
 import { useState } from 'react';
 import {
-  Box,
   Button,
   Text,
   Alert,
@@ -220,10 +219,10 @@ export function CqlConsole() {
           </div>
 
           {evaluateMutation.isPending && (
-            <Box className={classes.emptyState}>
+            <div className={classes.emptyState}>
               <Loader size="md" />
               <Text size="sm" c="dimmed">Evaluating...</Text>
-            </Box>
+            </div>
           )}
 
           {evaluateMutation.isError && (
@@ -240,19 +239,19 @@ export function CqlConsole() {
           )}
 
           {evaluateMutation.isSuccess && (
-            <Box className={classes.resultCode}>
+            <div className={classes.resultCode}>
               <Code block>
                 {JSON.stringify(result, null, 2)}
               </Code>
-            </Box>
+            </div>
           )}
 
           {!evaluateMutation.isPending && !evaluateMutation.isError && !evaluateMutation.isSuccess && (
-            <Box className={classes.emptyState}>
+            <div className={classes.emptyState}>
               <Text size="sm">
                 Enter a CQL expression and click "Evaluate" to see results
               </Text>
-            </Box>
+            </div>
           )}
         </section>
       </div>

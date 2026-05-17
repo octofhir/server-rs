@@ -1,11 +1,8 @@
 import { useCallback, useMemo } from "react";
 import {
-	Stack,
 	Text,
-	Group,
 	ActionIcon,
 	ScrollArea,
-	Box,
 	Tooltip,
 	Loader,
 	DataPreview,
@@ -20,6 +17,7 @@ import {
 import { getDbColumnViews, getDbIndexViews } from "@/entities/db-schema";
 import { useTableDetail, useDropIndex } from "@/shared/api/hooks";
 import { modals, notifications } from "@octofhir/ui-kit";
+import classes from "../DbConsolePage.module.css";
 
 interface TableDetailViewProps {
 	schema: string;
@@ -78,27 +76,27 @@ export function TableDetailView({ schema, table, onBack }: TableDetailViewProps)
 	);
 
 	return (
-		<Stack gap={0} h="100%">
-			<Group gap="xs" px="sm" py="xs" style={{ flexShrink: 0, borderBottom: "1px solid var(--octo-border-subtle)" }}>
+		<div className={classes.tableDetailRoot}>
+			<div className={classes.tableDetailHeader}>
 				<ActionIcon variant="subtle" size="sm" onClick={onBack}>
 					<ArrowLeft size={14} />
 				</ActionIcon>
-				<Text size="xs" fw={600} truncate style={{ flex: 1 }}>
+				<Text size="xs" fw={600} truncate className={classes.tableDetailTitle}>
 					{schema}.{table}
 				</Text>
-			</Group>
+			</div>
 
-			<ScrollArea style={{ flex: 1 }} p="xs">
+			<ScrollArea className={classes.tableDetailScroll}>
 				{isLoading && (
-					<Box ta="center" py="xl">
+					<div className={classes.centeredLoader}>
 						<Loader size="sm" />
-					</Box>
+					</div>
 				)}
 
 				{data && (
-					<Stack gap="md">
+					<div className={classes.tableDetailContent}>
 						{/* Columns */}
-						<Box>
+						<section>
 							<Text size="xs" fw={600} c="dimmed" mb={4} tt="uppercase" lts={0.5}>
 								Columns ({data.columns.length})
 							</Text>
@@ -127,10 +125,10 @@ export function TableDetailView({ schema, table, onBack }: TableDetailViewProps)
 								}))}
 								getRowKey={(_row, rowIndex) => columnViews[rowIndex]?.id ?? `${rowIndex}`}
 							/>
-						</Box>
+						</section>
 
 						{/* Indexes */}
-						<Box>
+						<section>
 							<Text size="xs" fw={600} c="dimmed" mb={4} tt="uppercase" lts={0.5}>
 								Indexes ({data.indexes.length})
 							</Text>
@@ -180,10 +178,10 @@ export function TableDetailView({ schema, table, onBack }: TableDetailViewProps)
 									) : null,
 								}))}
 							/>
-						</Box>
-					</Stack>
+						</section>
+					</div>
 				)}
 			</ScrollArea>
-		</Stack>
+		</div>
 	);
 }

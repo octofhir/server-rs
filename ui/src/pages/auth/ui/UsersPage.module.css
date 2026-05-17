@@ -102,10 +102,17 @@
 	margin-right: 4px;
 }
 
+.modalForm {
+	display: flex;
+	flex-direction: column;
+	gap: var(--octo-spacing-md);
+}
+
 .formGrid,
 .switchGrid {
 	display: grid;
 	grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+	gap: var(--octo-spacing-md);
 	width: 100%;
 }
 
@@ -121,7 +128,10 @@
 }
 
 .modalActions {
-	padding-top: 4px;
+	display: flex;
+	justify-content: flex-end;
+	gap: var(--octo-spacing-sm);
+	padding-top: var(--octo-spacing-xs);
 }
 
 .passwordStrength {
@@ -162,5 +172,9 @@
 	.formGrid,
 	.switchGrid {
 		grid-template-columns: 1fr;
+	}
+
+	.modalActions {
+		flex-direction: column-reverse;
 	}
 }

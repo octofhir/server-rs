@@ -2,10 +2,7 @@ import { useMemo } from "react";
 import {
 	Tabs,
 	Text,
-	Stack,
-	Flex,
 	Badge,
-	Box,
 	Table,
 } from "@/shared/ui";
 import {
@@ -16,6 +13,7 @@ import {
 import type { QueryAst, Diagnostic, QueryInputMetadata } from "../core/types";
 import { explainQuery, type ExplainItem } from "../core/explain";
 import { diffSelfLink, type SelfLinkDiff } from "../core/self-link-diff";
+import classes from "./QueryInspector.module.css";
 
 export interface QueryInspectorProps {
 	ast: QueryAst;
@@ -62,7 +60,7 @@ export function QueryInspector({
 					id="parsed"
 					icon={<CodeIcon width={14} />}
 				>
-					<Flex gap="1" alignItems="center">
+					<span className={classes.tabLabel}>
 						Parsed
 						{diagnostics.length > 0 && (
 							<Badge
@@ -72,7 +70,7 @@ export function QueryInspector({
 								{errorCount + warnCount}
 							</Badge>
 						)}
-					</Flex>
+					</span>
 				</Tabs.Tab>
 				<Tabs.Tab
 					id="explain"
@@ -90,7 +88,7 @@ export function QueryInspector({
 				)}
 			</Tabs.List>
 
-			<Box style={{ paddingTop: "16px" }}>
+			<div className={classes.panelBody}>
 				<Tabs.Panel value="parsed">
 					<ParsedTab ast={ast} diagnostics={diagnostics} />
 				</Tabs.Panel>
@@ -104,7 +102,7 @@ export function QueryInspector({
 						<ResponseTab response={response} selfLinkDiff={selfLinkDiff} />
 					</Tabs.Panel>
 				)}
-			</Box>
+			</div>
 		</Tabs>
 	);
 }
@@ -114,30 +112,30 @@ function ParsedTab({
 	diagnostics,
 }: { ast: QueryAst; diagnostics: Diagnostic[] }) {
 	return (
-		<Stack gap="4">
-			<Box>
-				<Text variant="caption-1" color="secondary" style={{ marginBottom: "4px", fontWeight: 700 }}>
+		<div className={classes.stackLarge}>
+			<section>
+				<Text variant="caption-1" color="secondary" className={classes.sectionLabelCompact}>
 					PATH
 				</Text>
-				<Flex gap="2" wrap="wrap" alignItems="center">
+				<div className={classes.wrapRow}>
 					<Badge theme="info" size="m">
 						{ast.path.kind}
 					</Badge>
 					{"resourceType" in ast.path && (
-						<code style={{ backgroundColor: "var(--g-color-base-generic-subtle)", padding: "2px 4px", borderRadius: "4px" }}>{ast.path.resourceType}</code>
+						<code className={classes.inlineCode}>{ast.path.resourceType}</code>
 					)}
 					{"id" in ast.path && ast.path.id && (
-						<code style={{ backgroundColor: "var(--g-color-base-generic-subtle)", padding: "2px 4px", borderRadius: "4px" }}>{ast.path.id}</code>
+						<code className={classes.inlineCode}>{ast.path.id}</code>
 					)}
 					{"operation" in ast.path && (
-						<code style={{ backgroundColor: "var(--g-color-base-generic-subtle)", padding: "2px 4px", borderRadius: "4px" }}>{ast.path.operation}</code>
+						<code className={classes.inlineCode}>{ast.path.operation}</code>
 					)}
-				</Flex>
-			</Box>
+				</div>
+			</section>
 
 			{ast.params.length > 0 && (
-				<Box>
-					<Text variant="caption-1" color="secondary" style={{ marginBottom: "8px", fontWeight: 700 }}>
+				<section>
+					<Text variant="caption-1" color="secondary" className={classes.sectionLabel}>
 						PARAMETERS ({ast.params.length})
 					</Text>
 					<Table striped highlightOnHover>
@@ -152,14 +150,14 @@ function ParsedTab({
 							{ast.params.map((p, i) => (
 								<Table.Tr key={`${p.name}-${i}`}>
 									<Table.Td>
-										<Flex gap="2" alignItems="center">
-											<code style={{ fontWeight: 700 }}>{p.name}</code>
+										<div className={classes.row}>
+											<code className={classes.boldCode}>{p.name}</code>
 											{p.isSpecial && (
 												<Badge size="s" theme="warning">
 													special
 												</Badge>
 											)}
-										</Flex>
+										</div>
 									</Table.Td>
 									<Table.Td>
 										{p.modifier ? (
@@ -169,37 +167,36 @@ function ParsedTab({
 										)}
 									</Table.Td>
 									<Table.Td>
-										<Flex gap="2" wrap="wrap">
+										<div className={classes.wrapRow}>
 											{p.values.map((v, j) => (
-												<Flex key={`${v.raw}-${j}`} gap="1" alignItems="center">
+												<span key={`${v.raw}-${j}`} className={classes.row}>
 													{v.prefix && (
 														<Badge size="s" theme="info">
 															{v.prefix}
 														</Badge>
 													)}
-													<code style={{ backgroundColor: "var(--g-color-base-generic-subtle)", padding: "2px 4px", borderRadius: "4px" }}>{v.raw}</code>
-												</Flex>
+													<code className={classes.inlineCode}>{v.raw}</code>
+												</span>
 											))}
-										</Flex>
+										</div>
 									</Table.Td>
 								</Table.Tr>
 							))}
 						</Table.Tbody>
 					</Table>
-				</Box>
+				</section>
 			)}
 
 			{diagnostics.length > 0 && (
-				<Box>
-					<Text variant="caption-1" color="secondary" style={{ marginBottom: "8px", fontWeight: 700 }}>
+				<section>
+					<Text variant="caption-1" color="secondary" className={classes.sectionLabel}>
 						DIAGNOSTICS ({diagnostics.length})
 					</Text>
-					<Stack gap="2">
+					<div className={classes.stackSmall}>
 						{diagnostics.map((d, i) => (
-							<Flex
+							<div
 								key={`${d.code}-${d.span.start}-${i}`}
-								gap="2"
-								alignItems="center"
+								className={classes.row}
 							>
 								<Badge
 									size="s"
@@ -214,31 +211,30 @@ function ParsedTab({
 									{d.severity}
 								</Badge>
 								<Text variant="body-1">{d.message}</Text>
-							</Flex>
+							</div>
 						))}
-					</Stack>
-				</Box>
+					</div>
+				</section>
 			)}
-		</Stack>
+		</div>
 	);
 }
 
 function ExplainTab({ items }: { items: ExplainItem[] }) {
 	if (items.length === 0) {
 		return (
-			<Flex direction="column" alignItems="center" style={{ padding: "20px 0", opacity: 0.5 }}>
+			<div className={classes.emptyExplain}>
 				<Text variant="body-1">Type a FHIR query to see explanation.</Text>
-			</Flex>
+			</div>
 		);
 	}
 
 	return (
-		<Stack gap="3">
+		<div className={classes.explainList}>
 			{items.map((item, i) => (
-				<Flex
+				<div
 					key={`${item.label}-${i}`}
-					gap="3"
-					alignItems="flex-start"
+					className={classes.explainItem}
 				>
 					<Badge
 						size="s"
@@ -249,19 +245,19 @@ function ExplainTab({ items }: { items: ExplainItem[] }) {
 									? "warning"
 									: "normal"
 						}
-						style={{ flexShrink: 0, marginTop: "2px" }}
+						className={classes.explainBadge}
 					>
 						{item.kind}
 					</Badge>
-					<Box>
-						<code style={{ fontWeight: 700 }}>{item.label}</code>
-						<Text variant="caption-1" color="secondary" style={{ marginTop: "2px" }}>
+					<div className={classes.explainBody}>
+						<code className={classes.boldCode}>{item.label}</code>
+						<Text variant="caption-1" color="secondary" className={classes.description}>
 							{item.description}
 						</Text>
-					</Box>
-				</Flex>
+					</div>
+				</div>
 			))}
-		</Stack>
+		</div>
 	);
 }
 
@@ -276,8 +272,8 @@ function ResponseTab({
 	const issues = getOperationOutcomeIssues(body);
 
 	return (
-		<Stack gap="4">
-			<Flex gap="2" alignItems="center">
+		<div className={classes.stackLarge}>
+			<div className={classes.row}>
 				<Badge
 					theme={
 						(response.status ?? 0) >= 200 && (response.status ?? 0) < 300
@@ -294,16 +290,16 @@ function ResponseTab({
 						{response.durationMs}ms
 					</Text>
 				)}
-			</Flex>
+			</div>
 
 			{issues.length > 0 && (
-				<Box>
-					<Text variant="caption-1" color="secondary" style={{ marginBottom: "8px", fontWeight: 700 }}>
+				<section>
+					<Text variant="caption-1" color="secondary" className={classes.sectionLabel}>
 						OPERATION OUTCOME ({issues.length} issues)
 					</Text>
-					<Stack gap="2">
+					<div className={classes.stackSmall}>
 						{issues.map((issue, i) => (
-							<Flex key={`${issue.code}-${i}`} gap="2" alignItems="center">
+							<div key={`${issue.code}-${i}`} className={classes.row}>
 								<Badge
 									size="s"
 									theme={
@@ -319,30 +315,30 @@ function ResponseTab({
 								<Text variant="body-1">
 									{issue.diagnostics || issue.code}
 								</Text>
-							</Flex>
+							</div>
 						))}
-					</Stack>
-				</Box>
+					</div>
+				</section>
 			)}
 
 			{selfLinkDiff && (
-				<Box>
-					<Text variant="caption-1" color="secondary" style={{ marginBottom: "8px", fontWeight: 700 }}>
+				<section>
+					<Text variant="caption-1" color="secondary" className={classes.sectionLabel}>
 						SELF-LINK DIFF
 					</Text>
-					<Stack gap="2">
+					<div className={classes.stackSmall}>
 						{selfLinkDiff.added.map((a) => (
-							<Text key={a} variant="caption-1" style={{ color: "var(--g-color-text-success)" }}>
+							<Text key={a} variant="caption-1" className={classes.diffAdded}>
 								+ {a} (added by server)
 							</Text>
 						))}
 						{selfLinkDiff.removed.map((r) => (
-							<Text key={r} variant="caption-1" style={{ color: "var(--g-color-text-danger)" }}>
+							<Text key={r} variant="caption-1" className={classes.diffRemoved}>
 								- {r} (removed by server)
 							</Text>
 						))}
 						{selfLinkDiff.modified.map((m) => (
-							<Text key={m.param} variant="caption-1" style={{ color: "var(--g-color-text-warning)" }}>
+							<Text key={m.param} variant="caption-1" className={classes.diffModified}>
 								~ {m.param}: {m.sent} → {m.received}
 							</Text>
 						))}
@@ -353,10 +349,10 @@ function ResponseTab({
 									No differences — server accepted query as-is
 								</Text>
 							)}
-					</Stack>
-				</Box>
+					</div>
+				</section>
 			)}
-		</Stack>
+		</div>
 	);
 }
 

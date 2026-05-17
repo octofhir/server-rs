@@ -2,7 +2,6 @@ import { useParams, useNavigate } from "react-router-dom";
 import {
 	Title,
 	Text,
-	Group,
 	Badge,
 	Loader,
 	Alert,
@@ -76,8 +75,8 @@ export function AppDetailPage() {
 			className="page-enter"
 			kicker={
 				<Breadcrumbs>
-				<Anchor onClick={() => navigate("/apps")}>Apps</Anchor>
-				<Text>{app?.name ?? "Loading..."}</Text>
+					<Anchor onClick={() => navigate("/apps")}>Apps</Anchor>
+					<Text>{app?.name ?? "Loading..."}</Text>
 				</Breadcrumbs>
 			}
 			actions={
@@ -88,12 +87,12 @@ export function AppDetailPage() {
 		>
 
 			{isLoading && (
-				<Group justify="center" py="xl">
+				<div className={classes.loadingState}>
 					<Loader size="sm" />
 					<Text size="sm" c="dimmed">
 						Loading app...
 					</Text>
-				</Group>
+				</div>
 			)}
 
 			{error && (
@@ -110,12 +109,12 @@ export function AppDetailPage() {
 						view="filled"
 						padding="l"
 					>
-						<Group justify="space-between" align="flex-start">
-							<Group gap="md">
+						<div className={classes.summaryHeader}>
+							<div className={classes.summaryMain}>
 								<ThemeIcon size="xl" variant="light" color="primary" radius="md">
 									<IconRocket size={24} />
 								</ThemeIcon>
-								<div>
+								<div className={classes.summaryText}>
 									<Title order={3}>{app.name}</Title>
 									{app.description && (
 										<Text size="sm" c="dimmed" maw={500}>
@@ -124,8 +123,8 @@ export function AppDetailPage() {
 									)}
 									<Code size="xs" mt="xs">{app.id}</Code>
 								</div>
-							</Group>
-							<Group gap="xs">
+							</div>
+							<div className={classes.summaryActions}>
 								<Badge
 									size="lg"
 									variant="light"
@@ -141,8 +140,8 @@ export function AppDetailPage() {
 								>
 									Edit
 								</Button>
-							</Group>
-						</Group>
+							</div>
+						</div>
 					</SectionPanel>
 
 					<SectionPanel
@@ -156,20 +155,20 @@ export function AppDetailPage() {
 								{
 									id: "endpoint",
 									label: (
-										<Group gap="xs">
+										<div className={classes.labelInline}>
 											<IconWorld size={14} color="var(--g-color-text-secondary)" />
 											Endpoint URL
-										</Group>
+										</div>
 									),
 									value: app.endpoint?.url ? (
-										<Group gap="xs">
+										<div className={classes.valueInline}>
 											<Code size="xs">{app.endpoint.url}</Code>
 											<Tooltip label="Open endpoint">
 												<Anchor href={app.endpoint.url} target="_blank" size="xs">
 													<IconExternalLink size={14} />
 												</Anchor>
 											</Tooltip>
-										</Group>
+										</div>
 									) : (
 										<Text size="sm" c="dimmed">
 											{getAppEndpointDisplay(app)}
@@ -179,30 +178,30 @@ export function AppDetailPage() {
 								{
 									id: "timeout",
 									label: (
-										<Group gap="xs">
+										<div className={classes.labelInline}>
 											<IconClock size={14} color="var(--g-color-text-secondary)" />
 											Timeout
-										</Group>
+										</div>
 									),
 									value: app.endpoint?.timeout ? `${app.endpoint.timeout}s` : "Default (30s)",
 								},
 								{
 									id: "api-version",
 									label: (
-										<Group gap="xs">
+										<div className={classes.labelInline}>
 											<IconApi size={14} color="var(--g-color-text-secondary)" />
 											API Version
-										</Group>
+										</div>
 									),
 									value: app.apiVersion ?? 1,
 								},
 								{
 									id: "base-path",
 									label: (
-										<Group gap="xs">
+										<div className={classes.labelInline}>
 											<IconWorld size={14} color="var(--g-color-text-secondary)" />
 											Base Path
-										</Group>
+										</div>
 									),
 									value: app.basePath || "None",
 								},
@@ -212,13 +211,13 @@ export function AppDetailPage() {
 
 					<SectionPanel
 						title={
-							<Group gap="sm">
+							<div className={classes.sectionTitle}>
 								<IconApi size={20} color="var(--octo-brand-primary-active)" />
 								Operations
 								<Badge size="sm" variant="light" color="gray">
 									{operations.length}
 								</Badge>
-							</Group>
+							</div>
 						}
 						description="Inline API operation contracts exposed by this App"
 						view="tinted"
@@ -252,7 +251,7 @@ export function AppDetailPage() {
 										</Tooltip>
 									),
 									policy: op.policy ? (
-										<Group gap={4}>
+										<div className={classes.policyBadges}>
 											{op.policy.roles && (
 												<Tooltip label={`Roles: ${op.policy.roles.join(", ")}`}>
 													<Badge size="xs" variant="outline" color="violet">
@@ -265,7 +264,7 @@ export function AppDetailPage() {
 													{op.policy.compartment}
 												</Badge>
 											)}
-										</Group>
+										</div>
 									) : (
 										<Text size="xs" c="dimmed">-</Text>
 									),
@@ -278,13 +277,13 @@ export function AppDetailPage() {
 
 					<SectionPanel
 						title={
-							<Group gap="sm">
+							<div className={classes.sectionTitle}>
 								<IconWebhook size={20} color="var(--g-color-base-warning-medium-hover)" />
 								Subscriptions
 								<Badge size="sm" variant="light" color="gray">
 									{subscriptions.length}
 								</Badge>
-							</Group>
+							</div>
 						}
 						description="FHIR event subscriptions and webhook or notification channels"
 						view="tinted"
@@ -323,7 +322,7 @@ export function AppDetailPage() {
 										<Text size="xs" c="dimmed">All</Text>
 									),
 									channel: sub.channel ? (
-										<Group gap={4}>
+										<div className={classes.channelBadges}>
 											<Badge size="xs" variant="light" color="deep">
 												{sub.channel.type}
 											</Badge>
@@ -332,14 +331,14 @@ export function AppDetailPage() {
 													{sub.channel.endpoint}
 												</Code>
 											</Tooltip>
-										</Group>
+										</div>
 									) : sub.notification ? (
-										<Group gap={4}>
+										<div className={classes.channelBadges}>
 											<IconBell size={12} color="var(--g-color-base-warning-medium-hover)" />
 											<Badge size="xs" variant="light" color="warm">
 												notification
 											</Badge>
-										</Group>
+										</div>
 									) : (
 										<Text size="xs" c="dimmed">-</Text>
 									),

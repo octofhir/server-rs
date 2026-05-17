@@ -1,0 +1,101 @@
+.panelBody {
+	padding-top: 16px;
+}
+
+.tabLabel,
+.row,
+.wrapRow,
+.explainItem {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+
+.tabLabel {
+	gap: 4px;
+}
+
+.wrapRow {
+	flex-wrap: wrap;
+}
+
+.stackLarge,
+.stackSmall,
+.explainList {
+	display: flex;
+	flex-direction: column;
+}
+
+.stackLarge {
+	gap: 16px;
+}
+
+.stackSmall {
+	gap: 8px;
+}
+
+.sectionLabel,
+.sectionLabelCompact {
+	display: block;
+	font-weight: 700;
+}
+
+.sectionLabel {
+	margin-bottom: 8px;
+}
+
+.sectionLabelCompact {
+	margin-bottom: 4px;
+}
+
+.inlineCode {
+	padding: 2px 4px;
+	border-radius: 4px;
+	background-color: var(--g-color-base-generic-subtle);
+}
+
+.boldCode {
+	font-weight: 700;
+}
+
+.emptyExplain {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	padding: 20px 0;
+	opacity: 0.5;
+}
+
+.explainList {
+	gap: 12px;
+}
+
+.explainItem {
+	align-items: flex-start;
+	gap: 12px;
+}
+
+.explainBadge {
+	flex-shrink: 0;
+	margin-top: 2px;
+}
+
+.explainBody {
+	min-width: 0;
+}
+
+.description {
+	margin-top: 2px;
+}
+
+.diffAdded {
+	color: var(--g-color-text-success);
+}
+
+.diffRemoved {
+	color: var(--g-color-text-danger);
+}
+
+.diffModified {
+	color: var(--g-color-text-warning);
+}

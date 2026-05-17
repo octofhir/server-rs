@@ -6,16 +6,14 @@ import {
 } from "@/entities/db-schema";
 import { useDbTables } from "@/shared/api/hooks";
 import {
-  Box,
-  Group,
   Loader,
   RecordList,
   ScrollArea,
-  Stack,
   Text,
   TextInput,
 } from "@/shared/ui";
 import { TableDetailView } from "./TableDetailView";
+import classes from "../DbConsolePage.module.css";
 
 interface SelectedTable {
   schema: string;
@@ -62,8 +60,8 @@ export function TablesTab() {
   }
 
   return (
-    <Stack gap={0} h="100%">
-      <Box px="xs" py={6} style={{ flexShrink: 0 }}>
+    <div className={classes.sideTabRoot}>
+      <div className={classes.sideTabSearch}>
         <TextInput
           size="xs"
           placeholder="Search tables..."
@@ -71,21 +69,21 @@ export function TablesTab() {
           value={search}
           onChange={(e) => setSearch(e.currentTarget.value)}
         />
-      </Box>
-      <Group gap={4} px="sm" pb={4} style={{ flexShrink: 0 }}>
+      </div>
+      <div className={classes.sideTabCount}>
         <Text size="xs" c="dimmed">
           {filtered.length}
           {search ? ` / ${tables.length}` : ""} tables
         </Text>
-      </Group>
-      <ScrollArea style={{ flex: 1 }}>
+      </div>
+      <ScrollArea className={classes.sideTabScroll}>
         {isLoading && (
-          <Box ta="center" py="xl">
+          <div className={classes.centeredLoader}>
             <Loader size="sm" />
-          </Box>
+          </div>
         )}
         {!isLoading && (
-          <Box p="xs">
+          <div className={classes.sideTabPadding}>
             <RecordList
               density="compact"
               items={tableItems}
@@ -97,9 +95,9 @@ export function TablesTab() {
                 }
               }}
             />
-          </Box>
+          </div>
         )}
       </ScrollArea>
-    </Stack>
+    </div>
   );
 }

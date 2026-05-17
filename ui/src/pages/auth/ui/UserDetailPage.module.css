@@ -1,3 +1,12 @@
+.pageState {
+	display: flex;
+	flex: 1;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	gap: var(--octo-spacing-sm);
+}
+
 .contentGrid {
 	display: grid;
 	grid-template-columns: 1fr 1fr;
@@ -12,8 +21,17 @@
 
 }
 
+.detailColumn {
+	display: flex;
+	flex-direction: column;
+	gap: var(--octo-spacing-sm);
+	min-width: 0;
+}
+
 .metaBadges,
 .actions {
+	display: flex;
+	gap: var(--octo-spacing-xs);
 	flex-wrap: wrap;
 }
 
@@ -36,6 +54,18 @@
 	display: flex;
 	flex-direction: column;
 	gap: 8px;
+}
+
+.cardState {
+	display: flex;
+	justify-content: center;
+	padding-block: var(--octo-spacing-md);
+}
+
+.sessionsList {
+	display: flex;
+	flex-direction: column;
+	gap: var(--octo-spacing-xs);
 }
 
 .roleItem {
@@ -68,7 +98,6 @@
 	padding: 8px 10px;
 	background: var(--octo-surface-1);
 	border-radius: var(--g-border-radius-m);
-	margin-bottom: 8px;
 	min-width: 0;
 }
 

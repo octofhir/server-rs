@@ -33,6 +33,10 @@
 }
 
 .brand {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 16px;
 	text-align: center;
 }
 
@@ -56,6 +60,20 @@
 	display: flex;
 	flex-direction: column;
 	gap: 24px;
+}
+
+.intro,
+.fields {
+	display: flex;
+	flex-direction: column;
+}
+
+.intro {
+	gap: 16px;
+}
+
+.fields {
+	gap: 12px;
 }
 
 .field {

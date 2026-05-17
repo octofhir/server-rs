@@ -1,5 +1,5 @@
 import { useCallback, useRef } from "react";
-import { Flex, Select, Tabs, TextInput } from "@/shared/ui";
+import { Select, Tabs, TextInput } from "@/shared/ui";
 import { arrayMove } from "@dnd-kit/sortable";
 import { ColumnBuilder } from "./ColumnBuilder";
 import { ConstantsEditor } from "./ConstantsEditor";
@@ -150,9 +150,9 @@ export function EditorPanel({ value: viewDef, resourceTypes, onChange }: EditorP
   );
 
   return (
-    <Flex direction="column" gap="4" className={classes.panel}>
+    <div className={classes.panel}>
       {/* Basic info */}
-      <Flex gap="4" alignItems="flex-end" wrap="wrap">
+      <div className={classes.headerFields}>
         <TextInput
           label="Name"
           placeholder="my_patient_view"
@@ -179,7 +179,7 @@ export function EditorPanel({ value: viewDef, resourceTypes, onChange }: EditorP
           data={STATUS_OPTIONS}
           className={classes.statusField}
         />
-      </Flex>
+      </div>
 
       {/* Tabs for different editors */}
       <Tabs defaultValue="columns" className={classes.tabs}>
@@ -221,6 +221,6 @@ export function EditorPanel({ value: viewDef, resourceTypes, onChange }: EditorP
           />
         </Tabs.Panel>
       </Tabs>
-    </Flex>
+    </div>
   );
 }

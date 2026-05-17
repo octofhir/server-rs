@@ -1,4 +1,4 @@
-import { Flex, Tabs, Text, Box } from "@/shared/ui";
+import { Tabs, Text } from "@/shared/ui";
 import { SQLPreview } from "./SQLPreview";
 import { ResultTable } from "./ResultTable";
 import type { RunResult, SqlResult } from "../../lib/useViewDefinition";
@@ -13,7 +13,7 @@ interface PreviewPanelProps {
 
 export function PreviewPanel({ runResult, sqlResult, onRefreshSql, isLoading }: PreviewPanelProps) {
   return (
-    <Flex direction="column" gap="4" className={classes.panel}>
+    <div className={classes.panel}>
       <Tabs
         defaultValue="sql"
         className={classes.tabs}
@@ -34,18 +34,18 @@ export function PreviewPanel({ runResult, sqlResult, onRefreshSql, isLoading }: 
 
         <Tabs.Panel value="results" className={classes.resultsPanel}>
           {runResult ? (
-            <Box className={classes.resultsScroll}>
+            <div className={classes.resultsScroll}>
               <ResultTable result={runResult} />
-            </Box>
+            </div>
           ) : (
-            <Flex grow alignItems="center" justifyContent="center" py="10">
+            <div className={classes.emptyState}>
               <Text color="secondary" variant="body-1">
                 Click "Run" to see preview results
               </Text>
-            </Flex>
+            </div>
           )}
         </Tabs.Panel>
       </Tabs>
-    </Flex>
+    </div>
   );
 }

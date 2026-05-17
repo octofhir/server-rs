@@ -1,8 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import {
 	ActionIcon,
-	Box,
-	Group,
 	Loader,
 	ScrollArea,
 	SegmentedControl,
@@ -37,6 +35,14 @@ interface SelectedTable {
 
 type RailViewMode = "all" | "fhir" | "system";
 type RailSortMode = "name" | "rows";
+
+function isRailViewMode(value: string): value is RailViewMode {
+	return value === "all" || value === "fhir" || value === "system";
+}
+
+function isRailSortMode(value: string | null): value is RailSortMode {
+	return value === "name" || value === "rows";
+}
 
 function isSystemTable(name: string): boolean {
 	return name.startsWith("_");
@@ -182,7 +188,7 @@ export function SchemaRail({
 			>
 				{getTableAbbrev(table.name)}
 			</div>
-			<Box style={{ flex: 1, minWidth: 0 }}>
+			<div className={classes.railTableText}>
 				<Text size="xs" ff="monospace" truncate>
 					{formatTableName(table.schema, table.name)}
 				</Text>
@@ -191,7 +197,7 @@ export function SchemaRail({
 						~{table.rowEstimate.toLocaleString()}
 					</Text>
 				)}
-			</Box>
+			</div>
 		</UnstyledButton>
 	);
 
@@ -234,9 +240,9 @@ export function SchemaRail({
 			{/* Header */}
 			<div className={classes.railHeader}>
 				{expanded ? (
-					<Group justify="space-between" w="100%" px={4}>
-						<Group gap={6}>
-							<Database size={14} style={{ opacity: 0.5 }} />
+					<div className={classes.railHeaderContent}>
+						<div className={classes.railHeaderTitle}>
+							<Database size={14} className={classes.mutedIcon} />
 							<Text size="xs" fw={600} c="dimmed">
 								Tables
 							</Text>
@@ -245,13 +251,13 @@ export function SchemaRail({
 									{tables.length}
 								</Text>
 							)}
-						</Group>
+						</div>
 						<Tooltip label="Collapse (Ctrl+B)">
 							<ActionIcon variant="subtle" size="xs" onClick={onToggle}>
 								<LayoutSideContentRight size={14} />
 							</ActionIcon>
 						</Tooltip>
-					</Group>
+					</div>
 				) : (
 					<Tooltip label="Expand schema (Ctrl+B)" position="right">
 						<ActionIcon variant="subtle" size="xs" onClick={onToggle}>
@@ -263,7 +269,7 @@ export function SchemaRail({
 
 			{/* Controls (expanded only) */}
 			{expanded && (
-				<Box className={classes.railControls}>
+				<div className={classes.railControls}>
 					<TextInput
 						size="xs"
 						placeholder="Search tables..."
@@ -273,12 +279,16 @@ export function SchemaRail({
 						key={searchFocusKey}
 						autoFocus={!!searchFocusKey}
 					/>
-					<Group gap={6} wrap="nowrap">
+					<div className={classes.railFilterRow}>
 						<SegmentedControl
 							size="xs"
 							fullWidth
 							value={viewMode}
-							onChange={(value) => setViewMode(value as RailViewMode)}
+							onChange={(value) => {
+								if (isRailViewMode(value)) {
+									setViewMode(value);
+								}
+							}}
 							data={[
 								{ label: `All (${filtered.all.length})`, value: "all" },
 								{ label: `FHIR (${filtered.fhir.length})`, value: "fhir" },
@@ -289,42 +299,42 @@ export function SchemaRail({
 							size="xs"
 							w={102}
 							value={sortMode}
-							onChange={(value) => setSortMode((value as RailSortMode) ?? "rows")}
+							onChange={(value) => setSortMode(isRailSortMode(value) ? value : "rows")}
 							data={[
 								{ value: "rows", label: "By rows" },
 								{ value: "name", label: "By name" },
 							]}
 							allowDeselect={false}
 						/>
-					</Group>
-				</Box>
+					</div>
+				</div>
 			)}
 
 			{/* Content */}
 			<ScrollArea className={classes.railContent}>
 				{isLoading && (
-					<Box ta="center" py="xl">
+					<div className={classes.centeredLoader}>
 						<Loader size="sm" />
-					</Box>
+					</div>
 				)}
 
 				{!isLoading && sortedActiveTables.length === 0 && (
-					<Box className={classes.railEmpty}>
+					<div className={classes.railEmpty}>
 						<Text size="xs" c="dimmed">
 							No tables found for current filters
 						</Text>
-					</Box>
+					</div>
 				)}
 
 				{!isLoading &&
 					expanded &&
 					groupedTables.map((group) => (
-						<Box key={group.schema} className={classes.railSchemaGroup}>
+						<div key={group.schema} className={classes.railSchemaGroup}>
 							<Text size="xs" fw={600} c="dimmed" className={classes.railSchemaHeader}>
 								{group.schema}
 							</Text>
 							{group.items.map(renderExpandedTable)}
-						</Box>
+						</div>
 					))}
 
 				{!isLoading && !expanded && sortedActiveTables.map(renderCollapsedTable)}

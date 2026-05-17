@@ -98,8 +98,8 @@ export { Link as NavLink, type LinkProps as NavLinkProps } from "./Link";
 export { TextArea as Textarea, type TextAreaProps as TextareaProps } from "./TextArea";
 /** @deprecated use {@link TextArea} */
 export { TextArea as JsonInput, type TextAreaProps as JsonInputProps } from "./TextArea";
-/** @deprecated use {@link Select} */
-export { Select as MultiSelect, type SelectProps as MultiSelectProps } from "./Select";
+/** @deprecated use {@link Select} with `multiple` */
+export { MultiSelect, type SelectProps as MultiSelectProps } from "./Select";
 /** @deprecated use {@link DatePicker} */
 export { DatePicker as DateInput, type DatePickerProps as DateInputProps } from "./DatePicker";
 /** @deprecated use {@link DatePicker} */

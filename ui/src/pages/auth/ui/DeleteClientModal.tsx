@@ -1,4 +1,4 @@
-import { Stack, Text, Group, Alert } from "@/shared/ui";
+import { Text, Alert } from "@/shared/ui";
 import { TriangleExclamation } from "@gravity-ui/icons";
 import { Modal } from "@/shared/ui/Modal/Modal";
 import { Button } from "@/shared/ui/Button/Button";
@@ -31,13 +31,13 @@ export function DeleteClientModal({
 			title="Delete OAuth Client"
 			size="md"
 		>
-			<Stack gap="md">
+			<div className={classes.content}>
 				<Text size="sm">
 					You are about to delete the following OAuth client:
 				</Text>
 
 				<div className={classes.clientInfo}>
-					<Stack gap="xs">
+					<div className={classes.details}>
 						<div>
 							<Text className={classes.label}>Name</Text>
 							<Text className={classes.value}>{clientName}</Text>
@@ -46,7 +46,7 @@ export function DeleteClientModal({
 							<Text className={classes.label}>Client ID</Text>
 							<Text className={classes.value}>{clientId}</Text>
 						</div>
-					</Stack>
+					</div>
 				</div>
 
 				<Alert
@@ -63,15 +63,15 @@ export function DeleteClientModal({
 					</Text>
 				</Alert>
 
-				<Group justify="flex-end" gap="sm">
+				<div className={classes.actions}>
 					<Button variant="light" onClick={onClose} disabled={isDeleting}>
 						Cancel
 					</Button>
 					<Button color="red" onClick={onConfirm} loading={isDeleting}>
 						Delete Client
 					</Button>
-				</Group>
-			</Stack>
+				</div>
+			</div>
 		</Modal>
 	);
 }

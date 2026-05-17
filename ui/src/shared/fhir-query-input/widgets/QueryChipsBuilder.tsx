@@ -1,7 +1,5 @@
 import { useCallback, useMemo } from "react";
 import {
-	Stack,
-	Group,
 	Select,
 	TextInput,
 	ActionIcon,
@@ -9,7 +7,6 @@ import {
 	Badge,
 	Text,
 	Code,
-	Box,
 	NumberInput,
 	SegmentedRadioGroup as SegmentedControl,
 	type SelectProps,
@@ -22,6 +19,7 @@ import { DateValueEditor } from "./value-editors/DateValueEditor";
 import { TokenValueEditor } from "./value-editors/TokenValueEditor";
 import { ReferenceValueEditor } from "./value-editors/ReferenceValueEditor";
 import { NumberValueEditor } from "./value-editors/NumberValueEditor";
+import classes from "./QueryChipsBuilder.module.css";
 
 export interface QueryChipsBuilderProps {
 	state: BuilderState;
@@ -135,9 +133,9 @@ export function QueryChipsBuilder({
 	}, [specialParams]);
 
 	return (
-		<Stack gap="md">
+		<div className={classes.root}>
 			{/* Resource Type Selector */}
-			<Group gap="sm" align="flex-end">
+			<div className={classes.resourceRow}>
 				<Select
 					label="Resource Type"
 					placeholder="Select resource type"
@@ -155,12 +153,12 @@ export function QueryChipsBuilder({
 					onChange={(e) => handleResourceIdChange(e.target.value)}
 					styles={{ root: { width: 160 } }}
 				/>
-			</Group>
+			</div>
 
 			{/* Search Parameters */}
 			{state.resourceType && (
-				<Box>
-					<Group justify="space-between" mb="xs">
+				<section>
+					<div className={classes.sectionHeader}>
 						<Text size="sm" fw={600}>
 							Search Parameters
 						</Text>
@@ -172,9 +170,9 @@ export function QueryChipsBuilder({
 						>
 							Add Parameter
 						</Button>
-					</Group>
+					</div>
 
-					<Stack gap="xs">
+					<div className={classes.chipList}>
 						{regularParams.length === 0 ? (
 							<Text size="xs" c="dimmed">
 								No search parameters added. Click "Add Parameter" to filter
@@ -195,35 +193,35 @@ export function QueryChipsBuilder({
 								/>
 							))
 						)}
-					</Stack>
-				</Box>
+					</div>
+				</section>
 			)}
 
 			{/* Special Parameters */}
-			<Box>
-				<Group justify="space-between" mb="xs">
+			<section>
+				<div className={classes.sectionHeader}>
 					<Text size="sm" fw={600}>
 						Special Parameters
 					</Text>
 					{availableSpecialParams.length > 0 && (
-						<Group gap={4}>
+						<div className={classes.specialActions}>
 							{availableSpecialParams.slice(0, 4).map((name) => (
 								<Badge
 									key={name}
 									size="xs"
 									variant="light"
 									color="orange"
-									style={{ cursor: "pointer" }}
+									className={classes.clickableBadge}
 									onClick={() => handleAddSpecialParam(name)}
 								>
 									+ {name}
 								</Badge>
 							))}
-						</Group>
+						</div>
 					)}
-				</Group>
+				</div>
 
-				<Stack gap="xs">
+				<div className={classes.chipList}>
 					{specialParams.map((param) => (
 						<SpecialParamChip
 							key={param.id}
@@ -236,26 +234,19 @@ export function QueryChipsBuilder({
 							onRemove={() => handleRemoveParam(param.id)}
 						/>
 					))}
-				</Stack>
-			</Box>
+				</div>
+			</section>
 
 			{/* Preview */}
-			<Box
-				p="xs"
-				style={{
-					backgroundColor: "var(--octo-surface-2)",
-					borderRadius: "var(--octo-radius-sm)",
-					border: "1px solid var(--octo-border-subtle)",
-				}}
-			>
+			<div className={classes.preview}>
 				<Text size="xs" fw={600} c="dimmed" mb={2}>
 					PREVIEW
 				</Text>
-				<Code style={{ fontSize: 11, wordBreak: "break-all" }}>
+				<Code className={classes.previewCode}>
 					{buildPreviewUrl(state)}
 				</Code>
-			</Box>
-		</Stack>
+			</div>
+		</div>
 	);
 }
 
@@ -297,15 +288,7 @@ function ParamChip({
 	const paramType = paramDef?.type;
 
 	return (
-		<Group
-			gap="xs"
-			p="xs"
-			style={{
-				backgroundColor: "var(--octo-surface-2)",
-				borderRadius: "var(--octo-radius-sm)",
-				border: "1px solid var(--octo-border-subtle)",
-			}}
-		>
+		<div className={classes.paramChip}>
 			<Select
 				placeholder="Parameter"
 				data={availableParams}
@@ -341,7 +324,7 @@ function ParamChip({
 			>
 				<TrashBin size={14} />
 			</ActionIcon>
-		</Group>
+		</div>
 	);
 }
 
@@ -404,16 +387,8 @@ function SpecialParamChip({
 	onRemove,
 }: SpecialParamChipProps) {
 	return (
-		<Group
-			gap="xs"
-			p="xs"
-			style={{
-				backgroundColor: "var(--octo-surface-2)",
-				borderRadius: "var(--octo-radius-sm)",
-				border: "1px solid var(--octo-border-subtle)",
-			}}
-		>
-			<Badge size="sm" variant="light" color="orange" style={{ flexShrink: 0 }}>
+		<div className={classes.paramChip}>
+			<Badge size="sm" variant="light" color="orange" className={classes.fixedBadge}>
 				{param.code}
 			</Badge>
 			<SpecialParamValueEditor
@@ -431,7 +406,7 @@ function SpecialParamChip({
 			>
 				<TrashBin size={14} />
 			</ActionIcon>
-		</Group>
+		</div>
 	);
 }
 

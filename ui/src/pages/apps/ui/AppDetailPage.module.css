@@ -1,3 +1,54 @@
+.loadingState {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	gap: 8px;
+	padding: 32px 0;
+}
+
+.summaryHeader {
+	display: flex;
+	align-items: flex-start;
+	justify-content: space-between;
+	gap: 16px;
+}
+
+.summaryMain {
+	display: flex;
+	min-width: 0;
+	gap: 16px;
+}
+
+.summaryText {
+	min-width: 0;
+}
+
+.summaryActions {
+	display: flex;
+	flex-wrap: wrap;
+	justify-content: flex-end;
+	gap: 8px;
+}
+
+.labelInline,
+.valueInline,
+.sectionTitle,
+.policyBadges,
+.channelBadges {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+}
+
+.sectionTitle {
+	gap: 8px;
+}
+
+.policyBadges,
+.channelBadges {
+	flex-wrap: wrap;
+}
+
 .filterCode,
 .endpointCode {
 	display: block;
@@ -13,4 +64,14 @@
 
 .endpointCode {
 	max-width: 140px;
+}
+
+@media (max-width: 720px) {
+	.summaryHeader {
+		flex-direction: column;
+	}
+
+	.summaryActions {
+		justify-content: flex-start;
+	}
 }

@@ -3,14 +3,23 @@
     border-radius: var(--octo-radius-md);
     overflow: hidden;
     border: 1px solid var(--octo-border-subtle);
-    backgroundColor: var(--octo-surface-2);
+    background-color: var(--octo-surface-2);
 }
 
 .copyButton {
     position: absolute;
     top: 12px;
     right: 12px;
-    zIndex: 5;
+    z-index: 5;
+}
+
+.copyAction {
+    box-shadow: var(--octo-shadow-xs);
+    backdrop-filter: blur(4px);
+}
+
+.content {
+    padding: 16px;
 }
 
 .code {

@@ -1,8 +1,6 @@
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
-	Box,
-	Flex,
 	Text,
 	Badge,
 	DataPreview,
@@ -20,7 +18,7 @@ import { notifications } from "@octofhir/ui-kit";
 import {
 	CircleExclamation,
 	Magnifier,
-	Box as PackageIcon,
+	Archive,
 	Eye,
 	Check,
 	TriangleExclamation,
@@ -91,7 +89,7 @@ function InstalledPackagesTab({
 	);
 
 	return (
-		<Flex direction="column" gap="3">
+		<div className={classes.tabStack}>
 			<TextInput
 				placeholder="Search installed packages..."
 				leftSection={<Magnifier size={16} />}
@@ -101,12 +99,12 @@ function InstalledPackagesTab({
 			/>
 
 			{isLoading && (
-				<Flex justifyContent="center" alignItems="center" gap="2" className={classes.statePanel}>
+				<div className={classes.statePanel}>
 					<Loader size="sm" />
 					<Text size="sm" c="dimmed">
 						Loading packages...
 					</Text>
-				</Flex>
+				</div>
 			)}
 
 			{error && (
@@ -128,18 +126,18 @@ function InstalledPackagesTab({
 					</Text>
 
 					{filteredPackages.length === 0 ? (
-						<Box className={classes.emptyPanel}>
-							<Flex direction="column" alignItems="center" gap="2">
-								<PackageIcon size={22} className={classes.emptyIcon} />
+						<div className={classes.emptyPanel}>
+							<div className={classes.emptyContent}>
+								<Archive size={22} className={classes.emptyIcon} />
 								<Text ta="center" c="dimmed">
 									{search
 										? "No packages match your search"
 										: "No packages installed"}
 								</Text>
-							</Flex>
-						</Box>
+							</div>
+						</div>
 					) : (
-						<Box className={classes.tablePanel}>
+						<div className={classes.tablePanel}>
 							<DataPreview
 								columns={[
 									{ id: "package", label: "Package" },
@@ -151,13 +149,13 @@ function InstalledPackagesTab({
 								]}
 								rows={packageViews.map((pkg) => ({
 									package: (
-										<Flex gap="2" alignItems="center">
-											<PackageIcon
+										<div className={classes.packageCell}>
+											<Archive
 												size={16}
-												style={{ color: "var(--octo-accent-primary)" }}
+												className={classes.packageIcon}
 											/>
 											<Text fw={500} className={classes.truncateText}>{pkg.name}</Text>
-										</Flex>
+										</div>
 									),
 									version: (
 										<Badge size="sm" variant="outline">
@@ -190,11 +188,11 @@ function InstalledPackagesTab({
 								}))}
 								getRowKey={(_row, index) => packageViews[index]?.id ?? `${index}`}
 							/>
-						</Box>
+						</div>
 					)}
 				</>
 			)}
-		</Flex>
+		</div>
 	);
 }
 
@@ -249,7 +247,7 @@ function RegistryTab({
 	const versionOptions = useMemo(() => getFhirPackageVersionOptions(lookupData), [lookupData]);
 
 	return (
-		<Flex direction="column" gap="3">
+		<div className={classes.tabStack}>
 			<TextInput
 				placeholder="Search packages... (e.g., us core, hl7.fhir)"
 				leftSection={<Magnifier size={16} />}
@@ -263,16 +261,16 @@ function RegistryTab({
 			/>
 
 			{searchLoading && (
-				<Flex justifyContent="center" alignItems="center" gap="2" className={classes.statePanel}>
+				<div className={classes.statePanel}>
 					<Loader size="sm" />
 					<Text size="sm" c="dimmed">
 						Searching packages...
 					</Text>
-				</Flex>
+				</div>
 			)}
 
 			{searchData && searchData.packages.length > 0 && (
-				<Box className={classes.tablePanel}>
+				<div className={classes.tablePanel}>
 					<DataPreview
 						columns={[
 							{ id: "package", label: "Package", width: 260 },
@@ -283,15 +281,15 @@ function RegistryTab({
 						]}
 						rows={registryViews.map((pkg) => ({
 							package: (
-								<Flex gap="2" alignItems="center">
-									<PackageIcon
+								<div className={classes.packageCell}>
+									<Archive
 										size={16}
-										style={{ color: "var(--octo-accent-primary)" }}
+										className={classes.packageIcon}
 									/>
 									<Text fw={500} size="sm" className={classes.truncateText}>
 										{pkg.name}
 									</Text>
-								</Flex>
+								</div>
 							),
 							description: (
 								<Text size="sm" c="dimmed" className={classes.truncateText}>
@@ -337,7 +335,7 @@ function RegistryTab({
 						}))}
 						getRowKey={(_row, index) => registryViews[index]?.id ?? `${index}`}
 					/>
-				</Box>
+				</div>
 			)}
 
 			{searchData &&
@@ -354,8 +352,8 @@ function RegistryTab({
 				)}
 
 			{!searchData && !searchLoading && (
-				<Box className={classes.emptyPanel}>
-					<Flex direction="column" alignItems="center" gap="2">
+				<div className={classes.emptyPanel}>
+					<div className={classes.emptyContent}>
 						<Globe size={22} className={classes.emptyIcon} />
 						<Text ta="center" c="dimmed">
 							Enter a search term to find packages in the FHIR registry
@@ -363,8 +361,8 @@ function RegistryTab({
 						<Text ta="center" size="xs" c="dimmed">
 							Examples: us core, hl7.fhir, terminology, mcode
 						</Text>
-					</Flex>
-				</Box>
+					</div>
+				</div>
 			)}
 
 			{/* Install Progress Modal */}
@@ -377,7 +375,7 @@ function RegistryTab({
 				packageName={selectedPackage || ""}
 				packageVersion={selectedVersion || ""}
 			/>
-		</Flex>
+		</div>
 	);
 }
 
@@ -408,7 +406,7 @@ export function PackagesPage() {
 
 			<Tabs value={activeTab} onChange={setActiveTab} className={classes.tabs}>
 				<Tabs.List>
-					<Tabs.Tab value="installed" leftSection={<Box size={14} />}>
+					<Tabs.Tab value="installed" leftSection={<Archive size={14} />}>
 						Installed
 						{data && (
 							<Badge size="xs" variant="light" ml="xs">

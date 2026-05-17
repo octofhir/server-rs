@@ -1,5 +1,5 @@
 import { useCallback } from "react";
-import { Stack, Text, Group, Badge, ActionIcon, ScrollArea, Box, Tooltip } from "@/shared/ui";
+import { Text, Badge, ActionIcon, ScrollArea, Tooltip } from "@/shared/ui";
 import { TrashBin, Clock } from "@gravity-ui/icons";
 import { useQueryHistory, useClearHistory } from "@/shared/api/hooks";
 import { modals } from "@octofhir/ui-kit";
@@ -28,19 +28,9 @@ function HistoryItem({
 	onSelect,
 }: { entry: QueryHistoryEntry; onSelect: (query: string) => void }) {
 	return (
-		<Box
+		<div
 			onClick={() => onSelect(entry.query)}
-			style={{
-				padding: "8px 12px",
-				cursor: "pointer",
-				borderBottom: "1px solid var(--octo-border-subtle)",
-			}}
-			onMouseEnter={(e) => {
-				(e.currentTarget as HTMLElement).style.backgroundColor = "var(--octo-surface-2)";
-			}}
-			onMouseLeave={(e) => {
-				(e.currentTarget as HTMLElement).style.backgroundColor = "transparent";
-			}}
+			className={classes.historyItem}
 		>
 			<Text
 				size="xs"
@@ -49,7 +39,7 @@ function HistoryItem({
 			>
 				{entry.query}
 			</Text>
-			<Group gap={6} mt={4}>
+			<div className={classes.historyMeta}>
 				<Text size="xs" c="dimmed">
 					{formatTimeAgo(entry.createdAt)}
 				</Text>
@@ -68,8 +58,8 @@ function HistoryItem({
 						{entry.rowCount} rows
 					</Text>
 				)}
-			</Group>
-		</Box>
+			</div>
+		</div>
 	);
 }
 
@@ -92,14 +82,14 @@ export function HistoryTab({ onSelectQuery }: HistoryTabProps) {
 	const entries = data?.entries ?? [];
 
 	return (
-		<Stack gap={0} h="100%">
-			<Group justify="space-between" px="sm" py="xs" style={{ flexShrink: 0 }}>
-				<Group gap={4}>
-					<Clock size={14} style={{ opacity: 0.5 }} />
+		<div className={classes.sideTabRoot}>
+			<div className={classes.sideTabHeader}>
+				<div className={classes.sideTabHeaderTitle}>
+					<Clock size={14} className={classes.mutedIcon} />
 					<Text size="xs" fw={500} c="dimmed">
 						History
 					</Text>
-				</Group>
+				</div>
 				{entries.length > 0 && (
 					<Tooltip label="Clear history">
 						<ActionIcon
@@ -113,8 +103,8 @@ export function HistoryTab({ onSelectQuery }: HistoryTabProps) {
 						</ActionIcon>
 					</Tooltip>
 				)}
-			</Group>
-			<ScrollArea style={{ flex: 1 }}>
+			</div>
+			<ScrollArea className={classes.sideTabScroll}>
 				{isLoading && (
 					<Text size="xs" c="dimmed" ta="center" py="md">
 						Loading...
@@ -129,6 +119,6 @@ export function HistoryTab({ onSelectQuery }: HistoryTabProps) {
 					<HistoryItem key={entry.id} entry={entry} onSelect={onSelectQuery} />
 				))}
 			</ScrollArea>
-		</Stack>
+		</div>
 	);
 }

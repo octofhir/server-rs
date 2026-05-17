@@ -1,7 +1,5 @@
 import { useState } from "react";
 import {
-  Box,
-  Flex,
   Text,
   Button,
   Select,
@@ -165,7 +163,7 @@ export function PlaygroundPanel({ automationId, sourceCode }: PlaygroundPanelPro
     <div className={classes.root}>
       {/* Input section */}
       <div className={classes.inputSection}>
-        <Flex justifyContent="space-between" alignItems="center" gap="2" wrap="wrap">
+        <div className={classes.inputHeader}>
           <Text fw={500} size="sm">Input Context</Text>
           <Select
             size="xs"
@@ -175,15 +173,15 @@ export function PlaygroundPanel({ automationId, sourceCode }: PlaygroundPanelPro
             clearable
             className={classes.templateSelect}
           />
-        </Flex>
-        <Box className={classes.editorFrame}>
+        </div>
+        <div className={classes.editorFrame}>
           <JsonEditor
             value={inputJson}
             onChange={(value) => setInputJson(value || "")}
             height={180}
           />
-        </Box>
-        <Flex gap="2" wrap="wrap">
+        </div>
+        <div className={classes.inputActions}>
           <Button
             leftSection={<IconPlayerPlay size={16} />}
             onClick={handleExecute}
@@ -196,7 +194,7 @@ export function PlaygroundPanel({ automationId, sourceCode }: PlaygroundPanelPro
               Clear Results
             </Button>
           )}
-        </Flex>
+        </div>
       </div>
 
       <Divider />
@@ -205,7 +203,7 @@ export function PlaygroundPanel({ automationId, sourceCode }: PlaygroundPanelPro
       {result && (
         <div className={classes.results}>
           {/* Status */}
-          <Flex gap="4" alignItems="center" wrap="wrap">
+          <div className={classes.statusRow}>
             <Badge color={result.success ? "green" : "red"} size="lg">
               {result.success ? "Success" : "Failed"}
             </Badge>
@@ -214,24 +212,22 @@ export function PlaygroundPanel({ automationId, sourceCode }: PlaygroundPanelPro
                 Duration: {result.duration_ms}ms
               </Text>
             )}
-          </Flex>
+          </div>
 
           {/* Error */}
           {result.error && (
-            <Box className={classes.errorCard}>
+            <div className={classes.errorCard}>
               <Text size="sm" c="red" fw={500}>Error:</Text>
               <Code block color="red" mt="xs">
                 {result.error}
               </Code>
-            </Box>
+            </div>
           )}
 
           {/* Output */}
           {result.output !== undefined && (
-            <Box className={classes.resultCard}>
-              <Flex
-                alignItems="center"
-                gap="2"
+            <div className={classes.resultCard}>
+              <div
                 className={classes.collapseHeader}
                 onClick={() => setOutputExpanded(!outputExpanded)}
               >
@@ -239,7 +235,7 @@ export function PlaygroundPanel({ automationId, sourceCode }: PlaygroundPanelPro
                   {outputExpanded ? <IconChevronDown size={16} /> : <IconChevronRight size={16} />}
                 </ActionIcon>
                 <Text size="sm" fw={500}>Output</Text>
-              </Flex>
+              </div>
               <Collapse in={outputExpanded}>
                 <Divider />
                 <div className={classes.outputScroll}>
@@ -248,15 +244,13 @@ export function PlaygroundPanel({ automationId, sourceCode }: PlaygroundPanelPro
                   </Code>
                 </div>
               </Collapse>
-            </Box>
+            </div>
           )}
 
           {/* Execution Logs */}
           {result.logs && result.logs.length > 0 && (
-            <Box className={classes.resultCard}>
-              <Flex
-                alignItems="center"
-                gap="2"
+            <div className={classes.resultCard}>
+              <div
                 className={classes.collapseHeader}
                 onClick={() => setLogsExpanded(!logsExpanded)}
               >
@@ -264,14 +258,14 @@ export function PlaygroundPanel({ automationId, sourceCode }: PlaygroundPanelPro
                   {logsExpanded ? <IconChevronDown size={16} /> : <IconChevronRight size={16} />}
                 </ActionIcon>
                 <Text size="sm" fw={500}>Logs ({result.logs.length})</Text>
-              </Flex>
+              </div>
               <Collapse in={logsExpanded}>
                 <Divider />
                 <div className={classes.logsScroll}>
                   <div className={classes.logsList}>
                     {result.logs.map((log, index) => (
-                      <Box key={`${index}-${log.message.slice(0, 20)}`} className={classes.logItem}>
-                        <Flex gap="2" wrap="nowrap" alignItems="flex-start">
+                      <div key={`${index}-${log.message.slice(0, 20)}`} className={classes.logItem}>
+                        <div className={classes.logRow}>
                           <LogLevelBadge level={log.level} />
                           <div className={classes.logBody}>
                             <Text size="xs" className={classes.logMessage}>
@@ -288,26 +282,26 @@ export function PlaygroundPanel({ automationId, sourceCode }: PlaygroundPanelPro
                               {new Date(log.timestamp).toLocaleTimeString()}
                             </Text>
                           )}
-                        </Flex>
-                      </Box>
+                        </div>
+                      </div>
                     ))}
                   </div>
                 </div>
               </Collapse>
-            </Box>
+            </div>
           )}
         </div>
       )}
 
       {!result && (
-        <Box className={classes.emptyState}>
+        <div className={classes.emptyState}>
           <Text c="dimmed" size="sm">
             Click "Execute" to run the automation with the input context above.
           </Text>
           <Text c="dimmed" size="xs" mt="xs">
             Tip: Press Ctrl+Enter in the editor to execute
           </Text>
-        </Box>
+        </div>
       )}
     </div>
   );

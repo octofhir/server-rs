@@ -1,3 +1,27 @@
+.tabStack {
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+}
+
+.filters,
+.headerActions,
+.modalTitle,
+.resourceCell,
+.metrics,
+.resourceTypes {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+
+.filters,
+.headerActions,
+.metrics,
+.resourceTypes {
+	flex-wrap: wrap;
+}
+
 .searchInput {
 	flex: 1 1 280px;
 	max-width: 460px;
@@ -30,6 +54,10 @@
 
 .statePanel,
 .modalState {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	gap: 8px;
 	min-height: 220px;
 	padding: 24px;
 }
@@ -41,6 +69,16 @@
 .codeScroll {
 	max-height: 400px;
 	overflow: auto;
+}
+
+.codeBlockSmall {
+	font-size: 12px;
+}
+
+.panelStack {
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
 }
 
 .truncateText {

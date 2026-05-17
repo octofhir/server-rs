@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Stack, Text, Group, Badge, DataPreview, Loader } from "@/shared/ui";
+import { Text, Badge, DataPreview, Loader } from "@/shared/ui";
 import { useParams, useNavigate } from "react-router-dom";
 import {
 	ArrowLeft,
@@ -38,21 +38,21 @@ export function UserDetailPage() {
 
 	if (userLoading) {
 		return (
-			<Stack align="center" justify="center" style={{ flex: 1 }}>
+			<div className={classes.pageState}>
 				<Loader size="lg" />
 				<Text c="dimmed">Loading user...</Text>
-			</Stack>
+			</div>
 		);
 	}
 
 	if (!user) {
 		return (
-			<Stack align="center" justify="center" style={{ flex: 1 }}>
+			<div className={classes.pageState}>
 				<Text c="dimmed">User not found</Text>
 				<Button variant="light" onClick={() => navigate("/admin/users")}>
 					Back to Users
 				</Button>
-			</Stack>
+			</div>
 		);
 	}
 
@@ -70,7 +70,7 @@ export function UserDetailPage() {
 			title={user.name || user.username}
 			description={user.email || user.username}
 			meta={
-				<Group gap="xs" className={classes.metaBadges}>
+				<div className={classes.metaBadges}>
 					<Badge color={statusView.color} variant="light">
 						{statusView.label}
 					</Badge>
@@ -88,10 +88,10 @@ export function UserDetailPage() {
 					<Badge color="gray" variant="light">
 						Last login {formatUserRelativeTime(user.lastLogin)}
 					</Badge>
-				</Group>
+				</div>
 			}
 			actions={
-				<Group gap="xs" className={classes.actions}>
+				<div className={classes.actions}>
 					<Button
 						variant="subtle"
 						leftSection={<ArrowLeft size={16} />}
@@ -108,11 +108,11 @@ export function UserDetailPage() {
 					<ActionIcon variant="light" color="red" size="lg">
 						<TrashBin size={16} />
 					</ActionIcon>
-				</Group>
+				</div>
 			}
 		>
 			<div className={classes.contentGrid}>
-				<Stack gap="sm">
+				<div className={classes.detailColumn}>
 					<Card className={classes.sectionCard}>
 						<Text as="h2" variant="subheader-3" className={classes.sectionTitle}>
 							<CircleInfo size={18} />
@@ -187,20 +187,20 @@ export function UserDetailPage() {
 							</div>
 						)}
 					</Card>
-				</Stack>
+				</div>
 
-				<Stack gap="sm">
+				<div className={classes.detailColumn}>
 					<Card className={classes.sectionCard}>
 						<Text as="h2" variant="subheader-3" className={classes.sectionTitle}>
 							<Smartphone size={18} />
 							Active Sessions
 						</Text>
 						{sessionsLoading ? (
-							<Stack align="center" py="md">
+							<div className={classes.cardState}>
 								<Loader size="sm" />
-							</Stack>
+							</div>
 						) : sessions && sessions.length > 0 ? (
-							<Stack gap="xs">
+							<div className={classes.sessionsList}>
 								{sessions.map((session) => (
 									<div key={session.id} className={classes.sessionItem}>
 										<div className={classes.sessionInfo}>
@@ -230,7 +230,7 @@ export function UserDetailPage() {
 										)}
 									</div>
 								))}
-							</Stack>
+							</div>
 						) : (
 							<div className={classes.emptyState}>
 								<Text size="sm" c="dimmed">
@@ -279,7 +279,7 @@ export function UserDetailPage() {
 							</div>
 						)}
 					</Card>
-				</Stack>
+				</div>
 			</div>
 
 			<EditUserModal user={user} opened={editModalOpened} onClose={() => setEditModalOpened(false)} />

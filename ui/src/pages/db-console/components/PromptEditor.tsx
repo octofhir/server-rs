@@ -1,12 +1,11 @@
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
+import type { CSSProperties } from "react";
 import {
-	Group,
 	Text,
 	Button,
 	ActionIcon,
 	Tooltip,
 	Popover,
-	Box,
 	Select,
 	UnstyledButton,
 } from "@/shared/ui";
@@ -139,16 +138,21 @@ export function PromptEditor({
 		[clampDiagnosticsSize, setDiagnosticsSize],
 	);
 
+	const diagnosticsStyle = useMemo<CSSProperties & { "--diagnostics-size": string }>(
+		() => ({ "--diagnostics-size": `${diagnosticsSize}%` }),
+		[diagnosticsSize],
+	);
+
 	return (
 		<div className={classes.promptContainer}>
 			{/* Toolbar */}
 			<div className={classes.promptToolbar}>
-				<Group gap={6}>
+				<div className={classes.promptTitle}>
 					<Text size="xs" fw={600} c="dimmed">
 						SQL
 					</Text>
-				</Group>
-				<Group gap={4}>
+				</div>
+				<div className={classes.promptActions}>
 					<Tooltip label="Format SQL (Shift+Alt+F)">
 						<ActionIcon
 							variant="subtle"
@@ -166,7 +170,7 @@ export function PromptEditor({
 						placement="top-end"
 						trigger="click"
 						content={
-							<Box p="3" style={{ width: 320 }}>
+							<div className={classes.formatterPopover}>
 								<Text size="sm" fw={500} mb="sm">
 									SQL Formatter Settings
 								</Text>
@@ -178,7 +182,7 @@ export function PromptEditor({
 									}}
 									compact
 								/>
-								<Group justify="flex-end" mt="sm">
+								<div className={classes.popoverActions}>
 									<Button
 										size="xs"
 										variant="light"
@@ -189,8 +193,8 @@ export function PromptEditor({
 									>
 										Apply & Format
 									</Button>
-								</Group>
-							</Box>
+								</div>
+							</div>
 						}
 					>
 						<Tooltip label="Formatter Settings">
@@ -234,13 +238,13 @@ export function PromptEditor({
 							Ctrl+↩
 						</Text>
 					</Button>
-				</Group>
+				</div>
 			</div>
 
 			<div
 				ref={workspaceRef}
 				className={classes.promptWorkspace}
-				style={{ "--diagnostics-size": `${diagnosticsSize}%` } as React.CSSProperties}
+				style={diagnosticsStyle}
 			>
 				{/* Editor with prompt glyph */}
 				<div className={classes.promptBody}>
@@ -266,13 +270,13 @@ export function PromptEditor({
 				</UnstyledButton>
 
 				{/* Diagnostics */}
-				<Box className={classes.diagnosticsPane} style={{ flex: 1, minHeight: 0 }}>
+				<div className={classes.diagnosticsPane}>
 					<DiagnosticsPanel
 						model={modelInstance}
 						editor={editorInstance}
 						height="100%"
 					/>
-				</Box>
+				</div>
 			</div>
 		</div>
 	);

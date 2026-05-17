@@ -5,7 +5,6 @@ import {
 	Alert,
 	Button,
 	Card,
-	Flex,
 	PasswordInput,
 	Text,
 	TextInput,
@@ -47,7 +46,7 @@ export function LoginPage() {
 		<div className={classes.scene}>
 			<div className={classes.glow} aria-hidden="true" />
 			<div className={classes.shell}>
-				<Flex direction="column" alignItems="center" gap={4} className={classes.brand}>
+				<div className={classes.brand}>
 					<img src={logoUrl} alt="OctoFHIR" className={classes.logo} />
 					<Text variant="subheader-2" color="primary">
 						OctoFHIR Console
@@ -55,22 +54,22 @@ export function LoginPage() {
 					<Text variant="body-2" color="secondary">
 						Sign in to administer your FHIR server
 					</Text>
-				</Flex>
+				</div>
 
 				<Card view="raised" type="container" className={classes.panel}>
 					<form onSubmit={handleSubmit} className={classes.form} noValidate>
-						<Flex direction="column" gap={4}>
+						<div className={classes.intro}>
 							<Text variant="header-1">Welcome back</Text>
 							<Text variant="body-2" color="secondary">
 								Use your server credentials to continue.
 							</Text>
-						</Flex>
+						</div>
 
 						{errorMessage ? (
 							<Alert theme="danger" view="filled" message={errorMessage} layout="horizontal" />
 						) : null}
 
-						<Flex direction="column" gap={3}>
+						<div className={classes.fields}>
 							<div className={classes.field}>
 								<label htmlFor={usernameId}>
 									<Text variant="caption-2" color="secondary">
@@ -106,7 +105,7 @@ export function LoginPage() {
 									disabled={isLoggingIn}
 								/>
 							</div>
-						</Flex>
+						</div>
 
 						<Button
 							type="submit"

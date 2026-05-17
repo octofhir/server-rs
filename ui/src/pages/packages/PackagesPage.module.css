@@ -2,6 +2,12 @@
 	min-width: 0;
 }
 
+.tabStack {
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+}
+
 .searchInput {
 	width: min(100%, 460px);
 }
@@ -22,6 +28,10 @@
 }
 
 .statePanel {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	gap: 8px;
 	min-height: 220px;
 	padding: 24px;
 }
@@ -33,8 +43,26 @@
 	background: var(--g-color-base-generic);
 }
 
+.emptyContent {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 8px;
+}
+
 .emptyIcon {
 	color: var(--g-color-text-hint);
+}
+
+.packageCell {
+	display: flex;
+	min-width: 0;
+	align-items: center;
+	gap: 8px;
+}
+
+.packageIcon {
+	color: var(--octo-accent-primary);
 }
 
 .truncateText {

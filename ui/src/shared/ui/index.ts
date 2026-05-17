@@ -22,7 +22,6 @@ export {
     Popover, type PopoverProps,
     Portal, type PortalProps,
     Drawer, type DrawerProps,
-    Modal, type ModalProps,
     AppShell, type AppShellProps,
     Breadcrumbs, type BreadcrumbsProps,
     Progress, type ProgressProps,
@@ -52,7 +51,7 @@ export {
     Card as Paper, type CardProps as PaperProps,
     Box as ScrollArea, type BoxProps as ScrollAreaProps,
     Text as Title, type TextProps as TitleProps,
-    Select as MultiSelect, type SelectProps as MultiSelectProps,
+    MultiSelect, type SelectProps as MultiSelectProps,
     TextArea as Textarea, type TextAreaProps as TextareaProps,
     TextArea as JsonInput, type TextAreaProps as JsonInputProps,
     Button as UnstyledButton, type ButtonProps as UnstyledButtonProps,
@@ -71,6 +70,7 @@ export * from "./Badge";
 export * from "./TextInput";
 export * from "./ActionIcon";
 export * from "./Card";
+export * from "./Modal";
 export * from "./ErrorBoundary";
 export * from "./JsonViewer";
 export * from "./utils";

@@ -1,4 +1,4 @@
-import { Badge, Box, Code, Collapse, Flex, Text } from "@/shared/ui";
+import { Badge, Code, Collapse, Text } from "@/shared/ui";
 import { ChevronDown, ChevronRight } from "@gravity-ui/icons";
 import { useState } from "react";
 import type { FhirPathResult } from "../types";
@@ -15,9 +15,9 @@ export function ResultItem({ result }: Props) {
 	const typeColor = getTypeColor(result.datatype);
 
 	return (
-		<Box className={classes.resultItem}>
-			<Flex direction="column" gap="2">
-				<Flex gap="2" alignItems="center">
+		<div className={classes.resultItem}>
+			<div className={classes.resultItemContent}>
+				<div className={classes.resultHeader}>
 					<Text size="xs" c="dimmed">
 						[{result.index}]
 					</Text>
@@ -26,9 +26,7 @@ export function ResultItem({ result }: Props) {
 					</Badge>
 
 					{isComplex ? (
-						<Flex
-							gap="2"
-							alignItems="center"
+						<div
 							onClick={() => setExpanded(!expanded)}
 							className={classes.resultToggle}
 						>
@@ -40,13 +38,13 @@ export function ResultItem({ result }: Props) {
 							<Text size="sm" c="dimmed">
 								{result.datatype} object
 							</Text>
-						</Flex>
+						</div>
 					) : (
 						<Code className={classes.resultCode}>
 							{formatPrimitiveValue(result.value)}
 						</Code>
 					)}
-				</Flex>
+				</div>
 
 				{isComplex && (
 					<Collapse in={expanded}>
@@ -55,8 +53,8 @@ export function ResultItem({ result }: Props) {
 						</Code>
 					</Collapse>
 				)}
-			</Flex>
-		</Box>
+			</div>
+		</div>
 	);
 }
 

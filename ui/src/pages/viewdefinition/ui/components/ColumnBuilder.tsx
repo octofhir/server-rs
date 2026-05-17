@@ -1,5 +1,5 @@
 import { useCallback } from "react";
-import { Button, Group, Menu, Paper, Stack, Text } from "@/shared/ui";
+import { Button, Menu, Text } from "@/shared/ui";
 import { IconChevronDown, IconPlus, IconRepeat } from "@octofhir/ui-kit";
 import {
   closestCenter,
@@ -22,6 +22,7 @@ import type {
   ViewDefinitionConstant,
   ViewDefinitionSelect,
 } from "../../lib/useViewDefinition";
+import classes from "./ColumnBuilder.module.css";
 
 interface ColumnBuilderProps {
   columns: ViewDefinitionColumn[];
@@ -85,12 +86,12 @@ export function ColumnBuilder({
   const sortableIds = columns.map((col, i) => col._id || i.toString());
 
   return (
-    <Stack gap="sm">
-      <Group justify="space-between">
+    <div className={classes.root}>
+      <div className={classes.header}>
         <Text size="sm" fw={500}>
           Columns & Collections
         </Text>
-        <Group gap="xs">
+        <div className={classes.actions}>
           <Button
             variant="subtle"
             size="xs"
@@ -125,11 +126,11 @@ export function ColumnBuilder({
               </Menu.Item>
             </Menu.Dropdown>
           </Menu>
-        </Group>
-      </Group>
+        </div>
+      </div>
 
-      <Paper withBorder p="sm">
-        <Stack gap="md">
+      <div className={classes.panel}>
+        <div className={classes.content}>
           {/* Simple columns */}
           {columns.length > 0 && (
             <DndContext
@@ -141,7 +142,7 @@ export function ColumnBuilder({
                 items={sortableIds}
                 strategy={verticalListSortingStrategy}
               >
-                <Stack gap="xs">
+                <div className={classes.columnList}>
                   {columns.map((col, i) => (
                     <ColumnRow
                       key={col._id || i}
@@ -153,7 +154,7 @@ export function ColumnBuilder({
                       onRemove={onRemove}
                     />
                   ))}
-                </Stack>
+                </div>
               </SortableContext>
             </DndContext>
           )}
@@ -178,8 +179,8 @@ export function ColumnBuilder({
               start.
             </Text>
           )}
-        </Stack>
-      </Paper>
-    </Stack>
+        </div>
+      </div>
+    </div>
   );
 }

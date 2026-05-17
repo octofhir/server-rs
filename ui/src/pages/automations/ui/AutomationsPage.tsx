@@ -1,8 +1,6 @@
 import { useState, useMemo } from "react";
 import {
   Alert,
-  Box,
-  Flex,
   Button,
   TextInput,
   Select,
@@ -145,7 +143,7 @@ export function AutomationsPage() {
     }
 
     return (
-      <Flex gap="1" wrap="wrap">
+      <div className={classes.triggerBadges}>
         {automation.triggers.map((trigger) => (
           <Tooltip
             key={trigger.id}
@@ -168,7 +166,7 @@ export function AutomationsPage() {
             </Badge>
           </Tooltip>
         ))}
-      </Flex>
+      </div>
     );
   };
 
@@ -210,7 +208,7 @@ export function AutomationsPage() {
                         stats.last_execution_status === "failed" ? "Failed" : "Running";
 
     return (
-      <Flex gap="2" alignItems="center" wrap="wrap">
+      <div className={classes.lastRun}>
         <Tooltip
           label={stats.last_error || `Last run: ${formatDate(stats.last_execution_at || "")}`}
           multiline
@@ -233,7 +231,7 @@ export function AutomationsPage() {
             </Badge>
           </Tooltip>
         )}
-      </Flex>
+      </div>
     );
   };
 
@@ -251,7 +249,7 @@ export function AutomationsPage() {
       }
       toolbar={
         isFeatureUnavailable ? undefined : (
-          <Flex gap="2" wrap="wrap" alignItems="center" className={classes.toolbar}>
+          <div className={classes.toolbar}>
             <TextInput
               placeholder="Search automations..."
               leftSection={<Magnifier size={16} />}
@@ -271,11 +269,11 @@ export function AutomationsPage() {
               clearable
               className={classes.statusSelect}
             />
-          </Flex>
+          </div>
         )
       }
     >
-      <Box className={classes.tablePanel}>
+      <div className={classes.tablePanel}>
         {isFeatureUnavailable ? (
           <Alert
             theme="warning"
@@ -299,11 +297,11 @@ export function AutomationsPage() {
             </Text>
           </Alert>
         ) : isLoading ? (
-          <Flex justifyContent="center" alignItems="center" className={classes.statePanel}>
+          <div className={classes.statePanel}>
             <Loader />
-          </Flex>
+          </div>
         ) : filteredAutomations.length === 0 ? (
-          <Flex direction="column" alignItems="center" justifyContent="center" gap="3" className={classes.statePanel}>
+          <div className={classes.emptyState}>
               <Text c="dimmed">No automations found</Text>
               <Button
                 variant="light"
@@ -312,7 +310,7 @@ export function AutomationsPage() {
               >
                 Create your first automation
               </Button>
-          </Flex>
+          </div>
         ) : (
           <Table.ScrollContainer minWidth={940}>
             <Table striped highlightOnHover>
@@ -330,14 +328,14 @@ export function AutomationsPage() {
                 {filteredAutomations.map((automation) => (
                   <Table.Tr key={automation.id}>
                     <Table.Td>
-                      <Flex direction="column" gap="1">
+                      <div className={classes.nameCell}>
                         <Text fw={500}>{automation.name}</Text>
                         {automation.description && (
                           <Text size="xs" c="dimmed" className={classes.truncateText}>
                             {automation.description}
                           </Text>
                         )}
-                      </Flex>
+                      </div>
                     </Table.Td>
                     <Table.Td>
                       <AutomationStatusBadge status={automation.status} />
@@ -350,7 +348,7 @@ export function AutomationsPage() {
                       </Text>
                     </Table.Td>
                     <Table.Td>
-                      <Flex gap="1">
+                      <div className={classes.rowActions}>
                         <Tooltip label="Edit">
                           <ActionIcon
                             variant="subtle"
@@ -388,7 +386,7 @@ export function AutomationsPage() {
                             <TrashBin size={16} />
                           </ActionIcon>
                         </Tooltip>
-                      </Flex>
+                      </div>
                     </Table.Td>
                   </Table.Tr>
                 ))}
@@ -396,7 +394,7 @@ export function AutomationsPage() {
             </Table>
           </Table.ScrollContainer>
         )}
-      </Box>
+      </div>
 
       {/* Total count */}
       {data?.total !== undefined && (
