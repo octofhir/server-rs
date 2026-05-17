@@ -1,12 +1,11 @@
-.container {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
+.body {
   overflow: hidden;
 }
 
-.header {
-  flex-shrink: 0;
+.container {
+  min-height: 0;
+  overflow: hidden;
+  padding-bottom: 0;
 }
 
 .editorContainer {

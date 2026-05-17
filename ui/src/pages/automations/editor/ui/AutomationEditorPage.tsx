@@ -3,7 +3,6 @@ import { useParams, useNavigate, useSearchParams } from "react-router-dom";
 import {
   Stack,
   Group,
-  Title,
   Button,
   TextInput,
   Textarea,
@@ -18,6 +17,7 @@ import {
   Divider,
   Box,
 } from "@/shared/ui";
+import { WorkspacePageLayout } from "@/widgets/workspace-page";
 import { notifications } from "@octofhir/ui-kit";
 import {
   ArrowLeft,
@@ -173,21 +173,17 @@ export function AutomationEditorPage() {
   }
 
   return (
-    <Stack className={`page-enter ${classes.container}`} gap={0} h="100%">
-      {/* Header */}
-      <Group className={classes.header} justify="space-between" p="md" pb="sm">
-        <Group gap="md">
+    <WorkspacePageLayout
+      title={name || "Untitled Automation"}
+      description={isDirty ? "Unsaved changes" : "Edit source, triggers, playground, and execution history"}
+      className="page-enter"
+      bodyClassName={classes.body}
+      contentClassName={classes.container}
+      actions={
+        <Group gap="sm">
           <ActionIcon variant="subtle" onClick={() => navigate("/automations")}>
             <ArrowLeft size={20} />
           </ActionIcon>
-          <Title order={3}>{name || "Untitled Automation"}</Title>
-          {isDirty && (
-            <Text size="xs" c="dimmed">
-              (unsaved changes)
-            </Text>
-          )}
-        </Group>
-        <Group gap="sm">
           <Tooltip label={isDirty ? "Save changes (Ctrl+S)" : "No unsaved changes"}>
             <Button
               variant={isDirty ? "filled" : "default"}
@@ -220,9 +216,8 @@ export function AutomationEditorPage() {
             </Button>
           </Tooltip>
         </Group>
-      </Group>
-
-      <Divider />
+      }
+    >
 
       {/* Editor */}
       <Box className={classes.editorContainer}>
@@ -310,6 +305,6 @@ export function AutomationEditorPage() {
           </Box>
         </Tabs>
       </Box>
-    </Stack>
+    </WorkspacePageLayout>
   );
 }

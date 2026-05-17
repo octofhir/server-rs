@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import {
   Box,
-  Title,
   Paper,
   Stack,
   Button,
@@ -14,7 +13,8 @@ import {
   Loader,
   Grid,
 } from '@/shared/ui';
-import { Play, CircleExclamation, Check } from '@gravity-ui/icons';
+import { ToolWorkspaceLayout } from '@/widgets/tool-workspace';
+import { Play, CircleExclamation } from '@gravity-ui/icons';
 import { Editor } from '@monaco-editor/react';
 import { useMutation } from '@tanstack/react-query';
 import { fhirClient } from '@/shared/api/fhirClient';
@@ -70,8 +70,8 @@ export function CqlConsole() {
             name: 'contextValue',
             resource: contextJson,
           });
-        } catch (e) {
-          throw new Error(`Invalid context JSON: ${e}`);
+        } catch (error) {
+          throw new Error(`Invalid context JSON: ${error}`);
         }
       }
 
@@ -88,8 +88,8 @@ export function CqlConsole() {
               },
             });
           }
-        } catch (e) {
-          throw new Error(`Invalid parameters JSON: ${e}`);
+        } catch (error) {
+          throw new Error(`Invalid parameters JSON: ${error}`);
         }
       }
 
@@ -127,24 +127,12 @@ export function CqlConsole() {
   const result = extractResult(evaluateMutation.data);
 
   return (
-    <Box
+    <ToolWorkspaceLayout
+      title="CQL Console"
+      description="Evaluate Clinical Quality Language (CQL) expressions"
       className="page-enter"
-      style={{
-        height: '100%',
-        display: 'flex',
-        flexDirection: 'column',
-        overflow: 'hidden',
-      }}
     >
-      <Box p="xl" style={{ overflowY: 'auto', flex: 1 }}>
         <Stack gap="lg" style={{ maxWidth: '100%', height: '100%' }}>
-        <Box>
-          <Title order={2}>CQL Console</Title>
-          <Text c="dimmed" size="sm">
-            Evaluate Clinical Quality Language (CQL) expressions
-          </Text>
-        </Box>
-
         <Grid gutter="lg" style={{ flex: 1 }}>
           <Grid.Col span={6}>
             <Paper p="md" radius="lg" withBorder style={{ height: '100%' }}>
@@ -286,7 +274,6 @@ export function CqlConsole() {
           </Grid.Col>
         </Grid>
       </Stack>
-      </Box>
-    </Box>
+    </ToolWorkspaceLayout>
   );
 }

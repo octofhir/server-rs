@@ -2,7 +2,6 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { notifications } from "@octofhir/ui-kit";
 import type { AppResource } from "@/entities/api-app";
 import { fhirClient } from "@/shared/api/fhirClient";
-import type { Bundle } from "@/shared/api/types";
 
 export type { AppResource } from "@/entities/api-app";
 
@@ -10,7 +9,7 @@ export type { AppResource } from "@/entities/api-app";
 export const appKeys = {
 	all: ["apps"] as const,
 	lists: () => [...appKeys.all, "list"] as const,
-	list: (params: Record<string, any>) => [...appKeys.lists(), params] as const,
+	list: (params: Record<string, unknown>) => [...appKeys.lists(), params] as const,
 	details: () => [...appKeys.all, "detail"] as const,
 	detail: (id: string) => [...appKeys.details(), id] as const,
 };
@@ -20,13 +19,12 @@ export function useApps(params: { count?: number; offset?: number; search?: stri
 	return useQuery({
 		queryKey: appKeys.list(params),
 		queryFn: async () => {
-			const searchParams: Record<string, any> = {};
+			const searchParams: Record<string, string | number> = {};
 			if (params.count) searchParams._count = params.count;
 			if (params.offset) searchParams._offset = params.offset;
 			if (params.search) searchParams.name = params.search;
 			
-			const response = await fhirClient.search("App", searchParams);
-			return response as Bundle<AppResource>;
+			return fhirClient.search<AppResource>("App", searchParams);
 		},
 	});
 }
@@ -36,8 +34,7 @@ export function useApp(id: string | null) {
 		queryKey: appKeys.detail(id || ""),
 		queryFn: async () => {
 			if (!id) throw new Error("ID required");
-			const response = await fhirClient.read("App", id);
-			return response as AppResource;
+			return fhirClient.read<AppResource>("App", id);
 		},
 		enabled: !!id,
 	});
@@ -47,9 +44,9 @@ export function useCreateApp() {
 	const queryClient = useQueryClient();
 
 	return useMutation({
-		mutationFn: async (app: Partial<AppResource>) => {
-			const response = await fhirClient.create(app as any);
-			return response as AppResource;
+		mutationFn: async (app: AppResource) => {
+			const response = await fhirClient.create(app);
+			return response;
 		},
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: appKeys.lists() });
@@ -75,8 +72,8 @@ export function useUpdateApp() {
 	return useMutation({
 		mutationFn: async (app: AppResource) => {
 			if (!app.id) throw new Error("App resource ID required for update");
-			const response = await fhirClient.update(app as any);
-			return response as AppResource;
+			const response = await fhirClient.update(app);
+			return response;
 		},
 		onSuccess: (data) => {
 			queryClient.invalidateQueries({ queryKey: appKeys.lists() });

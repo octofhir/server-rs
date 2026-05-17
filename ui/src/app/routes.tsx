@@ -1,5 +1,4 @@
 import { Routes, Route } from "react-router-dom";
-import { Center, Text, Stack, Title } from "@/shared/ui";
 import { RouteGuard } from "@/shared/ui-react/RouteGuard";
 import { AppShell } from "@/widgets/app-shell";
 
@@ -22,23 +21,7 @@ import { LogsViewerPage } from "@/pages/logs";
 import { AuditTrailPage } from "@/pages/audit";
 import { ViewDefinitionPage } from "@/pages/viewdefinition";
 import { AutomationsPage, AutomationEditorPage } from "@/pages/automations";
-
-// Placeholder component for pages during migration
-function PlaceholderPage({ name, description }: { name: string; description?: string }) {
-  return (
-    <Center h="100%">
-      <Stack align="center" gap="md">
-        <Title order={2}>{name}</Title>
-        <Text c="dimmed">{description || "Migration in progress"}</Text>
-      </Stack>
-    </Center>
-  );
-}
-
-// Placeholder pages (will be replaced with actual components)
-const CapabilityStatementPage = () => (
-  <PlaceholderPage name="Capability Statement" description="FHIR server metadata" />
-);
+import { CapabilityStatementPage } from "@/pages/metadata";
 
 // Protected layout with RouteGuard and AppShell
 function ProtectedLayout() {

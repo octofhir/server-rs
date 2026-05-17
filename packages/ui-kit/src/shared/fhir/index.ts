@@ -13,6 +13,12 @@ export {
 export { CapabilityFlag, type CapabilityFlagProps } from "./CapabilityFlag";
 export { IdentifierBadge, type IdentifierBadgeProps } from "./IdentifierBadge";
 export { CodingBadge, type CodingBadgeProps } from "./CodingBadge";
+export {
+    ResourceName,
+    getResourceDisplayName,
+    type FhirDisplayResource,
+    type ResourceNameProps,
+} from "./ResourceName";
 export { ResourceMetaBar, type ResourceMetaBarProps } from "./ResourceMetaBar";
 export {
     ResourceSummaryCard,

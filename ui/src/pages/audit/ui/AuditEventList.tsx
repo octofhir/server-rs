@@ -39,6 +39,13 @@ import {
 } from "@/entities/audit-event";
 import classes from "./AuditEventList.module.css";
 
+const singleLineTextStyle = {
+	display: "-webkit-box",
+	WebkitBoxOrient: "vertical",
+	WebkitLineClamp: 1,
+	overflow: "hidden",
+};
+
 interface AuditEventListProps {
 	events: AuditEvent[];
 	isLoading: boolean;
@@ -222,11 +229,11 @@ function AuditEventListComponent({
 											<ActorIcon size={12} />
 										</ThemeIcon>
 										<Stack gap={0}>
-											<Text size="sm" lineClamp={1}>
+											<Text size="sm" style={singleLineTextStyle}>
 												{getAuditActorLabel(event)}
 											</Text>
 											{event.actor.name && event.actor.id && (
-												<Text size="xs" c="dimmed" lineClamp={1}>
+												<Text size="xs" c="dimmed" style={singleLineTextStyle}>
 													{event.actor.id}
 												</Text>
 											)}
@@ -236,11 +243,11 @@ function AuditEventListComponent({
 								<Table.Td>
 									{target ? (
 										<Stack gap={0}>
-											<Text size="sm" lineClamp={1}>
+											<Text size="sm" style={singleLineTextStyle}>
 												{target.primary}
 											</Text>
 											{target.secondary && (
-												<Text size="xs" c="dimmed" lineClamp={1}>
+												<Text size="xs" c="dimmed" style={singleLineTextStyle}>
 													{target.secondary}
 												</Text>
 											)}
@@ -253,7 +260,7 @@ function AuditEventListComponent({
 								</Table.Td>
 								<Table.Td>
 									<Tooltip label={event.source.userAgent || "Unknown"}>
-										<Text size="xs" c="dimmed" lineClamp={1}>
+										<Text size="xs" c="dimmed" style={singleLineTextStyle}>
 											{event.source.ipAddress || "—"}
 										</Text>
 									</Tooltip>

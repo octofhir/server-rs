@@ -16,23 +16,23 @@
 .headerInner {
     box-sizing: border-box;
     display: grid;
-    gap: 16px;
+    gap: 12px;
     width: 100%;
     max-width: var(--workspace-page-max-width, 1440px);
     margin: 0 auto;
-    padding: 20px 24px;
+    padding: 14px 20px;
 }
 
 .headingRow {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
     align-items: start;
-    gap: 20px;
+    gap: 16px;
 }
 
 .titleBlock {
     display: grid;
-    gap: 6px;
+    gap: 4px;
     min-width: 0;
 }
 
@@ -77,11 +77,11 @@
 .bodyInner {
     box-sizing: border-box;
     display: grid;
-    gap: 20px;
+    gap: 16px;
     width: 100%;
     max-width: var(--workspace-page-max-width, 1440px);
     margin: 0 auto;
-    padding: 24px;
+    padding: 16px 20px;
 }
 
 .bodyWithAside {
@@ -91,7 +91,7 @@
 
 .main {
     display: grid;
-    gap: 20px;
+    gap: 16px;
     min-width: 0;
 }
 
@@ -152,7 +152,7 @@
 
 @media (max-width: 640px) {
     .headerInner {
-        padding: 16px;
+        padding: 12px 16px;
     }
 
     .bodyInner {

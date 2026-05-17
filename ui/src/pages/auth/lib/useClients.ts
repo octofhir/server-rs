@@ -2,7 +2,6 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { notifications } from "@octofhir/ui-kit";
 import type { ClientResource, RegenerateSecretResponse } from "@/entities/oauth-client";
 import { fhirClient } from "@/shared/api/fhirClient";
-import type { Bundle } from "@/shared/api/types";
 
 export type { ClientResource, RegenerateSecretResponse } from "@/entities/oauth-client";
 
@@ -10,7 +9,7 @@ export type { ClientResource, RegenerateSecretResponse } from "@/entities/oauth-
 export const clientKeys = {
 	all: ["clients"] as const,
 	lists: () => [...clientKeys.all, "list"] as const,
-	list: (params: Record<string, any>) => [...clientKeys.lists(), params] as const,
+	list: (params: Record<string, unknown>) => [...clientKeys.lists(), params] as const,
 	details: () => [...clientKeys.all, "detail"] as const,
 	detail: (id: string) => [...clientKeys.details(), id] as const,
 };
@@ -20,13 +19,12 @@ export function useClients(params: { count?: number; offset?: number; search?: s
 	return useQuery({
 		queryKey: clientKeys.list(params),
 		queryFn: async () => {
-			const searchParams: Record<string, any> = {};
+			const searchParams: Record<string, string | number> = {};
 			if (params.count) searchParams._count = params.count;
 			if (params.offset) searchParams._offset = params.offset;
 			if (params.search) searchParams.name = params.search;
 			
-			const response = await fhirClient.search("Client", searchParams);
-			return response as Bundle<ClientResource>;
+			return fhirClient.search<ClientResource>("Client", searchParams);
 		},
 	});
 }
@@ -36,8 +34,7 @@ export function useClient(id: string | null) {
 		queryKey: clientKeys.detail(id || ""),
 		queryFn: async () => {
 			if (!id) throw new Error("ID required");
-			const response = await fhirClient.read("Client", id);
-			return response as ClientResource;
+			return fhirClient.read<ClientResource>("Client", id);
 		},
 		enabled: !!id,
 	});
@@ -50,8 +47,7 @@ export function useCreateClient() {
 		mutationFn: async (client: Partial<ClientResource>) => {
 			// Strip 'id' from body - server assigns the ID for new resources
 			const { id: _id, ...body } = client;
-			const response = await fhirClient.create(body as Partial<ClientResource>);
-			return response as ClientResource;
+			return fhirClient.create<ClientResource>({ ...body, resourceType: "Client" });
 		},
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: clientKeys.lists() });
@@ -78,8 +74,7 @@ export function useUpdateClient() {
 		mutationFn: async (client: ClientResource) => {
 			if (!client.id) throw new Error("Client resource ID required for update");
 			// Use fhirClient.update which handles routing correctly
-			const response = await fhirClient.update(client);
-			return response as ClientResource;
+			return fhirClient.update<ClientResource>(client);
 		},
 		onSuccess: (data) => {
 			queryClient.invalidateQueries({ queryKey: clientKeys.lists() });

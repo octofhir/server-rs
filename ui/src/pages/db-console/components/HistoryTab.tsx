@@ -44,8 +44,13 @@ function HistoryItem({
 			<Text
 				size="xs"
 				ff="monospace"
-				lineClamp={2}
-				style={{ wordBreak: "break-all" }}
+				style={{
+					display: "-webkit-box",
+					WebkitBoxOrient: "vertical",
+					WebkitLineClamp: 2,
+					overflow: "hidden",
+					wordBreak: "break-all",
+				}}
 			>
 				{entry.query}
 			</Text>

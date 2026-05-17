@@ -5,6 +5,7 @@ import {
   parseAuthSession,
   type AuthSession,
 } from '@/entities/auth-session';
+import { getBundleResources } from '@/shared/api';
 import { fhirClient } from '@/shared/api/fhirClient';
 export type { AuthSession } from '@/entities/auth-session';
 export const extractUserId = extractAuthSessionUserId;
@@ -34,15 +35,8 @@ export function useSessions(userId: string) {
         status: 'active',
       };
 
-      const response = await fhirClient.search('AuthSession', params);
-
-      if (!response || !response.entry) {
-        return [];
-      }
-
-      return response.entry
-        .filter((entry) => entry.resource)
-        .map((entry) => parseAuthSession(entry.resource));
+      const response = await fhirClient.search<AuthSession>('AuthSession', params);
+      return getBundleResources(response).map((resource) => parseAuthSession(resource));
     },
     enabled: Boolean(userId),
     refetchInterval: 30000, // Refresh every 30 seconds
@@ -79,7 +73,7 @@ export function useRevokeAllSessions() {
 
   return useMutation({
     mutationFn: async ({ userId, currentSessionId }: { userId: string; currentSessionId?: string }) => {
-      const params: any = {
+      const params: { subject: string; excludeSession?: string } = {
         subject: `User/${userId}`,
       };
 

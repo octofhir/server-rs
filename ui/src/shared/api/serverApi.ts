@@ -42,10 +42,27 @@ export class ApiResponseError extends Error {
     message: string,
     public status: number,
     public statusText: string,
-    public responseData: any,
+    public responseData: unknown,
   ) {
     super(message);
     this.name = "ApiResponseError";
+  }
+}
+
+function toHttpMethod(method: string | undefined): HttpMethod {
+  switch (method) {
+    case "POST":
+    case "PUT":
+    case "DELETE":
+    case "PATCH":
+    case "HEAD":
+    case "OPTIONS":
+      return method;
+    case "GET":
+    case undefined:
+      return "GET";
+    default:
+      throw new Error(`Unsupported HTTP method: ${method}`);
   }
 }
 
@@ -112,11 +129,14 @@ class ServerApiClient {
     // Parse response data
     let data: T;
     const contentType = response.headers.get("content-type");
+    const rawBody = await response.text();
 
-    if (contentType?.includes("application/json") || contentType?.includes("application/fhir+json")) {
-      data = await response.json();
+    if (!rawBody) {
+      data = undefined as T;
+    } else if (contentType?.includes("application/json") || contentType?.includes("application/fhir+json")) {
+      data = JSON.parse(rawBody) as T;
     } else {
-      data = (await response.text()) as unknown as T;
+      data = rawBody as T;
     }
 
     const result: HttpResponse<T> = {
@@ -125,7 +145,7 @@ class ServerApiClient {
       statusText: response.statusText,
       headers,
       config: {
-        method: (options.method || "GET") as any,
+        method: toHttpMethod(options.method),
         url,
         headers: options.headers as Record<string, string>,
         data: options.body,

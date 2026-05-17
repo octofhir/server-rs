@@ -1,5 +1,4 @@
 import { Group, Text, Box, UnstyledButton } from "@/shared/ui";
-import { useDesignTokens } from "@octofhir/ui-kit";
 import {
 	CircleExclamation,
 	TriangleExclamation,
@@ -18,20 +17,19 @@ interface DiagnosticItemProps {
  * Severity icon component
  */
 function SeverityIcon({ severity }: { severity: monaco.MarkerSeverity }) {
-	const theme = useDesignTokens();
 	const size = 16;
 
 	switch (severity) {
 		case 8: // monaco.MarkerSeverity.Error
-			return <CircleExclamation size={size} color={theme.colors.fire[6]} />;
+			return <CircleExclamation size={size} color="var(--g-color-text-danger)" />;
 		case 4: // monaco.MarkerSeverity.Warning
-			return <TriangleExclamation size={size} color={theme.colors.warm[6]} />;
+			return <TriangleExclamation size={size} color="var(--g-color-text-warning)" />;
 		case 2: // monaco.MarkerSeverity.Info
-			return <CircleInfo size={size} color={theme.colors.primary[6]} />;
+			return <CircleInfo size={size} color="var(--g-color-text-info)" />;
 		case 1: // monaco.MarkerSeverity.Hint
-			return <Bulb size={size} color={theme.colors.deep[5]} />;
+			return <Bulb size={size} color="var(--g-color-text-secondary)" />;
 		default:
-			return <CircleInfo size={size} color={theme.colors.deep[5]} />;
+			return <CircleInfo size={size} color="var(--g-color-text-secondary)" />;
 	}
 }
 
@@ -39,8 +37,6 @@ function SeverityIcon({ severity }: { severity: monaco.MarkerSeverity }) {
  * Individual diagnostic item with click-to-navigate functionality
  */
 export function DiagnosticItem({ diagnostic, onClick }: DiagnosticItemProps) {
-	const theme = useDesignTokens();
-
 	const handleClick = () => {
 		onClick?.();
 	};
@@ -51,19 +47,10 @@ export function DiagnosticItem({ diagnostic, onClick }: DiagnosticItemProps) {
 			style={{
 				width: "100%",
 				padding: "8px 12px",
-				borderRadius: theme.radius.sm,
+				borderRadius: "var(--g-border-radius-s)",
 				transition: "background-color 0.2s",
 				cursor: onClick ? "pointer" : "default",
 			}}
-			styles={{
-					root: {
-						"&:hover": onClick
-							? {
-								backgroundColor: "var(--octo-surface-3)",
-							}
-							: {},
-					},
-				}}
 		>
 			<Group gap="xs" wrap="nowrap" align="flex-start">
 				<Box style={{ marginTop: 2 }}>

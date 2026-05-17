@@ -2,16 +2,14 @@ import { useState, useCallback, useMemo } from "react";
 import {
 	Box,
 	Stack,
-	Title,
 	Text,
-	Group,
-	ThemeIcon,
 	Tabs,
 	ActionIcon,
 	Tooltip,
 } from "@/shared/ui";
+import { WorkspacePageLayout } from "@/widgets/workspace-page";
 import { notifications } from "@octofhir/ui-kit";
-import { Shield, ListUl, ChartBar, Xmark } from "@gravity-ui/icons";
+import { ListUl, ChartBar, Xmark } from "@gravity-ui/icons";
 import { useAuditEvents, useAuditAnalytics, exportAuditLogs } from "./lib/useAudit";
 import { AuditFilters } from "./ui/AuditFilters";
 import { AuditEventList } from "./ui/AuditEventList";
@@ -101,28 +99,14 @@ export function AuditTrailPage() {
 	}, []);
 
 	return (
-		<Box className={`${classes.container} page-enter`}>
+		<WorkspacePageLayout
+			title="Audit Trail"
+			description="Track and analyze all system activity and changes"
+			className="page-enter"
+			bodyClassName={classes.body}
+			contentClassName={classes.container}
+		>
 			<Stack gap={0} className={classes.stack}>
-				{/* Header */}
-				<Box className={classes.header}>
-					<Group justify="space-between" align="flex-start">
-						<Group gap="md">
-							<ThemeIcon variant="light" color="primary" size={48} radius="md">
-								<Shield size={24} />
-							</ThemeIcon>
-							<div>
-								<Title order={2} style={{ letterSpacing: "-0.02em" }}>
-									Audit Trail
-								</Title>
-								<Text c="dimmed" size="sm">
-									Track and analyze all system activity and changes
-								</Text>
-							</div>
-						</Group>
-					</Group>
-				</Box>
-
-				{/* Tabs */}
 				<Tabs
 					value={activeTab}
 					onChange={setActiveTab}
@@ -138,7 +122,6 @@ export function AuditTrailPage() {
 					</Tabs.List>
 				</Tabs>
 
-				{/* Content */}
 				{activeTab === "events" && (
 					<>
 						<AuditFilters
@@ -199,6 +182,6 @@ export function AuditTrailPage() {
 					</Box>
 				)}
 			</Stack>
-		</Box>
+		</WorkspacePageLayout>
 	);
 }

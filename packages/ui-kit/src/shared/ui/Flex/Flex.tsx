@@ -2,6 +2,20 @@ import React, { forwardRef } from "react";
 import { Flex as GravityFlex, type FlexProps as GravityFlexProps } from "@gravity-ui/uikit";
 import { getSpacingStyles, cleanLayoutProps, mapSpaceValue } from "../layout-utils";
 
+type GravityGap = Extract<NonNullable<GravityFlexProps["gap"]>, number | string>;
+
+const GRAVITY_GAPS = [0, 0.5, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10] as const satisfies readonly GravityGap[];
+
+function toGravityGap(gap: number | string | undefined): GravityGap | undefined {
+    const gapPx = mapSpaceValue(gap);
+    if (typeof gapPx !== "number") {
+        return undefined;
+    }
+
+    const gravityGap = Math.round(gapPx / 4);
+    return GRAVITY_GAPS.find((value) => value === gravityGap);
+}
+
 export interface FlexProps extends Omit<GravityFlexProps, "gap" | "direction" | "wrap"> {
     gap?: number | string;
     align?: GravityFlexProps["alignItems"];
@@ -30,15 +44,12 @@ export interface FlexProps extends Omit<GravityFlexProps, "gap" | "direction" | 
 export const Flex = forwardRef<HTMLDivElement, FlexProps>(({ gap, align, justify, direction, wrap, style, ...props }, ref) => {
     const combinedStyle = { ...getSpacingStyles(props), ...style };
     const cleaned = cleanLayoutProps(props);
-    
-    // Convert gap correctly for GravityUI. Gravity UI 'spaceBaseSize' is 4px.
-    const gapPx = mapSpaceValue(gap);
-    const gravityGap = typeof gapPx === 'number' ? Math.round(gapPx / 4) : undefined;
+    const gravityGap = toGravityGap(gap);
 
     return (
         <GravityFlex 
             ref={ref} 
-            gap={gravityGap as any} 
+            gap={gravityGap}
             alignItems={align}
             justifyContent={justify}
             direction={direction}

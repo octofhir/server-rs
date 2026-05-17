@@ -1,4 +1,5 @@
 import type { FhirBundle, FhirResource } from "@/shared/api/types";
+import { getBundleResources } from "@/shared/api/guards";
 
 export interface FhirResourceListView {
 	id: string;
@@ -11,7 +12,7 @@ export interface FhirResourceListView {
 }
 
 export function getFhirBundleResources(bundle: FhirBundle | null | undefined): FhirResource[] {
-	return (bundle?.entry?.map((entry) => entry.resource).filter(Boolean) ?? []) as FhirResource[];
+	return getBundleResources(bundle);
 }
 
 export function getFhirResourceDisplayValue(

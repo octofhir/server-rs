@@ -1,5 +1,6 @@
-import { useState, useCallback, useEffect } from "react";
-import { Box, Flex, Text, Button, Spin, Alert } from "@/shared/ui";
+import { useState, useCallback } from "react";
+import { Box, Flex, Button, Spin, Alert } from "@/shared/ui";
+import { ToolWorkspaceLayout } from "@/widgets/tool-workspace";
 import {
   IconPlus,
   IconPlayerPlay,
@@ -160,16 +161,13 @@ export function ViewDefinitionPage() {
   const isDisabled = settings?.sqlOnFhir?.enabled === false;
 
   return (
-    <Box className={classes.container}>
-      <Flex direction="column" gap="0" style={{ height: "100%" }}>
-        {/* Header */}
-        <Flex justifyContent="space-between" alignItems="center" px="4" py="2" style={{ borderBottom: "1px solid var(--g-color-line-base)" }}>
-          <Flex gap="4" alignItems="center">
-            <Text variant="header-2">ViewDefinition Editor</Text>
+    <ToolWorkspaceLayout
+      title="ViewDefinition Editor"
+      description="Build SQL on FHIR ViewDefinition resources and preview generated output"
+      className="page-enter"
+      actions={
+        <Flex gap="2">
             {listLoading && <Spin size="s" />}
-          </Flex>
-
-          <Flex gap="2">
             <Button
               view="action"
               size="m"
@@ -215,10 +213,11 @@ export function ViewDefinitionPage() {
               New
             </Button>
           </Flex>
-        </Flex>
+      }
+    >
 
         {isDisabled && (
-          <Box px="4" py="2">
+          <Box pb="4">
             <FeatureDisabledBanner />
           </Box>
         )}
@@ -250,7 +249,6 @@ export function ViewDefinitionPage() {
             </Box>
           </Flex>
         </Flex>
-      </Flex>
-    </Box>
+    </ToolWorkspaceLayout>
   );
 }

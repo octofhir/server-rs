@@ -2,7 +2,6 @@ import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
 	Stack,
-	Title,
 	Text,
 	Paper,
 	Group,
@@ -21,6 +20,7 @@ import {
 	Button,
 	Select,
 } from "@/shared/ui";
+import { WorkspacePageLayout } from "@/widgets/workspace-page";
 import { notifications } from "@octofhir/ui-kit";
 import {
 	CircleExclamation,
@@ -47,6 +47,13 @@ import {
 } from "@/entities/fhir-package";
 import type { PackageInfo } from "@/shared/api/types";
 import { InstallProgressModal } from "./InstallProgressModal";
+
+const singleLineTextStyle = {
+	display: "-webkit-box",
+	WebkitBoxOrient: "vertical",
+	WebkitLineClamp: 1,
+	overflow: "hidden",
+};
 
 function FhirVersionBadge({
 	packageVersion,
@@ -98,7 +105,7 @@ function PackageCard({
 					<ThemeIcon variant="light" size="md" color="warm">
 						<Box size={16} />
 					</ThemeIcon>
-					<Text fw={500} lineClamp={1}>
+					<Text fw={500} style={singleLineTextStyle}>
 						{pkg.name}
 					</Text>
 				</Group>
@@ -156,12 +163,13 @@ function InstalledPackagesTab({
 	);
 
 	return (
-		<Stack gap="md">
+		<Stack gap="sm">
 			<TextInput
 				placeholder="Search installed packages..."
 				leftSection={<Magnifier size={16} />}
 				value={search}
 				onChange={(e) => setSearch(e.currentTarget.value)}
+				style={{ maxWidth: 460 }}
 			/>
 
 			{isLoading && (
@@ -192,15 +200,15 @@ function InstalledPackagesTab({
 					</Text>
 
 					{filteredPackages.length === 0 ? (
-						<Paper p="xl" style={{ backgroundColor: "var(--octo-surface-2)" }}>
-							<Stack align="center" gap="md">
+						<Paper p="md" style={{ backgroundColor: "var(--octo-surface-2)" }}>
+							<Stack align="center" gap="sm">
 								<ThemeIcon
-									size={rem(60)}
+									size={rem(40)}
 									radius="xl"
 									variant="light"
 									color="warm"
 								>
-									<Box size={30} />
+									<Box size={22} />
 								</ThemeIcon>
 								<Text ta="center" c="dimmed">
 									{search
@@ -331,24 +339,18 @@ function RegistryTab({
 	const versionOptions = useMemo(() => getFhirPackageVersionOptions(lookupData), [lookupData]);
 
 	return (
-		<Stack gap="md">
-			<Paper p="md" style={{ backgroundColor: "var(--octo-surface-2)" }}>
-				<Stack gap="md">
-					<Text size="sm" c="dimmed">
-						Search for packages in the FHIR Package Registry (fs.get-ig.org)
-					</Text>
-					<TextInput
-						placeholder="Search packages... (e.g., us core, hl7.fhir)"
-						leftSection={<Magnifier size={16} />}
-						value={searchQuery}
-						onChange={(e) => {
-							setSearchQuery(e.currentTarget.value);
-							setSelectedPackage(null);
-							setSelectedVersion(null);
-						}}
-					/>
-				</Stack>
-			</Paper>
+		<Stack gap="sm">
+			<TextInput
+				placeholder="Search packages... (e.g., us core, hl7.fhir)"
+				leftSection={<Magnifier size={16} />}
+				value={searchQuery}
+				onChange={(e) => {
+					setSearchQuery(e.currentTarget.value);
+					setSelectedPackage(null);
+					setSelectedVersion(null);
+				}}
+				style={{ maxWidth: 520 }}
+			/>
 
 			{searchLoading && (
 				<Group justify="center" py="xl">
@@ -382,7 +384,7 @@ function RegistryTab({
 								</Group>
 							),
 							description: (
-								<Text size="sm" c="dimmed" lineClamp={1}>
+								<Text size="sm" c="dimmed" style={singleLineTextStyle}>
 									{pkg.descriptionLabel}
 								</Text>
 							),
@@ -442,10 +444,10 @@ function RegistryTab({
 				)}
 
 			{!searchData && !searchLoading && (
-				<Paper p="xl" style={{ backgroundColor: "var(--octo-surface-2)" }}>
-					<Stack align="center" gap="md">
-						<ThemeIcon size={rem(60)} radius="xl" variant="light" color="fire">
-							<Globe size={30} />
+				<Paper p="md" style={{ backgroundColor: "var(--octo-surface-2)" }}>
+					<Stack align="center" gap="sm">
+						<ThemeIcon size={rem(40)} radius="xl" variant="light" color="fire">
+							<Globe size={22} />
 						</ThemeIcon>
 						<Text ta="center" c="dimmed">
 							Enter a search term to find packages in the FHIR registry
@@ -485,19 +487,15 @@ export function PackagesPage() {
 	const serverVersion = data?.serverFhirVersion || "4.0.1";
 
 	return (
-		<Stack gap="md" style={{ flex: 1, minHeight: 0 }}>
-			<Group justify="space-between">
-				<div>
-					<Title order={2}>FHIR Packages</Title>
-					<Text c="dimmed" size="sm">
-						Manage installed FHIR packages and install new packages from the
-						registry
-					</Text>
-				</div>
+		<WorkspacePageLayout
+			title="FHIR Packages"
+			description="Manage installed FHIR packages and install new packages from the registry"
+			actions={
 				<Badge size="lg" variant="light" color="warm">
 					Server: FHIR {serverVersion}
 				</Badge>
-			</Group>
+			}
+		>
 
 			<Tabs value={activeTab} onChange={setActiveTab}>
 				<Tabs.List>
@@ -525,6 +523,6 @@ export function PackagesPage() {
 					<RegistryTab serverVersion={serverVersion} />
 				</Tabs.Panel>
 			</Tabs>
-		</Stack>
+		</WorkspacePageLayout>
 	);
 }

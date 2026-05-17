@@ -10,6 +10,7 @@ import {
 	Switch,
 	Card,
 } from "@/shared/ui";
+import { WorkspacePageLayout } from "@/widgets/workspace-page";
 import { Field, Form, FormSpy, useDebouncedValue, useDisclosure } from "@octofhir/ui-kit";
 import { DropdownMenu } from "@gravity-ui/uikit";
 import { useNavigate } from "react-router-dom";
@@ -44,7 +45,8 @@ import {
 	type UserFilterParams,
 } from "../lib/useUsers";
 import { useRoles } from "../lib/useRoles";
-import type { UserResource } from "@/shared/api/types";
+import type { RoleResource, UserResource } from "@/shared/api/types";
+import { getBundleResources } from "@/shared/api/guards";
 import { DeleteUserModal } from "./DeleteUserModal";
 import classes from "./UsersPage.module.css";
 
@@ -72,8 +74,9 @@ export function UsersPage() {
 	const deleteUser = useDeleteUser();
 	const bulkUpdate = useBulkUpdateUsers();
 
-	const users = data?.entry?.map((e) => e.resource) || [];
-	const availableRoles = rolesData?.entry?.map((e) => e.resource.name) || ["admin", "practitioner", "patient"];
+	const users = getBundleResources<UserResource>(data);
+	const roleNames = getBundleResources<RoleResource>(rolesData).map((role) => role.name);
+	const availableRoles = roleNames.length ? roleNames : ["admin", "practitioner", "patient"];
 
 	const handleEdit = (user: UserResource) => {
 		setEditingUser(user);
@@ -144,25 +147,18 @@ export function UsersPage() {
 	const someSelected = selectedUsers.size > 0;
 
 	return (
-		<div className={classes.pageRoot}>
-			<Flex justify="space-between" align="flex-start" gap="m" wrap="nowrap" className={classes.pageHeader}>
-				<div className={classes.heading}>
-					<Text as="h1" variant="header-2" className={classes.pageTitle}>
-						Users
-					</Text>
-					<Text as="p" color="secondary" variant="body-1" className={classes.pageDescription}>
-						Manage user accounts, roles, and credentials
-					</Text>
-				</div>
+		<WorkspacePageLayout
+			title="Users"
+			description="Manage user accounts, roles, and credentials"
+			actions={
 				<Button view="action" onClick={open}>
 					<Button.Icon>
 						<Plus width={16} />
 					</Button.Icon>
 					Create User
 				</Button>
-			</Flex>
-
-			<Card type="container" view="outlined" className={classes.tableContainer}>
+			}
+			toolbar={
 				<div className={classes.filterBar}>
 					<TextInput
 						placeholder="Search by username or email..."
@@ -192,7 +188,10 @@ export function UsersPage() {
 						width={140}
 					/>
 				</div>
+			}
+		>
 
+			<Card type="container" view="outlined" className={classes.tableContainer}>
 				{someSelected && (
 					<div className={classes.bulkActions}>
 						<Text variant="body-1" className={classes.selectedCount}>
@@ -231,7 +230,7 @@ export function UsersPage() {
 				)}
 
 				<Table.ScrollContainer minWidth={860}>
-					<Table verticalSpacing="md" highlightOnHover>
+					<Table verticalSpacing="sm" highlightOnHover>
 						<Table.Thead>
 							<Table.Tr>
 								<Table.Th className={classes.selectionCell}>
@@ -386,7 +385,7 @@ export function UsersPage() {
 				}}
 				user={resetPasswordTarget}
 			/>
-		</div>
+		</WorkspacePageLayout>
 	);
 }
 
@@ -442,7 +441,12 @@ function UserModal({
 		if (values.password) userData.password = values.password;
 		try {
 			if (isEditing && user?.id) {
-				await update.mutateAsync({ ...userData, id: user.id } as UserResource);
+				await update.mutateAsync({
+					...user,
+					...userData,
+					id: user.id,
+					resourceType: "User",
+				});
 			} else {
 				await create.mutateAsync(userData);
 			}

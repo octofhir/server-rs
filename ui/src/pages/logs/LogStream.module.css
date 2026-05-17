@@ -1,0 +1,17 @@
+.container {
+	height: 100%;
+	overflow-y: auto;
+	background-color: var(--octo-surface-1);
+}
+
+.logList {
+	font-family: var(--octo-typography-mono);
+}
+
+.bottomAnchor {
+	height: 1px;
+}
+
+.emptyState {
+	background-color: var(--octo-surface-1);
+}

@@ -7,7 +7,6 @@ import {
 	ActionIcon,
 	Tooltip,
 	Badge,
-	Popover,
 	Stack,
 	Text,
 	Chip,
@@ -267,9 +266,8 @@ function AuditFiltersComponent({
 					w={140}
 				/>
 
-				{/* Time Range Filter */}
-				<Popover width={320} position="bottom-start" shadow="md">
-					<Popover.Target>
+				<Menu shadow="md" width={320} position="bottom-start" closeOnItemClick={false}>
+					<Menu.Target>
 						<Button
 							variant="light"
 							leftSection={<Clock size={14} />}
@@ -283,8 +281,8 @@ function AuditFiltersComponent({
 								</Badge>
 							)}
 						</Button>
-					</Popover.Target>
-					<Popover.Dropdown>
+					</Menu.Target>
+					<Menu.Dropdown p="sm">
 						<Stack gap="sm">
 							<Text size="sm" fw={600}>
 								Time Range Filter
@@ -324,8 +322,8 @@ function AuditFiltersComponent({
 								</Button>
 							)}
 						</Stack>
-					</Popover.Dropdown>
-				</Popover>
+					</Menu.Dropdown>
+				</Menu>
 
 				<div className={classes.spacer} />
 

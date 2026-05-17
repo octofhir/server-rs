@@ -1,7 +1,6 @@
 import { resolve } from "node:path";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
-// @ts-expect-error - CommonJS module compatibility
 import monacoEditorPluginModule from "vite-plugin-monaco-editor";
 
 const monacoEditorPlugin =

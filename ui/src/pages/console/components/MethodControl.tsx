@@ -1,5 +1,5 @@
 import { Select } from "@/shared/ui";
-import type { HttpMethod } from "@/shared/api";
+import { isHttpMethod } from "@/shared/api";
 import { useUnit } from "effector-react";
 import { $method, setMethod } from "../state/consoleStore";
 
@@ -14,7 +14,10 @@ export function MethodControl() {
 	return (
 		<Select
 			value={[method]}
-			onUpdate={(v) => setMethodEvent((v[0] ?? "GET") as HttpMethod)}
+			onUpdate={(v) => {
+				const nextMethod = v[0];
+				setMethodEvent(nextMethod && isHttpMethod(nextMethod) ? nextMethod : "GET");
+			}}
 			options={METHOD_OPTIONS.map(m => ({ value: m, content: m }))}
 			size="m"
 			view="flat"

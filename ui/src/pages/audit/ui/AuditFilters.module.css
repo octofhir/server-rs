@@ -1,5 +1,5 @@
 .container {
-  padding: var(--octo-spacing-sm) var(--octo-spacing-md);
+  padding: 8px 0;
   background: var(--octo-surface-1);
   border-bottom: 1px solid var(--octo-border-subtle);
 }
@@ -9,7 +9,7 @@
 }
 
 .searchInput {
-  flex: 0 0 260px;
+  flex: 0 0 280px;
 }
 
 .filterButton {

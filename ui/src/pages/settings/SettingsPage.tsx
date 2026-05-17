@@ -10,8 +10,8 @@ import {
 	Select,
 	Switch,
 	Loader,
-	ScrollArea,
 } from "@/shared/ui";
+import { WorkspacePageLayout } from "@/widgets/workspace-page";
 import { useColorScheme } from "@octofhir/ui-kit";
 import { useHealth, useFormatterSettings } from "@/shared/api/hooks";
 import { useUiSettings } from "@/shared";
@@ -44,13 +44,11 @@ export function SettingsPage() {
 	};
 
 	return (
-		<ScrollArea h="100%" type="auto" offsetScrollbars>
+		<WorkspacePageLayout
+			title="Settings"
+			description="Configure server settings and preferences"
+		>
 			<Stack gap="lg" pb="xl">
-				<div>
-					<Title order={2}>Settings</Title>
-					<Text c="dimmed">Configure server settings and preferences</Text>
-				</div>
-
 			<Card
 				shadow="sm"
 				padding="lg"
@@ -202,6 +200,6 @@ export function SettingsPage() {
 				</Stack>
 			</Card>
 			</Stack>
-		</ScrollArea>
+		</WorkspacePageLayout>
 	);
 }

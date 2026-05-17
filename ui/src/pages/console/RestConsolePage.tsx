@@ -16,6 +16,7 @@ import { RequestOptionTabs } from "./components/RequestBuilderAccordion";
 import { ResponseViewer } from "./components/ResponseViewer";
 import { useRestConsoleMeta } from "./hooks/useRestConsoleMeta";
 import { useSendConsoleRequest } from "./hooks/useSendConsoleRequest";
+import { ToolWorkspaceLayout } from "@/widgets/tool-workspace";
 import {
   $body,
   $customHeaders,
@@ -102,50 +103,44 @@ export function RestConsolePage() {
   useHotkeys(hotkeys);
 
   return (
-    <Box className="page-enter" style={{ height: "100%", overflow: "hidden", display: "flex", flexDirection: "column" }}>
+    <ToolWorkspaceLayout
+      className="page-enter"
+      title="REST Console"
+      description="Build, send, and inspect FHIR REST requests"
+      maxWidth={1280}
+      toolbar={<ModeControl />}
+      actions={
+        <Flex gap="2">
+          <Button
+            view="flat"
+            size="m"
+            onClick={toggleInspector}
+          >
+            <Button.Icon><Eye size={16} /></Button.Icon>
+            Inspector
+          </Button>
+          <Button
+            view="flat"
+            size="m"
+            onClick={historyHandlers.open}
+          >
+            <Button.Icon><ClockArrowRotateLeft size={16} /></Button.Icon>
+            History
+          </Button>
+        </Flex>
+      }
+    >
       <Helmet>
         <title>REST Console</title>
       </Helmet>
 
-      {/* Persistent Header */}
-      <Box style={{ padding: "16px 24px", borderBottom: "1px solid var(--g-color-line-generic-subtle)", backgroundColor: "var(--g-color-base-background)" }}>
-        <Flex justifyContent="space-between" alignItems="center">
-          <Flex gap="4" alignItems="center">
-            <Text variant="header-2" style={{ fontWeight: 700 }}>REST Console</Text>
-            <ModeControl />
-          </Flex>
-          <Flex gap="2">
-            <Button
-              view="flat"
-              size="m"
-              onClick={toggleInspector}
-            >
-              <Button.Icon><Eye size={16} /></Button.Icon>
-              Inspector
-            </Button>
-            <Button
-              view="flat"
-              size="m"
-              onClick={historyHandlers.open}
-            >
-              <Button.Icon><ClockArrowRotateLeft size={16} /></Button.Icon>
-              History
-            </Button>
-          </Flex>
-        </Flex>
-      </Box>
-
-      {/* Main Content Area */}
-      <Box style={{ flex: 1, overflowY: "auto", padding: "24px" }}>
-        <Box style={{ maxWidth: "1200px", margin: "0 auto" }}>
           <Stack gap="6">
             {/* Request Editor Section */}
             <Box style={{ 
               backgroundColor: "var(--g-color-base-background)", 
-              borderRadius: "12px", 
+              borderRadius: "8px",
               border: "1px solid var(--g-color-line-generic-subtle)",
               overflow: "hidden",
-              boxShadow: "var(--g-shadow-low)"
             }}>
               {mode === "pro" ? (
                 <RequestBar
@@ -157,7 +152,7 @@ export function RestConsolePage() {
                   onSend={handleSend}
                 />
               ) : (
-                <Box style={{ padding: "20px" }}>
+                <Box style={{ padding: "16px" }}>
                    <BuilderModeEditor
                     allSuggestions={allSuggestions}
                     searchParamsByResource={searchParamsByResource}
@@ -187,9 +182,9 @@ export function RestConsolePage() {
             {/* Inspector (collapsible) */}
             <Collapse in={inspectorOpened}>
               <Box style={{ 
-                padding: "20px", 
+                padding: "16px",
                 border: "1px solid var(--g-color-line-info-subtle)", 
-                borderRadius: "12px",
+                borderRadius: "8px",
                 backgroundColor: "var(--g-color-base-info-subtle)" 
               }}>
                 <QueryInspector
@@ -219,11 +214,10 @@ export function RestConsolePage() {
                     Response
                   </Text>
                   <Box style={{ 
-                    borderRadius: "12px", 
+                    borderRadius: "8px",
                     border: "1px solid var(--g-color-line-generic-subtle)",
                     backgroundColor: "var(--g-color-base-background)",
                     overflow: "hidden",
-                    boxShadow: "var(--g-shadow-low)"
                   }}>
                     <ResponseViewer response={sendMutation.data} isLoading={sendMutation.isPending} />
                   </Box>
@@ -235,11 +229,9 @@ export function RestConsolePage() {
               )}
             </Box>
           </Stack>
-        </Box>
-      </Box>
 
       <CommandPalette />
       <HistoryPanel opened={historyOpened} onClose={historyHandlers.close} />
-    </Box>
+    </ToolWorkspaceLayout>
   );
 }

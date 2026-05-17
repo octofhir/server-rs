@@ -3,18 +3,16 @@ import {
   Badge,
   Button,
   Card,
-  Container,
   DataPreview,
-  Flex,
   Group,
   KeyValueList,
   Modal,
   SectionPanel,
   Stack,
   Text,
-  Title,
   Tooltip,
 } from '@/shared/ui';
+import { WorkspacePageLayout } from "@/widgets/workspace-page";
 import { useDisclosure } from '@octofhir/ui-kit';
 import {
   Display,
@@ -95,16 +93,11 @@ export function SessionsPage() {
   };
 
   return (
-    <Container size="xl" className="page-enter">
-      <Stack gap="xl">
-        {/* Header */}
-        <Flex justify="space-between" align="center">
-          <div>
-            <Title order={2}>Active Sessions</Title>
-            <Text c="dimmed" size="sm" mt={4}>
-              Manage your active login sessions across devices
-            </Text>
-          </div>
+    <WorkspacePageLayout
+      title="Active Sessions"
+      description="Manage your active login sessions across devices"
+      className="page-enter"
+      actions={
           <Group>
             <Button variant="subtle" leftSection={<ArrowRotateRight size={16} />} onClick={() => refetch()}>
               Refresh
@@ -115,14 +108,15 @@ export function SessionsPage() {
               </Button>
             )}
           </Group>
-        </Flex>
-
+      }
+    >
+      <Stack gap="sm">
         {currentSession && (
           <SectionPanel
             title="Current session"
             description="The browser session currently attached to this control plane"
             view="filled"
-            padding="l"
+            padding="m"
             actions={
               <Badge color="green" size="sm" variant="light">
                 Current
@@ -134,7 +128,7 @@ export function SessionsPage() {
               const activity = getAuthSessionActivityView(currentSession);
 
               return (
-                <Stack gap="md">
+                <Stack gap="sm">
                   <Group>
                     <DeviceIcon kind={device.kind} />
                     <div>
@@ -162,7 +156,7 @@ export function SessionsPage() {
           title="Other sessions"
           description="Active sessions on other browsers and devices"
           view="tinted"
-          padding="l"
+          padding="m"
           actions={
             <Badge size="sm" variant="light" color="gray">
               {otherSessions.length}
@@ -222,7 +216,6 @@ export function SessionsPage() {
         </SectionPanel>
       </Stack>
 
-      {/* Revoke Single Session Modal */}
       <Modal
         opened={revokeModalOpened}
         onClose={closeRevokeModal}
@@ -230,7 +223,7 @@ export function SessionsPage() {
         centered
         radius="lg"
       >
-        <Stack gap="md">
+        <Stack gap="sm">
           <Text>
             Are you sure you want to revoke this session? The device will need to sign in again.
           </Text>
@@ -256,7 +249,7 @@ export function SessionsPage() {
               })()}
             </Card>
           )}
-          <Group justify="flex-end" mt="md">
+          <Group justify="flex-end" mt="sm">
             <Button variant="subtle" onClick={closeRevokeModal}>
               Cancel
             </Button>
@@ -267,7 +260,6 @@ export function SessionsPage() {
         </Stack>
       </Modal>
 
-      {/* Revoke All Sessions Modal */}
       <Modal
         opened={revokeAllModalOpened}
         onClose={closeRevokeAllModal}
@@ -275,14 +267,14 @@ export function SessionsPage() {
         centered
         radius="lg"
       >
-        <Stack gap="md">
+        <Stack gap="sm">
           <Text>
             Are you sure you want to revoke all other sessions? All other devices will need to sign in again.
           </Text>
           <Text size="sm" c="dimmed">
             This will affect {otherSessions.length} session{otherSessions.length !== 1 ? 's' : ''}.
           </Text>
-          <Group justify="flex-end" mt="md">
+          <Group justify="flex-end" mt="sm">
             <Button variant="subtle" onClick={closeRevokeAllModal}>
               Cancel
             </Button>
@@ -292,6 +284,6 @@ export function SessionsPage() {
           </Group>
         </Stack>
       </Modal>
-    </Container>
+    </WorkspacePageLayout>
   );
 }

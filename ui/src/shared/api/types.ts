@@ -53,10 +53,15 @@ export interface FhirResource {
     versionId?: string;
     lastUpdated?: string;
   };
-  [key: string]: any;
+  [key: string]: unknown;
 }
 
-export interface FhirBundle {
+export interface FhirBundleEntry<T extends FhirResource = FhirResource> {
+  resource?: T;
+  fullUrl?: string;
+}
+
+export interface FhirBundle<T extends FhirResource = FhirResource> {
   resourceType: "Bundle";
   id?: string;
   type: string;
@@ -65,10 +70,7 @@ export interface FhirBundle {
     relation: string;
     url: string;
   }>;
-  entry?: Array<{
-    resource: FhirResource;
-    fullUrl?: string;
-  }>;
+  entry?: Array<FhirBundleEntry<T>>;
 }
 
 export interface FhirOperationOutcome {
@@ -78,6 +80,36 @@ export interface FhirOperationOutcome {
     code: string;
     diagnostics?: string;
     location?: string[];
+  }>;
+}
+
+export interface CapabilityStatement extends FhirResource {
+  resourceType: "CapabilityStatement";
+  status?: string;
+  date?: string;
+  publisher?: string;
+  fhirVersion?: string;
+  format?: string[];
+  software?: {
+    name?: string;
+    version?: string;
+  };
+  implementation?: {
+    description?: string;
+    url?: string;
+  };
+  rest?: Array<{
+    mode?: string;
+    interaction?: Array<{ code?: string }>;
+    resource?: Array<{
+      type?: string;
+      interaction?: Array<{ code?: string }>;
+      searchParam?: Array<{
+        name?: string;
+        type?: string;
+        documentation?: string;
+      }>;
+    }>;
   }>;
 }
 
@@ -288,19 +320,7 @@ export interface Permission {
 }
 
 // Bundle type for list responses
-export interface Bundle<T extends FhirResource = FhirResource> {
-  resourceType: "Bundle";
-  type: string;
-  total?: number;
-  link?: Array<{
-    relation: string;
-    url: string;
-  }>;
-  entry?: Array<{
-    resource: T;
-    fullUrl?: string;
-  }>;
-}
+export type Bundle<T extends FhirResource = FhirResource> = FhirBundle<T>;
 
 export interface UserIdentityElement {
   provider: Reference;
@@ -362,18 +382,23 @@ export interface OperationUpdateRequest {
 }
 
 // HTTP types
-export type HttpMethod = "GET" | "POST" | "PUT" | "DELETE" | "PATCH" | "HEAD" | "OPTIONS";
+export const HTTP_METHODS = ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"] as const;
+export type HttpMethod = (typeof HTTP_METHODS)[number];
+
+export function isHttpMethod(value: string): value is HttpMethod {
+  return (HTTP_METHODS as readonly string[]).includes(value);
+}
 
 export interface HttpRequestConfig {
   method: HttpMethod;
   url: string;
   headers?: Record<string, string>;
-  data?: any;
+  data?: unknown;
   timeout?: number;
   credentials?: RequestCredentials;
 }
 
-export interface HttpResponse<T = any> {
+export interface HttpResponse<T = unknown> {
   data: T;
   status: number;
   statusText: string;

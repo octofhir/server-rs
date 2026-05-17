@@ -12,13 +12,13 @@ import {
 	CircleInfo,
 	ShieldCheck,
 } from "@gravity-ui/icons";
+import { WorkspacePageLayout } from "@/widgets/workspace-page";
 import { Card } from "@/shared/ui/Card/Card";
 import { Button } from "@/shared/ui/Button/Button";
 import { ActionIcon } from "@/shared/ui/ActionIcon/ActionIcon";
 import {
 	formatUserDateTime,
 	formatUserRelativeTime,
-	getUserInitials,
 	getUserRoleView,
 	getUserSessionBrowser,
 	getUserStatusView,
@@ -66,75 +66,53 @@ export function UserDetailPage() {
 	const statusView = getUserStatusView(user);
 
 	return (
-		<Stack gap="md" className={classes.pageRoot}>
-			{/* Back button */}
-			<Group>
-				<Button
-					variant="subtle"
-					leftSection={<ArrowLeft size={16} />}
-					onClick={() => navigate("/auth/users")}
-				>
-					Back to Users
-				</Button>
-			</Group>
-
-			{/* Profile Header Card */}
-			<Card className={classes.headerCard}>
-				<div className={classes.profileHeader}>
-					<div className={classes.avatar}>{getUserInitials(user)}</div>
-					<div className={classes.profileInfo}>
-						<Text className={classes.userName}>{user.name || user.username}</Text>
-						<Text className={classes.userEmail}>{user.email || user.username}</Text>
-						<Group gap="xs" mt="xs">
-							<Badge color={statusView.color} variant="light">
-								{statusView.label}
-							</Badge>
-							{user.mfaEnabled && (
-								<Badge color="blue" variant="light" leftSection={<ShieldCheck size={12} />}>
-									MFA Enabled
-								</Badge>
-							)}
-						</Group>
-					</div>
-					<div className={classes.profileActions}>
-						<Button variant="light" leftSection={<Pencil size={16} />} onClick={() => setEditModalOpened(true)}>
-							Edit
-						</Button>
-						<Button variant="light" leftSection={<Key size={16} />}>
-							Reset Password
-						</Button>
-						<ActionIcon variant="light" color="red" size="lg">
-							<TrashBin size={16} />
-						</ActionIcon>
-					</div>
-				</div>
-
-				{/* Stats */}
-				<div className={classes.statsGrid}>
-					<div className={classes.statItem}>
-						<Text className={classes.statValue}>{user.roles?.length ?? 0}</Text>
-						<Text className={classes.statLabel}>Roles</Text>
-					</div>
-					<div className={classes.statItem}>
-						<Text className={classes.statValue}>{activeSessions}</Text>
-						<Text className={classes.statLabel}>Active Sessions</Text>
-					</div>
-					<div className={classes.statItem}>
-						<Text className={classes.statValue}>{user.identity?.length ?? 0}</Text>
-						<Text className={classes.statLabel}>Linked Identities</Text>
-					</div>
-					<div className={classes.statItem}>
-						<Text className={classes.statValue}>{formatUserRelativeTime(user.lastLogin)}</Text>
-						<Text className={classes.statLabel}>Last Login</Text>
-					</div>
-				</div>
-			</Card>
-
-			{/* Content Grid */}
+		<WorkspacePageLayout
+			title={user.name || user.username}
+			description={user.email || user.username}
+			meta={
+				<Group gap="xs">
+					<Badge color={statusView.color} variant="light">
+						{statusView.label}
+					</Badge>
+					{user.mfaEnabled ? (
+						<Badge color="blue" variant="light" leftSection={<ShieldCheck size={12} />}>
+							MFA Enabled
+						</Badge>
+					) : null}
+					<Badge color="gray" variant="light">
+						{user.roles?.length ?? 0} roles
+					</Badge>
+					<Badge color="gray" variant="light">
+						{activeSessions} sessions
+					</Badge>
+					<Badge color="gray" variant="light">
+						Last login {formatUserRelativeTime(user.lastLogin)}
+					</Badge>
+				</Group>
+			}
+			actions={
+				<Group gap="xs">
+					<Button
+						variant="subtle"
+						leftSection={<ArrowLeft size={16} />}
+						onClick={() => navigate("/auth/users")}
+					>
+						Back
+					</Button>
+					<Button variant="light" leftSection={<Pencil size={16} />} onClick={() => setEditModalOpened(true)}>
+						Edit
+					</Button>
+					<Button variant="light" leftSection={<Key size={16} />}>
+						Reset Password
+					</Button>
+					<ActionIcon variant="light" color="red" size="lg">
+						<TrashBin size={16} />
+					</ActionIcon>
+				</Group>
+			}
+		>
 			<div className={classes.contentGrid}>
-				{/* Left Column */}
-				<Stack gap="md">
-					{/* Profile Info */}
+				<Stack gap="sm">
 					<Card className={classes.sectionCard}>
 						<Title order={4} className={classes.sectionTitle}>
 							<CircleInfo size={18} />
@@ -188,16 +166,16 @@ export function UserDetailPage() {
 									const roleView = getUserRoleView(role);
 
 									return (
-									<div key={role} className={classes.roleItem}>
-										<Text className={classes.roleName}>{roleView.role}</Text>
-										<Badge
-											size="sm"
-											variant={roleView.theme === "danger" ? "filled" : "light"}
-											color={roleView.theme === "danger" ? "red" : "blue"}
-										>
-											{roleView.theme === "danger" ? "System" : "Custom"}
-										</Badge>
-									</div>
+										<div key={role} className={classes.roleItem}>
+											<Text className={classes.roleName}>{roleView.role}</Text>
+											<Badge
+												size="sm"
+												variant={roleView.theme === "danger" ? "filled" : "light"}
+												color={roleView.theme === "danger" ? "red" : "blue"}
+											>
+												{roleView.theme === "danger" ? "System" : "Custom"}
+											</Badge>
+										</div>
 									);
 								})}
 							</div>
@@ -211,9 +189,7 @@ export function UserDetailPage() {
 					</Card>
 				</Stack>
 
-				{/* Right Column */}
-				<Stack gap="md">
-					{/* Active Sessions */}
+				<Stack gap="sm">
 					<Card className={classes.sectionCard}>
 						<Title order={4} className={classes.sectionTitle}>
 							<Smartphone size={18} />
@@ -264,7 +240,6 @@ export function UserDetailPage() {
 						)}
 					</Card>
 
-					{/* Linked Identities */}
 					<Card className={classes.sectionCard}>
 						<Title order={4} className={classes.sectionTitle}>
 							<Person size={18} />
@@ -300,8 +275,7 @@ export function UserDetailPage() {
 				</Stack>
 			</div>
 
-			{/* Edit User Modal */}
 			<EditUserModal user={user} opened={editModalOpened} onClose={() => setEditModalOpened(false)} />
-		</Stack>
+		</WorkspacePageLayout>
 	);
 }

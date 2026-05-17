@@ -4,6 +4,7 @@ import { createGraphiQLFetcher } from "@graphiql/toolkit";
 import { useColorScheme } from "@octofhir/ui-kit";
 import "graphiql/style.css";
 import { useUiSettings } from "@/shared";
+import { ToolWorkspaceLayout } from "@/widgets/tool-workspace";
 
 const DEFAULT_QUERY = `# Welcome to the Abyxon GraphQL Console!
 #
@@ -47,15 +48,28 @@ export function GraphQLConsolePage() {
 	const themeClass = colorScheme === "dark" ? "graphiql-dark" : "graphiql-light";
 
 	return (
-		<div
-			className={themeClass}
-			style={{ flex: 1, minHeight: 0, backgroundColor: "var(--octo-surface-1)" }}
+		<ToolWorkspaceLayout
+			title="GraphQL"
+			description="Explore and execute GraphQL queries against the FHIR server"
+			maxWidth="none"
 		>
-			<GraphiQL
-				fetcher={fetcher}
-				defaultQuery={DEFAULT_QUERY}
-				shouldPersistHeaders
-			/>
-		</div>
+			<div
+				className={themeClass}
+				style={{
+					flex: 1,
+					minHeight: 560,
+					backgroundColor: "var(--octo-surface-1)",
+					border: "1px solid var(--g-color-line-generic)",
+					borderRadius: 8,
+					overflow: "hidden",
+				}}
+			>
+				<GraphiQL
+					fetcher={fetcher}
+					defaultQuery={DEFAULT_QUERY}
+					shouldPersistHeaders
+				/>
+			</div>
+		</ToolWorkspaceLayout>
 	);
 }

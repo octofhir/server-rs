@@ -1,7 +1,6 @@
 import { useMemo, useState } from "react";
 import {
 	Stack,
-	Title,
 	Text,
 	Group,
 	DataPreview,
@@ -11,6 +10,7 @@ import {
 	Textarea,
 	Alert,
 } from "@/shared/ui";
+import { WorkspacePageLayout } from "@/widgets/workspace-page";
 import { Field, Form, type FormApi, useDebouncedValue, useDisclosure } from "@octofhir/ui-kit";
 import {
 	Plus,
@@ -41,6 +41,7 @@ import {
 	usePermissions,
 } from "../lib/useRoles";
 import type { RoleResource } from "@/shared/api/types";
+import { getBundleResources } from "@/shared/api/guards";
 import classes from "./RolesPage.module.css";
 
 export function RolesPage() {
@@ -53,7 +54,7 @@ export function RolesPage() {
 	const { data, isLoading } = useRoles({ search: debouncedSearch || undefined });
 	const deleteRole = useDeleteRole();
 
-	const roles = data?.entry?.map((e) => e.resource) || [];
+	const roles = getBundleResources<RoleResource>(data);
 
 	const handleEdit = (role: RoleResource) => {
 		setEditingRole(role);
@@ -78,30 +79,28 @@ export function RolesPage() {
 	};
 
 	return (
-		<Stack gap="md" className={classes.pageRoot}>
-			<Group justify="space-between">
-				<div>
-					<Title order={2}>Roles</Title>
-					<Text c="dimmed" size="sm">
-						Manage roles and permissions
-					</Text>
-				</div>
+		<WorkspacePageLayout
+			title="Roles"
+			description="Manage roles and permissions"
+			actions={
 				<Button leftSection={<Plus size={16} />} onClick={open}>
 					Create Role
 				</Button>
-			</Group>
-
-			<Card className={classes.tableContainer}>
-				<Group mb="md">
+			}
+			toolbar={
+				<Group>
 					<TextInput
 						placeholder="Search roles..."
 						leftSection={<Magnifier size={16} />}
 						value={search}
 						onChange={(e) => setSearch(e.currentTarget.value)}
-						style={{ flex: 1 }}
+						style={{ flex: 1, maxWidth: 460 }}
 					/>
 				</Group>
+			}
+		>
 
+			<Card className={classes.tableContainer}>
 				<DataPreview
 					columns={[
 						{ id: "role", label: "Role" },
@@ -200,7 +199,7 @@ export function RolesPage() {
 				roleName={deleteTarget?.name ?? ""}
 				isDeleting={deleteRole.isPending}
 			/>
-		</Stack>
+		</WorkspacePageLayout>
 	);
 }
 

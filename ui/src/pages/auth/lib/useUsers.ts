@@ -2,7 +2,8 @@ import { notifications } from "@octofhir/ui-kit";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { fhirClient } from "@/shared/api/fhirClient";
-import type { Bundle, UserResource, UserSession } from "@/shared/api/types";
+import { getBundleResources } from "@/shared/api";
+import type { FhirResource, UserResource, UserSession } from "@/shared/api/types";
 
 // Filter parameters for user list
 export interface UserFilterParams {
@@ -37,8 +38,7 @@ export function useUsers(params: UserFilterParams = {}) {
 			if (params.status) searchParams.status = params.status;
 			if (params.active !== undefined) searchParams.active = params.active.toString();
 
-			const response = await fhirClient.search("User", searchParams);
-			return response as Bundle<UserResource>;
+			return fhirClient.search<UserResource>("User", searchParams);
 		},
 	});
 }
@@ -48,8 +48,7 @@ export function useUser(id: string | null) {
 		queryKey: userKeys.detail(id || ""),
 		queryFn: async () => {
 			if (!id) throw new Error("ID required");
-			const response = await fhirClient.read("User", id);
-			return response as UserResource;
+			return fhirClient.read<UserResource>("User", id);
 		},
 		enabled: !!id,
 	});
@@ -59,10 +58,8 @@ export function useCreateUser() {
 	const queryClient = useQueryClient();
 
 	return useMutation({
-		mutationFn: async (user: Partial<UserResource>) => {
-			const response = await fhirClient.create({ ...user, resourceType: "User" } as UserResource);
-			return response as UserResource;
-		},
+		mutationFn: (user: Partial<UserResource>) =>
+			fhirClient.create<UserResource>({ ...user, resourceType: "User" }),
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: userKeys.lists() });
 			notifications.show({
@@ -87,8 +84,7 @@ export function useUpdateUser() {
 	return useMutation({
 		mutationFn: async (user: UserResource) => {
 			if (!user.id) throw new Error("User ID required for update");
-			const response = await fhirClient.update(user);
-			return response as UserResource;
+			return fhirClient.update<UserResource>(user);
 		},
 		onSuccess: (data) => {
 			queryClient.invalidateQueries({ queryKey: userKeys.lists() });
@@ -178,24 +174,23 @@ export function useUserSessions(userId: string | null) {
 		queryKey: userKeys.sessions(userId || ""),
 		queryFn: async () => {
 			if (!userId) throw new Error("User ID required");
-			const response = await fhirClient.search("AuthSession", {
+			const response = await fhirClient.search<FhirResource>("AuthSession", {
 				subject: `User/${userId}`,
 				status: "active",
 			});
 
 			// Transform AuthSession resources to UserSession format
-			const sessions: UserSession[] = (response.entry || []).map((entry) => {
-				const resource = entry.resource;
+			const sessions: UserSession[] = getBundleResources(response).map((resource) => {
 				return {
-					id: resource.id || "",
-					userId: resource.subject?.reference?.replace("User/", "") || userId,
-					clientId: resource.client?.reference?.replace("Client/", ""),
-					clientName: resource.client?.display,
-					ipAddress: resource.ipAddress,
-					userAgent: resource.userAgent,
-					createdAt: resource.meta?.lastUpdated || resource.createdAt || "",
-					expiresAt: resource.expiresAt || "",
-					lastActivity: resource.lastActivity,
+					id: resource.id ?? "",
+					userId: getReferenceId(resource.subject, "User") ?? userId,
+					clientId: getReferenceId(resource.client, "Client"),
+					clientName: getReferenceDisplay(resource.client),
+					ipAddress: getString(resource.ipAddress),
+					userAgent: getString(resource.userAgent),
+					createdAt: resource.meta?.lastUpdated ?? getString(resource.createdAt) ?? "",
+					expiresAt: getString(resource.expiresAt) ?? "",
+					lastActivity: getString(resource.lastActivity),
 				};
 			});
 
@@ -239,9 +234,9 @@ export function useBulkUpdateUsers() {
 		mutationFn: async ({ userIds, updates }: { userIds: string[]; updates: Partial<UserResource> }) => {
 			const promises = userIds.map(async (id) => {
 				// User is an internal resource, so it's at root level
-				const user = await fhirClient.read("User", id);
+				const user = await fhirClient.read<UserResource>("User", id);
 				const updatedUser = { ...user, ...updates };
-				return fhirClient.update(updatedUser);
+				return fhirClient.update<UserResource>(updatedUser);
 			});
 			return Promise.all(promises);
 		},
@@ -271,12 +266,28 @@ export function useSearchResources(resourceType: "Practitioner" | "Patient", sea
 			if (!search || search.length < 2) {
 				return { entry: [] };
 			}
-			const response = await fhirClient.search(resourceType, {
+			return fhirClient.search(resourceType, {
 				name: search,
 				_count: 10,
 			});
-			return response as Bundle;
 		},
 		enabled: search.length >= 2,
 	});
+}
+
+function getString(value: unknown): string | undefined {
+	return typeof value === "string" ? value : undefined;
+}
+
+function getReferenceId(value: unknown, resourceType: string): string | undefined {
+	if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+	const reference = (value as { reference?: unknown }).reference;
+	if (typeof reference !== "string") return undefined;
+	return reference.replace(`${resourceType}/`, "");
+}
+
+function getReferenceDisplay(value: unknown): string | undefined {
+	if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+	const display = (value as { display?: unknown }).display;
+	return typeof display === "string" ? display : undefined;
 }

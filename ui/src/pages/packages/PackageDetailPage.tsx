@@ -2,7 +2,6 @@ import { useMemo, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import {
 	Stack,
-	Title,
 	Text,
 	Paper,
 	Group,
@@ -23,6 +22,7 @@ import {
 	ScrollArea,
 	Code,
 } from "@/shared/ui";
+import { WorkspacePageLayout } from "@/widgets/workspace-page";
 import {
 	filterFhirPackageResources,
 	getFhirPackageResourceTypeOptions,
@@ -31,7 +31,6 @@ import {
 import {
 	CircleExclamation,
 	Magnifier,
-	Box as BoxIcon,
 	ArrowLeft,
 	Check,
 	TriangleExclamation,
@@ -46,6 +45,13 @@ import {
 	usePackageFhirSchema,
 } from "@/shared/api/hooks";
 import type { PackageResourceSummary } from "@/shared/api/types";
+
+const singleLineTextStyle = {
+	display: "-webkit-box",
+	WebkitBoxOrient: "vertical",
+	WebkitLineClamp: 1,
+	overflow: "hidden",
+};
 
 function FhirVersionBadge({
 	packageVersion,
@@ -211,14 +217,14 @@ function ResourcesTab({
 	);
 
 	return (
-		<Stack gap="md">
-			<Group gap="md">
+		<Stack gap="sm">
+			<Group gap="sm">
 				<TextInput
 					placeholder="Search resources..."
 					leftSection={<Magnifier size={16} />}
 					value={search}
 					onChange={(e) => setSearch(e.currentTarget.value)}
-					style={{ flex: 1 }}
+					style={{ flex: 1, maxWidth: 460 }}
 				/>
 				<Select
 					placeholder="Filter by type"
@@ -268,7 +274,7 @@ function ResourcesTab({
 								</Text>
 							),
 							url: (
-								<Text size="xs" c="dimmed" lineClamp={1}>
+								<Text size="xs" c="dimmed" style={singleLineTextStyle}>
 									{resource.urlLabel}
 								</Text>
 							),
@@ -322,13 +328,16 @@ export function PackageDetailPage() {
 	}
 
 	return (
-		<Stack gap="md" style={{ flex: 1, minHeight: 0 }}>
-			<Breadcrumbs>
-				<Anchor onClick={() => navigate("/packages")}>Packages</Anchor>
-				<Text>{name}</Text>
-			</Breadcrumbs>
-
-			<Group justify="space-between">
+		<WorkspacePageLayout
+			title={name}
+			description={`Version ${version}`}
+			kicker={
+				<Breadcrumbs>
+					<Anchor onClick={() => navigate("/packages")}>Packages</Anchor>
+					<Text>{name}</Text>
+				</Breadcrumbs>
+			}
+			actions={
 				<Group gap="md">
 					<Button
 						variant="subtle"
@@ -337,21 +346,10 @@ export function PackageDetailPage() {
 					>
 						Back
 					</Button>
-					<Group gap="xs">
-						<ThemeIcon variant="light" size="lg" color="warm">
-							<BoxIcon width={20} />
-						</ThemeIcon>
-						<div>
-							<Title order={2}>{name}</Title>
-							<Text size="sm" c="dimmed">
-								Version {version}
-							</Text>
-						</div>
-					</Group>
+					{data && <FhirVersionBadge packageVersion={data.fhirVersion} isCompatible={data.isCompatible} />}
 				</Group>
-
-				{data && <FhirVersionBadge packageVersion={data.fhirVersion} isCompatible={data.isCompatible} />}
-			</Group>
+			}
+		>
 
 			{isLoading && (
 				<Group justify="center" py="xl">
@@ -381,8 +379,8 @@ export function PackageDetailPage() {
 					</Tabs.List>
 
 					<Tabs.Panel value="overview" pt="md">
-						<Stack gap="md">
-							<Paper p="md" style={{ backgroundColor: "var(--octo-surface-1)" }}>
+						<Stack gap="sm">
+							<Paper p="sm" style={{ backgroundColor: "var(--octo-surface-1)" }}>
 								<Stack gap="sm">
 									{data.description && (
 										<div>
@@ -393,7 +391,7 @@ export function PackageDetailPage() {
 										</div>
 									)}
 
-									<Group gap="xl">
+									<Group gap="lg">
 										<div>
 											<Text size="sm" fw={500} c="dimmed">
 												Total Resources
@@ -414,7 +412,7 @@ export function PackageDetailPage() {
 								</Stack>
 							</Paper>
 
-							<Paper p="md" style={{ backgroundColor: "var(--octo-surface-2)" }}>
+							<Paper p="sm" style={{ backgroundColor: "var(--octo-surface-2)" }}>
 								<Text size="sm" fw={500} c="dimmed" mb="sm">
 									Resource Types
 								</Text>
@@ -438,6 +436,6 @@ export function PackageDetailPage() {
 					</Tabs.Panel>
 				</Tabs>
 			)}
-		</Stack>
+		</WorkspacePageLayout>
 	);
 }

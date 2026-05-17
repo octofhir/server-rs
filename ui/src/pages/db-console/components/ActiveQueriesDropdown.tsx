@@ -81,8 +81,13 @@ function QueryItem({
 				<Text
 					size="xs"
 					ff="monospace"
-					lineClamp={2}
-					style={{ wordBreak: "break-all" }}
+					style={{
+						display: "-webkit-box",
+						WebkitBoxOrient: "vertical",
+						WebkitLineClamp: 2,
+						overflow: "hidden",
+						wordBreak: "break-all",
+					}}
 				>
 					{query.query}
 				</Text>
@@ -92,7 +97,7 @@ function QueryItem({
 }
 
 export function ActiveQueriesDropdown() {
-	const [opened, { toggle, close }] = useDisclosure(false);
+	const [opened, { open, close }] = useDisclosure(false);
 	const { data, isLoading } = useActiveQueries(true);
 	const terminateMutation = useTerminateQuery();
 	const [terminatingPid, setTerminatingPid] = useState<number | null>(null);
@@ -143,79 +148,77 @@ export function ActiveQueriesDropdown() {
 
 	return (
 		<Popover
-			opened={opened}
-			onClose={close}
-			position="bottom-end"
-			width={380}
-			shadow="md"
-		>
-			<Popover.Target>
-				<Tooltip label="Active queries">
-					<UnstyledButton
-						onClick={toggle}
+			open={opened}
+			onOpenChange={(nextOpen) => (nextOpen ? open() : close())}
+			placement="bottom-end"
+			trigger="click"
+			content={
+				<Box style={{ width: 380 }}>
+					<Group
+						justify="space-between"
+						px="sm"
+						py="xs"
 						style={{
-							display: "inline-flex",
-							alignItems: "center",
-							gap: 4,
-							padding: "2px 6px",
-							borderRadius: "var(--octo-radius-sm)",
+							borderBottom: "1px solid var(--octo-border-subtle)",
 						}}
 					>
-						<Pulse
-							size={15}
-							style={{ opacity: queries.length > 0 ? 1 : 0.5 }}
-						/>
+						<Text size="xs" fw={600}>
+							Active Queries
+						</Text>
 						{queries.length > 0 && (
-							<Text
-								size="xs"
-								fw={600}
-								c={activeCount > 0 ? "primary" : "dimmed"}
-							>
+							<Badge size="xs" variant="light">
 								{queries.length}
+							</Badge>
+						)}
+					</Group>
+					<ScrollArea.Autosize mah={300}>
+						{isLoading && (
+							<Text size="xs" c="dimmed" ta="center" py="md">
+								Loading...
 							</Text>
 						)}
-					</UnstyledButton>
-				</Tooltip>
-			</Popover.Target>
-			<Popover.Dropdown p={0}>
-				<Group
-					justify="space-between"
-					px="sm"
-					py="xs"
+						{!isLoading && queries.length === 0 && (
+							<Text size="xs" c="dimmed" ta="center" py="xl">
+								No active queries
+							</Text>
+						)}
+						{queries.map((q) => (
+							<QueryItem
+								key={q.pid}
+								query={q}
+								onTerminate={handleTerminate}
+								isTerminating={terminatingPid === q.pid}
+							/>
+						))}
+					</ScrollArea.Autosize>
+				</Box>
+			}
+		>
+			<Tooltip label="Active queries">
+				<UnstyledButton
 					style={{
-						borderBottom: "1px solid var(--octo-border-subtle)",
+						display: "inline-flex",
+						alignItems: "center",
+						gap: 4,
+						padding: "2px 6px",
+						borderRadius: "var(--octo-radius-sm)",
 					}}
 				>
-					<Text size="xs" fw={600}>
-						Active Queries
-					</Text>
+					<Pulse
+						size={15}
+						style={{ opacity: queries.length > 0 ? 1 : 0.5 }}
+					/>
 					{queries.length > 0 && (
-						<Badge size="xs" variant="light">
+						<Text
+							size="xs"
+							fw={600}
+							c={activeCount > 0 ? "primary" : "dimmed"}
+						>
 							{queries.length}
-						</Badge>
-					)}
-				</Group>
-				<ScrollArea.Autosize mah={300}>
-					{isLoading && (
-						<Text size="xs" c="dimmed" ta="center" py="md">
-							Loading...
 						</Text>
 					)}
-					{!isLoading && queries.length === 0 && (
-						<Text size="xs" c="dimmed" ta="center" py="xl">
-							No active queries
-						</Text>
-					)}
-					{queries.map((q) => (
-						<QueryItem
-							key={q.pid}
-							query={q}
-							onTerminate={handleTerminate}
-							isTerminating={terminatingPid === q.pid}
-						/>
-					))}
-				</ScrollArea.Autosize>
-			</Popover.Dropdown>
+				</UnstyledButton>
+			</Tooltip>
 		</Popover>
 	);
 }

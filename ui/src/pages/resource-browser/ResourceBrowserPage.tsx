@@ -2,7 +2,6 @@ import { useState, useMemo, useEffect, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import {
 	Stack,
-	Title,
 	Text,
 	Paper,
 	Group,
@@ -20,6 +19,7 @@ import {
 	Box,
 	RecordList,
 } from "@/shared/ui";
+import { ToolWorkspaceLayout } from "@/widgets/tool-workspace";
 import { OperationOutcomePanel, notifications } from "@octofhir/ui-kit";
 import {
 	Magnifier,
@@ -608,16 +608,17 @@ export function ResourceBrowserPage() {
 	);
 
 	return (
-		<Box p="xl" h="100%" className="page-enter" style={{ display: "flex", flexDirection: "column" }}>
-			<Box mb="xl">
-				<Group justify="space-between" align="flex-end">
-					<Box>
-						<Title order={2}>Resource Browser</Title>
-						<Breadcrumbs mt="xs" separator="→" style={{ fontSize: "12px" }}>
-							{breadcrumbItems}
-						</Breadcrumbs>
-					</Box>
-					{selectedType && !selectedId && (
+		<ToolWorkspaceLayout
+			title="Resource Browser"
+			description="Browse, inspect, and edit FHIR resources"
+			className="page-enter"
+			kicker={
+				<Breadcrumbs separator="→" style={{ fontSize: "12px" }}>
+					{breadcrumbItems}
+				</Breadcrumbs>
+			}
+			actions={
+				selectedType && !selectedId ? (
 						<Button
 							variant="subtle"
 							leftSection={<ChevronLeft size={16} />}
@@ -626,9 +627,9 @@ export function ResourceBrowserPage() {
 						>
 							Change Resource Type
 						</Button>
-					)}
-				</Group>
-			</Box>
+				) : null
+			}
+		>
 
 			<Box style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
 				{!selectedType ? (
@@ -644,6 +645,6 @@ export function ResourceBrowserPage() {
 					</Box>
 				)}
 			</Box>
-		</Box>
+		</ToolWorkspaceLayout>
 	);
 }

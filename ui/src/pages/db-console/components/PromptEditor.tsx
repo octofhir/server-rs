@@ -69,7 +69,7 @@ export function PromptEditor({
 	modelInstance,
 	isPending,
 }: PromptEditorProps) {
-	const [formatterOpened, { toggle: toggleFormatter, close: closeFormatter }] =
+	const [formatterOpened, { open: openFormatter, close: closeFormatter }] =
 		useDisclosure(false);
 	const workspaceRef = useRef<HTMLDivElement>(null);
 	const [diagnosticsSize, setDiagnosticsSize] = useLocalStorage({
@@ -160,48 +160,43 @@ export function PromptEditor({
 					</Tooltip>
 
 					<Popover
-						opened={formatterOpened}
-						onClose={closeFormatter}
-						position="top-end"
-						width={320}
-						shadow="md"
-					>
-						<Popover.Target>
-							<Tooltip label="Formatter Settings">
-								<ActionIcon
-									variant="subtle"
-									size="xs"
-									onClick={toggleFormatter}
-								>
-									<Gear size={14} />
-								</ActionIcon>
-							</Tooltip>
-						</Popover.Target>
-						<Popover.Dropdown>
-							<Text size="sm" fw={500} mb="sm">
-								SQL Formatter Settings
-							</Text>
-							<FormatterSettings
-								value={formatterConfig}
-								onChange={(config) => {
-									setLspFormatterConfig(config);
-									saveFormatterConfig(config);
-								}}
-								compact
-							/>
-							<Group justify="flex-end" mt="sm">
-								<Button
-									size="xs"
-									variant="light"
-									onClick={() => {
-										closeFormatter();
-										handleFormat();
+						open={formatterOpened}
+						onOpenChange={(open) => (open ? openFormatter() : closeFormatter())}
+						placement="top-end"
+						trigger="click"
+						content={
+							<Box p="3" style={{ width: 320 }}>
+								<Text size="sm" fw={500} mb="sm">
+									SQL Formatter Settings
+								</Text>
+								<FormatterSettings
+									value={formatterConfig}
+									onChange={(config) => {
+										setLspFormatterConfig(config);
+										saveFormatterConfig(config);
 									}}
-								>
-									Apply & Format
-								</Button>
-							</Group>
-						</Popover.Dropdown>
+									compact
+								/>
+								<Group justify="flex-end" mt="sm">
+									<Button
+										size="xs"
+										variant="light"
+										onClick={() => {
+											closeFormatter();
+											handleFormat();
+										}}
+									>
+										Apply & Format
+									</Button>
+								</Group>
+							</Box>
+						}
+					>
+						<Tooltip label="Formatter Settings">
+							<ActionIcon variant="subtle" size="xs">
+								<Gear size={14} />
+							</ActionIcon>
+						</Tooltip>
 					</Popover>
 
 					<Tooltip label="Auto-limit for SELECT/WITH queries without LIMIT">
@@ -234,7 +229,7 @@ export function PromptEditor({
 						loading={isPending}
 					>
 						Execute
-						<Text span size="xs" c="dimmed" ml={6}>
+						<Text as="span" size="xs" c="dimmed" ml={6}>
 							Ctrl+↩
 						</Text>
 					</Button>

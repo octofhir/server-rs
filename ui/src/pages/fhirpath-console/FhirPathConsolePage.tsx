@@ -6,8 +6,8 @@ import {
 	Paper,
 	Stack,
 	Text,
-	Title,
 } from "@/shared/ui";
+import { ToolWorkspaceLayout } from "@/widgets/tool-workspace";
 import { CircleExclamation, Play, Xmark } from "@gravity-ui/icons";
 import { useMutation } from "@tanstack/react-query";
 import { FhirPathEditor } from "@/shared/monaco/FhirPathEditor";
@@ -55,7 +55,7 @@ export function FhirPathConsolePage() {
 				try {
 					const resource = JSON.parse(inputResource);
 					body.parameter.push({ name: "resource", resource });
-				} catch (e) {
+				} catch {
 					throw new Error("Invalid JSON in input resource");
 				}
 			}
@@ -89,11 +89,29 @@ export function FhirPathConsolePage() {
 	};
 
 	return (
-		<Stack gap="md" h="100%" p="md" className="page-enter">
-			<Group justify="space-between">
-				<Title order={2}>FHIRPath Console</Title>
-			</Group>
-
+		<ToolWorkspaceLayout
+			title="FHIRPath Console"
+			description="Evaluate FHIRPath expressions against a sample or pasted resource"
+			className="page-enter"
+			actions={
+				<Group>
+					<Button
+						leftSection={<Play size={16} />}
+						onClick={handleExecute}
+						loading={evaluateMutation.isPending}
+					>
+						Execute
+					</Button>
+					<Button
+						variant="subtle"
+						leftSection={<Xmark size={16} />}
+						onClick={handleClear}
+					>
+						Clear
+					</Button>
+				</Group>
+			}
+		>
 			{/* Expression Editor */}
 			<Stack gap="xs">
 				<Text size="sm" fw={500}>
@@ -122,24 +140,6 @@ export function FhirPathConsolePage() {
 					height={300}
 				/>
 			</Stack>
-
-			{/* Actions */}
-			<Group>
-				<Button
-					leftSection={<Play size={16} />}
-					onClick={handleExecute}
-					loading={evaluateMutation.isPending}
-				>
-					Execute (Ctrl+Enter)
-				</Button>
-				<Button
-					variant="subtle"
-					leftSection={<Xmark size={16} />}
-					onClick={handleClear}
-				>
-					Clear
-				</Button>
-			</Group>
 
 			{/* Results */}
 			<Stack gap="sm" style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
@@ -176,6 +176,6 @@ export function FhirPathConsolePage() {
 					</>
 				)}
 			</Stack>
-		</Stack>
+		</ToolWorkspaceLayout>
 	);
 }

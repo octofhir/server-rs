@@ -67,7 +67,7 @@ export function ResponseViewer({ response, isLoading }: ResponseViewerProps) {
 				<Flex justifyContent="space-between" alignItems="center">
 					<Flex gap="3" alignItems="center">
 						<Badge
-							theme={statusTheme as any}
+							theme={statusTheme}
 							size="l"
 						>
 							<Flex gap="1" alignItems="center">

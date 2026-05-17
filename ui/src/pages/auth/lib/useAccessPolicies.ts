@@ -6,7 +6,6 @@ import {
 	type AccessPolicyResource,
 } from "@/entities/access-policy";
 import { fhirClient } from "@/shared/api/fhirClient";
-import type { Bundle, FhirResource } from "@/shared/api/types";
 
 export type { AccessPolicyResource, MatcherElement, EngineElement } from "@/entities/access-policy";
 export const VALID_OPERATIONS = accessPolicyOperations;
@@ -26,13 +25,12 @@ export function useAccessPolicies(params: { count?: number; offset?: number; sea
 	return useQuery({
 		queryKey: accessPolicyKeys.list(params),
 		queryFn: async () => {
-			const searchParams: Record<string, unknown> = {};
+			const searchParams: Record<string, string | number> = {};
 			if (params.count) searchParams._count = params.count;
 			if (params.offset) searchParams._offset = params.offset;
 			if (params.search) searchParams.name = params.search;
 
-			const response = await fhirClient.search("AccessPolicy", searchParams);
-			return response as Bundle<AccessPolicyResource>;
+			return fhirClient.search<AccessPolicyResource>("AccessPolicy", searchParams);
 		},
 	});
 }
@@ -42,8 +40,7 @@ export function useAccessPolicy(id: string | null) {
 		queryKey: accessPolicyKeys.detail(id || ""),
 		queryFn: async () => {
 			if (!id) throw new Error("ID required");
-			const response = await fhirClient.read("AccessPolicy", id);
-			return response as AccessPolicyResource;
+			return fhirClient.read<AccessPolicyResource>("AccessPolicy", id);
 		},
 		enabled: !!id,
 	});
@@ -53,10 +50,8 @@ export function useCreateAccessPolicy() {
 	const queryClient = useQueryClient();
 
 	return useMutation({
-		mutationFn: async (policy: Partial<AccessPolicyResource>) => {
-			const response = await fhirClient.create(policy as Partial<FhirResource>);
-			return response as AccessPolicyResource;
-		},
+		mutationFn: (policy: Partial<AccessPolicyResource>) =>
+			fhirClient.create<AccessPolicyResource>({ ...policy, resourceType: "AccessPolicy" }),
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: accessPolicyKeys.lists() });
 			notifications.show({
@@ -81,8 +76,7 @@ export function useUpdateAccessPolicy() {
 	return useMutation({
 		mutationFn: async (policy: AccessPolicyResource) => {
 			if (!policy.id) throw new Error("Policy resource ID required for update");
-			const response = await fhirClient.update(policy as FhirResource);
-			return response as AccessPolicyResource;
+			return fhirClient.update<AccessPolicyResource>(policy);
 		},
 		onSuccess: (data) => {
 			queryClient.invalidateQueries({ queryKey: accessPolicyKeys.lists() });

@@ -40,7 +40,7 @@ export {
     RecordList, type RecordListProps, type RecordListItem,
     SectionPanel, type SectionPanelProps,
     StatGrid, type StatGridProps,
-    StatusBadge, type StatusBadgeProps,
+    StatusBadge, type StatusBadgeProps, type StatusTone,
 
     // Legacy aliases (deprecated, to be removed)
     Stack, type StackProps,

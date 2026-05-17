@@ -17,6 +17,7 @@ import {
 	KeyValueList,
 	SectionPanel,
 } from "@/shared/ui";
+import { WorkspacePageLayout } from "@/widgets/workspace-page";
 import {
 	CircleExclamation,
 	ArrowLeft,
@@ -111,17 +112,21 @@ export function OperationDetailPage() {
 	const accessView = operation ? getOperationAccessView(operation.public) : null;
 
 	return (
-		<Stack gap="md" style={{ flex: 1, minHeight: 0 }}>
-			<Breadcrumbs>
-				<Anchor onClick={() => navigate("/operations")}>Operations</Anchor>
-				<Text>Detail</Text>
-			</Breadcrumbs>
-
-			<Group>
+		<WorkspacePageLayout
+			title={operation?.name ?? "Operation details"}
+			description="Server route metadata and runtime configuration"
+			kicker={
+				<Breadcrumbs>
+					<Anchor onClick={() => navigate("/operations")}>Operations</Anchor>
+					<Text>Detail</Text>
+				</Breadcrumbs>
+			}
+			actions={
 				<Button variant="subtle" leftSection={<ArrowLeft size={16} />} onClick={() => navigate("/operations")}>
 					Back
 				</Button>
-			</Group>
+			}
+		>
 
 			{isLoading && (
 				<Group justify="center" py="xl">
@@ -144,13 +149,13 @@ export function OperationDetailPage() {
 						title="Operation summary"
 						description="Server route metadata and runtime ownership"
 						view="filled"
-						padding="l"
+						padding="m"
 					>
-						<Stack gap="md">
+						<Stack gap="sm">
 							<Group justify="space-between" align="flex-start">
 								<div>
 									<Group gap="sm" mb="xs">
-										<CategoryIcon size={24} color="var(--g-color-text-secondary)" />
+										<CategoryIcon size={20} color="var(--g-color-text-secondary)" />
 										<Title order={3}>{operation.name}</Title>
 									</Group>
 									<Code size="sm">{operation.id}</Code>
@@ -224,9 +229,9 @@ export function OperationDetailPage() {
 						title="Settings"
 						description="Editable access policy and operator-facing description"
 						view="tinted"
-						padding="l"
+						padding="m"
 					>
-						<Stack gap="md">
+						<Stack gap="sm">
 							<Switch
 								label="Public Access"
 								description="When enabled, this operation does not require authentication"
@@ -271,6 +276,6 @@ export function OperationDetailPage() {
 					</SectionPanel>
 				</>
 			)}
-		</Stack>
+		</WorkspacePageLayout>
 	);
 }

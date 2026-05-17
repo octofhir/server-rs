@@ -1,7 +1,6 @@
-import { useState, useMemo } from "react";
+import { useState } from "react";
 import {
 	Stack,
-	Title,
 	Text,
 	Paper,
 	Group,
@@ -13,11 +12,11 @@ import {
 	Menu,
 	Modal,
 	Switch,
-	Textarea,
 	Select,
 	PasswordInput,
 	MultiSelect,
 } from "@/shared/ui";
+import { WorkspacePageLayout } from "@/widgets/workspace-page";
 import { Field, Form, useDebouncedValue, useDisclosure } from "@octofhir/ui-kit";
 import {
 	Plus,
@@ -35,6 +34,7 @@ import {
 	type IdentityProviderType,
 } from "@/entities/identity-provider";
 import { useIdentityProviders, useCreateIdentityProvider, useUpdateIdentityProvider, useDeleteIdentityProvider } from "../lib/useIdentityProviders";
+import { getBundleResources } from "@/shared/api/guards";
 
 export function IdentityProvidersPage() {
 	const [search, setSearch] = useState("");
@@ -61,33 +61,31 @@ export function IdentityProvidersPage() {
 		close();
 	};
 
-	const providers = data?.entry?.map((e) => e.resource) || [];
+	const providers = getBundleResources<IdentityProviderResource>(data);
 
 	return (
-		<Stack gap="md" style={{ flex: 1, minHeight: 0 }}>
-			<Group justify="space-between">
-				<div>
-					<Title order={2}>Identity Providers</Title>
-					<Text c="dimmed" size="sm">
-						Manage external OIDC/OAuth2 authentication providers
-					</Text>
-				</div>
+		<WorkspacePageLayout
+			title="Identity Providers"
+			description="Manage external OIDC/OAuth2 authentication providers"
+			actions={
 				<Button leftSection={<Plus size={16} />} onClick={open}>
 					Add Provider
 				</Button>
-			</Group>
-
-			<Paper p="md" withBorder>
-				<Group mb="md">
+			}
+			toolbar={
+				<Group>
 					<TextInput
 						placeholder="Search by name..."
 						leftSection={<Magnifier size={16} />}
 						value={search}
 						onChange={(e) => setSearch(e.currentTarget.value)}
-						style={{ flex: 1 }}
+						style={{ flex: 1, maxWidth: 460 }}
 					/>
 				</Group>
+			}
+		>
 
+			<Paper p="sm" withBorder>
 				<DataPreview
 					columns={[
 						{ id: "provider", label: "Name / Issuer" },
@@ -163,7 +161,7 @@ export function IdentityProvidersPage() {
 				onClose={handleClose}
 				idp={editingIdp}
 			/>
-		</Stack>
+		</WorkspacePageLayout>
 	);
 }
 
@@ -239,16 +237,16 @@ function IdpModal({
 		: IDP_DEFAULTS;
 
 	const handleSubmit = async (values: IdpFormValues) => {
-		const payload: Record<string, unknown> = {
+		const payload: IdentityProviderResource = {
 			resourceType: "IdentityProvider",
 			...values,
 		};
 		if (isEditing && !values.clientSecret) delete payload.clientSecret;
 		try {
 			if (isEditing && idp?.id) {
-				await update.mutateAsync({ ...payload, id: idp.id } as IdentityProviderResource);
+				await update.mutateAsync({ ...payload, id: idp.id });
 			} else {
-				await create.mutateAsync(payload as IdentityProviderResource);
+				await create.mutateAsync(payload);
 			}
 			onClose();
 		} catch {

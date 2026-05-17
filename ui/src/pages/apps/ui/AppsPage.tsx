@@ -1,8 +1,7 @@
-import { useState, useMemo } from "react";
+import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
 	Stack,
-	Title,
 	Text,
 	Paper,
 	Group,
@@ -18,6 +17,7 @@ import {
 	Code,
 	Anchor,
 } from "@/shared/ui";
+import { WorkspacePageLayout } from "@/widgets/workspace-page";
 import { Field, Form, useDebouncedValue, useDisclosure } from "@octofhir/ui-kit";
 import {
 	IconPlus,
@@ -37,6 +37,14 @@ import {
 	type AppResource,
 } from "@/entities/api-app";
 import { useApps, useCreateApp, useUpdateApp, useDeleteApp } from "../lib/useApps";
+import { getBundleResources } from "@/shared/api/guards";
+
+const singleLineTextStyle = {
+	display: "-webkit-box",
+	WebkitBoxOrient: "vertical",
+	WebkitLineClamp: 1,
+	overflow: "hidden",
+};
 
 export function AppsPage() {
 	const navigate = useNavigate();
@@ -68,33 +76,31 @@ export function AppsPage() {
 		close();
 	};
 
-	const apps = data?.entry?.map((e) => e.resource) || [];
+	const apps = getBundleResources<AppResource>(data);
 
 	return (
-		<Stack gap="md" style={{ flex: 1, minHeight: 0 }}>
-			<Group justify="space-between">
-				<div>
-					<Title order={2}>API Gateway Apps</Title>
-					<Text c="dimmed" size="sm">
-						Group custom operations under base paths and common configuration
-					</Text>
-				</div>
+		<WorkspacePageLayout
+			title="API Gateway Apps"
+			description="Group custom operations under base paths and common configuration"
+			actions={
 				<Button leftSection={<IconPlus size={16} />} onClick={open}>
 					Create App
 				</Button>
-			</Group>
-
-			<Paper p="md" withBorder>
-				<Group mb="md">
+			}
+			toolbar={
+				<Group>
 					<TextInput
 						placeholder="Search by name..."
 						leftSection={<IconSearch size={16} />}
 						value={search}
 						onChange={(e) => setSearch(e.currentTarget.value)}
-						style={{ flex: 1 }}
+						style={{ flex: 1, maxWidth: 460 }}
 					/>
 				</Group>
+			}
+		>
 
+			<Paper p="sm" withBorder>
 				<DataPreview
 					columns={[
 						{ id: "application", label: "Application" },
@@ -118,7 +124,7 @@ export function AppsPage() {
 													<Anchor size="sm" onClick={() => app.id && handleView(app.id)}>
 														{app.name}
 													</Anchor>
-													<Text size="xs" c="dimmed" maw={300} lineClamp={1}>
+													<Text size="xs" c="dimmed" maw={300} style={singleLineTextStyle}>
 														{app.description || "No description"}
 													</Text>
 												</div>
@@ -126,7 +132,7 @@ export function AppsPage() {
 										),
 										endpoint:
 											app.endpoint?.url || app.basePath ? (
-												<Code size="xs" style={{ maxWidth: 220 }} lineClamp={1}>
+												<Code size="xs" style={{ maxWidth: 220, ...singleLineTextStyle }}>
 													{endpoint}
 												</Code>
 											) : (
@@ -211,7 +217,7 @@ export function AppsPage() {
 				onClose={handleClose}
 				app={editingApp}
 			/>
-		</Stack>
+		</WorkspacePageLayout>
 	);
 }
 
@@ -278,7 +284,7 @@ function AppModal({
 		: APP_DEFAULTS;
 
 	const handleSubmit = async (values: AppFormValues) => {
-		const payload: Partial<AppResource> = {
+		const payload: AppResource = {
 			resourceType: "App",
 			name: values.name,
 			description: values.description || undefined,
@@ -291,7 +297,7 @@ function AppModal({
 		if (values.secret) payload.secret = values.secret;
 		try {
 			if (isEditing && app?.id) {
-				await update.mutateAsync({ ...payload, id: app.id } as AppResource);
+				await update.mutateAsync({ ...payload, id: app.id });
 			} else {
 				await create.mutateAsync(payload);
 			}

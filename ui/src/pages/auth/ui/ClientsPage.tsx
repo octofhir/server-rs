@@ -1,7 +1,6 @@
-import { useState, useMemo } from "react";
+import { useState } from "react";
 import {
 	Stack,
-	Title,
 	Text,
 	Group,
 	DataPreview,
@@ -16,6 +15,7 @@ import {
 	CopyButton,
 	Tooltip,
 } from "@/shared/ui";
+import { WorkspacePageLayout } from "@/widgets/workspace-page";
 import { Field, Form, useDebouncedValue, useDisclosure } from "@octofhir/ui-kit";
 import {
 	Plus,
@@ -47,6 +47,7 @@ import {
 	useDeleteClient,
 	useRegenerateSecret,
 } from "../lib/useClients";
+import { getBundleResources } from "@/shared/api/guards";
 import { SecretDisplayModal } from "./SecretDisplayModal";
 import { DeleteClientModal } from "./DeleteClientModal";
 import classes from "./ClientsPage.module.css";
@@ -105,33 +106,31 @@ export function ClientsPage() {
 		setIsNewClientSecret(true);
 	};
 
-	const clients = data?.entry?.map((e) => e.resource) || [];
+	const clients = getBundleResources<ClientResource>(data);
 
 	return (
-		<Stack gap="md" className={classes.pageRoot}>
-			<Group justify="space-between">
-				<div>
-					<Title order={2}>Clients</Title>
-					<Text c="dimmed" size="sm">
-						Manage OAuth 2.0 applications and credentials
-					</Text>
-				</div>
+		<WorkspacePageLayout
+			title="Clients"
+			description="Manage OAuth 2.0 applications and credentials"
+			actions={
 				<Button leftSection={<Plus size={16} />} onClick={open}>
 					Register Client
 				</Button>
-			</Group>
-
-			<Card className={classes.tableContainer}>
-				<Group mb="md">
+			}
+			toolbar={
+				<Group>
 					<TextInput
 						placeholder="Search by name..."
 						leftSection={<Magnifier size={16} />}
 						value={search}
 						onChange={(e) => setSearch(e.currentTarget.value)}
-						style={{ flex: 1 }}
+						style={{ flex: 1, maxWidth: 460 }}
 					/>
 				</Group>
+			}
+		>
 
+			<Card className={classes.tableContainer}>
 				<DataPreview
 					columns={[
 						{ id: "client", label: "Name / Client ID" },
@@ -270,7 +269,7 @@ export function ClientsPage() {
 					isNewClient={isNewClientSecret}
 				/>
 			)}
-		</Stack>
+		</WorkspacePageLayout>
 	);
 }
 
@@ -310,7 +309,7 @@ function ClientModal({
 		: CLIENT_DEFAULTS;
 
 	const handleSubmit = async (values: ClientFormValues) => {
-		const payload: Record<string, unknown> = {
+		const payload: Partial<ClientResource> = {
 			resourceType: "Client",
 			...values,
 		};
@@ -318,10 +317,15 @@ function ClientModal({
 		if (isEditing && !values.clientSecret) delete payload.clientSecret;
 		try {
 			if (isEditing && client?.id) {
-				await update.mutateAsync({ ...payload, id: client.id } as ClientResource);
+				await update.mutateAsync({
+					...client,
+					...payload,
+					id: client.id,
+					resourceType: "Client",
+				});
 				onClose();
 			} else {
-				const result = await create.mutateAsync(payload as Partial<ClientResource>);
+				const result = await create.mutateAsync(payload);
 				onClose();
 				if (values.confidential && values.clientSecret) {
 					onSecretCreated(result.clientId, values.clientSecret);

@@ -15,7 +15,6 @@ export function ReferenceValueEditor({
 	value,
 	onChange,
 	targets,
-	targetSearchParams,
 }: ReferenceValueEditorProps) {
 	// If targets are available, offer structured input
 	// Reference value can be: "123", "Patient/123", or a chain like "Patient.name"

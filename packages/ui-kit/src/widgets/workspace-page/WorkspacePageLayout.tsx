@@ -56,7 +56,7 @@ export function WorkspacePageLayout({
                     <div className={classes.headingRow}>
                         <div className={classes.titleBlock}>
                             {kicker ? <div className={classes.kickerRow}>{kicker}</div> : null}
-                            <Text as="h1" variant="display-1" className={classes.title}>
+                            <Text as="h1" variant="header-1" className={classes.title}>
                                 {title}
                             </Text>
                             {description ? (
@@ -111,7 +111,7 @@ export function WorkspacePageSection({
                 <div className={classes.sectionHeader}>
                     <div className={classes.sectionTitleBlock}>
                         {title ? (
-                            <Text as="h2" variant="header-2">
+                            <Text as="h2" variant="subheader-3">
                                 {title}
                             </Text>
                         ) : null}

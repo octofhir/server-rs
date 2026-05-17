@@ -1,6 +1,5 @@
 import { useParams, useNavigate } from "react-router-dom";
 import {
-	Stack,
 	Title,
 	Text,
 	Group,
@@ -9,7 +8,6 @@ import {
 	Alert,
 	Button,
 	Code,
-	Divider,
 	Breadcrumbs,
 	Anchor,
 	Tooltip,
@@ -18,6 +16,7 @@ import {
 	KeyValueList,
 	SectionPanel,
 } from "@/shared/ui";
+import { WorkspacePageLayout } from "@/widgets/workspace-page";
 import {
 	IconAlertCircle,
 	IconArrowLeft,
@@ -41,6 +40,13 @@ import {
 	getSubscriptionEventView,
 } from "@/entities/api-app";
 import { useApp } from "../lib/useApps";
+
+const singleLineTextStyle = {
+	display: "-webkit-box",
+	WebkitBoxOrient: "vertical",
+	WebkitLineClamp: 1,
+	overflow: "hidden",
+};
 
 function MethodBadge({ method }: { method: string }) {
 	const methodView = getAppMethodView(method);
@@ -70,17 +76,22 @@ export function AppDetailPage() {
 	const subscriptions = app?.subscriptions ?? [];
 
 	return (
-		<Stack gap="md" style={{ flex: 1, minHeight: 0 }} className="page-enter">
-			<Breadcrumbs>
+		<WorkspacePageLayout
+			title={app?.name ?? "App details"}
+			description="FHIR App resource backing custom API surfaces"
+			className="page-enter"
+			kicker={
+				<Breadcrumbs>
 				<Anchor onClick={() => navigate("/apps")}>Apps</Anchor>
 				<Text>{app?.name ?? "Loading..."}</Text>
-			</Breadcrumbs>
-
-			<Group>
+				</Breadcrumbs>
+			}
+			actions={
 				<Button variant="subtle" leftSection={<IconArrowLeft size={16} />} onClick={() => navigate("/apps")}>
 					Back
 				</Button>
-			</Group>
+			}
+		>
 
 			{isLoading && (
 				<Group justify="center" py="xl">
@@ -310,7 +321,7 @@ export function AppDetailPage() {
 									),
 									filter: sub.trigger.fhirpath ? (
 										<Tooltip label={sub.trigger.fhirpath}>
-											<Code size="xs" style={{ maxWidth: 180 }} lineClamp={1}>
+											<Code size="xs" style={{ maxWidth: 180, ...singleLineTextStyle }}>
 												{sub.trigger.fhirpath}
 											</Code>
 										</Tooltip>
@@ -323,7 +334,7 @@ export function AppDetailPage() {
 												{sub.channel.type}
 											</Badge>
 											<Tooltip label={sub.channel.endpoint}>
-												<Code size="xs" style={{ maxWidth: 140 }} lineClamp={1}>
+												<Code size="xs" style={{ maxWidth: 140, ...singleLineTextStyle }}>
 													{sub.channel.endpoint}
 												</Code>
 											</Tooltip>
@@ -346,6 +357,6 @@ export function AppDetailPage() {
 					</SectionPanel>
 				</>
 			)}
-		</Stack>
+		</WorkspacePageLayout>
 	);
 }

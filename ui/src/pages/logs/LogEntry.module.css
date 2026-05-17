@@ -1,0 +1,85 @@
+.entry {
+	border-bottom: 1px solid var(--octo-border-subtle);
+	transition: background-color 0.15s ease;
+}
+
+.entry:hover {
+	background-color: var(--octo-surface-2);
+}
+
+.entry[data-level="error"] {
+	background-color: rgba(255, 77, 61, 0.05);
+}
+
+.entry[data-level="error"]:hover {
+	background-color: rgba(255, 77, 61, 0.1);
+}
+
+.entry[data-level="warn"] {
+	background-color: rgba(168, 132, 120, 0.05);
+}
+
+.entry[data-level="warn"]:hover {
+	background-color: rgba(168, 132, 120, 0.1);
+}
+
+.mainRow {
+	padding: 6px 12px;
+	min-height: 32px;
+}
+
+.expandIcon {
+	flex-shrink: 0;
+}
+
+.timestamp {
+	flex-shrink: 0;
+	width: 90px;
+	font-size: 11px;
+}
+
+.levelBadge {
+	flex-shrink: 0;
+	width: 50px;
+	text-align: center;
+	font-size: 9px;
+	font-weight: 600;
+}
+
+.target {
+	flex-shrink: 0;
+	width: 220px;
+	font-size: 11px;
+	opacity: 0.7;
+}
+
+.message {
+	flex: 1;
+	min-width: 0;
+}
+
+.copyButton {
+	flex-shrink: 0;
+	opacity: 0;
+	transition: opacity 0.15s ease;
+}
+
+.entry:hover .copyButton {
+	opacity: 1;
+}
+
+.details {
+	padding: 8px 12px 12px 42px;
+	background-color: var(--octo-surface-2);
+	border-top: 1px solid var(--octo-border-subtle);
+}
+
+.fieldsContainer {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	padding: 8px 12px;
+	background-color: var(--octo-surface-1);
+	border-radius: 6px;
+	border: 1px solid var(--octo-border-subtle);
+}

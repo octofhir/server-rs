@@ -84,7 +84,17 @@ function QueryItem({
         </Group>
       </Group>
       {query.query && (
-        <Text size="xs" ff="monospace" lineClamp={3} style={{ wordBreak: "break-all" }}>
+        <Text
+          size="xs"
+          ff="monospace"
+          style={{
+            display: "-webkit-box",
+            WebkitBoxOrient: "vertical",
+            WebkitLineClamp: 3,
+            overflow: "hidden",
+            wordBreak: "break-all",
+          }}
+        >
           {query.query}
         </Text>
       )}

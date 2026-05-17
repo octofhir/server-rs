@@ -2,7 +2,6 @@ import { useState, useMemo } from "react";
 import {
   Stack,
   Group,
-  Title,
   Button,
   TextInput,
   Select,
@@ -15,6 +14,7 @@ import {
   Center,
   Badge,
 } from "@/shared/ui";
+import { WorkspacePageLayout } from "@/widgets/workspace-page";
 import { modals, notifications } from "@octofhir/ui-kit";
 import { useNavigate } from "react-router-dom";
 import {
@@ -32,7 +32,13 @@ import { useAutomations, useDeleteAutomation, useDeployAutomation } from "../lib
 import { AutomationStatusBadge } from "./AutomationStatusBadge";
 import { CreateAutomationModal } from "./CreateAutomationModal";
 import type { Automation, AutomationStatus, AutomationTriggerType } from "@/shared/api/types";
-import classes from "./AutomationsPage.module.css";
+
+const singleLineTextStyle = {
+  display: "-webkit-box",
+  WebkitBoxOrient: "vertical",
+  WebkitLineClamp: 1,
+  overflow: "hidden",
+};
 
 const statusOptions = [
   { value: "", label: "All statuses" },
@@ -241,36 +247,36 @@ export function AutomationsPage() {
   }
 
   return (
-    <Stack className={`page-enter ${classes.container}`} gap="lg" p="md">
-      {/* Header */}
-      <Group justify="space-between">
-        <Title order={2}>Automations</Title>
+    <WorkspacePageLayout
+      title="Automations"
+      description="Create, deploy, and test event-driven automation workflows"
+      className="page-enter"
+      actions={
         <Button leftSection={<Plus size={16} />} onClick={() => setCreateModalOpen(true)}>
           New Automation
         </Button>
-      </Group>
-
-      {/* Filters */}
-      <Group gap="md">
-        <TextInput
-          placeholder="Search automations..."
-          leftSection={<Magnifier size={16} />}
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          style={{ flex: 1, maxWidth: 400 }}
-        />
-        <Select
-          data={statusOptions}
-          value={statusFilter}
-          onChange={(value) => setStatusFilter(value || "")}
-          placeholder="Filter by status"
-          clearable
-          w={160}
-        />
-      </Group>
-
-      {/* Table */}
-      <Paper withBorder radius="md">
+      }
+      toolbar={
+        <Group gap="sm">
+          <TextInput
+            placeholder="Search automations..."
+            leftSection={<Magnifier size={16} />}
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            style={{ flex: 1, maxWidth: 460 }}
+          />
+          <Select
+            data={statusOptions}
+            value={statusFilter}
+            onChange={(value) => setStatusFilter(value || "")}
+            placeholder="Filter by status"
+            clearable
+            w={160}
+          />
+        </Group>
+      }
+    >
+      <Paper withBorder radius="md" style={{ overflow: "hidden" }}>
         {isLoading ? (
           <Center h={300}>
             <Loader />
@@ -307,7 +313,7 @@ export function AutomationsPage() {
                     <Stack gap={2}>
                       <Text fw={500}>{automation.name}</Text>
                       {automation.description && (
-                        <Text size="xs" c="dimmed" lineClamp={1}>
+                        <Text size="xs" c="dimmed" style={singleLineTextStyle}>
                           {automation.description}
                         </Text>
                       )}
@@ -380,6 +386,6 @@ export function AutomationsPage() {
 
       {/* Create Modal */}
       <CreateAutomationModal opened={createModalOpen} onClose={() => setCreateModalOpen(false)} />
-    </Stack>
+    </WorkspacePageLayout>
   );
 }

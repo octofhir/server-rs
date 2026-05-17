@@ -1,6 +1,6 @@
 import { IconClock, IconPinFilled } from "@octofhir/ui-kit";
 import { useMemo } from "react";
-import type { HttpMethod } from "@/shared/api";
+import { isHttpMethod } from "@/shared/api";
 import { useHistory } from "../../hooks/useHistory";
 import type { ConsoleCommand } from "../types";
 
@@ -78,7 +78,7 @@ export function useHistoryCommands(): ConsoleCommand[] {
         execute: (ctx) => {
           // Always restore to "pro" mode (the only active mode now)
           ctx.setMode("pro");
-          ctx.setMethod(entry.method as HttpMethod);
+          ctx.setMethod(isHttpMethod(entry.method) ? entry.method : "GET");
           ctx.setRawPath(entry.path);
 
           if (entry.body) {

@@ -1,7 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { astToBuilderState, builderStateToAst, builderStateToRaw } from "./builder-model";
 import { parseQueryAst } from "./parser";
-import { serializeAst } from "./serializer";
 
 describe("builder-model", () => {
 	describe("astToBuilderState", () => {

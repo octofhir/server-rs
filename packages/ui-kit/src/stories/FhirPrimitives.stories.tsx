@@ -8,6 +8,7 @@ import {
     IdentifierBadge,
     OperationOutcomePanel,
     ReferenceLink,
+    ResourceName,
     ResourceMetaBar,
     ResourceSummaryCard,
     ResourceTypeBadge,
@@ -74,6 +75,24 @@ export const WorkspaceFoundations: Story = {
 
                 <CanonicalUri value="http://hl7.org/fhir/StructureDefinition/Patient" />
                 <ReferenceLink href="/ui/resources/Patient/example" reference="Patient/example" />
+                <div style={{ display: "grid", gap: 8 }}>
+                    <ResourceName
+                        showType
+                        resource={{
+                            resourceType: "Patient",
+                            id: "example",
+                            name: [{ given: ["Alex"], family: "Streltsov" }],
+                        }}
+                    />
+                    <ResourceName
+                        showType
+                        resource={{
+                            resourceType: "StructureDefinition",
+                            id: "octofhir-access-policy",
+                            title: "Access policy profile",
+                        }}
+                    />
+                </div>
             </Surface>
 
             <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) 320px", gap: 12 }}>

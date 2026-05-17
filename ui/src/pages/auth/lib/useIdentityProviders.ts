@@ -2,7 +2,6 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { notifications } from "@octofhir/ui-kit";
 import type { IdentityProviderResource } from "@/entities/identity-provider";
 import { fhirClient } from "@/shared/api/fhirClient";
-import type { Bundle } from "@/shared/api/types";
 
 export type { IdentityProviderResource } from "@/entities/identity-provider";
 
@@ -10,7 +9,7 @@ export type { IdentityProviderResource } from "@/entities/identity-provider";
 export const idpKeys = {
 	all: ["identity-providers"] as const,
 	lists: () => [...idpKeys.all, "list"] as const,
-	list: (params: Record<string, any>) => [...idpKeys.lists(), params] as const,
+	list: (params: Record<string, unknown>) => [...idpKeys.lists(), params] as const,
 	details: () => [...idpKeys.all, "detail"] as const,
 	detail: (id: string) => [...idpKeys.details(), id] as const,
 };
@@ -20,13 +19,12 @@ export function useIdentityProviders(params: { count?: number; offset?: number; 
 	return useQuery({
 		queryKey: idpKeys.list(params),
 		queryFn: async () => {
-			const searchParams: Record<string, any> = {};
+			const searchParams: Record<string, string | number> = {};
 			if (params.count) searchParams._count = params.count;
 			if (params.offset) searchParams._offset = params.offset;
 			if (params.search) searchParams.name = params.search;
 			
-			const response = await fhirClient.search("IdentityProvider", searchParams);
-			return response as Bundle<IdentityProviderResource>;
+			return fhirClient.search<IdentityProviderResource>("IdentityProvider", searchParams);
 		},
 	});
 }
@@ -36,8 +34,7 @@ export function useIdentityProvider(id: string | null) {
 		queryKey: idpKeys.detail(id || ""),
 		queryFn: async () => {
 			if (!id) throw new Error("ID required");
-			const response = await fhirClient.read("IdentityProvider", id);
-			return response as IdentityProviderResource;
+			return fhirClient.read<IdentityProviderResource>("IdentityProvider", id);
 		},
 		enabled: !!id,
 	});
@@ -47,9 +44,9 @@ export function useCreateIdentityProvider() {
 	const queryClient = useQueryClient();
 
 	return useMutation({
-		mutationFn: async (idp: Partial<IdentityProviderResource>) => {
-			const response = await fhirClient.create(idp as any);
-			return response as IdentityProviderResource;
+		mutationFn: async (idp: IdentityProviderResource) => {
+			const response = await fhirClient.create(idp);
+			return response;
 		},
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: idpKeys.lists() });
@@ -75,8 +72,8 @@ export function useUpdateIdentityProvider() {
 	return useMutation({
 		mutationFn: async (idp: IdentityProviderResource) => {
 			if (!idp.id) throw new Error("Provider resource ID required for update");
-			const response = await fhirClient.update(idp as any);
-			return response as IdentityProviderResource;
+			const response = await fhirClient.update(idp);
+			return response;
 		},
 		onSuccess: (data) => {
 			queryClient.invalidateQueries({ queryKey: idpKeys.lists() });

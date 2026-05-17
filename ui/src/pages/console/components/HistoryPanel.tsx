@@ -9,7 +9,6 @@ import {
   Stack,
   Text,
   TextInput,
-  Tooltip,
 } from "@/shared/ui";
 import {
   IconClock,
@@ -22,6 +21,7 @@ import {
 } from "@octofhir/ui-kit";
 import { useUnit } from "effector-react";
 import { useState } from "react";
+import { isHttpMethod } from "@/shared/api";
 import type { HistoryEntry } from "../db/historyDatabase";
 import { useHistory } from "../hooks/useHistory";
 import { historyService } from "../services/historyService";
@@ -34,7 +34,7 @@ interface HistoryPanelProps {
 
 export function HistoryPanel({ opened, onClose }: HistoryPanelProps) {
   const [searchQuery, setSearchQuery] = useState("");
-  const { entries, isLoading, togglePin, deleteEntry, clearAll } = useHistory();
+  const { entries, togglePin, deleteEntry, clearAll } = useHistory();
   const {
     setRawPath: setRawPathEvent,
     setMethod: setMethodEvent,
@@ -58,7 +58,7 @@ export function HistoryPanel({ opened, onClose }: HistoryPanelProps) {
   const handleRestore = (entry: HistoryEntry) => {
     // Always restore to "pro" mode (the only active mode now)
     setModeEvent("pro");
-    setMethodEvent(entry.method as any);
+    setMethodEvent(isHttpMethod(entry.method) ? entry.method : "GET");
     setRawPathEvent(entry.path);
     if (entry.body) {
       setBodyEvent(entry.body);

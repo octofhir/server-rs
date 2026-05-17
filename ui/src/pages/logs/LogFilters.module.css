@@ -1,0 +1,42 @@
+.container {
+	background-color: var(--octo-surface-1);
+	border-bottom: 1px solid var(--octo-border-subtle);
+	padding: 8px 12px;
+	position: sticky;
+	top: 0;
+	z-index: 10;
+}
+
+.toolbar {
+	width: 100%;
+	justify-content: space-between;
+}
+
+.primaryControls {
+	flex: 1 1 420px;
+	min-width: 0;
+}
+
+.searchInput {
+	width: min(360px, 100%);
+	flex: 1 1 260px;
+}
+
+.actions {
+	flex: 0 0 auto;
+}
+
+@media (max-width: 720px) {
+	.toolbar {
+		align-items: stretch;
+	}
+
+	.primaryControls,
+	.actions {
+		width: 100%;
+	}
+
+	.actions {
+		justify-content: flex-end;
+	}
+}

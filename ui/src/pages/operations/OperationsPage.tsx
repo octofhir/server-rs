@@ -1,8 +1,6 @@
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
-	Stack,
-	Title,
 	Text,
 	Paper,
 	Group,
@@ -15,11 +13,10 @@ import {
 	ActionIcon,
 	Tooltip,
 	Code,
-	Accordion,
 	Select,
 	Anchor,
-	ScrollArea,
 } from "@/shared/ui";
+import { WorkspacePageLayout } from "@/widgets/workspace-page";
 import {
 	CircleExclamation,
 	Magnifier,
@@ -55,6 +52,13 @@ const CATEGORY_ICONS: Record<string, typeof Server> = {
 	api: Cpu,
 };
 
+const singleLineTextStyle = {
+	display: "-webkit-box",
+	WebkitBoxOrient: "vertical",
+	WebkitLineClamp: 1,
+	overflow: "hidden",
+};
+
 function MethodBadge({ method }: { method: string }) {
 	const methodView = getOperationMethodView(method);
 
@@ -80,8 +84,8 @@ function CategorySection({
 	const categoryView = getOperationCategoryView(category);
 
 	return (
-		<Accordion.Item value={category}>
-			<Accordion.Control>
+		<Paper p="sm" withBorder style={{ backgroundColor: "var(--g-color-base-background)" }}>
+			<Group justify="space-between" mb="sm">
 				<Group gap="sm">
 					<Icon size={20} color="var(--g-color-text-secondary)" />
 					<Text fw={500}>{categoryView.label}</Text>
@@ -89,72 +93,70 @@ function CategorySection({
 						{operations.length}
 					</Badge>
 				</Group>
-			</Accordion.Control>
-			<Accordion.Panel>
-				<DataPreview
-					columns={[
-						{ id: "id", label: "ID", width: 180 },
-						{ id: "name", label: "Name" },
-						{ id: "methods", label: "Methods", width: 180 },
-						{ id: "path", label: "Path" },
-						{ id: "app", label: "App", width: 180 },
-						{ id: "access", label: "Access", width: 90 },
-						{ id: "actions", label: "", width: 50 },
-					]}
-					rows={operations.map((operation) => ({
-						id: <Code>{operation.id}</Code>,
-						name: (
-							<>
-								<Text size="sm" fw={500}>
-									{operation.name}
+			</Group>
+			<DataPreview
+				columns={[
+					{ id: "id", label: "ID", width: 180 },
+					{ id: "name", label: "Name" },
+					{ id: "methods", label: "Methods", width: 180 },
+					{ id: "path", label: "Path" },
+					{ id: "app", label: "App", width: 180 },
+					{ id: "access", label: "Access", width: 90 },
+					{ id: "actions", label: "", width: 50 },
+				]}
+				rows={operations.map((operation) => ({
+					id: <Code>{operation.id}</Code>,
+					name: (
+						<>
+							<Text size="sm" fw={500}>
+								{operation.name}
+							</Text>
+							{operation.description && (
+								<Text size="xs" c="dimmed" style={singleLineTextStyle}>
+									{operation.description}
 								</Text>
-								{operation.description && (
-									<Text size="xs" c="dimmed" lineClamp={1}>
-										{operation.description}
-									</Text>
-								)}
-							</>
-						),
-						methods: (
-							<Group gap={4}>
-								{operation.methods.map((method) => (
-									<MethodBadge key={method} method={method} />
-								))}
-							</Group>
-						),
-						path: <Code size="xs">{operation.path_pattern}</Code>,
-						app: operation.app ? (
-							<Anchor
-								size="sm"
-								onClick={() => onNavigateToApp(operation.app?.id ?? "")}
-								style={{ cursor: "pointer" }}
-							>
-								{operation.app.name}
-							</Anchor>
-						) : (
-							<Text size="sm" c="dimmed">-</Text>
-						),
-						access: (
-							<Tooltip label={operation.public ? "Public (no auth required)" : "Protected (requires auth)"}>
-								{operation.public ? (
-									<LockOpen size={16} style={{ color: "var(--octo-accent-primary)" }} />
-								) : (
-									<Lock size={16} style={{ color: "var(--octo-accent-warm)" }} />
-								)}
-							</Tooltip>
-						),
-						actions: (
-							<Tooltip label="View details">
-								<ActionIcon variant="subtle" size="sm" onClick={() => onViewOperation(operation.id)}>
-									<Eye size={16} />
-								</ActionIcon>
-							</Tooltip>
-						),
-					}))}
-					getRowKey={(_row, index) => operations[index]?.id ?? `${index}`}
-				/>
-			</Accordion.Panel>
-		</Accordion.Item>
+							)}
+						</>
+					),
+					methods: (
+						<Group gap={4}>
+							{operation.methods.map((method) => (
+								<MethodBadge key={method} method={method} />
+							))}
+						</Group>
+					),
+					path: <Code size="xs">{operation.path_pattern}</Code>,
+					app: operation.app ? (
+						<Anchor
+							size="sm"
+							onClick={() => onNavigateToApp(operation.app?.id ?? "")}
+							style={{ cursor: "pointer" }}
+						>
+							{operation.app.name}
+						</Anchor>
+					) : (
+						<Text size="sm" c="dimmed">-</Text>
+					),
+					access: (
+						<Tooltip label={operation.public ? "Public (no auth required)" : "Protected (requires auth)"}>
+							{operation.public ? (
+								<LockOpen size={16} style={{ color: "var(--octo-accent-primary)" }} />
+							) : (
+								<Lock size={16} style={{ color: "var(--octo-accent-warm)" }} />
+							)}
+						</Tooltip>
+					),
+					actions: (
+						<Tooltip label="View details">
+							<ActionIcon variant="subtle" size="sm" onClick={() => onViewOperation(operation.id)}>
+								<Eye size={16} />
+							</ActionIcon>
+						</Tooltip>
+					),
+				}))}
+				getRowKey={(_row, index) => operations[index]?.id ?? `${index}`}
+			/>
+		</Paper>
 	);
 }
 
@@ -189,22 +191,17 @@ export function OperationsPage() {
 	};
 
 	return (
-		<Stack gap="md" style={{ flex: 1, minHeight: 0 }}>
-			<div>
-				<Title order={2}>Operations</Title>
-				<Text c="dimmed" size="sm">
-					View and manage server API operations
-				</Text>
-			</div>
-
-			<Paper p="md" style={{ backgroundColor: "var(--octo-surface-2)" }}>
-				<Group gap="md">
+		<WorkspacePageLayout
+			title="Operations"
+			description="View and manage server API operations"
+			toolbar={
+				<Group gap="sm">
 					<TextInput
 						placeholder="Search operations..."
 						leftSection={<Magnifier size={16} />}
 						value={search}
 						onChange={(e) => setSearch(e.currentTarget.value)}
-						style={{ flex: 1 }}
+						style={{ flex: 1, maxWidth: 460 }}
 					/>
 					{appOptions.length > 0 && (
 						<Select
@@ -222,7 +219,8 @@ export function OperationsPage() {
 						data={operationAccessFilterOptions}
 					/>
 				</Group>
-			</Paper>
+			}
+		>
 
 			{isLoading && (
 				<Group justify="center" py="xl">
@@ -253,28 +251,26 @@ export function OperationsPage() {
 					</Group>
 
 					{categories.length === 0 ? (
-						<Paper p="xl" style={{ backgroundColor: "var(--octo-surface-2)" }}>
+						<Paper p="md" style={{ backgroundColor: "var(--octo-surface-2)" }}>
 							<Text ta="center" c="dimmed">
 								No operations match your filters
 							</Text>
 						</Paper>
 					) : (
-						<ScrollArea style={{ flex: 1 }} offsetScrollbars>
-							<Accordion multiple defaultValue={categories}>
-								{categories.map((category) => (
-									<CategorySection
-										key={category}
-										category={category}
-										operations={filteredAndGrouped[category]}
-										onViewOperation={handleViewOperation}
-										onNavigateToApp={handleNavigateToApp}
-									/>
-								))}
-							</Accordion>
-						</ScrollArea>
+						<div style={{ display: "grid", gap: 12 }}>
+							{categories.map((category) => (
+								<CategorySection
+									key={category}
+									category={category}
+									operations={filteredAndGrouped[category]}
+									onViewOperation={handleViewOperation}
+									onNavigateToApp={handleNavigateToApp}
+								/>
+							))}
+						</div>
 					)}
 				</>
 			)}
-		</Stack>
+		</WorkspacePageLayout>
 	);
 }

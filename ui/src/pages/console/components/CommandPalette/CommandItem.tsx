@@ -44,7 +44,7 @@ export function CommandItem({ command }: CommandItemProps) {
 			{command.badge && (
 				<Badge
 					size="s"
-					theme={command.badgeColor as any || "normal"}
+					color={command.badgeColor ?? "gray"}
 					style={{ flexShrink: 0 }}
 				>
 					{command.badge}

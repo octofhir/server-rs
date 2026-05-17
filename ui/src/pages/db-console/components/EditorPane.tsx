@@ -32,7 +32,7 @@ export function EditorPane({
 	modelInstance,
 	isPending,
 }: EditorPaneProps) {
-	const [formatterOpened, { toggle: toggleFormatter, close: closeFormatter }] = useDisclosure(false);
+	const [formatterOpened, { open: openFormatter, close: closeFormatter }] = useDisclosure(false);
 	const { config: formatterConfig, saveConfig: saveFormatterConfig } = useFormatterSettings();
 
 	useEffect(() => {
@@ -80,39 +80,44 @@ export function EditorPane({
 						</ActionIcon>
 					</Tooltip>
 
-					<Popover opened={formatterOpened} onClose={closeFormatter} position="bottom-end" width={320} shadow="md">
-						<Popover.Target>
-							<Tooltip label="Formatter Settings">
-								<ActionIcon variant="subtle" size="xs" onClick={toggleFormatter}>
-									<Gear size={14} />
-								</ActionIcon>
-							</Tooltip>
-						</Popover.Target>
-						<Popover.Dropdown>
-							<Text size="sm" fw={500} mb="sm">
-								SQL Formatter Settings
-							</Text>
-							<FormatterSettings
-								value={formatterConfig}
-								onChange={(config) => {
-									setLspFormatterConfig(config);
-									saveFormatterConfig(config);
-								}}
-								compact
-							/>
-							<Group justify="flex-end" mt="sm">
-								<Button
-									size="xs"
-									variant="light"
-									onClick={() => {
-										closeFormatter();
-										handleFormat();
+					<Popover
+						open={formatterOpened}
+						onOpenChange={(open) => (open ? openFormatter() : closeFormatter())}
+						placement="bottom-end"
+						trigger="click"
+						content={
+							<Box p="3" style={{ width: 320 }}>
+								<Text size="sm" fw={500} mb="sm">
+									SQL Formatter Settings
+								</Text>
+								<FormatterSettings
+									value={formatterConfig}
+									onChange={(config) => {
+										setLspFormatterConfig(config);
+										saveFormatterConfig(config);
 									}}
-								>
-									Apply & Format
-								</Button>
-							</Group>
-						</Popover.Dropdown>
+									compact
+								/>
+								<Group justify="flex-end" mt="sm">
+									<Button
+										size="xs"
+										variant="light"
+										onClick={() => {
+											closeFormatter();
+											handleFormat();
+										}}
+									>
+										Apply & Format
+									</Button>
+								</Group>
+							</Box>
+						}
+					>
+						<Tooltip label="Formatter Settings">
+							<ActionIcon variant="subtle" size="xs">
+								<Gear size={14} />
+							</ActionIcon>
+						</Tooltip>
 					</Popover>
 
 					<Button size="compact-xs" onClick={() => onExecute()} loading={isPending}>

@@ -2,7 +2,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { notifications } from "@octofhir/ui-kit";
 import { defaultRolePermissions } from "@/entities/access-role";
 import { fhirClient } from "@/shared/api/fhirClient";
-import type { RoleResource, Bundle } from "@/shared/api/types";
+import type { RoleResource } from "@/shared/api/types";
 
 // Query keys
 export const roleKeys = {
@@ -21,13 +21,12 @@ export function useRoles(params: { count?: number; offset?: number; search?: str
 	return useQuery({
 		queryKey: roleKeys.list(params),
 		queryFn: async () => {
-			const searchParams: Record<string, unknown> = {};
+			const searchParams: Record<string, string | number> = {};
 			if (params.count) searchParams._count = params.count;
 			if (params.offset) searchParams._offset = params.offset;
 			if (params.search) searchParams.name = params.search;
 
-			const response = await fhirClient.search("Role", searchParams);
-			return response as Bundle<RoleResource>;
+			return fhirClient.search<RoleResource>("Role", searchParams);
 		},
 	});
 }
@@ -37,8 +36,7 @@ export function useRole(id: string | null) {
 		queryKey: roleKeys.detail(id || ""),
 		queryFn: async () => {
 			if (!id) throw new Error("ID required");
-			const response = await fhirClient.read("Role", id);
-			return response as RoleResource;
+			return fhirClient.read<RoleResource>("Role", id);
 		},
 		enabled: !!id,
 	});
@@ -60,10 +58,8 @@ export function useCreateRole() {
 	const queryClient = useQueryClient();
 
 	return useMutation({
-		mutationFn: async (role: Partial<RoleResource>) => {
-			const response = await fhirClient.create({ ...role, resourceType: "Role" } as RoleResource);
-			return response as RoleResource;
-		},
+		mutationFn: (role: Partial<RoleResource>) =>
+			fhirClient.create<RoleResource>({ ...role, resourceType: "Role" }),
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: roleKeys.lists() });
 			notifications.show({
@@ -88,8 +84,7 @@ export function useUpdateRole() {
 	return useMutation({
 		mutationFn: async (role: RoleResource) => {
 			if (!role.id) throw new Error("Role ID required for update");
-			const response = await fhirClient.update(role);
-			return response as RoleResource;
+			return fhirClient.update<RoleResource>(role);
 		},
 		onSuccess: (data) => {
 			queryClient.invalidateQueries({ queryKey: roleKeys.lists() });

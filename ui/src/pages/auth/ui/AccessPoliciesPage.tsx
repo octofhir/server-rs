@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo } from "react";
 import {
 	ActionIcon,
 	Badge,
@@ -19,8 +19,8 @@ import {
 	Text,
 	Textarea,
 	TextInput,
-	Title,
 } from "@/shared/ui";
+import { WorkspacePageLayout } from "@/widgets/workspace-page";
 import { Field, Form, FormSpy, useDebouncedValue, useDisclosure } from "@octofhir/ui-kit";
 import {
 	Plus,
@@ -53,6 +53,7 @@ import {
 	type MatcherElement,
 } from "@/entities/access-policy";
 import { useClients } from "../lib/useClients";
+import { getBundleResources } from "@/shared/api/guards";
 import { useResourceTypes } from "@/shared/api/hooks";
 import { Button } from "@/shared/ui/Button/Button";
 import { PolicyScriptEditor } from "@/shared/monaco/PolicyScriptEditor";
@@ -82,33 +83,31 @@ export function AccessPoliciesPage() {
 		close();
 	};
 
-	const policies = data?.entry?.map((e) => e.resource) || [];
+	const policies = getBundleResources<AccessPolicyResource>(data);
 
 	return (
-		<Stack gap="md" style={{ flex: 1, minHeight: 0 }}>
-			<Group justify="space-between">
-				<div>
-					<Title order={2}>Access Policies</Title>
-					<Text c="dimmed" size="sm">
-						Define fine-grained access control rules with matchers and custom scripts
-					</Text>
-				</div>
+		<WorkspacePageLayout
+			title="Access Policies"
+			description="Define fine-grained access control rules with matchers and custom scripts"
+			actions={
 				<Button leftSection={<Plus size={16} />} onClick={open}>
 					Create Policy
 				</Button>
-			</Group>
-
-			<Paper p="md" withBorder>
-				<Group mb="md">
+			}
+			toolbar={
+				<Group>
 					<TextInput
 						placeholder="Search by name..."
 						leftSection={<Magnifier size={16} />}
 						value={search}
 						onChange={(e) => setSearch(e.currentTarget.value)}
-						style={{ flex: 1 }}
+						style={{ flex: 1, maxWidth: 460 }}
 					/>
 				</Group>
+			}
+		>
 
+			<Paper p="sm" withBorder>
 				<DataPreview
 					columns={[
 						{ id: "name", label: "Name" },
@@ -178,7 +177,7 @@ export function AccessPoliciesPage() {
 			</Paper>
 
 			<PolicyModal opened={opened} onClose={handleClose} policy={editingPolicy} />
-		</Stack>
+		</WorkspacePageLayout>
 	);
 }
 

@@ -6,6 +6,7 @@ import {
 } from "@/shared/ui";
 import {
 	DashboardShell,
+	type DashboardShellStatus,
 } from "@octofhir/ui-kit";
 import {
 	House,
@@ -33,6 +34,11 @@ import { useHealth, useAuth, useSettings } from "@/shared/api/hooks";
 import { useColorScheme } from "@octofhir/ui-kit";
 
 const logoUrl = `${import.meta.env.BASE_URL}logo.png`;
+const statusThemeByHealth: Record<"ok" | "degraded" | "down", DashboardShellStatus["theme"]> = {
+	ok: "success",
+	degraded: "warning",
+	down: "danger",
+};
 
 /**
  * AppShell provides the top-level navigation and layout for the console.
@@ -213,11 +219,7 @@ export function AppShell() {
 		},
 	], [location.pathname, navigate]);
 
-	const statusColor = {
-		ok: "success",
-		degraded: "warning",
-		down: "danger",
-	}[health?.status ?? "down"];
+	const statusTheme = statusThemeByHealth[health?.status ?? "down"];
 
 	return (
 		<DashboardShell
@@ -236,7 +238,7 @@ export function AppShell() {
 			}}
 			status={{
 				label: health?.status?.toUpperCase() ?? "UNKNOWN",
-				theme: statusColor as any,
+				theme: statusTheme,
 			}}
 			account={user ? {
 				name: user.name || user.username,

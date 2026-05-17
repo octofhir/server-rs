@@ -1,6 +1,6 @@
 import type {
+	Bundle,
 	CapabilityStatement,
-	FhirBundle,
 	FhirResource,
 	HttpMethod,
 	HttpRequestConfig,
@@ -8,6 +8,7 @@ import type {
 } from "./types";
 import { authInterceptor } from "./authInterceptor";
 import { refreshAuthSession } from "./authSession";
+import { assertFhirBundle, assertFhirResource } from "./guards";
 
 export class HttpError extends Error {
 	response: HttpResponse<unknown>;
@@ -18,6 +19,9 @@ export class HttpError extends Error {
 		this.response = response;
 	}
 }
+
+type FhirSearchParams = Record<string, string | number | boolean | undefined>;
+type FhirCreateResource<T extends FhirResource> = Partial<T> & Pick<T, "resourceType">;
 
 export class FhirClient {
 	private baseUrl: string;
@@ -33,7 +37,7 @@ export class FhirClient {
 		};
 	}
 
-	private async request<T = any>(
+	private async request<T = unknown>(
 		config: HttpRequestConfig,
 	): Promise<HttpResponse<T>> {
 		const {
@@ -93,17 +97,21 @@ export class FhirClient {
 			responseHeaders[key] = value;
 		});
 
-		// Parse response data
+		// Parse response data. FHIR DELETE/empty responses are valid and should not
+		// be forced through JSON.parse.
 		let responseData: T;
 		const contentType = response.headers.get("content-type");
+		const rawBody = await response.text();
 
-		if (
+		if (!rawBody) {
+			responseData = undefined as T;
+		} else if (
 			contentType?.includes("application/json") ||
 			contentType?.includes("application/fhir+json")
 		) {
-			responseData = await response.json();
+			responseData = JSON.parse(rawBody) as T;
 		} else {
-			responseData = (await response.text()) as unknown as T;
+			responseData = rawBody as T;
 		}
 
 		const result: HttpResponse<T> = {
@@ -133,37 +141,40 @@ export class FhirClient {
 			method: "GET",
 			url: `/${resourceType}/${id}`,
 		});
-		return response.data;
+		return assertFhirResource<T>(response.data, `read ${resourceType}/${id}`);
 	}
 
-	async search<_T extends FhirResource = FhirResource>(
+	async search<T extends FhirResource = FhirResource>(
 		resourceType: string,
-		params: Record<string, string | number> = {},
-	): Promise<FhirBundle> {
+		params: FhirSearchParams = {},
+	): Promise<Bundle<T>> {
 		const searchParams = new URLSearchParams();
 
 		Object.entries(params).forEach(([key, value]) => {
+			if (value === undefined) return;
 			searchParams.set(key, String(value));
 		});
 
 		const queryString = searchParams.toString();
 		const url = `/${resourceType}${queryString ? `?${queryString}` : ""}`;
 
-		const response = await this.request<FhirBundle>({
+		const response = await this.request<Bundle<T>>({
 			method: "GET",
 			url,
 		});
 
-		return response.data;
+		return assertFhirBundle<T>(response.data, `search ${resourceType}`);
 	}
 
-	async create<T extends FhirResource = FhirResource>(resource: T): Promise<T> {
+	async create<T extends FhirResource = FhirResource>(
+		resource: FhirCreateResource<T>,
+	): Promise<T> {
 		const response = await this.request<T>({
 			method: "POST",
 			url: `/${resource.resourceType}`,
 			data: resource,
 		});
-		return response.data;
+		return assertFhirResource<T>(response.data, `create ${resource.resourceType}`);
 	}
 
 	async update<T extends FhirResource = FhirResource>(resource: T): Promise<T> {
@@ -176,7 +187,7 @@ export class FhirClient {
 			url: `/${resource.resourceType}/${resource.id}`,
 			data: resource,
 		});
-		return response.data;
+		return assertFhirResource<T>(response.data, `update ${resource.resourceType}/${resource.id}`);
 	}
 
 	async delete(resourceType: string, id: string): Promise<void> {
@@ -189,20 +200,20 @@ export class FhirClient {
 	async getCapabilities(): Promise<CapabilityStatement> {
 		const response = await this.request<CapabilityStatement>({
 			method: "GET",
-			url: "/metadata",
+			url: "/fhir/metadata",
 		});
 		return response.data;
 	}
 
 	// Generic request method for custom operations
-	async customRequest<T = any>(
+	async customRequest<T = unknown>(
 		config: Omit<HttpRequestConfig, "url"> & { url: string },
 	): Promise<HttpResponse<T>> {
 		return this.request<T>(config);
 	}
 
 	// Raw request method for REST console with timing
-	async rawRequest<T = any>(
+	async rawRequest<T = unknown>(
 		method: HttpMethod,
 		path: string,
 		body?: unknown,
@@ -239,7 +250,7 @@ export class FhirClient {
 			url: link.url,
 		});
 
-		return response.data;
+		return assertFhirBundle(response.data, `follow bundle link ${relation}`);
 	}
 
 	setBaseUrl(baseUrl: string): void {
@@ -286,7 +297,7 @@ class OctoFhirClient extends FhirClient {
 			method: "GET",
 			url: `${baseUrl}/${resourceType}/${id}`,
 		});
-		return response.data;
+		return assertFhirResource<T>(response.data, `read ${resourceType}/${id}`);
 	}
 
 	async search<_T extends FhirResource = FhirResource>(
@@ -308,7 +319,7 @@ class OctoFhirClient extends FhirClient {
 			url,
 		});
 
-		return response.data;
+		return assertFhirBundle(response.data, `search ${resourceType}`);
 	}
 
 	async create<T extends FhirResource = FhirResource>(resource: T): Promise<T> {
@@ -318,7 +329,7 @@ class OctoFhirClient extends FhirClient {
 			url: `${baseUrl}/${resource.resourceType}`,
 			data: resource,
 		});
-		return response.data;
+		return assertFhirResource<T>(response.data, `create ${resource.resourceType}`);
 	}
 
 	async update<T extends FhirResource = FhirResource>(resource: T): Promise<T> {
@@ -332,7 +343,7 @@ class OctoFhirClient extends FhirClient {
 			url: `${baseUrl}/${resource.resourceType}/${resource.id}`,
 			data: resource,
 		});
-		return response.data;
+		return assertFhirResource<T>(response.data, `update ${resource.resourceType}/${resource.id}`);
 	}
 
 	async delete(resourceType: string, id: string): Promise<void> {
