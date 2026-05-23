@@ -86,8 +86,16 @@ impl SearchModifier {
     pub fn applicable_to(&self, param_type: &SearchParameterType) -> bool {
         match self {
             Self::Missing => true, // All types support :missing
-            Self::Exact | Self::Contains => {
-                matches!(param_type, SearchParameterType::String)
+            Self::Exact => matches!(param_type, SearchParameterType::String),
+            Self::Contains => {
+                // FHIR R4 §3.1.1.5.6 lists :contains for string SP. In practice
+                // (HAPI, Aidbox, Medplum, Microsoft FHIR) :contains is also
+                // accepted on uri SP for substring URI search; allow it for
+                // interop and treat it as a case-insensitive substring match.
+                matches!(
+                    param_type,
+                    SearchParameterType::String | SearchParameterType::Uri
+                )
             }
             Self::Not | Self::Text | Self::In | Self::NotIn => {
                 matches!(param_type, SearchParameterType::Token)

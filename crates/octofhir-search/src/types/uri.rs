@@ -53,6 +53,13 @@ pub fn build_uri_search(
                 format!("${p} LIKE {jsonb_path} || '%'")
             }
 
+            Some(SearchModifier::Contains) => {
+                // Case-insensitive substring match against the stored URI.
+                let escaped = escape_like_pattern(&value.raw.to_lowercase());
+                let p = builder.add_text_param(format!("%{escaped}%"));
+                format!("LOWER({jsonb_path}) LIKE ${p}")
+            }
+
             Some(SearchModifier::Missing) => {
                 let is_missing = value.raw.eq_ignore_ascii_case("true");
                 if is_missing {
@@ -121,6 +128,14 @@ pub fn build_uri_array_search(
                 let p = builder.add_text_param(&value.raw);
                 format!(
                     "EXISTS (SELECT 1 FROM jsonb_array_elements_text({array_path}) AS uri WHERE ${p} LIKE uri || '%')"
+                )
+            }
+
+            Some(SearchModifier::Contains) => {
+                let escaped = escape_like_pattern(&value.raw.to_lowercase());
+                let p = builder.add_text_param(format!("%{escaped}%"));
+                format!(
+                    "EXISTS (SELECT 1 FROM jsonb_array_elements_text({array_path}) AS uri WHERE LOWER(uri) LIKE ${p})"
                 )
             }
 

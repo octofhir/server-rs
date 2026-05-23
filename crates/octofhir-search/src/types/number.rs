@@ -227,15 +227,26 @@ pub fn build_quantity_search(
     Ok(())
 }
 
-/// Parse a quantity search value into number, system, and code parts.
+/// Parse a quantity search value into (number, system, code) parts per
+/// FHIR R4 §3.1.1.5.7 (search.html#quantity).
+///
+/// Format: `value[|system[|code]]`. The system and code components are
+/// positional — the first `|`-delimited field after the value is the system,
+/// the second is the code. Empty fields collapse to `None` so callers can
+/// distinguish "any value" from a literal match.
+///
+/// Examples:
+///   "5.4"             → ("5.4", None,        None)
+///   "5.4|"            → ("5.4", None,        None)         // trailing pipe = any system
+///   "5.4|http://x"    → ("5.4", Some("…"),   None)
+///   "5.4|http://x|kg" → ("5.4", Some("…"),   Some("kg"))
+///   "5.4||kg"         → ("5.4", None,        Some("kg"))   // any system, fixed code
 fn parse_quantity_value(value: &str) -> (&str, Option<&str>, Option<&str>) {
     let parts: Vec<&str> = value.splitn(3, '|').collect();
-
-    match parts.len() {
-        1 => (parts[0], None, None),
-        2 => (parts[0], None, Some(parts[1])),
-        _ => (parts[0], Some(parts[1]), Some(parts[2])),
-    }
+    let num = parts[0];
+    let system = parts.get(1).copied().filter(|s| !s.is_empty());
+    let code = parts.get(2).copied().filter(|s| !s.is_empty());
+    (num, system, code)
 }
 
 /// Build a numeric comparison condition with the given prefix.

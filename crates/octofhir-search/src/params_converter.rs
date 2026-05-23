@@ -8,6 +8,9 @@ use crate::include::{is_include_parameter, is_revinclude_parameter};
 use crate::parameters::SearchPrefix;
 use crate::parser::{ParsedParam, ParsedValue};
 use crate::registry::SearchParameterRegistry;
+use crate::reverse_chaining::{
+    build_reverse_chain_search, is_reverse_chain_parameter, parse_reverse_chain,
+};
 use crate::sql_builder::{
     FhirQueryBuilder, IncludeSpec, JsonbPath, RevIncludeSpec, SearchCondition, SortOrder, SortSpec,
     SqlBuilder, SqlBuilderError, SqlValue, fhirpath_to_jsonb_path,
@@ -133,10 +136,34 @@ pub fn build_query_from_params_with_config(
     // Collect unknown parameters for warnings
     let mut unknown_params = Vec::new();
 
-    // Convert SearchParams.parameters to ParsedParam and process
-    for (key, values) in &params.parameters {
+    // Convert SearchParams.parameters to ParsedParam and process.
+    //
+    // FHIR R4 §3.1.1.5 (search.html#combining):
+    //   - Repeated parameter occurrences (a=v1&a=v2) → AND (each iteration must
+    //     match independently). Emit one ParsedParam per value entry.
+    //   - Comma-separated values within one occurrence (a=v1,v2) → OR. Emit one
+    //     ParsedParam with multiple ParsedValue.
+    //
+    // `params.parameters: HashMap<String, Vec<String>>` stores the Vec from
+    // `&`-repetition (one entry per occurrence). Each String can still contain
+    // a comma list. Iterate per entry so repeated occurrences AND naturally
+    // through SqlBuilder.add_condition (which AND's top-level conditions).
+    for (key, value_entries) in &params.parameters {
         // Skip control parameters
         if is_control_param(key) {
+            continue;
+        }
+
+        // Reverse chaining (_has) — handled before chain detection because
+        // `_has:` keys can contain `.` in the inner search-parameter spec.
+        if is_reverse_chain_parameter(key) {
+            handle_has_param(
+                &mut sql_builder,
+                key,
+                value_entries,
+                registry,
+                resource_type,
+            )?;
             continue;
         }
 
@@ -146,7 +173,7 @@ pub fn build_query_from_params_with_config(
                 &mut builder,
                 &mut sql_builder,
                 key,
-                values,
+                value_entries,
                 registry,
                 schema,
                 resource_type,
@@ -154,70 +181,73 @@ pub fn build_query_from_params_with_config(
             continue;
         }
 
-        // Convert to ParsedParam format
-        let mut parsed = convert_to_parsed_param(key, values);
+        for value_entry in value_entries {
+            // Convert one `&`-occurrence to ParsedParam (single-value entry,
+            // possibly comma-split into multiple ParsedValue for OR).
+            let mut parsed = convert_to_parsed_param(key, value_entry);
 
-        // Look up parameter definition in registry
-        let Some(param_def) = registry.get(resource_type, &parsed.name) else {
-            // Unknown parameter - handle based on policy
-            match config.unknown_param_handling {
-                UnknownParamHandling::Strict => {
-                    return Err(SqlBuilderError::InvalidSearchValue(format!(
-                        "Unknown search parameter: {}",
-                        key
-                    )));
+            // Look up parameter definition in registry
+            let Some(param_def) = registry.get(resource_type, &parsed.name) else {
+                // Unknown parameter - handle based on policy
+                match config.unknown_param_handling {
+                    UnknownParamHandling::Strict => {
+                        return Err(SqlBuilderError::InvalidSearchValue(format!(
+                            "Unknown search parameter: {}",
+                            key
+                        )));
+                    }
+                    UnknownParamHandling::Lenient => {
+                        tracing::debug!(param = %parsed.name, "Unknown search parameter, skipping");
+                        unknown_params.push(UnknownParamWarning {
+                            name: parsed.name.clone(),
+                            modifier: parsed.modifier.as_ref().map(|m| format!("{:?}", m)),
+                        });
+                        continue;
+                    }
                 }
-                UnknownParamHandling::Lenient => {
-                    tracing::debug!(param = %parsed.name, "Unknown search parameter, skipping");
-                    unknown_params.push(UnknownParamWarning {
-                        name: parsed.name.clone(),
-                        modifier: parsed.modifier.as_ref().map(|m| format!("{:?}", m)),
-                    });
-                    continue;
-                }
-            }
-        };
+            };
 
-        // Validate modifier compatibility with parameter type
-        if let Some(ref modifier) = parsed.modifier
-            && !modifier.applicable_to(&param_def.param_type)
-        {
-            return Err(SqlBuilderError::InvalidSearchValue(format!(
-                "Modifier ':{:?}' is not valid for {} parameter '{}' (type: {:?})",
-                modifier, resource_type, parsed.name, param_def.param_type
-            )));
-        }
-
-        // Validate prefix compatibility with parameter type.
-        // If a prefix is not applicable (e.g., UUID starting with "eb" parsed as "ends before"
-        // for a reference param), revert it — treat the prefix chars as part of the value.
-        for value in &mut parsed.values {
-            if let Some(ref prefix) = value.prefix
-                && !prefix.applicable_to(&param_def.param_type)
+            // Validate modifier compatibility with parameter type
+            if let Some(ref modifier) = parsed.modifier
+                && !modifier.applicable_to(&param_def.param_type)
             {
-                // Restore the prefix as part of the raw value
-                value.raw = format!("{}{}", prefix, value.raw);
-                value.prefix = None;
+                return Err(SqlBuilderError::InvalidSearchValue(format!(
+                    "Modifier ':{:?}' is not valid for {} parameter '{}' (type: {:?})",
+                    modifier, resource_type, parsed.name, param_def.param_type
+                )));
             }
-        }
 
-        // Handle _id specially — it maps to the database column `r.id`, not JSONB
-        if parsed.name == "_id" {
-            let mut or_conditions = Vec::new();
-            for value in &parsed.values {
-                if !value.raw.is_empty() {
-                    let p = sql_builder.add_text_param(&value.raw);
-                    or_conditions.push(format!("r.id = ${p}"));
+            // Validate prefix compatibility with parameter type.
+            // If a prefix is not applicable (e.g., UUID starting with "eb" parsed as "ends before"
+            // for a reference param), revert it — treat the prefix chars as part of the value.
+            for value in &mut parsed.values {
+                if let Some(ref prefix) = value.prefix
+                    && !prefix.applicable_to(&param_def.param_type)
+                {
+                    // Restore the prefix as part of the raw value
+                    value.raw = format!("{}{}", prefix, value.raw);
+                    value.prefix = None;
                 }
             }
-            if !or_conditions.is_empty() {
-                sql_builder.add_condition(SqlBuilder::build_or_clause(&or_conditions));
-            }
-            continue;
-        }
 
-        // Use dispatch_search to build the condition
-        dispatch_search(&mut sql_builder, &parsed, &param_def, resource_type)?;
+            // Handle _id specially — it maps to the database column `r.id`, not JSONB
+            if parsed.name == "_id" {
+                let mut or_conditions = Vec::new();
+                for value in &parsed.values {
+                    if !value.raw.is_empty() {
+                        let p = sql_builder.add_text_param(&value.raw);
+                        or_conditions.push(format!("r.id = ${p}"));
+                    }
+                }
+                if !or_conditions.is_empty() {
+                    sql_builder.add_condition(SqlBuilder::build_or_clause(&or_conditions));
+                }
+                continue;
+            }
+
+            // Use dispatch_search to build the condition
+            dispatch_search(&mut sql_builder, &parsed, &param_def, resource_type)?;
+        }
     }
 
     // Add status filter to exclude deleted resources
@@ -290,8 +320,17 @@ fn is_control_param(name: &str) -> bool {
     CONTROL_PARAMS.contains(&name) || is_include_parameter(name) || is_revinclude_parameter(name)
 }
 
-/// Convert a key-value pair to ParsedParam format.
-fn convert_to_parsed_param(key: &str, values: &[String]) -> ParsedParam {
+/// Convert a single key=value occurrence to ParsedParam format.
+///
+/// Per FHIR R4 §3.1.1.5 search.html#combining:
+/// - Comma-separated values within `value_entry` map to multiple ParsedValue
+///   (OR semantics inside one occurrence).
+/// - Repeated `&`-occurrences are AND'd by the caller emitting one ParsedParam
+///   per occurrence.
+///
+/// :of-type matches the spec spelling (Identifier modifier). The legacy
+/// camelCase `ofType` is also accepted.
+fn convert_to_parsed_param(key: &str, value_entry: &str) -> ParsedParam {
     // Parse name and modifier from key (e.g., "name:exact" -> name, Some(Exact))
     let (name, modifier) = if let Some((n, m)) = key.split_once(':') {
         let modifier = match m {
@@ -305,7 +344,7 @@ fn convert_to_parsed_param(key: &str, values: &[String]) -> ParsedParam {
             "not" => Some(crate::parameters::SearchModifier::Not),
             "identifier" => Some(crate::parameters::SearchModifier::Identifier),
             "missing" => Some(crate::parameters::SearchModifier::Missing),
-            "ofType" => Some(crate::parameters::SearchModifier::OfType),
+            "of-type" | "ofType" => Some(crate::parameters::SearchModifier::OfType),
             "code-text" => Some(crate::parameters::SearchModifier::CodeText),
             "text-advanced" => Some(crate::parameters::SearchModifier::TextAdvanced),
             other if !other.is_empty() => {
@@ -318,19 +357,16 @@ fn convert_to_parsed_param(key: &str, values: &[String]) -> ParsedParam {
         (key.to_string(), None)
     };
 
-    // Parse values with prefix extraction
-    let parsed_values: Vec<ParsedValue> = values
-        .iter()
-        .flat_map(|v| {
-            // Handle comma-separated values (OR semantics within same param)
-            v.split(',').map(|part| {
-                let part = part.trim();
-                let (prefix, raw) = extract_prefix(part);
-                ParsedValue {
-                    prefix,
-                    raw: raw.to_string(),
-                }
-            })
+    // Parse comma-separated values (OR semantics within this occurrence).
+    let parsed_values: Vec<ParsedValue> = value_entry
+        .split(',')
+        .map(|part| {
+            let part = part.trim();
+            let (prefix, raw) = extract_prefix(part);
+            ParsedValue {
+                prefix,
+                raw: raw.to_string(),
+            }
         })
         .filter(|pv| !pv.raw.is_empty())
         .collect();
@@ -365,6 +401,54 @@ fn extract_prefix(value: &str) -> (Option<SearchPrefix>, &str) {
 ///
 /// Uses the `search_idx_reference` index table for B-tree lookups instead of
 /// runtime JSONB extraction and CONCAT matching.
+/// Build reverse-chain (`_has`) conditions for one parameter key.
+///
+/// FHIR R4 §3.1.1.5.4 (search.html#has). Each `&`-occurrence emits one
+/// EXISTS clause and contributes an AND at the top level; comma-separated
+/// values within an occurrence OR via the inner `dispatch_search` invocation.
+fn handle_has_param(
+    sql_builder: &mut SqlBuilder,
+    key: &str,
+    values: &[String],
+    registry: &SearchParameterRegistry,
+    base_type: &str,
+) -> Result<(), SqlBuilderError> {
+    for value in values {
+        match parse_reverse_chain(key, value, registry, base_type) {
+            Ok(rc) => {
+                tracing::debug!(
+                    source = %rc.source_type,
+                    ref_param = %rc.reference_param,
+                    value = %value,
+                    "Processing _has occurrence"
+                );
+                build_reverse_chain_search(sql_builder, &rc, base_type)
+                    .map_err(|e| SqlBuilderError::InvalidSearchValue(e.to_string()))?;
+            }
+            Err(e) => {
+                tracing::warn!(
+                    key = %key,
+                    value = %value,
+                    error = %e,
+                    "Failed to parse _has parameter"
+                );
+                // Skip invalid occurrence (lenient handling of unknown params).
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Build chained-search conditions for one parameter key.
+///
+/// Per FHIR R4 §3.1.1.5 (search.html#combining), repeated `&`-occurrences of
+/// the same chained parameter (e.g. `subject:Patient.name=A&subject:Patient.name=B`)
+/// AND independently — each link in the chain must match the corresponding value.
+/// Comma-separated values inside a single occurrence still OR via the inner
+/// parameter handler (build_chained_search routes through dispatch_search which
+/// already handles comma-OR).
+///
+/// Each `&`-occurrence emits one top-level condition that SqlBuilder AND's.
 fn handle_chained_param(
     _builder: &mut FhirQueryBuilder,
     sql_builder: &mut SqlBuilder,
@@ -374,23 +458,31 @@ fn handle_chained_param(
     _schema: &str,
     resource_type: &str,
 ) -> Result<(), SqlBuilderError> {
-    let value = values.first().map(|s| s.as_str()).unwrap_or("");
-
-    match parse_chained_parameter(key, value, registry, resource_type) {
-        Ok(chained) => {
-            tracing::debug!(
-                chain = ?chained.chain,
-                final_param = %chained.final_param,
-                "Processing chained parameter"
-            );
-            build_chained_search(sql_builder, &chained, resource_type)
-                .map_err(|e| SqlBuilderError::InvalidSearchValue(e.to_string()))
-        }
-        Err(e) => {
-            tracing::warn!(key = %key, error = %e, "Failed to parse chained parameter");
-            Ok(()) // Skip invalid chained parameters
+    for value in values {
+        match parse_chained_parameter(key, value, registry, resource_type) {
+            Ok(chained) => {
+                tracing::debug!(
+                    chain = ?chained.chain,
+                    final_param = %chained.final_param,
+                    value = %value,
+                    "Processing chained parameter occurrence"
+                );
+                build_chained_search(sql_builder, &chained, resource_type)
+                    .map_err(|e| SqlBuilderError::InvalidSearchValue(e.to_string()))?;
+            }
+            Err(e) => {
+                tracing::warn!(
+                    key = %key,
+                    value = %value,
+                    error = %e,
+                    "Failed to parse chained parameter"
+                );
+                // Skip invalid chained parameter occurrence (do not fail the
+                // whole search — matches lenient handling of unknown params).
+            }
         }
     }
+    Ok(())
 }
 
 /// Build a SortSpec from a sort parameter.
@@ -571,7 +663,7 @@ mod tests {
 
     #[test]
     fn test_convert_to_parsed_param_simple() {
-        let parsed = convert_to_parsed_param("name", &["John".to_string()]);
+        let parsed = convert_to_parsed_param("name", "John");
         assert_eq!(parsed.name, "name");
         assert!(parsed.modifier.is_none());
         assert_eq!(parsed.values.len(), 1);
@@ -580,7 +672,7 @@ mod tests {
 
     #[test]
     fn test_convert_to_parsed_param_with_modifier() {
-        let parsed = convert_to_parsed_param("name:exact", &["John".to_string()]);
+        let parsed = convert_to_parsed_param("name:exact", "John");
         assert_eq!(parsed.name, "name");
         assert!(matches!(
             parsed.modifier,
@@ -590,7 +682,7 @@ mod tests {
 
     #[test]
     fn test_convert_to_parsed_param_with_prefix() {
-        let parsed = convert_to_parsed_param("birthdate", &["ge2000-01-01".to_string()]);
+        let parsed = convert_to_parsed_param("birthdate", "ge2000-01-01");
         assert_eq!(parsed.name, "birthdate");
         assert_eq!(parsed.values.len(), 1);
         assert_eq!(parsed.values[0].prefix, Some(SearchPrefix::Ge));
@@ -599,7 +691,7 @@ mod tests {
 
     #[test]
     fn test_convert_to_parsed_param_comma_separated() {
-        let parsed = convert_to_parsed_param("status", &["active,completed".to_string()]);
+        let parsed = convert_to_parsed_param("status", "active,completed");
         assert_eq!(parsed.values.len(), 2);
         assert_eq!(parsed.values[0].raw, "active");
         assert_eq!(parsed.values[1].raw, "completed");

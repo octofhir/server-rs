@@ -308,7 +308,10 @@ impl FhirPathOperation {
         let context = octofhir_fhirpath::EvaluationContext::new(
             collection,
             state.model_provider.clone(),
-            state.terminology_provider.clone(),
+            state
+                .terminology_provider
+                .clone()
+                .map(|h| h as std::sync::Arc<dyn octofhir_fhir_model::TerminologyProvider>),
             None, // validation provider
             None, // trace provider
         );

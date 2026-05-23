@@ -108,7 +108,11 @@ impl QueryCacheKey {
                 prefixes: p
                     .values
                     .iter()
-                    .map(|v| v.prefix.as_ref().map(|pr| format!("{:?}", pr).to_lowercase()))
+                    .map(|v| {
+                        v.prefix
+                            .as_ref()
+                            .map(|pr| format!("{:?}", pr).to_lowercase())
+                    })
                     .collect(),
             })
             .collect();
@@ -605,12 +609,14 @@ mod tests {
                     modifier: None,
                     param_type: SearchParameterType::String,
                     value_count: 1,
+                    prefixes: vec![None],
                 },
                 QueryParamKey {
                     name: "birthdate".to_string(),
                     modifier: Some("lt".to_string()),
                     param_type: SearchParameterType::Date,
                     value_count: 1,
+                    prefixes: vec![None],
                 },
             ],
             true,
@@ -625,12 +631,14 @@ mod tests {
                     modifier: Some("lt".to_string()),
                     param_type: SearchParameterType::Date,
                     value_count: 1,
+                    prefixes: vec![None],
                 },
                 QueryParamKey {
                     name: "name".to_string(),
                     modifier: None,
                     param_type: SearchParameterType::String,
                     value_count: 1,
+                    prefixes: vec![None],
                 },
             ],
             true,
@@ -650,6 +658,7 @@ mod tests {
                 modifier: None,
                 param_type: SearchParameterType::String,
                 value_count: 1,
+                prefixes: vec![None],
             }],
             false,
             vec![],
@@ -662,6 +671,7 @@ mod tests {
                 modifier: Some("exact".to_string()),
                 param_type: SearchParameterType::String,
                 value_count: 1,
+                prefixes: vec![None],
             }],
             false,
             vec![],
@@ -680,6 +690,7 @@ mod tests {
                 modifier: None,
                 param_type: SearchParameterType::String,
                 value_count: 1,
+                prefixes: vec![None],
             }],
             true,
             vec!["name".to_string()],
@@ -702,6 +713,7 @@ mod tests {
                 modifier: None,
                 param_type: SearchParameterType::String,
                 value_count: 1,
+                prefixes: vec![None],
             }],
             false,
             vec![],
@@ -737,6 +749,7 @@ mod tests {
                 modifier: None,
                 param_type: SearchParameterType::String,
                 value_count: 1,
+                prefixes: vec![None],
             }],
             false,
             vec![],
@@ -765,6 +778,7 @@ mod tests {
                     modifier: None,
                     param_type: SearchParameterType::String,
                     value_count: 1,
+                    prefixes: vec![None],
                 }],
                 false,
                 vec![],
@@ -807,6 +821,7 @@ mod tests {
                     modifier: None,
                     param_type: SearchParameterType::String,
                     value_count: 1,
+                    prefixes: vec![None],
                 }],
                 false,
                 vec![],
@@ -836,6 +851,7 @@ mod tests {
                 modifier: None,
                 param_type: SearchParameterType::String,
                 value_count: 1,
+                prefixes: vec![None],
             }],
             false,
             vec![],
@@ -882,6 +898,7 @@ mod tests {
                 modifier: None,
                 param_type: SearchParameterType::String,
                 value_count: 1,
+                prefixes: vec![None],
             }],
             false,
             vec![],
@@ -936,6 +953,7 @@ mod tests {
                     modifier: None,
                     param_type: SearchParameterType::String,
                     value_count: 1,
+                    prefixes: vec![None],
                 }],
                 false,
                 vec![],

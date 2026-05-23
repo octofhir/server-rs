@@ -12,6 +12,7 @@ repository.workspace = true
 octofhir-core = { workspace = true }
 octofhir-storage = { workspace = true }
 octofhir-search = { path = "../octofhir-search" }
+octofhir-fhir-model = { workspace = true }
 octofhir-canonical-manager = { workspace = true }
 octofhir-notifications = { path = "../octofhir-notifications" }
 

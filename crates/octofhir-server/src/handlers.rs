@@ -2405,13 +2405,14 @@ pub async fn search_resource(
     let count = search_params.count.unwrap_or(10) as usize;
 
     // Execute search with raw JSON optimization and handling mode
-    let result = octofhir_db_postgres::queries::execute_search_raw_with_config(
+    let result = octofhir_db_postgres::queries::execute_search_raw_with_terminology(
         &state.read_db_pool,
         &resource_type,
         &search_params,
         Some(&cfg.registry),
         unknown_param_handling,
         state.query_cache.as_deref(),
+        state.terminology_provider.as_ref(),
     )
     .await
     .map_err(|e| ApiError::bad_request(e.to_string()))?;

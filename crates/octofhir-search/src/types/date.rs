@@ -208,9 +208,9 @@ pub fn parse_date_range(date_str: &str) -> Result<DateRange, SqlBuilderError> {
         let year: i32 = trimmed[..4]
             .parse()
             .map_err(|_| SqlBuilderError::InvalidSearchValue(format!("Invalid year: {trimmed}")))?;
-        let month_num: u8 = trimmed[5..7]
-            .parse()
-            .map_err(|_| SqlBuilderError::InvalidSearchValue(format!("Invalid month: {trimmed}")))?;
+        let month_num: u8 = trimmed[5..7].parse().map_err(|_| {
+            SqlBuilderError::InvalidSearchValue(format!("Invalid month: {trimmed}"))
+        })?;
         let month = Month::try_from(month_num).map_err(|_| {
             SqlBuilderError::InvalidSearchValue(format!("Invalid month: {trimmed}"))
         })?;
@@ -478,9 +478,7 @@ pub fn build_index_date_search(
         let p_lo = builder.add_timestamp_param(&lo);
         let p_hi = builder.add_timestamp_param(&hi);
 
-        let rng_q = format!(
-            "tstzrange(${p_lo}::timestamptz, ${p_hi}::timestamptz, '[)')"
-        );
+        let rng_q = format!("tstzrange(${p_lo}::timestamptz, ${p_hi}::timestamptz, '[)')");
 
         let predicate = match prefix {
             SearchPrefix::Eq => format!("sid.rng <@ {rng_q}"),
@@ -507,9 +505,7 @@ pub fn build_index_date_search(
                 let apx_hi = format_datetime(&(dr.end + expansion));
                 let p_alo = builder.add_timestamp_param(apx_lo);
                 let p_ahi = builder.add_timestamp_param(apx_hi);
-                format!(
-                    "sid.rng && tstzrange(${p_alo}::timestamptz, ${p_ahi}::timestamptz, '[)')"
-                )
+                format!("sid.rng && tstzrange(${p_alo}::timestamptz, ${p_ahi}::timestamptz, '[)')")
             }
         };
 

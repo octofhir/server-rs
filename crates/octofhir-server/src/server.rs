@@ -53,7 +53,6 @@ use crate::{config::AppConfig, handlers, middleware as app_middleware};
 use octofhir_core::events::EventBroadcaster;
 use octofhir_db_postgres::PostgresConfig;
 use octofhir_db_postgres::PostgresStorage;
-use octofhir_fhir_model::terminology::TerminologyProvider;
 use octofhir_fhirschema::TerminologyProviderAdapter;
 use octofhir_search::{HybridTerminologyProvider, ReloadableSearchConfig};
 use octofhir_storage::{DynStorage, EventedStorage};
@@ -147,9 +146,12 @@ pub struct AppStateInner {
     pub package_store: Arc<octofhir_db_postgres::PostgresPackageStore>,
     /// Subscription state for FHIR R5 subscriptions
     pub subscription_state: SubscriptionState,
-    /// Terminology provider for $expand, $validate-code, $subsumes, $translate, $lookup
-    /// This is the HybridTerminologyProvider with local + cached remote support
-    pub terminology_provider: Option<Arc<dyn TerminologyProvider>>,
+    /// Terminology provider for $expand, $validate-code, $subsumes, $translate,
+    /// $lookup AND search modifiers (`:in`, `:not-in`, `:above`, `:below`).
+    /// Stored as the concrete `HybridTerminologyProvider` so callers can use
+    /// either inherent methods (hierarchy expansion) or the
+    /// `TerminologyProvider` trait via `Arc::clone() as Arc<dyn …>`.
+    pub terminology_provider: Option<Arc<octofhir_search::terminology::HybridTerminologyProvider>>,
     /// Shared anonymous AuthContext used in anonymous-access mode. Built once
     /// at startup so the auth middleware just `Arc::clone`s it.
     pub anonymous_auth_context: Arc<octofhir_auth::middleware::AuthContext>,
@@ -634,8 +636,7 @@ pub async fn build_app(
         cfg.fhir.version
     );
 
-    // HybridTerminologyProvider for terminology operations
-    let terminology_provider: Option<Arc<dyn TerminologyProvider>> =
+    let terminology_provider: Option<Arc<HybridTerminologyProvider>> =
         match crate::canonical::get_manager() {
             Some(manager) => match HybridTerminologyProvider::new(manager, &cfg.terminology) {
                 Ok(provider) => {

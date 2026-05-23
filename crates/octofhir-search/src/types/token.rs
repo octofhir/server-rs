@@ -469,51 +469,43 @@ fn build_default_token_condition(
     }
 }
 
-/// Build condition for Identifier type filtering (:of-type modifier).
+/// Build condition for Identifier `:of-type` modifier search.
 ///
-/// Format: type|system|value where type is the identifier type code
+/// Per FHIR R4 §3.1.1.5.13 (https://hl7.org/fhir/R4/search.html#oftype):
+/// The format is `[parameter]:of-type=[system]|[code]|[value]`. The system+code
+/// identify a `Identifier.type.coding`, and `value` matches `Identifier.value`.
+/// All three components are REQUIRED.
+///
+/// SQL: iterate identifier array; each matching identifier must have:
+///   - a coding entry whose system AND code match (via JSONB @>), and
+///   - value equal to the third part.
 fn build_identifier_of_type_condition(
     builder: &mut SqlBuilder,
     jsonb_path: &str,
     value: &str,
 ) -> Result<String, SqlBuilderError> {
     let parts: Vec<&str> = value.splitn(3, '|').collect();
-
-    if parts.len() < 2 {
+    if parts.len() != 3 {
         return Err(SqlBuilderError::InvalidSearchValue(
-            "of-type modifier requires type|system|value or type|value format".to_string(),
+            "of-type modifier requires system|code|value format".to_string(),
+        ));
+    }
+    let (type_system, type_code, id_value) = (parts[0], parts[1], parts[2]);
+    if type_system.is_empty() || type_code.is_empty() || id_value.is_empty() {
+        return Err(SqlBuilderError::InvalidSearchValue(
+            "of-type modifier requires non-empty system, code, and value".to_string(),
         ));
     }
 
-    let type_code = parts[0];
+    let coding = serde_json::json!([{"system": type_system, "code": type_code}]).to_string();
+    let p_coding = builder.add_json_param(&coding);
+    let p_val = builder.add_text_param(id_value);
 
-    if parts.len() == 3 {
-        // type|system|value
-        let system = parts[1];
-        let id_value = parts[2];
-        let p_type = builder.add_text_param(type_code);
-        let p_sys = builder.add_text_param(system);
-        let p_val = builder.add_text_param(id_value);
-
-        Ok(format!(
-            "EXISTS (SELECT 1 FROM jsonb_array_elements({jsonb_path}) AS ident \
-             WHERE ident->'type'->'coding' @> '[{{\"code\": \"{}\"}}]'::jsonb \
-             AND ident->>'system' = ${p_sys} AND ident->>'value' = ${p_val})",
-            type_code.replace('"', "\\\"")
-        )
-        .replace(&format!("${p_type}"), type_code))
-    } else {
-        // type|value (system is any)
-        let id_value = parts[1];
-        let p_val = builder.add_text_param(id_value);
-
-        Ok(format!(
-            "EXISTS (SELECT 1 FROM jsonb_array_elements({jsonb_path}) AS ident \
-             WHERE ident->'type'->'coding' @> '[{{\"code\": \"{}\"}}]'::jsonb \
-             AND ident->>'value' = ${p_val})",
-            type_code.replace('"', "\\\"")
-        ))
-    }
+    Ok(format!(
+        "EXISTS (SELECT 1 FROM jsonb_array_elements({jsonb_path}) AS ident \
+         WHERE ident->'type'->'coding' @> ${p_coding}::jsonb \
+         AND ident->>'value' = ${p_val})"
+    ))
 }
 
 /// Build token search for Identifier arrays.
@@ -595,6 +587,10 @@ pub fn build_identifier_search(
                 } else {
                     format!("({array_path} IS NOT NULL AND jsonb_array_length({array_path}) > 0)")
                 }
+            }
+
+            Some(SearchModifier::OfType) => {
+                build_identifier_of_type_condition(builder, array_path, &value.raw)?
             }
 
             Some(other) => {
@@ -706,7 +702,21 @@ pub fn build_gin_token_search(
     Ok(())
 }
 
-/// Build GIN containment condition for a token (CodeableConcept/Coding).
+/// Build GIN containment condition for a token search.
+///
+/// FHIR token SPs cover three storage shapes:
+/// 1. CodeableConcept:   `{"key": {"coding": [{"system": "...", "code": "..."}]}}`
+/// 2. Plain code scalar: `{"key": "code"}`
+/// 3. Plain code array:  `{"key": ["code-a", "code-b"]}`
+///
+/// When the search has an explicit system (`system|code`), only shape (1) is
+/// meaningful — Identifier-typed params take a separate path. When there is
+/// no system, the SP may target any of the three shapes (e.g. `Patient.gender`
+/// is a scalar code, `AllergyIntolerance.category` is an array of codes,
+/// `Observation.code` is a CodeableConcept). To stay correct without per-SP
+/// schema lookups, fall back to OR'ing all three containment shapes.
+///
+/// All variants share the same GIN `jsonb_path_ops` index on `resource`.
 fn build_gin_token_containment(
     builder: &mut SqlBuilder,
     resource_col: &str,
@@ -714,25 +724,38 @@ fn build_gin_token_containment(
     system: Option<&str>,
     code: &str,
 ) -> String {
-    // Build the coding object based on system presence
     let coding_obj = match system {
         Some(sys) if !sys.is_empty() => {
             serde_json::json!({"system": sys, "code": code})
         }
-        _ => {
-            serde_json::json!({"code": code})
-        }
+        _ => serde_json::json!({"code": code}),
     };
+    let cc_value = serde_json::json!({"coding": [coding_obj]});
+    let cc_containment = build_nested_containment(path_segments, cc_value);
+    let p_cc = builder.add_json_param(cc_containment.to_string());
+    let cc_clause = format!("{resource_col} @> ${p_cc}::jsonb");
 
-    // Wrap in {"coding": [...]} for CodeableConcept
-    let field_value = serde_json::json!({"coding": [coding_obj]});
+    let has_explicit_system = matches!(system, Some(sys) if !sys.is_empty());
+    if has_explicit_system {
+        return cc_clause;
+    }
 
-    // Build the nested JSON containment object from path segments
-    let containment = build_nested_containment(path_segments, field_value);
+    // No system → also try plain scalar / array code shapes. Postgres'
+    // `array @> scalar` containment exception (see jsonb @> docs) means the
+    // scalar containment alone covers a stored array (`["a","b"] @> "a"` is
+    // TRUE), but we OR both forms anyway for clarity and to keep the planner
+    // honest if the underlying GIN index variant changes.
+    let scalar_value = serde_json::json!(code);
+    let scalar_containment = build_nested_containment(path_segments, scalar_value);
+    let p_scalar = builder.add_json_param(scalar_containment.to_string());
+    let scalar_clause = format!("{resource_col} @> ${p_scalar}::jsonb");
 
-    let json_str = containment.to_string();
-    let p = builder.add_json_param(&json_str);
-    format!("{resource_col} @> ${p}::jsonb")
+    let array_value = serde_json::json!([code]);
+    let array_containment = build_nested_containment(path_segments, array_value);
+    let p_array = builder.add_json_param(array_containment.to_string());
+    let array_clause = format!("{resource_col} @> ${p_array}::jsonb");
+
+    format!("({cc_clause} OR {scalar_clause} OR {array_clause})")
 }
 
 /// Build GIN-optimized search for simple code fields using `resource @> '{...}'::jsonb`.

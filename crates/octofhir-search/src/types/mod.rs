@@ -68,10 +68,16 @@ pub fn dispatch_search(
 
     let path_segments = fhirpath_to_jsonb_path(expression, resource_type);
 
-    // Determine if we need text extraction (->>) or JSON traversal (->)
+    // Determine if we need text extraction (->>) or JSON traversal (->).
+    // URI/canonical/url are stored as JSON strings — for `=`, `LIKE`, and
+    // `LOWER(...)` to all work without explicit casts, extract the leaf as
+    // text. Date/Number/String already follow this convention.
     let needs_text = matches!(
         definition.param_type,
-        SearchParameterType::String | SearchParameterType::Number | SearchParameterType::Date
+        SearchParameterType::String
+            | SearchParameterType::Number
+            | SearchParameterType::Date
+            | SearchParameterType::Uri
     );
 
     let jsonb_path = build_jsonb_accessor(builder.resource_column(), &path_segments, needs_text);
@@ -416,29 +422,47 @@ fn build_gin_exact_string_search(
             continue;
         }
 
-        let condition = if element_type_hint.is_human_name() {
-            // HumanName: OR of containments for family, text, and given
+        let condition = if element_type_hint.is_human_name() && path_segments.len() == 1 {
+            // HumanName root path (e.g., `name` → Patient.name). Builds the
+            // family/text/given OR. For sub-field paths (e.g., `family` →
+            // Patient.name.family) the regular array branch produces correct
+            // containment `{name:[{family:"…"}]}`; HumanName branch would
+            // incorrectly wrap the sub-field into both levels.
             build_gin_human_name_exact(builder, &resource_col, path_segments, &value.raw)
-        } else if matches!(element_type_hint, ElementTypeHint::Array(_)) {
-            // Array string field (e.g., name.family within name array)
-            // Split into array path and field, wrap in array containment
+        } else if matches!(element_type_hint, ElementTypeHint::Array(_)) || path_segments.len() > 1
+        {
+            // Array string field (e.g., HumanName.family inside Patient.name[]).
+            // Split into array path and field, then OR two containments:
+            //   {"name":[{"given":"Alex"}]}      — for scalar leaf fields
+            //   {"name":[{"given":["Alex"]}]}    — for array-of-strings leaves
+            //
+            // Both shapes occur in FHIR (family is scalar, given is array).
+            // OR-ing keeps the GIN @> index usable while staying correct without
+            // per-field schema lookup. Postgres' "array contains scalar"
+            // exception (jsonb docs) makes the scalar form work for arrays in
+            // most cases, but nested containment evaluation is finicky so the
+            // array form is included explicitly.
             let (array_segments, field) = split_array_path(path_segments);
             if field.is_empty() {
-                // Direct array containment
                 let containment = build_string_nested_containment(
                     &array_segments,
                     serde_json::json!([&value.raw]),
                 );
-                let json_str = containment.to_string();
-                let p = builder.add_json_param(&json_str);
+                let p = builder.add_json_param(containment.to_string());
                 format!("{resource_col} @> ${p}::jsonb")
             } else {
-                // Array element field containment: {"name": [{"family": "Smith"}]}
-                let elem_obj = serde_json::json!([{field.as_str(): &value.raw}]);
-                let containment = build_string_nested_containment(&array_segments, elem_obj);
-                let json_str = containment.to_string();
-                let p = builder.add_json_param(&json_str);
-                format!("{resource_col} @> ${p}::jsonb")
+                let scalar_obj = serde_json::json!([{field.as_str(): &value.raw}]);
+                let scalar_containment =
+                    build_string_nested_containment(&array_segments, scalar_obj);
+                let p_scalar = builder.add_json_param(scalar_containment.to_string());
+
+                let array_obj = serde_json::json!([{field.as_str(): [&value.raw]}]);
+                let array_containment = build_string_nested_containment(&array_segments, array_obj);
+                let p_array = builder.add_json_param(array_containment.to_string());
+
+                format!(
+                    "({resource_col} @> ${p_scalar}::jsonb OR {resource_col} @> ${p_array}::jsonb)"
+                )
             }
         } else {
             // Simple string field: {"gender": "female"}

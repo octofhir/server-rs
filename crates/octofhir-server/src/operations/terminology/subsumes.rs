@@ -15,6 +15,7 @@
 //! - For large terminologies (SNOMED CT, LOINC, RxNorm): delegate to tx.fhir.org
 
 use async_trait::async_trait;
+use octofhir_fhir_model::TerminologyProvider;
 use serde::Deserialize;
 use serde_json::{Value, json};
 

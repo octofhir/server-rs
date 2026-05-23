@@ -21,6 +21,7 @@ indexmap = { workspace = true }
 regex = { workspace = true }
 url = { workspace = true }
 tracing = { workspace = true }
+unicode-normalization = "0.1"
 
 # Events system
 tokio = { workspace = true }

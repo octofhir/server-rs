@@ -13,6 +13,7 @@ pub mod reloadable;
 pub mod reverse_chaining;
 pub mod sql_builder;
 pub mod terminology;
+pub mod terminology_preprocess;
 pub mod types;
 
 pub use common::register_common_parameters;

@@ -4287,6 +4287,7 @@ dependencies = [
  "tokio",
  "tokio-test",
  "tracing",
+ "unicode-normalization",
  "url",
  "uuid",
 ]
@@ -4473,6 +4474,7 @@ dependencies = [
  "futures-util",
  "octofhir-canonical-manager",
  "octofhir-core",
+ "octofhir-fhir-model",
  "octofhir-notifications",
  "octofhir-search",
  "octofhir-storage",
@@ -4638,6 +4640,7 @@ dependencies = [
  "anyhow",
  "arc-swap",
  "async-trait",
+ "criterion",
  "dashmap",
  "fastrand",
  "indexmap 2.14.0",

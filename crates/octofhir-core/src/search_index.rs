@@ -138,14 +138,14 @@ fn emit_date_rows(value: &Value, param_code: &str, results: &mut Vec<ExtractedDa
                 return;
             }
             // Period (closed, open-start, open-end)
-            if value.get("start").is_some() || value.get("end").is_some() {
-                if let Some(range) = parse_period_to_range(value) {
-                    results.push(ExtractedDate {
-                        param_code: param_code.to_string(),
-                        range_start: range.0,
-                        range_end: range.1,
-                    });
-                }
+            if (value.get("start").is_some() || value.get("end").is_some())
+                && let Some(range) = parse_period_to_range(value)
+            {
+                results.push(ExtractedDate {
+                    param_code: param_code.to_string(),
+                    range_start: range.0,
+                    range_end: range.1,
+                });
             }
         }
         Value::String(s) => {
@@ -186,7 +186,11 @@ pub fn parse_date_to_range(date_str: &str) -> Option<(String, String)> {
         if !(1..=12).contains(&month) {
             return None;
         }
-        let (ny, nm) = if month == 12 { (year + 1, 1) } else { (year, month + 1) };
+        let (ny, nm) = if month == 12 {
+            (year + 1, 1)
+        } else {
+            (year, month + 1)
+        };
         return Some((
             format!("{year:04}-{month:02}-01T00:00:00Z"),
             format!("{ny:04}-{nm:02}-01T00:00:00Z"),
@@ -539,12 +543,48 @@ fn extract_address_strings(addr: &Value, param_code: &str, results: &mut Vec<Ext
     }
 }
 
-/// Normalize a string for search: lowercase and basic accent folding.
+/// Normalize a string for FHIR R4 search semantics.
 ///
-/// This is a simplified normalizer. For full Unicode NFD decomposition,
-/// add the `unicode-normalization` crate.
+/// Per FHIR R4 §3.1.1.5.6 (search.html#string), string parameter matching is
+/// "by default" case-insensitive and accent-insensitive. We implement this by:
+///   1. Lowercasing (Unicode-aware via `char::to_lowercase`).
+///   2. Decomposing to NFD so combining marks split from base characters.
+///   3. Stripping Unicode combining marks (categories Mn, Mc, Me).
+///
+/// Examples:
+///   "Müller"  → "muller"
+///   "García"  → "garcia"
+///   "Renée"   → "renee"
+///
+/// Both indexed values and query values must go through this function so the
+/// stored form and the lookup form match.
 pub fn normalize_string(s: &str) -> String {
-    s.to_lowercase()
+    use unicode_normalization::UnicodeNormalization;
+    s.nfd()
+        .filter(|c| !is_combining_mark(*c))
+        .flat_map(|c| c.to_lowercase())
+        .collect()
+}
+
+/// Returns true for Unicode combining marks (general categories Mn, Mc, Me).
+///
+/// Combining marks are the diacritic glyphs that NFD decomposition splits off
+/// from base characters (e.g., "é" → "e" + U+0301 COMBINING ACUTE ACCENT).
+/// Stripping them yields accent-insensitive matching.
+fn is_combining_mark(c: char) -> bool {
+    matches!(
+        c as u32,
+        // Combining Diacritical Marks
+        0x0300..=0x036F
+        // Combining Diacritical Marks Extended
+        | 0x1AB0..=0x1AFF
+        // Combining Diacritical Marks Supplement
+        | 0x1DC0..=0x1DFF
+        // Combining Diacritical Marks for Symbols
+        | 0x20D0..=0x20FF
+        // Combining Half Marks
+        | 0xFE20..=0xFE2F
+    )
 }
 
 // ============================================================================

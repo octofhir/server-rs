@@ -1,14 +1,23 @@
 //! String search parameter implementation.
 //!
-//! String search supports the following modifiers:
-//! - (default): starts-with, case-insensitive
-//! - :exact: exact match, case-sensitive
-//! - :contains: contains, case-insensitive
-//! - :text: full-text search on narrative
+//! Per FHIR R4 §3.1.1.5.6 (https://hl7.org/fhir/R4/search.html#string):
+//! - (default): starts-with, case-insensitive AND accent-insensitive
+//! - :exact: exact, case-sensitive, accent-sensitive, full-string equality
+//! - :contains: substring, case-insensitive AND accent-insensitive
+//! - :text: full-text search on narrative (server-defined)
+//!
+//! Implementation:
+//! - The query value is normalized in Rust (lowercase + NFD strip combining
+//!   marks) via `octofhir_core::normalize_string` before being bound.
+//! - The indexed/JSONB side is normalized in SQL with `f_unaccent_lower(...)`
+//!   (defined in migration 20260602000001_unaccent_extension.sql) so the
+//!   comparison is symmetric.
+//! - :exact bypasses both: raw equality.
 
 use crate::parameters::SearchModifier;
 use crate::parser::ParsedParam;
 use crate::sql_builder::{SqlBuilder, SqlBuilderError};
+use octofhir_core::search_index::normalize_string;
 
 /// Build SQL conditions for string search.
 ///
@@ -32,23 +41,25 @@ pub fn build_string_search(
 
         let condition = match &param.modifier {
             None => {
-                // Default: starts-with, case-insensitive
-                let escaped = escape_like_pattern(&value.raw);
+                // Default: starts-with, case-insensitive, accent-insensitive (§3.1.1.5.6).
+                let normalized = normalize_string(&value.raw);
+                let escaped = escape_like_pattern(&normalized);
                 let p = builder.add_text_param(format!("{escaped}%"));
-                format!("LOWER({jsonb_path}) LIKE LOWER(${p})")
+                format!("f_unaccent_lower({jsonb_path}) LIKE ${p}")
             }
 
             Some(SearchModifier::Exact) => {
-                // Exact match, case-sensitive
+                // Exact match: case-sensitive, accent-sensitive, full-string equality.
                 let p = builder.add_text_param(&value.raw);
                 format!("{jsonb_path} = ${p}")
             }
 
             Some(SearchModifier::Contains) => {
-                // Contains, case-insensitive
-                let escaped = escape_like_pattern(&value.raw);
+                // Substring, case-insensitive, accent-insensitive.
+                let normalized = normalize_string(&value.raw);
+                let escaped = escape_like_pattern(&normalized);
                 let p = builder.add_text_param(format!("%{escaped}%"));
-                format!("LOWER({jsonb_path}) LIKE LOWER(${p})")
+                format!("f_unaccent_lower({jsonb_path}) LIKE ${p}")
             }
 
             Some(SearchModifier::Text) => {
@@ -116,24 +127,21 @@ pub fn build_array_string_search(
 
         let condition = match &param.modifier {
             None => {
-                // Default: starts-with, case-insensitive
-                // Use EXISTS to search across array elements.
-                // Also handle nested string arrays (e.g., name[].given[] where given is an array of strings)
-                // by checking both scalar and array extraction. Guard with jsonb_typeof to avoid
-                // "cannot extract elements from a scalar" errors.
-                let escaped = escape_like_pattern(&value.raw);
+                // Default: starts-with, case-insensitive, accent-insensitive.
+                let normalized = normalize_string(&value.raw);
+                let escaped = escape_like_pattern(&normalized);
                 let p = builder.add_text_param(format!("{escaped}%"));
                 format!(
                     "EXISTS (SELECT 1 FROM jsonb_array_elements({array_path}) AS elem WHERE \
-                     LOWER(elem->>'{field_name}') LIKE LOWER(${p}) OR \
+                     f_unaccent_lower(elem->>'{field_name}') LIKE ${p} OR \
                      (jsonb_typeof(elem->'{field_name}') = 'array' AND \
                       EXISTS (SELECT 1 FROM jsonb_array_elements_text(elem->'{field_name}') AS sub \
-                      WHERE LOWER(sub) LIKE LOWER(${p}))))"
+                      WHERE f_unaccent_lower(sub) LIKE ${p})))"
                 )
             }
 
             Some(SearchModifier::Exact) => {
-                // Exact match across array elements (scalar or nested array)
+                // Exact: case-sensitive, accent-sensitive, full-string equality.
                 let p = builder.add_text_param(&value.raw);
                 format!(
                     "EXISTS (SELECT 1 FROM jsonb_array_elements({array_path}) AS elem WHERE \
@@ -145,15 +153,16 @@ pub fn build_array_string_search(
             }
 
             Some(SearchModifier::Contains) => {
-                // Contains, case-insensitive across array elements (scalar or nested array)
-                let escaped = escape_like_pattern(&value.raw);
+                // Substring, case-insensitive, accent-insensitive.
+                let normalized = normalize_string(&value.raw);
+                let escaped = escape_like_pattern(&normalized);
                 let p = builder.add_text_param(format!("%{escaped}%"));
                 format!(
                     "EXISTS (SELECT 1 FROM jsonb_array_elements({array_path}) AS elem WHERE \
-                     LOWER(elem->>'{field_name}') LIKE LOWER(${p}) OR \
+                     f_unaccent_lower(elem->>'{field_name}') LIKE ${p} OR \
                      (jsonb_typeof(elem->'{field_name}') = 'array' AND \
                       EXISTS (SELECT 1 FROM jsonb_array_elements_text(elem->'{field_name}') AS sub \
-                      WHERE LOWER(sub) LIKE LOWER(${p}))))"
+                      WHERE f_unaccent_lower(sub) LIKE ${p})))"
                 )
             }
 
@@ -202,15 +211,15 @@ pub fn build_human_name_search(
 
         let condition = match &param.modifier {
             None => {
-                // Default: starts-with, case-insensitive
-                // Search in family, given[], and text
-                let escaped = escape_like_pattern(&value.raw);
+                // Default: starts-with, case+accent-insensitive across family/given/text.
+                let normalized = normalize_string(&value.raw);
+                let escaped = escape_like_pattern(&normalized);
                 let p = builder.add_text_param(format!("{escaped}%"));
                 format!(
                     "EXISTS (SELECT 1 FROM jsonb_array_elements({array_path}) AS name WHERE \
-                     LOWER(name->>'family') LIKE LOWER(${p}) OR \
-                     LOWER(name->>'text') LIKE LOWER(${p}) OR \
-                     EXISTS (SELECT 1 FROM jsonb_array_elements_text(COALESCE(name->'given', '[]'::jsonb)) AS g WHERE LOWER(g) LIKE LOWER(${p})))"
+                     f_unaccent_lower(name->>'family') LIKE ${p} OR \
+                     f_unaccent_lower(name->>'text') LIKE ${p} OR \
+                     EXISTS (SELECT 1 FROM jsonb_array_elements_text(COALESCE(name->'given', '[]'::jsonb)) AS g WHERE f_unaccent_lower(g) LIKE ${p}))"
                 )
             }
 
@@ -225,13 +234,14 @@ pub fn build_human_name_search(
             }
 
             Some(SearchModifier::Contains) => {
-                let escaped = escape_like_pattern(&value.raw);
+                let normalized = normalize_string(&value.raw);
+                let escaped = escape_like_pattern(&normalized);
                 let p = builder.add_text_param(format!("%{escaped}%"));
                 format!(
                     "EXISTS (SELECT 1 FROM jsonb_array_elements({array_path}) AS name WHERE \
-                     LOWER(name->>'family') LIKE LOWER(${p}) OR \
-                     LOWER(name->>'text') LIKE LOWER(${p}) OR \
-                     EXISTS (SELECT 1 FROM jsonb_array_elements_text(COALESCE(name->'given', '[]'::jsonb)) AS g WHERE LOWER(g) LIKE LOWER(${p})))"
+                     f_unaccent_lower(name->>'family') LIKE ${p} OR \
+                     f_unaccent_lower(name->>'text') LIKE ${p} OR \
+                     EXISTS (SELECT 1 FROM jsonb_array_elements_text(COALESCE(name->'given', '[]'::jsonb)) AS g WHERE f_unaccent_lower(g) LIKE ${p}))"
                 )
             }
 
@@ -283,8 +293,8 @@ mod tests {
         build_string_search(&mut builder, &param, "resource->>'name'").unwrap();
 
         let clause = builder.build_where_clause().unwrap();
-        assert!(clause.contains("LOWER(resource->>'name') LIKE LOWER($1)"));
-        assert_eq!(builder.params()[0].as_str(), "John%");
+        assert!(clause.contains("f_unaccent_lower(resource->>'name') LIKE $1"));
+        assert_eq!(builder.params()[0].as_str(), "john%");
     }
 
     #[test]
@@ -307,7 +317,7 @@ mod tests {
         build_string_search(&mut builder, &param, "resource->>'name'").unwrap();
 
         let clause = builder.build_where_clause().unwrap();
-        assert!(clause.contains("LOWER(resource->>'name') LIKE LOWER($1)"));
+        assert!(clause.contains("f_unaccent_lower(resource->>'name') LIKE $1"));
         assert_eq!(builder.params()[0].as_str(), "%ohn%");
     }
 
@@ -318,7 +328,8 @@ mod tests {
 
         build_string_search(&mut builder, &param, "resource->>'name'").unwrap();
 
-        // The % should be escaped
+        // The % is escaped after Rust-side normalize (lowercase + accent strip).
+        // "100%" normalizes to "100%" → escaped to "100\%" → suffix "%" appended.
         assert_eq!(builder.params()[0].as_str(), "100\\%%");
     }
 

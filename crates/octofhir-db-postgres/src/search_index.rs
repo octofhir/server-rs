@@ -590,8 +590,7 @@ impl BatchIndexBuffer {
         // The batched flush path (async indexer) previously skipped this — the
         // non-batched single-resource writers do it — so untouched resource
         // types failed to INSERT with "no partition of relation found for row".
-        let mut seen_types: std::collections::HashSet<String> =
-            std::collections::HashSet::new();
+        let mut seen_types: std::collections::HashSet<String> = std::collections::HashSet::new();
         for r in &refs {
             seen_types.insert(r.resource_type.clone());
         }

@@ -11,6 +11,11 @@ use sqlx_core::query_scalar::query_scalar;
 use sqlx_postgres::{PgPool, PgTransaction};
 use time::OffsetDateTime;
 
+use octofhir_fhir_model::terminology::TerminologyProvider;
+use octofhir_search::terminology::HybridTerminologyProvider;
+use octofhir_search::terminology_preprocess::{
+    pre_expand_subsumption_modifiers, pre_expand_terminology_modifiers,
+};
 use octofhir_search::{
     BuiltQuery, ParamsSearchConfig, PreparedQuery, QueryCache, QueryCacheKey, QueryParamKey,
     SearchParameterRegistry, SqlValue, UnknownParamHandling, build_query_from_params,
@@ -210,6 +215,58 @@ pub async fn execute_search_raw_with_config(
     unknown_param_handling: Option<UnknownParamHandling>,
     query_cache: Option<&QueryCache>,
 ) -> Result<RawSearchResult, StorageError> {
+    execute_search_raw_with_config_inner(
+        pool,
+        resource_type,
+        params,
+        registry,
+        unknown_param_handling,
+        query_cache,
+        None,
+    )
+    .await
+}
+
+/// Like `execute_search_raw_with_config`, but also pre-expands `:in` /
+/// `:not-in` / `:above` / `:below` Token modifiers via the terminology
+/// provider before building the SQL. See `octofhir_search::terminology_preprocess`
+/// for spec details.
+///
+/// The concrete `HybridTerminologyProvider` is required because hierarchy
+/// expansion (`:above` / `:below`) lives outside the `TerminologyProvider`
+/// trait. Pass `None` if terminology is not configured; in that case
+/// `:in`/`:not-in`/`:above`/`:below` fall through to the sync dispatcher
+/// and return `NotImplemented`.
+pub async fn execute_search_raw_with_terminology(
+    pool: &PgPool,
+    resource_type: &str,
+    params: &SearchParams,
+    registry: Option<&Arc<SearchParameterRegistry>>,
+    unknown_param_handling: Option<UnknownParamHandling>,
+    query_cache: Option<&QueryCache>,
+    terminology: Option<&Arc<HybridTerminologyProvider>>,
+) -> Result<RawSearchResult, StorageError> {
+    execute_search_raw_with_config_inner(
+        pool,
+        resource_type,
+        params,
+        registry,
+        unknown_param_handling,
+        query_cache,
+        terminology,
+    )
+    .await
+}
+
+async fn execute_search_raw_with_config_inner(
+    pool: &PgPool,
+    resource_type: &str,
+    params: &SearchParams,
+    registry: Option<&Arc<SearchParameterRegistry>>,
+    unknown_param_handling: Option<UnknownParamHandling>,
+    query_cache: Option<&QueryCache>,
+    terminology: Option<&Arc<HybridTerminologyProvider>>,
+) -> Result<RawSearchResult, StorageError> {
     let requested_limit = params.count.unwrap_or(10) as usize;
     let mut effective_params = params.clone();
     effective_params.count = Some(params.count.unwrap_or(10).saturating_add(1));
@@ -218,6 +275,32 @@ pub async fn execute_search_raw_with_config(
     let empty_registry = Arc::new(SearchParameterRegistry::new());
     let registry_arc = registry.unwrap_or(&empty_registry);
     let registry = registry_arc.as_ref();
+
+    // Pre-expand FHIR token search modifiers that require a terminology
+    // service so the sync SQL builder can treat them as ordinary Token OR
+    // searches (`:in`/`:not-in` against a ValueSet, `:above`/`:below`
+    // against a code-system hierarchy).
+    if let Some(tx) = terminology {
+        let trait_view: Arc<dyn TerminologyProvider> = tx.clone();
+        pre_expand_terminology_modifiers(
+            &mut effective_params,
+            registry,
+            resource_type,
+            &trait_view,
+        )
+        .await
+        .map_err(|e| {
+            tracing::warn!(error = %e, "Terminology pre-expansion failed");
+            StorageError::invalid_resource(format!("Terminology expansion failed: {e}"))
+        })?;
+
+        pre_expand_subsumption_modifiers(&mut effective_params, registry, resource_type, tx)
+            .await
+            .map_err(|e| {
+                tracing::warn!(error = %e, "Subsumption pre-expansion failed");
+                StorageError::invalid_resource(format!("Subsumption expansion failed: {e}"))
+            })?;
+    }
 
     // Build search config
     let search_config = ParamsSearchConfig {
@@ -310,7 +393,26 @@ pub async fn execute_search_raw_with_config(
                     tag
                 };
 
-                let cache_name = format!("{name}#{token_shape}");
+                // `:missing` selects between structurally different SQL
+                // templates (`IS NULL` vs `IS NOT NULL`, `NOT EXISTS` vs
+                // `EXISTS`) based on the boolean value, which is NOT bound
+                // as a parameter. Two requests `gender:missing=true` and
+                // `gender:missing=false` must therefore not share a cache
+                // entry — encode the polarity into the cache name.
+                let missing_tag = if modifier.as_deref() == Some("missing") {
+                    let is_true = values.iter().any(|v| v.eq_ignore_ascii_case("true"));
+                    let is_false = values.iter().any(|v| !v.eq_ignore_ascii_case("true"));
+                    match (is_true, is_false) {
+                        (true, false) => "#miss-t",
+                        (false, true) => "#miss-f",
+                        (true, true) => "#miss-tf",
+                        _ => "#miss-x",
+                    }
+                } else {
+                    ""
+                };
+
+                let cache_name = format!("{name}#{token_shape}{missing_tag}");
 
                 // Distinguish prefixes per value — date / number / quantity SQL
                 // shape depends on `eq`/`gt`/`lt`/`ne`/`ge`/`le`/`sa`/`eb`/`ap`
@@ -325,8 +427,7 @@ pub async fn execute_search_raw_with_config(
                             if lower.starts_with(p) && v.len() > 2 {
                                 let rest = &v[2..];
                                 let next = rest.chars().next();
-                                if next.is_some_and(|c| c.is_ascii_digit() || c == '-')
-                                {
+                                if next.is_some_and(|c| c.is_ascii_digit() || c == '-') {
                                     return Some(p.to_string());
                                 }
                             }

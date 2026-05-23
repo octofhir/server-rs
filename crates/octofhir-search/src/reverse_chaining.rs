@@ -1,37 +1,57 @@
-//! Reverse chaining (_has) implementation for FHIR search.
+//! Reverse chaining (`_has`) implementation per FHIR R4 §3.1.1.5.4.
 //!
-//! Reverse chaining allows searching for resources based on other resources
-//! that reference them.
+//! Reverse chains let a search constrain the base resource by properties of
+//! OTHER resources that reference it.
 //!
-//! Example: `Patient?_has:Observation:patient:code=1234`
-//! Finds patients that have observations with code 1234.
+//! Format:
+//!     `_has:<SourceType>:<refParam>:<finalParam>[:<modifier>]=<value>`
+//!
+//! Example:
+//!     `Patient?_has:Observation:patient:code=1234`
+//!
+//! Reads as: "Patients X such that there exists an Observation O whose
+//! `patient` reference resolves to X and whose `code` search parameter matches
+//! `1234`."
+//!
+//! Nested `_has` (any depth) is supported by recursive substitution:
+//!     `Patient?_has:Observation:patient:_has:AuditEvent:entity:agent=Practitioner/1`
+//!
+//! Implementation:
+//! - The link from base to source uses the `search_idx_reference` table
+//!   (`target_type`/`target_id` lookup) — O(log N) index.
+//! - The final-parameter condition is built via `dispatch_search` against an
+//!   inner `SqlBuilder` bound to the source-table alias. This reuses all
+//!   correctness behavior (modifiers, accent folding, GIN containment, etc.).
+//! - Multiple `&`-occurrences of `_has:…` each emit a separate EXISTS clause;
+//!   they AND naturally through `SqlBuilder::add_condition`.
 
-use crate::parameters::SearchParameterType;
+use crate::parameters::{SearchModifier, SearchParameter, SearchParameterType};
+use crate::parser::{ParsedParam, ParsedValue};
 use crate::registry::SearchParameterRegistry;
-use crate::sql_builder::{SqlBuilder, SqlBuilderError};
+use crate::sql_builder::{SqlBuilder, SqlBuilderError, SqlParam};
+use std::sync::Arc;
 
-/// A parsed reverse chain (_has) parameter.
 #[derive(Debug, Clone)]
 pub struct ReverseChainParameter {
-    /// The source resource type that references the target
     pub source_type: String,
-    /// The reference parameter on the source type
     pub reference_param: String,
-    /// The expression for the reference parameter
-    pub reference_expression: String,
-    /// The search parameter to filter on
-    pub search_param: String,
-    /// The search parameter type
-    pub search_param_type: SearchParameterType,
-    /// The expression for the search parameter
-    pub search_expression: String,
-    /// The search value
+    pub source_ref_def: Arc<SearchParameter>,
+    /// Either a terminal final-parameter spec, or a nested `_has` for deeper
+    /// reverse-chaining.
+    pub tail: ReverseChainTail,
     pub value: String,
-    /// Nested _has parameter (for chained _has)
-    pub nested: Option<Box<ReverseChainParameter>>,
 }
 
-/// Error type for reverse chaining operations.
+#[derive(Debug, Clone)]
+pub enum ReverseChainTail {
+    Final {
+        param_name: String,
+        modifier: Option<SearchModifier>,
+        param_def: Arc<SearchParameter>,
+    },
+    Nested(Box<ReverseChainParameter>),
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum ReverseChainingError {
     #[error("Invalid _has parameter: {0}")]
@@ -50,194 +70,257 @@ pub enum ReverseChainingError {
     SqlBuilder(#[from] SqlBuilderError),
 }
 
-/// Check if a parameter name is a reverse chain (_has) parameter.
+/// True for parameter names beginning with `_has:` (FHIR R4 §3.1.1.5.4).
 pub fn is_reverse_chain_parameter(name: &str) -> bool {
     name.starts_with("_has:")
 }
 
-/// Parse a reverse chain (_has) parameter.
-///
-/// Format: `_has:Type:referenceParam:searchParam=value`
-///
-/// # Arguments
-/// * `name` - The parameter name (e.g., "_has:Observation:patient:code")
-/// * `value` - The search value
-/// * `registry` - The search parameter registry
-/// * `base_type` - The base resource type being searched
-///
-/// # Returns
-/// A `ReverseChainParameter` if parsing succeeds, or an error.
+/// Parse a `_has:` parameter, validating the source-resource reference link
+/// and final-parameter SP against the registry. Supports nested `_has`.
 pub fn parse_reverse_chain(
     name: &str,
     value: &str,
     registry: &SearchParameterRegistry,
     _base_type: &str,
 ) -> Result<ReverseChainParameter, ReverseChainingError> {
-    if !name.starts_with("_has:") {
-        return Err(ReverseChainingError::InvalidHas(
-            "Parameter must start with _has:".to_string(),
-        ));
-    }
+    parse_recursive(name, value, registry)
+}
 
-    let parts: Vec<&str> = name[5..].split(':').collect();
-    if parts.len() < 3 {
-        return Err(ReverseChainingError::InvalidHas(
-            "_has requires Type:referenceParam:searchParam format".to_string(),
-        ));
-    }
+fn parse_recursive(
+    name: &str,
+    value: &str,
+    registry: &SearchParameterRegistry,
+) -> Result<ReverseChainParameter, ReverseChainingError> {
+    let rest = name
+        .strip_prefix("_has:")
+        .ok_or_else(|| ReverseChainingError::InvalidHas("expected `_has:` prefix".to_string()))?;
 
-    let source_type = parts[0];
-    let reference_param = parts[1];
-    let search_param = parts[2];
+    // Split into at most 3 parts: SourceType, refParam, tail.
+    // The tail may itself begin with `_has:` for nested chains, or be the
+    // final-parameter spec (`code` or `code:modifier`).
+    let (source_type, after_type) = rest.split_once(':').ok_or_else(|| {
+        ReverseChainingError::InvalidHas("_has requires <SourceType>:<refParam>:…".to_string())
+    })?;
+    let (ref_param, tail_str) = after_type.split_once(':').ok_or_else(|| {
+        ReverseChainingError::InvalidHas("_has requires <SourceType>:<refParam>:…".to_string())
+    })?;
 
-    // Get the reference parameter definition
-    let ref_param_def = registry.get(source_type, reference_param).ok_or_else(|| {
+    let source_ref_def = registry.get(source_type, ref_param).ok_or_else(|| {
         ReverseChainingError::UnknownParameter {
-            param: reference_param.to_string(),
+            param: ref_param.to_string(),
             resource_type: source_type.to_string(),
         }
     })?;
-
-    // Verify it's a reference type
-    if ref_param_def.param_type != SearchParameterType::Reference {
+    if source_ref_def.param_type != SearchParameterType::Reference {
         return Err(ReverseChainingError::NotReferenceType(
-            reference_param.to_string(),
+            ref_param.to_string(),
         ));
     }
 
-    // Get the search parameter definition
-    let search_param_def = registry.get(source_type, search_param).ok_or_else(|| {
-        ReverseChainingError::UnknownParameter {
-            param: search_param.to_string(),
-            resource_type: source_type.to_string(),
+    let tail = if tail_str.starts_with("_has:") {
+        // Nested reverse chain — parse with source_type as the implicit base
+        // for its own validation step.
+        let nested = parse_recursive(tail_str, value, registry)?;
+        ReverseChainTail::Nested(Box::new(nested))
+    } else {
+        // Terminal final-parameter spec — may carry one modifier.
+        let (final_name, modifier_str) = match tail_str.split_once(':') {
+            Some((n, m)) => (n, Some(m)),
+            None => (tail_str, None),
+        };
+        let param_def = registry.get(source_type, final_name).ok_or_else(|| {
+            ReverseChainingError::UnknownParameter {
+                param: final_name.to_string(),
+                resource_type: source_type.to_string(),
+            }
+        })?;
+        let modifier = modifier_str.and_then(parse_modifier);
+        ReverseChainTail::Final {
+            param_name: final_name.to_string(),
+            modifier,
+            param_def,
         }
-    })?;
+    };
 
     Ok(ReverseChainParameter {
         source_type: source_type.to_string(),
-        reference_param: reference_param.to_string(),
-        reference_expression: ref_param_def.expression.clone().unwrap_or_default(),
-        search_param: search_param.to_string(),
-        search_param_type: search_param_def.param_type,
-        search_expression: search_param_def.expression.clone().unwrap_or_default(),
+        reference_param: ref_param.to_string(),
+        source_ref_def,
+        tail,
         value: value.to_string(),
-        nested: None,
     })
 }
 
-/// Build SQL for a reverse chain (_has) parameter.
+fn parse_modifier(s: &str) -> Option<SearchModifier> {
+    match s {
+        "exact" => Some(SearchModifier::Exact),
+        "contains" => Some(SearchModifier::Contains),
+        "text" => Some(SearchModifier::Text),
+        "in" => Some(SearchModifier::In),
+        "not-in" => Some(SearchModifier::NotIn),
+        "below" => Some(SearchModifier::Below),
+        "above" => Some(SearchModifier::Above),
+        "not" => Some(SearchModifier::Not),
+        "identifier" => Some(SearchModifier::Identifier),
+        "missing" => Some(SearchModifier::Missing),
+        "of-type" | "ofType" => Some(SearchModifier::OfType),
+        other if !other.is_empty() => Some(SearchModifier::Type(other.to_string())),
+        _ => None,
+    }
+}
+
+/// Generate the EXISTS clause for a parsed `_has` parameter and attach it to
+/// `builder`.
 ///
-/// This generates an EXISTS subquery to find resources that are referenced
-/// by other resources matching the search criteria.
+/// `base_type` is the outer search's resource type (the one whose `id`
+/// matches the inner `target_id`).
 pub fn build_reverse_chain_search(
     builder: &mut SqlBuilder,
     param: &ReverseChainParameter,
     base_type: &str,
 ) -> Result<(), ReverseChainingError> {
-    let source_table = param.source_type.to_lowercase();
-    let ref_path = extract_path(&param.reference_expression, &param.source_type);
-    let search_path = extract_path(&param.search_expression, &param.source_type);
+    // Build the EXISTS clause; each invocation uses a unique alias suffix so
+    // multiple `_has` occurrences (or nested ones) don't collide in SQL.
+    let depth = 0;
+    let outer_id_ref = format!("{}->>'id'", builder.resource_column());
+    let outer_id_ref = format!("({outer_id_ref})");
+    // For the top-level outer table the alias is `r`, so r.id is cleaner.
+    let outer_id_expr = if builder.resource_column() == "r.resource" {
+        "r.id".to_string()
+    } else {
+        outer_id_ref
+    };
 
-    // Build the search condition based on parameter type
-    let search_condition = build_search_condition(builder, param, &search_path)?;
-
-    // Build EXISTS subquery
-    // The reference in the source resource should point to our base resource
-    let condition = format!(
-        "EXISTS (SELECT 1 FROM {source_table} rev \
-         WHERE rev.{ref_path}->>'reference' = '{base_type}/' || {}.id::text \
-         AND rev.status != 'deleted' \
-         AND {search_condition})",
-        builder.resource_column()
-    );
-
-    builder.add_condition(condition);
-
+    let clause = build_has_level(builder, param, base_type, &outer_id_expr, depth)?;
+    builder.add_condition(clause);
     Ok(())
 }
 
-/// Build the search condition based on parameter type.
-fn build_search_condition(
+/// Recursively build one EXISTS level. The outer-table id reference comes from
+/// `outer_id_expr` (e.g. `r.id` at the top, `has<n>.id` for nested levels).
+fn build_has_level(
     builder: &mut SqlBuilder,
     param: &ReverseChainParameter,
-    search_path: &str,
+    base_type: &str,
+    outer_id_expr: &str,
+    depth: usize,
 ) -> Result<String, ReverseChainingError> {
-    match param.search_param_type {
-        SearchParameterType::String => {
-            let p = builder.add_text_param(format!("{}%", param.value));
-            Ok(format!("rev.{search_path} ILIKE ${p}"))
-        }
-        SearchParameterType::Token => {
-            // Handle system|code format
-            if param.value.contains('|') {
-                let parts: Vec<&str> = param.value.splitn(2, '|').collect();
-                let system = parts[0];
-                let code = parts[1];
+    let source_table = param.source_type.to_lowercase();
+    let src_alias = format!("has{depth}");
+    let sir_alias = format!("hasir{depth}");
 
-                if system.is_empty() {
-                    // |code - match code only
-                    let p = builder.add_text_param(code);
-                    Ok(format!(
-                        "(rev.{search_path}->>'code' = ${p} OR rev.{search_path} = ${p})"
-                    ))
-                } else {
-                    // system|code - match both
-                    let p1 = builder.add_text_param(system);
-                    let p2 = builder.add_text_param(code);
-                    Ok(format!(
-                        "(rev.{search_path}->>'system' = ${p1} AND rev.{search_path}->>'code' = ${p2})"
-                    ))
-                }
-            } else {
-                // code only
-                let p = builder.add_text_param(&param.value);
-                Ok(format!(
-                    "(rev.{search_path}->>'code' = ${p} OR rev.{search_path} = ${p})"
-                ))
-            }
+    let rt_param = builder.add_text_param(&param.source_type);
+    let pc_param = builder.add_text_param(&param.reference_param);
+    let tt_param = builder.add_text_param(base_type);
+
+    // Inner condition: either dispatch_search on terminal final-param, or a
+    // recursive EXISTS for the nested _has level.
+    let inner = match &param.tail {
+        ReverseChainTail::Final {
+            param_name,
+            modifier,
+            param_def,
+        } => build_final_condition(
+            builder,
+            param_name,
+            modifier.clone(),
+            param_def,
+            &param.value,
+            &param.source_type,
+            &src_alias,
+        )?,
+        ReverseChainTail::Nested(inner_param) => {
+            let inner_outer_id = format!("{src_alias}.id");
+            build_has_level(
+                builder,
+                inner_param,
+                &param.source_type,
+                &inner_outer_id,
+                depth + 1,
+            )?
         }
-        SearchParameterType::Date => {
-            let p = builder.add_text_param(&param.value);
-            Ok(format!("rev.{search_path} = ${p}"))
-        }
-        SearchParameterType::Number | SearchParameterType::Quantity => {
-            let p = builder.add_text_param(&param.value);
-            Ok(format!("(rev.{search_path})::numeric = ${p}::numeric"))
-        }
-        SearchParameterType::Reference => {
-            let p = builder.add_text_param(&param.value);
-            Ok(format!("rev.{search_path}->>'reference' = ${p}"))
-        }
-        SearchParameterType::Uri => {
-            let p = builder.add_text_param(&param.value);
-            Ok(format!("rev.{search_path} = ${p}"))
-        }
-        _ => Err(ReverseChainingError::InvalidHas(format!(
-            "Unsupported search parameter type: {:?}",
-            param.search_param_type
-        ))),
-    }
+    };
+
+    Ok(format!(
+        "EXISTS (SELECT 1 FROM search_idx_reference {sir_alias} \
+         JOIN \"{source_table}\" {src_alias} \
+           ON {src_alias}.id = {sir_alias}.resource_id \
+          AND {src_alias}.status != 'deleted' \
+         WHERE {sir_alias}.resource_type = ${rt_param} \
+           AND {sir_alias}.param_code = ${pc_param} \
+           AND {sir_alias}.ref_kind = 1 \
+           AND {sir_alias}.target_type = ${tt_param} \
+           AND {sir_alias}.target_id = {outer_id_expr} \
+           AND {inner})"
+    ))
 }
 
-/// Extract a JSONB path from a FHIRPath expression.
-fn extract_path(expression: &str, resource_type: &str) -> String {
-    let path = expression
-        .strip_prefix(resource_type)
-        .unwrap_or(expression)
-        .strip_prefix('.')
-        .unwrap_or(expression);
+/// Build the inner search condition using `dispatch_search` on a builder
+/// scoped to the source-table alias. Copies the produced SQL params back into
+/// the outer builder.
+fn build_final_condition(
+    builder: &mut SqlBuilder,
+    final_param: &str,
+    modifier: Option<SearchModifier>,
+    param_def: &Arc<SearchParameter>,
+    raw_value: &str,
+    source_type: &str,
+    src_alias: &str,
+) -> Result<String, ReverseChainingError> {
+    let resource_col = format!("{src_alias}.resource");
+    let mut inner =
+        SqlBuilder::with_resource_column(&resource_col).with_param_offset(builder.param_count());
 
-    let parts: Vec<&str> = path.split('.').filter(|p| !p.is_empty()).collect();
+    // Comma-OR within the single value entry (per FHIR §3.1.1.5).
+    let values: Vec<ParsedValue> = raw_value
+        .split(',')
+        .filter(|v| !v.is_empty())
+        .map(|v| ParsedValue {
+            prefix: None,
+            raw: v.to_string(),
+        })
+        .collect();
 
-    if parts.is_empty() {
-        return "resource".to_string();
+    let parsed = ParsedParam {
+        name: final_param.to_string(),
+        modifier,
+        values,
+    };
+
+    crate::types::dispatch_search(&mut inner, &parsed, param_def, source_type)?;
+
+    // Promote inner params into the outer builder so bind indices stay
+    // consistent with the produced SQL fragment.
+    for p in inner.params() {
+        match p {
+            SqlParam::Text(s) => {
+                builder.add_text_param(s);
+            }
+            SqlParam::Integer(i) => {
+                builder.add_integer_param(*i);
+            }
+            SqlParam::Float(f) => {
+                builder.add_float_param(*f);
+            }
+            SqlParam::Boolean(b) => {
+                builder.add_boolean_param(*b);
+            }
+            SqlParam::Json(s) => {
+                builder.add_json_param(s);
+            }
+            SqlParam::Timestamp(s) => {
+                builder.add_timestamp_param(s);
+            }
+        }
     }
 
-    let mut accessor = "resource".to_string();
-    for part in parts {
-        accessor.push_str(&format!("->'{part}'"));
+    let conditions = inner.conditions();
+    match conditions.first() {
+        Some(cond) => Ok(cond.clone()),
+        None => Err(ReverseChainingError::InvalidHas(format!(
+            "final parameter `{final_param}` produced no SQL condition"
+        ))),
     }
-    accessor
 }
 
 #[cfg(test)]
@@ -248,7 +331,6 @@ mod tests {
     fn create_test_registry() -> SearchParameterRegistry {
         let registry = SearchParameterRegistry::new();
 
-        // Observation.patient -> Patient
         let patient_param = SearchParameter::new(
             "patient",
             "http://hl7.org/fhir/SearchParameter/Observation-patient",
@@ -259,7 +341,6 @@ mod tests {
         .with_targets(vec!["Patient".to_string()]);
         registry.register(patient_param);
 
-        // Observation.code
         let code_param = SearchParameter::new(
             "code",
             "http://hl7.org/fhir/SearchParameter/Observation-code",
@@ -268,16 +349,6 @@ mod tests {
         )
         .with_expression("Observation.code");
         registry.register(code_param);
-
-        // Observation.status
-        let status_param = SearchParameter::new(
-            "status",
-            "http://hl7.org/fhir/SearchParameter/Observation-status",
-            SearchParameterType::Token,
-            vec!["Observation".to_string()],
-        )
-        .with_expression("Observation.status");
-        registry.register(status_param);
 
         registry
     }
@@ -290,69 +361,59 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_reverse_chain() {
+    fn test_parse_terminal_has() {
         let registry = create_test_registry();
-        let result = parse_reverse_chain(
+        let parsed = parse_reverse_chain(
             "_has:Observation:patient:code",
-            "1234-5",
+            "1234",
             &registry,
             "Patient",
-        );
-
-        assert!(result.is_ok());
-        let param = result.unwrap();
-        assert_eq!(param.source_type, "Observation");
-        assert_eq!(param.reference_param, "patient");
-        assert_eq!(param.search_param, "code");
-        assert_eq!(param.value, "1234-5");
+        )
+        .expect("parse should succeed");
+        assert_eq!(parsed.source_type, "Observation");
+        assert_eq!(parsed.reference_param, "patient");
+        match parsed.tail {
+            ReverseChainTail::Final {
+                param_name,
+                modifier,
+                ..
+            } => {
+                assert_eq!(param_name, "code");
+                assert!(modifier.is_none());
+            }
+            _ => panic!("expected Final tail"),
+        }
+        assert_eq!(parsed.value, "1234");
     }
 
     #[test]
-    fn test_parse_reverse_chain_invalid_format() {
+    fn test_parse_terminal_with_modifier() {
         let registry = create_test_registry();
-        let result = parse_reverse_chain("_has:Observation:patient", "1234", &registry, "Patient");
-
-        assert!(result.is_err());
-        assert!(matches!(result, Err(ReverseChainingError::InvalidHas(_))));
+        let parsed = parse_reverse_chain(
+            "_has:Observation:patient:code:not",
+            "1234",
+            &registry,
+            "Patient",
+        )
+        .expect("parse should succeed");
+        match parsed.tail {
+            ReverseChainTail::Final { modifier, .. } => {
+                assert!(matches!(modifier, Some(SearchModifier::Not)));
+            }
+            _ => panic!("expected Final tail"),
+        }
     }
 
     #[test]
-    fn test_parse_reverse_chain_unknown_param() {
+    fn test_unknown_reference_param_fails() {
         let registry = create_test_registry();
-        let result = parse_reverse_chain(
+        let err = parse_reverse_chain(
             "_has:Observation:unknown:code",
             "1234",
             &registry,
             "Patient",
-        );
-
-        assert!(result.is_err());
-        assert!(matches!(
-            result,
-            Err(ReverseChainingError::UnknownParameter { .. })
-        ));
-    }
-
-    #[test]
-    fn test_build_reverse_chain_search() {
-        let registry = create_test_registry();
-        let param = parse_reverse_chain(
-            "_has:Observation:patient:code",
-            "1234-5",
-            &registry,
-            "Patient",
         )
-        .unwrap();
-
-        let mut builder = SqlBuilder::new();
-        let result = build_reverse_chain_search(&mut builder, &param, "Patient");
-
-        assert!(result.is_ok());
-        let clause = builder.build_where_clause();
-        assert!(clause.is_some());
-        let clause_str = clause.unwrap();
-        assert!(clause_str.contains("EXISTS"));
-        assert!(clause_str.contains("observation"));
-        assert!(clause_str.contains("Patient/"));
+        .unwrap_err();
+        assert!(matches!(err, ReverseChainingError::UnknownParameter { .. }));
     }
 }

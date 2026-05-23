@@ -31,6 +31,11 @@ macro_rules! embedded_migrations {
                 "date_index_tstzrange",
                 include_str!("../../migrations/20260601000001_date_index_tstzrange.sql"),
             ),
+            (
+                20260602000001i64,
+                "unaccent_extension",
+                include_str!("../../migrations/20260602000001_unaccent_extension.sql"),
+            ),
         ]
     };
 }
