@@ -45,8 +45,10 @@ pub use token::{
 };
 pub use uri::{build_uri_array_search, build_uri_search};
 
+use crate::ir::{resolve_composite_component_specs, search_type_name};
 use crate::parameters::{ElementTypeHint, SearchModifier, SearchParameter, SearchParameterType};
 use crate::parser::ParsedParam;
+use crate::registry::SearchParameterRegistry;
 use crate::sql_builder::{
     SqlBuilder, SqlBuilderError, build_jsonb_accessor, fhirpath_to_jsonb_path,
 };
@@ -61,6 +63,30 @@ pub fn dispatch_search(
     param: &ParsedParam,
     definition: &Arc<SearchParameter>,
     resource_type: &str,
+) -> Result<(), SqlBuilderError> {
+    dispatch_search_inner(builder, param, definition, resource_type, None)
+}
+
+/// Dispatch a search parameter with access to the full SearchParameter registry.
+///
+/// Composite parameters need this to resolve component `definition` URLs to
+/// their real SearchParameter types instead of guessing from expression text.
+pub fn dispatch_search_with_registry(
+    builder: &mut SqlBuilder,
+    param: &ParsedParam,
+    definition: &Arc<SearchParameter>,
+    resource_type: &str,
+    registry: &SearchParameterRegistry,
+) -> Result<(), SqlBuilderError> {
+    dispatch_search_inner(builder, param, definition, resource_type, Some(registry))
+}
+
+fn dispatch_search_inner(
+    builder: &mut SqlBuilder,
+    param: &ParsedParam,
+    definition: &Arc<SearchParameter>,
+    resource_type: &str,
+    registry: Option<&SearchParameterRegistry>,
 ) -> Result<(), SqlBuilderError> {
     // Get the FHIRPath expression and convert to JSONB path
     let expression = definition.expression.as_deref().ok_or_else(|| {
@@ -165,22 +191,21 @@ pub fn dispatch_search(
                 )));
             }
 
-            // Convert SearchParameterComponent to CompositeComponent
-            let components: Vec<CompositeComponent> = definition
-                .component
-                .iter()
-                .map(|c| {
-                    // Extract parameter type from component expression or definition URL
-                    // For now, use a simple heuristic based on common patterns
-                    let param_type = infer_component_type(&c.expression);
-
-                    CompositeComponent {
+            let Some(registry) = registry else {
+                return Err(SqlBuilderError::InvalidPath(
+                    "Composite component type resolution requires SearchParameterRegistry"
+                        .to_string(),
+                ));
+            };
+            let components =
+                resolve_composite_component_specs(registry, resource_type, definition)?
+                    .into_iter()
+                    .map(|spec| CompositeComponent {
                         name: definition.code.clone(),
-                        param_type,
-                        expression: c.expression.clone(),
-                    }
-                })
-                .collect();
+                        param_type: search_type_name(spec.search_type).to_string(),
+                        expression: spec.expression,
+                    })
+                    .collect::<Vec<_>>();
 
             // Process each value in the search parameter
             for value in &param.values {
@@ -382,6 +407,7 @@ fn build_last_updated_search(
 /// - **HumanName** (path=`["name"]`): OR of containments for family/text/given
 /// - **Array string** (e.g. `["name","family"]`): containment wrapping in array
 /// - **Simple string** (e.g. `["gender"]`): direct containment
+#[cfg(test)]
 fn build_gin_exact_string_search(
     builder: &mut SqlBuilder,
     param: &ParsedParam,
@@ -467,6 +493,7 @@ fn build_gin_exact_string_search(
 /// - `resource @> '{"name": [{"family": "Smith"}]}'::jsonb`
 /// - `resource @> '{"name": [{"text": "Smith"}]}'::jsonb`
 /// - `resource @> '{"name": [{"given": ["Smith"]}]}'::jsonb`
+#[cfg(test)]
 fn build_gin_human_name_exact(
     builder: &mut SqlBuilder,
     resource_col: &str,
@@ -491,6 +518,7 @@ fn build_gin_human_name_exact(
 }
 
 /// Build a nested JSON object from path segments wrapping a leaf value (for string search).
+#[cfg(test)]
 fn build_string_nested_containment(
     path_segments: &[String],
     leaf_value: serde_json::Value,
@@ -503,6 +531,7 @@ fn build_string_nested_containment(
 }
 
 /// Split a path into array path and field name.
+#[cfg(test)]
 fn split_array_path(path: &[String]) -> (Vec<String>, String) {
     if path.len() > 1 {
         let array_path = path[..path.len() - 1].to_vec();
@@ -519,56 +548,6 @@ fn split_array_path(path: &[String]) -> (Vec<String>, String) {
 /// ends with ".identifier", this is likely an Identifier-type field.
 fn is_identifier_param(code: &str, expression: &str) -> bool {
     code == "identifier" || expression.ends_with(".identifier")
-}
-
-/// Infer component type from FHIRPath expression.
-///
-/// This is a heuristic-based approach that examines the expression to determine
-/// the likely FHIR type. A more robust implementation would look up the component
-/// definition URL to get the exact type.
-fn infer_component_type(expression: &str) -> String {
-    let lower = expression.to_lowercase();
-
-    // Date patterns (check before code as "effective" could match both)
-    if lower.contains("date")
-        || lower.contains("time")
-        || lower.contains("instant")
-        || lower.contains("effective")
-        || lower.contains("period")
-        || lower.starts_with("authored")
-    {
-        return "date".to_string();
-    }
-
-    // Token-like patterns
-    if lower.contains("code") || lower.contains("coding") || lower.contains("codeable") {
-        return "token".to_string();
-    }
-
-    // String-like patterns
-    if lower.contains("text") || lower.contains("display") || lower.contains("name") {
-        return "string".to_string();
-    }
-
-    // Quantity patterns
-    if lower.contains("quantity")
-        || (lower.contains("value") && (lower.contains("unit") || lower.contains("system")))
-    {
-        return "quantity".to_string();
-    }
-
-    // Reference patterns
-    if lower.contains("reference") || lower.contains("subject") || lower.contains("patient") {
-        return "reference".to_string();
-    }
-
-    // Number patterns
-    if lower.contains("integer") || lower.contains("decimal") {
-        return "number".to_string();
-    }
-
-    // Default to token as it's most common
-    "token".to_string()
 }
 
 #[cfg(test)]
@@ -747,6 +726,26 @@ mod tests {
     fn test_dispatch_composite_search() {
         use crate::parameters::SearchParameterComponent;
 
+        let registry = SearchParameterRegistry::new();
+        registry.register(
+            SearchParameter::new(
+                "code",
+                "http://hl7.org/fhir/SearchParameter/Observation-code",
+                SearchParameterType::Token,
+                vec!["Observation".to_string()],
+            )
+            .with_expression("Observation.code"),
+        );
+        registry.register(
+            SearchParameter::new(
+                "value-quantity",
+                "http://hl7.org/fhir/SearchParameter/Observation-value-quantity",
+                SearchParameterType::Quantity,
+                vec!["Observation".to_string()],
+            )
+            .with_expression("Observation.valueQuantity"),
+        );
+
         let mut builder = SqlBuilder::new();
         let param = ParsedParam {
             name: "code-value-quantity".to_string(),
@@ -778,7 +777,8 @@ mod tests {
             ]),
         );
 
-        let result = dispatch_search(&mut builder, &param, &def, "Observation");
+        let result =
+            dispatch_search_with_registry(&mut builder, &param, &def, "Observation", &registry);
         assert!(result.is_ok());
 
         let clause = builder.build_where_clause();
@@ -821,16 +821,37 @@ mod tests {
     }
 
     #[test]
-    fn test_infer_component_type() {
-        assert_eq!(super::infer_component_type("code"), "token");
-        assert_eq!(super::infer_component_type("valueQuantity"), "quantity");
-        assert_eq!(
-            super::infer_component_type("value.as(CodeableConcept)"),
-            "token"
+    fn test_dispatch_composite_requires_registry_for_component_types() {
+        use crate::parameters::SearchParameterComponent;
+
+        let mut builder = SqlBuilder::new();
+        let param = ParsedParam {
+            name: "code-value-quantity".to_string(),
+            modifier: None,
+            values: vec![ParsedValue {
+                prefix: None,
+                raw: "http://loinc.org|8480-6$gt100".to_string(),
+            }],
+        };
+        let def = Arc::new(
+            SearchParameter::new(
+                "code-value-quantity",
+                "http://hl7.org/fhir/SearchParameter/Observation-code-value-quantity",
+                SearchParameterType::Composite,
+                vec!["Observation".to_string()],
+            )
+            .with_expression("Observation")
+            .with_components(vec![SearchParameterComponent {
+                definition: "http://hl7.org/fhir/SearchParameter/Observation-code".to_string(),
+                expression: "code".to_string(),
+            }]),
         );
-        assert_eq!(super::infer_component_type("effective"), "date");
-        assert_eq!(super::infer_component_type("subject"), "reference");
-        assert_eq!(super::infer_component_type("display"), "string");
+
+        let err = dispatch_search(&mut builder, &param, &def, "Observation").unwrap_err();
+        assert!(
+            err.to_string().contains("requires SearchParameterRegistry"),
+            "composite dispatch without registry must fail explicitly, got: {err}"
+        );
     }
 
     // ========================================================================

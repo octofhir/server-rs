@@ -37,4 +37,13 @@ impl StrategyDecision {
             reason: "date search uses search_idx_date tstzrange GiST".to_string(),
         }
     }
+
+    pub fn sidecar_string() -> Self {
+        Self {
+            strategy: IndexStrategy::SidecarString,
+            expected_index: Some("search_idx_string_*_param_code_value_norm_trgm_idx".to_string()),
+            index_backed: true,
+            reason: "string search uses search_idx_string normalized text indexes".to_string(),
+        }
+    }
 }

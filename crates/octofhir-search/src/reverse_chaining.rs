@@ -178,6 +178,7 @@ pub fn build_reverse_chain_search(
     builder: &mut SqlBuilder,
     param: &ReverseChainParameter,
     base_type: &str,
+    registry: &SearchParameterRegistry,
 ) -> Result<(), ReverseChainingError> {
     // Build the EXISTS clause; each invocation uses a unique alias suffix so
     // multiple `_has` occurrences (or nested ones) don't collide in SQL.
@@ -191,7 +192,7 @@ pub fn build_reverse_chain_search(
         outer_id_ref
     };
 
-    let clause = build_has_level(builder, param, base_type, &outer_id_expr, depth)?;
+    let clause = build_has_level(builder, param, base_type, &outer_id_expr, registry, depth)?;
     builder.add_condition(clause);
     Ok(())
 }
@@ -203,6 +204,7 @@ fn build_has_level(
     param: &ReverseChainParameter,
     base_type: &str,
     outer_id_expr: &str,
+    registry: &SearchParameterRegistry,
     depth: usize,
 ) -> Result<String, ReverseChainingError> {
     let source_table = param.source_type.to_lowercase();
@@ -228,6 +230,7 @@ fn build_has_level(
             &param.value,
             &param.source_type,
             &src_alias,
+            registry,
         )?,
         ReverseChainTail::Nested(inner_param) => {
             let inner_outer_id = format!("{src_alias}.id");
@@ -236,6 +239,7 @@ fn build_has_level(
                 inner_param,
                 &param.source_type,
                 &inner_outer_id,
+                registry,
                 depth + 1,
             )?
         }
@@ -266,6 +270,7 @@ fn build_final_condition(
     raw_value: &str,
     source_type: &str,
     src_alias: &str,
+    registry: &SearchParameterRegistry,
 ) -> Result<String, ReverseChainingError> {
     let resource_col = format!("{src_alias}.resource");
     let mut inner =
@@ -287,7 +292,13 @@ fn build_final_condition(
         values,
     };
 
-    crate::types::dispatch_search(&mut inner, &parsed, param_def, source_type)?;
+    crate::types::dispatch_search_with_registry(
+        &mut inner,
+        &parsed,
+        param_def,
+        source_type,
+        registry,
+    )?;
 
     // Promote inner params into the outer builder so bind indices stay
     // consistent with the produced SQL fragment.

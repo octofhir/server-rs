@@ -97,9 +97,11 @@ impl SearchModifier {
                     SearchParameterType::String | SearchParameterType::Uri
                 )
             }
-            Self::Not | Self::Text | Self::In | Self::NotIn => {
-                matches!(param_type, SearchParameterType::Token)
-            }
+            Self::Text => matches!(
+                param_type,
+                SearchParameterType::String | SearchParameterType::Token
+            ),
+            Self::Not | Self::In | Self::NotIn => matches!(param_type, SearchParameterType::Token),
             Self::Below | Self::Above => {
                 matches!(
                     param_type,
@@ -634,9 +636,11 @@ mod tests {
         // String modifiers
         assert!(SearchModifier::Exact.applicable_to(&SearchParameterType::String));
         assert!(SearchModifier::Contains.applicable_to(&SearchParameterType::String));
+        assert!(SearchModifier::Text.applicable_to(&SearchParameterType::String));
         assert!(!SearchModifier::Exact.applicable_to(&SearchParameterType::Token));
 
         // Token modifiers
+        assert!(SearchModifier::Text.applicable_to(&SearchParameterType::Token));
         assert!(SearchModifier::In.applicable_to(&SearchParameterType::Token));
         assert!(SearchModifier::NotIn.applicable_to(&SearchParameterType::Token));
         assert!(!SearchModifier::In.applicable_to(&SearchParameterType::String));

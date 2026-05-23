@@ -435,26 +435,25 @@ fn build_default_token_condition(
     code: &str,
 ) -> String {
     match system {
+        Some(sys) if !sys.is_empty() && code.is_empty() => {
+            build_token_system_any_condition(builder, jsonb_path, sys)
+        }
         Some(sys) if !sys.is_empty() => {
             // system|code - match both
             let json = serde_json::json!([{"system": sys, "code": code}]).to_string();
             let p = builder.add_json_param(&json);
+            let p_sys = builder.add_text_param(sys);
+            let p_code = builder.add_text_param(code);
             // Check in CodeableConcept.coding array
             format!(
                 "({jsonb_path}->'coding' @> ${p}::jsonb OR \
-                 ({jsonb_path}->>'system' = '{sys}' AND {jsonb_path}->>'code' = '{code}') OR \
-                 ({jsonb_path}->>'system' = '{sys}' AND {jsonb_path}->>'value' = '{code}'))"
+                 ({jsonb_path}->>'system' = ${p_sys} AND {jsonb_path}->>'code' = ${p_code}) OR \
+                 ({jsonb_path}->>'system' = ${p_sys} AND {jsonb_path}->>'value' = ${p_code}))"
             )
         }
         Some(_) => {
             // |code - code with no system (null system) - empty string case
-            let p = builder.add_text_param(code);
-            format!(
-                "(({jsonb_path}->>'system' IS NULL AND {jsonb_path}->>'code' = ${p}) OR \
-                 ({jsonb_path}->>'system' IS NULL AND {jsonb_path}->>'value' = ${p}) OR \
-                 EXISTS (SELECT 1 FROM jsonb_array_elements({jsonb_path}->'coding') AS c \
-                         WHERE c->>'system' IS NULL AND c->>'code' = ${p}))"
-            )
+            build_token_no_system_condition(builder, jsonb_path, code)
         }
         None => {
             // code only - match in any system
@@ -467,6 +466,36 @@ fn build_default_token_condition(
             )
         }
     }
+}
+
+fn build_token_no_system_condition(
+    builder: &mut SqlBuilder,
+    jsonb_path: &str,
+    code: &str,
+) -> String {
+    let p = builder.add_text_param(code);
+    format!(
+        "((({jsonb_path}->>'system' IS NULL OR {jsonb_path}->>'system' = '') \
+          AND {jsonb_path}->>'code' = ${p}) OR \
+         (({jsonb_path}->>'system' IS NULL OR {jsonb_path}->>'system' = '') \
+          AND {jsonb_path}->>'value' = ${p}) OR \
+         EXISTS (SELECT 1 FROM jsonb_array_elements({jsonb_path}->'coding') AS c \
+                 WHERE (c->>'system' IS NULL OR c->>'system' = '') \
+                 AND c->>'code' = ${p}))"
+    )
+}
+
+fn build_token_system_any_condition(
+    builder: &mut SqlBuilder,
+    jsonb_path: &str,
+    system: &str,
+) -> String {
+    let p = builder.add_text_param(system);
+    format!(
+        "({jsonb_path}->>'system' = ${p} OR \
+         EXISTS (SELECT 1 FROM jsonb_array_elements({jsonb_path}->'coding') AS c \
+                 WHERE c->>'system' = ${p}))"
+    )
 }
 
 /// Build condition for Identifier `:of-type` modifier search.
@@ -530,55 +559,12 @@ pub fn build_identifier_search(
         let (system, code) = parse_token_value(&value.raw);
 
         let condition = match &param.modifier {
-            None => {
-                match system {
-                    Some(sys) if !sys.is_empty() && !code.is_empty() => {
-                        // system|value
-                        let json = serde_json::json!([{"system": sys, "value": code}]).to_string();
-                        let p = builder.add_json_param(&json);
-                        format!("{array_path} @> ${p}::jsonb")
-                    }
-                    Some(sys) if !sys.is_empty() => {
-                        // system| (empty value) — match any identifier with that system
-                        let p = builder.add_text_param(sys);
-                        format!(
-                            "EXISTS (SELECT 1 FROM jsonb_array_elements({array_path}) AS ident \
-                             WHERE ident->>'system' = ${p})"
-                        )
-                    }
-                    Some(_) => {
-                        // |value - no system (empty string case)
-                        let p = builder.add_text_param(code);
-                        format!(
-                            "EXISTS (SELECT 1 FROM jsonb_array_elements({array_path}) AS ident \
-                             WHERE (ident->>'system' IS NULL OR ident->>'system' = '') AND ident->>'value' = ${p})"
-                        )
-                    }
-                    None => {
-                        // value only
-                        let p = builder.add_text_param(code);
-                        format!(
-                            "EXISTS (SELECT 1 FROM jsonb_array_elements({array_path}) AS ident \
-                             WHERE ident->>'value' = ${p})"
-                        )
-                    }
-                }
-            }
+            None => build_identifier_match_condition(builder, array_path, system, code),
 
-            Some(SearchModifier::Not) => match system {
-                Some(sys) if !sys.is_empty() => {
-                    let json = serde_json::json!([{"system": sys, "value": code}]).to_string();
-                    let p = builder.add_json_param(&json);
-                    format!("NOT ({array_path} @> ${p}::jsonb)")
-                }
-                _ => {
-                    let p = builder.add_text_param(code);
-                    format!(
-                        "NOT EXISTS (SELECT 1 FROM jsonb_array_elements({array_path}) AS ident \
-                             WHERE ident->>'value' = ${p})"
-                    )
-                }
-            },
+            Some(SearchModifier::Not) => {
+                let inner = build_identifier_match_condition(builder, array_path, system, code);
+                format!("NOT ({inner})")
+            }
 
             Some(SearchModifier::Missing) => {
                 let is_missing = value.raw.eq_ignore_ascii_case("true");
@@ -606,6 +592,47 @@ pub fn build_identifier_search(
     }
 
     Ok(())
+}
+
+fn build_identifier_match_condition(
+    builder: &mut SqlBuilder,
+    array_path: &str,
+    system: Option<&str>,
+    value: &str,
+) -> String {
+    match system {
+        Some(sys) if !sys.is_empty() && !value.is_empty() => {
+            // system|value
+            let json = serde_json::json!([{"system": sys, "value": value}]).to_string();
+            let p = builder.add_json_param(&json);
+            format!("{array_path} @> ${p}::jsonb")
+        }
+        Some(sys) if !sys.is_empty() => {
+            // system| (empty value) — match any identifier with that system.
+            let p = builder.add_text_param(sys);
+            format!(
+                "EXISTS (SELECT 1 FROM jsonb_array_elements({array_path}) AS ident \
+                 WHERE ident->>'system' = ${p})"
+            )
+        }
+        Some(_) => {
+            // |value - no system.
+            let p = builder.add_text_param(value);
+            format!(
+                "EXISTS (SELECT 1 FROM jsonb_array_elements({array_path}) AS ident \
+                 WHERE (ident->>'system' IS NULL OR ident->>'system' = '') \
+                 AND ident->>'value' = ${p})"
+            )
+        }
+        None => {
+            // value only.
+            let p = builder.add_text_param(value);
+            format!(
+                "EXISTS (SELECT 1 FROM jsonb_array_elements({array_path}) AS ident \
+                 WHERE ident->>'value' = ${p})"
+            )
+        }
+    }
 }
 
 /// Build GIN-optimized token search using `resource @> '{...}'::jsonb`.
@@ -724,6 +751,17 @@ fn build_gin_token_containment(
     system: Option<&str>,
     code: &str,
 ) -> String {
+    let jsonb_path = crate::sql_builder::build_jsonb_accessor(resource_col, path_segments, false);
+
+    if let Some(sys) = system {
+        if sys.is_empty() {
+            return build_token_no_system_condition(builder, &jsonb_path, code);
+        }
+        if code.is_empty() {
+            return build_token_system_any_condition(builder, &jsonb_path, sys);
+        }
+    }
+
     let coding_obj = match system {
         Some(sys) if !sys.is_empty() => {
             serde_json::json!({"system": sys, "code": code})
@@ -940,7 +978,8 @@ mod tests {
 
         let clause = builder.build_where_clause().unwrap();
         assert!(clause.contains("@>"));
-        assert!(clause.contains("http://loinc.org"));
+        assert!(!clause.contains("http://loinc.org"));
+        assert_eq!(builder.params().len(), 3);
     }
 
     #[test]
@@ -1095,6 +1134,44 @@ mod tests {
     }
 
     #[test]
+    fn test_gin_token_search_no_system_code_uses_no_system_semantics() {
+        let mut builder = SqlBuilder::new();
+        let param = make_param("code", "|8480-6", None);
+
+        build_gin_token_search(&mut builder, &param, &["code".to_string()]).unwrap();
+
+        let clause = builder.build_where_clause().unwrap();
+        assert!(
+            clause.contains("system' IS NULL") && clause.contains("c->>'system' IS NULL"),
+            "|code must require absent system, got: {clause}"
+        );
+        assert!(
+            !clause.contains("@>"),
+            "|code cannot be represented by broad code-only containment: {clause}"
+        );
+        assert_eq!(builder.params()[0].as_str(), "8480-6");
+    }
+
+    #[test]
+    fn test_gin_token_search_system_any_code_uses_system_only_semantics() {
+        let mut builder = SqlBuilder::new();
+        let param = make_param("code", "http://loinc.org|", None);
+
+        build_gin_token_search(&mut builder, &param, &["code".to_string()]).unwrap();
+
+        let clause = builder.build_where_clause().unwrap();
+        assert!(
+            clause.contains("c->>'system' = $1") && !clause.contains("c->>'code'"),
+            "system| must match any code in that system, got: {clause}"
+        );
+        assert!(
+            !clause.contains("@>"),
+            "system| cannot be represented as containment with empty code: {clause}"
+        );
+        assert_eq!(builder.params()[0].as_str(), "http://loinc.org");
+    }
+
+    #[test]
     fn test_gin_token_search_not_modifier() {
         let mut builder = SqlBuilder::new();
         let param = make_param("code", "http://loinc.org|8480-6", Some(SearchModifier::Not));
@@ -1149,6 +1226,53 @@ mod tests {
             json_str.contains("http://test.org") && json_str.contains("debug-123"),
             "Expected JSON with system and value, got: {json_str}"
         );
+    }
+
+    #[test]
+    fn test_identifier_system_any_value_search() {
+        let mut builder = SqlBuilder::new();
+        let param = make_param("identifier", "http://test.org|", None);
+
+        build_identifier_search(&mut builder, &param, "r.resource->'identifier'").unwrap();
+
+        let clause = builder.build_where_clause().unwrap();
+        assert!(
+            clause.contains("ident->>'system' = $1") && !clause.contains("ident->>'value'"),
+            "system| should match any identifier value in system, got: {clause}"
+        );
+        assert_eq!(builder.params()[0].as_str(), "http://test.org");
+    }
+
+    #[test]
+    fn test_identifier_no_system_value_search() {
+        let mut builder = SqlBuilder::new();
+        let param = make_param("identifier", "|debug-123", None);
+
+        build_identifier_search(&mut builder, &param, "r.resource->'identifier'").unwrap();
+
+        let clause = builder.build_where_clause().unwrap();
+        assert!(
+            clause.contains("ident->>'system' IS NULL") && clause.contains("ident->>'value' = $1"),
+            "|value should require absent identifier system, got: {clause}"
+        );
+        assert_eq!(builder.params()[0].as_str(), "debug-123");
+    }
+
+    #[test]
+    fn test_identifier_not_modifier_negates_same_token_form() {
+        let mut builder = SqlBuilder::new();
+        let param = make_param("identifier", "|debug-123", Some(SearchModifier::Not));
+
+        build_identifier_search(&mut builder, &param, "r.resource->'identifier'").unwrap();
+
+        let clause = builder.build_where_clause().unwrap();
+        assert!(
+            clause.starts_with("NOT (EXISTS")
+                && clause.contains("ident->>'system' IS NULL")
+                && clause.contains("ident->>'value' = $1"),
+            ":not must negate the |value form, got: {clause}"
+        );
+        assert_eq!(builder.params()[0].as_str(), "debug-123");
     }
 
     #[test]

@@ -1130,9 +1130,35 @@ mod tests {
     }
 
     #[test]
+    fn test_extract_strings_normalizes_accents_and_preserves_exact() {
+        let resource = json!({
+            "resourceType": "Patient",
+            "name": [{
+                "family": "Müller",
+                "given": ["Renée"]
+            }]
+        });
+
+        let strings = extract_strings(&resource, "Patient", "name", "Patient.name");
+
+        assert!(
+            strings
+                .iter()
+                .any(|s| { s.value_exact == "Müller" && s.value_normalized == "muller" })
+        );
+        assert!(
+            strings
+                .iter()
+                .any(|s| { s.value_exact == "Renée" && s.value_normalized == "renee" })
+        );
+    }
+
+    #[test]
     fn test_normalize_string() {
         assert_eq!(normalize_string("Smith"), "smith");
         assert_eq!(normalize_string("HELLO"), "hello");
+        assert_eq!(normalize_string("Müller"), "muller");
+        assert_eq!(normalize_string("García Renée"), "garcia renee");
     }
 
     #[test]

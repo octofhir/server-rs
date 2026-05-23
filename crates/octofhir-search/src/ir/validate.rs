@@ -41,9 +41,16 @@ pub fn validate_search_expr(expr: &SearchExpr) -> Result<(), ValidationError> {
                 });
             }
             for value in &param.values {
-                if param.search_type != SearchParameterType::Date
-                    || !matches!(value, SearchValue::Date(_))
-                {
+                let matches_type = matches!(
+                    (param.search_type, value),
+                    (SearchParameterType::Date, SearchValue::Date(_))
+                        | (SearchParameterType::String, SearchValue::String(_))
+                        | (SearchParameterType::Token, SearchValue::Token(_))
+                        | (SearchParameterType::Number, SearchValue::Number(_))
+                        | (SearchParameterType::Quantity, SearchValue::Quantity(_))
+                        | (SearchParameterType::Composite, SearchValue::Composite(_))
+                );
+                if !matches_type {
                     return Err(ValidationError::TypeMismatch {
                         code: param.code.clone(),
                         search_type: param.search_type,

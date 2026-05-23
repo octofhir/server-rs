@@ -192,13 +192,14 @@ pub fn build_chained_search(
     builder: &mut SqlBuilder,
     chained: &ChainedParameter,
     base_type: &str,
+    registry: &SearchParameterRegistry,
 ) -> Result<(), ChainingError> {
     if chained.chain.is_empty() {
         return Err(ChainingError::InvalidChain("Empty chain".to_string()));
     }
 
     // Build nested EXISTS subqueries from outside in
-    let condition = build_nested_chain(builder, chained, base_type, 0)?;
+    let condition = build_nested_chain(builder, chained, base_type, registry, 0)?;
     builder.add_condition(condition);
 
     Ok(())
@@ -212,6 +213,7 @@ fn build_nested_chain(
     builder: &mut SqlBuilder,
     chained: &ChainedParameter,
     current_type: &str,
+    registry: &SearchParameterRegistry,
     depth: usize,
 ) -> Result<String, ChainingError> {
     let link = &chained.chain[depth];
@@ -239,10 +241,10 @@ fn build_nested_chain(
     // Build inner condition: either next chain level or final condition
     let inner_condition = if depth + 1 < chained.chain.len() {
         // More chain links - recurse
-        build_nested_chain(builder, chained, target_type, depth + 1)?
+        build_nested_chain(builder, chained, target_type, registry, depth + 1)?
     } else {
         // Final link - build the actual search condition
-        build_final_condition(builder, chained, target_type, &alias)?
+        build_final_condition(builder, chained, target_type, &alias, registry)?
     };
 
     Ok(format!(
@@ -266,6 +268,7 @@ fn build_final_condition(
     chained: &ChainedParameter,
     target_type: &str,
     alias: &str,
+    registry: &SearchParameterRegistry,
 ) -> Result<String, ChainingError> {
     // If we have the full param definition, use dispatch_search for correct handling
     // of arrays, HumanName, GIN containment, etc.
@@ -297,7 +300,13 @@ fn build_final_condition(
             values,
         };
 
-        crate::types::dispatch_search(&mut inner_builder, &parsed, param_def, target_type)?;
+        crate::types::dispatch_search_with_registry(
+            &mut inner_builder,
+            &parsed,
+            param_def,
+            target_type,
+            registry,
+        )?;
 
         // Extract conditions and params from inner builder
         let conditions = inner_builder.conditions();
@@ -536,7 +545,7 @@ mod tests {
                 .unwrap();
 
         let mut builder = SqlBuilder::new();
-        let result = build_chained_search(&mut builder, &chained, "Observation");
+        let result = build_chained_search(&mut builder, &chained, "Observation", &registry);
 
         assert!(result.is_ok());
         let clause = builder.build_where_clause();
@@ -585,7 +594,7 @@ mod tests {
         .unwrap();
 
         let mut builder = SqlBuilder::new();
-        let result = build_chained_search(&mut builder, &chained, "Observation");
+        let result = build_chained_search(&mut builder, &chained, "Observation", &registry);
 
         assert!(result.is_ok());
         let clause = builder.build_where_clause().unwrap();
@@ -620,7 +629,7 @@ mod tests {
         );
 
         let mut builder = SqlBuilder::new();
-        build_chained_search(&mut builder, &chained, "Observation").unwrap();
+        build_chained_search(&mut builder, &chained, "Observation", &registry).unwrap();
 
         let clause = builder.build_where_clause().unwrap();
         assert!(
@@ -649,7 +658,7 @@ mod tests {
         .unwrap();
 
         let mut builder = SqlBuilder::new();
-        build_chained_search(&mut builder, &chained, "Observation").unwrap();
+        build_chained_search(&mut builder, &chained, "Observation", &registry).unwrap();
 
         let clause = builder.build_where_clause().unwrap();
         assert!(

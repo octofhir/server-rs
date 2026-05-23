@@ -17,6 +17,7 @@
 use crate::parameters::SearchModifier;
 use crate::parser::ParsedParam;
 use crate::sql_builder::{SqlBuilder, SqlBuilderError};
+use crate::{ir::StringClause, ir::render_string_clauses_as_or};
 use octofhir_core::search_index::normalize_string;
 
 /// Build SQL conditions for string search against the `search_idx_string`
@@ -37,92 +38,10 @@ pub fn build_indexed_string_search(
     param: &ParsedParam,
     resource_type: &str,
 ) -> Result<(), SqlBuilderError> {
-    if let Some(SearchModifier::Missing) = &param.modifier {
-        return build_indexed_missing(builder, param, resource_type);
+    let clauses = StringClause::from_parsed_param(param, resource_type)?;
+    if let Some(sql) = render_string_clauses_as_or(builder, &clauses) {
+        builder.add_condition(sql);
     }
-
-    if param.values.is_empty() {
-        return Ok(());
-    }
-
-    let mut or_conditions = Vec::new();
-
-    for value in &param.values {
-        if value.raw.is_empty() {
-            continue;
-        }
-
-        let rt_param = builder.add_text_param(resource_type);
-        let pc_param = builder.add_text_param(&param.name);
-
-        let predicate = match &param.modifier {
-            None => {
-                let normalized = normalize_string(&value.raw);
-                let pattern = format!("{}%", escape_like_pattern(&normalized));
-                let p = builder.add_text_param(pattern);
-                format!("sid.value_norm LIKE ${p}")
-            }
-            Some(SearchModifier::Contains) => {
-                let normalized = normalize_string(&value.raw);
-                let pattern = format!("%{}%", escape_like_pattern(&normalized));
-                let p = builder.add_text_param(pattern);
-                format!("sid.value_norm LIKE ${p}")
-            }
-            Some(SearchModifier::Exact) => {
-                let p = builder.add_text_param(&value.raw);
-                format!("sid.value_exact = ${p}")
-            }
-            Some(other) => {
-                return Err(SqlBuilderError::InvalidModifier(format!("{other:?}")));
-            }
-        };
-
-        let id_col = builder.id_column();
-        let cond = format!(
-            "EXISTS (SELECT 1 FROM search_idx_string sid \
-             WHERE sid.resource_type = ${rt_param} AND sid.resource_id = {id_col} \
-             AND sid.param_code = ${pc_param} \
-             AND {predicate})"
-        );
-        or_conditions.push(cond);
-    }
-
-    if !or_conditions.is_empty() {
-        builder.add_condition(SqlBuilder::build_or_clause(&or_conditions));
-    }
-
-    Ok(())
-}
-
-fn build_indexed_missing(
-    builder: &mut SqlBuilder,
-    param: &ParsedParam,
-    resource_type: &str,
-) -> Result<(), SqlBuilderError> {
-    let is_missing = param
-        .values
-        .first()
-        .map(|v| v.raw.eq_ignore_ascii_case("true"))
-        .unwrap_or(false);
-
-    let rt_param = builder.add_text_param(resource_type);
-    let pc_param = builder.add_text_param(&param.name);
-    let id_col = builder.id_column();
-
-    let condition = if is_missing {
-        format!(
-            "NOT EXISTS (SELECT 1 FROM search_idx_string sid \
-             WHERE sid.resource_type = ${rt_param} AND sid.resource_id = {id_col} \
-             AND sid.param_code = ${pc_param})"
-        )
-    } else {
-        format!(
-            "EXISTS (SELECT 1 FROM search_idx_string sid \
-             WHERE sid.resource_type = ${rt_param} AND sid.resource_id = {id_col} \
-             AND sid.param_code = ${pc_param})"
-        )
-    };
-    builder.add_condition(condition);
     Ok(())
 }
 
@@ -494,5 +413,56 @@ mod tests {
 
         let result = build_string_search(&mut builder, &param, "resource->>'name'");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_indexed_string_default_uses_sidecar_prefix() {
+        let mut builder = SqlBuilder::new();
+        let param = make_param("family", "Smíth", None);
+
+        build_indexed_string_search(&mut builder, &param, "Patient").unwrap();
+
+        let clause = builder.build_where_clause().unwrap();
+        assert!(clause.contains("search_idx_string"));
+        assert!(clause.contains("sid.value_norm LIKE"));
+        assert_eq!(builder.params()[2].as_str(), "smith%");
+        assert!(!clause.contains("Smíth"));
+    }
+
+    #[test]
+    fn test_indexed_string_contains_escapes_like_pattern() {
+        let mut builder = SqlBuilder::new();
+        let param = make_param("family", "Sm_th%", Some(SearchModifier::Contains));
+
+        build_indexed_string_search(&mut builder, &param, "Patient").unwrap();
+
+        let clause = builder.build_where_clause().unwrap();
+        assert!(clause.contains("sid.value_norm LIKE"));
+        assert_eq!(builder.params()[2].as_str(), "%sm\\_th\\%%");
+    }
+
+    #[test]
+    fn test_indexed_string_exact_uses_sidecar_btree_value() {
+        let mut builder = SqlBuilder::new();
+        let param = make_param("family", "Smíth", Some(SearchModifier::Exact));
+
+        build_indexed_string_search(&mut builder, &param, "Patient").unwrap();
+
+        let clause = builder.build_where_clause().unwrap();
+        assert!(clause.contains("sid.value_exact ="));
+        assert_eq!(builder.params()[2].as_str(), "Smíth");
+    }
+
+    #[test]
+    fn test_indexed_string_missing_uses_sidecar_exists() {
+        let mut builder = SqlBuilder::new();
+        let param = make_param("family", "true", Some(SearchModifier::Missing));
+
+        build_indexed_string_search(&mut builder, &param, "Patient").unwrap();
+
+        let clause = builder.build_where_clause().unwrap();
+        assert!(clause.contains("NOT EXISTS"));
+        assert!(clause.contains("search_idx_string"));
+        assert_eq!(builder.param_count(), 2);
     }
 }

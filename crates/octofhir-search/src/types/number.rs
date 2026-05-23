@@ -15,6 +15,125 @@ use crate::parameters::{SearchModifier, SearchPrefix};
 use crate::parser::ParsedParam;
 use crate::sql_builder::{SqlBuilder, SqlBuilderError};
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DecimalParts {
+    mantissa: i128,
+    scale: u32,
+}
+
+impl DecimalParts {
+    fn parse(input: &str) -> Result<Self, SqlBuilderError> {
+        let raw = input.trim();
+        if raw.is_empty() {
+            return Err(invalid_number(input));
+        }
+
+        let (negative, unsigned) = match raw.as_bytes()[0] {
+            b'+' => (false, &raw[1..]),
+            b'-' => (true, &raw[1..]),
+            _ => (false, raw),
+        };
+        if unsigned.is_empty() {
+            return Err(invalid_number(input));
+        }
+
+        let mut digits = String::new();
+        let mut scale = 0_u32;
+        let mut seen_dot = false;
+        let mut seen_digit = false;
+
+        for ch in unsigned.chars() {
+            match ch {
+                '0'..='9' => {
+                    seen_digit = true;
+                    digits.push(ch);
+                    if seen_dot {
+                        scale += 1;
+                    }
+                }
+                '.' if !seen_dot => {
+                    seen_dot = true;
+                }
+                _ => return Err(invalid_number(input)),
+            }
+        }
+
+        if !seen_digit {
+            return Err(invalid_number(input));
+        }
+
+        let mut mantissa = digits.parse::<i128>().map_err(|_| invalid_number(input))?;
+        if negative {
+            mantissa = -mantissa;
+        }
+
+        Ok(Self { mantissa, scale })
+    }
+
+    fn format(&self) -> String {
+        format_decimal(self.mantissa, self.scale)
+    }
+
+    fn implicit_eq_bounds(&self) -> (String, String) {
+        let scale = self.scale + 1;
+        let centered = self.mantissa * 10;
+        (
+            format_decimal(centered - 5, scale),
+            format_decimal(centered + 5, scale),
+        )
+    }
+
+    fn approximate_bounds(&self) -> (String, String) {
+        let scale = self.scale + 1;
+        let centered = self.mantissa * 10;
+        let delta = self.mantissa.abs();
+        (
+            format_decimal(centered - delta, scale),
+            format_decimal(centered + delta, scale),
+        )
+    }
+}
+
+fn invalid_number(value: &str) -> SqlBuilderError {
+    SqlBuilderError::InvalidSearchValue(format!("Invalid number: {value}"))
+}
+
+fn invalid_quantity_number(value: &str) -> SqlBuilderError {
+    SqlBuilderError::InvalidSearchValue(format!("Invalid number in quantity: {value}"))
+}
+
+fn format_decimal(mantissa: i128, scale: u32) -> String {
+    let negative = mantissa < 0;
+    let digits = mantissa.abs().to_string();
+
+    if scale == 0 {
+        return if negative {
+            format!("-{digits}")
+        } else {
+            digits
+        };
+    }
+
+    let scale = scale as usize;
+    let value = if digits.len() > scale {
+        let split = digits.len() - scale;
+        format!("{}.{}", &digits[..split], &digits[split..])
+    } else {
+        format!("0.{}{}", "0".repeat(scale - digits.len()), digits)
+    };
+    let trimmed = value.trim_end_matches('0').trim_end_matches('.');
+
+    if negative && trimmed != "0" {
+        format!("-{trimmed}")
+    } else {
+        trimmed.to_string()
+    }
+}
+
+fn bind_numeric(builder: &mut SqlBuilder, value: impl Into<String>) -> usize {
+    builder.add_text_param(value.into())
+}
+
 /// Build SQL conditions for number search.
 ///
 /// Number parameters use prefixes to specify comparison operators.
@@ -42,64 +161,54 @@ pub fn build_number_search(
 
         let prefix = value.prefix.unwrap_or(SearchPrefix::Eq);
         let num_str = &value.raw;
-
-        let num: f64 = num_str.parse().map_err(|_| {
-            SqlBuilderError::InvalidSearchValue(format!("Invalid number: {num_str}"))
-        })?;
+        let number = DecimalParts::parse(num_str)?;
 
         let condition = match prefix {
             SearchPrefix::Eq => {
-                // Per FHIR spec, eq includes implicit precision range
-                let precision = calculate_precision(num_str);
-                let lower = num - precision;
-                let upper = num + precision;
-                let p1 = builder.add_float_param(lower);
-                let p2 = builder.add_float_param(upper);
-                format!("({jsonb_path})::numeric BETWEEN ${p1} AND ${p2}")
+                let (lower, upper) = number.implicit_eq_bounds();
+                let p1 = bind_numeric(builder, lower);
+                let p2 = bind_numeric(builder, upper);
+                format!(
+                    "(({jsonb_path})::numeric >= ${p1}::numeric AND ({jsonb_path})::numeric < ${p2}::numeric)"
+                )
             }
 
             SearchPrefix::Ne => {
-                // Not equal - outside the precision range
-                let precision = calculate_precision(num_str);
-                let lower = num - precision;
-                let upper = num + precision;
-                let p1 = builder.add_float_param(lower);
-                let p2 = builder.add_float_param(upper);
-                format!("({jsonb_path})::numeric NOT BETWEEN ${p1} AND ${p2}")
+                let (lower, upper) = number.implicit_eq_bounds();
+                let p1 = bind_numeric(builder, lower);
+                let p2 = bind_numeric(builder, upper);
+                format!(
+                    "(({jsonb_path})::numeric < ${p1}::numeric OR ({jsonb_path})::numeric >= ${p2}::numeric)"
+                )
             }
 
             SearchPrefix::Gt | SearchPrefix::Sa => {
-                // Greater than
-                let p = builder.add_float_param(num);
-                format!("({jsonb_path})::numeric > ${p}")
+                let p = bind_numeric(builder, number.format());
+                format!("({jsonb_path})::numeric > ${p}::numeric")
             }
 
             SearchPrefix::Lt | SearchPrefix::Eb => {
-                // Less than
-                let p = builder.add_float_param(num);
-                format!("({jsonb_path})::numeric < ${p}")
+                let p = bind_numeric(builder, number.format());
+                format!("({jsonb_path})::numeric < ${p}::numeric")
             }
 
             SearchPrefix::Ge => {
-                // Greater or equal
-                let p = builder.add_float_param(num);
-                format!("({jsonb_path})::numeric >= ${p}")
+                let p = bind_numeric(builder, number.format());
+                format!("({jsonb_path})::numeric >= ${p}::numeric")
             }
 
             SearchPrefix::Le => {
-                // Less or equal
-                let p = builder.add_float_param(num);
-                format!("({jsonb_path})::numeric <= ${p}")
+                let p = bind_numeric(builder, number.format());
+                format!("({jsonb_path})::numeric <= ${p}::numeric")
             }
 
             SearchPrefix::Ap => {
-                // Approximate: 10% range
-                let range = num.abs() * 0.1;
-                let lower = num - range;
-                let upper = num + range;
-                let p1 = builder.add_float_param(lower);
-                let p2 = builder.add_float_param(upper);
-                format!("({jsonb_path})::numeric BETWEEN ${p1} AND ${p2}")
+                let (lower, upper) = number.approximate_bounds();
+                let p1 = bind_numeric(builder, lower);
+                let p2 = bind_numeric(builder, upper);
+                format!(
+                    "(({jsonb_path})::numeric >= ${p1}::numeric AND ({jsonb_path})::numeric < ${p2}::numeric)"
+                )
             }
         };
 
@@ -129,24 +238,6 @@ fn build_missing_condition(
         builder.add_condition(condition);
     }
     Ok(())
-}
-
-/// Calculate the implicit precision based on significant figures.
-///
-/// Per FHIR spec, a number like "5.5" has implicit range [5.45, 5.55)
-/// and "100" has range [99.5, 100.5).
-fn calculate_precision(num_str: &str) -> f64 {
-    // Remove leading/trailing whitespace and sign
-    let cleaned = num_str.trim().trim_start_matches(['+', '-']);
-
-    if let Some(dot_pos) = cleaned.find('.') {
-        // Has decimal point - precision based on decimal places
-        let decimals = cleaned.len() - dot_pos - 1;
-        0.5 * 10f64.powi(-(decimals as i32))
-    } else {
-        // Integer - precision is 0.5
-        0.5
-    }
 }
 
 /// Build search for Quantity types.
@@ -179,18 +270,11 @@ pub fn build_quantity_search(
         // Parse quantity format: number|system|code
         let (num_str, system, code) = parse_quantity_value(&value.raw);
 
-        let num: f64 = num_str.parse().map_err(|_| {
-            SqlBuilderError::InvalidSearchValue(format!("Invalid number in quantity: {num_str}"))
-        })?;
+        let number = DecimalParts::parse(num_str).map_err(|_| invalid_quantity_number(num_str))?;
 
         // Build the numeric condition
-        let num_condition = build_numeric_condition(
-            builder,
-            &format!("{jsonb_path}->>'value'"),
-            prefix,
-            num,
-            num_str,
-        );
+        let num_condition =
+            build_numeric_condition(builder, &format!("{jsonb_path}->>'value'"), prefix, &number);
 
         // Add system/code constraints if present
         let condition = if system.is_some() || code.is_some() {
@@ -254,55 +338,48 @@ fn build_numeric_condition(
     builder: &mut SqlBuilder,
     path: &str,
     prefix: SearchPrefix,
-    num: f64,
-    num_str: &str,
+    number: &DecimalParts,
 ) -> String {
     match prefix {
         SearchPrefix::Eq => {
-            let precision = calculate_precision(num_str);
-            let lower = num - precision;
-            let upper = num + precision;
-            let p1 = builder.add_float_param(lower);
-            let p2 = builder.add_float_param(upper);
-            format!("({path})::numeric BETWEEN ${p1} AND ${p2}")
+            let (lower, upper) = number.implicit_eq_bounds();
+            let p1 = bind_numeric(builder, lower);
+            let p2 = bind_numeric(builder, upper);
+            format!("(({path})::numeric >= ${p1}::numeric AND ({path})::numeric < ${p2}::numeric)")
         }
 
         SearchPrefix::Ne => {
-            let precision = calculate_precision(num_str);
-            let lower = num - precision;
-            let upper = num + precision;
-            let p1 = builder.add_float_param(lower);
-            let p2 = builder.add_float_param(upper);
-            format!("({path})::numeric NOT BETWEEN ${p1} AND ${p2}")
+            let (lower, upper) = number.implicit_eq_bounds();
+            let p1 = bind_numeric(builder, lower);
+            let p2 = bind_numeric(builder, upper);
+            format!("(({path})::numeric < ${p1}::numeric OR ({path})::numeric >= ${p2}::numeric)")
         }
 
         SearchPrefix::Gt | SearchPrefix::Sa => {
-            let p = builder.add_float_param(num);
-            format!("({path})::numeric > ${p}")
+            let p = bind_numeric(builder, number.format());
+            format!("({path})::numeric > ${p}::numeric")
         }
 
         SearchPrefix::Lt | SearchPrefix::Eb => {
-            let p = builder.add_float_param(num);
-            format!("({path})::numeric < ${p}")
+            let p = bind_numeric(builder, number.format());
+            format!("({path})::numeric < ${p}::numeric")
         }
 
         SearchPrefix::Ge => {
-            let p = builder.add_float_param(num);
-            format!("({path})::numeric >= ${p}")
+            let p = bind_numeric(builder, number.format());
+            format!("({path})::numeric >= ${p}::numeric")
         }
 
         SearchPrefix::Le => {
-            let p = builder.add_float_param(num);
-            format!("({path})::numeric <= ${p}")
+            let p = bind_numeric(builder, number.format());
+            format!("({path})::numeric <= ${p}::numeric")
         }
 
         SearchPrefix::Ap => {
-            let range = num.abs() * 0.1;
-            let lower = num - range;
-            let upper = num + range;
-            let p1 = builder.add_float_param(lower);
-            let p2 = builder.add_float_param(upper);
-            format!("({path})::numeric BETWEEN ${p1} AND ${p2}")
+            let (lower, upper) = number.approximate_bounds();
+            let p1 = bind_numeric(builder, lower);
+            let p2 = bind_numeric(builder, upper);
+            format!("(({path})::numeric >= ${p1}::numeric AND ({path})::numeric < ${p2}::numeric)")
         }
     }
 }
@@ -324,11 +401,22 @@ mod tests {
     }
 
     #[test]
-    fn test_calculate_precision() {
-        assert!((calculate_precision("100") - 0.5).abs() < 0.001);
-        assert!((calculate_precision("5.5") - 0.05).abs() < 0.001);
-        assert!((calculate_precision("5.50") - 0.005).abs() < 0.001);
-        assert!((calculate_precision("5.500") - 0.0005).abs() < 0.0001);
+    fn test_decimal_implicit_precision_bounds_are_exact_half_open() {
+        let cases = [
+            ("100", "99.5", "100.5"),
+            ("5.5", "5.45", "5.55"),
+            ("5.50", "5.495", "5.505"),
+            ("5.500", "5.4995", "5.5005"),
+            ("-5.5", "-5.55", "-5.45"),
+        ];
+
+        for (value, expected_lower, expected_upper) in cases {
+            let number = DecimalParts::parse(value).unwrap();
+            assert_eq!(
+                number.implicit_eq_bounds(),
+                (expected_lower.to_string(), expected_upper.to_string())
+            );
+        }
     }
 
     #[test]
@@ -339,8 +427,12 @@ mod tests {
         build_number_search(&mut builder, &param, "resource->>'value'").unwrap();
 
         let clause = builder.build_where_clause().unwrap();
-        assert!(clause.contains("BETWEEN"));
+        assert!(clause.contains(">= $1::numeric"));
+        assert!(clause.contains("< $2::numeric"));
+        assert!(!clause.contains("BETWEEN"));
         assert_eq!(builder.param_count(), 2);
+        assert_eq!(builder.params()[0].as_str(), "5.45");
+        assert_eq!(builder.params()[1].as_str(), "5.55");
     }
 
     #[test]
@@ -351,7 +443,8 @@ mod tests {
         build_number_search(&mut builder, &param, "resource->>'value'").unwrap();
 
         let clause = builder.build_where_clause().unwrap();
-        assert!(clause.contains("> $1"));
+        assert!(clause.contains("> $1::numeric"));
+        assert_eq!(builder.params()[0].as_str(), "100");
     }
 
     #[test]
@@ -362,7 +455,8 @@ mod tests {
         build_number_search(&mut builder, &param, "resource->>'value'").unwrap();
 
         let clause = builder.build_where_clause().unwrap();
-        assert!(clause.contains("BETWEEN"));
+        assert!(clause.contains(">= $1::numeric"));
+        assert!(clause.contains("< $2::numeric"));
     }
 
     #[test]
@@ -373,14 +467,14 @@ mod tests {
         build_number_search(&mut builder, &param, "resource->>'value'").unwrap();
 
         let clause = builder.build_where_clause().unwrap();
-        assert!(clause.contains("BETWEEN"));
+        assert!(clause.contains(">= $1::numeric"));
+        assert!(clause.contains("< $2::numeric"));
+        assert!(!clause.contains("BETWEEN"));
 
         // Check approximate range (10% of 100 = 10)
         let params = builder.params();
-        let lower: f64 = params[0].as_str().parse().unwrap();
-        let upper: f64 = params[1].as_str().parse().unwrap();
-        assert!((lower - 90.0).abs() < 0.001);
-        assert!((upper - 110.0).abs() < 0.001);
+        assert_eq!(params[0].as_str(), "90");
+        assert_eq!(params[1].as_str(), "110");
     }
 
     #[test]
@@ -391,7 +485,11 @@ mod tests {
         build_number_search(&mut builder, &param, "resource->>'value'").unwrap();
 
         let clause = builder.build_where_clause().unwrap();
-        assert!(clause.contains("NOT BETWEEN"));
+        assert!(clause.contains("< $1::numeric"));
+        assert!(clause.contains(">= $2::numeric"));
+        assert!(!clause.contains("NOT BETWEEN"));
+        assert_eq!(builder.params()[0].as_str(), "4.5");
+        assert_eq!(builder.params()[1].as_str(), "5.5");
     }
 
     #[test]

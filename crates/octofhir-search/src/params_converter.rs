@@ -6,9 +6,13 @@
 use crate::chaining::{build_chained_search, is_chained_parameter, parse_chained_parameter};
 use crate::include::{is_include_parameter, is_revinclude_parameter};
 use crate::ir::{
-    SearchDebugPlan, build_date_debug_plan, render_date_clauses_as_or, rewrite_date_clauses,
+    CompositeClause, NumberClause, QuantityClause, SearchDebugPlan, StringClause, TokenClause,
+    TokenIndexShape, build_composite_debug_plan, build_date_debug_plan, build_number_debug_plan,
+    build_quantity_debug_plan, build_string_debug_plan, build_string_text_debug_predicate,
+    build_token_debug_plan, render_date_clauses_as_or, resolve_composite_component_specs,
+    rewrite_date_clauses,
 };
-use crate::parameters::{SearchParameterType, SearchPrefix};
+use crate::parameters::{ElementTypeHint, SearchParameter, SearchParameterType, SearchPrefix};
 use crate::parser::{ParsedParam, ParsedValue};
 use crate::registry::SearchParameterRegistry;
 use crate::reverse_chaining::{
@@ -19,7 +23,7 @@ use crate::sql_builder::{
     SqlBuilder, SqlBuilderError, SqlValue, fhirpath_to_jsonb_path,
 };
 use crate::types::date_ast::{DateClause, DatePredicate};
-use crate::types::dispatch_search;
+use crate::types::dispatch_search_with_registry;
 use octofhir_storage::{SearchParams, TotalMode};
 use url::form_urlencoded;
 
@@ -276,10 +280,42 @@ pub fn build_query_from_params_with_config(
                     param_def.param_type,
                     resource_type,
                 )?;
+                collect_string_debug_plan(
+                    debug_plan.as_mut(),
+                    &parsed,
+                    param_def.param_type,
+                    resource_type,
+                )?;
+                collect_number_debug_plan(
+                    debug_plan.as_mut(),
+                    &parsed,
+                    param_def.param_type,
+                    resource_type,
+                )?;
+                collect_quantity_debug_plan(
+                    debug_plan.as_mut(),
+                    &parsed,
+                    param_def.param_type,
+                    resource_type,
+                )?;
+                collect_composite_debug_plan(
+                    debug_plan.as_mut(),
+                    &parsed,
+                    &param_def,
+                    registry,
+                    resource_type,
+                )?;
+                collect_token_debug_plan(debug_plan.as_mut(), &parsed, &param_def, resource_type)?;
             }
 
             // Use dispatch_search to build the condition
-            dispatch_search(&mut sql_builder, &parsed, &param_def, resource_type)?;
+            dispatch_search_with_registry(
+                &mut sql_builder,
+                &parsed,
+                &param_def,
+                resource_type,
+                registry,
+            )?;
         }
     }
 
@@ -462,6 +498,171 @@ fn append_date_debug_plan(
     }
 }
 
+fn collect_string_debug_plan(
+    debug_plan: Option<&mut SearchDebugPlan>,
+    parsed: &ParsedParam,
+    param_type: SearchParameterType,
+    resource_type: &str,
+) -> Result<(), SqlBuilderError> {
+    if param_type != SearchParameterType::String {
+        return Ok(());
+    }
+
+    if matches!(
+        parsed.modifier,
+        Some(crate::parameters::SearchModifier::Text)
+    ) {
+        append_string_text_debug_plan(debug_plan, &parsed.name);
+        return Ok(());
+    }
+
+    let clauses = StringClause::from_parsed_param(parsed, resource_type)?;
+    append_string_debug_plan(debug_plan, resource_type, &clauses);
+    Ok(())
+}
+
+fn append_string_text_debug_plan(debug_plan: Option<&mut SearchDebugPlan>, param_code: &str) {
+    if let Some(plan) = debug_plan {
+        plan.predicates
+            .push(build_string_text_debug_predicate(param_code));
+    }
+}
+
+fn append_string_debug_plan(
+    debug_plan: Option<&mut SearchDebugPlan>,
+    resource_type: &str,
+    clauses: &[StringClause],
+) {
+    if let Some(plan) = debug_plan {
+        plan.predicates
+            .extend(build_string_debug_plan(resource_type, clauses).predicates);
+    }
+}
+
+fn collect_number_debug_plan(
+    debug_plan: Option<&mut SearchDebugPlan>,
+    parsed: &ParsedParam,
+    param_type: SearchParameterType,
+    resource_type: &str,
+) -> Result<(), SqlBuilderError> {
+    if param_type != SearchParameterType::Number {
+        return Ok(());
+    }
+
+    let clauses = NumberClause::from_parsed_param(parsed, resource_type)?;
+    append_number_debug_plan(debug_plan, resource_type, &clauses);
+    Ok(())
+}
+
+fn append_number_debug_plan(
+    debug_plan: Option<&mut SearchDebugPlan>,
+    resource_type: &str,
+    clauses: &[NumberClause],
+) {
+    if let Some(plan) = debug_plan {
+        plan.predicates
+            .extend(build_number_debug_plan(resource_type, clauses).predicates);
+    }
+}
+
+fn collect_quantity_debug_plan(
+    debug_plan: Option<&mut SearchDebugPlan>,
+    parsed: &ParsedParam,
+    param_type: SearchParameterType,
+    resource_type: &str,
+) -> Result<(), SqlBuilderError> {
+    if param_type != SearchParameterType::Quantity {
+        return Ok(());
+    }
+
+    let clauses = QuantityClause::from_parsed_param(parsed, resource_type)?;
+    append_quantity_debug_plan(debug_plan, resource_type, &clauses);
+    Ok(())
+}
+
+fn append_quantity_debug_plan(
+    debug_plan: Option<&mut SearchDebugPlan>,
+    resource_type: &str,
+    clauses: &[QuantityClause],
+) {
+    if let Some(plan) = debug_plan {
+        plan.predicates
+            .extend(build_quantity_debug_plan(resource_type, clauses).predicates);
+    }
+}
+
+fn collect_composite_debug_plan(
+    debug_plan: Option<&mut SearchDebugPlan>,
+    parsed: &ParsedParam,
+    param_def: &SearchParameter,
+    registry: &SearchParameterRegistry,
+    resource_type: &str,
+) -> Result<(), SqlBuilderError> {
+    if param_def.param_type != SearchParameterType::Composite {
+        return Ok(());
+    }
+
+    let components = resolve_composite_component_specs(registry, resource_type, param_def)?;
+    let clauses = CompositeClause::from_parsed_param(parsed, resource_type, &components)?;
+    append_composite_debug_plan(debug_plan, resource_type, &clauses);
+    Ok(())
+}
+
+fn append_composite_debug_plan(
+    debug_plan: Option<&mut SearchDebugPlan>,
+    resource_type: &str,
+    clauses: &[CompositeClause],
+) {
+    if let Some(plan) = debug_plan {
+        plan.predicates
+            .extend(build_composite_debug_plan(resource_type, clauses).predicates);
+    }
+}
+
+fn collect_token_debug_plan(
+    debug_plan: Option<&mut SearchDebugPlan>,
+    parsed: &ParsedParam,
+    param_def: &SearchParameter,
+    resource_type: &str,
+) -> Result<(), SqlBuilderError> {
+    if param_def.param_type != SearchParameterType::Token {
+        return Ok(());
+    }
+
+    let index_shape = token_index_shape(param_def);
+    let clauses = TokenClause::from_parsed_param(parsed, resource_type, index_shape)?;
+    append_token_debug_plan(debug_plan, resource_type, &clauses);
+    Ok(())
+}
+
+fn token_index_shape(param_def: &SearchParameter) -> TokenIndexShape {
+    if param_def.element_type_hint.is_identifier()
+        || (matches!(&param_def.element_type_hint, ElementTypeHint::Unknown)
+            && is_identifier_param(&param_def.code, param_def.expression.as_deref()))
+    {
+        TokenIndexShape::Identifier
+    } else if matches!(&param_def.element_type_hint, ElementTypeHint::SimpleCode) {
+        TokenIndexShape::SimpleCode
+    } else {
+        TokenIndexShape::Coding
+    }
+}
+
+fn is_identifier_param(code: &str, expression: Option<&str>) -> bool {
+    code == "identifier" || expression.is_some_and(|expr| expr.ends_with(".identifier"))
+}
+
+fn append_token_debug_plan(
+    debug_plan: Option<&mut SearchDebugPlan>,
+    resource_type: &str,
+    clauses: &[TokenClause],
+) {
+    if let Some(plan) = debug_plan {
+        plan.predicates
+            .extend(build_token_debug_plan(resource_type, clauses).predicates);
+    }
+}
+
 /// Convert a single key=value occurrence to ParsedParam format.
 ///
 /// Per FHIR R4 §3.1.1.5 search.html#combining:
@@ -564,7 +765,7 @@ fn handle_has_param(
                     value = %value,
                     "Processing _has occurrence"
                 );
-                build_reverse_chain_search(sql_builder, &rc, base_type)
+                build_reverse_chain_search(sql_builder, &rc, base_type, registry)
                     .map_err(|e| SqlBuilderError::InvalidSearchValue(e.to_string()))?;
             }
             Err(e) => {
@@ -609,7 +810,7 @@ fn handle_chained_param(
                     value = %value,
                     "Processing chained parameter occurrence"
                 );
-                build_chained_search(sql_builder, &chained, resource_type)
+                build_chained_search(sql_builder, &chained, resource_type, registry)
                     .map_err(|e| SqlBuilderError::InvalidSearchValue(e.to_string()))?;
             }
             Err(e) => {
@@ -1072,6 +1273,111 @@ mod tests {
         registry
     }
 
+    fn string_registry_with_expression() -> SearchParameterRegistry {
+        use crate::parameters::SearchParameter;
+        let registry = SearchParameterRegistry::new();
+        registry.register(
+            SearchParameter::new(
+                "family",
+                "http://hl7.org/fhir/SearchParameter/Patient-family",
+                SearchParameterType::String,
+                vec!["Patient".to_string()],
+            )
+            .with_expression("Patient.name.family"),
+        );
+        registry
+    }
+
+    fn token_registry_with_expression() -> SearchParameterRegistry {
+        use crate::parameters::SearchParameter;
+        let registry = SearchParameterRegistry::new();
+        registry.register(
+            SearchParameter::new(
+                "code",
+                "http://hl7.org/fhir/SearchParameter/Observation-code",
+                SearchParameterType::Token,
+                vec!["Observation".to_string()],
+            )
+            .with_expression("Observation.code")
+            .with_element_type_hint(ElementTypeHint::Token),
+        );
+        registry
+    }
+
+    fn number_registry_with_expression() -> SearchParameterRegistry {
+        use crate::parameters::SearchParameter;
+        let registry = SearchParameterRegistry::new();
+        registry.register(
+            SearchParameter::new(
+                "value",
+                "http://hl7.org/fhir/SearchParameter/Observation-value",
+                SearchParameterType::Number,
+                vec!["Observation".to_string()],
+            )
+            .with_expression("Observation.valueInteger"),
+        );
+        registry
+    }
+
+    fn quantity_registry_with_expression() -> SearchParameterRegistry {
+        use crate::parameters::SearchParameter;
+        let registry = SearchParameterRegistry::new();
+        registry.register(
+            SearchParameter::new(
+                "value-quantity",
+                "http://hl7.org/fhir/SearchParameter/Observation-value-quantity",
+                SearchParameterType::Quantity,
+                vec!["Observation".to_string()],
+            )
+            .with_expression("Observation.valueQuantity"),
+        );
+        registry
+    }
+
+    fn composite_registry_with_expression() -> SearchParameterRegistry {
+        use crate::parameters::{SearchParameter, SearchParameterComponent};
+        let registry = SearchParameterRegistry::new();
+        registry.register(
+            SearchParameter::new(
+                "code",
+                "http://hl7.org/fhir/SearchParameter/Observation-code",
+                SearchParameterType::Token,
+                vec!["Observation".to_string()],
+            )
+            .with_expression("Observation.component.code"),
+        );
+        registry.register(
+            SearchParameter::new(
+                "value-quantity",
+                "http://hl7.org/fhir/SearchParameter/Observation-value-quantity",
+                SearchParameterType::Quantity,
+                vec!["Observation".to_string()],
+            )
+            .with_expression("Observation.component.valueQuantity"),
+        );
+        registry.register(
+            SearchParameter::new(
+                "code-value-quantity",
+                "http://hl7.org/fhir/SearchParameter/Observation-code-value-quantity",
+                SearchParameterType::Composite,
+                vec!["Observation".to_string()],
+            )
+            .with_expression("Observation.component")
+            .with_components(vec![
+                SearchParameterComponent {
+                    definition: "http://hl7.org/fhir/SearchParameter/Observation-code".to_string(),
+                    expression: "Observation.component.code".to_string(),
+                },
+                SearchParameterComponent {
+                    definition: "http://hl7.org/fhir/SearchParameter/Observation-value-quantity"
+                        .to_string(),
+                    expression: "Observation.component.valueQuantity".to_string(),
+                },
+            ]),
+        );
+        registry
+    }
+
     #[test]
     fn date_comma_values_render_or_within_one_occurrence() {
         let registry = date_registry_with_expression();
@@ -1165,6 +1471,443 @@ mod tests {
             !json.contains("2000-01-01") && !json.contains("2000-12-31"),
             "debug output must stay redacted: {json}"
         );
+    }
+
+    #[test]
+    fn string_debug_plan_is_collected_only_when_requested() {
+        let registry = string_registry_with_expression();
+        let params = parse_query_string("family:contains=Smíth&_count=5", 10, 100);
+
+        let default_converted =
+            build_query_from_params("Patient", &params, &registry, "public").unwrap();
+        assert!(default_converted.debug_plan.is_none());
+
+        let config = SearchConfig {
+            unknown_param_handling: UnknownParamHandling::Lenient,
+            collect_debug_plan: true,
+        };
+        let converted =
+            build_query_from_params_with_config("Patient", &params, &registry, "public", &config)
+                .unwrap();
+        let plan = converted.debug_plan.expect("debug plan collected");
+
+        assert_eq!(plan.resource_type, "Patient");
+        assert_eq!(plan.predicates.len(), 1);
+        assert_eq!(plan.predicates[0].param_code, "family");
+        assert_eq!(plan.predicates[0].search_type, SearchParameterType::String);
+        assert!(plan.predicates[0].index_backed);
+        assert_eq!(
+            plan.predicates[0].strategy,
+            crate::ir::IndexStrategy::SidecarString
+        );
+        assert!(plan.predicates[0].sql_shape.contains("sid.value_norm LIKE"));
+
+        let built = converted.builder.with_raw_resource(true).build().unwrap();
+        assert!(
+            built.sql.contains("search_idx_string") && built.sql.contains("sid.value_norm LIKE"),
+            "string runtime path must use sidecar SQL, got: {}",
+            built.sql
+        );
+
+        let json = serde_json::to_string(&plan).unwrap();
+        assert!(json.contains("sidecar_string"));
+        assert!(json.contains("search_idx_string_*_param_code_value_norm_trgm_idx"));
+        assert!(
+            !json.contains("Smíth") && !json.contains("smith"),
+            "debug output must stay redacted: {json}"
+        );
+    }
+
+    #[test]
+    fn string_query_builder_uses_sidecar_normalization_and_exact_raw_value() {
+        let registry = string_registry_with_expression();
+        let cases = [
+            ("family=Müller", "sid.value_norm LIKE", "muller%"),
+            ("family:contains=Müller", "sid.value_norm LIKE", "%muller%"),
+            ("family:exact=Müller", "sid.value_exact =", "Müller"),
+        ];
+
+        for (query, expected_sql, expected_param) in cases {
+            let params = parse_query_string(query, 10, 100);
+            let converted =
+                build_query_from_params("Patient", &params, &registry, "public").unwrap();
+            let built = converted.builder.with_raw_resource(true).build().unwrap();
+
+            assert!(
+                built.sql.contains("search_idx_string") && built.sql.contains(expected_sql),
+                "string query should use sidecar SQL, got: {}",
+                built.sql
+            );
+            assert!(
+                !built.sql.contains("Müller") && !built.sql.contains("muller"),
+                "string values must be bound, not interpolated: {}",
+                built.sql
+            );
+            let rendered_params = built
+                .params
+                .iter()
+                .map(SqlValue::as_display_str)
+                .collect::<Vec<_>>()
+                .join("\n");
+            assert!(
+                rendered_params.contains(expected_param),
+                "expected bound param {expected_param:?}, params: {rendered_params}"
+            );
+        }
+    }
+
+    #[test]
+    fn string_text_query_uses_jsonb_fallback_and_debug_marks_non_index_backed() {
+        let registry = string_registry_with_expression();
+        let params = parse_query_string("family:text=Müller&_count=5", 10, 100);
+        let config = SearchConfig {
+            unknown_param_handling: UnknownParamHandling::Lenient,
+            collect_debug_plan: true,
+        };
+
+        let converted =
+            build_query_from_params_with_config("Patient", &params, &registry, "public", &config)
+                .unwrap();
+        let plan = converted.debug_plan.expect("debug plan collected");
+
+        assert_eq!(plan.predicates.len(), 1);
+        assert_eq!(plan.predicates[0].param_code, "family");
+        assert_eq!(plan.predicates[0].search_type, SearchParameterType::String);
+        assert_eq!(
+            plan.predicates[0].strategy,
+            crate::ir::IndexStrategy::JsonbTraversal
+        );
+        assert!(!plan.predicates[0].index_backed);
+        assert_eq!(plan.predicates[0].expected_index, None);
+        assert!(plan.predicates[0].sql_shape.contains("to_tsvector"));
+
+        let built = converted.builder.with_raw_resource(true).build().unwrap();
+        assert!(
+            built.sql.contains("to_tsvector") && built.sql.contains("plainto_tsquery"),
+            "string :text must use narrative fallback SQL, got: {}",
+            built.sql
+        );
+        assert!(
+            !built.sql.contains("search_idx_string") && !built.sql.contains("Müller"),
+            "string :text should not use sidecar or interpolate values: {}",
+            built.sql
+        );
+        assert!(
+            built
+                .params
+                .iter()
+                .any(|param| param.as_display_str() == "Müller"),
+            "string :text value should be bound"
+        );
+
+        let json = serde_json::to_string(&plan).unwrap();
+        assert!(json.contains("jsonb_traversal"));
+        assert!(
+            !json.contains("Müller") && !json.contains("muller"),
+            "debug output must stay redacted: {json}"
+        );
+    }
+
+    #[test]
+    fn number_debug_plan_marks_jsonb_numeric_cast_non_index_backed() {
+        let registry = number_registry_with_expression();
+        let params = parse_query_string("value=ge123.45&_count=5", 10, 100);
+        let config = SearchConfig {
+            unknown_param_handling: UnknownParamHandling::Lenient,
+            collect_debug_plan: true,
+        };
+
+        let converted = build_query_from_params_with_config(
+            "Observation",
+            &params,
+            &registry,
+            "public",
+            &config,
+        )
+        .unwrap();
+        let plan = converted.debug_plan.expect("debug plan collected");
+
+        assert_eq!(plan.resource_type, "Observation");
+        assert_eq!(plan.predicates.len(), 1);
+        assert_eq!(plan.predicates[0].param_code, "value");
+        assert_eq!(plan.predicates[0].search_type, SearchParameterType::Number);
+        assert_eq!(
+            plan.predicates[0].strategy,
+            crate::ir::IndexStrategy::JsonbTraversal
+        );
+        assert!(!plan.predicates[0].index_backed);
+        assert_eq!(plan.predicates[0].expected_index, None);
+        assert!(plan.predicates[0].sql_shape.contains("::numeric >= $value"));
+
+        let built = converted.builder.with_raw_resource(true).build().unwrap();
+        assert!(
+            built.sql.contains("::numeric >= $1"),
+            "number runtime path should remain JSONB numeric cast, got: {}",
+            built.sql
+        );
+        assert!(
+            !built.sql.contains("123.45"),
+            "number values must be bound, not interpolated: {}",
+            built.sql
+        );
+
+        let json = serde_json::to_string(&plan).unwrap();
+        assert!(json.contains("jsonb_traversal"));
+        assert!(
+            !json.contains("123.45"),
+            "debug output must stay redacted: {json}"
+        );
+    }
+
+    #[test]
+    fn quantity_debug_plan_marks_jsonb_numeric_cast_non_index_backed() {
+        let registry = quantity_registry_with_expression();
+        let params = parse_query_string(
+            "value-quantity=5.5|http://unitsofmeasure.org|mg&_count=5",
+            10,
+            100,
+        );
+        let config = SearchConfig {
+            unknown_param_handling: UnknownParamHandling::Lenient,
+            collect_debug_plan: true,
+        };
+
+        let converted = build_query_from_params_with_config(
+            "Observation",
+            &params,
+            &registry,
+            "public",
+            &config,
+        )
+        .unwrap();
+        let plan = converted.debug_plan.expect("debug plan collected");
+
+        assert_eq!(plan.resource_type, "Observation");
+        assert_eq!(plan.predicates.len(), 1);
+        assert_eq!(plan.predicates[0].param_code, "value-quantity");
+        assert_eq!(
+            plan.predicates[0].search_type,
+            SearchParameterType::Quantity
+        );
+        assert_eq!(
+            plan.predicates[0].strategy,
+            crate::ir::IndexStrategy::JsonbTraversal
+        );
+        assert!(!plan.predicates[0].index_backed);
+        assert_eq!(plan.predicates[0].expected_index, None);
+        assert!(plan.predicates[0].sql_shape.contains("::numeric >= $lo"));
+        assert!(plan.predicates[0].sql_shape.contains("system' = $system"));
+        assert!(plan.predicates[0].sql_shape.contains("unit' = $code"));
+
+        let built = converted.builder.with_raw_resource(true).build().unwrap();
+        assert!(
+            built.sql.contains("::numeric >= $1::numeric")
+                && built.sql.contains("::numeric < $2::numeric"),
+            "quantity runtime path should use half-open numeric cast, got: {}",
+            built.sql
+        );
+        assert!(
+            !built.sql.contains("unitsofmeasure") && !built.sql.contains("mg"),
+            "quantity values must be bound, not interpolated: {}",
+            built.sql
+        );
+
+        let rendered_params = built
+            .params
+            .iter()
+            .map(SqlValue::as_display_str)
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(rendered_params.contains("5.45"));
+        assert!(rendered_params.contains("5.55"));
+        assert!(rendered_params.contains("http://unitsofmeasure.org"));
+        assert!(rendered_params.contains("mg"));
+
+        let json = serde_json::to_string(&plan).unwrap();
+        assert!(json.contains("jsonb_traversal"));
+        assert!(
+            !json.contains("5.5") && !json.contains("unitsofmeasure") && !json.contains("mg"),
+            "debug output must stay redacted: {json}"
+        );
+    }
+
+    #[test]
+    fn composite_debug_plan_marks_tuple_semantics_and_cooccurrence_risk() {
+        let registry = composite_registry_with_expression();
+        let params = parse_query_string(
+            "code-value-quantity=http://loinc.org|8480-6$gt5.5|http://unitsofmeasure.org|mg&_count=5",
+            10,
+            100,
+        );
+        let config = SearchConfig {
+            unknown_param_handling: UnknownParamHandling::Lenient,
+            collect_debug_plan: true,
+        };
+
+        let converted = build_query_from_params_with_config(
+            "Observation",
+            &params,
+            &registry,
+            "public",
+            &config,
+        )
+        .unwrap();
+        let plan = converted.debug_plan.expect("debug plan collected");
+
+        assert_eq!(plan.resource_type, "Observation");
+        assert_eq!(plan.predicates.len(), 1);
+        assert_eq!(plan.predicates[0].param_code, "code-value-quantity");
+        assert_eq!(
+            plan.predicates[0].search_type,
+            SearchParameterType::Composite
+        );
+        assert_eq!(
+            plan.predicates[0].strategy,
+            crate::ir::IndexStrategy::JsonbTraversal
+        );
+        assert!(!plan.predicates[0].index_backed);
+        assert_eq!(plan.predicates[0].expected_index, None);
+        assert!(
+            plan.predicates[0]
+                .sql_shape
+                .contains("requires-same-element")
+        );
+
+        let built = converted.builder.with_raw_resource(true).build().unwrap();
+        assert!(
+            built.sql.contains("component")
+                && built.sql.contains("system")
+                && built.sql.contains("value"),
+            "composite runtime path should remain current component SQL, got: {}",
+            built.sql
+        );
+        assert!(
+            !built.sql.contains("loinc")
+                && !built.sql.contains("8480-6")
+                && !built.sql.contains("mg"),
+            "composite values must be bound, not interpolated: {}",
+            built.sql
+        );
+
+        let json = serde_json::to_string(&plan).unwrap();
+        assert!(json.contains("jsonb_traversal"));
+        assert!(
+            !json.contains("loinc") && !json.contains("8480-6") && !json.contains("mg"),
+            "debug output must stay redacted: {json}"
+        );
+    }
+
+    #[test]
+    fn token_debug_plan_is_collected_only_when_requested() {
+        let registry = token_registry_with_expression();
+        let params = parse_query_string("code=http://loinc.org|8480-6&_count=5", 10, 100);
+
+        let default_converted =
+            build_query_from_params("Observation", &params, &registry, "public").unwrap();
+        assert!(default_converted.debug_plan.is_none());
+
+        let config = SearchConfig {
+            unknown_param_handling: UnknownParamHandling::Lenient,
+            collect_debug_plan: true,
+        };
+        let converted = build_query_from_params_with_config(
+            "Observation",
+            &params,
+            &registry,
+            "public",
+            &config,
+        )
+        .unwrap();
+        let plan = converted.debug_plan.expect("debug plan collected");
+
+        assert_eq!(plan.resource_type, "Observation");
+        assert_eq!(plan.predicates.len(), 1);
+        assert_eq!(plan.predicates[0].param_code, "code");
+        assert_eq!(plan.predicates[0].search_type, SearchParameterType::Token);
+        assert_eq!(
+            plan.predicates[0].strategy,
+            crate::ir::IndexStrategy::JsonbContainment
+        );
+        assert!(plan.predicates[0].index_backed);
+        assert!(plan.predicates[0].sql_shape.contains("system: $system"));
+
+        let built = converted.builder.with_raw_resource(true).build().unwrap();
+        assert!(
+            built.sql.contains("@>") && built.sql.contains("::jsonb"),
+            "token runtime path must keep existing JSONB containment SQL, got: {}",
+            built.sql
+        );
+
+        let json = serde_json::to_string(&plan).unwrap();
+        assert!(json.contains("jsonb_containment"));
+        assert!(json.contains("idx_observation_gin"));
+        assert!(
+            !json.contains("loinc") && !json.contains("8480-6"),
+            "debug output must stay redacted: {json}"
+        );
+    }
+
+    #[test]
+    fn token_query_builder_preserves_fhir_token_forms() {
+        let registry = token_registry_with_expression();
+
+        let cases = [
+            (
+                "code=8480-6",
+                "@>",
+                "code-only token should use JSONB containment",
+                vec!["8480-6"],
+            ),
+            (
+                "code=|8480-6",
+                "c->>'system' IS NULL",
+                "|code token should require absent coding system",
+                vec!["8480-6"],
+            ),
+            (
+                "code=http://loinc.org|",
+                "c->>'system' =",
+                "system| token should match any code in that system",
+                vec!["http://loinc.org"],
+            ),
+            (
+                "code=http://loinc.org|8480-6",
+                "@>",
+                "system|code token should use JSONB coding containment",
+                vec!["http://loinc.org", "8480-6"],
+            ),
+        ];
+
+        for (query, expected_sql, message, redacted_values) in cases {
+            let params = parse_query_string(query, 10, 100);
+            let converted =
+                build_query_from_params("Observation", &params, &registry, "public").unwrap();
+            let built = converted.builder.with_raw_resource(true).build().unwrap();
+
+            assert!(
+                built.sql.contains(expected_sql),
+                "{message}, got: {}",
+                built.sql
+            );
+            assert!(
+                !built.sql.contains("loinc") && !built.sql.contains("8480-6"),
+                "token values must not be interpolated into SQL text: {}",
+                built.sql
+            );
+
+            let rendered_params = built
+                .params
+                .iter()
+                .map(SqlValue::as_display_str)
+                .collect::<Vec<_>>()
+                .join("\n");
+            for expected_value in redacted_values {
+                assert!(
+                    rendered_params.contains(expected_value),
+                    "expected bound param {expected_value:?}, params: {rendered_params}"
+                );
+            }
+        }
     }
 
     #[test]
