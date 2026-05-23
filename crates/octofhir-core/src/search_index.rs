@@ -77,6 +77,13 @@ pub fn extract_references(
 // Date Extraction
 // ============================================================================
 
+/// Maximum number of `Timing.event[]` entries indexed per resource for one
+/// search parameter. Larger schedules are truncated and a warning is logged.
+/// Bounds write fanout for multi-year dose schedules where indexing every
+/// event yields no extra query value (FHIR date search matches outer limits,
+/// not enumerated occurrences).
+pub const MAX_TIMING_EVENTS: usize = 64;
+
 /// Extract date values from a FHIR resource for indexing.
 ///
 /// Every value is collapsed to a half-open `[lower, upper)` range in UTC and
@@ -84,7 +91,10 @@ pub fn extract_references(
 /// (`Timing.event[]`, repeating Periods, multi-value extensions) emit one row
 /// per element — the index is never collapsed to a min/max envelope.
 ///
-/// See `docs/architecture/date-search.md` for the full design.
+/// `Timing.repeat.boundsPeriod` is also indexed when present, as a single
+/// Period row (open ends become `±infinity`). `boundsDuration`, `boundsRange`,
+/// and recurrence-only schedules without finite bounds are not indexed —
+/// they have no concrete calendar window.
 pub fn extract_dates(
     resource: &Value,
     resource_type: &str,
@@ -122,9 +132,22 @@ fn emit_date_rows(value: &Value, param_code: &str, results: &mut Vec<ExtractedDa
             }
         }
         Value::Object(_) => {
-            // Timing.event[] — per-element rows
+            // Timing: index every concrete `event[]` plus the outer
+            // `repeat.boundsPeriod` window if present.
+            let mut matched_timing = false;
+
             if let Some(events) = value.get("event").and_then(|e| e.as_array()) {
-                for ev in events {
+                matched_timing = true;
+                let take = events.len().min(MAX_TIMING_EVENTS);
+                if events.len() > MAX_TIMING_EVENTS {
+                    tracing::warn!(
+                        param_code = param_code,
+                        events = events.len(),
+                        cap = MAX_TIMING_EVENTS,
+                        "Timing.event[] truncated to cap; later events not indexed"
+                    );
+                }
+                for ev in events.iter().take(take) {
                     if let Some(s) = ev.as_str()
                         && let Some(range) = parse_date_to_range(s)
                     {
@@ -135,9 +158,25 @@ fn emit_date_rows(value: &Value, param_code: &str, results: &mut Vec<ExtractedDa
                         });
                     }
                 }
+            }
+
+            // `boundsDuration` / `boundsRange` have no anchor and are skipped.
+            if let Some(bp) = value.get("repeat").and_then(|r| r.get("boundsPeriod"))
+                && let Some(range) = parse_period_to_range(bp)
+            {
+                matched_timing = true;
+                results.push(ExtractedDate {
+                    param_code: param_code.to_string(),
+                    range_start: range.0,
+                    range_end: range.1,
+                });
+            }
+
+            if matched_timing {
                 return;
             }
-            // Period (closed, open-start, open-end)
+
+            // Period (closed, open-start, open-end).
             if (value.get("start").is_some() || value.get("end").is_some())
                 && let Some(range) = parse_period_to_range(value)
             {
@@ -910,6 +949,128 @@ mod tests {
         assert!(starts.iter().any(|s| s.starts_with("2026-03-01")));
         assert!(starts.iter().any(|s| s.starts_with("2026-06-15")));
         assert!(starts.iter().any(|s| s.starts_with("2026-09-30")));
+    }
+
+    #[test]
+    fn test_extract_dates_timing_event_capped() {
+        // Build a Timing with 100 events — must be truncated to MAX_TIMING_EVENTS.
+        let events: Vec<String> = (0..100)
+            .map(|i| format!("2024-{:02}-{:02}", (i / 28) + 1, (i % 28) + 1))
+            .collect();
+        let resource = json!({
+            "resourceType": "MedicationStatement",
+            "effectiveTiming": { "event": events }
+        });
+        let dates = extract_dates(
+            &resource,
+            "MedicationStatement",
+            "date",
+            "MedicationStatement.effective",
+        );
+        assert_eq!(
+            dates.len(),
+            MAX_TIMING_EVENTS,
+            "Timing.event[] beyond cap must be dropped"
+        );
+        // First indexed event must still be the first one — truncation is a tail-drop,
+        // not a sample.
+        assert!(dates[0].range_start.starts_with("2024-01-01"));
+    }
+
+    #[test]
+    fn test_extract_dates_timing_bounds_period_indexed() {
+        // Timing with only `repeat.boundsPeriod` — no concrete events. Must
+        // emit one Period row.
+        let resource = json!({
+            "resourceType": "MedicationStatement",
+            "effectiveTiming": {
+                "repeat": {
+                    "boundsPeriod": { "start": "2024-03-01", "end": "2024-09-30" },
+                    "frequency": 1,
+                    "period": 1,
+                    "periodUnit": "d"
+                }
+            }
+        });
+        let dates = extract_dates(
+            &resource,
+            "MedicationStatement",
+            "date",
+            "MedicationStatement.effective",
+        );
+        assert_eq!(dates.len(), 1, "repeat.boundsPeriod must index as 1 Period");
+        assert!(dates[0].range_start.starts_with("2024-03-01"));
+        assert!(dates[0].range_end.starts_with("2024-10-01"));
+    }
+
+    #[test]
+    fn test_extract_dates_timing_events_and_bounds_period_both_indexed() {
+        // Both concrete events AND a boundsPeriod present — every event plus the
+        // outer window must be indexed.
+        let resource = json!({
+            "resourceType": "MedicationStatement",
+            "effectiveTiming": {
+                "event": ["2024-04-01", "2024-05-01"],
+                "repeat": {
+                    "boundsPeriod": { "start": "2024-03-01", "end": "2024-09-30" }
+                }
+            }
+        });
+        let dates = extract_dates(
+            &resource,
+            "MedicationStatement",
+            "date",
+            "MedicationStatement.effective",
+        );
+        assert_eq!(
+            dates.len(),
+            3,
+            "2 events + 1 boundsPeriod = 3 rows, got: {dates:?}"
+        );
+    }
+
+    #[test]
+    fn test_extract_dates_timing_repeat_without_bounds_not_indexed() {
+        // Recurrence-only Timing (frequency + period, no event[], no bounds*)
+        // has no finite searchable window — must not be indexed.
+        let resource = json!({
+            "resourceType": "MedicationStatement",
+            "effectiveTiming": {
+                "repeat": { "frequency": 1, "period": 1, "periodUnit": "d" }
+            }
+        });
+        let dates = extract_dates(
+            &resource,
+            "MedicationStatement",
+            "date",
+            "MedicationStatement.effective",
+        );
+        assert!(
+            dates.is_empty(),
+            "recurrence-only Timing must not be indexed, got: {dates:?}"
+        );
+    }
+
+    #[test]
+    fn test_extract_dates_timing_bounds_duration_not_indexed() {
+        // `boundsDuration` describes an unanchored span — no calendar window,
+        // must not be indexed.
+        let resource = json!({
+            "resourceType": "MedicationStatement",
+            "effectiveTiming": {
+                "repeat": { "boundsDuration": { "value": 7, "unit": "d" } }
+            }
+        });
+        let dates = extract_dates(
+            &resource,
+            "MedicationStatement",
+            "date",
+            "MedicationStatement.effective",
+        );
+        assert!(
+            dates.is_empty(),
+            "boundsDuration must not be indexed, got: {dates:?}"
+        );
     }
 
     #[test]

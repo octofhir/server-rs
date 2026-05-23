@@ -17,7 +17,7 @@ use sqlx_postgres::PgPool;
 use tokio::sync::mpsc;
 use tokio::time::Instant;
 
-use octofhir_core::search_index::{ExtractedDate, ExtractedReference};
+use octofhir_core::search_index::{ExtractedDate, ExtractedReference, ExtractedString};
 use octofhir_storage::StorageError;
 
 use crate::search_index;
@@ -32,9 +32,9 @@ pub enum IndexOp {
     Delete,
 }
 
-/// One unit of index work. `refs` / `dates` are pre-extracted on the caller
-/// side so the worker doesn't need the search-parameter registry or the
-/// original JSONB.
+/// One unit of index work. `refs` / `dates` / `strings` are pre-extracted on
+/// the caller side so the worker doesn't need the search-parameter registry
+/// or the original JSONB.
 #[derive(Debug)]
 pub struct IndexJob {
     pub op: IndexOp,
@@ -42,6 +42,7 @@ pub struct IndexJob {
     pub resource_id: String,
     pub refs: Vec<ExtractedReference>,
     pub dates: Vec<ExtractedDate>,
+    pub strings: Vec<ExtractedString>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -191,7 +192,13 @@ async fn flush_batch(pool: &PgPool, batch: &[IndexJob]) -> Result<(), StorageErr
         if matches!(job.op, IndexOp::Delete) {
             continue;
         }
-        buffer.extend_with(&job.resource_type, &job.resource_id, &job.refs, &job.dates);
+        buffer.extend_with(
+            &job.resource_type,
+            &job.resource_id,
+            &job.refs,
+            &job.dates,
+            &job.strings,
+        );
     }
     if !buffer.is_empty() {
         buffer.flush_with_tx(&mut tx).await?;
@@ -217,7 +224,13 @@ async fn flush_one(pool: &PgPool, job: &IndexJob) -> Result<(), StorageError> {
 
     if matches!(job.op, IndexOp::Create | IndexOp::Update) {
         let mut buffer = search_index::BatchIndexBuffer::new();
-        buffer.extend_with(&job.resource_type, &job.resource_id, &job.refs, &job.dates);
+        buffer.extend_with(
+            &job.resource_type,
+            &job.resource_id,
+            &job.refs,
+            &job.dates,
+            &job.strings,
+        );
         if !buffer.is_empty() {
             buffer.flush_with_tx(&mut tx).await?;
         }

@@ -377,6 +377,10 @@ pub struct SearchSettings {
     /// Default: 1000
     #[serde(default = "default_search_cache_capacity")]
     pub cache_capacity: usize,
+    /// Allow internal `_debug=search-plan` search plan collection.
+    /// Default: false
+    #[serde(default)]
+    pub allow_debug_search_plan: bool,
 }
 fn default_search_default() -> usize {
     10
@@ -393,6 +397,7 @@ impl Default for SearchSettings {
             default_count: default_search_default(),
             max_count: default_search_max(),
             cache_capacity: default_search_cache_capacity(),
+            allow_debug_search_plan: false,
         }
     }
 }

@@ -80,12 +80,13 @@ pub async fn root() -> impl IntoResponse {
 #[tracing::instrument(name = "fhir.root", skip_all)]
 pub async fn fhir_root(
     state: State<crate::server::AppState>,
+    headers: HeaderMap,
     params: Query<HashMap<String, String>>,
     raw: RawQuery,
 ) -> Result<impl IntoResponse, ApiError> {
     // If _type parameter is present, this is a system search
     if params.contains_key("_type") {
-        return system_search(state, params, raw)
+        return system_search(state, headers, params, raw)
             .await
             .map(|r| r.into_response());
     }
@@ -2393,6 +2394,9 @@ pub async fn search_resource(
         .map(octofhir_search::UnknownParamHandling::from_prefer_header);
 
     let raw_q = raw.unwrap_or_default();
+    let collect_debug_plan =
+        should_collect_search_plan_debug(&state.config.search, &headers, &raw_q);
+    let raw_q = strip_search_debug_params(&raw_q);
     let cfg = state.search_config.config();
 
     // Parse query string to SearchParams
@@ -2405,14 +2409,17 @@ pub async fn search_resource(
     let count = search_params.count.unwrap_or(10) as usize;
 
     // Execute search with raw JSON optimization and handling mode
-    let result = octofhir_db_postgres::queries::execute_search_raw_with_terminology(
+    let result = octofhir_db_postgres::queries::execute_search_raw_with_terminology_options(
         &state.read_db_pool,
         &resource_type,
         &search_params,
         Some(&cfg.registry),
-        unknown_param_handling,
         state.query_cache.as_deref(),
         state.terminology_provider.as_ref(),
+        octofhir_db_postgres::queries::RawSearchOptions {
+            unknown_param_handling,
+            collect_debug_plan,
+        },
     )
     .await
     .map_err(|e| ApiError::bad_request(e.to_string()))?;
@@ -2475,6 +2482,7 @@ pub async fn search_resource(
 #[tracing::instrument(name = "fhir.search.post", skip_all, fields(resource_type = %resource_type))]
 pub async fn search_resource_post(
     State(state): State<crate::server::AppState>,
+    headers: HeaderMap,
     Path(resource_type): Path<String>,
     RawQuery(raw): RawQuery,
     body: Bytes,
@@ -2501,6 +2509,9 @@ pub async fn search_resource_post(
             merged
         }
     };
+    let collect_debug_plan =
+        should_collect_search_plan_debug(&state.config.search, &headers, &raw_q);
+    let raw_q = strip_search_debug_params(&raw_q);
 
     let cfg = state.search_config.config();
 
@@ -2514,13 +2525,16 @@ pub async fn search_resource_post(
     let count = search_params.count.unwrap_or(10) as usize;
 
     // Execute search with raw JSON optimization
-    let result = octofhir_db_postgres::queries::execute_search_raw_with_config(
+    let result = octofhir_db_postgres::queries::execute_search_raw_with_options(
         &state.read_db_pool,
         &resource_type,
         &search_params,
         Some(&cfg.registry),
-        None,
         state.query_cache.as_deref(),
+        octofhir_db_postgres::queries::RawSearchOptions {
+            unknown_param_handling: None,
+            collect_debug_plan,
+        },
     )
     .await
     .map_err(|e| ApiError::bad_request(e.to_string()))?;
@@ -2592,6 +2606,7 @@ pub async fn search_resource_post(
 #[tracing::instrument(name = "fhir.search.system", skip_all)]
 pub async fn system_search(
     State(state): State<crate::server::AppState>,
+    headers: HeaderMap,
     Query(params): Query<HashMap<String, String>>,
     RawQuery(raw): RawQuery,
 ) -> Result<impl IntoResponse, ApiError> {
@@ -2609,6 +2624,9 @@ pub async fn system_search(
     }
 
     let raw_q = raw.unwrap_or_default();
+    let collect_debug_plan =
+        should_collect_search_plan_debug(&state.config.search, &headers, &raw_q);
+    let raw_q = strip_search_debug_params(&raw_q);
     let cfg = state.search_config.config();
 
     // Collect raw entries: (resource_json, id, resource_type)
@@ -2626,13 +2644,16 @@ pub async fn system_search(
             continue;
         }
 
-        match octofhir_db_postgres::queries::execute_search_raw_with_config(
+        match octofhir_db_postgres::queries::execute_search_raw_with_options(
             &state.read_db_pool,
             type_name,
             &search_params,
             Some(&cfg.registry),
-            None,
             state.query_cache.as_deref(),
+            octofhir_db_postgres::queries::RawSearchOptions {
+                unknown_param_handling: None,
+                collect_debug_plan,
+            },
         )
         .await
         {
@@ -2723,6 +2744,57 @@ fn build_query_suffix_for_links(raw_q: &str) -> Option<String> {
         .collect();
     let s = filtered.join("&");
     if s.is_empty() { None } else { Some(s) }
+}
+
+const SEARCH_DEBUG_PARAM: &str = "_debug";
+const SEARCH_PLAN_DEBUG_VALUE: &str = "search-plan";
+const SEARCH_DEBUG_HEADER: &str = "x-octofhir-debug";
+
+fn should_collect_search_plan_debug(
+    settings: &crate::config::SearchSettings,
+    headers: &HeaderMap,
+    raw_q: &str,
+) -> bool {
+    settings.allow_debug_search_plan
+        && (query_requests_search_plan_debug(raw_q) || header_requests_search_plan_debug(headers))
+}
+
+fn query_requests_search_plan_debug(raw_q: &str) -> bool {
+    url::form_urlencoded::parse(raw_q.as_bytes())
+        .any(|(key, value)| key == SEARCH_DEBUG_PARAM && value == SEARCH_PLAN_DEBUG_VALUE)
+}
+
+fn header_requests_search_plan_debug(headers: &HeaderMap) -> bool {
+    headers
+        .get(SEARCH_DEBUG_HEADER)
+        .and_then(|value| value.to_str().ok())
+        .map(|value| {
+            value
+                .split(',')
+                .map(str::trim)
+                .any(|value| value == SEARCH_PLAN_DEBUG_VALUE)
+        })
+        .unwrap_or(false)
+}
+
+fn strip_search_debug_params(raw_q: &str) -> String {
+    raw_q
+        .split('&')
+        .filter(|part| !is_search_debug_param(part))
+        .collect::<Vec<_>>()
+        .join("&")
+}
+
+fn is_search_debug_param(raw_query_part: &str) -> bool {
+    let key = raw_query_part
+        .split_once('=')
+        .map(|(key, _)| key)
+        .unwrap_or(raw_query_part);
+
+    key == SEARCH_DEBUG_PARAM
+        || urlencoding::decode(key)
+            .map(|decoded| decoded == SEARCH_DEBUG_PARAM)
+            .unwrap_or(false)
 }
 
 /// Apply _summary and _elements result parameters to a bundle
@@ -6969,6 +7041,66 @@ mod tests {
     fn test_fhir_versioned_resource_url_uses_base_path() {
         let url = fhir_versioned_resource_url("http://localhost:8080/fhir", "Patient", "123", "7");
         assert_eq!(url, "http://localhost:8080/fhir/Patient/123/_history/7");
+    }
+
+    #[test]
+    fn test_search_plan_debug_requires_config_flag() {
+        let mut settings = crate::config::SearchSettings::default();
+        let headers = HeaderMap::new();
+
+        assert!(!should_collect_search_plan_debug(
+            &settings,
+            &headers,
+            "_debug=search-plan"
+        ));
+
+        settings.allow_debug_search_plan = true;
+        assert!(should_collect_search_plan_debug(
+            &settings,
+            &headers,
+            "_debug=search-plan"
+        ));
+        assert!(!should_collect_search_plan_debug(
+            &settings,
+            &headers,
+            "_debug=other"
+        ));
+    }
+
+    #[test]
+    fn test_search_plan_debug_header_request() {
+        let mut settings = crate::config::SearchSettings::default();
+        settings.allow_debug_search_plan = true;
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            SEARCH_DEBUG_HEADER,
+            SEARCH_PLAN_DEBUG_VALUE.parse().unwrap(),
+        );
+
+        assert!(should_collect_search_plan_debug(&settings, &headers, ""));
+    }
+
+    #[test]
+    fn test_strip_search_debug_params() {
+        assert_eq!(
+            strip_search_debug_params("birthdate=ge2000-01-01&_debug=search-plan&_count=5"),
+            "birthdate=ge2000-01-01&_count=5"
+        );
+        assert_eq!(
+            strip_search_debug_params("%5Fdebug=search-plan&name=Smith"),
+            "name=Smith"
+        );
+        assert_eq!(strip_search_debug_params("_debug=search-plan"), "");
+    }
+
+    #[test]
+    fn test_debug_param_removed_from_pagination_suffix() {
+        let raw_q = strip_search_debug_params("birthdate=ge2000-01-01&_debug=search-plan&_count=5");
+
+        assert_eq!(
+            build_query_suffix_for_links(&raw_q),
+            Some("birthdate=ge2000-01-01".to_string())
+        );
     }
 
     #[test]

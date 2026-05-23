@@ -14,6 +14,8 @@ pub use history::{get_history, get_history_raw, get_system_history, get_system_h
 
 // Re-export search operations
 pub use search::{
-    SearchUnknownParamHandling, execute_search, execute_search_raw, execute_search_raw_with_config,
-    execute_search_raw_with_terminology, execute_search_with_tx,
+    RawSearchOptions, SearchUnknownParamHandling, execute_search, execute_search_raw,
+    execute_search_raw_with_config, execute_search_raw_with_options,
+    execute_search_raw_with_terminology, execute_search_raw_with_terminology_options,
+    execute_search_with_tx,
 };

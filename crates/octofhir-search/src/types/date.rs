@@ -7,16 +7,27 @@
 //! operators so the GiST index covers every FHIR prefix:
 //!
 //! - `eq` (`<@`) — resource value entirely inside query range
-//! - `ne` — NOT eq
-//! - `gt` / `sa` (`>>`) — `lower(r) >= upper(q)`
-//! - `lt` / `eb` (`<<`) — `upper(r) <= lower(q)`
-//! - `ge` (`NOT <<`) — `upper(r) > lower(q)`
-//! - `le` (`NOT >>`) — `lower(r) < upper(q)`
+//! - `ne` — NOT eq (`NOT EXISTS … <@`)
+//! - `gt` (`&& [upper(q), +∞)`) — range above q intersects r (`upper(r) > upper(q)`)
+//! - `lt` (`&& (-∞, lower(q))`) — range below q intersects r (`lower(r) < lower(q)`)
+//! - `ge` (`&& [lower(q), +∞)`) — r intersects from q.lo onward (`upper(r) > lower(q)`)
+//! - `le` (`&& (-∞, upper(q))`) — r intersects strictly before q.hi (`lower(r) < upper(q)`)
+//! - `sa` (`>>`) — target strictly starts after q (`lower(r) >= upper(q)`)
+//! - `eb` (`<<`) — target strictly ends before q (`upper(r) <= lower(q)`)
 //! - `ap` (`&&`) — overlaps a ±10 % expansion of the query range
+//!
+//! Every operator is GiST-indexable via the standard `range_ops` opclass — no
+//! `NOT (…)` wrappers, so the planner always has the option of a Bitmap Index
+//! Scan on `search_idx_date_*_param_code_rng_idx`.
+//!
+//! `&>` / `&<` are NOT equivalent to `NOT(<<)` / `NOT(>>)` on wide Periods —
+//! they compare against the *opposite* bound of `q`. Do not substitute them.
 
 use crate::parameters::{SearchModifier, SearchPrefix};
 use crate::parser::ParsedParam;
 use crate::sql_builder::{SqlBuilder, SqlBuilderError};
+use crate::types::date_ast::DateClause;
+use crate::{ir::render_date_clauses_as_or, ir::rewrite_date_clauses};
 use time::{Date, Duration, Month, OffsetDateTime, PrimitiveDateTime, Time};
 
 /// Half-open `[start, end)` UTC range built from a FHIR date / dateTime /
@@ -441,17 +452,18 @@ pub fn build_index_date_search(
 
         let rt_param = builder.add_text_param(resource_type);
         let pc_param = builder.add_text_param(&param.name);
+        let id_col = builder.id_column();
 
         let condition = if is_missing {
             format!(
                 "NOT EXISTS (SELECT 1 FROM search_idx_date sid \
-                 WHERE sid.resource_type = ${rt_param} AND sid.resource_id = r.id \
+                 WHERE sid.resource_type = ${rt_param} AND sid.resource_id = {id_col} \
                  AND sid.param_code = ${pc_param})"
             )
         } else {
             format!(
                 "EXISTS (SELECT 1 FROM search_idx_date sid \
-                 WHERE sid.resource_type = ${rt_param} AND sid.resource_id = r.id \
+                 WHERE sid.resource_type = ${rt_param} AND sid.resource_id = {id_col} \
                  AND sid.param_code = ${pc_param})"
             )
         };
@@ -459,67 +471,9 @@ pub fn build_index_date_search(
         return Ok(());
     }
 
-    let mut or_conditions = Vec::new();
-
-    for value in &param.values {
-        if value.raw.is_empty() {
-            continue;
-        }
-
-        let prefix = value.prefix.unwrap_or(SearchPrefix::Eq);
-        let dr = parse_date_range(&value.raw)?;
-        let lo = format_datetime(&dr.start);
-        let hi = format_datetime(&dr.end);
-
-        let rt_param = builder.add_text_param(resource_type);
-        let pc_param = builder.add_text_param(&param.name);
-
-        // Bind both bounds once per value; reuse for any operator below.
-        let p_lo = builder.add_timestamp_param(&lo);
-        let p_hi = builder.add_timestamp_param(&hi);
-
-        let rng_q = format!("tstzrange(${p_lo}::timestamptz, ${p_hi}::timestamptz, '[)')");
-
-        let predicate = match prefix {
-            SearchPrefix::Eq => format!("sid.rng <@ {rng_q}"),
-            SearchPrefix::Ne => {
-                // NOT eq: negate the EXISTS below — handled by wrapping the
-                // whole clause in NOT EXISTS.
-                let cond = format!(
-                    "NOT EXISTS (SELECT 1 FROM search_idx_date sid \
-                     WHERE sid.resource_type = ${rt_param} AND sid.resource_id = r.id \
-                     AND sid.param_code = ${pc_param} \
-                     AND sid.rng <@ {rng_q})"
-                );
-                or_conditions.push(cond);
-                continue;
-            }
-            SearchPrefix::Gt | SearchPrefix::Sa => format!("sid.rng >> {rng_q}"),
-            SearchPrefix::Lt | SearchPrefix::Eb => format!("sid.rng << {rng_q}"),
-            SearchPrefix::Ge => format!("NOT (sid.rng << {rng_q})"),
-            SearchPrefix::Le => format!("NOT (sid.rng >> {rng_q})"),
-            SearchPrefix::Ap => {
-                let duration = dr.end - dr.start;
-                let expansion = duration / 10;
-                let apx_lo = format_datetime(&(dr.start - expansion));
-                let apx_hi = format_datetime(&(dr.end + expansion));
-                let p_alo = builder.add_timestamp_param(apx_lo);
-                let p_ahi = builder.add_timestamp_param(apx_hi);
-                format!("sid.rng && tstzrange(${p_alo}::timestamptz, ${p_ahi}::timestamptz, '[)')")
-            }
-        };
-
-        let cond = format!(
-            "EXISTS (SELECT 1 FROM search_idx_date sid \
-             WHERE sid.resource_type = ${rt_param} AND sid.resource_id = r.id \
-             AND sid.param_code = ${pc_param} \
-             AND {predicate})"
-        );
-        or_conditions.push(cond);
-    }
-
-    if !or_conditions.is_empty() {
-        builder.add_condition(SqlBuilder::build_or_clause(&or_conditions));
+    let clauses = rewrite_date_clauses(DateClause::from_parsed_param(param, resource_type)?);
+    if let Some(sql) = render_date_clauses_as_or(builder, &clauses) {
+        builder.add_condition(sql);
     }
 
     Ok(())
@@ -787,5 +741,157 @@ mod tests {
 
         let clause = builder.build_where_clause().unwrap();
         assert!(clause.contains(" OR "));
+    }
+
+    // Per-prefix SQL shape for the sidecar path. Guards against
+    // `Gt|Sa` / `Lt|Eb` collapse and `NOT (rng <{<,>}> q)` regressions.
+
+    fn index_clause(prefix: SearchPrefix, raw: &str) -> String {
+        let mut builder = SqlBuilder::new();
+        let param = make_param("date", raw, Some(prefix));
+        build_index_date_search(&mut builder, &param, "Patient").unwrap();
+        builder.build_where_clause().unwrap()
+    }
+
+    #[test]
+    fn index_eq_uses_contains() {
+        let clause = index_clause(SearchPrefix::Eq, "2024-06-15");
+        assert!(
+            clause.contains("sid.rng <@"),
+            "eq must emit `sid.rng <@ q`, got: {clause}"
+        );
+    }
+
+    #[test]
+    fn index_ne_uses_not_exists_contains() {
+        let mut builder = SqlBuilder::new();
+        let param = make_param("date", "2024-06-15", Some(SearchPrefix::Ne));
+        build_index_date_search(&mut builder, &param, "Patient").unwrap();
+        let clause = builder.build_where_clause().unwrap();
+        assert!(
+            clause.contains("NOT EXISTS") && clause.contains("sid.rng <@"),
+            "ne must emit `NOT EXISTS (… sid.rng <@ q)` anti-join, got: {clause}"
+        );
+    }
+
+    #[test]
+    fn index_gt_uses_overlap_above_q() {
+        let clause = index_clause(SearchPrefix::Gt, "2024-06-15");
+        assert!(
+            clause.contains("sid.rng &&") && clause.contains("NULL, '[)')"),
+            "gt must emit `sid.rng && tstzrange(upper(q), NULL, '[)')`, got: {clause}"
+        );
+        // gt must NOT regress to `>>` (which is `sa` semantics).
+        assert!(
+            !clause.contains("sid.rng >>"),
+            "gt regressed to `>>` (collapse with `sa`): {clause}"
+        );
+    }
+
+    #[test]
+    fn index_lt_uses_overlap_below_q() {
+        let clause = index_clause(SearchPrefix::Lt, "2024-06-15");
+        assert!(
+            clause.contains("sid.rng &&") && clause.contains("tstzrange(NULL,"),
+            "lt must emit `sid.rng && tstzrange(NULL, lower(q), '()')`, got: {clause}"
+        );
+        assert!(
+            !clause.contains("sid.rng <<"),
+            "lt regressed to `<<` (collapse with `eb`): {clause}"
+        );
+    }
+
+    #[test]
+    fn index_ge_uses_overlap_from_q_lo() {
+        let clause = index_clause(SearchPrefix::Ge, "2024-06-15");
+        assert!(
+            clause.contains("sid.rng &&") && clause.contains("NULL, '[)')"),
+            "ge must emit `sid.rng && tstzrange(lower(q), NULL, '[)')`, got: {clause}"
+        );
+        // ge must NOT regress to the GiST-unfriendly `NOT (sid.rng << q)` shape.
+        assert!(
+            !clause.contains("NOT (sid.rng <<"),
+            "ge regressed to NOT(<<) which defeats GiST: {clause}"
+        );
+        // ge must NOT be silently rewritten as `&>` (incorrect on wide Periods).
+        assert!(
+            !clause.contains("sid.rng &>"),
+            "ge MUST NOT use `&>` — semantically wrong on wide Periods; got: {clause}"
+        );
+    }
+
+    #[test]
+    fn index_le_uses_overlap_to_q_hi() {
+        let clause = index_clause(SearchPrefix::Le, "2024-06-15");
+        assert!(
+            clause.contains("sid.rng &&") && clause.contains("tstzrange(NULL,"),
+            "le must emit `sid.rng && tstzrange(NULL, upper(q), '()')`, got: {clause}"
+        );
+        assert!(
+            !clause.contains("NOT (sid.rng >>"),
+            "le regressed to NOT(>>) which defeats GiST: {clause}"
+        );
+        assert!(
+            !clause.contains("sid.rng &<"),
+            "le MUST NOT use `&<` — semantically wrong on wide Periods; got: {clause}"
+        );
+    }
+
+    #[test]
+    fn index_sa_uses_strictly_after() {
+        let clause = index_clause(SearchPrefix::Sa, "2024-06-15");
+        assert!(
+            clause.contains("sid.rng >>"),
+            "sa must emit `sid.rng >> q`, got: {clause}"
+        );
+        // sa must NOT collapse with gt's overlap form.
+        assert!(
+            !clause.contains("sid.rng && tstzrange"),
+            "sa must not use overlap-with-half-infinite (that's gt): {clause}"
+        );
+    }
+
+    #[test]
+    fn index_eb_uses_strictly_before() {
+        let clause = index_clause(SearchPrefix::Eb, "2024-06-15");
+        assert!(
+            clause.contains("sid.rng <<"),
+            "eb must emit `sid.rng << q`, got: {clause}"
+        );
+        assert!(
+            !clause.contains("sid.rng && tstzrange"),
+            "eb must not use overlap-with-half-infinite (that's lt): {clause}"
+        );
+    }
+
+    #[test]
+    fn index_ap_uses_overlap() {
+        let clause = index_clause(SearchPrefix::Ap, "2024-06-15");
+        assert!(
+            clause.contains("sid.rng &&"),
+            "ap must emit `sid.rng && expanded_q`, got: {clause}"
+        );
+    }
+
+    #[test]
+    fn index_no_bare_not_in_where_clause() {
+        // Guard against the Goal-3 NOT antipattern: `NOT (range_op)` in WHERE.
+        // `NOT EXISTS (subquery)` is allowed (anti-join); the inline form is not.
+        for prefix in [
+            SearchPrefix::Eq,
+            SearchPrefix::Gt,
+            SearchPrefix::Lt,
+            SearchPrefix::Ge,
+            SearchPrefix::Le,
+            SearchPrefix::Sa,
+            SearchPrefix::Eb,
+            SearchPrefix::Ap,
+        ] {
+            let clause = index_clause(prefix, "2024-06-15");
+            assert!(
+                !clause.contains("NOT (sid.rng"),
+                "prefix {prefix:?} emitted `NOT (sid.rng …)` antipattern: {clause}"
+            );
+        }
     }
 }

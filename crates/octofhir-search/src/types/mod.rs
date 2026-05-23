@@ -14,6 +14,7 @@
 
 pub mod composite;
 pub mod date;
+pub mod date_ast;
 pub mod number;
 pub mod reference;
 pub mod special;
@@ -34,7 +35,10 @@ pub use special::{
     build_list_search, build_near_search, build_text_search, detect_special_type,
     parse_near_parameter,
 };
-pub use string::{build_array_string_search, build_human_name_search, build_string_search};
+pub use string::{
+    build_array_string_search, build_human_name_search, build_indexed_string_search,
+    build_string_search,
+};
 pub use token::{
     build_code_search, build_gin_code_search, build_gin_token_search, build_identifier_search,
     build_token_search, build_token_search_with_terminology, parse_token_value,
@@ -85,38 +89,12 @@ pub fn dispatch_search(
     // Dispatch to the appropriate handler based on param type and resolved element type hint
     match definition.param_type {
         SearchParameterType::String => {
-            // GIN-optimized path for :exact modifier — uses @> containment
-            if matches!(&param.modifier, Some(SearchModifier::Exact)) {
-                return build_gin_exact_string_search(
-                    builder,
-                    param,
-                    &path_segments,
-                    &definition.element_type_hint,
-                );
+            // `:text` is full-text on the resource narrative — sidecar does
+            // not carry it. Keep the legacy JSONB+tsvector path.
+            if matches!(&param.modifier, Some(SearchModifier::Text)) {
+                return build_string_search(builder, param, &jsonb_path);
             }
-
-            if definition.element_type_hint.is_human_name() && path_segments.len() == 1 {
-                // HumanName search — only when path points directly to the HumanName array
-                // (e.g., Patient.name → ["name"]). Sub-fields like Patient.name.family
-                // (→ ["name", "family"]) must use array string search instead.
-                let array_path =
-                    build_jsonb_accessor(builder.resource_column(), &path_segments, false);
-                build_human_name_search(builder, param, &array_path)
-            } else if matches!(&definition.element_type_hint, ElementTypeHint::Array(_))
-                || path_segments.len() > 1
-            {
-                // Array element search for:
-                // 1. Explicitly typed array paths (ElementTypeHint::Array)
-                // 2. Multi-segment paths (e.g., name.family, address.city) — in FHIR,
-                //    these almost always traverse through arrays (name[], address[], etc.)
-                //    and need jsonb_array_elements() to iterate the array.
-                let (array_segments, field) = split_array_path(&path_segments);
-                let array_path =
-                    build_jsonb_accessor(builder.resource_column(), &array_segments, false);
-                build_array_string_search(builder, param, &array_path, &field)
-            } else {
-                build_string_search(builder, param, &jsonb_path)
-            }
+            build_indexed_string_search(builder, param, resource_type)
         }
 
         SearchParameterType::Token => {
@@ -949,8 +927,8 @@ mod tests {
     }
 
     #[test]
-    fn test_dispatch_string_exact_uses_gin() {
-        // Dispatch :exact string search should route through GIN
+    fn test_dispatch_string_exact_uses_sidecar_btree() {
+        // :exact string search routes through search_idx_string (value_exact btree).
         let mut builder = SqlBuilder::new();
         let param = ParsedParam {
             name: "family".to_string(),
@@ -975,8 +953,8 @@ mod tests {
 
         let clause = builder.build_where_clause().unwrap();
         assert!(
-            clause.contains("@>"),
-            "Expected GIN containment for :exact, got: {clause}"
+            clause.contains("search_idx_string") && clause.contains("sid.value_exact ="),
+            "Expected sidecar btree :exact, got: {clause}"
         );
     }
 

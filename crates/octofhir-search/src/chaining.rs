@@ -601,9 +601,10 @@ mod tests {
     }
 
     #[test]
-    fn test_chained_string_family_uses_array_search() {
-        // Test: Observation?subject:Patient.family=DebugFamily
-        // The final condition should use array-aware SQL, not naive JSONB path
+    fn test_chained_string_family_uses_sidecar() {
+        // Observation?subject:Patient.family=DebugFamily
+        // Final string condition routes through `search_idx_string`, scoped
+        // to the chained target's id (`chain0.id`), not the outer `r.id`.
         let registry = create_test_registry();
         let chained = parse_chained_parameter(
             "subject:Patient.family",
@@ -622,22 +623,22 @@ mod tests {
         build_chained_search(&mut builder, &chained, "Observation").unwrap();
 
         let clause = builder.build_where_clause().unwrap();
-        // Should use jsonb_array_elements for name array, NOT naive resource->'name'->>'family'
         assert!(
-            clause.contains("jsonb_array_elements") || clause.contains("@>"),
-            "Expected array-aware SQL (jsonb_array_elements or @>), got: {clause}"
+            clause.contains("search_idx_string"),
+            "Chained string search must hit search_idx_string sidecar, got: {clause}"
         );
-        // Should NOT use the naive ->'name'->>'family' pattern
         assert!(
-            !clause.contains("resource->'name'->>'family'"),
-            "Should NOT use naive JSONB path for array field, got: {clause}"
+            clause.contains("sid.resource_id = chain0.id"),
+            "Chained sidecar lookup must target chain0.id, got: {clause}"
         );
     }
 
     #[test]
-    fn test_chained_string_name_uses_human_name_search() {
-        // Test: Observation?subject:Patient.name=DebugGiven
-        // The final condition should use HumanName search (family, given, text)
+    fn test_chained_string_name_uses_sidecar() {
+        // Observation?subject:Patient.name=DebugGiven
+        // The string sidecar already carries one row per HumanName subfield,
+        // so the chained search becomes a single EXISTS against
+        // `search_idx_string` filtered by `param_code = 'name'`.
         let registry = create_test_registry();
         let chained = parse_chained_parameter(
             "subject:Patient.name",
@@ -651,10 +652,13 @@ mod tests {
         build_chained_search(&mut builder, &chained, "Observation").unwrap();
 
         let clause = builder.build_where_clause().unwrap();
-        // Should search across family, given, text via HumanName logic
         assert!(
-            clause.contains("family") && clause.contains("given"),
-            "Expected HumanName search with family/given fields, got: {clause}"
+            clause.contains("search_idx_string"),
+            "Chained name search must hit search_idx_string, got: {clause}"
+        );
+        assert!(
+            clause.contains("sid.resource_id = chain0.id"),
+            "Chained sidecar lookup must target chain0.id, got: {clause}"
         );
     }
 }

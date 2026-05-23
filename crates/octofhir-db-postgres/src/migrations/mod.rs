@@ -36,6 +36,11 @@ macro_rules! embedded_migrations {
                 "unaccent_extension",
                 include_str!("../../migrations/20260602000001_unaccent_extension.sql"),
             ),
+            (
+                20260603000001i64,
+                "search_idx_string",
+                include_str!("../../migrations/20260603000001_search_idx_string.sql"),
+            ),
         ]
     };
 }

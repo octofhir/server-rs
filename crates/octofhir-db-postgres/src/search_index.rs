@@ -8,7 +8,7 @@ use serde_json::Value;
 use sqlx_postgres::PgTransaction;
 
 use octofhir_core::fhir_reference::NormalizedRef;
-use octofhir_core::search_index::{ExtractedDate, ExtractedReference};
+use octofhir_core::search_index::{ExtractedDate, ExtractedReference, ExtractedString};
 use octofhir_search::{SearchParameterRegistry, SearchParameterType};
 use octofhir_storage::StorageError;
 use sqlx_core::query::query;
@@ -43,7 +43,9 @@ async fn ensure_search_partition(pool: &PgPool, resource_type: &str) -> Result<(
         "CREATE TABLE IF NOT EXISTS \"search_idx_reference_{table}\" \
             PARTITION OF search_idx_reference FOR VALUES IN ('{resource_type}'); \
          CREATE TABLE IF NOT EXISTS \"search_idx_date_{table}\" \
-            PARTITION OF search_idx_date FOR VALUES IN ('{resource_type}');"
+            PARTITION OF search_idx_date FOR VALUES IN ('{resource_type}'); \
+         CREATE TABLE IF NOT EXISTS \"search_idx_string_{table}\" \
+            PARTITION OF search_idx_string FOR VALUES IN ('{resource_type}');"
     );
     sqlx_core::raw_sql::raw_sql(&sql)
         .execute(pool)
@@ -72,6 +74,9 @@ async fn ensure_search_partition_in_tx(
     let date_sql = format!(
         r#"CREATE TABLE IF NOT EXISTS "search_idx_date_{table}" PARTITION OF search_idx_date FOR VALUES IN ('{resource_type}')"#
     );
+    let string_sql = format!(
+        r#"CREATE TABLE IF NOT EXISTS "search_idx_string_{table}" PARTITION OF search_idx_string FOR VALUES IN ('{resource_type}')"#
+    );
     query(&ref_sql).execute(&mut *conn).await.map_err(|e| {
         StorageError::internal(format!(
             "ensure_search_partition_in_tx(ref/{resource_type}): {e}"
@@ -82,23 +87,36 @@ async fn ensure_search_partition_in_tx(
             "ensure_search_partition_in_tx(date/{resource_type}): {e}"
         ))
     })?;
+    query(&string_sql).execute(&mut *conn).await.map_err(|e| {
+        StorageError::internal(format!(
+            "ensure_search_partition_in_tx(string/{resource_type}): {e}"
+        ))
+    })?;
     Ok(())
 }
 
-/// Extract denormalized search index rows for a resource using the registry.
+/// Extract denormalised search index rows for a resource using the registry.
+///
+/// Returns `(references, dates, strings)`. One entry per FHIR value: arrays
+/// like `HumanName.given[]` or `Timing.event[]` produce multiple rows.
 pub fn extract_search_index_rows(
     registry: &SearchParameterRegistry,
     resource_type: &str,
     resource: &Value,
-) -> (Vec<ExtractedReference>, Vec<ExtractedDate>) {
+) -> (
+    Vec<ExtractedReference>,
+    Vec<ExtractedDate>,
+    Vec<ExtractedString>,
+) {
     let params = registry.get_all_for_type(resource_type);
 
     if params.is_empty() {
-        return (Vec::new(), Vec::new());
+        return (Vec::new(), Vec::new(), Vec::new());
     }
 
     let mut refs = Vec::new();
     let mut dates = Vec::new();
+    let mut strings = Vec::new();
 
     for param in &params {
         let expression = match &param.expression {
@@ -124,11 +142,19 @@ pub fn extract_search_index_rows(
                     expression,
                 ));
             }
+            SearchParameterType::String => {
+                strings.extend(octofhir_core::search_index::extract_strings(
+                    resource,
+                    resource_type,
+                    &param.code,
+                    expression,
+                ));
+            }
             _ => {}
         }
     }
 
-    (refs, dates)
+    (refs, dates, strings)
 }
 
 // ============================================================================
@@ -446,6 +472,116 @@ fn build_date_unnest_columns(dates: &[ExtractedDate]) -> DateUnnestColumns {
 }
 
 // ============================================================================
+// String Index
+// ============================================================================
+
+/// Write string index rows for a resource. `resource_type` / `resource_id`
+/// are bound as scalars; only per-row columns are sent as arrays.
+pub async fn write_string_index(
+    pool: &PgPool,
+    resource_type: &str,
+    resource_id: &str,
+    strings: &[ExtractedString],
+) -> Result<(), StorageError> {
+    ensure_search_partition(pool, resource_type).await?;
+    query("DELETE FROM search_idx_string WHERE resource_type = $1 AND resource_id = $2")
+        .bind(resource_type)
+        .bind(resource_id)
+        .execute(pool)
+        .await
+        .map_err(|e| StorageError::internal(format!("Failed to delete string index: {e}")))?;
+
+    if strings.is_empty() {
+        return Ok(());
+    }
+
+    let cols = build_string_unnest_columns(strings);
+
+    query(
+        "INSERT INTO search_idx_string (\
+            resource_type, resource_id, param_code, value_norm, value_exact\
+        ) SELECT \
+            $1, $2, t.pc, t.vn, t.ve \
+        FROM UNNEST(\
+            $3::text[], $4::text[], $5::text[]\
+        ) AS t(pc, vn, ve)",
+    )
+    .bind(resource_type)
+    .bind(resource_id)
+    .bind(&cols.param_codes)
+    .bind(&cols.value_norms)
+    .bind(&cols.value_exacts)
+    .execute(pool)
+    .await
+    .map_err(|e| StorageError::internal(format!("Failed to write string index: {e}")))?;
+
+    Ok(())
+}
+
+/// Write string index rows for a resource within a transaction.
+pub async fn write_string_index_with_tx(
+    tx: &mut PgTransaction<'_>,
+    resource_type: &str,
+    resource_id: &str,
+    strings: &[ExtractedString],
+) -> Result<(), StorageError> {
+    ensure_search_partition_in_tx(tx, resource_type).await?;
+    query("DELETE FROM search_idx_string WHERE resource_type = $1 AND resource_id = $2")
+        .bind(resource_type)
+        .bind(resource_id)
+        .execute(&mut **tx)
+        .await
+        .map_err(|e| StorageError::internal(format!("Failed to delete string index: {e}")))?;
+
+    if strings.is_empty() {
+        return Ok(());
+    }
+
+    let cols = build_string_unnest_columns(strings);
+
+    query(
+        "INSERT INTO search_idx_string (\
+            resource_type, resource_id, param_code, value_norm, value_exact\
+        ) SELECT \
+            $1, $2, t.pc, t.vn, t.ve \
+        FROM UNNEST(\
+            $3::text[], $4::text[], $5::text[]\
+        ) AS t(pc, vn, ve)",
+    )
+    .bind(resource_type)
+    .bind(resource_id)
+    .bind(&cols.param_codes)
+    .bind(&cols.value_norms)
+    .bind(&cols.value_exacts)
+    .execute(&mut **tx)
+    .await
+    .map_err(|e| StorageError::internal(format!("Failed to write string index: {e}")))?;
+
+    Ok(())
+}
+
+struct StringUnnestColumns {
+    param_codes: Vec<String>,
+    value_norms: Vec<String>,
+    value_exacts: Vec<String>,
+}
+
+fn build_string_unnest_columns(strings: &[ExtractedString]) -> StringUnnestColumns {
+    let len = strings.len();
+    let mut cols = StringUnnestColumns {
+        param_codes: Vec::with_capacity(len),
+        value_norms: Vec::with_capacity(len),
+        value_exacts: Vec::with_capacity(len),
+    };
+    for s in strings {
+        cols.param_codes.push(s.param_code.clone());
+        cols.value_norms.push(s.value_normalized.clone());
+        cols.value_exacts.push(s.value_exact.clone());
+    }
+    cols
+}
+
+// ============================================================================
 // Batch Index Writers (across many resources)
 // ============================================================================
 
@@ -536,6 +672,7 @@ fn flatten_reference(
 pub struct BatchIndexBuffer {
     refs: Vec<ReferenceIndexRow>,
     dates: Vec<DateIndexRow>,
+    strings: Vec<StringIndexRow>,
 }
 
 struct DateIndexRow {
@@ -546,18 +683,27 @@ struct DateIndexRow {
     range_end: String,
 }
 
+struct StringIndexRow {
+    resource_type: String,
+    resource_id: String,
+    param_code: String,
+    value_norm: String,
+    value_exact: String,
+}
+
 impl BatchIndexBuffer {
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Push extracted reference/date index rows for one resource.
+    /// Push extracted reference / date / string index rows for one resource.
     pub fn extend_with(
         &mut self,
         resource_type: &str,
         resource_id: &str,
         refs: &[ExtractedReference],
         dates: &[ExtractedDate],
+        strings: &[ExtractedString],
     ) {
         self.refs.reserve(refs.len());
         for r in refs {
@@ -574,28 +720,46 @@ impl BatchIndexBuffer {
                 range_end: d.range_end.clone(),
             });
         }
+        self.strings.reserve(strings.len());
+        for s in strings {
+            self.strings.push(StringIndexRow {
+                resource_type: resource_type.to_string(),
+                resource_id: resource_id.to_string(),
+                param_code: s.param_code.clone(),
+                value_norm: s.value_normalized.clone(),
+                value_exact: s.value_exact.clone(),
+            });
+        }
     }
 
     pub fn is_empty(&self) -> bool {
-        self.refs.is_empty() && self.dates.is_empty()
+        self.refs.is_empty() && self.dates.is_empty() && self.strings.is_empty()
     }
 
-    /// Flush all accumulated rows to the search index tables in one pair of
-    /// UNNEST inserts (reference + date). Caller is responsible for any
-    /// upstream `DELETE` of stale rows; for fresh CREATEs none is needed.
+    /// Flush all accumulated rows to the search index tables in one UNNEST
+    /// insert per sidecar (reference, date, string). Caller is responsible
+    /// for any upstream `DELETE` of stale rows; for fresh CREATEs none is
+    /// needed.
     pub async fn flush_with_tx(self, tx: &mut PgTransaction<'_>) -> Result<(), StorageError> {
-        let BatchIndexBuffer { refs, dates } = self;
+        let BatchIndexBuffer {
+            refs,
+            dates,
+            strings,
+        } = self;
 
         // Ensure list partitions exist for every resource_type in this batch.
-        // The batched flush path (async indexer) previously skipped this — the
-        // non-batched single-resource writers do it — so untouched resource
-        // types failed to INSERT with "no partition of relation found for row".
+        // Without this the batched flush path fails with "no partition of
+        // relation found for row" when a resource type was never touched by
+        // the single-resource writers yet.
         let mut seen_types: std::collections::HashSet<String> = std::collections::HashSet::new();
         for r in &refs {
             seen_types.insert(r.resource_type.clone());
         }
         for d in &dates {
             seen_types.insert(d.resource_type.clone());
+        }
+        for s in &strings {
+            seen_types.insert(s.resource_type.clone());
         }
         for rt in &seen_types {
             ensure_search_partition_in_tx(tx, rt).await?;
@@ -700,6 +864,43 @@ impl BatchIndexBuffer {
             })?;
         }
 
+        if !strings.is_empty() {
+            let len = strings.len();
+            let mut resource_types = Vec::with_capacity(len);
+            let mut resource_ids = Vec::with_capacity(len);
+            let mut param_codes = Vec::with_capacity(len);
+            let mut value_norms = Vec::with_capacity(len);
+            let mut value_exacts = Vec::with_capacity(len);
+
+            for s in strings {
+                resource_types.push(s.resource_type);
+                resource_ids.push(s.resource_id);
+                param_codes.push(s.param_code);
+                value_norms.push(s.value_norm);
+                value_exacts.push(s.value_exact);
+            }
+
+            query(
+                "INSERT INTO search_idx_string (\
+                    resource_type, resource_id, param_code, value_norm, value_exact\
+                ) SELECT \
+                    t.rt, t.rid, t.pc, t.vn, t.ve \
+                FROM UNNEST(\
+                    $1::text[], $2::text[], $3::text[], $4::text[], $5::text[]\
+                ) AS t(rt, rid, pc, vn, ve)",
+            )
+            .bind(&resource_types)
+            .bind(&resource_ids)
+            .bind(&param_codes)
+            .bind(&value_norms)
+            .bind(&value_exacts)
+            .execute(&mut **tx)
+            .await
+            .map_err(|e| {
+                StorageError::internal(format!("Failed to batch-write string index: {e}"))
+            })?;
+        }
+
         Ok(())
     }
 }
@@ -727,10 +928,16 @@ pub async fn delete_search_indexes(
             .bind(resource_id)
             .execute(pool);
 
-    // Execute deletes concurrently
-    let (r1, r2) = tokio::join!(del_ref, del_date);
+    let del_string =
+        query("DELETE FROM search_idx_string WHERE resource_type = $1 AND resource_id = $2")
+            .bind(resource_type)
+            .bind(resource_id)
+            .execute(pool);
+
+    let (r1, r2, r3) = tokio::join!(del_ref, del_date, del_string);
     r1.map_err(|e| StorageError::internal(format!("Failed to delete reference index: {e}")))?;
     r2.map_err(|e| StorageError::internal(format!("Failed to delete date index: {e}")))?;
+    r3.map_err(|e| StorageError::internal(format!("Failed to delete string index: {e}")))?;
 
     Ok(())
 }
@@ -755,12 +962,19 @@ pub async fn delete_search_indexes_with_tx(
         .await
         .map_err(|e| StorageError::internal(format!("Failed to delete date index: {e}")))?;
 
+    query("DELETE FROM search_idx_string WHERE resource_type = $1 AND resource_id = $2")
+        .bind(resource_type)
+        .bind(resource_id)
+        .execute(&mut **tx)
+        .await
+        .map_err(|e| StorageError::internal(format!("Failed to delete string index: {e}")))?;
+
     Ok(())
 }
 
-/// Delete index rows for many ids of one `resource_type` in two statements
-/// (one per index table). Caller groups by `resource_type` so partition
-/// pruning stays effective.
+/// Delete index rows for many ids of one `resource_type`, one statement per
+/// sidecar. Caller groups by `resource_type` so partition pruning stays
+/// effective.
 pub async fn delete_search_indexes_batch_with_tx(
     tx: &mut PgTransaction<'_>,
     resource_type: &str,
@@ -789,6 +1003,16 @@ pub async fn delete_search_indexes_batch_with_tx(
     .execute(&mut **tx)
     .await
     .map_err(|e| StorageError::internal(format!("Failed to batch-delete date index: {e}")))?;
+
+    query(
+        "DELETE FROM search_idx_string \
+         WHERE resource_type = $1 AND resource_id = ANY($2)",
+    )
+    .bind(resource_type)
+    .bind(resource_ids)
+    .execute(&mut **tx)
+    .await
+    .map_err(|e| StorageError::internal(format!("Failed to batch-delete string index: {e}")))?;
 
     Ok(())
 }

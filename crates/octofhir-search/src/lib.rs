@@ -3,6 +3,7 @@ pub mod common;
 pub mod config_watcher;
 pub mod filter;
 pub mod include;
+pub mod ir;
 pub mod loader;
 pub mod parameters;
 pub mod params_converter;

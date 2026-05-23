@@ -1101,6 +1101,17 @@ impl SqlBuilder {
         &self.resource_col
     }
 
+    /// Derive the id column from the resource column. `resource_col` is
+    /// always of the form `<alias>.resource`; the corresponding id column is
+    /// `<alias>.id`. Falls back to `"r.id"` when the suffix is missing
+    /// (legacy callers / tests built with `SqlBuilder::new()`).
+    pub fn id_column(&self) -> String {
+        match self.resource_col.strip_suffix(".resource") {
+            Some(prefix) => format!("{prefix}.id"),
+            None => "r.id".to_string(),
+        }
+    }
+
     /// Add a raw SQL condition with placeholders.
     ///
     /// Use `{}` as placeholder which will be replaced with `$N` parameter references.

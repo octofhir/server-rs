@@ -32,6 +32,13 @@ pub use octofhir_search::UnknownParamHandling as SearchUnknownParamHandling;
 use crate::error::is_undefined_table;
 use crate::schema::SchemaManager;
 
+/// Per-request raw search execution options.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct RawSearchOptions {
+    pub unknown_param_handling: Option<UnknownParamHandling>,
+    pub collect_debug_plan: bool,
+}
+
 /// Converts chrono DateTime to time OffsetDateTime.
 fn chrono_to_time(dt: DateTime<Utc>) -> OffsetDateTime {
     OffsetDateTime::from_unix_timestamp(dt.timestamp()).unwrap_or(OffsetDateTime::UNIX_EPOCH)
@@ -220,9 +227,33 @@ pub async fn execute_search_raw_with_config(
         resource_type,
         params,
         registry,
-        unknown_param_handling,
         query_cache,
         None,
+        RawSearchOptions {
+            unknown_param_handling,
+            collect_debug_plan: false,
+        },
+    )
+    .await
+}
+
+/// Execute a FHIR search query with per-request search options.
+pub async fn execute_search_raw_with_options(
+    pool: &PgPool,
+    resource_type: &str,
+    params: &SearchParams,
+    registry: Option<&Arc<SearchParameterRegistry>>,
+    query_cache: Option<&QueryCache>,
+    options: RawSearchOptions,
+) -> Result<RawSearchResult, StorageError> {
+    execute_search_raw_with_config_inner(
+        pool,
+        resource_type,
+        params,
+        registry,
+        query_cache,
+        None,
+        options,
     )
     .await
 }
@@ -251,9 +282,34 @@ pub async fn execute_search_raw_with_terminology(
         resource_type,
         params,
         registry,
-        unknown_param_handling,
         query_cache,
         terminology,
+        RawSearchOptions {
+            unknown_param_handling,
+            collect_debug_plan: false,
+        },
+    )
+    .await
+}
+
+/// Execute a FHIR search query with terminology expansion and per-request options.
+pub async fn execute_search_raw_with_terminology_options(
+    pool: &PgPool,
+    resource_type: &str,
+    params: &SearchParams,
+    registry: Option<&Arc<SearchParameterRegistry>>,
+    query_cache: Option<&QueryCache>,
+    terminology: Option<&Arc<HybridTerminologyProvider>>,
+    options: RawSearchOptions,
+) -> Result<RawSearchResult, StorageError> {
+    execute_search_raw_with_config_inner(
+        pool,
+        resource_type,
+        params,
+        registry,
+        query_cache,
+        terminology,
+        options,
     )
     .await
 }
@@ -263,9 +319,9 @@ async fn execute_search_raw_with_config_inner(
     resource_type: &str,
     params: &SearchParams,
     registry: Option<&Arc<SearchParameterRegistry>>,
-    unknown_param_handling: Option<UnknownParamHandling>,
     query_cache: Option<&QueryCache>,
     terminology: Option<&Arc<HybridTerminologyProvider>>,
+    options: RawSearchOptions,
 ) -> Result<RawSearchResult, StorageError> {
     let requested_limit = params.count.unwrap_or(10) as usize;
     let mut effective_params = params.clone();
@@ -304,7 +360,8 @@ async fn execute_search_raw_with_config_inner(
 
     // Build search config
     let search_config = ParamsSearchConfig {
-        unknown_param_handling: unknown_param_handling.unwrap_or_default(),
+        unknown_param_handling: options.unknown_param_handling.unwrap_or_default(),
+        collect_debug_plan: options.collect_debug_plan,
     };
 
     // Convert SearchParams to SQL query using the params converter
@@ -319,6 +376,16 @@ async fn execute_search_raw_with_config_inner(
         tracing::warn!(error = %e, "Failed to build search query");
         StorageError::invalid_resource(format!("Invalid search parameters: {e}"))
     })?;
+
+    if let Some(debug_plan) = &converted.debug_plan {
+        let plan_json = serde_json::to_string(debug_plan).unwrap_or_else(|_| "null".to_string());
+        tracing::debug!(
+            resource_type = %resource_type,
+            predicate_count = debug_plan.predicates.len(),
+            search_plan = %plan_json,
+            "Built search debug plan"
+        );
+    }
 
     // Collect unknown parameters as warnings
     let warnings: Vec<String> = converted

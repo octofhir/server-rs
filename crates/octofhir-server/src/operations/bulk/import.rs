@@ -307,7 +307,7 @@ async fn upsert_resource_with_indexes(
             octofhir_storage::StorageError::internal(format!("Failed to upsert resource: {e}"))
         })?;
 
-    let (refs, dates) = octofhir_db_postgres::search_index::extract_search_index_rows(
+    let (refs, dates, strings) = octofhir_db_postgres::search_index::extract_search_index_rows(
         registry,
         resource_type,
         resource,
@@ -324,6 +324,13 @@ async fn upsert_resource_with_indexes(
         resource_type,
         id,
         &dates,
+    )
+    .await?;
+    octofhir_db_postgres::search_index::write_string_index_with_tx(
+        &mut tx,
+        resource_type,
+        id,
+        &strings,
     )
     .await?;
 

@@ -210,7 +210,7 @@ impl PostgresStorage {
         let Some(registry) = self.search_registry.get() else {
             return Ok(());
         };
-        let (refs, dates) =
+        let (refs, dates, strings) =
             crate::search_index::extract_search_index_rows(registry, resource_type, resource);
 
         let job = IndexJob {
@@ -219,6 +219,7 @@ impl PostgresStorage {
             resource_id: resource_id.to_string(),
             refs,
             dates,
+            strings,
         };
 
         if let Some(indexer) = &self.async_indexer {
@@ -239,6 +240,7 @@ impl PostgresStorage {
             resource_id: resource_id.to_string(),
             refs: Vec::new(),
             dates: Vec::new(),
+            strings: Vec::new(),
         };
 
         if let Some(indexer) = &self.async_indexer {
@@ -270,7 +272,13 @@ impl PostgresStorage {
             // Insert-only buffer; the Update branch already deleted above,
             // so we never DELETE on Create.
             let mut buffer = crate::search_index::BatchIndexBuffer::new();
-            buffer.extend_with(&job.resource_type, &job.resource_id, &job.refs, &job.dates);
+            buffer.extend_with(
+                &job.resource_type,
+                &job.resource_id,
+                &job.refs,
+                &job.dates,
+                &job.strings,
+            );
             if !buffer.is_empty() {
                 buffer.flush_with_tx(&mut tx).await?;
             }
@@ -299,12 +307,14 @@ impl PostgresStorage {
             .get()
             .ok_or_else(|| StorageError::internal("Search registry not initialized"))?;
 
-        let (refs, dates) =
+        let (refs, dates, strings) =
             crate::search_index::extract_search_index_rows(registry, resource_type, resource);
 
         crate::search_index::write_reference_index(&self.pool, resource_type, resource_id, &refs)
             .await?;
         crate::search_index::write_date_index(&self.pool, resource_type, resource_id, &dates)
+            .await?;
+        crate::search_index::write_string_index(&self.pool, resource_type, resource_id, &strings)
             .await?;
 
         Ok(())
