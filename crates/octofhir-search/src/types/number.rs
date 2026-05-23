@@ -14,6 +14,7 @@
 use crate::parameters::{SearchModifier, SearchPrefix};
 use crate::parser::ParsedParam;
 use crate::sql_builder::{SqlBuilder, SqlBuilderError};
+use crate::{ir::NumberClause, ir::render_number_clauses_as_or};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct DecimalParts {
@@ -143,82 +144,10 @@ pub fn build_number_search(
     param: &ParsedParam,
     jsonb_path: &str,
 ) -> Result<(), SqlBuilderError> {
-    if param.values.is_empty() {
-        return Ok(());
+    let clauses = NumberClause::from_parsed_param(param, "")?;
+    if let Some(sql) = render_number_clauses_as_or(builder, &clauses, jsonb_path)? {
+        builder.add_condition(sql);
     }
-
-    // Check for :missing modifier first
-    if let Some(SearchModifier::Missing) = &param.modifier {
-        return build_missing_condition(builder, param, jsonb_path);
-    }
-
-    let mut or_conditions = Vec::new();
-
-    for value in &param.values {
-        if value.raw.is_empty() {
-            continue;
-        }
-
-        let prefix = value.prefix.unwrap_or(SearchPrefix::Eq);
-        let num_str = &value.raw;
-        let number = DecimalParts::parse(num_str)?;
-
-        let condition = match prefix {
-            SearchPrefix::Eq => {
-                let (lower, upper) = number.implicit_eq_bounds();
-                let p1 = bind_numeric(builder, lower);
-                let p2 = bind_numeric(builder, upper);
-                format!(
-                    "(({jsonb_path})::numeric >= ${p1}::numeric AND ({jsonb_path})::numeric < ${p2}::numeric)"
-                )
-            }
-
-            SearchPrefix::Ne => {
-                let (lower, upper) = number.implicit_eq_bounds();
-                let p1 = bind_numeric(builder, lower);
-                let p2 = bind_numeric(builder, upper);
-                format!(
-                    "(({jsonb_path})::numeric < ${p1}::numeric OR ({jsonb_path})::numeric >= ${p2}::numeric)"
-                )
-            }
-
-            SearchPrefix::Gt | SearchPrefix::Sa => {
-                let p = bind_numeric(builder, number.format());
-                format!("({jsonb_path})::numeric > ${p}::numeric")
-            }
-
-            SearchPrefix::Lt | SearchPrefix::Eb => {
-                let p = bind_numeric(builder, number.format());
-                format!("({jsonb_path})::numeric < ${p}::numeric")
-            }
-
-            SearchPrefix::Ge => {
-                let p = bind_numeric(builder, number.format());
-                format!("({jsonb_path})::numeric >= ${p}::numeric")
-            }
-
-            SearchPrefix::Le => {
-                let p = bind_numeric(builder, number.format());
-                format!("({jsonb_path})::numeric <= ${p}::numeric")
-            }
-
-            SearchPrefix::Ap => {
-                let (lower, upper) = number.approximate_bounds();
-                let p1 = bind_numeric(builder, lower);
-                let p2 = bind_numeric(builder, upper);
-                format!(
-                    "(({jsonb_path})::numeric >= ${p1}::numeric AND ({jsonb_path})::numeric < ${p2}::numeric)"
-                )
-            }
-        };
-
-        or_conditions.push(condition);
-    }
-
-    if !or_conditions.is_empty() {
-        builder.add_condition(SqlBuilder::build_or_clause(&or_conditions));
-    }
-
     Ok(())
 }
 

@@ -1,6 +1,10 @@
-use crate::ir::ast::{ReferenceClause, ReferencePredicate, StringClause, StringPredicate};
+use crate::ir::ast::{
+    NumberClause, NumberPredicate, ReferenceClause, ReferencePredicate, StringClause,
+    StringPredicate,
+};
 use crate::ir::sql::{RangeOp, SelectStmt, SqlExpr, SqlOp, SqlTerm};
-use crate::sql_builder::SqlBuilder;
+use crate::parameters::SearchPrefix;
+use crate::sql_builder::{SqlBuilder, SqlBuilderError};
 use crate::types::date_ast::DateClause;
 use octofhir_core::search_index::normalize_string;
 
@@ -50,6 +54,46 @@ pub fn render_reference_clauses_as_or(
         None
     } else {
         Some(SqlBuilder::build_or_clause(&rendered))
+    }
+}
+
+/// Render number clauses as one OR group over the current JSONB numeric-cast path.
+pub fn render_number_clauses_as_or(
+    builder: &mut SqlBuilder,
+    clauses: &[NumberClause],
+    jsonb_path: &str,
+) -> Result<Option<String>, SqlBuilderError> {
+    let rendered = clauses
+        .iter()
+        .map(|clause| render_number_clause(builder, clause, jsonb_path))
+        .collect::<Result<Vec<_>, _>>()?;
+    if rendered.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(SqlBuilder::build_or_clause(&rendered)))
+    }
+}
+
+fn render_number_clause(
+    builder: &mut SqlBuilder,
+    clause: &NumberClause,
+    jsonb_path: &str,
+) -> Result<String, SqlBuilderError> {
+    match &clause.predicate {
+        NumberPredicate::Missing { is_missing } => {
+            let condition = if *is_missing {
+                format!("({jsonb_path} IS NULL OR {jsonb_path} = 'null')")
+            } else {
+                format!("({jsonb_path} IS NOT NULL AND {jsonb_path} != 'null')")
+            };
+            Ok(condition)
+        }
+        NumberPredicate::Comparison { prefix, value } => {
+            let number = RenderDecimalParts::parse(value)?;
+            Ok(render_numeric_comparison(
+                builder, jsonb_path, *prefix, &number,
+            ))
+        }
     }
 }
 
@@ -259,6 +303,165 @@ fn escape_like_pattern(s: &str) -> String {
         .replace('_', "\\_")
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RenderDecimalParts {
+    mantissa: i128,
+    scale: u32,
+}
+
+impl RenderDecimalParts {
+    fn parse(input: &str) -> Result<Self, SqlBuilderError> {
+        let raw = input.trim();
+        if raw.is_empty() {
+            return Err(invalid_number(input));
+        }
+
+        let (negative, unsigned) = match raw.as_bytes()[0] {
+            b'+' => (false, &raw[1..]),
+            b'-' => (true, &raw[1..]),
+            _ => (false, raw),
+        };
+        if unsigned.is_empty() {
+            return Err(invalid_number(input));
+        }
+
+        let mut digits = String::new();
+        let mut scale = 0_u32;
+        let mut seen_dot = false;
+        let mut seen_digit = false;
+
+        for ch in unsigned.chars() {
+            match ch {
+                '0'..='9' => {
+                    seen_digit = true;
+                    digits.push(ch);
+                    if seen_dot {
+                        scale += 1;
+                    }
+                }
+                '.' if !seen_dot => {
+                    seen_dot = true;
+                }
+                _ => return Err(invalid_number(input)),
+            }
+        }
+
+        if !seen_digit {
+            return Err(invalid_number(input));
+        }
+
+        let mut mantissa = digits.parse::<i128>().map_err(|_| invalid_number(input))?;
+        if negative {
+            mantissa = -mantissa;
+        }
+
+        Ok(Self { mantissa, scale })
+    }
+
+    fn format(&self) -> String {
+        format_decimal(self.mantissa, self.scale)
+    }
+
+    fn implicit_eq_bounds(&self) -> (String, String) {
+        let scale = self.scale + 1;
+        let centered = self.mantissa * 10;
+        (
+            format_decimal(centered - 5, scale),
+            format_decimal(centered + 5, scale),
+        )
+    }
+
+    fn approximate_bounds(&self) -> (String, String) {
+        let scale = self.scale + 1;
+        let centered = self.mantissa * 10;
+        let delta = self.mantissa.abs();
+        (
+            format_decimal(centered - delta, scale),
+            format_decimal(centered + delta, scale),
+        )
+    }
+}
+
+fn invalid_number(value: &str) -> SqlBuilderError {
+    SqlBuilderError::InvalidSearchValue(format!("Invalid number: {value}"))
+}
+
+fn format_decimal(mantissa: i128, scale: u32) -> String {
+    let negative = mantissa < 0;
+    let digits = mantissa.abs().to_string();
+
+    if scale == 0 {
+        return if negative {
+            format!("-{digits}")
+        } else {
+            digits
+        };
+    }
+
+    let scale = scale as usize;
+    let value = if digits.len() > scale {
+        let split = digits.len() - scale;
+        format!("{}.{}", &digits[..split], &digits[split..])
+    } else {
+        format!("0.{}{}", "0".repeat(scale - digits.len()), digits)
+    };
+    let trimmed = value.trim_end_matches('0').trim_end_matches('.');
+
+    if negative && trimmed != "0" {
+        format!("-{trimmed}")
+    } else {
+        trimmed.to_string()
+    }
+}
+
+fn bind_numeric(builder: &mut SqlBuilder, value: impl Into<String>) -> usize {
+    builder.add_text_param(value.into())
+}
+
+fn render_numeric_comparison(
+    builder: &mut SqlBuilder,
+    path: &str,
+    prefix: SearchPrefix,
+    number: &RenderDecimalParts,
+) -> String {
+    match prefix {
+        SearchPrefix::Eq => {
+            let (lower, upper) = number.implicit_eq_bounds();
+            let p1 = bind_numeric(builder, lower);
+            let p2 = bind_numeric(builder, upper);
+            format!("(({path})::numeric >= ${p1}::numeric AND ({path})::numeric < ${p2}::numeric)")
+        }
+        SearchPrefix::Ne => {
+            let (lower, upper) = number.implicit_eq_bounds();
+            let p1 = bind_numeric(builder, lower);
+            let p2 = bind_numeric(builder, upper);
+            format!("(({path})::numeric < ${p1}::numeric OR ({path})::numeric >= ${p2}::numeric)")
+        }
+        SearchPrefix::Gt | SearchPrefix::Sa => {
+            let p = bind_numeric(builder, number.format());
+            format!("({path})::numeric > ${p}::numeric")
+        }
+        SearchPrefix::Lt | SearchPrefix::Eb => {
+            let p = bind_numeric(builder, number.format());
+            format!("({path})::numeric < ${p}::numeric")
+        }
+        SearchPrefix::Ge => {
+            let p = bind_numeric(builder, number.format());
+            format!("({path})::numeric >= ${p}::numeric")
+        }
+        SearchPrefix::Le => {
+            let p = bind_numeric(builder, number.format());
+            format!("({path})::numeric <= ${p}::numeric")
+        }
+        SearchPrefix::Ap => {
+            let (lower, upper) = number.approximate_bounds();
+            let p1 = bind_numeric(builder, lower);
+            let p2 = bind_numeric(builder, upper);
+            format!("(({path})::numeric >= ${p1}::numeric AND ({path})::numeric < ${p2}::numeric)")
+        }
+    }
+}
+
 /// Render the small SQL AST to parameterized SQL text.
 pub fn render_sql_expr(expr: &SqlExpr) -> String {
     match expr {
@@ -435,5 +638,33 @@ mod tests {
         assert!(!sql.contains(" OR "));
         assert!(!sql.contains("abc"));
         assert_eq!(builder.params()[2].as_str(), "abc");
+    }
+
+    #[test]
+    fn number_render_uses_half_open_decimal_bounds() {
+        let mut builder = SqlBuilder::new();
+        let clauses = NumberClause::from_parsed_param(
+            &crate::parser::ParsedParam {
+                name: "value".to_string(),
+                modifier: None,
+                values: vec![crate::parser::ParsedValue {
+                    prefix: Some(SearchPrefix::Eq),
+                    raw: "5.50".to_string(),
+                }],
+            },
+            "Observation",
+        )
+        .unwrap();
+
+        let sql = render_number_clauses_as_or(&mut builder, &clauses, "resource->>'value'")
+            .unwrap()
+            .unwrap();
+
+        assert!(sql.contains(">= $1::numeric"));
+        assert!(sql.contains("< $2::numeric"));
+        assert!(!sql.contains("BETWEEN"));
+        assert!(!sql.contains("5.50"));
+        assert_eq!(builder.params()[0].as_str(), "5.495");
+        assert_eq!(builder.params()[1].as_str(), "5.505");
     }
 }
