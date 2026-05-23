@@ -15,6 +15,7 @@ use crate::parameters::SearchModifier;
 use crate::parser::ParsedParam;
 use crate::sql_builder::{SqlBuilder, SqlBuilderError, SqlParam};
 use crate::terminology::HybridTerminologyProvider;
+use crate::{ir::TokenClause, ir::TokenIndexShape, ir::render_token_simple_code_clauses_as_or};
 use sqlx_postgres::PgPool;
 
 /// Parse a token value into system and code parts.
@@ -807,59 +808,10 @@ pub fn build_gin_code_search(
     param: &ParsedParam,
     path_segments: &[String],
 ) -> Result<(), SqlBuilderError> {
-    if param.values.is_empty() {
-        return Ok(());
+    let clauses = TokenClause::from_parsed_param(param, "", TokenIndexShape::SimpleCode)?;
+    if let Some(sql) = render_token_simple_code_clauses_as_or(builder, &clauses, path_segments)? {
+        builder.add_condition(sql);
     }
-
-    let resource_col = builder.resource_column().to_string();
-    let mut or_conditions = Vec::new();
-
-    for value in &param.values {
-        if value.raw.is_empty() {
-            continue;
-        }
-
-        // For simple codes, ignore system part
-        let (_, code) = parse_token_value(&value.raw);
-
-        let condition = match &param.modifier {
-            None => {
-                let containment = build_nested_containment(path_segments, serde_json::json!(code));
-                let json_str = containment.to_string();
-                let p = builder.add_json_param(&json_str);
-                format!("{resource_col} @> ${p}::jsonb")
-            }
-
-            Some(SearchModifier::Not) => {
-                let containment = build_nested_containment(path_segments, serde_json::json!(code));
-                let json_str = containment.to_string();
-                let p = builder.add_json_param(&json_str);
-                format!("NOT ({resource_col} @> ${p}::jsonb)")
-            }
-
-            Some(SearchModifier::Missing) => {
-                let text_path =
-                    crate::sql_builder::build_jsonb_accessor(&resource_col, path_segments, true);
-                let is_missing = value.raw.eq_ignore_ascii_case("true");
-                if is_missing {
-                    format!("({text_path} IS NULL OR {text_path} = 'null')")
-                } else {
-                    format!("({text_path} IS NOT NULL AND {text_path} != 'null')")
-                }
-            }
-
-            Some(other) => {
-                return Err(SqlBuilderError::InvalidModifier(format!("{other:?}")));
-            }
-        };
-
-        or_conditions.push(condition);
-    }
-
-    if !or_conditions.is_empty() {
-        builder.add_condition(SqlBuilder::build_or_clause(&or_conditions));
-    }
-
     Ok(())
 }
 
@@ -1090,18 +1042,16 @@ mod tests {
     }
 
     #[test]
-    fn test_gin_code_search_not_modifier() {
+    fn test_gin_code_search_not_modifier_uses_boolean_false_check() {
         let mut builder = SqlBuilder::new();
         let param = make_param("gender", "female", Some(SearchModifier::Not));
 
         build_gin_code_search(&mut builder, &param, &["gender".to_string()]).unwrap();
 
         let clause = builder.build_where_clause().unwrap();
-        assert!(
-            clause.starts_with("NOT ("),
-            "Expected NOT wrapper, got: {clause}"
-        );
+        assert_eq!(clause, "(resource @> $1::jsonb) = false");
         assert!(clause.contains("@>"));
+        assert!(!clause.contains("NOT ("));
     }
 
     #[test]

@@ -1,6 +1,6 @@
 use crate::ir::ast::{
     NumberClause, NumberPredicate, QuantityClause, QuantityPredicate, ReferenceClause,
-    ReferencePredicate, StringClause, StringPredicate,
+    ReferencePredicate, StringClause, StringPredicate, TokenClause, TokenPredicate,
 };
 use crate::ir::sql::{RangeOp, SelectStmt, SqlExpr, SqlOp, SqlTerm};
 use crate::parameters::SearchPrefix;
@@ -91,6 +91,26 @@ pub fn render_quantity_clauses_as_or(
     }
 }
 
+/// Render simple-code token clauses as one OR group.
+///
+/// This covers scalar/array code SearchParameters such as `Patient.gender`.
+/// CodeableConcept/Coding and Identifier token renderers remain separate slices.
+pub fn render_token_simple_code_clauses_as_or(
+    builder: &mut SqlBuilder,
+    clauses: &[TokenClause],
+    path_segments: &[String],
+) -> Result<Option<String>, SqlBuilderError> {
+    let rendered = clauses
+        .iter()
+        .map(|clause| render_token_simple_code_clause(builder, clause, path_segments))
+        .collect::<Result<Vec<_>, _>>()?;
+    if rendered.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(SqlBuilder::build_or_clause(&rendered)))
+    }
+}
+
 fn render_number_clause(
     builder: &mut SqlBuilder,
     clause: &NumberClause,
@@ -110,6 +130,53 @@ fn render_number_clause(
             Ok(render_numeric_comparison(
                 builder, jsonb_path, *prefix, &number,
             ))
+        }
+    }
+}
+
+fn render_token_simple_code_clause(
+    builder: &mut SqlBuilder,
+    clause: &TokenClause,
+    path_segments: &[String],
+) -> Result<String, SqlBuilderError> {
+    let resource_col = builder.resource_column().to_string();
+    match &clause.predicate {
+        TokenPredicate::Missing { is_missing } => {
+            let text_path =
+                crate::sql_builder::build_jsonb_accessor(&resource_col, path_segments, true);
+            let condition = if *is_missing {
+                format!("({text_path} IS NULL OR {text_path} = 'null')")
+            } else {
+                format!("({text_path} IS NOT NULL AND {text_path} != 'null')")
+            };
+            Ok(condition)
+        }
+        predicate => {
+            let code = simple_code_token_value(predicate)?;
+            let containment = build_nested_json_containment(path_segments, serde_json::json!(code));
+            let json_str = containment.to_string();
+            let p = builder.add_json_param(&json_str);
+            let condition = format!("{resource_col} @> ${p}::jsonb");
+            if clause.negated {
+                Ok(format!("({condition}) = false"))
+            } else {
+                Ok(condition)
+            }
+        }
+    }
+}
+
+fn simple_code_token_value(predicate: &TokenPredicate) -> Result<&str, SqlBuilderError> {
+    match predicate {
+        TokenPredicate::AnySystemCode { code }
+        | TokenPredicate::NoSystemCode { code }
+        | TokenPredicate::SystemCode { code, .. } => Ok(code),
+        TokenPredicate::SystemAnyCode { .. } => Ok(""),
+        TokenPredicate::IdentifierOfType { .. }
+        | TokenPredicate::TerminologySet { .. }
+        | TokenPredicate::DisplayText { .. }
+        | TokenPredicate::Missing { .. } => {
+            Err(SqlBuilderError::InvalidModifier(format!("{predicate:?}")))
         }
     }
 }
@@ -314,6 +381,17 @@ fn render_jsonb_reference_condition(
         "(({single_match}) OR (jsonb_typeof({jsonb_path}) = 'array' AND EXISTS (\
          SELECT 1 FROM jsonb_array_elements({jsonb_path}) AS e WHERE {array_match})))"
     )
+}
+
+fn build_nested_json_containment(
+    path_segments: &[String],
+    leaf_value: serde_json::Value,
+) -> serde_json::Value {
+    let mut result = leaf_value;
+    for segment in path_segments.iter().rev() {
+        result = serde_json::json!({ segment.as_str(): result });
+    }
+    result
 }
 
 fn render_string_clause(builder: &mut SqlBuilder, clause: &StringClause) -> String {
@@ -770,5 +848,58 @@ mod tests {
         assert_eq!(builder.params()[1].as_str(), "5.55");
         assert_eq!(builder.params()[2].as_str(), "http://unitsofmeasure.org");
         assert_eq!(builder.params()[3].as_str(), "mg");
+    }
+
+    #[test]
+    fn simple_code_token_render_uses_jsonb_containment() {
+        let mut builder = SqlBuilder::with_resource_column("r.resource");
+        let clauses = TokenClause::from_parsed_param(
+            &crate::parser::ParsedParam {
+                name: "gender".to_string(),
+                modifier: None,
+                values: vec![crate::parser::ParsedValue {
+                    prefix: None,
+                    raw: "female".to_string(),
+                }],
+            },
+            "Patient",
+            crate::ir::TokenIndexShape::SimpleCode,
+        )
+        .unwrap();
+
+        let sql =
+            render_token_simple_code_clauses_as_or(&mut builder, &clauses, &["gender".to_string()])
+                .unwrap()
+                .unwrap();
+
+        assert_eq!(sql, "r.resource @> $1::jsonb");
+        assert!(!sql.contains("female"));
+        assert_eq!(builder.params()[0].as_str(), r#"{"gender":"female"}"#);
+    }
+
+    #[test]
+    fn simple_code_token_render_not_uses_boolean_false_check() {
+        let mut builder = SqlBuilder::with_resource_column("r.resource");
+        let clauses = TokenClause::from_parsed_param(
+            &crate::parser::ParsedParam {
+                name: "gender".to_string(),
+                modifier: Some(crate::parameters::SearchModifier::Not),
+                values: vec![crate::parser::ParsedValue {
+                    prefix: None,
+                    raw: "female".to_string(),
+                }],
+            },
+            "Patient",
+            crate::ir::TokenIndexShape::SimpleCode,
+        )
+        .unwrap();
+
+        let sql =
+            render_token_simple_code_clauses_as_or(&mut builder, &clauses, &["gender".to_string()])
+                .unwrap()
+                .unwrap();
+
+        assert_eq!(sql, "(r.resource @> $1::jsonb) = false");
+        assert_eq!(builder.params()[0].as_str(), r#"{"gender":"female"}"#);
     }
 }
