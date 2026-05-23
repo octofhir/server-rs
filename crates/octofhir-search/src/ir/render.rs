@@ -41,6 +41,23 @@ pub fn render_string_clauses_as_or(
     }
 }
 
+/// Render scalar JSONB string clauses as one OR group.
+pub fn render_string_path_clauses_as_or(
+    builder: &mut SqlBuilder,
+    clauses: &[StringClause],
+    jsonb_path: &str,
+) -> Option<String> {
+    let rendered = clauses
+        .iter()
+        .map(|clause| render_string_path_clause(builder, clause, jsonb_path))
+        .collect::<Vec<_>>();
+    if rendered.is_empty() {
+        None
+    } else {
+        Some(SqlBuilder::build_or_clause(&rendered))
+    }
+}
+
 /// Render reference clauses as one OR group.
 pub fn render_reference_clauses_as_or(
     builder: &mut SqlBuilder,
@@ -287,6 +304,45 @@ fn render_uri_array_clause(
                 format!("({array_path} IS NULL OR jsonb_array_length({array_path}) = 0)")
             } else {
                 format!("({array_path} IS NOT NULL AND jsonb_array_length({array_path}) > 0)")
+            }
+        }
+    }
+}
+
+fn render_string_path_clause(
+    builder: &mut SqlBuilder,
+    clause: &StringClause,
+    jsonb_path: &str,
+) -> String {
+    match &clause.predicate {
+        StringPredicate::Prefix { value } => {
+            let normalized = normalize_string(value);
+            let escaped = escape_like_pattern(&normalized);
+            let p = builder.add_text_param(format!("{escaped}%"));
+            format!("f_unaccent_lower({jsonb_path}) LIKE ${p}")
+        }
+        StringPredicate::Exact { value } => {
+            let p = builder.add_text_param(value);
+            format!("{jsonb_path} = ${p}")
+        }
+        StringPredicate::Contains { value } => {
+            let normalized = normalize_string(value);
+            let escaped = escape_like_pattern(&normalized);
+            let p = builder.add_text_param(format!("%{escaped}%"));
+            format!("f_unaccent_lower({jsonb_path}) LIKE ${p}")
+        }
+        StringPredicate::Text { value } => {
+            let resource_col = builder.resource_column().to_string();
+            let p = builder.add_text_param(value);
+            format!(
+                "to_tsvector('english', {resource_col}->>'text') @@ plainto_tsquery('english', ${p})"
+            )
+        }
+        StringPredicate::Missing { is_missing } => {
+            if *is_missing {
+                format!("({jsonb_path} IS NULL OR {jsonb_path} = 'null')")
+            } else {
+                format!("({jsonb_path} IS NOT NULL AND {jsonb_path} != 'null')")
             }
         }
     }
@@ -857,6 +913,14 @@ fn build_nested_json_containment(
 }
 
 fn render_string_clause(builder: &mut SqlBuilder, clause: &StringClause) -> String {
+    if let StringPredicate::Text { value } = &clause.predicate {
+        let resource_col = builder.resource_column().to_string();
+        let p = builder.add_text_param(value);
+        return format!(
+            "to_tsvector('english', {resource_col}->>'text') @@ plainto_tsquery('english', ${p})"
+        );
+    }
+
     let rt_param = builder.add_text_param(&clause.resource_type);
     let pc_param = builder.add_text_param(&clause.param_code);
     let id_col = builder.id_column();
@@ -892,6 +956,7 @@ fn render_string_clause(builder: &mut SqlBuilder, clause: &StringClause) -> Stri
                     let p = builder.add_text_param(value);
                     format!("sid.value_exact = ${p}")
                 }
+                StringPredicate::Text { .. } => unreachable!("handled above"),
                 StringPredicate::Missing { .. } => unreachable!("handled above"),
             };
             format!(
@@ -1189,6 +1254,29 @@ mod tests {
         assert!(sql.contains("sid.value_norm LIKE $3"));
         assert!(!sql.contains("Sm_th"));
         assert_eq!(builder.params()[2].as_str(), "%sm\\_th\\%%");
+    }
+
+    #[test]
+    fn string_path_render_uses_normalized_bound_pattern() {
+        let mut builder = SqlBuilder::new();
+        let clauses = StringClause::from_parsed_param(
+            &crate::parser::ParsedParam {
+                name: "name".to_string(),
+                modifier: None,
+                values: vec![crate::parser::ParsedValue {
+                    prefix: None,
+                    raw: "Élodie".to_string(),
+                }],
+            },
+            "Patient",
+        )
+        .unwrap();
+
+        let sql =
+            render_string_path_clauses_as_or(&mut builder, &clauses, "resource->>'name'").unwrap();
+
+        assert_eq!(sql, "f_unaccent_lower(resource->>'name') LIKE $1");
+        assert_eq!(builder.params()[0].as_str(), "elodie%");
     }
 
     #[test]

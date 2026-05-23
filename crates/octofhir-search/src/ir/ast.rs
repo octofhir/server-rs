@@ -65,6 +65,8 @@ pub enum StringPredicate {
     Contains { value: String },
     /// `:exact`: case/accent-sensitive full-string equality.
     Exact { value: String },
+    /// `:text`: full-text search over resource narrative.
+    Text { value: String },
     /// `:missing=true|false`.
     Missing { is_missing: bool },
 }
@@ -113,6 +115,9 @@ impl StringClause {
                     value: value.raw.clone(),
                 },
                 Some(SearchModifier::Exact) => StringPredicate::Exact {
+                    value: value.raw.clone(),
+                },
+                Some(SearchModifier::Text) => StringPredicate::Text {
                     value: value.raw.clone(),
                 },
                 Some(other) => {

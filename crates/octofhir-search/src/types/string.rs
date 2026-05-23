@@ -17,7 +17,9 @@
 use crate::parameters::SearchModifier;
 use crate::parser::ParsedParam;
 use crate::sql_builder::{SqlBuilder, SqlBuilderError};
-use crate::{ir::StringClause, ir::render_string_clauses_as_or};
+use crate::{
+    ir::StringClause, ir::render_string_clauses_as_or, ir::render_string_path_clauses_as_or,
+};
 use octofhir_core::search_index::normalize_string;
 
 /// Build SQL conditions for string search against the `search_idx_string`
@@ -54,72 +56,10 @@ pub fn build_string_search(
     param: &ParsedParam,
     jsonb_path: &str,
 ) -> Result<(), SqlBuilderError> {
-    if param.values.is_empty() {
-        return Ok(());
+    let clauses = StringClause::from_parsed_param(param, "")?;
+    if let Some(sql) = render_string_path_clauses_as_or(builder, &clauses, jsonb_path) {
+        builder.add_condition(sql);
     }
-
-    let mut or_conditions = Vec::new();
-
-    for value in &param.values {
-        if value.raw.is_empty() {
-            continue;
-        }
-
-        let condition = match &param.modifier {
-            None => {
-                // Default: starts-with, case-insensitive, accent-insensitive (§3.1.1.5.6).
-                let normalized = normalize_string(&value.raw);
-                let escaped = escape_like_pattern(&normalized);
-                let p = builder.add_text_param(format!("{escaped}%"));
-                format!("f_unaccent_lower({jsonb_path}) LIKE ${p}")
-            }
-
-            Some(SearchModifier::Exact) => {
-                // Exact match: case-sensitive, accent-sensitive, full-string equality.
-                let p = builder.add_text_param(&value.raw);
-                format!("{jsonb_path} = ${p}")
-            }
-
-            Some(SearchModifier::Contains) => {
-                // Substring, case-insensitive, accent-insensitive.
-                let normalized = normalize_string(&value.raw);
-                let escaped = escape_like_pattern(&normalized);
-                let p = builder.add_text_param(format!("%{escaped}%"));
-                format!("f_unaccent_lower({jsonb_path}) LIKE ${p}")
-            }
-
-            Some(SearchModifier::Text) => {
-                // Full-text search - search in text field
-                // This searches the narrative text of the resource
-                let resource_col = builder.resource_column().to_string();
-                let p = builder.add_text_param(&value.raw);
-                format!(
-                    "to_tsvector('english', {resource_col}->>'text') @@ plainto_tsquery('english', ${p})"
-                )
-            }
-
-            Some(SearchModifier::Missing) => {
-                // Missing modifier: check if field is null or absent
-                let is_missing = value.raw.eq_ignore_ascii_case("true");
-                if is_missing {
-                    format!("({jsonb_path} IS NULL OR {jsonb_path} = 'null')")
-                } else {
-                    format!("({jsonb_path} IS NOT NULL AND {jsonb_path} != 'null')")
-                }
-            }
-
-            Some(other) => {
-                return Err(SqlBuilderError::InvalidModifier(format!("{other:?}")));
-            }
-        };
-
-        or_conditions.push(condition);
-    }
-
-    if !or_conditions.is_empty() {
-        builder.add_condition(SqlBuilder::build_or_clause(&or_conditions));
-    }
-
     Ok(())
 }
 

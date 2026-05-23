@@ -178,6 +178,10 @@ fn debug_string_clause(clause: &StringClause) -> DebugPredicate {
             Some("search_idx_string_*_param_code_value_exact_btree_idx".to_string()),
             "EXISTS search_idx_string WHERE sid.value_exact = $exact".to_string(),
         ),
+        StringPredicate::Text { .. } => (
+            None,
+            "to_tsvector(resource.text) @@ plainto_tsquery($text)".to_string(),
+        ),
         StringPredicate::Missing { is_missing } => {
             let shape = if *is_missing {
                 "NOT EXISTS search_idx_string WHERE sid.param_code = $param_code"
@@ -191,12 +195,19 @@ fn debug_string_clause(clause: &StringClause) -> DebugPredicate {
         }
     };
 
+    let index_backed = expected_index.is_some();
+    let strategy = if matches!(clause.predicate, StringPredicate::Text { .. }) {
+        IndexStrategy::JsonbTraversal
+    } else {
+        IndexStrategy::SidecarString
+    };
+
     DebugPredicate {
         param_code: clause.param_code.clone(),
         search_type: SearchParameterType::String,
-        strategy: IndexStrategy::SidecarString,
+        strategy,
         expected_index,
-        index_backed: true,
+        index_backed,
         sql_shape,
     }
 }
