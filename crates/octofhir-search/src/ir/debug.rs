@@ -376,9 +376,15 @@ fn debug_reference_clause(clause: &ReferenceClause) -> DebugPredicate {
             "EXISTS search_idx_reference WHERE sir.external_url = $url OR sir.raw_reference = $url"
                 .to_string(),
         ),
-        ReferencePredicate::Identifier { system, .. } => {
+        ReferencePredicate::Identifier {
+            system,
+            require_no_system,
+            ..
+        } => {
             let shape = if system.is_some() {
                 "EXISTS search_idx_reference WHERE sir.ref_kind = 4 AND sir.identifier_system = $system AND sir.identifier_value = $value"
+            } else if *require_no_system {
+                "EXISTS search_idx_reference WHERE sir.ref_kind = 4 AND sir.identifier_system IS NULL AND sir.identifier_value = $value"
             } else {
                 "EXISTS search_idx_reference WHERE sir.ref_kind = 4 AND sir.identifier_value = $value"
             };
@@ -741,6 +747,8 @@ mod tests {
                 target_type: Some("Patient".to_string()),
                 target_id: "pat-123".to_string(),
             },
+            target_types: vec!["Patient".to_string()],
+            jsonb_fallback_value: Some("Patient/pat-123".to_string()),
         }];
 
         let plan = build_reference_debug_plan("Observation", &clauses);
@@ -773,6 +781,8 @@ mod tests {
             resource_type: "Observation".to_string(),
             param_code: "subject".to_string(),
             predicate: ReferencePredicate::Missing { is_missing: true },
+            target_types: vec!["Patient".to_string()],
+            jsonb_fallback_value: None,
         }];
 
         let plan = build_reference_debug_plan("Observation", &clauses);

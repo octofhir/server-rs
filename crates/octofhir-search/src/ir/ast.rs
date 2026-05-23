@@ -597,6 +597,7 @@ pub enum ReferencePredicate {
     /// `:identifier` reference search using identifier rows in `search_idx_reference`.
     Identifier {
         system: Option<String>,
+        require_no_system: bool,
         value: String,
     },
     /// `:missing=true|false`.
@@ -613,6 +614,8 @@ pub struct ReferenceClause {
     pub resource_type: String,
     pub param_code: String,
     pub predicate: ReferencePredicate,
+    pub target_types: Vec<String>,
+    pub jsonb_fallback_value: Option<String>,
 }
 
 impl ReferenceClause {
@@ -647,6 +650,8 @@ impl ReferenceClause {
                 resource_type: resource_type.to_string(),
                 param_code: param.name.clone(),
                 predicate,
+                target_types: target_types.to_vec(),
+                jsonb_fallback_value: matches!(param.modifier, None).then(|| value.raw.clone()),
             });
         }
 
@@ -678,11 +683,13 @@ fn parse_reference_identifier(raw: &str) -> ReferencePredicate {
     if let Some((system, value)) = raw.split_once('|') {
         ReferencePredicate::Identifier {
             system: (!system.is_empty()).then(|| system.to_string()),
+            require_no_system: system.is_empty(),
             value: value.to_string(),
         }
     } else {
         ReferencePredicate::Identifier {
             system: None,
+            require_no_system: false,
             value: raw.to_string(),
         }
     }
