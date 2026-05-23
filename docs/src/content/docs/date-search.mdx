@@ -333,32 +333,7 @@ the bench.
 
 ---
 
-## 7. Competitor comparison
-
-| Server | Date storage | Index | Open Periods | Timing arrays | Sub-second |
-|---|---|---|---|---|---|
-| **OctoFHIR** | `tstzrange` (half-open, generated) | GiST on `(param_code, rng)` | `±infinity` | One row per `event[]` | µs (`timestamptz` native) |
-| HAPI | Two `TIMESTAMP` columns | Two btrees + `CASE` per prefix | NULL sentinels | Min/max envelope | ms |
-| Aidbox | `tstzrange` | GiST | Closed end-of-day | Min/max envelope | ms |
-| Medplum | JSON-encoded bounds in resource column | None usable for prefix algebra | Closed | Min/max envelope | ms |
-| MS FHIR | Two computed `datetime2` columns | Two btrees | NULL sentinels | Single row per resource | sub-second only via fallback |
-| fhir-candle | In-memory `DateTimeOffset` ranges | Linear scan | NULL sentinels | First event only | ms |
-
-**Where we explicitly beat each one:**
-
-- **HAPI / MS FHIR**: One GiST instead of two btrees + `CASE` chain.
-  Every prefix uses the index; `eq` and `ap` no longer fall back to seq
-  scan on big tables.
-- **Aidbox**: `±infinity` for open Periods (correct `eb`/`lt` semantics on
-  open-ended encounters); per-element rows for `Timing.event[]` (correct
-  `eq` for any event in the array).
-- **Medplum**: We have an actual range index — they don't.
-- **fhir-candle**: We have an index at all.
-- **All five**: sub-millisecond precision survives the round-trip.
-
----
-
-## 8. Query compilation — concrete examples
+## 7. Query compilation — concrete examples
 
 ### `date=ne2028-05`
 
@@ -437,7 +412,7 @@ emitted for `Timing.event[]`.
 
 ---
 
-## 9. Implementation map
+## 8. Implementation map
 
 - **Schema/migration** —
   `crates/octofhir-db-postgres/migrations/2025*_date_index_tstzrange.sql`
@@ -461,7 +436,7 @@ emitted for `Timing.event[]`.
 
 ---
 
-## 10. What this design rules out (on purpose)
+## 9. What this design rules out (on purpose)
 
 - **Per-event-position queries** (`date[2]=…`). No SP defines it. If FHIR
   ever adds one, add an `event_index` column to the partition.
