@@ -18,7 +18,7 @@ pub use ast::{
     CompositeSafety, DateParamExpr, NumberClause, NumberPredicate, QuantityClause,
     QuantityPredicate, ReferenceClause, ReferencePredicate, SearchExpr, SearchParamExpr,
     SearchValue, StringClause, StringPredicate, TokenClause, TokenIndexShape, TokenPredicate,
-    TokenSetModifier,
+    TokenSetModifier, UriClause, UriPredicate,
 };
 pub use debug::{
     DebugPredicate, SearchDebugPlan, build_composite_debug_plan, build_date_debug_plan,
@@ -32,7 +32,8 @@ pub use render::{
     render_date_clauses_as_or, render_number_clauses_as_or, render_quantity_clauses_as_or,
     render_reference_clauses_as_or, render_sql_expr, render_string_clauses_as_or,
     render_token_coding_clauses_as_or, render_token_identifier_clauses_as_or,
-    render_token_simple_code_clauses_as_or,
+    render_token_simple_code_clauses_as_or, render_uri_array_clauses_as_or,
+    render_uri_clauses_as_or,
 };
 pub use rewrite::{rewrite_date_clauses, rewrite_search_expr};
 pub use strategy::{IndexStrategy, StrategyDecision};

@@ -6,9 +6,9 @@
 //! - :above modifier: hierarchical above (value starts with URI)
 //! - :missing modifier: check if URI is present or absent
 
-use crate::parameters::SearchModifier;
 use crate::parser::ParsedParam;
 use crate::sql_builder::{SqlBuilder, SqlBuilderError};
+use crate::{ir::UriClause, ir::render_uri_array_clauses_as_or, ir::render_uri_clauses_as_or};
 
 /// Build SQL conditions for URI search.
 ///
@@ -19,72 +19,10 @@ pub fn build_uri_search(
     param: &ParsedParam,
     jsonb_path: &str,
 ) -> Result<(), SqlBuilderError> {
-    if param.values.is_empty() {
-        return Ok(());
+    let clauses = UriClause::from_parsed_param(param, "")?;
+    if let Some(sql) = render_uri_clauses_as_or(builder, &clauses, jsonb_path) {
+        builder.add_condition(sql);
     }
-
-    let mut or_conditions = Vec::new();
-
-    for value in &param.values {
-        if value.raw.is_empty() {
-            continue;
-        }
-
-        let condition = match &param.modifier {
-            None => {
-                // Exact match
-                let p = builder.add_text_param(&value.raw);
-                format!("{jsonb_path} = ${p}")
-            }
-
-            Some(SearchModifier::Below) => {
-                // Hierarchical below - stored URI starts with search value
-                // e.g., search for "http://example.org/fhir" matches "http://example.org/fhir/Patient"
-                let escaped = escape_like_pattern(&value.raw);
-                let p = builder.add_text_param(format!("{escaped}%"));
-                format!("{jsonb_path} LIKE ${p}")
-            }
-
-            Some(SearchModifier::Above) => {
-                // Hierarchical above - search value starts with stored URI
-                // e.g., search for "http://example.org/fhir/Patient/123" matches "http://example.org/fhir"
-                // This requires checking if the stored URI is a prefix of the search value
-                let p = builder.add_text_param(&value.raw);
-                format!("${p} LIKE {jsonb_path} || '%'")
-            }
-
-            Some(SearchModifier::Contains) => {
-                // Case-insensitive substring match against the stored URI.
-                let escaped = escape_like_pattern(&value.raw.to_lowercase());
-                let p = builder.add_text_param(format!("%{escaped}%"));
-                format!("LOWER({jsonb_path}) LIKE ${p}")
-            }
-
-            Some(SearchModifier::Missing) => {
-                let is_missing = value.raw.eq_ignore_ascii_case("true");
-                if is_missing {
-                    format!(
-                        "({jsonb_path} IS NULL OR {jsonb_path} = 'null' OR {jsonb_path} = '\"\"')"
-                    )
-                } else {
-                    format!(
-                        "({jsonb_path} IS NOT NULL AND {jsonb_path} != 'null' AND {jsonb_path} != '\"\"')"
-                    )
-                }
-            }
-
-            Some(other) => {
-                return Err(SqlBuilderError::InvalidModifier(format!("{other:?}")));
-            }
-        };
-
-        or_conditions.push(condition);
-    }
-
-    if !or_conditions.is_empty() {
-        builder.add_condition(SqlBuilder::build_or_clause(&or_conditions));
-    }
-
     Ok(())
 }
 
@@ -94,85 +32,17 @@ pub fn build_uri_array_search(
     param: &ParsedParam,
     array_path: &str,
 ) -> Result<(), SqlBuilderError> {
-    if param.values.is_empty() {
-        return Ok(());
+    let clauses = UriClause::from_parsed_param(param, "")?;
+    if let Some(sql) = render_uri_array_clauses_as_or(builder, &clauses, array_path) {
+        builder.add_condition(sql);
     }
-
-    let mut or_conditions = Vec::new();
-
-    for value in &param.values {
-        if value.raw.is_empty() {
-            continue;
-        }
-
-        let condition = match &param.modifier {
-            None => {
-                // Exact match in array
-                let p = builder.add_text_param(&value.raw);
-                format!(
-                    "EXISTS (SELECT 1 FROM jsonb_array_elements_text({array_path}) AS uri WHERE uri = ${p})"
-                )
-            }
-
-            Some(SearchModifier::Below) => {
-                // Hierarchical below in array
-                let escaped = escape_like_pattern(&value.raw);
-                let p = builder.add_text_param(format!("{escaped}%"));
-                format!(
-                    "EXISTS (SELECT 1 FROM jsonb_array_elements_text({array_path}) AS uri WHERE uri LIKE ${p})"
-                )
-            }
-
-            Some(SearchModifier::Above) => {
-                // Hierarchical above in array
-                let p = builder.add_text_param(&value.raw);
-                format!(
-                    "EXISTS (SELECT 1 FROM jsonb_array_elements_text({array_path}) AS uri WHERE ${p} LIKE uri || '%')"
-                )
-            }
-
-            Some(SearchModifier::Contains) => {
-                let escaped = escape_like_pattern(&value.raw.to_lowercase());
-                let p = builder.add_text_param(format!("%{escaped}%"));
-                format!(
-                    "EXISTS (SELECT 1 FROM jsonb_array_elements_text({array_path}) AS uri WHERE LOWER(uri) LIKE ${p})"
-                )
-            }
-
-            Some(SearchModifier::Missing) => {
-                let is_missing = value.raw.eq_ignore_ascii_case("true");
-                if is_missing {
-                    format!("({array_path} IS NULL OR jsonb_array_length({array_path}) = 0)")
-                } else {
-                    format!("({array_path} IS NOT NULL AND jsonb_array_length({array_path}) > 0)")
-                }
-            }
-
-            Some(other) => {
-                return Err(SqlBuilderError::InvalidModifier(format!("{other:?}")));
-            }
-        };
-
-        or_conditions.push(condition);
-    }
-
-    if !or_conditions.is_empty() {
-        builder.add_condition(SqlBuilder::build_or_clause(&or_conditions));
-    }
-
     Ok(())
-}
-
-/// Escape special characters in LIKE patterns.
-fn escape_like_pattern(s: &str) -> String {
-    s.replace('\\', "\\\\")
-        .replace('%', "\\%")
-        .replace('_', "\\_")
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::parameters::SearchModifier;
     use crate::parser::ParsedValue;
 
     fn make_param(name: &str, value: &str, modifier: Option<SearchModifier>) -> ParsedParam {

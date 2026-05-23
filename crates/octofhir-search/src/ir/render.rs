@@ -1,6 +1,7 @@
 use crate::ir::ast::{
     NumberClause, NumberPredicate, QuantityClause, QuantityPredicate, ReferenceClause,
-    ReferencePredicate, StringClause, StringPredicate, TokenClause, TokenPredicate,
+    ReferencePredicate, StringClause, StringPredicate, TokenClause, TokenPredicate, UriClause,
+    UriPredicate,
 };
 use crate::ir::sql::{RangeOp, SelectStmt, SqlExpr, SqlOp, SqlTerm};
 use crate::parameters::SearchPrefix;
@@ -49,6 +50,40 @@ pub fn render_reference_clauses_as_or(
     let rendered = clauses
         .iter()
         .map(|clause| render_reference_clause(builder, clause, jsonb_path))
+        .collect::<Vec<_>>();
+    if rendered.is_empty() {
+        None
+    } else {
+        Some(SqlBuilder::build_or_clause(&rendered))
+    }
+}
+
+/// Render scalar URI clauses as one OR group.
+pub fn render_uri_clauses_as_or(
+    builder: &mut SqlBuilder,
+    clauses: &[UriClause],
+    path: &str,
+) -> Option<String> {
+    let rendered = clauses
+        .iter()
+        .map(|clause| render_uri_clause(builder, clause, path))
+        .collect::<Vec<_>>();
+    if rendered.is_empty() {
+        None
+    } else {
+        Some(SqlBuilder::build_or_clause(&rendered))
+    }
+}
+
+/// Render URI-array clauses as one OR group.
+pub fn render_uri_array_clauses_as_or(
+    builder: &mut SqlBuilder,
+    clauses: &[UriClause],
+    array_path: &str,
+) -> Option<String> {
+    let rendered = clauses
+        .iter()
+        .map(|clause| render_uri_array_clause(builder, clause, array_path))
         .collect::<Vec<_>>();
     if rendered.is_empty() {
         None
@@ -164,6 +199,78 @@ fn render_number_clause(
             Ok(render_numeric_comparison(
                 builder, jsonb_path, *prefix, &number,
             ))
+        }
+    }
+}
+
+fn render_uri_clause(builder: &mut SqlBuilder, clause: &UriClause, path: &str) -> String {
+    match &clause.predicate {
+        UriPredicate::Exact { value } => {
+            let p = builder.add_text_param(value);
+            format!("{path} = ${p}")
+        }
+        UriPredicate::Below { value } => {
+            let escaped = escape_like_pattern(value);
+            let p = builder.add_text_param(format!("{escaped}%"));
+            format!("{path} LIKE ${p}")
+        }
+        UriPredicate::Above { value } => {
+            let p = builder.add_text_param(value);
+            format!("${p} LIKE {path} || '%'")
+        }
+        UriPredicate::Contains { value } => {
+            let escaped = escape_like_pattern(&value.to_lowercase());
+            let p = builder.add_text_param(format!("%{escaped}%"));
+            format!("LOWER({path}) LIKE ${p}")
+        }
+        UriPredicate::Missing { is_missing } => {
+            if *is_missing {
+                format!("({path} IS NULL OR {path} = 'null' OR {path} = '\"\"')")
+            } else {
+                format!("({path} IS NOT NULL AND {path} != 'null' AND {path} != '\"\"')")
+            }
+        }
+    }
+}
+
+fn render_uri_array_clause(
+    builder: &mut SqlBuilder,
+    clause: &UriClause,
+    array_path: &str,
+) -> String {
+    match &clause.predicate {
+        UriPredicate::Exact { value } => {
+            let p = builder.add_text_param(value);
+            format!(
+                "EXISTS (SELECT 1 FROM jsonb_array_elements_text({array_path}) AS uri WHERE uri = ${p})"
+            )
+        }
+        UriPredicate::Below { value } => {
+            let escaped = escape_like_pattern(value);
+            let p = builder.add_text_param(format!("{escaped}%"));
+            format!(
+                "EXISTS (SELECT 1 FROM jsonb_array_elements_text({array_path}) AS uri WHERE uri LIKE ${p})"
+            )
+        }
+        UriPredicate::Above { value } => {
+            let p = builder.add_text_param(value);
+            format!(
+                "EXISTS (SELECT 1 FROM jsonb_array_elements_text({array_path}) AS uri WHERE ${p} LIKE uri || '%')"
+            )
+        }
+        UriPredicate::Contains { value } => {
+            let escaped = escape_like_pattern(&value.to_lowercase());
+            let p = builder.add_text_param(format!("%{escaped}%"));
+            format!(
+                "EXISTS (SELECT 1 FROM jsonb_array_elements_text({array_path}) AS uri WHERE LOWER(uri) LIKE ${p})"
+            )
+        }
+        UriPredicate::Missing { is_missing } => {
+            if *is_missing {
+                format!("({array_path} IS NULL OR jsonb_array_length({array_path}) = 0)")
+            } else {
+                format!("({array_path} IS NOT NULL AND jsonb_array_length({array_path}) > 0)")
+            }
         }
     }
 }
@@ -1300,5 +1407,51 @@ mod tests {
         assert!(sql.starts_with("(EXISTS"));
         assert!(sql.ends_with("= false"));
         assert!(!sql.contains("NOT ("));
+    }
+
+    #[test]
+    fn uri_render_escapes_like_patterns() {
+        let mut builder = SqlBuilder::new();
+        let clauses = UriClause::from_parsed_param(
+            &crate::parser::ParsedParam {
+                name: "url".to_string(),
+                modifier: Some(crate::parameters::SearchModifier::Below),
+                values: vec![crate::parser::ParsedValue {
+                    prefix: None,
+                    raw: "http://example.org/100%".to_string(),
+                }],
+            },
+            "ImplementationGuide",
+        )
+        .unwrap();
+
+        let sql = render_uri_clauses_as_or(&mut builder, &clauses, "resource->>'url'").unwrap();
+
+        assert_eq!(sql, "resource->>'url' LIKE $1");
+        assert_eq!(builder.params()[0].as_str(), "http://example.org/100\\%%");
+    }
+
+    #[test]
+    fn uri_array_render_uses_array_elements_text() {
+        let mut builder = SqlBuilder::new();
+        let clauses = UriClause::from_parsed_param(
+            &crate::parser::ParsedParam {
+                name: "_profile".to_string(),
+                modifier: None,
+                values: vec![crate::parser::ParsedValue {
+                    prefix: None,
+                    raw: "http://hl7.org/fhir/us/core/Patient".to_string(),
+                }],
+            },
+            "Patient",
+        )
+        .unwrap();
+
+        let sql =
+            render_uri_array_clauses_as_or(&mut builder, &clauses, "resource->'meta'->'profile'")
+                .unwrap();
+
+        assert!(sql.contains("jsonb_array_elements_text(resource->'meta'->'profile')"));
+        assert!(sql.contains("uri = $1"));
     }
 }

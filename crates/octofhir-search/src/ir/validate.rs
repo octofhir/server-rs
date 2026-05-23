@@ -48,6 +48,7 @@ pub fn validate_search_expr(expr: &SearchExpr) -> Result<(), ValidationError> {
                         | (SearchParameterType::Token, SearchValue::Token(_))
                         | (SearchParameterType::Number, SearchValue::Number(_))
                         | (SearchParameterType::Quantity, SearchValue::Quantity(_))
+                        | (SearchParameterType::Uri, SearchValue::Uri(_))
                         | (SearchParameterType::Composite, SearchValue::Composite(_))
                 );
                 if !matches_type {

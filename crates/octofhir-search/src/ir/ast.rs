@@ -36,6 +36,7 @@ pub enum SearchValue {
     Reference(ReferencePredicate),
     Number(NumberPredicate),
     Quantity(QuantityPredicate),
+    Uri(UriPredicate),
     Composite(CompositePredicate),
 }
 
@@ -112,6 +113,82 @@ impl StringClause {
                     value: value.raw.clone(),
                 },
                 Some(SearchModifier::Exact) => StringPredicate::Exact {
+                    value: value.raw.clone(),
+                },
+                Some(other) => {
+                    return Err(SqlBuilderError::InvalidModifier(format!("{other:?}")));
+                }
+            };
+
+            clauses.push(Self {
+                resource_type: resource_type.to_string(),
+                param_code: param.name.clone(),
+                predicate,
+            });
+        }
+
+        Ok(clauses)
+    }
+}
+
+/// URI SearchParameter predicate.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum UriPredicate {
+    /// Default URI search: exact match.
+    Exact { value: String },
+    /// `:below`: stored URI starts with the search URI.
+    Below { value: String },
+    /// `:above`: search URI starts with the stored URI.
+    Above { value: String },
+    /// `:contains`: case-insensitive substring match.
+    Contains { value: String },
+    /// `:missing=true|false`.
+    Missing { is_missing: bool },
+}
+
+/// URI SearchParameter occurrence.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UriClause {
+    pub resource_type: String,
+    pub param_code: String,
+    pub predicate: UriPredicate,
+}
+
+impl UriClause {
+    pub fn from_parsed_param(
+        param: &ParsedParam,
+        resource_type: &str,
+    ) -> Result<Vec<Self>, SqlBuilderError> {
+        if matches!(param.modifier, Some(SearchModifier::Missing)) {
+            let is_missing = param
+                .values
+                .first()
+                .map(|v| v.raw.eq_ignore_ascii_case("true"))
+                .unwrap_or(false);
+            return Ok(vec![Self {
+                resource_type: resource_type.to_string(),
+                param_code: param.name.clone(),
+                predicate: UriPredicate::Missing { is_missing },
+            }]);
+        }
+
+        let mut clauses = Vec::new();
+        for value in &param.values {
+            if value.raw.is_empty() {
+                continue;
+            }
+
+            let predicate = match &param.modifier {
+                None => UriPredicate::Exact {
+                    value: value.raw.clone(),
+                },
+                Some(SearchModifier::Below) => UriPredicate::Below {
+                    value: value.raw.clone(),
+                },
+                Some(SearchModifier::Above) => UriPredicate::Above {
+                    value: value.raw.clone(),
+                },
+                Some(SearchModifier::Contains) => UriPredicate::Contains {
                     value: value.raw.clone(),
                 },
                 Some(other) => {
