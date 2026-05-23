@@ -15,7 +15,10 @@ use crate::parameters::SearchModifier;
 use crate::parser::ParsedParam;
 use crate::sql_builder::{SqlBuilder, SqlBuilderError, SqlParam};
 use crate::terminology::HybridTerminologyProvider;
-use crate::{ir::TokenClause, ir::TokenIndexShape, ir::render_token_simple_code_clauses_as_or};
+use crate::{
+    ir::TokenClause, ir::TokenIndexShape, ir::render_token_coding_clauses_as_or,
+    ir::render_token_simple_code_clauses_as_or,
+};
 use sqlx_postgres::PgPool;
 
 /// Parse a token value into system and code parts.
@@ -649,152 +652,11 @@ pub fn build_gin_token_search(
     param: &ParsedParam,
     path_segments: &[String],
 ) -> Result<(), SqlBuilderError> {
-    if param.values.is_empty() {
-        return Ok(());
+    let clauses = TokenClause::from_parsed_param(param, "", TokenIndexShape::Coding)?;
+    if let Some(sql) = render_token_coding_clauses_as_or(builder, &clauses, path_segments)? {
+        builder.add_condition(sql);
     }
-
-    let resource_col = builder.resource_column().to_string();
-    let mut or_conditions = Vec::new();
-
-    for value in &param.values {
-        if value.raw.is_empty() {
-            continue;
-        }
-
-        let (system, code) = parse_token_value(&value.raw);
-
-        let condition = match &param.modifier {
-            None => build_gin_token_containment(
-                &mut *builder,
-                &resource_col,
-                path_segments,
-                system,
-                code,
-            ),
-
-            Some(SearchModifier::Not) => {
-                let inner = build_gin_token_containment(
-                    &mut *builder,
-                    &resource_col,
-                    path_segments,
-                    system,
-                    code,
-                );
-                format!("NOT ({inner})")
-            }
-
-            // For other modifiers, fall back to the standard token search
-            _ => {
-                let json_path =
-                    crate::sql_builder::build_jsonb_accessor(&resource_col, path_segments, false);
-                let mut temp_builder = SqlBuilder::new().with_param_offset(builder.param_count());
-                build_token_search(&mut temp_builder, param, &json_path)?;
-                // Copy params
-                for p in temp_builder.params() {
-                    match p {
-                        SqlParam::Text(s) => {
-                            builder.add_text_param(s);
-                        }
-                        SqlParam::Json(s) => {
-                            builder.add_json_param(s);
-                        }
-                        SqlParam::Integer(i) => {
-                            builder.add_integer_param(*i);
-                        }
-                        SqlParam::Float(f) => {
-                            builder.add_float_param(*f);
-                        }
-                        SqlParam::Boolean(b) => {
-                            builder.add_boolean_param(*b);
-                        }
-                        SqlParam::Timestamp(s) => {
-                            builder.add_timestamp_param(s);
-                        }
-                    }
-                }
-                let conditions = temp_builder.conditions();
-                if let Some(c) = conditions.first() {
-                    builder.add_condition(c.clone());
-                }
-                return Ok(());
-            }
-        };
-
-        or_conditions.push(condition);
-    }
-
-    if !or_conditions.is_empty() {
-        builder.add_condition(SqlBuilder::build_or_clause(&or_conditions));
-    }
-
     Ok(())
-}
-
-/// Build GIN containment condition for a token search.
-///
-/// FHIR token SPs cover three storage shapes:
-/// 1. CodeableConcept:   `{"key": {"coding": [{"system": "...", "code": "..."}]}}`
-/// 2. Plain code scalar: `{"key": "code"}`
-/// 3. Plain code array:  `{"key": ["code-a", "code-b"]}`
-///
-/// When the search has an explicit system (`system|code`), only shape (1) is
-/// meaningful — Identifier-typed params take a separate path. When there is
-/// no system, the SP may target any of the three shapes (e.g. `Patient.gender`
-/// is a scalar code, `AllergyIntolerance.category` is an array of codes,
-/// `Observation.code` is a CodeableConcept). To stay correct without per-SP
-/// schema lookups, fall back to OR'ing all three containment shapes.
-///
-/// All variants share the same GIN `jsonb_path_ops` index on `resource`.
-fn build_gin_token_containment(
-    builder: &mut SqlBuilder,
-    resource_col: &str,
-    path_segments: &[String],
-    system: Option<&str>,
-    code: &str,
-) -> String {
-    let jsonb_path = crate::sql_builder::build_jsonb_accessor(resource_col, path_segments, false);
-
-    if let Some(sys) = system {
-        if sys.is_empty() {
-            return build_token_no_system_condition(builder, &jsonb_path, code);
-        }
-        if code.is_empty() {
-            return build_token_system_any_condition(builder, &jsonb_path, sys);
-        }
-    }
-
-    let coding_obj = match system {
-        Some(sys) if !sys.is_empty() => {
-            serde_json::json!({"system": sys, "code": code})
-        }
-        _ => serde_json::json!({"code": code}),
-    };
-    let cc_value = serde_json::json!({"coding": [coding_obj]});
-    let cc_containment = build_nested_containment(path_segments, cc_value);
-    let p_cc = builder.add_json_param(cc_containment.to_string());
-    let cc_clause = format!("{resource_col} @> ${p_cc}::jsonb");
-
-    let has_explicit_system = matches!(system, Some(sys) if !sys.is_empty());
-    if has_explicit_system {
-        return cc_clause;
-    }
-
-    // No system → also try plain scalar / array code shapes. Postgres'
-    // `array @> scalar` containment exception (see jsonb @> docs) means the
-    // scalar containment alone covers a stored array (`["a","b"] @> "a"` is
-    // TRUE), but we OR both forms anyway for clarity and to keep the planner
-    // honest if the underlying GIN index variant changes.
-    let scalar_value = serde_json::json!(code);
-    let scalar_containment = build_nested_containment(path_segments, scalar_value);
-    let p_scalar = builder.add_json_param(scalar_containment.to_string());
-    let scalar_clause = format!("{resource_col} @> ${p_scalar}::jsonb");
-
-    let array_value = serde_json::json!([code]);
-    let array_containment = build_nested_containment(path_segments, array_value);
-    let p_array = builder.add_json_param(array_containment.to_string());
-    let array_clause = format!("{resource_col} @> ${p_array}::jsonb");
-
-    format!("({cc_clause} OR {scalar_clause} OR {array_clause})")
 }
 
 /// Build GIN-optimized search for simple code fields using `resource @> '{...}'::jsonb`.
@@ -822,6 +684,7 @@ pub fn build_gin_code_search(
 ///
 /// For path `["name", "family"]` and value `"Smith"`, produces:
 /// `{"name": [{"family": "Smith"}]}`  (arrays handled by caller)
+#[cfg(test)]
 fn build_nested_containment(
     path_segments: &[String],
     leaf_value: serde_json::Value,
@@ -1122,18 +985,16 @@ mod tests {
     }
 
     #[test]
-    fn test_gin_token_search_not_modifier() {
+    fn test_gin_token_search_not_modifier_uses_boolean_false_check() {
         let mut builder = SqlBuilder::new();
         let param = make_param("code", "http://loinc.org|8480-6", Some(SearchModifier::Not));
 
         build_gin_token_search(&mut builder, &param, &["code".to_string()]).unwrap();
 
         let clause = builder.build_where_clause().unwrap();
-        assert!(
-            clause.starts_with("NOT ("),
-            "Expected NOT wrapper, got: {clause}"
-        );
+        assert_eq!(clause, "(resource @> $1::jsonb) = false");
         assert!(clause.contains("@>"));
+        assert!(!clause.contains("NOT ("));
     }
 
     #[test]

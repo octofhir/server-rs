@@ -111,6 +111,23 @@ pub fn render_token_simple_code_clauses_as_or(
     }
 }
 
+/// Render Coding/CodeableConcept token clauses as one OR group.
+pub fn render_token_coding_clauses_as_or(
+    builder: &mut SqlBuilder,
+    clauses: &[TokenClause],
+    path_segments: &[String],
+) -> Result<Option<String>, SqlBuilderError> {
+    let rendered = clauses
+        .iter()
+        .map(|clause| render_token_coding_clause(builder, clause, path_segments))
+        .collect::<Result<Vec<_>, _>>()?;
+    if rendered.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(SqlBuilder::build_or_clause(&rendered)))
+    }
+}
+
 fn render_number_clause(
     builder: &mut SqlBuilder,
     clause: &NumberClause,
@@ -163,6 +180,140 @@ fn render_token_simple_code_clause(
                 Ok(condition)
             }
         }
+    }
+}
+
+fn render_token_coding_clause(
+    builder: &mut SqlBuilder,
+    clause: &TokenClause,
+    path_segments: &[String],
+) -> Result<String, SqlBuilderError> {
+    let resource_col = builder.resource_column().to_string();
+    let jsonb_path = crate::sql_builder::build_jsonb_accessor(&resource_col, path_segments, false);
+
+    let condition = match &clause.predicate {
+        TokenPredicate::AnySystemCode { code } => {
+            render_token_any_system_code(builder, &resource_col, path_segments, code)
+        }
+        TokenPredicate::NoSystemCode { code } => {
+            render_token_no_system_code(builder, &jsonb_path, code)
+        }
+        TokenPredicate::SystemAnyCode { system } => {
+            render_token_system_any_code(builder, &jsonb_path, system)
+        }
+        TokenPredicate::SystemCode { system, code } => {
+            render_token_system_code(builder, &resource_col, path_segments, system, code)
+        }
+        TokenPredicate::DisplayText { text } => {
+            let p = builder.add_text_param(format!("%{text}%"));
+            format!(
+                "EXISTS (SELECT 1 FROM jsonb_array_elements({jsonb_path}->'coding') AS c WHERE LOWER(c->>'display') LIKE LOWER(${p}))"
+            )
+        }
+        TokenPredicate::Missing { is_missing } => {
+            if *is_missing {
+                format!("({jsonb_path} IS NULL OR {jsonb_path} = 'null')")
+            } else {
+                format!("({jsonb_path} IS NOT NULL AND {jsonb_path} != 'null')")
+            }
+        }
+        TokenPredicate::TerminologySet { modifier, .. } => {
+            return Err(SqlBuilderError::NotImplemented(format!(
+                "{} modifier requires terminology provider",
+                token_set_modifier_name(*modifier)
+            )));
+        }
+        TokenPredicate::IdentifierOfType { .. } => {
+            return Err(SqlBuilderError::InvalidModifier("OfType".to_string()));
+        }
+    };
+
+    if clause.negated {
+        Ok(format!("({condition}) = false"))
+    } else {
+        Ok(condition)
+    }
+}
+
+fn render_token_any_system_code(
+    builder: &mut SqlBuilder,
+    resource_col: &str,
+    path_segments: &[String],
+    code: &str,
+) -> String {
+    let cc_clause =
+        render_token_coding_containment(builder, resource_col, path_segments, None, code);
+
+    let scalar_containment = build_nested_json_containment(path_segments, serde_json::json!(code));
+    let p_scalar = builder.add_json_param(&scalar_containment.to_string());
+    let scalar_clause = format!("{resource_col} @> ${p_scalar}::jsonb");
+
+    let array_containment = build_nested_json_containment(path_segments, serde_json::json!([code]));
+    let p_array = builder.add_json_param(&array_containment.to_string());
+    let array_clause = format!("{resource_col} @> ${p_array}::jsonb");
+
+    format!("({cc_clause} OR {scalar_clause} OR {array_clause})")
+}
+
+fn render_token_system_code(
+    builder: &mut SqlBuilder,
+    resource_col: &str,
+    path_segments: &[String],
+    system: &str,
+    code: &str,
+) -> String {
+    render_token_coding_containment(builder, resource_col, path_segments, Some(system), code)
+}
+
+fn render_token_coding_containment(
+    builder: &mut SqlBuilder,
+    resource_col: &str,
+    path_segments: &[String],
+    system: Option<&str>,
+    code: &str,
+) -> String {
+    let coding_obj = match system {
+        Some(system) => serde_json::json!({"system": system, "code": code}),
+        None => serde_json::json!({"code": code}),
+    };
+    let cc_value = serde_json::json!({"coding": [coding_obj]});
+    let containment = build_nested_json_containment(path_segments, cc_value);
+    let p = builder.add_json_param(&containment.to_string());
+    format!("{resource_col} @> ${p}::jsonb")
+}
+
+fn render_token_no_system_code(builder: &mut SqlBuilder, jsonb_path: &str, code: &str) -> String {
+    let p = builder.add_text_param(code);
+    format!(
+        "((({jsonb_path}->>'system' IS NULL OR {jsonb_path}->>'system' = '') \
+          AND {jsonb_path}->>'code' = ${p}) OR \
+         (({jsonb_path}->>'system' IS NULL OR {jsonb_path}->>'system' = '') \
+          AND {jsonb_path}->>'value' = ${p}) OR \
+         EXISTS (SELECT 1 FROM jsonb_array_elements({jsonb_path}->'coding') AS c \
+                 WHERE (c->>'system' IS NULL OR c->>'system' = '') \
+                 AND c->>'code' = ${p}))"
+    )
+}
+
+fn render_token_system_any_code(
+    builder: &mut SqlBuilder,
+    jsonb_path: &str,
+    system: &str,
+) -> String {
+    let p = builder.add_text_param(system);
+    format!(
+        "({jsonb_path}->>'system' = ${p} OR \
+         EXISTS (SELECT 1 FROM jsonb_array_elements({jsonb_path}->'coding') AS c \
+                 WHERE c->>'system' = ${p}))"
+    )
+}
+
+fn token_set_modifier_name(modifier: crate::ir::TokenSetModifier) -> &'static str {
+    match modifier {
+        crate::ir::TokenSetModifier::In => "in",
+        crate::ir::TokenSetModifier::NotIn => "not-in",
+        crate::ir::TokenSetModifier::Below => "below",
+        crate::ir::TokenSetModifier::Above => "above",
     }
 }
 
@@ -901,5 +1052,65 @@ mod tests {
 
         assert_eq!(sql, "(r.resource @> $1::jsonb) = false");
         assert_eq!(builder.params()[0].as_str(), r#"{"gender":"female"}"#);
+    }
+
+    #[test]
+    fn coding_token_render_preserves_system_code_as_containment() {
+        let mut builder = SqlBuilder::with_resource_column("r.resource");
+        let clauses = TokenClause::from_parsed_param(
+            &crate::parser::ParsedParam {
+                name: "code".to_string(),
+                modifier: None,
+                values: vec![crate::parser::ParsedValue {
+                    prefix: None,
+                    raw: "http://loinc.org|8480-6".to_string(),
+                }],
+            },
+            "Observation",
+            crate::ir::TokenIndexShape::Coding,
+        )
+        .unwrap();
+
+        let sql = render_token_coding_clauses_as_or(&mut builder, &clauses, &["code".to_string()])
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(sql, "r.resource @> $1::jsonb");
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&builder.params()[0].as_str()).unwrap(),
+            serde_json::json!({
+                "code": {
+                    "coding": [{
+                        "system": "http://loinc.org",
+                        "code": "8480-6"
+                    }]
+                }
+            })
+        );
+    }
+
+    #[test]
+    fn coding_token_render_not_uses_boolean_false_check() {
+        let mut builder = SqlBuilder::with_resource_column("r.resource");
+        let clauses = TokenClause::from_parsed_param(
+            &crate::parser::ParsedParam {
+                name: "code".to_string(),
+                modifier: Some(crate::parameters::SearchModifier::Not),
+                values: vec![crate::parser::ParsedValue {
+                    prefix: None,
+                    raw: "http://loinc.org|8480-6".to_string(),
+                }],
+            },
+            "Observation",
+            crate::ir::TokenIndexShape::Coding,
+        )
+        .unwrap();
+
+        let sql = render_token_coding_clauses_as_or(&mut builder, &clauses, &["code".to_string()])
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(sql, "(r.resource @> $1::jsonb) = false");
+        assert!(!sql.contains("NOT ("));
     }
 }
