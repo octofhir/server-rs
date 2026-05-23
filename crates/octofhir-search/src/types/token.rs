@@ -78,6 +78,16 @@ pub async fn build_token_search_with_terminology(
     pool: &PgPool,
     terminology: Option<&HybridTerminologyProvider>,
 ) -> Result<(), SqlBuilderError> {
+    if !matches!(
+        param.modifier,
+        Some(SearchModifier::In)
+            | Some(SearchModifier::NotIn)
+            | Some(SearchModifier::Below)
+            | Some(SearchModifier::Above)
+    ) {
+        return build_token_search(builder, param, jsonb_path);
+    }
+
     if param.values.is_empty() {
         return Ok(());
     }
@@ -92,20 +102,7 @@ pub async fn build_token_search_with_terminology(
         let (system, code) = parse_token_value(&value.raw);
 
         let condition = match &param.modifier {
-            None => build_default_token_condition(builder, jsonb_path, system, code),
-
-            Some(SearchModifier::Not) => {
-                let inner = build_default_token_condition(builder, jsonb_path, system, code);
-                format!("NOT ({inner})")
-            }
-
-            Some(SearchModifier::Text) => {
-                let p = builder.add_text_param(format!("%{code}%"));
-                format!(
-                    "EXISTS (SELECT 1 FROM jsonb_array_elements({jsonb_path}->'coding') AS c WHERE LOWER(c->>'display') LIKE LOWER(${p}))"
-                )
-            }
-
+            None => unreachable!("non-terminology token modifiers returned above"),
             Some(SearchModifier::In) => {
                 // Value is the ValueSet URL
                 let valueset_url = &value.raw;
@@ -144,19 +141,6 @@ pub async fn build_token_search_with_terminology(
                 // Value format: system|code or just code
                 build_subsumption_condition(builder, jsonb_path, system, code, false, terminology)
                     .await?
-            }
-
-            Some(SearchModifier::OfType) => {
-                build_identifier_of_type_condition(builder, jsonb_path, code)?
-            }
-
-            Some(SearchModifier::Missing) => {
-                let is_missing = value.raw.eq_ignore_ascii_case("true");
-                if is_missing {
-                    format!("({jsonb_path} IS NULL OR {jsonb_path} = 'null')")
-                } else {
-                    format!("({jsonb_path} IS NOT NULL AND {jsonb_path} != 'null')")
-                }
             }
 
             Some(other) => {
@@ -266,7 +250,7 @@ async fn build_in_modifier_condition(
     }
 
     Ok(if negate {
-        format!("NOT ({condition})")
+        format!("({condition}) = false")
     } else {
         condition
     })
@@ -354,116 +338,6 @@ async fn build_subsumption_condition(
     } else {
         format!("({})", conditions.join(" OR "))
     })
-}
-
-/// Build condition for default token matching.
-fn build_default_token_condition(
-    builder: &mut SqlBuilder,
-    jsonb_path: &str,
-    system: Option<&str>,
-    code: &str,
-) -> String {
-    match system {
-        Some(sys) if !sys.is_empty() && code.is_empty() => {
-            build_token_system_any_condition(builder, jsonb_path, sys)
-        }
-        Some(sys) if !sys.is_empty() => {
-            // system|code - match both
-            let json = serde_json::json!([{"system": sys, "code": code}]).to_string();
-            let p = builder.add_json_param(&json);
-            let p_sys = builder.add_text_param(sys);
-            let p_code = builder.add_text_param(code);
-            // Check in CodeableConcept.coding array
-            format!(
-                "({jsonb_path}->'coding' @> ${p}::jsonb OR \
-                 ({jsonb_path}->>'system' = ${p_sys} AND {jsonb_path}->>'code' = ${p_code}) OR \
-                 ({jsonb_path}->>'system' = ${p_sys} AND {jsonb_path}->>'value' = ${p_code}))"
-            )
-        }
-        Some(_) => {
-            // |code - code with no system (null system) - empty string case
-            build_token_no_system_condition(builder, jsonb_path, code)
-        }
-        None => {
-            // code only - match in any system
-            // Checks: direct code/value fields, and coding array elements
-            let p = builder.add_text_param(code);
-            format!(
-                "({jsonb_path}->>'code' = ${p} OR \
-                 {jsonb_path}->>'value' = ${p} OR \
-                 EXISTS (SELECT 1 FROM jsonb_array_elements({jsonb_path}->'coding') AS c WHERE c->>'code' = ${p}))"
-            )
-        }
-    }
-}
-
-fn build_token_no_system_condition(
-    builder: &mut SqlBuilder,
-    jsonb_path: &str,
-    code: &str,
-) -> String {
-    let p = builder.add_text_param(code);
-    format!(
-        "((({jsonb_path}->>'system' IS NULL OR {jsonb_path}->>'system' = '') \
-          AND {jsonb_path}->>'code' = ${p}) OR \
-         (({jsonb_path}->>'system' IS NULL OR {jsonb_path}->>'system' = '') \
-          AND {jsonb_path}->>'value' = ${p}) OR \
-         EXISTS (SELECT 1 FROM jsonb_array_elements({jsonb_path}->'coding') AS c \
-                 WHERE (c->>'system' IS NULL OR c->>'system' = '') \
-                 AND c->>'code' = ${p}))"
-    )
-}
-
-fn build_token_system_any_condition(
-    builder: &mut SqlBuilder,
-    jsonb_path: &str,
-    system: &str,
-) -> String {
-    let p = builder.add_text_param(system);
-    format!(
-        "({jsonb_path}->>'system' = ${p} OR \
-         EXISTS (SELECT 1 FROM jsonb_array_elements({jsonb_path}->'coding') AS c \
-                 WHERE c->>'system' = ${p}))"
-    )
-}
-
-/// Build condition for Identifier `:of-type` modifier search.
-///
-/// Per FHIR R4 §3.1.1.5.13 (https://hl7.org/fhir/R4/search.html#oftype):
-/// The format is `[parameter]:of-type=[system]|[code]|[value]`. The system+code
-/// identify a `Identifier.type.coding`, and `value` matches `Identifier.value`.
-/// All three components are REQUIRED.
-///
-/// SQL: iterate identifier array; each matching identifier must have:
-///   - a coding entry whose system AND code match (via JSONB @>), and
-///   - value equal to the third part.
-fn build_identifier_of_type_condition(
-    builder: &mut SqlBuilder,
-    jsonb_path: &str,
-    value: &str,
-) -> Result<String, SqlBuilderError> {
-    let parts: Vec<&str> = value.splitn(3, '|').collect();
-    if parts.len() != 3 {
-        return Err(SqlBuilderError::InvalidSearchValue(
-            "of-type modifier requires system|code|value format".to_string(),
-        ));
-    }
-    let (type_system, type_code, id_value) = (parts[0], parts[1], parts[2]);
-    if type_system.is_empty() || type_code.is_empty() || id_value.is_empty() {
-        return Err(SqlBuilderError::InvalidSearchValue(
-            "of-type modifier requires non-empty system, code, and value".to_string(),
-        ));
-    }
-
-    let coding = serde_json::json!([{"system": type_system, "code": type_code}]).to_string();
-    let p_coding = builder.add_json_param(&coding);
-    let p_val = builder.add_text_param(id_value);
-
-    Ok(format!(
-        "EXISTS (SELECT 1 FROM jsonb_array_elements({jsonb_path}) AS ident \
-         WHERE ident->'type'->'coding' @> ${p_coding}::jsonb \
-         AND ident->>'value' = ${p_val})"
-    ))
 }
 
 /// Build token search for Identifier arrays.
