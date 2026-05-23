@@ -6,11 +6,11 @@
 use crate::chaining::{build_chained_search, is_chained_parameter, parse_chained_parameter};
 use crate::include::{is_include_parameter, is_revinclude_parameter};
 use crate::ir::{
-    CompositeClause, NumberClause, QuantityClause, SearchDebugPlan, StringClause, TokenClause,
-    TokenIndexShape, build_composite_debug_plan, build_date_debug_plan, build_number_debug_plan,
-    build_quantity_debug_plan, build_string_debug_plan, build_string_text_debug_predicate,
-    build_token_debug_plan, render_date_clauses_as_or, resolve_composite_component_specs,
-    rewrite_date_clauses,
+    CompositeClause, NumberClause, QuantityClause, ReferenceClause, SearchDebugPlan, StringClause,
+    TokenClause, TokenIndexShape, build_composite_debug_plan, build_date_debug_plan,
+    build_number_debug_plan, build_quantity_debug_plan, build_reference_debug_plan,
+    build_string_debug_plan, build_string_text_debug_predicate, build_token_debug_plan,
+    render_date_clauses_as_or, resolve_composite_component_specs, rewrite_date_clauses,
 };
 use crate::parameters::{ElementTypeHint, SearchParameter, SearchParameterType, SearchPrefix};
 use crate::parser::{ParsedParam, ParsedValue};
@@ -306,6 +306,12 @@ pub fn build_query_from_params_with_config(
                     resource_type,
                 )?;
                 collect_token_debug_plan(debug_plan.as_mut(), &parsed, &param_def, resource_type)?;
+                collect_reference_debug_plan(
+                    debug_plan.as_mut(),
+                    &parsed,
+                    &param_def,
+                    resource_type,
+                )?;
             }
 
             // Use dispatch_search to build the condition
@@ -635,6 +641,21 @@ fn collect_token_debug_plan(
     Ok(())
 }
 
+fn collect_reference_debug_plan(
+    debug_plan: Option<&mut SearchDebugPlan>,
+    parsed: &ParsedParam,
+    param_def: &SearchParameter,
+    resource_type: &str,
+) -> Result<(), SqlBuilderError> {
+    if param_def.param_type != SearchParameterType::Reference {
+        return Ok(());
+    }
+
+    let clauses = ReferenceClause::from_parsed_param(parsed, resource_type, &param_def.target)?;
+    append_reference_debug_plan(debug_plan, resource_type, &clauses);
+    Ok(())
+}
+
 fn token_index_shape(param_def: &SearchParameter) -> TokenIndexShape {
     if param_def.element_type_hint.is_identifier()
         || (matches!(&param_def.element_type_hint, ElementTypeHint::Unknown)
@@ -660,6 +681,17 @@ fn append_token_debug_plan(
     if let Some(plan) = debug_plan {
         plan.predicates
             .extend(build_token_debug_plan(resource_type, clauses).predicates);
+    }
+}
+
+fn append_reference_debug_plan(
+    debug_plan: Option<&mut SearchDebugPlan>,
+    resource_type: &str,
+    clauses: &[ReferenceClause],
+) {
+    if let Some(plan) = debug_plan {
+        plan.predicates
+            .extend(build_reference_debug_plan(resource_type, clauses).predicates);
     }
 }
 
@@ -1304,6 +1336,22 @@ mod tests {
         registry
     }
 
+    fn reference_registry_with_expression() -> SearchParameterRegistry {
+        use crate::parameters::SearchParameter;
+        let registry = SearchParameterRegistry::new();
+        registry.register(
+            SearchParameter::new(
+                "subject",
+                "http://hl7.org/fhir/SearchParameter/Observation-subject",
+                SearchParameterType::Reference,
+                vec!["Observation".to_string()],
+            )
+            .with_expression("Observation.subject")
+            .with_targets(vec!["Patient".to_string(), "Group".to_string()]),
+        );
+        registry
+    }
+
     fn number_registry_with_expression() -> SearchParameterRegistry {
         use crate::parameters::SearchParameter;
         let registry = SearchParameterRegistry::new();
@@ -1908,6 +1956,106 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn reference_debug_plan_marks_sidecar_path_and_runtime_stays_unchanged() {
+        let registry = reference_registry_with_expression();
+        let params = parse_query_string("subject=Patient/pat-123&_count=5", 10, 100);
+        let config = SearchConfig {
+            unknown_param_handling: UnknownParamHandling::Lenient,
+            collect_debug_plan: true,
+        };
+
+        let converted = build_query_from_params_with_config(
+            "Observation",
+            &params,
+            &registry,
+            "public",
+            &config,
+        )
+        .unwrap();
+        let plan = converted.debug_plan.expect("debug plan collected");
+
+        assert_eq!(plan.resource_type, "Observation");
+        assert_eq!(plan.predicates.len(), 1);
+        assert_eq!(plan.predicates[0].param_code, "subject");
+        assert_eq!(
+            plan.predicates[0].search_type,
+            SearchParameterType::Reference
+        );
+        assert_eq!(
+            plan.predicates[0].strategy,
+            crate::ir::IndexStrategy::SidecarReference
+        );
+        assert!(plan.predicates[0].index_backed);
+        assert_eq!(
+            plan.predicates[0].expected_index,
+            Some("idx_ref_local".to_string())
+        );
+        assert!(plan.predicates[0].sql_shape.contains("target_type"));
+
+        let built = converted.builder.with_raw_resource(true).build().unwrap();
+        assert!(
+            built.sql.contains("search_idx_reference") && built.sql.contains(" OR "),
+            "reference runtime path should keep index plus JSONB fallback, got: {}",
+            built.sql
+        );
+        assert!(
+            !built.sql.contains("pat-123") && !built.sql.contains("Patient/pat-123"),
+            "reference values must be bound, not interpolated: {}",
+            built.sql
+        );
+
+        let json = serde_json::to_string(&plan).unwrap();
+        assert!(json.contains("sidecar_reference"));
+        assert!(
+            !json.contains("pat-123") && !json.contains("Patient/pat-123"),
+            "debug output must stay redacted: {json}"
+        );
+    }
+
+    #[test]
+    fn reference_identifier_debug_plan_uses_identifier_index_shape() {
+        let registry = reference_registry_with_expression();
+        let params = parse_query_string(
+            "subject:identifier=http://hospital.example|abc&_count=5",
+            10,
+            100,
+        );
+        let config = SearchConfig {
+            unknown_param_handling: UnknownParamHandling::Lenient,
+            collect_debug_plan: true,
+        };
+
+        let converted = build_query_from_params_with_config(
+            "Observation",
+            &params,
+            &registry,
+            "public",
+            &config,
+        )
+        .unwrap();
+        let plan = converted.debug_plan.expect("debug plan collected");
+
+        assert_eq!(
+            plan.predicates[0].expected_index,
+            Some("idx_ref_identifier".to_string())
+        );
+        assert!(plan.predicates[0].sql_shape.contains("identifier_system"));
+
+        let built = converted.builder.with_raw_resource(true).build().unwrap();
+        assert!(
+            built.sql.contains("ref_kind = 4") && built.sql.contains("identifier_value"),
+            "reference :identifier runtime path should use reference sidecar, got: {}",
+            built.sql
+        );
+
+        let json = serde_json::to_string(&plan).unwrap();
+        assert!(
+            !json.contains("hospital.example") && !json.contains("abc"),
+            "debug output must stay redacted: {json}"
+        );
     }
 
     #[test]

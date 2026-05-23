@@ -1,7 +1,7 @@
 use crate::ir::ast::{
     CompositeClause, CompositePredicate, CompositeSafety, NumberClause, NumberPredicate,
-    QuantityClause, QuantityPredicate, StringClause, StringPredicate, TokenClause, TokenIndexShape,
-    TokenPredicate, TokenSetModifier,
+    QuantityClause, QuantityPredicate, ReferenceClause, ReferencePredicate, StringClause,
+    StringPredicate, TokenClause, TokenIndexShape, TokenPredicate, TokenSetModifier,
 };
 use crate::ir::strategy::IndexStrategy;
 use crate::parameters::{SearchParameterType, SearchPrefix};
@@ -112,6 +112,19 @@ pub fn build_string_text_debug_predicate(param_code: &str) -> DebugPredicate {
 pub fn build_token_debug_plan(resource_type: &str, clauses: &[TokenClause]) -> SearchDebugPlan {
     let mut plan = SearchDebugPlan::new(resource_type);
     plan.predicates = clauses.iter().map(debug_token_clause).collect();
+    plan
+}
+
+/// Build safe debug output for reference predicates.
+///
+/// SQL shapes intentionally distinguish local, external, identifier, and
+/// missing forms while redacting all reference/identifier values.
+pub fn build_reference_debug_plan(
+    resource_type: &str,
+    clauses: &[ReferenceClause],
+) -> SearchDebugPlan {
+    let mut plan = SearchDebugPlan::new(resource_type);
+    plan.predicates = clauses.iter().map(debug_reference_clause).collect();
     plan
 }
 
@@ -328,6 +341,72 @@ fn debug_token_clause(clause: &TokenClause) -> DebugPredicate {
     DebugPredicate {
         param_code: clause.param_code.clone(),
         search_type: SearchParameterType::Token,
+        strategy,
+        expected_index,
+        index_backed,
+        sql_shape,
+    }
+}
+
+fn debug_reference_clause(clause: &ReferenceClause) -> DebugPredicate {
+    let (strategy, expected_index, index_backed, sql_shape) = match &clause.predicate {
+        ReferencePredicate::Local { target_type, .. } => {
+            let (index, shape) = if target_type.is_some() {
+                (
+                    "idx_ref_local",
+                    "EXISTS search_idx_reference WHERE sir.ref_kind = 1 AND sir.target_type = $target_type AND sir.target_id = $target_id",
+                )
+            } else {
+                (
+                    "idx_ref_local_untyped",
+                    "EXISTS search_idx_reference WHERE sir.ref_kind = 1 AND sir.target_id = $target_id",
+                )
+            };
+            (
+                IndexStrategy::SidecarReference,
+                Some(index.to_string()),
+                true,
+                shape.to_string(),
+            )
+        }
+        ReferencePredicate::External { .. } => (
+            IndexStrategy::SidecarReference,
+            Some("idx_ref_external".to_string()),
+            true,
+            "EXISTS search_idx_reference WHERE sir.external_url = $url OR sir.raw_reference = $url"
+                .to_string(),
+        ),
+        ReferencePredicate::Identifier { system, .. } => {
+            let shape = if system.is_some() {
+                "EXISTS search_idx_reference WHERE sir.ref_kind = 4 AND sir.identifier_system = $system AND sir.identifier_value = $value"
+            } else {
+                "EXISTS search_idx_reference WHERE sir.ref_kind = 4 AND sir.identifier_value = $value"
+            };
+            (
+                IndexStrategy::SidecarReference,
+                Some("idx_ref_identifier".to_string()),
+                true,
+                shape.to_string(),
+            )
+        }
+        ReferencePredicate::Missing { is_missing } => {
+            let shape = if *is_missing {
+                "reference jsonb path IS NULL"
+            } else {
+                "reference jsonb path IS NOT NULL"
+            };
+            (
+                IndexStrategy::JsonbTraversal,
+                None,
+                false,
+                shape.to_string(),
+            )
+        }
+    };
+
+    DebugPredicate {
+        param_code: clause.param_code.clone(),
+        search_type: SearchParameterType::Reference,
         strategy,
         expected_index,
         index_backed,
@@ -651,5 +730,56 @@ mod tests {
             !json.contains("loinc") && !json.contains("8480-6"),
             "debug output must not include token values: {json}"
         );
+    }
+
+    #[test]
+    fn reference_debug_plan_marks_sidecar_and_redacts_values() {
+        let clauses = vec![ReferenceClause {
+            resource_type: "Observation".to_string(),
+            param_code: "subject".to_string(),
+            predicate: ReferencePredicate::Local {
+                target_type: Some("Patient".to_string()),
+                target_id: "pat-123".to_string(),
+            },
+        }];
+
+        let plan = build_reference_debug_plan("Observation", &clauses);
+        let json = serde_json::to_string(&plan).unwrap();
+
+        assert_eq!(
+            plan.predicates[0].search_type,
+            SearchParameterType::Reference
+        );
+        assert_eq!(plan.predicates[0].strategy, IndexStrategy::SidecarReference);
+        assert!(plan.predicates[0].index_backed);
+        assert_eq!(
+            plan.predicates[0].expected_index,
+            Some("idx_ref_local".to_string())
+        );
+        assert!(
+            plan.predicates[0]
+                .sql_shape
+                .contains("search_idx_reference")
+        );
+        assert!(
+            !json.contains("Patient") && !json.contains("pat-123"),
+            "debug output must not include reference values: {json}"
+        );
+    }
+
+    #[test]
+    fn reference_missing_debug_plan_marks_jsonb_fallback() {
+        let clauses = vec![ReferenceClause {
+            resource_type: "Observation".to_string(),
+            param_code: "subject".to_string(),
+            predicate: ReferencePredicate::Missing { is_missing: true },
+        }];
+
+        let plan = build_reference_debug_plan("Observation", &clauses);
+
+        assert_eq!(plan.predicates[0].strategy, IndexStrategy::JsonbTraversal);
+        assert!(!plan.predicates[0].index_backed);
+        assert_eq!(plan.predicates[0].expected_index, None);
+        assert!(plan.predicates[0].sql_shape.contains("IS NULL"));
     }
 }

@@ -33,6 +33,7 @@ pub enum SearchValue {
     Date(DatePredicate),
     String(StringPredicate),
     Token(TokenPredicate),
+    Reference(ReferencePredicate),
     Number(NumberPredicate),
     Quantity(QuantityPredicate),
     Composite(CompositePredicate),
@@ -581,6 +582,110 @@ fn parse_identifier_of_type(raw: &str) -> Result<TokenPredicate, SqlBuilderError
         code: parts[1].to_string(),
         value: parts[2].to_string(),
     })
+}
+
+/// Reference SearchParameter predicate.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ReferencePredicate {
+    /// Local reference by target id, optionally scoped to target type.
+    Local {
+        target_type: Option<String>,
+        target_id: String,
+    },
+    /// External absolute URL reference.
+    External { url: String },
+    /// `:identifier` reference search using identifier rows in `search_idx_reference`.
+    Identifier {
+        system: Option<String>,
+        value: String,
+    },
+    /// `:missing=true|false`.
+    Missing { is_missing: bool },
+}
+
+/// Reference SearchParameter occurrence.
+///
+/// Clauses are OR-combined because they come from one comma-separated query
+/// occurrence. Runtime SQL still includes the legacy JSONB fallback for default
+/// reference matching; this IR node exposes the sidecar intent for debug.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReferenceClause {
+    pub resource_type: String,
+    pub param_code: String,
+    pub predicate: ReferencePredicate,
+}
+
+impl ReferenceClause {
+    pub fn from_parsed_param(
+        param: &ParsedParam,
+        resource_type: &str,
+        target_types: &[String],
+    ) -> Result<Vec<Self>, SqlBuilderError> {
+        let mut clauses = Vec::new();
+
+        for value in &param.values {
+            if value.raw.is_empty() {
+                continue;
+            }
+
+            let predicate = match &param.modifier {
+                None => parse_reference_predicate(&value.raw, target_types),
+                Some(SearchModifier::Type(type_name)) => ReferencePredicate::Local {
+                    target_type: Some(type_name.clone()),
+                    target_id: value.raw.clone(),
+                },
+                Some(SearchModifier::Identifier) => parse_reference_identifier(&value.raw),
+                Some(SearchModifier::Missing) => ReferencePredicate::Missing {
+                    is_missing: value.raw.eq_ignore_ascii_case("true"),
+                },
+                Some(other) => {
+                    return Err(SqlBuilderError::InvalidModifier(format!("{other:?}")));
+                }
+            };
+
+            clauses.push(Self {
+                resource_type: resource_type.to_string(),
+                param_code: param.name.clone(),
+                predicate,
+            });
+        }
+
+        Ok(clauses)
+    }
+}
+
+fn parse_reference_predicate(raw: &str, target_types: &[String]) -> ReferencePredicate {
+    if raw.starts_with("http://") || raw.starts_with("https://") {
+        return ReferencePredicate::External {
+            url: raw.to_string(),
+        };
+    }
+
+    if let Some((target_type, target_id)) = raw.split_once('/') {
+        return ReferencePredicate::Local {
+            target_type: Some(target_type.to_string()),
+            target_id: target_id.to_string(),
+        };
+    }
+
+    ReferencePredicate::Local {
+        target_type: (target_types.len() == 1).then(|| target_types[0].clone()),
+        target_id: raw.to_string(),
+    }
+}
+
+fn parse_reference_identifier(raw: &str) -> ReferencePredicate {
+    if let Some((system, value)) = raw.split_once('|') {
+        ReferencePredicate::Identifier {
+            system: (!system.is_empty()).then(|| system.to_string()),
+            value: value.to_string(),
+        }
+    } else {
+        ReferencePredicate::Identifier {
+            system: None,
+            value: raw.to_string(),
+        }
+    }
 }
 
 #[cfg(test)]

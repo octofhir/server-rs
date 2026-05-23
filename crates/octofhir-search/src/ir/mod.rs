@@ -16,13 +16,14 @@ pub mod validate;
 pub use ast::{
     CompositeClause, CompositeComponentPredicate, CompositeComponentSpec, CompositePredicate,
     CompositeSafety, DateParamExpr, NumberClause, NumberPredicate, QuantityClause,
-    QuantityPredicate, SearchExpr, SearchParamExpr, SearchValue, StringClause, StringPredicate,
-    TokenClause, TokenIndexShape, TokenPredicate, TokenSetModifier,
+    QuantityPredicate, ReferenceClause, ReferencePredicate, SearchExpr, SearchParamExpr,
+    SearchValue, StringClause, StringPredicate, TokenClause, TokenIndexShape, TokenPredicate,
+    TokenSetModifier,
 };
 pub use debug::{
     DebugPredicate, SearchDebugPlan, build_composite_debug_plan, build_date_debug_plan,
-    build_number_debug_plan, build_quantity_debug_plan, build_string_debug_plan,
-    build_string_text_debug_predicate, build_token_debug_plan,
+    build_number_debug_plan, build_quantity_debug_plan, build_reference_debug_plan,
+    build_string_debug_plan, build_string_text_debug_predicate, build_token_debug_plan,
 };
 pub use registry::{
     resolve_component_definition, resolve_composite_component_specs, search_type_name,
