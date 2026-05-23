@@ -180,6 +180,23 @@ pub fn render_token_identifier_clauses_as_or(
     }
 }
 
+/// Render generic token clauses over an already-resolved JSONB path.
+pub fn render_token_path_clauses_as_or(
+    builder: &mut SqlBuilder,
+    clauses: &[TokenClause],
+    jsonb_path: &str,
+) -> Result<Option<String>, SqlBuilderError> {
+    let rendered = clauses
+        .iter()
+        .map(|clause| render_token_path_clause(builder, clause, jsonb_path))
+        .collect::<Result<Vec<_>, _>>()?;
+    if rendered.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(SqlBuilder::build_or_clause(&rendered)))
+    }
+}
+
 fn render_number_clause(
     builder: &mut SqlBuilder,
     clause: &NumberClause,
@@ -304,6 +321,70 @@ fn render_token_simple_code_clause(
                 Ok(condition)
             }
         }
+    }
+}
+
+fn render_token_path_clause(
+    builder: &mut SqlBuilder,
+    clause: &TokenClause,
+    jsonb_path: &str,
+) -> Result<String, SqlBuilderError> {
+    let condition = match &clause.predicate {
+        TokenPredicate::AnySystemCode { code } => {
+            let p = builder.add_text_param(code);
+            format!(
+                "({jsonb_path}->>'code' = ${p} OR \
+                 {jsonb_path}->>'value' = ${p} OR \
+                 EXISTS (SELECT 1 FROM jsonb_array_elements({jsonb_path}->'coding') AS c WHERE c->>'code' = ${p}))"
+            )
+        }
+        TokenPredicate::NoSystemCode { code } => {
+            render_token_no_system_code(builder, jsonb_path, code)
+        }
+        TokenPredicate::SystemAnyCode { system } => {
+            render_token_system_any_code(builder, jsonb_path, system)
+        }
+        TokenPredicate::SystemCode { system, code } => {
+            let json = serde_json::json!([{"system": system, "code": code}]).to_string();
+            let p = builder.add_json_param(&json);
+            let p_sys = builder.add_text_param(system);
+            let p_code = builder.add_text_param(code);
+            format!(
+                "({jsonb_path}->'coding' @> ${p}::jsonb OR \
+                 ({jsonb_path}->>'system' = ${p_sys} AND {jsonb_path}->>'code' = ${p_code}) OR \
+                 ({jsonb_path}->>'system' = ${p_sys} AND {jsonb_path}->>'value' = ${p_code}))"
+            )
+        }
+        TokenPredicate::IdentifierOfType {
+            system,
+            code,
+            value,
+        } => render_identifier_of_type(builder, jsonb_path, system, code, value),
+        TokenPredicate::DisplayText { text } => {
+            let p = builder.add_text_param(format!("%{text}%"));
+            format!(
+                "EXISTS (SELECT 1 FROM jsonb_array_elements({jsonb_path}->'coding') AS c WHERE LOWER(c->>'display') LIKE LOWER(${p}))"
+            )
+        }
+        TokenPredicate::Missing { is_missing } => {
+            if *is_missing {
+                format!("({jsonb_path} IS NULL OR {jsonb_path} = 'null')")
+            } else {
+                format!("({jsonb_path} IS NOT NULL AND {jsonb_path} != 'null')")
+            }
+        }
+        TokenPredicate::TerminologySet { modifier, .. } => {
+            return Err(SqlBuilderError::NotImplemented(format!(
+                "{} modifier requires terminology provider",
+                token_set_modifier_name(*modifier)
+            )));
+        }
+    };
+
+    if clause.negated {
+        Ok(format!("({condition}) = false"))
+    } else {
+        Ok(condition)
     }
 }
 
@@ -1453,5 +1534,31 @@ mod tests {
 
         assert!(sql.contains("jsonb_array_elements_text(resource->'meta'->'profile')"));
         assert!(sql.contains("uri = $1"));
+    }
+
+    #[test]
+    fn token_path_render_not_uses_boolean_false_check() {
+        let mut builder = SqlBuilder::new();
+        let clauses = TokenClause::from_parsed_param(
+            &crate::parser::ParsedParam {
+                name: "status".to_string(),
+                modifier: Some(crate::parameters::SearchModifier::Not),
+                values: vec![crate::parser::ParsedValue {
+                    prefix: None,
+                    raw: "active".to_string(),
+                }],
+            },
+            "Observation",
+            crate::ir::TokenIndexShape::Coding,
+        )
+        .unwrap();
+
+        let sql = render_token_path_clauses_as_or(&mut builder, &clauses, "resource->'status'")
+            .unwrap()
+            .unwrap();
+
+        assert!(sql.starts_with("("));
+        assert!(sql.ends_with("= false"));
+        assert!(!sql.contains("NOT ("));
     }
 }

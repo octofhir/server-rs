@@ -17,7 +17,8 @@ use crate::sql_builder::{SqlBuilder, SqlBuilderError, SqlParam};
 use crate::terminology::HybridTerminologyProvider;
 use crate::{
     ir::TokenClause, ir::TokenIndexShape, ir::render_token_coding_clauses_as_or,
-    ir::render_token_identifier_clauses_as_or, ir::render_token_simple_code_clauses_as_or,
+    ir::render_token_identifier_clauses_as_or, ir::render_token_path_clauses_as_or,
+    ir::render_token_simple_code_clauses_as_or,
 };
 use sqlx_postgres::PgPool;
 
@@ -52,86 +53,10 @@ pub fn build_token_search(
     param: &ParsedParam,
     jsonb_path: &str,
 ) -> Result<(), SqlBuilderError> {
-    if param.values.is_empty() {
-        return Ok(());
+    let clauses = TokenClause::from_parsed_param(param, "", TokenIndexShape::Coding)?;
+    if let Some(sql) = render_token_path_clauses_as_or(builder, &clauses, jsonb_path)? {
+        builder.add_condition(sql);
     }
-
-    let mut or_conditions = Vec::new();
-
-    for value in &param.values {
-        if value.raw.is_empty() {
-            continue;
-        }
-
-        let (system, code) = parse_token_value(&value.raw);
-
-        let condition = match &param.modifier {
-            None => build_default_token_condition(builder, jsonb_path, system, code),
-
-            Some(SearchModifier::Not) => {
-                let inner = build_default_token_condition(builder, jsonb_path, system, code);
-                format!("NOT ({inner})")
-            }
-
-            Some(SearchModifier::Text) => {
-                // Search on display text
-                let p = builder.add_text_param(format!("%{code}%"));
-                format!(
-                    "EXISTS (SELECT 1 FROM jsonb_array_elements({jsonb_path}->'coding') AS c WHERE LOWER(c->>'display') LIKE LOWER(${p}))"
-                )
-            }
-
-            Some(SearchModifier::In) => {
-                return Err(SqlBuilderError::NotImplemented(
-                    "in modifier requires ValueSet expansion".to_string(),
-                ));
-            }
-
-            Some(SearchModifier::NotIn) => {
-                return Err(SqlBuilderError::NotImplemented(
-                    "not-in modifier requires ValueSet expansion".to_string(),
-                ));
-            }
-
-            Some(SearchModifier::Below) => {
-                return Err(SqlBuilderError::NotImplemented(
-                    "below modifier requires terminology service".to_string(),
-                ));
-            }
-
-            Some(SearchModifier::Above) => {
-                return Err(SqlBuilderError::NotImplemented(
-                    "above modifier requires terminology service".to_string(),
-                ));
-            }
-
-            Some(SearchModifier::OfType) => {
-                // For Identifier type filtering: type|system|value
-                // The code contains type|system|value format
-                build_identifier_of_type_condition(builder, jsonb_path, code)?
-            }
-
-            Some(SearchModifier::Missing) => {
-                let is_missing = value.raw.eq_ignore_ascii_case("true");
-                if is_missing {
-                    format!("({jsonb_path} IS NULL OR {jsonb_path} = 'null')")
-                } else {
-                    format!("({jsonb_path} IS NOT NULL AND {jsonb_path} != 'null')")
-                }
-            }
-
-            Some(other) => {
-                return Err(SqlBuilderError::InvalidModifier(format!("{other:?}")));
-            }
-        };
-
-        or_conditions.push(condition);
-    }
-
-    if !or_conditions.is_empty() {
-        builder.add_condition(SqlBuilder::build_or_clause(&or_conditions));
-    }
-
     Ok(())
 }
 
@@ -726,14 +651,16 @@ mod tests {
     }
 
     #[test]
-    fn test_token_not_modifier() {
+    fn test_token_not_modifier_uses_boolean_false_check() {
         let mut builder = SqlBuilder::new();
         let param = make_param("status", "active", Some(SearchModifier::Not));
 
         build_token_search(&mut builder, &param, "resource->'status'").unwrap();
 
         let clause = builder.build_where_clause().unwrap();
-        assert!(clause.starts_with("NOT ("));
+        assert!(clause.starts_with("("));
+        assert!(clause.ends_with("= false"));
+        assert!(!clause.contains("NOT ("));
     }
 
     #[test]
