@@ -128,6 +128,23 @@ pub fn render_token_coding_clauses_as_or(
     }
 }
 
+/// Render Identifier token clauses as one OR group.
+pub fn render_token_identifier_clauses_as_or(
+    builder: &mut SqlBuilder,
+    clauses: &[TokenClause],
+    array_path: &str,
+) -> Result<Option<String>, SqlBuilderError> {
+    let rendered = clauses
+        .iter()
+        .map(|clause| render_token_identifier_clause(builder, clause, array_path))
+        .collect::<Result<Vec<_>, _>>()?;
+    if rendered.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(SqlBuilder::build_or_clause(&rendered)))
+    }
+}
+
 fn render_number_clause(
     builder: &mut SqlBuilder,
     clause: &NumberClause,
@@ -181,6 +198,112 @@ fn render_token_simple_code_clause(
             }
         }
     }
+}
+
+fn render_token_identifier_clause(
+    builder: &mut SqlBuilder,
+    clause: &TokenClause,
+    array_path: &str,
+) -> Result<String, SqlBuilderError> {
+    let condition = match &clause.predicate {
+        TokenPredicate::AnySystemCode { code } => {
+            render_identifier_value_only(builder, array_path, code)
+        }
+        TokenPredicate::NoSystemCode { code } => {
+            render_identifier_no_system_value(builder, array_path, code)
+        }
+        TokenPredicate::SystemAnyCode { system } => {
+            render_identifier_system_any_value(builder, array_path, system)
+        }
+        TokenPredicate::SystemCode { system, code } => {
+            render_identifier_system_value(builder, array_path, system, code)
+        }
+        TokenPredicate::IdentifierOfType {
+            system,
+            code,
+            value,
+        } => render_identifier_of_type(builder, array_path, system, code, value),
+        TokenPredicate::Missing { is_missing } => {
+            if *is_missing {
+                format!("({array_path} IS NULL OR jsonb_array_length({array_path}) = 0)")
+            } else {
+                format!("({array_path} IS NOT NULL AND jsonb_array_length({array_path}) > 0)")
+            }
+        }
+        TokenPredicate::DisplayText { .. } | TokenPredicate::TerminologySet { .. } => {
+            return Err(SqlBuilderError::InvalidModifier(format!(
+                "{:?}",
+                clause.predicate
+            )));
+        }
+    };
+
+    if clause.negated {
+        Ok(format!("({condition}) = false"))
+    } else {
+        Ok(condition)
+    }
+}
+
+fn render_identifier_system_value(
+    builder: &mut SqlBuilder,
+    array_path: &str,
+    system: &str,
+    value: &str,
+) -> String {
+    let json = serde_json::json!([{"system": system, "value": value}]).to_string();
+    let p = builder.add_json_param(&json);
+    format!("{array_path} @> ${p}::jsonb")
+}
+
+fn render_identifier_system_any_value(
+    builder: &mut SqlBuilder,
+    array_path: &str,
+    system: &str,
+) -> String {
+    let p = builder.add_text_param(system);
+    format!(
+        "EXISTS (SELECT 1 FROM jsonb_array_elements({array_path}) AS ident \
+         WHERE ident->>'system' = ${p})"
+    )
+}
+
+fn render_identifier_no_system_value(
+    builder: &mut SqlBuilder,
+    array_path: &str,
+    value: &str,
+) -> String {
+    let p = builder.add_text_param(value);
+    format!(
+        "EXISTS (SELECT 1 FROM jsonb_array_elements({array_path}) AS ident \
+         WHERE (ident->>'system' IS NULL OR ident->>'system' = '') \
+         AND ident->>'value' = ${p})"
+    )
+}
+
+fn render_identifier_value_only(builder: &mut SqlBuilder, array_path: &str, value: &str) -> String {
+    let p = builder.add_text_param(value);
+    format!(
+        "EXISTS (SELECT 1 FROM jsonb_array_elements({array_path}) AS ident \
+         WHERE ident->>'value' = ${p})"
+    )
+}
+
+fn render_identifier_of_type(
+    builder: &mut SqlBuilder,
+    array_path: &str,
+    system: &str,
+    code: &str,
+    value: &str,
+) -> String {
+    let coding = serde_json::json!([{"system": system, "code": code}]).to_string();
+    let p_coding = builder.add_json_param(&coding);
+    let p_val = builder.add_text_param(value);
+    format!(
+        "EXISTS (SELECT 1 FROM jsonb_array_elements({array_path}) AS ident \
+         WHERE ident->'type'->'coding' @> ${p_coding}::jsonb \
+         AND ident->>'value' = ${p_val})"
+    )
 }
 
 fn render_token_coding_clause(
@@ -1111,6 +1234,71 @@ mod tests {
             .unwrap();
 
         assert_eq!(sql, "(r.resource @> $1::jsonb) = false");
+        assert!(!sql.contains("NOT ("));
+    }
+
+    #[test]
+    fn identifier_token_render_preserves_system_value_containment() {
+        let mut builder = SqlBuilder::with_resource_column("r.resource");
+        let clauses = TokenClause::from_parsed_param(
+            &crate::parser::ParsedParam {
+                name: "identifier".to_string(),
+                modifier: None,
+                values: vec![crate::parser::ParsedValue {
+                    prefix: None,
+                    raw: "http://test.org|debug-123".to_string(),
+                }],
+            },
+            "Patient",
+            crate::ir::TokenIndexShape::Identifier,
+        )
+        .unwrap();
+
+        let sql = render_token_identifier_clauses_as_or(
+            &mut builder,
+            &clauses,
+            "r.resource->'identifier'",
+        )
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(sql, "r.resource->'identifier' @> $1::jsonb");
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&builder.params()[0].as_str()).unwrap(),
+            serde_json::json!([{
+                "system": "http://test.org",
+                "value": "debug-123"
+            }])
+        );
+    }
+
+    #[test]
+    fn identifier_token_render_not_uses_boolean_false_check() {
+        let mut builder = SqlBuilder::with_resource_column("r.resource");
+        let clauses = TokenClause::from_parsed_param(
+            &crate::parser::ParsedParam {
+                name: "identifier".to_string(),
+                modifier: Some(crate::parameters::SearchModifier::Not),
+                values: vec![crate::parser::ParsedValue {
+                    prefix: None,
+                    raw: "|debug-123".to_string(),
+                }],
+            },
+            "Patient",
+            crate::ir::TokenIndexShape::Identifier,
+        )
+        .unwrap();
+
+        let sql = render_token_identifier_clauses_as_or(
+            &mut builder,
+            &clauses,
+            "r.resource->'identifier'",
+        )
+        .unwrap()
+        .unwrap();
+
+        assert!(sql.starts_with("(EXISTS"));
+        assert!(sql.ends_with("= false"));
         assert!(!sql.contains("NOT ("));
     }
 }

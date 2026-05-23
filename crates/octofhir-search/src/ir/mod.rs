@@ -31,7 +31,8 @@ pub use registry::{
 pub use render::{
     render_date_clauses_as_or, render_number_clauses_as_or, render_quantity_clauses_as_or,
     render_reference_clauses_as_or, render_sql_expr, render_string_clauses_as_or,
-    render_token_coding_clauses_as_or, render_token_simple_code_clauses_as_or,
+    render_token_coding_clauses_as_or, render_token_identifier_clauses_as_or,
+    render_token_simple_code_clauses_as_or,
 };
 pub use rewrite::{rewrite_date_clauses, rewrite_search_expr};
 pub use strategy::{IndexStrategy, StrategyDecision};

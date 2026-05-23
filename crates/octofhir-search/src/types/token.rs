@@ -17,7 +17,7 @@ use crate::sql_builder::{SqlBuilder, SqlBuilderError, SqlParam};
 use crate::terminology::HybridTerminologyProvider;
 use crate::{
     ir::TokenClause, ir::TokenIndexShape, ir::render_token_coding_clauses_as_or,
-    ir::render_token_simple_code_clauses_as_or,
+    ir::render_token_identifier_clauses_as_or, ir::render_token_simple_code_clauses_as_or,
 };
 use sqlx_postgres::PgPool;
 
@@ -549,94 +549,11 @@ pub fn build_identifier_search(
     param: &ParsedParam,
     array_path: &str,
 ) -> Result<(), SqlBuilderError> {
-    if param.values.is_empty() {
-        return Ok(());
+    let clauses = TokenClause::from_parsed_param(param, "", TokenIndexShape::Identifier)?;
+    if let Some(sql) = render_token_identifier_clauses_as_or(builder, &clauses, array_path)? {
+        builder.add_condition(sql);
     }
-
-    let mut or_conditions = Vec::new();
-
-    for value in &param.values {
-        if value.raw.is_empty() {
-            continue;
-        }
-
-        let (system, code) = parse_token_value(&value.raw);
-
-        let condition = match &param.modifier {
-            None => build_identifier_match_condition(builder, array_path, system, code),
-
-            Some(SearchModifier::Not) => {
-                let inner = build_identifier_match_condition(builder, array_path, system, code);
-                format!("NOT ({inner})")
-            }
-
-            Some(SearchModifier::Missing) => {
-                let is_missing = value.raw.eq_ignore_ascii_case("true");
-                if is_missing {
-                    format!("({array_path} IS NULL OR jsonb_array_length({array_path}) = 0)")
-                } else {
-                    format!("({array_path} IS NOT NULL AND jsonb_array_length({array_path}) > 0)")
-                }
-            }
-
-            Some(SearchModifier::OfType) => {
-                build_identifier_of_type_condition(builder, array_path, &value.raw)?
-            }
-
-            Some(other) => {
-                return Err(SqlBuilderError::InvalidModifier(format!("{other:?}")));
-            }
-        };
-
-        or_conditions.push(condition);
-    }
-
-    if !or_conditions.is_empty() {
-        builder.add_condition(SqlBuilder::build_or_clause(&or_conditions));
-    }
-
     Ok(())
-}
-
-fn build_identifier_match_condition(
-    builder: &mut SqlBuilder,
-    array_path: &str,
-    system: Option<&str>,
-    value: &str,
-) -> String {
-    match system {
-        Some(sys) if !sys.is_empty() && !value.is_empty() => {
-            // system|value
-            let json = serde_json::json!([{"system": sys, "value": value}]).to_string();
-            let p = builder.add_json_param(&json);
-            format!("{array_path} @> ${p}::jsonb")
-        }
-        Some(sys) if !sys.is_empty() => {
-            // system| (empty value) — match any identifier with that system.
-            let p = builder.add_text_param(sys);
-            format!(
-                "EXISTS (SELECT 1 FROM jsonb_array_elements({array_path}) AS ident \
-                 WHERE ident->>'system' = ${p})"
-            )
-        }
-        Some(_) => {
-            // |value - no system.
-            let p = builder.add_text_param(value);
-            format!(
-                "EXISTS (SELECT 1 FROM jsonb_array_elements({array_path}) AS ident \
-                 WHERE (ident->>'system' IS NULL OR ident->>'system' = '') \
-                 AND ident->>'value' = ${p})"
-            )
-        }
-        None => {
-            // value only.
-            let p = builder.add_text_param(value);
-            format!(
-                "EXISTS (SELECT 1 FROM jsonb_array_elements({array_path}) AS ident \
-                 WHERE ident->>'value' = ${p})"
-            )
-        }
-    }
 }
 
 /// Build GIN-optimized token search using `resource @> '{...}'::jsonb`.
@@ -1070,7 +987,7 @@ mod tests {
     }
 
     #[test]
-    fn test_identifier_not_modifier_negates_same_token_form() {
+    fn test_identifier_not_modifier_uses_boolean_false_check() {
         let mut builder = SqlBuilder::new();
         let param = make_param("identifier", "|debug-123", Some(SearchModifier::Not));
 
@@ -1078,11 +995,13 @@ mod tests {
 
         let clause = builder.build_where_clause().unwrap();
         assert!(
-            clause.starts_with("NOT (EXISTS")
+            clause.starts_with("(EXISTS")
                 && clause.contains("ident->>'system' IS NULL")
-                && clause.contains("ident->>'value' = $1"),
+                && clause.contains("ident->>'value' = $1")
+                && clause.ends_with("= false"),
             ":not must negate the |value form, got: {clause}"
         );
+        assert!(!clause.contains("NOT ("));
         assert_eq!(builder.params()[0].as_str(), "debug-123");
     }
 
