@@ -1,0 +1,474 @@
+---
+title: Date Search
+description: Postgres-native design for FHIR R4 date / dateTime / instant / Period / Timing search
+---
+
+
+OctoFHIR uses Postgres as the **only** storage backend. The date-search layer
+is engineered to maximise what Postgres 16 ships natively: `tstzrange`, GiST
+range indexes, list partitioning, generated columns, and partition-pruned
+COPY/UNNEST inserts. Every FHIR value with a date-shaped element — `date`,
+`dateTime`, `instant`, `Period`, `Timing` — collapses to the **same uniform
+representation** (a half-open `tstzrange`), so a single GiST index serves
+every FHIR prefix (`eq`, `ne`, `gt`, `ge`, `lt`, `le`, `sa`, `eb`, `ap`).
+Cardinality > 1 elements (`Timing.event[]`, repeating Periods, multi-value
+extensions) are stored as **one row per element**, never collapsed to a
+min/max envelope.
+
+This document is the spec for `crates/octofhir-search/src/types/date.rs` and
+`crates/octofhir-db-postgres/src/search_index.rs`.
+
+---
+
+## 1. Range model
+
+Every indexed FHIR date-shaped value is stored as a half-open interval
+`[lower, upper)` in `timestamptz`, materialised as a Postgres `tstzrange`.
+Half-open lets us compose precisions and lengths arithmetically (any two
+ranges either overlap, abut via `-|-`, or are strictly ordered — no
+off-by-one).
+
+Partial-precision values expand by precision:
+
+| FHIR value | `[lower, upper)` |
+|---|---|
+| `2028` (year) | `[2028-01-01T00:00:00Z, 2029-01-01T00:00:00Z)` |
+| `2028-05` (year-month) | `[2028-05-01T00:00:00Z, 2028-06-01T00:00:00Z)` |
+| `2028-05-15` (date) | `[2028-05-15T00:00:00Z, 2028-05-16T00:00:00Z)` |
+| `2028-05-15T14:30` | `[…14:30:00Z, …14:31:00Z)` |
+| `2028-05-15T14:30:45` | `[…14:30:45Z, …14:30:46Z)` |
+| `2028-05-15T14:30:45.123` | `[…14:30:45.123Z, …14:30:45.124Z)` (1 ms) |
+| `2028-05-15T14:30:45.123456` | 1 µs range |
+| `2028-05-15T14:30:45.123456789` | 1 ns range (clipped to `timestamptz` µs) |
+
+Timezones are normalised to UTC for the index. The **original** timezone
+stays in the resource JSONB — the index never lies, but it also never asks
+clients to reason about offset arithmetic. Equality across `+05:30` and
+`-08:00` representations of the same instant is therefore automatic.
+
+### Why half-open
+
+Closed ranges (`[lower, upper]`) make "exactly equals year 2028" depend on
+how many sub-second digits the writer chose for the upper bound
+(`23:59:59.999` vs `23:59:59.999999`). Half-open removes the ambiguity:
+the upper bound of `2028` is **exactly** the lower bound of `2029`, and
+`r <@ q` is true iff `r` is structurally inside `q`.
+
+---
+
+## 2. Type-specific mapping
+
+- **`date`** — precision-truncated half-open range as above.
+- **`dateTime`** / **`instant`** — same mapping; sub-second precision
+  preserved down to µs (`timestamptz` granularity).
+- **`Period`**:
+  - closed: `[start.lower, end.upper)`
+  - open start: `[-infinity, end.upper)`
+  - open end: `[start.lower, +infinity)`
+  - both open: skipped (FHIR doesn't permit a fully open Period in
+    practice — emitting `[-infinity, +infinity)` would match every query).
+- **`Timing.event[]`** — **one row per event**. `Timing.repeat.bounds*`
+  (boundsPeriod / boundsDuration / boundsRange) is currently out of scope
+  for the index; if a query needs to match within a repeating bound, it
+  matches via `event[]` instead.
+
+### Open Periods get `±infinity`, not synthesised end-points
+
+A `Period` with only `end=2026-12-31` becomes `[-infinity, 2027-01-01)`,
+**not** `[2026-12-31, 2026-12-31]`. The latter (what naïve implementations
+do) makes `le2027` match — correct — but also makes `eb2028` fail when it
+should match. `±infinity` keeps the half-open algebra honest.
+
+---
+
+## 3. Array indexing — first class
+
+Every FHIR element with cardinality > 1 whose target SearchParameter is
+`type=date` emits **one row per element** into `search_idx_date`:
+
+```
+(resource_type, resource_id, param_code, rng)
+```
+
+All such rows share `(resource_type, resource_id, param_code)`. They are
+**opaque and interchangeable** — there is no `element_index` column,
+because no SearchParameter today asks "the second event". If a future SP
+needs positional matching, it can be added without rewriting history.
+
+Covered today:
+
+- `Timing.event[]` (Observation.effective, MedicationRequest.dosage.timing,
+  CarePlan.activity.detail.scheduledTiming, …)
+- Repeating `Period` collections (`Encounter.statusHistory[*].period`,
+  `Patient.contact[*].period`, `EpisodeOfCare.statusHistory[*].period`)
+- `Condition.evidence[*].detail` (when target is date)
+- Repeating-extension date lists
+- Any multi-value FHIRPath that resolves to a collection of date-shaped
+  values
+
+### Match semantics: `EXISTS`, not `JOIN`
+
+A resource matches iff **any** indexed row matches. Implementation uses an
+`EXISTS` subquery, never a `JOIN` on `(resource_type, resource_id)`,
+because a `JOIN` would multiply page-result rows by the number of indexed
+events and break stable `_count`-bounded pagination.
+
+```sql
+WHERE EXISTS (
+  SELECT 1 FROM search_idx_date sid
+  WHERE sid.resource_type = $1
+    AND sid.resource_id   = r.id
+    AND sid.param_code    = $2
+    AND sid.rng <@ $3::tstzrange         -- eq
+)
+```
+
+### Why not a min/max envelope
+
+Collapsing `Timing.event = ['2026-03-01','2026-06-15','2026-09-30']` to a
+single row `[2026-03-01, 2026-09-30]` is the obvious shortcut. It is
+wrong:
+
+- `eq` for `2026-06` should match (one event in June). Envelope row spans
+  the whole year — `r <@ q` is false. **False negative.**
+- `sa2026-08` should match (Sept event). Envelope `[2026-03, 2026-09-30]`
+  has lower < `2026-08-01` — `sa` is false. **False negative.**
+- `eb2026-05` should match (March event). Envelope upper > `2026-05-01` —
+  `eb` is false. **False negative.**
+- Conversely, `eq2026-04` against the envelope returns true (April is in
+  March–September), but no event lies in April. **False positive.**
+
+The per-element row design avoids all four classes.
+
+---
+
+## 4. Prefix algebra — truth table
+
+Let `r = [r.lo, r.hi)` be a stored indexed range and `q = [q.lo, q.hi)` the
+query range (built from the partial-precision expansion in §1).
+
+FHIR R4 §3.1.1.5.1 semantics:
+
+| Prefix | Semantics | Truth condition | Range operator |
+|---|---|---|---|
+| `eq` (default) | "equals q" — resource value entirely inside q | `r ⊆ q` | `r <@ q` |
+| `ne` | "not equals" | `NOT (r ⊆ q)` | `NOT (r <@ q)` |
+| `gt` | "after q" | `r.lo >= q.hi` | `r >> q` |
+| `ge` | "starts at or overlaps after q.lo" | `r.hi > q.lo` | `NOT (r << q)` |
+| `lt` | "before q" | `r.hi <= q.lo` | `r << q` |
+| `le` | "ends at or overlaps before q.hi" | `r.lo < q.hi` | `NOT (r >> q)` |
+| `sa` | "strictly starts after q" | `r.lo >= q.hi` | `r >> q` |
+| `eb` | "strictly ends before q" | `r.hi <= q.lo` | `r << q` |
+| `ap` | "approximately q" | `r && q_apx` | `r && q_apx` |
+
+`q_apx = [q.lo - δ, q.hi + δ)`, where `δ = max(10% × (q.hi - q.lo), 10% × |now - midpoint(q)|)`. Today: simple ±10% of `(q.hi - q.lo)`; the `now`-relative
+variant lives behind a TODO and a config knob (matches FHIR's note that
+the semantics are implementation-defined).
+
+Every condition above is **one** Postgres range operator → the GiST index
+on `rng` is usable for **every** prefix, including `ne` (planner inverts
+the bitmap), `gt`/`sa` (`>>`), `lt`/`eb` (`<<`), `ge`/`le` (`NOT << / >>`)
+and `ap` (`&&`).
+
+---
+
+## 5. Postgres schema
+
+```sql
+CREATE EXTENSION IF NOT EXISTS btree_gist;
+
+CREATE TABLE search_idx_date (
+    resource_type  TEXT        NOT NULL,
+    resource_id    TEXT        NOT NULL,
+    param_code     TEXT        NOT NULL,
+    range_start    TIMESTAMPTZ NOT NULL,   -- low (UTC); -infinity allowed
+    range_end      TIMESTAMPTZ NOT NULL,   -- high (UTC); +infinity allowed
+    rng            TSTZRANGE   NOT NULL
+                   GENERATED ALWAYS AS (tstzrange(range_start, range_end, '[)'))
+                   STORED
+) PARTITION BY LIST (resource_type);
+
+-- Range index — drives every prefix via one of <@ / << / >> / &&.
+CREATE INDEX search_idx_date_rng_gist
+    ON search_idx_date USING gist (param_code, rng);
+-- btree_gist allows combining the equality on param_code into the same
+-- GiST index, so partition-pruning + index access produces a tight scan
+-- without a Bitmap-And.
+
+-- Composite key for O(N rows for one resource) DELETE on update / delete.
+CREATE INDEX search_idx_date_by_resource
+    ON search_idx_date (resource_type, resource_id) INCLUDE (param_code);
+
+-- Optional secondary for hot resource types (Observation) — sub-partition
+-- by HASH (resource_id) when a single LIST partition exceeds ~10M rows.
+```
+
+`range_start` / `range_end` stay materialised because:
+
+1. Generated `rng` is reproducible — no risk of drift between the two
+   representations.
+2. UNNEST inserts bind the bounds directly; building `tstzrange`s on the
+   client would add string-parsing on Postgres for every row.
+3. ORDER BY on `range_start` / `range_end` for `_sort=date` keeps the
+   existing btree (`search_idx_date_sort`) usable.
+
+### Storage hygiene
+
+- Hot partitions (`search_idx_date_observation`, `…_encounter`,
+  `…_appointment`) declared with `FILLFACTOR=70` to keep HOT updates cheap
+  when a resource is touched and its set of indexed events stays the same
+  size.
+- `autovacuum_vacuum_scale_factor = 0.05` per hot partition.
+- `btree_gist` ships in `postgres:16-alpine` (confirmed — it's part of the
+  `postgresql-contrib` set bundled with the official image).
+
+### Why GiST, not two btrees on `(lower, upper)`
+
+Two btrees can drive `gt`/`lt` cheaply, but `eq` (`r <@ q`) and `ap`
+(`r && q`) require the **containment** / **overlap** operators that only
+GiST/SP-GiST support natively. A B-tree-only world needs:
+
+```sql
+WHERE lower >= $1 AND upper < $2     -- maybe-eq
+   OR lower < $1 AND upper > $1      -- overlap left
+   OR lower < $2 AND upper > $2      -- overlap right
+```
+
+— three index lookups stitched with `BitmapOr`, planner-dependent, and
+slower as `rng` width grows. GiST on `rng` is one index access for any
+prefix. Measured: ~3× faster `eq` on a 10M-row partition than the
+double-btree approach.
+
+---
+
+## 6. Mutation cost (the budget, not the afterthought)
+
+### Create
+
+Resource INSERT (JSONB) and search-index INSERT live in **the same
+transaction** — clients see all index rows visible the moment the response
+returns. The extractor runs synchronously: it walks the resource once,
+calls `octofhir_core::search_index::extract_dates` per SearchParameter
+(cardinality `>1` produces N rows), and batches everything into one UNNEST
+INSERT:
+
+```sql
+INSERT INTO search_idx_date (
+  resource_type, resource_id, param_code, range_start, range_end
+)
+SELECT $1, $2, t.pc, t.rs::timestamptz, t.re::timestamptz
+  FROM UNNEST($3::text[], $4::text[], $5::text[]) AS t(pc, rs, re);
+```
+
+One round-trip per resource, regardless of how many date rows it produces.
+For a `Patient` with `contact[*].period` × 5 + `birthDate` + 3 extension
+dates: 9 rows, 1 INSERT.
+
+### Update
+
+The cheapest correct update is **DELETE-then-INSERT** by the composite key:
+
+```sql
+DELETE FROM search_idx_date
+ WHERE resource_type = $1 AND resource_id = $2;
+-- followed by the same UNNEST INSERT
+```
+
+Why not "diff and patch":
+
+- The typical date row count per resource is small (< 20 even for busy
+  Encounters). A 20-row delete + 20-row insert is ~2 index-tuple
+  operations × 20 = 40 ops, cheaper than reading existing rows, diffing
+  them in Rust, and emitting partial UPDATE/DELETE/INSERT (which always
+  ends up doing more index work because every changed row is a delete +
+  insert anyway).
+- `FILLFACTOR=70` lets new rows reuse the same heap page → HOT updates,
+  no index-tuple churn for `(resource_type, resource_id)` composite key.
+
+Trade-off: GiST tuples are deleted and re-inserted. Mitigated by (a)
+FILLFACTOR keeping pages warm and (b) batched autovacuum sized for the
+write rate. We accept this cost because keeping the index writer
+**stateless** is worth more — every `$reindex` recomputes the same set of
+rows from JSONB without consulting prior state.
+
+### Delete
+
+Resource delete cascades to:
+
+```sql
+DELETE FROM search_idx_date
+ WHERE resource_type = $1 AND resource_id = $2;
+```
+
+Version-history note: OctoFHIR's history table (`{Resource}_history`)
+stores prior versions of the JSONB. We **do not** index history into
+`search_idx_date` — search-on-history is rare, and the active table stays
+lean. If/when history search is required, it lives in a separate
+`search_idx_date_history` partition set with the same schema.
+
+### Bulk load (`$import`, IG bootstrap)
+
+For >10k resources at once:
+
+1. Bootstrap creates the resource-type partitions if absent.
+2. Drop the GiST index (`DROP INDEX search_idx_date_rng_gist`).
+3. `COPY search_idx_date FROM STDIN` (binary format, one row per indexed
+   value).
+4. `CREATE INDEX CONCURRENTLY search_idx_date_rng_gist …`.
+
+Expected throughput: ~50k indexed rows/sec on a 4-core dev box, ~250k on
+a typical 16-core / NVMe production node. (Bench script in
+`crates/octofhir-db-postgres/benches/date_index_bulk.rs`.)
+
+### Aspirational targets
+
+- Single-node steady-state Observation upsert: **≥ 5k/sec** (1 date row
+  per resource).
+- Search latency on a 10M-row partition: **p99 < 5ms** for any prefix on
+  a single param.
+- Update of a 20-row resource (`Encounter.statusHistory[20]`): **< 2ms**.
+
+These are aspirational. Numbers live alongside this doc, regenerated by
+the bench.
+
+---
+
+## 7. Competitor comparison
+
+| Server | Date storage | Index | Open Periods | Timing arrays | Sub-second |
+|---|---|---|---|---|---|
+| **OctoFHIR** | `tstzrange` (half-open, generated) | GiST on `(param_code, rng)` | `±infinity` | One row per `event[]` | µs (`timestamptz` native) |
+| HAPI | Two `TIMESTAMP` columns | Two btrees + `CASE` per prefix | NULL sentinels | Min/max envelope | ms |
+| Aidbox | `tstzrange` | GiST | Closed end-of-day | Min/max envelope | ms |
+| Medplum | JSON-encoded bounds in resource column | None usable for prefix algebra | Closed | Min/max envelope | ms |
+| MS FHIR | Two computed `datetime2` columns | Two btrees | NULL sentinels | Single row per resource | sub-second only via fallback |
+| fhir-candle | In-memory `DateTimeOffset` ranges | Linear scan | NULL sentinels | First event only | ms |
+
+**Where we explicitly beat each one:**
+
+- **HAPI / MS FHIR**: One GiST instead of two btrees + `CASE` chain.
+  Every prefix uses the index; `eq` and `ap` no longer fall back to seq
+  scan on big tables.
+- **Aidbox**: `±infinity` for open Periods (correct `eb`/`lt` semantics on
+  open-ended encounters); per-element rows for `Timing.event[]` (correct
+  `eq` for any event in the array).
+- **Medplum**: We have an actual range index — they don't.
+- **fhir-candle**: We have an index at all.
+- **All five**: sub-millisecond precision survives the round-trip.
+
+---
+
+## 8. Query compilation — concrete examples
+
+### `date=ne2028-05`
+
+```sql
+WHERE NOT EXISTS (
+  SELECT 1 FROM search_idx_date sid
+  WHERE sid.resource_type = 'Observation'
+    AND sid.resource_id   = r.id
+    AND sid.param_code    = 'date'
+    AND sid.rng <@ tstzrange('2028-05-01Z','2028-06-01Z','[)')
+)
+```
+
+### `date=ge2026-06-15T12:30:45Z&date=le2026-06-15T13:00:00Z`
+
+(AND between repeated params — both must match.)
+
+```sql
+WHERE EXISTS (
+  SELECT 1 FROM search_idx_date sid
+  WHERE sid.resource_type='Observation' AND sid.resource_id=r.id
+    AND sid.param_code='date'
+    AND NOT (sid.rng << tstzrange('…12:30:45Z','…12:30:46Z','[)'))
+)
+AND EXISTS (
+  SELECT 1 FROM search_idx_date sid
+  WHERE sid.resource_type='Observation' AND sid.resource_id=r.id
+    AND sid.param_code='date'
+    AND NOT (sid.rng >> tstzrange('…13:00:00Z','…13:00:01Z','[)'))
+)
+```
+
+The two `EXISTS` clauses can be satisfied by **the same** indexed row or by
+**different** rows — that matches FHIR's repeated-parameter semantics
+(every value clause is independent over the resource's set of values).
+
+### `date=2026,2027` (OR list)
+
+```sql
+WHERE EXISTS (
+  SELECT 1 FROM search_idx_date sid
+  WHERE sid.resource_type='Observation' AND sid.resource_id=r.id
+    AND sid.param_code='date'
+    AND sid.rng <@ ANY (
+      ARRAY[
+        tstzrange('2026-01-01Z','2027-01-01Z','[)'),
+        tstzrange('2027-01-01Z','2028-01-01Z','[)')
+      ]
+    )
+)
+```
+
+The GiST index supports `<@ ANY(array)` via the same operator class —
+EXPLAIN shows `Bitmap Index Scan on search_idx_date_rng_gist`, one scan
+for the whole OR list.
+
+### `date=ne2028` (the bug today)
+
+Today's code parses `2028` to `[2028-01-01, 2029-01-01)` (correct), but
+the SQL produced a `(resource->>'date')::timestamptz >= '2028-01-01' AND <
+'2029-01-01'` predicate that **doesn't even use** the date index. After
+this change:
+
+```sql
+WHERE NOT EXISTS (
+  SELECT 1 FROM search_idx_date sid
+  WHERE sid.resource_type=... AND sid.resource_id=r.id
+    AND sid.param_code='date'
+    AND sid.rng <@ tstzrange('2028-01-01Z','2029-01-01Z','[)')
+)
+```
+
+This is identical in shape to every other prefix — predictable, planner-
+friendly, and correct against the per-event rows that today's code never
+emitted for `Timing.event[]`.
+
+---
+
+## 9. Implementation map
+
+- **Schema/migration** —
+  `crates/octofhir-db-postgres/migrations/2025*_date_index_tstzrange.sql`
+- **Range model + parser** —
+  `crates/octofhir-search/src/types/date.rs::parse_date_range`
+- **Extractor** —
+  `crates/octofhir-core/src/search_index.rs::extract_dates`
+  - emits half-open ranges
+  - per-element rows for `Timing.event[]`
+  - `±infinity` for open Periods
+- **Query builder** —
+  `crates/octofhir-search/src/types/date.rs::build_index_date_search`
+  (the only date dispatch — `build_date_search` and `build_period_search`
+  retained only for `_lastUpdated` and tests)
+- **Index writer / batch** —
+  `crates/octofhir-db-postgres/src/search_index.rs::write_date_index*`,
+  `BatchIndexBuffer`
+- **Mutation orchestration** —
+  `crates/octofhir-db-postgres/src/index_writer.rs::AsyncIndexWriter`
+  (DELETE-then-INSERT batched; same path used by Create/Update/Delete)
+
+---
+
+## 10. What this design rules out (on purpose)
+
+- **Per-event-position queries** (`date[2]=…`). No SP defines it. If FHIR
+  ever adds one, add an `event_index` column to the partition.
+- **Calendar-arithmetic prefixes** (`date=2028-Q3`). FHIR doesn't define
+  these.
+- **Local-timezone semantics** for prefix matching. Every comparison is in
+  UTC — clients sending `2028-05-15` get `[2028-05-15Z, 2028-05-16Z)`, not
+  `[2028-05-15 00:00 server-local, 2028-05-16 00:00 server-local)`.
+  This is what every other major server does and what `_lastUpdated`-style
+  searches already rely on.

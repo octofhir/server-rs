@@ -55,6 +55,7 @@ export default defineConfig({
             { label: 'Search Parameters', link: 'search-parameters/' },
             { label: 'Search Indexing', link: 'search-indexing/' },
             { label: 'Search Architecture', link: 'search-architecture/' },
+            { label: 'Date Search', link: 'date-search/' },
           ]
         },
         {
