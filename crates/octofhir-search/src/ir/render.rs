@@ -1,6 +1,6 @@
 use crate::ir::ast::{
-    NumberClause, NumberPredicate, ReferenceClause, ReferencePredicate, StringClause,
-    StringPredicate,
+    NumberClause, NumberPredicate, QuantityClause, QuantityPredicate, ReferenceClause,
+    ReferencePredicate, StringClause, StringPredicate,
 };
 use crate::ir::sql::{RangeOp, SelectStmt, SqlExpr, SqlOp, SqlTerm};
 use crate::parameters::SearchPrefix;
@@ -74,6 +74,23 @@ pub fn render_number_clauses_as_or(
     }
 }
 
+/// Render quantity clauses as one OR group over the current JSONB numeric-cast path.
+pub fn render_quantity_clauses_as_or(
+    builder: &mut SqlBuilder,
+    clauses: &[QuantityClause],
+    jsonb_path: &str,
+) -> Result<Option<String>, SqlBuilderError> {
+    let rendered = clauses
+        .iter()
+        .map(|clause| render_quantity_clause(builder, clause, jsonb_path))
+        .collect::<Result<Vec<_>, _>>()?;
+    if rendered.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(SqlBuilder::build_or_clause(&rendered)))
+    }
+}
+
 fn render_number_clause(
     builder: &mut SqlBuilder,
     clause: &NumberClause,
@@ -93,6 +110,56 @@ fn render_number_clause(
             Ok(render_numeric_comparison(
                 builder, jsonb_path, *prefix, &number,
             ))
+        }
+    }
+}
+
+fn render_quantity_clause(
+    builder: &mut SqlBuilder,
+    clause: &QuantityClause,
+    jsonb_path: &str,
+) -> Result<String, SqlBuilderError> {
+    match &clause.predicate {
+        QuantityPredicate::Missing { is_missing } => {
+            let condition = if *is_missing {
+                format!("({jsonb_path} IS NULL OR {jsonb_path} = 'null')")
+            } else {
+                format!("({jsonb_path} IS NOT NULL AND {jsonb_path} != 'null')")
+            };
+            Ok(condition)
+        }
+        QuantityPredicate::Comparison {
+            prefix,
+            value,
+            system,
+            code,
+        } => {
+            let number =
+                RenderDecimalParts::parse(value).map_err(|_| invalid_quantity_number(value))?;
+            let num_condition = render_numeric_comparison(
+                builder,
+                &format!("{jsonb_path}->>'value'"),
+                *prefix,
+                &number,
+            );
+
+            if system.is_none() && code.is_none() {
+                return Ok(num_condition);
+            }
+
+            let mut constraints = vec![num_condition];
+            if let Some(system) = system {
+                let p = builder.add_text_param(system);
+                constraints.push(format!("{jsonb_path}->>'system' = ${p}"));
+            }
+            if let Some(code) = code {
+                let p = builder.add_text_param(code);
+                constraints.push(format!(
+                    "({jsonb_path}->>'code' = ${p} OR {jsonb_path}->>'unit' = ${p})"
+                ));
+            }
+
+            Ok(format!("({})", constraints.join(" AND ")))
         }
     }
 }
@@ -386,6 +453,10 @@ fn invalid_number(value: &str) -> SqlBuilderError {
     SqlBuilderError::InvalidSearchValue(format!("Invalid number: {value}"))
 }
 
+fn invalid_quantity_number(value: &str) -> SqlBuilderError {
+    SqlBuilderError::InvalidSearchValue(format!("Invalid number in quantity: {value}"))
+}
+
 fn format_decimal(mantissa: i128, scale: u32) -> String {
     let negative = mantissa < 0;
     let digits = mantissa.abs().to_string();
@@ -666,5 +737,38 @@ mod tests {
         assert!(!sql.contains("5.50"));
         assert_eq!(builder.params()[0].as_str(), "5.495");
         assert_eq!(builder.params()[1].as_str(), "5.505");
+    }
+
+    #[test]
+    fn quantity_render_uses_numeric_bounds_and_code_constraints() {
+        let mut builder = SqlBuilder::new();
+        let clauses = QuantityClause::from_parsed_param(
+            &crate::parser::ParsedParam {
+                name: "value-quantity".to_string(),
+                modifier: None,
+                values: vec![crate::parser::ParsedValue {
+                    prefix: Some(SearchPrefix::Eq),
+                    raw: "5.5|http://unitsofmeasure.org|mg".to_string(),
+                }],
+            },
+            "Observation",
+        )
+        .unwrap();
+
+        let sql =
+            render_quantity_clauses_as_or(&mut builder, &clauses, "resource->'valueQuantity'")
+                .unwrap()
+                .unwrap();
+
+        assert!(sql.contains("(resource->'valueQuantity'->>'value')::numeric >= $1::numeric"));
+        assert!(sql.contains("(resource->'valueQuantity'->>'value')::numeric < $2::numeric"));
+        assert!(sql.contains("resource->'valueQuantity'->>'system' = $3"));
+        assert!(sql.contains("resource->'valueQuantity'->>'code' = $4"));
+        assert!(sql.contains("resource->'valueQuantity'->>'unit' = $4"));
+        assert!(!sql.contains("unitsofmeasure") && !sql.contains("mg"));
+        assert_eq!(builder.params()[0].as_str(), "5.45");
+        assert_eq!(builder.params()[1].as_str(), "5.55");
+        assert_eq!(builder.params()[2].as_str(), "http://unitsofmeasure.org");
+        assert_eq!(builder.params()[3].as_str(), "mg");
     }
 }

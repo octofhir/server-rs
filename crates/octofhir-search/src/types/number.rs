@@ -11,17 +11,21 @@
 //! - eb: ends before (same as lt for numbers)
 //! - ap: approximately (10% range)
 
-use crate::parameters::{SearchModifier, SearchPrefix};
 use crate::parser::ParsedParam;
 use crate::sql_builder::{SqlBuilder, SqlBuilderError};
-use crate::{ir::NumberClause, ir::render_number_clauses_as_or};
+use crate::{
+    ir::NumberClause, ir::QuantityClause, ir::render_number_clauses_as_or,
+    ir::render_quantity_clauses_as_or,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg(test)]
 struct DecimalParts {
     mantissa: i128,
     scale: u32,
 }
 
+#[cfg(test)]
 impl DecimalParts {
     fn parse(input: &str) -> Result<Self, SqlBuilderError> {
         let raw = input.trim();
@@ -71,10 +75,6 @@ impl DecimalParts {
         Ok(Self { mantissa, scale })
     }
 
-    fn format(&self) -> String {
-        format_decimal(self.mantissa, self.scale)
-    }
-
     fn implicit_eq_bounds(&self) -> (String, String) {
         let scale = self.scale + 1;
         let centered = self.mantissa * 10;
@@ -83,26 +83,14 @@ impl DecimalParts {
             format_decimal(centered + 5, scale),
         )
     }
-
-    fn approximate_bounds(&self) -> (String, String) {
-        let scale = self.scale + 1;
-        let centered = self.mantissa * 10;
-        let delta = self.mantissa.abs();
-        (
-            format_decimal(centered - delta, scale),
-            format_decimal(centered + delta, scale),
-        )
-    }
 }
 
+#[cfg(test)]
 fn invalid_number(value: &str) -> SqlBuilderError {
     SqlBuilderError::InvalidSearchValue(format!("Invalid number: {value}"))
 }
 
-fn invalid_quantity_number(value: &str) -> SqlBuilderError {
-    SqlBuilderError::InvalidSearchValue(format!("Invalid number in quantity: {value}"))
-}
-
+#[cfg(test)]
 fn format_decimal(mantissa: i128, scale: u32) -> String {
     let negative = mantissa < 0;
     let digits = mantissa.abs().to_string();
@@ -131,10 +119,6 @@ fn format_decimal(mantissa: i128, scale: u32) -> String {
     }
 }
 
-fn bind_numeric(builder: &mut SqlBuilder, value: impl Into<String>) -> usize {
-    builder.add_text_param(value.into())
-}
-
 /// Build SQL conditions for number search.
 ///
 /// Number parameters use prefixes to specify comparison operators.
@@ -151,24 +135,6 @@ pub fn build_number_search(
     Ok(())
 }
 
-/// Build missing condition for number fields.
-fn build_missing_condition(
-    builder: &mut SqlBuilder,
-    param: &ParsedParam,
-    jsonb_path: &str,
-) -> Result<(), SqlBuilderError> {
-    if let Some(value) = param.values.first() {
-        let is_missing = value.raw.eq_ignore_ascii_case("true");
-        let condition = if is_missing {
-            format!("({jsonb_path} IS NULL OR {jsonb_path} = 'null')")
-        } else {
-            format!("({jsonb_path} IS NOT NULL AND {jsonb_path} != 'null')")
-        };
-        builder.add_condition(condition);
-    }
-    Ok(())
-}
-
 /// Build search for Quantity types.
 ///
 /// Quantity has value, unit, system, and code fields.
@@ -178,144 +144,17 @@ pub fn build_quantity_search(
     param: &ParsedParam,
     jsonb_path: &str,
 ) -> Result<(), SqlBuilderError> {
-    if param.values.is_empty() {
-        return Ok(());
+    let clauses = QuantityClause::from_parsed_param(param, "")?;
+    if let Some(sql) = render_quantity_clauses_as_or(builder, &clauses, jsonb_path)? {
+        builder.add_condition(sql);
     }
-
-    // Check for :missing modifier first
-    if let Some(SearchModifier::Missing) = &param.modifier {
-        return build_missing_condition(builder, param, jsonb_path);
-    }
-
-    let mut or_conditions = Vec::new();
-
-    for value in &param.values {
-        if value.raw.is_empty() {
-            continue;
-        }
-
-        let prefix = value.prefix.unwrap_or(SearchPrefix::Eq);
-
-        // Parse quantity format: number|system|code
-        let (num_str, system, code) = parse_quantity_value(&value.raw);
-
-        let number = DecimalParts::parse(num_str).map_err(|_| invalid_quantity_number(num_str))?;
-
-        // Build the numeric condition
-        let num_condition =
-            build_numeric_condition(builder, &format!("{jsonb_path}->>'value'"), prefix, &number);
-
-        // Add system/code constraints if present
-        let condition = if system.is_some() || code.is_some() {
-            let mut constraints = vec![num_condition];
-
-            if let Some(sys) = system
-                && !sys.is_empty()
-            {
-                let p = builder.add_text_param(sys);
-                constraints.push(format!("{jsonb_path}->>'system' = ${p}"));
-            }
-
-            if let Some(c) = code
-                && !c.is_empty()
-            {
-                let p = builder.add_text_param(c);
-                constraints.push(format!(
-                    "({jsonb_path}->>'code' = ${p} OR {jsonb_path}->>'unit' = ${p})"
-                ));
-            }
-
-            format!("({})", constraints.join(" AND "))
-        } else {
-            num_condition
-        };
-
-        or_conditions.push(condition);
-    }
-
-    if !or_conditions.is_empty() {
-        builder.add_condition(SqlBuilder::build_or_clause(&or_conditions));
-    }
-
     Ok(())
-}
-
-/// Parse a quantity search value into (number, system, code) parts per
-/// FHIR R4 §3.1.1.5.7 (search.html#quantity).
-///
-/// Format: `value[|system[|code]]`. The system and code components are
-/// positional — the first `|`-delimited field after the value is the system,
-/// the second is the code. Empty fields collapse to `None` so callers can
-/// distinguish "any value" from a literal match.
-///
-/// Examples:
-///   "5.4"             → ("5.4", None,        None)
-///   "5.4|"            → ("5.4", None,        None)         // trailing pipe = any system
-///   "5.4|http://x"    → ("5.4", Some("…"),   None)
-///   "5.4|http://x|kg" → ("5.4", Some("…"),   Some("kg"))
-///   "5.4||kg"         → ("5.4", None,        Some("kg"))   // any system, fixed code
-fn parse_quantity_value(value: &str) -> (&str, Option<&str>, Option<&str>) {
-    let parts: Vec<&str> = value.splitn(3, '|').collect();
-    let num = parts[0];
-    let system = parts.get(1).copied().filter(|s| !s.is_empty());
-    let code = parts.get(2).copied().filter(|s| !s.is_empty());
-    (num, system, code)
-}
-
-/// Build a numeric comparison condition with the given prefix.
-fn build_numeric_condition(
-    builder: &mut SqlBuilder,
-    path: &str,
-    prefix: SearchPrefix,
-    number: &DecimalParts,
-) -> String {
-    match prefix {
-        SearchPrefix::Eq => {
-            let (lower, upper) = number.implicit_eq_bounds();
-            let p1 = bind_numeric(builder, lower);
-            let p2 = bind_numeric(builder, upper);
-            format!("(({path})::numeric >= ${p1}::numeric AND ({path})::numeric < ${p2}::numeric)")
-        }
-
-        SearchPrefix::Ne => {
-            let (lower, upper) = number.implicit_eq_bounds();
-            let p1 = bind_numeric(builder, lower);
-            let p2 = bind_numeric(builder, upper);
-            format!("(({path})::numeric < ${p1}::numeric OR ({path})::numeric >= ${p2}::numeric)")
-        }
-
-        SearchPrefix::Gt | SearchPrefix::Sa => {
-            let p = bind_numeric(builder, number.format());
-            format!("({path})::numeric > ${p}::numeric")
-        }
-
-        SearchPrefix::Lt | SearchPrefix::Eb => {
-            let p = bind_numeric(builder, number.format());
-            format!("({path})::numeric < ${p}::numeric")
-        }
-
-        SearchPrefix::Ge => {
-            let p = bind_numeric(builder, number.format());
-            format!("({path})::numeric >= ${p}::numeric")
-        }
-
-        SearchPrefix::Le => {
-            let p = bind_numeric(builder, number.format());
-            format!("({path})::numeric <= ${p}::numeric")
-        }
-
-        SearchPrefix::Ap => {
-            let (lower, upper) = number.approximate_bounds();
-            let p1 = bind_numeric(builder, lower);
-            let p2 = bind_numeric(builder, upper);
-            format!("(({path})::numeric >= ${p1}::numeric AND ({path})::numeric < ${p2}::numeric)")
-        }
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::parameters::{SearchModifier, SearchPrefix};
     use crate::parser::ParsedValue;
 
     fn make_param(name: &str, value: &str, prefix: Option<SearchPrefix>) -> ParsedParam {
