@@ -18,7 +18,8 @@ use crate::parameters::SearchModifier;
 use crate::parser::ParsedParam;
 use crate::sql_builder::{SqlBuilder, SqlBuilderError};
 use crate::{
-    ir::StringClause, ir::render_string_clauses_as_or, ir::render_string_path_clauses_as_or,
+    ir::StringClause, ir::render_string_array_clauses_as_or, ir::render_string_clauses_as_or,
+    ir::render_string_path_clauses_as_or,
 };
 use octofhir_core::search_index::normalize_string;
 
@@ -80,79 +81,11 @@ pub fn build_array_string_search(
     array_path: &str,
     field_name: &str,
 ) -> Result<(), SqlBuilderError> {
-    if param.values.is_empty() {
-        return Ok(());
+    let clauses = StringClause::from_parsed_param(param, "")?;
+    if let Some(sql) = render_string_array_clauses_as_or(builder, &clauses, array_path, field_name)
+    {
+        builder.add_condition(sql);
     }
-
-    let mut or_conditions = Vec::new();
-
-    for value in &param.values {
-        if value.raw.is_empty() {
-            continue;
-        }
-
-        let condition = match &param.modifier {
-            None => {
-                // Default: starts-with, case-insensitive, accent-insensitive.
-                let normalized = normalize_string(&value.raw);
-                let escaped = escape_like_pattern(&normalized);
-                let p = builder.add_text_param(format!("{escaped}%"));
-                format!(
-                    "EXISTS (SELECT 1 FROM jsonb_array_elements({array_path}) AS elem WHERE \
-                     f_unaccent_lower(elem->>'{field_name}') LIKE ${p} OR \
-                     (jsonb_typeof(elem->'{field_name}') = 'array' AND \
-                      EXISTS (SELECT 1 FROM jsonb_array_elements_text(elem->'{field_name}') AS sub \
-                      WHERE f_unaccent_lower(sub) LIKE ${p})))"
-                )
-            }
-
-            Some(SearchModifier::Exact) => {
-                // Exact: case-sensitive, accent-sensitive, full-string equality.
-                let p = builder.add_text_param(&value.raw);
-                format!(
-                    "EXISTS (SELECT 1 FROM jsonb_array_elements({array_path}) AS elem WHERE \
-                     elem->>'{field_name}' = ${p} OR \
-                     (jsonb_typeof(elem->'{field_name}') = 'array' AND \
-                      EXISTS (SELECT 1 FROM jsonb_array_elements_text(elem->'{field_name}') AS sub \
-                      WHERE sub = ${p})))"
-                )
-            }
-
-            Some(SearchModifier::Contains) => {
-                // Substring, case-insensitive, accent-insensitive.
-                let normalized = normalize_string(&value.raw);
-                let escaped = escape_like_pattern(&normalized);
-                let p = builder.add_text_param(format!("%{escaped}%"));
-                format!(
-                    "EXISTS (SELECT 1 FROM jsonb_array_elements({array_path}) AS elem WHERE \
-                     f_unaccent_lower(elem->>'{field_name}') LIKE ${p} OR \
-                     (jsonb_typeof(elem->'{field_name}') = 'array' AND \
-                      EXISTS (SELECT 1 FROM jsonb_array_elements_text(elem->'{field_name}') AS sub \
-                      WHERE f_unaccent_lower(sub) LIKE ${p})))"
-                )
-            }
-
-            Some(SearchModifier::Missing) => {
-                let is_missing = value.raw.eq_ignore_ascii_case("true");
-                if is_missing {
-                    format!("({array_path} IS NULL OR jsonb_array_length({array_path}) = 0)")
-                } else {
-                    format!("({array_path} IS NOT NULL AND jsonb_array_length({array_path}) > 0)")
-                }
-            }
-
-            Some(other) => {
-                return Err(SqlBuilderError::InvalidModifier(format!("{other:?}")));
-            }
-        };
-
-        or_conditions.push(condition);
-    }
-
-    if !or_conditions.is_empty() {
-        builder.add_condition(SqlBuilder::build_or_clause(&or_conditions));
-    }
-
     Ok(())
 }
 
