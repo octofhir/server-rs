@@ -17,7 +17,7 @@ time = { workspace = true, features = ["serde"] }
 lettre = { version = "0.11", features = ["tokio1-rustls-tls", "smtp-transport", "builder"], default-features = false }
 
 # HTTP (for SendGrid, webhooks, Telegram)
-reqwest = { version = "0.12", features = ["json", "rustls-tls"], default-features = false }
+reqwest = { version = "0.13", features = ["json", "rustls"], default-features = false }
 
 # Webhook HMAC signatures
 hmac = "0.12"

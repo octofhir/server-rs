@@ -3,15 +3,18 @@
 
 use axum::{
     Extension, Json,
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     response::{IntoResponse, Response},
 };
+use octofhir_search::SearchParameterType;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sqlx_core::row::Row;
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use tracing::{info, warn};
+use url::form_urlencoded;
 
 use crate::server::AppState;
 use octofhir_api::ApiError;
@@ -316,6 +319,639 @@ pub async fn get_table_detail(
     };
 
     Ok((StatusCode::OK, Json(response)).into_response())
+}
+
+// ============================================================================
+// Index Advisor
+// ============================================================================
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IndexAdvisorQuery {
+    #[serde(default)]
+    pub resource_type: Option<String>,
+    #[serde(default = "default_index_advisor_limit")]
+    pub limit: i64,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AnalyzeIndexesRequest {
+    #[serde(default)]
+    pub resource_type: Option<String>,
+    #[serde(default)]
+    pub queries: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IndexAdvisorResponse {
+    pub resource_type: Option<String>,
+    pub table: Option<String>,
+    pub table_stats: Option<IndexAdvisorTableStats>,
+    pub suggestions: Vec<IndexSuggestion>,
+    pub observed_queries: Vec<ObservedQuery>,
+    pub notes: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IndexAdvisorTableStats {
+    pub row_estimate: i64,
+    pub dead_rows: i64,
+    pub table_size_bytes: i64,
+    pub total_size_bytes: i64,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IndexSuggestion {
+    pub id: String,
+    pub category: String,
+    pub priority: String,
+    pub resource_type: Option<String>,
+    pub table: Option<String>,
+    pub reason: String,
+    pub tradeoff: String,
+    pub create_statement: Option<String>,
+    pub existing_index: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ObservedQuery {
+    pub source: String,
+    pub query: String,
+    pub calls: Option<i64>,
+    pub mean_time_ms: Option<f64>,
+    pub total_time_ms: Option<f64>,
+}
+
+#[derive(Debug)]
+struct ExistingIndex {
+    name: String,
+    indexdef: String,
+    size_bytes: i64,
+    scans: i64,
+    is_primary: bool,
+    is_unique: bool,
+}
+
+fn default_index_advisor_limit() -> i64 {
+    20
+}
+
+fn priority_rank(priority: &str) -> u8 {
+    match priority {
+        "high" => 0,
+        "medium" => 1,
+        "low" => 2,
+        _ => 3,
+    }
+}
+
+fn normalize_resource_table(resource_type: &str) -> Result<String, ApiError> {
+    let table = resource_type.to_ascii_lowercase();
+    if !is_valid_identifier(&table) {
+        return Err(ApiError::bad_request("Invalid resourceType"));
+    }
+    Ok(table)
+}
+
+fn quote_ident(identifier: &str) -> String {
+    format!("\"{}\"", identifier.replace('"', "\"\""))
+}
+
+async fn load_table_stats(
+    pool: &sqlx_postgres::PgPool,
+    table: &str,
+) -> Result<Option<IndexAdvisorTableStats>, ApiError> {
+    let row = sqlx_core::query::query(
+        "SELECT \
+             COALESCE(s.n_live_tup, 0)::bigint AS row_estimate, \
+             COALESCE(s.n_dead_tup, 0)::bigint AS dead_rows, \
+             pg_table_size(c.oid)::bigint AS table_size_bytes, \
+             pg_total_relation_size(c.oid)::bigint AS total_size_bytes \
+         FROM pg_class c \
+         JOIN pg_namespace n ON n.oid = c.relnamespace \
+         LEFT JOIN pg_stat_user_tables s ON s.relid = c.oid \
+         WHERE n.nspname = 'public' AND c.relname = $1",
+    )
+    .bind(table)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| ApiError::internal(format!("Failed to fetch table stats: {}", e)))?;
+
+    Ok(row.map(|row| IndexAdvisorTableStats {
+        row_estimate: row.try_get::<i64, _>("row_estimate").unwrap_or(0),
+        dead_rows: row.try_get::<i64, _>("dead_rows").unwrap_or(0),
+        table_size_bytes: row.try_get::<i64, _>("table_size_bytes").unwrap_or(0),
+        total_size_bytes: row.try_get::<i64, _>("total_size_bytes").unwrap_or(0),
+    }))
+}
+
+async fn load_existing_indexes(
+    pool: &sqlx_postgres::PgPool,
+    table: &str,
+) -> Result<Vec<ExistingIndex>, ApiError> {
+    let rows = sqlx_core::query::query(
+        "SELECT \
+             i.relname AS index_name, \
+             pg_get_indexdef(i.oid) AS indexdef, \
+             pg_relation_size(i.oid)::bigint AS size_bytes, \
+             COALESCE(s.idx_scan, 0)::bigint AS scans, \
+             ix.indisprimary AS is_primary, \
+             ix.indisunique AS is_unique \
+         FROM pg_index ix \
+         JOIN pg_class t ON t.oid = ix.indrelid \
+         JOIN pg_class i ON i.oid = ix.indexrelid \
+         JOIN pg_namespace n ON n.oid = t.relnamespace \
+         LEFT JOIN pg_stat_user_indexes s ON s.indexrelid = i.oid \
+         WHERE n.nspname = 'public' AND t.relname = $1 \
+         ORDER BY pg_relation_size(i.oid) DESC",
+    )
+    .bind(table)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| ApiError::internal(format!("Failed to fetch indexes: {}", e)))?;
+
+    Ok(rows
+        .iter()
+        .map(|row| ExistingIndex {
+            name: row.try_get::<String, _>("index_name").unwrap_or_default(),
+            indexdef: row.try_get::<String, _>("indexdef").unwrap_or_default(),
+            size_bytes: row.try_get::<i64, _>("size_bytes").unwrap_or(0),
+            scans: row.try_get::<i64, _>("scans").unwrap_or(0),
+            is_primary: row.try_get::<bool, _>("is_primary").unwrap_or(false),
+            is_unique: row.try_get::<bool, _>("is_unique").unwrap_or(false),
+        })
+        .collect())
+}
+
+async fn pg_stat_statements_available(pool: &sqlx_postgres::PgPool) -> Result<bool, ApiError> {
+    let row = sqlx_core::query::query("SELECT to_regclass('pg_stat_statements') IS NOT NULL AS ok")
+        .fetch_one(pool)
+        .await
+        .map_err(|e| ApiError::internal(format!("Failed to check pg_stat_statements: {}", e)))?;
+
+    Ok(row.try_get::<bool, _>("ok").unwrap_or(false))
+}
+
+async fn load_observed_sql(
+    pool: &sqlx_postgres::PgPool,
+    table: Option<&str>,
+    limit: i64,
+) -> Result<Vec<ObservedQuery>, ApiError> {
+    if !pg_stat_statements_available(pool).await? {
+        return Ok(Vec::new());
+    }
+
+    let safe_limit = limit.clamp(1, 100);
+    let rows = if let Some(table) = table {
+        sqlx_core::query::query(
+            "SELECT query, calls::bigint, mean_exec_time::float8, total_exec_time::float8 \
+             FROM pg_stat_statements \
+             WHERE query ILIKE '%' || $1 || '%' \
+             ORDER BY total_exec_time DESC \
+             LIMIT $2",
+        )
+        .bind(table)
+        .bind(safe_limit)
+        .fetch_all(pool)
+        .await
+    } else {
+        sqlx_core::query::query(
+            "SELECT query, calls::bigint, mean_exec_time::float8, total_exec_time::float8 \
+             FROM pg_stat_statements \
+             ORDER BY total_exec_time DESC \
+             LIMIT $1",
+        )
+        .bind(safe_limit)
+        .fetch_all(pool)
+        .await
+    }
+    .map_err(|e| ApiError::internal(format!("Failed to fetch observed SQL: {}", e)))?;
+
+    Ok(rows
+        .iter()
+        .map(|row| ObservedQuery {
+            source: "pg_stat_statements".to_string(),
+            query: row.try_get::<String, _>("query").unwrap_or_default(),
+            calls: row.try_get::<i64, _>("calls").ok(),
+            mean_time_ms: row.try_get::<f64, _>("mean_exec_time").ok(),
+            total_time_ms: row.try_get::<f64, _>("total_exec_time").ok(),
+        })
+        .collect())
+}
+
+fn extract_fhir_query_parts(query: &str) -> (Option<String>, Option<String>) {
+    let trimmed = query.trim();
+    if trimmed.is_empty() {
+        return (None, None);
+    }
+
+    let without_method = trimmed
+        .strip_prefix("GET ")
+        .or_else(|| trimmed.strip_prefix("POST "))
+        .unwrap_or(trimmed)
+        .trim();
+
+    let path = without_method
+        .split_whitespace()
+        .next()
+        .unwrap_or(without_method);
+    let (path_part, query_part) = match path.split_once('?') {
+        Some((p, q)) => (p, Some(q.to_string())),
+        None => (path, None),
+    };
+
+    let mut segments = path_part.trim_matches('/').split('/');
+    let first = segments.next();
+    let resource_type = if first == Some("fhir") {
+        segments.next()
+    } else {
+        first
+    }
+    .filter(|segment| !segment.is_empty() && !segment.starts_with('$') && *segment != "_search")
+    .map(ToString::to_string);
+
+    (resource_type, query_part)
+}
+
+fn base_param_name(name: &str) -> &str {
+    name.split([':', '.']).next().unwrap_or(name)
+}
+
+fn analyze_fhir_queries(
+    state: &AppState,
+    requested_resource_type: Option<&str>,
+    queries: &[String],
+) -> Vec<IndexSuggestion> {
+    let registry = state.search_config.config().registry.clone();
+    let mut usage: BTreeMap<(String, String, String), usize> = BTreeMap::new();
+
+    for query in queries {
+        let (query_resource_type, query_string) = extract_fhir_query_parts(query);
+        let resource_type = requested_resource_type
+            .map(ToString::to_string)
+            .or(query_resource_type);
+        let Some(resource_type) = resource_type else {
+            continue;
+        };
+        let Some(query_string) = query_string else {
+            continue;
+        };
+
+        for (key, _) in form_urlencoded::parse(query_string.as_bytes()) {
+            let key = key.to_string();
+            if key.starts_with('_') {
+                continue;
+            }
+            let param_name = base_param_name(&key);
+            let Some(param) = registry.get(&resource_type, param_name) else {
+                continue;
+            };
+            let kind = match param.param_type {
+                SearchParameterType::String => "string",
+                SearchParameterType::Token => "token",
+                SearchParameterType::Date => "date",
+                SearchParameterType::Reference => "reference",
+                SearchParameterType::Quantity => "quantity",
+                SearchParameterType::Number => "number",
+                SearchParameterType::Uri => "uri",
+                SearchParameterType::Composite => "composite",
+                SearchParameterType::Special => "special",
+            };
+            *usage
+                .entry((
+                    resource_type.clone(),
+                    param_name.to_string(),
+                    kind.to_string(),
+                ))
+                .or_default() += 1;
+        }
+    }
+
+    usage
+        .into_iter()
+        .map(|((resource_type, param_code, kind), count)| {
+            let (priority, reason, tradeoff, create_statement) = match kind.as_str() {
+                "reference" => (
+                    "low",
+                    format!(
+                        "`{param_code}` appears in {count} observed request(s); reference search already has search_idx_reference coverage"
+                    ),
+                    "Prefer keeping this on the normalized reference projection; adding JSONB expression indexes would duplicate write cost.",
+                    None,
+                ),
+                "date" => (
+                    "medium",
+                    format!(
+                        "`{param_code}` appears in {count} observed request(s); date search should use search_idx_date instead of per-row JSONB casts"
+                    ),
+                    "The projection is already written on resource changes, so the best ROI is routing reads to it before adding more table indexes.",
+                    None,
+                ),
+                "token" => (
+                    "medium",
+                    format!(
+                        "`{param_code}` appears in {count} observed request(s); repeated token search is a candidate for a sparse token projection"
+                    ),
+                    "A token projection adds write amplification only for registered token params, but avoids broad JSONB GIN dependence on massive resource tables.",
+                    None,
+                ),
+                "string" => (
+                    "medium",
+                    format!(
+                        "`{param_code}` appears in {count} observed request(s); string search may need a workload-specific expression/trigram index"
+                    ),
+                    "Do not auto-create this: SearchParameter.expression must be mapped to a stable SQL expression first, otherwise the index can be wrong or too wide.",
+                    None,
+                ),
+                "quantity" | "number" => (
+                    "medium",
+                    format!(
+                        "`{param_code}` appears in {count} observed request(s); numeric/quantity search is a candidate for a sparse range projection"
+                    ),
+                    "A projection speeds range search but adds numeric extraction cost to writes; validate cardinality and query frequency first.",
+                    None,
+                ),
+                _ => (
+                    "low",
+                    format!("`{param_code}` appears in {count} observed request(s)"),
+                    "No automatic index recommendation for this SearchParameter type yet.",
+                    None,
+                ),
+            };
+
+            IndexSuggestion {
+                id: format!("fhir-param-{resource_type}-{param_code}"),
+                category: "fhir-search-parameter".to_string(),
+                priority: priority.to_string(),
+                resource_type: Some(resource_type),
+                table: None,
+                reason,
+                tradeoff: tradeoff.to_string(),
+                create_statement,
+                existing_index: None,
+            }
+        })
+        .collect()
+}
+
+fn build_table_suggestions(
+    resource_type: Option<&str>,
+    table: Option<&str>,
+    stats: Option<&IndexAdvisorTableStats>,
+    indexes: &[ExistingIndex],
+) -> Vec<IndexSuggestion> {
+    let mut suggestions = Vec::new();
+    let Some(table) = table else {
+        return suggestions;
+    };
+
+    let has_active_updated_id = indexes.iter().any(|idx| {
+        let def = idx.indexdef.to_ascii_lowercase();
+        def.contains("updated_at") && def.contains("id") && def.contains("status")
+    });
+
+    if !has_active_updated_id {
+        suggestions.push(IndexSuggestion {
+            id: format!("default-page-{table}"),
+            category: "resource-table".to_string(),
+            priority: "high".to_string(),
+            resource_type: resource_type.map(ToString::to_string),
+            table: Some(table.to_string()),
+            reason: "Default search/history/export paths need stable updated_at/id keyset pagination on active rows.".to_string(),
+            tradeoff: "Small extra B-tree write cost; much cheaper than deep OFFSET scans and safer than adding more JSONB expression indexes.".to_string(),
+            create_statement: Some(format!(
+                "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_{table}_active_updated_id ON {} (updated_at DESC, id) WHERE status != 'deleted';",
+                quote_ident(table)
+            )),
+            existing_index: None,
+        });
+    }
+
+    for idx in indexes {
+        let large_unused = idx.scans == 0 && idx.size_bytes > 10 * 1024 * 1024;
+        if large_unused && !idx.is_primary && !idx.is_unique {
+            suggestions.push(IndexSuggestion {
+                id: format!("review-unused-{}", idx.name),
+                category: "index-hygiene".to_string(),
+                priority: "medium".to_string(),
+                resource_type: resource_type.map(ToString::to_string),
+                table: Some(table.to_string()),
+                reason: format!(
+                    "Index `{}` has 0 recorded scans and is larger than 10 MiB.",
+                    idx.name
+                ),
+                tradeoff: "Do not drop automatically; pg_stat counters reset on restart and rare critical queries may still need it. Review with workload history first.".to_string(),
+                create_statement: None,
+                existing_index: Some(idx.name.clone()),
+            });
+        }
+    }
+
+    if let Some(stats) = stats
+        && stats.dead_rows > 0
+        && stats.row_estimate > 0
+        && stats.dead_rows > stats.row_estimate / 5
+    {
+        suggestions.push(IndexSuggestion {
+            id: format!("vacuum-pressure-{table}"),
+            category: "maintenance".to_string(),
+            priority: "medium".to_string(),
+            resource_type: resource_type.map(ToString::to_string),
+            table: Some(table.to_string()),
+            reason: "Dead rows are above 20% of live row estimate; index advice may be distorted by bloat.".to_string(),
+            tradeoff: "Tune autovacuum or vacuum before adding indexes, otherwise new indexes may hide the real table-bloat problem.".to_string(),
+            create_statement: None,
+            existing_index: None,
+        });
+    }
+
+    suggestions
+}
+
+/// GET /api/db-console/index-advisor?resourceType=Observation
+pub async fn get_index_advisor(
+    State(state): State<AppState>,
+    Extension(auth_context): Extension<Arc<AuthContext>>,
+    Query(query): Query<IndexAdvisorQuery>,
+) -> Result<Response, ApiError> {
+    check_db_console_access(&state.config.db_console, &auth_context)?;
+
+    let table = query
+        .resource_type
+        .as_deref()
+        .map(normalize_resource_table)
+        .transpose()?;
+
+    let stats = if let Some(table) = &table {
+        load_table_stats(state.db_pool.as_ref(), table).await?
+    } else {
+        None
+    };
+    let indexes = if let Some(table) = &table {
+        load_existing_indexes(state.db_pool.as_ref(), table).await?
+    } else {
+        Vec::new()
+    };
+    let observed_queries =
+        load_observed_sql(state.db_pool.as_ref(), table.as_deref(), query.limit).await?;
+
+    let table_for_suggestions = table.as_deref().filter(|_| stats.is_some());
+    let mut suggestions = build_table_suggestions(
+        query.resource_type.as_deref(),
+        table_for_suggestions,
+        stats.as_ref(),
+        &indexes,
+    );
+
+    let mut notes = Vec::new();
+    if table.is_some() && stats.is_none() {
+        notes.push("No matching resource table was found in the public schema.".to_string());
+    }
+    if observed_queries.is_empty() {
+        notes.push(
+            "pg_stat_statements is unavailable or has no matching SQL yet; POST real FHIR request URLs to /api/db-console/index-advisor/analyze for request-shape advice."
+                .to_string(),
+        );
+    }
+    notes.push(
+        "Advisor is read-only: it returns candidate SQL, but never runs DDL automatically."
+            .to_string(),
+    );
+
+    suggestions.sort_by(|a, b| {
+        priority_rank(&a.priority)
+            .cmp(&priority_rank(&b.priority))
+            .then_with(|| a.id.cmp(&b.id))
+    });
+
+    Ok((
+        StatusCode::OK,
+        Json(IndexAdvisorResponse {
+            resource_type: query.resource_type,
+            table,
+            table_stats: stats,
+            suggestions,
+            observed_queries,
+            notes,
+        }),
+    )
+        .into_response())
+}
+
+/// POST /api/db-console/index-advisor/analyze
+pub async fn analyze_index_advisor(
+    State(state): State<AppState>,
+    Extension(auth_context): Extension<Arc<AuthContext>>,
+    Json(req): Json<AnalyzeIndexesRequest>,
+) -> Result<Response, ApiError> {
+    check_db_console_access(&state.config.db_console, &auth_context)?;
+
+    let table = req
+        .resource_type
+        .as_deref()
+        .map(normalize_resource_table)
+        .transpose()?;
+    let stats = if let Some(table) = &table {
+        load_table_stats(state.db_pool.as_ref(), table).await?
+    } else {
+        None
+    };
+    let indexes = if let Some(table) = &table {
+        load_existing_indexes(state.db_pool.as_ref(), table).await?
+    } else {
+        Vec::new()
+    };
+
+    let table_for_suggestions = table.as_deref().filter(|_| stats.is_some());
+    let mut suggestions = build_table_suggestions(
+        req.resource_type.as_deref(),
+        table_for_suggestions,
+        stats.as_ref(),
+        &indexes,
+    );
+    suggestions.extend(analyze_fhir_queries(
+        &state,
+        req.resource_type.as_deref(),
+        &req.queries,
+    ));
+    suggestions.sort_by(|a, b| {
+        priority_rank(&a.priority)
+            .cmp(&priority_rank(&b.priority))
+            .then_with(|| a.id.cmp(&b.id))
+    });
+
+    let observed_queries = req
+        .queries
+        .into_iter()
+        .map(|query| ObservedQuery {
+            source: "request".to_string(),
+            query,
+            calls: None,
+            mean_time_ms: None,
+            total_time_ms: None,
+        })
+        .collect();
+
+    let mut notes = Vec::new();
+    if table.is_some() && stats.is_none() {
+        notes.push("No matching resource table was found in the public schema.".to_string());
+    }
+    notes.push(
+        "FHIR request analysis is shape-based; validate every DDL candidate with EXPLAIN before applying it."
+            .to_string(),
+    );
+
+    Ok((
+        StatusCode::OK,
+        Json(IndexAdvisorResponse {
+            resource_type: req.resource_type,
+            table,
+            table_stats: stats,
+            suggestions,
+            observed_queries,
+            notes,
+        }),
+    )
+        .into_response())
+}
+
+#[cfg(test)]
+mod index_advisor_tests {
+    use super::{base_param_name, extract_fhir_query_parts, priority_rank};
+
+    #[test]
+    fn extracts_resource_type_and_query_from_fhir_url() {
+        let (resource_type, query) =
+            extract_fhir_query_parts("GET /fhir/Observation?subject=Patient/123&code=x");
+
+        assert_eq!(resource_type.as_deref(), Some("Observation"));
+        assert_eq!(query.as_deref(), Some("subject=Patient/123&code=x"));
+    }
+
+    #[test]
+    fn extracts_resource_type_without_fhir_prefix() {
+        let (resource_type, query) = extract_fhir_query_parts("Patient?name=smith");
+
+        assert_eq!(resource_type.as_deref(), Some("Patient"));
+        assert_eq!(query.as_deref(), Some("name=smith"));
+    }
+
+    #[test]
+    fn reduces_modifier_and_chain_to_base_param() {
+        assert_eq!(base_param_name("name:contains"), "name");
+        assert_eq!(base_param_name("subject.name"), "subject");
+    }
+
+    #[test]
+    fn priority_rank_orders_high_first() {
+        assert!(priority_rank("high") < priority_rank("medium"));
+        assert!(priority_rank("medium") < priority_rank("low"));
+    }
 }
 
 // ============================================================================

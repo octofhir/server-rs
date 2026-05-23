@@ -8,7 +8,7 @@ export * from "./Select";
 export * from "./Checkbox";
 export * from "./Switch";
 export * from "./NumberInput";
-export * from "./Textarea";
+export * from "./TextArea";
 export * from "./PasswordInput";
 export * from "./DatePicker";
 
@@ -95,9 +95,9 @@ export { Link as Anchor, type LinkProps as AnchorProps } from "./Link";
 /** @deprecated use {@link Link} */
 export { Link as NavLink, type LinkProps as NavLinkProps } from "./Link";
 /** @deprecated use {@link TextArea} */
-export { TextArea as Textarea, type TextAreaProps as TextareaProps } from "./Textarea";
+export { TextArea as Textarea, type TextAreaProps as TextareaProps } from "./TextArea";
 /** @deprecated use {@link TextArea} */
-export { TextArea as JsonInput, type TextAreaProps as JsonInputProps } from "./Textarea";
+export { TextArea as JsonInput, type TextAreaProps as JsonInputProps } from "./TextArea";
 /** @deprecated use {@link Select} with `multiple` */
 export { MultiSelect, type SelectProps as MultiSelectProps } from "./Select";
 /** @deprecated use {@link DatePicker} */

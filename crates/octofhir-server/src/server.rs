@@ -1884,6 +1884,14 @@ fn build_router(state: AppState, body_limit: usize, compression: bool) -> Router
             get(crate::operations::db_console_api::list_active_queries),
         )
         .route(
+            "/api/db-console/index-advisor",
+            get(crate::operations::db_console_api::get_index_advisor),
+        )
+        .route(
+            "/api/db-console/index-advisor/analyze",
+            axum::routing::post(crate::operations::db_console_api::analyze_index_advisor),
+        )
+        .route(
             "/api/db-console/terminate-query",
             axum::routing::post(crate::operations::db_console_api::terminate_query),
         )

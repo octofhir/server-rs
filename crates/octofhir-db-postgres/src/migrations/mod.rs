@@ -26,6 +26,11 @@ macro_rules! embedded_migrations {
                 "db_console_history",
                 include_str!("../../migrations/20260225000001_db_console_history.sql"),
             ),
+            (
+                20260601000001i64,
+                "date_index_tstzrange",
+                include_str!("../../migrations/20260601000001_date_index_tstzrange.sql"),
+            ),
         ]
     };
 }

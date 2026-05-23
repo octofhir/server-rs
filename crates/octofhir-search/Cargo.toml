@@ -49,7 +49,7 @@ notify = { workspace = true }
 toml = { workspace = true }
 
 # Fast random number generation for probabilistic cache cleanup
-fastrand = "2.1"
+fastrand = "2.4"
 
 [dev-dependencies]
 tokio-test = { workspace = true }

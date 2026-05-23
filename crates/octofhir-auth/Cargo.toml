@@ -41,14 +41,14 @@ humantime-serde = "1"
 num_cpus = "1"
 
 # Scripting
-rquickjs = { version = "0.6", features = ["parallel"] }
+rquickjs = { version = "0.11", features = ["parallel"] }
 
 # HTTP client for JWKS fetching
-reqwest = { version = "0.11", features = ["json"] }
+reqwest = { version = "0.13", features = ["json", "form"] }
 
 # HTTP handlers
 axum = { workspace = true }
-axum-extra = { version = "0.10", features = ["cookie"] }
+axum-extra = { version = "0.12", features = ["cookie"] }
 cookie = { version = "0.18", features = ["percent-encode"] }
 
 # Admin API types
@@ -61,7 +61,7 @@ argon2 = { version = "0.5.3", features = ["std"] }
 
 [dev-dependencies]
 tokio-test = { workspace = true }
-criterion = { version = "0.5", features = ["async_tokio"] }
+criterion = { version = "0.8", features = ["async_tokio"] }
 
 [[bench]]
 name = "quickjs_bench"

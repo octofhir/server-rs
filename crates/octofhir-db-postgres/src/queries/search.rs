@@ -312,11 +312,35 @@ pub async fn execute_search_raw_with_config(
 
                 let cache_name = format!("{name}#{token_shape}");
 
+                // Distinguish prefixes per value — date / number / quantity SQL
+                // shape depends on `eq`/`gt`/`lt`/`ne`/`ge`/`le`/`sa`/`eb`/`ap`
+                // so two queries with the same name+modifier but different
+                // prefixes must NOT share a cached query template.
+                let prefixes: Vec<Option<String>> = values
+                    .iter()
+                    .map(|v| {
+                        // Detect the same prefix the parser would extract.
+                        let lower = v.to_ascii_lowercase();
+                        for p in ["eq", "ne", "gt", "lt", "ge", "le", "sa", "eb", "ap"] {
+                            if lower.starts_with(p) && v.len() > 2 {
+                                let rest = &v[2..];
+                                let next = rest.chars().next();
+                                if next.is_some_and(|c| c.is_ascii_digit() || c == '-')
+                                {
+                                    return Some(p.to_string());
+                                }
+                            }
+                        }
+                        None
+                    })
+                    .collect();
+
                 QueryParamKey {
                     name: cache_name,
                     modifier,
                     param_type: QueryCacheKey::infer_param_type(key),
                     value_count: values.len(),
+                    prefixes,
                 }
             })
             .collect();

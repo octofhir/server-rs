@@ -79,8 +79,12 @@ pub fn extract_references(
 
 /// Extract date values from a FHIR resource for indexing.
 ///
-/// Converts FHIR date precision (year, month, day, instant) into explicit
-/// start/end ranges for efficient B-tree range queries.
+/// Every value is collapsed to a half-open `[lower, upper)` range in UTC and
+/// stored as one row in `search_idx_date`. Cardinality > 1 elements
+/// (`Timing.event[]`, repeating Periods, multi-value extensions) emit one row
+/// per element — the index is never collapsed to a min/max envelope.
+///
+/// See `docs/architecture/date-search.md` for the full design.
 pub fn extract_dates(
     resource: &Value,
     resource_type: &str,
@@ -97,79 +101,295 @@ pub fn extract_dates(
     navigate_json(resource, &path_segments, 0, &mut values);
 
     for date_value in values {
-        // Handle Period type (has start/end)
-        if date_value.get("start").is_some() || date_value.get("end").is_some() {
-            if let Some(range) = parse_period_to_range(&date_value) {
+        emit_date_rows(&date_value, param_code, &mut results);
+    }
+
+    results
+}
+
+/// Push one or more `ExtractedDate` rows from a FHIR date-shaped value.
+///
+/// Dispatches on the JSON shape:
+/// - Object with `event` → Timing (one row per event)
+/// - Object with `start`/`end` → Period (one row, half-open, ±infinity for open ends)
+/// - String → date / dateTime / instant (one row)
+/// - Array → recurse (handles repeating Periods / Timings)
+fn emit_date_rows(value: &Value, param_code: &str, results: &mut Vec<ExtractedDate>) {
+    match value {
+        Value::Array(arr) => {
+            for v in arr {
+                emit_date_rows(v, param_code, results);
+            }
+        }
+        Value::Object(_) => {
+            // Timing.event[] — per-element rows
+            if let Some(events) = value.get("event").and_then(|e| e.as_array()) {
+                for ev in events {
+                    if let Some(s) = ev.as_str()
+                        && let Some(range) = parse_date_to_range(s)
+                    {
+                        results.push(ExtractedDate {
+                            param_code: param_code.to_string(),
+                            range_start: range.0,
+                            range_end: range.1,
+                        });
+                    }
+                }
+                return;
+            }
+            // Period (closed, open-start, open-end)
+            if value.get("start").is_some() || value.get("end").is_some() {
+                if let Some(range) = parse_period_to_range(value) {
+                    results.push(ExtractedDate {
+                        param_code: param_code.to_string(),
+                        range_start: range.0,
+                        range_end: range.1,
+                    });
+                }
+            }
+        }
+        Value::String(s) => {
+            if let Some(range) = parse_date_to_range(s) {
                 results.push(ExtractedDate {
                     param_code: param_code.to_string(),
                     range_start: range.0,
                     range_end: range.1,
                 });
             }
-            continue;
         }
-
-        // Handle simple date/dateTime string
-        if let Some(date_str) = date_value.as_str()
-            && let Some(range) = parse_date_to_range(date_str)
-        {
-            results.push(ExtractedDate {
-                param_code: param_code.to_string(),
-                range_start: range.0,
-                range_end: range.1,
-            });
-        }
+        _ => {}
     }
-
-    results
 }
 
-/// Parse a FHIR date string into a start/end range based on precision.
-fn parse_date_to_range(date_str: &str) -> Option<(String, String)> {
+/// Parse a FHIR date-shaped string into a half-open `[lower, upper)` range
+/// expressed as RFC3339 UTC strings. Returns `None` if the string is not a
+/// recognised FHIR date / dateTime / instant form.
+///
+/// All FHIR partial precisions and sub-second precisions are supported.
+pub fn parse_date_to_range(date_str: &str) -> Option<(String, String)> {
     let trimmed = date_str.trim();
     let len = trimmed.len();
 
-    // Year only: "2024"
+    // Year only: "2024" → [2024-01-01, 2025-01-01)
     if len == 4 && trimmed.chars().all(|c| c.is_ascii_digit()) {
         let year: i32 = trimmed.parse().ok()?;
         return Some((
-            format!("{year}-01-01T00:00:00Z"),
-            format!("{}-12-31T23:59:59.999Z", year),
+            format!("{year:04}-01-01T00:00:00Z"),
+            format!("{:04}-01-01T00:00:00Z", year + 1),
         ));
     }
 
-    // Year-Month: "2024-03"
+    // Year-Month: "2024-03" → [2024-03-01, 2024-04-01)
     if len == 7 && trimmed.chars().nth(4) == Some('-') {
         let year: i32 = trimmed[..4].parse().ok()?;
         let month: u32 = trimmed[5..7].parse().ok()?;
         if !(1..=12).contains(&month) {
             return None;
         }
-        let last_day = days_in_month(year, month);
+        let (ny, nm) = if month == 12 { (year + 1, 1) } else { (year, month + 1) };
         return Some((
-            format!("{year}-{month:02}-01T00:00:00Z"),
-            format!("{year}-{month:02}-{last_day:02}T23:59:59.999Z"),
+            format!("{year:04}-{month:02}-01T00:00:00Z"),
+            format!("{ny:04}-{nm:02}-01T00:00:00Z"),
         ));
     }
 
-    // Full date: "2024-03-15"
+    // Full date: "2024-03-15" → [2024-03-15, 2024-03-16)
     if len == 10 && !trimmed.contains('T') {
+        let year: i32 = trimmed[..4].parse().ok()?;
+        let month: u32 = trimmed[5..7].parse().ok()?;
+        let day: u32 = trimmed[8..10].parse().ok()?;
+        if !(1..=12).contains(&month) || day == 0 || day > days_in_month(year, month) {
+            return None;
+        }
+        let (ny, nm, nd) = next_day(year, month, day);
         return Some((
-            format!("{trimmed}T00:00:00Z"),
-            format!("{trimmed}T23:59:59.999Z"),
+            format!("{year:04}-{month:02}-{day:02}T00:00:00Z"),
+            format!("{ny:04}-{nm:02}-{nd:02}T00:00:00Z"),
         ));
     }
 
-    // DateTime with timezone
+    // DateTime — parse into UTC instant + precision, compute half-open upper.
     if trimmed.contains('T') {
-        // Already a precise instant — use as both start and end
-        return Some((trimmed.to_string(), trimmed.to_string()));
+        return parse_datetime_to_range(trimmed);
     }
 
     None
 }
 
-/// Parse a FHIR Period into start/end timestamps.
+/// Parse a FHIR dateTime / instant string (must contain 'T') into half-open
+/// `[lower, upper)` UTC. Supports any timezone offset (Z, ±HH:MM, ±HHMM, none)
+/// and any sub-second precision up to nanoseconds (clipped to µs for the
+/// upper bound — Postgres `timestamptz` is µs-precise).
+fn parse_datetime_to_range(s: &str) -> Option<(String, String)> {
+    // Split TZ suffix from the body. TZ marker is 'Z' or '+' or a '-' that
+    // appears after the date+time prefix (date "-" is at positions 4 and 7).
+    let bytes = s.as_bytes();
+    let mut tz_pos: Option<usize> = None;
+    if let Some(last) = bytes.last()
+        && *last == b'Z'
+    {
+        tz_pos = Some(s.len() - 1);
+    } else {
+        // Look for '+' or '-' after position 10 (past date)
+        for (i, b) in bytes.iter().enumerate().skip(11) {
+            if *b == b'+' || *b == b'-' {
+                tz_pos = Some(i);
+                break;
+            }
+        }
+    }
+
+    let (body, tz) = match tz_pos {
+        Some(p) => (&s[..p], &s[p..]),
+        None => (s, ""),
+    };
+
+    // body = YYYY-MM-DDThh:mm[:ss[.fff…]]
+    if body.len() < 16 || body.as_bytes().get(10) != Some(&b'T') {
+        return None;
+    }
+    let year: i32 = body[..4].parse().ok()?;
+    let month: u32 = body[5..7].parse().ok()?;
+    let day: u32 = body[8..10].parse().ok()?;
+    let hour: u32 = body[11..13].parse().ok()?;
+    let minute: u32 = body[14..16].parse().ok()?;
+
+    let (sec_str, frac_str, precision): (&str, &str, Precision) = if body.len() == 16 {
+        ("00", "", Precision::Minute)
+    } else if body.len() >= 19 && body.as_bytes().get(16) == Some(&b':') {
+        let s_str = &body[17..19];
+        if body.len() == 19 {
+            (s_str, "", Precision::Second)
+        } else if body.as_bytes().get(19) == Some(&b'.') {
+            let frac = &body[20..];
+            let p = match frac.len() {
+                1..=3 => Precision::Milli,
+                4..=6 => Precision::Micro,
+                _ => Precision::Nano, // 7+ digits — clip upper to µs
+            };
+            (s_str, frac, p)
+        } else {
+            return None;
+        }
+    } else {
+        return None;
+    };
+
+    let second: u32 = sec_str.parse().ok()?;
+    if month == 0
+        || month > 12
+        || day == 0
+        || day > days_in_month(year, month)
+        || hour > 23
+        || minute > 59
+        || second > 60
+    {
+        return None;
+    }
+
+    // Convert (year, month, day, hour, minute, second + frac, tz) → UTC offset.
+    // Use the `time` crate for offset arithmetic.
+    let off_minutes = parse_offset_minutes(tz)?;
+
+    use time::{Date, Duration, Month, PrimitiveDateTime, Time, UtcOffset};
+    let m = Month::try_from(month as u8).ok()?;
+    let date = Date::from_calendar_date(year, m, day as u8).ok()?;
+    // Build a Time at second precision (frac handled separately).
+    let t = Time::from_hms(hour as u8, minute as u8, second as u8).ok()?;
+    let pdt = PrimitiveDateTime::new(date, t);
+    let offset = UtcOffset::from_whole_seconds(off_minutes * 60).ok()?;
+    let mut start = pdt.assume_offset(offset).to_offset(UtcOffset::UTC);
+
+    // Apply fractional seconds (truncated to nanoseconds; clipped to µs for printing).
+    let mut frac_ns: i64 = 0;
+    if !frac_str.is_empty() {
+        // Pad/truncate to 9 digits.
+        let mut buf = String::from(frac_str);
+        if buf.len() > 9 {
+            buf.truncate(9);
+        } else {
+            while buf.len() < 9 {
+                buf.push('0');
+            }
+        }
+        frac_ns = buf.parse::<i64>().ok()?;
+        start += Duration::nanoseconds(frac_ns);
+    }
+
+    let lower = format_utc(start);
+    let upper_inst = match precision {
+        Precision::Minute => start + Duration::minutes(1),
+        Precision::Second => start + Duration::seconds(1),
+        Precision::Milli => start + Duration::milliseconds(1),
+        Precision::Micro => start + Duration::microseconds(1),
+        Precision::Nano => {
+            // Stored timestamps are µs-precise. Clip upper to next µs boundary.
+            let _ = frac_ns; // already applied
+            start + Duration::microseconds(1)
+        }
+    };
+    let upper = format_utc(upper_inst);
+    Some((lower, upper))
+}
+
+#[derive(Copy, Clone)]
+enum Precision {
+    Minute,
+    Second,
+    Milli,
+    Micro,
+    Nano,
+}
+
+fn parse_offset_minutes(tz: &str) -> Option<i32> {
+    if tz.is_empty() || tz == "Z" {
+        return Some(0);
+    }
+    // tz is like "+05:30", "-08:00", "+0530", "+05"
+    let bytes = tz.as_bytes();
+    let sign: i32 = match bytes[0] {
+        b'+' => 1,
+        b'-' => -1,
+        _ => return None,
+    };
+    let rest = &tz[1..];
+    let (hh, mm) = if let Some(colon) = rest.find(':') {
+        let h: i32 = rest[..colon].parse().ok()?;
+        let m: i32 = rest[colon + 1..].parse().ok()?;
+        (h, m)
+    } else if rest.len() == 4 {
+        let h: i32 = rest[..2].parse().ok()?;
+        let m: i32 = rest[2..].parse().ok()?;
+        (h, m)
+    } else if rest.len() == 2 {
+        let h: i32 = rest.parse().ok()?;
+        (h, 0)
+    } else {
+        return None;
+    };
+    Some(sign * (hh * 60 + mm))
+}
+
+fn format_utc(dt: time::OffsetDateTime) -> String {
+    use time::format_description::well_known::Rfc3339;
+    dt.format(&Rfc3339).unwrap_or_else(|_| dt.to_string())
+}
+
+fn next_day(year: i32, month: u32, day: u32) -> (i32, u32, u32) {
+    if day < days_in_month(year, month) {
+        (year, month, day + 1)
+    } else if month < 12 {
+        (year, month + 1, 1)
+    } else {
+        (year + 1, 1, 1)
+    }
+}
+
+/// Parse a FHIR Period into half-open `[lower, upper)` UTC strings.
+///
+/// Open-start → lower = `-infinity`. Open-end → upper = `infinity`. Both
+/// open → `None` (such a Period matches every query and is treated as
+/// "no usable bound", consistent with the architecture doc).
 fn parse_period_to_range(period: &Value) -> Option<(String, String)> {
     let start = period
         .get("start")
@@ -183,8 +403,8 @@ fn parse_period_to_range(period: &Value) -> Option<(String, String)> {
 
     match (start, end) {
         (Some(s), Some(e)) => Some((s, e)),
-        (Some(s), None) => Some((s.clone(), s)), // Open-ended period
-        (None, Some(e)) => Some((e.clone(), e)), // Start-less period (unusual)
+        (Some(s), None) => Some((s, "infinity".to_string())),
+        (None, Some(e)) => Some(("-infinity".to_string(), e)),
         (None, None) => None,
     }
 }
@@ -603,7 +823,8 @@ mod tests {
         );
         assert_eq!(dates.len(), 1);
         assert!(dates[0].range_start.starts_with("2024-03-15T00:00:00"));
-        assert!(dates[0].range_end.starts_with("2024-03-15T23:59:59"));
+        // Half-open: upper bound = start of next day
+        assert!(dates[0].range_end.starts_with("2024-03-16T00:00:00"));
     }
 
     #[test]
@@ -616,7 +837,8 @@ mod tests {
         let dates = extract_dates(&resource, "Patient", "birthdate", "Patient.birthDate");
         assert_eq!(dates.len(), 1);
         assert!(dates[0].range_start.starts_with("1990-01-01"));
-        assert!(dates[0].range_end.starts_with("1990-12-31"));
+        // Half-open: upper bound = start of next year
+        assert!(dates[0].range_end.starts_with("1991-01-01"));
     }
 
     #[test]
@@ -632,7 +854,61 @@ mod tests {
         let dates = extract_dates(&resource, "Encounter", "date", "Encounter.period");
         assert_eq!(dates.len(), 1);
         assert!(dates[0].range_start.starts_with("2024-01-01T00:00:00"));
-        assert!(dates[0].range_end.starts_with("2024-01-15T23:59:59"));
+        // Half-open: upper bound = start of day after end
+        assert!(dates[0].range_end.starts_with("2024-01-16T00:00:00"));
+    }
+
+    #[test]
+    fn test_extract_dates_timing_event_per_element() {
+        let resource = json!({
+            "resourceType": "Observation",
+            "effectiveTiming": { "event": ["2026-03-01", "2026-06-15", "2026-09-30"] }
+        });
+        let dates = extract_dates(&resource, "Observation", "date", "Observation.effective");
+        assert_eq!(dates.len(), 3, "one row per event");
+        let starts: Vec<_> = dates.iter().map(|d| d.range_start.as_str()).collect();
+        assert!(starts.iter().any(|s| s.starts_with("2026-03-01")));
+        assert!(starts.iter().any(|s| s.starts_with("2026-06-15")));
+        assert!(starts.iter().any(|s| s.starts_with("2026-09-30")));
+    }
+
+    #[test]
+    fn test_extract_dates_period_open_start() {
+        let resource = json!({
+            "resourceType": "Encounter",
+            "period": { "end": "2024-01-15" }
+        });
+        let dates = extract_dates(&resource, "Encounter", "date", "Encounter.period");
+        assert_eq!(dates.len(), 1);
+        assert_eq!(dates[0].range_start, "-infinity");
+        assert!(dates[0].range_end.starts_with("2024-01-16"));
+    }
+
+    #[test]
+    fn test_extract_dates_period_open_end() {
+        let resource = json!({
+            "resourceType": "Encounter",
+            "period": { "start": "2024-01-15" }
+        });
+        let dates = extract_dates(&resource, "Encounter", "date", "Encounter.period");
+        assert_eq!(dates.len(), 1);
+        assert!(dates[0].range_start.starts_with("2024-01-15"));
+        assert_eq!(dates[0].range_end, "infinity");
+    }
+
+    #[test]
+    fn test_parse_datetime_fractional_no_tz() {
+        // FHIR allows fractional seconds without an explicit TZ — historically
+        // this rejected; ensure it's accepted now.
+        let r = parse_date_to_range("2028-05-15T14:30:45.123").unwrap();
+        assert!(r.0.starts_with("2028-05-15T14:30:45.123"));
+    }
+
+    #[test]
+    fn test_parse_datetime_minute_precision() {
+        let r = parse_date_to_range("2028-05-15T14:30").unwrap();
+        assert!(r.0.starts_with("2028-05-15T14:30:00"));
+        assert!(r.1.starts_with("2028-05-15T14:31:00"));
     }
 
     #[test]
@@ -677,14 +953,16 @@ mod tests {
     fn test_parse_date_ranges() {
         let range = parse_date_to_range("2024").unwrap();
         assert!(range.0.starts_with("2024-01-01"));
-        assert!(range.1.starts_with("2024-12-31"));
+        // Half-open upper = start of next year
+        assert!(range.1.starts_with("2025-01-01"));
 
         let range = parse_date_to_range("2024-02").unwrap();
         assert!(range.0.starts_with("2024-02-01"));
-        assert!(range.1.starts_with("2024-02-29")); // leap year
+        // Half-open upper = start of March
+        assert!(range.1.starts_with("2024-03-01"));
 
         let range = parse_date_to_range("2023-02").unwrap();
-        assert!(range.1.starts_with("2023-02-28")); // non-leap year
+        assert!(range.1.starts_with("2023-03-01"));
     }
 
     #[test]

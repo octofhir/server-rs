@@ -173,10 +173,10 @@ async fn proxy_websocket(
 /// Converts axum WebSocket message to tungstenite message.
 fn convert_client_to_backend(msg: Message) -> Option<tungstenite::Message> {
     match msg {
-        Message::Text(text) => Some(tungstenite::Message::Text(text.to_string())),
-        Message::Binary(data) => Some(tungstenite::Message::Binary(data.to_vec())),
-        Message::Ping(data) => Some(tungstenite::Message::Ping(data.to_vec())),
-        Message::Pong(data) => Some(tungstenite::Message::Pong(data.to_vec())),
+        Message::Text(text) => Some(tungstenite::Message::Text(text.to_string().into())),
+        Message::Binary(data) => Some(tungstenite::Message::Binary(data)),
+        Message::Ping(data) => Some(tungstenite::Message::Ping(data)),
+        Message::Pong(data) => Some(tungstenite::Message::Pong(data)),
         Message::Close(_) => None,
     }
 }
@@ -184,7 +184,7 @@ fn convert_client_to_backend(msg: Message) -> Option<tungstenite::Message> {
 /// Converts tungstenite message to axum WebSocket message.
 fn convert_backend_to_client(msg: tungstenite::Message) -> Option<Message> {
     match msg {
-        tungstenite::Message::Text(text) => Some(Message::Text(text.into())),
+        tungstenite::Message::Text(text) => Some(Message::Text(text.to_string().into())),
         tungstenite::Message::Binary(data) => Some(Message::Binary(data.into())),
         tungstenite::Message::Ping(data) => Some(Message::Ping(data.into())),
         tungstenite::Message::Pong(data) => Some(Message::Pong(data.into())),

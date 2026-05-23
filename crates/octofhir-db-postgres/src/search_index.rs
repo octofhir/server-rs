@@ -586,6 +586,22 @@ impl BatchIndexBuffer {
     pub async fn flush_with_tx(self, tx: &mut PgTransaction<'_>) -> Result<(), StorageError> {
         let BatchIndexBuffer { refs, dates } = self;
 
+        // Ensure list partitions exist for every resource_type in this batch.
+        // The batched flush path (async indexer) previously skipped this — the
+        // non-batched single-resource writers do it — so untouched resource
+        // types failed to INSERT with "no partition of relation found for row".
+        let mut seen_types: std::collections::HashSet<String> =
+            std::collections::HashSet::new();
+        for r in &refs {
+            seen_types.insert(r.resource_type.clone());
+        }
+        for d in &dates {
+            seen_types.insert(d.resource_type.clone());
+        }
+        for rt in &seen_types {
+            ensure_search_partition_in_tx(tx, rt).await?;
+        }
+
         if !refs.is_empty() {
             let len = refs.len();
             let mut resource_types = Vec::with_capacity(len);

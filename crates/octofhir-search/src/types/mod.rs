@@ -136,18 +136,15 @@ pub fn dispatch_search(
         SearchParameterType::Number => build_number_search(builder, param, &jsonb_path),
 
         SearchParameterType::Date => {
-            // _lastUpdated is a system search parameter that maps to the
-            // updated_at column, not a JSONB field — it isn't stored in the
-            // search_idx_date table. Handle it via direct column comparison.
+            // _lastUpdated maps to the updated_at column, not search_idx_date.
             if param.name == "_lastUpdated" {
                 return build_last_updated_search(builder, param);
             }
 
-            // For non-polymorphic date fields, perform a direct JSONB
-            // comparison with a timestamptz cast — this works even when the
-            // search_idx_date table is empty or not populated for this param.
-            // The path looks like ["birthDate"] (Patient) or ["meta", "lastUpdated"].
-            build_date_search(builder, param, &jsonb_path)
+            // Every other date / dateTime / instant / Period / Timing search
+            // goes through search_idx_date (one row per indexed value, half-
+            // open tstzrange, GiST index). See docs/architecture/date-search.md.
+            build_index_date_search(builder, param, resource_type)
         }
 
         SearchParameterType::Quantity => {

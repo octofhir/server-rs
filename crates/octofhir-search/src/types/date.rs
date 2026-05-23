@@ -1,28 +1,26 @@
 //! Date search parameter implementation.
 //!
-//! Date search supports the following prefixes:
-//! - eq: equal (default) - within the precision range
-//! - ne: not equal - outside the precision range
-//! - gt: greater than the upper bound
-//! - lt: less than the lower bound
-//! - ge: greater or equal to lower bound
-//! - le: less than or equal to upper bound
-//! - sa: starts after the upper bound
-//! - eb: ends before the lower bound
-//! - ap: approximately (10% range around the period)
+//! See `docs/architecture/date-search.md` for the design.
 //!
-//! Date precision is determined by the input format:
-//! - Year: 2023 -> [2023-01-01, 2024-01-01)
-//! - Month: 2023-01 -> [2023-01-01, 2023-02-01)
-//! - Day: 2023-01-15 -> [2023-01-15, 2023-01-16)
-//! - DateTime: full instant
+//! Every FHIR date-shaped value is canonicalised to a half-open `[lower, upper)`
+//! UTC interval. Queries are issued against `search_idx_date` using `tstzrange`
+//! operators so the GiST index covers every FHIR prefix:
+//!
+//! - `eq` (`<@`) — resource value entirely inside query range
+//! - `ne` — NOT eq
+//! - `gt` / `sa` (`>>`) — `lower(r) >= upper(q)`
+//! - `lt` / `eb` (`<<`) — `upper(r) <= lower(q)`
+//! - `ge` (`NOT <<`) — `upper(r) > lower(q)`
+//! - `le` (`NOT >>`) — `lower(r) < upper(q)`
+//! - `ap` (`&&`) — overlaps a ±10 % expansion of the query range
 
 use crate::parameters::{SearchModifier, SearchPrefix};
 use crate::parser::ParsedParam;
 use crate::sql_builder::{SqlBuilder, SqlBuilderError};
 use time::{Date, Duration, Month, OffsetDateTime, PrimitiveDateTime, Time};
 
-/// Represents a date range based on precision.
+/// Half-open `[start, end)` UTC range built from a FHIR date / dateTime /
+/// instant search parameter value.
 #[derive(Debug, Clone)]
 pub struct DateRange {
     pub start: OffsetDateTime,
@@ -175,124 +173,230 @@ fn build_date_condition(
     Ok(condition)
 }
 
-/// Parse a date string into a range based on precision.
+/// Parse a FHIR date / dateTime / instant string into a half-open `[start, end)`
+/// UTC `DateRange` whose width matches the value's stated precision.
 ///
-/// Supported formats:
-/// - Year: 2023
-/// - Year-Month: 2023-01
-/// - Date: 2023-01-15
-/// - DateTime: 2023-01-15T10:30:00
-/// - DateTime with TZ: 2023-01-15T10:30:00Z or 2023-01-15T10:30:00+05:00
+/// Accepts every FHIR R4 surface form:
+/// - `2028`
+/// - `2028-05`
+/// - `2028-05-15`
+/// - `2028-05-15T14:30`
+/// - `2028-05-15T14:30:45`
+/// - `2028-05-15T14:30:45.123` (and any sub-second precision)
+/// - any of the above with `Z`, `+HH:MM`, `-HH:MM`, `+HHMM`
 pub fn parse_date_range(date_str: &str) -> Result<DateRange, SqlBuilderError> {
     let trimmed = date_str.trim();
 
-    // Year only: 2023
+    // Year only: 2028
     if trimmed.len() == 4 && trimmed.chars().all(|c| c.is_ascii_digit()) {
         let year: i32 = trimmed
             .parse()
             .map_err(|_| SqlBuilderError::InvalidSearchValue(format!("Invalid year: {trimmed}")))?;
-
         let start = Date::from_calendar_date(year, Month::January, 1)
             .map_err(|e| SqlBuilderError::InvalidSearchValue(format!("Invalid date: {e}")))?
             .with_time(Time::MIDNIGHT)
             .assume_utc();
-
         let end = Date::from_calendar_date(year + 1, Month::January, 1)
             .map_err(|e| SqlBuilderError::InvalidSearchValue(format!("Invalid date: {e}")))?
             .with_time(Time::MIDNIGHT)
             .assume_utc();
-
         return Ok(DateRange { start, end });
     }
 
-    // Year-Month: 2023-01
+    // Year-Month: 2028-05
     if trimmed.len() == 7 && trimmed.chars().nth(4) == Some('-') {
-        let parts: Vec<&str> = trimmed.split('-').collect();
-        if parts.len() == 2 {
-            let year: i32 = parts[0].parse().map_err(|_| {
-                SqlBuilderError::InvalidSearchValue(format!("Invalid year: {}", parts[0]))
-            })?;
-            let month_num: u8 = parts[1].parse().map_err(|_| {
-                SqlBuilderError::InvalidSearchValue(format!("Invalid month: {}", parts[1]))
-            })?;
-
-            let month = Month::try_from(month_num).map_err(|_| {
-                SqlBuilderError::InvalidSearchValue(format!("Invalid month number: {month_num}"))
-            })?;
-
-            let start = Date::from_calendar_date(year, month, 1)
-                .map_err(|e| SqlBuilderError::InvalidSearchValue(format!("Invalid date: {e}")))?
-                .with_time(Time::MIDNIGHT)
-                .assume_utc();
-
-            let end = if month_num == 12 {
-                Date::from_calendar_date(year + 1, Month::January, 1)
-            } else {
-                Date::from_calendar_date(year, Month::try_from(month_num + 1).unwrap(), 1)
-            }
+        let year: i32 = trimmed[..4]
+            .parse()
+            .map_err(|_| SqlBuilderError::InvalidSearchValue(format!("Invalid year: {trimmed}")))?;
+        let month_num: u8 = trimmed[5..7]
+            .parse()
+            .map_err(|_| SqlBuilderError::InvalidSearchValue(format!("Invalid month: {trimmed}")))?;
+        let month = Month::try_from(month_num).map_err(|_| {
+            SqlBuilderError::InvalidSearchValue(format!("Invalid month: {trimmed}"))
+        })?;
+        let start = Date::from_calendar_date(year, month, 1)
             .map_err(|e| SqlBuilderError::InvalidSearchValue(format!("Invalid date: {e}")))?
             .with_time(Time::MIDNIGHT)
             .assume_utc();
-
-            return Ok(DateRange { start, end });
+        let end = if month_num == 12 {
+            Date::from_calendar_date(year + 1, Month::January, 1)
+        } else {
+            Date::from_calendar_date(year, Month::try_from(month_num + 1).unwrap(), 1)
         }
+        .map_err(|e| SqlBuilderError::InvalidSearchValue(format!("Invalid date: {e}")))?
+        .with_time(Time::MIDNIGHT)
+        .assume_utc();
+        return Ok(DateRange { start, end });
     }
 
-    // Full date: 2023-01-15
+    // Full date: 2028-05-15
     if trimmed.len() == 10 && !trimmed.contains('T') {
         let date = Date::parse(
             trimmed,
             time::macros::format_description!("[year]-[month]-[day]"),
         )
         .map_err(|e| SqlBuilderError::InvalidSearchValue(format!("Invalid date: {e}")))?;
-
         let start = date.with_time(Time::MIDNIGHT).assume_utc();
         let end = start + Duration::days(1);
-
         return Ok(DateRange { start, end });
     }
 
-    // DateTime formats
+    // DateTime — any precision, any timezone (or none).
     parse_datetime_range(trimmed)
 }
 
-/// Parse a datetime string into a range.
+/// Parse a FHIR dateTime / instant string into a half-open UTC range whose
+/// width is the value's stated precision (minute / second / sub-second).
 fn parse_datetime_range(dt_str: &str) -> Result<DateRange, SqlBuilderError> {
-    // Try parsing as RFC3339 / ISO8601 with timezone
-    if dt_str.contains('T') {
-        // Try parsing with timezone (Z or +/-offset)
-        if dt_str.ends_with('Z')
-            || dt_str.contains('+')
-            || dt_str.rfind('-').is_some_and(|i| i > 10)
-        {
-            let dt = OffsetDateTime::parse(dt_str, &time::format_description::well_known::Rfc3339)
-                .map_err(|e| {
-                    SqlBuilderError::InvalidSearchValue(format!("Invalid datetime: {e}"))
-                })?;
-
-            let end = dt + Duration::seconds(1);
-            return Ok(DateRange { start: dt, end });
-        }
-
-        // DateTime without timezone - assume UTC
-        // Format: 2023-01-15T10:30:00 or 2023-01-15T10:30
-        let format_with_seconds =
-            time::macros::format_description!("[year]-[month]-[day]T[hour]:[minute]:[second]");
-        let format_no_seconds =
-            time::macros::format_description!("[year]-[month]-[day]T[hour]:[minute]");
-
-        let pdt = PrimitiveDateTime::parse(dt_str, &format_with_seconds)
-            .or_else(|_| PrimitiveDateTime::parse(dt_str, &format_no_seconds))
-            .map_err(|e| SqlBuilderError::InvalidSearchValue(format!("Invalid datetime: {e}")))?;
-
-        let dt = pdt.assume_utc();
-        let end = dt + Duration::seconds(1);
-        return Ok(DateRange { start: dt, end });
+    if !dt_str.contains('T') {
+        return Err(SqlBuilderError::InvalidSearchValue(format!(
+            "Unrecognized date format: {dt_str}"
+        )));
     }
 
-    Err(SqlBuilderError::InvalidSearchValue(format!(
-        "Unrecognized date format: {dt_str}"
-    )))
+    // Split TZ suffix. TZ marker: trailing 'Z', or '+'/'-' after position 10.
+    let bytes = dt_str.as_bytes();
+    let mut tz_pos: Option<usize> = None;
+    if bytes.last() == Some(&b'Z') {
+        tz_pos = Some(dt_str.len() - 1);
+    } else {
+        for (i, b) in bytes.iter().enumerate().skip(11) {
+            if *b == b'+' || *b == b'-' {
+                tz_pos = Some(i);
+                break;
+            }
+        }
+    }
+    let (body, tz) = match tz_pos {
+        Some(p) => (&dt_str[..p], &dt_str[p..]),
+        None => (dt_str, ""),
+    };
+
+    if body.len() < 16 || body.as_bytes().get(10) != Some(&b'T') {
+        return Err(SqlBuilderError::InvalidSearchValue(format!(
+            "Unrecognized date format: {dt_str}"
+        )));
+    }
+
+    let year: i32 = body[..4]
+        .parse()
+        .map_err(|_| SqlBuilderError::InvalidSearchValue(format!("Invalid year: {dt_str}")))?;
+    let month: u8 = body[5..7]
+        .parse()
+        .map_err(|_| SqlBuilderError::InvalidSearchValue(format!("Invalid month: {dt_str}")))?;
+    let day: u8 = body[8..10]
+        .parse()
+        .map_err(|_| SqlBuilderError::InvalidSearchValue(format!("Invalid day: {dt_str}")))?;
+    let hour: u8 = body[11..13]
+        .parse()
+        .map_err(|_| SqlBuilderError::InvalidSearchValue(format!("Invalid hour: {dt_str}")))?;
+    let minute: u8 = body[14..16]
+        .parse()
+        .map_err(|_| SqlBuilderError::InvalidSearchValue(format!("Invalid minute: {dt_str}")))?;
+
+    let (sec, frac_str, precision): (u8, &str, Precision) = if body.len() == 16 {
+        (0, "", Precision::Minute)
+    } else if body.len() >= 19 && body.as_bytes().get(16) == Some(&b':') {
+        let s: u8 = body[17..19].parse().map_err(|_| {
+            SqlBuilderError::InvalidSearchValue(format!("Invalid second: {dt_str}"))
+        })?;
+        if body.len() == 19 {
+            (s, "", Precision::Second)
+        } else if body.as_bytes().get(19) == Some(&b'.') {
+            let frac = &body[20..];
+            if frac.is_empty() || !frac.chars().all(|c| c.is_ascii_digit()) {
+                return Err(SqlBuilderError::InvalidSearchValue(format!(
+                    "Invalid fractional second: {dt_str}"
+                )));
+            }
+            let p = match frac.len() {
+                1..=3 => Precision::Milli,
+                4..=6 => Precision::Micro,
+                _ => Precision::Micro, // 7+ digits clipped to µs upper
+            };
+            (s, frac, p)
+        } else {
+            return Err(SqlBuilderError::InvalidSearchValue(format!(
+                "Unrecognized date format: {dt_str}"
+            )));
+        }
+    } else {
+        return Err(SqlBuilderError::InvalidSearchValue(format!(
+            "Unrecognized date format: {dt_str}"
+        )));
+    };
+
+    let month_e = Month::try_from(month)
+        .map_err(|_| SqlBuilderError::InvalidSearchValue(format!("Invalid month: {dt_str}")))?;
+    let date = Date::from_calendar_date(year, month_e, day)
+        .map_err(|e| SqlBuilderError::InvalidSearchValue(format!("Invalid date: {e}")))?;
+    let time = Time::from_hms(hour, minute, sec)
+        .map_err(|e| SqlBuilderError::InvalidSearchValue(format!("Invalid time: {e}")))?;
+    let pdt = PrimitiveDateTime::new(date, time);
+
+    let off_minutes = parse_offset_minutes(tz).ok_or_else(|| {
+        SqlBuilderError::InvalidSearchValue(format!("Invalid timezone offset in {dt_str}"))
+    })?;
+    let offset = time::UtcOffset::from_whole_seconds(off_minutes * 60)
+        .map_err(|e| SqlBuilderError::InvalidSearchValue(format!("Invalid offset: {e}")))?;
+    let mut start = pdt.assume_offset(offset).to_offset(time::UtcOffset::UTC);
+
+    if !frac_str.is_empty() {
+        let mut buf = String::from(frac_str);
+        if buf.len() > 9 {
+            buf.truncate(9);
+        } else {
+            while buf.len() < 9 {
+                buf.push('0');
+            }
+        }
+        let ns: i64 = buf.parse().unwrap_or(0);
+        start += Duration::nanoseconds(ns);
+    }
+
+    let end = match precision {
+        Precision::Minute => start + Duration::minutes(1),
+        Precision::Second => start + Duration::seconds(1),
+        Precision::Milli => start + Duration::milliseconds(1),
+        Precision::Micro => start + Duration::microseconds(1),
+    };
+    Ok(DateRange { start, end })
+}
+
+#[derive(Copy, Clone)]
+enum Precision {
+    Minute,
+    Second,
+    Milli,
+    Micro,
+}
+
+fn parse_offset_minutes(tz: &str) -> Option<i32> {
+    if tz.is_empty() || tz == "Z" {
+        return Some(0);
+    }
+    let bytes = tz.as_bytes();
+    let sign: i32 = match bytes[0] {
+        b'+' => 1,
+        b'-' => -1,
+        _ => return None,
+    };
+    let rest = &tz[1..];
+    let (hh, mm) = if let Some(colon) = rest.find(':') {
+        let h: i32 = rest[..colon].parse().ok()?;
+        let m: i32 = rest[colon + 1..].parse().ok()?;
+        (h, m)
+    } else if rest.len() == 4 {
+        let h: i32 = rest[..2].parse().ok()?;
+        let m: i32 = rest[2..].parse().ok()?;
+        (h, m)
+    } else if rest.len() == 2 {
+        let h: i32 = rest.parse().ok()?;
+        (h, 0)
+    } else {
+        return None;
+    };
+    Some(sign * (hh * 60 + mm))
 }
 
 /// Format a datetime as ISO8601/RFC3339 string.
@@ -301,12 +405,22 @@ fn format_datetime(dt: &OffsetDateTime) -> String {
         .unwrap_or_else(|_| dt.to_string())
 }
 
-/// Build date search using the `search_idx_date` index table.
+/// Build a date search against the `search_idx_date` table using `tstzrange`
+/// range operators. One EXISTS subquery per value; values are OR-combined.
 ///
-/// This approach is more robust than JSONB path queries because:
-/// - Handles polymorphic date fields (e.g., `effective[x]` → effectiveDateTime/effectivePeriod)
-/// - The index already contains correctly extracted date ranges regardless of JSON field name
-/// - Uses B-tree index for efficient range queries
+/// FHIR prefix → range-operator mapping (see architecture doc §4):
+///
+/// | Prefix | Truth condition | Operator |
+/// |---|---|---|
+/// | `eq` (default) | `r ⊆ q`       | `r.rng <@ q` |
+/// | `ne` | `NOT (r ⊆ q)`         | `NOT EXISTS … <@ q` |
+/// | `gt` | `lower(r) >= upper(q)` | `r.rng >> q` |
+/// | `lt` | `upper(r) <= lower(q)` | `r.rng << q` |
+/// | `ge` | `upper(r) > lower(q)`  | `NOT (r.rng << q)` |
+/// | `le` | `lower(r) < upper(q)`  | `NOT (r.rng >> q)` |
+/// | `sa` | `lower(r) >= upper(q)` | `r.rng >> q` |
+/// | `eb` | `upper(r) <= lower(q)` | `r.rng << q` |
+/// | `ap` | overlaps ±10 % window | `r.rng && q_apx` |
 pub fn build_index_date_search(
     builder: &mut SqlBuilder,
     param: &ParsedParam,
@@ -316,7 +430,8 @@ pub fn build_index_date_search(
         return Ok(());
     }
 
-    // Handle :missing modifier — fall back to checking if any index row exists
+    // :missing modifier — match resources that have / don't have any indexed
+    // value for this search parameter.
     if let Some(SearchModifier::Missing) = &param.modifier {
         let is_missing = param
             .values
@@ -340,7 +455,6 @@ pub fn build_index_date_search(
                  AND sid.param_code = ${pc_param})"
             )
         };
-
         builder.add_condition(condition);
         return Ok(());
     }
@@ -353,102 +467,59 @@ pub fn build_index_date_search(
         }
 
         let prefix = value.prefix.unwrap_or(SearchPrefix::Eq);
-        let date_range = parse_date_range(&value.raw)?;
-
-        let start_str = format_datetime(&date_range.start);
-        let end_str = format_datetime(&date_range.end);
+        let dr = parse_date_range(&value.raw)?;
+        let lo = format_datetime(&dr.start);
+        let hi = format_datetime(&dr.end);
 
         let rt_param = builder.add_text_param(resource_type);
         let pc_param = builder.add_text_param(&param.name);
 
-        // The index stores (range_start, range_end) for each date value.
-        // A resource date "overlaps" a search range when:
-        //   index.range_start < search.end AND index.range_end >= search.start
-        let condition = match prefix {
-            SearchPrefix::Eq => {
-                // Resource value overlaps with search range
-                let p1 = builder.add_timestamp_param(&start_str);
-                let p2 = builder.add_timestamp_param(&end_str);
-                format!(
-                    "EXISTS (SELECT 1 FROM search_idx_date sid \
-                     WHERE sid.resource_type = ${rt_param} AND sid.resource_id = r.id \
-                     AND sid.param_code = ${pc_param} \
-                     AND sid.range_start < ${p2}::timestamptz \
-                     AND sid.range_end >= ${p1}::timestamptz)"
-                )
-            }
+        // Bind both bounds once per value; reuse for any operator below.
+        let p_lo = builder.add_timestamp_param(&lo);
+        let p_hi = builder.add_timestamp_param(&hi);
+
+        let rng_q = format!(
+            "tstzrange(${p_lo}::timestamptz, ${p_hi}::timestamptz, '[)')"
+        );
+
+        let predicate = match prefix {
+            SearchPrefix::Eq => format!("sid.rng <@ {rng_q}"),
             SearchPrefix::Ne => {
-                // Resource value does NOT overlap with search range
-                let p1 = builder.add_timestamp_param(&start_str);
-                let p2 = builder.add_timestamp_param(&end_str);
-                format!(
+                // NOT eq: negate the EXISTS below — handled by wrapping the
+                // whole clause in NOT EXISTS.
+                let cond = format!(
                     "NOT EXISTS (SELECT 1 FROM search_idx_date sid \
                      WHERE sid.resource_type = ${rt_param} AND sid.resource_id = r.id \
                      AND sid.param_code = ${pc_param} \
-                     AND sid.range_start < ${p2}::timestamptz \
-                     AND sid.range_end >= ${p1}::timestamptz)"
-                )
+                     AND sid.rng <@ {rng_q})"
+                );
+                or_conditions.push(cond);
+                continue;
             }
-            SearchPrefix::Gt | SearchPrefix::Sa => {
-                // Resource value is after search range
-                let p = builder.add_timestamp_param(&end_str);
-                format!(
-                    "EXISTS (SELECT 1 FROM search_idx_date sid \
-                     WHERE sid.resource_type = ${rt_param} AND sid.resource_id = r.id \
-                     AND sid.param_code = ${pc_param} \
-                     AND sid.range_start >= ${p}::timestamptz)"
-                )
-            }
-            SearchPrefix::Lt | SearchPrefix::Eb => {
-                // Resource value is before search range
-                let p = builder.add_timestamp_param(&start_str);
-                format!(
-                    "EXISTS (SELECT 1 FROM search_idx_date sid \
-                     WHERE sid.resource_type = ${rt_param} AND sid.resource_id = r.id \
-                     AND sid.param_code = ${pc_param} \
-                     AND sid.range_end < ${p}::timestamptz)"
-                )
-            }
-            SearchPrefix::Ge => {
-                // Resource value >= search start
-                let p = builder.add_timestamp_param(&start_str);
-                format!(
-                    "EXISTS (SELECT 1 FROM search_idx_date sid \
-                     WHERE sid.resource_type = ${rt_param} AND sid.resource_id = r.id \
-                     AND sid.param_code = ${pc_param} \
-                     AND sid.range_end >= ${p}::timestamptz)"
-                )
-            }
-            SearchPrefix::Le => {
-                // Resource value <= search end
-                let p = builder.add_timestamp_param(&end_str);
-                format!(
-                    "EXISTS (SELECT 1 FROM search_idx_date sid \
-                     WHERE sid.resource_type = ${rt_param} AND sid.resource_id = r.id \
-                     AND sid.param_code = ${pc_param} \
-                     AND sid.range_start < ${p}::timestamptz)"
-                )
-            }
+            SearchPrefix::Gt | SearchPrefix::Sa => format!("sid.rng >> {rng_q}"),
+            SearchPrefix::Lt | SearchPrefix::Eb => format!("sid.rng << {rng_q}"),
+            SearchPrefix::Ge => format!("NOT (sid.rng << {rng_q})"),
+            SearchPrefix::Le => format!("NOT (sid.rng >> {rng_q})"),
             SearchPrefix::Ap => {
-                // Approximate: expand range by 10%
-                let duration = date_range.end - date_range.start;
+                let duration = dr.end - dr.start;
                 let expansion = duration / 10;
-                let approx_start = date_range.start - expansion;
-                let approx_end = date_range.end + expansion;
-
-                let p1 = builder.add_timestamp_param(format_datetime(&approx_start));
-                let p2 = builder.add_timestamp_param(format_datetime(&approx_end));
+                let apx_lo = format_datetime(&(dr.start - expansion));
+                let apx_hi = format_datetime(&(dr.end + expansion));
+                let p_alo = builder.add_timestamp_param(apx_lo);
+                let p_ahi = builder.add_timestamp_param(apx_hi);
                 format!(
-                    "EXISTS (SELECT 1 FROM search_idx_date sid \
-                     WHERE sid.resource_type = ${rt_param} AND sid.resource_id = r.id \
-                     AND sid.param_code = ${pc_param} \
-                     AND sid.range_start < ${p2}::timestamptz \
-                     AND sid.range_end >= ${p1}::timestamptz)"
+                    "sid.rng && tstzrange(${p_alo}::timestamptz, ${p_ahi}::timestamptz, '[)')"
                 )
             }
         };
 
-        or_conditions.push(condition);
+        let cond = format!(
+            "EXISTS (SELECT 1 FROM search_idx_date sid \
+             WHERE sid.resource_type = ${rt_param} AND sid.resource_id = r.id \
+             AND sid.param_code = ${pc_param} \
+             AND {predicate})"
+        );
+        or_conditions.push(cond);
     }
 
     if !or_conditions.is_empty() {

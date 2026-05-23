@@ -80,6 +80,11 @@ pub struct QueryParamKey {
     pub param_type: SearchParameterType,
     /// Number of values (affects OR clause structure)
     pub value_count: usize,
+    /// Prefixes applied to each value, in order. For numeric / date parameters
+    /// the SQL template depends on the prefix (`eq` → `<@`, `gt` → `>>`, …) so
+    /// `date=eq2026` and `date=gt2026` MUST hash to different keys; otherwise
+    /// the cached SQL is reused with the wrong operator.
+    pub prefixes: Vec<Option<String>>,
 }
 
 impl QueryCacheKey {
@@ -100,6 +105,11 @@ impl QueryCacheKey {
                     .map(|m| format!("{:?}", m).to_lowercase()),
                 param_type: Self::infer_param_type(&p.name),
                 value_count: p.values.len(),
+                prefixes: p
+                    .values
+                    .iter()
+                    .map(|v| v.prefix.as_ref().map(|pr| format!("{:?}", pr).to_lowercase()))
+                    .collect(),
             })
             .collect();
 
