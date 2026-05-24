@@ -6,12 +6,12 @@
 use crate::chaining::{build_chained_search, is_chained_parameter, parse_chained_parameter};
 use crate::include::{is_include_parameter, is_revinclude_parameter};
 use crate::ir::{
-    CompositeClause, IdClause, NumberClause, QuantityClause, ReferenceClause, SearchDebugPlan,
-    StringClause, TokenClause, TokenIndexShape, build_composite_debug_plan, build_date_debug_plan,
-    build_number_debug_plan, build_quantity_debug_plan, build_reference_debug_plan,
-    build_string_debug_plan, build_string_text_debug_predicate, build_token_debug_plan,
-    render_date_clauses_as_or, render_id_clauses_as_or, resolve_composite_component_specs,
-    resolve_resource_column_param, rewrite_date_clauses,
+    CompositeClause, IdClause, NumberClause, QuantityClause, ReferenceClause, ResourceColumnParam,
+    SearchDebugPlan, StringClause, TokenClause, TokenIndexShape, build_composite_debug_plan,
+    build_date_debug_plan, build_number_debug_plan, build_quantity_debug_plan,
+    build_reference_debug_plan, build_string_debug_plan, build_string_text_debug_predicate,
+    build_token_debug_plan, render_date_clauses_as_or, render_id_clauses_as_or,
+    resolve_composite_component_specs, resolve_resource_column_param, rewrite_date_clauses,
 };
 use crate::parameters::{ElementTypeHint, SearchParameter, SearchParameterType, SearchPrefix};
 use crate::parser::{ParsedParam, ParsedValue};
@@ -272,12 +272,7 @@ pub fn build_query_from_params_with_config(
             }
 
             if config.collect_debug_plan {
-                collect_date_debug_plan(
-                    debug_plan.as_mut(),
-                    &parsed,
-                    param_def.param_type,
-                    resource_type,
-                )?;
+                collect_date_debug_plan(debug_plan.as_mut(), &parsed, &param_def, resource_type)?;
                 collect_string_debug_plan(
                     debug_plan.as_mut(),
                     &parsed,
@@ -415,13 +410,16 @@ fn try_fold_repeated_date_window(
     if key.contains(':') {
         return Ok(false); // any modifier blocks fold
     }
-    if key == "_lastUpdated" {
-        return Ok(false);
-    }
     let Some(param_def) = registry.get(resource_type, key) else {
         return Ok(false);
     };
     if param_def.param_type != SearchParameterType::Date {
+        return Ok(false);
+    }
+    if matches!(
+        resolve_resource_column_param(&param_def),
+        Some(ResourceColumnParam::LastUpdated)
+    ) {
         return Ok(false);
     }
 
@@ -476,12 +474,15 @@ fn try_fold_repeated_date_window(
 fn collect_date_debug_plan(
     debug_plan: Option<&mut SearchDebugPlan>,
     parsed: &ParsedParam,
-    param_type: SearchParameterType,
+    param_def: &SearchParameter,
     resource_type: &str,
 ) -> Result<(), SqlBuilderError> {
-    if parsed.name == "_lastUpdated"
-        || parsed.modifier.is_some()
-        || param_type != SearchParameterType::Date
+    if parsed.modifier.is_some()
+        || param_def.param_type != SearchParameterType::Date
+        || matches!(
+            resolve_resource_column_param(param_def),
+            Some(ResourceColumnParam::LastUpdated)
+        )
     {
         return Ok(());
     }
@@ -2274,6 +2275,7 @@ mod tests {
     #[test]
     fn fold_refuses_last_updated() {
         let registry = SearchParameterRegistry::new();
+        crate::common::register_common_parameters(&registry);
         // `_lastUpdated` is a common param; it maps to `r.updated_at`, not
         // search_idx_date, so the fold MUST refuse it even if both bounds match.
         let mut builder = SqlBuilder::with_resource_column("r.resource");
