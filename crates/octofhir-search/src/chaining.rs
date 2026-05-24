@@ -30,12 +30,8 @@ pub struct ChainedParameter {
     pub chain: Vec<ChainLink>,
     /// The final search parameter name
     pub final_param: String,
-    /// The final search parameter type
-    pub final_param_type: SearchParameterType,
-    /// The final search parameter expression
-    pub final_expression: String,
     /// Full search parameter definition for the final parameter
-    pub final_param_def: Option<Arc<SearchParameter>>,
+    pub final_param_def: Arc<SearchParameter>,
     /// The search value
     pub value: String,
     /// Optional modifier on the final parameter
@@ -152,9 +148,7 @@ pub fn parse_chained_parameter(
     Ok(ChainedParameter {
         chain,
         final_param: final_param.to_string(),
-        final_param_type: final_param_def.param_type,
-        final_expression: final_param_def.expression.clone().unwrap_or_default(),
-        final_param_def: Some(final_param_def),
+        final_param_def,
         value: value.to_string(),
         modifier: modifier.map(|s| s.to_string()),
     })
@@ -260,9 +254,8 @@ fn build_nested_chain(
 
 /// Build the final condition for the chained search.
 ///
-/// Uses the full `dispatch_search` pipeline when a parameter definition is
-/// available, so array-aware and GIN-optimized logic is reused correctly.
-/// Falls back to a simple path-based condition otherwise.
+/// Uses the full `dispatch_search` pipeline, so registry-aware array, sidecar,
+/// and GIN-optimized logic is reused correctly.
 fn build_final_condition(
     builder: &mut SqlBuilder,
     chained: &ChainedParameter,
@@ -270,137 +263,70 @@ fn build_final_condition(
     alias: &str,
     registry: &SearchParameterRegistry,
 ) -> Result<String, ChainingError> {
-    // If we have the full param definition, use dispatch_search for correct handling
-    // of arrays, HumanName, GIN containment, etc.
-    if let Some(ref param_def) = chained.final_param_def {
-        let resource_col = format!("{alias}.resource");
-        let mut inner_builder = SqlBuilder::with_resource_column(&resource_col)
-            .with_param_offset(builder.param_count());
+    let resource_col = format!("{alias}.resource");
+    let mut inner_builder =
+        SqlBuilder::with_resource_column(&resource_col).with_param_offset(builder.param_count());
 
-        // Build ParsedParam from the chained value
-        let modifier = chained
-            .modifier
-            .as_deref()
-            .and_then(crate::parameters::SearchModifier::parse);
+    let modifier = chained
+        .modifier
+        .as_deref()
+        .and_then(crate::parameters::SearchModifier::parse);
 
-        // Parse the value into ParsedValue(s), handling comma-separated OR values
-        let values: Vec<crate::parser::ParsedValue> = chained
-            .value
-            .split(',')
-            .filter(|v| !v.is_empty())
-            .map(|v| crate::parser::ParsedValue {
-                prefix: None,
-                raw: v.to_string(),
-            })
-            .collect();
+    let values: Vec<crate::parser::ParsedValue> = chained
+        .value
+        .split(',')
+        .filter(|v| !v.is_empty())
+        .map(|v| crate::parser::ParsedValue {
+            prefix: None,
+            raw: v.to_string(),
+        })
+        .collect();
 
-        let parsed = crate::parser::ParsedParam {
-            name: chained.final_param.clone(),
-            modifier,
-            values,
-        };
+    let parsed = crate::parser::ParsedParam {
+        name: chained.final_param.clone(),
+        modifier,
+        values,
+    };
 
-        crate::types::dispatch_search_with_registry(
-            &mut inner_builder,
-            &parsed,
-            param_def,
-            target_type,
-            registry,
-        )?;
+    crate::types::dispatch_search_with_registry(
+        &mut inner_builder,
+        &parsed,
+        &chained.final_param_def,
+        target_type,
+        registry,
+    )?;
 
-        // Extract conditions and params from inner builder
-        let conditions = inner_builder.conditions();
-        if let Some(condition) = conditions.first() {
-            // Copy params from inner builder to outer builder
-            for p in inner_builder.params() {
-                match p {
-                    crate::sql_builder::SqlParam::Text(s) => {
-                        builder.add_text_param(s);
-                    }
-                    crate::sql_builder::SqlParam::Integer(i) => {
-                        builder.add_integer_param(*i);
-                    }
-                    crate::sql_builder::SqlParam::Float(f) => {
-                        builder.add_float_param(*f);
-                    }
-                    crate::sql_builder::SqlParam::Boolean(b) => {
-                        builder.add_boolean_param(*b);
-                    }
-                    crate::sql_builder::SqlParam::Json(s) => {
-                        builder.add_json_param(s);
-                    }
-                    crate::sql_builder::SqlParam::Timestamp(s) => {
-                        builder.add_timestamp_param(s);
-                    }
+    let conditions = inner_builder.conditions();
+    if let Some(condition) = conditions.first() {
+        for p in inner_builder.params() {
+            match p {
+                crate::sql_builder::SqlParam::Text(s) => {
+                    builder.add_text_param(s);
+                }
+                crate::sql_builder::SqlParam::Integer(i) => {
+                    builder.add_integer_param(*i);
+                }
+                crate::sql_builder::SqlParam::Float(f) => {
+                    builder.add_float_param(*f);
+                }
+                crate::sql_builder::SqlParam::Boolean(b) => {
+                    builder.add_boolean_param(*b);
+                }
+                crate::sql_builder::SqlParam::Json(s) => {
+                    builder.add_json_param(s);
+                }
+                crate::sql_builder::SqlParam::Timestamp(s) => {
+                    builder.add_timestamp_param(s);
                 }
             }
-            return Ok(condition.clone());
         }
+        return Ok(condition.clone());
     }
 
-    // Fallback: simple path-based condition (for when no param def is available)
-    let final_path = extract_final_path(&chained.final_expression, target_type);
-    match chained.final_param_type {
-        SearchParameterType::String => {
-            let p = builder.add_text_param(format!("{}%", chained.value));
-            Ok(format!("{alias}.{final_path} ILIKE ${p}"))
-        }
-        SearchParameterType::Token => {
-            let p = builder.add_text_param(&chained.value);
-            Ok(format!("{alias}.{final_path} = ${p}"))
-        }
-        SearchParameterType::Reference => {
-            let p = builder.add_text_param(&chained.value);
-            Ok(format!("{alias}.{final_path}->>'reference' = ${p}"))
-        }
-        SearchParameterType::Date => {
-            let p = builder.add_text_param(&chained.value);
-            Ok(format!("{alias}.{final_path} = ${p}"))
-        }
-        SearchParameterType::Number | SearchParameterType::Quantity => {
-            let p = builder.add_text_param(&chained.value);
-            Ok(format!("({alias}.{final_path})::numeric = ${p}::numeric"))
-        }
-        SearchParameterType::Uri => {
-            let p = builder.add_text_param(&chained.value);
-            Ok(format!("{alias}.{final_path} = ${p}"))
-        }
-        _ => Err(ChainingError::InvalidChain(format!(
-            "Unsupported final parameter type: {:?}",
-            chained.final_param_type
-        ))),
-    }
-}
-
-/// Extract the final parameter path from a FHIRPath expression.
-fn extract_final_path(expression: &str, resource_type: &str) -> String {
-    let path = expression
-        .strip_prefix(resource_type)
-        .unwrap_or(expression)
-        .strip_prefix('.')
-        .unwrap_or(expression);
-
-    let parts: Vec<&str> = path.split('.').filter(|p| !p.is_empty()).collect();
-
-    if parts.is_empty() {
-        return "resource".to_string();
-    }
-
-    // For simple paths, use ->> for text extraction
-    if parts.len() == 1 {
-        return format!("resource->>'{}'", parts[0]);
-    }
-
-    // For nested paths, navigate with -> and end with ->>
-    let mut accessor = "resource".to_string();
-    for (i, part) in parts.iter().enumerate() {
-        if i == parts.len() - 1 {
-            accessor.push_str(&format!("->>'{part}'"));
-        } else {
-            accessor.push_str(&format!("->'{part}'"));
-        }
-    }
-    accessor
+    Err(ChainingError::InvalidChain(format!(
+        "final parameter `{}` produced no SQL condition",
+        chained.final_param
+    )))
 }
 
 #[cfg(test)]
@@ -623,10 +549,7 @@ mod tests {
         )
         .unwrap();
 
-        assert!(
-            chained.final_param_def.is_some(),
-            "Should have final param def"
-        );
+        assert_eq!(chained.final_param_def.code, "family");
 
         let mut builder = SqlBuilder::new();
         build_chained_search(&mut builder, &chained, "Observation", &registry).unwrap();
