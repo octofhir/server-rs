@@ -23,13 +23,13 @@
 //! `&>` / `&<` are NOT equivalent to `NOT(<<)` / `NOT(>>)` on wide Periods —
 //! they compare against the *opposite* bound of `q`. Do not substitute them.
 
-use crate::parameters::{SearchModifier, SearchPrefix};
+use crate::parameters::SearchModifier;
 use crate::parser::ParsedParam;
 use crate::sql_builder::{SqlBuilder, SqlBuilderError};
-use crate::types::date_ast::DateClause;
+use crate::types::date_ast::{DateClause, PeriodClause};
 use crate::{
     ir::render_date_clauses_as_or, ir::render_date_text_path_clauses_as_or,
-    ir::rewrite_date_clauses,
+    ir::render_period_path_clauses_as_or, ir::rewrite_date_clauses,
 };
 use time::{Date, Duration, Month, OffsetDateTime, PrimitiveDateTime, Time};
 
@@ -313,12 +313,6 @@ fn parse_offset_minutes(tz: &str) -> Option<i32> {
     Some(sign * (hh * 60 + mm))
 }
 
-/// Format a datetime as ISO8601/RFC3339 string.
-fn format_datetime(dt: &OffsetDateTime) -> String {
-    dt.format(&time::format_description::well_known::Rfc3339)
-        .unwrap_or_else(|_| dt.to_string())
-}
-
 /// Build a date search against the `search_idx_date` table using `tstzrange`
 /// range operators. One EXISTS subquery per value; values are OR-combined.
 ///
@@ -400,112 +394,18 @@ pub fn build_period_search(
         return build_missing_condition(builder, param, jsonb_path);
     }
 
-    let mut or_conditions = Vec::new();
-
-    for value in &param.values {
-        if value.raw.is_empty() {
-            continue;
-        }
-
-        let prefix = value.prefix.unwrap_or(SearchPrefix::Eq);
-        let date_range = parse_date_range(&value.raw)?;
-
-        let condition = build_period_condition(builder, jsonb_path, prefix, &date_range)?;
-        or_conditions.push(condition);
-    }
-
-    if !or_conditions.is_empty() {
-        builder.add_condition(SqlBuilder::build_or_clause(&or_conditions));
+    let clauses = PeriodClause::from_parsed_param(param, "")?;
+    if let Some(sql) = render_period_path_clauses_as_or(builder, &clauses, jsonb_path) {
+        builder.add_condition(sql);
     }
 
     Ok(())
 }
 
-/// Build a SQL condition for Period comparison.
-///
-/// Note: Parameters are bound as text strings and must be explicitly cast to
-/// timestamptz in the SQL to ensure proper type comparison.
-fn build_period_condition(
-    builder: &mut SqlBuilder,
-    jsonb_path: &str,
-    prefix: SearchPrefix,
-    range: &DateRange,
-) -> Result<String, SqlBuilderError> {
-    let start_str = format_datetime(&range.start);
-    let end_str = format_datetime(&range.end);
-
-    let start_path = format!("{jsonb_path}->>'start'");
-    let end_path = format!("{jsonb_path}->>'end'");
-
-    let condition = match prefix {
-        SearchPrefix::Eq => {
-            // Period overlaps with search range
-            let p1 = builder.add_timestamp_param(&start_str);
-            let p2 = builder.add_timestamp_param(&end_str);
-            format!(
-                "(({start_path} IS NULL OR ({start_path})::timestamptz < ${p2}::timestamptz) AND \
-                 ({end_path} IS NULL OR ({end_path})::timestamptz >= ${p1}::timestamptz))"
-            )
-        }
-
-        SearchPrefix::Ne => {
-            let p1 = builder.add_timestamp_param(&start_str);
-            let p2 = builder.add_timestamp_param(&end_str);
-            format!(
-                "NOT (({start_path} IS NULL OR ({start_path})::timestamptz < ${p2}::timestamptz) AND \
-                 ({end_path} IS NULL OR ({end_path})::timestamptz >= ${p1}::timestamptz))"
-            )
-        }
-
-        SearchPrefix::Gt | SearchPrefix::Sa => {
-            // Period starts after search range
-            let p = builder.add_timestamp_param(&end_str);
-            format!("({start_path})::timestamptz >= ${p}::timestamptz")
-        }
-
-        SearchPrefix::Lt | SearchPrefix::Eb => {
-            // Period ends before search range
-            let p = builder.add_timestamp_param(&start_str);
-            format!("({end_path} IS NOT NULL AND ({end_path})::timestamptz < ${p}::timestamptz)")
-        }
-
-        SearchPrefix::Ge => {
-            let p = builder.add_timestamp_param(&start_str);
-            format!(
-                "(({start_path})::timestamptz >= ${p}::timestamptz OR \
-                 ({end_path} IS NOT NULL AND ({end_path})::timestamptz >= ${p}::timestamptz))"
-            )
-        }
-
-        SearchPrefix::Le => {
-            let p = builder.add_timestamp_param(&end_str);
-            format!(
-                "(({start_path} IS NULL OR ({start_path})::timestamptz < ${p}::timestamptz) AND \
-                 ({end_path} IS NULL OR ({end_path})::timestamptz < ${p}::timestamptz))"
-            )
-        }
-
-        SearchPrefix::Ap => {
-            let duration = range.end - range.start;
-            let expansion = duration / 10;
-            let approx_start = range.start - expansion;
-            let approx_end = range.end + expansion;
-
-            let p1 = builder.add_timestamp_param(format_datetime(&approx_start));
-            let p2 = builder.add_timestamp_param(format_datetime(&approx_end));
-            format!(
-                "(({start_path} IS NULL OR ({start_path})::timestamptz < ${p2}::timestamptz) AND \
-                 ({end_path} IS NULL OR ({end_path})::timestamptz >= ${p1}::timestamptz))"
-            )
-        }
-    };
-
-    Ok(condition)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::parameters::SearchPrefix;
     use crate::parser::ParsedValue;
     use time::UtcOffset;
 
@@ -629,6 +529,20 @@ mod tests {
         let clause = builder.build_where_clause().unwrap();
         assert!(clause.contains("start"));
         assert!(clause.contains("end"));
+    }
+
+    #[test]
+    fn test_period_ne_search_uses_positive_split() {
+        let mut builder = SqlBuilder::new();
+        let param = make_param("period", "2023-06", Some(SearchPrefix::Ne));
+
+        build_period_search(&mut builder, &param, "resource->'period'").unwrap();
+
+        let clause = builder.build_where_clause().unwrap();
+        assert!(clause.contains("resource->'period'->>'start' IS NOT NULL"));
+        assert!(clause.contains("resource->'period'->>'end' IS NOT NULL"));
+        assert!(clause.contains(" OR "));
+        assert!(!clause.contains("NOT ("));
     }
 
     #[test]

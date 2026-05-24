@@ -64,6 +64,25 @@ pub struct DateClause {
     pub predicate: DatePredicate,
 }
 
+/// Period predicate over a FHIR object with `start` and `end` fields.
+#[derive(Debug, Clone)]
+pub enum PeriodPredicate {
+    Overlaps { q: DateRange },
+    NotOverlaps { q: DateRange },
+    StartsAtOrAfter { at: OffsetDateTime },
+    EndsBefore { at: OffsetDateTime },
+    HasAnyBoundAtOrAfter { at: OffsetDateTime },
+    BoundsBefore { at: OffsetDateTime },
+}
+
+/// Period predicate plus parameter metadata.
+#[derive(Debug, Clone)]
+pub struct PeriodClause {
+    pub resource_type: String,
+    pub param_code: String,
+    pub predicate: PeriodPredicate,
+}
+
 impl DateClause {
     /// Build clauses from one `ParsedParam`. One `ParsedParam` may carry
     /// multiple comma-OR'd values, each producing one clause.
@@ -194,6 +213,52 @@ impl DateClause {
                 )
             }
         }
+    }
+}
+
+impl PeriodClause {
+    /// Build period clauses from one parsed query occurrence.
+    pub fn from_parsed_param(
+        param: &ParsedParam,
+        resource_type: &str,
+    ) -> Result<Vec<PeriodClause>, SqlBuilderError> {
+        let mut out = Vec::with_capacity(param.values.len());
+        for v in &param.values {
+            if v.raw.is_empty() {
+                continue;
+            }
+
+            let prefix = v.prefix.unwrap_or(SearchPrefix::Eq);
+            let q = parse_date_range(&v.raw)?;
+            let predicate = match prefix {
+                SearchPrefix::Eq => PeriodPredicate::Overlaps { q },
+                SearchPrefix::Ne => PeriodPredicate::NotOverlaps { q },
+                SearchPrefix::Gt | SearchPrefix::Sa => {
+                    PeriodPredicate::StartsAtOrAfter { at: q.end }
+                }
+                SearchPrefix::Lt | SearchPrefix::Eb => PeriodPredicate::EndsBefore { at: q.start },
+                SearchPrefix::Ge => PeriodPredicate::HasAnyBoundAtOrAfter { at: q.start },
+                SearchPrefix::Le => PeriodPredicate::BoundsBefore { at: q.end },
+                SearchPrefix::Ap => {
+                    let duration = q.end - q.start;
+                    let expansion = duration / 10;
+                    PeriodPredicate::Overlaps {
+                        q: DateRange {
+                            start: q.start - expansion,
+                            end: q.end + expansion,
+                        },
+                    }
+                }
+            };
+
+            out.push(PeriodClause {
+                resource_type: resource_type.to_string(),
+                param_code: param.name.clone(),
+                predicate,
+            });
+        }
+
+        Ok(out)
     }
 }
 

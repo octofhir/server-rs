@@ -6,7 +6,7 @@ use crate::ir::ast::{
 use crate::ir::sql::{RangeOp, SelectStmt, SqlExpr, SqlOp, SqlTerm};
 use crate::parameters::SearchPrefix;
 use crate::sql_builder::{SqlBuilder, SqlBuilderError};
-use crate::types::date_ast::{Bound, DateClause, DatePredicate};
+use crate::types::date_ast::{Bound, DateClause, DatePredicate, PeriodClause, PeriodPredicate};
 use octofhir_core::search_index::normalize_string;
 
 /// Render date sidecar clauses as one OR group.
@@ -51,6 +51,23 @@ pub fn render_date_text_path_clauses_as_or(
     let rendered = clauses
         .iter()
         .map(|clause| render_date_text_path_clause(builder, clause, jsonb_path))
+        .collect::<Vec<_>>();
+    if rendered.is_empty() {
+        None
+    } else {
+        Some(SqlBuilder::build_or_clause(&rendered))
+    }
+}
+
+/// Render Period clauses against a JSONB object with `start` and `end`.
+pub fn render_period_path_clauses_as_or(
+    builder: &mut SqlBuilder,
+    clauses: &[PeriodClause],
+    jsonb_path: &str,
+) -> Option<String> {
+    let rendered = clauses
+        .iter()
+        .map(|clause| render_period_path_clause(builder, clause, jsonb_path))
         .collect::<Vec<_>>();
     if rendered.is_empty() {
         None
@@ -491,6 +508,56 @@ fn render_date_text_path_clause(
 ) -> String {
     let timestamp_expr = format!("({jsonb_path})::timestamptz");
     render_date_column_clause(builder, clause, &timestamp_expr)
+}
+
+fn render_period_path_clause(
+    builder: &mut SqlBuilder,
+    clause: &PeriodClause,
+    jsonb_path: &str,
+) -> String {
+    let start_path = format!("{jsonb_path}->>'start'");
+    let end_path = format!("{jsonb_path}->>'end'");
+
+    match &clause.predicate {
+        PeriodPredicate::Overlaps { q } => {
+            let p_lo = builder.add_timestamp_param(format_rfc3339(&q.start));
+            let p_hi = builder.add_timestamp_param(format_rfc3339(&q.end));
+            format!(
+                "(({start_path} IS NULL OR ({start_path})::timestamptz < ${p_hi}::timestamptz) AND \
+                 ({end_path} IS NULL OR ({end_path})::timestamptz >= ${p_lo}::timestamptz))"
+            )
+        }
+        PeriodPredicate::NotOverlaps { q } => {
+            let p_lo = builder.add_timestamp_param(format_rfc3339(&q.start));
+            let p_hi = builder.add_timestamp_param(format_rfc3339(&q.end));
+            format!(
+                "(({start_path} IS NOT NULL AND ({start_path})::timestamptz >= ${p_hi}::timestamptz) OR \
+                 ({end_path} IS NOT NULL AND ({end_path})::timestamptz < ${p_lo}::timestamptz))"
+            )
+        }
+        PeriodPredicate::StartsAtOrAfter { at } => {
+            let p = builder.add_timestamp_param(format_rfc3339(at));
+            format!("({start_path})::timestamptz >= ${p}::timestamptz")
+        }
+        PeriodPredicate::EndsBefore { at } => {
+            let p = builder.add_timestamp_param(format_rfc3339(at));
+            format!("({end_path} IS NOT NULL AND ({end_path})::timestamptz < ${p}::timestamptz)")
+        }
+        PeriodPredicate::HasAnyBoundAtOrAfter { at } => {
+            let p = builder.add_timestamp_param(format_rfc3339(at));
+            format!(
+                "(({start_path})::timestamptz >= ${p}::timestamptz OR \
+                 ({end_path} IS NOT NULL AND ({end_path})::timestamptz >= ${p}::timestamptz))"
+            )
+        }
+        PeriodPredicate::BoundsBefore { at } => {
+            let p = builder.add_timestamp_param(format_rfc3339(at));
+            format!(
+                "(({start_path} IS NULL OR ({start_path})::timestamptz < ${p}::timestamptz) AND \
+                 ({end_path} IS NULL OR ({end_path})::timestamptz < ${p}::timestamptz))"
+            )
+        }
+    }
 }
 
 fn render_timestamp_window(
