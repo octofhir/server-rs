@@ -346,7 +346,7 @@ fn debug_token_clause(clause: &TokenClause) -> DebugPredicate {
     let index_backed = token_index_backed(clause);
     let mut sql_shape = token_sql_shape(clause);
     if clause.negated {
-        sql_shape = format!("NOT ({sql_shape})");
+        sql_shape = format!("({sql_shape}) = false");
     }
 
     DebugPredicate {
@@ -747,6 +747,24 @@ mod tests {
             !json.contains("loinc") && !json.contains("8480-6"),
             "debug output must not include token values: {json}"
         );
+    }
+
+    #[test]
+    fn token_negation_debug_shape_matches_boolean_false_runtime_style() {
+        let clauses = vec![TokenClause {
+            resource_type: "Patient".to_string(),
+            param_code: "gender".to_string(),
+            predicate: TokenPredicate::AnySystemCode {
+                code: "female".to_string(),
+            },
+            negated: true,
+            index_shape: TokenIndexShape::SimpleCode,
+        }];
+
+        let plan = build_token_debug_plan("Patient", &clauses);
+
+        assert!(plan.predicates[0].sql_shape.ends_with("= false"));
+        assert!(!plan.predicates[0].sql_shape.contains("NOT ("));
     }
 
     #[test]
