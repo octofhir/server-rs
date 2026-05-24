@@ -44,6 +44,7 @@ pub fn validate_search_expr(expr: &SearchExpr) -> Result<(), ValidationError> {
                 let matches_type = matches!(
                     (param.search_type, value),
                     (SearchParameterType::Date, SearchValue::Date(_))
+                        | (SearchParameterType::Token, SearchValue::Id(_))
                         | (SearchParameterType::String, SearchValue::String(_))
                         | (SearchParameterType::Token, SearchValue::Token(_))
                         | (SearchParameterType::Number, SearchValue::Number(_))
@@ -61,4 +62,50 @@ pub fn validate_search_expr(expr: &SearchExpr) -> Result<(), ValidationError> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ir::{IdPredicate, SearchParamExpr};
+
+    #[test]
+    fn validates_resource_id_as_token_backed_ir_value() {
+        let expr = SearchExpr::Param(SearchParamExpr {
+            resource_type: "Patient".to_string(),
+            code: "_id".to_string(),
+            search_type: SearchParameterType::Token,
+            modifier: None,
+            values: vec![SearchValue::Id(IdPredicate::Equals {
+                value: "pat-1".to_string(),
+            })],
+            expression: Some("Resource.id".to_string()),
+            strategy_hint: None,
+        });
+
+        assert_eq!(validate_search_expr(&expr), Ok(()));
+    }
+
+    #[test]
+    fn rejects_resource_id_ir_value_for_non_token_type() {
+        let expr = SearchExpr::Param(SearchParamExpr {
+            resource_type: "Patient".to_string(),
+            code: "_id".to_string(),
+            search_type: SearchParameterType::String,
+            modifier: None,
+            values: vec![SearchValue::Id(IdPredicate::Equals {
+                value: "pat-1".to_string(),
+            })],
+            expression: Some("Resource.id".to_string()),
+            strategy_hint: None,
+        });
+
+        assert_eq!(
+            validate_search_expr(&expr),
+            Err(ValidationError::TypeMismatch {
+                code: "_id".to_string(),
+                search_type: SearchParameterType::String,
+            })
+        );
+    }
 }
