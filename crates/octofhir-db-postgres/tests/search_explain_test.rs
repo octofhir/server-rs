@@ -71,6 +71,7 @@ async fn representative_search_explain_json_runs_with_bound_params() {
         let build_elapsed = build_started.elapsed();
         let sql_shape = redact_sql_shape(&query.sql);
         assert_redacted_shape(case.label, &sql_shape);
+        assert_expected_shape(case.label, &sql_shape, case.expected_sql_fragments);
 
         let started = Instant::now();
         let explain = octofhir_db_postgres::queries::search::explain_built_search_query_json(
@@ -170,6 +171,7 @@ struct SearchExplainCase {
     label: &'static str,
     resource_type: &'static str,
     query: &'static str,
+    expected_sql_fragments: &'static [&'static str],
 }
 
 fn representative_queries() -> Vec<SearchExplainCase> {
@@ -178,71 +180,107 @@ fn representative_queries() -> Vec<SearchExplainCase> {
             label: "patient_id",
             resource_type: "Patient",
             query: "_id=explain-patient&_count=1",
+            expected_sql_fragments: &["r.id = $N"],
         },
         SearchExplainCase {
             label: "patient_last_updated_window",
             resource_type: "Patient",
             query: "_lastUpdated=ge2024-01-01&_lastUpdated=le2024-12-31&_count=10",
+            expected_sql_fragments: &[
+                "r.updated_at >= $N::timestamptz",
+                "r.updated_at < $N::timestamptz",
+            ],
         },
         SearchExplainCase {
             label: "patient_birthdate_window",
             resource_type: "Patient",
             query: "birthdate=ge1980-01-01&birthdate=le2000-12-31&_count=10",
+            expected_sql_fragments: &["search_idx_date", "sid.rng && tstzrange"],
         },
         SearchExplainCase {
             label: "patient_family_prefix",
             resource_type: "Patient",
             query: "family=Smith&_count=10",
+            expected_sql_fragments: &["search_idx_string", "sid.value_norm LIKE $N"],
         },
         SearchExplainCase {
             label: "patient_family_exact",
             resource_type: "Patient",
             query: "family:exact=Smith&_count=10",
+            expected_sql_fragments: &["search_idx_string", "sid.value_exact = $N"],
         },
         SearchExplainCase {
             label: "patient_identifier",
             resource_type: "Patient",
             query: "identifier=http://hospital.example/mrn|12345&_count=10",
+            expected_sql_fragments: &["r.resource @> $N::jsonb"],
         },
         SearchExplainCase {
             label: "patient_gender",
             resource_type: "Patient",
             query: "gender=female&_count=10",
+            expected_sql_fragments: &["r.resource @> $N::jsonb"],
         },
         SearchExplainCase {
             label: "patient_gender_system_only",
             resource_type: "Patient",
             query: "gender=http://example.org|&_count=10",
+            expected_sql_fragments: &["WHERE FALSE"],
         },
         SearchExplainCase {
             label: "observation_code",
             resource_type: "Observation",
             query: "code=http://loinc.org|8480-6&_count=10",
+            expected_sql_fragments: &["r.resource @> $N::jsonb"],
         },
         SearchExplainCase {
             label: "observation_subject",
             resource_type: "Observation",
             query: "subject=Patient/explain-patient&_count=10",
+            expected_sql_fragments: &[
+                "search_idx_reference",
+                "sir.ref_kind = 1",
+                "sir.target_id = $N",
+            ],
         },
         SearchExplainCase {
             label: "observation_subject_patient_family",
             resource_type: "Observation",
             query: "subject:Patient.family=Smith&_count=10",
+            expected_sql_fragments: &[
+                "JOIN patient chain0",
+                "search_idx_reference",
+                "search_idx_string",
+            ],
         },
         SearchExplainCase {
             label: "patient_has_observation_code",
             resource_type: "Patient",
             query: "_has:Observation:subject:code=http://loinc.org|8480-6&_count=10",
+            expected_sql_fragments: &[
+                "search_idx_reference hasir0",
+                "JOIN \"observation\" has0",
+                "has0.resource @> $N::jsonb",
+            ],
         },
         SearchExplainCase {
             label: "observation_quantity",
             resource_type: "Observation",
             query: "value-quantity=ge100|http://unitsofmeasure.org|mm[Hg]&_count=10",
+            expected_sql_fragments: &[
+                "(r.resource->'valueQuantity'->>'value')::numeric >= $N::numeric",
+                "r.resource @> $N::jsonb",
+            ],
         },
         SearchExplainCase {
             label: "observation_composite_code_quantity",
             resource_type: "Observation",
             query: "code-value-quantity=http://loinc.org|8480-6$ge100|http://unitsofmeasure.org|mm[Hg]&_count=10",
+            expected_sql_fragments: &[
+                "jsonb_array_elements",
+                "AS component_elem",
+                "component_elem->'valueQuantity'->>'value'",
+            ],
         },
     ]
 }
@@ -394,6 +432,15 @@ fn assert_redacted_shape(label: &str, sql_shape: &str) {
         assert!(
             !sql_shape.contains(leaked_value),
             "{label} SQL shape leaked bind value {leaked_value}: {sql_shape}"
+        );
+    }
+}
+
+fn assert_expected_shape(label: &str, sql_shape: &str, expected_fragments: &[&str]) {
+    for expected in expected_fragments {
+        assert!(
+            sql_shape.contains(expected),
+            "{label} SQL shape missing expected fragment {expected:?}: {sql_shape}"
         );
     }
 }
