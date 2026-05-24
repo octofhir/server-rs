@@ -864,6 +864,40 @@ async fn execute_count_query(pool: &PgPool, query: &BuiltQuery) -> Result<u32, S
     Ok(count as u32)
 }
 
+/// Execute PostgreSQL EXPLAIN for an already-built search query and return FORMAT JSON output.
+///
+/// `analyze = true` runs the query via `EXPLAIN ANALYZE`; callers must keep that behind an
+/// explicit internal/debug gate.
+pub async fn explain_built_search_query_json(
+    pool: &PgPool,
+    query: &BuiltQuery,
+    analyze: bool,
+) -> Result<Value, StorageError> {
+    let explain_sql = build_explain_sql(&query.sql, analyze);
+    query_scalar(&explain_sql)
+        .bind_all_params(&query.params)
+        .fetch_one(pool)
+        .await
+        .map_err(|e| {
+            tracing::warn!(
+                error = %e,
+                sql_shape = %redact_sql_shape(&query.sql),
+                analyze,
+                "Search EXPLAIN query failed"
+            );
+            StorageError::internal(format!("Search EXPLAIN failed: {e}"))
+        })
+}
+
+fn build_explain_sql(sql: &str, analyze: bool) -> String {
+    let options = if analyze {
+        "ANALYZE, BUFFERS, FORMAT JSON"
+    } else {
+        "FORMAT JSON"
+    };
+    format!("EXPLAIN ({options}) {sql}")
+}
+
 async fn execute_count_query_with_tx(
     tx: &mut PgTransaction<'_>,
     query: &BuiltQuery,
@@ -1345,6 +1379,30 @@ impl<'q> BindAllParams<'q>
     }
 }
 
+impl<'q> BindAllParams<'q>
+    for sqlx_core::query_scalar::QueryScalar<
+        'q,
+        sqlx_postgres::Postgres,
+        Value,
+        sqlx_postgres::PgArguments,
+    >
+{
+    fn bind_all_params(mut self, params: &'q [SqlValue]) -> Self {
+        for param in params {
+            self = match param {
+                SqlValue::Text(s) => self.bind(s.as_str()),
+                SqlValue::Integer(i) => self.bind(*i),
+                SqlValue::Float(f) => self.bind(*f),
+                SqlValue::Boolean(b) => self.bind(*b),
+                SqlValue::Json(s) => self.bind(s.as_str()),
+                SqlValue::Timestamp(s) => self.bind(s.as_str()),
+                SqlValue::Null => self.bind(None::<String>),
+            };
+        }
+        self
+    }
+}
+
 /// Helper trait to bind all params to a raw query (resource as text).
 trait BindAllParamsRaw<'q> {
     fn bind_all_params_raw(self, params: &'q [SqlValue]) -> Self;
@@ -1396,6 +1454,20 @@ mod tests {
         assert_eq!(
             redact_sql_shape(sql),
             "SELECT * FROM patient r WHERE r.id = $? AND r.updated_at >= $?"
+        );
+    }
+
+    #[test]
+    fn test_build_explain_sql_uses_json_format_and_optional_analyze() {
+        let sql = "SELECT * FROM patient WHERE id = $1";
+
+        assert_eq!(
+            build_explain_sql(sql, false),
+            "EXPLAIN (FORMAT JSON) SELECT * FROM patient WHERE id = $1"
+        );
+        assert_eq!(
+            build_explain_sql(sql, true),
+            "EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) SELECT * FROM patient WHERE id = $1"
         );
     }
 }
