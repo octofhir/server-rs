@@ -66,8 +66,9 @@ pub fn build_number_debug_plan(resource_type: &str, clauses: &[NumberClause]) ->
 
 /// Build safe debug output for quantity predicates.
 ///
-/// Current quantity search uses JSONB numeric casts plus JSONB system/code
-/// comparisons, not a production sidecar.
+/// Current quantity search uses JSONB numeric casts. When system/code
+/// constraints are present, runtime also adds full-resource JSONB containment
+/// so the generic resource GIN index can prefilter before numeric comparison.
 pub fn build_quantity_debug_plan(
     resource_type: &str,
     clauses: &[QuantityClause],
@@ -248,14 +249,31 @@ fn number_sql_shape(predicate: &NumberPredicate) -> String {
 }
 
 fn debug_quantity_clause(clause: &QuantityClause) -> DebugPredicate {
+    let has_gin_prefilter = quantity_has_gin_prefilter(&clause.predicate);
+
     DebugPredicate {
         param_code: clause.param_code.clone(),
         search_type: SearchParameterType::Quantity,
-        strategy: IndexStrategy::JsonbTraversal,
-        expected_index: None,
-        index_backed: false,
+        strategy: if has_gin_prefilter {
+            IndexStrategy::JsonbContainment
+        } else {
+            IndexStrategy::JsonbTraversal
+        },
+        expected_index: if has_gin_prefilter {
+            Some(format!("idx_{}_gin", clause.resource_type.to_lowercase()))
+        } else {
+            None
+        },
+        index_backed: has_gin_prefilter,
         sql_shape: quantity_sql_shape(&clause.predicate),
     }
+}
+
+fn quantity_has_gin_prefilter(predicate: &QuantityPredicate) -> bool {
+    matches!(
+        predicate,
+        QuantityPredicate::Comparison { system, code, .. } if system.is_some() || code.is_some()
+    )
 }
 
 fn quantity_sql_shape(predicate: &QuantityPredicate) -> String {
@@ -285,11 +303,21 @@ fn quantity_sql_shape(predicate: &QuantityPredicate) -> String {
                 SearchPrefix::Le => "(jsonb_path->>'value')::numeric <= $value".to_string(),
             };
 
-            if system.is_some() {
-                shape.push_str(" AND jsonb_path->>'system' = $system");
-            }
-            if code.is_some() {
-                shape.push_str(" AND (jsonb_path->>'code' = $code OR jsonb_path->>'unit' = $code)");
+            match (system.is_some(), code.is_some()) {
+                (false, false) => {}
+                (true, false) => {
+                    shape.push_str(" AND resource @> {quantity_path: {system: $system}}")
+                }
+                (false, true) => {
+                    shape.push_str(
+                        " AND (resource @> {quantity_path: {code: $code}} OR resource @> {quantity_path: {unit: $code}})",
+                    );
+                }
+                (true, true) => {
+                    shape.push_str(
+                        " AND (resource @> {quantity_path: {system: $system, code: $code}} OR resource @> {quantity_path: {system: $system, unit: $code}})",
+                    );
+                }
             }
             shape
         }
@@ -659,7 +687,7 @@ mod tests {
     }
 
     #[test]
-    fn quantity_debug_plan_marks_jsonb_cast_as_non_index_backed_and_redacted() {
+    fn quantity_debug_plan_marks_gin_prefilter_and_redacts_values() {
         let clauses = vec![QuantityClause {
             resource_type: "Observation".to_string(),
             param_code: "value-quantity".to_string(),
@@ -678,12 +706,16 @@ mod tests {
             plan.predicates[0].search_type,
             SearchParameterType::Quantity
         );
-        assert_eq!(plan.predicates[0].strategy, IndexStrategy::JsonbTraversal);
-        assert!(!plan.predicates[0].index_backed);
-        assert_eq!(plan.predicates[0].expected_index, None);
+        assert_eq!(plan.predicates[0].strategy, IndexStrategy::JsonbContainment);
+        assert!(plan.predicates[0].index_backed);
+        assert_eq!(
+            plan.predicates[0].expected_index,
+            Some("idx_observation_gin".to_string())
+        );
         assert!(plan.predicates[0].sql_shape.contains("::numeric >= $lo"));
-        assert!(plan.predicates[0].sql_shape.contains("system' = $system"));
-        assert!(plan.predicates[0].sql_shape.contains("unit' = $code"));
+        assert!(plan.predicates[0].sql_shape.contains("resource @>"));
+        assert!(plan.predicates[0].sql_shape.contains("system: $system"));
+        assert!(plan.predicates[0].sql_shape.contains("unit: $code"));
         assert!(
             !json.contains("5.5") && !json.contains("unitsofmeasure") && !json.contains("mg"),
             "debug output must not include bound quantity values: {json}"

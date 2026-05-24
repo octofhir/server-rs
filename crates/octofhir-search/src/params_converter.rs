@@ -1907,7 +1907,7 @@ mod tests {
     }
 
     #[test]
-    fn quantity_debug_plan_marks_jsonb_numeric_cast_non_index_backed() {
+    fn quantity_debug_plan_marks_gin_prefilter_for_system_code() {
         let registry = quantity_registry_with_expression();
         let params = parse_query_string(
             "value-quantity=5.5|http://unitsofmeasure.org|mg&_count=5",
@@ -1938,19 +1938,24 @@ mod tests {
         );
         assert_eq!(
             plan.predicates[0].strategy,
-            crate::ir::IndexStrategy::JsonbTraversal
+            crate::ir::IndexStrategy::JsonbContainment
         );
-        assert!(!plan.predicates[0].index_backed);
-        assert_eq!(plan.predicates[0].expected_index, None);
+        assert!(plan.predicates[0].index_backed);
+        assert_eq!(
+            plan.predicates[0].expected_index,
+            Some("idx_observation_gin".to_string())
+        );
         assert!(plan.predicates[0].sql_shape.contains("::numeric >= $lo"));
-        assert!(plan.predicates[0].sql_shape.contains("system' = $system"));
-        assert!(plan.predicates[0].sql_shape.contains("unit' = $code"));
+        assert!(plan.predicates[0].sql_shape.contains("resource @>"));
+        assert!(plan.predicates[0].sql_shape.contains("system: $system"));
+        assert!(plan.predicates[0].sql_shape.contains("unit: $code"));
 
         let built = converted.builder.with_raw_resource(true).build().unwrap();
         assert!(
             built.sql.contains("::numeric >= $1::numeric")
-                && built.sql.contains("::numeric < $2::numeric"),
-            "quantity runtime path should use half-open numeric cast, got: {}",
+                && built.sql.contains("::numeric < $2::numeric")
+                && built.sql.contains("r.resource @>"),
+            "quantity runtime path should use numeric cast plus GIN containment, got: {}",
             built.sql
         );
         assert!(
@@ -1967,11 +1972,11 @@ mod tests {
             .join("\n");
         assert!(rendered_params.contains("5.45"));
         assert!(rendered_params.contains("5.55"));
-        assert!(rendered_params.contains("http://unitsofmeasure.org"));
-        assert!(rendered_params.contains("mg"));
+        assert!(rendered_params.contains("\"system\":\"http://unitsofmeasure.org\""));
+        assert!(rendered_params.contains("\"unit\":\"mg\""));
 
         let json = serde_json::to_string(&plan).unwrap();
-        assert!(json.contains("jsonb_traversal"));
+        assert!(json.contains("jsonb_containment"));
         assert!(
             !json.contains("5.5") && !json.contains("unitsofmeasure") && !json.contains("mg"),
             "debug output must stay redacted: {json}"
