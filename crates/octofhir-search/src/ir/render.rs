@@ -1,8 +1,8 @@
 use crate::ir::ast::{
-    CompositeClause, CompositeComponentPredicate, CompositePredicate, IdClause, IdPredicate,
-    NumberClause, NumberPredicate, QuantityClause, QuantityPredicate, ReferenceClause,
-    ReferencePredicate, StringClause, StringPredicate, TokenClause, TokenPredicate, UriClause,
-    UriPredicate,
+    CompositeClause, CompositeComponentPredicate, CompositePredicate, CompositeSafety, IdClause,
+    IdPredicate, NumberClause, NumberPredicate, QuantityClause, QuantityPredicate, ReferenceClause,
+    ReferencePredicate, StringClause, StringPredicate, TokenClause, TokenIndexShape,
+    TokenPredicate, UriClause, UriPredicate,
 };
 use crate::ir::sql::{RangeOp, SelectStmt, SqlExpr, SqlOp, SqlTerm};
 use crate::parameters::SearchParameterType;
@@ -702,7 +702,13 @@ fn render_composite_clause(
     clause: &CompositeClause,
 ) -> Result<String, SqlBuilderError> {
     match &clause.predicate {
-        CompositePredicate::Tuple { components, .. } => {
+        CompositePredicate::Tuple { components, safety } => {
+            if matches!(safety, CompositeSafety::RequiresSameElement)
+                && let Some(sql) = render_composite_same_component_element(builder, components)?
+            {
+                return Ok(sql);
+            }
+
             let conditions = components
                 .iter()
                 .map(|component| render_composite_component(builder, component))
@@ -717,6 +723,40 @@ fn render_composite_clause(
             "composite :missing requires a materialized composite strategy".to_string(),
         )),
     }
+}
+
+fn render_composite_same_component_element(
+    builder: &mut SqlBuilder,
+    components: &[CompositeComponentPredicate],
+) -> Result<Option<String>, SqlBuilderError> {
+    let Some(suffixes) = components
+        .iter()
+        .map(|component| strip_component_suffix(&component.spec.expression))
+        .collect::<Option<Vec<_>>>()
+    else {
+        return Ok(None);
+    };
+
+    let conditions = components
+        .iter()
+        .zip(suffixes.iter())
+        .map(|(component, suffix)| {
+            let json_path =
+                suffix_jsonb_path("component_elem", suffix, component_text_leaf(component));
+            render_composite_component_at_path(builder, component, &json_path)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+
+    if conditions.is_empty() {
+        return Ok(Some("TRUE".to_string()));
+    }
+
+    let component_path = format!("{}->'component'", builder.resource_column());
+    Ok(Some(format!(
+        "EXISTS (SELECT 1 FROM jsonb_array_elements({}) AS component_elem WHERE {})",
+        jsonb_array_or_singleton(&component_path),
+        conditions.join(" AND ")
+    )))
 }
 
 fn render_id_clause(builder: &mut SqlBuilder, clause: &IdClause, id_column: &str) -> String {
@@ -746,6 +786,14 @@ fn render_composite_component(
     component: &CompositeComponentPredicate,
 ) -> Result<String, SqlBuilderError> {
     let json_path = expression_to_jsonb_path(&component.spec.expression);
+    render_composite_component_at_path(builder, component, &json_path)
+}
+
+fn render_composite_component_at_path(
+    builder: &mut SqlBuilder,
+    component: &CompositeComponentPredicate,
+    json_path: &str,
+) -> Result<String, SqlBuilderError> {
     match component.spec.search_type {
         SearchParameterType::Token => {
             render_composite_token_component(builder, &component.value, &json_path)
@@ -785,34 +833,86 @@ fn render_composite_component(
     }
 }
 
+fn component_text_leaf(component: &CompositeComponentPredicate) -> bool {
+    matches!(
+        component.spec.search_type,
+        SearchParameterType::String
+            | SearchParameterType::Date
+            | SearchParameterType::Number
+            | SearchParameterType::Uri
+    )
+}
+
+fn strip_component_suffix(expression: &str) -> Option<String> {
+    let path = expression
+        .split_once('.')
+        .map_or(expression, |(head, tail)| {
+            if head
+                .chars()
+                .next()
+                .is_some_and(|ch| ch.is_ascii_uppercase())
+            {
+                tail
+            } else {
+                expression
+            }
+        });
+    path.strip_prefix("component.")
+        .map(str::to_string)
+        .or_else(|| {
+            path.strip_prefix("Observation.component.")
+                .map(str::to_string)
+        })
+}
+
+fn suffix_jsonb_path(base: &str, suffix: &str, text_leaf: bool) -> String {
+    let parts = suffix
+        .split('.')
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>();
+    if parts.is_empty() {
+        return base.to_string();
+    }
+
+    let mut acc = base.to_string();
+    for (index, part) in parts.iter().enumerate() {
+        let is_leaf = index == parts.len() - 1;
+        let op = if is_leaf && text_leaf { "->>" } else { "->" };
+        acc.push_str(&format!("{op}'{part}'"));
+    }
+    acc
+}
+
+fn jsonb_array_or_singleton(path: &str) -> String {
+    format!(
+        "CASE \
+         WHEN jsonb_typeof({path}) = 'array' THEN {path} \
+         WHEN {path} IS NULL THEN '[]'::jsonb \
+         ELSE jsonb_build_array({path}) \
+         END"
+    )
+}
+
 fn render_composite_token_component(
     builder: &mut SqlBuilder,
     value: &str,
     json_path: &str,
 ) -> Result<String, SqlBuilderError> {
-    if let Some((system, code)) = value.split_once('|') {
-        let base = to_object_path(json_path);
-        match (system.is_empty(), code.is_empty()) {
-            (true, false) => {
-                let p = builder.add_text_param(code);
-                Ok(format!("({base}->>'code' = ${p})"))
-            }
-            (false, true) => {
-                let p = builder.add_text_param(system);
-                Ok(format!("({base}->>'system' = ${p})"))
-            }
-            _ => {
-                let p1 = builder.add_text_param(system);
-                let p2 = builder.add_text_param(code);
-                Ok(format!(
-                    "({base}->>'system' = ${p1} AND {base}->>'code' = ${p2})"
-                ))
-            }
-        }
-    } else {
-        let p = builder.add_text_param(value);
-        Ok(format!("({json_path} = ${p})"))
-    }
+    let clauses = TokenClause::from_parsed_param(
+        &crate::parser::ParsedParam {
+            name: "composite-token".to_string(),
+            modifier: None,
+            values: vec![crate::parser::ParsedValue {
+                prefix: None,
+                raw: value.to_string(),
+            }],
+        },
+        "",
+        TokenIndexShape::Coding,
+    )?;
+
+    render_token_path_clauses_as_or(builder, &clauses, json_path)?
+        .ok_or_else(|| SqlBuilderError::InvalidSearchValue("empty token component".to_string()))
 }
 
 fn render_composite_quantity_component(
@@ -2146,6 +2246,47 @@ mod tests {
         assert_eq!(builder.params()[1].as_str(), "5.55");
         assert_eq!(builder.params()[2].as_str(), "http://unitsofmeasure.org");
         assert_eq!(builder.params()[3].as_str(), "mg");
+    }
+
+    #[test]
+    fn composite_component_tuple_renders_same_element_exists() {
+        let mut builder = SqlBuilder::new();
+        let clauses = CompositeClause::from_parsed_param(
+            &crate::parser::ParsedParam {
+                name: "code-value-quantity".to_string(),
+                modifier: None,
+                values: vec![crate::parser::ParsedValue {
+                    prefix: None,
+                    raw: "http://loinc.org|8480-6$ge100|http://unitsofmeasure.org|mm[Hg]"
+                        .to_string(),
+                }],
+            },
+            "Observation",
+            &[
+                crate::ir::CompositeComponentSpec {
+                    code: "code".to_string(),
+                    search_type: SearchParameterType::Token,
+                    expression: "Observation.component.code".to_string(),
+                },
+                crate::ir::CompositeComponentSpec {
+                    code: "value-quantity".to_string(),
+                    search_type: SearchParameterType::Quantity,
+                    expression: "Observation.component.valueQuantity".to_string(),
+                },
+            ],
+        )
+        .unwrap();
+
+        let sql = render_composite_clauses_as_or(&mut builder, &clauses)
+            .unwrap()
+            .unwrap();
+
+        assert!(sql.contains("jsonb_array_elements"));
+        assert!(sql.contains("AS component_elem"));
+        assert!(sql.contains("component_elem->'code'->'coding' @>"));
+        assert!(sql.contains("component_elem->'valueQuantity'->>'value'"));
+        assert!(!sql.contains("resource->'component'->'code'"));
+        assert!(!sql.contains("loinc") && !sql.contains("8480-6") && !sql.contains("mm[Hg]"));
     }
 
     #[test]

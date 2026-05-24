@@ -141,7 +141,7 @@ async fn seed_representative_data(storage: &PostgresStorage) {
                 "code": "mm[Hg]",
                 "unit": "mm[Hg]"
             },
-            "component": {
+            "component": [{
                 "code": {
                     "coding": [{
                         "system": "http://loinc.org",
@@ -154,7 +154,7 @@ async fn seed_representative_data(storage: &PostgresStorage) {
                     "code": "mm[Hg]",
                     "unit": "mm[Hg]"
                 }
-            }
+            }]
         }),
     ] {
         storage
