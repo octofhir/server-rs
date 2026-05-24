@@ -15,10 +15,10 @@ pub mod validate;
 
 pub use ast::{
     CompositeClause, CompositeComponentPredicate, CompositeComponentSpec, CompositePredicate,
-    CompositeSafety, DateParamExpr, NumberClause, NumberPredicate, QuantityClause,
-    QuantityPredicate, ReferenceClause, ReferencePredicate, SearchExpr, SearchParamExpr,
-    SearchValue, StringClause, StringPredicate, TokenClause, TokenIndexShape, TokenPredicate,
-    TokenSetModifier, UriClause, UriPredicate,
+    CompositeSafety, DateParamExpr, IdClause, IdPredicate, NumberClause, NumberPredicate,
+    QuantityClause, QuantityPredicate, ReferenceClause, ReferencePredicate, SearchExpr,
+    SearchParamExpr, SearchValue, StringClause, StringPredicate, TokenClause, TokenIndexShape,
+    TokenPredicate, TokenSetModifier, UriClause, UriPredicate,
 };
 pub use debug::{
     DebugPredicate, SearchDebugPlan, build_composite_debug_plan, build_date_debug_plan,
@@ -30,7 +30,7 @@ pub use registry::{
 };
 pub use render::{
     render_composite_clauses_as_or, render_date_clauses_as_or, render_date_column_clauses_as_or,
-    render_date_text_path_clauses_as_or, render_number_clauses_as_or,
+    render_date_text_path_clauses_as_or, render_id_clauses_as_or, render_number_clauses_as_or,
     render_period_path_clauses_as_or, render_quantity_clauses_as_or,
     render_reference_clauses_as_or, render_sql_expr, render_string_array_clauses_as_or,
     render_string_clauses_as_or, render_string_human_name_clauses_as_or,

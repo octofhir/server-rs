@@ -1,7 +1,8 @@
 use crate::ir::ast::{
-    CompositeClause, CompositeComponentPredicate, CompositePredicate, NumberClause,
-    NumberPredicate, QuantityClause, QuantityPredicate, ReferenceClause, ReferencePredicate,
-    StringClause, StringPredicate, TokenClause, TokenPredicate, UriClause, UriPredicate,
+    CompositeClause, CompositeComponentPredicate, CompositePredicate, IdClause, IdPredicate,
+    NumberClause, NumberPredicate, QuantityClause, QuantityPredicate, ReferenceClause,
+    ReferencePredicate, StringClause, StringPredicate, TokenClause, TokenPredicate, UriClause,
+    UriPredicate,
 };
 use crate::ir::sql::{RangeOp, SelectStmt, SqlExpr, SqlOp, SqlTerm};
 use crate::parameters::SearchParameterType;
@@ -90,6 +91,23 @@ pub fn render_composite_clauses_as_or(
         Ok(None)
     } else {
         Ok(Some(SqlBuilder::build_or_clause(&rendered)))
+    }
+}
+
+/// Render logical id clauses as one OR group over a resource id column.
+pub fn render_id_clauses_as_or(
+    builder: &mut SqlBuilder,
+    clauses: &[IdClause],
+    id_column: &str,
+) -> Option<String> {
+    let rendered = clauses
+        .iter()
+        .map(|clause| render_id_clause(builder, clause, id_column))
+        .collect::<Vec<_>>();
+    if rendered.is_empty() {
+        None
+    } else {
+        Some(SqlBuilder::build_or_clause(&rendered))
     }
 }
 
@@ -596,6 +614,28 @@ fn render_composite_clause(
         CompositePredicate::Missing { .. } => Err(SqlBuilderError::NotImplemented(
             "composite :missing requires a materialized composite strategy".to_string(),
         )),
+    }
+}
+
+fn render_id_clause(builder: &mut SqlBuilder, clause: &IdClause, id_column: &str) -> String {
+    let condition = match &clause.predicate {
+        IdPredicate::Equals { value } => {
+            let p = builder.add_text_param(value);
+            format!("{id_column} = ${p}")
+        }
+        IdPredicate::Missing { is_missing } => {
+            if *is_missing {
+                format!("{id_column} IS NULL")
+            } else {
+                format!("{id_column} IS NOT NULL")
+            }
+        }
+    };
+
+    if clause.negated {
+        format!("({condition}) = false")
+    } else {
+        condition
     }
 }
 
@@ -1822,6 +1862,25 @@ mod tests {
         assert!(!sql.contains("NOT"));
         assert_eq!(builder.params()[0].as_str(), "2024-06-15T00:00:00Z");
         assert_eq!(builder.params()[1].as_str(), "2024-06-16T00:00:00Z");
+    }
+
+    #[test]
+    fn id_render_not_uses_boolean_negation_without_not_wrapper() {
+        let mut builder = SqlBuilder::new();
+        let clauses = vec![IdClause {
+            resource_type: "Patient".to_string(),
+            param_code: "_id".to_string(),
+            predicate: IdPredicate::Equals {
+                value: "pat-1".to_string(),
+            },
+            negated: true,
+        }];
+
+        let sql = render_id_clauses_as_or(&mut builder, &clauses, "r.id").unwrap();
+
+        assert_eq!(sql, "(r.id = $1) = false");
+        assert!(!sql.contains("NOT ("));
+        assert_eq!(builder.params()[0].as_str(), "pat-1");
     }
 
     #[test]

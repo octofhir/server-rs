@@ -30,6 +30,7 @@ pub struct SearchParamExpr {
 /// Type-specific predicate payload.
 #[derive(Debug, Clone)]
 pub enum SearchValue {
+    Id(IdPredicate),
     Date(DatePredicate),
     String(StringPredicate),
     Token(TokenPredicate),
@@ -38,6 +39,67 @@ pub enum SearchValue {
     Quantity(QuantityPredicate),
     Uri(UriPredicate),
     Composite(CompositePredicate),
+}
+
+/// Logical resource id predicate.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum IdPredicate {
+    Equals { value: String },
+    Missing { is_missing: bool },
+}
+
+/// Logical id SearchParameter occurrence over the resource id column.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IdClause {
+    pub resource_type: String,
+    pub param_code: String,
+    pub predicate: IdPredicate,
+    pub negated: bool,
+}
+
+impl IdClause {
+    pub fn from_parsed_param(
+        param: &ParsedParam,
+        resource_type: &str,
+    ) -> Result<Vec<Self>, SqlBuilderError> {
+        if matches!(param.modifier, Some(SearchModifier::Missing)) {
+            let is_missing = param
+                .values
+                .first()
+                .map(|v| v.raw.eq_ignore_ascii_case("true"))
+                .unwrap_or(false);
+            return Ok(vec![Self {
+                resource_type: resource_type.to_string(),
+                param_code: param.name.clone(),
+                predicate: IdPredicate::Missing { is_missing },
+                negated: false,
+            }]);
+        }
+
+        let negated = matches!(param.modifier, Some(SearchModifier::Not));
+        if let Some(modifier) = &param.modifier
+            && !negated
+        {
+            return Err(SqlBuilderError::InvalidModifier(format!("{modifier:?}")));
+        }
+
+        let mut clauses = Vec::new();
+        for value in &param.values {
+            if value.raw.is_empty() {
+                continue;
+            }
+            clauses.push(Self {
+                resource_type: resource_type.to_string(),
+                param_code: param.name.clone(),
+                predicate: IdPredicate::Equals {
+                    value: value.raw.clone(),
+                },
+                negated,
+            });
+        }
+
+        Ok(clauses)
+    }
 }
 
 /// Date SearchParameter occurrence.

@@ -6,11 +6,12 @@
 use crate::chaining::{build_chained_search, is_chained_parameter, parse_chained_parameter};
 use crate::include::{is_include_parameter, is_revinclude_parameter};
 use crate::ir::{
-    CompositeClause, NumberClause, QuantityClause, ReferenceClause, SearchDebugPlan, StringClause,
-    TokenClause, TokenIndexShape, build_composite_debug_plan, build_date_debug_plan,
+    CompositeClause, IdClause, NumberClause, QuantityClause, ReferenceClause, SearchDebugPlan,
+    StringClause, TokenClause, TokenIndexShape, build_composite_debug_plan, build_date_debug_plan,
     build_number_debug_plan, build_quantity_debug_plan, build_reference_debug_plan,
     build_string_debug_plan, build_string_text_debug_predicate, build_token_debug_plan,
-    render_date_clauses_as_or, resolve_composite_component_specs, rewrite_date_clauses,
+    render_date_clauses_as_or, render_id_clauses_as_or, resolve_composite_component_specs,
+    rewrite_date_clauses,
 };
 use crate::parameters::{ElementTypeHint, SearchParameter, SearchParameterType, SearchPrefix};
 use crate::parser::{ParsedParam, ParsedValue};
@@ -260,15 +261,9 @@ pub fn build_query_from_params_with_config(
 
             // Handle _id specially — it maps to the database column `r.id`, not JSONB
             if parsed.name == "_id" {
-                let mut or_conditions = Vec::new();
-                for value in &parsed.values {
-                    if !value.raw.is_empty() {
-                        let p = sql_builder.add_text_param(&value.raw);
-                        or_conditions.push(format!("r.id = ${p}"));
-                    }
-                }
-                if !or_conditions.is_empty() {
-                    sql_builder.add_condition(SqlBuilder::build_or_clause(&or_conditions));
+                let clauses = IdClause::from_parsed_param(&parsed, resource_type)?;
+                if let Some(sql) = render_id_clauses_as_or(&mut sql_builder, &clauses, "r.id") {
+                    sql_builder.add_condition(sql);
                 }
                 continue;
             }
@@ -1179,6 +1174,41 @@ mod tests {
             "expected _lastUpdated/_id column sort, got: {}",
             built.sql
         );
+    }
+
+    #[test]
+    fn test_id_search_uses_column_bound_params() {
+        let registry = SearchParameterRegistry::new();
+        crate::common::register_common_parameters(&registry);
+        let params = parse_query_string("_id=pat-1,pat-2&_count=5", 10, 100);
+        let converted = build_query_from_params("Patient", &params, &registry, "public").unwrap();
+        let built = converted.builder.with_raw_resource(true).build().unwrap();
+
+        assert!(
+            built.sql.contains("(r.id = $1 OR r.id = $2)"),
+            "expected _id OR over r.id column, got: {}",
+            built.sql
+        );
+        assert!(!built.sql.contains("pat-1"));
+        assert!(matches!(&built.params[0], SqlValue::Text(value) if value == "pat-1"));
+        assert!(matches!(&built.params[1], SqlValue::Text(value) if value == "pat-2"));
+    }
+
+    #[test]
+    fn test_id_not_search_uses_boolean_negation_without_not_wrapper() {
+        let registry = SearchParameterRegistry::new();
+        crate::common::register_common_parameters(&registry);
+        let params = parse_query_string("_id:not=pat-1&_count=5", 10, 100);
+        let converted = build_query_from_params("Patient", &params, &registry, "public").unwrap();
+        let built = converted.builder.with_raw_resource(true).build().unwrap();
+
+        assert!(
+            built.sql.contains("(r.id = $1) = false"),
+            "expected _id:not boolean negation over r.id column, got: {}",
+            built.sql
+        );
+        assert!(!built.sql.contains("NOT (r.id ="));
+        assert!(matches!(&built.params[0], SqlValue::Text(value) if value == "pat-1"));
     }
 
     #[test]
