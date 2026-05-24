@@ -6,7 +6,7 @@ use crate::ir::ast::{
 use crate::ir::sql::{RangeOp, SelectStmt, SqlExpr, SqlOp, SqlTerm};
 use crate::parameters::SearchPrefix;
 use crate::sql_builder::{SqlBuilder, SqlBuilderError};
-use crate::types::date_ast::DateClause;
+use crate::types::date_ast::{Bound, DateClause, DatePredicate};
 use octofhir_core::search_index::normalize_string;
 
 /// Render date sidecar clauses as one OR group.
@@ -17,6 +17,23 @@ pub fn render_date_clauses_as_or(
     let rendered = clauses
         .iter()
         .map(|clause| clause.render(builder))
+        .collect::<Vec<_>>();
+    if rendered.is_empty() {
+        None
+    } else {
+        Some(SqlBuilder::build_or_clause(&rendered))
+    }
+}
+
+/// Render date clauses against a single timestamptz column.
+pub fn render_date_column_clauses_as_or(
+    builder: &mut SqlBuilder,
+    clauses: &[DateClause],
+    column: &str,
+) -> Option<String> {
+    let rendered = clauses
+        .iter()
+        .map(|clause| render_date_column_clause(builder, clause, column))
         .collect::<Vec<_>>();
     if rendered.is_empty() {
         None
@@ -412,6 +429,66 @@ fn render_string_human_name_clause(
                 format!("({array_path} IS NOT NULL AND jsonb_array_length({array_path}) > 0)")
             }
         }
+    }
+}
+
+fn render_date_column_clause(
+    builder: &mut SqlBuilder,
+    clause: &DateClause,
+    column: &str,
+) -> String {
+    match &clause.predicate {
+        DatePredicate::Contains { q } => render_timestamp_window(
+            builder,
+            column,
+            Some(Bound {
+                at: q.start,
+                inclusive: true,
+            }),
+            Some(Bound {
+                at: q.end,
+                inclusive: false,
+            }),
+        ),
+        DatePredicate::NotContains { q } => {
+            let p_lo = builder.add_timestamp_param(format_rfc3339(&q.start));
+            let p_hi = builder.add_timestamp_param(format_rfc3339(&q.end));
+            format!("({column} < ${p_lo}::timestamptz OR {column} >= ${p_hi}::timestamptz)")
+        }
+        DatePredicate::Overlap { lo, hi } => render_timestamp_window(builder, column, *lo, *hi),
+        DatePredicate::StrictlyAfter { q } => {
+            let p = builder.add_timestamp_param(format_rfc3339(&q.end));
+            format!("({column} >= ${p}::timestamptz)")
+        }
+        DatePredicate::StrictlyBefore { q } => {
+            let p = builder.add_timestamp_param(format_rfc3339(&q.start));
+            format!("({column} < ${p}::timestamptz)")
+        }
+    }
+}
+
+fn render_timestamp_window(
+    builder: &mut SqlBuilder,
+    column: &str,
+    lo: Option<Bound>,
+    hi: Option<Bound>,
+) -> String {
+    let mut parts = Vec::new();
+    if let Some(bound) = lo {
+        let p = builder.add_timestamp_param(format_rfc3339(&bound.at));
+        let op = if bound.inclusive { ">=" } else { ">" };
+        parts.push(format!("{column} {op} ${p}::timestamptz"));
+    }
+    if let Some(bound) = hi {
+        let p = builder.add_timestamp_param(format_rfc3339(&bound.at));
+        let op = if bound.inclusive { "<=" } else { "<" };
+        parts.push(format!("{column} {op} ${p}::timestamptz"));
+    }
+
+    match parts.len() {
+        0 => "TRUE".to_string(),
+        1 => format!("({})", parts[0]),
+        _ => format!("({})", parts.join(" AND ")),
     }
 }
 
@@ -873,6 +950,12 @@ fn token_set_modifier_name(modifier: crate::ir::TokenSetModifier) -> &'static st
         crate::ir::TokenSetModifier::Below => "below",
         crate::ir::TokenSetModifier::Above => "above",
     }
+}
+
+fn format_rfc3339(value: &time::OffsetDateTime) -> String {
+    value
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap_or_else(|_| value.to_string())
 }
 
 fn simple_code_token_value(predicate: &TokenPredicate) -> Result<&str, SqlBuilderError> {
@@ -1426,6 +1509,33 @@ mod tests {
             render_sql_expr(&expr),
             "sid.rng && tstzrange($1, NULL, '[)')"
         );
+    }
+
+    #[test]
+    fn date_column_render_ne_uses_positive_range_split() {
+        let mut builder = SqlBuilder::new();
+        let clauses = DateClause::from_parsed_param(
+            &crate::parser::ParsedParam {
+                name: "_lastUpdated".to_string(),
+                modifier: None,
+                values: vec![crate::parser::ParsedValue {
+                    prefix: Some(SearchPrefix::Ne),
+                    raw: "2024-06-15".to_string(),
+                }],
+            },
+            "Patient",
+        )
+        .unwrap();
+
+        let sql = render_date_column_clauses_as_or(&mut builder, &clauses, "r.updated_at").unwrap();
+
+        assert_eq!(
+            sql,
+            "(r.updated_at < $1::timestamptz OR r.updated_at >= $2::timestamptz)"
+        );
+        assert!(!sql.contains("NOT"));
+        assert_eq!(builder.params()[0].as_str(), "2024-06-15T00:00:00Z");
+        assert_eq!(builder.params()[1].as_str(), "2024-06-16T00:00:00Z");
     }
 
     #[test]

@@ -45,7 +45,9 @@ pub use token::{
 };
 pub use uri::{build_uri_array_search, build_uri_search};
 
-use crate::ir::{resolve_composite_component_specs, search_type_name};
+use crate::ir::{
+    render_date_column_clauses_as_or, resolve_composite_component_specs, search_type_name,
+};
 use crate::parameters::{ElementTypeHint, SearchModifier, SearchParameter, SearchParameterType};
 use crate::parser::ParsedParam;
 use crate::registry::SearchParameterRegistry;
@@ -294,8 +296,7 @@ fn build_last_updated_search(
     builder: &mut SqlBuilder,
     param: &ParsedParam,
 ) -> Result<(), SqlBuilderError> {
-    use crate::parameters::SearchPrefix;
-    use crate::types::date::parse_date_range;
+    use crate::types::date_ast::DateClause;
 
     if param.values.is_empty() {
         return Ok(());
@@ -328,72 +329,9 @@ fn build_last_updated_search(
         return Ok(());
     }
 
-    let mut or_conditions = Vec::new();
-
-    for value in &param.values {
-        if value.raw.is_empty() {
-            continue;
-        }
-
-        let prefix = value.prefix.unwrap_or(SearchPrefix::Eq);
-        let range = parse_date_range(&value.raw)?;
-        let start = range
-            .start
-            .format(&time::format_description::well_known::Rfc3339)
-            .unwrap_or_else(|_| range.start.to_string());
-        let end = range
-            .end
-            .format(&time::format_description::well_known::Rfc3339)
-            .unwrap_or_else(|_| range.end.to_string());
-
-        let condition = match prefix {
-            SearchPrefix::Eq => {
-                let p1 = builder.add_timestamp_param(&start);
-                let p2 = builder.add_timestamp_param(&end);
-                format!("({column} >= ${p1}::timestamptz AND {column} < ${p2}::timestamptz)")
-            }
-            SearchPrefix::Ne => {
-                let p1 = builder.add_timestamp_param(&start);
-                let p2 = builder.add_timestamp_param(&end);
-                format!("NOT ({column} >= ${p1}::timestamptz AND {column} < ${p2}::timestamptz)")
-            }
-            SearchPrefix::Gt | SearchPrefix::Sa => {
-                let p = builder.add_timestamp_param(&end);
-                format!("({column} >= ${p}::timestamptz)")
-            }
-            SearchPrefix::Lt | SearchPrefix::Eb => {
-                let p = builder.add_timestamp_param(&start);
-                format!("({column} < ${p}::timestamptz)")
-            }
-            SearchPrefix::Ge => {
-                let p = builder.add_timestamp_param(&start);
-                format!("({column} >= ${p}::timestamptz)")
-            }
-            SearchPrefix::Le => {
-                let p = builder.add_timestamp_param(&end);
-                format!("({column} < ${p}::timestamptz)")
-            }
-            SearchPrefix::Ap => {
-                let duration: time::Duration = range.end - range.start;
-                let expansion = duration / 10;
-                let approx_start: time::OffsetDateTime = range.start - expansion;
-                let approx_end: time::OffsetDateTime = range.end + expansion;
-                let s = approx_start
-                    .format(&time::format_description::well_known::Rfc3339)
-                    .unwrap_or_default();
-                let e = approx_end
-                    .format(&time::format_description::well_known::Rfc3339)
-                    .unwrap_or_default();
-                let p1 = builder.add_timestamp_param(s);
-                let p2 = builder.add_timestamp_param(e);
-                format!("({column} >= ${p1}::timestamptz AND {column} < ${p2}::timestamptz)")
-            }
-        };
-        or_conditions.push(condition);
-    }
-
-    if !or_conditions.is_empty() {
-        builder.add_condition(SqlBuilder::build_or_clause(&or_conditions));
+    let clauses = DateClause::from_parsed_param(param, "")?;
+    if let Some(sql) = render_date_column_clauses_as_or(builder, &clauses, &column) {
+        builder.add_condition(sql);
     }
 
     Ok(())
@@ -553,6 +491,7 @@ fn is_identifier_param(code: &str, expression: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::parameters::SearchPrefix;
     use crate::parser::ParsedValue;
 
     #[test]
@@ -641,6 +580,37 @@ mod tests {
 
         let clause = builder.build_where_clause();
         assert!(clause.is_some());
+    }
+
+    #[test]
+    fn test_dispatch_last_updated_ne_uses_column_ir_without_not() {
+        let mut builder = SqlBuilder::with_resource_column("r.resource");
+        let param = ParsedParam {
+            name: "_lastUpdated".to_string(),
+            modifier: None,
+            values: vec![ParsedValue {
+                prefix: Some(SearchPrefix::Ne),
+                raw: "2024-06-15".to_string(),
+            }],
+        };
+        let def = Arc::new(
+            SearchParameter::new(
+                "_lastUpdated",
+                "http://hl7.org/fhir/SearchParameter/Resource-lastUpdated",
+                SearchParameterType::Date,
+                vec!["Patient".to_string()],
+            )
+            .with_expression("Resource.meta.lastUpdated"),
+        );
+
+        dispatch_search(&mut builder, &param, &def, "Patient").unwrap();
+
+        let clause = builder.build_where_clause().unwrap();
+        assert_eq!(
+            clause,
+            "(r.updated_at < $1::timestamptz OR r.updated_at >= $2::timestamptz)"
+        );
+        assert!(!clause.contains("NOT"));
     }
 
     #[test]
