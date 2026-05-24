@@ -2100,6 +2100,69 @@ mod tests {
     }
 
     #[test]
+    fn identifier_token_debug_plan_matches_gin_runtime_path() {
+        let registry = SearchParameterRegistry::new();
+        registry.register(
+            SearchParameter::new(
+                "identifier",
+                "http://hl7.org/fhir/SearchParameter/Patient-identifier",
+                SearchParameterType::Token,
+                vec!["Patient".to_string()],
+            )
+            .with_expression("Patient.identifier")
+            .with_element_type_hint(ElementTypeHint::Identifier),
+        );
+        let params = parse_query_string(
+            "identifier=http://hospital.example/mrn|12345&_count=5",
+            10,
+            100,
+        );
+        let config = SearchConfig {
+            unknown_param_handling: UnknownParamHandling::Lenient,
+            collect_debug_plan: true,
+        };
+
+        let converted = build_native_ir_query_from_params_with_config(
+            "Patient", &params, &registry, "public", &config,
+        )
+        .unwrap();
+        let plan = converted.debug_plan.expect("debug plan collected");
+
+        assert_eq!(plan.resource_type, "Patient");
+        assert_eq!(plan.predicates.len(), 1);
+        assert_eq!(plan.predicates[0].param_code, "identifier");
+        assert_eq!(
+            plan.predicates[0].strategy,
+            crate::ir::IndexStrategy::JsonbContainment
+        );
+        assert!(plan.predicates[0].index_backed);
+        assert_eq!(
+            plan.predicates[0].expected_index,
+            Some("idx_patient_gin".to_string())
+        );
+        assert!(
+            plan.predicates[0]
+                .sql_shape
+                .contains("resource @> {identifier")
+        );
+
+        let built = converted.builder.with_raw_resource(true).build().unwrap();
+        assert!(
+            built.sql.contains("r.resource @>") && built.sql.contains("::jsonb"),
+            "identifier token runtime path should use resource containment, got: {}",
+            built.sql
+        );
+
+        let json = serde_json::to_string(&plan).unwrap();
+        assert!(json.contains("jsonb_containment"));
+        assert!(json.contains("idx_patient_gin"));
+        assert!(
+            !json.contains("hospital.example") && !json.contains("12345"),
+            "debug output must stay redacted: {json}"
+        );
+    }
+
+    #[test]
     fn token_query_builder_preserves_fhir_token_forms() {
         let registry = token_registry_with_expression();
 

@@ -460,11 +460,10 @@ fn debug_reference_clause(clause: &ReferenceClause) -> DebugPredicate {
 }
 
 fn token_strategy(clause: &TokenClause) -> IndexStrategy {
-    match clause.predicate {
-        TokenPredicate::DisplayText { .. }
-        | TokenPredicate::Missing { .. }
-        | TokenPredicate::TerminologySet { .. } => IndexStrategy::JsonbTraversal,
-        _ => IndexStrategy::JsonbContainment,
+    if token_uses_containment_shape(clause) {
+        IndexStrategy::JsonbContainment
+    } else {
+        IndexStrategy::JsonbTraversal
     }
 }
 
@@ -480,12 +479,26 @@ fn token_index_backed(clause: &TokenClause) -> bool {
     if clause.negated {
         return false;
     }
+    token_uses_containment_shape(clause)
+}
+
+fn token_uses_containment_shape(clause: &TokenClause) -> bool {
     match (&clause.index_shape, &clause.predicate) {
         (_, TokenPredicate::DisplayText { .. })
         | (_, TokenPredicate::Missing { .. })
-        | (_, TokenPredicate::TerminologySet { .. }) => false,
-        (TokenIndexShape::Identifier, _) => false,
-        (TokenIndexShape::SimpleCode, TokenPredicate::AnySystemCode { .. }) => true,
+        | (_, TokenPredicate::TerminologySet { .. })
+        | (_, TokenPredicate::NoSystemCode { .. }) => false,
+        (
+            TokenIndexShape::Identifier,
+            TokenPredicate::AnySystemCode { .. }
+            | TokenPredicate::SystemAnyCode { .. }
+            | TokenPredicate::SystemCode { .. }
+            | TokenPredicate::IdentifierOfType { .. },
+        ) => true,
+        (
+            TokenIndexShape::SimpleCode,
+            TokenPredicate::AnySystemCode { .. } | TokenPredicate::SystemCode { .. },
+        ) => true,
         (TokenIndexShape::SimpleCode, _) => false,
         (TokenIndexShape::Coding, TokenPredicate::AnySystemCode { .. })
         | (TokenIndexShape::Coding, TokenPredicate::SystemCode { .. }) => true,
@@ -498,7 +511,7 @@ fn token_sql_shape(clause: &TokenClause) -> String {
         TokenPredicate::AnySystemCode { .. } => match clause.index_shape {
             TokenIndexShape::SimpleCode => "resource @> {code: $code}".to_string(),
             TokenIndexShape::Identifier => {
-                "EXISTS identifier WHERE ident.value = $code".to_string()
+                "resource @> {identifier: [{value: $code}]}".to_string()
             }
             TokenIndexShape::Coding => {
                 "resource @> {coding: [{code: $code}]} OR resource @> {code: $code}".to_string()
@@ -512,7 +525,7 @@ fn token_sql_shape(clause: &TokenClause) -> String {
         },
         TokenPredicate::SystemAnyCode { .. } => match clause.index_shape {
             TokenIndexShape::Identifier => {
-                "EXISTS identifier WHERE ident.system = $system".to_string()
+                "resource @> {identifier: [{system: $system}]}".to_string()
             }
             _ => "EXISTS coding WHERE coding.system = $system".to_string(),
         },
@@ -524,7 +537,7 @@ fn token_sql_shape(clause: &TokenClause) -> String {
             }
         },
         TokenPredicate::IdentifierOfType { .. } => {
-            "EXISTS identifier WHERE ident.type.coding @> [{system: $system, code: $code}] AND ident.value = $value".to_string()
+            "resource @> {identifier: [{type: {coding: [{system: $system, code: $code}]}, value: $value}]}".to_string()
         }
         TokenPredicate::TerminologySet { modifier, .. } => {
             format!("terminology {} expansion over token code", token_set_modifier_name(*modifier))
@@ -779,6 +792,60 @@ mod tests {
             !json.contains("loinc") && !json.contains("8480-6"),
             "debug output must not include token values: {json}"
         );
+    }
+
+    #[test]
+    fn identifier_token_debug_plan_marks_gin_containment_forms() {
+        let clauses = vec![TokenClause {
+            resource_type: "Patient".to_string(),
+            param_code: "identifier".to_string(),
+            predicate: TokenPredicate::SystemCode {
+                system: "http://hospital.example/mrn".to_string(),
+                code: "12345".to_string(),
+            },
+            negated: false,
+            index_shape: TokenIndexShape::Identifier,
+        }];
+
+        let plan = build_token_debug_plan("Patient", &clauses);
+        let json = serde_json::to_string(&plan).unwrap();
+
+        assert_eq!(plan.predicates[0].strategy, IndexStrategy::JsonbContainment);
+        assert!(plan.predicates[0].index_backed);
+        assert_eq!(
+            plan.predicates[0].expected_index,
+            Some("idx_patient_gin".to_string())
+        );
+        assert!(
+            plan.predicates[0]
+                .sql_shape
+                .contains("resource @> {identifier")
+        );
+        assert!(plan.predicates[0].sql_shape.contains("value: $code"));
+        assert!(
+            !json.contains("hospital.example") && !json.contains("12345"),
+            "debug output must not include identifier token values: {json}"
+        );
+    }
+
+    #[test]
+    fn identifier_no_system_token_debug_plan_stays_traversal() {
+        let clauses = vec![TokenClause {
+            resource_type: "Patient".to_string(),
+            param_code: "identifier".to_string(),
+            predicate: TokenPredicate::NoSystemCode {
+                code: "12345".to_string(),
+            },
+            negated: false,
+            index_shape: TokenIndexShape::Identifier,
+        }];
+
+        let plan = build_token_debug_plan("Patient", &clauses);
+
+        assert_eq!(plan.predicates[0].strategy, IndexStrategy::JsonbTraversal);
+        assert!(!plan.predicates[0].index_backed);
+        assert_eq!(plan.predicates[0].expected_index, None);
+        assert!(plan.predicates[0].sql_shape.contains("system IS NULL"));
     }
 
     #[test]
