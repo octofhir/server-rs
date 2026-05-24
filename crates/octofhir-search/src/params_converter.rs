@@ -2159,7 +2159,7 @@ mod tests {
     }
 
     #[test]
-    fn reference_debug_plan_marks_sidecar_path_and_runtime_stays_unchanged() {
+    fn reference_debug_plan_marks_sidecar_path_and_runtime_uses_index_only() {
         let registry = reference_registry_with_expression();
         let params = parse_query_string("subject=Patient/pat-123&_count=5", 10, 100);
         let config = SearchConfig {
@@ -2197,8 +2197,8 @@ mod tests {
 
         let built = converted.builder.with_raw_resource(true).build().unwrap();
         assert!(
-            built.sql.contains("search_idx_reference") && built.sql.contains(" OR "),
-            "reference runtime path should keep index plus JSONB fallback, got: {}",
+            built.sql.contains("search_idx_reference") && !built.sql.contains(" OR "),
+            "reference runtime path should use sidecar only, got: {}",
             built.sql
         );
         assert!(

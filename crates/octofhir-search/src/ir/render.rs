@@ -1366,20 +1366,7 @@ fn render_reference_clause(
                 )
             }
         }
-        predicate => {
-            let index_cond = render_reference_index_condition(builder, clause, predicate);
-            if let Some(ref_value) = &clause.jsonb_fallback_value {
-                let jsonb_cond = render_jsonb_reference_condition(
-                    builder,
-                    jsonb_path,
-                    ref_value,
-                    &clause.target_types,
-                );
-                format!("({index_cond} OR {jsonb_cond})")
-            } else {
-                index_cond
-            }
-        }
+        predicate => render_reference_index_condition(builder, clause, predicate),
     }
 }
 
@@ -1457,48 +1444,6 @@ fn render_reference_index_condition(
         }
         ReferencePredicate::Missing { .. } => unreachable!("handled by caller"),
     }
-}
-
-fn render_jsonb_reference_condition(
-    builder: &mut SqlBuilder,
-    jsonb_path: &str,
-    ref_value: &str,
-    target_types: &[String],
-) -> String {
-    let mut candidates: Vec<String> = Vec::new();
-
-    if ref_value.contains('/') {
-        candidates.push(ref_value.to_string());
-    } else if target_types.len() == 1 {
-        candidates.push(format!("{}/{}", target_types[0], ref_value));
-        candidates.push(ref_value.to_string());
-    } else {
-        for target_type in target_types {
-            candidates.push(format!("{target_type}/{ref_value}"));
-        }
-        candidates.push(ref_value.to_string());
-    }
-
-    let param_nums = candidates
-        .iter()
-        .map(|candidate| builder.add_text_param(candidate))
-        .collect::<Vec<_>>();
-
-    let single_match = param_nums
-        .iter()
-        .map(|p| format!("({jsonb_path}->>'reference' = ${p})"))
-        .collect::<Vec<_>>()
-        .join(" OR ");
-    let array_match = param_nums
-        .iter()
-        .map(|p| format!("e->>'reference' = ${p}"))
-        .collect::<Vec<_>>()
-        .join(" OR ");
-
-    format!(
-        "(({single_match}) OR (jsonb_typeof({jsonb_path}) = 'array' AND EXISTS (\
-         SELECT 1 FROM jsonb_array_elements({jsonb_path}) AS e WHERE {array_match})))"
-    )
 }
 
 fn build_nested_json_containment(
@@ -1981,7 +1926,7 @@ mod tests {
     }
 
     #[test]
-    fn reference_render_preserves_default_index_plus_jsonb_fallback() {
+    fn reference_render_uses_sidecar_without_jsonb_fallback() {
         let mut builder = SqlBuilder::with_resource_column("r.resource");
         let clauses = ReferenceClause::from_parsed_param(
             &crate::parser::ParsedParam {
@@ -2004,12 +1949,12 @@ mod tests {
         assert!(sql.contains("sir.ref_kind = 1"));
         assert!(sql.contains("sir.target_type = $3"));
         assert!(sql.contains("sir.target_id = $4"));
-        assert!(sql.contains(" OR "));
-        assert!(sql.contains("r.resource->'subject'->>'reference' = $5"));
+        assert!(!sql.contains(" OR "));
+        assert!(!sql.contains("r.resource->'subject'->>'reference'"));
         assert!(!sql.contains("pat-123") && !sql.contains("Patient/pat-123"));
         assert_eq!(builder.params()[2].as_str(), "Patient");
         assert_eq!(builder.params()[3].as_str(), "pat-123");
-        assert_eq!(builder.params()[4].as_str(), "Patient/pat-123");
+        assert_eq!(builder.params().len(), 4);
     }
 
     #[test]

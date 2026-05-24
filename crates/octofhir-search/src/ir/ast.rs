@@ -751,15 +751,14 @@ pub enum ReferencePredicate {
 /// Reference SearchParameter occurrence.
 ///
 /// Clauses are OR-combined because they come from one comma-separated query
-/// occurrence. Runtime SQL still includes the legacy JSONB fallback for default
-/// reference matching; this IR node exposes the sidecar intent for debug.
+/// occurrence. Local/external/identifier reference matching is sidecar-backed;
+/// `:missing` remains a JSONB field-presence check.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReferenceClause {
     pub resource_type: String,
     pub param_code: String,
     pub predicate: ReferencePredicate,
     pub target_types: Vec<String>,
-    pub jsonb_fallback_value: Option<String>,
 }
 
 impl ReferenceClause {
@@ -795,7 +794,6 @@ impl ReferenceClause {
                 param_code: param.name.clone(),
                 predicate,
                 target_types: target_types.to_vec(),
-                jsonb_fallback_value: matches!(param.modifier, None).then(|| value.raw.clone()),
             });
         }
 

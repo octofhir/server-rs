@@ -777,7 +777,6 @@ mod tests {
                 target_id: "pat-123".to_string(),
             },
             target_types: vec!["Patient".to_string()],
-            jsonb_fallback_value: Some("Patient/pat-123".to_string()),
         }];
 
         let plan = build_reference_debug_plan("Observation", &clauses);
@@ -811,7 +810,6 @@ mod tests {
             param_code: "subject".to_string(),
             predicate: ReferencePredicate::Missing { is_missing: true },
             target_types: vec!["Patient".to_string()],
-            jsonb_fallback_value: None,
         }];
 
         let plan = build_reference_debug_plan("Observation", &clauses);
