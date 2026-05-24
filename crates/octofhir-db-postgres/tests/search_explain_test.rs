@@ -60,6 +60,7 @@ async fn representative_search_explain_json_runs_with_bound_params() {
     );
     seed_representative_data(&storage).await;
     let synthetic_rows = synthetic_row_count();
+    let explain_analyze = explain_analyze_enabled();
     if synthetic_rows > 0 {
         let started = Instant::now();
         seed_synthetic_data(&storage, synthetic_rows).await;
@@ -70,6 +71,10 @@ async fn representative_search_explain_json_runs_with_bound_params() {
             started.elapsed().as_secs_f64() * 1000.0
         );
     }
+    println!(
+        "search_explain_config | synthetic_rows={} | explain_analyze={}",
+        synthetic_rows, explain_analyze
+    );
 
     for case in representative_queries() {
         let build_started = Instant::now();
@@ -88,7 +93,9 @@ async fn representative_search_explain_json_runs_with_bound_params() {
 
         let started = Instant::now();
         let explain = octofhir_db_postgres::queries::search::explain_built_search_query_json(
-            &pool, &query, false,
+            &pool,
+            &query,
+            explain_analyze,
         )
         .await
         .unwrap_or_else(|error| panic!("{} EXPLAIN should run: {error}", case.label));
@@ -113,14 +120,22 @@ async fn representative_search_explain_json_runs_with_bound_params() {
 
         let mut node_types = Vec::new();
         collect_node_types(&explain[0]["Plan"], &mut node_types);
+        let planning_ms = explain[0].get("Planning Time").and_then(Value::as_f64);
+        let analyze_execution_ms = explain[0].get("Execution Time").and_then(Value::as_f64);
+        let analyze_actual_rows = explain[0]["Plan"]
+            .get("Actual Rows")
+            .and_then(Value::as_f64);
         println!(
-            "{} | resource={} | build_ms={:.3} | explain_ms={:.3} | execute_ms={:.3} | rows={} | params={} | sql_shape_hash={:016x} | nodes={:?}\nsql_shape={}",
+            "{} | resource={} | build_ms={:.3} | explain_ms={:.3} | execute_ms={:.3} | rows={} | analyze_planning_ms={} | analyze_execution_ms={} | analyze_actual_rows={} | params={} | sql_shape_hash={:016x} | nodes={:?}\nsql_shape={}",
             case.label,
             case.resource_type,
             build_elapsed.as_secs_f64() * 1000.0,
             elapsed.as_secs_f64() * 1000.0,
             execute_elapsed.as_secs_f64() * 1000.0,
             row_count,
+            format_optional_f64(planning_ms),
+            format_optional_f64(analyze_execution_ms),
+            format_optional_f64(analyze_actual_rows),
             query.params.len(),
             stable_hash(&sql_shape),
             node_types,
@@ -163,6 +178,24 @@ fn synthetic_row_count() -> usize {
         .ok()
         .and_then(|value| value.parse::<usize>().ok())
         .unwrap_or(0)
+}
+
+fn explain_analyze_enabled() -> bool {
+    env::var("OCTOFHIR_SEARCH_EXPLAIN_ANALYZE")
+        .ok()
+        .map(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+        .unwrap_or(false)
+}
+
+fn format_optional_f64(value: Option<f64>) -> String {
+    value
+        .map(|value| format!("{value:.3}"))
+        .unwrap_or_else(|| "n/a".to_string())
 }
 
 async fn seed_representative_data(storage: &PostgresStorage) {
