@@ -34,8 +34,8 @@ pub use render::{
     render_string_clauses_as_or, render_string_human_name_clauses_as_or,
     render_string_path_clauses_as_or, render_token_coding_clauses_as_or,
     render_token_identifier_clauses_as_or, render_token_path_clauses_as_or,
-    render_token_simple_code_clauses_as_or, render_uri_array_clauses_as_or,
-    render_uri_clauses_as_or,
+    render_token_scalar_code_clauses_as_or, render_token_simple_code_clauses_as_or,
+    render_uri_array_clauses_as_or, render_uri_clauses_as_or,
 };
 pub use rewrite::{rewrite_date_clauses, rewrite_search_expr};
 pub use strategy::{IndexStrategy, StrategyDecision};

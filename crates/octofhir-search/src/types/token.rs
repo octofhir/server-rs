@@ -18,7 +18,7 @@ use crate::terminology::HybridTerminologyProvider;
 use crate::{
     ir::TokenClause, ir::TokenIndexShape, ir::render_token_coding_clauses_as_or,
     ir::render_token_identifier_clauses_as_or, ir::render_token_path_clauses_as_or,
-    ir::render_token_simple_code_clauses_as_or,
+    ir::render_token_scalar_code_clauses_as_or, ir::render_token_simple_code_clauses_as_or,
 };
 use sqlx_postgres::PgPool;
 
@@ -420,52 +420,10 @@ pub fn build_code_search(
     param: &ParsedParam,
     jsonb_path: &str,
 ) -> Result<(), SqlBuilderError> {
-    if param.values.is_empty() {
-        return Ok(());
+    let clauses = TokenClause::from_parsed_param(param, "", TokenIndexShape::SimpleCode)?;
+    if let Some(sql) = render_token_scalar_code_clauses_as_or(builder, &clauses, jsonb_path)? {
+        builder.add_condition(sql);
     }
-
-    let mut or_conditions = Vec::new();
-
-    for value in &param.values {
-        if value.raw.is_empty() {
-            continue;
-        }
-
-        // For simple codes, ignore system part
-        let (_, code) = parse_token_value(&value.raw);
-
-        let condition = match &param.modifier {
-            None => {
-                let p = builder.add_text_param(code);
-                format!("{jsonb_path} = ${p}")
-            }
-
-            Some(SearchModifier::Not) => {
-                let p = builder.add_text_param(code);
-                format!("{jsonb_path} != ${p}")
-            }
-
-            Some(SearchModifier::Missing) => {
-                let is_missing = value.raw.eq_ignore_ascii_case("true");
-                if is_missing {
-                    format!("({jsonb_path} IS NULL OR {jsonb_path} = 'null')")
-                } else {
-                    format!("({jsonb_path} IS NOT NULL AND {jsonb_path} != 'null')")
-                }
-            }
-
-            Some(other) => {
-                return Err(SqlBuilderError::InvalidModifier(format!("{other:?}")));
-            }
-        };
-
-        or_conditions.push(condition);
-    }
-
-    if !or_conditions.is_empty() {
-        builder.add_condition(SqlBuilder::build_or_clause(&or_conditions));
-    }
-
     Ok(())
 }
 
@@ -569,6 +527,19 @@ mod tests {
 
         let clause = builder.build_where_clause().unwrap();
         assert!(clause.contains("resource->>'gender' = $1"));
+    }
+
+    #[test]
+    fn test_code_search_not_modifier_uses_boolean_false_check() {
+        let mut builder = SqlBuilder::new();
+        let param = make_param("gender", "female", Some(SearchModifier::Not));
+
+        build_code_search(&mut builder, &param, "resource->>'gender'").unwrap();
+
+        let clause = builder.build_where_clause().unwrap();
+        assert_eq!(clause, "(resource->>'gender' = $1) = false");
+        assert!(!clause.contains("NOT ("));
+        assert_eq!(builder.params()[0].as_str(), "female");
     }
 
     #[test]
