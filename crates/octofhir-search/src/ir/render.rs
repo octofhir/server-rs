@@ -42,6 +42,23 @@ pub fn render_date_column_clauses_as_or(
     }
 }
 
+/// Render date clauses against a JSONB text extraction path cast to timestamptz.
+pub fn render_date_text_path_clauses_as_or(
+    builder: &mut SqlBuilder,
+    clauses: &[DateClause],
+    jsonb_path: &str,
+) -> Option<String> {
+    let rendered = clauses
+        .iter()
+        .map(|clause| render_date_text_path_clause(builder, clause, jsonb_path))
+        .collect::<Vec<_>>();
+    if rendered.is_empty() {
+        None
+    } else {
+        Some(SqlBuilder::build_or_clause(&rendered))
+    }
+}
+
 /// Render string sidecar clauses as one OR group.
 pub fn render_string_clauses_as_or(
     builder: &mut SqlBuilder,
@@ -465,6 +482,15 @@ fn render_date_column_clause(
             format!("({column} < ${p}::timestamptz)")
         }
     }
+}
+
+fn render_date_text_path_clause(
+    builder: &mut SqlBuilder,
+    clause: &DateClause,
+    jsonb_path: &str,
+) -> String {
+    let timestamp_expr = format!("({jsonb_path})::timestamptz");
+    render_date_column_clause(builder, clause, &timestamp_expr)
 }
 
 fn render_timestamp_window(

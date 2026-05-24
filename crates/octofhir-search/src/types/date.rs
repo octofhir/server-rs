@@ -27,7 +27,10 @@ use crate::parameters::{SearchModifier, SearchPrefix};
 use crate::parser::ParsedParam;
 use crate::sql_builder::{SqlBuilder, SqlBuilderError};
 use crate::types::date_ast::DateClause;
-use crate::{ir::render_date_clauses_as_or, ir::rewrite_date_clauses};
+use crate::{
+    ir::render_date_clauses_as_or, ir::render_date_text_path_clauses_as_or,
+    ir::rewrite_date_clauses,
+};
 use time::{Date, Duration, Month, OffsetDateTime, PrimitiveDateTime, Time};
 
 /// Half-open `[start, end)` UTC range built from a FHIR date / dateTime /
@@ -56,22 +59,9 @@ pub fn build_date_search(
         return build_missing_condition(builder, param, jsonb_path);
     }
 
-    let mut or_conditions = Vec::new();
-
-    for value in &param.values {
-        if value.raw.is_empty() {
-            continue;
-        }
-
-        let prefix = value.prefix.unwrap_or(SearchPrefix::Eq);
-        let date_range = parse_date_range(&value.raw)?;
-
-        let condition = build_date_condition(builder, jsonb_path, prefix, &date_range)?;
-        or_conditions.push(condition);
-    }
-
-    if !or_conditions.is_empty() {
-        builder.add_condition(SqlBuilder::build_or_clause(&or_conditions));
+    let clauses = DateClause::from_parsed_param(param, "")?;
+    if let Some(sql) = render_date_text_path_clauses_as_or(builder, &clauses, jsonb_path) {
+        builder.add_condition(sql);
     }
 
     Ok(())
@@ -95,93 +85,6 @@ fn build_missing_condition(
         builder.add_condition(condition);
     }
     Ok(())
-}
-
-/// Build a SQL condition for date comparison.
-///
-/// Note: Parameters are bound as text strings and must be explicitly cast to
-/// timestamptz in the SQL to ensure proper type comparison.
-fn build_date_condition(
-    builder: &mut SqlBuilder,
-    jsonb_path: &str,
-    prefix: SearchPrefix,
-    range: &DateRange,
-) -> Result<String, SqlBuilderError> {
-    let start_str = format_datetime(&range.start);
-    let end_str = format_datetime(&range.end);
-
-    let condition = match prefix {
-        SearchPrefix::Eq => {
-            // Resource value overlaps with parameter range
-            // resource.start < param.end AND resource.end >= param.start
-            let p1 = builder.add_timestamp_param(&start_str);
-            let p2 = builder.add_timestamp_param(&end_str);
-            format!(
-                "(({jsonb_path})::timestamptz >= ${p1}::timestamptz AND ({jsonb_path})::timestamptz < ${p2}::timestamptz)"
-            )
-        }
-
-        SearchPrefix::Ne => {
-            // Resource value does NOT overlap with parameter range
-            let p1 = builder.add_timestamp_param(&start_str);
-            let p2 = builder.add_timestamp_param(&end_str);
-            format!(
-                "NOT (({jsonb_path})::timestamptz >= ${p1}::timestamptz AND ({jsonb_path})::timestamptz < ${p2}::timestamptz)"
-            )
-        }
-
-        SearchPrefix::Gt => {
-            // Resource value is after parameter range
-            let p = builder.add_timestamp_param(&end_str);
-            format!("({jsonb_path})::timestamptz >= ${p}::timestamptz")
-        }
-
-        SearchPrefix::Lt => {
-            // Resource value is before parameter range
-            let p = builder.add_timestamp_param(&start_str);
-            format!("({jsonb_path})::timestamptz < ${p}::timestamptz")
-        }
-
-        SearchPrefix::Ge => {
-            // Resource value >= parameter start
-            let p = builder.add_timestamp_param(&start_str);
-            format!("({jsonb_path})::timestamptz >= ${p}::timestamptz")
-        }
-
-        SearchPrefix::Le => {
-            // Resource value < parameter end
-            let p = builder.add_timestamp_param(&end_str);
-            format!("({jsonb_path})::timestamptz < ${p}::timestamptz")
-        }
-
-        SearchPrefix::Sa => {
-            // Starts after - same as gt for point-in-time
-            let p = builder.add_timestamp_param(&end_str);
-            format!("({jsonb_path})::timestamptz >= ${p}::timestamptz")
-        }
-
-        SearchPrefix::Eb => {
-            // Ends before - same as lt for point-in-time
-            let p = builder.add_timestamp_param(&start_str);
-            format!("({jsonb_path})::timestamptz < ${p}::timestamptz")
-        }
-
-        SearchPrefix::Ap => {
-            // Approximate: expand the range by 10% on each side
-            let duration = range.end - range.start;
-            let expansion = duration / 10;
-            let approx_start = range.start - expansion;
-            let approx_end = range.end + expansion;
-
-            let p1 = builder.add_timestamp_param(format_datetime(&approx_start));
-            let p2 = builder.add_timestamp_param(format_datetime(&approx_end));
-            format!(
-                "(({jsonb_path})::timestamptz >= ${p1}::timestamptz AND ({jsonb_path})::timestamptz < ${p2}::timestamptz)"
-            )
-        }
-    };
-
-    Ok(condition)
 }
 
 /// Parse a FHIR date / dateTime / instant string into a half-open `[start, end)`
@@ -681,6 +584,21 @@ mod tests {
 
         let clause = builder.build_where_clause().unwrap();
         assert!(clause.contains("<"));
+    }
+
+    #[test]
+    fn test_date_ne_search_uses_positive_range_split() {
+        let mut builder = SqlBuilder::new();
+        let param = make_param("date", "2023-06-15", Some(SearchPrefix::Ne));
+
+        build_date_search(&mut builder, &param, "resource->>'date'").unwrap();
+
+        let clause = builder.build_where_clause().unwrap();
+        assert_eq!(
+            clause,
+            "((resource->>'date')::timestamptz < $1::timestamptz OR (resource->>'date')::timestamptz >= $2::timestamptz)"
+        );
+        assert!(!clause.contains("NOT"));
     }
 
     #[test]
