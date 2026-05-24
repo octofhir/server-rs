@@ -76,6 +76,23 @@ pub fn render_string_array_clauses_as_or(
     }
 }
 
+/// Render HumanName string clauses across family, text, and given.
+pub fn render_string_human_name_clauses_as_or(
+    builder: &mut SqlBuilder,
+    clauses: &[StringClause],
+    array_path: &str,
+) -> Option<String> {
+    let rendered = clauses
+        .iter()
+        .map(|clause| render_string_human_name_clause(builder, clause, array_path))
+        .collect::<Vec<_>>();
+    if rendered.is_empty() {
+        None
+    } else {
+        Some(SqlBuilder::build_or_clause(&rendered))
+    }
+}
+
 /// Render reference clauses as one OR group.
 pub fn render_reference_clauses_as_or(
     builder: &mut SqlBuilder,
@@ -318,6 +335,60 @@ fn render_uri_array_clause(
             )
         }
         UriPredicate::Missing { is_missing } => {
+            if *is_missing {
+                format!("({array_path} IS NULL OR jsonb_array_length({array_path}) = 0)")
+            } else {
+                format!("({array_path} IS NOT NULL AND jsonb_array_length({array_path}) > 0)")
+            }
+        }
+    }
+}
+
+fn render_string_human_name_clause(
+    builder: &mut SqlBuilder,
+    clause: &StringClause,
+    array_path: &str,
+) -> String {
+    match &clause.predicate {
+        StringPredicate::Prefix { value } => {
+            let normalized = normalize_string(value);
+            let escaped = escape_like_pattern(&normalized);
+            let p = builder.add_text_param(format!("{escaped}%"));
+            format!(
+                "EXISTS (SELECT 1 FROM jsonb_array_elements({array_path}) AS name WHERE \
+                 f_unaccent_lower(name->>'family') LIKE ${p} OR \
+                 f_unaccent_lower(name->>'text') LIKE ${p} OR \
+                 (jsonb_typeof(name->'given') = 'array' AND EXISTS (SELECT 1 FROM jsonb_array_elements_text(name->'given') AS g WHERE f_unaccent_lower(g) LIKE ${p})))"
+            )
+        }
+        StringPredicate::Exact { value } => {
+            let p = builder.add_text_param(value);
+            format!(
+                "EXISTS (SELECT 1 FROM jsonb_array_elements({array_path}) AS name WHERE \
+                 name->>'family' = ${p} OR \
+                 name->>'text' = ${p} OR \
+                 (jsonb_typeof(name->'given') = 'array' AND EXISTS (SELECT 1 FROM jsonb_array_elements_text(name->'given') AS g WHERE g = ${p})))"
+            )
+        }
+        StringPredicate::Contains { value } => {
+            let normalized = normalize_string(value);
+            let escaped = escape_like_pattern(&normalized);
+            let p = builder.add_text_param(format!("%{escaped}%"));
+            format!(
+                "EXISTS (SELECT 1 FROM jsonb_array_elements({array_path}) AS name WHERE \
+                 f_unaccent_lower(name->>'family') LIKE ${p} OR \
+                 f_unaccent_lower(name->>'text') LIKE ${p} OR \
+                 (jsonb_typeof(name->'given') = 'array' AND EXISTS (SELECT 1 FROM jsonb_array_elements_text(name->'given') AS g WHERE f_unaccent_lower(g) LIKE ${p})))"
+            )
+        }
+        StringPredicate::Text { value } => {
+            let resource_col = builder.resource_column().to_string();
+            let p = builder.add_text_param(value);
+            format!(
+                "to_tsvector('english', {resource_col}->>'text') @@ plainto_tsquery('english', ${p})"
+            )
+        }
+        StringPredicate::Missing { is_missing } => {
             if *is_missing {
                 format!("({array_path} IS NULL OR jsonb_array_length({array_path}) = 0)")
             } else {
@@ -1379,6 +1450,35 @@ mod tests {
         assert!(sql.contains("elem->>'given'"));
         assert!(sql.contains("jsonb_array_elements_text(elem->'given')"));
         assert_eq!(builder.params()[0].as_str(), "%ann%");
+    }
+
+    #[test]
+    fn string_human_name_render_searches_family_text_and_given() {
+        let mut builder = SqlBuilder::new();
+        let clauses = StringClause::from_parsed_param(
+            &crate::parser::ParsedParam {
+                name: "name".to_string(),
+                modifier: None,
+                values: vec![crate::parser::ParsedValue {
+                    prefix: None,
+                    raw: "Smíth".to_string(),
+                }],
+            },
+            "Patient",
+        )
+        .unwrap();
+
+        let sql =
+            render_string_human_name_clauses_as_or(&mut builder, &clauses, "resource->'name'")
+                .unwrap();
+
+        assert!(sql.contains("jsonb_array_elements(resource->'name')"));
+        assert!(sql.contains("name->>'family'"));
+        assert!(sql.contains("name->>'text'"));
+        assert!(sql.contains("jsonb_array_elements_text"));
+        assert!(sql.contains("jsonb_typeof(name->'given') = 'array'"));
+        assert!(!sql.contains("COALESCE"));
+        assert_eq!(builder.params()[0].as_str(), "smith%");
     }
 
     #[test]

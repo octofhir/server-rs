@@ -14,14 +14,12 @@
 //!   comparison is symmetric.
 //! - :exact bypasses both: raw equality.
 
-use crate::parameters::SearchModifier;
 use crate::parser::ParsedParam;
 use crate::sql_builder::{SqlBuilder, SqlBuilderError};
 use crate::{
     ir::StringClause, ir::render_string_array_clauses_as_or, ir::render_string_clauses_as_or,
-    ir::render_string_path_clauses_as_or,
+    ir::render_string_human_name_clauses_as_or, ir::render_string_path_clauses_as_or,
 };
-use octofhir_core::search_index::normalize_string;
 
 /// Build SQL conditions for string search against the `search_idx_string`
 /// sidecar. One row per extracted value (HumanName parts, Address parts,
@@ -64,13 +62,6 @@ pub fn build_string_search(
     Ok(())
 }
 
-/// Escape special characters in LIKE patterns.
-fn escape_like_pattern(s: &str) -> String {
-    s.replace('\\', "\\\\")
-        .replace('%', "\\%")
-        .replace('_', "\\_")
-}
-
 /// Build a JSONB path for string search that handles arrays.
 ///
 /// For HumanName fields, we need to search across array elements.
@@ -97,80 +88,17 @@ pub fn build_human_name_search(
     param: &ParsedParam,
     array_path: &str,
 ) -> Result<(), SqlBuilderError> {
-    if param.values.is_empty() {
-        return Ok(());
+    let clauses = StringClause::from_parsed_param(param, "")?;
+    if let Some(sql) = render_string_human_name_clauses_as_or(builder, &clauses, array_path) {
+        builder.add_condition(sql);
     }
-
-    let mut or_conditions = Vec::new();
-
-    for value in &param.values {
-        if value.raw.is_empty() {
-            continue;
-        }
-
-        let condition = match &param.modifier {
-            None => {
-                // Default: starts-with, case+accent-insensitive across family/given/text.
-                let normalized = normalize_string(&value.raw);
-                let escaped = escape_like_pattern(&normalized);
-                let p = builder.add_text_param(format!("{escaped}%"));
-                format!(
-                    "EXISTS (SELECT 1 FROM jsonb_array_elements({array_path}) AS name WHERE \
-                     f_unaccent_lower(name->>'family') LIKE ${p} OR \
-                     f_unaccent_lower(name->>'text') LIKE ${p} OR \
-                     EXISTS (SELECT 1 FROM jsonb_array_elements_text(COALESCE(name->'given', '[]'::jsonb)) AS g WHERE f_unaccent_lower(g) LIKE ${p}))"
-                )
-            }
-
-            Some(SearchModifier::Exact) => {
-                let p = builder.add_text_param(&value.raw);
-                format!(
-                    "EXISTS (SELECT 1 FROM jsonb_array_elements({array_path}) AS name WHERE \
-                     name->>'family' = ${p} OR \
-                     name->>'text' = ${p} OR \
-                     EXISTS (SELECT 1 FROM jsonb_array_elements_text(COALESCE(name->'given', '[]'::jsonb)) AS g WHERE g = ${p}))"
-                )
-            }
-
-            Some(SearchModifier::Contains) => {
-                let normalized = normalize_string(&value.raw);
-                let escaped = escape_like_pattern(&normalized);
-                let p = builder.add_text_param(format!("%{escaped}%"));
-                format!(
-                    "EXISTS (SELECT 1 FROM jsonb_array_elements({array_path}) AS name WHERE \
-                     f_unaccent_lower(name->>'family') LIKE ${p} OR \
-                     f_unaccent_lower(name->>'text') LIKE ${p} OR \
-                     EXISTS (SELECT 1 FROM jsonb_array_elements_text(COALESCE(name->'given', '[]'::jsonb)) AS g WHERE f_unaccent_lower(g) LIKE ${p}))"
-                )
-            }
-
-            Some(SearchModifier::Missing) => {
-                let is_missing = value.raw.eq_ignore_ascii_case("true");
-                if is_missing {
-                    format!("({array_path} IS NULL OR jsonb_array_length({array_path}) = 0)")
-                } else {
-                    format!("({array_path} IS NOT NULL AND jsonb_array_length({array_path}) > 0)")
-                }
-            }
-
-            Some(other) => {
-                return Err(SqlBuilderError::InvalidModifier(format!("{other:?}")));
-            }
-        };
-
-        or_conditions.push(condition);
-    }
-
-    if !or_conditions.is_empty() {
-        builder.add_condition(SqlBuilder::build_or_clause(&or_conditions));
-    }
-
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::parameters::SearchModifier;
     use crate::parser::ParsedValue;
 
     fn make_param(name: &str, value: &str, modifier: Option<SearchModifier>) -> ParsedParam {
