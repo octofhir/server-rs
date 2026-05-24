@@ -1,12 +1,13 @@
 use octofhir_db_postgres::{PostgresStorage, SchemaManager, migrations};
 use octofhir_search::{
-    ElementTypeHint, SearchParameter, SearchParameterRegistry, SearchParameterType,
-    build_native_ir_query_from_params, parameters::SearchParameterComponent, parse_query_string,
-    register_common_parameters,
+    BuiltQuery, ElementTypeHint, SearchParameter, SearchParameterRegistry, SearchParameterType,
+    SqlValue, build_native_ir_query_from_params, parameters::SearchParameterComponent,
+    parse_query_string, register_common_parameters,
 };
 use octofhir_storage::FhirStorage;
 use serde_json::{Value, json};
-use sqlx_postgres::PgPoolOptions;
+use sqlx_core::query_as::query_as;
+use sqlx_postgres::{PgPool, PgPoolOptions};
 use std::collections::hash_map::DefaultHasher;
 use std::env;
 use std::hash::{Hash, Hasher};
@@ -93,6 +94,12 @@ async fn representative_search_explain_json_runs_with_bound_params() {
         .unwrap_or_else(|error| panic!("{} EXPLAIN should run: {error}", case.label));
         let elapsed = started.elapsed();
 
+        let execute_started = Instant::now();
+        let row_count = execute_built_query_row_count(&pool, &query)
+            .await
+            .unwrap_or_else(|error| panic!("{} query should execute: {error}", case.label));
+        let execute_elapsed = execute_started.elapsed();
+
         assert!(
             explain.is_array(),
             "{} EXPLAIN JSON should be an array: {explain}",
@@ -107,17 +114,48 @@ async fn representative_search_explain_json_runs_with_bound_params() {
         let mut node_types = Vec::new();
         collect_node_types(&explain[0]["Plan"], &mut node_types);
         println!(
-            "{} | resource={} | build_ms={:.3} | explain_ms={:.3} | params={} | sql_shape_hash={:016x} | nodes={:?}\nsql_shape={}",
+            "{} | resource={} | build_ms={:.3} | explain_ms={:.3} | execute_ms={:.3} | rows={} | params={} | sql_shape_hash={:016x} | nodes={:?}\nsql_shape={}",
             case.label,
             case.resource_type,
             build_elapsed.as_secs_f64() * 1000.0,
             elapsed.as_secs_f64() * 1000.0,
+            execute_elapsed.as_secs_f64() * 1000.0,
+            row_count,
             query.params.len(),
             stable_hash(&sql_shape),
             node_types,
             sql_shape
         );
     }
+}
+
+async fn execute_built_query_row_count(
+    pool: &PgPool,
+    query: &BuiltQuery,
+) -> Result<usize, sqlx_core::Error> {
+    let mut sqlx_query = query_as::<
+        _,
+        (
+            String,
+            String,
+            i64,
+            chrono::DateTime<chrono::Utc>,
+            chrono::DateTime<chrono::Utc>,
+        ),
+    >(&query.sql);
+    for param in &query.params {
+        sqlx_query = match param {
+            SqlValue::Text(value) => sqlx_query.bind(value.as_str()),
+            SqlValue::Integer(value) => sqlx_query.bind(*value),
+            SqlValue::Float(value) => sqlx_query.bind(*value),
+            SqlValue::Boolean(value) => sqlx_query.bind(*value),
+            SqlValue::Json(value) => sqlx_query.bind(value.as_str()),
+            SqlValue::Timestamp(value) => sqlx_query.bind(value.as_str()),
+            SqlValue::Null => sqlx_query.bind(None::<String>),
+        };
+    }
+
+    sqlx_query.fetch_all(pool).await.map(|rows| rows.len())
 }
 
 fn synthetic_row_count() -> usize {
