@@ -19,11 +19,12 @@ production search paths:
    - `search_idx_string`
    - `search_idx_number`
    - `search_idx_quantity`
-2. **Direct JSONB SQL paths** only for intentionally non-indexed surfaces such
-   as narrative full-text (`:text`).
+2. **Direct JSONB SQL paths** only for explicit special search surfaces such
+   as `_text`, `_content`, `_filter`, `_list`, and runtime user-defined
+   SearchParameters.
 
 This keeps FHIR search semantics explicit while avoiding runtime JSONB fallback
-for production query types.
+for bundled/package production query types.
 
 ## What Is Indexed
 
@@ -37,6 +38,27 @@ for production query types.
 | Number search | `search_idx_number` | Prefix-aware numeric ranges |
 | Quantity search | `search_idx_quantity` | Numeric value plus system/code/unit |
 | Token simple code (`gender=female`) | JSONB containment (`@>`) | Uses the resource GIN index |
+| Runtime user-defined SearchParameter | Explicit JSONB fallback | Compatibility path; not native-indexed |
+
+## Unsupported Production Cases
+
+OctoFHIR does not silently fall back to resource JSONB traversal for bundled or
+package SearchParameters when a modifier or component shape has no native
+strategy. Unsupported package cases return an explicit error.
+
+Runtime user-defined SearchParameters are different: they are marked as
+user-defined at registration time and use an explicit JSONB compatibility
+fallback so clients can migrate workloads before native indexing is available.
+
+Currently unsupported:
+
+- Native indexing for runtime user-defined SearchParameters.
+- Composite SearchParameter execution that would require JSONB component
+  traversal or unproven same-element semantics for bundled/package parameters.
+- SearchParameter `:text` modifiers on string/token parameters.
+
+SearchParameters loaded from FHIR or implementation-guide packages are treated
+as package metadata, not as runtime custom parameters.
 
 ## Debug Plans
 

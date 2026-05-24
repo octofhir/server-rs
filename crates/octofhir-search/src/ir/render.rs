@@ -7,6 +7,7 @@ use crate::ir::ast::{
 use crate::ir::sql::{RangeOp, SelectStmt, SqlExpr, SqlFrom, SqlOp, SqlTerm};
 use crate::parameters::SearchParameterType;
 use crate::parameters::SearchPrefix;
+use crate::parser::{ParsedParam, ParsedValue};
 use crate::sql_builder::{SqlBuilder, SqlBuilderError};
 use crate::types::date_ast::{Bound, DateClause, DatePredicate, PeriodClause, PeriodPredicate};
 use octofhir_core::search_index::normalize_string;
@@ -87,6 +88,29 @@ pub fn render_composite_clauses_as_or(
         .iter()
         .map(|clause| {
             render_composite_clause_expr(builder, clause).map(|expr| render_sql_expr(&expr))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    if rendered.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(SqlBuilder::build_or_clause(&rendered)))
+    }
+}
+
+/// Render composite tuple clauses through JSONB traversal.
+///
+/// This is intentionally kept out of the native production renderer. It is used
+/// only for user-defined SearchParameters that cannot have prebuilt native
+/// sidecar rows until the parameter is promoted into package metadata.
+pub fn render_composite_clauses_as_jsonb_fallback_or(
+    builder: &mut SqlBuilder,
+    clauses: &[CompositeClause],
+) -> Result<Option<String>, SqlBuilderError> {
+    let rendered = clauses
+        .iter()
+        .map(|clause| {
+            render_composite_clause_jsonb_fallback_expr(builder, clause)
+                .map(|expr| render_sql_expr(&expr))
         })
         .collect::<Result<Vec<_>, _>>()?;
     if rendered.is_empty() {
@@ -1106,6 +1130,41 @@ fn render_composite_clause_expr(
     match &clause.predicate {
         CompositePredicate::Tuple { components, safety } => {
             if matches!(safety, CompositeSafety::RequiresSameElement) {
+                return Err(SqlBuilderError::NotImplemented(
+                    "same-element composite search requires a materialized native composite strategy"
+                        .to_string(),
+                ));
+            }
+
+            let conditions = components
+                .iter()
+                .map(|component| {
+                    render_composite_component_native_expr(
+                        builder,
+                        &clause.resource_type,
+                        component,
+                    )
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            if conditions.is_empty() {
+                Ok(SqlExpr::Bool(true))
+            } else {
+                Ok(SqlExpr::And(conditions))
+            }
+        }
+        CompositePredicate::Missing { .. } => Err(SqlBuilderError::NotImplemented(
+            "composite :missing requires a materialized composite strategy".to_string(),
+        )),
+    }
+}
+
+fn render_composite_clause_jsonb_fallback_expr(
+    builder: &mut SqlBuilder,
+    clause: &CompositeClause,
+) -> Result<SqlExpr, SqlBuilderError> {
+    match &clause.predicate {
+        CompositePredicate::Tuple { components, safety } => {
+            if matches!(safety, CompositeSafety::RequiresSameElement) {
                 return render_composite_same_component_element_expr(builder, components);
             }
 
@@ -1120,8 +1179,130 @@ fn render_composite_clause_expr(
             }
         }
         CompositePredicate::Missing { .. } => Err(SqlBuilderError::NotImplemented(
-            "composite :missing requires a materialized composite strategy".to_string(),
+            "custom composite :missing JSONB fallback is not supported".to_string(),
         )),
+    }
+}
+
+fn render_composite_component_native_expr(
+    builder: &mut SqlBuilder,
+    resource_type: &str,
+    component: &CompositeComponentPredicate,
+) -> Result<SqlExpr, SqlBuilderError> {
+    let parsed = parsed_component_param(component);
+    let sql = match component.spec.search_type {
+        SearchParameterType::String => {
+            let clauses = StringClause::from_parsed_param(&parsed, resource_type)?;
+            render_string_clauses_as_or(builder, &clauses)
+        }
+        SearchParameterType::Date => {
+            let clauses = DateClause::from_parsed_param(&parsed, resource_type)?;
+            render_date_clauses_as_or(builder, &clauses)
+        }
+        SearchParameterType::Number => {
+            let clauses = NumberClause::from_parsed_param(&parsed, resource_type)?;
+            render_number_index_clauses_as_or(builder, &clauses)?
+        }
+        SearchParameterType::Quantity => {
+            let clauses = QuantityClause::from_parsed_param(&parsed, resource_type)?;
+            render_quantity_index_clauses_as_or(builder, &clauses)?
+        }
+        SearchParameterType::Reference => {
+            let clauses = ReferenceClause::from_parsed_param(&parsed, resource_type, &[])?;
+            render_reference_clauses_as_or(builder, &clauses, "")
+        }
+        SearchParameterType::Token => {
+            let index_shape = token_index_shape_for_component(component);
+            let clauses = TokenClause::from_parsed_param(&parsed, resource_type, index_shape)?;
+            let path_segments =
+                crate::sql_builder::fhirpath_to_jsonb_path(&component.spec.expression, "");
+            match index_shape {
+                TokenIndexShape::Identifier => {
+                    let resource_col = builder.resource_column().to_string();
+                    let array_path = crate::sql_builder::build_jsonb_accessor(
+                        &resource_col,
+                        &path_segments,
+                        false,
+                    );
+                    render_token_identifier_containment_clauses_as_or(
+                        builder,
+                        &clauses,
+                        &path_segments,
+                        &array_path,
+                    )?
+                }
+                TokenIndexShape::SimpleCode => {
+                    render_token_simple_code_clauses_as_or(builder, &clauses, &path_segments)?
+                }
+                TokenIndexShape::Coding => {
+                    render_token_coding_clauses_as_or(builder, &clauses, &path_segments)?
+                }
+            }
+        }
+        SearchParameterType::Uri => {
+            let clauses = UriClause::from_parsed_param(&parsed, resource_type)?;
+            let path_segments =
+                crate::sql_builder::fhirpath_to_jsonb_path(&component.spec.expression, "");
+            let path = crate::sql_builder::build_jsonb_accessor(
+                builder.resource_column(),
+                &path_segments,
+                true,
+            );
+            render_uri_clauses_as_or(builder, &clauses, &path)
+        }
+        SearchParameterType::Composite | SearchParameterType::Special => {
+            return Err(SqlBuilderError::NotImplemented(format!(
+                "Composite component type '{}' not supported",
+                crate::ir::search_type_name(component.spec.search_type)
+            )));
+        }
+    };
+
+    sql.map(SqlExpr::Raw).ok_or_else(|| {
+        SqlBuilderError::InvalidSearchValue(format!(
+            "Composite component '{}' produced no native predicate",
+            component.spec.code
+        ))
+    })
+}
+
+fn parsed_component_param(component: &CompositeComponentPredicate) -> ParsedParam {
+    let (prefix, raw) = extract_component_prefix(&component.value);
+    ParsedParam {
+        name: component.spec.code.clone(),
+        modifier: None,
+        values: vec![ParsedValue {
+            prefix,
+            raw: raw.to_string(),
+        }],
+    }
+}
+
+fn extract_component_prefix(value: &str) -> (Option<SearchPrefix>, &str) {
+    let mut chars = value.chars();
+    if let Some(c1) = chars.next()
+        && let Some(c2) = chars.next()
+        && c1.is_ascii_lowercase()
+        && c2.is_ascii_lowercase()
+    {
+        let prefix_str: String = [c1, c2].iter().collect();
+        if let Some(prefix) = SearchPrefix::parse(&prefix_str) {
+            return (Some(prefix), &value[2..]);
+        }
+    }
+    (None, value)
+}
+
+fn token_index_shape_for_component(component: &CompositeComponentPredicate) -> TokenIndexShape {
+    if component.spec.element_type_hint.is_identifier() {
+        TokenIndexShape::Identifier
+    } else if matches!(
+        &component.spec.element_type_hint,
+        crate::parameters::ElementTypeHint::SimpleCode
+    ) {
+        TokenIndexShape::SimpleCode
+    } else {
+        TokenIndexShape::Coding
     }
 }
 
@@ -2629,21 +2810,26 @@ fn render_quantity_containment(
 fn render_reference_clause(
     builder: &mut SqlBuilder,
     clause: &ReferenceClause,
-    jsonb_path: &str,
+    _jsonb_path: &str,
 ) -> String {
     match &clause.predicate {
         ReferencePredicate::Missing { is_missing } => {
-            if *is_missing {
-                format!(
-                    "({jsonb_path} IS NULL OR {jsonb_path} = 'null' OR {jsonb_path}->>'reference' IS NULL)"
-                )
-            } else {
-                format!(
-                    "({jsonb_path} IS NOT NULL AND {jsonb_path} != 'null' AND {jsonb_path}->>'reference' IS NOT NULL)"
-                )
-            }
+            render_sql_expr(&reference_index_missing_expr(builder, clause, *is_missing))
         }
         predicate => render_reference_index_condition(builder, clause, predicate),
+    }
+}
+
+fn reference_index_missing_expr(
+    builder: &mut SqlBuilder,
+    clause: &ReferenceClause,
+    is_missing: bool,
+) -> SqlExpr {
+    let exists = reference_index_exists_expr(reference_base_predicates(builder, clause));
+    if is_missing {
+        SqlExpr::Not(Box::new(exists))
+    } else {
+        exists
     }
 }
 
@@ -2660,26 +2846,7 @@ fn reference_index_condition_expr(
     clause: &ReferenceClause,
     predicate: &ReferencePredicate,
 ) -> SqlExpr {
-    let rt_param = builder.add_text_param(&clause.resource_type);
-    let pc_param = builder.add_text_param(&clause.param_code);
-    let id_col = builder.id_column();
-    let mut predicates = vec![
-        SqlExpr::Compare {
-            lhs: SqlTerm::Ident("sir.resource_type".to_string()),
-            op: SqlOp::Eq,
-            rhs: SqlTerm::Param(rt_param),
-        },
-        SqlExpr::Compare {
-            lhs: SqlTerm::Ident("sir.resource_id".to_string()),
-            op: SqlOp::Eq,
-            rhs: SqlTerm::Ident(id_col),
-        },
-        SqlExpr::Compare {
-            lhs: SqlTerm::Ident("sir.param_code".to_string()),
-            op: SqlOp::Eq,
-            rhs: SqlTerm::Param(pc_param),
-        },
-    ];
+    let mut predicates = reference_base_predicates(builder, clause);
 
     match predicate {
         ReferencePredicate::Local {
@@ -2755,6 +2922,29 @@ fn reference_index_condition_expr(
         }
         ReferencePredicate::Missing { .. } => unreachable!("handled by caller"),
     }
+}
+
+fn reference_base_predicates(builder: &mut SqlBuilder, clause: &ReferenceClause) -> Vec<SqlExpr> {
+    let rt_param = builder.add_text_param(&clause.resource_type);
+    let pc_param = builder.add_text_param(&clause.param_code);
+    let id_col = builder.id_column();
+    vec![
+        SqlExpr::Compare {
+            lhs: SqlTerm::Ident("sir.resource_type".to_string()),
+            op: SqlOp::Eq,
+            rhs: SqlTerm::Param(rt_param),
+        },
+        SqlExpr::Compare {
+            lhs: SqlTerm::Ident("sir.resource_id".to_string()),
+            op: SqlOp::Eq,
+            rhs: SqlTerm::Ident(id_col),
+        },
+        SqlExpr::Compare {
+            lhs: SqlTerm::Ident("sir.param_code".to_string()),
+            op: SqlOp::Eq,
+            rhs: SqlTerm::Param(pc_param),
+        },
+    ]
 }
 
 fn reference_index_exists_expr(predicates: Vec<SqlExpr>) -> SqlExpr {
@@ -3639,17 +3829,19 @@ mod tests {
                     code: "code".to_string(),
                     search_type: SearchParameterType::Token,
                     expression: "Observation.component.code".to_string(),
+                    element_type_hint: crate::parameters::ElementTypeHint::Unknown,
                 },
                 crate::ir::CompositeComponentSpec {
                     code: "value-quantity".to_string(),
                     search_type: SearchParameterType::Quantity,
                     expression: "Observation.component.valueQuantity".to_string(),
+                    element_type_hint: crate::parameters::ElementTypeHint::Unknown,
                 },
             ],
         )
         .unwrap();
 
-        let sql = render_composite_clauses_as_or(&mut builder, &clauses)
+        let sql = render_composite_clauses_as_jsonb_fallback_or(&mut builder, &clauses)
             .unwrap()
             .unwrap();
 

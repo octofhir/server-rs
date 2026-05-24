@@ -22,13 +22,15 @@ pub mod string;
 pub mod token;
 pub mod uri;
 
+pub use composite::CompositeComponent;
+pub use composite::{CompositeValue, parse_composite_value};
 pub use composite::{
-    CompositeComponent, CompositeValue, build_composite_search, build_composite_search_with_specs,
-    parse_composite_value,
+    build_composite_search, build_composite_search_with_specs,
+    build_composite_search_with_specs_jsonb_fallback,
 };
-pub use date::{
-    DateRange, build_date_search, build_index_date_search, build_period_search, parse_date_range,
-};
+#[cfg(test)]
+pub use date::build_period_search;
+pub use date::{DateRange, build_date_search, build_index_date_search, parse_date_range};
 pub use number::{
     build_gin_quantity_search, build_index_number_search, build_index_quantity_search,
     build_number_search, build_quantity_search,
@@ -39,14 +41,13 @@ pub use special::{
     build_list_search, build_near_search, build_text_search, detect_special_type,
     parse_near_parameter,
 };
-pub use string::{
-    build_array_string_search, build_human_name_search, build_indexed_string_search,
-    build_string_search,
-};
+pub use string::build_indexed_string_search;
+pub use string::{build_array_string_search, build_human_name_search, build_string_search};
+#[cfg(test)]
+pub use token::build_token_search_with_terminology;
 pub use token::{
     build_code_search, build_gin_code_search, build_gin_identifier_search, build_gin_token_search,
-    build_identifier_search, build_token_search, build_token_search_with_terminology,
-    parse_token_value,
+    build_identifier_search, build_token_search, parse_token_value,
 };
 pub use uri::{build_uri_array_search, build_uri_search};
 
@@ -120,16 +121,23 @@ fn dispatch_search_inner(
 
     let jsonb_path = build_jsonb_accessor(builder.resource_column(), &path_segments, needs_text);
 
+    if definition.user_defined {
+        return dispatch_user_defined_jsonb_search(
+            builder,
+            param,
+            definition,
+            resource_type,
+            registry,
+            &path_segments,
+            &jsonb_path,
+        );
+    }
+
+    reject_unsupported_production_path(param, definition, resource_type)?;
+
     // Dispatch to the appropriate handler based on param type and resolved element type hint
     match definition.param_type {
-        SearchParameterType::String => {
-            // `:text` is full-text on the resource narrative — sidecar does
-            // not carry it. Keep the legacy JSONB+tsvector path.
-            if matches!(&param.modifier, Some(SearchModifier::Text)) {
-                return build_string_search(builder, param, &jsonb_path);
-            }
-            build_indexed_string_search(builder, param, resource_type)
-        }
+        SearchParameterType::String => build_indexed_string_search(builder, param, resource_type),
 
         SearchParameterType::Token => {
             if definition.element_type_hint.is_identifier()
@@ -278,6 +286,213 @@ fn dispatch_search_inner(
             }
         }
     }
+}
+
+fn dispatch_user_defined_jsonb_search(
+    builder: &mut SqlBuilder,
+    param: &ParsedParam,
+    definition: &SearchParameter,
+    resource_type: &str,
+    registry: Option<&SearchParameterRegistry>,
+    path_segments: &[String],
+    jsonb_path: &str,
+) -> Result<(), SqlBuilderError> {
+    let object_path = build_jsonb_accessor(builder.resource_column(), path_segments, false);
+    let text_path = build_jsonb_accessor(builder.resource_column(), path_segments, true);
+
+    match definition.param_type {
+        SearchParameterType::String => {
+            if definition.element_type_hint.is_human_name() && path_segments.len() == 1 {
+                build_human_name_search(builder, param, &object_path)
+            } else if matches!(definition.element_type_hint, ElementTypeHint::Array(_))
+                && path_segments.len() > 1
+            {
+                let array_path = build_jsonb_accessor(
+                    builder.resource_column(),
+                    &path_segments[..path_segments.len() - 1],
+                    false,
+                );
+                let field_name = path_segments.last().expect("checked non-empty");
+                build_array_string_search(builder, param, &array_path, field_name)
+            } else {
+                build_string_search(builder, param, jsonb_path)
+            }
+        }
+        SearchParameterType::Token => {
+            if definition.element_type_hint.is_identifier()
+                || (matches!(&definition.element_type_hint, ElementTypeHint::Unknown)
+                    && definition
+                        .expression
+                        .as_deref()
+                        .is_some_and(|expr| is_identifier_param(&definition.code, expr)))
+            {
+                build_identifier_search(builder, param, &object_path)
+            } else if matches!(&definition.element_type_hint, ElementTypeHint::SimpleCode) {
+                build_code_search(builder, param, &text_path)
+            } else {
+                build_token_search(builder, param, &object_path)
+            }
+        }
+        SearchParameterType::Number => build_number_search(builder, param, jsonb_path),
+        SearchParameterType::Date => build_date_search(builder, param, jsonb_path),
+        SearchParameterType::Quantity => {
+            build_gin_quantity_search(builder, param, &object_path, path_segments)
+        }
+        SearchParameterType::Reference => {
+            build_reference_jsonb_fallback_search(builder, param, &object_path, &definition.target)
+        }
+        SearchParameterType::Composite => {
+            if definition.component.is_empty() {
+                return Err(SqlBuilderError::InvalidPath(format!(
+                    "Composite search parameter {} has no components defined",
+                    definition.code
+                )));
+            }
+
+            let Some(registry) = registry else {
+                return Err(SqlBuilderError::InvalidPath(
+                    "Custom composite component type resolution requires SearchParameterRegistry"
+                        .to_string(),
+                ));
+            };
+            let components =
+                resolve_composite_component_specs(registry, resource_type, definition)?;
+            build_composite_search_with_specs_jsonb_fallback(
+                builder,
+                param,
+                resource_type,
+                &components,
+            )
+        }
+        SearchParameterType::Uri => match &definition.element_type_hint {
+            ElementTypeHint::Array(_) => build_uri_array_search(builder, param, &object_path),
+            _ => build_uri_search(builder, param, &text_path),
+        },
+        SearchParameterType::Special => Err(SqlBuilderError::NotImplemented(format!(
+            "User-defined special SearchParameter '{}' is not supported",
+            definition.url
+        ))),
+    }
+}
+
+fn build_reference_jsonb_fallback_search(
+    builder: &mut SqlBuilder,
+    param: &ParsedParam,
+    json_path: &str,
+    target_types: &[String],
+) -> Result<(), SqlBuilderError> {
+    if param.values.is_empty() {
+        return Ok(());
+    }
+
+    if matches!(param.modifier, Some(SearchModifier::Identifier)) {
+        return build_identifier_search(builder, param, &format!("{json_path}->'identifier'"));
+    }
+
+    if matches!(param.modifier, Some(SearchModifier::Missing)) {
+        let is_missing = param
+            .values
+            .first()
+            .map(|v| v.raw.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
+        let condition = if is_missing {
+            format!(
+                "({json_path} IS NULL OR {json_path} = 'null'::jsonb OR {json_path} = '[]'::jsonb)"
+            )
+        } else {
+            format!(
+                "({json_path} IS NOT NULL AND {json_path} != 'null'::jsonb AND {json_path} != '[]'::jsonb)"
+            )
+        };
+        builder.add_condition(condition);
+        return Ok(());
+    }
+
+    let type_modifier = match &param.modifier {
+        Some(SearchModifier::Type(resource_type)) => Some(resource_type.as_str()),
+        None => None,
+        Some(other) => {
+            return Err(SqlBuilderError::InvalidModifier(format!("{other:?}")));
+        }
+    };
+
+    let mut or_conditions = Vec::new();
+    for value in &param.values {
+        if value.raw.is_empty() {
+            continue;
+        }
+
+        let references = reference_fallback_candidates(&value.raw, type_modifier, target_types);
+        let mut value_conditions = Vec::new();
+        for reference in references {
+            let p = builder.add_text_param(reference);
+            value_conditions.push(format!(
+                "EXISTS (SELECT 1 FROM jsonb_array_elements({}) AS ref WHERE ref->>'reference' = ${p})",
+                jsonb_array_or_singleton(json_path)
+            ));
+        }
+
+        if !value_conditions.is_empty() {
+            or_conditions.push(SqlBuilder::build_or_clause(&value_conditions));
+        }
+    }
+
+    if !or_conditions.is_empty() {
+        builder.add_condition(SqlBuilder::build_or_clause(&or_conditions));
+    }
+    Ok(())
+}
+
+fn reference_fallback_candidates(
+    raw: &str,
+    type_modifier: Option<&str>,
+    target_types: &[String],
+) -> Vec<String> {
+    if raw.contains('/') || raw.starts_with("http://") || raw.starts_with("https://") {
+        return vec![raw.to_string()];
+    }
+
+    if let Some(resource_type) = type_modifier {
+        return vec![format!("{resource_type}/{raw}")];
+    }
+
+    if target_types.len() == 1 {
+        return vec![format!("{}/{raw}", target_types[0]), raw.to_string()];
+    }
+
+    vec![raw.to_string()]
+}
+
+fn jsonb_array_or_singleton(path: &str) -> String {
+    format!(
+        "CASE WHEN jsonb_typeof({path}) = 'array' THEN {path} WHEN {path} IS NULL THEN '[]'::jsonb ELSE jsonb_build_array({path}) END"
+    )
+}
+
+pub(crate) fn reject_unsupported_production_path(
+    parsed: &ParsedParam,
+    param_def: &SearchParameter,
+    resource_type: &str,
+) -> Result<(), SqlBuilderError> {
+    match param_def.param_type {
+        SearchParameterType::String if matches!(parsed.modifier, Some(SearchModifier::Text)) => {
+            Err(production_path_disabled(
+                resource_type,
+                &parsed.name,
+                "string :text narrative JSONB traversal",
+            ))
+        }
+        SearchParameterType::Token if matches!(parsed.modifier, Some(SearchModifier::Text)) => Err(
+            production_path_disabled(resource_type, &parsed.name, "token :text display traversal"),
+        ),
+        _ => Ok(()),
+    }
+}
+
+fn production_path_disabled(resource_type: &str, param_name: &str, path: &str) -> SqlBuilderError {
+    SqlBuilderError::NotImplemented(format!(
+        "{resource_type}.{param_name} requires {path}, but production fallback search paths are disabled"
+    ))
 }
 
 /// Build a date search against the `updated_at` system column (used for the
@@ -738,15 +953,13 @@ mod tests {
             ]),
         );
 
-        let result =
-            dispatch_search_with_registry(&mut builder, &param, &def, "Observation", &registry);
-        assert!(result.is_ok());
+        dispatch_search_with_registry(&mut builder, &param, &def, "Observation", &registry)
+            .unwrap();
 
-        let clause = builder.build_where_clause();
-        assert!(clause.is_some());
-        let clause_str = clause.unwrap();
-        // Verify the SQL contains both code and value conditions
-        assert!(!clause_str.is_empty());
+        let clause = builder.build_where_clause().unwrap();
+        assert!(clause.contains("search_idx_quantity"));
+        assert!(clause.contains("resource @>"));
+        assert!(!clause.contains("jsonb_array_elements"));
     }
 
     #[test]
@@ -764,7 +977,7 @@ mod tests {
         let def = Arc::new(
             SearchParameter::new(
                 "test-composite",
-                "http://example.org/test-composite",
+                "http://hl7.org/fhir/SearchParameter/Patient-test-composite",
                 SearchParameterType::Composite,
                 vec!["Patient".to_string()],
             )
@@ -813,6 +1026,34 @@ mod tests {
             err.to_string().contains("requires SearchParameterRegistry"),
             "composite dispatch without registry must fail explicitly, got: {err}"
         );
+    }
+
+    #[test]
+    fn test_dispatch_user_defined_search_parameter_uses_jsonb_fallback() {
+        let mut builder = SqlBuilder::new();
+        let param = ParsedParam {
+            name: "custom-name".to_string(),
+            modifier: None,
+            values: vec![ParsedValue {
+                prefix: None,
+                raw: "Smith".to_string(),
+            }],
+        };
+        let def = Arc::new(
+            SearchParameter::new(
+                "custom-name",
+                "http://example.org/fhir/SearchParameter/Patient-custom-name",
+                SearchParameterType::String,
+                vec!["Patient".to_string()],
+            )
+            .with_expression("Patient.name.family")
+            .with_user_defined(true),
+        );
+
+        dispatch_search(&mut builder, &param, &def, "Patient").unwrap();
+        let clause = builder.build_where_clause().unwrap();
+        assert!(clause.contains("f_unaccent_lower(resource->'name'->>'family') LIKE"));
+        assert!(!clause.contains("search_idx_string"));
     }
 
     // ========================================================================

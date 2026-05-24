@@ -312,7 +312,7 @@ This feature is stronger than XML support for current adoption.
 It helps compete on:
 
 - developer experience versus HAPI
-- product platform feel versus Aidbox
+- product platform feel versus commercial FHIR platforms
 - application integration velocity versus managed cloud FHIR APIs
 
 Most servers stop at API exposure. A good SDK generator turns OctoFHIR into an application platform.

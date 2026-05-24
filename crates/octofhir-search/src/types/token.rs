@@ -11,16 +11,24 @@
 //! - :above: subsumption - ancestors (requires terminology provider)
 //! - :of-type: identifier type filtering
 
+use crate::ir::{
+    render_token_identifier_clauses_as_or, render_token_path_clauses_as_or,
+    render_token_scalar_code_clauses_as_or,
+};
+#[cfg(test)]
 use crate::parameters::SearchModifier;
 use crate::parser::ParsedParam;
-use crate::sql_builder::{SqlBuilder, SqlBuilderError, SqlParam, build_jsonb_accessor};
+#[cfg(test)]
+use crate::sql_builder::SqlParam;
+use crate::sql_builder::{SqlBuilder, SqlBuilderError, build_jsonb_accessor};
+#[cfg(test)]
 use crate::terminology::HybridTerminologyProvider;
 use crate::{
     ir::TokenClause, ir::TokenIndexShape, ir::render_token_coding_clauses_as_or,
-    ir::render_token_identifier_clauses_as_or,
-    ir::render_token_identifier_containment_clauses_as_or, ir::render_token_path_clauses_as_or,
-    ir::render_token_scalar_code_clauses_as_or, ir::render_token_simple_code_clauses_as_or,
+    ir::render_token_identifier_containment_clauses_as_or,
+    ir::render_token_simple_code_clauses_as_or,
 };
+#[cfg(test)]
 use sqlx_postgres::PgPool;
 
 /// Parse a token value into system and code parts.
@@ -72,6 +80,7 @@ pub fn build_token_search(
 /// * `jsonb_path` - JSONB path to the field being searched
 /// * `pool` - Database connection pool (required for large ValueSet optimization)
 /// * `terminology` - Terminology provider for ValueSet expansion
+#[cfg(test)]
 pub async fn build_token_search_with_terminology(
     builder: &mut SqlBuilder,
     param: &ParsedParam,
@@ -164,6 +173,7 @@ pub async fn build_token_search_with_terminology(
 /// Expands the ValueSet using the optimized expansion method that automatically
 /// chooses between IN clause (small expansions <500 codes) and temp table strategy
 /// (large expansions ≥500 codes) for optimal performance.
+#[cfg(test)]
 async fn build_in_modifier_condition(
     builder: &mut SqlBuilder,
     jsonb_path: &str,
@@ -266,6 +276,7 @@ async fn build_in_modifier_condition(
 /// - For SNOMED CT: Uses ECL (Expression Constraint Language)
 /// - For other systems: Attempts to use remote terminology server
 /// - Fallback: Returns only the exact code if hierarchy expansion is not supported
+#[cfg(test)]
 async fn build_subsumption_condition(
     builder: &mut SqlBuilder,
     jsonb_path: &str,

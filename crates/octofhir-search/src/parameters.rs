@@ -370,6 +370,9 @@ pub struct SearchParameter {
     /// Element type hint resolved from FhirSchema at registry build time.
     /// Determines which SQL builder to use in dispatch_search.
     pub element_type_hint: ElementTypeHint,
+    /// SearchParameter was created/updated by a user at runtime, not loaded
+    /// from FHIR packages or built-in common metadata.
+    pub user_defined: bool,
 }
 
 impl SearchParameter {
@@ -394,6 +397,7 @@ impl SearchParameter {
             component: Vec::new(),
             cached_jsonb_path: None,
             element_type_hint: ElementTypeHint::Unknown,
+            user_defined: false,
         }
     }
 
@@ -491,6 +495,13 @@ impl SearchParameter {
     #[must_use]
     pub fn with_element_type_hint(mut self, hint: ElementTypeHint) -> Self {
         self.element_type_hint = hint;
+        self
+    }
+
+    /// Mark this SearchParameter as user-defined runtime metadata.
+    #[must_use]
+    pub fn with_user_defined(mut self, user_defined: bool) -> Self {
+        self.user_defined = user_defined;
         self
     }
 

@@ -46,6 +46,11 @@ macro_rules! embedded_migrations {
                 "search_idx_numeric",
                 include_str!("../../migrations/20260604000001_search_idx_numeric.sql"),
             ),
+            (
+                20260605000001i64,
+                "search_idx_reference_presence",
+                include_str!("../../migrations/20260605000001_search_idx_reference_presence.sql"),
+            ),
         ]
     };
 }

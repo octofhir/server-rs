@@ -13,9 +13,7 @@ use crate::ir::{
     build_token_debug_plan, render_date_clauses_as_or, render_id_clauses_as_or,
     resolve_composite_component_specs, resolve_resource_column_param, rewrite_date_clauses,
 };
-use crate::parameters::{
-    ElementTypeHint, SearchModifier, SearchParameter, SearchParameterType, SearchPrefix,
-};
+use crate::parameters::{ElementTypeHint, SearchParameter, SearchParameterType, SearchPrefix};
 use crate::parser::{ParsedParam, ParsedValue};
 use crate::registry::SearchParameterRegistry;
 use crate::reverse_chaining::{
@@ -274,7 +272,7 @@ pub fn build_native_ir_query_from_params_with_config(
                 continue;
             }
 
-            reject_non_production_fallback(&parsed, &param_def, resource_type)?;
+            crate::types::reject_unsupported_production_path(&parsed, &param_def, resource_type)?;
 
             if config.collect_debug_plan {
                 collect_date_debug_plan(debug_plan.as_mut(), &parsed, &param_def, resource_type)?;
@@ -474,46 +472,6 @@ fn try_fold_repeated_date_window(
     }
     append_date_debug_plan(debug_plan, resource_type, &merged);
     Ok(true)
-}
-
-fn reject_non_production_fallback(
-    parsed: &ParsedParam,
-    param_def: &SearchParameter,
-    resource_type: &str,
-) -> Result<(), SqlBuilderError> {
-    match param_def.param_type {
-        SearchParameterType::String if matches!(parsed.modifier, Some(SearchModifier::Text)) => {
-            Err(fallback_disabled(
-                resource_type,
-                &parsed.name,
-                "string :text narrative JSONB traversal",
-            ))
-        }
-        SearchParameterType::Composite => Err(fallback_disabled(
-            resource_type,
-            &parsed.name,
-            "composite JSONB component traversal",
-        )),
-        SearchParameterType::Reference
-            if matches!(parsed.modifier, Some(SearchModifier::Missing)) =>
-        {
-            Err(fallback_disabled(
-                resource_type,
-                &parsed.name,
-                "reference :missing JSONB presence check",
-            ))
-        }
-        SearchParameterType::Token if matches!(parsed.modifier, Some(SearchModifier::Text)) => Err(
-            fallback_disabled(resource_type, &parsed.name, "token :text display traversal"),
-        ),
-        _ => Ok(()),
-    }
-}
-
-fn fallback_disabled(resource_type: &str, param_name: &str, fallback: &str) -> SqlBuilderError {
-    SqlBuilderError::NotImplemented(format!(
-        "{resource_type}.{param_name} requires {fallback}, but production fallback search paths are disabled"
-    ))
 }
 
 fn collect_date_debug_plan(
@@ -851,7 +809,9 @@ fn handle_has_param(
                     error = %e,
                     "Failed to parse _has parameter"
                 );
-                // Skip invalid occurrence (lenient handling of unknown params).
+                return Err(SqlBuilderError::InvalidSearchValue(format!(
+                    "Invalid _has search parameter '{key}': {e}"
+                )));
             }
         }
     }
@@ -896,8 +856,9 @@ fn handle_chained_param(
                     error = %e,
                     "Failed to parse chained parameter"
                 );
-                // Skip invalid chained parameter occurrence (do not fail the
-                // whole search — matches lenient handling of unknown params).
+                return Err(SqlBuilderError::InvalidSearchValue(format!(
+                    "Invalid chained search parameter '{key}': {e}"
+                )));
             }
         }
     }
@@ -1369,15 +1330,20 @@ mod tests {
             10,
             100,
         );
-        assert_fallback_disabled(
-            build_native_ir_query_from_params(
-                "Observation",
-                &composite_params,
-                &registry,
-                "public",
-            ),
-            "Observation.code-value-quantity",
-            "composite JSONB component traversal",
+        let composite_err = match build_native_ir_query_from_params(
+            "Observation",
+            &composite_params,
+            &registry,
+            "public",
+        ) {
+            Ok(_) => panic!("same-element composite unexpectedly rendered"),
+            Err(err) => err,
+        };
+        assert!(
+            composite_err
+                .to_string()
+                .contains("materialized native composite strategy"),
+            "same-element composite must fail explicitly, got: {composite_err}"
         );
     }
 
@@ -2060,7 +2026,7 @@ mod tests {
     }
 
     #[test]
-    fn composite_jsonb_component_traversal_fallback_is_rejected() {
+    fn same_element_composite_requires_materialized_native_strategy() {
         let registry = composite_registry_with_expression();
         let params = parse_query_string(
             "code-value-quantity=http://loinc.org|8480-6$gt5.5|http://unitsofmeasure.org|mg&_count=5",
@@ -2072,21 +2038,25 @@ mod tests {
             collect_debug_plan: true,
         };
 
-        assert_fallback_disabled(
-            build_native_ir_query_from_params_with_config(
-                "Observation",
-                &params,
-                &registry,
-                "public",
-                &config,
-            ),
-            "Observation.code-value-quantity",
-            "composite JSONB component traversal",
+        let err = match build_native_ir_query_from_params_with_config(
+            "Observation",
+            &params,
+            &registry,
+            "public",
+            &config,
+        ) {
+            Ok(_) => panic!("same-element composite unexpectedly rendered"),
+            Err(err) => err,
+        };
+        assert!(
+            err.to_string()
+                .contains("materialized native composite strategy"),
+            "same-element composite must fail explicitly without JSONB fallback, got: {err}"
         );
     }
 
     #[test]
-    fn reference_missing_jsonb_presence_fallback_is_rejected() {
+    fn reference_missing_uses_reference_sidecar() {
         let registry = reference_registry_with_expression();
         let params = parse_query_string("subject:missing=true&_count=5", 10, 100);
         let config = SearchConfig {
@@ -2094,17 +2064,18 @@ mod tests {
             collect_debug_plan: true,
         };
 
-        assert_fallback_disabled(
-            build_native_ir_query_from_params_with_config(
-                "Observation",
-                &params,
-                &registry,
-                "public",
-                &config,
-            ),
-            "Observation.subject",
-            "reference :missing JSONB presence check",
-        );
+        let converted = build_native_ir_query_from_params_with_config(
+            "Observation",
+            &params,
+            &registry,
+            "public",
+            &config,
+        )
+        .unwrap();
+        let built = converted.builder.with_raw_resource(true).build().unwrap();
+        assert!(built.sql.contains("search_idx_reference"));
+        assert!(built.sql.contains("NOT EXISTS"));
+        assert!(!built.sql.contains("r.resource->'subject'"));
     }
 
     #[test]

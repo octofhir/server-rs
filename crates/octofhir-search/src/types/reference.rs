@@ -162,7 +162,8 @@ mod tests {
         .unwrap();
 
         let clause = builder.build_where_clause().unwrap();
-        assert!(clause.contains("IS NULL"));
+        assert!(clause.contains("search_idx_reference"));
+        assert!(clause.contains("NOT EXISTS"));
     }
 
     #[test]

@@ -85,6 +85,7 @@ pub fn resolve_composite_component_specs(
                 code: resolved.code.clone(),
                 search_type: resolved.param_type,
                 expression: component.expression.clone(),
+                element_type_hint: resolved.element_type_hint.clone(),
             })
         })
         .collect()

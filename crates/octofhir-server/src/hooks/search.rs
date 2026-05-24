@@ -75,6 +75,7 @@ impl ResourceHook for SearchParamHook {
                 // Parse the search parameter
                 match octofhir_search::parse_search_parameter(resource) {
                     Ok(param) => {
+                        let param = param.with_user_defined(true);
                         let code = param.code.clone();
 
                         // Upsert into registry

@@ -1325,6 +1325,10 @@ CREATE INDEX IF NOT EXISTS idx_ref_identifier
     ON search_idx_reference (resource_type, param_code, identifier_system, identifier_value)
     WHERE ref_kind = 4;
 
+-- Presence checks: Observation?subject:missing=true/false
+CREATE INDEX IF NOT EXISTS idx_ref_presence
+    ON search_idx_reference (resource_type, param_code, resource_id);
+
 -- Date index for fast date range queries and sorting
 CREATE TABLE IF NOT EXISTS search_idx_date (
     resource_type   TEXT        NOT NULL,

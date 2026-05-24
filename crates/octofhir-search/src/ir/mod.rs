@@ -30,7 +30,8 @@ pub use registry::{
     resolve_resource_column_param, search_type_name,
 };
 pub use render::{
-    render_composite_clauses_as_or, render_date_clauses_as_or, render_date_column_clauses_as_or,
+    render_composite_clauses_as_jsonb_fallback_or, render_composite_clauses_as_or,
+    render_date_clauses_as_or, render_date_column_clauses_as_or,
     render_date_text_path_clauses_as_or, render_id_clauses_as_or, render_number_clauses_as_or,
     render_number_index_clauses_as_or, render_period_path_clauses_as_or,
     render_quantity_clauses_as_or, render_quantity_containment_clauses_as_or,

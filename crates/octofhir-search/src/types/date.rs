@@ -23,14 +23,16 @@
 //! `&>` / `&<` are NOT equivalent to `NOT(<<)` / `NOT(>>)` on wide Periods —
 //! they compare against the *opposite* bound of `q`. Do not substitute them.
 
+use crate::ir::render_date_clauses_as_or;
+use crate::ir::render_date_text_path_clauses_as_or;
+#[cfg(test)]
+use crate::ir::render_period_path_clauses_as_or;
 use crate::parameters::SearchModifier;
 use crate::parser::ParsedParam;
 use crate::sql_builder::{SqlBuilder, SqlBuilderError};
-use crate::types::date_ast::{DateClause, PeriodClause};
-use crate::{
-    ir::render_date_clauses_as_or, ir::render_date_text_path_clauses_as_or,
-    ir::render_period_path_clauses_as_or,
-};
+use crate::types::date_ast::DateClause;
+#[cfg(test)]
+use crate::types::date_ast::PeriodClause;
 use time::{Date, Duration, Month, OffsetDateTime, PrimitiveDateTime, Time};
 
 /// Half-open `[start, end)` UTC range built from a FHIR date / dateTime /
@@ -380,6 +382,7 @@ pub fn build_index_date_search(
 ///
 /// A Period overlaps with the search range if:
 /// - period.start < search.end AND (period.end IS NULL OR period.end >= search.start)
+#[cfg(test)]
 pub fn build_period_search(
     builder: &mut SqlBuilder,
     param: &ParsedParam,

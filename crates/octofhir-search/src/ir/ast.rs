@@ -1,5 +1,5 @@
 use crate::ir::strategy::IndexStrategy;
-use crate::parameters::{SearchModifier, SearchParameterType, SearchPrefix};
+use crate::parameters::{ElementTypeHint, SearchModifier, SearchParameterType, SearchPrefix};
 use crate::parser::ParsedParam;
 use crate::sql_builder::SqlBuilderError;
 use crate::types::date_ast::{DateClause, DatePredicate};
@@ -422,6 +422,7 @@ pub struct CompositeComponentSpec {
     pub code: String,
     pub search_type: SearchParameterType,
     pub expression: String,
+    pub element_type_hint: ElementTypeHint,
 }
 
 /// Per-component value inside one composite tuple.
@@ -751,8 +752,8 @@ pub enum ReferencePredicate {
 /// Reference SearchParameter occurrence.
 ///
 /// Clauses are OR-combined because they come from one comma-separated query
-/// occurrence. Local/external/identifier reference matching is sidecar-backed;
-/// `:missing` remains a JSONB field-presence check.
+/// occurrence. All reference matching, including `:missing`, is backed by
+/// `search_idx_reference`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReferenceClause {
     pub resource_type: String,

@@ -436,14 +436,14 @@ fn debug_reference_clause(clause: &ReferenceClause) -> DebugPredicate {
         }
         ReferencePredicate::Missing { is_missing } => {
             let shape = if *is_missing {
-                "reference jsonb path IS NULL"
+                "NOT EXISTS search_idx_reference WHERE sir.resource_type = $resource_type AND sir.param_code = $param_code AND sir.resource_id = r.id"
             } else {
-                "reference jsonb path IS NOT NULL"
+                "EXISTS search_idx_reference WHERE sir.resource_type = $resource_type AND sir.param_code = $param_code AND sir.resource_id = r.id"
             };
             (
-                IndexStrategy::JsonbTraversal,
-                None,
-                false,
+                IndexStrategy::SidecarReference,
+                Some("idx_ref_presence".to_string()),
+                true,
                 shape.to_string(),
             )
         }
@@ -970,7 +970,7 @@ mod tests {
     }
 
     #[test]
-    fn reference_missing_debug_plan_marks_jsonb_fallback() {
+    fn reference_missing_debug_plan_marks_sidecar_presence_check() {
         let clauses = vec![ReferenceClause {
             resource_type: "Observation".to_string(),
             param_code: "subject".to_string(),
@@ -980,9 +980,12 @@ mod tests {
 
         let plan = build_reference_debug_plan("Observation", &clauses);
 
-        assert_eq!(plan.predicates[0].strategy, IndexStrategy::JsonbTraversal);
-        assert!(!plan.predicates[0].index_backed);
-        assert_eq!(plan.predicates[0].expected_index, None);
-        assert!(plan.predicates[0].sql_shape.contains("IS NULL"));
+        assert_eq!(plan.predicates[0].strategy, IndexStrategy::SidecarReference);
+        assert!(plan.predicates[0].index_backed);
+        assert_eq!(
+            plan.predicates[0].expected_index,
+            Some("idx_ref_presence".to_string())
+        );
+        assert!(plan.predicates[0].sql_shape.contains("NOT EXISTS"));
     }
 }

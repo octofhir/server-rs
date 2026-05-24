@@ -277,7 +277,7 @@ Relevant files:
 
 Impact:
 
-- hard to claim reliability against HAPI, Aidbox, Firely, managed offerings
+- hard to claim reliability against HAPI, Firely, managed offerings
 
 Plan:
 

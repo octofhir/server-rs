@@ -3,7 +3,11 @@
 //! Composite search parameters combine multiple search criteria into a single parameter.
 //! Format: `value1$value2` where each part matches a component of the composite.
 
-use crate::ir::{CompositeClause, CompositeComponentSpec, render_composite_clauses_as_or};
+use crate::ir::{
+    CompositeClause, CompositeComponentSpec, render_composite_clauses_as_jsonb_fallback_or,
+    render_composite_clauses_as_or,
+};
+use crate::parameters::ElementTypeHint;
 use crate::parameters::SearchParameterType;
 use crate::parser::{ParsedParam, ParsedValue};
 use crate::sql_builder::{SqlBuilder, SqlBuilderError};
@@ -46,6 +50,7 @@ pub fn build_composite_search(
                 code: component.name.clone(),
                 search_type: parse_component_type(&component.param_type)?,
                 expression: component.expression.clone(),
+                element_type_hint: ElementTypeHint::Unknown,
             })
         })
         .collect::<Result<Vec<_>, SqlBuilderError>>()?;
@@ -68,6 +73,20 @@ pub fn build_composite_search_with_specs(
 ) -> Result<(), SqlBuilderError> {
     let clauses = CompositeClause::from_parsed_param(param, resource_type, components)?;
     if let Some(sql) = render_composite_clauses_as_or(builder, &clauses)? {
+        builder.add_condition(sql);
+    }
+
+    Ok(())
+}
+
+pub fn build_composite_search_with_specs_jsonb_fallback(
+    builder: &mut SqlBuilder,
+    param: &ParsedParam,
+    resource_type: &str,
+    components: &[CompositeComponentSpec],
+) -> Result<(), SqlBuilderError> {
+    let clauses = CompositeClause::from_parsed_param(param, resource_type, components)?;
+    if let Some(sql) = render_composite_clauses_as_jsonb_fallback_or(builder, &clauses)? {
         builder.add_condition(sql);
     }
 
@@ -167,7 +186,9 @@ mod tests {
             build_composite_search(&mut builder, "http://loinc.org|8480-6$gt100", &components);
         assert!(result.is_ok());
         let clause = builder.build_where_clause().unwrap();
-        assert!(clause.contains("system") && clause.contains("code") && clause.contains("value"));
+        assert!(clause.contains("search_idx_quantity"));
+        assert!(clause.contains("resource @>"));
+        assert!(!clause.contains("jsonb_array_elements"));
     }
 
     #[test]
