@@ -3,6 +3,9 @@
 //! Composite search parameters combine multiple search criteria into a single parameter.
 //! Format: `value1$value2` where each part matches a component of the composite.
 
+use crate::ir::{CompositeClause, CompositeComponentSpec, render_composite_clauses_as_or};
+use crate::parameters::SearchParameterType;
+use crate::parser::{ParsedParam, ParsedValue};
 use crate::sql_builder::{SqlBuilder, SqlBuilderError};
 
 /// Component of a composite search parameter.
@@ -36,74 +39,57 @@ pub fn build_composite_search(
     value: &str,
     components: &[CompositeComponent],
 ) -> Result<(), SqlBuilderError> {
-    let parsed = parse_composite_value(value);
-
-    if parsed.components.len() != components.len() {
-        return Err(SqlBuilderError::InvalidSearchValue(format!(
-            "Composite parameter expects {} components, got {}",
-            components.len(),
-            parsed.components.len()
-        )));
-    }
-
-    let conditions: Vec<String> = parsed
-        .components
+    let specs = components
         .iter()
-        .zip(components.iter())
-        .filter(|(v, _)| !v.is_empty())
-        .map(|(v, def)| build_component_condition(builder, v, def))
-        .collect::<Result<_, _>>()?;
+        .map(|component| {
+            Ok(CompositeComponentSpec {
+                code: component.name.clone(),
+                search_type: parse_component_type(&component.param_type)?,
+                expression: component.expression.clone(),
+            })
+        })
+        .collect::<Result<Vec<_>, SqlBuilderError>>()?;
+    let param = ParsedParam {
+        name: "composite".to_string(),
+        modifier: None,
+        values: vec![ParsedValue {
+            prefix: None,
+            raw: value.to_string(),
+        }],
+    };
+    build_composite_search_with_specs(builder, &param, "", &specs)
+}
 
-    if !conditions.is_empty() {
-        builder.add_condition(conditions.join(" AND "));
+pub fn build_composite_search_with_specs(
+    builder: &mut SqlBuilder,
+    param: &ParsedParam,
+    resource_type: &str,
+    components: &[CompositeComponentSpec],
+) -> Result<(), SqlBuilderError> {
+    let clauses = CompositeClause::from_parsed_param(param, resource_type, components)?;
+    if let Some(sql) = render_composite_clauses_as_or(builder, &clauses)? {
+        builder.add_condition(sql);
     }
 
     Ok(())
 }
 
-fn build_component_condition(
-    builder: &mut SqlBuilder,
-    value: &str,
-    component: &CompositeComponent,
-) -> Result<String, SqlBuilderError> {
-    let json_path = expression_to_jsonb_path(&component.expression);
-
-    match component.param_type.as_str() {
-        "token" => build_token_component(builder, value, &json_path),
-        "string" => {
-            let p = builder.add_text_param(format!("{value}%"));
-            Ok(format!("({json_path} ILIKE ${p})"))
-        }
-        "quantity" => build_quantity_component(builder, value, &json_path),
-        "date" => {
-            let (prefix, date_str) = extract_prefix(value);
-            let p = builder.add_text_param(date_str);
-            Ok(format!(
-                "({json_path}::timestamp {} ${p}::timestamp)",
-                prefix_to_comparator(prefix)
-            ))
-        }
-        "reference" => {
-            let base = to_object_path(&json_path);
-            let p = builder.add_text_param(value);
-            Ok(format!("({base}->>'reference' = ${p})"))
-        }
-        "number" => {
-            let (prefix, num_str) = extract_prefix(value);
-            let p = builder.add_text_param(num_str);
-            Ok(format!(
-                "({json_path}::numeric {} ${p}::numeric)",
-                prefix_to_comparator(prefix)
-            ))
-        }
-        _ => Err(SqlBuilderError::NotImplemented(format!(
-            "Composite component type '{}' not supported",
-            component.param_type
+fn parse_component_type(param_type: &str) -> Result<SearchParameterType, SqlBuilderError> {
+    match param_type {
+        "token" => Ok(SearchParameterType::Token),
+        "string" => Ok(SearchParameterType::String),
+        "quantity" => Ok(SearchParameterType::Quantity),
+        "date" => Ok(SearchParameterType::Date),
+        "reference" => Ok(SearchParameterType::Reference),
+        "number" => Ok(SearchParameterType::Number),
+        other => Err(SqlBuilderError::NotImplemented(format!(
+            "Composite component type '{other}' not supported"
         ))),
     }
 }
 
 /// Convert FHIRPath expression to JSONB path.
+#[cfg(test)]
 fn expression_to_jsonb_path(expression: &str) -> String {
     let path = expression
         .find('.')
@@ -122,79 +108,7 @@ fn expression_to_jsonb_path(expression: &str) -> String {
     acc
 }
 
-/// Convert text path (->>) to object path (->).
-fn to_object_path(path: &str) -> String {
-    if let Some(idx) = path.rfind("->>") {
-        let last_part = path[idx + 3..].trim_matches('\'');
-        format!("{}->'{}'", &path[..idx].trim_end_matches("->"), last_part)
-    } else {
-        path.to_string()
-    }
-}
-
-fn build_token_component(
-    builder: &mut SqlBuilder,
-    value: &str,
-    json_path: &str,
-) -> Result<String, SqlBuilderError> {
-    if let Some((system, code)) = value.split_once('|') {
-        let base = to_object_path(json_path);
-        match (system.is_empty(), code.is_empty()) {
-            (true, false) => {
-                let p = builder.add_text_param(code);
-                Ok(format!("({base}->>'code' = ${p})"))
-            }
-            (false, true) => {
-                let p = builder.add_text_param(system);
-                Ok(format!("({base}->>'system' = ${p})"))
-            }
-            _ => {
-                let p1 = builder.add_text_param(system);
-                let p2 = builder.add_text_param(code);
-                Ok(format!(
-                    "({base}->>'system' = ${p1} AND {base}->>'code' = ${p2})"
-                ))
-            }
-        }
-    } else {
-        let p = builder.add_text_param(value);
-        Ok(format!("({json_path} = ${p})"))
-    }
-}
-
-fn build_quantity_component(
-    builder: &mut SqlBuilder,
-    value: &str,
-    json_path: &str,
-) -> Result<String, SqlBuilderError> {
-    let base = to_object_path(json_path);
-    let parts: Vec<&str> = value.split('|').collect();
-    let (prefix, num_str) = extract_prefix(parts[0]);
-
-    let p = builder.add_text_param(num_str);
-    let value_cond = format!(
-        "({base}->>'value')::numeric {} ${p}::numeric",
-        prefix_to_comparator(prefix)
-    );
-
-    if parts.len() >= 3 {
-        let mut conds = vec![value_cond];
-        if !parts[1].is_empty() {
-            let ps = builder.add_text_param(parts[1]);
-            conds.push(format!("{base}->>'system' = ${ps}"));
-        }
-        if !parts[2].is_empty() {
-            let pc = builder.add_text_param(parts[2]);
-            conds.push(format!(
-                "({base}->>'code' = ${pc} OR {base}->>'unit' = ${pc})"
-            ));
-        }
-        Ok(format!("({})", conds.join(" AND ")))
-    } else {
-        Ok(format!("({value_cond})"))
-    }
-}
-
+#[cfg(test)]
 fn extract_prefix(value: &str) -> (&str, &str) {
     for prefix in ["ge", "le", "gt", "lt", "ne", "sa", "eb", "ap"] {
         if let Some(rest) = value.strip_prefix(prefix) {
@@ -202,17 +116,6 @@ fn extract_prefix(value: &str) -> (&str, &str) {
         }
     }
     ("eq", value)
-}
-
-fn prefix_to_comparator(prefix: &str) -> &'static str {
-    match prefix {
-        "gt" | "sa" => ">",
-        "lt" | "eb" => "<",
-        "ge" => ">=",
-        "le" => "<=",
-        "ne" => "!=",
-        _ => "=",
-    }
 }
 
 #[cfg(test)]

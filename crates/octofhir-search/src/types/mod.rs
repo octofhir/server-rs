@@ -23,7 +23,8 @@ pub mod token;
 pub mod uri;
 
 pub use composite::{
-    CompositeComponent, CompositeValue, build_composite_search, parse_composite_value,
+    CompositeComponent, CompositeValue, build_composite_search, build_composite_search_with_specs,
+    parse_composite_value,
 };
 pub use date::{
     DateRange, build_date_search, build_index_date_search, build_period_search, parse_date_range,
@@ -45,9 +46,7 @@ pub use token::{
 };
 pub use uri::{build_uri_array_search, build_uri_search};
 
-use crate::ir::{
-    render_date_column_clauses_as_or, resolve_composite_component_specs, search_type_name,
-};
+use crate::ir::{render_date_column_clauses_as_or, resolve_composite_component_specs};
 use crate::parameters::{ElementTypeHint, SearchModifier, SearchParameter, SearchParameterType};
 use crate::parser::ParsedParam;
 use crate::registry::SearchParameterRegistry;
@@ -200,21 +199,8 @@ fn dispatch_search_inner(
                 ));
             };
             let components =
-                resolve_composite_component_specs(registry, resource_type, definition)?
-                    .into_iter()
-                    .map(|spec| CompositeComponent {
-                        name: definition.code.clone(),
-                        param_type: search_type_name(spec.search_type).to_string(),
-                        expression: spec.expression,
-                    })
-                    .collect::<Vec<_>>();
-
-            // Process each value in the search parameter
-            for value in &param.values {
-                build_composite_search(builder, &value.raw, &components)?;
-            }
-
-            Ok(())
+                resolve_composite_component_specs(registry, resource_type, definition)?;
+            build_composite_search_with_specs(builder, param, resource_type, &components)
         }
 
         SearchParameterType::Uri => match &definition.element_type_hint {

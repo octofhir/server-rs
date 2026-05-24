@@ -29,7 +29,7 @@ pub use registry::{
     resolve_component_definition, resolve_composite_component_specs, search_type_name,
 };
 pub use render::{
-    render_date_clauses_as_or, render_date_column_clauses_as_or,
+    render_composite_clauses_as_or, render_date_clauses_as_or, render_date_column_clauses_as_or,
     render_date_text_path_clauses_as_or, render_number_clauses_as_or,
     render_period_path_clauses_as_or, render_quantity_clauses_as_or,
     render_reference_clauses_as_or, render_sql_expr, render_string_array_clauses_as_or,

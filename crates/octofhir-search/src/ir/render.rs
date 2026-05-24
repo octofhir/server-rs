@@ -1,9 +1,10 @@
 use crate::ir::ast::{
-    NumberClause, NumberPredicate, QuantityClause, QuantityPredicate, ReferenceClause,
-    ReferencePredicate, StringClause, StringPredicate, TokenClause, TokenPredicate, UriClause,
-    UriPredicate,
+    CompositeClause, CompositeComponentPredicate, CompositePredicate, NumberClause,
+    NumberPredicate, QuantityClause, QuantityPredicate, ReferenceClause, ReferencePredicate,
+    StringClause, StringPredicate, TokenClause, TokenPredicate, UriClause, UriPredicate,
 };
 use crate::ir::sql::{RangeOp, SelectStmt, SqlExpr, SqlOp, SqlTerm};
+use crate::parameters::SearchParameterType;
 use crate::parameters::SearchPrefix;
 use crate::sql_builder::{SqlBuilder, SqlBuilderError};
 use crate::types::date_ast::{Bound, DateClause, DatePredicate, PeriodClause, PeriodPredicate};
@@ -73,6 +74,22 @@ pub fn render_period_path_clauses_as_or(
         None
     } else {
         Some(SqlBuilder::build_or_clause(&rendered))
+    }
+}
+
+/// Render composite tuple clauses as OR of AND-combined component predicates.
+pub fn render_composite_clauses_as_or(
+    builder: &mut SqlBuilder,
+    clauses: &[CompositeClause],
+) -> Result<Option<String>, SqlBuilderError> {
+    let rendered = clauses
+        .iter()
+        .map(|clause| render_composite_clause(builder, clause))
+        .collect::<Result<Vec<_>, _>>()?;
+    if rendered.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(SqlBuilder::build_or_clause(&rendered)))
     }
 }
 
@@ -557,6 +574,182 @@ fn render_period_path_clause(
                  ({end_path} IS NULL OR ({end_path})::timestamptz < ${p}::timestamptz))"
             )
         }
+    }
+}
+
+fn render_composite_clause(
+    builder: &mut SqlBuilder,
+    clause: &CompositeClause,
+) -> Result<String, SqlBuilderError> {
+    match &clause.predicate {
+        CompositePredicate::Tuple { components, .. } => {
+            let conditions = components
+                .iter()
+                .map(|component| render_composite_component(builder, component))
+                .collect::<Result<Vec<_>, _>>()?;
+            if conditions.is_empty() {
+                Ok("TRUE".to_string())
+            } else {
+                Ok(conditions.join(" AND "))
+            }
+        }
+        CompositePredicate::Missing { .. } => Err(SqlBuilderError::NotImplemented(
+            "composite :missing requires a materialized composite strategy".to_string(),
+        )),
+    }
+}
+
+fn render_composite_component(
+    builder: &mut SqlBuilder,
+    component: &CompositeComponentPredicate,
+) -> Result<String, SqlBuilderError> {
+    let json_path = expression_to_jsonb_path(&component.spec.expression);
+    match component.spec.search_type {
+        SearchParameterType::Token => {
+            render_composite_token_component(builder, &component.value, &json_path)
+        }
+        SearchParameterType::String => {
+            let p = builder.add_text_param(format!("{}%", component.value));
+            Ok(format!("({json_path} ILIKE ${p})"))
+        }
+        SearchParameterType::Quantity => {
+            render_composite_quantity_component(builder, &component.value, &json_path)
+        }
+        SearchParameterType::Date => {
+            let (prefix, date_str) = extract_prefix(&component.value);
+            let p = builder.add_text_param(date_str);
+            Ok(format!(
+                "({json_path}::timestamp {} ${p}::timestamp)",
+                prefix_to_comparator(prefix)
+            ))
+        }
+        SearchParameterType::Reference => {
+            let base = to_object_path(&json_path);
+            let p = builder.add_text_param(&component.value);
+            Ok(format!("({base}->>'reference' = ${p})"))
+        }
+        SearchParameterType::Number => {
+            let (prefix, num_str) = extract_prefix(&component.value);
+            let p = builder.add_text_param(num_str);
+            Ok(format!(
+                "({json_path}::numeric {} ${p}::numeric)",
+                prefix_to_comparator(prefix)
+            ))
+        }
+        other => Err(SqlBuilderError::NotImplemented(format!(
+            "Composite component type '{}' not supported",
+            crate::ir::search_type_name(other)
+        ))),
+    }
+}
+
+fn render_composite_token_component(
+    builder: &mut SqlBuilder,
+    value: &str,
+    json_path: &str,
+) -> Result<String, SqlBuilderError> {
+    if let Some((system, code)) = value.split_once('|') {
+        let base = to_object_path(json_path);
+        match (system.is_empty(), code.is_empty()) {
+            (true, false) => {
+                let p = builder.add_text_param(code);
+                Ok(format!("({base}->>'code' = ${p})"))
+            }
+            (false, true) => {
+                let p = builder.add_text_param(system);
+                Ok(format!("({base}->>'system' = ${p})"))
+            }
+            _ => {
+                let p1 = builder.add_text_param(system);
+                let p2 = builder.add_text_param(code);
+                Ok(format!(
+                    "({base}->>'system' = ${p1} AND {base}->>'code' = ${p2})"
+                ))
+            }
+        }
+    } else {
+        let p = builder.add_text_param(value);
+        Ok(format!("({json_path} = ${p})"))
+    }
+}
+
+fn render_composite_quantity_component(
+    builder: &mut SqlBuilder,
+    value: &str,
+    json_path: &str,
+) -> Result<String, SqlBuilderError> {
+    let base = to_object_path(json_path);
+    let parts: Vec<&str> = value.split('|').collect();
+    let (prefix, num_str) = extract_prefix(parts[0]);
+
+    let p = builder.add_text_param(num_str);
+    let value_cond = format!(
+        "({base}->>'value')::numeric {} ${p}::numeric",
+        prefix_to_comparator(prefix)
+    );
+
+    if parts.len() >= 3 {
+        let mut conds = vec![value_cond];
+        if !parts[1].is_empty() {
+            let ps = builder.add_text_param(parts[1]);
+            conds.push(format!("{base}->>'system' = ${ps}"));
+        }
+        if !parts[2].is_empty() {
+            let pc = builder.add_text_param(parts[2]);
+            conds.push(format!(
+                "({base}->>'code' = ${pc} OR {base}->>'unit' = ${pc})"
+            ));
+        }
+        Ok(format!("({})", conds.join(" AND ")))
+    } else {
+        Ok(format!("({value_cond})"))
+    }
+}
+
+fn expression_to_jsonb_path(expression: &str) -> String {
+    let path = expression
+        .find('.')
+        .map_or(expression, |i| &expression[i + 1..]);
+    let parts: Vec<&str> = path.split('.').filter(|p| !p.is_empty()).collect();
+
+    if parts.is_empty() {
+        return "resource".to_string();
+    }
+
+    let mut acc = "resource".to_string();
+    for (i, part) in parts.iter().enumerate() {
+        let op = if i == parts.len() - 1 { "->>" } else { "->" };
+        acc.push_str(&format!("{op}'{part}'"));
+    }
+    acc
+}
+
+fn to_object_path(path: &str) -> String {
+    if let Some(idx) = path.rfind("->>") {
+        let last_part = path[idx + 3..].trim_matches('\'');
+        format!("{}->'{}'", &path[..idx].trim_end_matches("->"), last_part)
+    } else {
+        path.to_string()
+    }
+}
+
+fn extract_prefix(value: &str) -> (&str, &str) {
+    for prefix in ["ge", "le", "gt", "lt", "ne", "sa", "eb", "ap"] {
+        if let Some(rest) = value.strip_prefix(prefix) {
+            return (prefix, rest);
+        }
+    }
+    ("eq", value)
+}
+
+fn prefix_to_comparator(prefix: &str) -> &'static str {
+    match prefix {
+        "gt" | "sa" => ">",
+        "lt" | "eb" => "<",
+        "ge" => ">=",
+        "le" => "<=",
+        "ne" => "!=",
+        _ => "=",
     }
 }
 
