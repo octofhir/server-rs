@@ -1,13 +1,15 @@
-use octofhir_db_postgres::{SchemaManager, migrations};
+use octofhir_db_postgres::{PostgresStorage, SchemaManager, migrations};
 use octofhir_search::{
     ElementTypeHint, SearchParameter, SearchParameterRegistry, SearchParameterType,
     build_native_ir_query_from_params, parameters::SearchParameterComponent, parse_query_string,
     register_common_parameters,
 };
-use serde_json::Value;
+use octofhir_storage::FhirStorage;
+use serde_json::{Value, json};
 use sqlx_postgres::PgPoolOptions;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
+use std::sync::Arc;
 use std::time::Instant;
 use testcontainers::runners::AsyncRunner;
 use testcontainers_modules::postgres::Postgres;
@@ -48,7 +50,13 @@ async fn representative_search_explain_json_runs_with_bound_params() {
         .await
         .expect("Observation schema should be created");
 
-    let registry = representative_registry();
+    let registry = Arc::new(representative_registry());
+    let storage = PostgresStorage::from_pool(pool.clone());
+    assert!(
+        storage.search_registry_slot().set(registry.clone()).is_ok(),
+        "registry should only be set once"
+    );
+    seed_representative_data(&storage).await;
 
     for case in representative_queries() {
         let build_started = Instant::now();
@@ -96,6 +104,63 @@ async fn representative_search_explain_json_runs_with_bound_params() {
             node_types,
             sql_shape
         );
+    }
+}
+
+async fn seed_representative_data(storage: &PostgresStorage) {
+    for resource in [
+        json!({
+            "resourceType": "Patient",
+            "id": "explain-patient",
+            "birthDate": "1985-03-12",
+            "name": [{"family": "Smith", "given": ["Alex"]}],
+            "identifier": [{"system": "http://hospital.example/mrn", "value": "12345"}]
+        }),
+        json!({
+            "resourceType": "Patient",
+            "id": "other-patient",
+            "birthDate": "1970-06-01",
+            "name": [{"family": "Jones"}],
+            "identifier": [{"system": "http://hospital.example/mrn", "value": "99999"}]
+        }),
+        json!({
+            "resourceType": "Observation",
+            "id": "explain-observation",
+            "status": "final",
+            "code": {
+                "coding": [{
+                    "system": "http://loinc.org",
+                    "code": "8480-6",
+                    "display": "Systolic blood pressure"
+                }]
+            },
+            "subject": {"reference": "Patient/explain-patient"},
+            "valueQuantity": {
+                "value": 120,
+                "system": "http://unitsofmeasure.org",
+                "code": "mm[Hg]",
+                "unit": "mm[Hg]"
+            },
+            "component": {
+                "code": {
+                    "coding": [{
+                        "system": "http://loinc.org",
+                        "code": "8480-6"
+                    }]
+                },
+                "valueQuantity": {
+                    "value": 120,
+                    "system": "http://unitsofmeasure.org",
+                    "code": "mm[Hg]",
+                    "unit": "mm[Hg]"
+                }
+            }
+        }),
+    ] {
+        storage
+            .create(&resource)
+            .await
+            .unwrap_or_else(|error| panic!("seed {} should be created: {error}", resource));
     }
 }
 
