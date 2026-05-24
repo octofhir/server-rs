@@ -87,5 +87,6 @@ pub use terminology::{
 // SearchParams to query builder conversion
 pub use params_converter::{
     ConvertedQuery, SearchConfig as ParamsSearchConfig, UnknownParamHandling, UnknownParamWarning,
+    build_native_ir_query_from_params, build_native_ir_query_from_params_with_config,
     build_query_from_params, build_query_from_params_with_config, parse_query_string,
 };

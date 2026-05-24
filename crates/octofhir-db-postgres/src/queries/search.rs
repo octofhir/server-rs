@@ -2,7 +2,7 @@
 //!
 //! This module contains the SQL queries for FHIR search operations.
 
-use std::sync::Arc;
+use std::{sync::Arc, time::Instant};
 
 use chrono::{DateTime, Utc};
 use serde_json::Value;
@@ -18,8 +18,8 @@ use octofhir_search::terminology_preprocess::{
 };
 use octofhir_search::{
     BuiltQuery, ParamsSearchConfig, PreparedQuery, QueryCache, QueryCacheKey, QueryParamKey,
-    SearchParameterRegistry, SqlValue, UnknownParamHandling, build_query_from_params,
-    build_query_from_params_with_config,
+    SearchParameterRegistry, SqlValue, UnknownParamHandling, build_native_ir_query_from_params,
+    build_native_ir_query_from_params_with_config,
 };
 use octofhir_storage::{
     RawSearchResult, RawStoredResource, SearchParams, SearchResult, StorageError, StoredResource,
@@ -43,6 +43,36 @@ pub struct RawSearchOptions {
 fn chrono_to_time(dt: DateTime<Utc>) -> OffsetDateTime {
     OffsetDateTime::from_unix_timestamp(dt.timestamp()).unwrap_or(OffsetDateTime::UNIX_EPOCH)
         + time::Duration::nanoseconds(dt.timestamp_subsec_nanos() as i64)
+}
+
+/// Redact generated SQL for logs by preserving query shape while removing bind identities.
+fn redact_sql_shape(sql: &str) -> String {
+    let mut out = String::with_capacity(sql.len().min(4096));
+    let mut chars = sql.chars().peekable();
+    let mut previous_was_space = false;
+
+    while let Some(ch) = chars.next() {
+        if ch == '$' && chars.peek().is_some_and(|next| next.is_ascii_digit()) {
+            out.push_str("$?");
+            while chars.peek().is_some_and(|next| next.is_ascii_digit()) {
+                chars.next();
+            }
+            previous_was_space = false;
+            continue;
+        }
+
+        if ch.is_whitespace() {
+            if !previous_was_space {
+                out.push(' ');
+                previous_was_space = true;
+            }
+        } else {
+            out.push(ch);
+            previous_was_space = false;
+        }
+    }
+
+    out.trim().to_string()
 }
 
 /// Execute a FHIR search query and return results.
@@ -71,12 +101,13 @@ pub async fn execute_search(
     let empty_registry = SearchParameterRegistry::new();
     let registry = registry.map(|r| r.as_ref()).unwrap_or(&empty_registry);
 
-    // Convert SearchParams to SQL query using the params converter
-    let converted = build_query_from_params(resource_type, &effective_params, registry, "public")
-        .map_err(|e| {
-        tracing::warn!(error = %e, "Failed to build search query");
-        StorageError::invalid_resource(format!("Invalid search parameters: {e}"))
-    })?;
+    // Convert SearchParams to SQL query through the native-IR search path.
+    let converted =
+        build_native_ir_query_from_params(resource_type, &effective_params, registry, "public")
+            .map_err(|e| {
+                tracing::warn!(error = %e, "Failed to build search query");
+                StorageError::invalid_resource(format!("Invalid search parameters: {e}"))
+            })?;
 
     // Build the SQL query
     let built_query = converted.builder.build().map_err(|e| {
@@ -86,7 +117,7 @@ pub async fn execute_search(
 
     tracing::debug!(
         resource_type = %resource_type,
-        sql = %built_query.sql,
+        sql_shape = %redact_sql_shape(&built_query.sql),
         params_count = built_query.params.len(),
         "Executing search query"
     );
@@ -148,11 +179,12 @@ pub async fn execute_search_with_tx(
     let empty_registry = SearchParameterRegistry::new();
     let registry = registry.map(|r| r.as_ref()).unwrap_or(&empty_registry);
 
-    let converted = build_query_from_params(resource_type, &effective_params, registry, "public")
-        .map_err(|e| {
-        tracing::warn!(error = %e, "Failed to build transaction search query");
-        StorageError::invalid_resource(format!("Invalid search parameters: {e}"))
-    })?;
+    let converted =
+        build_native_ir_query_from_params(resource_type, &effective_params, registry, "public")
+            .map_err(|e| {
+                tracing::warn!(error = %e, "Failed to build transaction search query");
+                StorageError::invalid_resource(format!("Invalid search parameters: {e}"))
+            })?;
 
     let built_query = converted.builder.build().map_err(|e| {
         tracing::warn!(error = %e, "Failed to build transaction search SQL");
@@ -365,7 +397,8 @@ async fn execute_search_raw_with_config_inner(
     };
 
     // Convert SearchParams to SQL query using the params converter
-    let converted = build_query_from_params_with_config(
+    let build_started = Instant::now();
+    let converted = build_native_ir_query_from_params_with_config(
         resource_type,
         &effective_params,
         registry,
@@ -589,15 +622,32 @@ async fn execute_search_raw_with_config_inner(
         bq
     };
 
+    let build_elapsed = build_started.elapsed();
+
     tracing::debug!(
         resource_type = %resource_type,
-        sql = %built_query.sql,
+        search_engine = "native-ir",
+        sql_shape = %redact_sql_shape(&built_query.sql),
         params_count = built_query.params.len(),
         "Executing raw search query"
     );
 
     // Execute the main query with raw JSON (SQL already emits resource::text)
+    let execute_started = Instant::now();
     let entries = execute_query_raw(pool, &built_query, resource_type).await?;
+    let execute_elapsed = execute_started.elapsed();
+
+    if options.collect_debug_plan {
+        tracing::debug!(
+            resource_type = %resource_type,
+            search_engine = "native-ir",
+            sql_shape = %redact_sql_shape(&built_query.sql),
+            params_count = built_query.params.len(),
+            build_elapsed_ms = build_elapsed.as_secs_f64() * 1000.0,
+            db_execute_elapsed_ms = execute_elapsed.as_secs_f64() * 1000.0,
+            "Search native IR perf trace"
+        );
+    }
 
     // Determine if there are more results
     let has_more = entries.len() > requested_limit;
@@ -605,7 +655,19 @@ async fn execute_search_raw_with_config_inner(
 
     // Execute count query if requested
     let total = if let Some(cq) = count_query {
-        Some(execute_count_query(pool, &cq).await?)
+        let count_started = Instant::now();
+        let total = execute_count_query(pool, &cq).await?;
+        if options.collect_debug_plan {
+            tracing::debug!(
+                resource_type = %resource_type,
+                search_engine = "native-ir",
+                sql_shape = %redact_sql_shape(&cq.sql),
+                params_count = cq.params.len(),
+                db_execute_elapsed_ms = count_started.elapsed().as_secs_f64() * 1000.0,
+                "Search native IR count perf trace"
+            );
+        }
+        Some(total)
     } else {
         None
     };
@@ -662,7 +724,11 @@ async fn execute_query(
         .fetch_all(pool)
         .await
         .map_err(|e| {
-            tracing::warn!(error = %e, sql = %query.sql, "Search query failed");
+            tracing::warn!(
+                error = %e,
+                sql_shape = %redact_sql_shape(&query.sql),
+                "Search query failed"
+            );
             // Check for undefined table error (PostgreSQL 42P01)
             if is_undefined_table(&e) {
                 return StorageError::internal(format!(
@@ -702,7 +768,11 @@ async fn execute_query_with_tx(
         .fetch_all(&mut **tx)
         .await
         .map_err(|e| {
-            tracing::warn!(error = %e, sql = %query.sql, "Transaction search query failed");
+            tracing::warn!(
+                error = %e,
+                sql_shape = %redact_sql_shape(&query.sql),
+                "Transaction search query failed"
+            );
             if is_undefined_table(&e) {
                 return StorageError::internal(format!(
                     "Table for {} does not exist",
@@ -749,7 +819,11 @@ async fn execute_query_raw(
     .fetch_all(pool)
     .await
     .map_err(|e| {
-        tracing::warn!(error = %e, sql = %query.sql, "Raw search query failed");
+        tracing::warn!(
+            error = %e,
+            sql_shape = %redact_sql_shape(&query.sql),
+            "Raw search query failed"
+        );
         // Check for undefined table error (PostgreSQL 42P01)
         if is_undefined_table(&e) {
             return StorageError::internal(format!("Table for {} does not exist", resource_type));
@@ -1313,5 +1387,15 @@ mod tests {
         let chrono_ts = chrono_dt.timestamp();
         let time_ts = time_dt.unix_timestamp();
         assert!((chrono_ts - time_ts).abs() <= 1);
+    }
+
+    #[test]
+    fn test_redact_sql_shape_removes_bind_indices_and_normalizes_space() {
+        let sql = "SELECT *\nFROM patient r WHERE r.id = $1 AND r.updated_at >= $23";
+
+        assert_eq!(
+            redact_sql_shape(sql),
+            "SELECT * FROM patient r WHERE r.id = $? AND r.updated_at >= $?"
+        );
     }
 }

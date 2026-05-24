@@ -109,19 +109,31 @@ pub struct ConvertedQuery {
 
 /// Convert SearchParams to a FhirQueryBuilder with default (lenient) handling.
 ///
-/// This function:
-/// 1. Converts SearchParams.parameters to ParsedParam format
-/// 2. Uses dispatch_search() to build SQL conditions
-/// 3. Handles _sort, _count, _offset
-/// 4. Extracts _include/_revinclude specifications
-/// 5. Handles chained parameters
+/// This compatibility entrypoint routes through the native-IR search builder.
 pub fn build_query_from_params(
     resource_type: &str,
     params: &SearchParams,
     registry: &SearchParameterRegistry,
     schema: &str,
 ) -> Result<ConvertedQuery, SqlBuilderError> {
-    build_query_from_params_with_config(
+    build_native_ir_query_from_params(resource_type, params, registry, schema)
+}
+
+/// Convert SearchParams through the native-IR search path.
+///
+/// This function:
+/// 1. Converts SearchParams.parameters to ParsedParam format
+/// 2. Uses dispatch_search() to build SQL conditions
+/// 3. Handles _sort, _count, _offset
+/// 4. Extracts _include/_revinclude specifications
+/// 5. Handles chained parameters
+pub fn build_native_ir_query_from_params(
+    resource_type: &str,
+    params: &SearchParams,
+    registry: &SearchParameterRegistry,
+    schema: &str,
+) -> Result<ConvertedQuery, SqlBuilderError> {
+    build_native_ir_query_from_params_with_config(
         resource_type,
         params,
         registry,
@@ -132,9 +144,23 @@ pub fn build_query_from_params(
 
 /// Convert SearchParams to a FhirQueryBuilder with configurable unknown parameter handling.
 ///
+/// This compatibility entrypoint routes through the native-IR search builder.
+pub fn build_query_from_params_with_config(
+    resource_type: &str,
+    params: &SearchParams,
+    registry: &SearchParameterRegistry,
+    schema: &str,
+    config: &SearchConfig,
+) -> Result<ConvertedQuery, SqlBuilderError> {
+    build_native_ir_query_from_params_with_config(resource_type, params, registry, schema, config)
+}
+
+/// Convert SearchParams through the native-IR search path with configurable unknown parameter
+/// handling.
+///
 /// When `config.unknown_param_handling` is `Strict`, returns an error for unknown parameters.
 /// When `Lenient`, unknown parameters are skipped and returned in the result for warning.
-pub fn build_query_from_params_with_config(
+pub fn build_native_ir_query_from_params_with_config(
     resource_type: &str,
     params: &SearchParams,
     registry: &SearchParameterRegistry,
