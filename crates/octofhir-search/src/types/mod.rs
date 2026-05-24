@@ -29,7 +29,7 @@ pub use composite::{
 pub use date::{
     DateRange, build_date_search, build_index_date_search, build_period_search, parse_date_range,
 };
-pub use number::{build_number_search, build_quantity_search};
+pub use number::{build_gin_quantity_search, build_number_search, build_quantity_search};
 pub use reference::{build_reference_array_search, build_reference_search, is_resource_type};
 pub use special::{
     NearParameter, SpecialParameterType, build_content_search, build_filter_search,
@@ -165,7 +165,7 @@ fn dispatch_search_inner(
 
         SearchParameterType::Quantity => {
             let json_path = build_jsonb_accessor(builder.resource_column(), &path_segments, false);
-            build_quantity_search(builder, param, &json_path)
+            build_gin_quantity_search(builder, param, &json_path, &path_segments)
         }
 
         SearchParameterType::Reference => {

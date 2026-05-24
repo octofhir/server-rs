@@ -33,13 +33,13 @@ pub use render::{
     render_composite_clauses_as_or, render_date_clauses_as_or, render_date_column_clauses_as_or,
     render_date_text_path_clauses_as_or, render_id_clauses_as_or, render_number_clauses_as_or,
     render_period_path_clauses_as_or, render_quantity_clauses_as_or,
-    render_reference_clauses_as_or, render_sql_expr, render_string_array_clauses_as_or,
-    render_string_clauses_as_or, render_string_human_name_clauses_as_or,
-    render_string_path_clauses_as_or, render_token_coding_clauses_as_or,
-    render_token_identifier_clauses_as_or, render_token_identifier_containment_clauses_as_or,
-    render_token_path_clauses_as_or, render_token_scalar_code_clauses_as_or,
-    render_token_simple_code_clauses_as_or, render_uri_array_clauses_as_or,
-    render_uri_clauses_as_or,
+    render_quantity_containment_clauses_as_or, render_reference_clauses_as_or, render_sql_expr,
+    render_string_array_clauses_as_or, render_string_clauses_as_or,
+    render_string_human_name_clauses_as_or, render_string_path_clauses_as_or,
+    render_token_coding_clauses_as_or, render_token_identifier_clauses_as_or,
+    render_token_identifier_containment_clauses_as_or, render_token_path_clauses_as_or,
+    render_token_scalar_code_clauses_as_or, render_token_simple_code_clauses_as_or,
+    render_uri_array_clauses_as_or, render_uri_clauses_as_or,
 };
 pub use rewrite::{rewrite_date_clauses, rewrite_search_expr};
 pub use strategy::{IndexStrategy, StrategyDecision};

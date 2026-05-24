@@ -255,7 +255,27 @@ pub fn render_quantity_clauses_as_or(
 ) -> Result<Option<String>, SqlBuilderError> {
     let rendered = clauses
         .iter()
-        .map(|clause| render_quantity_clause(builder, clause, jsonb_path))
+        .map(|clause| render_quantity_clause(builder, clause, jsonb_path, None))
+        .collect::<Result<Vec<_>, _>>()?;
+    if rendered.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(SqlBuilder::build_or_clause(&rendered)))
+    }
+}
+
+/// Render quantity clauses with full-resource containment for system/code
+/// constraints where possible, so the generic resource GIN index can prefilter
+/// before numeric comparison.
+pub fn render_quantity_containment_clauses_as_or(
+    builder: &mut SqlBuilder,
+    clauses: &[QuantityClause],
+    jsonb_path: &str,
+    path_segments: &[String],
+) -> Result<Option<String>, SqlBuilderError> {
+    let rendered = clauses
+        .iter()
+        .map(|clause| render_quantity_clause(builder, clause, jsonb_path, Some(path_segments)))
         .collect::<Result<Vec<_>, _>>()?;
     if rendered.is_empty() {
         Ok(None)
@@ -1505,6 +1525,7 @@ fn render_quantity_clause(
     builder: &mut SqlBuilder,
     clause: &QuantityClause,
     jsonb_path: &str,
+    containment_path: Option<&[String]>,
 ) -> Result<String, SqlBuilderError> {
     match &clause.predicate {
         QuantityPredicate::Missing { is_missing } => {
@@ -1535,20 +1556,89 @@ fn render_quantity_clause(
             }
 
             let mut constraints = vec![num_condition];
-            if let Some(system) = system {
-                let p = builder.add_text_param(system);
-                constraints.push(format!("{jsonb_path}->>'system' = ${p}"));
-            }
-            if let Some(code) = code {
-                let p = builder.add_text_param(code);
-                constraints.push(format!(
-                    "({jsonb_path}->>'code' = ${p} OR {jsonb_path}->>'unit' = ${p})"
-                ));
+            if let Some(path_segments) = containment_path
+                && let Some(containment) =
+                    render_quantity_system_code_containment(builder, path_segments, system, code)
+            {
+                constraints.push(containment);
+            } else {
+                if let Some(system) = system {
+                    let p = builder.add_text_param(system);
+                    constraints.push(format!("{jsonb_path}->>'system' = ${p}"));
+                }
+                if let Some(code) = code {
+                    let p = builder.add_text_param(code);
+                    constraints.push(format!(
+                        "({jsonb_path}->>'code' = ${p} OR {jsonb_path}->>'unit' = ${p})"
+                    ));
+                }
             }
 
             Ok(format!("({})", constraints.join(" AND ")))
         }
     }
+}
+
+fn render_quantity_system_code_containment(
+    builder: &mut SqlBuilder,
+    path_segments: &[String],
+    system: &Option<String>,
+    code: &Option<String>,
+) -> Option<String> {
+    let system = system.as_deref();
+    let code = code.as_deref();
+    let resource_col = builder.resource_column().to_string();
+
+    match (system, code) {
+        (None, None) => None,
+        (Some(system), None) => Some(render_quantity_containment(
+            builder,
+            &resource_col,
+            path_segments,
+            serde_json::json!({"system": system}),
+        )),
+        (None, Some(code)) => {
+            let by_code = render_quantity_containment(
+                builder,
+                &resource_col,
+                path_segments,
+                serde_json::json!({"code": code}),
+            );
+            let by_unit = render_quantity_containment(
+                builder,
+                &resource_col,
+                path_segments,
+                serde_json::json!({"unit": code}),
+            );
+            Some(format!("({by_code} OR {by_unit})"))
+        }
+        (Some(system), Some(code)) => {
+            let by_code = render_quantity_containment(
+                builder,
+                &resource_col,
+                path_segments,
+                serde_json::json!({"system": system, "code": code}),
+            );
+            let by_unit = render_quantity_containment(
+                builder,
+                &resource_col,
+                path_segments,
+                serde_json::json!({"system": system, "unit": code}),
+            );
+            Some(format!("({by_code} OR {by_unit})"))
+        }
+    }
+}
+
+fn render_quantity_containment(
+    builder: &mut SqlBuilder,
+    resource_col: &str,
+    path_segments: &[String],
+    quantity_value: serde_json::Value,
+) -> String {
+    let containment = build_nested_json_containment(path_segments, quantity_value);
+    let p = builder.add_json_param(&containment.to_string());
+    format!("{resource_col} @> ${p}::jsonb")
 }
 
 fn render_reference_clause(
@@ -2246,6 +2336,47 @@ mod tests {
         assert_eq!(builder.params()[1].as_str(), "5.55");
         assert_eq!(builder.params()[2].as_str(), "http://unitsofmeasure.org");
         assert_eq!(builder.params()[3].as_str(), "mg");
+    }
+
+    #[test]
+    fn quantity_containment_render_adds_resource_gin_prefilter() {
+        let mut builder = SqlBuilder::with_resource_column("r.resource");
+        let clauses = QuantityClause::from_parsed_param(
+            &crate::parser::ParsedParam {
+                name: "value-quantity".to_string(),
+                modifier: None,
+                values: vec![crate::parser::ParsedValue {
+                    prefix: Some(SearchPrefix::Ge),
+                    raw: "100|http://unitsofmeasure.org|mm[Hg]".to_string(),
+                }],
+            },
+            "Observation",
+        )
+        .unwrap();
+
+        let sql = render_quantity_containment_clauses_as_or(
+            &mut builder,
+            &clauses,
+            "r.resource->'valueQuantity'",
+            &["valueQuantity".to_string()],
+        )
+        .unwrap()
+        .unwrap();
+
+        assert!(sql.contains("(r.resource->'valueQuantity'->>'value')::numeric >= $1::numeric"));
+        assert!(sql.contains("r.resource @>"));
+        assert!(!sql.contains("r.resource->'valueQuantity'->>'system'"));
+        assert!(!sql.contains("unitsofmeasure") && !sql.contains("mm[Hg]"));
+        assert_eq!(builder.params()[0].as_str(), "100");
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&builder.params()[1].as_str()).unwrap(),
+            serde_json::json!({
+                "valueQuantity": {
+                    "system": "http://unitsofmeasure.org",
+                    "code": "mm[Hg]"
+                }
+            })
+        );
     }
 
     #[test]

@@ -15,7 +15,7 @@ use crate::parser::ParsedParam;
 use crate::sql_builder::{SqlBuilder, SqlBuilderError};
 use crate::{
     ir::NumberClause, ir::QuantityClause, ir::render_number_clauses_as_or,
-    ir::render_quantity_clauses_as_or,
+    ir::render_quantity_clauses_as_or, ir::render_quantity_containment_clauses_as_or,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -151,6 +151,23 @@ pub fn build_quantity_search(
     Ok(())
 }
 
+/// Build search for Quantity types with a full-resource containment prefilter
+/// for system/code constraints.
+pub fn build_gin_quantity_search(
+    builder: &mut SqlBuilder,
+    param: &ParsedParam,
+    jsonb_path: &str,
+    path_segments: &[String],
+) -> Result<(), SqlBuilderError> {
+    let clauses = QuantityClause::from_parsed_param(param, "")?;
+    if let Some(sql) =
+        render_quantity_containment_clauses_as_or(builder, &clauses, jsonb_path, path_segments)?
+    {
+        builder.add_condition(sql);
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -277,6 +294,32 @@ mod tests {
         let clause = builder.build_where_clause().unwrap();
         assert!(clause.contains("system"));
         assert!(clause.contains("code"));
+    }
+
+    #[test]
+    fn test_gin_quantity_with_unit() {
+        let mut builder = SqlBuilder::new();
+        let param = ParsedParam {
+            name: "value-quantity".to_string(),
+            modifier: None,
+            values: vec![ParsedValue {
+                prefix: Some(SearchPrefix::Ge),
+                raw: "100|http://unitsofmeasure.org|mm[Hg]".to_string(),
+            }],
+        };
+
+        build_gin_quantity_search(
+            &mut builder,
+            &param,
+            "resource->'valueQuantity'",
+            &["valueQuantity".to_string()],
+        )
+        .unwrap();
+
+        let clause = builder.build_where_clause().unwrap();
+        assert!(clause.contains("resource @>"));
+        assert!(clause.contains("::numeric >= $1::numeric"));
+        assert!(!clause.contains("resource->'valueQuantity'->>'system'"));
     }
 
     #[test]
