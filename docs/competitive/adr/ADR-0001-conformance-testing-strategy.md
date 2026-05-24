@@ -17,7 +17,6 @@ No competitor comparison is credible without conformance test results. Every FHI
 - **Firely Server**: g10 certified
 - **AWS HealthLake**: Validated via ONC Inferno test suite (US Core IG STU v7.0.0, SMART App Launch v2.0.0)
 - **Medplum**: Inferno test results
-- **Aidbox**: Published conformance documentation
 
 OctoFHIR currently has **zero published conformance test results**. This is the single biggest credibility gap for a FHIR server. Without conformance evidence, potential adopters cannot evaluate whether OctoFHIR correctly implements the FHIR specification.
 

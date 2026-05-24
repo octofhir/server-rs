@@ -13,7 +13,9 @@ use crate::ir::{
     build_token_debug_plan, render_date_clauses_as_or, render_id_clauses_as_or,
     resolve_composite_component_specs, resolve_resource_column_param, rewrite_date_clauses,
 };
-use crate::parameters::{ElementTypeHint, SearchParameter, SearchParameterType, SearchPrefix};
+use crate::parameters::{
+    ElementTypeHint, SearchModifier, SearchParameter, SearchParameterType, SearchPrefix,
+};
 use crate::parser::{ParsedParam, ParsedValue};
 use crate::registry::SearchParameterRegistry;
 use crate::reverse_chaining::{
@@ -272,6 +274,8 @@ pub fn build_native_ir_query_from_params_with_config(
                 continue;
             }
 
+            reject_non_production_fallback(&parsed, &param_def, resource_type)?;
+
             if config.collect_debug_plan {
                 collect_date_debug_plan(debug_plan.as_mut(), &parsed, &param_def, resource_type)?;
                 collect_string_debug_plan(
@@ -472,6 +476,46 @@ fn try_fold_repeated_date_window(
     Ok(true)
 }
 
+fn reject_non_production_fallback(
+    parsed: &ParsedParam,
+    param_def: &SearchParameter,
+    resource_type: &str,
+) -> Result<(), SqlBuilderError> {
+    match param_def.param_type {
+        SearchParameterType::String if matches!(parsed.modifier, Some(SearchModifier::Text)) => {
+            Err(fallback_disabled(
+                resource_type,
+                &parsed.name,
+                "string :text narrative JSONB traversal",
+            ))
+        }
+        SearchParameterType::Composite => Err(fallback_disabled(
+            resource_type,
+            &parsed.name,
+            "composite JSONB component traversal",
+        )),
+        SearchParameterType::Reference
+            if matches!(parsed.modifier, Some(SearchModifier::Missing)) =>
+        {
+            Err(fallback_disabled(
+                resource_type,
+                &parsed.name,
+                "reference :missing JSONB presence check",
+            ))
+        }
+        SearchParameterType::Token if matches!(parsed.modifier, Some(SearchModifier::Text)) => Err(
+            fallback_disabled(resource_type, &parsed.name, "token :text display traversal"),
+        ),
+        _ => Ok(()),
+    }
+}
+
+fn fallback_disabled(resource_type: &str, param_name: &str, fallback: &str) -> SqlBuilderError {
+    SqlBuilderError::NotImplemented(format!(
+        "{resource_type}.{param_name} requires {fallback}, but production fallback search paths are disabled"
+    ))
+}
+
 fn collect_date_debug_plan(
     debug_plan: Option<&mut SearchDebugPlan>,
     parsed: &ParsedParam,
@@ -488,7 +532,7 @@ fn collect_date_debug_plan(
         return Ok(());
     }
 
-    let clauses = rewrite_date_clauses(DateClause::from_parsed_param(parsed, resource_type)?);
+    let clauses = DateClause::from_parsed_param(parsed, resource_type)?;
     append_date_debug_plan(debug_plan, resource_type, &clauses);
     Ok(())
 }
@@ -1020,6 +1064,34 @@ pub fn parse_query_string(query: &str, default_count: u32, max_count: u32) -> Se
 mod tests {
     use super::*;
 
+    fn assert_fallback_disabled<T>(
+        result: Result<T, SqlBuilderError>,
+        expected_param: &str,
+        expected_fallback: &str,
+    ) {
+        let err = match result {
+            Ok(_) => panic!("fallback-backed production search must be rejected"),
+            Err(err) => err,
+        };
+        match err {
+            SqlBuilderError::NotImplemented(message) => {
+                assert!(
+                    message.contains(expected_param),
+                    "error should identify param {expected_param:?}, got: {message}"
+                );
+                assert!(
+                    message.contains(expected_fallback),
+                    "error should identify fallback {expected_fallback:?}, got: {message}"
+                );
+                assert!(
+                    message.contains("fallback search paths are disabled"),
+                    "error should explain disabled fallbacks, got: {message}"
+                );
+            }
+            other => panic!("expected NotImplemented fallback rejection, got: {other:?}"),
+        }
+    }
+
     #[test]
     fn test_convert_to_parsed_param_simple() {
         let parsed = convert_to_parsed_param("name", "John");
@@ -1272,12 +1344,7 @@ mod tests {
             (
                 "Observation",
                 "value-quantity=ge100|http://unitsofmeasure.org|mm[Hg]&_count=10",
-                ["::numeric", "valueQuantity"],
-            ),
-            (
-                "Observation",
-                "code-value-quantity=http://loinc.org|8480-6$ge100|http://unitsofmeasure.org|mm[Hg]&_count=10",
-                ["component", "::numeric"],
+                ["search_idx_quantity", "siq.value_num"],
             ),
         ];
 
@@ -1296,6 +1363,22 @@ mod tests {
                 );
             }
         }
+
+        let composite_params = parse_query_string(
+            "code-value-quantity=http://loinc.org|8480-6$ge100|http://unitsofmeasure.org|mm[Hg]&_count=10",
+            10,
+            100,
+        );
+        assert_fallback_disabled(
+            build_native_ir_query_from_params(
+                "Observation",
+                &composite_params,
+                &registry,
+                "public",
+            ),
+            "Observation.code-value-quantity",
+            "composite JSONB component traversal",
+        );
     }
 
     #[test]
@@ -1662,6 +1745,73 @@ mod tests {
     }
 
     #[test]
+    fn date_comma_values_keep_prefix_per_value() {
+        let registry = date_registry_with_expression();
+        let params = parse_query_string("birthdate=lt1975,ge2005&_count=5", 10, 100);
+
+        let converted =
+            build_native_ir_query_from_params("Patient", &params, &registry, "public").unwrap();
+        let built = converted.builder.with_raw_resource(true).build().unwrap();
+
+        assert!(
+            built.sql.contains(" OR "),
+            "comma-separated prefixed dates must OR, got: {}",
+            built.sql
+        );
+        assert_eq!(
+            built
+                .sql
+                .matches("EXISTS (SELECT 1 FROM search_idx_date")
+                .count(),
+            2,
+            "two prefixed comma values should produce two OR'd EXISTS clauses: {}",
+            built.sql
+        );
+        let rendered_params = built
+            .params
+            .iter()
+            .map(SqlValue::as_display_str)
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            rendered_params.contains("1975-01-01T00:00:00Z")
+                && rendered_params.contains("2005-01-01T00:00:00Z"),
+            "date bounds should be bound independently per OR value, params: {rendered_params}"
+        );
+    }
+
+    #[test]
+    fn date_missing_modifier_uses_sidecar_existence() {
+        let registry = date_registry_with_expression();
+        let cases = [
+            ("birthdate:missing=true&_count=5", "NOT EXISTS"),
+            ("birthdate:missing=false&_count=5", "EXISTS"),
+        ];
+
+        for (query, expected_sql) in cases {
+            let params = parse_query_string(query, 10, 100);
+            let converted =
+                build_native_ir_query_from_params("Patient", &params, &registry, "public").unwrap();
+            let built = converted.builder.with_raw_resource(true).build().unwrap();
+
+            assert!(
+                built.sql.contains(expected_sql) && built.sql.contains("search_idx_date"),
+                "date :missing should use sidecar existence SQL, got: {}",
+                built.sql
+            );
+            assert!(
+                !built
+                    .params
+                    .iter()
+                    .map(SqlValue::as_display_str)
+                    .any(|param| param.eq_ignore_ascii_case("true")
+                        || param.eq_ignore_ascii_case("false")),
+                ":missing booleans should not be parsed as date values"
+            );
+        }
+    }
+
+    #[test]
     fn repeated_date_params_render_and_between_occurrences() {
         let registry = date_registry_with_expression();
         let params = parse_query_string(
@@ -1785,8 +1935,11 @@ mod tests {
         let registry = string_registry_with_expression();
         let cases = [
             ("family=Müller", "sid.value_norm LIKE", "muller%"),
+            ("family=Van+Pelt", "sid.value_norm LIKE", "van pelt%"),
             ("family:contains=Müller", "sid.value_norm LIKE", "%muller%"),
             ("family:exact=Müller", "sid.value_exact =", "Müller"),
+            ("family:exact=Smith", "sid.value_exact =", "Smith"),
+            ("family:exact=smith", "sid.value_exact =", "smith"),
         ];
 
         for (query, expected_sql, expected_param) in cases {
@@ -1819,7 +1972,7 @@ mod tests {
     }
 
     #[test]
-    fn string_text_query_uses_jsonb_fallback_and_debug_marks_non_index_backed() {
+    fn string_text_query_jsonb_fallback_is_rejected() {
         let registry = string_registry_with_expression();
         let params = parse_query_string("family:text=Müller&_count=5", 10, 100);
         let config = SearchConfig {
@@ -1827,52 +1980,17 @@ mod tests {
             collect_debug_plan: true,
         };
 
-        let converted = build_native_ir_query_from_params_with_config(
-            "Patient", &params, &registry, "public", &config,
-        )
-        .unwrap();
-        let plan = converted.debug_plan.expect("debug plan collected");
-
-        assert_eq!(plan.predicates.len(), 1);
-        assert_eq!(plan.predicates[0].param_code, "family");
-        assert_eq!(plan.predicates[0].search_type, SearchParameterType::String);
-        assert_eq!(
-            plan.predicates[0].strategy,
-            crate::ir::IndexStrategy::JsonbTraversal
-        );
-        assert!(!plan.predicates[0].index_backed);
-        assert_eq!(plan.predicates[0].expected_index, None);
-        assert!(plan.predicates[0].sql_shape.contains("to_tsvector"));
-
-        let built = converted.builder.with_raw_resource(true).build().unwrap();
-        assert!(
-            built.sql.contains("to_tsvector") && built.sql.contains("plainto_tsquery"),
-            "string :text must use narrative fallback SQL, got: {}",
-            built.sql
-        );
-        assert!(
-            !built.sql.contains("search_idx_string") && !built.sql.contains("Müller"),
-            "string :text should not use sidecar or interpolate values: {}",
-            built.sql
-        );
-        assert!(
-            built
-                .params
-                .iter()
-                .any(|param| param.as_display_str() == "Müller"),
-            "string :text value should be bound"
-        );
-
-        let json = serde_json::to_string(&plan).unwrap();
-        assert!(json.contains("jsonb_traversal"));
-        assert!(
-            !json.contains("Müller") && !json.contains("muller"),
-            "debug output must stay redacted: {json}"
+        assert_fallback_disabled(
+            build_native_ir_query_from_params_with_config(
+                "Patient", &params, &registry, "public", &config,
+            ),
+            "Patient.family",
+            "string :text narrative JSONB traversal",
         );
     }
 
     #[test]
-    fn number_debug_plan_marks_jsonb_numeric_cast_non_index_backed() {
+    fn number_query_uses_sidecar_number_index() {
         let registry = number_registry_with_expression();
         let params = parse_query_string("value=ge123.45&_count=5", 10, 100);
         let config = SearchConfig {
@@ -1888,42 +2006,22 @@ mod tests {
             &config,
         )
         .unwrap();
-        let plan = converted.debug_plan.expect("debug plan collected");
-
-        assert_eq!(plan.resource_type, "Observation");
-        assert_eq!(plan.predicates.len(), 1);
-        assert_eq!(plan.predicates[0].param_code, "value");
-        assert_eq!(plan.predicates[0].search_type, SearchParameterType::Number);
-        assert_eq!(
-            plan.predicates[0].strategy,
-            crate::ir::IndexStrategy::JsonbTraversal
-        );
-        assert!(!plan.predicates[0].index_backed);
-        assert_eq!(plan.predicates[0].expected_index, None);
-        assert!(plan.predicates[0].sql_shape.contains("::numeric >= $value"));
-
         let built = converted.builder.with_raw_resource(true).build().unwrap();
         assert!(
-            built.sql.contains("::numeric >= $1"),
-            "number runtime path should remain JSONB numeric cast, got: {}",
+            built.sql.contains("search_idx_number") && built.sql.contains("sin.value_num"),
+            "number runtime path should use sidecar number index, got: {}",
             built.sql
         );
-        assert!(
-            !built.sql.contains("123.45"),
-            "number values must be bound, not interpolated: {}",
-            built.sql
+        let plan = converted.debug_plan.expect("debug plan collected");
+        assert_eq!(
+            plan.predicates[0].strategy,
+            crate::ir::IndexStrategy::SidecarNumber
         );
-
-        let json = serde_json::to_string(&plan).unwrap();
-        assert!(json.contains("jsonb_traversal"));
-        assert!(
-            !json.contains("123.45"),
-            "debug output must stay redacted: {json}"
-        );
+        assert!(plan.predicates[0].index_backed);
     }
 
     #[test]
-    fn quantity_debug_plan_marks_gin_prefilter_for_system_code() {
+    fn quantity_query_uses_sidecar_quantity_index() {
         let registry = quantity_registry_with_expression();
         let params = parse_query_string(
             "value-quantity=5.5|http://unitsofmeasure.org|mg&_count=5",
@@ -1943,64 +2041,26 @@ mod tests {
             &config,
         )
         .unwrap();
-        let plan = converted.debug_plan.expect("debug plan collected");
-
-        assert_eq!(plan.resource_type, "Observation");
-        assert_eq!(plan.predicates.len(), 1);
-        assert_eq!(plan.predicates[0].param_code, "value-quantity");
-        assert_eq!(
-            plan.predicates[0].search_type,
-            SearchParameterType::Quantity
-        );
-        assert_eq!(
-            plan.predicates[0].strategy,
-            crate::ir::IndexStrategy::JsonbContainment
-        );
-        assert!(plan.predicates[0].index_backed);
-        assert_eq!(
-            plan.predicates[0].expected_index,
-            Some("idx_observation_gin".to_string())
-        );
-        assert!(plan.predicates[0].sql_shape.contains("::numeric >= $lo"));
-        assert!(plan.predicates[0].sql_shape.contains("resource @>"));
-        assert!(plan.predicates[0].sql_shape.contains("system: $system"));
-        assert!(plan.predicates[0].sql_shape.contains("unit: $code"));
-
         let built = converted.builder.with_raw_resource(true).build().unwrap();
         assert!(
-            built.sql.contains("::numeric >= $1::numeric")
-                && built.sql.contains("::numeric < $2::numeric")
-                && built.sql.contains("r.resource @>"),
-            "quantity runtime path should use numeric cast plus GIN containment, got: {}",
+            built.sql.contains("search_idx_quantity")
+                && built.sql.contains("siq.value_num")
+                && built.sql.contains("siq.system")
+                && built.sql.contains("siq.code")
+                && built.sql.contains("siq.unit"),
+            "quantity runtime path should use sidecar quantity index, got: {}",
             built.sql
         );
-        assert!(
-            !built.sql.contains("unitsofmeasure") && !built.sql.contains("mg"),
-            "quantity values must be bound, not interpolated: {}",
-            built.sql
+        let plan = converted.debug_plan.expect("debug plan collected");
+        assert_eq!(
+            plan.predicates[0].strategy,
+            crate::ir::IndexStrategy::SidecarQuantity
         );
-
-        let rendered_params = built
-            .params
-            .iter()
-            .map(SqlValue::as_display_str)
-            .collect::<Vec<_>>()
-            .join("\n");
-        assert!(rendered_params.contains("5.45"));
-        assert!(rendered_params.contains("5.55"));
-        assert!(rendered_params.contains("\"system\":\"http://unitsofmeasure.org\""));
-        assert!(rendered_params.contains("\"unit\":\"mg\""));
-
-        let json = serde_json::to_string(&plan).unwrap();
-        assert!(json.contains("jsonb_containment"));
-        assert!(
-            !json.contains("5.5") && !json.contains("unitsofmeasure") && !json.contains("mg"),
-            "debug output must stay redacted: {json}"
-        );
+        assert!(plan.predicates[0].index_backed);
     }
 
     #[test]
-    fn composite_debug_plan_marks_tuple_semantics_and_cooccurrence_risk() {
+    fn composite_jsonb_component_traversal_fallback_is_rejected() {
         let registry = composite_registry_with_expression();
         let params = parse_query_string(
             "code-value-quantity=http://loinc.org|8480-6$gt5.5|http://unitsofmeasure.org|mg&_count=5",
@@ -2012,56 +2072,60 @@ mod tests {
             collect_debug_plan: true,
         };
 
-        let converted = build_native_ir_query_from_params_with_config(
-            "Observation",
-            &params,
-            &registry,
-            "public",
-            &config,
-        )
-        .unwrap();
-        let plan = converted.debug_plan.expect("debug plan collected");
+        assert_fallback_disabled(
+            build_native_ir_query_from_params_with_config(
+                "Observation",
+                &params,
+                &registry,
+                "public",
+                &config,
+            ),
+            "Observation.code-value-quantity",
+            "composite JSONB component traversal",
+        );
+    }
 
-        assert_eq!(plan.resource_type, "Observation");
-        assert_eq!(plan.predicates.len(), 1);
-        assert_eq!(plan.predicates[0].param_code, "code-value-quantity");
-        assert_eq!(
-            plan.predicates[0].search_type,
-            SearchParameterType::Composite
-        );
-        assert_eq!(
-            plan.predicates[0].strategy,
-            crate::ir::IndexStrategy::JsonbTraversal
-        );
-        assert!(!plan.predicates[0].index_backed);
-        assert_eq!(plan.predicates[0].expected_index, None);
-        assert!(
-            plan.predicates[0]
-                .sql_shape
-                .contains("requires-same-element")
-        );
+    #[test]
+    fn reference_missing_jsonb_presence_fallback_is_rejected() {
+        let registry = reference_registry_with_expression();
+        let params = parse_query_string("subject:missing=true&_count=5", 10, 100);
+        let config = SearchConfig {
+            unknown_param_handling: UnknownParamHandling::Lenient,
+            collect_debug_plan: true,
+        };
 
-        let built = converted.builder.with_raw_resource(true).build().unwrap();
-        assert!(
-            built.sql.contains("component")
-                && built.sql.contains("system")
-                && built.sql.contains("value"),
-            "composite runtime path should remain current component SQL, got: {}",
-            built.sql
+        assert_fallback_disabled(
+            build_native_ir_query_from_params_with_config(
+                "Observation",
+                &params,
+                &registry,
+                "public",
+                &config,
+            ),
+            "Observation.subject",
+            "reference :missing JSONB presence check",
         );
-        assert!(
-            !built.sql.contains("loinc")
-                && !built.sql.contains("8480-6")
-                && !built.sql.contains("mg"),
-            "composite values must be bound, not interpolated: {}",
-            built.sql
-        );
+    }
 
-        let json = serde_json::to_string(&plan).unwrap();
-        assert!(json.contains("jsonb_traversal"));
-        assert!(
-            !json.contains("loinc") && !json.contains("8480-6") && !json.contains("mg"),
-            "debug output must stay redacted: {json}"
+    #[test]
+    fn token_text_display_fallback_is_rejected() {
+        let registry = token_registry_with_expression();
+        let params = parse_query_string("code:text=systolic&_count=5", 10, 100);
+        let config = SearchConfig {
+            unknown_param_handling: UnknownParamHandling::Lenient,
+            collect_debug_plan: true,
+        };
+
+        assert_fallback_disabled(
+            build_native_ir_query_from_params_with_config(
+                "Observation",
+                &params,
+                &registry,
+                "public",
+                &config,
+            ),
+            "Observation.code",
+            "token :text display traversal",
         );
     }
 

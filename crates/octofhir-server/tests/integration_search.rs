@@ -19,25 +19,109 @@ use octofhir_server::{AppConfig, PostgresStorageConfig, build_app};
 use serde_json::{Value, json};
 use testcontainers::{ContainerAsync, runners::AsyncRunner};
 use testcontainers_modules::postgres::Postgres;
-use tokio::task::JoinHandle;
+use tokio::sync::{Mutex, OnceCell, OwnedMutexGuard};
 
 // =============================================================================
 // Test Infrastructure
 // =============================================================================
 
-async fn start_postgres() -> (ContainerAsync<Postgres>, String) {
-    let container = Postgres::default()
-        .start()
+type SharedPostgres = Arc<Mutex<(ContainerAsync<Postgres>, String)>>;
+
+static SHARED_POSTGRES: OnceCell<SharedPostgres> = OnceCell::const_new();
+static SEARCH_TEST_LOCK: OnceCell<Arc<Mutex<()>>> = OnceCell::const_new();
+
+struct SearchTestPostgresGuard {
+    _serial: OwnedMutexGuard<()>,
+    _container: SharedPostgres,
+}
+
+struct TestServerHandle(tokio::task::JoinHandle<()>);
+
+impl Drop for TestServerHandle {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
+async fn start_postgres() -> (SearchTestPostgresGuard, String) {
+    let lock = SEARCH_TEST_LOCK
+        .get_or_init(|| async { Arc::new(Mutex::new(())) })
         .await
-        .expect("start postgres container");
+        .clone()
+        .lock_owned()
+        .await;
 
-    let host_port = container.get_host_port_ipv4(5432).await.expect("get port");
-    let url = format!(
-        "postgres://postgres:postgres@127.0.0.1:{}/postgres",
-        host_port
-    );
+    let container = SHARED_POSTGRES
+        .get_or_init(|| async {
+            let container = Postgres::default()
+                .start()
+                .await
+                .expect("start postgres container");
 
-    (container, url)
+            let host_port = container.get_host_port_ipv4(5432).await.expect("get port");
+            let url = format!(
+                "postgres://postgres:postgres@127.0.0.1:{}/postgres",
+                host_port
+            );
+
+            Arc::new(Mutex::new((container, url)))
+        })
+        .await
+        .clone();
+
+    let url = {
+        let guard = container.lock().await;
+        guard.1.clone()
+    };
+
+    reset_search_test_data(&url).await;
+
+    (
+        SearchTestPostgresGuard {
+            _serial: lock,
+            _container: container,
+        },
+        url,
+    )
+}
+
+async fn reset_search_test_data(postgres_url: &str) {
+    let pool = sqlx_postgres::PgPoolOptions::new()
+        .max_connections(1)
+        .connect(postgres_url)
+        .await
+        .expect("connect postgres for search test reset");
+
+    sqlx_core::query::query(
+        r#"
+        DO $$
+        DECLARE
+            table_name text;
+        BEGIN
+            FOREACH table_name IN ARRAY ARRAY[
+                'patient',
+                'patient_history',
+                'observation',
+                'observation_history',
+                'search_idx_reference',
+                'search_idx_date',
+                'search_idx_string',
+                'search_idx_number',
+                'search_idx_quantity'
+            ]
+            LOOP
+                IF to_regclass(format('public.%I', table_name)) IS NOT NULL THEN
+                    EXECUTE format('TRUNCATE TABLE public.%I CASCADE', table_name);
+                END IF;
+            END LOOP;
+        END $$;
+        "#,
+    )
+    .execute(&pool)
+    .await
+    .expect("reset search test data");
+
+    pool.close().await;
 }
 
 fn create_config(postgres_url: &str) -> AppConfig {
@@ -49,12 +133,13 @@ fn create_config(postgres_url: &str) -> AppConfig {
         idle_timeout_ms: Some(60000),
         ..Default::default()
     });
+    config.auth.policy.anonymous_access = true;
     config
 }
 
 async fn start_server(
     config: &AppConfig,
-) -> (String, tokio::sync::oneshot::Sender<()>, JoinHandle<()>) {
+) -> (String, tokio::sync::oneshot::Sender<()>, TestServerHandle) {
     let config_manager = Arc::new(
         ConfigurationManager::builder()
             .build()
@@ -77,7 +162,7 @@ async fn start_server(
             .await;
     });
 
-    (format!("http://{addr}/fhir"), tx, server)
+    (format!("http://{addr}/fhir"), tx, TestServerHandle(server))
 }
 
 /// Create test patients for search tests
@@ -129,11 +214,15 @@ async fn create_test_patients(client: &reqwest::Client, base: &str) -> Vec<Strin
             .await
             .expect("create patient");
 
-        if resp.status().is_success() {
-            let created: Value = resp.json().await.expect("parse json");
-            if let Some(id) = created["id"].as_str() {
-                ids.push(id.to_string());
-            }
+        let status = resp.status();
+        let body = resp.text().await.expect("read patient create response");
+        assert!(
+            status.is_success(),
+            "patient create failed with {status}: {body}"
+        );
+        let created: Value = serde_json::from_str(&body).expect("parse json");
+        if let Some(id) = created["id"].as_str() {
+            ids.push(id.to_string());
         }
     }
 
@@ -235,8 +324,10 @@ async fn test_string_exact_modifier() {
         .await
         .expect("search request");
 
-    assert!(resp.status().is_success());
-    let bundle: Value = resp.json().await.expect("parse bundle");
+    let status = resp.status();
+    let body = resp.text().await.expect("read response body");
+    assert!(status.is_success(), "search failed with {status}: {body}");
+    let bundle: Value = serde_json::from_str(&body).expect("parse bundle");
     assert_eq!(bundle["resourceType"], "Bundle");
     assert_eq!(get_bundle_total(&bundle), 2); // John Smith and Jane Smith
 
@@ -764,7 +855,6 @@ async fn test_combined_search_parameters() {
     let client = reqwest::Client::new();
 
     let _patient_ids = create_test_patients(&client, &base).await;
-
     // Combine multiple parameters (AND logic)
     let resp = client
         .get(format!("{base}/Patient?family=Smith&gender=female"))
@@ -773,8 +863,10 @@ async fn test_combined_search_parameters() {
         .await
         .expect("search request");
 
-    assert!(resp.status().is_success());
-    let bundle: Value = resp.json().await.expect("parse bundle");
+    let status = resp.status();
+    let body = resp.text().await.expect("read response body");
+    assert!(status.is_success(), "search failed with {status}: {body}");
+    let bundle: Value = serde_json::from_str(&body).expect("parse bundle");
     assert_eq!(get_bundle_total(&bundle), 1); // Only Jane Smith
 
     let _ = shutdown_tx.send(());

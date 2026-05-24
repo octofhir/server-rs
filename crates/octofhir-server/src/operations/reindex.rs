@@ -15,7 +15,7 @@ use crate::config::ReindexConfig;
 use crate::operations::handler::{OperationError, OperationHandler};
 use crate::server::AppState;
 
-use octofhir_search::{SearchParameterRegistry, SearchParameterType};
+use octofhir_search::SearchParameterRegistry;
 use sqlx_postgres::PgPool;
 
 /// The $reindex operation handler
@@ -174,51 +174,53 @@ async fn reindex_single_resource(
     resource_id: &str,
     resource: &Value,
 ) -> Result<(), OperationError> {
-    let params = registry.get_all_for_type(resource_type);
-
-    let mut refs = Vec::new();
-    let mut dates = Vec::new();
-
-    for param in &params {
-        let expression = match &param.expression {
-            Some(e) => e.as_str(),
-            None => continue,
-        };
-
-        match param.param_type {
-            SearchParameterType::Reference => {
-                refs.extend(octofhir_core::search_index::extract_references(
-                    resource,
-                    resource_type,
-                    &param.code,
-                    expression,
-                    None,
-                ));
-            }
-            SearchParameterType::Date => {
-                dates.extend(octofhir_core::search_index::extract_dates(
-                    resource,
-                    resource_type,
-                    &param.code,
-                    expression,
-                ));
-            }
-            _ => {}
-        }
-    }
+    let rows = octofhir_db_postgres::search_index::extract_search_index_rows(
+        registry,
+        resource_type,
+        resource,
+    );
 
     octofhir_db_postgres::search_index::write_reference_index(
         pool,
         resource_type,
         resource_id,
-        &refs,
+        &rows.refs,
     )
     .await
     .map_err(|e| OperationError::Internal(format!("Failed to write reference index: {e}")))?;
 
-    octofhir_db_postgres::search_index::write_date_index(pool, resource_type, resource_id, &dates)
-        .await
-        .map_err(|e| OperationError::Internal(format!("Failed to write date index: {e}")))?;
+    octofhir_db_postgres::search_index::write_date_index(
+        pool,
+        resource_type,
+        resource_id,
+        &rows.dates,
+    )
+    .await
+    .map_err(|e| OperationError::Internal(format!("Failed to write date index: {e}")))?;
+    octofhir_db_postgres::search_index::write_string_index(
+        pool,
+        resource_type,
+        resource_id,
+        &rows.strings,
+    )
+    .await
+    .map_err(|e| OperationError::Internal(format!("Failed to write string index: {e}")))?;
+    octofhir_db_postgres::search_index::write_number_index(
+        pool,
+        resource_type,
+        resource_id,
+        &rows.numbers,
+    )
+    .await
+    .map_err(|e| OperationError::Internal(format!("Failed to write number index: {e}")))?;
+    octofhir_db_postgres::search_index::write_quantity_index(
+        pool,
+        resource_type,
+        resource_id,
+        &rows.quantities,
+    )
+    .await
+    .map_err(|e| OperationError::Internal(format!("Failed to write quantity index: {e}")))?;
 
     Ok(())
 }
@@ -369,36 +371,11 @@ async fn reindex_resource_type(
 
         // Extract and write new indexes for each resource
         for (id, resource) in &batch {
-            let params = registry.get_all_for_type(resource_type);
-            let mut refs = Vec::new();
-            let mut dates = Vec::new();
-
-            for param in &params {
-                let expression = match &param.expression {
-                    Some(e) => e.as_str(),
-                    None => continue,
-                };
-                match param.param_type {
-                    SearchParameterType::Reference => {
-                        refs.extend(octofhir_core::search_index::extract_references(
-                            resource,
-                            resource_type,
-                            &param.code,
-                            expression,
-                            None,
-                        ));
-                    }
-                    SearchParameterType::Date => {
-                        dates.extend(octofhir_core::search_index::extract_dates(
-                            resource,
-                            resource_type,
-                            &param.code,
-                            expression,
-                        ));
-                    }
-                    _ => {}
-                }
-            }
+            let rows = octofhir_db_postgres::search_index::extract_search_index_rows(
+                registry,
+                resource_type,
+                resource,
+            );
 
             // Write indexes (uses per-resource delete+insert internally,
             // but we already deleted above, so we use write functions that
@@ -407,7 +384,7 @@ async fn reindex_resource_type(
                 pool,
                 resource_type,
                 id,
-                &refs,
+                &rows.refs,
             )
             .await
             {
@@ -420,11 +397,50 @@ async fn reindex_resource_type(
                 pool,
                 resource_type,
                 id,
-                &dates,
+                &rows.dates,
             )
             .await
             {
                 tracing::warn!(error = %e, resource_type, id, "Date index write failed");
+                errors += 1;
+                continue;
+            }
+
+            if let Err(e) = octofhir_db_postgres::search_index::write_string_index(
+                pool,
+                resource_type,
+                id,
+                &rows.strings,
+            )
+            .await
+            {
+                tracing::warn!(error = %e, resource_type, id, "String index write failed");
+                errors += 1;
+                continue;
+            }
+
+            if let Err(e) = octofhir_db_postgres::search_index::write_number_index(
+                pool,
+                resource_type,
+                id,
+                &rows.numbers,
+            )
+            .await
+            {
+                tracing::warn!(error = %e, resource_type, id, "Number index write failed");
+                errors += 1;
+                continue;
+            }
+
+            if let Err(e) = octofhir_db_postgres::search_index::write_quantity_index(
+                pool,
+                resource_type,
+                id,
+                &rows.quantities,
+            )
+            .await
+            {
+                tracing::warn!(error = %e, resource_type, id, "Quantity index write failed");
                 errors += 1;
                 continue;
             }
@@ -466,7 +482,7 @@ async fn list_resource_tables(pool: &PgPool) -> Result<Vec<String>, String> {
          WHERE table_schema = 'public' \
          AND table_name NOT LIKE '%_history' \
          AND table_name NOT LIKE '\\_%' ESCAPE '\\' \
-         AND table_name NOT IN ('async_jobs', 'search_idx_reference', 'search_idx_date') \
+         AND table_name NOT IN ('async_jobs', 'search_idx_reference', 'search_idx_date', 'search_idx_string', 'search_idx_number', 'search_idx_quantity') \
          ORDER BY table_name",
     )
     .fetch_all(pool)
@@ -554,6 +570,33 @@ async fn batch_delete_indexes(
     .execute(pool)
     .await
     .map_err(|e| format!("Failed to batch-delete date indexes: {e}"))?;
+
+    sqlx_core::query::query(
+        "DELETE FROM search_idx_string WHERE resource_type = $1 AND resource_id = ANY($2)",
+    )
+    .bind(resource_type)
+    .bind(&id_strings)
+    .execute(pool)
+    .await
+    .map_err(|e| format!("Failed to batch-delete string indexes: {e}"))?;
+
+    sqlx_core::query::query(
+        "DELETE FROM search_idx_number WHERE resource_type = $1 AND resource_id = ANY($2)",
+    )
+    .bind(resource_type)
+    .bind(&id_strings)
+    .execute(pool)
+    .await
+    .map_err(|e| format!("Failed to batch-delete number indexes: {e}"))?;
+
+    sqlx_core::query::query(
+        "DELETE FROM search_idx_quantity WHERE resource_type = $1 AND resource_id = ANY($2)",
+    )
+    .bind(resource_type)
+    .bind(&id_strings)
+    .execute(pool)
+    .await
+    .map_err(|e| format!("Failed to batch-delete quantity indexes: {e}"))?;
 
     Ok(())
 }

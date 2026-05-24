@@ -2,14 +2,14 @@
 
 ## Purpose
 
-This directory contains a comprehensive competitive analysis of OctoFHIR against 9 major FHIR server implementations. The analysis provides evidence-based competitive positioning, gap identification, and a prioritized improvement roadmap for a 3-5 developer team.
+This directory contains a comprehensive competitive analysis of OctoFHIR against 8 major FHIR server implementations. The analysis provides evidence-based competitive positioning, gap identification, and a prioritized improvement roadmap for a 3-5 developer team.
 
 ## How to Read Each File
 
 | File | Purpose | Audience |
 |------|---------|----------|
 | [sources.md](sources.md) | ~50 annotated URLs organized by competitor | Anyone verifying claims |
-| [feature-matrix.md](feature-matrix.md) | 80-row comparison table across 6 axes | Product & engineering leads |
+| [feature-matrix.md](feature-matrix.md) | Comparison table across 6 axes | Product & engineering leads |
 | [feature-matrix.csv](feature-matrix.csv) | Same data in CSV for spreadsheet import | Stakeholders, presentations |
 | [swot-and-gaps.md](swot-and-gaps.md) | SWOT analysis with code evidence + gap analysis | Strategy & planning |
 | [benchmarks/plan.md](benchmarks/plan.md) | Reproducible benchmark methodology | Performance engineering |
@@ -27,7 +27,7 @@ This directory contains a comprehensive competitive analysis of OctoFHIR against
 | Category | Competitors |
 |----------|------------|
 | Open Source | HAPI FHIR (Java), IBM FHIR / LinuxForHealth (Java), Medplum (TypeScript) |
-| Commercial / Open Core | Aidbox (PostgreSQL), Smile CDR (Java), Firely Server (.NET) |
+| Commercial / Open Core | Smile CDR (Java), Firely Server (.NET) |
 | Managed Cloud | Azure Health Data Services, Google Cloud Healthcare API, AWS HealthLake |
 
 ## Date of Analysis

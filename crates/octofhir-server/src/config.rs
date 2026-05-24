@@ -381,6 +381,17 @@ pub struct SearchSettings {
     /// Default: false
     #[serde(default)]
     pub allow_debug_search_plan: bool,
+    /// Allow internal `_debug=search-explain-analyze`.
+    ///
+    /// Default is false because EXPLAIN ANALYZE executes the search query.
+    #[serde(default)]
+    pub allow_debug_search_explain_analyze: bool,
+    /// Write denormalized search indexes asynchronously after resource commit.
+    ///
+    /// Default is false so FHIR search is read-after-write consistent when the
+    /// native sidecar search engine is the production path.
+    #[serde(default)]
+    pub async_index_writes: bool,
 }
 fn default_search_default() -> usize {
     10
@@ -398,6 +409,8 @@ impl Default for SearchSettings {
             max_count: default_search_max(),
             cache_capacity: default_search_cache_capacity(),
             allow_debug_search_plan: false,
+            allow_debug_search_explain_analyze: false,
+            async_index_writes: false,
         }
     }
 }

@@ -552,11 +552,16 @@ async fn create_storage(
         .await
         .map_err(|e| anyhow::anyhow!("Failed to create PostgreSQL storage: {e}"))?;
 
-    let index_writer = octofhir_db_postgres::AsyncIndexWriter::start(
-        pg_storage.pool().clone(),
-        octofhir_db_postgres::IndexWriterConfig::default(),
-    );
-    pg_storage.set_async_indexer(index_writer);
+    if cfg.search.async_index_writes {
+        let index_writer = octofhir_db_postgres::AsyncIndexWriter::start(
+            pg_storage.pool().clone(),
+            octofhir_db_postgres::IndexWriterConfig::default(),
+        );
+        pg_storage.set_async_indexer(index_writer);
+        tracing::info!("Async search-index writer enabled");
+    } else {
+        tracing::info!("Search-index writes are synchronous");
+    }
 
     let primary_pool = Arc::new(pg_storage.pool().clone());
 
@@ -593,6 +598,13 @@ pub async fn build_app(
 ) -> Result<Router, anyhow::Error> {
     let body_limit = cfg.server.body_limit_bytes;
     let (pg_storage, db_pool, read_db_pool) = create_storage(cfg).await?;
+
+    if crate::canonical::get_manager().is_none() && cfg.storage.postgres.is_some() {
+        let registry = crate::canonical::init_from_config_async(cfg)
+            .await
+            .map_err(|e| anyhow::anyhow!("Canonical manager initialization failed: {e}"))?;
+        crate::canonical::set_registry(registry);
+    }
 
     // Create event broadcaster for unified event system
     let event_broadcaster = EventBroadcaster::new_shared();

@@ -17,10 +17,10 @@ use sqlx_postgres::PgPool;
 use tokio::sync::mpsc;
 use tokio::time::Instant;
 
-use octofhir_core::search_index::{ExtractedDate, ExtractedReference, ExtractedString};
 use octofhir_storage::StorageError;
 
 use crate::search_index;
+use crate::search_index::ExtractedIndexRows;
 
 /// Op kind controls whether stale rows are deleted before insert:
 /// `Create` → insert only (no rows can exist yet); `Update` → DELETE then
@@ -40,9 +40,7 @@ pub struct IndexJob {
     pub op: IndexOp,
     pub resource_type: String,
     pub resource_id: String,
-    pub refs: Vec<ExtractedReference>,
-    pub dates: Vec<ExtractedDate>,
-    pub strings: Vec<ExtractedString>,
+    pub rows: ExtractedIndexRows,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -192,13 +190,7 @@ async fn flush_batch(pool: &PgPool, batch: &[IndexJob]) -> Result<(), StorageErr
         if matches!(job.op, IndexOp::Delete) {
             continue;
         }
-        buffer.extend_with(
-            &job.resource_type,
-            &job.resource_id,
-            &job.refs,
-            &job.dates,
-            &job.strings,
-        );
+        buffer.extend_with(&job.resource_type, &job.resource_id, &job.rows);
     }
     if !buffer.is_empty() {
         buffer.flush_with_tx(&mut tx).await?;
@@ -224,13 +216,7 @@ async fn flush_one(pool: &PgPool, job: &IndexJob) -> Result<(), StorageError> {
 
     if matches!(job.op, IndexOp::Create | IndexOp::Update) {
         let mut buffer = search_index::BatchIndexBuffer::new();
-        buffer.extend_with(
-            &job.resource_type,
-            &job.resource_id,
-            &job.refs,
-            &job.dates,
-            &job.strings,
-        );
+        buffer.extend_with(&job.resource_type, &job.resource_id, &job.rows);
         if !buffer.is_empty() {
             buffer.flush_with_tx(&mut tx).await?;
         }

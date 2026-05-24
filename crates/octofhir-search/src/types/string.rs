@@ -243,6 +243,18 @@ mod tests {
     }
 
     #[test]
+    fn test_indexed_string_prefix_preserves_spaces() {
+        let mut builder = SqlBuilder::new();
+        let param = make_param("family", "Van Hel", None);
+
+        build_indexed_string_search(&mut builder, &param, "Patient").unwrap();
+
+        let clause = builder.build_where_clause().unwrap();
+        assert!(clause.contains("sid.value_norm LIKE"));
+        assert_eq!(builder.params()[2].as_str(), "van hel%");
+    }
+
+    #[test]
     fn test_indexed_string_exact_uses_sidecar_btree_value() {
         let mut builder = SqlBuilder::new();
         let param = make_param("family", "Smíth", Some(SearchModifier::Exact));

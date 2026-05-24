@@ -1,6 +1,6 @@
 # Competitive Analysis Sources
 
-~50 annotated URLs organized by competitor, verified as of February 2026.
+Annotated URLs organized by competitor, verified as of February 2026.
 
 ---
 
@@ -38,18 +38,6 @@
 | 18 | https://www.medplum.com/docs/bots | Medplum Bots: serverless TypeScript functions |
 | 19 | https://www.medplum.com/docs/bots/custom-fhir-operations | Custom FHIR operations via Bots |
 | 20 | https://www.medplum.com/blog/january-2026-update | Recent updates, R5 status, scheduling operations |
-
-## Aidbox
-
-| # | URL | Description |
-|---|-----|-------------|
-| 21 | https://www.health-samurai.io/aidbox | Official website, product overview |
-| 22 | https://docs.aidbox.app/ | Documentation hub |
-| 23 | https://docs.aidbox.app/readme/features | Feature list: FHIR versions, APIs, terminology |
-| 24 | https://docs.aidbox.app/app-development/mappings | JUTE mapping language for data transformation |
-| 25 | https://docs.aidbox.app/deployment-and-maintenance/deploy-aidbox/run-aidbox-in-kubernetes/deploy-production-ready-aidbox-to-kubernetes | Kubernetes production deployment guide |
-| 26 | https://github.com/Aidbox/helm-charts | Official Helm charts |
-| 27 | https://github.com/Aidbox/examples | Example configurations and use cases |
 
 ## Azure Health Data Services (FHIR Service)
 

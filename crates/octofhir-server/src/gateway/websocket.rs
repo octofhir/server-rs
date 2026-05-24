@@ -185,9 +185,9 @@ fn convert_client_to_backend(msg: Message) -> Option<tungstenite::Message> {
 fn convert_backend_to_client(msg: tungstenite::Message) -> Option<Message> {
     match msg {
         tungstenite::Message::Text(text) => Some(Message::Text(text.to_string().into())),
-        tungstenite::Message::Binary(data) => Some(Message::Binary(data.into())),
-        tungstenite::Message::Ping(data) => Some(Message::Ping(data.into())),
-        tungstenite::Message::Pong(data) => Some(Message::Pong(data.into())),
+        tungstenite::Message::Binary(data) => Some(Message::Binary(data)),
+        tungstenite::Message::Ping(data) => Some(Message::Ping(data)),
+        tungstenite::Message::Pong(data) => Some(Message::Pong(data)),
         tungstenite::Message::Close(_) => None,
         tungstenite::Message::Frame(_) => None,
     }

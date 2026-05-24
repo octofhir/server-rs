@@ -162,6 +162,13 @@ fn date_sql_shape(predicate: &DatePredicate) -> String {
         DatePredicate::StrictlyBefore { .. } => {
             "EXISTS search_idx_date WHERE sid.rng << tstzrange($lo, $hi, '[)')".to_string()
         }
+        DatePredicate::Missing { is_missing } => {
+            if *is_missing {
+                "NOT EXISTS search_idx_date WHERE sid.param_code = $param".to_string()
+            } else {
+                "EXISTS search_idx_date WHERE sid.param_code = $param".to_string()
+            }
+        }
     }
 }
 
@@ -217,9 +224,9 @@ fn debug_number_clause(clause: &NumberClause) -> DebugPredicate {
     DebugPredicate {
         param_code: clause.param_code.clone(),
         search_type: SearchParameterType::Number,
-        strategy: IndexStrategy::JsonbTraversal,
-        expected_index: None,
-        index_backed: false,
+        strategy: IndexStrategy::SidecarNumber,
+        expected_index: Some("search_idx_number_*_param_code_value_num_idx".to_string()),
+        index_backed: true,
         sql_shape: number_sql_shape(&clause.predicate),
     }
 }
@@ -228,52 +235,45 @@ fn number_sql_shape(predicate: &NumberPredicate) -> String {
     match predicate {
         NumberPredicate::Comparison { prefix, .. } => match prefix {
             SearchPrefix::Eq | SearchPrefix::Ap => {
-                "(jsonb_path)::numeric >= $lo AND (jsonb_path)::numeric < $hi".to_string()
+                "EXISTS search_idx_number WHERE sin.value_num >= $lo AND sin.value_num < $hi"
+                    .to_string()
             }
             SearchPrefix::Ne => {
-                "(jsonb_path)::numeric < $lo OR (jsonb_path)::numeric >= $hi".to_string()
+                "NOT EXISTS search_idx_number WHERE sin.value_num >= $lo AND sin.value_num < $hi"
+                    .to_string()
             }
-            SearchPrefix::Gt | SearchPrefix::Sa => "(jsonb_path)::numeric > $value".to_string(),
-            SearchPrefix::Lt | SearchPrefix::Eb => "(jsonb_path)::numeric < $value".to_string(),
-            SearchPrefix::Ge => "(jsonb_path)::numeric >= $value".to_string(),
-            SearchPrefix::Le => "(jsonb_path)::numeric <= $value".to_string(),
+            SearchPrefix::Gt | SearchPrefix::Sa => {
+                "EXISTS search_idx_number WHERE sin.value_num > $value".to_string()
+            }
+            SearchPrefix::Lt | SearchPrefix::Eb => {
+                "EXISTS search_idx_number WHERE sin.value_num < $value".to_string()
+            }
+            SearchPrefix::Ge => {
+                "EXISTS search_idx_number WHERE sin.value_num >= $value".to_string()
+            }
+            SearchPrefix::Le => {
+                "EXISTS search_idx_number WHERE sin.value_num <= $value".to_string()
+            }
         },
         NumberPredicate::Missing { is_missing } => {
             if *is_missing {
-                "jsonb_path IS NULL".to_string()
+                "NOT EXISTS search_idx_number WHERE sin.param_code = $param_code".to_string()
             } else {
-                "jsonb_path IS NOT NULL".to_string()
+                "EXISTS search_idx_number WHERE sin.param_code = $param_code".to_string()
             }
         }
     }
 }
 
 fn debug_quantity_clause(clause: &QuantityClause) -> DebugPredicate {
-    let has_gin_prefilter = quantity_has_gin_prefilter(&clause.predicate);
-
     DebugPredicate {
         param_code: clause.param_code.clone(),
         search_type: SearchParameterType::Quantity,
-        strategy: if has_gin_prefilter {
-            IndexStrategy::JsonbContainment
-        } else {
-            IndexStrategy::JsonbTraversal
-        },
-        expected_index: if has_gin_prefilter {
-            Some(format!("idx_{}_gin", clause.resource_type.to_lowercase()))
-        } else {
-            None
-        },
-        index_backed: has_gin_prefilter,
+        strategy: IndexStrategy::SidecarQuantity,
+        expected_index: Some("search_idx_quantity_*_param_code_value_num_idx".to_string()),
+        index_backed: true,
         sql_shape: quantity_sql_shape(&clause.predicate),
     }
-}
-
-fn quantity_has_gin_prefilter(predicate: &QuantityPredicate) -> bool {
-    matches!(
-        predicate,
-        QuantityPredicate::Comparison { system, code, .. } if system.is_some() || code.is_some()
-    )
 }
 
 fn quantity_sql_shape(predicate: &QuantityPredicate) -> String {
@@ -286,36 +286,36 @@ fn quantity_sql_shape(predicate: &QuantityPredicate) -> String {
         } => {
             let mut shape = match prefix {
                 SearchPrefix::Eq | SearchPrefix::Ap => {
-                    "(jsonb_path->>'value')::numeric >= $lo AND (jsonb_path->>'value')::numeric < $hi"
+                    "EXISTS search_idx_quantity WHERE siq.value_num >= $lo AND siq.value_num < $hi"
                         .to_string()
                 }
                 SearchPrefix::Ne => {
-                    "(jsonb_path->>'value')::numeric < $lo OR (jsonb_path->>'value')::numeric >= $hi"
+                    "NOT EXISTS search_idx_quantity WHERE siq.value_num >= $lo AND siq.value_num < $hi"
                         .to_string()
                 }
                 SearchPrefix::Gt | SearchPrefix::Sa => {
-                    "(jsonb_path->>'value')::numeric > $value".to_string()
+                    "EXISTS search_idx_quantity WHERE siq.value_num > $value".to_string()
                 }
                 SearchPrefix::Lt | SearchPrefix::Eb => {
-                    "(jsonb_path->>'value')::numeric < $value".to_string()
+                    "EXISTS search_idx_quantity WHERE siq.value_num < $value".to_string()
                 }
-                SearchPrefix::Ge => "(jsonb_path->>'value')::numeric >= $value".to_string(),
-                SearchPrefix::Le => "(jsonb_path->>'value')::numeric <= $value".to_string(),
+                SearchPrefix::Ge => {
+                    "EXISTS search_idx_quantity WHERE siq.value_num >= $value".to_string()
+                }
+                SearchPrefix::Le => {
+                    "EXISTS search_idx_quantity WHERE siq.value_num <= $value".to_string()
+                }
             };
 
             match (system.is_some(), code.is_some()) {
                 (false, false) => {}
-                (true, false) => {
-                    shape.push_str(" AND resource @> {quantity_path: {system: $system}}")
-                }
+                (true, false) => shape.push_str(" AND siq.system = $system"),
                 (false, true) => {
-                    shape.push_str(
-                        " AND (resource @> {quantity_path: {code: $code}} OR resource @> {quantity_path: {unit: $code}})",
-                    );
+                    shape.push_str(" AND (siq.code = $code OR siq.unit = $code)");
                 }
                 (true, true) => {
                     shape.push_str(
-                        " AND (resource @> {quantity_path: {system: $system, code: $code}} OR resource @> {quantity_path: {system: $system, unit: $code}})",
+                        " AND siq.system = $system AND (siq.code = $code OR siq.unit = $code)",
                     );
                 }
             }
@@ -323,9 +323,9 @@ fn quantity_sql_shape(predicate: &QuantityPredicate) -> String {
         }
         QuantityPredicate::Missing { is_missing } => {
             if *is_missing {
-                "jsonb_path IS NULL".to_string()
+                "NOT EXISTS search_idx_quantity WHERE siq.param_code = $param_code".to_string()
             } else {
-                "jsonb_path IS NOT NULL".to_string()
+                "EXISTS search_idx_quantity WHERE siq.param_code = $param_code".to_string()
             }
         }
     }
@@ -683,7 +683,7 @@ mod tests {
     }
 
     #[test]
-    fn number_debug_plan_marks_jsonb_cast_as_non_index_backed_and_redacted() {
+    fn number_debug_plan_marks_sidecar_index_and_redacts_values() {
         let clauses = vec![NumberClause {
             resource_type: "Observation".to_string(),
             param_code: "value".to_string(),
@@ -697,10 +697,18 @@ mod tests {
         let json = serde_json::to_string(&plan).unwrap();
 
         assert_eq!(plan.predicates[0].search_type, SearchParameterType::Number);
-        assert_eq!(plan.predicates[0].strategy, IndexStrategy::JsonbTraversal);
-        assert!(!plan.predicates[0].index_backed);
-        assert_eq!(plan.predicates[0].expected_index, None);
-        assert!(plan.predicates[0].sql_shape.contains("::numeric >= $value"));
+        assert_eq!(plan.predicates[0].strategy, IndexStrategy::SidecarNumber);
+        assert!(plan.predicates[0].index_backed);
+        assert_eq!(
+            plan.predicates[0].expected_index,
+            Some("search_idx_number_*_param_code_value_num_idx".to_string())
+        );
+        assert!(plan.predicates[0].sql_shape.contains("search_idx_number"));
+        assert!(
+            plan.predicates[0]
+                .sql_shape
+                .contains("sin.value_num >= $value")
+        );
         assert!(
             !json.contains("123.45"),
             "debug output must not include bound number values: {json}"
@@ -708,7 +716,7 @@ mod tests {
     }
 
     #[test]
-    fn quantity_debug_plan_marks_gin_prefilter_and_redacts_values() {
+    fn quantity_debug_plan_marks_sidecar_index_and_redacts_values() {
         let clauses = vec![QuantityClause {
             resource_type: "Observation".to_string(),
             param_code: "value-quantity".to_string(),
@@ -727,16 +735,24 @@ mod tests {
             plan.predicates[0].search_type,
             SearchParameterType::Quantity
         );
-        assert_eq!(plan.predicates[0].strategy, IndexStrategy::JsonbContainment);
+        assert_eq!(plan.predicates[0].strategy, IndexStrategy::SidecarQuantity);
         assert!(plan.predicates[0].index_backed);
         assert_eq!(
             plan.predicates[0].expected_index,
-            Some("idx_observation_gin".to_string())
+            Some("search_idx_quantity_*_param_code_value_num_idx".to_string())
         );
-        assert!(plan.predicates[0].sql_shape.contains("::numeric >= $lo"));
-        assert!(plan.predicates[0].sql_shape.contains("resource @>"));
-        assert!(plan.predicates[0].sql_shape.contains("system: $system"));
-        assert!(plan.predicates[0].sql_shape.contains("unit: $code"));
+        assert!(plan.predicates[0].sql_shape.contains("search_idx_quantity"));
+        assert!(
+            plan.predicates[0]
+                .sql_shape
+                .contains("siq.value_num >= $lo")
+        );
+        assert!(
+            plan.predicates[0]
+                .sql_shape
+                .contains("siq.system = $system")
+        );
+        assert!(plan.predicates[0].sql_shape.contains("siq.unit = $code"));
         assert!(
             !json.contains("5.5") && !json.contains("unitsofmeasure") && !json.contains("mg"),
             "debug output must not include bound quantity values: {json}"

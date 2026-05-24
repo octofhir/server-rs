@@ -262,6 +262,7 @@ fn build_has_level(
 /// Build the inner search condition using `dispatch_search` on a builder
 /// scoped to the source-table alias. Copies the produced SQL params back into
 /// the outer builder.
+#[allow(clippy::too_many_arguments)]
 fn build_final_condition(
     builder: &mut SqlBuilder,
     final_param: &str,

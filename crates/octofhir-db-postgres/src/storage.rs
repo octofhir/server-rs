@@ -210,16 +210,14 @@ impl PostgresStorage {
         let Some(registry) = self.search_registry.get() else {
             return Ok(());
         };
-        let (refs, dates, strings) =
+        let rows =
             crate::search_index::extract_search_index_rows(registry, resource_type, resource);
 
         let job = IndexJob {
             op,
             resource_type: resource_type.to_string(),
             resource_id: resource_id.to_string(),
-            refs,
-            dates,
-            strings,
+            rows,
         };
 
         if let Some(indexer) = &self.async_indexer {
@@ -238,9 +236,7 @@ impl PostgresStorage {
             op: IndexOp::Delete,
             resource_type: resource_type.to_string(),
             resource_id: resource_id.to_string(),
-            refs: Vec::new(),
-            dates: Vec::new(),
-            strings: Vec::new(),
+            rows: crate::search_index::ExtractedIndexRows::default(),
         };
 
         if let Some(indexer) = &self.async_indexer {
@@ -272,13 +268,7 @@ impl PostgresStorage {
             // Insert-only buffer; the Update branch already deleted above,
             // so we never DELETE on Create.
             let mut buffer = crate::search_index::BatchIndexBuffer::new();
-            buffer.extend_with(
-                &job.resource_type,
-                &job.resource_id,
-                &job.refs,
-                &job.dates,
-                &job.strings,
-            );
+            buffer.extend_with(&job.resource_type, &job.resource_id, &job.rows);
             if !buffer.is_empty() {
                 buffer.flush_with_tx(&mut tx).await?;
             }
@@ -307,15 +297,39 @@ impl PostgresStorage {
             .get()
             .ok_or_else(|| StorageError::internal("Search registry not initialized"))?;
 
-        let (refs, dates, strings) =
+        let rows =
             crate::search_index::extract_search_index_rows(registry, resource_type, resource);
 
-        crate::search_index::write_reference_index(&self.pool, resource_type, resource_id, &refs)
+        crate::search_index::write_reference_index(
+            &self.pool,
+            resource_type,
+            resource_id,
+            &rows.refs,
+        )
+        .await?;
+        crate::search_index::write_date_index(&self.pool, resource_type, resource_id, &rows.dates)
             .await?;
-        crate::search_index::write_date_index(&self.pool, resource_type, resource_id, &dates)
-            .await?;
-        crate::search_index::write_string_index(&self.pool, resource_type, resource_id, &strings)
-            .await?;
+        crate::search_index::write_string_index(
+            &self.pool,
+            resource_type,
+            resource_id,
+            &rows.strings,
+        )
+        .await?;
+        crate::search_index::write_number_index(
+            &self.pool,
+            resource_type,
+            resource_id,
+            &rows.numbers,
+        )
+        .await?;
+        crate::search_index::write_quantity_index(
+            &self.pool,
+            resource_type,
+            resource_id,
+            &rows.quantities,
+        )
+        .await?;
 
         Ok(())
     }

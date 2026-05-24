@@ -125,20 +125,6 @@ cli-test-local:
     cargo run -p octofhir-cli -- --server http://localhost:8888 metadata --format table
     cargo run -p octofhir-cli -- --server http://localhost:8888 search Patient --format table
 
-# Start Aidbox for CLI testing
-aidbox-up:
-    docker compose -f docker-compose.aidbox.yml up -d
-
-# Stop Aidbox
-aidbox-down:
-    docker compose -f docker-compose.aidbox.yml down
-
-# Test CLI against Aidbox (Aidbox must be running)
-cli-test-aidbox:
-    @echo "Testing CLI against Aidbox..."
-    cargo run -p octofhir-cli -- --server http://localhost:8080 status
-    cargo run -p octofhir-cli -- --server http://localhost:8080 metadata --format table
-
 # =============================================================================
 # k6 Load Testing
 # =============================================================================

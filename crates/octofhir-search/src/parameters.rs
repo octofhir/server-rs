@@ -89,7 +89,7 @@ impl SearchModifier {
             Self::Exact => matches!(param_type, SearchParameterType::String),
             Self::Contains => {
                 // FHIR R4 §3.1.1.5.6 lists :contains for string SP. In practice
-                // (HAPI, Aidbox, Medplum, Microsoft FHIR) :contains is also
+                // :contains is also
                 // accepted on uri SP for substring URI search; allow it for
                 // interop and treat it as a case-insensitive substring match.
                 matches!(

@@ -29,7 +29,7 @@ use crate::sql_builder::{SqlBuilder, SqlBuilderError};
 use crate::types::date_ast::{DateClause, PeriodClause};
 use crate::{
     ir::render_date_clauses_as_or, ir::render_date_text_path_clauses_as_or,
-    ir::render_period_path_clauses_as_or, ir::rewrite_date_clauses,
+    ir::render_period_path_clauses_as_or,
 };
 use time::{Date, Duration, Month, OffsetDateTime, PrimitiveDateTime, Time};
 
@@ -368,7 +368,7 @@ pub fn build_index_date_search(
         return Ok(());
     }
 
-    let clauses = rewrite_date_clauses(DateClause::from_parsed_param(param, resource_type)?);
+    let clauses = DateClause::from_parsed_param(param, resource_type)?;
     if let Some(sql) = render_date_clauses_as_or(builder, &clauses) {
         builder.add_condition(sql);
     }
@@ -405,7 +405,7 @@ pub fn build_period_search(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::parameters::SearchPrefix;
+    use crate::parameters::{SearchModifier, SearchPrefix};
     use crate::parser::ParsedValue;
     use time::UtcOffset;
 
@@ -415,6 +415,17 @@ mod tests {
             modifier: None,
             values: vec![ParsedValue {
                 prefix,
+                raw: value.to_string(),
+            }],
+        }
+    }
+
+    fn make_missing_param(name: &str, value: &str) -> ParsedParam {
+        ParsedParam {
+            name: name.to_string(),
+            modifier: Some(SearchModifier::Missing),
+            values: vec![ParsedValue {
+                prefix: None,
                 raw: value.to_string(),
             }],
         }
@@ -703,6 +714,54 @@ mod tests {
             clause.contains("sid.rng &&"),
             "ap must emit `sid.rng && expanded_q`, got: {clause}"
         );
+    }
+
+    #[test]
+    fn index_missing_true_uses_date_sidecar_anti_join() {
+        let mut builder = SqlBuilder::new();
+        let param = make_missing_param("birthdate", "true");
+        build_index_date_search(&mut builder, &param, "Patient").unwrap();
+        let clause = builder.build_where_clause().unwrap();
+        assert!(clause.contains("NOT EXISTS"));
+        assert!(clause.contains("search_idx_date"));
+        assert!(clause.contains("sid.param_code ="));
+        assert!(!clause.contains("sid.rng"));
+    }
+
+    #[test]
+    fn index_missing_false_uses_date_sidecar_exists() {
+        let mut builder = SqlBuilder::new();
+        let param = make_missing_param("birthdate", "false");
+        build_index_date_search(&mut builder, &param, "Patient").unwrap();
+        let clause = builder.build_where_clause().unwrap();
+        assert!(clause.contains("EXISTS"));
+        assert!(!clause.contains("NOT EXISTS"));
+        assert!(clause.contains("search_idx_date"));
+        assert!(!clause.contains("sid.rng"));
+    }
+
+    #[test]
+    fn index_comma_or_keeps_prefix_per_value() {
+        let mut builder = SqlBuilder::new();
+        let param = ParsedParam {
+            name: "birthdate".to_string(),
+            modifier: None,
+            values: vec![
+                ParsedValue {
+                    prefix: Some(SearchPrefix::Ge),
+                    raw: "2005-01-01".to_string(),
+                },
+                ParsedValue {
+                    prefix: Some(SearchPrefix::Lt),
+                    raw: "1975-01-01".to_string(),
+                },
+            ],
+        };
+        build_index_date_search(&mut builder, &param, "Patient").unwrap();
+        let clause = builder.build_where_clause().unwrap();
+        assert!(clause.contains(" OR "));
+        assert!(clause.contains("tstzrange($3::timestamptz, NULL, '[)')"));
+        assert!(clause.contains("tstzrange(NULL, $6::timestamptz, '[)'"));
     }
 
     #[test]

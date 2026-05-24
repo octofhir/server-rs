@@ -1,6 +1,6 @@
 //! Search index extraction engine.
 //!
-//! Extracts reference, date, and string values from FHIR resource JSON
+//! Extracts reference, date, string, number, and quantity values from FHIR resource JSON
 //! for indexing in denormalized search tables.
 
 use crate::fhir_reference::{NormalizedRef, normalize_reference_for_index};
@@ -28,6 +28,23 @@ pub struct ExtractedString {
     pub param_code: String,
     pub value_normalized: String,
     pub value_exact: String,
+}
+
+/// An extracted number value ready for indexing.
+#[derive(Debug, Clone)]
+pub struct ExtractedNumber {
+    pub param_code: String,
+    pub value: String,
+}
+
+/// An extracted quantity value ready for indexing.
+#[derive(Debug, Clone)]
+pub struct ExtractedQuantity {
+    pub param_code: String,
+    pub value: String,
+    pub system: Option<String>,
+    pub code: Option<String>,
+    pub unit: Option<String>,
 }
 
 // ============================================================================
@@ -627,6 +644,150 @@ fn is_combining_mark(c: char) -> bool {
 }
 
 // ============================================================================
+// Number / Quantity Extraction
+// ============================================================================
+
+/// Extract FHIR number values for indexing.
+pub fn extract_numbers(
+    resource: &Value,
+    resource_type: &str,
+    param_code: &str,
+    expression: &str,
+) -> Vec<ExtractedNumber> {
+    let path_segments = fhirpath_to_segments(expression, resource_type);
+    if path_segments.is_empty() {
+        return Vec::new();
+    }
+
+    let mut values = Vec::new();
+    navigate_json(resource, &path_segments, 0, &mut values);
+
+    let mut results = Vec::new();
+    for value in values {
+        emit_number_rows(&value, param_code, &mut results);
+    }
+    results
+}
+
+fn emit_number_rows(value: &Value, param_code: &str, results: &mut Vec<ExtractedNumber>) {
+    match value {
+        Value::Array(arr) => {
+            for item in arr {
+                emit_number_rows(item, param_code, results);
+            }
+        }
+        Value::Number(number) => {
+            let raw = number.to_string();
+            if is_valid_decimal(&raw) {
+                results.push(ExtractedNumber {
+                    param_code: param_code.to_string(),
+                    value: raw,
+                });
+            }
+        }
+        Value::String(s) if is_valid_decimal(s) => results.push(ExtractedNumber {
+            param_code: param_code.to_string(),
+            value: s.trim().to_string(),
+        }),
+        _ => {}
+    }
+}
+
+/// Extract FHIR Quantity values for indexing.
+pub fn extract_quantities(
+    resource: &Value,
+    resource_type: &str,
+    param_code: &str,
+    expression: &str,
+) -> Vec<ExtractedQuantity> {
+    let path_segments = fhirpath_to_segments(expression, resource_type);
+    if path_segments.is_empty() {
+        return Vec::new();
+    }
+
+    let mut values = Vec::new();
+    navigate_json(resource, &path_segments, 0, &mut values);
+
+    let mut results = Vec::new();
+    for value in values {
+        emit_quantity_rows(&value, param_code, &mut results);
+    }
+    results
+}
+
+fn emit_quantity_rows(value: &Value, param_code: &str, results: &mut Vec<ExtractedQuantity>) {
+    match value {
+        Value::Array(arr) => {
+            for item in arr {
+                emit_quantity_rows(item, param_code, results);
+            }
+        }
+        Value::Object(obj) => {
+            let Some(raw_value) = obj.get("value").and_then(decimal_value_to_string) else {
+                return;
+            };
+            if !is_valid_decimal(&raw_value) {
+                return;
+            }
+            results.push(ExtractedQuantity {
+                param_code: param_code.to_string(),
+                value: raw_value,
+                system: obj
+                    .get("system")
+                    .and_then(Value::as_str)
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_string),
+                code: obj
+                    .get("code")
+                    .and_then(Value::as_str)
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_string),
+                unit: obj
+                    .get("unit")
+                    .and_then(Value::as_str)
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_string),
+            });
+        }
+        _ => {}
+    }
+}
+
+fn decimal_value_to_string(value: &Value) -> Option<String> {
+    match value {
+        Value::Number(number) => Some(number.to_string()),
+        Value::String(s) => Some(s.trim().to_string()),
+        _ => None,
+    }
+}
+
+fn is_valid_decimal(value: &str) -> bool {
+    let raw = value.trim();
+    if raw.is_empty() {
+        return false;
+    }
+
+    let unsigned = match raw.as_bytes()[0] {
+        b'+' | b'-' => &raw[1..],
+        _ => raw,
+    };
+    if unsigned.is_empty() {
+        return false;
+    }
+
+    let mut seen_digit = false;
+    let mut seen_dot = false;
+    for ch in unsigned.chars() {
+        match ch {
+            '0'..='9' => seen_digit = true,
+            '.' if !seen_dot => seen_dot = true,
+            _ => return false,
+        }
+    }
+    seen_digit
+}
+
+// ============================================================================
 // JSON Navigation Helpers
 // ============================================================================
 
@@ -1130,6 +1291,28 @@ mod tests {
     }
 
     #[test]
+    fn test_extract_strings_family_path_indexes_only_family_values() {
+        let resource = json!({
+            "resourceType": "Patient",
+            "name": [{
+                "family": "Van Pelt",
+                "given": ["John", "James"]
+            }]
+        });
+
+        let strings = extract_strings(&resource, "Patient", "family", "Patient.name.family");
+
+        assert_eq!(strings.len(), 1);
+        assert_eq!(strings[0].param_code, "family");
+        assert_eq!(strings[0].value_exact, "Van Pelt");
+        assert_eq!(strings[0].value_normalized, "van pelt");
+        assert!(
+            !strings.iter().any(|s| s.value_exact == "John"),
+            "Patient.name.family must not index given names under the family parameter"
+        );
+    }
+
+    #[test]
     fn test_extract_strings_normalizes_accents_and_preserves_exact() {
         let resource = json!({
             "resourceType": "Patient",
@@ -1151,6 +1334,85 @@ mod tests {
                 .iter()
                 .any(|s| { s.value_exact == "Renée" && s.value_normalized == "renee" })
         );
+    }
+
+    #[test]
+    fn test_extract_numbers_simple() {
+        let resource = json!({
+            "resourceType": "Observation",
+            "valueInteger": 42
+        });
+
+        let numbers = extract_numbers(&resource, "Observation", "value", "Observation.value");
+
+        assert_eq!(numbers.len(), 1);
+        assert_eq!(numbers[0].param_code, "value");
+        assert_eq!(numbers[0].value, "42");
+    }
+
+    #[test]
+    fn test_extract_quantities_value_system_code_unit() {
+        let resource = json!({
+            "resourceType": "Observation",
+            "valueQuantity": {
+                "value": 72,
+                "system": "http://unitsofmeasure.org",
+                "code": "/min",
+                "unit": "beats/min"
+            }
+        });
+
+        let quantities = extract_quantities(
+            &resource,
+            "Observation",
+            "value-quantity",
+            "Observation.valueQuantity",
+        );
+
+        assert_eq!(quantities.len(), 1);
+        assert_eq!(quantities[0].param_code, "value-quantity");
+        assert_eq!(quantities[0].value, "72");
+        assert_eq!(
+            quantities[0].system.as_deref(),
+            Some("http://unitsofmeasure.org")
+        );
+        assert_eq!(quantities[0].code.as_deref(), Some("/min"));
+        assert_eq!(quantities[0].unit.as_deref(), Some("beats/min"));
+    }
+
+    #[test]
+    fn test_extract_quantities_from_component_array() {
+        let resource = json!({
+            "resourceType": "Observation",
+            "component": [
+                {
+                    "valueQuantity": {
+                        "value": "120.5",
+                        "system": "http://unitsofmeasure.org",
+                        "code": "mm[Hg]"
+                    }
+                },
+                {
+                    "valueQuantity": {
+                        "value": 80,
+                        "unit": "mmHg"
+                    }
+                }
+            ]
+        });
+
+        let quantities = extract_quantities(
+            &resource,
+            "Observation",
+            "component-value-quantity",
+            "Observation.component.valueQuantity",
+        );
+
+        assert_eq!(quantities.len(), 2);
+        assert_eq!(quantities[0].value, "120.5");
+        assert_eq!(quantities[0].code.as_deref(), Some("mm[Hg]"));
+        assert_eq!(quantities[1].value, "80");
+        assert_eq!(quantities[1].unit.as_deref(), Some("mmHg"));
     }
 
     #[test]

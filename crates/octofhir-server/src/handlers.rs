@@ -2425,8 +2425,21 @@ pub async fn search_resource(
     .await
     .map_err(|e| ApiError::bad_request(e.to_string()))?;
 
-    let total = result.total.map(|t| t as usize);
-    let total_is_exact = total.is_some();
+    if debug_request.collect_plan() {
+        let debug = result
+            .debug
+            .as_ref()
+            .map(|debug| vec![(Some(resource_type.as_str()), debug)])
+            .unwrap_or_default();
+        return Ok((
+            StatusCode::OK,
+            Json(search_debug_parameters_resource(debug)),
+        )
+            .into_response());
+    }
+
+    let (total, total_is_exact) =
+        resolved_search_total(result.total, result.has_more, offset, result.entries.len());
 
     // Convert main entries to RawJson
     let (resources, ids): (Vec<_>, Vec<_>) = result
@@ -2541,8 +2554,21 @@ pub async fn search_resource_post(
     .await
     .map_err(|e| ApiError::bad_request(e.to_string()))?;
 
-    let total = result.total.map(|t| t as usize);
-    let total_is_exact = total.is_some();
+    if debug_request.collect_plan() {
+        let debug = result
+            .debug
+            .as_ref()
+            .map(|debug| vec![(Some(resource_type.as_str()), debug)])
+            .unwrap_or_default();
+        return Ok((
+            StatusCode::OK,
+            Json(search_debug_parameters_resource(debug)),
+        )
+            .into_response());
+    }
+
+    let (total, total_is_exact) =
+        resolved_search_total(result.total, result.has_more, offset, result.entries.len());
 
     // Convert main entries to RawJson
     let (resources, ids): (Vec<_>, Vec<_>) = result
@@ -2633,6 +2659,7 @@ pub async fn system_search(
     // Collect raw entries: (resource_json, id, resource_type)
     let mut all_entries: Vec<(String, String, String)> = Vec::new();
     let mut total_count: usize = 0;
+    let mut debug_entries: Vec<(String, octofhir_storage::RawSearchDebug)> = Vec::new();
 
     // Parse search params once
     let search_params =
@@ -2662,6 +2689,9 @@ pub async fn system_search(
         {
             Ok(result) => {
                 total_count += result.total.unwrap_or(result.entries.len() as u32) as usize;
+                if let Some(debug) = result.debug {
+                    debug_entries.push(((*type_name).to_string(), debug));
+                }
                 for entry in result.entries {
                     all_entries.push((entry.resource_json, entry.id, entry.resource_type));
                 }
@@ -2671,6 +2701,18 @@ pub async fn system_search(
                 // Continue with other types
             }
         }
+    }
+
+    if debug_request.collect_plan() {
+        let debug = debug_entries
+            .iter()
+            .map(|(resource_type, debug)| (Some(resource_type.as_str()), debug))
+            .collect::<Vec<_>>();
+        return Ok((
+            StatusCode::OK,
+            Json(search_debug_parameters_resource(debug)),
+        )
+            .into_response());
     }
 
     // Apply _count limit to combined results
@@ -2749,11 +2791,35 @@ fn build_query_suffix_for_links(raw_q: &str) -> Option<String> {
     if s.is_empty() { None } else { Some(s) }
 }
 
+fn resolved_search_total(
+    explicit_total: Option<u32>,
+    has_more: bool,
+    offset: usize,
+    page_len: usize,
+) -> (Option<usize>, bool) {
+    if let Some(total) = explicit_total {
+        return (Some(total as usize), true);
+    }
+
+    if has_more {
+        (None, false)
+    } else {
+        (Some(offset + page_len), true)
+    }
+}
+
 const SEARCH_DEBUG_PARAM: &str = "_debug";
+const SEARCH_DEBUG_VALUE: &str = "search";
 const SEARCH_PLAN_DEBUG_VALUE: &str = "search-plan";
+const SEARCH_SQL_DEBUG_VALUE: &str = "search-sql";
 const SEARCH_EXPLAIN_DEBUG_VALUE: &str = "search-explain";
 const SEARCH_EXPLAIN_ANALYZE_DEBUG_VALUE: &str = "search-explain-analyze";
-const SEARCH_DEBUG_HEADER: &str = "x-octofhir-debug";
+const SEARCH_HEADER_PLAN_VALUE: &str = "plan";
+const SEARCH_HEADER_SQL_VALUE: &str = "sql";
+const SEARCH_HEADER_EXPLAIN_VALUE: &str = "explain";
+const SEARCH_HEADER_EXPLAIN_ANALYZE_VALUE: &str = "explain-analyze";
+const SEARCH_DEBUG_HEADER: &str = "x-octofhir-search-debug";
+const LEGACY_SEARCH_DEBUG_HEADER: &str = "x-octofhir-debug";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SearchDebugRequest {
@@ -2786,9 +2852,17 @@ fn search_debug_request(
         return SearchDebugRequest::None;
     }
 
-    query_search_debug_request(raw_q)
+    let request = query_search_debug_request(raw_q)
         .or_else(|| header_search_debug_request(headers))
-        .unwrap_or(SearchDebugRequest::None)
+        .unwrap_or(SearchDebugRequest::None);
+
+    if matches!(request, SearchDebugRequest::ExplainAnalyze)
+        && !settings.allow_debug_search_explain_analyze
+    {
+        return SearchDebugRequest::None;
+    }
+
+    request
 }
 
 fn query_search_debug_request(raw_q: &str) -> Option<SearchDebugRequest> {
@@ -2802,6 +2876,7 @@ fn query_search_debug_request(raw_q: &str) -> Option<SearchDebugRequest> {
 fn header_search_debug_request(headers: &HeaderMap) -> Option<SearchDebugRequest> {
     headers
         .get(SEARCH_DEBUG_HEADER)
+        .or_else(|| headers.get(LEGACY_SEARCH_DEBUG_HEADER))
         .and_then(|value| value.to_str().ok())
         .and_then(|value| {
             value
@@ -2813,9 +2888,17 @@ fn header_search_debug_request(headers: &HeaderMap) -> Option<SearchDebugRequest
 
 fn parse_search_debug_value(value: &str) -> Option<SearchDebugRequest> {
     match value {
-        SEARCH_PLAN_DEBUG_VALUE => Some(SearchDebugRequest::Plan),
-        SEARCH_EXPLAIN_DEBUG_VALUE => Some(SearchDebugRequest::Explain),
-        SEARCH_EXPLAIN_ANALYZE_DEBUG_VALUE => Some(SearchDebugRequest::ExplainAnalyze),
+        SEARCH_DEBUG_VALUE
+        | SEARCH_SQL_DEBUG_VALUE
+        | SEARCH_PLAN_DEBUG_VALUE
+        | SEARCH_HEADER_PLAN_VALUE
+        | SEARCH_HEADER_SQL_VALUE => Some(SearchDebugRequest::Plan),
+        SEARCH_EXPLAIN_DEBUG_VALUE | SEARCH_HEADER_EXPLAIN_VALUE => {
+            Some(SearchDebugRequest::Explain)
+        }
+        SEARCH_EXPLAIN_ANALYZE_DEBUG_VALUE | SEARCH_HEADER_EXPLAIN_ANALYZE_VALUE => {
+            Some(SearchDebugRequest::ExplainAnalyze)
+        }
         _ => None,
     }
 }
@@ -2838,6 +2921,53 @@ fn is_search_debug_param(raw_query_part: &str) -> bool {
         || urlencoding::decode(key)
             .map(|decoded| decoded == SEARCH_DEBUG_PARAM)
             .unwrap_or(false)
+}
+
+fn search_debug_parameters_resource(
+    debug_entries: Vec<(Option<&str>, &octofhir_storage::RawSearchDebug)>,
+) -> Value {
+    let parameter = debug_entries
+        .into_iter()
+        .map(|(resource_type, debug)| {
+            let mut parts = Vec::new();
+            if let Some(resource_type) = resource_type {
+                parts.push(json!({"name": "resourceType", "valueString": resource_type}));
+            }
+            parts.push(json!({"name": "engine", "valueString": "native-ir"}));
+            parts.push(json!({"name": "analyze", "valueBoolean": debug.analyze}));
+            if let Some(sql_shape) = &debug.sql_shape {
+                parts.push(json!({"name": "sql", "valueString": sql_shape}));
+            }
+            if let Some(plan) = &debug.plan {
+                parts.push(json!({
+                    "name": "plan",
+                    "valueString": serde_json::to_string_pretty(plan).unwrap_or_else(|_| "null".to_string())
+                }));
+            }
+            if let Some(explain) = &debug.explain {
+                parts.push(json!({
+                    "name": "explain",
+                    "valueString": serde_json::to_string_pretty(explain).unwrap_or_else(|_| "null".to_string())
+                }));
+            }
+            if let Some(value) = debug.build_elapsed_ms {
+                parts.push(json!({"name": "buildElapsedMs", "valueDecimal": value}));
+            }
+            if let Some(value) = debug.db_execute_elapsed_ms {
+                parts.push(json!({"name": "dbExecuteElapsedMs", "valueDecimal": value}));
+            }
+
+            json!({
+                "name": "search",
+                "part": parts
+            })
+        })
+        .collect::<Vec<_>>();
+
+    json!({
+        "resourceType": "Parameters",
+        "parameter": parameter
+    })
 }
 
 /// Apply _summary and _elements result parameters to a bundle
@@ -4969,8 +5099,8 @@ async fn process_get_search_entry(
 
     let offset = search_params.offset.unwrap_or(0) as usize;
     let count = search_params.count.unwrap_or(10) as usize;
-    let total = result.total.map(|t| t as usize);
-    let total_is_exact = total.is_some();
+    let (total, total_is_exact) =
+        resolved_search_total(result.total, result.has_more, offset, result.entries.len());
 
     let (resources, ids): (Vec<_>, Vec<_>) = result
         .entries
@@ -7087,13 +7217,26 @@ mod tests {
     }
 
     #[test]
+    fn test_resolved_search_total_infers_final_page_without_count_query() {
+        assert_eq!(resolved_search_total(None, false, 20, 3), (Some(23), true));
+        assert_eq!(resolved_search_total(None, true, 20, 10), (None, false));
+        assert_eq!(
+            resolved_search_total(Some(42), true, 20, 10),
+            (Some(42), true)
+        );
+    }
+
+    #[test]
     fn test_search_plan_debug_requires_config_flag() {
         let mut settings = crate::config::SearchSettings::default();
         let headers = HeaderMap::new();
 
+        assert!(!search_debug_request(&settings, &headers, "_debug=search").collect_plan());
         assert!(!search_debug_request(&settings, &headers, "_debug=search-plan").collect_plan());
 
         settings.allow_debug_search_plan = true;
+        assert!(search_debug_request(&settings, &headers, "_debug=search").collect_plan());
+        assert!(search_debug_request(&settings, &headers, "_debug=search-sql").collect_plan());
         assert!(search_debug_request(&settings, &headers, "_debug=search-plan").collect_plan());
         assert!(!search_debug_request(&settings, &headers, "_debug=other").collect_plan());
     }
@@ -7105,7 +7248,7 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert(
             SEARCH_DEBUG_HEADER,
-            SEARCH_PLAN_DEBUG_VALUE.parse().unwrap(),
+            SEARCH_HEADER_PLAN_VALUE.parse().unwrap(),
         );
 
         assert!(search_debug_request(&settings, &headers, "").collect_plan());
@@ -7128,6 +7271,12 @@ mod tests {
         );
         assert_eq!(
             search_debug_request(&settings, &headers, "_debug=search-explain-analyze"),
+            SearchDebugRequest::None
+        );
+
+        settings.allow_debug_search_explain_analyze = true;
+        assert_eq!(
+            search_debug_request(&settings, &headers, "_debug=search-explain-analyze"),
             SearchDebugRequest::ExplainAnalyze
         );
     }
@@ -7139,7 +7288,7 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert(
             SEARCH_DEBUG_HEADER,
-            SEARCH_EXPLAIN_DEBUG_VALUE.parse().unwrap(),
+            SEARCH_HEADER_EXPLAIN_VALUE.parse().unwrap(),
         );
 
         assert_eq!(
@@ -7163,6 +7312,27 @@ mod tests {
             "name=Smith"
         );
         assert_eq!(strip_search_debug_params("_debug=search-plan"), "");
+    }
+
+    #[test]
+    fn test_search_debug_parameters_resource_is_fhir_parameters_and_redacted() {
+        let debug = octofhir_storage::RawSearchDebug {
+            sql_shape: Some("SELECT * FROM resources WHERE id = $?".to_string()),
+            plan: Some(json!({"resource_type": "Patient", "predicates": []})),
+            explain: Some(json!([{"Plan": {"Node Type": "Seq Scan"}}])),
+            analyze: false,
+            build_elapsed_ms: Some(1.25),
+            db_execute_elapsed_ms: Some(2.5),
+        };
+
+        let value = search_debug_parameters_resource(vec![(Some("Patient"), &debug)]);
+
+        assert_eq!(value["resourceType"], "Parameters");
+        let rendered = serde_json::to_string(&value).unwrap();
+        assert!(rendered.contains("native-ir"));
+        assert!(rendered.contains("SELECT * FROM resources WHERE id = $?"));
+        assert!(rendered.contains("Patient"));
+        assert!(!rendered.contains("$1"));
     }
 
     #[test]

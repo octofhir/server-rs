@@ -8,7 +8,9 @@ use serde_json::Value;
 use sqlx_postgres::PgTransaction;
 
 use octofhir_core::fhir_reference::NormalizedRef;
-use octofhir_core::search_index::{ExtractedDate, ExtractedReference, ExtractedString};
+use octofhir_core::search_index::{
+    ExtractedDate, ExtractedNumber, ExtractedQuantity, ExtractedReference, ExtractedString,
+};
 use octofhir_search::{SearchParameterRegistry, SearchParameterType};
 use octofhir_storage::StorageError;
 use sqlx_core::query::query;
@@ -26,7 +28,7 @@ fn partition_cache() -> &'static DashSet<String> {
     CACHE.get_or_init(DashSet::new)
 }
 
-/// Ensure `search_idx_reference_<rt>` and `search_idx_date_<rt>` exist.
+/// Ensure `search_idx_*_<rt>` partitions exist.
 ///
 /// Bootstrap no longer pre-creates these partitions because each `CREATE
 /// TABLE PARTITION OF` serialises on the parent's AccessExclusiveLock
@@ -45,7 +47,11 @@ async fn ensure_search_partition(pool: &PgPool, resource_type: &str) -> Result<(
          CREATE TABLE IF NOT EXISTS \"search_idx_date_{table}\" \
             PARTITION OF search_idx_date FOR VALUES IN ('{resource_type}'); \
          CREATE TABLE IF NOT EXISTS \"search_idx_string_{table}\" \
-            PARTITION OF search_idx_string FOR VALUES IN ('{resource_type}');"
+            PARTITION OF search_idx_string FOR VALUES IN ('{resource_type}'); \
+         CREATE TABLE IF NOT EXISTS \"search_idx_number_{table}\" \
+            PARTITION OF search_idx_number FOR VALUES IN ('{resource_type}'); \
+         CREATE TABLE IF NOT EXISTS \"search_idx_quantity_{table}\" \
+            PARTITION OF search_idx_quantity FOR VALUES IN ('{resource_type}');"
     );
     sqlx_core::raw_sql::raw_sql(&sql)
         .execute(pool)
@@ -77,6 +83,12 @@ async fn ensure_search_partition_in_tx(
     let string_sql = format!(
         r#"CREATE TABLE IF NOT EXISTS "search_idx_string_{table}" PARTITION OF search_idx_string FOR VALUES IN ('{resource_type}')"#
     );
+    let number_sql = format!(
+        r#"CREATE TABLE IF NOT EXISTS "search_idx_number_{table}" PARTITION OF search_idx_number FOR VALUES IN ('{resource_type}')"#
+    );
+    let quantity_sql = format!(
+        r#"CREATE TABLE IF NOT EXISTS "search_idx_quantity_{table}" PARTITION OF search_idx_quantity FOR VALUES IN ('{resource_type}')"#
+    );
     query(&ref_sql).execute(&mut *conn).await.map_err(|e| {
         StorageError::internal(format!(
             "ensure_search_partition_in_tx(ref/{resource_type}): {e}"
@@ -92,31 +104,52 @@ async fn ensure_search_partition_in_tx(
             "ensure_search_partition_in_tx(string/{resource_type}): {e}"
         ))
     })?;
+    query(&number_sql).execute(&mut *conn).await.map_err(|e| {
+        StorageError::internal(format!(
+            "ensure_search_partition_in_tx(number/{resource_type}): {e}"
+        ))
+    })?;
+    query(&quantity_sql)
+        .execute(&mut *conn)
+        .await
+        .map_err(|e| {
+            StorageError::internal(format!(
+                "ensure_search_partition_in_tx(quantity/{resource_type}): {e}"
+            ))
+        })?;
     Ok(())
 }
 
-/// Extract denormalised search index rows for a resource using the registry.
+/// Denormalized search-index rows extracted for one resource.
 ///
-/// Returns `(references, dates, strings)`. One entry per FHIR value: arrays
-/// like `HumanName.given[]` or `Timing.event[]` produce multiple rows.
+/// One entry per FHIR value: arrays like `HumanName.given[]` or `Timing.event[]`
+/// produce multiple rows.
+#[derive(Debug, Default)]
+pub struct ExtractedIndexRows {
+    pub refs: Vec<ExtractedReference>,
+    pub dates: Vec<ExtractedDate>,
+    pub strings: Vec<ExtractedString>,
+    pub numbers: Vec<ExtractedNumber>,
+    pub quantities: Vec<ExtractedQuantity>,
+}
+
+/// Extract denormalised search index rows for a resource using the registry.
 pub fn extract_search_index_rows(
     registry: &SearchParameterRegistry,
     resource_type: &str,
     resource: &Value,
-) -> (
-    Vec<ExtractedReference>,
-    Vec<ExtractedDate>,
-    Vec<ExtractedString>,
-) {
+) -> ExtractedIndexRows {
     let params = registry.get_all_for_type(resource_type);
 
     if params.is_empty() {
-        return (Vec::new(), Vec::new(), Vec::new());
+        return ExtractedIndexRows::default();
     }
 
     let mut refs = Vec::new();
     let mut dates = Vec::new();
     let mut strings = Vec::new();
+    let mut numbers = Vec::new();
+    let mut quantities = Vec::new();
 
     for param in &params {
         let expression = match &param.expression {
@@ -150,11 +183,33 @@ pub fn extract_search_index_rows(
                     expression,
                 ));
             }
+            SearchParameterType::Number => {
+                numbers.extend(octofhir_core::search_index::extract_numbers(
+                    resource,
+                    resource_type,
+                    &param.code,
+                    expression,
+                ));
+            }
+            SearchParameterType::Quantity => {
+                quantities.extend(octofhir_core::search_index::extract_quantities(
+                    resource,
+                    resource_type,
+                    &param.code,
+                    expression,
+                ));
+            }
             _ => {}
         }
     }
 
-    (refs, dates, strings)
+    ExtractedIndexRows {
+        refs,
+        dates,
+        strings,
+        numbers,
+        quantities,
+    }
 }
 
 // ============================================================================
@@ -584,6 +639,203 @@ fn build_string_unnest_columns(strings: &[ExtractedString]) -> StringUnnestColum
 }
 
 // ============================================================================
+// Number / Quantity Indexes
+// ============================================================================
+
+pub async fn write_number_index(
+    pool: &PgPool,
+    resource_type: &str,
+    resource_id: &str,
+    numbers: &[ExtractedNumber],
+) -> Result<(), StorageError> {
+    ensure_search_partition(pool, resource_type).await?;
+    query("DELETE FROM search_idx_number WHERE resource_type = $1 AND resource_id = $2")
+        .bind(resource_type)
+        .bind(resource_id)
+        .execute(pool)
+        .await
+        .map_err(|e| StorageError::internal(format!("Failed to delete number index: {e}")))?;
+
+    if numbers.is_empty() {
+        return Ok(());
+    }
+
+    let (param_codes, values): (Vec<_>, Vec<_>) = numbers
+        .iter()
+        .map(|n| (n.param_code.clone(), n.value.clone()))
+        .unzip();
+
+    query(
+        "INSERT INTO search_idx_number (\
+            resource_type, resource_id, param_code, value_num\
+        ) SELECT \
+            $1, $2, t.pc, t.vn::numeric \
+        FROM UNNEST($3::text[], $4::text[]) AS t(pc, vn)",
+    )
+    .bind(resource_type)
+    .bind(resource_id)
+    .bind(&param_codes)
+    .bind(&values)
+    .execute(pool)
+    .await
+    .map_err(|e| StorageError::internal(format!("Failed to write number index: {e}")))?;
+
+    Ok(())
+}
+
+pub async fn write_number_index_with_tx(
+    tx: &mut PgTransaction<'_>,
+    resource_type: &str,
+    resource_id: &str,
+    numbers: &[ExtractedNumber],
+) -> Result<(), StorageError> {
+    ensure_search_partition_in_tx(tx, resource_type).await?;
+    query("DELETE FROM search_idx_number WHERE resource_type = $1 AND resource_id = $2")
+        .bind(resource_type)
+        .bind(resource_id)
+        .execute(&mut **tx)
+        .await
+        .map_err(|e| StorageError::internal(format!("Failed to delete number index: {e}")))?;
+
+    if numbers.is_empty() {
+        return Ok(());
+    }
+
+    let (param_codes, values): (Vec<_>, Vec<_>) = numbers
+        .iter()
+        .map(|n| (n.param_code.clone(), n.value.clone()))
+        .unzip();
+
+    query(
+        "INSERT INTO search_idx_number (\
+            resource_type, resource_id, param_code, value_num\
+        ) SELECT \
+            $1, $2, t.pc, t.vn::numeric \
+        FROM UNNEST($3::text[], $4::text[]) AS t(pc, vn)",
+    )
+    .bind(resource_type)
+    .bind(resource_id)
+    .bind(&param_codes)
+    .bind(&values)
+    .execute(&mut **tx)
+    .await
+    .map_err(|e| StorageError::internal(format!("Failed to write number index: {e}")))?;
+
+    Ok(())
+}
+
+pub async fn write_quantity_index(
+    pool: &PgPool,
+    resource_type: &str,
+    resource_id: &str,
+    quantities: &[ExtractedQuantity],
+) -> Result<(), StorageError> {
+    ensure_search_partition(pool, resource_type).await?;
+    query("DELETE FROM search_idx_quantity WHERE resource_type = $1 AND resource_id = $2")
+        .bind(resource_type)
+        .bind(resource_id)
+        .execute(pool)
+        .await
+        .map_err(|e| StorageError::internal(format!("Failed to delete quantity index: {e}")))?;
+
+    if quantities.is_empty() {
+        return Ok(());
+    }
+
+    let cols = build_quantity_unnest_columns(quantities);
+    query(
+        "INSERT INTO search_idx_quantity (\
+            resource_type, resource_id, param_code, value_num, system, code, unit\
+        ) SELECT \
+            $1, $2, t.pc, t.vn::numeric, t.sys, t.code, t.unit \
+        FROM UNNEST(\
+            $3::text[], $4::text[], $5::text[], $6::text[], $7::text[]\
+        ) AS t(pc, vn, sys, code, unit)",
+    )
+    .bind(resource_type)
+    .bind(resource_id)
+    .bind(&cols.param_codes)
+    .bind(&cols.values)
+    .bind(&cols.systems)
+    .bind(&cols.codes)
+    .bind(&cols.units)
+    .execute(pool)
+    .await
+    .map_err(|e| StorageError::internal(format!("Failed to write quantity index: {e}")))?;
+
+    Ok(())
+}
+
+pub async fn write_quantity_index_with_tx(
+    tx: &mut PgTransaction<'_>,
+    resource_type: &str,
+    resource_id: &str,
+    quantities: &[ExtractedQuantity],
+) -> Result<(), StorageError> {
+    ensure_search_partition_in_tx(tx, resource_type).await?;
+    query("DELETE FROM search_idx_quantity WHERE resource_type = $1 AND resource_id = $2")
+        .bind(resource_type)
+        .bind(resource_id)
+        .execute(&mut **tx)
+        .await
+        .map_err(|e| StorageError::internal(format!("Failed to delete quantity index: {e}")))?;
+
+    if quantities.is_empty() {
+        return Ok(());
+    }
+
+    let cols = build_quantity_unnest_columns(quantities);
+    query(
+        "INSERT INTO search_idx_quantity (\
+            resource_type, resource_id, param_code, value_num, system, code, unit\
+        ) SELECT \
+            $1, $2, t.pc, t.vn::numeric, t.sys, t.code, t.unit \
+        FROM UNNEST(\
+            $3::text[], $4::text[], $5::text[], $6::text[], $7::text[]\
+        ) AS t(pc, vn, sys, code, unit)",
+    )
+    .bind(resource_type)
+    .bind(resource_id)
+    .bind(&cols.param_codes)
+    .bind(&cols.values)
+    .bind(&cols.systems)
+    .bind(&cols.codes)
+    .bind(&cols.units)
+    .execute(&mut **tx)
+    .await
+    .map_err(|e| StorageError::internal(format!("Failed to write quantity index: {e}")))?;
+
+    Ok(())
+}
+
+struct QuantityUnnestColumns {
+    param_codes: Vec<String>,
+    values: Vec<String>,
+    systems: Vec<Option<String>>,
+    codes: Vec<Option<String>>,
+    units: Vec<Option<String>>,
+}
+
+fn build_quantity_unnest_columns(quantities: &[ExtractedQuantity]) -> QuantityUnnestColumns {
+    let len = quantities.len();
+    let mut cols = QuantityUnnestColumns {
+        param_codes: Vec::with_capacity(len),
+        values: Vec::with_capacity(len),
+        systems: Vec::with_capacity(len),
+        codes: Vec::with_capacity(len),
+        units: Vec::with_capacity(len),
+    };
+    for q in quantities {
+        cols.param_codes.push(q.param_code.clone());
+        cols.values.push(q.value.clone());
+        cols.systems.push(q.system.clone());
+        cols.codes.push(q.code.clone());
+        cols.units.push(q.unit.clone());
+    }
+    cols
+}
+
+// ============================================================================
 // Batch Index Writers (across many resources)
 // ============================================================================
 
@@ -675,6 +927,8 @@ pub struct BatchIndexBuffer {
     refs: Vec<ReferenceIndexRow>,
     dates: Vec<DateIndexRow>,
     strings: Vec<StringIndexRow>,
+    numbers: Vec<NumberIndexRow>,
+    quantities: Vec<QuantityIndexRow>,
 }
 
 struct DateIndexRow {
@@ -693,27 +947,42 @@ struct StringIndexRow {
     value_exact: String,
 }
 
+struct NumberIndexRow {
+    resource_type: String,
+    resource_id: String,
+    param_code: String,
+    value: String,
+}
+
+struct QuantityIndexRow {
+    resource_type: String,
+    resource_id: String,
+    param_code: String,
+    value: String,
+    system: Option<String>,
+    code: Option<String>,
+    unit: Option<String>,
+}
+
 impl BatchIndexBuffer {
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Push extracted reference / date / string index rows for one resource.
+    /// Push extracted index rows for one resource.
     pub fn extend_with(
         &mut self,
         resource_type: &str,
         resource_id: &str,
-        refs: &[ExtractedReference],
-        dates: &[ExtractedDate],
-        strings: &[ExtractedString],
+        rows: &ExtractedIndexRows,
     ) {
-        self.refs.reserve(refs.len());
-        for r in refs {
+        self.refs.reserve(rows.refs.len());
+        for r in &rows.refs {
             self.refs
                 .push(flatten_reference(resource_type, resource_id, r));
         }
-        self.dates.reserve(dates.len());
-        for d in dates {
+        self.dates.reserve(rows.dates.len());
+        for d in &rows.dates {
             self.dates.push(DateIndexRow {
                 resource_type: resource_type.to_string(),
                 resource_id: resource_id.to_string(),
@@ -722,8 +991,8 @@ impl BatchIndexBuffer {
                 range_end: d.range_end.clone(),
             });
         }
-        self.strings.reserve(strings.len());
-        for s in strings {
+        self.strings.reserve(rows.strings.len());
+        for s in &rows.strings {
             self.strings.push(StringIndexRow {
                 resource_type: resource_type.to_string(),
                 resource_id: resource_id.to_string(),
@@ -732,10 +1001,35 @@ impl BatchIndexBuffer {
                 value_exact: s.value_exact.clone(),
             });
         }
+        self.numbers.reserve(rows.numbers.len());
+        for n in &rows.numbers {
+            self.numbers.push(NumberIndexRow {
+                resource_type: resource_type.to_string(),
+                resource_id: resource_id.to_string(),
+                param_code: n.param_code.clone(),
+                value: n.value.clone(),
+            });
+        }
+        self.quantities.reserve(rows.quantities.len());
+        for q in &rows.quantities {
+            self.quantities.push(QuantityIndexRow {
+                resource_type: resource_type.to_string(),
+                resource_id: resource_id.to_string(),
+                param_code: q.param_code.clone(),
+                value: q.value.clone(),
+                system: q.system.clone(),
+                code: q.code.clone(),
+                unit: q.unit.clone(),
+            });
+        }
     }
 
     pub fn is_empty(&self) -> bool {
-        self.refs.is_empty() && self.dates.is_empty() && self.strings.is_empty()
+        self.refs.is_empty()
+            && self.dates.is_empty()
+            && self.strings.is_empty()
+            && self.numbers.is_empty()
+            && self.quantities.is_empty()
     }
 
     /// Flush all accumulated rows to the search index tables in one UNNEST
@@ -747,6 +1041,8 @@ impl BatchIndexBuffer {
             refs,
             dates,
             strings,
+            numbers,
+            quantities,
         } = self;
 
         // Ensure list partitions exist for every resource_type in this batch.
@@ -762,6 +1058,12 @@ impl BatchIndexBuffer {
         }
         for s in &strings {
             seen_types.insert(s.resource_type.clone());
+        }
+        for n in &numbers {
+            seen_types.insert(n.resource_type.clone());
+        }
+        for q in &quantities {
+            seen_types.insert(q.resource_type.clone());
         }
         for rt in &seen_types {
             ensure_search_partition_in_tx(tx, rt).await?;
@@ -904,6 +1206,84 @@ impl BatchIndexBuffer {
             })?;
         }
 
+        if !numbers.is_empty() {
+            let len = numbers.len();
+            let mut resource_types = Vec::with_capacity(len);
+            let mut resource_ids = Vec::with_capacity(len);
+            let mut param_codes = Vec::with_capacity(len);
+            let mut values = Vec::with_capacity(len);
+
+            for n in numbers {
+                resource_types.push(n.resource_type);
+                resource_ids.push(n.resource_id);
+                param_codes.push(n.param_code);
+                values.push(n.value);
+            }
+
+            query(
+                "INSERT INTO search_idx_number (\
+                    resource_type, resource_id, param_code, value_num\
+                ) SELECT \
+                    t.rt, t.rid, t.pc, t.vn::numeric \
+                FROM UNNEST(\
+                    $1::text[], $2::text[], $3::text[], $4::text[]\
+                ) AS t(rt, rid, pc, vn)",
+            )
+            .bind(&resource_types)
+            .bind(&resource_ids)
+            .bind(&param_codes)
+            .bind(&values)
+            .execute(&mut **tx)
+            .await
+            .map_err(|e| {
+                StorageError::internal(format!("Failed to batch-write number index: {e}"))
+            })?;
+        }
+
+        if !quantities.is_empty() {
+            let len = quantities.len();
+            let mut resource_types = Vec::with_capacity(len);
+            let mut resource_ids = Vec::with_capacity(len);
+            let mut param_codes = Vec::with_capacity(len);
+            let mut values = Vec::with_capacity(len);
+            let mut systems: Vec<Option<String>> = Vec::with_capacity(len);
+            let mut codes: Vec<Option<String>> = Vec::with_capacity(len);
+            let mut units: Vec<Option<String>> = Vec::with_capacity(len);
+
+            for q in quantities {
+                resource_types.push(q.resource_type);
+                resource_ids.push(q.resource_id);
+                param_codes.push(q.param_code);
+                values.push(q.value);
+                systems.push(q.system);
+                codes.push(q.code);
+                units.push(q.unit);
+            }
+
+            query(
+                "INSERT INTO search_idx_quantity (\
+                    resource_type, resource_id, param_code, value_num, system, code, unit\
+                ) SELECT \
+                    t.rt, t.rid, t.pc, t.vn::numeric, t.sys, t.code, t.unit \
+                FROM UNNEST(\
+                    $1::text[], $2::text[], $3::text[], $4::text[], \
+                    $5::text[], $6::text[], $7::text[]\
+                ) AS t(rt, rid, pc, vn, sys, code, unit)",
+            )
+            .bind(&resource_types)
+            .bind(&resource_ids)
+            .bind(&param_codes)
+            .bind(&values)
+            .bind(&systems)
+            .bind(&codes)
+            .bind(&units)
+            .execute(&mut **tx)
+            .await
+            .map_err(|e| {
+                StorageError::internal(format!("Failed to batch-write quantity index: {e}"))
+            })?;
+        }
+
         Ok(())
     }
 }
@@ -936,11 +1316,24 @@ pub async fn delete_search_indexes(
             .bind(resource_type)
             .bind(resource_id)
             .execute(pool);
+    let del_number =
+        query("DELETE FROM search_idx_number WHERE resource_type = $1 AND resource_id = $2")
+            .bind(resource_type)
+            .bind(resource_id)
+            .execute(pool);
+    let del_quantity =
+        query("DELETE FROM search_idx_quantity WHERE resource_type = $1 AND resource_id = $2")
+            .bind(resource_type)
+            .bind(resource_id)
+            .execute(pool);
 
-    let (r1, r2, r3) = tokio::join!(del_ref, del_date, del_string);
+    let (r1, r2, r3, r4, r5) =
+        tokio::join!(del_ref, del_date, del_string, del_number, del_quantity);
     r1.map_err(|e| StorageError::internal(format!("Failed to delete reference index: {e}")))?;
     r2.map_err(|e| StorageError::internal(format!("Failed to delete date index: {e}")))?;
     r3.map_err(|e| StorageError::internal(format!("Failed to delete string index: {e}")))?;
+    r4.map_err(|e| StorageError::internal(format!("Failed to delete number index: {e}")))?;
+    r5.map_err(|e| StorageError::internal(format!("Failed to delete quantity index: {e}")))?;
 
     Ok(())
 }
@@ -971,6 +1364,20 @@ pub async fn delete_search_indexes_with_tx(
         .execute(&mut **tx)
         .await
         .map_err(|e| StorageError::internal(format!("Failed to delete string index: {e}")))?;
+
+    query("DELETE FROM search_idx_number WHERE resource_type = $1 AND resource_id = $2")
+        .bind(resource_type)
+        .bind(resource_id)
+        .execute(&mut **tx)
+        .await
+        .map_err(|e| StorageError::internal(format!("Failed to delete number index: {e}")))?;
+
+    query("DELETE FROM search_idx_quantity WHERE resource_type = $1 AND resource_id = $2")
+        .bind(resource_type)
+        .bind(resource_id)
+        .execute(&mut **tx)
+        .await
+        .map_err(|e| StorageError::internal(format!("Failed to delete quantity index: {e}")))?;
 
     Ok(())
 }
@@ -1016,6 +1423,26 @@ pub async fn delete_search_indexes_batch_with_tx(
     .execute(&mut **tx)
     .await
     .map_err(|e| StorageError::internal(format!("Failed to batch-delete string index: {e}")))?;
+
+    query(
+        "DELETE FROM search_idx_number \
+         WHERE resource_type = $1 AND resource_id = ANY($2)",
+    )
+    .bind(resource_type)
+    .bind(resource_ids)
+    .execute(&mut **tx)
+    .await
+    .map_err(|e| StorageError::internal(format!("Failed to batch-delete number index: {e}")))?;
+
+    query(
+        "DELETE FROM search_idx_quantity \
+         WHERE resource_type = $1 AND resource_id = ANY($2)",
+    )
+    .bind(resource_type)
+    .bind(resource_ids)
+    .execute(&mut **tx)
+    .await
+    .map_err(|e| StorageError::internal(format!("Failed to batch-delete quantity index: {e}")))?;
 
     Ok(())
 }

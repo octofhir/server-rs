@@ -10,14 +10,20 @@ If you need internals (registry/cache lifecycle), see [Search Architecture](./se
 
 ## Quick Summary
 
-OctoFHIR uses a hybrid model:
+OctoFHIR uses native search IR backed by denormalized index tables for
+production search paths:
 
-1. **Denormalized index tables** for high-impact patterns:
+1. **Denormalized index tables** for high-impact search types:
    - `search_idx_reference`
    - `search_idx_date`
-2. **Direct JSONB SQL paths** for string-heavy patterns.
+   - `search_idx_string`
+   - `search_idx_number`
+   - `search_idx_quantity`
+2. **Direct JSONB SQL paths** only for intentionally non-indexed surfaces such
+   as narrative full-text (`:text`).
 
-This keeps reference/date queries fast while avoiding unnecessary string duplication.
+This keeps FHIR search semantics explicit while avoiding runtime JSONB fallback
+for production query types.
 
 ## What Is Indexed
 
@@ -27,19 +33,34 @@ This keeps reference/date queries fast while avoiding unnecessary string duplica
 | `_include` / `_revinclude` | `search_idx_reference` | Uses normalized reference rows |
 | Chained search | `search_idx_reference` + target query | Efficient join start point |
 | Date search (`ge`, `lt`, `ap`, etc.) | `search_idx_date` | Precision-aware ranges |
-| String `:exact` | JSONB containment (`@>`) + GIN | No string denormalization table |
-| String default / `:contains` | JSON path + `LIKE`/`ILIKE` | Path-aware SQL builders |
+| String default / `:contains` / `:exact` | `search_idx_string` | Normalized and exact values |
+| Number search | `search_idx_number` | Prefix-aware numeric ranges |
+| Quantity search | `search_idx_quantity` | Numeric value plus system/code/unit |
+| Token simple code (`gender=female`) | JSONB containment (`@>`) | Uses the resource GIN index |
 
-## Why No `search_idx_string`
+## Debug Plans
 
-Earlier designs that denormalized strings can grow storage quickly on real datasets.
+Search debug output is disabled by default and must be enabled explicitly:
 
-Current design keeps strings in resource JSON and uses:
+```toml
+[search]
+allow_debug_search_plan = true
+allow_debug_search_explain_analyze = false
+```
 
-- GIN-backed containment for exact-style matching
-- path SQL for prefix/contains
+When enabled, request a redacted search plan with either query syntax or the
+header form:
 
-This reduces write amplification and keeps schema simpler.
+```http
+GET /fhir/Patient?family=Smith
+X-OctoFHIR-Search-Debug: plan
+```
+
+Accepted header values are `plan`, `sql`, `explain`, and `explain-analyze`.
+`explain-analyze` additionally requires `allow_debug_search_explain_analyze =
+true` because it executes the query. The response is returned as a FHIR
+`Parameters` resource and redacts search values while preserving strategy,
+index, and SQL-shape information.
 
 ## How This Affects Query Design
 
@@ -74,12 +95,12 @@ Use `:exact` for exact text semantics, not as a generic performance toggle.
 On resource create/update:
 
 1. Search parameters for the resource type are resolved.
-2. Reference/date values are extracted from resource JSON.
-3. Existing rows for that resource are replaced in `search_idx_reference` and `search_idx_date`.
+2. Indexed values are extracted from resource JSON.
+3. Existing rows for that resource are replaced in the relevant `search_idx_*` tables.
 
 On delete:
 
-- Rows are removed from both index tables for that resource.
+- Rows are removed from all search index tables for that resource.
 
 ## Operational Checks
 
@@ -93,13 +114,22 @@ Expected:
 
 - `search_idx_reference`
 - `search_idx_date`
+- `search_idx_string`
+- `search_idx_number`
+- `search_idx_quantity`
 
 ### Check cardinality quickly
 
 ```sql
 SELECT 'reference' AS kind, count(*) FROM search_idx_reference
 UNION ALL
-SELECT 'date' AS kind, count(*) FROM search_idx_date;
+SELECT 'date' AS kind, count(*) FROM search_idx_date
+UNION ALL
+SELECT 'string' AS kind, count(*) FROM search_idx_string
+UNION ALL
+SELECT 'number' AS kind, count(*) FROM search_idx_number
+UNION ALL
+SELECT 'quantity' AS kind, count(*) FROM search_idx_quantity;
 ```
 
 ## Tuning Strategy

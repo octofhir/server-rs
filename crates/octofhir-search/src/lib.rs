@@ -51,13 +51,6 @@ pub use sql_builder::{
     escape_identifier,
     fhirpath_to_jsonb_path,
 };
-pub use types::{
-    DateRange, build_date_search, build_gin_identifier_search, build_gin_quantity_search,
-    build_human_name_search, build_identifier_search, build_number_search, build_period_search,
-    build_quantity_search, build_string_search, build_token_search, dispatch_search,
-    parse_date_range, parse_token_value,
-};
-
 // Chaining and includes
 pub use chaining::{
     ChainLink, ChainedParameter, ChainingError, build_chained_search, is_chained_parameter,

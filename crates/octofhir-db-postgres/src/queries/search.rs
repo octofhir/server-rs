@@ -22,8 +22,8 @@ use octofhir_search::{
     build_native_ir_query_from_params_with_config,
 };
 use octofhir_storage::{
-    RawSearchResult, RawStoredResource, SearchParams, SearchResult, StorageError, StoredResource,
-    TotalMode,
+    RawSearchDebug, RawSearchResult, RawStoredResource, SearchParams, SearchResult, StorageError,
+    StoredResource, TotalMode,
 };
 
 /// Re-export UnknownParamHandling for convenience.
@@ -638,13 +638,13 @@ async fn execute_search_raw_with_config_inner(
         "Executing raw search query"
     );
 
+    let mut explain_plan = None;
     if options.collect_explain_plan || options.collect_explain_analyze {
         let explain_started = Instant::now();
-        let explain_plan =
+        let plan =
             explain_built_search_query_json(pool, &built_query, options.collect_explain_analyze)
                 .await?;
-        let explain_json =
-            serde_json::to_string(&explain_plan).unwrap_or_else(|_| "null".to_string());
+        let explain_json = serde_json::to_string(&plan).unwrap_or_else(|_| "null".to_string());
         tracing::debug!(
             resource_type = %resource_type,
             search_engine = "native-ir",
@@ -655,6 +655,7 @@ async fn execute_search_raw_with_config_inner(
             explain_plan = %explain_json,
             "Search native IR EXPLAIN"
         );
+        explain_plan = Some(plan);
     }
 
     // Execute the main query with raw JSON (SQL already emits resource::text)
@@ -711,12 +712,25 @@ async fn execute_search_raw_with_config_inner(
         Vec::new()
     };
 
+    let debug = options.collect_debug_plan.then(|| RawSearchDebug {
+        sql_shape: Some(redact_sql_shape(&built_query.sql)),
+        plan: converted
+            .debug_plan
+            .as_ref()
+            .and_then(|plan| serde_json::to_value(plan).ok()),
+        explain: explain_plan,
+        analyze: options.collect_explain_analyze,
+        build_elapsed_ms: Some(build_elapsed.as_secs_f64() * 1000.0),
+        db_execute_elapsed_ms: Some(execute_elapsed.as_secs_f64() * 1000.0),
+    });
+
     Ok(RawSearchResult {
         entries,
         included,
         total,
         has_more,
         warnings,
+        debug,
     })
 }
 

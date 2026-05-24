@@ -686,26 +686,18 @@ impl SchemaProvider for OctoFhirModelProvider {
 #[async_trait]
 impl ElementTypeResolver for OctoFhirModelProvider {
     async fn resolve(&self, resource_type: &str, element_path: &str) -> Option<(String, bool)> {
-        let schema = OctoFhirModelProvider::get_schema(self, resource_type).await?;
-        let elements = schema.elements.as_ref()?;
+        let mut current = self.get_type(resource_type).await.ok().flatten()?;
 
-        // Navigate nested paths (e.g., "meta.tag" → meta -> tag)
-        let parts: Vec<&str> = element_path.split('.').collect();
-        let mut current_elements = elements;
-
-        for (i, part) in parts.iter().enumerate() {
-            let element = current_elements.get(*part)?;
-            if i == parts.len() - 1 {
-                // Found the target element
-                return Some((
-                    element.type_name.clone().unwrap_or_default(),
-                    element.array.unwrap_or(false),
-                ));
-            }
-            // Navigate into nested elements (backbone elements)
-            current_elements = element.elements.as_ref()?;
+        for part in element_path
+            .split('.')
+            .map(str::trim)
+            .filter(|part| !part.is_empty())
+        {
+            current = self.get_element_type(&current, part).await.ok().flatten()?;
         }
 
-        None
+        let is_array = !current.singleton.unwrap_or(true);
+        let type_name = current.name.unwrap_or(current.type_name);
+        Some((type_name, is_array))
     }
 }

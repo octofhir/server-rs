@@ -335,7 +335,6 @@ the bench.
 |---|---|---|---|---|---|
 | **OctoFHIR** | `tstzrange` (half-open, generated) | GiST on `(param_code, rng)` | `±infinity` | One row per `event[]` | µs (`timestamptz` native) |
 | HAPI | Two `TIMESTAMP` columns | Two btrees + `CASE` per prefix | NULL sentinels | Min/max envelope | ms |
-| Aidbox | `tstzrange` | GiST | Closed end-of-day | Min/max envelope | ms |
 | Medplum | JSON-encoded bounds in resource column | None usable for prefix algebra | Closed | Min/max envelope | ms |
 | MS FHIR | Two computed `datetime2` columns | Two btrees | NULL sentinels | Single row per resource | sub-second only via fallback |
 | fhir-candle | In-memory `DateTimeOffset` ranges | Linear scan | NULL sentinels | First event only | ms |
@@ -345,12 +344,9 @@ the bench.
 - **HAPI / MS FHIR**: One GiST instead of two btrees + `CASE` chain.
   Every prefix uses the index; `eq` and `ap` no longer fall back to seq
   scan on big tables.
-- **Aidbox**: `±infinity` for open Periods (correct `eb`/`lt` semantics on
-  open-ended encounters); per-element rows for `Timing.event[]` (correct
-  `eq` for any event in the array).
 - **Medplum**: We have an actual range index — they don't.
 - **fhir-candle**: We have an index at all.
-- **All five**: sub-millisecond precision survives the round-trip.
+- **All four**: sub-millisecond precision survives the round-trip.
 
 ---
 

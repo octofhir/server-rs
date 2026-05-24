@@ -2,7 +2,7 @@
 
 ## Objective
 
-Produce reproducible, apples-to-apples performance comparisons between OctoFHIR, HAPI FHIR, and Aidbox using identical datasets, scenarios, and hardware.
+Produce reproducible, apples-to-apples performance comparisons between OctoFHIR and HAPI FHIR using identical datasets, scenarios, and hardware.
 
 ## Dataset
 
@@ -29,7 +29,6 @@ synthea -p 1000 -s 42 --exporter.fhir.transaction_bundle true
 |--------|-------|-------|
 | OctoFHIR | Local build (debug for dev, release for benchmark) | Current `main` branch |
 | HAPI FHIR | `hapiproject/hapi:latest` | Default JPA + PostgreSQL config |
-| Aidbox | `healthsamurai/aidboxone` | Trial license, PostgreSQL backend |
 
 ## Environment
 
@@ -112,7 +111,7 @@ GET /fhir/$export
 - **Purpose**: Bulk data export throughput
 - **VUs**: 1 (serial, measure total time)
 - **Metric**: Time to complete for 1000 patients, throughput in resources/sec
-- **Note**: Only if supported by competitor; HAPI and Aidbox support this
+- **Note**: Only if supported by competitor; HAPI supports this
 
 ## Metrics Collected
 
@@ -203,7 +202,7 @@ docker compose down
 ```
 
 ### 5. Repeat for Each Server
-Run steps 1-4 for OctoFHIR, HAPI FHIR, and Aidbox.
+Run steps 1-4 for OctoFHIR and HAPI FHIR.
 
 ## Reporting
 
@@ -216,13 +215,13 @@ Results published as:
 
 ### Table Template
 
-| Scenario | VUs | OctoFHIR p50 | OctoFHIR p95 | HAPI p50 | HAPI p95 | Aidbox p50 | Aidbox p95 |
-|----------|-----|-------------|-------------|---------|---------|-----------|-----------|
-| Read by ID | 10 | — | — | — | — | — | — |
-| Read by ID | 50 | — | — | — | — | — | — |
-| Read by ID | 100 | — | — | — | — | — | — |
-| Search Patient | 10 | — | — | — | — | — | — |
-| ... | ... | ... | ... | ... | ... | ... | ... |
+| Scenario | VUs | OctoFHIR p50 | OctoFHIR p95 | HAPI p50 | HAPI p95 |
+|----------|-----|-------------|-------------|---------|---------|
+| Read by ID | 10 | — | — | — | — |
+| Read by ID | 50 | — | — | — | — |
+| Read by ID | 100 | — | — | — | — |
+| Search Patient | 10 | — | — | — | — |
+| ... | ... | ... | ... | ... | ... |
 
 ### Additional Comparisons
 

@@ -15,7 +15,8 @@ use crate::parser::ParsedParam;
 use crate::sql_builder::{SqlBuilder, SqlBuilderError};
 use crate::{
     ir::NumberClause, ir::QuantityClause, ir::render_number_clauses_as_or,
-    ir::render_quantity_clauses_as_or, ir::render_quantity_containment_clauses_as_or,
+    ir::render_number_index_clauses_as_or, ir::render_quantity_clauses_as_or,
+    ir::render_quantity_containment_clauses_as_or, ir::render_quantity_index_clauses_as_or,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -135,6 +136,19 @@ pub fn build_number_search(
     Ok(())
 }
 
+/// Build number search against `search_idx_number`.
+pub fn build_index_number_search(
+    builder: &mut SqlBuilder,
+    param: &ParsedParam,
+    resource_type: &str,
+) -> Result<(), SqlBuilderError> {
+    let clauses = NumberClause::from_parsed_param(param, resource_type)?;
+    if let Some(sql) = render_number_index_clauses_as_or(builder, &clauses)? {
+        builder.add_condition(sql);
+    }
+    Ok(())
+}
+
 /// Build search for Quantity types.
 ///
 /// Quantity has value, unit, system, and code fields.
@@ -163,6 +177,19 @@ pub fn build_gin_quantity_search(
     if let Some(sql) =
         render_quantity_containment_clauses_as_or(builder, &clauses, jsonb_path, path_segments)?
     {
+        builder.add_condition(sql);
+    }
+    Ok(())
+}
+
+/// Build quantity search against `search_idx_quantity`.
+pub fn build_index_quantity_search(
+    builder: &mut SqlBuilder,
+    param: &ParsedParam,
+    resource_type: &str,
+) -> Result<(), SqlBuilderError> {
+    let clauses = QuantityClause::from_parsed_param(param, resource_type)?;
+    if let Some(sql) = render_quantity_index_clauses_as_or(builder, &clauses)? {
         builder.add_condition(sql);
     }
     Ok(())

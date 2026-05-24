@@ -152,6 +152,25 @@ pub struct RawSearchResult {
     pub has_more: bool,
     /// Warning messages to include in the response (e.g., unknown parameters ignored).
     pub warnings: Vec<String>,
+    /// Optional safe search debug payload, populated only by explicit debug-gated callers.
+    pub debug: Option<RawSearchDebug>,
+}
+
+/// Safe search debug payload for internal/debug responses.
+#[derive(Debug, Clone, Default)]
+pub struct RawSearchDebug {
+    /// Redacted SQL shape. Bind values are never included.
+    pub sql_shape: Option<String>,
+    /// FHIR-native search plan/debug metadata.
+    pub plan: Option<Value>,
+    /// PostgreSQL EXPLAIN JSON output when requested.
+    pub explain: Option<Value>,
+    /// Whether EXPLAIN ANALYZE was requested.
+    pub analyze: bool,
+    /// SQL builder elapsed time in milliseconds.
+    pub build_elapsed_ms: Option<f64>,
+    /// Database execution elapsed time in milliseconds.
+    pub db_execute_elapsed_ms: Option<f64>,
 }
 
 impl RawSearchResult {

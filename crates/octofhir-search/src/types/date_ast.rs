@@ -6,7 +6,7 @@
 //! pure passes over `Vec<DateClause>` instead of ad-hoc dispatch helpers.
 //! Prefix algebra lives in one place where the truth table can prove it.
 
-use crate::parameters::SearchPrefix;
+use crate::parameters::{SearchModifier, SearchPrefix};
 use crate::parser::ParsedParam;
 use crate::sql_builder::{SqlBuilder, SqlBuilderError};
 use crate::types::date::{DateRange, parse_date_range};
@@ -54,6 +54,8 @@ pub enum DatePredicate {
     StrictlyAfter { q: DateRange },
     /// `r.rng << tstzrange(q.lo, q.hi, '[)')` — eb.
     StrictlyBefore { q: DateRange },
+    /// `:missing=true|false`.
+    Missing { is_missing: bool },
 }
 
 /// Date predicate plus its `search_idx_date` lookup key.
@@ -83,6 +85,9 @@ pub struct PeriodClause {
     pub predicate: PeriodPredicate,
 }
 
+type DateWindowBucketKey = (String, String);
+type DateWindowBucket = (Option<Bound>, Option<Bound>, Vec<DateClause>);
+
 impl DateClause {
     /// Build clauses from one `ParsedParam`. One `ParsedParam` may carry
     /// multiple comma-OR'd values, each producing one clause.
@@ -90,6 +95,19 @@ impl DateClause {
         param: &ParsedParam,
         resource_type: &str,
     ) -> Result<Vec<DateClause>, SqlBuilderError> {
+        if matches!(param.modifier, Some(SearchModifier::Missing)) {
+            let is_missing = param
+                .values
+                .first()
+                .map(|v| v.raw.eq_ignore_ascii_case("true"))
+                .unwrap_or(false);
+            return Ok(vec![DateClause {
+                resource_type: resource_type.to_string(),
+                param_code: param.name.clone(),
+                predicate: DatePredicate::Missing { is_missing },
+            }]);
+        }
+
         let mut out = Vec::with_capacity(param.values.len());
         for v in &param.values {
             if v.raw.is_empty() {
@@ -212,6 +230,18 @@ impl DateClause {
                      AND sid.rng << tstzrange(${p_lo}::timestamptz, ${p_hi}::timestamptz, '[)'))"
                 )
             }
+            DatePredicate::Missing { is_missing } => {
+                let exists = format!(
+                    "EXISTS (SELECT 1 FROM search_idx_date sid \
+                     WHERE sid.resource_type = ${rt_param} AND sid.resource_id = {id_col} \
+                     AND sid.param_code = ${pc_param})"
+                );
+                if *is_missing {
+                    format!("NOT {exists}")
+                } else {
+                    exists
+                }
+            }
         }
     }
 }
@@ -276,8 +306,7 @@ pub fn merge_overlap_windows(clauses: Vec<DateClause>) -> Vec<DateClause> {
     use std::collections::BTreeMap;
 
     // Bucket by (resource_type, param_code).
-    let mut buckets: BTreeMap<(String, String), (Option<Bound>, Option<Bound>, Vec<DateClause>)> =
-        BTreeMap::new();
+    let mut buckets: BTreeMap<DateWindowBucketKey, DateWindowBucket> = BTreeMap::new();
     // Stable ordering of buckets in the output follows first-occurrence.
     let mut order: Vec<(String, String)> = Vec::new();
 
@@ -453,6 +482,7 @@ mod tests {
             DatePredicate::Overlap { lo, hi } => overlap(*lo, *hi, target),
             DatePredicate::StrictlyAfter { q } => le(TestEndpoint::Finite(q.end), target.lo),
             DatePredicate::StrictlyBefore { q } => le(target.hi, TestEndpoint::Finite(q.start)),
+            DatePredicate::Missing { .. } => false,
         }
     }
 

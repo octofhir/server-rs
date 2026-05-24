@@ -103,4 +103,3 @@ Month 5-12: P2 — Differentiation
 - Redis available for caching and pub/sub (horizontal scaling)
 - CI/CD pipeline with GitHub Actions (existing)
 - Access to Inferno test suite (open source, free)
-- Aidbox trial license available for benchmark comparison
