@@ -2394,8 +2394,7 @@ pub async fn search_resource(
         .map(octofhir_search::UnknownParamHandling::from_prefer_header);
 
     let raw_q = raw.unwrap_or_default();
-    let collect_debug_plan =
-        should_collect_search_plan_debug(&state.config.search, &headers, &raw_q);
+    let debug_request = search_debug_request(&state.config.search, &headers, &raw_q);
     let raw_q = strip_search_debug_params(&raw_q);
     let cfg = state.search_config.config();
 
@@ -2418,7 +2417,9 @@ pub async fn search_resource(
         state.terminology_provider.as_ref(),
         octofhir_db_postgres::queries::RawSearchOptions {
             unknown_param_handling,
-            collect_debug_plan,
+            collect_debug_plan: debug_request.collect_plan(),
+            collect_explain_plan: debug_request.collect_explain_plan(),
+            collect_explain_analyze: debug_request.collect_explain_analyze(),
         },
     )
     .await
@@ -2509,8 +2510,7 @@ pub async fn search_resource_post(
             merged
         }
     };
-    let collect_debug_plan =
-        should_collect_search_plan_debug(&state.config.search, &headers, &raw_q);
+    let debug_request = search_debug_request(&state.config.search, &headers, &raw_q);
     let raw_q = strip_search_debug_params(&raw_q);
 
     let cfg = state.search_config.config();
@@ -2533,7 +2533,9 @@ pub async fn search_resource_post(
         state.query_cache.as_deref(),
         octofhir_db_postgres::queries::RawSearchOptions {
             unknown_param_handling: None,
-            collect_debug_plan,
+            collect_debug_plan: debug_request.collect_plan(),
+            collect_explain_plan: debug_request.collect_explain_plan(),
+            collect_explain_analyze: debug_request.collect_explain_analyze(),
         },
     )
     .await
@@ -2624,8 +2626,7 @@ pub async fn system_search(
     }
 
     let raw_q = raw.unwrap_or_default();
-    let collect_debug_plan =
-        should_collect_search_plan_debug(&state.config.search, &headers, &raw_q);
+    let debug_request = search_debug_request(&state.config.search, &headers, &raw_q);
     let raw_q = strip_search_debug_params(&raw_q);
     let cfg = state.search_config.config();
 
@@ -2652,7 +2653,9 @@ pub async fn system_search(
             state.query_cache.as_deref(),
             octofhir_db_postgres::queries::RawSearchOptions {
                 unknown_param_handling: None,
-                collect_debug_plan,
+                collect_debug_plan: debug_request.collect_plan(),
+                collect_explain_plan: debug_request.collect_explain_plan(),
+                collect_explain_analyze: debug_request.collect_explain_analyze(),
             },
         )
         .await
@@ -2748,33 +2751,73 @@ fn build_query_suffix_for_links(raw_q: &str) -> Option<String> {
 
 const SEARCH_DEBUG_PARAM: &str = "_debug";
 const SEARCH_PLAN_DEBUG_VALUE: &str = "search-plan";
+const SEARCH_EXPLAIN_DEBUG_VALUE: &str = "search-explain";
+const SEARCH_EXPLAIN_ANALYZE_DEBUG_VALUE: &str = "search-explain-analyze";
 const SEARCH_DEBUG_HEADER: &str = "x-octofhir-debug";
 
-fn should_collect_search_plan_debug(
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SearchDebugRequest {
+    None,
+    Plan,
+    Explain,
+    ExplainAnalyze,
+}
+
+impl SearchDebugRequest {
+    fn collect_plan(self) -> bool {
+        !matches!(self, Self::None)
+    }
+
+    fn collect_explain_plan(self) -> bool {
+        matches!(self, Self::Explain | Self::ExplainAnalyze)
+    }
+
+    fn collect_explain_analyze(self) -> bool {
+        matches!(self, Self::ExplainAnalyze)
+    }
+}
+
+fn search_debug_request(
     settings: &crate::config::SearchSettings,
     headers: &HeaderMap,
     raw_q: &str,
-) -> bool {
-    settings.allow_debug_search_plan
-        && (query_requests_search_plan_debug(raw_q) || header_requests_search_plan_debug(headers))
+) -> SearchDebugRequest {
+    if !settings.allow_debug_search_plan {
+        return SearchDebugRequest::None;
+    }
+
+    query_search_debug_request(raw_q)
+        .or_else(|| header_search_debug_request(headers))
+        .unwrap_or(SearchDebugRequest::None)
 }
 
-fn query_requests_search_plan_debug(raw_q: &str) -> bool {
-    url::form_urlencoded::parse(raw_q.as_bytes())
-        .any(|(key, value)| key == SEARCH_DEBUG_PARAM && value == SEARCH_PLAN_DEBUG_VALUE)
+fn query_search_debug_request(raw_q: &str) -> Option<SearchDebugRequest> {
+    url::form_urlencoded::parse(raw_q.as_bytes()).find_map(|(key, value)| {
+        (key == SEARCH_DEBUG_PARAM)
+            .then(|| parse_search_debug_value(&value))
+            .flatten()
+    })
 }
 
-fn header_requests_search_plan_debug(headers: &HeaderMap) -> bool {
+fn header_search_debug_request(headers: &HeaderMap) -> Option<SearchDebugRequest> {
     headers
         .get(SEARCH_DEBUG_HEADER)
         .and_then(|value| value.to_str().ok())
-        .map(|value| {
+        .and_then(|value| {
             value
                 .split(',')
                 .map(str::trim)
-                .any(|value| value == SEARCH_PLAN_DEBUG_VALUE)
+                .find_map(parse_search_debug_value)
         })
-        .unwrap_or(false)
+}
+
+fn parse_search_debug_value(value: &str) -> Option<SearchDebugRequest> {
+    match value {
+        SEARCH_PLAN_DEBUG_VALUE => Some(SearchDebugRequest::Plan),
+        SEARCH_EXPLAIN_DEBUG_VALUE => Some(SearchDebugRequest::Explain),
+        SEARCH_EXPLAIN_ANALYZE_DEBUG_VALUE => Some(SearchDebugRequest::ExplainAnalyze),
+        _ => None,
+    }
 }
 
 fn strip_search_debug_params(raw_q: &str) -> String {
@@ -7048,23 +7091,11 @@ mod tests {
         let mut settings = crate::config::SearchSettings::default();
         let headers = HeaderMap::new();
 
-        assert!(!should_collect_search_plan_debug(
-            &settings,
-            &headers,
-            "_debug=search-plan"
-        ));
+        assert!(!search_debug_request(&settings, &headers, "_debug=search-plan").collect_plan());
 
         settings.allow_debug_search_plan = true;
-        assert!(should_collect_search_plan_debug(
-            &settings,
-            &headers,
-            "_debug=search-plan"
-        ));
-        assert!(!should_collect_search_plan_debug(
-            &settings,
-            &headers,
-            "_debug=other"
-        ));
+        assert!(search_debug_request(&settings, &headers, "_debug=search-plan").collect_plan());
+        assert!(!search_debug_request(&settings, &headers, "_debug=other").collect_plan());
     }
 
     #[test]
@@ -7077,13 +7108,54 @@ mod tests {
             SEARCH_PLAN_DEBUG_VALUE.parse().unwrap(),
         );
 
-        assert!(should_collect_search_plan_debug(&settings, &headers, ""));
+        assert!(search_debug_request(&settings, &headers, "").collect_plan());
+    }
+
+    #[test]
+    fn test_search_explain_debug_request_requires_config_flag() {
+        let mut settings = crate::config::SearchSettings::default();
+        let headers = HeaderMap::new();
+
+        assert_eq!(
+            search_debug_request(&settings, &headers, "_debug=search-explain"),
+            SearchDebugRequest::None
+        );
+
+        settings.allow_debug_search_plan = true;
+        assert_eq!(
+            search_debug_request(&settings, &headers, "_debug=search-explain"),
+            SearchDebugRequest::Explain
+        );
+        assert_eq!(
+            search_debug_request(&settings, &headers, "_debug=search-explain-analyze"),
+            SearchDebugRequest::ExplainAnalyze
+        );
+    }
+
+    #[test]
+    fn test_search_explain_debug_header_request() {
+        let mut settings = crate::config::SearchSettings::default();
+        settings.allow_debug_search_plan = true;
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            SEARCH_DEBUG_HEADER,
+            SEARCH_EXPLAIN_DEBUG_VALUE.parse().unwrap(),
+        );
+
+        assert_eq!(
+            search_debug_request(&settings, &headers, ""),
+            SearchDebugRequest::Explain
+        );
     }
 
     #[test]
     fn test_strip_search_debug_params() {
         assert_eq!(
             strip_search_debug_params("birthdate=ge2000-01-01&_debug=search-plan&_count=5"),
+            "birthdate=ge2000-01-01&_count=5"
+        );
+        assert_eq!(
+            strip_search_debug_params("birthdate=ge2000-01-01&_debug=search-explain&_count=5"),
             "birthdate=ge2000-01-01&_count=5"
         );
         assert_eq!(

@@ -37,6 +37,8 @@ use crate::schema::SchemaManager;
 pub struct RawSearchOptions {
     pub unknown_param_handling: Option<UnknownParamHandling>,
     pub collect_debug_plan: bool,
+    pub collect_explain_plan: bool,
+    pub collect_explain_analyze: bool,
 }
 
 /// Converts chrono DateTime to time OffsetDateTime.
@@ -264,6 +266,8 @@ pub async fn execute_search_raw_with_config(
         RawSearchOptions {
             unknown_param_handling,
             collect_debug_plan: false,
+            collect_explain_plan: false,
+            collect_explain_analyze: false,
         },
     )
     .await
@@ -319,6 +323,8 @@ pub async fn execute_search_raw_with_terminology(
         RawSearchOptions {
             unknown_param_handling,
             collect_debug_plan: false,
+            collect_explain_plan: false,
+            collect_explain_analyze: false,
         },
     )
     .await
@@ -631,6 +637,25 @@ async fn execute_search_raw_with_config_inner(
         params_count = built_query.params.len(),
         "Executing raw search query"
     );
+
+    if options.collect_explain_plan || options.collect_explain_analyze {
+        let explain_started = Instant::now();
+        let explain_plan =
+            explain_built_search_query_json(pool, &built_query, options.collect_explain_analyze)
+                .await?;
+        let explain_json =
+            serde_json::to_string(&explain_plan).unwrap_or_else(|_| "null".to_string());
+        tracing::debug!(
+            resource_type = %resource_type,
+            search_engine = "native-ir",
+            analyze = options.collect_explain_analyze,
+            sql_shape = %redact_sql_shape(&built_query.sql),
+            params_count = built_query.params.len(),
+            explain_elapsed_ms = explain_started.elapsed().as_secs_f64() * 1000.0,
+            explain_plan = %explain_json,
+            "Search native IR EXPLAIN"
+        );
+    }
 
     // Execute the main query with raw JSON (SQL already emits resource::text)
     let execute_started = Instant::now();
