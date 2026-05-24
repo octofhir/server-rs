@@ -1130,6 +1130,174 @@ mod tests {
         assert_eq!(converted.includes[0].param_name, "subject");
     }
 
+    fn representative_registry() -> SearchParameterRegistry {
+        let registry = SearchParameterRegistry::new();
+        crate::common::register_common_parameters(&registry);
+
+        registry.register(
+            SearchParameter::new(
+                "birthdate",
+                "http://hl7.org/fhir/SearchParameter/Patient-birthdate",
+                SearchParameterType::Date,
+                vec!["Patient".to_string()],
+            )
+            .with_expression("Patient.birthDate"),
+        );
+        registry.register(
+            SearchParameter::new(
+                "family",
+                "http://hl7.org/fhir/SearchParameter/Patient-family",
+                SearchParameterType::String,
+                vec!["Patient".to_string()],
+            )
+            .with_expression("Patient.name.family"),
+        );
+        registry.register(
+            SearchParameter::new(
+                "identifier",
+                "http://hl7.org/fhir/SearchParameter/Patient-identifier",
+                SearchParameterType::Token,
+                vec!["Patient".to_string()],
+            )
+            .with_expression("Patient.identifier")
+            .with_element_type_hint(ElementTypeHint::Identifier),
+        );
+        registry.register(
+            SearchParameter::new(
+                "code",
+                "http://hl7.org/fhir/SearchParameter/Observation-code",
+                SearchParameterType::Token,
+                vec!["Observation".to_string()],
+            )
+            .with_expression("Observation.code")
+            .with_element_type_hint(ElementTypeHint::Token),
+        );
+        registry.register(
+            SearchParameter::new(
+                "subject",
+                "http://hl7.org/fhir/SearchParameter/Observation-subject",
+                SearchParameterType::Reference,
+                vec!["Observation".to_string()],
+            )
+            .with_expression("Observation.subject")
+            .with_targets(vec!["Patient".to_string()]),
+        );
+        registry.register(
+            SearchParameter::new(
+                "value-quantity",
+                "http://hl7.org/fhir/SearchParameter/Observation-value-quantity",
+                SearchParameterType::Quantity,
+                vec!["Observation".to_string()],
+            )
+            .with_expression("Observation.valueQuantity"),
+        );
+        registry.register(
+            SearchParameter::new(
+                "code-value-quantity",
+                "http://hl7.org/fhir/SearchParameter/Observation-code-value-quantity",
+                SearchParameterType::Composite,
+                vec!["Observation".to_string()],
+            )
+            .with_expression("Observation.component")
+            .with_components(vec![
+                crate::parameters::SearchParameterComponent {
+                    definition: "http://hl7.org/fhir/SearchParameter/Observation-code".to_string(),
+                    expression: "Observation.component.code".to_string(),
+                },
+                crate::parameters::SearchParameterComponent {
+                    definition: "http://hl7.org/fhir/SearchParameter/Observation-value-quantity"
+                        .to_string(),
+                    expression: "Observation.component.valueQuantity".to_string(),
+                },
+            ]),
+        );
+
+        registry
+    }
+
+    #[test]
+    fn representative_native_ir_queries_keep_expected_sql_shape() {
+        let registry = representative_registry();
+        let cases = [
+            (
+                "Patient",
+                "_id=pat-1&_count=10",
+                ["r.id = $1", "updated_at"],
+            ),
+            (
+                "Patient",
+                "_lastUpdated=ge2024-01-01&_lastUpdated=le2024-12-31&_count=10",
+                ["r.updated_at", "ORDER BY"],
+            ),
+            (
+                "Patient",
+                "birthdate=ge1980-01-01&birthdate=le2000-12-31&_count=10",
+                ["search_idx_date", "tstzrange"],
+            ),
+            (
+                "Patient",
+                "family=Smith&_count=10",
+                ["search_idx_string", "value_norm LIKE"],
+            ),
+            (
+                "Patient",
+                "family:exact=Smith&_count=10",
+                ["search_idx_string", "value_exact ="],
+            ),
+            (
+                "Patient",
+                "identifier=http://hospital.example/mrn|12345&_count=10",
+                ["r.resource->'identifier'", "@>"],
+            ),
+            (
+                "Observation",
+                "code=http://loinc.org|8480-6&_count=10",
+                ["r.resource @>", "\"observation\""],
+            ),
+            (
+                "Observation",
+                "subject=Patient/pat-1&_count=10",
+                ["search_idx_reference", "target_id ="],
+            ),
+            (
+                "Observation",
+                "subject:Patient.family=Smith&_count=10",
+                ["search_idx_reference", "search_idx_string"],
+            ),
+            (
+                "Patient",
+                "_has:Observation:subject:code=http://loinc.org|8480-6&_count=10",
+                ["search_idx_reference", "has0.resource @>"],
+            ),
+            (
+                "Observation",
+                "value-quantity=ge100|http://unitsofmeasure.org|mm[Hg]&_count=10",
+                ["::numeric", "valueQuantity"],
+            ),
+            (
+                "Observation",
+                "code-value-quantity=http://loinc.org|8480-6$ge100|http://unitsofmeasure.org|mm[Hg]&_count=10",
+                ["component", "::numeric"],
+            ),
+        ];
+
+        for (resource_type, query, expected_fragments) in cases {
+            let params = parse_query_string(query, 10, 100);
+            let converted =
+                build_native_ir_query_from_params(resource_type, &params, &registry, "public")
+                    .unwrap();
+            let built = converted.builder.with_raw_resource(true).build().unwrap();
+
+            for expected in expected_fragments {
+                assert!(
+                    built.sql.contains(expected),
+                    "query `{resource_type}?{query}` missing `{expected}` in SQL: {}",
+                    built.sql
+                );
+            }
+        }
+    }
+
     #[test]
     fn test_default_sort_uses_updated_at_column() {
         let registry = SearchParameterRegistry::new();
