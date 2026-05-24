@@ -8,6 +8,7 @@ use octofhir_storage::FhirStorage;
 use serde_json::{Value, json};
 use sqlx_postgres::PgPoolOptions;
 use std::collections::hash_map::DefaultHasher;
+use std::env;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 use std::time::Instant;
@@ -57,6 +58,17 @@ async fn representative_search_explain_json_runs_with_bound_params() {
         "registry should only be set once"
     );
     seed_representative_data(&storage).await;
+    let synthetic_rows = synthetic_row_count();
+    if synthetic_rows > 0 {
+        let started = Instant::now();
+        seed_synthetic_data(&storage, synthetic_rows).await;
+        println!(
+            "seed_synthetic_data | patients={} | observations={} | elapsed_ms={:.3}",
+            synthetic_rows,
+            synthetic_rows,
+            started.elapsed().as_secs_f64() * 1000.0
+        );
+    }
 
     for case in representative_queries() {
         let build_started = Instant::now();
@@ -106,6 +118,13 @@ async fn representative_search_explain_json_runs_with_bound_params() {
             sql_shape
         );
     }
+}
+
+fn synthetic_row_count() -> usize {
+    env::var("OCTOFHIR_SEARCH_EXPLAIN_SYNTHETIC_ROWS")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(0)
 }
 
 async fn seed_representative_data(storage: &PostgresStorage) {
@@ -164,6 +183,74 @@ async fn seed_representative_data(storage: &PostgresStorage) {
             .create(&resource)
             .await
             .unwrap_or_else(|error| panic!("seed {} should be created: {error}", resource));
+    }
+}
+
+async fn seed_synthetic_data(storage: &PostgresStorage, rows: usize) {
+    for index in 0..rows {
+        let family = if index % 10 == 0 { "Smith" } else { "Jones" };
+        let gender = if index % 2 == 0 { "female" } else { "male" };
+        let birth_year = 1970 + (index % 40);
+        let patient_id = format!("synthetic-patient-{index:06}");
+        let identifier_value = format!("synthetic-mrn-{index:06}");
+        let patient = json!({
+            "resourceType": "Patient",
+            "id": patient_id,
+            "birthDate": format!("{birth_year:04}-03-12"),
+            "gender": gender,
+            "name": [{"family": family, "given": ["Synthetic"]}],
+            "identifier": [{"system": "http://hospital.example/mrn", "value": identifier_value}]
+        });
+
+        storage
+            .create(&patient)
+            .await
+            .unwrap_or_else(|error| panic!("synthetic patient {index} should be created: {error}"));
+
+        let matches_observation = index % 10 == 0;
+        let code = if matches_observation {
+            "8480-6"
+        } else {
+            "8310-5"
+        };
+        let quantity_value = if matches_observation { 120 } else { 80 };
+        let observation = json!({
+            "resourceType": "Observation",
+            "id": format!("synthetic-observation-{index:06}"),
+            "status": "final",
+            "code": {
+                "coding": [{
+                    "system": "http://loinc.org",
+                    "code": code,
+                    "display": "Synthetic observation"
+                }]
+            },
+            "subject": {"reference": format!("Patient/synthetic-patient-{index:06}")},
+            "valueQuantity": {
+                "value": quantity_value,
+                "system": "http://unitsofmeasure.org",
+                "code": "mm[Hg]",
+                "unit": "mm[Hg]"
+            },
+            "component": [{
+                "code": {
+                    "coding": [{
+                        "system": "http://loinc.org",
+                        "code": code
+                    }]
+                },
+                "valueQuantity": {
+                    "value": quantity_value,
+                    "system": "http://unitsofmeasure.org",
+                    "code": "mm[Hg]",
+                    "unit": "mm[Hg]"
+                }
+            }]
+        });
+
+        storage.create(&observation).await.unwrap_or_else(|error| {
+            panic!("synthetic observation {index} should be created: {error}")
+        });
     }
 }
 
