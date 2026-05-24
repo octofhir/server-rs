@@ -46,7 +46,10 @@ pub use token::{
 };
 pub use uri::{build_uri_array_search, build_uri_search};
 
-use crate::ir::{render_date_column_clauses_as_or, resolve_composite_component_specs};
+use crate::ir::{
+    ResourceColumnParam, render_date_column_clauses_as_or, resolve_composite_component_specs,
+    resolve_resource_column_param,
+};
 use crate::parameters::{ElementTypeHint, SearchModifier, SearchParameter, SearchParameterType};
 use crate::parser::ParsedParam;
 use crate::registry::SearchParameterRegistry;
@@ -147,8 +150,11 @@ fn dispatch_search_inner(
         SearchParameterType::Number => build_number_search(builder, param, &jsonb_path),
 
         SearchParameterType::Date => {
-            // _lastUpdated maps to the updated_at column, not search_idx_date.
-            if param.name == "_lastUpdated" {
+            // Resource.meta.lastUpdated maps to the row updated_at column, not search_idx_date.
+            if matches!(
+                resolve_resource_column_param(definition),
+                Some(ResourceColumnParam::LastUpdated)
+            ) {
                 return build_last_updated_search(builder, param);
             }
 

@@ -26,7 +26,8 @@ pub use debug::{
     build_string_debug_plan, build_string_text_debug_predicate, build_token_debug_plan,
 };
 pub use registry::{
-    resolve_component_definition, resolve_composite_component_specs, search_type_name,
+    ResourceColumnParam, resolve_component_definition, resolve_composite_component_specs,
+    resolve_resource_column_param, search_type_name,
 };
 pub use render::{
     render_composite_clauses_as_or, render_date_clauses_as_or, render_date_column_clauses_as_or,

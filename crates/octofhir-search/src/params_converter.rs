@@ -11,7 +11,7 @@ use crate::ir::{
     build_number_debug_plan, build_quantity_debug_plan, build_reference_debug_plan,
     build_string_debug_plan, build_string_text_debug_predicate, build_token_debug_plan,
     render_date_clauses_as_or, render_id_clauses_as_or, resolve_composite_component_specs,
-    rewrite_date_clauses,
+    resolve_resource_column_param, rewrite_date_clauses,
 };
 use crate::parameters::{ElementTypeHint, SearchParameter, SearchParameterType, SearchPrefix};
 use crate::parser::{ParsedParam, ParsedValue};
@@ -259,8 +259,11 @@ pub fn build_query_from_params_with_config(
                 }
             }
 
-            // Handle _id specially — it maps to the database column `r.id`, not JSONB
-            if parsed.name == "_id" {
+            // Resource.id maps to the database row id column, not JSONB.
+            if matches!(
+                resolve_resource_column_param(&param_def),
+                Some(crate::ir::ResourceColumnParam::Id)
+            ) {
                 let clauses = IdClause::from_parsed_param(&parsed, resource_type)?;
                 if let Some(sql) = render_id_clauses_as_or(&mut sql_builder, &clauses, "r.id") {
                     sql_builder.add_condition(sql);
@@ -862,38 +865,22 @@ fn build_sort_spec(
     registry: &SearchParameterRegistry,
     resource_type: &str,
 ) -> Option<SortSpec> {
-    match field {
-        "_lastUpdated" => {
-            let order = if descending {
-                SortOrder::Desc
-            } else {
-                SortOrder::Asc
-            };
-            SortSpec::column("updated_at", order).ok()
-        }
-        "_id" => {
-            let order = if descending {
-                SortOrder::Desc
-            } else {
-                SortOrder::Asc
-            };
-            SortSpec::column("id", order).ok()
-        }
-        _ => {
-            // Look up the field in the registry
-            let param_def = registry.get(resource_type, field)?;
-            let expr = param_def.expression.as_deref()?;
-            let path_segments = fhirpath_to_jsonb_path(expr, resource_type);
-            let path = JsonbPath::new(path_segments).ok()?;
-            let order = if descending {
-                SortOrder::Desc
-            } else {
-                SortOrder::Asc
-            };
+    let param_def = registry.get(resource_type, field)?;
+    let order = if descending {
+        SortOrder::Desc
+    } else {
+        SortOrder::Asc
+    };
 
-            Some(SortSpec::new(path, order))
-        }
+    if let Some(column_param) = resolve_resource_column_param(&param_def) {
+        return SortSpec::column(column_param.column_name(), order).ok();
     }
+
+    let expr = param_def.expression.as_deref()?;
+    let path_segments = fhirpath_to_jsonb_path(expr, resource_type);
+    let path = JsonbPath::new(path_segments).ok()?;
+
+    Some(SortSpec::new(path, order))
 }
 
 /// Extract _include specifications from params.
@@ -1163,6 +1150,7 @@ mod tests {
     #[test]
     fn test_last_updated_and_id_sort_use_columns() {
         let registry = SearchParameterRegistry::new();
+        crate::common::register_common_parameters(&registry);
         let params = parse_query_string("_sort=-_lastUpdated,_id&_count=5", 10, 100);
         let converted = build_query_from_params("Patient", &params, &registry, "public").unwrap();
         let built = converted.builder.with_raw_resource(true).build().unwrap();
