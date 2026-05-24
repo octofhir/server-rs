@@ -1247,7 +1247,7 @@ mod tests {
             (
                 "Patient",
                 "identifier=http://hospital.example/mrn|12345&_count=10",
-                ["r.resource->'identifier'", "@>"],
+                ["r.resource @>", "ORDER BY"],
             ),
             (
                 "Observation",

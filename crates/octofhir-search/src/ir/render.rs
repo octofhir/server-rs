@@ -335,6 +335,30 @@ pub fn render_token_identifier_clauses_as_or(
     }
 }
 
+/// Render Identifier token clauses as one OR group, using full-resource JSONB
+/// containment where it preserves FHIR identifier semantics.
+///
+/// `resource @> $jsonb` can use the generic resource GIN index. Cases that
+/// require proving system absence or field presence still use the array path.
+pub fn render_token_identifier_containment_clauses_as_or(
+    builder: &mut SqlBuilder,
+    clauses: &[TokenClause],
+    path_segments: &[String],
+    array_path: &str,
+) -> Result<Option<String>, SqlBuilderError> {
+    let rendered = clauses
+        .iter()
+        .map(|clause| {
+            render_token_identifier_containment_clause(builder, clause, path_segments, array_path)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    if rendered.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(SqlBuilder::build_or_clause(&rendered)))
+    }
+}
+
 /// Render generic token clauses over an already-resolved JSONB path.
 pub fn render_token_path_clauses_as_or(
     builder: &mut SqlBuilder,
@@ -350,6 +374,84 @@ pub fn render_token_path_clauses_as_or(
     } else {
         Ok(Some(SqlBuilder::build_or_clause(&rendered)))
     }
+}
+
+fn render_token_identifier_containment_clause(
+    builder: &mut SqlBuilder,
+    clause: &TokenClause,
+    path_segments: &[String],
+    array_path: &str,
+) -> Result<String, SqlBuilderError> {
+    let resource_col = builder.resource_column().to_string();
+    let condition = match &clause.predicate {
+        TokenPredicate::AnySystemCode { code } => render_identifier_containment(
+            builder,
+            &resource_col,
+            path_segments,
+            serde_json::json!({"value": code}),
+        ),
+        TokenPredicate::SystemAnyCode { system } => render_identifier_containment(
+            builder,
+            &resource_col,
+            path_segments,
+            serde_json::json!({"system": system}),
+        ),
+        TokenPredicate::SystemCode { system, code } => render_identifier_containment(
+            builder,
+            &resource_col,
+            path_segments,
+            serde_json::json!({"system": system, "value": code}),
+        ),
+        TokenPredicate::IdentifierOfType {
+            system,
+            code,
+            value,
+        } => render_identifier_containment(
+            builder,
+            &resource_col,
+            path_segments,
+            serde_json::json!({
+                "type": {"coding": [{"system": system, "code": code}]},
+                "value": value
+            }),
+        ),
+        TokenPredicate::NoSystemCode { code } => {
+            render_identifier_no_system_value(builder, array_path, code)
+        }
+        TokenPredicate::Missing { is_missing } => {
+            if *is_missing {
+                format!("({array_path} IS NULL OR jsonb_array_length({array_path}) = 0)")
+            } else {
+                format!("({array_path} IS NOT NULL AND jsonb_array_length({array_path}) > 0)")
+            }
+        }
+        TokenPredicate::DisplayText { .. } | TokenPredicate::TerminologySet { .. } => {
+            return Err(SqlBuilderError::InvalidModifier(format!(
+                "{:?}",
+                clause.predicate
+            )));
+        }
+    };
+
+    if clause.negated {
+        Ok(format!("({condition}) = false"))
+    } else {
+        Ok(condition)
+    }
+}
+
+fn render_identifier_containment(
+    builder: &mut SqlBuilder,
+    resource_col: &str,
+    path_segments: &[String],
+    identifier_value: serde_json::Value,
+) -> String {
+    let containment = build_nested_json_containment(
+        path_segments,
+        serde_json::Value::Array(vec![identifier_value]),
+    );
+    let p = builder.add_json_param(&containment.to_string());
+    format!("{resource_col} @> ${p}::jsonb")
 }
 
 fn render_number_clause(
@@ -2275,6 +2377,44 @@ mod tests {
         assert!(sql.starts_with("(EXISTS"));
         assert!(sql.ends_with("= false"));
         assert!(!sql.contains("NOT ("));
+    }
+
+    #[test]
+    fn identifier_token_containment_render_uses_resource_gin_shape() {
+        let mut builder = SqlBuilder::with_resource_column("r.resource");
+        let clauses = TokenClause::from_parsed_param(
+            &crate::parser::ParsedParam {
+                name: "identifier".to_string(),
+                modifier: None,
+                values: vec![crate::parser::ParsedValue {
+                    prefix: None,
+                    raw: "http://test.org|debug-123".to_string(),
+                }],
+            },
+            "Patient",
+            crate::ir::TokenIndexShape::Identifier,
+        )
+        .unwrap();
+
+        let sql = render_token_identifier_containment_clauses_as_or(
+            &mut builder,
+            &clauses,
+            &["identifier".to_string()],
+            "r.resource->'identifier'",
+        )
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(sql, "r.resource @> $1::jsonb");
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&builder.params()[0].as_str()).unwrap(),
+            serde_json::json!({
+                "identifier": [{
+                    "system": "http://test.org",
+                    "value": "debug-123"
+                }]
+            })
+        );
     }
 
     #[test]

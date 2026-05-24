@@ -41,8 +41,9 @@ pub use string::{
     build_string_search,
 };
 pub use token::{
-    build_code_search, build_gin_code_search, build_gin_token_search, build_identifier_search,
-    build_token_search, build_token_search_with_terminology, parse_token_value,
+    build_code_search, build_gin_code_search, build_gin_identifier_search, build_gin_token_search,
+    build_identifier_search, build_token_search, build_token_search_with_terminology,
+    parse_token_value,
 };
 pub use uri::{build_uri_array_search, build_uri_search};
 
@@ -132,12 +133,10 @@ fn dispatch_search_inner(
                 || (matches!(&definition.element_type_hint, ElementTypeHint::Unknown)
                     && is_identifier_param(&definition.code, expression))
             {
-                // Identifier search uses @> for system|value.
+                // Identifier search uses full-resource containment for GIN-friendly forms.
                 // Also detect identifier params when element_type_hint is Unknown
                 // (e.g. schema resolver unavailable) by checking param code / expression.
-                let array_path =
-                    build_jsonb_accessor(builder.resource_column(), &path_segments, false);
-                build_identifier_search(builder, param, &array_path)
+                build_gin_identifier_search(builder, param, &path_segments)
             } else if matches!(&definition.element_type_hint, ElementTypeHint::SimpleCode) {
                 // GIN-optimized simple code search (e.g., Patient.gender)
                 build_gin_code_search(builder, param, &path_segments)

@@ -13,11 +13,12 @@
 
 use crate::parameters::SearchModifier;
 use crate::parser::ParsedParam;
-use crate::sql_builder::{SqlBuilder, SqlBuilderError, SqlParam};
+use crate::sql_builder::{SqlBuilder, SqlBuilderError, SqlParam, build_jsonb_accessor};
 use crate::terminology::HybridTerminologyProvider;
 use crate::{
     ir::TokenClause, ir::TokenIndexShape, ir::render_token_coding_clauses_as_or,
-    ir::render_token_identifier_clauses_as_or, ir::render_token_path_clauses_as_or,
+    ir::render_token_identifier_clauses_as_or,
+    ir::render_token_identifier_containment_clauses_as_or, ir::render_token_path_clauses_as_or,
     ir::render_token_scalar_code_clauses_as_or, ir::render_token_simple_code_clauses_as_or,
 };
 use sqlx_postgres::PgPool;
@@ -350,6 +351,30 @@ pub fn build_identifier_search(
 ) -> Result<(), SqlBuilderError> {
     let clauses = TokenClause::from_parsed_param(param, "", TokenIndexShape::Identifier)?;
     if let Some(sql) = render_token_identifier_clauses_as_or(builder, &clauses, array_path)? {
+        builder.add_condition(sql);
+    }
+    Ok(())
+}
+
+/// Build GIN-optimized token search for Identifier arrays.
+///
+/// System/value, value-only, system-only, and :of-type forms can be expressed
+/// as full-resource containment and use the generic resource GIN index. Forms
+/// requiring absence checks still fall back to array traversal.
+pub fn build_gin_identifier_search(
+    builder: &mut SqlBuilder,
+    param: &ParsedParam,
+    path_segments: &[String],
+) -> Result<(), SqlBuilderError> {
+    let clauses = TokenClause::from_parsed_param(param, "", TokenIndexShape::Identifier)?;
+    let resource_col = builder.resource_column().to_string();
+    let array_path = build_jsonb_accessor(&resource_col, path_segments, false);
+    if let Some(sql) = render_token_identifier_containment_clauses_as_or(
+        builder,
+        &clauses,
+        path_segments,
+        &array_path,
+    )? {
         builder.add_condition(sql);
     }
     Ok(())
@@ -794,6 +819,43 @@ mod tests {
     }
 
     #[test]
+    fn test_gin_identifier_system_value_search() {
+        let mut builder = SqlBuilder::new();
+        let param = make_param("identifier", "http://test.org|debug-123", None);
+
+        build_gin_identifier_search(&mut builder, &param, &["identifier".to_string()]).unwrap();
+
+        let clause = builder.build_where_clause().unwrap();
+        assert_eq!(clause, "resource @> $1::jsonb");
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&builder.params()[0].as_str()).unwrap(),
+            serde_json::json!({
+                "identifier": [{
+                    "system": "http://test.org",
+                    "value": "debug-123"
+                }]
+            })
+        );
+    }
+
+    #[test]
+    fn test_gin_identifier_no_system_value_keeps_absence_check() {
+        let mut builder = SqlBuilder::new();
+        let param = make_param("identifier", "|debug-123", None);
+
+        build_gin_identifier_search(&mut builder, &param, &["identifier".to_string()]).unwrap();
+
+        let clause = builder.build_where_clause().unwrap();
+        assert!(
+            clause.contains("jsonb_array_elements(resource->'identifier')")
+                && clause.contains("ident->>'system' IS NULL")
+                && clause.contains("ident->>'value' = $1"),
+            "|value should keep explicit no-system semantics, got: {clause}"
+        );
+        assert_eq!(builder.params()[0].as_str(), "debug-123");
+    }
+
+    #[test]
     fn test_identifier_dispatch_with_element_type_hint() {
         // Verify that identifier token search is dispatched correctly through dispatch_search
         use crate::parameters::{ElementTypeHint, SearchParameter, SearchParameterType};
@@ -821,16 +883,13 @@ mod tests {
         crate::types::dispatch_search(&mut builder, &param, &def, "Patient").unwrap();
 
         let clause = builder.build_where_clause().unwrap();
-        // Should use @> containment (identifier path), NOT coding
-        assert!(
-            clause.contains("@>"),
-            "Expected @> containment, got: {clause}"
-        );
+        assert_eq!(clause, "resource @> $1::jsonb");
         let params = builder.params();
         let json_str = params[0].as_str();
-        // Should contain system/value, NOT coding
         assert!(
-            json_str.contains("\"value\"") && json_str.contains("\"system\""),
+            json_str.contains("\"identifier\"")
+                && json_str.contains("\"value\"")
+                && json_str.contains("\"system\""),
             "Expected identifier JSON with system/value, got: {json_str}"
         );
         assert!(
