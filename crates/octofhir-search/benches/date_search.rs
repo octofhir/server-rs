@@ -28,7 +28,8 @@ use octofhir_search::registry::SearchParameterRegistry;
 use octofhir_search::sql_builder::SqlBuilder;
 use octofhir_search::types::date::build_index_date_search;
 use octofhir_search::{
-    build_native_ir_query_from_params, parse_query_string, register_common_parameters,
+    ParamsSearchConfig, UnknownParamHandling, build_native_ir_query_from_params,
+    build_native_ir_query_from_params_with_config, parse_query_string, register_common_parameters,
 };
 use serde_json::{Value, json};
 use std::hint::black_box;
@@ -368,6 +369,16 @@ fn representative_registry() -> SearchParameterRegistry {
     );
     registry.register(
         SearchParameter::new(
+            "gender",
+            "http://hl7.org/fhir/SearchParameter/Patient-gender",
+            SearchParameterType::Token,
+            vec!["Patient".to_string()],
+        )
+        .with_expression("Patient.gender")
+        .with_element_type_hint(ElementTypeHint::SimpleCode),
+    );
+    registry.register(
+        SearchParameter::new(
             "code",
             "http://hl7.org/fhir/SearchParameter/Observation-code",
             SearchParameterType::Token,
@@ -419,11 +430,8 @@ fn representative_registry() -> SearchParameterRegistry {
     registry
 }
 
-fn bench_native_ir_query_build_render(c: &mut Criterion) {
-    let registry = representative_registry();
-    let mut group = c.benchmark_group("native_ir_query_build_render");
-
-    let cases: &[(&str, &str, &str)] = &[
+fn representative_query_cases() -> &'static [(&'static str, &'static str, &'static str)] {
+    &[
         ("patient_id", "Patient", "_id=pat-1&_count=10"),
         (
             "patient_last_updated_window",
@@ -445,6 +453,12 @@ fn bench_native_ir_query_build_render(c: &mut Criterion) {
             "patient_identifier",
             "Patient",
             "identifier=http://hospital.example/mrn|12345&_count=10",
+        ),
+        ("patient_gender", "Patient", "gender=female&_count=10"),
+        (
+            "patient_gender_system_only",
+            "Patient",
+            "gender=http://example.org|&_count=10",
         ),
         (
             "observation_code",
@@ -476,9 +490,14 @@ fn bench_native_ir_query_build_render(c: &mut Criterion) {
             "Observation",
             "code-value-quantity=http://loinc.org|8480-6$ge100|http://unitsofmeasure.org|mm[Hg]&_count=10",
         ),
-    ];
+    ]
+}
 
-    for (label, resource_type, query) in cases {
+fn bench_native_ir_query_build_render(c: &mut Criterion) {
+    let registry = representative_registry();
+    let mut group = c.benchmark_group("native_ir_query_build_render");
+
+    for (label, resource_type, query) in representative_query_cases() {
         let params = parse_query_string(query, 10, 100);
         group.bench_with_input(
             BenchmarkId::from_parameter(label),
@@ -501,6 +520,44 @@ fn bench_native_ir_query_build_render(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_native_ir_query_build_render_with_debug_plan(c: &mut Criterion) {
+    let registry = representative_registry();
+    let config = ParamsSearchConfig {
+        unknown_param_handling: UnknownParamHandling::Lenient,
+        collect_debug_plan: true,
+    };
+    let mut group = c.benchmark_group("native_ir_query_build_render_debug_plan");
+
+    for (label, resource_type, query) in representative_query_cases() {
+        let params = parse_query_string(query, 10, 100);
+        group.bench_with_input(
+            BenchmarkId::from_parameter(label),
+            &(*resource_type, params),
+            |b, (rt, parsed)| {
+                b.iter(|| {
+                    let converted = build_native_ir_query_from_params_with_config(
+                        black_box(rt),
+                        black_box(parsed),
+                        black_box(&registry),
+                        "public",
+                        black_box(&config),
+                    )
+                    .unwrap();
+                    black_box(
+                        converted
+                            .debug_plan
+                            .as_ref()
+                            .map(|plan| plan.predicates.len()),
+                    );
+                    converted.builder.with_raw_resource(true).build().unwrap()
+                });
+            },
+        );
+    }
+
+    group.finish();
+}
+
 criterion_group!(
     benches,
     bench_parse_date_to_range,
@@ -509,5 +566,6 @@ criterion_group!(
     bench_parse_query,
     bench_normalize_string,
     bench_native_ir_query_build_render,
+    bench_native_ir_query_build_render_with_debug_plan,
 );
 criterion_main!(benches);
