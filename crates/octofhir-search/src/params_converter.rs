@@ -107,18 +107,6 @@ pub struct ConvertedQuery {
     pub debug_plan: Option<SearchDebugPlan>,
 }
 
-/// Convert SearchParams to a FhirQueryBuilder with default (lenient) handling.
-///
-/// This compatibility entrypoint routes through the native-IR search builder.
-pub fn build_query_from_params(
-    resource_type: &str,
-    params: &SearchParams,
-    registry: &SearchParameterRegistry,
-    schema: &str,
-) -> Result<ConvertedQuery, SqlBuilderError> {
-    build_native_ir_query_from_params(resource_type, params, registry, schema)
-}
-
 /// Convert SearchParams through the native-IR search path.
 ///
 /// This function:
@@ -140,19 +128,6 @@ pub fn build_native_ir_query_from_params(
         schema,
         &SearchConfig::default(),
     )
-}
-
-/// Convert SearchParams to a FhirQueryBuilder with configurable unknown parameter handling.
-///
-/// This compatibility entrypoint routes through the native-IR search builder.
-pub fn build_query_from_params_with_config(
-    resource_type: &str,
-    params: &SearchParams,
-    registry: &SearchParameterRegistry,
-    schema: &str,
-    config: &SearchConfig,
-) -> Result<ConvertedQuery, SqlBuilderError> {
-    build_native_ir_query_from_params_with_config(resource_type, params, registry, schema, config)
 }
 
 /// Convert SearchParams through the native-IR search path with configurable unknown parameter
@@ -1146,7 +1121,7 @@ mod tests {
         let params =
             parse_query_string("code=8867-4&_include=Observation:subject&_count=5", 10, 100);
         let converted =
-            build_query_from_params("Observation", &params, &registry, "public").unwrap();
+            build_native_ir_query_from_params("Observation", &params, &registry, "public").unwrap();
         assert!(
             !converted.includes.is_empty(),
             "converted.includes should not be empty"
@@ -1159,7 +1134,8 @@ mod tests {
     fn test_default_sort_uses_updated_at_column() {
         let registry = SearchParameterRegistry::new();
         let params = parse_query_string("_count=5", 10, 100);
-        let converted = build_query_from_params("Patient", &params, &registry, "public").unwrap();
+        let converted =
+            build_native_ir_query_from_params("Patient", &params, &registry, "public").unwrap();
         let built = converted.builder.with_raw_resource(true).build().unwrap();
 
         assert!(
@@ -1179,7 +1155,8 @@ mod tests {
         let registry = SearchParameterRegistry::new();
         crate::common::register_common_parameters(&registry);
         let params = parse_query_string("_sort=-_lastUpdated,_id&_count=5", 10, 100);
-        let converted = build_query_from_params("Patient", &params, &registry, "public").unwrap();
+        let converted =
+            build_native_ir_query_from_params("Patient", &params, &registry, "public").unwrap();
         let built = converted.builder.with_raw_resource(true).build().unwrap();
 
         assert!(
@@ -1196,7 +1173,8 @@ mod tests {
         let registry = SearchParameterRegistry::new();
         crate::common::register_common_parameters(&registry);
         let params = parse_query_string("_id=pat-1,pat-2&_count=5", 10, 100);
-        let converted = build_query_from_params("Patient", &params, &registry, "public").unwrap();
+        let converted =
+            build_native_ir_query_from_params("Patient", &params, &registry, "public").unwrap();
         let built = converted.builder.with_raw_resource(true).build().unwrap();
 
         assert!(
@@ -1214,7 +1192,8 @@ mod tests {
         let registry = SearchParameterRegistry::new();
         crate::common::register_common_parameters(&registry);
         let params = parse_query_string("_id:not=pat-1&_count=5", 10, 100);
-        let converted = build_query_from_params("Patient", &params, &registry, "public").unwrap();
+        let converted =
+            build_native_ir_query_from_params("Patient", &params, &registry, "public").unwrap();
         let built = converted.builder.with_raw_resource(true).build().unwrap();
 
         assert!(
@@ -1244,7 +1223,8 @@ mod tests {
 
         let params = parse_query_string("identifier=http://test.org|debug-123&_count=5", 10, 100);
 
-        let converted = build_query_from_params("Patient", &params, &registry, "public").unwrap();
+        let converted =
+            build_native_ir_query_from_params("Patient", &params, &registry, "public").unwrap();
         let built = converted.builder.with_raw_resource(true).build().unwrap();
 
         // Should contain @> containment for identifier system|value
@@ -1289,7 +1269,8 @@ mod tests {
 
         let params = parse_query_string("identifier=http://test.org|debug-123&_count=5", 10, 100);
 
-        let converted = build_query_from_params("Patient", &params, &registry, "public").unwrap();
+        let converted =
+            build_native_ir_query_from_params("Patient", &params, &registry, "public").unwrap();
         let built = converted.builder.with_raw_resource(true).build().unwrap();
 
         // Should use @> containment with identifier-style JSON (system/value, NOT coding)
@@ -1476,7 +1457,8 @@ mod tests {
         let registry = date_registry_with_expression();
         let params = parse_query_string("birthdate=2024-01-01,2024-02-01&_count=5", 10, 100);
 
-        let converted = build_query_from_params("Patient", &params, &registry, "public").unwrap();
+        let converted =
+            build_native_ir_query_from_params("Patient", &params, &registry, "public").unwrap();
         let built = converted.builder.with_raw_resource(true).build().unwrap();
 
         assert!(
@@ -1504,7 +1486,8 @@ mod tests {
             100,
         );
 
-        let converted = build_query_from_params("Patient", &params, &registry, "public").unwrap();
+        let converted =
+            build_native_ir_query_from_params("Patient", &params, &registry, "public").unwrap();
         let built = converted.builder.with_raw_resource(true).build().unwrap();
 
         assert!(
@@ -1535,16 +1518,17 @@ mod tests {
         );
 
         let default_converted =
-            build_query_from_params("Patient", &params, &registry, "public").unwrap();
+            build_native_ir_query_from_params("Patient", &params, &registry, "public").unwrap();
         assert!(default_converted.debug_plan.is_none());
 
         let config = SearchConfig {
             unknown_param_handling: UnknownParamHandling::Lenient,
             collect_debug_plan: true,
         };
-        let converted =
-            build_query_from_params_with_config("Patient", &params, &registry, "public", &config)
-                .unwrap();
+        let converted = build_native_ir_query_from_params_with_config(
+            "Patient", &params, &registry, "public", &config,
+        )
+        .unwrap();
         let plan = converted.debug_plan.expect("debug plan collected");
 
         assert_eq!(plan.resource_type, "Patient");
@@ -1572,16 +1556,17 @@ mod tests {
         let params = parse_query_string("family:contains=Smíth&_count=5", 10, 100);
 
         let default_converted =
-            build_query_from_params("Patient", &params, &registry, "public").unwrap();
+            build_native_ir_query_from_params("Patient", &params, &registry, "public").unwrap();
         assert!(default_converted.debug_plan.is_none());
 
         let config = SearchConfig {
             unknown_param_handling: UnknownParamHandling::Lenient,
             collect_debug_plan: true,
         };
-        let converted =
-            build_query_from_params_with_config("Patient", &params, &registry, "public", &config)
-                .unwrap();
+        let converted = build_native_ir_query_from_params_with_config(
+            "Patient", &params, &registry, "public", &config,
+        )
+        .unwrap();
         let plan = converted.debug_plan.expect("debug plan collected");
 
         assert_eq!(plan.resource_type, "Patient");
@@ -1623,7 +1608,7 @@ mod tests {
         for (query, expected_sql, expected_param) in cases {
             let params = parse_query_string(query, 10, 100);
             let converted =
-                build_query_from_params("Patient", &params, &registry, "public").unwrap();
+                build_native_ir_query_from_params("Patient", &params, &registry, "public").unwrap();
             let built = converted.builder.with_raw_resource(true).build().unwrap();
 
             assert!(
@@ -1658,9 +1643,10 @@ mod tests {
             collect_debug_plan: true,
         };
 
-        let converted =
-            build_query_from_params_with_config("Patient", &params, &registry, "public", &config)
-                .unwrap();
+        let converted = build_native_ir_query_from_params_with_config(
+            "Patient", &params, &registry, "public", &config,
+        )
+        .unwrap();
         let plan = converted.debug_plan.expect("debug plan collected");
 
         assert_eq!(plan.predicates.len(), 1);
@@ -1710,7 +1696,7 @@ mod tests {
             collect_debug_plan: true,
         };
 
-        let converted = build_query_from_params_with_config(
+        let converted = build_native_ir_query_from_params_with_config(
             "Observation",
             &params,
             &registry,
@@ -1765,7 +1751,7 @@ mod tests {
             collect_debug_plan: true,
         };
 
-        let converted = build_query_from_params_with_config(
+        let converted = build_native_ir_query_from_params_with_config(
             "Observation",
             &params,
             &registry,
@@ -1837,7 +1823,7 @@ mod tests {
             collect_debug_plan: true,
         };
 
-        let converted = build_query_from_params_with_config(
+        let converted = build_native_ir_query_from_params_with_config(
             "Observation",
             &params,
             &registry,
@@ -1896,14 +1882,14 @@ mod tests {
         let params = parse_query_string("code=http://loinc.org|8480-6&_count=5", 10, 100);
 
         let default_converted =
-            build_query_from_params("Observation", &params, &registry, "public").unwrap();
+            build_native_ir_query_from_params("Observation", &params, &registry, "public").unwrap();
         assert!(default_converted.debug_plan.is_none());
 
         let config = SearchConfig {
             unknown_param_handling: UnknownParamHandling::Lenient,
             collect_debug_plan: true,
         };
-        let converted = build_query_from_params_with_config(
+        let converted = build_native_ir_query_from_params_with_config(
             "Observation",
             &params,
             &registry,
@@ -1974,7 +1960,8 @@ mod tests {
         for (query, expected_sql, message, redacted_values) in cases {
             let params = parse_query_string(query, 10, 100);
             let converted =
-                build_query_from_params("Observation", &params, &registry, "public").unwrap();
+                build_native_ir_query_from_params("Observation", &params, &registry, "public")
+                    .unwrap();
             let built = converted.builder.with_raw_resource(true).build().unwrap();
 
             assert!(
@@ -2012,7 +1999,7 @@ mod tests {
             collect_debug_plan: true,
         };
 
-        let converted = build_query_from_params_with_config(
+        let converted = build_native_ir_query_from_params_with_config(
             "Observation",
             &params,
             &registry,
@@ -2073,7 +2060,7 @@ mod tests {
             collect_debug_plan: true,
         };
 
-        let converted = build_query_from_params_with_config(
+        let converted = build_native_ir_query_from_params_with_config(
             "Observation",
             &params,
             &registry,
