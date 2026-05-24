@@ -1143,29 +1143,30 @@ fn render_token_simple_code_clause(
     path_segments: &[String],
 ) -> Result<String, SqlBuilderError> {
     let resource_col = builder.resource_column().to_string();
-    match &clause.predicate {
+    let condition = match &clause.predicate {
         TokenPredicate::Missing { is_missing } => {
             let text_path =
                 crate::sql_builder::build_jsonb_accessor(&resource_col, path_segments, true);
-            let condition = if *is_missing {
+            if *is_missing {
                 format!("({text_path} IS NULL OR {text_path} = 'null')")
             } else {
                 format!("({text_path} IS NOT NULL AND {text_path} != 'null')")
-            };
-            Ok(condition)
+            }
         }
+        TokenPredicate::SystemAnyCode { .. } => "FALSE".to_string(),
         predicate => {
             let code = simple_code_token_value(predicate)?;
             let containment = build_nested_json_containment(path_segments, serde_json::json!(code));
             let json_str = containment.to_string();
             let p = builder.add_json_param(&json_str);
-            let condition = format!("{resource_col} @> ${p}::jsonb");
-            if clause.negated {
-                Ok(format!("({condition}) = false"))
-            } else {
-                Ok(condition)
-            }
+            format!("{resource_col} @> ${p}::jsonb")
         }
+    };
+
+    if clause.negated {
+        Ok(format!("({condition}) = false"))
+    } else {
+        Ok(condition)
     }
 }
 
@@ -1182,6 +1183,7 @@ fn render_token_scalar_code_clause(
                 format!("({jsonb_path} IS NOT NULL AND {jsonb_path} != 'null')")
             }
         }
+        TokenPredicate::SystemAnyCode { .. } => "FALSE".to_string(),
         predicate => {
             let code = simple_code_token_value(predicate)?;
             let p = builder.add_text_param(code);
@@ -2474,6 +2476,58 @@ mod tests {
     }
 
     #[test]
+    fn simple_code_token_render_no_system_code_uses_value_containment() {
+        let mut builder = SqlBuilder::with_resource_column("r.resource");
+        let clauses = TokenClause::from_parsed_param(
+            &crate::parser::ParsedParam {
+                name: "gender".to_string(),
+                modifier: None,
+                values: vec![crate::parser::ParsedValue {
+                    prefix: None,
+                    raw: "|female".to_string(),
+                }],
+            },
+            "Patient",
+            crate::ir::TokenIndexShape::SimpleCode,
+        )
+        .unwrap();
+
+        let sql =
+            render_token_simple_code_clauses_as_or(&mut builder, &clauses, &["gender".to_string()])
+                .unwrap()
+                .unwrap();
+
+        assert_eq!(sql, "r.resource @> $1::jsonb");
+        assert_eq!(builder.params()[0].as_str(), r#"{"gender":"female"}"#);
+    }
+
+    #[test]
+    fn simple_code_token_render_system_any_code_matches_nothing() {
+        let mut builder = SqlBuilder::with_resource_column("r.resource");
+        let clauses = TokenClause::from_parsed_param(
+            &crate::parser::ParsedParam {
+                name: "gender".to_string(),
+                modifier: None,
+                values: vec![crate::parser::ParsedValue {
+                    prefix: None,
+                    raw: "http://example.org|".to_string(),
+                }],
+            },
+            "Patient",
+            crate::ir::TokenIndexShape::SimpleCode,
+        )
+        .unwrap();
+
+        let sql =
+            render_token_simple_code_clauses_as_or(&mut builder, &clauses, &["gender".to_string()])
+                .unwrap()
+                .unwrap();
+
+        assert_eq!(sql, "FALSE");
+        assert!(builder.params().is_empty());
+    }
+
+    #[test]
     fn scalar_code_token_render_uses_text_path_and_ignores_system() {
         let mut builder = SqlBuilder::new();
         let clauses = TokenClause::from_parsed_param(
@@ -2497,6 +2551,32 @@ mod tests {
 
         assert_eq!(sql, "resource->>'gender' = $1");
         assert_eq!(builder.params()[0].as_str(), "female");
+    }
+
+    #[test]
+    fn scalar_code_token_render_system_any_code_matches_nothing() {
+        let mut builder = SqlBuilder::new();
+        let clauses = TokenClause::from_parsed_param(
+            &crate::parser::ParsedParam {
+                name: "gender".to_string(),
+                modifier: None,
+                values: vec![crate::parser::ParsedValue {
+                    prefix: None,
+                    raw: "http://example.org|".to_string(),
+                }],
+            },
+            "Patient",
+            crate::ir::TokenIndexShape::SimpleCode,
+        )
+        .unwrap();
+
+        let sql =
+            render_token_scalar_code_clauses_as_or(&mut builder, &clauses, "resource->>'gender'")
+                .unwrap()
+                .unwrap();
+
+        assert_eq!(sql, "FALSE");
+        assert!(builder.params().is_empty());
     }
 
     #[test]

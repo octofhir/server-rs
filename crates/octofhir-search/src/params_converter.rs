@@ -1530,6 +1530,22 @@ mod tests {
         registry
     }
 
+    fn simple_code_registry_with_expression() -> SearchParameterRegistry {
+        use crate::parameters::SearchParameter;
+        let registry = SearchParameterRegistry::new();
+        registry.register(
+            SearchParameter::new(
+                "gender",
+                "http://hl7.org/fhir/SearchParameter/Patient-gender",
+                SearchParameterType::Token,
+                vec!["Patient".to_string()],
+            )
+            .with_expression("Patient.gender")
+            .with_element_type_hint(ElementTypeHint::SimpleCode),
+        );
+        registry
+    }
+
     fn reference_registry_with_expression() -> SearchParameterRegistry {
         use crate::parameters::SearchParameter;
         let registry = SearchParameterRegistry::new();
@@ -2224,6 +2240,43 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn simple_code_system_any_token_matches_nothing() {
+        let registry = simple_code_registry_with_expression();
+        let params = parse_query_string("gender=http://example.org|&_count=5", 10, 100);
+        let config = SearchConfig {
+            unknown_param_handling: UnknownParamHandling::Lenient,
+            collect_debug_plan: true,
+        };
+
+        let converted = build_native_ir_query_from_params_with_config(
+            "Patient", &params, &registry, "public", &config,
+        )
+        .unwrap();
+        let plan = converted.debug_plan.expect("debug plan collected");
+
+        assert_eq!(plan.predicates.len(), 1);
+        assert_eq!(plan.predicates[0].param_code, "gender");
+        assert_eq!(
+            plan.predicates[0].strategy,
+            crate::ir::IndexStrategy::JsonbTraversal
+        );
+        assert!(!plan.predicates[0].index_backed);
+        assert_eq!(plan.predicates[0].sql_shape, "FALSE");
+
+        let built = converted.builder.with_raw_resource(true).build().unwrap();
+        assert!(
+            built.sql.contains("WHERE FALSE"),
+            "simple code system-only token should match nothing, got: {}",
+            built.sql
+        );
+        assert!(
+            !built.sql.contains("example.org"),
+            "token values must not be interpolated into SQL text: {}",
+            built.sql
+        );
     }
 
     #[test]

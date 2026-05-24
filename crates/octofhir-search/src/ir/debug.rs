@@ -487,7 +487,9 @@ fn token_uses_containment_shape(clause: &TokenClause) -> bool {
         (_, TokenPredicate::DisplayText { .. })
         | (_, TokenPredicate::Missing { .. })
         | (_, TokenPredicate::TerminologySet { .. })
-        | (_, TokenPredicate::NoSystemCode { .. }) => false,
+        | (TokenIndexShape::Coding, TokenPredicate::NoSystemCode { .. })
+        | (TokenIndexShape::Identifier, TokenPredicate::NoSystemCode { .. })
+        | (TokenIndexShape::SimpleCode, TokenPredicate::SystemAnyCode { .. }) => false,
         (
             TokenIndexShape::Identifier,
             TokenPredicate::AnySystemCode { .. }
@@ -497,7 +499,9 @@ fn token_uses_containment_shape(clause: &TokenClause) -> bool {
         ) => true,
         (
             TokenIndexShape::SimpleCode,
-            TokenPredicate::AnySystemCode { .. } | TokenPredicate::SystemCode { .. },
+            TokenPredicate::AnySystemCode { .. }
+            | TokenPredicate::NoSystemCode { .. }
+            | TokenPredicate::SystemCode { .. },
         ) => true,
         (TokenIndexShape::SimpleCode, _) => false,
         (TokenIndexShape::Coding, TokenPredicate::AnySystemCode { .. })
@@ -521,13 +525,17 @@ fn token_sql_shape(clause: &TokenClause) -> String {
             TokenIndexShape::Identifier => {
                 "EXISTS identifier WHERE ident.system IS NULL AND ident.value = $code".to_string()
             }
-            _ => "EXISTS coding WHERE coding.system IS NULL AND coding.code = $code".to_string(),
+            TokenIndexShape::SimpleCode => "resource @> {code: $code}".to_string(),
+            TokenIndexShape::Coding => {
+                "EXISTS coding WHERE coding.system IS NULL AND coding.code = $code".to_string()
+            }
         },
         TokenPredicate::SystemAnyCode { .. } => match clause.index_shape {
             TokenIndexShape::Identifier => {
                 "resource @> {identifier: [{system: $system}]}".to_string()
             }
-            _ => "EXISTS coding WHERE coding.system = $system".to_string(),
+            TokenIndexShape::SimpleCode => "FALSE".to_string(),
+            TokenIndexShape::Coding => "EXISTS coding WHERE coding.system = $system".to_string(),
         },
         TokenPredicate::SystemCode { .. } => match clause.index_shape {
             TokenIndexShape::Identifier => "resource @> {identifier: [{system: $system, value: $code}]}".to_string(),
@@ -846,6 +854,49 @@ mod tests {
         assert!(!plan.predicates[0].index_backed);
         assert_eq!(plan.predicates[0].expected_index, None);
         assert!(plan.predicates[0].sql_shape.contains("system IS NULL"));
+    }
+
+    #[test]
+    fn simple_code_no_system_token_debug_plan_uses_containment() {
+        let clauses = vec![TokenClause {
+            resource_type: "Patient".to_string(),
+            param_code: "gender".to_string(),
+            predicate: TokenPredicate::NoSystemCode {
+                code: "female".to_string(),
+            },
+            negated: false,
+            index_shape: TokenIndexShape::SimpleCode,
+        }];
+
+        let plan = build_token_debug_plan("Patient", &clauses);
+
+        assert_eq!(plan.predicates[0].strategy, IndexStrategy::JsonbContainment);
+        assert!(plan.predicates[0].index_backed);
+        assert_eq!(
+            plan.predicates[0].expected_index,
+            Some("idx_patient_gin".to_string())
+        );
+        assert_eq!(plan.predicates[0].sql_shape, "resource @> {code: $code}");
+    }
+
+    #[test]
+    fn simple_code_system_any_token_debug_plan_matches_nothing() {
+        let clauses = vec![TokenClause {
+            resource_type: "Patient".to_string(),
+            param_code: "gender".to_string(),
+            predicate: TokenPredicate::SystemAnyCode {
+                system: "http://example.org".to_string(),
+            },
+            negated: false,
+            index_shape: TokenIndexShape::SimpleCode,
+        }];
+
+        let plan = build_token_debug_plan("Patient", &clauses);
+
+        assert_eq!(plan.predicates[0].strategy, IndexStrategy::JsonbTraversal);
+        assert!(!plan.predicates[0].index_backed);
+        assert_eq!(plan.predicates[0].expected_index, None);
+        assert_eq!(plan.predicates[0].sql_shape, "FALSE");
     }
 
     #[test]
