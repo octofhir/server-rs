@@ -113,6 +113,7 @@ async fn seed_representative_data(storage: &PostgresStorage) {
             "resourceType": "Patient",
             "id": "explain-patient",
             "birthDate": "1985-03-12",
+            "gender": "female",
             "name": [{"family": "Smith", "given": ["Alex"]}],
             "identifier": [{"system": "http://hospital.example/mrn", "value": "12345"}]
         }),
@@ -120,6 +121,7 @@ async fn seed_representative_data(storage: &PostgresStorage) {
             "resourceType": "Patient",
             "id": "other-patient",
             "birthDate": "1970-06-01",
+            "gender": "male",
             "name": [{"family": "Jones"}],
             "identifier": [{"system": "http://hospital.example/mrn", "value": "99999"}]
         }),
@@ -203,6 +205,16 @@ fn representative_queries() -> Vec<SearchExplainCase> {
             query: "identifier=http://hospital.example/mrn|12345&_count=10",
         },
         SearchExplainCase {
+            label: "patient_gender",
+            resource_type: "Patient",
+            query: "gender=female&_count=10",
+        },
+        SearchExplainCase {
+            label: "patient_gender_system_only",
+            resource_type: "Patient",
+            query: "gender=http://example.org|&_count=10",
+        },
+        SearchExplainCase {
             label: "observation_code",
             resource_type: "Observation",
             query: "code=http://loinc.org|8480-6&_count=10",
@@ -266,6 +278,16 @@ fn representative_registry() -> SearchParameterRegistry {
         )
         .with_expression("Patient.identifier")
         .with_element_type_hint(ElementTypeHint::Identifier),
+    );
+    registry.register(
+        SearchParameter::new(
+            "gender",
+            "http://hl7.org/fhir/SearchParameter/Patient-gender",
+            SearchParameterType::Token,
+            vec!["Patient".to_string()],
+        )
+        .with_expression("Patient.gender")
+        .with_element_type_hint(ElementTypeHint::SimpleCode),
     );
     registry.register(
         SearchParameter::new(
@@ -363,6 +385,8 @@ fn assert_redacted_shape(label: &str, sql_shape: &str) {
         "1980-01-01",
         "2000-12-31",
         "Smith",
+        "female",
+        "example.org",
         "12345",
         "8480-6",
         "100",
