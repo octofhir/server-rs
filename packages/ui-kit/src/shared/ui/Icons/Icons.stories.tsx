@@ -1,20 +1,50 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import * as GravityIcons from "@gravity-ui/icons";
+import type { ComponentType, SVGProps } from "react";
 import { useState } from "react";
 import { TextInput } from "../TextInput";
 import { Text } from "../Text";
 import { Flex } from "../Flex";
 import { Card } from "../Card";
+import * as KitIcons from "./index";
 
 interface IconEntry {
     name: string;
-    Component: React.ComponentType<{ width?: number; height?: number }>;
+    Component: ComponentType<SVGProps<SVGSVGElement>>;
+    source: "alias" | "gravity";
 }
 
-const allIcons: IconEntry[] = Object.entries(GravityIcons)
-    .filter(([name, value]) => /^[A-Z]/.test(name) && typeof value === "object" && value !== null)
-    .map(([name, Component]) => ({ name, Component: Component as IconEntry["Component"] }))
-    .sort((a, b) => a.name.localeCompare(b.name));
+type IconModule = Record<string, unknown> & {
+    default?: Record<string, unknown>;
+};
+
+const gravityIconModule = GravityIcons as IconModule;
+const gravityIconExports = gravityIconModule.default ?? gravityIconModule;
+
+function isIconComponent(value: unknown): value is IconEntry["Component"] {
+    return typeof value === "function";
+}
+
+function getIconEntries(
+    source: IconEntry["source"],
+    icons: Record<string, unknown>,
+    namePattern: RegExp,
+): IconEntry[] {
+    const entries: IconEntry[] = [];
+
+    for (const [name, value] of Object.entries(icons)) {
+        if (namePattern.test(name) && isIconComponent(value)) {
+            entries.push({ name, Component: value, source });
+        }
+    }
+
+    return entries;
+}
+
+const allIcons: IconEntry[] = [
+    ...getIconEntries("alias", KitIcons, /^Icon[A-Z]/),
+    ...getIconEntries("gravity", gravityIconExports, /^[A-Z]/),
+].sort((a, b) => a.name.localeCompare(b.name));
 
 const meta: Meta = {
     title: "Foundations/Icons",
@@ -38,16 +68,20 @@ type Story = StoryObj;
 export const Catalog: Story = {
     render: () => {
         const [query, setQuery] = useState("");
-        const filtered = allIcons.filter((i) =>
-            i.name.toLowerCase().includes(query.toLowerCase()),
-        );
+        const normalizedQuery = query.trim().toLowerCase();
+        const filtered = normalizedQuery
+            ? allIcons.filter(({ name, source }) => {
+                  const haystack = `${name} ${source}`.toLowerCase();
+                  return haystack.includes(normalizedQuery);
+              })
+            : allIcons;
 
         return (
             <Flex direction="column" gap={4}>
                 <TextInput
                     placeholder={`Filter ${allIcons.length} icons...`}
                     value={query}
-                    onUpdate={(v) => setQuery(v)}
+                    onUpdate={setQuery}
                     size="l"
                     hasClear
                 />
@@ -61,7 +95,7 @@ export const Catalog: Story = {
                         gap: 8,
                     }}
                 >
-                    {filtered.map(({ name, Component }) => (
+                    {filtered.map(({ name, Component, source }) => (
                         <Card key={name} type="container" view="filled" theme="normal">
                             <Flex
                                 direction="column"
@@ -82,6 +116,11 @@ export const Catalog: Story = {
                                 >
                                     {name}
                                 </Text>
+                                {source === "alias" ? (
+                                    <Text variant="caption-2" color="hint">
+                                        ui-kit alias
+                                    </Text>
+                                ) : null}
                             </Flex>
                         </Card>
                     ))}
