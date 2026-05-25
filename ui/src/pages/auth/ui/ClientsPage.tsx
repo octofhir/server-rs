@@ -1,3 +1,4 @@
+import { ActionIcon, Button, Card, Field, Form, Modal, TextInput, useDebouncedValue, useDisclosure } from "@octofhir/ui-kit";
 import { useState } from "react";
 import {
 	Text,
@@ -12,9 +13,8 @@ import {
 	Textarea,
 	CopyButton,
 	Tooltip,
-} from "@/shared/ui";
+} from "@octofhir/ui-kit";
 import { WorkspacePageLayout } from "@/widgets/workspace-page";
-import { Field, Form, useDebouncedValue, useDisclosure } from "@octofhir/ui-kit";
 import {
 	Plus,
 	Magnifier,
@@ -33,11 +33,6 @@ import {
 	type ClientResource,
 	type RegenerateSecretResponse,
 } from "@/entities/oauth-client";
-import { Card } from "@/shared/ui/Card/Card";
-import { Modal } from "@/shared/ui/Modal/Modal";
-import { Button } from "@/shared/ui/Button/Button";
-import { TextInput } from "@/shared/ui/TextInput/TextInput";
-import { ActionIcon } from "@/shared/ui/ActionIcon/ActionIcon";
 import {
 	useClients,
 	useCreateClient,

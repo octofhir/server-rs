@@ -13,7 +13,7 @@ import {
 	Anchor,
 	KeyValueList,
 	SectionPanel,
-} from "@/shared/ui";
+} from "@octofhir/ui-kit";
 import { WorkspacePageLayout } from "@/widgets/workspace-page";
 import {
 	CircleExclamation,

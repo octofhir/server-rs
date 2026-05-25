@@ -1,5 +1,5 @@
 import { DropdownMenu } from "@gravity-ui/uikit";
-import { ActionIcon, Badge, Button, TextInput, Tooltip } from "@/shared/ui";
+import { ActionIcon, Badge, Button, TextInput, Tooltip } from "@octofhir/ui-kit";
 import { memo } from "react";
 
 import {

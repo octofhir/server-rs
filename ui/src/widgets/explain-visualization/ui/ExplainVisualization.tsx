@@ -1,3 +1,4 @@
+import { useDesignTokens } from "@octofhir/ui-kit";
 import { useState, useMemo } from "react";
 import {
 	Box,
@@ -7,8 +8,7 @@ import {
 	Stack,
 	UnstyledButton,
 	Code,
-} from "@/shared/ui";
-import { useDesignTokens } from "@octofhir/ui-kit";
+} from "@octofhir/ui-kit";
 import {
 	ChevronRight,
 	ChevronDown,

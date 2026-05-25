@@ -20,6 +20,8 @@ export * from "./Container";
 export * from "./Burger";
 export * from "./Surface";
 export * from "./PageHeader";
+export * from "./PageLayout";
+export * from "./ResizablePanels";
 
 // === Data display ===
 export * from "./Card";

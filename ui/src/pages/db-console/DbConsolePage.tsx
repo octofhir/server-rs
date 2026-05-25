@@ -1,4 +1,4 @@
-import { useHotkeys, useLocalStorage } from "@octofhir/ui-kit";
+import { useHotkeys, useLocalStorage, Resizable, Badge, Kbd, Text, Tooltip } from "@octofhir/ui-kit";
 import type * as monaco from "monaco-editor";
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import {
@@ -7,7 +7,6 @@ import {
 	useQueryHistory,
 } from "@/shared/api/hooks";
 import { applyResultLimit, formatSqlError, parseTimeoutMs } from "@/entities/db-query";
-import { Badge, Kbd, Text, Tooltip } from "@/shared/ui";
 import type { SqlResponse } from "@/shared/api/types";
 import { ExecutionStream } from "./components/ExecutionStream";
 import { PromptEditor } from "./components/PromptEditor";
@@ -343,30 +342,39 @@ export function DbConsolePage() {
 				</div>
 			</div>
 
-			<div className={classes.workspace}>
-				<div className={classes.streamPanel}>
-					<ExecutionStream
-						entries={stream}
-						onReplayQuery={handleReplayQuery}
-						onToggleExpand={handleToggleExpand}
-						onRemoveEntry={handleRemoveEntry}
-					/>
-				</div>
-				<div className={classes.studioPanel}>
-					<PromptEditor
-						initialQuery={INITIAL_QUERY}
-						onQueryChange={handleQueryChange}
-						resultLimit={resultLimit}
-						onResultLimitChange={handleResultLimitChange}
-						sqlTimeout={sqlTimeout}
-						onSqlTimeoutChange={handleSqlTimeoutChange}
-						onExecute={handleExecute}
-						onEditorMount={handleEditorMount}
-						editorInstance={editorInstance}
-						modelInstance={modelInstance}
-						isPending={sqlMutation.isPending}
-					/>
-				</div>
+			<div className={classes.workspaceResizable}>
+				<Resizable.Group orientation="horizontal">
+					<Resizable.Pane defaultSize={40} minSize={25}>
+						<div className={classes.streamPanel} style={{ height: "100%" }}>
+							<ExecutionStream
+								entries={stream}
+								onReplayQuery={handleReplayQuery}
+								onToggleExpand={handleToggleExpand}
+								onRemoveEntry={handleRemoveEntry}
+							/>
+						</div>
+					</Resizable.Pane>
+
+					<Resizable.Handle />
+
+					<Resizable.Pane defaultSize={60} minSize={35}>
+						<div className={classes.studioPanel} style={{ height: "100%" }}>
+							<PromptEditor
+								initialQuery={INITIAL_QUERY}
+								onQueryChange={handleQueryChange}
+								resultLimit={resultLimit}
+								onResultLimitChange={handleResultLimitChange}
+								sqlTimeout={sqlTimeout}
+								onSqlTimeoutChange={handleSqlTimeoutChange}
+								onExecute={handleExecute}
+								onEditorMount={handleEditorMount}
+								editorInstance={editorInstance}
+								modelInstance={modelInstance}
+								isPending={sqlMutation.isPending}
+							/>
+						</div>
+					</Resizable.Pane>
+				</Resizable.Group>
 			</div>
 		</div>
 	);

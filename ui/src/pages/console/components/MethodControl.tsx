@@ -1,4 +1,4 @@
-import { Select } from "@/shared/ui";
+import { Select } from "@octofhir/ui-kit";
 import { isHttpMethod } from "@/shared/api";
 import { useUnit } from "effector-react";
 import { $method, setMethod } from "../state/consoleStore";

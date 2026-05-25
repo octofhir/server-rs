@@ -6,7 +6,7 @@ import {
 	Tooltip,
 	Collapse,
 	UnstyledButton,
-} from "@/shared/ui";
+} from "@octofhir/ui-kit";
 import {
 	ChevronDown,
 	ChevronRight,

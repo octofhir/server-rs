@@ -1,3 +1,4 @@
+import { notifications } from "@octofhir/ui-kit";
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
@@ -12,9 +13,8 @@ import {
 	Tabs,
 	Button,
 	Select,
-} from "@/shared/ui";
+} from "@octofhir/ui-kit";
 import { WorkspacePageLayout } from "@/widgets/workspace-page";
-import { notifications } from "@octofhir/ui-kit";
 import {
 	CircleExclamation,
 	Magnifier,

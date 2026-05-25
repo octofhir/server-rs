@@ -1,4 +1,4 @@
-import { Code, Text, Loader } from "@/shared/ui";
+import { Code, Loader, Text } from "@octofhir/ui-kit";
 import type { SqlResult } from "../../lib/useViewDefinition";
 import classes from "./SQLPreview.module.css";
 

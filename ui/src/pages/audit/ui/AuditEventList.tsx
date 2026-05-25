@@ -7,7 +7,7 @@ import {
 	Center,
 	Tooltip,
 	ThemeIcon,
-} from "@/shared/ui";
+} from "@octofhir/ui-kit";
 import {
 	Person,
 	Server,

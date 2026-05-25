@@ -1,5 +1,5 @@
+import { Alert, Button, Spin } from "@octofhir/ui-kit";
 import { useState, useCallback } from "react";
-import { Button, Spin, Alert } from "@/shared/ui";
 import { ToolWorkspaceLayout } from "@/widgets/tool-workspace";
 import {
   IconPlus,

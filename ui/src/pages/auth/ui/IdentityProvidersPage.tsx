@@ -1,3 +1,4 @@
+import { Card, Field, Form, useDebouncedValue, useDisclosure } from "@octofhir/ui-kit";
 import { useState } from "react";
 import {
 	Text,
@@ -12,9 +13,8 @@ import {
 	Select,
 	PasswordInput,
 	MultiSelect,
-} from "@/shared/ui";
+} from "@octofhir/ui-kit";
 import { WorkspacePageLayout } from "@/widgets/workspace-page";
-import { Field, Form, useDebouncedValue, useDisclosure } from "@octofhir/ui-kit";
 import {
 	Plus,
 	Magnifier,
@@ -32,7 +32,6 @@ import {
 } from "@/entities/identity-provider";
 import { useIdentityProviders, useCreateIdentityProvider, useUpdateIdentityProvider, useDeleteIdentityProvider } from "../lib/useIdentityProviders";
 import { getBundleResources } from "@/shared/api/guards";
-import { Card } from "@/shared/ui/Card/Card";
 import classes from "./IdentityProvidersPage.module.css";
 
 export function IdentityProvidersPage() {

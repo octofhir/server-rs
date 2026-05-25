@@ -1,3 +1,4 @@
+import { useColorScheme } from "@octofhir/ui-kit";
 import { useMemo } from "react";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
 import {
@@ -31,7 +32,6 @@ import {
 	Display,
 } from "@gravity-ui/icons";
 import { useHealth, useAuth, useSettings } from "@/shared/api/hooks";
-import { useColorScheme } from "@octofhir/ui-kit";
 
 const logoUrl = `${import.meta.env.BASE_URL}logo.png`;
 const statusThemeByHealth: Record<"ok" | "degraded" | "down", DashboardShellStatus["theme"]> = {
@@ -245,7 +245,7 @@ export function AppShell() {
 				onSignOut: logout,
 			} : null}
 		>
-			<Flex direction="column" style={{ minHeight: "100%", backgroundColor: "var(--g-color-base-background)" }}>
+			<Flex direction="column" style={{ height: "100%", overflow: "hidden", backgroundColor: "var(--g-color-base-background)" }}>
 				<ErrorBoundary>
 					<Outlet />
 				</ErrorBoundary>

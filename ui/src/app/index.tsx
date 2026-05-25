@@ -1,14 +1,14 @@
 // Configure Monaco web workers before any Monaco imports
+import { UIProvider } from "@octofhir/ui-kit";
 import "@/shared/monaco/config";
 
 import { StrictMode } from "react";
 import { BrowserRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { HelmetProvider } from "react-helmet-async";
-import { UIProvider } from "@octofhir/ui-kit";
+import { ErrorBoundary } from "@/shared/ui";
 import { AppRoutes } from "./routes";
 import { useAuthInterceptor } from "@/shared/api/hooks";
-import { ErrorBoundary } from "@/shared/ui";
 
 import "@/shared/styles/global.css";
 import "@/shared/styles/app.css";

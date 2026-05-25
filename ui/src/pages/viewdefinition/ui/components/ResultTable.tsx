@@ -1,4 +1,4 @@
-import { Table, Text, Code } from "@/shared/ui";
+import { Code, Table, Text } from "@octofhir/ui-kit";
 import { isRecord } from "@/shared/api/guards";
 import type { RunResult } from "../../lib/useViewDefinition";
 

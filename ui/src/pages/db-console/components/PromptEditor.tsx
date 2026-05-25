@@ -1,3 +1,4 @@
+import { useDisclosure, useLocalStorage } from "@octofhir/ui-kit";
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import type { CSSProperties } from "react";
 import {
@@ -8,9 +9,8 @@ import {
 	Popover,
 	Select,
 	UnstyledButton,
-} from "@/shared/ui";
+} from "@octofhir/ui-kit";
 import { Code, GripHorizontal, Gear } from "@gravity-ui/icons";
-import { useDisclosure, useLocalStorage } from "@octofhir/ui-kit";
 import type * as monaco from "monaco-editor";
 import { SqlEditor } from "@/shared/monaco/SqlEditor";
 import { DiagnosticsPanel } from "@/widgets/diagnostics-panel";

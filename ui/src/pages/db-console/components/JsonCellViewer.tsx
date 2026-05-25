@@ -1,4 +1,4 @@
-import { ScrollArea } from "@/shared/ui";
+import { ScrollArea } from "@octofhir/ui-kit";
 
 interface JsonCellViewerProps {
   value: Record<string, unknown>;

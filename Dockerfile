@@ -56,14 +56,17 @@ COPY igs/ ./igs/
 # Copy built UI
 COPY --from=ui-builder /app/ui/dist ./ui/dist
 
-# Build release binary with cached cargo registry and target dir
+# Build release binary with cached cargo registry and target dir.
+# `find … -exec touch` refreshes mtimes — BuildKit's deterministic COPY
+# would otherwise leave cargo's incremental cache unable to see source edits.
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
     --mount=type=cache,target=/work/server-rs/target \
-    CARGO_PROFILE_RELEASE_LTO=thin \
-    CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16 \
-    CARGO_PROFILE_RELEASE_DEBUG=0 \
-    cargo build --release --bin octofhir-server \
+    find crates -name '*.rs' -exec touch {} + \
+    && CARGO_PROFILE_RELEASE_LTO=thin \
+       CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16 \
+       CARGO_PROFILE_RELEASE_DEBUG=0 \
+       cargo build --release --bin octofhir-server \
     && cp /work/server-rs/target/release/octofhir-server /usr/local/bin/octofhir-server
 
 # -----------------------------------------------------------------------------

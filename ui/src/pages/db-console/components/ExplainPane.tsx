@@ -1,5 +1,5 @@
+import { Code, SegmentedControl, Text } from "@octofhir/ui-kit";
 import { useState, useMemo } from "react";
-import { Text, Code, SegmentedControl } from "@/shared/ui";
 import type { SqlResponse } from "@/shared/api/types";
 import { ExplainVisualization } from "@/widgets/explain-visualization";
 import classes from "../DbConsolePage.module.css";

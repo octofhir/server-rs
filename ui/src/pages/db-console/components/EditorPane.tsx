@@ -1,7 +1,6 @@
+import { ActionIcon, Button, Popover, Text, Tooltip, UnstyledButton, useDisclosure } from "@octofhir/ui-kit";
 import { useCallback, useEffect } from "react";
-import { Text, Button, ActionIcon, Tooltip, Popover, UnstyledButton } from "@/shared/ui";
 import { Code, Gear } from "@gravity-ui/icons";
-import { useDisclosure } from "@octofhir/ui-kit";
 import type * as monaco from "monaco-editor";
 import { SqlEditor } from "@/shared/monaco/SqlEditor";
 import { DiagnosticsPanel } from "@/widgets/diagnostics-panel";

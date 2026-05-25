@@ -7,7 +7,7 @@ import {
 	Tabs, 
 	Text,
 	DataPreview,
-} from "@/shared/ui";
+} from "@octofhir/ui-kit";
 import {
 	getBundleResourceEntries,
 	getConsoleResponseStatusTone,

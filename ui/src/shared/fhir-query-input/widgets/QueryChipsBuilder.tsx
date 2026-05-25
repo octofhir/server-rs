@@ -10,7 +10,7 @@ import {
 	NumberInput,
 	SegmentedRadioGroup as SegmentedControl,
 	type SelectProps,
-} from "@/shared/ui";
+} from "@octofhir/ui-kit";
 import { Plus, TrashBin } from "@gravity-ui/icons";
 import type { BuilderState, BuilderParam } from "../core/builder-model";
 import type { QueryInputMetadata } from "../core/types";

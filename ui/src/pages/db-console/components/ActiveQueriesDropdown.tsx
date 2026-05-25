@@ -1,3 +1,4 @@
+import { modals, notifications, useDisclosure } from "@octofhir/ui-kit";
 import { useCallback, useState } from "react";
 import {
 	ActionIcon,
@@ -7,9 +8,8 @@ import {
 	Text,
 	Tooltip,
 	UnstyledButton,
-} from "@/shared/ui";
+} from "@octofhir/ui-kit";
 import { Pulse, Stop } from "@gravity-ui/icons";
-import { modals, notifications, useDisclosure } from "@octofhir/ui-kit";
 import { useActiveQueries, useTerminateQuery } from "@/shared/api/hooks";
 import type { ActiveQuery } from "@/shared/api/types";
 import classes from "../DbConsolePage.module.css";

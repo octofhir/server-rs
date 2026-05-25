@@ -1,6 +1,5 @@
+import { IconSearch, Kbd, Modal, Text, TextInput } from "@octofhir/ui-kit";
 import { useState, useRef, useEffect, useMemo } from "react";
-import { Modal, TextInput, Text, Kbd } from "@/shared/ui";
-import { IconSearch } from "@octofhir/ui-kit";
 import { useUnit } from "effector-react";
 import {
 	$commandPaletteOpen,

@@ -5,7 +5,7 @@ import {
 	Text,
 	SegmentedRadioGroup,
 	Badge,
-} from "@/shared/ui";
+} from "@octofhir/ui-kit";
 import { useUnit } from "effector-react";
 import {
 	$queryParams,

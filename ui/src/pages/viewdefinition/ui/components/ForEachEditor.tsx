@@ -1,3 +1,4 @@
+import { IconArrowsExchange, IconPlus, IconTrash } from "@octofhir/ui-kit";
 import { useCallback } from "react";
 import {
   ActionIcon,
@@ -5,8 +6,7 @@ import {
   Card,
   Text,
   Tooltip,
-} from "@/shared/ui";
-import { IconArrowsExchange, IconPlus, IconTrash } from "@octofhir/ui-kit";
+} from "@octofhir/ui-kit";
 import { FHIRPathInput } from "./FHIRPathInput";
 import { ColumnRow } from "./ColumnRow";
 import type {

@@ -11,7 +11,7 @@ import {
   ScrollArea,
   Text,
   TextInput,
-} from "@/shared/ui";
+} from "@octofhir/ui-kit";
 import { TableDetailView } from "./TableDetailView";
 import classes from "../DbConsolePage.module.css";
 

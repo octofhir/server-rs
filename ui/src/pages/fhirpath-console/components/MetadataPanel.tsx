@@ -1,4 +1,4 @@
-import { Badge, Collapse, Text } from "@/shared/ui";
+import { Badge, Collapse, Text } from "@octofhir/ui-kit";
 import { ChevronDown, ChevronRight } from "@gravity-ui/icons";
 import { useState } from "react";
 import type { FhirPathMetadata } from "../types";

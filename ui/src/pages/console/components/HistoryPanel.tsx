@@ -1,5 +1,4 @@
-import { Drawer } from "@/shared/ui";
-import { ActionIcon, Badge, Button, Card, Menu, Text, TextInput } from "@/shared/ui";
+import { ActionIcon, Badge, Button, Card, Drawer, Menu, Text, TextInput } from "@octofhir/ui-kit";
 import {
   IconClock,
   IconDots,

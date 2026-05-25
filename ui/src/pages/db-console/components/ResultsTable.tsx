@@ -1,5 +1,5 @@
+import { Alert, Badge, DataPreview, Text } from "@octofhir/ui-kit";
 import type { ReactNode } from "react";
-import { Text, Badge, Alert, DataPreview } from "@/shared/ui";
 import { CircleExclamation, CircleInfo } from "@gravity-ui/icons";
 import type { SqlResponse, SqlValue } from "@/shared/api/types";
 import { JsonCellViewer } from "./JsonCellViewer";

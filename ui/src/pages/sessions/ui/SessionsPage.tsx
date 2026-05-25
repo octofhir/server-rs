@@ -1,3 +1,4 @@
+import { useDisclosure } from "@octofhir/ui-kit";
 import {
   ActionIcon,
   Badge,
@@ -9,9 +10,8 @@ import {
   SectionPanel,
   Text,
   Tooltip,
-} from '@/shared/ui';
+} from "@octofhir/ui-kit";
 import { WorkspacePageLayout } from "@/widgets/workspace-page";
-import { useDisclosure } from '@octofhir/ui-kit';
 import {
   Display,
   Smartphone,

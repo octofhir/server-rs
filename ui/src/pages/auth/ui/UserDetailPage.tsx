@@ -1,5 +1,5 @@
+import { ActionIcon, Badge, Button, Card, DataPreview, Loader, Text } from "@octofhir/ui-kit";
 import { useState } from "react";
-import { Text, Badge, DataPreview, Loader } from "@/shared/ui";
 import { useParams, useNavigate } from "react-router-dom";
 import {
 	ArrowLeft,
@@ -13,9 +13,6 @@ import {
 	ShieldCheck,
 } from "@gravity-ui/icons";
 import { WorkspacePageLayout } from "@/widgets/workspace-page";
-import { Card } from "@/shared/ui/Card/Card";
-import { Button } from "@/shared/ui/Button/Button";
-import { ActionIcon } from "@/shared/ui/ActionIcon/ActionIcon";
 import {
 	formatUserDateTime,
 	formatUserRelativeTime,

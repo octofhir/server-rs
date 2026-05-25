@@ -3,7 +3,8 @@ import {
 	Alert,
 	Button,
 	Text,
-} from "@/shared/ui";
+	Resizable,
+} from "@octofhir/ui-kit";
 import { ToolWorkspaceLayout } from "@/widgets/tool-workspace";
 import { CircleExclamation, Play, Xmark } from "@gravity-ui/icons";
 import { useMutation } from "@tanstack/react-query";
@@ -111,70 +112,82 @@ export function FhirPathConsolePage() {
 				</div>
 			}
 		>
-			<div className={classes.workspace}>
-				<div className={classes.editorPanel}>
-					<Text size="sm" fw={500} className={classes.panelTitle}>
-						Expression
-					</Text>
-					<FhirPathEditor
-						value={expression}
-						onChange={(value) => setExpression(value)}
-						onSubmit={handleExecute}
-						height={120}
-						placeholder="Enter FHIRPath expression (e.g., Patient.name.given)"
-					/>
-				</div>
-
-				<div className={classes.editorPanel}>
-					<Text size="sm" fw={500} className={classes.panelTitle}>
-						Input Resource
-					</Text>
-					<JsonEditor
-						value={inputResource}
-						onChange={(value) => setInputResource(value)}
-						onExecute={handleExecute}
-						height={300}
-					/>
-				</div>
-
-				<div className={classes.resultsPanel}>
-					{evaluateMutation.error && (
-						<Alert icon={<CircleExclamation />} color="red">
-							<Text fw={500}>Evaluation Error</Text>
-							<Text size="sm">{evaluateMutation.error.message}</Text>
-						</Alert>
-					)}
-
-					{evaluateMutation.data ? (
-						<>
-							<MetadataPanel metadata={evaluateMutation.data.metadata} />
-
-							<div className={classes.panel}>
-								<Text fw={500} className={classes.panelTitle}>
-									Results ({evaluateMutation.data.results.length})
-								</Text>
-
-								<div className={classes.resultList}>
-									{evaluateMutation.data.results.length === 0 ? (
-										<Text c="dimmed" size="sm">
-											No results (empty collection)
-										</Text>
-									) : (
-										evaluateMutation.data.results.map((result) => (
-											<ResultItem key={result.index} result={result} />
-										))
-									)}
-								</div>
-							</div>
-						</>
-					) : (
-						<div className={classes.emptyState}>
-							<Text size="sm" c="dimmed">
-								Run an expression to see evaluation metadata and results.
+			<div className={classes.workspaceResizable}>
+				<Resizable.Group orientation="vertical">
+					<Resizable.Pane defaultSize={20} minSize={10}>
+						<div className={classes.editorPanel} style={{ height: "100%", overflow: "hidden" }}>
+							<Text size="sm" fw={500} className={classes.panelTitle}>
+								Expression
 							</Text>
+							<FhirPathEditor
+								value={expression}
+								onChange={(value) => setExpression(value)}
+								onSubmit={handleExecute}
+								height={120}
+								placeholder="Enter FHIRPath expression (e.g., Patient.name.given)"
+							/>
 						</div>
-					)}
-				</div>
+					</Resizable.Pane>
+
+					<Resizable.Handle />
+
+					<Resizable.Pane defaultSize={40} minSize={20}>
+						<div className={classes.editorPanel} style={{ height: "100%", overflow: "hidden" }}>
+							<Text size="sm" fw={500} className={classes.panelTitle}>
+								Input Resource
+							</Text>
+							<JsonEditor
+								value={inputResource}
+								onChange={(value) => setInputResource(value)}
+								onExecute={handleExecute}
+								height={300}
+							/>
+						</div>
+					</Resizable.Pane>
+
+					<Resizable.Handle />
+
+					<Resizable.Pane defaultSize={40} minSize={20}>
+						<div className={classes.resultsPanel} style={{ height: "100%", overflow: "auto" }}>
+							{evaluateMutation.error && (
+								<Alert icon={<CircleExclamation />} color="red">
+									<Text fw={500}>Evaluation Error</Text>
+									<Text size="sm">{evaluateMutation.error.message}</Text>
+								</Alert>
+							)}
+
+							{evaluateMutation.data ? (
+								<>
+									<MetadataPanel metadata={evaluateMutation.data.metadata} />
+
+									<div className={classes.panel}>
+										<Text fw={500} className={classes.panelTitle}>
+											Results ({evaluateMutation.data.results.length})
+										</Text>
+
+										<div className={classes.resultList}>
+											{evaluateMutation.data.results.length === 0 ? (
+												<Text c="dimmed" size="sm">
+													No results (empty collection)
+												</Text>
+											) : (
+												evaluateMutation.data.results.map((result) => (
+													<ResultItem key={result.index} result={result} />
+												))
+											)}
+										</div>
+									</div>
+								</>
+							) : (
+								<div className={classes.emptyState}>
+									<Text size="sm" c="dimmed">
+										Run an expression to see evaluation metadata and results.
+									</Text>
+								</div>
+							)}
+						</div>
+					</Resizable.Pane>
+				</Resizable.Group>
 			</div>
 		</ToolWorkspaceLayout>
 	);

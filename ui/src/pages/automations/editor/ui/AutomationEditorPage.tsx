@@ -1,3 +1,4 @@
+import { notifications } from "@octofhir/ui-kit";
 import { useState, useEffect, useCallback } from "react";
 import { useParams, useNavigate, useSearchParams } from "react-router-dom";
 import {
@@ -12,9 +13,8 @@ import {
   ActionIcon,
   Tooltip,
   Divider,
-} from "@/shared/ui";
+} from "@octofhir/ui-kit";
 import { WorkspacePageLayout } from "@/widgets/workspace-page";
-import { notifications } from "@octofhir/ui-kit";
 import { isAutomationFeatureUnavailableError } from "@/shared/api/automationsApi";
 import {
   ArrowLeft,

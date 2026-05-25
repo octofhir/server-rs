@@ -7,7 +7,7 @@ import {
 	Center,
 	Loader,
 	RingProgress,
-} from "@/shared/ui";
+} from "@octofhir/ui-kit";
 import {
 	Person,
 	Database,

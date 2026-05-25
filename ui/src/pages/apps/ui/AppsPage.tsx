@@ -1,3 +1,4 @@
+import { Field, Form, useDebouncedValue, useDisclosure } from "@octofhir/ui-kit";
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
@@ -14,9 +15,8 @@ import {
 	Select,
 	Code,
 	Anchor,
-} from "@/shared/ui";
+} from "@octofhir/ui-kit";
 import { WorkspacePageLayout } from "@/widgets/workspace-page";
-import { Field, Form, useDebouncedValue, useDisclosure } from "@octofhir/ui-kit";
 import {
 	IconPlus,
 	IconSearch,

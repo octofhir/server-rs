@@ -1,4 +1,4 @@
-import { ActionIcon, Badge, Collapse, CopyButton, Text, Tooltip } from "@/shared/ui";
+import { ActionIcon, Badge, Collapse, CopyButton, Text, Tooltip } from "@octofhir/ui-kit";
 import { useState, memo } from "react";
 
 import {

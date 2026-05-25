@@ -1,6 +1,5 @@
+import { Button, Modal, TextInput, Textarea, notifications } from "@octofhir/ui-kit";
 import { useState } from "react";
-import { Modal, TextInput, Textarea, Button } from "@/shared/ui";
-import { notifications } from "@octofhir/ui-kit";
 import { useNavigate } from "react-router-dom";
 import { isAutomationFeatureUnavailableError } from "@/shared/api/automationsApi";
 import { useCreateAutomation } from "../lib/useAutomations";

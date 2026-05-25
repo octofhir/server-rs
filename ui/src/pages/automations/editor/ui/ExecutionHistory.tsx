@@ -6,7 +6,7 @@ import {
   Tooltip,
   Code,
   ActionIcon,
-} from "@/shared/ui";
+} from "@octofhir/ui-kit";
 import { useState } from "react";
 import { ChevronDown, ChevronRight } from "@gravity-ui/icons";
 import { useAutomationLogs } from "../../lib/useAutomations";

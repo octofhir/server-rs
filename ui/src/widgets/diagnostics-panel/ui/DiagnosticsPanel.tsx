@@ -7,7 +7,7 @@ import {
   Tabs,
   Text,
   UnstyledButton,
-} from "@/shared/ui";
+} from "@octofhir/ui-kit";
 import { ChevronDown, ChevronUp } from "@gravity-ui/icons";
 import type * as monaco from "monaco-editor";
 import { useCallback, useState } from "react";

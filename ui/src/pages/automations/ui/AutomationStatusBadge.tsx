@@ -1,4 +1,4 @@
-import { Badge, type BadgeProps } from "@/shared/ui";
+import { Badge, type BadgeProps } from "@octofhir/ui-kit";
 import type { AutomationStatus } from "@/shared/api/types";
 
 interface AutomationStatusBadgeProps extends Omit<BadgeProps, "color"> {

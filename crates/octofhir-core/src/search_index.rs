@@ -450,16 +450,28 @@ fn next_day(year: i32, month: u32, day: u32) -> (i32, u32, u32) {
 /// Open-start → lower = `-infinity`. Open-end → upper = `infinity`. Both
 /// open → `None` (such a Period matches every query and is treated as
 /// "no usable bound", consistent with the architecture doc).
+///
+/// Boundary inclusivity follows precision symmetrically for `start` and `end`:
+/// - Date-only (`"2028-12-31"`) covers the entire stated day → lower is the
+///   day-start, upper is the next-day boundary.
+/// - DateTime/instant with a time component (`"2028-01-01T00:00:00Z"`) is
+///   treated as the exact transition instant — exclusive boundary at that
+///   instant. So `Period.end == nextPeriod.start` describes a touching
+///   boundary, not a one-precision-unit overlap.
 fn parse_period_to_range(period: &Value) -> Option<(String, String)> {
     let start = period
         .get("start")
         .and_then(|s| s.as_str())
-        .and_then(|s| parse_date_to_range(s).map(|r| r.0));
+        .and_then(|s| {
+            parse_date_to_range(s).map(|r| if s.contains('T') { r.1 } else { r.0 })
+        });
 
     let end = period
         .get("end")
         .and_then(|e| e.as_str())
-        .and_then(|e| parse_date_to_range(e).map(|r| r.1));
+        .and_then(|e| {
+            parse_date_to_range(e).map(|r| if e.contains('T') { r.0 } else { r.1 })
+        });
 
     match (start, end) {
         (Some(s), Some(e)) => Some((s, e)),

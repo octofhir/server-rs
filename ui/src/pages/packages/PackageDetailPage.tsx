@@ -16,7 +16,7 @@ import {
 	Anchor,
 	Modal,
 	Code,
-} from "@/shared/ui";
+} from "@octofhir/ui-kit";
 import { WorkspacePageLayout } from "@/widgets/workspace-page";
 import {
 	filterFhirPackageResources,

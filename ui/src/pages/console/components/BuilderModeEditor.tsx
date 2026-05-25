@@ -1,6 +1,6 @@
+import { Badge, Text } from "@octofhir/ui-kit";
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import { useUnit } from "effector-react";
-import { Badge, Text } from "@/shared/ui";
 import { $method, $rawPath, setRawPath } from "../state/consoleStore";
 import type {
 	AutocompleteSuggestion,

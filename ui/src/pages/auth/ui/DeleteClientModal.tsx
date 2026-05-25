@@ -1,7 +1,5 @@
-import { Text, Alert } from "@/shared/ui";
+import { Alert, Button, Modal, Text } from "@octofhir/ui-kit";
 import { TriangleExclamation } from "@gravity-ui/icons";
-import { Modal } from "@/shared/ui/Modal/Modal";
-import { Button } from "@/shared/ui/Button/Button";
 import classes from "./DeleteClientModal.module.css";
 
 interface DeleteClientModalProps {

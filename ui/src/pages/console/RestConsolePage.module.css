@@ -4,6 +4,14 @@
   gap: 20px;
 }
 
+.rootResizable {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  gap: 0;
+}
+
 .actions {
   display: flex;
   align-items: center;

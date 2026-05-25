@@ -1,6 +1,5 @@
+import { ActionIcon, IconGripVertical, IconTrash, Select, TextInput, Tooltip } from "@octofhir/ui-kit";
 import { memo } from "react";
-import { TextInput, Select, ActionIcon, Tooltip } from "@/shared/ui";
-import { IconTrash, IconGripVertical } from "@octofhir/ui-kit";
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { FHIRPathInput } from "./FHIRPathInput";

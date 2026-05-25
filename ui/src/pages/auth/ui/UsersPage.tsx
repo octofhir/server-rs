@@ -1,3 +1,4 @@
+import { Button, Field, Form, FormSpy, Modal, TextInput, useDebouncedValue, useDisclosure } from "@octofhir/ui-kit";
 import { useState } from "react";
 import {
 	Text,
@@ -8,9 +9,8 @@ import {
 	PasswordInput,
 	Switch,
 	Card,
-} from "@/shared/ui";
+} from "@octofhir/ui-kit";
 import { WorkspacePageLayout } from "@/widgets/workspace-page";
-import { Field, Form, FormSpy, useDebouncedValue, useDisclosure } from "@octofhir/ui-kit";
 import { DropdownMenu } from "@gravity-ui/uikit";
 import { useNavigate } from "react-router-dom";
 import {
@@ -31,9 +31,6 @@ import {
 	getUserRoleView,
 	getUserStatusView,
 } from "@/entities/user-account";
-import { Modal } from "@/shared/ui/Modal/Modal";
-import { Button } from "@/shared/ui/Button/Button";
-import { TextInput } from "@/shared/ui/TextInput/TextInput";
 import {
 	useUsers,
 	useCreateUser,

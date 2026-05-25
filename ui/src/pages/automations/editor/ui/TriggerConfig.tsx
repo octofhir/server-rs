@@ -1,3 +1,4 @@
+import { IconBolt, IconClock, IconHandClick, IconPlus, IconTrash, notifications } from "@octofhir/ui-kit";
 import { useState } from "react";
 import {
   ActionIcon,
@@ -10,9 +11,7 @@ import {
   Textarea,
   TextInput,
   Tooltip,
-} from "@/shared/ui";
-import { notifications } from "@octofhir/ui-kit";
-import { IconPlus, IconTrash, IconBolt, IconClock, IconHandClick } from "@octofhir/ui-kit";
+} from "@octofhir/ui-kit";
 import { useAddTrigger, useDeleteTrigger } from "../../lib/useAutomations";
 import type { AutomationTrigger, AutomationTriggerType, CreateTriggerRequest } from "@/shared/api/types";
 import { useResourceTypes } from "@/shared/api/hooks/useSystemQueries";

@@ -1,4 +1,4 @@
-import { Text, Badge } from "@/shared/ui";
+import { Badge, Text } from "@octofhir/ui-kit";
 import type { ConsoleCommand } from "../../commands/types";
 import styles from "./CommandItem.module.css";
 

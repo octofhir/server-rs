@@ -14,7 +14,7 @@ import {
 	Select,
 	Anchor,
 	SectionPanel,
-} from "@/shared/ui";
+} from "@octofhir/ui-kit";
 import { WorkspacePageLayout } from "@/widgets/workspace-page";
 import classes from "./OperationsPage.module.css";
 import {

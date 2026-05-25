@@ -1,3 +1,4 @@
+import { Button } from "@octofhir/ui-kit";
 import { useCallback, useMemo } from "react";
 import { Play } from "@gravity-ui/icons";
 import { useUnit } from "effector-react";
@@ -9,7 +10,6 @@ import type {
 } from "@/shared/api";
 import type { QueryInputMetadata } from "@/shared/fhir-query-input";
 import { QueryEditor } from "@/shared/fhir-query-input/widgets/QueryEditor";
-import { Button } from "@/shared/ui";
 import { MethodControl } from "./MethodControl";
 import styles from "./RequestBar.module.css";
 

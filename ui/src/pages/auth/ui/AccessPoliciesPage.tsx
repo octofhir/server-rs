@@ -1,3 +1,4 @@
+import { Button, Card, Field, Form, FormSpy, useDebouncedValue, useDisclosure } from "@octofhir/ui-kit";
 import { useState, useMemo } from "react";
 import {
 	ActionIcon,
@@ -15,9 +16,8 @@ import {
 	Text,
 	Textarea,
 	TextInput,
-} from "@/shared/ui";
+} from "@octofhir/ui-kit";
 import { WorkspacePageLayout } from "@/widgets/workspace-page";
-import { Field, Form, FormSpy, useDebouncedValue, useDisclosure } from "@octofhir/ui-kit";
 import {
 	Plus,
 	Magnifier,
@@ -51,9 +51,7 @@ import {
 import { useClients } from "../lib/useClients";
 import { getBundleResources, isRecord } from "@/shared/api/guards";
 import { useResourceTypes } from "@/shared/api/hooks";
-import { Button } from "@/shared/ui/Button/Button";
 import { PolicyScriptEditor } from "@/shared/monaco/PolicyScriptEditor";
-import { Card } from "@/shared/ui/Card/Card";
 import type { ClientResource } from "@/entities/oauth-client";
 import classes from "./AccessPoliciesPage.module.css";
 

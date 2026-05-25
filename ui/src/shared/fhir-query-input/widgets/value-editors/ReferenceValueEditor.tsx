@@ -1,5 +1,5 @@
+import { Select, TextInput } from "@octofhir/ui-kit";
 import { useCallback, useMemo } from "react";
-import { Select, TextInput } from "@/shared/ui";
 import type { RestConsoleSearchParam } from "@/shared/api";
 import classes from "./ValueEditor.module.css";
 

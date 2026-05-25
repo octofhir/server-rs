@@ -1,0 +1,51 @@
+.handle {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    transition: background-color var(--octo-motion-fast, 100ms) var(--octo-motion-ease, ease);
+    touch-action: none;
+}
+
+/* Horizontal resizing handle styling */
+:global([data-panel-group-direction="horizontal"]) > .handle {
+    width: 8px;
+    height: 100%;
+    cursor: col-resize;
+    margin: 0 -4px;
+    z-index: 10;
+}
+
+/* Vertical resizing handle styling */
+:global([data-panel-group-direction="vertical"]) > .handle {
+    height: 8px;
+    width: 100%;
+    cursor: row-resize;
+    margin: -4px 0;
+    z-index: 10;
+}
+
+.line {
+    background-color: var(--octo-border-subtle, var(--g-color-line-generic));
+    transition: background-color var(--octo-motion-fast, 100ms) var(--octo-motion-ease, ease),
+                box-shadow var(--octo-motion-fast, 100ms) var(--octo-motion-ease, ease);
+}
+
+:global([data-panel-group-direction="horizontal"]) > .handle .line {
+    width: 2px;
+    height: 100%;
+}
+
+:global([data-panel-group-direction="vertical"]) > .handle .line {
+    height: 2px;
+    width: 100%;
+}
+
+/* Glow highlight for active dragging or hover */
+.handle:hover .line,
+.handle[data-resize-handle-state="hover"] .line,
+.handle[data-resize-handle-state="drag"] .line {
+    background-color: var(--octo-brand-primary, var(--g-color-base-brand));
+    box-shadow: 0 0 6px var(--octo-brand-primary-ring, var(--g-color-base-brand-hover));
+}

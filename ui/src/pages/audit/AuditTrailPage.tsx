@@ -1,7 +1,6 @@
+import { ActionIcon, Tabs, Text, Tooltip, notifications } from "@octofhir/ui-kit";
 import { useState, useCallback, useMemo } from "react";
-import { Text, Tabs, ActionIcon, Tooltip } from "@/shared/ui";
 import { WorkspacePageLayout } from "@/widgets/workspace-page";
-import { notifications } from "@octofhir/ui-kit";
 import { ListUl, ChartBar, Xmark } from "@gravity-ui/icons";
 import { useAuditEvents, useAuditAnalytics, exportAuditLogs } from "./lib/useAudit";
 import { AuditFilters } from "./ui/AuditFilters";

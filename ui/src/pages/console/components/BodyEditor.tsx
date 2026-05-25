@@ -1,7 +1,6 @@
+import { Alert, Button, IconAlertCircle, Skeleton, Text } from "@octofhir/ui-kit";
 import { Suspense, useState } from "react";
 import { useUnit } from "effector-react";
-import { Text, Button, Alert, Skeleton } from "@/shared/ui";
-import { IconAlertCircle } from "@octofhir/ui-kit";
 import { JsonEditor } from "@/shared/monaco";
 import { $body, setBody } from "../state/consoleStore";
 import { generateTemplate } from "../utils/templateGenerator";

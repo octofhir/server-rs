@@ -7,9 +7,12 @@ import {
   JsonInput,
   Select,
   Loader,
-} from '@/shared/ui';
-import { ToolWorkspaceLayout } from '@/widgets/tool-workspace';
-import { Play, CircleExclamation } from '@gravity-ui/icons';
+  Resizable,
+  PageContainer,
+  ScrollableContent,
+  PageHeader,
+} from '@octofhir/ui-kit';
+import { Play } from '@gravity-ui/icons';
 import { Editor } from '@monaco-editor/react';
 import { useMutation } from '@tanstack/react-query';
 import { fhirClient } from '@/shared/api/fhirClient';
@@ -123,138 +126,158 @@ export function CqlConsole() {
   const result = extractResult(evaluateMutation.data);
 
   return (
-    <ToolWorkspaceLayout
-      title="CQL Console"
-      description="Evaluate Clinical Quality Language (CQL) expressions"
-      className="page-enter"
-    >
-      <div className={classes.workspace}>
-        <section className={classes.panel}>
-          <div className={classes.formStack}>
-            <div className={classes.fieldBlock}>
-              <Text size="sm" fw={500} className={classes.fieldLabel}>
-                CQL Expression
-              </Text>
-              <div className={classes.editorFrame}>
-                <Editor
-                  height="200px"
-                  defaultLanguage="plaintext"
-                  value={expression}
-                  onChange={(value) => setExpression(value || '')}
-                  theme="vs-dark"
-                  options={{
-                    minimap: { enabled: false },
-                    fontSize: 14,
-                    lineNumbers: 'on',
-                    scrollBeyondLastLine: false,
-                    automaticLayout: true,
-                  }}
-                />
-              </div>
-            </div>
-
-            <div className={classes.fieldBlock}>
-              <Select
-                label="Context Type (optional)"
-                placeholder="Select resource type"
-                value={contextType}
-                onChange={setContextType}
-                data={[
-                  { value: 'Patient', label: 'Patient' },
-                  { value: 'Encounter', label: 'Encounter' },
-                  { value: 'Observation', label: 'Observation' },
-                  { value: 'Condition', label: 'Condition' },
-                ]}
-                clearable
-              />
-            </div>
-
-            <JsonInput
-              label="Context Value (optional JSON)"
-              placeholder='{"resourceType": "Patient", "id": "123"}'
-              value={contextValue}
-              onChange={setContextValue}
-              minRows={3}
-              maxRows={6}
-              autosize
-            />
-
-            <JsonInput
-              label="Parameters (optional JSON)"
-              placeholder='{"paramName": 5, "anotherParam": "value"}'
-              value={parameters}
-              onChange={setParameters}
-              minRows={3}
-              maxRows={6}
-              autosize
-            />
-
-            <Button
-              leftSection={evaluateMutation.isPending ? <Loader size="xs" /> : <Play size={16} />}
-              onClick={handleEvaluate}
-              disabled={!expression.trim() || evaluateMutation.isPending}
-              fullWidth
-            >
-              {evaluateMutation.isPending ? 'Evaluating...' : 'Evaluate Expression'}
-            </Button>
-
-            <div className={classes.examples}>
-              <Text size="xs" fw={600}>
-                Example expressions
-              </Text>
-              <Code block className={classes.exampleCode}>1 + 1</Code>
-              <Code block className={classes.exampleCode}>true and false</Code>
-              <Code block className={classes.exampleCode}>&apos;Hello&apos; + &apos; &apos; + &apos;World&apos;</Code>
-              <Code block className={classes.exampleCode}>5 &gt; 3</Code>
-              <Code block className={classes.exampleCode}>&#123;1, 2, 3, 4, 5&#125;</Code>
-            </div>
-          </div>
-        </section>
-
-        <section className={classes.panel}>
-          <div className={classes.resultHeader}>
-            <Text size="sm" fw={600}>
-              Result
-            </Text>
-          </div>
-
-          {evaluateMutation.isPending && (
-            <div className={classes.emptyState}>
-              <Loader size="md" />
-              <Text size="sm" c="dimmed">Evaluating...</Text>
-            </div>
-          )}
-
-          {evaluateMutation.isError && (
-            <Alert
-              icon={<CircleExclamation size={16} />}
-              title="Evaluation Error"
-              color="red"
-              radius="md"
-            >
-              {evaluateMutation.error instanceof Error
-                ? evaluateMutation.error.message
-                : 'An unknown error occurred'}
-            </Alert>
-          )}
-
-          {evaluateMutation.isSuccess && (
-            <div className={classes.resultCode}>
-              <Code block>
-                {JSON.stringify(result, null, 2)}
-              </Code>
-            </div>
-          )}
-
-          {!evaluateMutation.isPending && !evaluateMutation.isError && !evaluateMutation.isSuccess && (
-            <div className={classes.emptyState}>
-              <Text size="sm">
-                Enter a CQL expression and click "Evaluate" to see results
-              </Text>
-            </div>
-          )}
-        </section>
+    <PageContainer className="page-enter">
+      <div style={{ padding: '14px 20px', borderBottom: '1px solid var(--g-color-line-generic)' }}>
+        <PageHeader
+          title="CQL Console"
+          description="Evaluate Clinical Quality Language (CQL) expressions"
+        />
       </div>
-    </ToolWorkspaceLayout>
+
+      <div style={{ flex: 1, minHeight: 0, width: '100%' }}>
+        <Resizable.Group orientation="horizontal">
+          <Resizable.Pane defaultSize={45} minSize={30}>
+            <ScrollableContent>
+              <div className={classes.formStack}>
+                <div className={classes.fieldBlock}>
+                  <Text variant="body-2" style={{ fontWeight: 500, marginBottom: 4 }}>
+                    CQL Expression
+                  </Text>
+                  <div className={classes.editorFrame}>
+                    <Editor
+                      height="200px"
+                      defaultLanguage="plaintext"
+                      value={expression}
+                      onChange={(value) => setExpression(value || '')}
+                      theme="vs-dark"
+                      options={{
+                        minimap: { enabled: false },
+                        fontSize: 14,
+                        lineNumbers: 'on',
+                        scrollBeyondLastLine: false,
+                        automaticLayout: true,
+                      }}
+                    />
+                  </div>
+                </div>
+
+                <div className={classes.fieldBlock}>
+                  <Select
+                    label="Context Type (optional)"
+                    placeholder="Select resource type"
+                    value={contextType}
+                    onChange={setContextType}
+                    data={[
+                      { value: 'Patient', label: 'Patient' },
+                      { value: 'Encounter', label: 'Encounter' },
+                      { value: 'Observation', label: 'Observation' },
+                      { value: 'Condition', label: 'Condition' },
+                    ]}
+                    clearable
+                  />
+                </div>
+
+                <JsonInput
+                  label="Context Value (optional JSON)"
+                  placeholder='{"resourceType": "Patient", "id": "123"}'
+                  value={contextValue}
+                  onChange={setContextValue}
+                  minRows={3}
+                  maxRows={6}
+                  autosize
+                />
+
+                <JsonInput
+                  label="Parameters (optional JSON)"
+                  placeholder='{"paramName": 5, "anotherParam": "value"}'
+                  value={parameters}
+                  onChange={setParameters}
+                  minRows={3}
+                  maxRows={6}
+                  autosize
+                />
+
+                <Button
+                  view="action"
+                  size="l"
+                  onClick={handleEvaluate}
+                  disabled={!expression.trim() || evaluateMutation.isPending}
+                  style={{ width: '100%', marginTop: 8 }}
+                >
+                  {evaluateMutation.isPending ? (
+                    <>
+                      <Loader size="s" style={{ marginRight: 8 }} />
+                      Evaluating...
+                    </>
+                  ) : (
+                    <>
+                      <Play size={16} style={{ marginRight: 8 }} />
+                      Evaluate Expression
+                    </>
+                  )}
+                </Button>
+
+                <div className={classes.examples}>
+                  <Text variant="caption-2" style={{ fontWeight: 600, textTransform: 'uppercase', color: 'var(--g-color-text-secondary)' }}>
+                    Example expressions
+                  </Text>
+                  <Code className={classes.exampleCode}>1 + 1</Code>
+                  <Code className={classes.exampleCode}>true and false</Code>
+                  <Code className={classes.exampleCode}>&apos;Hello&apos; + &apos; &apos; + &apos;World&apos;</Code>
+                  <Code className={classes.exampleCode}>5 &gt; 3</Code>
+                  <Code className={classes.exampleCode}>&#123;1, 2, 3, 4, 5&#125;</Code>
+                </div>
+              </div>
+            </ScrollableContent>
+          </Resizable.Pane>
+
+          <Resizable.Handle />
+
+          <Resizable.Pane defaultSize={55} minSize={30}>
+            <ScrollableContent style={{ borderLeft: '1px solid var(--g-color-line-generic)' }}>
+              <div className={classes.resultHeader}>
+                <Text variant="subheader-2">Result</Text>
+              </div>
+
+              {evaluateMutation.isPending && (
+                <div className={classes.emptyState}>
+                  <Loader size="l" />
+                  <Text color="secondary">Evaluating...</Text>
+                </div>
+              )}
+
+              {evaluateMutation.isError && (
+                <Alert
+                  view="filled"
+                  theme="danger"
+                  title="Evaluation Error"
+                  style={{ borderRadius: 8 }}
+                >
+                  {evaluateMutation.error instanceof Error
+                    ? evaluateMutation.error.message
+                    : 'An unknown error occurred'}
+                </Alert>
+              )}
+
+              {evaluateMutation.isSuccess && (
+                <div className={classes.resultCode}>
+                  <Code style={{ display: 'block', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
+                    {JSON.stringify(result, null, 2)}
+                  </Code>
+                </div>
+              )}
+
+              {!evaluateMutation.isPending && !evaluateMutation.isError && !evaluateMutation.isSuccess && (
+                <div className={classes.emptyState}>
+                  <Text color="secondary">
+                    Enter a CQL expression and click "Evaluate" to see results
+                  </Text>
+                </div>
+              )}
+            </ScrollableContent>
+          </Resizable.Pane>
+        </Resizable.Group>
+      </div>
+    </PageContainer>
   );
 }

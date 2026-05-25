@@ -1,5 +1,5 @@
+import { ActionIcon, Tabs, Tooltip } from "@octofhir/ui-kit";
 import { Pulse, Clock, SquareListUl, Xmark } from "@gravity-ui/icons";
-import { ActionIcon, Tabs, Tooltip } from "@/shared/ui";
 import { ActiveQueriesTab } from "./ActiveQueriesTab";
 import { HistoryTab } from "./HistoryTab";
 import { TablesTab } from "./TablesTab";

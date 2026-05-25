@@ -10,7 +10,7 @@ import {
 	Chip,
 	Select,
 	DateTimePicker,
-} from "@/shared/ui";
+} from "@octofhir/ui-kit";
 import {
 	Magnifier,
 	FunnelXmark,

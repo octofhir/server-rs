@@ -43,13 +43,21 @@ pub enum DatePredicate {
     Contains { q: DateRange },
     /// `NOT EXISTS (… r.rng <@ q …)` — ne.
     NotContains { q: DateRange },
-    /// `r.rng && tstzrange(lo, hi, …)` — gt, lt, ge, le, ap, and any window
-    /// produced by the fold rewrite. `lo`/`hi` of `None` mean an infinite
-    /// half-line in that direction.
+    /// `r.rng && tstzrange(lo, hi, …)` — gt, lt, ap, and any window produced
+    /// by the fold rewrite. `lo`/`hi` of `None` mean an infinite half-line
+    /// in that direction.
     Overlap {
         lo: Option<Bound>,
         hi: Option<Bound>,
     },
+    /// `ge`: `(r.rng && [upper(q), +∞)) OR (r.rng <@ q)` —
+    /// FHIR §3.1.1.5.1: the range above the search value intersects the
+    /// target range, OR the search range fully contains the target range.
+    Ge { q: DateRange },
+    /// `le`: `(r.rng && (-∞, lower(q))) OR (r.rng <@ q)` —
+    /// FHIR §3.1.1.5.1: the range below the search value intersects the
+    /// target range, OR the search range fully contains the target range.
+    Le { q: DateRange },
     /// `r.rng >> tstzrange(q.lo, q.hi, '[)')` — sa.
     StrictlyAfter { q: DateRange },
     /// `r.rng << tstzrange(q.lo, q.hi, '[)')` — eb.
@@ -128,27 +136,19 @@ impl DateClause {
                     lo: None,
                     hi: Some(Bound::exclusive(q.start)),
                 },
-                // ge: r intersects [lower(q), +∞)
-                SearchPrefix::Ge => DatePredicate::Overlap {
-                    lo: Some(Bound::inclusive(q.start)),
-                    hi: None,
-                },
-                // le: r intersects (-∞, upper(q))
-                SearchPrefix::Le => DatePredicate::Overlap {
-                    lo: None,
-                    hi: Some(Bound::exclusive(q.end)),
-                },
+                // ge: (r intersects [upper(q), +∞)) OR (q contains r)
+                SearchPrefix::Ge => DatePredicate::Ge { q },
+                // le: (r intersects (-∞, lower(q))) OR (q contains r)
+                SearchPrefix::Le => DatePredicate::Le { q },
                 SearchPrefix::Sa => DatePredicate::StrictlyAfter { q },
                 SearchPrefix::Eb => DatePredicate::StrictlyBefore { q },
-                // ap: ±10% expansion around q (matches date.rs::build_index_date_search).
-                SearchPrefix::Ap => {
-                    let duration = q.end - q.start;
-                    let expansion = duration / 10;
-                    DatePredicate::Overlap {
-                        lo: Some(Bound::inclusive(q.start - expansion)),
-                        hi: Some(Bound::exclusive(q.end + expansion)),
-                    }
-                }
+                // ap: strict overlap with the search range. FHIR §3.1.1.5.1
+                // leaves the window implementation-defined; we use the same
+                // shape as plain overlap so boundary touches do not match.
+                SearchPrefix::Ap => DatePredicate::Overlap {
+                    lo: Some(Bound::inclusive(q.start)),
+                    hi: Some(Bound::exclusive(q.end)),
+                },
             };
             out.push(DateClause {
                 resource_type: resource_type.to_string(),
@@ -208,6 +208,28 @@ impl DateClause {
                      WHERE sid.resource_type = ${rt_param} AND sid.resource_id = {id_col} \
                      AND sid.param_code = ${pc_param} \
                      AND sid.rng && tstzrange({lo_expr}, {hi_expr}, '{bounds}'))"
+                )
+            }
+            DatePredicate::Ge { q } => {
+                let p_lo = builder.add_timestamp_param(format_rfc3339(&q.start));
+                let p_hi = builder.add_timestamp_param(format_rfc3339(&q.end));
+                format!(
+                    "EXISTS (SELECT 1 FROM search_idx_date sid \
+                     WHERE sid.resource_type = ${rt_param} AND sid.resource_id = {id_col} \
+                     AND sid.param_code = ${pc_param} \
+                     AND (sid.rng && tstzrange(${p_hi}::timestamptz, NULL, '[)') \
+                          OR sid.rng <@ tstzrange(${p_lo}::timestamptz, ${p_hi}::timestamptz, '[)')))"
+                )
+            }
+            DatePredicate::Le { q } => {
+                let p_lo = builder.add_timestamp_param(format_rfc3339(&q.start));
+                let p_hi = builder.add_timestamp_param(format_rfc3339(&q.end));
+                format!(
+                    "EXISTS (SELECT 1 FROM search_idx_date sid \
+                     WHERE sid.resource_type = ${rt_param} AND sid.resource_id = {id_col} \
+                     AND sid.param_code = ${pc_param} \
+                     AND (sid.rng && tstzrange(NULL, ${p_lo}::timestamptz, '[)') \
+                          OR sid.rng <@ tstzrange(${p_lo}::timestamptz, ${p_hi}::timestamptz, '[)')))"
                 )
             }
             DatePredicate::StrictlyAfter { q } => {
@@ -480,6 +502,12 @@ mod tests {
             DatePredicate::Contains { q } => contains(q, target),
             DatePredicate::NotContains { q } => !contains(q, target),
             DatePredicate::Overlap { lo, hi } => overlap(*lo, *hi, target),
+            DatePredicate::Ge { q } => {
+                overlap(Some(Bound::inclusive(q.end)), None, target) || contains(q, target)
+            }
+            DatePredicate::Le { q } => {
+                overlap(None, Some(Bound::exclusive(q.start)), target) || contains(q, target)
+            }
             DatePredicate::StrictlyAfter { q } => le(TestEndpoint::Finite(q.end), target.lo),
             DatePredicate::StrictlyBefore { q } => le(target.hi, TestEndpoint::Finite(q.start)),
             DatePredicate::Missing { .. } => false,
@@ -496,9 +524,7 @@ mod tests {
     #[test]
     fn from_parsed_param_maps_each_prefix() {
         for (prefix, expect_overlap, expect_inclusive_lo) in [
-            (SearchPrefix::Ge, true, Some(true)),
             (SearchPrefix::Gt, true, Some(true)),
-            (SearchPrefix::Le, true, None),
             (SearchPrefix::Lt, true, None),
             (SearchPrefix::Ap, true, Some(true)),
             (SearchPrefix::Eq, false, None),
@@ -521,6 +547,17 @@ mod tests {
                 _ => {}
             }
         }
+        // ge / le now map to dedicated FHIR-correct predicates.
+        for prefix in [SearchPrefix::Ge, SearchPrefix::Le] {
+            let p = pp("date", prefix, "2024-06-15");
+            let clauses = DateClause::from_parsed_param(&p, "Patient").unwrap();
+            assert_eq!(clauses.len(), 1);
+            match (&clauses[0].predicate, prefix) {
+                (DatePredicate::Ge { .. }, SearchPrefix::Ge) => {}
+                (DatePredicate::Le { .. }, SearchPrefix::Le) => {}
+                (other, _) => panic!("unexpected predicate for {prefix:?}: {other:?}"),
+            }
+        }
     }
 
     #[test]
@@ -539,7 +576,7 @@ mod tests {
             (SearchPrefix::Le, [true, true, false, true]),
             (SearchPrefix::Sa, [false, false, true, false]),
             (SearchPrefix::Eb, [true, false, false, false]),
-            (SearchPrefix::Ap, [true, true, true, true]),
+            (SearchPrefix::Ap, [false, true, false, true]),
         ];
 
         for (prefix, expected) in cases {
@@ -583,44 +620,35 @@ mod tests {
     }
 
     #[test]
-    fn merge_collapses_ge_le_into_one_window() {
-        let ge = DateClause::from_parsed_param(&pp("date", SearchPrefix::Ge, "2024-01-01"), "Pt")
+    fn merge_collapses_gt_lt_into_one_window() {
+        // Only `Overlap` predicates participate in window folding. `Ge`/`Le`
+        // carry containment as well and pass through unchanged.
+        let gt = DateClause::from_parsed_param(&pp("date", SearchPrefix::Gt, "2024-01-01"), "Pt")
             .unwrap();
-        let le = DateClause::from_parsed_param(&pp("date", SearchPrefix::Le, "2024-12-31"), "Pt")
+        let lt = DateClause::from_parsed_param(&pp("date", SearchPrefix::Lt, "2024-12-31"), "Pt")
             .unwrap();
-        let mut all = ge;
-        all.extend(le);
+        let mut all = gt;
+        all.extend(lt);
 
         let merged = merge_overlap_windows(all);
-        assert_eq!(merged.len(), 1, "ge+le must collapse into one clause");
+        assert_eq!(merged.len(), 1, "gt+lt must collapse into one clause");
         let DatePredicate::Overlap { lo, hi } = &merged[0].predicate else {
             panic!("expected Overlap, got {:?}", merged[0].predicate);
         };
-        assert!(lo.unwrap().inclusive, "ge → inclusive lower");
-        assert!(!hi.unwrap().inclusive, "le → exclusive upper");
-        // Lower must be 2024-01-01, upper must be 2025-01-01 (le2024-12-31 expanded).
-        let lo_str = format_rfc3339(&lo.unwrap().at);
-        let hi_str = format_rfc3339(&hi.unwrap().at);
-        assert!(
-            lo_str.starts_with("2024-01-01"),
-            "lo should be 2024-01-01, got {lo_str}"
-        );
-        assert!(
-            hi_str.starts_with("2025-01-01"),
-            "hi should be 2025-01-01, got {hi_str}"
-        );
+        assert!(lo.unwrap().inclusive, "gt → inclusive lower at upper(q)");
+        assert!(!hi.unwrap().inclusive, "lt → exclusive upper at lower(q)");
     }
 
     #[test]
     fn merge_keeps_eq_clause_separate() {
         let eq = DateClause::from_parsed_param(&pp("date", SearchPrefix::Eq, "2024-06-15"), "Pt")
             .unwrap();
-        let ge = DateClause::from_parsed_param(&pp("date", SearchPrefix::Ge, "2020-01-01"), "Pt")
+        let gt = DateClause::from_parsed_param(&pp("date", SearchPrefix::Gt, "2020-01-01"), "Pt")
             .unwrap();
         let mut all = eq;
-        all.extend(ge);
+        all.extend(gt);
         let merged = merge_overlap_windows(all);
-        // One merged Overlap (from the lone ge) + the untouched eq Contains.
+        // One merged Overlap (from the lone gt) + the untouched eq Contains.
         assert_eq!(merged.len(), 2, "got: {merged:?}");
         let kinds: Vec<&str> = merged
             .iter()
@@ -635,18 +663,18 @@ mod tests {
     }
 
     #[test]
-    fn merge_takes_strictest_lo_when_two_ge_present() {
+    fn merge_takes_strictest_lo_when_two_gt_present() {
         let mut all = Vec::new();
         all.extend(
-            DateClause::from_parsed_param(&pp("date", SearchPrefix::Ge, "1980-01-01"), "Pt")
+            DateClause::from_parsed_param(&pp("date", SearchPrefix::Gt, "1980-01-01"), "Pt")
                 .unwrap(),
         );
         all.extend(
-            DateClause::from_parsed_param(&pp("date", SearchPrefix::Ge, "1990-06-15"), "Pt")
+            DateClause::from_parsed_param(&pp("date", SearchPrefix::Gt, "1990-06-15"), "Pt")
                 .unwrap(),
         );
         all.extend(
-            DateClause::from_parsed_param(&pp("date", SearchPrefix::Le, "2010-01-01"), "Pt")
+            DateClause::from_parsed_param(&pp("date", SearchPrefix::Lt, "2010-01-01"), "Pt")
                 .unwrap(),
         );
         let merged = merge_overlap_windows(all);
@@ -655,9 +683,10 @@ mod tests {
             panic!()
         };
         let lo_str = format_rfc3339(&lo.unwrap().at);
+        // gt > 1990-06-15 → lower bound starts at upper(q)=1990-06-16
         assert!(
-            lo_str.starts_with("1990-06-15"),
-            "strictest ge wins, got {lo_str}"
+            lo_str.starts_with("1990-06-16"),
+            "strictest gt wins, got {lo_str}"
         );
     }
 
@@ -665,12 +694,12 @@ mod tests {
     fn render_overlap_emits_half_infinite_when_one_side_missing() {
         let mut builder = SqlBuilder::with_resource_column("r.resource");
         let clauses =
-            DateClause::from_parsed_param(&pp("date", SearchPrefix::Ge, "2024-01-01"), "Pt")
+            DateClause::from_parsed_param(&pp("date", SearchPrefix::Gt, "2024-01-01"), "Pt")
                 .unwrap();
         let sql = clauses[0].render(&mut builder);
         assert!(
             sql.contains("tstzrange(") && sql.contains(", NULL,") && sql.contains("'[)'"),
-            "ge → half-infinite [lo, NULL, '[)'): {sql}"
+            "gt → half-infinite [upper(q), NULL, '[)'): {sql}"
         );
     }
 

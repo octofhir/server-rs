@@ -1,4 +1,4 @@
-import { SegmentedControl } from "@/shared/ui";
+import { SegmentedControl } from "@octofhir/ui-kit";
 import { useUnit } from "effector-react";
 import { $mode, setMode, type ConsoleMode } from "../state/consoleStore";
 

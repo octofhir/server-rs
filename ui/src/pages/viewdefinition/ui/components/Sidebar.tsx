@@ -1,5 +1,4 @@
-import { Text, Divider, Button } from "@/shared/ui";
-import { IconCheck } from "@octofhir/ui-kit";
+import { Button, Divider, IconCheck, Text } from "@octofhir/ui-kit";
 import type { ViewDefinition } from "../../lib/useViewDefinition";
 import classes from "./Sidebar.module.css";
 

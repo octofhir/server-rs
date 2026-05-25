@@ -1,5 +1,5 @@
+import { Kbd, Text, UnstyledButton } from "@octofhir/ui-kit";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Kbd, Text, UnstyledButton } from "@/shared/ui";
 import { ClockArrowRotateLeft, Terminal, ChevronRight, ChevronDown } from "@gravity-ui/icons";
 import { StreamEntryCard, type StreamEntry } from "./StreamEntryCard";
 import classes from "../DbConsolePage.module.css";

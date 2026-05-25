@@ -1,8 +1,7 @@
 import { Server, SquareListUl, Wrench } from "@gravity-ui/icons";
 import type { ReactNode } from "react";
-import { Badge, Code, Loader, Text } from "@/shared/ui";
+import { Badge, Code, Loader, Text, WorkspacePageLayout, WorkspacePageSection } from "@octofhir/ui-kit";
 import { useCapabilities } from "@/shared/api/hooks";
-import { WorkspacePageLayout, WorkspacePageSection } from "@/widgets/workspace-page";
 import classes from "./CapabilityStatementPage.module.css";
 
 export function CapabilityStatementPage() {

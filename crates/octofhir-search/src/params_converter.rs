@@ -1812,7 +1812,7 @@ mod tests {
     fn date_debug_plan_is_collected_only_when_requested() {
         let registry = date_registry_with_expression();
         let params = parse_query_string(
-            "birthdate=ge2000-01-01&birthdate=le2000-12-31&_count=5",
+            "birthdate=gt2000-01-01&birthdate=lt2000-12-31&_count=5",
             10,
             100,
         );
@@ -2415,19 +2415,21 @@ mod tests {
     }
 
     #[test]
-    fn fold_ge_le_emits_single_overlap() {
+    fn fold_gt_lt_emits_single_overlap() {
+        // Only plain `Overlap` predicates participate in window folding;
+        // `Ge`/`Le` carry containment as well and are skipped.
         let registry = date_registry();
         let mut builder = SqlBuilder::with_resource_column("r.resource");
         let folded = try_fold_repeated_date_window(
             &mut builder,
             None,
             "birthdate",
-            &["ge1980-01-01".to_string(), "le2000-01-01".to_string()],
+            &["gt1980-01-01".to_string(), "lt2000-01-01".to_string()],
             &registry,
             "Patient",
         )
         .unwrap();
-        assert!(folded, "ge+le must fold");
+        assert!(folded, "gt+lt must fold");
         let clause = builder.build_where_clause().unwrap();
         assert!(
             clause.contains("sid.rng && tstzrange(")
@@ -2483,7 +2485,7 @@ mod tests {
     }
 
     #[test]
-    fn fold_takes_strictest_lo_when_ge_repeated() {
+    fn fold_takes_strictest_lo_when_gt_repeated() {
         let registry = date_registry();
         let mut builder = SqlBuilder::with_resource_column("r.resource");
         let folded = try_fold_repeated_date_window(
@@ -2491,38 +2493,39 @@ mod tests {
             None,
             "birthdate",
             &[
-                "ge1980-01-01".to_string(),
-                "ge1990-06-15".to_string(),
-                "le2010-01-01".to_string(),
+                "gt1980-01-01".to_string(),
+                "gt1990-06-15".to_string(),
+                "lt2010-01-01".to_string(),
             ],
             &registry,
             "Patient",
         )
         .unwrap();
-        assert!(folded, "ge+ge+le must fold");
+        assert!(folded, "gt+gt+lt must fold");
         let clause = builder.build_where_clause().unwrap();
         let params = builder.params();
-        // The lo param must be the *later* of the two ge values (strictest).
+        // The lo param must be the *later* of the two gt values (strictest).
+        // gt q ↔ r && [upper(q), …), so gt1990-06-15 → lo = upper(q) = 1990-06-16.
         let lo_param = params
             .iter()
             .find_map(|p| match p {
-                crate::sql_builder::SqlParam::Timestamp(s) if s.starts_with("1990-06-15") => {
+                crate::sql_builder::SqlParam::Timestamp(s) if s.starts_with("1990-06-16") => {
                     Some(s.clone())
                 }
                 _ => None,
             })
-            .expect("strictest lo (1990-06-15) must be bound");
+            .expect("strictest lo (1990-06-16) must be bound");
         assert!(
             !clause.is_empty() && !lo_param.is_empty(),
-            "expected lo param 1990-06-15 to be present"
+            "expected lo param 1990-06-16 to be present"
         );
-        // The looser 1980-01-01 must NOT be a parameter.
+        // The looser 1980-01-02 must NOT be a parameter.
         assert!(
             !params.iter().any(|p| matches!(
                 p,
-                crate::sql_builder::SqlParam::Timestamp(s) if s.starts_with("1980-01-01")
+                crate::sql_builder::SqlParam::Timestamp(s) if s.starts_with("1980-01-02")
             )),
-            "looser lo 1980-01-01 should not survive the fold"
+            "looser lo 1980-01-02 should not survive the fold"
         );
     }
 

@@ -1,5 +1,5 @@
+import { Select, Tabs, TextInput } from "@octofhir/ui-kit";
 import { useCallback, useRef } from "react";
-import { Select, Tabs, TextInput } from "@/shared/ui";
 import { arrayMove } from "@dnd-kit/sortable";
 import { ColumnBuilder } from "./ColumnBuilder";
 import { ConstantsEditor } from "./ConstantsEditor";

@@ -1,4 +1,4 @@
-import { Group, Text, Box, UnstyledButton } from "@/shared/ui";
+import { Box, Group, Text, UnstyledButton } from "@octofhir/ui-kit";
 import {
 	CircleExclamation,
 	TriangleExclamation,

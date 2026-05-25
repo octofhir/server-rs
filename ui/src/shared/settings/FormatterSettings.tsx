@@ -6,7 +6,7 @@ import {
   Divider,
   Collapse,
   ActionIcon,
-} from '@/shared/ui';
+} from "@octofhir/ui-kit";
 import { ChevronDown, ChevronRight } from '@gravity-ui/icons';
 import { useState } from 'react';
 import {

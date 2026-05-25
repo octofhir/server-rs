@@ -591,16 +591,30 @@ fn uri_clause_expr(builder: &mut SqlBuilder, clause: &UriClause, path: &str) -> 
     }
 }
 
+/// Wrap a JSONB path in a CASE that normalizes scalar strings to a
+/// singleton array, so `jsonb_array_elements_text` is safe regardless of
+/// whether the resolved element_type_hint marked the field as an array.
+fn jsonb_uri_array_normalized(array_path: &str) -> String {
+    format!(
+        "CASE \
+         WHEN jsonb_typeof({array_path}) = 'array' THEN {array_path} \
+         WHEN jsonb_typeof({array_path}) = 'string' THEN jsonb_build_array({array_path}) \
+         ELSE '[]'::jsonb \
+         END"
+    )
+}
+
 fn uri_array_clause_expr(
     builder: &mut SqlBuilder,
     clause: &UriClause,
     array_path: &str,
 ) -> SqlExpr {
+    let normalized = jsonb_uri_array_normalized(array_path);
     match &clause.predicate {
         UriPredicate::Exact { value } => {
             let p = builder.add_text_param(value);
             jsonb_array_text_exists_expr(
-                array_path,
+                &normalized,
                 "uri",
                 SqlExpr::Compare {
                     lhs: SqlTerm::Ident("uri".to_string()),
@@ -613,7 +627,7 @@ fn uri_array_clause_expr(
             let escaped = escape_like_pattern(value);
             let p = builder.add_text_param(format!("{escaped}%"));
             jsonb_array_text_exists_expr(
-                array_path,
+                &normalized,
                 "uri",
                 SqlExpr::Compare {
                     lhs: SqlTerm::Ident("uri".to_string()),
@@ -625,7 +639,7 @@ fn uri_array_clause_expr(
         UriPredicate::Above { value } => {
             let p = builder.add_text_param(value);
             jsonb_array_text_exists_expr(
-                array_path,
+                &normalized,
                 "uri",
                 SqlExpr::Compare {
                     lhs: SqlTerm::Param(p),
@@ -638,7 +652,7 @@ fn uri_array_clause_expr(
             let escaped = escape_like_pattern(&value.to_lowercase());
             let p = builder.add_text_param(format!("%{escaped}%"));
             jsonb_array_text_exists_expr(
-                array_path,
+                &normalized,
                 "uri",
                 SqlExpr::Compare {
                     lhs: SqlTerm::Ident("LOWER(uri)".to_string()),
@@ -835,6 +849,33 @@ fn date_column_clause_expr(builder: &mut SqlBuilder, clause: &DateClause, column
             ])
         }
         DatePredicate::Overlap { lo, hi } => timestamp_window_expr(builder, column, *lo, *hi),
+        // Column-based path: target value is a single timestamp, not a range.
+        // ge → target >= upper(q) OR target ∈ q (i.e. target >= lower(q)).
+        // Combined: target >= lower(q).
+        DatePredicate::Ge { q } => {
+            let p_lo = builder.add_timestamp_param(format_rfc3339(&q.start));
+            SqlExpr::Compare {
+                lhs: SqlTerm::Ident(column.to_string()),
+                op: SqlOp::Ge,
+                rhs: SqlTerm::ParamCast {
+                    index: p_lo,
+                    cast: "timestamptz",
+                },
+            }
+        }
+        // le → target < lower(q) OR target ∈ q (target < upper(q)).
+        // Combined: target < upper(q).
+        DatePredicate::Le { q } => {
+            let p_hi = builder.add_timestamp_param(format_rfc3339(&q.end));
+            SqlExpr::Compare {
+                lhs: SqlTerm::Ident(column.to_string()),
+                op: SqlOp::Lt,
+                rhs: SqlTerm::ParamCast {
+                    index: p_hi,
+                    cast: "timestamptz",
+                },
+            }
+        }
         DatePredicate::StrictlyAfter { q } => {
             let p = builder.add_timestamp_param(format_rfc3339(&q.end));
             SqlExpr::Compare {
@@ -1017,22 +1058,83 @@ fn date_sidecar_clause_expr(builder: &mut SqlBuilder, clause: &DateClause) -> Sq
                 rhs: timestamp_range_term(builder, *lo, *hi),
             },
         ),
-        DatePredicate::StrictlyAfter { q } => (
+        DatePredicate::Ge { q } => (
             false,
-            SqlExpr::RangeOp {
-                lhs: SqlTerm::Ident("sid.rng".to_string()),
-                op: RangeOp::StrictlyAfter,
-                rhs: date_range_term(builder, q),
-            },
+            SqlExpr::Or(vec![
+                SqlExpr::RangeOp {
+                    lhs: SqlTerm::Ident("sid.rng".to_string()),
+                    op: RangeOp::Overlaps,
+                    rhs: timestamp_range_term(
+                        builder,
+                        Some(Bound {
+                            at: q.end,
+                            inclusive: true,
+                        }),
+                        None,
+                    ),
+                },
+                SqlExpr::RangeOp {
+                    lhs: SqlTerm::Ident("sid.rng".to_string()),
+                    op: RangeOp::ContainsBy,
+                    rhs: date_range_term(builder, q),
+                },
+            ]),
         ),
-        DatePredicate::StrictlyBefore { q } => (
+        DatePredicate::Le { q } => (
             false,
-            SqlExpr::RangeOp {
-                lhs: SqlTerm::Ident("sid.rng".to_string()),
-                op: RangeOp::StrictlyBefore,
-                rhs: date_range_term(builder, q),
-            },
+            SqlExpr::Or(vec![
+                SqlExpr::RangeOp {
+                    lhs: SqlTerm::Ident("sid.rng".to_string()),
+                    op: RangeOp::Overlaps,
+                    rhs: timestamp_range_term(
+                        builder,
+                        None,
+                        Some(Bound {
+                            at: q.start,
+                            inclusive: false,
+                        }),
+                    ),
+                },
+                SqlExpr::RangeOp {
+                    lhs: SqlTerm::Ident("sid.rng".to_string()),
+                    op: RangeOp::ContainsBy,
+                    rhs: date_range_term(builder, q),
+                },
+            ]),
         ),
+        // sa: target strictly above search. Use `lower(target) > upper(search)`
+        // so a boundary touch (`lower(target) == upper(search)`) does not
+        // qualify, unlike PG's `>>` on `[)` tstzranges.
+        DatePredicate::StrictlyAfter { q } => {
+            let p_hi = builder.add_timestamp_param(format_rfc3339(&q.end));
+            (
+                false,
+                SqlExpr::Compare {
+                    lhs: SqlTerm::Raw("lower(sid.rng)".to_string()),
+                    op: SqlOp::Gt,
+                    rhs: SqlTerm::ParamCast {
+                        index: p_hi,
+                        cast: "timestamptz",
+                    },
+                },
+            )
+        }
+        // eb: mirror of sa. Use `upper(target) < lower(search)` so a
+        // boundary touch does not qualify.
+        DatePredicate::StrictlyBefore { q } => {
+            let p_lo = builder.add_timestamp_param(format_rfc3339(&q.start));
+            (
+                false,
+                SqlExpr::Compare {
+                    lhs: SqlTerm::Raw("upper(sid.rng)".to_string()),
+                    op: SqlOp::Lt,
+                    rhs: SqlTerm::ParamCast {
+                        index: p_lo,
+                        cast: "timestamptz",
+                    },
+                },
+            )
+        }
         DatePredicate::Missing { is_missing } => {
             let exists = SqlExpr::Exists(Box::new(SelectStmt {
                 projection: vec![SqlTerm::Integer(1)],
@@ -4242,7 +4344,10 @@ mod tests {
             render_uri_array_clauses_as_or(&mut builder, &clauses, "resource->'meta'->'profile'")
                 .unwrap();
 
-        assert!(sql.contains("jsonb_array_elements_text(resource->'meta'->'profile')"));
+        // Path is normalized via a CASE so jsonb_array_elements_text works on
+        // both array and scalar JSONB shapes.
+        assert!(sql.contains("jsonb_array_elements_text(CASE"));
+        assert!(sql.contains("jsonb_typeof(resource->'meta'->'profile') = 'array'"));
         assert!(sql.contains("uri = $1"));
     }
 

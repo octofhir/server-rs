@@ -1,5 +1,4 @@
-import { Text, TextInput, ActionIcon, Button, Alert } from "@/shared/ui";
-import { IconX, IconPlus, IconLock } from "@octofhir/ui-kit";
+import { ActionIcon, Alert, Button, IconLock, IconPlus, IconX, Text, TextInput } from "@octofhir/ui-kit";
 import { useUnit } from "effector-react";
 import {
 	$customHeaders,

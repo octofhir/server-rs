@@ -1,4 +1,4 @@
-import { Text } from "@/shared/ui";
+import { Text } from "@octofhir/ui-kit";
 import type { ConsoleCommand } from "../../commands/types";
 import { CommandItem } from "./CommandItem";
 import styles from "./CommandList.module.css";

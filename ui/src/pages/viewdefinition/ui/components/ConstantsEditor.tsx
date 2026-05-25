@@ -1,5 +1,4 @@
-import { Button, Text, TextInput, Select, ActionIcon, Tooltip } from "@/shared/ui";
-import { IconPlus, IconTrash } from "@octofhir/ui-kit";
+import { ActionIcon, Button, IconPlus, IconTrash, Select, Text, TextInput, Tooltip } from "@octofhir/ui-kit";
 import type { ViewDefinitionConstant } from "../../lib/useViewDefinition";
 import classes from "./ConstantsEditor.module.css";
 

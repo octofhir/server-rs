@@ -1,5 +1,5 @@
+import { Badge, Tabs, Text } from "@octofhir/ui-kit";
 import { useUnit } from "effector-react";
-import { Badge, Tabs, Text } from "@/shared/ui";
 import { $body, $customHeaders, $method } from "../state/consoleStore";
 import { BodyEditor } from "./BodyEditor";
 import { HeaderEditor } from "./HeaderEditor";

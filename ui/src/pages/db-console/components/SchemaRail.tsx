@@ -9,7 +9,7 @@ import {
 	TextInput,
 	Tooltip,
 	UnstyledButton,
-} from "@/shared/ui";
+} from "@octofhir/ui-kit";
 import {
 	Database,
 	LayoutSideContentRight,

@@ -1,3 +1,4 @@
+import { modals, notifications } from "@octofhir/ui-kit";
 import { useState, useMemo } from "react";
 import {
   Alert,
@@ -10,9 +11,8 @@ import {
   Tooltip,
   Loader,
   Badge,
-} from "@/shared/ui";
+} from "@octofhir/ui-kit";
 import { WorkspacePageLayout } from "@/widgets/workspace-page";
-import { modals, notifications } from "@octofhir/ui-kit";
 import { useNavigate } from "react-router-dom";
 import { isAutomationFeatureUnavailableError } from "@/shared/api/automationsApi";
 import {

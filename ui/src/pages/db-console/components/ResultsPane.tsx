@@ -1,5 +1,5 @@
+import { ActionIcon, Badge, Tabs, Text, Tooltip } from "@octofhir/ui-kit";
 import { useState, useCallback } from "react";
-import { Tabs, Text, Badge, ActionIcon, Tooltip } from "@/shared/ui";
 import { ArrowDownToLine } from "@gravity-ui/icons";
 import type { SqlResponse, SqlValue } from "@/shared/api/types";
 import { ResultsTable } from "./ResultsTable";

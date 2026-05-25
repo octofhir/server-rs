@@ -1,5 +1,5 @@
+import { Text, TextInput } from "@octofhir/ui-kit";
 import { useCallback, useMemo } from "react";
-import { TextInput, Text } from "@/shared/ui";
 import classes from "./ValueEditor.module.css";
 
 export interface TokenValueEditorProps {

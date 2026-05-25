@@ -4,7 +4,7 @@ import {
 	Text,
 	Badge,
 	Table,
-} from "@/shared/ui";
+} from "@octofhir/ui-kit";
 import {
 	Code as CodeIcon,
 	Comment,

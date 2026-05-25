@@ -1,6 +1,5 @@
+import { Button, IconChevronDown, IconPlus, IconRepeat, Menu, Text } from "@octofhir/ui-kit";
 import { useCallback } from "react";
-import { Button, Menu, Text } from "@/shared/ui";
-import { IconChevronDown, IconPlus, IconRepeat } from "@octofhir/ui-kit";
 import {
   closestCenter,
   DndContext,

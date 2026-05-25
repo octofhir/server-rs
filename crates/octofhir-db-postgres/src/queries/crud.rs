@@ -544,7 +544,7 @@ pub async fn update_raw(
                        ),
                        status = 'updated'
                    FROM new_tx
-                   WHERE t.id = $1 AND t.status != 'deleted'
+                   WHERE t.id = $1
                    RETURNING t.id, new_tx.txid, t.created_at, t.updated_at, t.resource::text, 0::bigint as old_txid"#
             ),
             false,
@@ -1125,7 +1125,7 @@ pub async fn update_with_tx_if_match(
                            true
                        ),
                        status = 'updated'
-                   WHERE t.id = $1 AND t.status != 'deleted'
+                   WHERE t.id = $1
                    RETURNING t.id, t.txid, t.created_at, t.updated_at, t.resource,
                              0::bigint as old_txid"#
             ),
@@ -1149,7 +1149,7 @@ pub async fn update_with_tx_if_match(
                        ),
                        status = 'updated'
                    FROM new_tx
-                   WHERE t.id = $1 AND t.status != 'deleted'
+                   WHERE t.id = $1
                    RETURNING t.id, new_tx.txid, t.created_at, t.updated_at, t.resource,
                              0::bigint as old_txid"#
             ),

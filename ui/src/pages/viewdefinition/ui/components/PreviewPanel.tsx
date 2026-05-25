@@ -1,4 +1,4 @@
-import { Tabs, Text } from "@/shared/ui";
+import { Tabs, Text } from "@octofhir/ui-kit";
 import { SQLPreview } from "./SQLPreview";
 import { ResultTable } from "./ResultTable";
 import type { RunResult, SqlResult } from "../../lib/useViewDefinition";

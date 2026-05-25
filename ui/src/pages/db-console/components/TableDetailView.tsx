@@ -1,3 +1,4 @@
+import { modals, notifications } from "@octofhir/ui-kit";
 import { useCallback, useMemo } from "react";
 import {
 	Text,
@@ -7,7 +8,7 @@ import {
 	Loader,
 	DataPreview,
 	RecordList,
-} from "@/shared/ui";
+} from "@octofhir/ui-kit";
 import {
 	ArrowLeft,
 	TrashBin,
@@ -16,7 +17,6 @@ import {
 } from "@gravity-ui/icons";
 import { getDbColumnViews, getDbIndexViews } from "@/entities/db-schema";
 import { useTableDetail, useDropIndex } from "@/shared/api/hooks";
-import { modals, notifications } from "@octofhir/ui-kit";
 import classes from "../DbConsolePage.module.css";
 
 interface TableDetailViewProps {

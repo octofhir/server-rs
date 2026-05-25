@@ -1,4 +1,4 @@
-import { Text, TextInput } from "@/shared/ui";
+import { Text, TextInput } from "@octofhir/ui-kit";
 import { useUnit } from "effector-react";
 import { $rawPath, setRawPath } from "../state/consoleStore";
 import styles from "./RawRequestInput.module.css";

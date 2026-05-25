@@ -10,7 +10,7 @@ import {
   ScrollArea,
   Text,
   Tooltip,
-} from "@/shared/ui";
+} from "@octofhir/ui-kit";
 import classes from "../DbConsolePage.module.css";
 
 interface ActiveQueriesTabProps {

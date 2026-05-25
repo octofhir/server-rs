@@ -8,7 +8,7 @@ import {
 	ScrollArea,
 	Button,
 	Alert,
-} from "@/shared/ui";
+} from "@octofhir/ui-kit";
 import {
 	Check,
 	ArrowDownToLine,

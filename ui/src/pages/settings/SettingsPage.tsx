@@ -6,8 +6,9 @@ import {
 	Select,
 	Switch,
 	Loader,
-} from "@/shared/ui";
-import { WorkspacePageLayout, WorkspacePageSection } from "@/widgets/workspace-page";
+	WorkspacePageLayout,
+	WorkspacePageSection,
+} from "@octofhir/ui-kit";
 import { useColorScheme } from "@octofhir/ui-kit";
 import { useHealth, useFormatterSettings } from "@/shared/api/hooks";
 import { useUiSettings } from "@/shared";

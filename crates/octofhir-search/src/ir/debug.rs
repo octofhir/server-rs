@@ -156,6 +156,12 @@ fn date_sql_shape(predicate: &DatePredicate) -> String {
                 "EXISTS search_idx_date WHERE sid.rng && tstzrange({lo_expr}, {hi_expr}, '{bounds}')"
             )
         }
+        DatePredicate::Ge { .. } => {
+            "EXISTS search_idx_date WHERE sid.rng && tstzrange($hi, NULL, '[)') OR sid.rng <@ tstzrange($lo, $hi, '[)')".to_string()
+        }
+        DatePredicate::Le { .. } => {
+            "EXISTS search_idx_date WHERE sid.rng && tstzrange(NULL, $lo, '[)') OR sid.rng <@ tstzrange($lo, $hi, '[)')".to_string()
+        }
         DatePredicate::StrictlyAfter { .. } => {
             "EXISTS search_idx_date WHERE sid.rng >> tstzrange($lo, $hi, '[)')".to_string()
         }
@@ -631,7 +637,7 @@ mod tests {
     #[test]
     fn date_debug_plan_shows_half_infinite_overlap_shape() {
         let clauses =
-            DateClause::from_parsed_param(&parsed(SearchPrefix::Ge, "2000-06-15"), "Patient")
+            DateClause::from_parsed_param(&parsed(SearchPrefix::Gt, "2000-06-15"), "Patient")
                 .unwrap();
 
         let plan = build_date_debug_plan("Patient", &clauses);

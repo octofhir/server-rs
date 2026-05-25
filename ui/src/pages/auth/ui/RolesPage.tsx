@@ -1,3 +1,4 @@
+import { ActionIcon, Button, Card, Field, Form, Modal, TextInput, type FormApi, useDebouncedValue, useDisclosure } from "@octofhir/ui-kit";
 import { useMemo, useState } from "react";
 import {
 	Text,
@@ -7,9 +8,8 @@ import {
 	Checkbox,
 	Textarea,
 	Alert,
-} from "@/shared/ui";
+} from "@octofhir/ui-kit";
 import { WorkspacePageLayout } from "@/widgets/workspace-page";
-import { Field, Form, type FormApi, useDebouncedValue, useDisclosure } from "@octofhir/ui-kit";
 import {
 	Plus,
 	Magnifier,
@@ -26,11 +26,6 @@ import {
 	getRoleTypeView,
 	groupRolePermissions,
 } from "@/entities/access-role";
-import { Card } from "@/shared/ui/Card/Card";
-import { Modal } from "@/shared/ui/Modal/Modal";
-import { Button } from "@/shared/ui/Button/Button";
-import { TextInput } from "@/shared/ui/TextInput/TextInput";
-import { ActionIcon } from "@/shared/ui/ActionIcon/ActionIcon";
 import {
 	useRoles,
 	useCreateRole,

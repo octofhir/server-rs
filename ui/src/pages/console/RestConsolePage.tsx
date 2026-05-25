@@ -1,4 +1,4 @@
-import { useDisclosure, useHotkeys } from "@octofhir/ui-kit";
+import { Button, Collapse, Text, useDisclosure, useHotkeys, Resizable } from "@octofhir/ui-kit";
 import { Eye, ClockArrowRotateLeft, Play } from "@gravity-ui/icons";
 import { useUnit } from "effector-react";
 import { useCallback, useMemo } from "react";
@@ -6,7 +6,6 @@ import { Helmet } from "react-helmet-async";
 import type { QueryInputMetadata } from "@/shared/fhir-query-input";
 import { computeDiagnostics, parseQueryAst } from "@/shared/fhir-query-input";
 import { QueryInspector } from "@/shared/fhir-query-input/widgets/QueryInspector";
-import { Button, Collapse, Text } from "@/shared/ui";
 import { BuilderModeEditor } from "./components/BuilderModeEditor";
 import { CommandPalette } from "./components/CommandPalette";
 import { HistoryPanel } from "./components/HistoryPanel";
@@ -135,85 +134,94 @@ export function RestConsolePage() {
         <title>REST Console</title>
       </Helmet>
 
-          <div className={styles.root}>
-            {/* Request Editor Section */}
-            <section className={styles.requestPanel}>
-              {mode === "pro" ? (
-                <RequestBar
-                  allSuggestions={allSuggestions}
-                  searchParamsByResource={searchParamsByResource}
-                  capabilities={data}
-                  isLoading={isPending}
-                  isSending={sendMutation.isPending}
-                  onSend={handleSend}
-                />
-              ) : (
-                <div className={styles.builderContent}>
-                   <BuilderModeEditor
-                    allSuggestions={allSuggestions}
-                    searchParamsByResource={searchParamsByResource}
-                    capabilities={data}
-                    isLoading={isPending}
-                  />
-                  <div className={styles.builderActions}>
-                    <Button
-                      size="l"
-                      view="action"
-                      onClick={handleSend}
-                      loading={sendMutation.isPending}
-                    >
-                      <Button.Icon><Play size={18} /></Button.Icon>
-                      Execute Request
-                    </Button>
+          <div className={styles.rootResizable}>
+            <Resizable.Group orientation="vertical">
+              <Resizable.Pane defaultSize={50} minSize={25}>
+                <section className={styles.requestPanel} style={{ height: "100%", overflow: "auto" }}>
+                  {mode === "pro" ? (
+                    <RequestBar
+                      allSuggestions={allSuggestions}
+                      searchParamsByResource={searchParamsByResource}
+                      capabilities={data}
+                      isLoading={isPending}
+                      isSending={sendMutation.isPending}
+                      onSend={handleSend}
+                    />
+                  ) : (
+                    <div className={styles.builderContent}>
+                       <BuilderModeEditor
+                        allSuggestions={allSuggestions}
+                        searchParamsByResource={searchParamsByResource}
+                        capabilities={data}
+                        isLoading={isPending}
+                      />
+                      <div className={styles.builderActions}>
+                        <Button
+                          size="l"
+                          view="action"
+                          onClick={handleSend}
+                          loading={sendMutation.isPending}
+                        >
+                          <Button.Icon><Play size={18} /></Button.Icon>
+                          Execute Request
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+                  
+                  {/* Additional request options (Tabs, Headers, Body) */}
+                  <div className={styles.requestOptions}>
+                    <RequestOptionTabs />
                   </div>
-                </div>
-              )}
-              
-              {/* Additional request options (Tabs, Headers, Body) */}
-              <div className={styles.requestOptions}>
-                <RequestOptionTabs />
-              </div>
-            </section>
+                </section>
+              </Resizable.Pane>
 
-            {/* Inspector (collapsible) */}
-            <Collapse in={inspectorOpened}>
-              <section className={styles.inspectorPanel}>
-                <QueryInspector
-                  ast={inspectorAst}
-                  diagnostics={inspectorDiagnostics}
-                  metadata={inspectorMetadata}
-                  response={
-                    sendMutation.data
-                      ? {
-                          status: sendMutation.data.status,
-                          statusText: sendMutation.data.statusText,
-                          durationMs: sendMutation.data.durationMs,
-                          body: sendMutation.data.body,
-                          requestPath: sendMutation.data.requestPath,
+              <Resizable.Handle />
+
+              <Resizable.Pane defaultSize={50} minSize={25}>
+                <div style={{ height: "100%", display: "flex", flexDirection: "column", minHeight: 0 }}>
+                  {/* Inspector (collapsible) */}
+                  <Collapse in={inspectorOpened}>
+                    <section className={styles.inspectorPanel} style={{ marginBottom: 12 }}>
+                      <QueryInspector
+                        ast={inspectorAst}
+                        diagnostics={inspectorDiagnostics}
+                        metadata={inspectorMetadata}
+                        response={
+                          sendMutation.data
+                            ? {
+                                status: sendMutation.data.status,
+                                statusText: sendMutation.data.statusText,
+                                durationMs: sendMutation.data.durationMs,
+                                body: sendMutation.data.body,
+                                requestPath: sendMutation.data.requestPath,
+                              }
+                          : undefined
                         }
-                    : undefined
-                  }
-                />
-              </section>
-            </Collapse>
+                      />
+                    </section>
+                  </Collapse>
 
-            {/* Response Section */}
-            <section>
-              {sendMutation.data || sendMutation.isPending ? (
-                <div className={styles.responseSection}>
-                  <Text variant="caption-1" className={styles.sectionLabel}>
-                    Response
-                  </Text>
-                  <div className={styles.responsePanel}>
-                    <ResponseViewer response={sendMutation.data} isLoading={sendMutation.isPending} />
-                  </div>
+                  {/* Response Section */}
+                  <section style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
+                    {sendMutation.data || sendMutation.isPending ? (
+                      <div className={styles.responseSection} style={{ height: "100%", display: "flex", flexDirection: "column", minHeight: 0 }}>
+                        <Text variant="caption-1" className={styles.sectionLabel}>
+                          Response
+                        </Text>
+                        <div className={styles.responsePanel} style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
+                          <ResponseViewer response={sendMutation.data} isLoading={sendMutation.isPending} />
+                        </div>
+                      </div>
+                    ) : (
+                      <div className={styles.emptyResponse}>
+                        <Text variant="body-2">Execute a request to see the response payload here.</Text>
+                      </div>
+                    )}
+                  </section>
                 </div>
-              ) : (
-                <div className={styles.emptyResponse}>
-                  <Text variant="body-2">Execute a request to see the response payload here.</Text>
-                </div>
-              )}
-            </section>
+              </Resizable.Pane>
+            </Resizable.Group>
           </div>
 
       <CommandPalette />

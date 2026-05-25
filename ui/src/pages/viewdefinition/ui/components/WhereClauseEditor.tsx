@@ -1,5 +1,4 @@
-import { Button, Text, ActionIcon, Tooltip } from "@/shared/ui";
-import { IconPlus, IconTrash } from "@octofhir/ui-kit";
+import { ActionIcon, Button, IconPlus, IconTrash, Text, Tooltip } from "@octofhir/ui-kit";
 import type { ViewDefinitionWhere, ViewDefinitionConstant } from "../../lib/useViewDefinition";
 import { FHIRPathInput } from "./FHIRPathInput";
 import classes from "./WhereClauseEditor.module.css";

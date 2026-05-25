@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, useCallback } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import {
 	Text,
@@ -14,7 +14,8 @@ import {
 	ScrollArea,
 	Alert,
 	RecordList,
-} from "@/shared/ui";
+	Resizable,
+} from "@octofhir/ui-kit";
 import { ToolWorkspaceLayout } from "@/widgets/tool-workspace";
 import { OperationOutcomePanel, notifications } from "@octofhir/ui-kit";
 import {
@@ -50,10 +51,6 @@ import { HttpError } from "@/shared/api/fhirClient";
 import { assertFhirResource, isRecord } from "@/shared/api/guards";
 import classes from "./ResourceBrowserPage.module.css";
 
-const MIN_PANEL_WIDTH = 400;
-const MAX_PANEL_WIDTH = 900;
-const DEFAULT_PANEL_WIDTH = 600;
-
 function isCatalogCategoryFilter(value: string): value is FhirCatalogCategoryFilter {
 	return value === "all" || value === "fhir" || value === "system" || value === "custom";
 }
@@ -73,8 +70,6 @@ export function ResourceBrowserPage() {
 	const [isEditMode, setIsEditMode] = useState(false);
 	const [editedResource, setEditedResource] = useState("");
 	const [currentBundle, setCurrentBundle] = useState<FhirBundle | null>(null);
-	const [panelWidth, setPanelWidth] = useState(DEFAULT_PANEL_WIDTH);
-	const [isResizing, setIsResizing] = useState(false);
 	const [saveError, setSaveError] = useState<{
 		message: string;
 		operationOutcome?: FhirOperationOutcome;
@@ -118,33 +113,6 @@ export function ResourceBrowserPage() {
 			setIsEditMode(false);
 		}
 	}, [selectedResource]);
-
-	// Resize handlers
-	const handleMouseDown = useCallback(() => {
-		setIsResizing(true);
-	}, []);
-
-	useEffect(() => {
-		const handleMouseMove = (e: MouseEvent) => {
-			if (!isResizing) return;
-			const newWidth = window.innerWidth - e.clientX - 32; // 32 for padding
-			setPanelWidth(Math.min(MAX_PANEL_WIDTH, Math.max(MIN_PANEL_WIDTH, newWidth)));
-		};
-
-		const handleMouseUp = () => {
-			setIsResizing(false);
-		};
-
-		if (isResizing) {
-			document.addEventListener("mousemove", handleMouseMove);
-			document.addEventListener("mouseup", handleMouseUp);
-		}
-
-		return () => {
-			document.removeEventListener("mousemove", handleMouseMove);
-			document.removeEventListener("mouseup", handleMouseUp);
-		};
-	}, [isResizing]);
 
 	// Memoize category filter data to avoid infinite re-renders
 	const categoryFilterData = useMemo(() => [
@@ -359,7 +327,7 @@ export function ResourceBrowserPage() {
 
 	// Resources Table
 	const renderResourcesTable = () => (
-		<div className={classes.tablePanel}>
+		<div className={classes.tablePanel} style={{ height: "100%" }}>
 			<div className={classes.panelHeader}>
 				<div className={classes.toolbar}>
 					<div className={classes.titleRow}>
@@ -441,115 +409,105 @@ export function ResourceBrowserPage() {
 		</div>
 	);
 
-	// Details Panel with resize handle
-	const renderDetailsPanel = () => (
-		<div className={classes.detailsShell}>
-			{/* Resize handle */}
-			<div
-				onMouseDown={handleMouseDown}
-				className={classes.resizeHandle}
-				data-resizing={isResizing ? "true" : undefined}
-			>
-				<div className={classes.resizeKnob} />
-			</div>
-			<div className={classes.detailsPanel} style={{ width: panelWidth }}>
-				<div className={classes.panelHeader}>
-					<div className={classes.toolbar}>
-						<div className={classes.resourceIdentity}>
-							<Badge size="lg" radius="sm" variant="gradient" gradient={{ from: "primary", to: "fire", deg: 135 }}>
-								{selectedType}
-							</Badge>
-							<Text fw={600} size="sm" ff="monospace" c="dimmed">
-								{selectedId}
-							</Text>
-						</div>
-						<div className={classes.detailActions}>
-							{isEditMode ? (
-								<div className={classes.editActions}>
-									<Button
-										size="xs"
-										variant="subtle"
-										color="gray"
-										radius="md"
-										onClick={handleCancel}
-										disabled={updateMutation.isPending}
-									>
-										Cancel
-									</Button>
-									<Button
-										size="xs"
-										radius="md"
-										onClick={handleSave}
-										loading={updateMutation.isPending}
-									>
-										Save Resource
-									</Button>
-								</div>
-							) : (
+	// Details Panel Content without manual resize handle
+	const renderDetailsPanelContent = () => (
+		<div className={classes.detailsPanel} style={{ width: "100%", height: "100%" }}>
+			<div className={classes.panelHeader}>
+				<div className={classes.toolbar}>
+					<div className={classes.resourceIdentity}>
+						<Badge size="lg" radius="sm" variant="gradient" gradient={{ from: "primary", to: "fire", deg: 135 }}>
+							{selectedType}
+						</Badge>
+						<Text fw={600} size="sm" ff="monospace" c="dimmed">
+							{selectedId}
+						</Text>
+					</div>
+					<div className={classes.detailActions}>
+						{isEditMode ? (
+							<div className={classes.editActions}>
 								<Button
 									size="xs"
-									variant="light"
+									variant="subtle"
+									color="gray"
 									radius="md"
-									leftSection={<Code size={14} />}
-									onClick={() => {
-										setSaveError(null);
-										setIsEditMode(true);
-									}}
+									onClick={handleCancel}
+									disabled={updateMutation.isPending}
 								>
-									Edit JSON
+									Cancel
 								</Button>
-							)}
-							<ActionIcon
-								variant="subtle"
-								color="gray"
+								<Button
+									size="xs"
+									radius="md"
+									onClick={handleSave}
+									loading={updateMutation.isPending}
+								>
+									Save Resource
+								</Button>
+							</div>
+						) : (
+							<Button
+								size="xs"
+								variant="light"
 								radius="md"
-								size="md"
-								onClick={handleCloseDetails}
+								leftSection={<Code size={14} />}
+								onClick={() => {
+									setSaveError(null);
+									setIsEditMode(true);
+								}}
 							>
-								<GripHorizontal size={16} className={classes.closeIcon} />
-							</ActionIcon>
-						</div>
+								Edit JSON
+							</Button>
+						)}
+						<ActionIcon
+							variant="subtle"
+							color="gray"
+							radius="md"
+							size="md"
+							onClick={handleCloseDetails}
+						>
+							<GripHorizontal size={16} className={classes.closeIcon} />
+						</ActionIcon>
 					</div>
 				</div>
-
-				{resourceLoading ? (
-					<Center py={100}>
-						<Loader size="lg" variant="dots" color="primary" />
-					</Center>
-				) : (
-					<div className={classes.detailsBody}>
-						<div className={classes.editorFill}>
-							<JsonEditor
-								value={editedResource}
-								onChange={isEditMode ? setEditedResource : undefined}
-								readOnly={!isEditMode}
-								height="100%"
-								schema={jsonSchemaObject}
-								resourceType={selectedType ?? undefined}
-							/>
-						</div>
-						{saveError && (
-							<div className={classes.errorPanel}>
-								<Alert
-									color="red"
-									icon={<CircleExclamation size={16} />}
-									radius="md"
-									title={saveError.message}
-								>
-									{saveError.operationOutcome?.issue ? (
-										<OperationOutcomePanel
-											outcome={saveError.operationOutcome}
-											maxIssues={3}
-										/>
-									) : (
-										<Text size="xs">An error occurred while saving.</Text>
-									)}
-								</Alert>
-							</div>
-						)}
-					</div>
-				)}
 			</div>
+
+			{resourceLoading ? (
+				<Center py={100}>
+					<Loader size="lg" variant="dots" color="primary" />
+				</Center>
+			) : (
+				<div className={classes.detailsBody}>
+					<div className={classes.editorFill}>
+						<JsonEditor
+							value={editedResource}
+							onChange={isEditMode ? setEditedResource : undefined}
+							readOnly={!isEditMode}
+							height="100%"
+							schema={jsonSchemaObject}
+							resourceType={selectedType ?? undefined}
+						/>
+					</div>
+					{saveError && (
+						<div className={classes.errorPanel}>
+							<Alert
+								color="red"
+								icon={<CircleExclamation size={16} />}
+								radius="md"
+								title={saveError.message}
+							>
+								{saveError.operationOutcome?.issue ? (
+									<OperationOutcomePanel
+										outcome={saveError.operationOutcome}
+										maxIssues={3}
+									/>
+								) : (
+									<Text size="xs">An error occurred while saving.</Text>
+								)}
+							</Alert>
+						</div>
+					)}
+				</div>
+			)}
 		</div>
 	);
 
@@ -584,10 +542,22 @@ export function ResourceBrowserPage() {
 				) : (
 					// Level 2: Resources Table (+ optional Details Panel)
 					<div className={classes.splitView}>
-						<div className={classes.listPane}>
-							{renderResourcesTable()}
-						</div>
-						{selectedId && renderDetailsPanel()}
+						<Resizable.Group orientation="horizontal">
+							<Resizable.Pane defaultSize={selectedId ? 50 : 100} minSize={30}>
+								{renderResourcesTable()}
+							</Resizable.Pane>
+
+							{selectedId && (
+								<>
+									<Resizable.Handle />
+									<Resizable.Pane defaultSize={50} minSize={30}>
+										<div className={classes.detailsShell} style={{ flex: 1, minWidth: 0 }}>
+											{renderDetailsPanelContent()}
+										</div>
+									</Resizable.Pane>
+								</>
+							)}
+						</Resizable.Group>
 					</div>
 				)}
 			</div>

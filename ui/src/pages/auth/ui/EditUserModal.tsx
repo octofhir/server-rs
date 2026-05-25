@@ -1,6 +1,5 @@
+import { Button, Modal, Select, TextInput } from "@octofhir/ui-kit";
 import { useState, useMemo } from "react";
-import { Modal, TextInput, Select } from "@/shared/ui";
-import { Button } from "@/shared/ui/Button/Button";
 import { useUpdateUser, useSearchResources } from "../lib/useUsers";
 import { getBundleResources, isRecord } from "@/shared/api/guards";
 import type { FhirResource, UserResource } from "@/shared/api/types";

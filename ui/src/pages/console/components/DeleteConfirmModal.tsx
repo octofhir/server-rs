@@ -1,6 +1,4 @@
-import { Button, Code, Modal, Text } from "@/shared/ui";
-import { useDesignTokens } from "@octofhir/ui-kit";
-import { IconAlertTriangle } from "@octofhir/ui-kit";
+import { Button, Code, IconAlertTriangle, Modal, Text, useDesignTokens } from "@octofhir/ui-kit";
 import styles from "./DeleteConfirmModal.module.css";
 
 interface DeleteConfirmModalProps {

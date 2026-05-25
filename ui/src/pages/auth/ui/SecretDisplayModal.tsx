@@ -1,3 +1,4 @@
+import { Button, Modal } from "@octofhir/ui-kit";
 import { useState } from "react";
 import {
 	Text,
@@ -6,10 +7,8 @@ import {
 	ActionIcon,
 	Tooltip,
 	Alert,
-} from "@/shared/ui";
+} from "@octofhir/ui-kit";
 import { TriangleExclamation, Copy, Check } from "@gravity-ui/icons";
-import { Modal } from "@/shared/ui/Modal/Modal";
-import { Button } from "@/shared/ui/Button/Button";
 import classes from "./SecretDisplayModal.module.css";
 
 interface SecretDisplayModalProps {

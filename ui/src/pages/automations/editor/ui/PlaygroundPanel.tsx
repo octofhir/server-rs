@@ -1,3 +1,4 @@
+import { IconChevronDown, IconChevronRight, IconPlayerPlay, IconTrash, notifications } from "@octofhir/ui-kit";
 import { useState } from "react";
 import {
   Text,
@@ -8,9 +9,7 @@ import {
   Divider,
   Collapse,
   ActionIcon,
-} from "@/shared/ui";
-import { notifications } from "@octofhir/ui-kit";
-import { IconPlayerPlay, IconTrash, IconChevronDown, IconChevronRight } from "@octofhir/ui-kit";
+} from "@octofhir/ui-kit";
 import { JsonEditor } from "@/shared/monaco/JsonEditor";
 import { useTestAutomation } from "../../lib/useAutomations";
 import type { ExecuteAutomationResponse, AutomationLogEntry } from "@/shared/api/types";

@@ -10,7 +10,7 @@ import {
 	CopyButton,
 	ActionIcon,
 	Tooltip,
-} from "@/shared/ui";
+} from "@octofhir/ui-kit";
 import {
 	Person,
 	Server,

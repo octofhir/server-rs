@@ -648,18 +648,18 @@ mod tests {
     }
 
     #[test]
-    fn index_ge_uses_overlap_from_q_lo() {
+    fn index_ge_uses_overlap_plus_containment() {
+        // FHIR R4 §3.1.1.5.1: `ge` = (range above search overlaps target)
+        // OR (search contains target). Emitted as an OR of `&&` and `<@`.
         let clause = index_clause(SearchPrefix::Ge, "2024-06-15");
         assert!(
-            clause.contains("sid.rng &&") && clause.contains("NULL, '[)')"),
-            "ge must emit `sid.rng && tstzrange(lower(q), NULL, '[)')`, got: {clause}"
+            clause.contains("sid.rng &&") && clause.contains("sid.rng <@"),
+            "ge must emit `(sid.rng && …) OR (sid.rng <@ …)`, got: {clause}"
         );
-        // ge must NOT regress to the GiST-unfriendly `NOT (sid.rng << q)` shape.
         assert!(
             !clause.contains("NOT (sid.rng <<"),
             "ge regressed to NOT(<<) which defeats GiST: {clause}"
         );
-        // ge must NOT be silently rewritten as `&>` (incorrect on wide Periods).
         assert!(
             !clause.contains("sid.rng &>"),
             "ge MUST NOT use `&>` — semantically wrong on wide Periods; got: {clause}"
@@ -667,11 +667,13 @@ mod tests {
     }
 
     #[test]
-    fn index_le_uses_overlap_to_q_hi() {
+    fn index_le_uses_overlap_plus_containment() {
+        // FHIR R4 §3.1.1.5.1: `le` = (range below search overlaps target)
+        // OR (search contains target). Emitted as an OR of `&&` and `<@`.
         let clause = index_clause(SearchPrefix::Le, "2024-06-15");
         assert!(
-            clause.contains("sid.rng &&") && clause.contains("tstzrange(NULL,"),
-            "le must emit `sid.rng && tstzrange(NULL, upper(q), '()')`, got: {clause}"
+            clause.contains("sid.rng &&") && clause.contains("sid.rng <@"),
+            "le must emit `(sid.rng && …) OR (sid.rng <@ …)`, got: {clause}"
         );
         assert!(
             !clause.contains("NOT (sid.rng >>"),
@@ -684,13 +686,14 @@ mod tests {
     }
 
     #[test]
-    fn index_sa_uses_strictly_after() {
+    fn index_sa_uses_strict_after_comparison() {
+        // sa requires a strict gap (`lower(t) > upper(s)`) so a boundary
+        // touch does not qualify.
         let clause = index_clause(SearchPrefix::Sa, "2024-06-15");
         assert!(
-            clause.contains("sid.rng >>"),
-            "sa must emit `sid.rng >> q`, got: {clause}"
+            clause.contains("lower(sid.rng) >"),
+            "sa must emit `lower(sid.rng) > upper(q)`, got: {clause}"
         );
-        // sa must NOT collapse with gt's overlap form.
         assert!(
             !clause.contains("sid.rng && tstzrange"),
             "sa must not use overlap-with-half-infinite (that's gt): {clause}"
@@ -698,11 +701,13 @@ mod tests {
     }
 
     #[test]
-    fn index_eb_uses_strictly_before() {
+    fn index_eb_uses_strict_before_comparison() {
+        // eb mirrors sa: `upper(t) < lower(s)` so boundary touches don't
+        // qualify.
         let clause = index_clause(SearchPrefix::Eb, "2024-06-15");
         assert!(
-            clause.contains("sid.rng <<"),
-            "eb must emit `sid.rng << q`, got: {clause}"
+            clause.contains("upper(sid.rng) <"),
+            "eb must emit `upper(sid.rng) < lower(q)`, got: {clause}"
         );
         assert!(
             !clause.contains("sid.rng && tstzrange"),
@@ -751,7 +756,7 @@ mod tests {
             modifier: None,
             values: vec![
                 ParsedValue {
-                    prefix: Some(SearchPrefix::Ge),
+                    prefix: Some(SearchPrefix::Gt),
                     raw: "2005-01-01".to_string(),
                 },
                 ParsedValue {

@@ -65,6 +65,17 @@
     var(--octo-surface-1);
 }
 
+.workspaceResizable {
+  grid-area: workspace;
+  min-height: 0;
+  padding: var(--octo-spacing-sm);
+  display: flex;
+  background:
+    radial-gradient(120% 120% at 100% 0%, color-mix(in srgb, var(--octo-accent-primary) 7%, transparent) 0%, transparent 55%),
+    radial-gradient(100% 100% at 0% 100%, color-mix(in srgb, var(--octo-accent-warm) 7%, transparent) 0%, transparent 60%),
+    var(--octo-surface-1);
+}
+
 .streamPanel,
 .studioPanel {
   min-height: 0;

@@ -1,5 +1,4 @@
-import { Alert, Badge, Switch, Text } from "@/shared/ui";
-import { WorkspacePageLayout } from "@/widgets/workspace-page";
+import { Alert, Badge, Switch, Text, WorkspacePageLayout } from "@octofhir/ui-kit";
 import { useState } from "react";
 
 import { CircleInfo } from "@gravity-ui/icons";

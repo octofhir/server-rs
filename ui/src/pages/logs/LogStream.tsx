@@ -1,4 +1,4 @@
-import { Text, ThemeIcon } from "@/shared/ui";
+import { Text, ThemeIcon } from "@octofhir/ui-kit";
 import { useRef, useEffect, memo } from "react";
 
 import { Pulse, CircleExclamation } from "@gravity-ui/icons";
