@@ -3778,6 +3778,7 @@ dependencies = [
 [[package]]
 name = "mold_completion"
 version = "0.1.0"
+source = "git+https://github.com/octofhir/mold.git?branch=main#7a2377bb66e377de4f9a4580dd7993e18b60b6e6"
 dependencies = [
  "mold_hir",
  "mold_parser",
@@ -3788,6 +3789,7 @@ dependencies = [
 [[package]]
 name = "mold_format"
 version = "0.1.0"
+source = "git+https://github.com/octofhir/mold.git?branch=main#7a2377bb66e377de4f9a4580dd7993e18b60b6e6"
 dependencies = [
  "cstree",
  "mold_parser",
@@ -3798,6 +3800,7 @@ dependencies = [
 [[package]]
 name = "mold_hir"
 version = "0.1.0"
+source = "git+https://github.com/octofhir/mold.git?branch=main#7a2377bb66e377de4f9a4580dd7993e18b60b6e6"
 dependencies = [
  "mold_syntax",
  "text-size",
@@ -3806,6 +3809,7 @@ dependencies = [
 [[package]]
 name = "mold_lexer"
 version = "0.1.0"
+source = "git+https://github.com/octofhir/mold.git?branch=main#7a2377bb66e377de4f9a4580dd7993e18b60b6e6"
 dependencies = [
  "mold_syntax",
  "text-size",
@@ -3814,6 +3818,7 @@ dependencies = [
 [[package]]
 name = "mold_parser"
 version = "0.1.0"
+source = "git+https://github.com/octofhir/mold.git?branch=main#7a2377bb66e377de4f9a4580dd7993e18b60b6e6"
 dependencies = [
  "cstree",
  "mold_lexer",
@@ -3824,6 +3829,7 @@ dependencies = [
 [[package]]
 name = "mold_syntax"
 version = "0.1.0"
+source = "git+https://github.com/octofhir/mold.git?branch=main#7a2377bb66e377de4f9a4580dd7993e18b60b6e6"
 dependencies = [
  "cstree",
  "phf 0.13.1",
