@@ -6,7 +6,7 @@ use async_lsp::lsp_types::{
     CompletionItem as LspCompletionItem, CompletionItemKind as LspCompletionItemKind,
     CompletionOptions, CompletionParams, CompletionResponse, Diagnostic, DiagnosticSeverity,
     DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
-    DocumentFormattingParams, InitializeParams, InitializeResult, OneOf, Position,
+    DocumentFormattingParams, InitializeParams, InitializeResult, NumberOrString, OneOf, Position,
     PublishDiagnosticsParams, Range, ServerCapabilities, TextDocumentSyncCapability,
     TextDocumentSyncKind, TextEdit, Url,
 };
@@ -196,7 +196,11 @@ impl PostgresLspServer {
     ) -> Vec<Diagnostic> {
         let provider = HirSchemaProviderAdapter::new(schema_cache, model_snapshot);
         let options = HirAnalysisOptions::new()
-            .with_builtin_lint_packs([HirBuiltinLintPack::Core, HirBuiltinLintPack::Jsonb])
+            .with_builtin_lint_packs([
+                HirBuiltinLintPack::Core,
+                HirBuiltinLintPack::Jsonb,
+                HirBuiltinLintPack::Convention,
+            ])
             .with_external_lint_pack(Arc::new(ResourceIdJsonbLintPack));
         let analysis = analyze_query_with_options(parse, &provider, &options);
 
@@ -213,13 +217,23 @@ impl PostgresLspServer {
                     _ => DiagnosticSeverity::INFORMATION, // Handle future variants
                 });
 
+                // Surface the stable rule code and fold any "did you mean …?"
+                // help line into the diagnostic message.
+                let code = diag
+                    .code
+                    .map(|c| NumberOrString::String(c.as_str().to_string()));
+                let message = match diag.help {
+                    Some(help) => format!("{}\nhelp: {help}", diag.message),
+                    None => diag.message,
+                };
+
                 Some(Diagnostic {
                     range,
                     severity,
-                    code: None,
+                    code,
                     code_description: None,
                     source: Some("mold-hir".to_string()),
-                    message: diag.message,
+                    message,
                     related_information: None,
                     tags: None,
                     data: None,
