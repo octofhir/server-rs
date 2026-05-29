@@ -4177,9 +4177,9 @@ dependencies = [
 
 [[package]]
 name = "octofhir-canonical-manager"
-version = "0.2.1"
+version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "56212187aebc13534bdeac42b787b9c3d0f15a56a03fbeed0ee1e059e2694549"
+checksum = "684fdc822731de8748de603774c18d8f72c431ee5d703331ae36299d138d336e"
 dependencies = [
  "anyhow",
  "async-trait",
