@@ -221,8 +221,8 @@ pub async fn build_capability_statement(
         .status("active")
         .kind("instance")
         .date(chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string())
-        .add_format("application/fhir+json")
         .add_format("application/json")
+        .with_interactions(&["transaction", "batch", "search-system", "history-system"])
         .add_patch_format("application/json-patch+json")
         .add_patch_format("application/fhir+json");
 
@@ -2527,6 +2527,10 @@ pub async fn search_resource_post(
     let raw_q = strip_search_debug_params(&raw_q);
 
     let cfg = state.search_config.config();
+    let unknown_param_handling = headers
+        .get("Prefer")
+        .and_then(|h| h.to_str().ok())
+        .map(octofhir_search::UnknownParamHandling::from_prefer_header);
 
     // Parse query string to SearchParams
     let search_params =
@@ -2537,15 +2541,16 @@ pub async fn search_resource_post(
     let offset = search_params.offset.unwrap_or(0) as usize;
     let count = search_params.count.unwrap_or(10) as usize;
 
-    // Execute search with raw JSON optimization
-    let result = octofhir_db_postgres::queries::execute_search_raw_with_options(
+    // Execute search with raw JSON optimization and terminology modifier support.
+    let result = octofhir_db_postgres::queries::execute_search_raw_with_terminology_options(
         &state.read_db_pool,
         &resource_type,
         &search_params,
         Some(&cfg.registry),
         state.query_cache.as_deref(),
+        state.terminology_provider.as_ref(),
         octofhir_db_postgres::queries::RawSearchOptions {
-            unknown_param_handling: None,
+            unknown_param_handling,
             collect_debug_plan: debug_request.collect_plan(),
             collect_explain_plan: debug_request.collect_explain_plan(),
             collect_explain_analyze: debug_request.collect_explain_analyze(),
@@ -2655,6 +2660,10 @@ pub async fn system_search(
     let debug_request = search_debug_request(&state.config.search, &headers, &raw_q);
     let raw_q = strip_search_debug_params(&raw_q);
     let cfg = state.search_config.config();
+    let unknown_param_handling = headers
+        .get("Prefer")
+        .and_then(|h| h.to_str().ok())
+        .map(octofhir_search::UnknownParamHandling::from_prefer_header);
 
     // Collect raw entries: (resource_json, id, resource_type)
     let mut all_entries: Vec<(String, String, String)> = Vec::new();
@@ -2672,14 +2681,15 @@ pub async fn system_search(
             continue;
         }
 
-        match octofhir_db_postgres::queries::execute_search_raw_with_options(
+        match octofhir_db_postgres::queries::execute_search_raw_with_terminology_options(
             &state.read_db_pool,
             type_name,
             &search_params,
             Some(&cfg.registry),
             state.query_cache.as_deref(),
+            state.terminology_provider.as_ref(),
             octofhir_db_postgres::queries::RawSearchOptions {
-                unknown_param_handling: None,
+                unknown_param_handling,
                 collect_debug_plan: debug_request.collect_plan(),
                 collect_explain_plan: debug_request.collect_explain_plan(),
                 collect_explain_analyze: debug_request.collect_explain_analyze(),

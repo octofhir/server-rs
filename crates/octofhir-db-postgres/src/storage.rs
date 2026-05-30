@@ -3,9 +3,8 @@
 use std::sync::{Arc, OnceLock};
 
 use async_trait::async_trait;
-use serde_json::{Map, Value};
-use sqlx_postgres::PgPool;
-use time::format_description::well_known::Rfc3339;
+use serde_json::Value;
+use sqlx_postgres::{PgPool, PgTransaction};
 
 use octofhir_search::{QueryCache, SearchParameter, SearchParameterRegistry};
 use octofhir_storage::{
@@ -42,37 +41,6 @@ pub struct PostgresStorage {
 }
 
 impl PostgresStorage {
-    fn resource_for_index(
-        resource: &Value,
-        stored: &RawStoredResource,
-    ) -> Result<Value, StorageError> {
-        let mut indexed = resource.clone();
-        let obj = indexed.as_object_mut().ok_or_else(|| {
-            StorageError::invalid_resource("Cannot index non-object FHIR resource")
-        })?;
-
-        obj.insert("id".to_string(), Value::String(stored.id.clone()));
-
-        let mut meta = obj
-            .get("meta")
-            .and_then(Value::as_object)
-            .cloned()
-            .unwrap_or_else(Map::new);
-        meta.insert(
-            "versionId".to_string(),
-            Value::String(stored.version_id.clone()),
-        );
-        meta.insert(
-            "lastUpdated".to_string(),
-            Value::String(stored.last_updated.format(&Rfc3339).map_err(|e| {
-                StorageError::internal(format!("Failed to format lastUpdated for indexing: {e}"))
-            })?),
-        );
-        obj.insert("meta".to_string(), Value::Object(meta));
-
-        Ok(indexed)
-    }
-
     /// Creates a new `PostgresStorage` with the given configuration.
     ///
     /// This will:
@@ -198,88 +166,105 @@ impl PostgresStorage {
             .and_then(|r| r.get(resource_type, code))
     }
 
-    /// Extract index rows on the caller side, then hand off to the async
-    /// indexer (or flush inline when no indexer is set).
-    async fn dispatch_index_write(
+    /// Write search-index rows inside the same transaction as the resource
+    /// mutation. This makes the synchronous CRUD path atomic: if index writes
+    /// fail, the resource mutation rolls back too.
+    async fn write_indexes_with_tx(
+        &self,
+        tx: &mut PgTransaction<'_>,
+        op: IndexOp,
+        resource_type: &str,
+        resource_id: &str,
+        resource: Option<&Value>,
+    ) -> Result<(), StorageError> {
+        if self.async_indexer.is_some() {
+            tracing::debug!(
+                resource_type = %resource_type,
+                resource_id = %resource_id,
+                "Async search-index writer configured; using transactional index write for consistency"
+            );
+        }
+
+        if matches!(op, IndexOp::Update | IndexOp::Delete) {
+            crate::search_index::delete_search_indexes_with_tx(tx, resource_type, resource_id)
+                .await?;
+        }
+
+        if !matches!(op, IndexOp::Create | IndexOp::Update) {
+            return Ok(());
+        }
+
+        let Some(registry) = self.search_registry.get() else {
+            return Ok(());
+        };
+        let resource = resource.ok_or_else(|| {
+            StorageError::internal("Missing resource payload for search-index write")
+        })?;
+        let rows =
+            crate::search_index::extract_search_index_rows(registry, resource_type, resource);
+        let mut buffer = crate::search_index::BatchIndexBuffer::new();
+        buffer.extend_with(resource_type, resource_id, &rows);
+        if !buffer.is_empty() {
+            buffer.flush_with_tx(tx).await?;
+        }
+
+        Ok(())
+    }
+
+    fn raw_from_stored(stored: &StoredResource) -> Result<RawStoredResource, StorageError> {
+        let resource_json = serde_json::to_string(&stored.resource)
+            .map_err(|e| StorageError::internal(format!("Failed to serialize resource: {e}")))?;
+        Ok(RawStoredResource {
+            id: stored.id.clone(),
+            version_id: stored.version_id.clone(),
+            resource_type: stored.resource_type.clone(),
+            resource_json,
+            last_updated: stored.last_updated,
+            created_at: stored.created_at,
+        })
+    }
+
+    async fn enqueue_index_write(
         &self,
         op: IndexOp,
         resource_type: &str,
         resource_id: &str,
         resource: &Value,
     ) -> Result<(), StorageError> {
+        let Some(indexer) = &self.async_indexer else {
+            return Ok(());
+        };
         let Some(registry) = self.search_registry.get() else {
             return Ok(());
         };
         let rows =
             crate::search_index::extract_search_index_rows(registry, resource_type, resource);
-
-        let job = IndexJob {
-            op,
-            resource_type: resource_type.to_string(),
-            resource_id: resource_id.to_string(),
-            rows,
-        };
-
-        if let Some(indexer) = &self.async_indexer {
-            indexer.submit(job).await
-        } else {
-            self.write_index_job_inline(&job).await
-        }
+        indexer
+            .submit(IndexJob {
+                op,
+                resource_type: resource_type.to_string(),
+                resource_id: resource_id.to_string(),
+                rows,
+            })
+            .await
     }
 
-    async fn dispatch_index_delete(
+    async fn enqueue_index_delete(
         &self,
         resource_type: &str,
         resource_id: &str,
     ) -> Result<(), StorageError> {
-        let job = IndexJob {
-            op: IndexOp::Delete,
-            resource_type: resource_type.to_string(),
-            resource_id: resource_id.to_string(),
-            rows: crate::search_index::ExtractedIndexRows::default(),
+        let Some(indexer) = &self.async_indexer else {
+            return Ok(());
         };
-
-        if let Some(indexer) = &self.async_indexer {
-            indexer.submit(job).await
-        } else {
-            self.write_index_job_inline(&job).await
-        }
-    }
-
-    /// Inline, non-batched index flush for one job. `Create` skips the
-    /// leading DELETE since no rows can exist yet.
-    async fn write_index_job_inline(&self, job: &IndexJob) -> Result<(), StorageError> {
-        let mut tx = self.pool.begin().await.map_err(|e| {
-            StorageError::transaction_error(format!(
-                "Failed to begin search-index transaction: {e}"
-            ))
-        })?;
-
-        if matches!(job.op, IndexOp::Update | IndexOp::Delete) {
-            crate::search_index::delete_search_indexes_with_tx(
-                &mut tx,
-                &job.resource_type,
-                &job.resource_id,
-            )
-            .await?;
-        }
-
-        if matches!(job.op, IndexOp::Create | IndexOp::Update) {
-            // Insert-only buffer; the Update branch already deleted above,
-            // so we never DELETE on Create.
-            let mut buffer = crate::search_index::BatchIndexBuffer::new();
-            buffer.extend_with(&job.resource_type, &job.resource_id, &job.rows);
-            if !buffer.is_empty() {
-                buffer.flush_with_tx(&mut tx).await?;
-            }
-        }
-
-        tx.commit().await.map_err(|e| {
-            StorageError::transaction_error(format!(
-                "Failed to commit search-index transaction: {e}"
-            ))
-        })?;
-        Ok(())
+        indexer
+            .submit(IndexJob {
+                op: IndexOp::Delete,
+                resource_type: resource_type.to_string(),
+                resource_id: resource_id.to_string(),
+                rows: crate::search_index::ExtractedIndexRows::default(),
+            })
+            .await
     }
 
     /// Reindex a single resource: delete old index rows, extract new ones, and write them.
@@ -357,36 +342,51 @@ impl PostgresStorage {
 #[async_trait]
 impl FhirStorage for PostgresStorage {
     async fn create(&self, resource: &Value) -> Result<StoredResource, StorageError> {
-        // Resource tx commits first; index write follows separately so the
-        // connection isn't held across FHIRPath + index I/O.
-        let result = {
-            let mut tx = self.pool.begin().await.map_err(|e| {
-                StorageError::transaction_error(format!("Failed to begin transaction: {e}"))
-            })?;
-            let result = queries::crud::create_with_tx(&mut tx, resource, None).await?;
-            tx.commit().await.map_err(|e| {
-                StorageError::transaction_error(format!("Failed to commit transaction: {e}"))
-            })?;
-            result
-        };
-
-        if let Err(e) = self
-            .dispatch_index_write(
-                IndexOp::Create,
-                &result.resource_type,
-                &result.id,
-                &result.resource,
-            )
-            .await
-        {
-            tracing::warn!(
-                error = %e,
-                resource_type = %result.resource_type,
-                resource_id = %result.id,
-                "search index write failed after create commit"
-            );
+        if self.async_indexer.is_some() {
+            let result = {
+                let mut tx = self.pool.begin().await.map_err(|e| {
+                    StorageError::transaction_error(format!("Failed to begin transaction: {e}"))
+                })?;
+                let result = queries::crud::create_with_tx(&mut tx, resource, None).await?;
+                tx.commit().await.map_err(|e| {
+                    StorageError::transaction_error(format!("Failed to commit transaction: {e}"))
+                })?;
+                result
+            };
+            if let Err(e) = self
+                .enqueue_index_write(
+                    IndexOp::Create,
+                    &result.resource_type,
+                    &result.id,
+                    &result.resource,
+                )
+                .await
+            {
+                tracing::warn!(
+                    error = %e,
+                    resource_type = %result.resource_type,
+                    resource_id = %result.id,
+                    "async search index enqueue failed after create commit"
+                );
+            }
+            return Ok(result);
         }
 
+        let mut tx = self.pool.begin().await.map_err(|e| {
+            StorageError::transaction_error(format!("Failed to begin transaction: {e}"))
+        })?;
+        let result = queries::crud::create_with_tx(&mut tx, resource, None).await?;
+        self.write_indexes_with_tx(
+            &mut tx,
+            IndexOp::Create,
+            &result.resource_type,
+            &result.id,
+            Some(&result.resource),
+        )
+        .await?;
+        tx.commit().await.map_err(|e| {
+            StorageError::transaction_error(format!("Failed to commit transaction: {e}"))
+        })?;
         Ok(result)
     }
 
@@ -394,27 +394,49 @@ impl FhirStorage for PostgresStorage {
         &self,
         resource: &Value,
     ) -> Result<octofhir_storage::RawStoredResource, StorageError> {
-        let result = queries::crud::create_raw(&self.pool, resource).await?;
-        let indexed_resource = Self::resource_for_index(resource, &result)?;
-
-        if let Err(e) = self
-            .dispatch_index_write(
-                IndexOp::Create,
-                &result.resource_type,
-                &result.id,
-                &indexed_resource,
-            )
-            .await
-        {
-            tracing::warn!(
-                error = %e,
-                resource_type = %result.resource_type,
-                resource_id = %result.id,
-                "search index write failed after raw create"
-            );
+        if self.async_indexer.is_some() {
+            let mut tx = self.pool.begin().await.map_err(|e| {
+                StorageError::transaction_error(format!("Failed to begin transaction: {e}"))
+            })?;
+            let result = queries::crud::create_with_tx(&mut tx, resource, None).await?;
+            tx.commit().await.map_err(|e| {
+                StorageError::transaction_error(format!("Failed to commit transaction: {e}"))
+            })?;
+            if let Err(e) = self
+                .enqueue_index_write(
+                    IndexOp::Create,
+                    &result.resource_type,
+                    &result.id,
+                    &result.resource,
+                )
+                .await
+            {
+                tracing::warn!(
+                    error = %e,
+                    resource_type = %result.resource_type,
+                    resource_id = %result.id,
+                    "async search index enqueue failed after raw create commit"
+                );
+            }
+            return Self::raw_from_stored(&result);
         }
 
-        Ok(result)
+        let mut tx = self.pool.begin().await.map_err(|e| {
+            StorageError::transaction_error(format!("Failed to begin transaction: {e}"))
+        })?;
+        let result = queries::crud::create_with_tx(&mut tx, resource, None).await?;
+        self.write_indexes_with_tx(
+            &mut tx,
+            IndexOp::Create,
+            &result.resource_type,
+            &result.id,
+            Some(&result.resource),
+        )
+        .await?;
+        tx.commit().await.map_err(|e| {
+            StorageError::transaction_error(format!("Failed to commit transaction: {e}"))
+        })?;
+        Self::raw_from_stored(&result)
     }
 
     async fn read(
@@ -438,35 +460,54 @@ impl FhirStorage for PostgresStorage {
         resource: &Value,
         if_match: Option<&str>,
     ) -> Result<StoredResource, StorageError> {
-        let result = {
-            let mut tx = self.pool.begin().await.map_err(|e| {
-                StorageError::transaction_error(format!("Failed to begin transaction: {e}"))
-            })?;
-            let result =
-                queries::crud::update_with_tx_if_match(&mut tx, resource, if_match, None).await?;
-            tx.commit().await.map_err(|e| {
-                StorageError::transaction_error(format!("Failed to commit transaction: {e}"))
-            })?;
-            result
-        };
-
-        if let Err(e) = self
-            .dispatch_index_write(
-                IndexOp::Update,
-                &result.resource_type,
-                &result.id,
-                &result.resource,
-            )
-            .await
-        {
-            tracing::warn!(
-                error = %e,
-                resource_type = %result.resource_type,
-                resource_id = %result.id,
-                "search index write failed after update commit"
-            );
+        if self.async_indexer.is_some() {
+            let result = {
+                let mut tx = self.pool.begin().await.map_err(|e| {
+                    StorageError::transaction_error(format!("Failed to begin transaction: {e}"))
+                })?;
+                let result =
+                    queries::crud::update_with_tx_if_match(&mut tx, resource, if_match, None)
+                        .await?;
+                tx.commit().await.map_err(|e| {
+                    StorageError::transaction_error(format!("Failed to commit transaction: {e}"))
+                })?;
+                result
+            };
+            if let Err(e) = self
+                .enqueue_index_write(
+                    IndexOp::Update,
+                    &result.resource_type,
+                    &result.id,
+                    &result.resource,
+                )
+                .await
+            {
+                tracing::warn!(
+                    error = %e,
+                    resource_type = %result.resource_type,
+                    resource_id = %result.id,
+                    "async search index enqueue failed after update commit"
+                );
+            }
+            return Ok(result);
         }
 
+        let mut tx = self.pool.begin().await.map_err(|e| {
+            StorageError::transaction_error(format!("Failed to begin transaction: {e}"))
+        })?;
+        let result =
+            queries::crud::update_with_tx_if_match(&mut tx, resource, if_match, None).await?;
+        self.write_indexes_with_tx(
+            &mut tx,
+            IndexOp::Update,
+            &result.resource_type,
+            &result.id,
+            Some(&result.resource),
+        )
+        .await?;
+        tx.commit().await.map_err(|e| {
+            StorageError::transaction_error(format!("Failed to commit transaction: {e}"))
+        })?;
         Ok(result)
     }
 
@@ -475,51 +516,61 @@ impl FhirStorage for PostgresStorage {
         resource: &Value,
         if_match: Option<&str>,
     ) -> Result<octofhir_storage::RawStoredResource, StorageError> {
-        let result = queries::crud::update_raw(&self.pool, resource, if_match).await?;
-        let indexed_resource = Self::resource_for_index(resource, &result)?;
-
-        if let Err(e) = self
-            .dispatch_index_write(
-                IndexOp::Update,
-                &result.resource_type,
-                &result.id,
-                &indexed_resource,
-            )
-            .await
-        {
-            tracing::warn!(
-                error = %e,
-                resource_type = %result.resource_type,
-                resource_id = %result.id,
-                "search index write failed after raw update"
-            );
+        if self.async_indexer.is_some() {
+            let result = self.update(resource, if_match).await?;
+            return Self::raw_from_stored(&result);
         }
 
-        Ok(result)
+        let mut tx = self.pool.begin().await.map_err(|e| {
+            StorageError::transaction_error(format!("Failed to begin transaction: {e}"))
+        })?;
+        let result =
+            queries::crud::update_with_tx_if_match(&mut tx, resource, if_match, None).await?;
+        self.write_indexes_with_tx(
+            &mut tx,
+            IndexOp::Update,
+            &result.resource_type,
+            &result.id,
+            Some(&result.resource),
+        )
+        .await?;
+        tx.commit().await.map_err(|e| {
+            StorageError::transaction_error(format!("Failed to commit transaction: {e}"))
+        })?;
+        Self::raw_from_stored(&result)
     }
 
     async fn delete(&self, resource_type: &str, id: &str) -> Result<(), StorageError> {
-        // Soft-delete commits first; index cleanup follows. Orphaned index
-        // rows after a failure can be reaped with `$reindex`.
-        {
-            let mut tx = self.pool.begin().await.map_err(|e| {
-                StorageError::transaction_error(format!("Failed to begin transaction: {e}"))
-            })?;
-            queries::crud::delete_with_tx(&mut tx, resource_type, id, None).await?;
-            tx.commit().await.map_err(|e| {
-                StorageError::transaction_error(format!("Failed to commit transaction: {e}"))
-            })?;
+        if self.async_indexer.is_some() {
+            {
+                let mut tx = self.pool.begin().await.map_err(|e| {
+                    StorageError::transaction_error(format!("Failed to begin transaction: {e}"))
+                })?;
+                queries::crud::delete_with_tx(&mut tx, resource_type, id, None).await?;
+                tx.commit().await.map_err(|e| {
+                    StorageError::transaction_error(format!("Failed to commit transaction: {e}"))
+                })?;
+            }
+            if let Err(e) = self.enqueue_index_delete(resource_type, id).await {
+                tracing::warn!(
+                    error = %e,
+                    resource_type = %resource_type,
+                    resource_id = %id,
+                    "async search index enqueue failed after delete commit"
+                );
+            }
+            return Ok(());
         }
 
-        if let Err(e) = self.dispatch_index_delete(resource_type, id).await {
-            tracing::warn!(
-                error = %e,
-                resource_type = %resource_type,
-                resource_id = %id,
-                "search index delete failed after resource delete commit"
-            );
-        }
-
+        let mut tx = self.pool.begin().await.map_err(|e| {
+            StorageError::transaction_error(format!("Failed to begin transaction: {e}"))
+        })?;
+        queries::crud::delete_with_tx(&mut tx, resource_type, id, None).await?;
+        self.write_indexes_with_tx(&mut tx, IndexOp::Delete, resource_type, id, None)
+            .await?;
+        tx.commit().await.map_err(|e| {
+            StorageError::transaction_error(format!("Failed to commit transaction: {e}"))
+        })?;
         Ok(())
     }
 

@@ -2,7 +2,11 @@
 //!
 //! This module contains the SQL queries for FHIR search operations.
 
-use std::{sync::Arc, time::Instant};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+    time::Instant,
+};
 
 use chrono::{DateTime, Utc};
 use serde_json::Value;
@@ -31,6 +35,8 @@ pub use octofhir_search::UnknownParamHandling as SearchUnknownParamHandling;
 
 use crate::error::is_undefined_table;
 use crate::schema::SchemaManager;
+
+const INCLUDE_ITERATE_MAX_DEPTH: usize = 100;
 
 /// Per-request raw search execution options.
 #[derive(Debug, Clone, Copy, Default)]
@@ -999,6 +1005,55 @@ async fn resolve_include(
     include: &octofhir_search::IncludeSpec,
     _source_type: &str,
 ) -> Result<Vec<StoredResource>, StorageError> {
+    if include.iterate {
+        return resolve_include_iterate(pool, main_results, include).await;
+    }
+
+    resolve_include_once(pool, main_results, include).await
+}
+
+async fn resolve_include_iterate(
+    pool: &PgPool,
+    main_results: &[StoredResource],
+    include: &octofhir_search::IncludeSpec,
+) -> Result<Vec<StoredResource>, StorageError> {
+    let mut visited: HashSet<(String, String)> = main_results
+        .iter()
+        .map(|r| (r.resource_type.clone(), r.id.clone()))
+        .collect();
+    let mut current: Vec<StoredResource> = main_results
+        .iter()
+        .filter(|r| r.resource_type == include.source_type)
+        .cloned()
+        .collect();
+    let mut included = Vec::new();
+
+    for _ in 0..INCLUDE_ITERATE_MAX_DEPTH {
+        if current.is_empty() {
+            break;
+        }
+
+        let next = resolve_include_once(pool, &current, include).await?;
+        current = Vec::new();
+        for entry in next {
+            let key = (entry.resource_type.clone(), entry.id.clone());
+            if visited.insert(key) {
+                if entry.resource_type == include.source_type {
+                    current.push(entry.clone());
+                }
+                included.push(entry);
+            }
+        }
+    }
+
+    Ok(included)
+}
+
+async fn resolve_include_once(
+    pool: &PgPool,
+    main_results: &[StoredResource],
+    include: &octofhir_search::IncludeSpec,
+) -> Result<Vec<StoredResource>, StorageError> {
     if main_results.is_empty() {
         return Ok(Vec::new());
     }
@@ -1006,8 +1061,15 @@ async fn resolve_include(
     let source_type = &include.source_type;
     let param_name = &include.param_name;
 
-    // Collect source IDs
-    let source_ids: Vec<&str> = main_results.iter().map(|r| r.id.as_str()).collect();
+    // Collect source IDs for the declared source type only.
+    let source_ids: Vec<&str> = main_results
+        .iter()
+        .filter(|r| r.resource_type == *source_type)
+        .map(|r| r.id.as_str())
+        .collect();
+    if source_ids.is_empty() {
+        return Ok(Vec::new());
+    }
 
     let target_types = if let Some(target_type) = include.target_type.as_ref() {
         vec![target_type.clone()]
@@ -1113,6 +1175,10 @@ async fn resolve_revinclude(
     main_results: &[StoredResource],
     revinclude: &octofhir_search::RevIncludeSpec,
 ) -> Result<Vec<StoredResource>, StorageError> {
+    if revinclude.iterate {
+        return resolve_revinclude_iterate(pool, main_results, revinclude).await;
+    }
+
     if main_results.is_empty() {
         return Ok(Vec::new());
     }
@@ -1121,7 +1187,69 @@ async fn resolve_revinclude(
         .first()
         .map(|r| r.resource_type.as_str())
         .unwrap_or("");
-    let target_ids: Vec<&str> = main_results.iter().map(|r| r.id.as_str()).collect();
+
+    resolve_revinclude_once(pool, main_type, main_results, revinclude).await
+}
+
+async fn resolve_revinclude_iterate(
+    pool: &PgPool,
+    main_results: &[StoredResource],
+    revinclude: &octofhir_search::RevIncludeSpec,
+) -> Result<Vec<StoredResource>, StorageError> {
+    let mut visited: HashSet<(String, String)> = main_results
+        .iter()
+        .map(|r| (r.resource_type.clone(), r.id.clone()))
+        .collect();
+    let mut current = main_results.to_vec();
+    let mut included = Vec::new();
+
+    for _ in 0..INCLUDE_ITERATE_MAX_DEPTH {
+        if current.is_empty() {
+            break;
+        }
+
+        let mut groups: HashMap<String, Vec<StoredResource>> = HashMap::new();
+        for entry in current {
+            groups
+                .entry(entry.resource_type.clone())
+                .or_default()
+                .push(entry);
+        }
+
+        current = Vec::new();
+        for (target_type, targets) in groups {
+            let next = resolve_revinclude_once(pool, &target_type, &targets, revinclude).await?;
+            for entry in next {
+                let key = (entry.resource_type.clone(), entry.id.clone());
+                if visited.insert(key) {
+                    current.push(entry.clone());
+                    included.push(entry);
+                }
+            }
+        }
+    }
+
+    Ok(included)
+}
+
+async fn resolve_revinclude_once(
+    pool: &PgPool,
+    target_type: &str,
+    target_results: &[StoredResource],
+    revinclude: &octofhir_search::RevIncludeSpec,
+) -> Result<Vec<StoredResource>, StorageError> {
+    if revinclude
+        .target_type
+        .as_ref()
+        .is_some_and(|expected| expected != target_type)
+    {
+        return Ok(Vec::new());
+    }
+
+    let target_ids: Vec<&str> = target_results.iter().map(|r| r.id.as_str()).collect();
+    if target_ids.is_empty() {
+        return Ok(Vec::new());
+    }
 
     let source_type = &revinclude.source_type;
     let table = SchemaManager::table_name(source_type);
@@ -1140,7 +1268,7 @@ async fn resolve_revinclude(
     let rows: Vec<(Value, String, i64, DateTime<Utc>, DateTime<Utc>)> = query_as(&sql)
         .bind(source_type)
         .bind(param_name)
-        .bind(main_type)
+        .bind(target_type)
         .bind(&target_ids)
         .fetch_all(pool)
         .await
@@ -1217,6 +1345,55 @@ async fn resolve_include_raw(
     main_results: &[RawStoredResource],
     include: &octofhir_search::IncludeSpec,
 ) -> Result<Vec<RawStoredResource>, StorageError> {
+    if include.iterate {
+        return resolve_include_iterate_raw(pool, main_results, include).await;
+    }
+
+    resolve_include_once_raw(pool, main_results, include).await
+}
+
+async fn resolve_include_iterate_raw(
+    pool: &PgPool,
+    main_results: &[RawStoredResource],
+    include: &octofhir_search::IncludeSpec,
+) -> Result<Vec<RawStoredResource>, StorageError> {
+    let mut visited: HashSet<(String, String)> = main_results
+        .iter()
+        .map(|r| (r.resource_type.clone(), r.id.clone()))
+        .collect();
+    let mut current: Vec<RawStoredResource> = main_results
+        .iter()
+        .filter(|r| r.resource_type == include.source_type)
+        .cloned()
+        .collect();
+    let mut included = Vec::new();
+
+    for _ in 0..INCLUDE_ITERATE_MAX_DEPTH {
+        if current.is_empty() {
+            break;
+        }
+
+        let next = resolve_include_once_raw(pool, &current, include).await?;
+        current = Vec::new();
+        for entry in next {
+            let key = (entry.resource_type.clone(), entry.id.clone());
+            if visited.insert(key) {
+                if entry.resource_type == include.source_type {
+                    current.push(entry.clone());
+                }
+                included.push(entry);
+            }
+        }
+    }
+
+    Ok(included)
+}
+
+async fn resolve_include_once_raw(
+    pool: &PgPool,
+    main_results: &[RawStoredResource],
+    include: &octofhir_search::IncludeSpec,
+) -> Result<Vec<RawStoredResource>, StorageError> {
     if main_results.is_empty() {
         return Ok(Vec::new());
     }
@@ -1224,8 +1401,15 @@ async fn resolve_include_raw(
     let source_type = &include.source_type;
     let param_name = &include.param_name;
 
-    // Collect source IDs
-    let source_ids: Vec<&str> = main_results.iter().map(|r| r.id.as_str()).collect();
+    // Collect source IDs for the declared source type only.
+    let source_ids: Vec<&str> = main_results
+        .iter()
+        .filter(|r| r.resource_type == *source_type)
+        .map(|r| r.id.as_str())
+        .collect();
+    if source_ids.is_empty() {
+        return Ok(Vec::new());
+    }
 
     let target_types = if let Some(target_type) = include.target_type.as_ref() {
         vec![target_type.clone()]
@@ -1309,11 +1493,77 @@ async fn resolve_revinclude_raw(
     main_results: &[RawStoredResource],
     revinclude: &octofhir_search::RevIncludeSpec,
 ) -> Result<Vec<RawStoredResource>, StorageError> {
+    if revinclude.iterate {
+        return resolve_revinclude_iterate_raw(pool, main_results, revinclude).await;
+    }
+
     if main_results.is_empty() {
         return Ok(Vec::new());
     }
 
-    let target_ids: Vec<&str> = main_results.iter().map(|r| r.id.as_str()).collect();
+    resolve_revinclude_once_raw(pool, main_resource_type, main_results, revinclude).await
+}
+
+async fn resolve_revinclude_iterate_raw(
+    pool: &PgPool,
+    main_results: &[RawStoredResource],
+    revinclude: &octofhir_search::RevIncludeSpec,
+) -> Result<Vec<RawStoredResource>, StorageError> {
+    let mut visited: HashSet<(String, String)> = main_results
+        .iter()
+        .map(|r| (r.resource_type.clone(), r.id.clone()))
+        .collect();
+    let mut current = main_results.to_vec();
+    let mut included = Vec::new();
+
+    for _ in 0..INCLUDE_ITERATE_MAX_DEPTH {
+        if current.is_empty() {
+            break;
+        }
+
+        let mut groups: HashMap<String, Vec<RawStoredResource>> = HashMap::new();
+        for entry in current {
+            groups
+                .entry(entry.resource_type.clone())
+                .or_default()
+                .push(entry);
+        }
+
+        current = Vec::new();
+        for (target_type, targets) in groups {
+            let next =
+                resolve_revinclude_once_raw(pool, &target_type, &targets, revinclude).await?;
+            for entry in next {
+                let key = (entry.resource_type.clone(), entry.id.clone());
+                if visited.insert(key) {
+                    current.push(entry.clone());
+                    included.push(entry);
+                }
+            }
+        }
+    }
+
+    Ok(included)
+}
+
+async fn resolve_revinclude_once_raw(
+    pool: &PgPool,
+    target_type: &str,
+    target_results: &[RawStoredResource],
+    revinclude: &octofhir_search::RevIncludeSpec,
+) -> Result<Vec<RawStoredResource>, StorageError> {
+    if revinclude
+        .target_type
+        .as_ref()
+        .is_some_and(|expected| expected != target_type)
+    {
+        return Ok(Vec::new());
+    }
+
+    let target_ids: Vec<&str> = target_results.iter().map(|r| r.id.as_str()).collect();
+    if target_ids.is_empty() {
+        return Ok(Vec::new());
+    }
 
     let source_type = &revinclude.source_type;
     let table = SchemaManager::table_name(source_type);
@@ -1332,7 +1582,7 @@ async fn resolve_revinclude_raw(
     let rows: Vec<(String, String, i64, DateTime<Utc>, DateTime<Utc>)> = query_as(&sql)
         .bind(source_type)
         .bind(param_name)
-        .bind(main_resource_type)
+        .bind(target_type)
         .bind(&target_ids)
         .fetch_all(pool)
         .await

@@ -898,7 +898,11 @@ fn extract_include_specs(
 ) -> Vec<IncludeSpec> {
     let mut specs = Vec::new();
 
-    if let Some(includes) = params.parameters.get("_include") {
+    for (key, includes) in params
+        .parameters
+        .iter()
+        .filter(|(key, _)| key.as_str() == "_include" || key.as_str() == "_include:iterate")
+    {
         for value in includes {
             // Format: SourceType:searchParam or SourceType:searchParam:TargetType
             let parts: Vec<&str> = value.split(':').collect();
@@ -919,6 +923,9 @@ fn extract_include_specs(
                         spec = spec.with_target(&param_def.target[0]);
                     }
                 }
+                if key.as_str() == "_include:iterate" {
+                    spec = spec.iterate();
+                }
                 specs.push(spec);
             }
         }
@@ -935,7 +942,11 @@ fn extract_revinclude_specs(
 ) -> Vec<RevIncludeSpec> {
     let mut specs = Vec::new();
 
-    if let Some(revincludes) = params.parameters.get("_revinclude") {
+    for (key, revincludes) in params
+        .parameters
+        .iter()
+        .filter(|(key, _)| key.as_str() == "_revinclude" || key.as_str() == "_revinclude:iterate")
+    {
         for value in revincludes {
             // Format: SourceType:searchParam or SourceType:searchParam:TargetType
             let parts: Vec<&str> = value.split(':').collect();
@@ -947,6 +958,9 @@ fn extract_revinclude_specs(
                 let mut spec = RevIncludeSpec::new(source, param);
                 if let Some(t) = target {
                     spec = spec.with_target(t);
+                }
+                if key.as_str() == "_revinclude:iterate" {
+                    spec = spec.iterate();
                 }
                 specs.push(spec);
             }
@@ -1135,6 +1149,24 @@ mod tests {
     }
 
     #[test]
+    fn test_extract_include_iterate_specs_from_params() {
+        let registry = SearchParameterRegistry::new();
+        let params = parse_query_string(
+            "code=8867-4&_include:iterate=Observation:subject&_count=5",
+            10,
+            100,
+        );
+        let specs = extract_include_specs(&params, &registry, "Observation");
+        assert!(
+            !specs.is_empty(),
+            "include:iterate specs should not be empty"
+        );
+        assert_eq!(specs[0].source_type, "Observation");
+        assert_eq!(specs[0].param_name, "subject");
+        assert!(specs[0].iterate);
+    }
+
+    #[test]
     fn test_extract_revinclude_specs_from_params() {
         let registry = SearchParameterRegistry::new();
         let params = parse_query_string(
@@ -1146,6 +1178,24 @@ mod tests {
         assert!(!specs.is_empty(), "revinclude specs should not be empty");
         assert_eq!(specs[0].source_type, "Observation");
         assert_eq!(specs[0].param_name, "subject");
+    }
+
+    #[test]
+    fn test_extract_revinclude_iterate_specs_from_params() {
+        let registry = SearchParameterRegistry::new();
+        let params = parse_query_string(
+            "family=Smith&_revinclude:iterate=Observation:subject&_count=5",
+            10,
+            100,
+        );
+        let specs = extract_revinclude_specs(&params, &registry, "Patient");
+        assert!(
+            !specs.is_empty(),
+            "revinclude:iterate specs should not be empty"
+        );
+        assert_eq!(specs[0].source_type, "Observation");
+        assert_eq!(specs[0].param_name, "subject");
+        assert!(specs[0].iterate);
     }
 
     #[test]

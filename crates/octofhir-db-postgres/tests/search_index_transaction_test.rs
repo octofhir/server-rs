@@ -69,6 +69,53 @@ async fn setup_storage() -> (testcontainers::ContainerAsync<Postgres>, PostgresS
 }
 
 #[tokio::test]
+async fn normal_create_rolls_back_when_search_index_write_fails() {
+    let (_container, storage) = setup_storage().await;
+
+    let patient = json!({
+        "resourceType": "Patient",
+        "id": "normal-rollback-patient",
+        "managingOrganization": {
+            "reference": "Organization/org-1"
+        }
+    });
+
+    let result = storage.create(&patient).await;
+    assert!(result.is_err(), "create should fail when index write fails");
+
+    let stored = storage
+        .read("Patient", "normal-rollback-patient")
+        .await
+        .expect("read should succeed");
+    assert!(stored.is_none(), "resource insert must be rolled back");
+}
+
+#[tokio::test]
+async fn normal_create_raw_rolls_back_when_search_index_write_fails() {
+    let (_container, storage) = setup_storage().await;
+
+    let patient = json!({
+        "resourceType": "Patient",
+        "id": "normal-raw-rollback-patient",
+        "managingOrganization": {
+            "reference": "Organization/org-1"
+        }
+    });
+
+    let result = storage.create_raw(&patient).await;
+    assert!(
+        result.is_err(),
+        "create_raw should fail when index write fails"
+    );
+
+    let stored = storage
+        .read("Patient", "normal-raw-rollback-patient")
+        .await
+        .expect("read should succeed");
+    assert!(stored.is_none(), "resource insert must be rolled back");
+}
+
+#[tokio::test]
 async fn create_rolls_back_when_search_index_write_fails() {
     let (_container, storage) = setup_storage().await;
 

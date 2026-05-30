@@ -1492,7 +1492,9 @@ pub fn bundle_from_history(
         }
     }
 
-    Bundle::history(bundle_entries, links)
+    let mut bundle = Bundle::history(bundle_entries, links);
+    bundle.total = total.map(u64::from);
+    bundle
 }
 
 /// Build a history endpoint URL with pagination
@@ -1509,13 +1511,13 @@ fn build_history_link(
         None => format!("{base_url}/{resource_type}/_history"),
     };
 
-    format!("{path}?_count={count}&__offset={offset}")
+    format!("{path}?_count={count}&_offset={offset}")
 }
 
 /// Build a system-level history endpoint URL with pagination
 fn build_system_history_link(base_url: &str, offset: usize, count: usize) -> String {
     let base_url = base_url.trim_end_matches('/');
-    format!("{base_url}/_history?_count={count}&__offset={offset}")
+    format!("{base_url}/_history?_count={count}&_offset={offset}")
 }
 
 /// Build a system-level history bundle from history entries
@@ -1612,7 +1614,9 @@ pub fn bundle_from_system_history(
         }
     }
 
-    Bundle::history(bundle_entries, links)
+    let mut bundle = Bundle::history(bundle_entries, links);
+    bundle.total = total.map(u64::from);
+    bundle
 }
 
 #[cfg(test)]
@@ -1786,6 +1790,42 @@ mod bundle_generation_tests {
         assert!(rels.get("last").unwrap().contains("_offset=0"));
         assert!(rels.get("self").unwrap().contains("name=Jane"));
     }
+
+    #[test]
+    fn history_bundle_uses_total_for_links_and_total_field() {
+        let entry = HistoryBundleEntry {
+            resource: RawJson::from(make_pat("11")),
+            id: "11".to_string(),
+            resource_type: "Patient".to_string(),
+            version_id: "11".to_string(),
+            last_modified: "2024-01-01T00:00:00Z".to_string(),
+            method: HistoryBundleMethod::Update,
+        };
+        let bundle = bundle_from_history(
+            vec![entry],
+            "http://example.org/fhir",
+            "Patient",
+            None,
+            10,
+            10,
+            Some(25),
+        );
+
+        assert_eq!(bundle.total, Some(25));
+        let rels: std::collections::HashMap<_, _> = bundle
+            .link
+            .iter()
+            .map(|link| (link.relation.clone(), link.url.clone()))
+            .collect();
+        assert!(rels.get("self").unwrap().contains("_offset=10"));
+        assert!(rels.get("previous").unwrap().contains("_offset=0"));
+        assert!(rels.get("next").unwrap().contains("_offset=20"));
+        assert!(rels.get("last").unwrap().contains("_offset=20"));
+        assert!(
+            !rels.values().any(|url| url.contains("__offset")),
+            "history links must use canonical _offset"
+        );
+    }
 }
 
 // -------------------------
@@ -1825,6 +1865,8 @@ impl CapabilityStatement {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct CapabilityStatementRest {
     pub mode: String, // "server" or "client"
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub interaction: Vec<SystemInteraction>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub resource: Option<Vec<CapabilityStatementRestResource>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1837,11 +1879,17 @@ impl CapabilityStatementRest {
     pub fn server_minimal() -> Self {
         Self {
             mode: "server".to_string(),
+            interaction: Vec::new(),
             resource: Some(vec![]),
             operation: None,
             patch_format: None,
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SystemInteraction {
+    pub code: String, // e.g., "transaction", "batch", "search-system", "history-system"
 }
 
 /// Operation definition in CapabilityStatement
@@ -2051,6 +2099,7 @@ pub struct CapabilityStatementBuilder {
     fhir_version: String,
     formats: Vec<String>,
     resources: Vec<CapabilityStatementRestResource>,
+    interactions: Vec<SystemInteraction>,
     operations: Vec<CapabilityStatementRestOperation>,
     patch_formats: Vec<String>,
 }
@@ -2064,6 +2113,7 @@ impl CapabilityStatementBuilder {
             fhir_version: "4.3.0".to_string(),
             formats: vec!["application/fhir+json".to_string()],
             resources: Vec::new(),
+            interactions: Vec::new(),
             operations: Vec::new(),
             patch_formats: Vec::new(),
         }
@@ -2086,7 +2136,20 @@ impl CapabilityStatementBuilder {
         self
     }
     pub fn add_format(mut self, format: impl Into<String>) -> Self {
-        self.formats.push(format.into());
+        let format = format.into();
+        if !self.formats.contains(&format) {
+            self.formats.push(format);
+        }
+        self
+    }
+
+    pub fn with_interactions(mut self, codes: &[&str]) -> Self {
+        self.interactions = codes
+            .iter()
+            .map(|code| SystemInteraction {
+                code: code.to_string(),
+            })
+            .collect();
         self
     }
 
@@ -2143,6 +2206,7 @@ impl CapabilityStatementBuilder {
             format: self.formats,
             rest: vec![CapabilityStatementRest {
                 mode: "server".to_string(),
+                interaction: self.interactions,
                 resource: Some(self.resources),
                 operation: operations,
                 patch_format,
@@ -2165,6 +2229,7 @@ mod capability_statement_builder_tests {
         let builder = CapabilityStatementBuilder::new_json_r4b()
             .status("active")
             .kind("instance")
+            .with_interactions(&["transaction", "batch"])
             .add_patch_format("application/json-patch+json")
             .add_resource(
                 "Patient",
@@ -2199,6 +2264,8 @@ mod capability_statement_builder_tests {
         assert_eq!(cs.rest.len(), 1);
         let rest = &cs.rest[0];
         assert_eq!(rest.mode, "server");
+        assert!(rest.interaction.iter().any(|i| i.code == "transaction"));
+        assert!(rest.interaction.iter().any(|i| i.code == "batch"));
         assert_eq!(
             rest.patch_format.as_ref().unwrap(),
             &vec!["application/json-patch+json".to_string()]

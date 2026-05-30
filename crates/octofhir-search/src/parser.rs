@@ -1,4 +1,4 @@
-use crate::parameters::{SearchModifier, SearchPrefix};
+use crate::parameters::{SearchModifier, SearchParameterType, SearchPrefix};
 use crate::registry::SearchParameterRegistry;
 use std::borrow::Cow;
 use thiserror::Error;
@@ -31,19 +31,7 @@ impl SearchParameterParser {
         let mut result = ParsedParameters::default();
         for (k, v) in form_urlencoded::parse(query.as_bytes()) {
             let (name, modifier) = Self::split_name_and_modifier(k);
-            let mut values = Vec::new();
-            // Support comma-separated values per FHIR search rules
-            for raw_val in v.split(',') {
-                let raw_val = raw_val.trim();
-                if raw_val.is_empty() {
-                    continue;
-                }
-                let (prefix, remainder) = Self::extract_prefix(raw_val);
-                values.push(ParsedValue {
-                    prefix,
-                    raw: remainder.to_string(),
-                });
-            }
+            let values = Self::parse_values(v.as_ref());
             result.params.push(ParsedParam {
                 name: name.into_owned(),
                 modifier,
@@ -91,6 +79,44 @@ impl SearchParameterParser {
             }
         }
         (None, value)
+    }
+
+    /// Parse one raw query value into FHIR comma-OR values with prefixes.
+    pub fn parse_values(value: &str) -> Vec<ParsedValue> {
+        value
+            .split(',')
+            .filter_map(|raw_val| {
+                let raw_val = raw_val.trim();
+                if raw_val.is_empty() {
+                    return None;
+                }
+                let (prefix, remainder) = Self::extract_prefix(raw_val);
+                Some(ParsedValue {
+                    prefix,
+                    raw: remainder.to_string(),
+                })
+            })
+            .collect()
+    }
+
+    /// Parse values and preserve prefix-looking text for parameter types that
+    /// do not support comparison prefixes, matching the normal query path.
+    pub fn parse_values_for_type(
+        value: &str,
+        param_type: &SearchParameterType,
+    ) -> Vec<ParsedValue> {
+        Self::parse_values(value)
+            .into_iter()
+            .map(|mut parsed| {
+                if let Some(prefix) = parsed.prefix
+                    && !prefix.applicable_to(param_type)
+                {
+                    parsed.raw = format!("{prefix}{}", parsed.raw);
+                    parsed.prefix = None;
+                }
+                parsed
+            })
+            .collect()
     }
 }
 

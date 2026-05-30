@@ -8,6 +8,7 @@
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 use sqlx_core::query_as::query_as;
+use sqlx_core::query_scalar::query_scalar;
 use sqlx_postgres::PgPool;
 use time::OffsetDateTime;
 
@@ -98,8 +99,24 @@ pub async fn get_history(
            ORDER BY txid DESC
            LIMIT {limit} OFFSET {offset}"#
     );
+    let count_sql = format!(
+        r#"WITH all_versions AS ({sql})
+           SELECT COUNT(*)::bigint FROM all_versions"#
+    );
 
     // Execute query with appropriate bindings
+    let total = execute_history_count_query(
+        &count_sql,
+        pool,
+        id_str.clone(),
+        since_chrono,
+        at_chrono,
+        has_id,
+        has_since,
+        has_at,
+    )
+    .await?;
+
     let rows = execute_history_query(
         &full_sql,
         pool,
@@ -131,8 +148,6 @@ pub async fn get_history(
             )
         })
         .collect();
-
-    let total = entries.len() as u32;
 
     Ok(HistoryResult {
         entries,
@@ -215,6 +230,14 @@ pub async fn get_system_history(
            LIMIT {limit} OFFSET {offset}"#,
         unions.join(" UNION ALL ")
     );
+    let count_sql = format!(
+        r#"WITH all_versions AS ({})
+           SELECT COUNT(*)::bigint FROM all_versions"#,
+        unions.join(" UNION ALL ")
+    );
+
+    let total =
+        execute_system_history_count_query(&count_sql, pool, since_chrono, at_chrono).await?;
 
     // Execute with appropriate bindings
     let rows: Vec<SystemHistoryRow> = match (since_chrono, at_chrono) {
@@ -247,8 +270,6 @@ pub async fn get_system_history(
             },
         )
         .collect();
-
-    let total = entries.len() as u32;
 
     Ok(HistoryResult {
         entries,
@@ -307,6 +328,22 @@ pub async fn get_history_raw(
            ORDER BY txid DESC
            LIMIT {limit} OFFSET {offset}"#
     );
+    let count_sql = format!(
+        r#"WITH all_versions AS ({sql})
+           SELECT COUNT(*)::bigint FROM all_versions"#
+    );
+
+    let total = execute_history_count_query(
+        &count_sql,
+        pool,
+        id_str.clone(),
+        since_chrono,
+        at_chrono,
+        has_id,
+        has_since,
+        has_at,
+    )
+    .await?;
 
     let rows: Vec<RawHistoryRow> = execute_raw_history_query(
         &full_sql,
@@ -340,8 +377,6 @@ pub async fn get_history_raw(
             },
         )
         .collect();
-
-    let total = entries.len() as u32;
 
     Ok(RawHistoryResult {
         entries,
@@ -412,6 +447,14 @@ pub async fn get_system_history_raw(
            LIMIT {limit} OFFSET {offset}"#,
         unions.join(" UNION ALL ")
     );
+    let count_sql = format!(
+        r#"WITH all_versions AS ({})
+           SELECT COUNT(*)::bigint FROM all_versions"#,
+        unions.join(" UNION ALL ")
+    );
+
+    let total =
+        execute_system_history_count_query(&count_sql, pool, since_chrono, at_chrono).await?;
 
     let rows: Vec<RawSystemHistoryRow> = match (since_chrono, at_chrono) {
         (Some(since), Some(at)) => query_as(&sql).bind(since).bind(at).fetch_all(pool).await,
@@ -442,8 +485,6 @@ pub async fn get_system_history_raw(
             },
         )
         .collect();
-
-    let total = entries.len() as u32;
 
     Ok(RawHistoryResult {
         entries,
@@ -533,6 +574,91 @@ fn build_union_query(
     );
 
     (sql, has_id, has_since, has_at)
+}
+
+/// Executes a history COUNT query with the same dynamic bindings as the page query.
+#[allow(clippy::too_many_arguments)]
+async fn execute_history_count_query(
+    sql: &str,
+    pool: &PgPool,
+    id_str: Option<String>,
+    since: Option<DateTime<Utc>>,
+    at: Option<DateTime<Utc>>,
+    has_id: bool,
+    has_since: bool,
+    has_at: bool,
+) -> Result<u32, StorageError> {
+    let count: i64 = match (has_id, has_since, has_at) {
+        (true, true, true) => {
+            query_scalar(sql)
+                .bind(id_str.unwrap())
+                .bind(since.unwrap())
+                .bind(at.unwrap())
+                .fetch_one(pool)
+                .await
+        }
+        (true, true, false) => {
+            query_scalar(sql)
+                .bind(id_str.unwrap())
+                .bind(since.unwrap())
+                .fetch_one(pool)
+                .await
+        }
+        (true, false, true) => {
+            query_scalar(sql)
+                .bind(id_str.unwrap())
+                .bind(at.unwrap())
+                .fetch_one(pool)
+                .await
+        }
+        (true, false, false) => {
+            query_scalar(sql)
+                .bind(id_str.unwrap())
+                .fetch_one(pool)
+                .await
+        }
+        (false, true, true) => {
+            query_scalar(sql)
+                .bind(since.unwrap())
+                .bind(at.unwrap())
+                .fetch_one(pool)
+                .await
+        }
+        (false, true, false) => query_scalar(sql).bind(since.unwrap()).fetch_one(pool).await,
+        (false, false, true) => query_scalar(sql).bind(at.unwrap()).fetch_one(pool).await,
+        (false, false, false) => query_scalar(sql).fetch_one(pool).await,
+    }
+    .map_err(|e| {
+        if e.to_string().contains("does not exist") {
+            return StorageError::internal(format!("Table does not exist: {e}"));
+        }
+        StorageError::internal(format!("Failed to count history: {e}"))
+    })?;
+
+    u32::try_from(count).map_err(|_| {
+        StorageError::internal(format!("History count exceeds supported range: {count}"))
+    })
+}
+
+async fn execute_system_history_count_query(
+    sql: &str,
+    pool: &PgPool,
+    since: Option<DateTime<Utc>>,
+    at: Option<DateTime<Utc>>,
+) -> Result<u32, StorageError> {
+    let count: i64 = match (since, at) {
+        (Some(since), Some(at)) => query_scalar(sql).bind(since).bind(at).fetch_one(pool).await,
+        (Some(since), None) => query_scalar(sql).bind(since).fetch_one(pool).await,
+        (None, Some(at)) => query_scalar(sql).bind(at).fetch_one(pool).await,
+        (None, None) => query_scalar(sql).fetch_one(pool).await,
+    }
+    .map_err(|e| StorageError::internal(format!("Failed to count system history: {e}")))?;
+
+    u32::try_from(count).map_err(|_| {
+        StorageError::internal(format!(
+            "System history count exceeds supported range: {count}"
+        ))
+    })
 }
 
 /// Executes a history query with dynamic parameter bindings.

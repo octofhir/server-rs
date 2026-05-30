@@ -8,6 +8,7 @@
 //! - `Observation?subject:Patient.name=Smith` - Explicit type modifier
 
 use crate::parameters::{SearchParameter, SearchParameterType};
+use crate::parser::SearchParameterParser;
 use crate::registry::SearchParameterRegistry;
 use crate::sql_builder::{SqlBuilder, SqlBuilderError};
 use std::sync::Arc;
@@ -272,15 +273,10 @@ fn build_final_condition(
         .as_deref()
         .and_then(crate::parameters::SearchModifier::parse);
 
-    let values: Vec<crate::parser::ParsedValue> = chained
-        .value
-        .split(',')
-        .filter(|v| !v.is_empty())
-        .map(|v| crate::parser::ParsedValue {
-            prefix: None,
-            raw: v.to_string(),
-        })
-        .collect();
+    let values = SearchParameterParser::parse_values_for_type(
+        &chained.value,
+        &chained.final_param_def.param_type,
+    );
 
     let parsed = crate::parser::ParsedParam {
         name: chained.final_param.clone(),
@@ -381,6 +377,16 @@ mod tests {
         )
         .with_expression("Patient.gender");
         registry.register(gender_param);
+
+        // Patient.birthdate
+        let birthdate_param = SearchParameter::new(
+            "birthdate",
+            "http://hl7.org/fhir/SearchParameter/Patient-birthdate",
+            SearchParameterType::Date,
+            vec!["Patient".to_string()],
+        )
+        .with_expression("Patient.birthDate");
+        registry.register(birthdate_param);
 
         // Patient.generalPractitioner -> Practitioner, Organization
         let gp_param = SearchParameter::new(
@@ -591,6 +597,43 @@ mod tests {
         assert!(
             clause.contains("sid.resource_id = chain0.id"),
             "Chained sidecar lookup must target chain0.id, got: {clause}"
+        );
+    }
+
+    #[test]
+    fn test_chained_date_preserves_search_prefix() {
+        let registry = create_test_registry();
+        let chained = parse_chained_parameter(
+            "subject:Patient.birthdate",
+            "ge2000-01-01",
+            &registry,
+            "Observation",
+        )
+        .unwrap();
+
+        let mut builder = SqlBuilder::new();
+        build_chained_search(&mut builder, &chained, "Observation", &registry).unwrap();
+
+        let clause = builder.build_where_clause().unwrap();
+        assert!(
+            clause.contains("search_idx_date"),
+            "Chained date search must use date sidecar, got: {clause}"
+        );
+        assert!(
+            builder
+                .params()
+                .iter()
+                .any(|p| matches!(p, crate::sql_builder::SqlParam::Timestamp(s) if s.starts_with("2000-01-01"))),
+            "ge prefix should be parsed into a date lower bound, params: {:?}",
+            builder.params()
+        );
+        assert!(
+            !builder
+                .params()
+                .iter()
+                .any(|p| p.as_str().starts_with("ge2000")),
+            "ge prefix must not remain part of raw value, params: {:?}",
+            builder.params()
         );
     }
 }

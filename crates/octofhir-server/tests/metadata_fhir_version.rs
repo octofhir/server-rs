@@ -52,6 +52,15 @@ async fn metadata_reports_configured_fhir_version_r4() {
     let body: Value = resp.json().await.unwrap();
     assert_eq!(body["resourceType"], "CapabilityStatement");
     assert_eq!(body["fhirVersion"], "4.0.1");
+    let interactions = body["rest"][0]["interaction"].as_array().unwrap();
+    for code in ["transaction", "batch", "search-system", "history-system"] {
+        assert!(
+            interactions
+                .iter()
+                .any(|interaction| interaction["code"] == code),
+            "missing rest interaction {code}"
+        );
+    }
 
     let _ = shutdown_tx.send(());
     let _ = handle.await;

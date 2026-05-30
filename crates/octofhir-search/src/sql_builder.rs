@@ -418,6 +418,8 @@ pub struct RevIncludeSpec {
     pub param_name: String,
     /// Target resource type being referenced (e.g., "Patient")
     pub target_type: Option<String>,
+    /// Whether this is :iterate
+    pub iterate: bool,
 }
 
 impl RevIncludeSpec {
@@ -426,11 +428,17 @@ impl RevIncludeSpec {
             source_type: source_type.into(),
             param_name: param_name.into(),
             target_type: None,
+            iterate: false,
         }
     }
 
     pub fn with_target(mut self, target: impl Into<String>) -> Self {
         self.target_type = Some(target.into());
+        self
+    }
+
+    pub fn iterate(mut self) -> Self {
+        self.iterate = true;
         self
     }
 }

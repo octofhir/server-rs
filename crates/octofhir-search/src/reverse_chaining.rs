@@ -26,7 +26,7 @@
 //!   they AND naturally through `SqlBuilder::add_condition`.
 
 use crate::parameters::{SearchModifier, SearchParameter, SearchParameterType};
-use crate::parser::{ParsedParam, ParsedValue};
+use crate::parser::{ParsedParam, SearchParameterParser};
 use crate::registry::SearchParameterRegistry;
 use crate::sql_builder::{SqlBuilder, SqlBuilderError, SqlParam};
 use std::sync::Arc;
@@ -152,21 +152,9 @@ fn parse_recursive(
 }
 
 fn parse_modifier(s: &str) -> Option<SearchModifier> {
-    match s {
-        "exact" => Some(SearchModifier::Exact),
-        "contains" => Some(SearchModifier::Contains),
-        "text" => Some(SearchModifier::Text),
-        "in" => Some(SearchModifier::In),
-        "not-in" => Some(SearchModifier::NotIn),
-        "below" => Some(SearchModifier::Below),
-        "above" => Some(SearchModifier::Above),
-        "not" => Some(SearchModifier::Not),
-        "identifier" => Some(SearchModifier::Identifier),
-        "missing" => Some(SearchModifier::Missing),
-        "of-type" | "ofType" => Some(SearchModifier::OfType),
-        other if !other.is_empty() => Some(SearchModifier::Type(other.to_string())),
-        _ => None,
-    }
+    SearchModifier::parse(s)
+        .or_else(|| (s == "of-type").then_some(SearchModifier::OfType))
+        .or_else(|| (!s.is_empty()).then(|| SearchModifier::Type(s.to_string())))
 }
 
 /// Generate the EXISTS clause for a parsed `_has` parameter and attach it to
@@ -278,14 +266,7 @@ fn build_final_condition(
         SqlBuilder::with_resource_column(&resource_col).with_param_offset(builder.param_count());
 
     // Comma-OR within the single value entry (per FHIR §3.1.1.5).
-    let values: Vec<ParsedValue> = raw_value
-        .split(',')
-        .filter(|v| !v.is_empty())
-        .map(|v| ParsedValue {
-            prefix: None,
-            raw: v.to_string(),
-        })
-        .collect();
+    let values = SearchParameterParser::parse_values_for_type(raw_value, &param_def.param_type);
 
     let parsed = ParsedParam {
         name: final_param.to_string(),
@@ -362,6 +343,15 @@ mod tests {
         .with_expression("Observation.code");
         registry.register(code_param);
 
+        let date_param = SearchParameter::new(
+            "date",
+            "http://hl7.org/fhir/SearchParameter/Observation-date",
+            SearchParameterType::Date,
+            vec!["Observation".to_string()],
+        )
+        .with_expression("Observation.effective");
+        registry.register(date_param);
+
         registry
     }
 
@@ -414,6 +404,43 @@ mod tests {
             }
             _ => panic!("expected Final tail"),
         }
+    }
+
+    #[test]
+    fn test_has_date_preserves_search_prefix() {
+        let registry = create_test_registry();
+        let parsed = parse_reverse_chain(
+            "_has:Observation:patient:date",
+            "ge2020-01-01",
+            &registry,
+            "Patient",
+        )
+        .expect("parse should succeed");
+
+        let mut builder = SqlBuilder::with_resource_column("r.resource");
+        build_reverse_chain_search(&mut builder, &parsed, "Patient", &registry).unwrap();
+
+        let clause = builder.build_where_clause().unwrap();
+        assert!(
+            clause.contains("search_idx_date"),
+            "_has date search must use date sidecar, got: {clause}"
+        );
+        assert!(
+            builder
+                .params()
+                .iter()
+                .any(|p| matches!(p, crate::sql_builder::SqlParam::Timestamp(s) if s.starts_with("2020-01-01"))),
+            "ge prefix should be parsed into a date lower bound, params: {:?}",
+            builder.params()
+        );
+        assert!(
+            !builder
+                .params()
+                .iter()
+                .any(|p| p.as_str().starts_with("ge2020")),
+            "ge prefix must not remain part of raw value, params: {:?}",
+            builder.params()
+        );
     }
 
     #[test]
