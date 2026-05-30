@@ -46,6 +46,7 @@ fn create_config(postgres_url: &str) -> AppConfig {
         idle_timeout_ms: Some(60000),
         ..Default::default()
     });
+    config.auth.policy.anonymous_access = true;
     config
 }
 
@@ -159,7 +160,7 @@ async fn test_transaction_commit_all_creates() {
     });
 
     let resp = client
-        .post(format!("{base}/"))
+        .post(&base)
         .header("content-type", "application/fhir+json")
         .json(&bundle)
         .send()
@@ -253,7 +254,7 @@ async fn test_transaction_commit_mixed_operations() {
     });
 
     let resp = client
-        .post(format!("{base}/"))
+        .post(&base)
         .header("content-type", "application/fhir+json")
         .json(&bundle)
         .send()
@@ -319,7 +320,7 @@ async fn test_transaction_rollback_on_invalid_reference() {
     });
 
     let resp = client
-        .post(format!("{base}/"))
+        .post(&base)
         .header("content-type", "application/fhir+json")
         .json(&bundle)
         .send()
@@ -406,7 +407,7 @@ async fn test_transaction_rollback_preserves_existing_data() {
     });
 
     let resp = client
-        .post(format!("{base}/"))
+        .post(&base)
         .header("content-type", "application/fhir+json")
         .json(&bundle)
         .send()
@@ -475,7 +476,7 @@ async fn test_batch_partial_failure() {
     });
 
     let resp = client
-        .post(format!("{base}/"))
+        .post(&base)
         .header("content-type", "application/fhir+json")
         .json(&bundle)
         .send()
@@ -511,6 +512,140 @@ async fn test_batch_partial_failure() {
         total > 0,
         "Successful batch entry should persist despite other failures"
     );
+
+    let _ = shutdown_tx.send(());
+}
+
+#[tokio::test]
+async fn test_transaction_prefer_return_minimal_omits_mutation_resources() {
+    let (_container, postgres_url) = start_postgres().await;
+    let config = create_config(&postgres_url);
+    let (base, shutdown_tx, _handle) = start_server(&config).await;
+    let client = reqwest::Client::new();
+
+    let patient = json!({
+        "resourceType": "Patient",
+        "name": [{"family": "PreferMinimal", "given": ["Before"]}]
+    });
+
+    let resp = client
+        .post(format!("{base}/Patient"))
+        .header("content-type", "application/fhir+json")
+        .json(&patient)
+        .send()
+        .await
+        .expect("create patient");
+    let create_status = resp.status();
+    let created: Value = resp.json().await.expect("parse create response");
+    assert!(create_status.is_success(), "create failed: {created}");
+    let patient_id = created["id"].as_str().expect("id");
+
+    let bundle = json!({
+        "resourceType": "Bundle",
+        "type": "transaction",
+        "entry": [
+            {
+                "resource": {
+                    "resourceType": "Patient",
+                    "id": patient_id,
+                    "name": [{"family": "PreferMinimal", "given": ["After"]}]
+                },
+                "request": {
+                    "method": "PUT",
+                    "url": format!("Patient/{}", patient_id)
+                }
+            },
+            {
+                "request": {
+                    "method": "GET",
+                    "url": "Patient?family=PreferMinimal"
+                }
+            }
+        ]
+    });
+
+    let resp = client
+        .post(&base)
+        .header("content-type", "application/fhir+json")
+        .header("prefer", "return=minimal")
+        .json(&bundle)
+        .send()
+        .await
+        .expect("transaction request");
+    let status = resp.status();
+    let response_bundle: Value = resp.json().await.expect("parse response");
+    assert!(status.is_success(), "transaction failed: {response_bundle}");
+    let entries = response_bundle["entry"].as_array().expect("entries");
+    assert_eq!(entries.len(), 2);
+    assert!(
+        entries[0].get("resource").is_none(),
+        "return=minimal must omit mutation response resources"
+    );
+    assert_eq!(entries[1]["resource"]["resourceType"], "Bundle");
+    assert_eq!(
+        entries[1]["resource"]["entry"][0]["resource"]["name"][0]["given"][0],
+        "After"
+    );
+
+    let _ = shutdown_tx.send(());
+}
+
+#[tokio::test]
+async fn test_batch_prefer_return_minimal_omits_mutation_resources() {
+    let (_container, postgres_url) = start_postgres().await;
+    let config = create_config(&postgres_url);
+    let (base, shutdown_tx, _handle) = start_server(&config).await;
+    let client = reqwest::Client::new();
+
+    let bundle = json!({
+        "resourceType": "Bundle",
+        "type": "batch",
+        "entry": [
+            {
+                "resource": {
+                    "resourceType": "Patient",
+                    "name": [{"family": "BatchPreferMinimal"}]
+                },
+                "request": {
+                    "method": "POST",
+                    "url": "Patient"
+                }
+            }
+        ]
+    });
+
+    let resp = client
+        .post(&base)
+        .header("content-type", "application/fhir+json")
+        .header("prefer", "return=minimal")
+        .json(&bundle)
+        .send()
+        .await
+        .expect("batch request");
+    assert!(resp.status().is_success());
+
+    let response_bundle: Value = resp.json().await.expect("parse response");
+    let entries = response_bundle["entry"].as_array().expect("entries");
+    assert_eq!(entries.len(), 1);
+    assert!(
+        entries[0].get("resource").is_none(),
+        "batch return=minimal must omit mutation response resources"
+    );
+    assert!(
+        entries[0]["response"]["status"]
+            .as_str()
+            .unwrap_or("")
+            .starts_with("201")
+    );
+
+    let search_resp = client
+        .get(format!("{base}/Patient?family=BatchPreferMinimal"))
+        .header("accept", "application/fhir+json")
+        .send()
+        .await
+        .expect("search request");
+    let search_bundle: Value = search_resp.json().await.expect("parse search response");
+    assert_eq!(search_bundle["total"].as_u64().unwrap_or(0), 1);
 
     let _ = shutdown_tx.send(());
 }
@@ -697,7 +832,7 @@ async fn test_transaction_internal_reference_resolution() {
     });
 
     let resp = client
-        .post(format!("{base}/"))
+        .post(&base)
         .header("content-type", "application/fhir+json")
         .json(&bundle)
         .send()
@@ -829,7 +964,7 @@ async fn test_transaction_with_delete() {
     });
 
     let resp = client
-        .post(format!("{base}/"))
+        .post(&base)
         .header("content-type", "application/fhir+json")
         .json(&bundle)
         .send()
@@ -913,7 +1048,7 @@ async fn test_transaction_conditional_create() {
     });
 
     let resp = client
-        .post(format!("{base}/"))
+        .post(&base)
         .header("content-type", "application/fhir+json")
         .json(&bundle)
         .send()
@@ -989,7 +1124,7 @@ async fn test_transaction_conditional_update() {
     });
 
     let resp = client
-        .post(format!("{base}/"))
+        .post(&base)
         .header("content-type", "application/fhir+json")
         .json(&bundle)
         .send()
@@ -1057,7 +1192,7 @@ async fn test_transaction_conditional_delete() {
     });
 
     let resp = client
-        .post(format!("{base}/"))
+        .post(&base)
         .header("content-type", "application/fhir+json")
         .json(&bundle)
         .send()
@@ -1125,7 +1260,7 @@ async fn test_transaction_patch_entry() {
     });
 
     let resp = client
-        .post(format!("{base}/"))
+        .post(&base)
         .header("content-type", "application/fhir+json")
         .json(&bundle)
         .send()
@@ -1178,7 +1313,7 @@ async fn test_transaction_get_search_sees_uncommitted_create() {
     });
 
     let resp = client
-        .post(format!("{base}/"))
+        .post(&base)
         .header("content-type", "application/fhir+json")
         .json(&bundle)
         .send()
@@ -1237,7 +1372,7 @@ async fn test_large_transaction_performance() {
     let start = std::time::Instant::now();
 
     let resp = client
-        .post(format!("{base}/"))
+        .post(&base)
         .header("content-type", "application/fhir+json")
         .json(&bundle)
         .send()

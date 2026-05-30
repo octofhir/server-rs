@@ -4008,7 +4008,7 @@ async fn process_transaction(
         if response_entries[*original_idx].is_some() {
             continue;
         }
-        match process_transaction_entry_with_tx(&mut *tx, state, entry).await {
+        match process_transaction_entry_with_tx(&mut *tx, state, entry, include_resource).await {
             Ok(response_entry) => response_entries[*original_idx] = Some(response_entry),
             Err(e) => {
                 tracing::warn!("Transaction failed, will auto-rollback: {}", e);
@@ -4076,6 +4076,7 @@ async fn process_transaction_entry_with_tx(
     tx: &mut dyn octofhir_storage::Transaction,
     state: &crate::server::AppState,
     entry: &Value,
+    include_resource: bool,
 ) -> Result<Value, ApiError> {
     let request = &entry["request"];
     let method = request["method"]
@@ -4110,7 +4111,7 @@ async fn process_transaction_entry_with_tx(
                     1 => {
                         let existing = &result.entries[0];
                         return Ok(build_transaction_response_entry(
-                            Some(&existing.resource),
+                            include_resource.then_some(&existing.resource),
                             "200 OK",
                             Some(resource_type),
                             Some(&existing.id),
@@ -4129,7 +4130,7 @@ async fn process_transaction_entry_with_tx(
             let stored = tx.create(&resource).await.map_err(map_storage_error)?;
 
             Ok(build_transaction_response_entry(
-                Some(&stored.resource),
+                include_resource.then_some(&stored.resource),
                 "201 Created",
                 Some(resource_type),
                 Some(&stored.id),
@@ -4162,7 +4163,7 @@ async fn process_transaction_entry_with_tx(
 
                 match tx.update(&resource, if_match.as_deref()).await {
                     Ok(stored) => Ok(build_transaction_response_entry(
-                        Some(&stored.resource),
+                        include_resource.then_some(&stored.resource),
                         "200 OK",
                         Some(resource_type),
                         Some(&stored.id),
@@ -4172,7 +4173,7 @@ async fn process_transaction_entry_with_tx(
                         let stored = tx.create(&resource).await.map_err(map_storage_error)?;
 
                         Ok(build_transaction_response_entry(
-                            Some(&stored.resource),
+                            include_resource.then_some(&stored.resource),
                             "201 Created",
                             Some(resource_type),
                             Some(&stored.id),
@@ -4203,7 +4204,7 @@ async fn process_transaction_entry_with_tx(
                         let stored = tx.create(&resource).await.map_err(map_storage_error)?;
 
                         Ok(build_transaction_response_entry(
-                            Some(&stored.resource),
+                            include_resource.then_some(&stored.resource),
                             "201 Created",
                             Some(resource_type),
                             Some(&stored.id),
@@ -4228,7 +4229,7 @@ async fn process_transaction_entry_with_tx(
                             .map_err(map_storage_error)?;
 
                         Ok(build_transaction_response_entry(
-                            Some(&stored.resource),
+                            include_resource.then_some(&stored.resource),
                             "200 OK",
                             Some(resource_type),
                             Some(&stored.id),
@@ -4466,7 +4467,7 @@ async fn process_transaction_entry_with_tx(
                 .map_err(map_storage_error)?;
 
             Ok(build_transaction_response_entry(
-                Some(&stored.resource),
+                include_resource.then_some(&stored.resource),
                 "200 OK",
                 Some(resource_type),
                 Some(id),
@@ -4484,7 +4485,7 @@ async fn process_transaction_entry_with_tx(
 async fn process_batch(
     state: &crate::server::AppState,
     bundle: &Value,
-    _include_resource: bool,
+    include_resource: bool,
 ) -> Result<(StatusCode, Json<Value>), ApiError> {
     let entries = bundle["entry"]
         .as_array()
@@ -4505,7 +4506,8 @@ async fn process_batch(
     for entry in entries {
         let mut reference_map: std::collections::HashMap<String, String> =
             std::collections::HashMap::new();
-        let result = process_transaction_entry(state, entry, &mut reference_map).await;
+        let result =
+            process_transaction_entry(state, entry, &mut reference_map, include_resource).await;
 
         match result {
             Ok((response_entry, _)) => {
@@ -4569,6 +4571,7 @@ async fn process_transaction_entry(
     state: &crate::server::AppState,
     entry: &Value,
     reference_map: &mut std::collections::HashMap<String, String>,
+    include_resource: bool,
 ) -> Result<(Value, Option<(String, String)>), ApiError> {
     let request = &entry["request"];
     let method = request["method"]
@@ -4588,11 +4591,21 @@ async fn process_transaction_entry(
     };
 
     match method.to_uppercase().as_str() {
-        "POST" => process_post_entry(state, url, resource, full_url, reference_map).await,
-        "PUT" => process_put_entry(state, url, resource, request).await,
+        "POST" => {
+            process_post_entry(
+                state,
+                url,
+                resource,
+                full_url,
+                reference_map,
+                include_resource,
+            )
+            .await
+        }
+        "PUT" => process_put_entry(state, url, resource, request, include_resource).await,
         "DELETE" => process_delete_entry(state, url).await,
         "GET" => process_get_entry(state, url).await,
-        "PATCH" => process_patch_entry(state, url, resource, request).await,
+        "PATCH" => process_patch_entry(state, url, resource, request, include_resource).await,
         _ => Err(ApiError::bad_request(format!(
             "Unknown HTTP method in bundle entry: {}",
             method
@@ -4607,6 +4620,7 @@ async fn process_post_entry(
     resource: Option<Value>,
     full_url: Option<&str>,
     reference_map: &mut std::collections::HashMap<String, String>,
+    include_resource: bool,
 ) -> Result<(Value, Option<(String, String)>), ApiError> {
     let mut resource =
         resource.ok_or_else(|| ApiError::bad_request("POST entry requires a resource"))?;
@@ -4645,7 +4659,7 @@ async fn process_post_entry(
                     }
 
                     let response_entry = build_transaction_response_entry(
-                        Some(&existing.resource),
+                        include_resource.then_some(&existing.resource),
                         "200 OK",
                         Some(resource_type),
                         Some(&existing.id),
@@ -4679,7 +4693,7 @@ async fn process_post_entry(
     }
 
     let response_entry = build_transaction_response_entry(
-        Some(&stored.resource),
+        include_resource.then_some(&stored.resource),
         "201 Created",
         Some(resource_type),
         Some(&stored.id),
@@ -4695,6 +4709,7 @@ async fn process_put_entry(
     url: &str,
     resource: Option<Value>,
     request: &Value,
+    include_resource: bool,
 ) -> Result<(Value, Option<(String, String)>), ApiError> {
     let mut resource =
         resource.ok_or_else(|| ApiError::bad_request("PUT entry requires a resource"))?;
@@ -4768,7 +4783,7 @@ async fn process_put_entry(
         };
 
         let response_entry = build_transaction_response_entry(
-            Some(&stored.resource),
+            include_resource.then_some(&stored.resource),
             status,
             Some(resource_type),
             Some(id),
@@ -4819,7 +4834,7 @@ async fn process_put_entry(
                     .map_err(map_storage_error)?;
 
                 let response_entry = build_transaction_response_entry(
-                    Some(&stored.resource),
+                    include_resource.then_some(&stored.resource),
                     "201 Created",
                     Some(resource_type),
                     Some(&stored.id),
@@ -4850,7 +4865,7 @@ async fn process_put_entry(
                     .map_err(map_storage_error)?;
 
                 let response_entry = build_transaction_response_entry(
-                    Some(&stored.resource),
+                    include_resource.then_some(&stored.resource),
                     "200 OK",
                     Some(resource_type),
                     Some(&existing.id),
@@ -5152,6 +5167,7 @@ async fn process_patch_entry(
     url: &str,
     resource: Option<Value>,
     _request: &Value,
+    include_resource: bool,
 ) -> Result<(Value, Option<(String, String)>), ApiError> {
     let patch = resource.ok_or_else(|| ApiError::bad_request("PATCH entry requires a resource"))?;
 
@@ -5204,7 +5220,7 @@ async fn process_patch_entry(
             .map_err(map_storage_error)?;
 
         let response_entry = build_transaction_response_entry(
-            Some(&stored.resource),
+            include_resource.then_some(&stored.resource),
             "200 OK",
             Some(resource_type),
             Some(id),
