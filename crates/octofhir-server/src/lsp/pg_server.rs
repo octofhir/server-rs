@@ -1,4 +1,4 @@
-//! PostgreSQL Language Server implementation backed by the Mold SQL stack.
+//! PostgreSQL Language Server implementation backed by the banshee SQL stack.
 
 use super::formatter_config::LspFormatterConfig;
 use async_lsp::lsp_types::notification::PublishDiagnostics;
@@ -11,16 +11,16 @@ use async_lsp::lsp_types::{
     TextDocumentSyncKind, TextEdit, Url,
 };
 use async_lsp::{ClientSocket, LanguageServer, ResponseError};
-use futures::future::BoxFuture;
-use mold_completion::types::{CompletionItemKind, TableType};
-use mold_completion::{CompletionRequest, FunctionProvider, SchemaProvider, complete};
-use mold_hir::{
+use banshee_completion::types::{CompletionItemKind, TableType};
+use banshee_completion::{CompletionRequest, FunctionProvider, SchemaProvider, complete};
+use banshee_hir::{
     AnalysisOptions as HirAnalysisOptions, Analyzer as HirAnalyzer,
     BuiltinLintPack as HirBuiltinLintPack, ColumnInfo as HirColumnInfo, DataType as HirDataType,
     LintRulePack as HirLintRulePack, SchemaProvider as HirSchemaProvider, Severity as HirSeverity,
     TableInfo as HirTableInfo, TableType as HirTableType, analyze_query_with_options,
 };
-use mold_syntax::SyntaxKind;
+use banshee_syntax::SyntaxKind;
+use futures::future::BoxFuture;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use text_size::{TextRange, TextSize};
@@ -30,7 +30,7 @@ use super::SchemaCache;
 struct ResourceIdJsonbLintPack;
 
 impl HirLintRulePack for ResourceIdJsonbLintPack {
-    fn apply(&self, root: &mold_syntax::SyntaxNode, analyzer: &mut HirAnalyzer<'_>) {
+    fn apply(&self, root: &banshee_syntax::SyntaxNode, analyzer: &mut HirAnalyzer<'_>) {
         let mut prev_non_trivia = None;
         let mut prev_prev_non_trivia = None;
 
@@ -46,10 +46,12 @@ impl HirLintRulePack for ResourceIdJsonbLintPack {
                 && token.text().trim_matches('\'').eq_ignore_ascii_case("id")
                 && prev_non_trivia
                     .as_ref()
-                    .is_some_and(|t: &mold_syntax::SyntaxToken| t.kind() == SyntaxKind::ARROW_TEXT)
+                    .is_some_and(|t: &banshee_syntax::SyntaxToken| {
+                        t.kind() == SyntaxKind::ARROW_TEXT
+                    })
                 && prev_prev_non_trivia
                     .as_ref()
-                    .is_some_and(|t: &mold_syntax::SyntaxToken| {
+                    .is_some_and(|t: &banshee_syntax::SyntaxToken| {
                         t.kind() == SyntaxKind::IDENT && t.text().eq_ignore_ascii_case("resource")
                     })
             {
@@ -168,8 +170,8 @@ impl PostgresLspServer {
         }
     }
 
-    fn collect_parse_diagnostics(text: &str) -> (mold_syntax::Parse, Vec<Diagnostic>) {
-        let parse = mold_parser::parse(text);
+    fn collect_parse_diagnostics(text: &str) -> (banshee_syntax::Parse, Vec<Diagnostic>) {
+        let parse = banshee_parser::parse(text);
         let diagnostics = parse
             .errors()
             .iter()
@@ -178,7 +180,7 @@ impl PostgresLspServer {
                 severity: Some(DiagnosticSeverity::ERROR),
                 code: None,
                 code_description: None,
-                source: Some("mold".to_string()),
+                source: Some("banshee".to_string()),
                 message: err.message.clone(),
                 related_information: None,
                 tags: None,
@@ -190,7 +192,7 @@ impl PostgresLspServer {
 
     fn collect_semantic_diagnostics(
         text: &str,
-        parse: &mold_syntax::Parse,
+        parse: &banshee_syntax::Parse,
         schema_cache: &SchemaCache,
         model_snapshot: &ModelSchemaSnapshot,
     ) -> Vec<Diagnostic> {
@@ -232,7 +234,7 @@ impl PostgresLspServer {
                     severity,
                     code,
                     code_description: None,
-                    source: Some("mold-hir".to_string()),
+                    source: Some("banshee-hir".to_string()),
                     message,
                     related_information: None,
                     tags: None,
@@ -400,7 +402,9 @@ impl PostgresLspServer {
         }
     }
 
-    fn to_lsp_completion_item(item: mold_completion::types::CompletionItem) -> LspCompletionItem {
+    fn to_lsp_completion_item(
+        item: banshee_completion::types::CompletionItem,
+    ) -> LspCompletionItem {
         let insert_text_format = if matches!(item.kind, CompletionItemKind::Snippet) {
             Some(async_lsp::lsp_types::InsertTextFormat::SNIPPET)
         } else {
@@ -557,7 +561,7 @@ impl LanguageServer for PostgresLspServer {
             model_snapshot.preload_fhir_schemas(&schema_cache).await;
 
             let offset = Self::position_to_offset(&state.text, position);
-            let parse = mold_parser::parse(&state.text);
+            let parse = banshee_parser::parse(&state.text);
             let offset = TextSize::new(offset as u32);
 
             let provider = SchemaProviderAdapter::new(schema_cache, model_snapshot);
@@ -626,7 +630,7 @@ impl LanguageServer for PostgresLspServer {
 
 struct ModelSchemaSnapshot {
     /// Cached JSONB schemas by resource type (lazy loaded)
-    jsonb_cache: dashmap::DashMap<String, mold_completion::types::JsonbSchema>,
+    jsonb_cache: dashmap::DashMap<String, banshee_completion::types::JsonbSchema>,
     /// The model provider for loading schemas
     model_provider: Arc<crate::model_provider::OctoFhirModelProvider>,
 }
@@ -644,7 +648,10 @@ impl ModelSchemaSnapshot {
 
     /// Get cached JSONB schema for a resource type.
     /// Returns None if not cached - call `preload_schema` first.
-    fn get_jsonb_schema(&self, resource_type: &str) -> Option<mold_completion::types::JsonbSchema> {
+    fn get_jsonb_schema(
+        &self,
+        resource_type: &str,
+    ) -> Option<banshee_completion::types::JsonbSchema> {
         let key = resource_type.to_lowercase();
         self.jsonb_cache.get(&key).map(|s| s.clone())
     }
@@ -681,12 +688,12 @@ impl ModelSchemaSnapshot {
     async fn build_jsonb_schema_from_fhir(
         fhir_schema: &octofhir_fhirschema::FhirSchema,
         provider: &crate::model_provider::OctoFhirModelProvider,
-    ) -> mold_completion::types::JsonbSchema {
+    ) -> banshee_completion::types::JsonbSchema {
         let mut seen = HashSet::new();
         if let Some(elements) = &fhir_schema.elements {
             Self::build_jsonb_schema_recursive(elements, provider, &mut seen, 0).await
         } else {
-            mold_completion::types::JsonbSchema::new()
+            banshee_completion::types::JsonbSchema::new()
         }
     }
 
@@ -697,20 +704,21 @@ impl ModelSchemaSnapshot {
         seen: &'a mut HashSet<String>,
         depth: usize,
     ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = mold_completion::types::JsonbSchema> + Send + 'a>,
+        Box<dyn std::future::Future<Output = banshee_completion::types::JsonbSchema> + Send + 'a>,
     > {
         Box::pin(async move {
             // Limit recursion depth to avoid infinite loops and excessive loading
             const MAX_DEPTH: usize = 5;
             if depth >= MAX_DEPTH {
-                return mold_completion::types::JsonbSchema::new();
+                return banshee_completion::types::JsonbSchema::new();
             }
 
-            let mut schema = mold_completion::types::JsonbSchema::new();
+            let mut schema = banshee_completion::types::JsonbSchema::new();
 
             for (name, element) in elements {
                 let field_type = Self::jsonb_field_type(element);
-                let mut field = mold_completion::types::JsonbField::new(name.clone(), field_type);
+                let mut field =
+                    banshee_completion::types::JsonbField::new(name.clone(), field_type);
 
                 if let Some(description) = Self::jsonb_field_description(element) {
                     field = field.with_description(description);
@@ -899,7 +907,7 @@ impl ModelSchemaSnapshot {
         }
 
         let mut current_fields = &schema.fields;
-        let mut last_field: Option<&mold_completion::types::JsonbField> = None;
+        let mut last_field: Option<&banshee_completion::types::JsonbField> = None;
 
         for segment in path {
             // Skip numeric segments (array indices)
@@ -922,35 +930,35 @@ impl ModelSchemaSnapshot {
         }
 
         // Check if the last field we found is an array
-        last_field.map(|f| f.field_type == mold_completion::types::JsonbFieldType::Array)
+        last_field.map(|f| f.field_type == banshee_completion::types::JsonbFieldType::Array)
     }
 
     /// Determine JSONB field type from FHIR schema element.
     fn jsonb_field_type(
         element: &octofhir_fhirschema::FhirSchemaElement,
-    ) -> mold_completion::types::JsonbFieldType {
+    ) -> banshee_completion::types::JsonbFieldType {
         let is_array = element.array.unwrap_or(false);
         let is_object = element.elements.is_some();
 
         let base_type = if is_object {
-            mold_completion::types::JsonbFieldType::Object
+            banshee_completion::types::JsonbFieldType::Object
         } else {
             let type_name = element.type_name.as_deref().unwrap_or("Any");
             match type_name {
-                "boolean" => mold_completion::types::JsonbFieldType::Boolean,
+                "boolean" => banshee_completion::types::JsonbFieldType::Boolean,
                 "integer" | "decimal" | "unsignedInt" | "positiveInt" => {
-                    mold_completion::types::JsonbFieldType::Number
+                    banshee_completion::types::JsonbFieldType::Number
                 }
                 "string" | "code" | "id" | "uri" | "url" | "canonical" | "markdown"
                 | "base64Binary" | "date" | "dateTime" | "instant" | "time" | "oid" | "uuid" => {
-                    mold_completion::types::JsonbFieldType::String
+                    banshee_completion::types::JsonbFieldType::String
                 }
-                _ => mold_completion::types::JsonbFieldType::Unknown,
+                _ => banshee_completion::types::JsonbFieldType::Unknown,
             }
         };
 
         if is_array {
-            mold_completion::types::JsonbFieldType::Array
+            banshee_completion::types::JsonbFieldType::Array
         } else {
             base_type
         }
@@ -972,7 +980,7 @@ impl SchemaProviderAdapter {
 }
 
 impl SchemaProvider for SchemaProviderAdapter {
-    fn tables(&self) -> Vec<mold_completion::types::TableInfo> {
+    fn tables(&self) -> Vec<banshee_completion::types::TableInfo> {
         self.schema_cache
             .get_tables()
             .into_iter()
@@ -984,7 +992,7 @@ impl SchemaProvider for SchemaProviderAdapter {
                     _ => TableType::Table,
                 };
 
-                let mut info = mold_completion::types::TableInfo::new(table.name)
+                let mut info = banshee_completion::types::TableInfo::new(table.name)
                     .with_schema(table.schema)
                     .with_type(table_type);
 
@@ -1001,7 +1009,7 @@ impl SchemaProvider for SchemaProviderAdapter {
         &self,
         schema: Option<&str>,
         table: &str,
-    ) -> Vec<mold_completion::types::ColumnInfo> {
+    ) -> Vec<banshee_completion::types::ColumnInfo> {
         let columns = match schema {
             Some(schema) => self.schema_cache.get_columns_in_schema(schema, table),
             None => self.schema_cache.get_columns(table),
@@ -1011,7 +1019,7 @@ impl SchemaProvider for SchemaProviderAdapter {
             .enumerate()
             .map(|(index, column)| {
                 let mut info =
-                    mold_completion::types::ColumnInfo::new(column.name, column.data_type)
+                    banshee_completion::types::ColumnInfo::new(column.name, column.data_type)
                         .with_nullable(column.is_nullable)
                         .with_ordinal(index);
 
@@ -1029,7 +1037,7 @@ impl SchemaProvider for SchemaProviderAdapter {
         _schema: Option<&str>,
         table: &str,
         column: &str,
-    ) -> Option<mold_completion::types::JsonbSchema> {
+    ) -> Option<banshee_completion::types::JsonbSchema> {
         if column != "resource" {
             return None;
         }
@@ -1040,12 +1048,12 @@ impl SchemaProvider for SchemaProviderAdapter {
 }
 
 impl FunctionProvider for SchemaProviderAdapter {
-    fn functions(&self) -> Vec<mold_completion::types::FunctionInfo> {
+    fn functions(&self) -> Vec<banshee_completion::types::FunctionInfo> {
         self.schema_cache
             .get_functions()
             .into_iter()
             .map(|func| {
-                mold_completion::types::FunctionInfo::new(func.name, func.return_type)
+                banshee_completion::types::FunctionInfo::new(func.name, func.return_type)
                     .with_description(func.description)
             })
             .collect()
@@ -1220,7 +1228,7 @@ fn parse_data_type(type_str: &str) -> HirDataType {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mold_hir::{NullSchemaProvider, analyze_query_with_options};
+    use banshee_hir::{NullSchemaProvider, analyze_query_with_options};
 
     #[test]
     fn test_offset_to_position_simple() {
@@ -1367,7 +1375,7 @@ mod tests {
 
     #[test]
     fn test_resource_id_jsonb_lint_pack_warns_on_arrow_text_id() {
-        let parse = mold_parser::parse("SELECT resource->>'id' FROM patient");
+        let parse = banshee_parser::parse("SELECT resource->>'id' FROM patient");
         let provider = NullSchemaProvider;
         let options = HirAnalysisOptions::new()
             .with_builtin_lint_packs(std::iter::empty())
@@ -1386,7 +1394,7 @@ mod tests {
 
     #[test]
     fn test_resource_id_jsonb_lint_pack_not_warn_on_json_value_extract() {
-        let parse = mold_parser::parse("SELECT resource->'id' FROM patient");
+        let parse = banshee_parser::parse("SELECT resource->'id' FROM patient");
         let provider = NullSchemaProvider;
         let options = HirAnalysisOptions::new()
             .with_builtin_lint_packs(std::iter::empty())

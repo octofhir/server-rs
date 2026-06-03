@@ -1,12 +1,12 @@
 //! LSP Formatter configuration types.
 //!
 //! This module provides serializable configuration types that match the
-//! mold_format configuration options, used for passing formatter settings
+//! banshee_format configuration options, used for passing formatter settings
 //! via LSP formatting requests.
 
-use mold_format::{
-    CommaStyle as MoldCommaStyle, FormatConfig, IdentifierCase as MoldIdentifierCase, IndentStyle,
-    KeywordCase as MoldKeywordCase, PgFormatterConfig,
+use banshee_format::{
+    CommaStyle as BansheeCommaStyle, FormatConfig, IdentifierCase as BansheeIdentifierCase,
+    IndentStyle, KeywordCase as BansheeKeywordCase, PgFormatterConfig,
 };
 use serde::{Deserialize, Serialize};
 
@@ -56,12 +56,12 @@ pub enum KeywordCase {
     Preserve,
 }
 
-impl From<KeywordCase> for MoldKeywordCase {
+impl From<KeywordCase> for BansheeKeywordCase {
     fn from(case: KeywordCase) -> Self {
         match case {
-            KeywordCase::Upper => MoldKeywordCase::Upper,
-            KeywordCase::Lower => MoldKeywordCase::Lower,
-            KeywordCase::Preserve => MoldKeywordCase::Preserve,
+            KeywordCase::Upper => BansheeKeywordCase::Upper,
+            KeywordCase::Lower => BansheeKeywordCase::Lower,
+            KeywordCase::Preserve => BansheeKeywordCase::Preserve,
         }
     }
 }
@@ -75,11 +75,11 @@ pub enum IdentifierCase {
     Preserve,
 }
 
-impl From<IdentifierCase> for MoldIdentifierCase {
+impl From<IdentifierCase> for BansheeIdentifierCase {
     fn from(case: IdentifierCase) -> Self {
         match case {
-            IdentifierCase::Lower => MoldIdentifierCase::Lower,
-            IdentifierCase::Preserve => MoldIdentifierCase::Preserve,
+            IdentifierCase::Lower => BansheeIdentifierCase::Lower,
+            IdentifierCase::Preserve => BansheeIdentifierCase::Preserve,
         }
     }
 }
@@ -93,11 +93,11 @@ pub enum CommaStyle {
     Leading,
 }
 
-impl From<CommaStyle> for MoldCommaStyle {
+impl From<CommaStyle> for BansheeCommaStyle {
     fn from(style: CommaStyle) -> Self {
         match style {
-            CommaStyle::Trailing => MoldCommaStyle::Trailing,
-            CommaStyle::Leading => MoldCommaStyle::Leading,
+            CommaStyle::Trailing => BansheeCommaStyle::Trailing,
+            CommaStyle::Leading => BansheeCommaStyle::Leading,
         }
     }
 }
@@ -106,7 +106,7 @@ impl From<CommaStyle> for MoldCommaStyle {
 // SqlStyle Configuration
 // =============================================================================
 
-/// SqlStyle configuration (matches mold_format::FormatConfig).
+/// SqlStyle configuration (matches banshee_format::FormatConfig).
 ///
 /// This formatter follows sqlstyle.guide conventions with river alignment.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -181,7 +181,7 @@ impl Default for SqlStyleConfig {
 }
 
 impl SqlStyleConfig {
-    /// Convert to mold_format::FormatConfig.
+    /// Convert to banshee_format::FormatConfig.
     pub fn to_format_config(&self) -> FormatConfig {
         let indent = if self.use_tabs {
             IndentStyle::Tabs
@@ -209,7 +209,7 @@ impl SqlStyleConfig {
 // PgFormatter Configuration
 // =============================================================================
 
-/// PgFormatter configuration (matches mold_format::PgFormatterConfig).
+/// PgFormatter configuration (matches banshee_format::PgFormatterConfig).
 ///
 /// This formatter is compatible with the pgFormatter tool.
 /// Case values: 0=unchanged, 1=lower, 2=upper, 3=capitalize
@@ -332,9 +332,9 @@ impl Default for PgFormatterStyleConfig {
 }
 
 impl PgFormatterStyleConfig {
-    /// Convert to mold_format::PgFormatterConfig.
+    /// Convert to banshee_format::PgFormatterConfig.
     pub fn to_pg_formatter_config(&self) -> PgFormatterConfig {
-        use mold_format::CaseOption;
+        use banshee_format::CaseOption;
 
         let to_case_option =
             |v: u8| -> CaseOption { CaseOption::from_value(v).unwrap_or(CaseOption::Upper) };
@@ -492,12 +492,12 @@ impl LspFormatterConfig {
     pub fn format(&self, text: &str) -> String {
         match self {
             LspFormatterConfig::SqlStyle(config) => {
-                mold_format::format(text, &config.to_format_config())
+                banshee_format::format(text, &config.to_format_config())
             }
             LspFormatterConfig::PgFormatter(config) => {
-                mold_format::format_with_pgformatter(text, &config.to_pg_formatter_config())
+                banshee_format::format_with_pgformatter(text, &config.to_pg_formatter_config())
             }
-            LspFormatterConfig::Compact => mold_format::format_compact(text),
+            LspFormatterConfig::Compact => banshee_format::format_compact(text),
         }
     }
 }
@@ -527,7 +527,7 @@ mod tests {
     fn test_sqlstyle_to_format_config() {
         let config = SqlStyleConfig::default();
         let format_config = config.to_format_config();
-        assert_eq!(format_config.keyword_case, MoldKeywordCase::Upper);
+        assert_eq!(format_config.keyword_case, BansheeKeywordCase::Upper);
         assert!(format_config.river_alignment);
     }
 

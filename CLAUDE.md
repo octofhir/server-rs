@@ -116,7 +116,7 @@ Local path dependencies (must exist alongside this repo):
 Remote dependencies:
 
 - `octofhir-fhir-model`: FHIR resource model with terminology support (crates.io)
-- `mold_*`: SQL parser/completion crates (git: `octofhir/mold`) for DB console LSP
+- `banshee_*`: SQL parser/completion crates (crates.io, repo: `octofhir/banshee`) for DB console LSP
 
 ### UI (`ui/`)
 

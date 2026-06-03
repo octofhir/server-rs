@@ -871,6 +871,73 @@ dependencies = [
 ]
 
 [[package]]
+name = "banshee_completion"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "36221fab16a0e4ddd8cafbb9c8791cbaab28aee9ed24f385492e4ca4c3c96484"
+dependencies = [
+ "banshee_hir",
+ "banshee_parser",
+ "banshee_syntax",
+ "text-size",
+]
+
+[[package]]
+name = "banshee_format"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0d72eb8a1fee604772f7754a11cb36e417960874e6d7e0fb22be47f9b6327c21"
+dependencies = [
+ "banshee_parser",
+ "banshee_syntax",
+ "cstree",
+ "text-size",
+]
+
+[[package]]
+name = "banshee_hir"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ab1ec74eba8154509d686a153df3ef6ff36e32026c9fa6e49fa3b54f9ec51156"
+dependencies = [
+ "banshee_syntax",
+ "text-size",
+]
+
+[[package]]
+name = "banshee_lexer"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b0d54a52b734740af1157acad55af75cf383ff488ad24e754499d729e7ac739b"
+dependencies = [
+ "banshee_syntax",
+ "text-size",
+]
+
+[[package]]
+name = "banshee_parser"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cc98ceb207cf570f2393082f1c6083b784fcc4c1e5cb9992810edc546a4608d1"
+dependencies = [
+ "banshee_lexer",
+ "banshee_syntax",
+ "cstree",
+ "text-size",
+]
+
+[[package]]
+name = "banshee_syntax"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e78e016fed78ba0ec7a3a03ac8462405b8a4ef77bad835da84194dcc99a9c4fd"
+dependencies = [
+ "cstree",
+ "phf 0.13.1",
+ "text-size",
+]
+
+[[package]]
 name = "base16ct"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3776,67 +3843,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "mold_completion"
-version = "0.1.0"
-source = "git+https://github.com/octofhir/mold.git?branch=main#7a2377bb66e377de4f9a4580dd7993e18b60b6e6"
-dependencies = [
- "mold_hir",
- "mold_parser",
- "mold_syntax",
- "text-size",
-]
-
-[[package]]
-name = "mold_format"
-version = "0.1.0"
-source = "git+https://github.com/octofhir/mold.git?branch=main#7a2377bb66e377de4f9a4580dd7993e18b60b6e6"
-dependencies = [
- "cstree",
- "mold_parser",
- "mold_syntax",
- "text-size",
-]
-
-[[package]]
-name = "mold_hir"
-version = "0.1.0"
-source = "git+https://github.com/octofhir/mold.git?branch=main#7a2377bb66e377de4f9a4580dd7993e18b60b6e6"
-dependencies = [
- "mold_syntax",
- "text-size",
-]
-
-[[package]]
-name = "mold_lexer"
-version = "0.1.0"
-source = "git+https://github.com/octofhir/mold.git?branch=main#7a2377bb66e377de4f9a4580dd7993e18b60b6e6"
-dependencies = [
- "mold_syntax",
- "text-size",
-]
-
-[[package]]
-name = "mold_parser"
-version = "0.1.0"
-source = "git+https://github.com/octofhir/mold.git?branch=main#7a2377bb66e377de4f9a4580dd7993e18b60b6e6"
-dependencies = [
- "cstree",
- "mold_lexer",
- "mold_syntax",
- "text-size",
-]
-
-[[package]]
-name = "mold_syntax"
-version = "0.1.0"
-source = "git+https://github.com/octofhir/mold.git?branch=main#7a2377bb66e377de4f9a4580dd7993e18b60b6e6"
-dependencies = [
- "cstree",
- "phf 0.13.1",
- "text-size",
-]
-
-[[package]]
 name = "multer"
 version = "3.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4675,6 +4681,11 @@ dependencies = [
  "async-lsp",
  "async-trait",
  "axum",
+ "banshee_completion",
+ "banshee_format",
+ "banshee_hir",
+ "banshee_parser",
+ "banshee_syntax",
  "base64",
  "chrono",
  "config",
@@ -4698,11 +4709,6 @@ dependencies = [
  "mimalloc",
  "mime_guess",
  "moka",
- "mold_completion",
- "mold_format",
- "mold_hir",
- "mold_parser",
- "mold_syntax",
  "notify",
  "notify-debouncer-mini",
  "num_cpus",

@@ -220,7 +220,7 @@ async fn model_provider_loads_patient_schema() {
 
 #[tokio::test]
 async fn jsonb_schema_fields_at_path_test() {
-    use mold_completion::types::{JsonbField, JsonbFieldType, JsonbSchema};
+    use banshee_completion::types::{JsonbField, JsonbFieldType, JsonbSchema};
 
     // Create a mock JSONB schema that mimics what would be built from FHIR schemas
     let mut humanname_schema = JsonbSchema::new();

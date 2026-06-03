@@ -47,11 +47,11 @@ tower-http = { workspace = true }
 async-lsp = { workspace = true }
 
 # PostgreSQL Language Server
-mold_parser = { workspace = true }
-mold_syntax = { workspace = true }
-mold_hir = { workspace = true }
-mold_completion = { workspace = true }
-mold_format = { workspace = true }
+banshee_parser = { workspace = true }
+banshee_syntax = { workspace = true }
+banshee_hir = { workspace = true }
+banshee_completion = { workspace = true }
+banshee_format = { workspace = true }
 text-size = { workspace = true }
 hyper = { workspace = true }
 tokio = { workspace = true }
