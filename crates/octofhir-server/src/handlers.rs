@@ -7269,8 +7269,10 @@ mod tests {
 
     #[test]
     fn test_search_plan_debug_header_request() {
-        let mut settings = crate::config::SearchSettings::default();
-        settings.allow_debug_search_plan = true;
+        let settings = crate::config::SearchSettings {
+            allow_debug_search_plan: true,
+            ..Default::default()
+        };
         let mut headers = HeaderMap::new();
         headers.insert(
             SEARCH_DEBUG_HEADER,
@@ -7309,8 +7311,10 @@ mod tests {
 
     #[test]
     fn test_search_explain_debug_header_request() {
-        let mut settings = crate::config::SearchSettings::default();
-        settings.allow_debug_search_plan = true;
+        let settings = crate::config::SearchSettings {
+            allow_debug_search_plan: true,
+            ..Default::default()
+        };
         let mut headers = HeaderMap::new();
         headers.insert(
             SEARCH_DEBUG_HEADER,

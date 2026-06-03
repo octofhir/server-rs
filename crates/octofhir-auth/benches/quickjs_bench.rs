@@ -6,9 +6,10 @@
 //! Run with: `cargo bench -p octofhir-auth quickjs`
 
 use std::collections::HashMap;
+use std::hint::black_box;
 use std::sync::Arc;
 
-use criterion::{Criterion, black_box, criterion_group, criterion_main};
+use criterion::{Criterion, criterion_group, criterion_main};
 use octofhir_auth::config::QuickJsConfig;
 use octofhir_auth::policy::context::{
     ClientIdentity, ClientType, EnvironmentContext, PolicyContext, RequestContext, ResourceContext,
