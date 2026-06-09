@@ -32,7 +32,7 @@ RUN pnpm -C ui build
 # -----------------------------------------------------------------------------
 # Stage 2: Build Rust binary
 # -----------------------------------------------------------------------------
-FROM rust:1.92-slim-bookworm AS rust-builder
+FROM rust:1.95-slim-bookworm AS rust-builder
 
 # Install build dependencies including JavaScriptCore for bot automation
 RUN apt-get update && apt-get install -y \
