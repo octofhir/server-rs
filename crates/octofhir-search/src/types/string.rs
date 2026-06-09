@@ -10,8 +10,8 @@
 //! - The query value is normalized in Rust (lowercase + NFD strip combining
 //!   marks) via `octofhir_core::normalize_string` before being bound.
 //! - The indexed/JSONB side is normalized in SQL with `f_unaccent_lower(...)`
-//!   (defined in migration 20260602000001_unaccent_extension.sql) so the
-//!   comparison is symmetric.
+//!   (defined in the consolidated schema migration) so the comparison is
+//!   symmetric.
 //! - :exact bypasses both: raw equality.
 
 use crate::parser::ParsedParam;

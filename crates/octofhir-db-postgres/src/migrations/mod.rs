@@ -16,40 +16,11 @@ use crate::error::Result;
 macro_rules! embedded_migrations {
     () => {
         &[
+            // Single consolidated schema; DB is always created from scratch.
             (
                 20241213000001i64,
                 "consolidated_schema",
                 include_str!("../../migrations/20241213000001_consolidated_schema.sql"),
-            ),
-            (
-                20260225000001i64,
-                "db_console_history",
-                include_str!("../../migrations/20260225000001_db_console_history.sql"),
-            ),
-            (
-                20260601000001i64,
-                "date_index_tstzrange",
-                include_str!("../../migrations/20260601000001_date_index_tstzrange.sql"),
-            ),
-            (
-                20260602000001i64,
-                "unaccent_extension",
-                include_str!("../../migrations/20260602000001_unaccent_extension.sql"),
-            ),
-            (
-                20260603000001i64,
-                "search_idx_string",
-                include_str!("../../migrations/20260603000001_search_idx_string.sql"),
-            ),
-            (
-                20260604000001i64,
-                "search_idx_numeric",
-                include_str!("../../migrations/20260604000001_search_idx_numeric.sql"),
-            ),
-            (
-                20260605000001i64,
-                "search_idx_reference_presence",
-                include_str!("../../migrations/20260605000001_search_idx_reference_presence.sql"),
             ),
         ]
     };

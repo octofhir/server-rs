@@ -8,6 +8,14 @@
 
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
+CREATE EXTENSION IF NOT EXISTS btree_gist;
+CREATE EXTENSION IF NOT EXISTS btree_gin;
+CREATE EXTENSION IF NOT EXISTS unaccent;
+
+CREATE OR REPLACE FUNCTION f_unaccent_lower(text)
+RETURNS text AS $$
+  SELECT lower(unaccent('public.unaccent', $1));
+$$ LANGUAGE sql IMMUTABLE PARALLEL SAFE;
 
 -- ============================================================================
 -- BASE TABLES
@@ -1335,7 +1343,8 @@ CREATE TABLE IF NOT EXISTS search_idx_date (
     resource_id     TEXT        NOT NULL,
     param_code      TEXT        NOT NULL,
     range_start     TIMESTAMPTZ NOT NULL,
-    range_end       TIMESTAMPTZ NOT NULL
+    range_end       TIMESTAMPTZ NOT NULL,
+    rng             TSTZRANGE   GENERATED ALWAYS AS (tstzrange(range_start, range_end, '[)')) STORED
 ) PARTITION BY LIST (resource_type);
 
 CREATE INDEX IF NOT EXISTS idx_date_range
@@ -1343,6 +1352,9 @@ CREATE INDEX IF NOT EXISTS idx_date_range
 
 CREATE INDEX IF NOT EXISTS idx_date_sort
     ON search_idx_date (resource_type, param_code, range_start DESC);
+
+CREATE INDEX IF NOT EXISTS search_idx_date_rng_gist
+    ON search_idx_date USING gist (param_code, rng);
 
 COMMENT ON TABLE search_idx_reference IS 'Denormalized reference index for O(log N) reference search, chaining, and include/revinclude';
 COMMENT ON TABLE search_idx_date IS 'Denormalized date index for O(log N) date range queries and index-ordered sorting';
@@ -1386,3 +1398,80 @@ BEGIN
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
+
+-- ============================================================================
+-- STRING SEARCH SIDECAR — search_idx_string
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS search_idx_string (
+    resource_type   TEXT NOT NULL,
+    resource_id     TEXT NOT NULL,
+    param_code      TEXT NOT NULL,
+    value_norm      TEXT NOT NULL,
+    value_exact     TEXT NOT NULL
+) PARTITION BY LIST (resource_type);
+
+CREATE INDEX IF NOT EXISTS idx_search_idx_string_norm_trgm
+    ON search_idx_string USING gin (param_code, value_norm gin_trgm_ops);
+
+CREATE INDEX IF NOT EXISTS idx_search_idx_string_exact_btree
+    ON search_idx_string (resource_type, param_code, value_exact);
+
+CREATE INDEX IF NOT EXISTS idx_search_idx_string_by_resource
+    ON search_idx_string (resource_type, resource_id);
+
+-- ============================================================================
+-- NUMBER + QUANTITY SEARCH SIDECARS
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS search_idx_number (
+    resource_type   TEXT    NOT NULL,
+    resource_id     TEXT    NOT NULL,
+    param_code      TEXT    NOT NULL,
+    value_num       NUMERIC NOT NULL
+) PARTITION BY LIST (resource_type);
+
+CREATE INDEX IF NOT EXISTS idx_search_idx_number_value
+    ON search_idx_number (resource_type, param_code, value_num);
+
+CREATE INDEX IF NOT EXISTS idx_search_idx_number_by_resource
+    ON search_idx_number (resource_type, resource_id);
+
+CREATE TABLE IF NOT EXISTS search_idx_quantity (
+    resource_type   TEXT    NOT NULL,
+    resource_id     TEXT    NOT NULL,
+    param_code      TEXT    NOT NULL,
+    value_num       NUMERIC NOT NULL,
+    system          TEXT,
+    code            TEXT,
+    unit            TEXT
+) PARTITION BY LIST (resource_type);
+
+CREATE INDEX IF NOT EXISTS idx_search_idx_quantity_value
+    ON search_idx_quantity (resource_type, param_code, value_num);
+
+CREATE INDEX IF NOT EXISTS idx_search_idx_quantity_system_code_value
+    ON search_idx_quantity (resource_type, param_code, system, code, value_num)
+    WHERE code IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_search_idx_quantity_system_unit_value
+    ON search_idx_quantity (resource_type, param_code, system, unit, value_num)
+    WHERE unit IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_search_idx_quantity_by_resource
+    ON search_idx_quantity (resource_type, resource_id);
+
+-- ============================================================================
+-- DB CONSOLE QUERY HISTORY
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS db_console_history (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id VARCHAR(255) NOT NULL,
+    query TEXT NOT NULL,
+    execution_time_ms BIGINT,
+    row_count INTEGER,
+    is_error BOOLEAN NOT NULL DEFAULT FALSE,
+    error_message TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_db_console_history_user
+    ON db_console_history(user_id, created_at DESC);
