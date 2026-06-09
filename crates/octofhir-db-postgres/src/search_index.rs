@@ -41,8 +41,14 @@ async fn ensure_search_partition(pool: &PgPool, resource_type: &str) -> Result<(
         return Ok(());
     }
     let table = resource_type.to_lowercase();
+    // See `ensure_search_partition_in_tx`: serialise concurrent first-write
+    // partition creation per resource type to avoid the racy `CREATE TABLE IF NOT
+    // EXISTS ... PARTITION OF` failing with `relation already exists` (42P07). The
+    // whole multi-statement batch runs as one implicit transaction, so the
+    // advisory lock is held across the CREATEs and released on commit.
     let sql = format!(
-        "CREATE TABLE IF NOT EXISTS \"search_idx_reference_{table}\" \
+        "SELECT pg_advisory_xact_lock(hashtext('octofhir_search_partition:{resource_type}')); \
+         CREATE TABLE IF NOT EXISTS \"search_idx_reference_{table}\" \
             PARTITION OF search_idx_reference FOR VALUES IN ('{resource_type}'); \
          CREATE TABLE IF NOT EXISTS \"search_idx_date_{table}\" \
             PARTITION OF search_idx_date FOR VALUES IN ('{resource_type}'); \
@@ -74,6 +80,23 @@ async fn ensure_search_partition_in_tx(
         return Ok(());
     }
     let table = resource_type.to_lowercase();
+
+    // `CREATE TABLE IF NOT EXISTS ... PARTITION OF` is NOT race-safe: concurrent
+    // transactions both pass the catalog existence check and then one fails with
+    // `relation "..." already exists` (42P07), which aborts that transaction and
+    // surfaces as a 500. Serialise the first-write-per-type creation with a
+    // transaction-scoped advisory lock keyed on the resource type. Only contended
+    // on the cold path (before the partition exists / is cached); once created the
+    // early-return above skips this entirely.
+    let lock_sql = format!(
+        r#"SELECT pg_advisory_xact_lock(hashtext('octofhir_search_partition:{resource_type}'))"#
+    );
+    query(&lock_sql).execute(&mut *conn).await.map_err(|e| {
+        StorageError::internal(format!(
+            "ensure_search_partition_in_tx(lock/{resource_type}): {e}"
+        ))
+    })?;
+
     let ref_sql = format!(
         r#"CREATE TABLE IF NOT EXISTS "search_idx_reference_{table}" PARTITION OF search_idx_reference FOR VALUES IN ('{resource_type}')"#
     );

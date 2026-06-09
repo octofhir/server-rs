@@ -178,6 +178,23 @@ impl HybridTerminologyProvider {
 
     /// Try to expand a ValueSet from local packages.
     async fn expand_from_local(&self, valueset_url: &str) -> Option<ValueSetExpansion> {
+        // Search/expansion callers only need the codes, not whether the local
+        // expansion was complete; an empty expansion is treated as "no local data".
+        let (expansion, _complete) = self.expand_from_local_detailed(valueset_url).await?;
+        if expansion.contains.is_empty() {
+            return None;
+        }
+        Some(expansion)
+    }
+
+    /// Like [`expand_from_local`] but also reports whether the expansion is
+    /// authoritative. `complete == false` means some part of the definition could
+    /// not be materialized locally, so a "code not in contains" result must be
+    /// treated as indeterminate rather than invalid.
+    async fn expand_from_local_detailed(
+        &self,
+        valueset_url: &str,
+    ) -> Option<(ValueSetExpansion, bool)> {
         // Try to resolve the ValueSet by canonical URL
         let resolved = self.canonical_manager.resolve(valueset_url).await.ok()?;
 
@@ -188,9 +205,9 @@ impl HybridTerminologyProvider {
 
         let valueset = &resolved.resource.content;
 
-        // Try to get expansion from ValueSet resource
+        // A pre-computed expansion is treated as authoritative.
         if let Some(expansion) = valueset.get("expansion") {
-            return self.parse_expansion(expansion);
+            return self.parse_expansion(expansion).map(|e| (e, true));
         }
 
         // If no expansion, try to build from compose
@@ -242,62 +259,86 @@ impl HybridTerminologyProvider {
     }
 
     /// Build expansion from compose section.
+    ///
+    /// Returns `(expansion, complete)`. `complete` is `false` when at least one
+    /// part of the compose could not be fully materialized locally - a non-enumerable
+    /// or unresolved code system, a `filter`, a `valueSet` import, or any `exclude`.
+    /// In that case the absence of a code from `contains` is NOT authoritative and
+    /// callers must not treat it as a hard "invalid".
     async fn build_expansion_from_compose(
         &self,
         compose: &serde_json::Value,
-    ) -> Option<ValueSetExpansion> {
+    ) -> Option<(ValueSetExpansion, bool)> {
         let mut concepts = Vec::new();
+        let mut complete = true;
 
-        if let Some(includes) = compose.get("include").and_then(|i| i.as_array()) {
-            for include in includes {
-                let system = include
-                    .get("system")
-                    .and_then(|s| s.as_str())
-                    .map(String::from);
-
-                // Handle explicit concept list
-                if let Some(concept_arr) = include.get("concept").and_then(|c| c.as_array()) {
-                    for concept in concept_arr {
-                        if let Some(code) = concept.get("code").and_then(|c| c.as_str()) {
-                            concepts.push(ValueSetConcept {
-                                code: code.to_string(),
-                                system: system.clone(),
-                                display: concept
-                                    .get("display")
-                                    .and_then(|d| d.as_str())
-                                    .map(String::from),
-                            });
-                        }
-                    }
-                } else if let Some(ref sys) = system {
-                    // No explicit concept list - load all codes from the CodeSystem
-                    if let Some(cs_concepts) = self.load_codesystem_concepts(sys).await {
-                        for concept in cs_concepts {
-                            concepts.push(ValueSetConcept {
-                                code: concept.code,
-                                system: Some(sys.clone()),
-                                display: concept.display,
-                            });
-                        }
-                    }
-                }
-
-                // Note: For full expansion, we'd also need to handle:
-                // - filter criteria
-                // - valueSet references
-            }
+        // We don't apply excludes here, so any exclude makes the result non-authoritative.
+        if compose
+            .get("exclude")
+            .and_then(|e| e.as_array())
+            .is_some_and(|a| !a.is_empty())
+        {
+            complete = false;
         }
 
-        if concepts.is_empty() {
+        let includes = compose.get("include").and_then(|i| i.as_array());
+        if includes.is_none() {
             return None;
         }
 
-        Some(ValueSetExpansion {
-            contains: concepts,
-            total: None,
-            parameters: Vec::new(),
-            timestamp: None,
-        })
+        for include in includes.unwrap() {
+            let system = include
+                .get("system")
+                .and_then(|s| s.as_str())
+                .map(String::from);
+
+            // Handle explicit concept list
+            if let Some(concept_arr) = include.get("concept").and_then(|c| c.as_array()) {
+                for concept in concept_arr {
+                    if let Some(code) = concept.get("code").and_then(|c| c.as_str()) {
+                        concepts.push(ValueSetConcept {
+                            code: code.to_string(),
+                            system: system.clone(),
+                            display: concept
+                                .get("display")
+                                .and_then(|d| d.as_str())
+                                .map(String::from),
+                        });
+                    }
+                }
+            } else if include.get("filter").is_some() {
+                // Filters are not evaluated locally.
+                complete = false;
+            } else if let Some(ref sys) = system {
+                // No explicit concept list - load all codes from the CodeSystem.
+                if let Some(cs_concepts) = self.load_codesystem_concepts(sys).await {
+                    for concept in cs_concepts {
+                        concepts.push(ValueSetConcept {
+                            code: concept.code,
+                            system: Some(sys.clone()),
+                            display: concept.display,
+                        });
+                    }
+                } else {
+                    // Code system could not be resolved/enumerated locally
+                    // (e.g. urn:iso:std:iso:4217, or any not-present content).
+                    complete = false;
+                }
+            } else {
+                // `valueSet` import or an include without system/concept/filter.
+                complete = false;
+            }
+        }
+
+        Some((
+            ValueSetExpansion {
+                contains: concepts,
+                total: None,
+                parameters: Vec::new(),
+                timestamp: None,
+            },
+            complete,
+        ))
     }
 
     /// Load all concepts from a CodeSystem by URL.
@@ -348,7 +389,7 @@ impl HybridTerminologyProvider {
         system: Option<&str>,
         code: &str,
     ) -> Option<bool> {
-        let expansion = self.expand_from_local(valueset_url).await?;
+        let (expansion, complete) = self.expand_from_local_detailed(valueset_url).await?;
 
         // Check if code is in expansion
         let found = expansion.contains.iter().any(|c| {
@@ -366,7 +407,19 @@ impl HybridTerminologyProvider {
             true
         });
 
-        Some(found)
+        if found {
+            return Some(true);
+        }
+
+        // Code absent. Only authoritative if the local expansion was complete;
+        // otherwise return None so the caller falls back to the remote terminology
+        // server instead of falsely rejecting a valid code (e.g. ISO-4217 currency
+        // codes whose code system is not enumerable locally).
+        if complete {
+            Some(false)
+        } else {
+            None
+        }
     }
 
     /// Try to validate code against local CodeSystem.
