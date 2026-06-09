@@ -467,10 +467,9 @@ pub async fn write_date_index(
 
     query(
         "INSERT INTO search_idx_date (\
-            resource_type, resource_id, param_code, range_start, range_end, rng\
+            resource_type, resource_id, param_code, range_start, range_end\
         ) SELECT \
-            $1, $2, t.pc, t.rs::timestamptz, t.re::timestamptz, \
-            tstzrange(t.rs::timestamptz, t.re::timestamptz, '[)') \
+            $1, $2, t.pc, t.rs::timestamptz, t.re::timestamptz \
         FROM UNNEST(\
             $3::text[], $4::text[], $5::text[]\
         ) AS t(pc, rs, re)",
@@ -510,10 +509,9 @@ pub async fn write_date_index_with_tx(
 
     query(
         "INSERT INTO search_idx_date (\
-            resource_type, resource_id, param_code, range_start, range_end, rng\
+            resource_type, resource_id, param_code, range_start, range_end\
         ) SELECT \
-            $1, $2, t.pc, t.rs::timestamptz, t.re::timestamptz, \
-            tstzrange(t.rs::timestamptz, t.re::timestamptz, '[)') \
+            $1, $2, t.pc, t.rs::timestamptz, t.re::timestamptz \
         FROM UNNEST(\
             $3::text[], $4::text[], $5::text[]\
         ) AS t(pc, rs, re)",
@@ -1172,10 +1170,9 @@ impl BatchIndexBuffer {
 
             query(
                 "INSERT INTO search_idx_date (\
-                    resource_type, resource_id, param_code, range_start, range_end, rng\
+                    resource_type, resource_id, param_code, range_start, range_end\
                 ) SELECT \
-                    t.rt, t.rid, t.pc, t.rs::timestamptz, t.re::timestamptz, \
-                    tstzrange(t.rs::timestamptz, t.re::timestamptz, '[)') \
+                    t.rt, t.rid, t.pc, t.rs::timestamptz, t.re::timestamptz \
                 FROM UNNEST(\
                     $1::text[], $2::text[], $3::text[], $4::text[], $5::text[]\
                 ) AS t(rt, rid, pc, rs, re)",
