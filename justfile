@@ -285,6 +285,23 @@ docker-push:
 # Build and push Docker image
 docker-release: docker-build docker-push
 
+# Multi-platform build settings (linux/amd64 for CI runners, linux/arm64 for Apple Silicon)
+DOCKER_PLATFORMS := "linux/amd64,linux/arm64"
+DOCKER_BUILDER := "octofhir-multi"
+
+# Ensure a docker-container buildx builder exists (required for multi-platform)
+docker-buildx-setup:
+    docker buildx inspect {{DOCKER_BUILDER}} >/dev/null 2>&1 \
+        || docker buildx create --name {{DOCKER_BUILDER}} --driver docker-container --bootstrap
+
+# Build and push a multi-platform image (amd64 + arm64) to the registry
+docker-release-multi: docker-buildx-setup
+    docker buildx build --builder {{DOCKER_BUILDER}} \
+        --platform {{DOCKER_PLATFORMS}} \
+        -t {{DOCKER_REGISTRY}}/{{DOCKER_IMAGE}}:{{DOCKER_TAG}} \
+        -t {{DOCKER_REGISTRY}}/{{DOCKER_IMAGE}}:latest \
+        --push .
+
 # Run Docker container locally (requires running postgres)
 docker-run:
     docker run --rm -it \
