@@ -17,7 +17,8 @@
 use crate::parser::ParsedParam;
 use crate::sql_builder::{SqlBuilder, SqlBuilderError};
 use crate::{
-    ir::StringClause, ir::render_string_array_clauses_as_or, ir::render_string_clauses_as_or,
+    ir::StringClause, ir::render_indexed_string_clauses_as_or,
+    ir::render_string_array_clauses_as_or, ir::render_string_clauses_as_or,
     ir::render_string_human_name_clauses_as_or, ir::render_string_path_clauses_as_or,
 };
 
@@ -41,6 +42,33 @@ pub fn build_indexed_string_search(
 ) -> Result<(), SqlBuilderError> {
     let clauses = StringClause::from_parsed_param(param, resource_type)?;
     if let Some(sql) = render_string_clauses_as_or(builder, &clauses) {
+        builder.add_condition(sql);
+    }
+    Ok(())
+}
+
+/// In-place string search on the resource JSONB (no sidecar): predicates run over
+/// `fhir_text_blob(fhir_extract_text(col,paths))` (trigram GIN) and the raw value
+/// array `fhir_extract_text(col,paths)` (`:exact` / `:missing`). `paths` expand by
+/// element type (HumanName -> family/given/prefix/suffix/text; scalar -> as-is).
+pub fn build_indexed_string_inplace(
+    builder: &mut SqlBuilder,
+    param: &ParsedParam,
+    resource_type: &str,
+    definition: &crate::parameters::SearchParameter,
+) -> Result<(), SqlBuilderError> {
+    let expression = definition.expression.as_deref().unwrap_or_default();
+    let segments = crate::sql_builder::fhirpath_to_jsonb_path(expression, resource_type);
+    let paths_json = crate::sql_builder::paths_to_json(&crate::sql_builder::extraction_paths(
+        &segments,
+        &definition.element_type_hint,
+    ));
+    let col = builder.resource_column();
+    let arr_expr = format!("fhir_extract_text({col}, '{paths_json}'::jsonb)");
+    let blob_expr = format!("fhir_text_blob({arr_expr})");
+
+    let clauses = StringClause::from_parsed_param(param, resource_type)?;
+    if let Some(sql) = render_indexed_string_clauses_as_or(builder, &clauses, &blob_expr, &arr_expr) {
         builder.add_condition(sql);
     }
     Ok(())

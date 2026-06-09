@@ -15,6 +15,8 @@
 use std::fmt;
 use thiserror::Error;
 
+use crate::parameters::ElementTypeHint;
+
 /// Errors that can occur during SQL building.
 #[derive(Debug, Error)]
 pub enum SqlBuilderError {
@@ -1296,35 +1298,158 @@ impl SqlBuilder {
 /// Handles FHIRPath union expressions like:
 /// - `Patient.birthDate | Person.birthDate | RelatedPerson.birthDate`
 /// - `(ActivityDefinition.useContext.value as CodeableConcept)`
+/// Derive the JSONB property path for a SearchParameter FHIRPath expression.
+///
+/// Parses the expression with the real FHIRPath parser (octofhir-fhirpath) and
+/// walks the AST — robustly handling unions (`|`), polymorphic casts
+/// (`value.ofType(Quantity)` / `value as Quantity` -> `valueQuantity`), filters
+/// (`where(...)`, `resolve()`), and index access. Falls back to a best-effort
+/// string parse only if the expression fails to parse.
 pub fn fhirpath_to_jsonb_path(expression: &str, resource_type: &str) -> Vec<String> {
-    // Handle union expressions (|) by finding the matching resource type or using the first one
-    let expr = if expression.contains('|') {
-        // Split by | and find the one matching our resource type, or use the first
+    if let Ok(ast) = octofhir_fhirpath::parse_expression(expression)
+        && let Some(segments) = ast_to_jsonb_segments(&ast, resource_type)
+        && !segments.is_empty()
+    {
+        return segments;
+    }
+    fhirpath_to_jsonb_path_fallback(expression, resource_type)
+}
+
+/// JSONB property paths to extract for a search parameter's functional index AND
+/// the matching query predicate (both must derive paths identically so the planner
+/// uses the index). Enum-driven, no string heuristics:
+/// - HumanName -> its searchable text subfields (family/given/prefix/suffix/text)
+/// - Period    -> start/end (date bounds)
+/// - everything else -> the path as-is
+pub fn extraction_paths(segments: &[String], hint: &ElementTypeHint) -> Vec<Vec<String>> {
+    let with_leaf = |leaf: &str| {
+        let mut p = segments.to_vec();
+        p.push(leaf.to_string());
+        p
+    };
+    if hint.is_human_name() {
+        ["family", "given", "prefix", "suffix", "text"]
+            .iter()
+            .map(|l| with_leaf(l))
+            .collect()
+    } else if hint.is_period() {
+        ["start", "end"].iter().map(|l| with_leaf(l)).collect()
+    } else {
+        vec![segments.to_vec()]
+    }
+}
+
+/// Serialize extraction paths to the JSONB literal the `fhir_extract_*` functions
+/// accept, e.g. `[["name","family"],["name","given"]]`.
+pub fn paths_to_json(paths: &[Vec<String>]) -> String {
+    serde_json::to_string(paths).unwrap_or_else(|_| "[]".to_string())
+}
+
+/// Type name carried by an `ofType(...)` / `as` argument (`Identifier` or `TypeInfo`).
+fn ast_type_name(node: &octofhir_fhirpath::ExpressionNode) -> Option<String> {
+    use octofhir_fhirpath::ExpressionNode as E;
+    match node {
+        E::Identifier(id) => Some(id.name.clone()),
+        E::TypeInfo(t) => Some(t.name.clone()),
+        _ => None,
+    }
+}
+
+/// Fold a polymorphic type onto the last path segment: `value` + `Quantity` -> `valueQuantity`.
+fn fold_poly_last(segments: &mut [String], ty: &str) {
+    if let Some(last) = segments.last_mut() {
+        last.push_str(&capitalize_first(ty));
+    }
+}
+
+/// Walk a parsed FHIRPath AST into JSONB property segments (resource root dropped).
+/// Returns None for shapes that don't reduce to a static property path.
+fn ast_to_jsonb_segments(
+    node: &octofhir_fhirpath::ExpressionNode,
+    rt: &str,
+) -> Option<Vec<String>> {
+    use octofhir_fhirpath::ExpressionNode as E;
+    match node {
+        // Leading identifier: a resource-type root (uppercase) is dropped; a bare
+        // lowercase identifier is a property (expression without resource prefix).
+        E::Identifier(id) => {
+            if id.name.chars().next().is_some_and(|c| c.is_ascii_uppercase()) {
+                Some(Vec::new())
+            } else {
+                Some(vec![id.name.clone()])
+            }
+        }
+        E::PropertyAccess(p) => {
+            let mut s = ast_to_jsonb_segments(&p.object, rt)?;
+            s.push(p.property.clone());
+            Some(s)
+        }
+        E::Path(p) => {
+            let mut s = ast_to_jsonb_segments(&p.base, rt)?;
+            s.extend(p.path.split('.').filter(|x| !x.is_empty()).map(str::to_string));
+            Some(s)
+        }
+        E::Parenthesized(inner) => ast_to_jsonb_segments(inner, rt),
+        // Drop the index — JSONB predicates match across array elements.
+        E::IndexAccess(ix) => ast_to_jsonb_segments(&ix.object, rt),
+        // `value as Quantity` -> fold polymorphic key onto `value`.
+        E::TypeCast(tc) => {
+            let mut s = ast_to_jsonb_segments(&tc.expression, rt)?;
+            fold_poly_last(&mut s, &tc.target_type);
+            Some(s)
+        }
+        // `where(...)` — navigation-neutral, keep the filtered base path.
+        E::Filter(f) => ast_to_jsonb_segments(&f.base, rt),
+        E::MethodCall(m) => {
+            let mut s = ast_to_jsonb_segments(&m.object, rt)?;
+            if matches!(m.method.as_str(), "ofType" | "as")
+                && let Some(ty) = m.arguments.first().and_then(ast_type_name)
+            {
+                fold_poly_last(&mut s, &ty);
+            }
+            // where/resolve/first/last/exists/single/tail/... don't change the path.
+            Some(s)
+        }
+        // Union: prefer the left branch that resolves to a path (e.g. value[x] -> first type).
+        E::Union(u) => match ast_to_jsonb_segments(&u.left, rt) {
+            Some(s) if !s.is_empty() => Some(s),
+            _ => ast_to_jsonb_segments(&u.right, rt),
+        },
+        _ => None,
+    }
+}
+
+fn fhirpath_to_jsonb_path_fallback(expression: &str, resource_type: &str) -> Vec<String> {
+    // Pick the union (|) branch matching this resource type with wrapping parens
+    // stripped, then fold FHIR polymorphic type filters into the stored [x] key:
+    //   "(Observation.value as Quantity) | (Observation.value as SampledData)"
+    //       -> branch "Observation.value as Quantity" -> "Observation.valueQuantity"
+    //   "value.ofType(Quantity)" -> "valueQuantity"
+    // The resource stores polymorphic values under <base><CapitalizedType>.
+    let strip_wrap = |s: &str| -> String {
+        let t = s.trim();
+        match t.strip_prefix('(').and_then(|x| x.strip_suffix(')')) {
+            Some(inner) => inner.trim().to_string(),
+            None => t.to_string(),
+        }
+    };
+    let branch = if expression.contains('|') {
         expression
             .split('|')
-            .map(|s| s.trim())
+            .map(&strip_wrap)
             .find(|s| {
                 s.starts_with(&format!("{resource_type}."))
                     || s.starts_with("Resource.")
                     || s.starts_with("DomainResource.")
             })
-            .or_else(|| expression.split('|').next().map(|s| s.trim()))
-            .unwrap_or(expression)
+            .or_else(|| expression.split('|').next().map(&strip_wrap))
+            .unwrap_or_else(|| strip_wrap(expression))
     } else {
-        expression
+        strip_wrap(expression)
     };
 
-    // Handle `as Type` casting - extract just the path before 'as'
-    let expr = if let Some(idx) = expr.find(" as ") {
-        let path_part = &expr[..idx];
-        // Remove surrounding parentheses if present
-        path_part
-            .trim()
-            .trim_start_matches('(')
-            .trim_end_matches(')')
-    } else {
-        expr
-    };
+    let folded = fold_polymorphic_paths(&branch);
+    let expr = folded.as_str();
 
     // Remove resource type prefix if present
     // Also handle case where we selected a union alternative with a different prefix
@@ -1370,6 +1495,62 @@ pub fn fhirpath_to_jsonb_path(expression: &str, resource_type: &str) -> Vec<Stri
             s.to_string()
         })
         .collect()
+}
+
+/// Capitalize the first ASCII letter (FHIR polymorphic key casing: `quantity`->`Quantity`,
+/// `dateTime`->`DateTime`).
+fn capitalize_first(s: &str) -> String {
+    let s = s.trim();
+    let mut chars = s.chars();
+    match chars.next() {
+        Some(c) => c.to_ascii_uppercase().to_string() + chars.as_str(),
+        None => String::new(),
+    }
+}
+
+/// Index where the trailing identifier of `s` starts (scan back over [A-Za-z0-9_]).
+fn ident_start(s: &str) -> usize {
+    s.rfind(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+        .map(|i| i + 1)
+        .unwrap_or(0)
+}
+
+/// Fold FHIR polymorphic type filters (`.ofType(T)`, `.as(T)`, ` as T`) into the
+/// `<base><CapitalizedType>` element key the resource JSONB actually stores under.
+pub(crate) fn fold_polymorphic_paths(expr: &str) -> String {
+    let mut out = expr.to_string();
+
+    // `.ofType(T)` and `.as(T)`
+    for marker in [".ofType(", ".as("] {
+        while let Some(pos) = out.find(marker) {
+            let after = &out[pos + marker.len()..];
+            let Some(close) = after.find(')') else { break };
+            let ty = capitalize_first(&after[..close]);
+            let before = &out[..pos];
+            let id_at = ident_start(before);
+            let folded = format!("{}{}", &before[id_at..], ty);
+            out = format!("{}{}{}", &before[..id_at], folded, &after[close + 1..]);
+        }
+    }
+
+    // ` as T` (space form, often wrapped in parens: `(Observation.value as Quantity)`)
+    while let Some(pos) = out.find(" as ") {
+        let before = &out[..pos];
+        let after = &out[pos + 4..];
+        // type token = leading identifier of `after`
+        let ty_end = after
+            .find(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+            .unwrap_or(after.len());
+        let ty = capitalize_first(&after[..ty_end]);
+        if ty.is_empty() {
+            break;
+        }
+        let id_at = ident_start(before);
+        let folded = format!("{}{}", &before[id_at..], ty);
+        out = format!("{}{}{}", &before[..id_at], folded, &after[ty_end..]);
+    }
+
+    out
 }
 
 /// Strip FHIRPath function calls from an expression, keeping only property paths.

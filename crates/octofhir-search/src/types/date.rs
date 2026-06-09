@@ -24,6 +24,7 @@
 //! they compare against the *opposite* bound of `q`. Do not substitute them.
 
 use crate::ir::render_date_clauses_as_or;
+use crate::ir::render_date_inplace_clauses_as_or;
 use crate::ir::render_date_text_path_clauses_as_or;
 #[cfg(test)]
 use crate::ir::render_period_path_clauses_as_or;
@@ -375,6 +376,50 @@ pub fn build_index_date_search(
         builder.add_condition(sql);
     }
 
+    Ok(())
+}
+
+/// In-place date search on the resource JSONB (no sidecar): predicates run over
+/// `tstzrange(fhir_extract_date_min(col,paths), fhir_extract_date_max(col,paths), '[]')`,
+/// matched by a GiST functional index on the same expression.
+pub fn build_indexed_date_inplace(
+    builder: &mut SqlBuilder,
+    param: &ParsedParam,
+    resource_type: &str,
+    definition: &crate::parameters::SearchParameter,
+) -> Result<(), SqlBuilderError> {
+    if param.values.is_empty() {
+        return Ok(());
+    }
+
+    let expression = definition.expression.as_deref().unwrap_or_default();
+    let segments = crate::sql_builder::fhirpath_to_jsonb_path(expression, resource_type);
+    let paths = crate::sql_builder::extraction_paths(&segments, &definition.element_type_hint);
+    let paths_json = crate::sql_builder::paths_to_json(&paths);
+    let col = builder.resource_column();
+    let min_expr = format!("fhir_extract_date_min({col}, '{paths_json}'::jsonb)");
+    let max_expr = format!("fhir_extract_date_max({col}, '{paths_json}'::jsonb)");
+    let range_expr = format!("tstzrange({min_expr}, {max_expr}, '[]')");
+
+    if let Some(SearchModifier::Missing) = &param.modifier {
+        let is_missing = param
+            .values
+            .first()
+            .map(|v| v.raw.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
+        let cond = if is_missing {
+            format!("{min_expr} IS NULL")
+        } else {
+            format!("{min_expr} IS NOT NULL")
+        };
+        builder.add_condition(cond);
+        return Ok(());
+    }
+
+    let clauses = DateClause::from_parsed_param(param, resource_type)?;
+    if let Some(sql) = render_date_inplace_clauses_as_or(builder, &clauses, &range_expr, &min_expr) {
+        builder.add_condition(sql);
+    }
     Ok(())
 }
 

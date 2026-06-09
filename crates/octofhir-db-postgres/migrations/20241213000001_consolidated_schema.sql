@@ -14,8 +14,64 @@ CREATE EXTENSION IF NOT EXISTS unaccent;
 
 CREATE OR REPLACE FUNCTION f_unaccent_lower(text)
 RETURNS text AS $$
-  SELECT lower(unaccent('public.unaccent', $1));
+  SELECT lower(public.unaccent('public.unaccent'::regdictionary, $1));
 $$ LANGUAGE sql IMMUTABLE PARALLEL SAFE;
+
+-- ============================================================================
+-- SEARCH EXTRACTION FUNCTIONS (in-place JSONB search indexes)
+-- ============================================================================
+-- `paths` is a JSONB array of property paths, each path an array of property
+-- names, e.g. '[["name","family"],["name","given"]]'. Lax JSONPath unwraps
+-- intermediate arrays automatically (name[*].family). All IMMUTABLE so they
+-- can drive functional indexes on the resource column.
+
+CREATE OR REPLACE FUNCTION fhir_extract_text(resource jsonb, paths jsonb)
+RETURNS text[] LANGUAGE sql IMMUTABLE PARALLEL SAFE STRICT AS $$
+  SELECT nullif(array_agg(value #>> '{}'), '{}')
+  FROM jsonb_array_elements(paths) AS p(path)
+  CROSS JOIN LATERAL (
+    SELECT ('$' || string_agg(format('.%I', seg #>> '{}'), '') || '[*]')::jsonpath AS jp
+    FROM jsonb_array_elements(p.path) AS seg
+  ) AS j
+  CROSS JOIN LATERAL jsonb_path_query(resource, j.jp) AS value;
+$$;
+
+-- Normalised text blob for trigram matching: unaccented-lowercase, space-joined,
+-- and space-wrapped so a token-prefix match works as LIKE '% term%'.
+-- Calls are schema-qualified so the function inlines correctly inside functional
+-- index expressions (which don't resolve via the session search_path).
+CREATE OR REPLACE FUNCTION fhir_text_blob(txts text[])
+RETURNS text LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$
+  SELECT ' ' || public.f_unaccent_lower(array_to_string(txts, ' ')) || ' ';
+$$;
+
+-- Lower/upper timestamptz bound of a (possibly partial) FHIR date/dateTime string.
+CREATE OR REPLACE FUNCTION fhir_date_bound(val text, bound text)
+RETURNS timestamptz LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$
+  SELECT CASE
+    WHEN val IS NULL THEN NULL
+    WHEN length(val) = 4 THEN
+      (val || CASE WHEN bound = 'min' THEN '-01-01T00:00:00Z' ELSE '-12-31T23:59:59.999999Z' END)::timestamptz
+    WHEN length(val) = 7 THEN
+      CASE WHEN bound = 'min' THEN (val || '-01')::timestamptz
+           ELSE (val || '-01')::timestamptz + interval '1 month' - interval '1 microsecond' END
+    WHEN length(val) = 10 THEN
+      (val || CASE WHEN bound = 'min' THEN 'T00:00:00Z' ELSE 'T23:59:59.999999Z' END)::timestamptz
+    ELSE val::timestamptz
+  END;
+$$;
+
+CREATE OR REPLACE FUNCTION fhir_extract_date_min(resource jsonb, paths jsonb)
+RETURNS timestamptz LANGUAGE sql IMMUTABLE PARALLEL SAFE STRICT AS $$
+  SELECT min(public.fhir_date_bound(v, 'min'))
+  FROM unnest(public.fhir_extract_text(resource, paths)) AS v;
+$$;
+
+CREATE OR REPLACE FUNCTION fhir_extract_date_max(resource jsonb, paths jsonb)
+RETURNS timestamptz LANGUAGE sql IMMUTABLE PARALLEL SAFE STRICT AS $$
+  SELECT max(public.fhir_date_bound(v, 'max'))
+  FROM unnest(public.fhir_extract_text(resource, paths)) AS v;
+$$;
 
 -- ============================================================================
 -- BASE TABLES

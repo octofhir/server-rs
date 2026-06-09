@@ -52,8 +52,8 @@
 mod config;
 mod error;
 mod fcm_storage;
+pub mod functional_indexes;
 pub mod gin_maintenance;
-pub mod index_writer;
 mod notification_storage;
 pub mod pool;
 mod query_analyzer;
@@ -72,7 +72,7 @@ pub mod queries;
 pub use config::PostgresConfig;
 pub use error::{PostgresError, Result};
 pub use fcm_storage::{FhirSchemaInfo, FhirSchemaRecord, PostgresPackageStore};
-pub use index_writer::{AsyncIndexWriter, IndexJob, IndexOp, IndexWriterConfig};
+pub use functional_indexes::create_default_search_indexes;
 pub use notification_storage::PostgresNotificationStorage;
 pub use query_analyzer::{
     AnalyzerConfig, AnalyzerError, AnalyzerStatsSnapshot, BufferStats, IndexSuggestion, IndexUsage,

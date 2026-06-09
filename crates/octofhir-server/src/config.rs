@@ -392,6 +392,40 @@ pub struct SearchSettings {
     /// native sidecar search engine is the production path.
     #[serde(default)]
     pub async_index_writes: bool,
+    /// Search parameters to build functional in-place indexes for at bootstrap,
+    /// each as `"ResourceType.code"` (e.g. `"Patient.birthdate"`). Indexes are
+    /// created once when tables + registry are ready; nothing is created at
+    /// runtime. Defaults to a popular set; override per deployment (env
+    /// `OCTOFHIR__SEARCH__INDEXED_PARAMS`) to index only what you search.
+    #[serde(default = "default_indexed_params")]
+    pub indexed_params: Vec<String>,
+}
+fn default_indexed_params() -> Vec<String> {
+    [
+        "Patient.birthdate",
+        "Patient.death-date",
+        "Observation.date",
+        "Encounter.date",
+        "Condition.recorded-date",
+        "Condition.onset-date",
+        "Procedure.date",
+        "MedicationRequest.authoredon",
+        "DiagnosticReport.date",
+        "Immunization.date",
+        "AllergyIntolerance.date",
+        "CarePlan.date",
+        "DocumentReference.date",
+        "ExplanationOfBenefit.created",
+        "Claim.created",
+        "Patient.name",
+        "Patient.family",
+        "Patient.given",
+        "Practitioner.name",
+        "Organization.name",
+    ]
+    .iter()
+    .map(|s| (*s).to_string())
+    .collect()
 }
 fn default_search_default() -> usize {
     10
@@ -411,6 +445,7 @@ impl Default for SearchSettings {
             allow_debug_search_plan: false,
             allow_debug_search_explain_analyze: false,
             async_index_writes: false,
+            indexed_params: default_indexed_params(),
         }
     }
 }
@@ -1160,7 +1195,8 @@ pub mod loader {
                 .try_parsing(true)
                 .separator("__")
                 .list_separator(",")
-                .with_list_parse_key("packages.load"),
+                .with_list_parse_key("packages.load")
+                .with_list_parse_key("search.indexed_params"),
         );
         let cfg = builder
             .build()

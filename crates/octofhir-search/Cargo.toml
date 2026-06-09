@@ -20,6 +20,9 @@ octofhir-canonical-manager = { workspace = true }
 # FHIR model with terminology support
 octofhir-fhir-model = { workspace = true }
 
+# FHIRPath parser — parse SearchParameter expressions to AST for jsonb-path derivation
+octofhir-fhirpath = { workspace = true }
+
 # Workspace dependencies
 dashmap = { workspace = true }
 arc-swap = { workspace = true }

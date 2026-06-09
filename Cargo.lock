@@ -4654,6 +4654,7 @@ dependencies = [
  "octofhir-canonical-manager",
  "octofhir-core",
  "octofhir-fhir-model",
+ "octofhir-fhirpath",
  "octofhir-storage",
  "regex",
  "serde",

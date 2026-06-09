@@ -4,7 +4,7 @@ use std::sync::{Arc, OnceLock};
 
 use async_trait::async_trait;
 use serde_json::Value;
-use sqlx_postgres::{PgPool, PgTransaction};
+use sqlx_postgres::PgPool;
 
 use octofhir_search::{QueryCache, SearchParameter, SearchParameterRegistry};
 use octofhir_storage::{
@@ -13,7 +13,6 @@ use octofhir_storage::{
 };
 
 use crate::config::PostgresConfig;
-use crate::index_writer::{AsyncIndexWriter, IndexJob, IndexOp};
 use crate::migrations;
 use crate::pool;
 use crate::queries;
@@ -35,9 +34,6 @@ pub struct PostgresStorage {
     search_registry: Arc<OnceLock<Arc<SearchParameterRegistry>>>,
     /// Query cache for search SQL template reuse
     query_cache: Option<Arc<QueryCache>>,
-    /// When set, `create / update / delete` enqueue index jobs here after the
-    /// resource transaction commits. Unset → indexing runs inline.
-    async_indexer: Option<AsyncIndexWriter>,
 }
 
 impl PostgresStorage {
@@ -69,7 +65,6 @@ impl PostgresStorage {
             schema_manager,
             search_registry: Arc::new(OnceLock::new()),
             query_cache: None,
-            async_indexer: None,
         })
     }
 
@@ -86,21 +81,7 @@ impl PostgresStorage {
             schema_manager,
             search_registry: Arc::new(OnceLock::new()),
             query_cache: None,
-            async_indexer: None,
         }
-    }
-
-    /// Plug an async, batched search-index writer into this storage. With
-    /// it set, `create / update / delete` enqueue index jobs after the
-    /// resource transaction commits; without it, indexing runs inline.
-    #[must_use]
-    pub fn with_async_indexer(mut self, indexer: AsyncIndexWriter) -> Self {
-        self.async_indexer = Some(indexer);
-        self
-    }
-
-    pub fn set_async_indexer(&mut self, indexer: AsyncIndexWriter) {
-        self.async_indexer = Some(indexer);
     }
 
     /// Sets the read replica pool for routing read operations.
@@ -166,51 +147,6 @@ impl PostgresStorage {
             .and_then(|r| r.get(resource_type, code))
     }
 
-    /// Write search-index rows inside the same transaction as the resource
-    /// mutation. This makes the synchronous CRUD path atomic: if index writes
-    /// fail, the resource mutation rolls back too.
-    async fn write_indexes_with_tx(
-        &self,
-        tx: &mut PgTransaction<'_>,
-        op: IndexOp,
-        resource_type: &str,
-        resource_id: &str,
-        resource: Option<&Value>,
-    ) -> Result<(), StorageError> {
-        if self.async_indexer.is_some() {
-            tracing::debug!(
-                resource_type = %resource_type,
-                resource_id = %resource_id,
-                "Async search-index writer configured; using transactional index write for consistency"
-            );
-        }
-
-        if matches!(op, IndexOp::Update | IndexOp::Delete) {
-            crate::search_index::delete_search_indexes_with_tx(tx, resource_type, resource_id)
-                .await?;
-        }
-
-        if !matches!(op, IndexOp::Create | IndexOp::Update) {
-            return Ok(());
-        }
-
-        let Some(registry) = self.search_registry.get() else {
-            return Ok(());
-        };
-        let resource = resource.ok_or_else(|| {
-            StorageError::internal("Missing resource payload for search-index write")
-        })?;
-        let rows =
-            crate::search_index::extract_search_index_rows(registry, resource_type, resource);
-        let mut buffer = crate::search_index::BatchIndexBuffer::new();
-        buffer.extend_with(resource_type, resource_id, &rows);
-        if !buffer.is_empty() {
-            buffer.flush_with_tx(tx).await?;
-        }
-
-        Ok(())
-    }
-
     fn raw_from_stored(stored: &StoredResource) -> Result<RawStoredResource, StorageError> {
         let resource_json = serde_json::to_string(&stored.resource)
             .map_err(|e| StorageError::internal(format!("Failed to serialize resource: {e}")))?;
@@ -222,49 +158,6 @@ impl PostgresStorage {
             last_updated: stored.last_updated,
             created_at: stored.created_at,
         })
-    }
-
-    async fn enqueue_index_write(
-        &self,
-        op: IndexOp,
-        resource_type: &str,
-        resource_id: &str,
-        resource: &Value,
-    ) -> Result<(), StorageError> {
-        let Some(indexer) = &self.async_indexer else {
-            return Ok(());
-        };
-        let Some(registry) = self.search_registry.get() else {
-            return Ok(());
-        };
-        let rows =
-            crate::search_index::extract_search_index_rows(registry, resource_type, resource);
-        indexer
-            .submit(IndexJob {
-                op,
-                resource_type: resource_type.to_string(),
-                resource_id: resource_id.to_string(),
-                rows,
-            })
-            .await
-    }
-
-    async fn enqueue_index_delete(
-        &self,
-        resource_type: &str,
-        resource_id: &str,
-    ) -> Result<(), StorageError> {
-        let Some(indexer) = &self.async_indexer else {
-            return Ok(());
-        };
-        indexer
-            .submit(IndexJob {
-                op: IndexOp::Delete,
-                resource_type: resource_type.to_string(),
-                resource_id: resource_id.to_string(),
-                rows: crate::search_index::ExtractedIndexRows::default(),
-            })
-            .await
     }
 
     /// Reindex a single resource: delete old index rows, extract new ones, and write them.
@@ -342,48 +235,10 @@ impl PostgresStorage {
 #[async_trait]
 impl FhirStorage for PostgresStorage {
     async fn create(&self, resource: &Value) -> Result<StoredResource, StorageError> {
-        if self.async_indexer.is_some() {
-            let result = {
-                let mut tx = self.pool.begin().await.map_err(|e| {
-                    StorageError::transaction_error(format!("Failed to begin transaction: {e}"))
-                })?;
-                let result = queries::crud::create_with_tx(&mut tx, resource, None).await?;
-                tx.commit().await.map_err(|e| {
-                    StorageError::transaction_error(format!("Failed to commit transaction: {e}"))
-                })?;
-                result
-            };
-            if let Err(e) = self
-                .enqueue_index_write(
-                    IndexOp::Create,
-                    &result.resource_type,
-                    &result.id,
-                    &result.resource,
-                )
-                .await
-            {
-                tracing::warn!(
-                    error = %e,
-                    resource_type = %result.resource_type,
-                    resource_id = %result.id,
-                    "async search index enqueue failed after create commit"
-                );
-            }
-            return Ok(result);
-        }
-
         let mut tx = self.pool.begin().await.map_err(|e| {
             StorageError::transaction_error(format!("Failed to begin transaction: {e}"))
         })?;
         let result = queries::crud::create_with_tx(&mut tx, resource, None).await?;
-        self.write_indexes_with_tx(
-            &mut tx,
-            IndexOp::Create,
-            &result.resource_type,
-            &result.id,
-            Some(&result.resource),
-        )
-        .await?;
         tx.commit().await.map_err(|e| {
             StorageError::transaction_error(format!("Failed to commit transaction: {e}"))
         })?;
@@ -394,45 +249,10 @@ impl FhirStorage for PostgresStorage {
         &self,
         resource: &Value,
     ) -> Result<octofhir_storage::RawStoredResource, StorageError> {
-        if self.async_indexer.is_some() {
-            let mut tx = self.pool.begin().await.map_err(|e| {
-                StorageError::transaction_error(format!("Failed to begin transaction: {e}"))
-            })?;
-            let result = queries::crud::create_with_tx(&mut tx, resource, None).await?;
-            tx.commit().await.map_err(|e| {
-                StorageError::transaction_error(format!("Failed to commit transaction: {e}"))
-            })?;
-            if let Err(e) = self
-                .enqueue_index_write(
-                    IndexOp::Create,
-                    &result.resource_type,
-                    &result.id,
-                    &result.resource,
-                )
-                .await
-            {
-                tracing::warn!(
-                    error = %e,
-                    resource_type = %result.resource_type,
-                    resource_id = %result.id,
-                    "async search index enqueue failed after raw create commit"
-                );
-            }
-            return Self::raw_from_stored(&result);
-        }
-
         let mut tx = self.pool.begin().await.map_err(|e| {
             StorageError::transaction_error(format!("Failed to begin transaction: {e}"))
         })?;
         let result = queries::crud::create_with_tx(&mut tx, resource, None).await?;
-        self.write_indexes_with_tx(
-            &mut tx,
-            IndexOp::Create,
-            &result.resource_type,
-            &result.id,
-            Some(&result.resource),
-        )
-        .await?;
         tx.commit().await.map_err(|e| {
             StorageError::transaction_error(format!("Failed to commit transaction: {e}"))
         })?;
@@ -460,51 +280,11 @@ impl FhirStorage for PostgresStorage {
         resource: &Value,
         if_match: Option<&str>,
     ) -> Result<StoredResource, StorageError> {
-        if self.async_indexer.is_some() {
-            let result = {
-                let mut tx = self.pool.begin().await.map_err(|e| {
-                    StorageError::transaction_error(format!("Failed to begin transaction: {e}"))
-                })?;
-                let result =
-                    queries::crud::update_with_tx_if_match(&mut tx, resource, if_match, None)
-                        .await?;
-                tx.commit().await.map_err(|e| {
-                    StorageError::transaction_error(format!("Failed to commit transaction: {e}"))
-                })?;
-                result
-            };
-            if let Err(e) = self
-                .enqueue_index_write(
-                    IndexOp::Update,
-                    &result.resource_type,
-                    &result.id,
-                    &result.resource,
-                )
-                .await
-            {
-                tracing::warn!(
-                    error = %e,
-                    resource_type = %result.resource_type,
-                    resource_id = %result.id,
-                    "async search index enqueue failed after update commit"
-                );
-            }
-            return Ok(result);
-        }
-
         let mut tx = self.pool.begin().await.map_err(|e| {
             StorageError::transaction_error(format!("Failed to begin transaction: {e}"))
         })?;
         let result =
             queries::crud::update_with_tx_if_match(&mut tx, resource, if_match, None).await?;
-        self.write_indexes_with_tx(
-            &mut tx,
-            IndexOp::Update,
-            &result.resource_type,
-            &result.id,
-            Some(&result.resource),
-        )
-        .await?;
         tx.commit().await.map_err(|e| {
             StorageError::transaction_error(format!("Failed to commit transaction: {e}"))
         })?;
@@ -516,24 +296,11 @@ impl FhirStorage for PostgresStorage {
         resource: &Value,
         if_match: Option<&str>,
     ) -> Result<octofhir_storage::RawStoredResource, StorageError> {
-        if self.async_indexer.is_some() {
-            let result = self.update(resource, if_match).await?;
-            return Self::raw_from_stored(&result);
-        }
-
         let mut tx = self.pool.begin().await.map_err(|e| {
             StorageError::transaction_error(format!("Failed to begin transaction: {e}"))
         })?;
         let result =
             queries::crud::update_with_tx_if_match(&mut tx, resource, if_match, None).await?;
-        self.write_indexes_with_tx(
-            &mut tx,
-            IndexOp::Update,
-            &result.resource_type,
-            &result.id,
-            Some(&result.resource),
-        )
-        .await?;
         tx.commit().await.map_err(|e| {
             StorageError::transaction_error(format!("Failed to commit transaction: {e}"))
         })?;
@@ -541,33 +308,10 @@ impl FhirStorage for PostgresStorage {
     }
 
     async fn delete(&self, resource_type: &str, id: &str) -> Result<(), StorageError> {
-        if self.async_indexer.is_some() {
-            {
-                let mut tx = self.pool.begin().await.map_err(|e| {
-                    StorageError::transaction_error(format!("Failed to begin transaction: {e}"))
-                })?;
-                queries::crud::delete_with_tx(&mut tx, resource_type, id, None).await?;
-                tx.commit().await.map_err(|e| {
-                    StorageError::transaction_error(format!("Failed to commit transaction: {e}"))
-                })?;
-            }
-            if let Err(e) = self.enqueue_index_delete(resource_type, id).await {
-                tracing::warn!(
-                    error = %e,
-                    resource_type = %resource_type,
-                    resource_id = %id,
-                    "async search index enqueue failed after delete commit"
-                );
-            }
-            return Ok(());
-        }
-
         let mut tx = self.pool.begin().await.map_err(|e| {
             StorageError::transaction_error(format!("Failed to begin transaction: {e}"))
         })?;
         queries::crud::delete_with_tx(&mut tx, resource_type, id, None).await?;
-        self.write_indexes_with_tx(&mut tx, IndexOp::Delete, resource_type, id, None)
-            .await?;
         tx.commit().await.map_err(|e| {
             StorageError::transaction_error(format!("Failed to commit transaction: {e}"))
         })?;
@@ -641,11 +385,7 @@ impl FhirStorage for PostgresStorage {
             StorageError::transaction_error(format!("Failed to begin transaction: {}", e))
         })?;
 
-        // Wrap in our PostgresTransaction type
-        let pg_tx = crate::transaction::PostgresTransaction::new(
-            sqlx_tx,
-            self.search_registry.get().cloned(),
-        );
+        let pg_tx = crate::transaction::PostgresTransaction::new(sqlx_tx, None);
 
         Ok(Box::new(pg_tx))
     }

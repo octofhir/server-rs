@@ -30,7 +30,10 @@ pub use composite::{
 };
 #[cfg(test)]
 pub use date::build_period_search;
-pub use date::{DateRange, build_date_search, build_index_date_search, parse_date_range};
+pub use date::{
+    DateRange, build_date_search, build_index_date_search, build_indexed_date_inplace,
+    parse_date_range,
+};
 pub use number::{
     build_gin_quantity_search, build_index_number_search, build_index_quantity_search,
     build_number_search, build_quantity_search,
@@ -41,7 +44,7 @@ pub use special::{
     build_list_search, build_near_search, build_text_search, detect_special_type,
     parse_near_parameter,
 };
-pub use string::build_indexed_string_search;
+pub use string::{build_indexed_string_inplace, build_indexed_string_search};
 pub use string::{build_array_string_search, build_human_name_search, build_string_search};
 #[cfg(test)]
 pub use token::build_token_search_with_terminology;
@@ -121,7 +124,31 @@ fn dispatch_search_inner(
 
     let jsonb_path = build_jsonb_accessor(builder.resource_column(), &path_segments, needs_text);
 
-    if definition.user_defined {
+    // String/Date/Number/Quantity/Reference search as in-place predicates on the
+    // resource JSONB via the shared jsonb dispatcher (no sidecar tables).
+    if definition.user_defined
+        || matches!(
+            definition.param_type,
+            SearchParameterType::String
+                | SearchParameterType::Date
+                | SearchParameterType::Number
+                | SearchParameterType::Quantity
+                | SearchParameterType::Reference
+        )
+    {
+        if matches!(definition.param_type, SearchParameterType::Date) {
+            // meta.lastUpdated is a row column, not a jsonb date path.
+            if matches!(
+                resolve_resource_column_param(definition),
+                Some(ResourceColumnParam::LastUpdated)
+            ) {
+                return build_last_updated_search(builder, param);
+            }
+            return build_indexed_date_inplace(builder, param, resource_type, definition);
+        }
+        if matches!(definition.param_type, SearchParameterType::String) {
+            return build_indexed_string_inplace(builder, param, resource_type, definition);
+        }
         return dispatch_user_defined_jsonb_search(
             builder,
             param,

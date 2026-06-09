@@ -552,17 +552,6 @@ async fn create_storage(
         .await
         .map_err(|e| anyhow::anyhow!("Failed to create PostgreSQL storage: {e}"))?;
 
-    if cfg.search.async_index_writes {
-        let index_writer = octofhir_db_postgres::AsyncIndexWriter::start(
-            pg_storage.pool().clone(),
-            octofhir_db_postgres::IndexWriterConfig::default(),
-        );
-        pg_storage.set_async_indexer(index_writer);
-        tracing::info!("Async search-index writer enabled");
-    } else {
-        tracing::info!("Search-index writes are synchronous");
-    }
-
     let primary_pool = Arc::new(pg_storage.pool().clone());
 
     // Create read replica pool if configured
@@ -793,6 +782,15 @@ pub async fn build_app(
     } else {
         tracing::info!("Search registry initialized on storage for index writing");
     }
+
+    // Functional search indexes for the popular parameters, created once now that
+    // resource tables and the registry are both ready (no runtime/lazy creation).
+    octofhir_db_postgres::create_default_search_indexes(
+        &db_pool,
+        &cfg_snapshot.registry,
+        &cfg.search.indexed_params,
+    )
+    .await;
 
     let auth_state = auth_state_result.context("Failed to initialize authentication")?;
     tracing::info!("Authentication initialized");

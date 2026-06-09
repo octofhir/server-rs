@@ -1169,6 +1169,111 @@ fn date_sidecar_clause_expr(builder: &mut SqlBuilder, clause: &DateClause) -> Sq
     }
 }
 
+/// In-place date predicate over a functional date-range expression on the
+/// resource JSONB (no sidecar table). `range_expr` must be exactly
+/// `tstzrange(fhir_extract_date_min(col,paths), fhir_extract_date_max(col,paths), '[]')`
+/// — the same expression the matching GiST functional index is built on, so the
+/// planner can use the index. `min_expr` is `fhir_extract_date_min(col,paths)`,
+/// used for `:missing`.
+fn date_inplace_clause_expr(
+    builder: &mut SqlBuilder,
+    clause: &DateClause,
+    range_expr: &str,
+    min_expr: &str,
+) -> SqlExpr {
+    let rng = || SqlTerm::Raw(range_expr.to_string());
+    match &clause.predicate {
+        DatePredicate::Contains { q } => SqlExpr::RangeOp {
+            lhs: rng(),
+            op: RangeOp::ContainsBy,
+            rhs: date_range_term(builder, q),
+        },
+        DatePredicate::NotContains { q } => SqlExpr::Not(Box::new(SqlExpr::RangeOp {
+            lhs: rng(),
+            op: RangeOp::ContainsBy,
+            rhs: date_range_term(builder, q),
+        })),
+        DatePredicate::Overlap { lo, hi } => SqlExpr::RangeOp {
+            lhs: rng(),
+            op: RangeOp::Overlaps,
+            rhs: timestamp_range_term(builder, *lo, *hi),
+        },
+        DatePredicate::Ge { q } => SqlExpr::Or(vec![
+            SqlExpr::RangeOp {
+                lhs: rng(),
+                op: RangeOp::Overlaps,
+                rhs: timestamp_range_term(
+                    builder,
+                    Some(Bound { at: q.end, inclusive: true }),
+                    None,
+                ),
+            },
+            SqlExpr::RangeOp {
+                lhs: rng(),
+                op: RangeOp::ContainsBy,
+                rhs: date_range_term(builder, q),
+            },
+        ]),
+        DatePredicate::Le { q } => SqlExpr::Or(vec![
+            SqlExpr::RangeOp {
+                lhs: rng(),
+                op: RangeOp::Overlaps,
+                rhs: timestamp_range_term(
+                    builder,
+                    None,
+                    Some(Bound { at: q.start, inclusive: false }),
+                ),
+            },
+            SqlExpr::RangeOp {
+                lhs: rng(),
+                op: RangeOp::ContainsBy,
+                rhs: date_range_term(builder, q),
+            },
+        ]),
+        DatePredicate::StrictlyAfter { q } => {
+            let p_hi = builder.add_timestamp_param(format_rfc3339(&q.end));
+            SqlExpr::Compare {
+                lhs: SqlTerm::Raw(format!("lower({range_expr})")),
+                op: SqlOp::Gt,
+                rhs: SqlTerm::ParamCast { index: p_hi, cast: "timestamptz" },
+            }
+        }
+        DatePredicate::StrictlyBefore { q } => {
+            let p_lo = builder.add_timestamp_param(format_rfc3339(&q.start));
+            SqlExpr::Compare {
+                lhs: SqlTerm::Raw(format!("upper({range_expr})")),
+                op: SqlOp::Lt,
+                rhs: SqlTerm::ParamCast { index: p_lo, cast: "timestamptz" },
+            }
+        }
+        DatePredicate::Missing { is_missing } => {
+            if *is_missing {
+                SqlExpr::IsNull(SqlTerm::Raw(min_expr.to_string()))
+            } else {
+                SqlExpr::IsNotNull(SqlTerm::Raw(min_expr.to_string()))
+            }
+        }
+    }
+}
+
+/// Render in-place date clauses (one OR group) over the functional range expression.
+pub fn render_date_inplace_clauses_as_or(
+    builder: &mut SqlBuilder,
+    clauses: &[DateClause],
+    range_expr: &str,
+    min_expr: &str,
+) -> Option<String> {
+    let rendered = clauses
+        .iter()
+        .map(|clause| render_sql_expr(&date_inplace_clause_expr(builder, clause, range_expr, min_expr)))
+        .collect::<Vec<_>>();
+    if rendered.is_empty() {
+        None
+    } else {
+        Some(SqlBuilder::build_or_clause(&rendered))
+    }
+}
+
 fn date_range_term(builder: &mut SqlBuilder, q: &crate::types::date::DateRange) -> SqlTerm {
     let p_lo = builder.add_timestamp_param(format_rfc3339(&q.start));
     let p_hi = builder.add_timestamp_param(format_rfc3339(&q.end));
@@ -3161,6 +3266,71 @@ fn string_sidecar_exists_expr(predicates: Vec<SqlExpr>) -> SqlExpr {
         },
         where_clause: Some(SqlExpr::And(predicates)),
     }))
+}
+
+/// In-place string predicate over the normalised text blob / raw value array of
+/// the resource JSONB (no sidecar). `blob_expr` =
+/// `fhir_text_blob(fhir_extract_text(col,paths))` (space-wrapped, matched by the
+/// trigram GIN functional index); `arr_expr` = `fhir_extract_text(col,paths)`
+/// (raw text[], for `:exact` and `:missing`).
+fn indexed_string_clause_expr(
+    builder: &mut SqlBuilder,
+    clause: &StringClause,
+    blob_expr: &str,
+    arr_expr: &str,
+) -> SqlExpr {
+    match &clause.predicate {
+        // Default FHIR string search: token starts-with (case/accent-insensitive).
+        StringPredicate::Prefix { value } => {
+            let pat = format!("% {}%", escape_like_pattern(&normalize_string(value)));
+            let p = builder.add_text_param(pat);
+            SqlExpr::Compare {
+                lhs: SqlTerm::Raw(blob_expr.to_string()),
+                op: SqlOp::Like,
+                rhs: SqlTerm::Param(p),
+            }
+        }
+        // `:contains` and (approximated) `:text`: substring, case/accent-insensitive.
+        StringPredicate::Contains { value } | StringPredicate::Text { value } => {
+            let pat = format!("%{}%", escape_like_pattern(&normalize_string(value)));
+            let p = builder.add_text_param(pat);
+            SqlExpr::Compare {
+                lhs: SqlTerm::Raw(blob_expr.to_string()),
+                op: SqlOp::Like,
+                rhs: SqlTerm::Param(p),
+            }
+        }
+        // `:exact`: case/accent-sensitive full equality against a raw extracted value.
+        StringPredicate::Exact { value } => {
+            let p = builder.add_text_param(value.clone());
+            SqlExpr::Raw(format!("${p} = ANY({arr_expr})"))
+        }
+        StringPredicate::Missing { is_missing } => {
+            if *is_missing {
+                SqlExpr::IsNull(SqlTerm::Raw(arr_expr.to_string()))
+            } else {
+                SqlExpr::IsNotNull(SqlTerm::Raw(arr_expr.to_string()))
+            }
+        }
+    }
+}
+
+/// Render in-place string clauses (one OR group) over the blob / array expressions.
+pub fn render_indexed_string_clauses_as_or(
+    builder: &mut SqlBuilder,
+    clauses: &[StringClause],
+    blob_expr: &str,
+    arr_expr: &str,
+) -> Option<String> {
+    let rendered = clauses
+        .iter()
+        .map(|c| render_sql_expr(&indexed_string_clause_expr(builder, c, blob_expr, arr_expr)))
+        .collect::<Vec<_>>();
+    if rendered.is_empty() {
+        None
+    } else {
+        Some(SqlBuilder::build_or_clause(&rendered))
+    }
 }
 
 fn escape_like_pattern(s: &str) -> String {
