@@ -1,4 +1,3 @@
-pub mod chaining;
 pub mod common;
 pub mod config_watcher;
 pub mod filter;
@@ -11,7 +10,6 @@ pub mod parser;
 pub mod query_cache;
 pub mod registry;
 pub mod reloadable;
-pub mod reverse_chaining;
 pub mod sql_builder;
 pub mod terminology;
 pub mod terminology_preprocess;
@@ -51,10 +49,10 @@ pub use sql_builder::{
     escape_identifier,
     fhirpath_to_jsonb_path,
 };
-// Chaining and includes
-pub use chaining::{
-    ChainLink, ChainedParameter, ChainingError, build_chained_search, is_chained_parameter,
-    parse_chained_parameter,
+// Chaining / reverse-chaining now live in the IR (`ir::chain`).
+pub use ir::chain::{
+    ChainClause, ChainError, ChainLink, HasClause, HasTail, is_chained_parameter,
+    is_reverse_chain_parameter, render_chain_clause, render_has_clause,
 };
 pub use config_watcher::{
     ConfigCallback, ConfigWatcher, ReloadableTerminologyProvider, WatcherConfig, WatcherError,
@@ -69,10 +67,6 @@ pub use query_cache::{
     QueryCacheKey, QueryParamKey,
 };
 pub use reloadable::{ReloadableSearchConfig, SearchConfig, SearchOptions};
-pub use reverse_chaining::{
-    ReverseChainParameter, ReverseChainingError, build_reverse_chain_search,
-    is_reverse_chain_parameter, parse_reverse_chain,
-};
 pub use terminology::{
     CacheStats, ExpansionResult, HierarchyDirection, HybridTerminologyProvider, TerminologyConfig,
     TerminologyError,

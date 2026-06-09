@@ -8,7 +8,7 @@
 
 use crate::parameters::{SearchModifier, SearchPrefix};
 use crate::parser::ParsedParam;
-use crate::sql_builder::{SqlBuilder, SqlBuilderError};
+use crate::sql_builder::SqlBuilderError;
 use crate::types::date::{DateRange, parse_date_range};
 use time::OffsetDateTime;
 
@@ -66,7 +66,7 @@ pub enum DatePredicate {
     Missing { is_missing: bool },
 }
 
-/// Date predicate plus its `search_idx_date` lookup key.
+/// Date predicate plus its resource-type / param-code lookup key.
 #[derive(Debug, Clone)]
 pub struct DateClause {
     pub resource_type: String,
@@ -157,114 +157,6 @@ impl DateClause {
             });
         }
         Ok(out)
-    }
-
-    /// Render this clause to a SQL fragment, registering bound parameters
-    /// on the supplied `SqlBuilder`. The returned string is meant to be
-    /// inserted into the surrounding `WHERE` directly.
-    pub fn render(&self, builder: &mut SqlBuilder) -> String {
-        let rt_param = builder.add_text_param(&self.resource_type);
-        let pc_param = builder.add_text_param(&self.param_code);
-        let id_col = builder.id_column();
-        match &self.predicate {
-            DatePredicate::Contains { q } => {
-                let p_lo = builder.add_timestamp_param(format_rfc3339(&q.start));
-                let p_hi = builder.add_timestamp_param(format_rfc3339(&q.end));
-                format!(
-                    "EXISTS (SELECT 1 FROM search_idx_date sid \
-                     WHERE sid.resource_type = ${rt_param} AND sid.resource_id = {id_col} \
-                     AND sid.param_code = ${pc_param} \
-                     AND sid.rng <@ tstzrange(${p_lo}::timestamptz, ${p_hi}::timestamptz, '[)'))"
-                )
-            }
-            DatePredicate::NotContains { q } => {
-                let p_lo = builder.add_timestamp_param(format_rfc3339(&q.start));
-                let p_hi = builder.add_timestamp_param(format_rfc3339(&q.end));
-                format!(
-                    "NOT EXISTS (SELECT 1 FROM search_idx_date sid \
-                     WHERE sid.resource_type = ${rt_param} AND sid.resource_id = {id_col} \
-                     AND sid.param_code = ${pc_param} \
-                     AND sid.rng <@ tstzrange(${p_lo}::timestamptz, ${p_hi}::timestamptz, '[)'))"
-                )
-            }
-            DatePredicate::Overlap { lo, hi } => {
-                let (lo_expr, lo_inc) = match lo {
-                    Some(b) => {
-                        let p = builder.add_timestamp_param(format_rfc3339(&b.at));
-                        (format!("${p}::timestamptz"), b.inclusive)
-                    }
-                    None => ("NULL".to_string(), true),
-                };
-                let (hi_expr, hi_inc) = match hi {
-                    Some(b) => {
-                        let p = builder.add_timestamp_param(format_rfc3339(&b.at));
-                        (format!("${p}::timestamptz"), b.inclusive)
-                    }
-                    None => ("NULL".to_string(), false),
-                };
-                let bounds = bounds_token(lo_inc, hi_inc);
-                format!(
-                    "EXISTS (SELECT 1 FROM search_idx_date sid \
-                     WHERE sid.resource_type = ${rt_param} AND sid.resource_id = {id_col} \
-                     AND sid.param_code = ${pc_param} \
-                     AND sid.rng && tstzrange({lo_expr}, {hi_expr}, '{bounds}'))"
-                )
-            }
-            DatePredicate::Ge { q } => {
-                let p_lo = builder.add_timestamp_param(format_rfc3339(&q.start));
-                let p_hi = builder.add_timestamp_param(format_rfc3339(&q.end));
-                format!(
-                    "EXISTS (SELECT 1 FROM search_idx_date sid \
-                     WHERE sid.resource_type = ${rt_param} AND sid.resource_id = {id_col} \
-                     AND sid.param_code = ${pc_param} \
-                     AND (sid.rng && tstzrange(${p_hi}::timestamptz, NULL, '[)') \
-                          OR sid.rng <@ tstzrange(${p_lo}::timestamptz, ${p_hi}::timestamptz, '[)')))"
-                )
-            }
-            DatePredicate::Le { q } => {
-                let p_lo = builder.add_timestamp_param(format_rfc3339(&q.start));
-                let p_hi = builder.add_timestamp_param(format_rfc3339(&q.end));
-                format!(
-                    "EXISTS (SELECT 1 FROM search_idx_date sid \
-                     WHERE sid.resource_type = ${rt_param} AND sid.resource_id = {id_col} \
-                     AND sid.param_code = ${pc_param} \
-                     AND (sid.rng && tstzrange(NULL, ${p_lo}::timestamptz, '[)') \
-                          OR sid.rng <@ tstzrange(${p_lo}::timestamptz, ${p_hi}::timestamptz, '[)')))"
-                )
-            }
-            DatePredicate::StrictlyAfter { q } => {
-                let p_lo = builder.add_timestamp_param(format_rfc3339(&q.start));
-                let p_hi = builder.add_timestamp_param(format_rfc3339(&q.end));
-                format!(
-                    "EXISTS (SELECT 1 FROM search_idx_date sid \
-                     WHERE sid.resource_type = ${rt_param} AND sid.resource_id = {id_col} \
-                     AND sid.param_code = ${pc_param} \
-                     AND sid.rng >> tstzrange(${p_lo}::timestamptz, ${p_hi}::timestamptz, '[)'))"
-                )
-            }
-            DatePredicate::StrictlyBefore { q } => {
-                let p_lo = builder.add_timestamp_param(format_rfc3339(&q.start));
-                let p_hi = builder.add_timestamp_param(format_rfc3339(&q.end));
-                format!(
-                    "EXISTS (SELECT 1 FROM search_idx_date sid \
-                     WHERE sid.resource_type = ${rt_param} AND sid.resource_id = {id_col} \
-                     AND sid.param_code = ${pc_param} \
-                     AND sid.rng << tstzrange(${p_lo}::timestamptz, ${p_hi}::timestamptz, '[)'))"
-                )
-            }
-            DatePredicate::Missing { is_missing } => {
-                let exists = format!(
-                    "EXISTS (SELECT 1 FROM search_idx_date sid \
-                     WHERE sid.resource_type = ${rt_param} AND sid.resource_id = {id_col} \
-                     AND sid.param_code = ${pc_param})"
-                );
-                if *is_missing {
-                    format!("NOT {exists}")
-                } else {
-                    exists
-                }
-            }
-        }
     }
 }
 
@@ -389,16 +281,7 @@ fn tighter_hi(cur: Option<Bound>, cand: Option<Bound>) -> Option<Bound> {
         }),
     }
 }
-
-fn bounds_token(lo_inc: bool, hi_inc: bool) -> &'static str {
-    match (lo_inc, hi_inc) {
-        (true, true) => "[]",
-        (true, false) => "[)",
-        (false, true) => "(]",
-        (false, false) => "()",
-    }
-}
-
+#[cfg(test)]
 fn format_rfc3339(dt: &OffsetDateTime) -> String {
     dt.format(&time::format_description::well_known::Rfc3339)
         .unwrap_or_else(|_| dt.to_string())
@@ -688,66 +571,5 @@ mod tests {
             lo_str.starts_with("1990-06-16"),
             "strictest gt wins, got {lo_str}"
         );
-    }
-
-    #[test]
-    fn render_overlap_emits_half_infinite_when_one_side_missing() {
-        let mut builder = SqlBuilder::with_resource_column("r.resource");
-        let clauses =
-            DateClause::from_parsed_param(&pp("date", SearchPrefix::Gt, "2024-01-01"), "Pt")
-                .unwrap();
-        let sql = clauses[0].render(&mut builder);
-        assert!(
-            sql.contains("tstzrange(") && sql.contains(", NULL,") && sql.contains("'[)'"),
-            "gt → half-infinite [upper(q), NULL, '[)'): {sql}"
-        );
-    }
-
-    #[test]
-    fn render_contains_uses_lt_at_op() {
-        let mut builder = SqlBuilder::with_resource_column("r.resource");
-        let clauses =
-            DateClause::from_parsed_param(&pp("date", SearchPrefix::Eq, "2024-06-15"), "Pt")
-                .unwrap();
-        let sql = clauses[0].render(&mut builder);
-        assert!(sql.contains("sid.rng <@"), "eq → `<@`: {sql}");
-        assert!(!sql.contains("sid.rng &&"), "eq must not use overlap");
-    }
-
-    #[test]
-    fn render_not_contains_for_ne() {
-        let mut builder = SqlBuilder::with_resource_column("r.resource");
-        let clauses =
-            DateClause::from_parsed_param(&pp("date", SearchPrefix::Ne, "2024-06-15"), "Pt")
-                .unwrap();
-        let sql = clauses[0].render(&mut builder);
-        assert!(
-            sql.starts_with("NOT EXISTS") && sql.contains("sid.rng <@"),
-            "ne → NOT EXISTS … <@: {sql}"
-        );
-    }
-
-    #[test]
-    fn ir_render_date_clauses_as_or_preserves_comma_or_shape() {
-        let mut builder = SqlBuilder::with_resource_column("r.resource");
-        let param = ParsedParam {
-            name: "date".to_string(),
-            modifier: None,
-            values: vec![
-                ParsedValue {
-                    prefix: Some(SearchPrefix::Eq),
-                    raw: "2024-06-15".to_string(),
-                },
-                ParsedValue {
-                    prefix: Some(SearchPrefix::Eq),
-                    raw: "2024-06-16".to_string(),
-                },
-            ],
-        };
-        let clauses = DateClause::from_parsed_param(&param, "Patient").unwrap();
-        let sql = crate::ir::render_date_clauses_as_or(&mut builder, &clauses).unwrap();
-
-        assert!(sql.contains(" OR "), "comma values must render OR: {sql}");
-        assert_eq!(sql.matches("EXISTS").count(), 2, "got: {sql}");
     }
 }

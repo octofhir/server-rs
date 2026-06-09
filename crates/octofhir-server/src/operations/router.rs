@@ -354,7 +354,7 @@ pub async fn compartment_post_handler(
     body: axum::body::Bytes,
 ) -> Result<Response, ApiError> {
     if is_operation(&param) {
-        // Extract compartment type from URI: /fhir/Patient/123/$reindex → "Patient"
+        // Extract compartment type from URI: /fhir/Patient/123/$validate → "Patient"
         let compartment_type = uri
             .path()
             .strip_prefix("/fhir/")

@@ -26,6 +26,7 @@ use futures_util::{StreamExt, stream};
 use octofhir_db_postgres::SchemaManager;
 use octofhir_search::SearchParameterRegistry;
 use serde_json::{Value, json};
+use sqlx_core::query::query;
 use sqlx_core::query_as::query_as;
 use uuid::Uuid;
 
@@ -250,7 +251,7 @@ impl OperationHandler for ImportOperation {
 /// Handles new resources, existing resources, and previously-deleted resources.
 async fn upsert_resource_with_indexes(
     pool: &sqlx_postgres::PgPool,
-    registry: &SearchParameterRegistry,
+    _registry: &SearchParameterRegistry,
     resource_type: &str,
     id: &str,
     resource: &Value,
@@ -307,47 +308,6 @@ async fn upsert_resource_with_indexes(
             octofhir_storage::StorageError::internal(format!("Failed to upsert resource: {e}"))
         })?;
 
-    let rows = octofhir_db_postgres::search_index::extract_search_index_rows(
-        registry,
-        resource_type,
-        resource,
-    );
-    octofhir_db_postgres::search_index::write_reference_index_with_tx(
-        &mut tx,
-        resource_type,
-        id,
-        &rows.refs,
-    )
-    .await?;
-    octofhir_db_postgres::search_index::write_date_index_with_tx(
-        &mut tx,
-        resource_type,
-        id,
-        &rows.dates,
-    )
-    .await?;
-    octofhir_db_postgres::search_index::write_string_index_with_tx(
-        &mut tx,
-        resource_type,
-        id,
-        &rows.strings,
-    )
-    .await?;
-    octofhir_db_postgres::search_index::write_number_index_with_tx(
-        &mut tx,
-        resource_type,
-        id,
-        &rows.numbers,
-    )
-    .await?;
-    octofhir_db_postgres::search_index::write_quantity_index_with_tx(
-        &mut tx,
-        resource_type,
-        id,
-        &rows.quantities,
-    )
-    .await?;
-
     tx.commit().await.map_err(|e| {
         octofhir_storage::StorageError::transaction_error(format!(
             "Failed to commit import upsert transaction: {e}"
@@ -357,12 +317,16 @@ async fn upsert_resource_with_indexes(
     Ok(row.0)
 }
 
-struct ImportLineOutcome {
-    created: bool,
-    error: Option<Value>,
+/// A parsed + validated import line, ready for the batch upsert.
+struct PreparedImportResource {
+    line_number: usize,
+    id: String,
+    resource: Value,
 }
 
-async fn process_import_line(
+/// Parse + validate one NDJSON line. No database access — writes happen in
+/// `batch_upsert_resources` so a whole batch shares one transaction/commit.
+async fn prepare_import_line(
     state: AppState,
     job_id: Uuid,
     resource_type: String,
@@ -370,7 +334,7 @@ async fn process_import_line(
     line_number: usize,
     line: String,
     skip_validation: bool,
-) -> ImportLineOutcome {
+) -> Result<PreparedImportResource, Value> {
     let resource: Value = match serde_json::from_str(&line) {
         Ok(v) => v,
         Err(e) => {
@@ -380,31 +344,25 @@ async fn process_import_line(
                 error = %e,
                 "Invalid JSON line, skipping"
             );
-            return ImportLineOutcome {
-                created: false,
-                error: Some(json!({
-                    "source": source_url,
-                    "line": line_number,
-                    "error": format!("Invalid JSON: {e}"),
-                })),
-            };
+            return Err(json!({
+                "source": source_url,
+                "line": line_number,
+                "error": format!("Invalid JSON: {e}"),
+            }));
         }
     };
 
     let actual_type = resource.get("resourceType").and_then(|v| v.as_str());
     if actual_type != Some(resource_type.as_str()) {
-        return ImportLineOutcome {
-            created: false,
-            error: Some(json!({
-                "source": source_url,
-                "line": line_number,
-                "error": format!(
-                    "Expected resourceType '{}', got '{}'",
-                    resource_type,
-                    actual_type.unwrap_or("null")
-                ),
-            })),
-        };
+        return Err(json!({
+            "source": source_url,
+            "line": line_number,
+            "error": format!(
+                "Expected resourceType '{}', got '{}'",
+                resource_type,
+                actual_type.unwrap_or("null")
+            ),
+        }));
     }
 
     if !skip_validation {
@@ -417,53 +375,94 @@ async fn process_import_line(
                 .collect::<Vec<_>>()
                 .join("; ");
 
-            return ImportLineOutcome {
-                created: false,
-                error: Some(json!({
-                    "source": source_url,
-                    "line": line_number,
-                    "error": format!("Validation failed: {diagnostics}"),
-                })),
-            };
+            return Err(json!({
+                "source": source_url,
+                "line": line_number,
+                "error": format!("Validation failed: {diagnostics}"),
+            }));
         }
     }
 
-    let id = resource.get("id").and_then(|v| v.as_str());
-    let result = if let Some(id) = id {
-        upsert_resource_with_indexes(
-            state.db_pool.as_ref(),
-            &state.search_config.config().registry,
-            &resource_type,
-            id,
-            &resource,
-        )
+    let id = resource
+        .get("id")
+        .and_then(|v| v.as_str())
+        .map(String::from)
+        .unwrap_or_else(|| Uuid::new_v4().to_string());
+
+    Ok(PreparedImportResource {
+        line_number,
+        id,
+        resource,
+    })
+}
+
+/// Upsert a whole batch in ONE transaction: one `_transaction` row, one
+/// UNNEST INSERT ... ON CONFLICT, one commit — instead of a transaction and
+/// commit per resource.
+async fn batch_upsert_resources(
+    pool: &sqlx_postgres::PgPool,
+    resource_type: &str,
+    prepared: &[PreparedImportResource],
+) -> Result<u64, octofhir_storage::StorageError> {
+    let table = SchemaManager::table_name(resource_type);
+    let now = Utc::now();
+
+    let ids: Vec<&str> = prepared.iter().map(|p| p.id.as_str()).collect();
+    let resources: Vec<&Value> = prepared.iter().map(|p| &p.resource).collect();
+
+    let mut tx = pool.begin().await.map_err(|e| {
+        octofhir_storage::StorageError::transaction_error(format!(
+            "Failed to begin import batch transaction: {e}"
+        ))
+    })?;
+
+    let sql = format!(
+        r#"WITH new_tx AS (
+               INSERT INTO _transaction (status) VALUES ('committed') RETURNING txid
+           )
+           INSERT INTO "{table}" (id, txid, created_at, updated_at, resource, status)
+           SELECT
+               t.id,
+               new_tx.txid,
+               $3,
+               $3,
+               jsonb_set(
+                   jsonb_set(t.resource, '{{id}}', to_jsonb(t.id)),
+                   '{{meta}}',
+                   jsonb_build_object(
+                       'versionId', new_tx.txid::text,
+                       'lastUpdated', to_char($3 AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+                   ),
+                   true
+               ),
+               'created'
+           FROM new_tx, UNNEST($1::text[], $2::jsonb[]) AS t(id, resource)
+           ON CONFLICT (id) DO UPDATE
+           SET txid = EXCLUDED.txid,
+               resource = EXCLUDED.resource,
+               status = 'updated',
+               updated_at = EXCLUDED.updated_at"#
+    );
+
+    let result = query(&sql)
+        .bind(&ids)
+        .bind(&resources)
+        .bind(now)
+        .execute(&mut *tx)
         .await
-    } else {
-        state.storage.create(&resource).await.map(|s| s.id)
-    };
+        .map_err(|e| {
+            octofhir_storage::StorageError::internal(format!(
+                "Failed to batch-upsert resources: {e}"
+            ))
+        })?;
 
-    match result {
-        Ok(_) => ImportLineOutcome {
-            created: true,
-            error: None,
-        },
-        Err(e) => {
-            tracing::warn!(
-                job_id = %job_id,
-                line = line_number,
-                error = %e,
-                "Failed to create resource"
-            );
-            ImportLineOutcome {
-                created: false,
-                error: Some(json!({
-                    "source": source_url,
-                    "line": line_number,
-                    "error": format!("Create failed: {e}"),
-                })),
-            }
-        }
-    }
+    tx.commit().await.map_err(|e| {
+        octofhir_storage::StorageError::transaction_error(format!(
+            "Failed to commit import batch transaction: {e}"
+        ))
+    })?;
+
+    Ok(result.rows_affected())
 }
 
 async fn process_import_batch(
@@ -479,12 +478,14 @@ async fn process_import_batch(
     let mut created = 0usize;
     let mut errors = Vec::new();
 
+    // Phase 1 — parse + validate in parallel (no DB writes).
+    let mut prepared: Vec<PreparedImportResource> = Vec::with_capacity(lines.len());
     let mut outcomes = stream::iter(lines.into_iter().map(|(line_number, line)| {
         let state = state.clone();
         let resource_type = resource_type.to_string();
         let source_url = source_url.to_string();
         async move {
-            process_import_line(
+            prepare_import_line(
                 state,
                 job_id,
                 resource_type,
@@ -499,11 +500,52 @@ async fn process_import_batch(
     .buffer_unordered(concurrency);
 
     while let Some(outcome) = outcomes.next().await {
-        if outcome.created {
-            created += 1;
+        match outcome {
+            Ok(p) => prepared.push(p),
+            Err(error) => errors.push(error),
         }
-        if let Some(error) = outcome.error {
-            errors.push(error);
+    }
+
+    if prepared.is_empty() {
+        return (created, errors);
+    }
+
+    // Phase 2 — one batched upsert. On batch failure, fall back to per-resource
+    // upserts so the offending line(s) are isolated and reported individually.
+    match batch_upsert_resources(state.db_pool.as_ref(), resource_type, &prepared).await {
+        Ok(_) => created += prepared.len(),
+        Err(batch_err) => {
+            tracing::warn!(
+                job_id = %job_id,
+                error = %batch_err,
+                "Batch upsert failed; retrying resources individually"
+            );
+            for p in &prepared {
+                match upsert_resource_with_indexes(
+                    state.db_pool.as_ref(),
+                    &state.search_config.config().registry,
+                    resource_type,
+                    &p.id,
+                    &p.resource,
+                )
+                .await
+                {
+                    Ok(_) => created += 1,
+                    Err(e) => {
+                        tracing::warn!(
+                            job_id = %job_id,
+                            line = p.line_number,
+                            error = %e,
+                            "Failed to create resource"
+                        );
+                        errors.push(json!({
+                            "source": source_url,
+                            "line": p.line_number,
+                            "error": format!("Create failed: {e}"),
+                        }));
+                    }
+                }
+            }
         }
     }
 

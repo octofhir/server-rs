@@ -967,68 +967,6 @@ impl FhirQueryBuilder {
         clause
     }
 
-    /// Build queries for _include specifications using the search_idx_reference index table.
-    pub fn build_include_queries(&self) -> Result<Vec<BuiltQuery>, SqlBuilderError> {
-        let mut queries = Vec::new();
-
-        for include in &self.includes {
-            let target_type = match include.target_type.as_deref() {
-                Some(t) => t,
-                None => continue, // Skip includes without resolved target type
-            };
-            let target_table = target_type.to_lowercase();
-            let target_table_escaped = escape_identifier(&target_table)?;
-            let schema = escape_identifier(&self.schema)?;
-            let source_type = &include.source_type;
-            let param_name = &include.param_name;
-
-            // Use index table JOIN to find referenced resources
-            let sql = format!(
-                "SELECT DISTINCT t.resource, t.id, t.txid, t.created_at, t.updated_at \
-                 FROM search_idx_reference sir \
-                 JOIN {schema}.{target_table_escaped} t ON t.id = sir.target_id AND t.status != 'deleted' \
-                 WHERE sir.resource_type = '{source_type}' AND sir.resource_id = ANY($1::text[]) \
-                 AND sir.param_code = '{param_name}' AND sir.ref_kind = 1 \
-                 AND sir.target_type = '{target_type}'"
-            );
-
-            queries.push(BuiltQuery {
-                sql,
-                params: vec![],
-            });
-        }
-
-        Ok(queries)
-    }
-
-    /// Build queries for _revinclude specifications using the search_idx_reference index table.
-    pub fn build_revinclude_queries(&self) -> Result<Vec<BuiltQuery>, SqlBuilderError> {
-        let mut queries = Vec::new();
-
-        for revinclude in &self.revincludes {
-            let source_table = revinclude.source_type.to_lowercase();
-            let source_table_escaped = escape_identifier(&source_table)?;
-            let schema = escape_identifier(&self.schema)?;
-            let source_type = &revinclude.source_type;
-            let param_name = &revinclude.param_name;
-
-            // Use index table to find resources that reference the main results
-            let sql = format!(
-                "SELECT DISTINCT s.resource, s.id, s.txid, s.created_at, s.updated_at \
-                 FROM search_idx_reference sir \
-                 JOIN {schema}.{source_table_escaped} s ON s.id = sir.resource_id AND s.status != 'deleted' \
-                 WHERE sir.resource_type = '{source_type}' AND sir.param_code = '{param_name}' \
-                 AND sir.ref_kind = 1 AND sir.target_id = ANY($1::text[])"
-            );
-
-            queries.push(BuiltQuery {
-                sql,
-                params: vec![],
-            });
-        }
-
-        Ok(queries)
-    }
 }
 
 /// A built SQL query with parameters.
@@ -1632,6 +1570,25 @@ fn is_fhirpath_function(name: &str) -> bool {
 /// Build a JSONB accessor chain from path segments.
 ///
 /// For example: `["name", "family"]` becomes `resource->'name'->'family'`
+/// SQL boolean fragment, true when the resource at `resource_col` carries a
+/// reference at `ref_segments` whose `reference` string satisfies `ref_predicate`.
+///
+/// `ref_predicate` is evaluated against each reference element aliased `ref`
+/// (e.g. `ref->>'reference' = 'Patient/' || c.id`). Searches the resource JSONB
+/// in place — no sidecar index tables.
+pub fn jsonb_reference_match_exists(
+    resource_col: &str,
+    ref_segments: &[String],
+    ref_predicate: &str,
+) -> String {
+    let obj_path = build_jsonb_accessor(resource_col, ref_segments, false);
+    let arr = format!(
+        "CASE WHEN jsonb_typeof({obj_path}) = 'array' THEN {obj_path} \
+         WHEN {obj_path} IS NULL THEN '[]'::jsonb ELSE jsonb_build_array({obj_path}) END"
+    );
+    format!("EXISTS (SELECT 1 FROM jsonb_array_elements({arr}) AS ref WHERE {ref_predicate})")
+}
+
 pub fn build_jsonb_accessor(resource_col: &str, path: &[String], as_text: bool) -> String {
     if path.is_empty() {
         return resource_col.to_string();
@@ -1717,15 +1674,16 @@ mod tests {
 
     #[test]
     fn test_fhirpath_to_jsonb_path_as_cast() {
-        // Handle `as Type` casting
+        // `as Type` casting folds the polymorphic type onto the leaf segment:
+        // `value as CodeableConcept` -> `valueCodeableConcept`.
         let path = fhirpath_to_jsonb_path(
             "(ActivityDefinition.useContext.value as CodeableConcept)",
             "ActivityDefinition",
         );
-        assert_eq!(path, vec!["useContext", "value"]);
+        assert_eq!(path, vec!["useContext", "valueCodeableConcept"]);
 
         let path = fhirpath_to_jsonb_path("Observation.value as Quantity", "Observation");
-        assert_eq!(path, vec!["value"]);
+        assert_eq!(path, vec!["valueQuantity"]);
     }
 
     #[test]
@@ -2111,28 +2069,6 @@ mod tests {
 
         assert!(query.sql.contains("SELECT r.id"));
         assert!(!query.sql.contains("resource"));
-    }
-
-    #[test]
-    fn test_fhir_query_builder_include_spec() {
-        let builder = FhirQueryBuilder::new("Observation", "public")
-            .include(IncludeSpec::new("Observation", "subject").with_target("Patient"));
-
-        let include_queries = builder.build_include_queries().unwrap();
-        assert_eq!(include_queries.len(), 1);
-        assert!(include_queries[0].sql.contains("\"patient\""));
-        assert!(include_queries[0].sql.contains("search_idx_reference"));
-    }
-
-    #[test]
-    fn test_fhir_query_builder_revinclude_spec() {
-        let builder = FhirQueryBuilder::new("Patient", "public")
-            .revinclude(RevIncludeSpec::new("Observation", "subject"));
-
-        let revinclude_queries = builder.build_revinclude_queries().unwrap();
-        assert_eq!(revinclude_queries.len(), 1);
-        assert!(revinclude_queries[0].sql.contains("\"observation\""));
-        assert!(revinclude_queries[0].sql.contains("search_idx_reference"));
     }
 
     #[test]

@@ -55,7 +55,6 @@ pub mod meta;
 pub mod notifications;
 pub mod params;
 pub mod registry;
-pub mod reindex;
 pub mod router;
 pub mod sof;
 pub mod sql;
@@ -78,7 +77,6 @@ pub use loader::{LoadError, load_operations};
 pub use meta::{MetaAddOperation, MetaDeleteOperation, MetaOperation};
 pub use params::OperationParams;
 pub use registry::OperationRegistry;
-pub use reindex::{ReindexOperation, execute_reindex};
 pub use router::{
     compartment_post_handler, instance_operation_handler, instance_operation_or_history_handler,
     is_operation, merged_root_get_handler, merged_root_post_handler, merged_type_get_handler,
@@ -160,19 +158,17 @@ pub fn register_core_operations_full(
         bulk_export_config,
         sql_on_fhir_config,
         cql_enabled,
-        crate::config::ReindexConfig::default(),
         crate::config::BulkImportConfig::default(),
     )
 }
 
-/// Registers core operations with all configuration options including reindex.
+/// Registers core operations with all configuration options.
 pub fn register_core_operations_all(
     fhirpath_engine: Arc<FhirPathEngine>,
     model_provider: SharedModelProvider,
     bulk_export_config: crate::config::BulkExportConfig,
     sql_on_fhir_config: crate::config::SqlOnFhirConfig,
     cql_enabled: bool,
-    reindex_config: crate::config::ReindexConfig,
     bulk_import_config: crate::config::BulkImportConfig,
 ) -> HashMap<String, DynOperationHandler> {
     let mut handlers: HashMap<String, DynOperationHandler> = HashMap::new();
@@ -272,12 +268,6 @@ pub fn register_core_operations_all(
     } else {
         tracing::info!("CQL operations NOT registered (cql_enabled=false)");
     }
-
-    // $reindex operation
-    handlers.insert(
-        "reindex".to_string(),
-        Arc::new(ReindexOperation::new(reindex_config)),
-    );
 
     // $import operation
     handlers.insert(

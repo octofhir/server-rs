@@ -162,80 +162,6 @@ pub fn extract_revincludes(query: &str, registry: &SearchParameterRegistry) -> V
     includes
 }
 
-/// Build SQL to fetch included resources for forward includes.
-///
-/// Uses the `search_idx_reference` index table for B-tree lookups.
-pub fn build_include_query(
-    include: &IncludeParam,
-    source_ids: &[String],
-    _ref_path: &str,
-) -> Option<(String, Vec<String>)> {
-    if source_ids.is_empty() {
-        return None;
-    }
-
-    // For wildcard target, we would need to query multiple tables
-    // For now, return None for untyped includes
-    let target_type = include.target_type.as_ref()?;
-    let target_table = target_type.to_lowercase();
-    let source_type = &include.source_type;
-    let param_code = &include.search_param;
-
-    let placeholders: Vec<String> = source_ids
-        .iter()
-        .enumerate()
-        .map(|(i, _)| format!("${}", i + 1))
-        .collect();
-
-    let sql = format!(
-        "SELECT DISTINCT t.id, t.txid, t.created_at AS ts, t.resource_type, t.resource, t.status \
-         FROM search_idx_reference sir \
-         JOIN {target_table} t ON t.id = sir.target_id AND t.status != 'deleted' \
-         WHERE sir.resource_type = '{source_type}' AND sir.resource_id IN ({placeholders}) \
-         AND sir.param_code = '{param_code}' AND sir.ref_kind = 1 \
-         AND sir.target_type = '{target_type}'",
-        placeholders = placeholders.join(", ")
-    );
-
-    Some((sql, source_ids.to_vec()))
-}
-
-/// Build SQL to fetch reverse included resources.
-///
-/// Uses the `search_idx_reference` index table for B-tree lookups.
-pub fn build_revinclude_query(
-    include: &IncludeParam,
-    target_type: &str,
-    target_ids: &[String],
-    _ref_path: &str,
-) -> Option<(String, Vec<String>)> {
-    if target_ids.is_empty() {
-        return None;
-    }
-
-    let source_type = &include.source_type;
-    let source_table = source_type.to_lowercase();
-    let param_code = &include.search_param;
-
-    let placeholders: String = target_ids
-        .iter()
-        .enumerate()
-        .map(|(i, _)| format!("${}", i + 1))
-        .collect::<Vec<_>>()
-        .join(", ");
-
-    let sql = format!(
-        "SELECT DISTINCT s.id, s.txid, s.created_at AS ts, s.resource_type, s.resource, s.status \
-         FROM search_idx_reference sir \
-         JOIN {source_table} s ON s.id = sir.resource_id AND s.status != 'deleted' \
-         WHERE sir.resource_type = '{source_type}' AND sir.param_code = '{param_code}' \
-         AND sir.ref_kind = 1 AND sir.target_type = '{target_type}' \
-         AND sir.target_id IN ({placeholders})"
-    );
-
-    Some((sql, target_ids.to_vec()))
-}
-
 // ============================================================================
 // _include:iterate Execution with Cycle Detection
 // ============================================================================
@@ -325,7 +251,7 @@ impl IncludeContext {
 /// Extract reference values from a FHIR resource JSON.
 ///
 /// Returns a list of (target_type, target_id) pairs for all references found.
-pub fn extract_references_from_resource(
+pub fn collect_references_from_resource(
     resource: &serde_json::Value,
     ref_paths: &[&str],
 ) -> Vec<(String, String)> {
@@ -441,97 +367,6 @@ impl IncludePlan {
     pub fn iterate_includes(&self) -> Vec<&IncludeParam> {
         self.includes.iter().filter(|i| i.iterate).collect()
     }
-}
-
-/// Generate SQL queries for a batch of resources to include.
-///
-/// Uses the `search_idx_reference` index table for B-tree lookups instead of
-/// runtime `fhir_ref_id()` / `fhir_ref_type()` extraction from JSONB.
-///
-/// Returns list of (sql, params, target_type) tuples.
-pub fn generate_include_queries(
-    include: &IncludeParam,
-    source_ids: &[String],
-    _ref_path: &str,
-    registry: &SearchParameterRegistry,
-) -> Vec<(String, Vec<String>, String)> {
-    let mut queries = Vec::new();
-
-    if source_ids.is_empty() {
-        return queries;
-    }
-
-    // Determine target types
-    let target_types: Vec<String> = if let Some(ref target) = include.target_type {
-        vec![target.clone()]
-    } else if let Some(param) = registry.get(&include.source_type, &include.search_param) {
-        param.target.clone()
-    } else {
-        return queries;
-    };
-
-    let source_type = &include.source_type;
-    let param_code = &include.search_param;
-
-    for target_type in target_types {
-        let target_table = target_type.to_lowercase();
-        let placeholders: String = source_ids
-            .iter()
-            .enumerate()
-            .map(|(i, _)| format!("${}", i + 1))
-            .collect::<Vec<_>>()
-            .join(", ");
-
-        let sql = format!(
-            "SELECT DISTINCT t.id, t.txid, t.created_at AS ts, t.resource_type, t.resource, t.status \
-             FROM search_idx_reference sir \
-             JOIN {target_table} t ON t.id = sir.target_id AND t.status != 'deleted' \
-             WHERE sir.resource_type = '{source_type}' AND sir.resource_id IN ({placeholders}) \
-             AND sir.param_code = '{param_code}' AND sir.ref_kind = 1 \
-             AND sir.target_type = '{target_type}'"
-        );
-
-        queries.push((sql, source_ids.to_vec(), target_type));
-    }
-
-    queries
-}
-
-/// Generate SQL queries for reverse includes.
-///
-/// Uses the `search_idx_reference` index table for B-tree lookups instead of
-/// runtime JSONB ->> extraction.
-pub fn generate_revinclude_queries(
-    include: &IncludeParam,
-    target_type: &str,
-    target_ids: &[String],
-    _ref_path: &str,
-) -> Vec<(String, Vec<String>, String)> {
-    if target_ids.is_empty() {
-        return vec![];
-    }
-
-    let source_type = &include.source_type;
-    let source_table = source_type.to_lowercase();
-    let param_code = &include.search_param;
-
-    let placeholders: String = target_ids
-        .iter()
-        .enumerate()
-        .map(|(i, _)| format!("${}", i + 1))
-        .collect::<Vec<_>>()
-        .join(", ");
-
-    let sql = format!(
-        "SELECT DISTINCT s.id, s.txid, s.created_at AS ts, s.resource_type, s.resource, s.status \
-         FROM search_idx_reference sir \
-         JOIN {source_table} s ON s.id = sir.resource_id AND s.status != 'deleted' \
-         WHERE sir.resource_type = '{source_type}' AND sir.param_code = '{param_code}' \
-         AND sir.ref_kind = 1 AND sir.target_type = '{target_type}' \
-         AND sir.target_id IN ({placeholders})"
-    );
-
-    vec![(sql, target_ids.to_vec(), include.source_type.clone())]
 }
 
 #[cfg(test)]
@@ -719,7 +554,7 @@ mod tests {
     }
 
     #[test]
-    fn test_extract_references_from_resource() {
+    fn test_collect_references_from_resource() {
         let resource = serde_json::json!({
             "resourceType": "Observation",
             "id": "obs-1",
@@ -731,7 +566,7 @@ mod tests {
             }]
         });
 
-        let refs = extract_references_from_resource(&resource, &["subject"]);
+        let refs = collect_references_from_resource(&resource, &["subject"]);
         assert_eq!(refs.len(), 1);
         assert_eq!(refs[0], ("Patient".to_string(), "123".to_string()));
     }

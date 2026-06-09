@@ -16,7 +16,6 @@ pub mod composite;
 pub mod date;
 pub mod date_ast;
 pub mod number;
-pub mod reference;
 pub mod special;
 pub mod string;
 pub mod token;
@@ -31,20 +30,17 @@ pub use composite::{
 #[cfg(test)]
 pub use date::build_period_search;
 pub use date::{
-    DateRange, build_date_search, build_index_date_search, build_indexed_date_inplace,
-    parse_date_range,
+    DateRange, build_date_search, build_indexed_date_inplace, parse_date_range,
 };
 pub use number::{
-    build_gin_quantity_search, build_index_number_search, build_index_quantity_search,
-    build_number_search, build_quantity_search,
+    build_gin_quantity_search, build_number_search, build_quantity_search,
 };
-pub use reference::{build_reference_array_search, build_reference_search, is_resource_type};
 pub use special::{
     NearParameter, SpecialParameterType, build_content_search, build_filter_search,
     build_list_search, build_near_search, build_text_search, detect_special_type,
     parse_near_parameter,
 };
-pub use string::{build_indexed_string_inplace, build_indexed_string_search};
+pub use string::{build_indexed_string_inplace};
 pub use string::{build_array_string_search, build_human_name_search, build_string_search};
 #[cfg(test)]
 pub use token::build_token_search_with_terminology;
@@ -162,10 +158,9 @@ fn dispatch_search_inner(
 
     reject_unsupported_production_path(param, definition, resource_type)?;
 
-    // Dispatch to the appropriate handler based on param type and resolved element type hint
+    // String/Date/Number/Quantity/Reference are always handled in place by the
+    // early branch above; only token/uri/composite/special reach here.
     match definition.param_type {
-        SearchParameterType::String => build_indexed_string_search(builder, param, resource_type),
-
         SearchParameterType::Token => {
             if definition.element_type_hint.is_identifier()
                 || (matches!(&definition.element_type_hint, ElementTypeHint::Unknown)
@@ -181,45 +176,6 @@ fn dispatch_search_inner(
             } else {
                 // GIN-optimized CodeableConcept/Coding/Token search
                 build_gin_token_search(builder, param, &path_segments)
-            }
-        }
-
-        SearchParameterType::Number => build_index_number_search(builder, param, resource_type),
-
-        SearchParameterType::Date => {
-            // Resource.meta.lastUpdated maps to the row updated_at column, not search_idx_date.
-            if matches!(
-                resolve_resource_column_param(definition),
-                Some(ResourceColumnParam::LastUpdated)
-            ) {
-                return build_last_updated_search(builder, param);
-            }
-
-            // Every other date / dateTime / instant / Period / Timing search
-            // goes through search_idx_date (one row per indexed value, half-
-            // open tstzrange, GiST index). See docs/architecture/date-search.md.
-            build_index_date_search(builder, param, resource_type)
-        }
-
-        SearchParameterType::Quantity => build_index_quantity_search(builder, param, resource_type),
-
-        SearchParameterType::Reference => {
-            let json_path = build_jsonb_accessor(builder.resource_column(), &path_segments, false);
-            match &definition.element_type_hint {
-                ElementTypeHint::Array(_) => build_reference_array_search(
-                    builder,
-                    param,
-                    &json_path,
-                    &definition.target,
-                    resource_type,
-                ),
-                _ => build_reference_search(
-                    builder,
-                    param,
-                    &json_path,
-                    &definition.target,
-                    resource_type,
-                ),
             }
         }
 
@@ -311,6 +267,14 @@ fn dispatch_search_inner(
                     param.name
                 ))),
             }
+        }
+
+        SearchParameterType::String
+        | SearchParameterType::Number
+        | SearchParameterType::Date
+        | SearchParameterType::Quantity
+        | SearchParameterType::Reference => {
+            unreachable!("handled in place by the early branch in dispatch_search_inner")
         }
     }
 }
@@ -413,7 +377,20 @@ fn build_reference_jsonb_fallback_search(
     }
 
     if matches!(param.modifier, Some(SearchModifier::Identifier)) {
-        return build_identifier_search(builder, param, &format!("{json_path}->'identifier'"));
+        // `reference:identifier` matches the embedded `.identifier` element as a
+        // plain token; the `:identifier` modifier has already been consumed by
+        // routing here, so drop it before delegating to the token identifier path
+        // (which only accepts token modifiers).
+        let identifier_param = ParsedParam {
+            name: param.name.clone(),
+            modifier: None,
+            values: param.values.clone(),
+        };
+        return build_identifier_search(
+            builder,
+            &identifier_param,
+            &format!("{json_path}->'identifier'"),
+        );
     }
 
     if matches!(param.modifier, Some(SearchModifier::Missing)) {
@@ -895,7 +872,8 @@ mod tests {
         let clause = builder.build_where_clause();
         assert!(clause.is_some());
         let clause_str = clause.unwrap();
-        assert!(clause_str.contains("search_idx_reference"));
+        assert!(clause_str.contains("ref->>'reference'"));
+        assert!(clause_str.contains("jsonb_array_elements"));
     }
 
     #[test]
@@ -984,8 +962,8 @@ mod tests {
             .unwrap();
 
         let clause = builder.build_where_clause().unwrap();
-        assert!(clause.contains("search_idx_quantity"));
-        assert!(clause.contains("resource @>"));
+        assert!(clause.contains("(resource->'valueQuantity'->>'value')::numeric > "));
+        assert!(clause.contains("resource->>'code'"));
         assert!(!clause.contains("jsonb_array_elements"));
     }
 
@@ -1079,7 +1057,7 @@ mod tests {
 
         dispatch_search(&mut builder, &param, &def, "Patient").unwrap();
         let clause = builder.build_where_clause().unwrap();
-        assert!(clause.contains("f_unaccent_lower(resource->'name'->>'family') LIKE"));
+        assert!(clause.contains("fhir_text_blob(fhir_extract_text(resource, '[[\"name\",\"family\"]]'::jsonb)) LIKE"));
         assert!(!clause.contains("search_idx_string"));
     }
 
@@ -1177,8 +1155,8 @@ mod tests {
     }
 
     #[test]
-    fn test_dispatch_string_exact_uses_sidecar_btree() {
-        // :exact string search routes through search_idx_string (value_exact btree).
+    fn test_dispatch_string_exact_uses_inplace_raw_value_array() {
+        // :exact string search matches the raw extracted value array in-place.
         let mut builder = SqlBuilder::new();
         let param = ParsedParam {
             name: "family".to_string(),
@@ -1203,8 +1181,8 @@ mod tests {
 
         let clause = builder.build_where_clause().unwrap();
         assert!(
-            clause.contains("search_idx_string") && clause.contains("sid.value_exact ="),
-            "Expected sidecar btree :exact, got: {clause}"
+            clause.contains("= ANY(fhir_extract_text(resource"),
+            "Expected in-place :exact over extracted value array, got: {clause}"
         );
     }
 

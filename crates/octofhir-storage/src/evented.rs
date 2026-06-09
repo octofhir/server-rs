@@ -142,6 +142,10 @@ impl<S: FhirStorage> FhirStorage for EventedStorage<S> {
         self.inner.read(resource_type, id).await
     }
 
+    async fn exists(&self, resource_type: &str, id: &str) -> Result<bool, StorageError> {
+        self.inner.exists(resource_type, id).await
+    }
+
     async fn read_raw(
         &self,
         resource_type: &str,

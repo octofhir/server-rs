@@ -178,15 +178,6 @@ impl SchemaManager {
             ));
         }
 
-        // NOTE: search_idx_reference / search_idx_date partitions are NOT
-        // created here. Each `CREATE TABLE ... PARTITION OF` takes
-        // AccessExclusiveLock on the partitioned parent and serialises
-        // across resource types; on cold-boot this was ~6s for 171×2=342
-        // partitions. They're now created lazily on first index write
-        // (see `ensure_search_partition` in `search_index.rs`) and cached
-        // per-process, paying one-time ~17ms per resource type on its
-        // first CRUD insert instead of stalling startup.
-
         // Gateway notify trigger
         if is_gateway {
             let trig = format!("{}_gateway_notify", table);

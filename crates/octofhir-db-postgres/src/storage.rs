@@ -160,57 +160,6 @@ impl PostgresStorage {
         })
     }
 
-    /// Reindex a single resource: delete old index rows, extract new ones, and write them.
-    ///
-    /// This is the same logic as `write_search_indexes` but exposed publicly for
-    /// the `$reindex` operation. Errors are propagated rather than silently logged.
-    pub async fn reindex_resource(
-        &self,
-        resource_type: &str,
-        resource_id: &str,
-        resource: &Value,
-    ) -> Result<(), StorageError> {
-        let registry = self
-            .search_registry
-            .get()
-            .ok_or_else(|| StorageError::internal("Search registry not initialized"))?;
-
-        let rows =
-            crate::search_index::extract_search_index_rows(registry, resource_type, resource);
-
-        crate::search_index::write_reference_index(
-            &self.pool,
-            resource_type,
-            resource_id,
-            &rows.refs,
-        )
-        .await?;
-        crate::search_index::write_date_index(&self.pool, resource_type, resource_id, &rows.dates)
-            .await?;
-        crate::search_index::write_string_index(
-            &self.pool,
-            resource_type,
-            resource_id,
-            &rows.strings,
-        )
-        .await?;
-        crate::search_index::write_number_index(
-            &self.pool,
-            resource_type,
-            resource_id,
-            &rows.numbers,
-        )
-        .await?;
-        crate::search_index::write_quantity_index(
-            &self.pool,
-            resource_type,
-            resource_id,
-            &rows.quantities,
-        )
-        .await?;
-
-        Ok(())
-    }
 
     /// Retrieves history across all resource types (system-level history).
     ///
@@ -265,6 +214,10 @@ impl FhirStorage for PostgresStorage {
         id: &str,
     ) -> Result<Option<StoredResource>, StorageError> {
         queries::read(self.read_pool(), resource_type, id).await
+    }
+
+    async fn exists(&self, resource_type: &str, id: &str) -> Result<bool, StorageError> {
+        queries::exists(self.read_pool(), resource_type, id).await
     }
 
     async fn read_raw(

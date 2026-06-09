@@ -353,19 +353,19 @@ fn representative_queries() -> Vec<SearchExplainCase> {
             label: "patient_birthdate_window",
             resource_type: "Patient",
             query: "birthdate=ge1980-01-01&birthdate=le2000-12-31&_count=10",
-            expected_sql_fragments: &["search_idx_date", "sid.rng && tstzrange"],
+            expected_sql_fragments: &["fhir_extract_date_min", "tstzrange"],
         },
         SearchExplainCase {
             label: "patient_family_prefix",
             resource_type: "Patient",
             query: "family=Smith&_count=10",
-            expected_sql_fragments: &["search_idx_string", "sid.value_norm LIKE $N"],
+            expected_sql_fragments: &["fhir_text_blob(fhir_extract_text", "LIKE"],
         },
         SearchExplainCase {
             label: "patient_family_exact",
             resource_type: "Patient",
             query: "family:exact=Smith&_count=10",
-            expected_sql_fragments: &["search_idx_string", "sid.value_exact = $N"],
+            expected_sql_fragments: &["ANY(fhir_extract_text"],
         },
         SearchExplainCase {
             label: "patient_identifier",
@@ -395,20 +395,16 @@ fn representative_queries() -> Vec<SearchExplainCase> {
             label: "observation_subject",
             resource_type: "Observation",
             query: "subject=Patient/explain-patient&_count=10",
-            expected_sql_fragments: &[
-                "search_idx_reference",
-                "sir.ref_kind = 1",
-                "sir.target_id = $N",
-            ],
+            expected_sql_fragments: &["jsonb_array_elements", "ref->>'reference'"],
         },
         SearchExplainCase {
             label: "observation_subject_patient_family",
             resource_type: "Observation",
             query: "subject:Patient.family=Smith&_count=10",
             expected_sql_fragments: &[
-                "JOIN patient chain0",
-                "search_idx_reference",
-                "search_idx_string",
+                "\"patient\" chain0",
+                "ref->>'reference'",
+                "fhir_text_blob(fhir_extract_text",
             ],
         },
         SearchExplainCase {
@@ -416,8 +412,8 @@ fn representative_queries() -> Vec<SearchExplainCase> {
             resource_type: "Patient",
             query: "_has:Observation:subject:code=http://loinc.org|8480-6&_count=10",
             expected_sql_fragments: &[
-                "search_idx_reference hasir0",
-                "JOIN \"observation\" has0",
+                "\"observation\" has0",
+                "ref->>'reference'",
                 "has0.resource @> $N::jsonb",
             ],
         },

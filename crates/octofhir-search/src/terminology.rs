@@ -132,7 +132,21 @@ pub struct HybridTerminologyProvider {
     /// currencies ValueSet + ISO-4217 code system from storage), so memoising the
     /// result collapses that to a single computation.
     vs_validation_cache: dashmap::DashMap<String, ValidationResult>,
+
+    /// Negative cache for remote validation errors, keyed like
+    /// `vs_validation_cache`, with the failure instant for TTL expiry. A remote
+    /// error (timeout, 4xx on a malformed/unknown ValueSet URL) would otherwise
+    /// bypass both caches and re-hit the remote server on every occurrence of
+    /// the same code — the dominant write-path stall observed under load.
+    vs_validation_negative_cache: dashmap::DashMap<String, (ValidationResult, std::time::Instant)>,
+
+    /// Single-flight guards: at most one in-flight remote validation per cache
+    /// key; concurrent duplicates await the winner and read the cache.
+    vs_validation_inflight: dashmap::DashMap<String, Arc<tokio::sync::Mutex<()>>>,
 }
+
+/// How long a remote validation error stays negative-cached.
+const VS_VALIDATION_NEGATIVE_TTL: Duration = Duration::from_secs(60);
 
 impl HybridTerminologyProvider {
     /// Create a new hybrid terminology provider.
@@ -162,6 +176,8 @@ impl HybridTerminologyProvider {
             canonical_manager,
             remote,
             vs_validation_cache: dashmap::DashMap::new(),
+            vs_validation_negative_cache: dashmap::DashMap::new(),
+            vs_validation_inflight: dashmap::DashMap::new(),
         })
     }
 
@@ -169,6 +185,7 @@ impl HybridTerminologyProvider {
     pub fn clear_cache(&self) {
         self.remote.clear_cache();
         self.vs_validation_cache.clear();
+        self.vs_validation_negative_cache.clear();
         tracing::debug!("Cleared terminology caches");
     }
 
@@ -799,6 +816,32 @@ impl TerminologyProvider for HybridTerminologyProvider {
         if let Some(hit) = self.vs_validation_cache.get(&cache_key) {
             return Ok(hit.clone());
         }
+        if let Some(neg) = self.vs_validation_negative_cache.get(&cache_key) {
+            if neg.1.elapsed() < VS_VALIDATION_NEGATIVE_TTL {
+                return Ok(neg.0.clone());
+            }
+            drop(neg);
+            self.vs_validation_negative_cache.remove(&cache_key);
+        }
+
+        // Single-flight: concurrent misses on the same key wait for the first
+        // resolver instead of issuing duplicate remote calls.
+        let flight = self
+            .vs_validation_inflight
+            .entry(cache_key.clone())
+            .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
+            .clone();
+        let _guard = flight.lock().await;
+
+        // Re-check after acquiring the lock — the winner may have populated it.
+        if let Some(hit) = self.vs_validation_cache.get(&cache_key) {
+            return Ok(hit.clone());
+        }
+        if let Some(neg) = self.vs_validation_negative_cache.get(&cache_key)
+            && neg.1.elapsed() < VS_VALIDATION_NEGATIVE_TTL
+        {
+            return Ok(neg.0.clone());
+        }
 
         // 1. Try local validation first
         let result = if let Some(result) = self.validate_code_vs_local(valueset, system, code).await
@@ -816,12 +859,31 @@ impl TerminologyProvider for HybridTerminologyProvider {
             }
         } else {
             // 2. Fall back to cached remote (CachedTerminologyProvider handles caching)
-            self.remote
+            match self
+                .remote
                 .validate_code_vs(valueset, system, code, display)
-                .await?
+                .await
+            {
+                Ok(result) => result,
+                Err(e) => {
+                    // Remote failure (timeout, 4xx on a malformed ValueSet URL,
+                    // …). Negative-cache result=false with a short TTL so the
+                    // same code does not re-hit the remote on every resource.
+                    let negative = ValidationResult {
+                        result: false,
+                        display: None,
+                        message: Some(format!("Terminology server error: {e}")),
+                    };
+                    self.vs_validation_negative_cache
+                        .insert(cache_key.clone(), (negative.clone(), std::time::Instant::now()));
+                    self.vs_validation_inflight.remove(&cache_key);
+                    return Ok(negative);
+                }
+            }
         };
 
-        self.vs_validation_cache.insert(cache_key, result.clone());
+        self.vs_validation_cache.insert(cache_key.clone(), result.clone());
+        self.vs_validation_inflight.remove(&cache_key);
         Ok(result)
     }
 

@@ -511,12 +511,9 @@ impl PostgresPackageStore {
                 })
             })?;
 
-        // Warm-DB fast path: query pg_class once to find which main tables and
-        // partitions already exist. Skip per-resource raw_sql for types whose
-        // entire schema is already in place. Partition creates on
-        // `search_idx_reference` / `search_idx_date` take AccessExclusiveLock
-        // on the parent, so even "CREATE TABLE IF NOT EXISTS" partitions
-        // serialize across the pool — avoiding the call is the only real win.
+        // Warm-DB fast path: query pg_class once to find which main tables
+        // already exist. Skip per-resource raw_sql for types whose schema is
+        // already in place.
         let existing_main: std::collections::HashSet<String> =
             match sqlx_core::query_as::query_as::<_, (String,)>(
                 "SELECT tablename FROM pg_tables WHERE schemaname = 'public'",
@@ -536,40 +533,12 @@ impl PostgresPackageStore {
             .filter(|rt| {
                 let table = rt.to_lowercase();
                 let main_present = existing_main.contains(&table);
-                let ref_part_present =
-                    existing_main.contains(&format!("search_idx_reference_{table}"));
-                let date_part_present = existing_main.contains(&format!("search_idx_date_{table}"));
-                let is_internal = matches!(
-                    table.as_str(),
-                    "user"
-                        | "client"
-                        | "session"
-                        | "authsession"
-                        | "accesspolicy"
-                        | "refreshtoken"
-                        | "revokedtoken"
-                        | "identityprovider"
-                        | "role"
-                        | "app"
-                        | "customoperation"
-                        | "appsubscription"
-                        | "notificationlog"
-                        | "notificationprovider"
-                        | "notificationtemplate"
-                );
-                // Internal resources don't get partitions — skip if main exists.
-                if is_internal {
-                    return !main_present;
-                }
-                !(main_present && ref_part_present && date_part_present)
+                !main_present
             })
             .collect();
 
         info!(
-            already_present = (existing_main
-                .iter()
-                .filter(|t| !t.starts_with("search_idx_"))
-                .count()),
+            already_present = existing_main.len(),
             need_create = need_create.len(),
             "Resource-schema cold/warm decision"
         );

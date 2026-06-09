@@ -1,32 +1,15 @@
 use crate::ir::ast::{
     CompositeClause, CompositeComponentPredicate, CompositePredicate, CompositeSafety, IdClause,
-    IdPredicate, NumberClause, NumberPredicate, QuantityClause, QuantityPredicate, ReferenceClause,
-    ReferencePredicate, StringClause, StringPredicate, TokenClause, TokenIndexShape,
+    IdPredicate, NumberClause, NumberPredicate, QuantityClause, QuantityPredicate,
+    StringClause, StringPredicate, TokenClause, TokenIndexShape,
     TokenPredicate, UriClause, UriPredicate,
 };
 use crate::ir::sql::{RangeOp, SelectStmt, SqlExpr, SqlFrom, SqlOp, SqlTerm};
 use crate::parameters::SearchParameterType;
 use crate::parameters::SearchPrefix;
-use crate::parser::{ParsedParam, ParsedValue};
 use crate::sql_builder::{SqlBuilder, SqlBuilderError};
 use crate::types::date_ast::{Bound, DateClause, DatePredicate, PeriodClause, PeriodPredicate};
-use octofhir_core::search_index::normalize_string;
-
-/// Render date sidecar clauses as one OR group.
-pub fn render_date_clauses_as_or(
-    builder: &mut SqlBuilder,
-    clauses: &[DateClause],
-) -> Option<String> {
-    let rendered = clauses
-        .iter()
-        .map(|clause| render_sql_expr(&date_sidecar_clause_expr(builder, clause)))
-        .collect::<Vec<_>>();
-    if rendered.is_empty() {
-        None
-    } else {
-        Some(SqlBuilder::build_or_clause(&rendered))
-    }
-}
+use octofhir_core::text::normalize_string;
 
 /// Render date clauses against a single timestamptz column.
 pub fn render_date_column_clauses_as_or(
@@ -137,22 +120,6 @@ pub fn render_id_clauses_as_or(
     }
 }
 
-/// Render string sidecar clauses as one OR group.
-pub fn render_string_clauses_as_or(
-    builder: &mut SqlBuilder,
-    clauses: &[StringClause],
-) -> Option<String> {
-    let rendered = clauses
-        .iter()
-        .map(|clause| render_string_clause(builder, clause))
-        .collect::<Vec<_>>();
-    if rendered.is_empty() {
-        None
-    } else {
-        Some(SqlBuilder::build_or_clause(&rendered))
-    }
-}
-
 /// Render scalar JSONB string clauses as one OR group.
 pub fn render_string_path_clauses_as_or(
     builder: &mut SqlBuilder,
@@ -197,23 +164,6 @@ pub fn render_string_human_name_clauses_as_or(
     let rendered = clauses
         .iter()
         .map(|clause| render_string_human_name_clause(builder, clause, array_path))
-        .collect::<Vec<_>>();
-    if rendered.is_empty() {
-        None
-    } else {
-        Some(SqlBuilder::build_or_clause(&rendered))
-    }
-}
-
-/// Render reference clauses as one OR group.
-pub fn render_reference_clauses_as_or(
-    builder: &mut SqlBuilder,
-    clauses: &[ReferenceClause],
-    jsonb_path: &str,
-) -> Option<String> {
-    let rendered = clauses
-        .iter()
-        .map(|clause| render_reference_clause(builder, clause, jsonb_path))
         .collect::<Vec<_>>();
     if rendered.is_empty() {
         None
@@ -273,22 +223,6 @@ pub fn render_number_clauses_as_or(
     }
 }
 
-/// Render number clauses through `search_idx_number`.
-pub fn render_number_index_clauses_as_or(
-    builder: &mut SqlBuilder,
-    clauses: &[NumberClause],
-) -> Result<Option<String>, SqlBuilderError> {
-    let rendered = clauses
-        .iter()
-        .map(|clause| render_number_index_clause(builder, clause))
-        .collect::<Result<Vec<_>, _>>()?;
-    if rendered.is_empty() {
-        Ok(None)
-    } else {
-        Ok(Some(SqlBuilder::build_or_clause(&rendered)))
-    }
-}
-
 /// Render quantity clauses as one OR group over the current JSONB numeric-cast path.
 pub fn render_quantity_clauses_as_or(
     builder: &mut SqlBuilder,
@@ -318,22 +252,6 @@ pub fn render_quantity_containment_clauses_as_or(
     let rendered = clauses
         .iter()
         .map(|clause| render_quantity_clause(builder, clause, jsonb_path, Some(path_segments)))
-        .collect::<Result<Vec<_>, _>>()?;
-    if rendered.is_empty() {
-        Ok(None)
-    } else {
-        Ok(Some(SqlBuilder::build_or_clause(&rendered)))
-    }
-}
-
-/// Render quantity clauses through `search_idx_quantity`.
-pub fn render_quantity_index_clauses_as_or(
-    builder: &mut SqlBuilder,
-    clauses: &[QuantityClause],
-) -> Result<Option<String>, SqlBuilderError> {
-    let rendered = clauses
-        .iter()
-        .map(|clause| render_quantity_index_clause(builder, clause))
         .collect::<Result<Vec<_>, _>>()?;
     if rendered.is_empty() {
         Ok(None)
@@ -1010,165 +928,6 @@ fn timestamp_text_compare_expr(path: &str, op: SqlOp, param: usize) -> SqlExpr {
     }
 }
 
-fn date_sidecar_clause_expr(builder: &mut SqlBuilder, clause: &DateClause) -> SqlExpr {
-    let rt_param = builder.add_text_param(&clause.resource_type);
-    let pc_param = builder.add_text_param(&clause.param_code);
-    let id_col = builder.id_column().to_string();
-
-    let mut where_parts = vec![
-        SqlExpr::Compare {
-            lhs: SqlTerm::Ident("sid.resource_type".to_string()),
-            op: SqlOp::Eq,
-            rhs: SqlTerm::Param(rt_param),
-        },
-        SqlExpr::Compare {
-            lhs: SqlTerm::Ident("sid.resource_id".to_string()),
-            op: SqlOp::Eq,
-            rhs: SqlTerm::Ident(id_col),
-        },
-        SqlExpr::Compare {
-            lhs: SqlTerm::Ident("sid.param_code".to_string()),
-            op: SqlOp::Eq,
-            rhs: SqlTerm::Param(pc_param),
-        },
-    ];
-
-    let (negate_exists, predicate) = match &clause.predicate {
-        DatePredicate::Contains { q } => (
-            false,
-            SqlExpr::RangeOp {
-                lhs: SqlTerm::Ident("sid.rng".to_string()),
-                op: RangeOp::ContainsBy,
-                rhs: date_range_term(builder, q),
-            },
-        ),
-        DatePredicate::NotContains { q } => (
-            true,
-            SqlExpr::RangeOp {
-                lhs: SqlTerm::Ident("sid.rng".to_string()),
-                op: RangeOp::ContainsBy,
-                rhs: date_range_term(builder, q),
-            },
-        ),
-        DatePredicate::Overlap { lo, hi } => (
-            false,
-            SqlExpr::RangeOp {
-                lhs: SqlTerm::Ident("sid.rng".to_string()),
-                op: RangeOp::Overlaps,
-                rhs: timestamp_range_term(builder, *lo, *hi),
-            },
-        ),
-        DatePredicate::Ge { q } => (
-            false,
-            SqlExpr::Or(vec![
-                SqlExpr::RangeOp {
-                    lhs: SqlTerm::Ident("sid.rng".to_string()),
-                    op: RangeOp::Overlaps,
-                    rhs: timestamp_range_term(
-                        builder,
-                        Some(Bound {
-                            at: q.end,
-                            inclusive: true,
-                        }),
-                        None,
-                    ),
-                },
-                SqlExpr::RangeOp {
-                    lhs: SqlTerm::Ident("sid.rng".to_string()),
-                    op: RangeOp::ContainsBy,
-                    rhs: date_range_term(builder, q),
-                },
-            ]),
-        ),
-        DatePredicate::Le { q } => (
-            false,
-            SqlExpr::Or(vec![
-                SqlExpr::RangeOp {
-                    lhs: SqlTerm::Ident("sid.rng".to_string()),
-                    op: RangeOp::Overlaps,
-                    rhs: timestamp_range_term(
-                        builder,
-                        None,
-                        Some(Bound {
-                            at: q.start,
-                            inclusive: false,
-                        }),
-                    ),
-                },
-                SqlExpr::RangeOp {
-                    lhs: SqlTerm::Ident("sid.rng".to_string()),
-                    op: RangeOp::ContainsBy,
-                    rhs: date_range_term(builder, q),
-                },
-            ]),
-        ),
-        // sa: target strictly above search. Use `lower(target) > upper(search)`
-        // so a boundary touch (`lower(target) == upper(search)`) does not
-        // qualify, unlike PG's `>>` on `[)` tstzranges.
-        DatePredicate::StrictlyAfter { q } => {
-            let p_hi = builder.add_timestamp_param(format_rfc3339(&q.end));
-            (
-                false,
-                SqlExpr::Compare {
-                    lhs: SqlTerm::Raw("lower(sid.rng)".to_string()),
-                    op: SqlOp::Gt,
-                    rhs: SqlTerm::ParamCast {
-                        index: p_hi,
-                        cast: "timestamptz",
-                    },
-                },
-            )
-        }
-        // eb: mirror of sa. Use `upper(target) < lower(search)` so a
-        // boundary touch does not qualify.
-        DatePredicate::StrictlyBefore { q } => {
-            let p_lo = builder.add_timestamp_param(format_rfc3339(&q.start));
-            (
-                false,
-                SqlExpr::Compare {
-                    lhs: SqlTerm::Raw("upper(sid.rng)".to_string()),
-                    op: SqlOp::Lt,
-                    rhs: SqlTerm::ParamCast {
-                        index: p_lo,
-                        cast: "timestamptz",
-                    },
-                },
-            )
-        }
-        DatePredicate::Missing { is_missing } => {
-            let exists = SqlExpr::Exists(Box::new(SelectStmt {
-                projection: vec![SqlTerm::Integer(1)],
-                from: SqlFrom {
-                    table: "search_idx_date".to_string(),
-                    alias: Some("sid".to_string()),
-                },
-                where_clause: Some(SqlExpr::And(where_parts)),
-            }));
-            return if *is_missing {
-                SqlExpr::Not(Box::new(exists))
-            } else {
-                exists
-            };
-        }
-    };
-    where_parts.push(predicate);
-
-    let exists = SqlExpr::Exists(Box::new(SelectStmt {
-        projection: vec![SqlTerm::Integer(1)],
-        from: SqlFrom {
-            table: "search_idx_date".to_string(),
-            alias: Some("sid".to_string()),
-        },
-        where_clause: Some(SqlExpr::And(where_parts)),
-    }));
-
-    if negate_exists {
-        SqlExpr::Not(Box::new(exists))
-    } else {
-        exists
-    }
-}
-
 /// In-place date predicate over a functional date-range expression on the
 /// resource JSONB (no sidecar table). `range_expr` must be exactly
 /// `tstzrange(fhir_extract_date_min(col,paths), fhir_extract_date_max(col,paths), '[]')`
@@ -1393,124 +1152,12 @@ fn render_composite_clause_jsonb_fallback_expr(
 
 fn render_composite_component_native_expr(
     builder: &mut SqlBuilder,
-    resource_type: &str,
+    _resource_type: &str,
     component: &CompositeComponentPredicate,
 ) -> Result<SqlExpr, SqlBuilderError> {
-    let parsed = parsed_component_param(component);
-    let sql = match component.spec.search_type {
-        SearchParameterType::String => {
-            let clauses = StringClause::from_parsed_param(&parsed, resource_type)?;
-            render_string_clauses_as_or(builder, &clauses)
-        }
-        SearchParameterType::Date => {
-            let clauses = DateClause::from_parsed_param(&parsed, resource_type)?;
-            render_date_clauses_as_or(builder, &clauses)
-        }
-        SearchParameterType::Number => {
-            let clauses = NumberClause::from_parsed_param(&parsed, resource_type)?;
-            render_number_index_clauses_as_or(builder, &clauses)?
-        }
-        SearchParameterType::Quantity => {
-            let clauses = QuantityClause::from_parsed_param(&parsed, resource_type)?;
-            render_quantity_index_clauses_as_or(builder, &clauses)?
-        }
-        SearchParameterType::Reference => {
-            let clauses = ReferenceClause::from_parsed_param(&parsed, resource_type, &[])?;
-            render_reference_clauses_as_or(builder, &clauses, "")
-        }
-        SearchParameterType::Token => {
-            let index_shape = token_index_shape_for_component(component);
-            let clauses = TokenClause::from_parsed_param(&parsed, resource_type, index_shape)?;
-            let path_segments =
-                crate::sql_builder::fhirpath_to_jsonb_path(&component.spec.expression, "");
-            match index_shape {
-                TokenIndexShape::Identifier => {
-                    let resource_col = builder.resource_column().to_string();
-                    let array_path = crate::sql_builder::build_jsonb_accessor(
-                        &resource_col,
-                        &path_segments,
-                        false,
-                    );
-                    render_token_identifier_containment_clauses_as_or(
-                        builder,
-                        &clauses,
-                        &path_segments,
-                        &array_path,
-                    )?
-                }
-                TokenIndexShape::SimpleCode => {
-                    render_token_simple_code_clauses_as_or(builder, &clauses, &path_segments)?
-                }
-                TokenIndexShape::Coding => {
-                    render_token_coding_clauses_as_or(builder, &clauses, &path_segments)?
-                }
-            }
-        }
-        SearchParameterType::Uri => {
-            let clauses = UriClause::from_parsed_param(&parsed, resource_type)?;
-            let path_segments =
-                crate::sql_builder::fhirpath_to_jsonb_path(&component.spec.expression, "");
-            let path = crate::sql_builder::build_jsonb_accessor(
-                builder.resource_column(),
-                &path_segments,
-                true,
-            );
-            render_uri_clauses_as_or(builder, &clauses, &path)
-        }
-        SearchParameterType::Composite | SearchParameterType::Special => {
-            return Err(SqlBuilderError::NotImplemented(format!(
-                "Composite component type '{}' not supported",
-                crate::ir::search_type_name(component.spec.search_type)
-            )));
-        }
-    };
-
-    sql.map(SqlExpr::Raw).ok_or_else(|| {
-        SqlBuilderError::InvalidSearchValue(format!(
-            "Composite component '{}' produced no native predicate",
-            component.spec.code
-        ))
-    })
-}
-
-fn parsed_component_param(component: &CompositeComponentPredicate) -> ParsedParam {
-    let (prefix, raw) = extract_component_prefix(&component.value);
-    ParsedParam {
-        name: component.spec.code.clone(),
-        modifier: None,
-        values: vec![ParsedValue {
-            prefix,
-            raw: raw.to_string(),
-        }],
-    }
-}
-
-fn extract_component_prefix(value: &str) -> (Option<SearchPrefix>, &str) {
-    let mut chars = value.chars();
-    if let Some(c1) = chars.next()
-        && let Some(c2) = chars.next()
-        && c1.is_ascii_lowercase()
-        && c2.is_ascii_lowercase()
-    {
-        let prefix_str: String = [c1, c2].iter().collect();
-        if let Some(prefix) = SearchPrefix::parse(&prefix_str) {
-            return (Some(prefix), &value[2..]);
-        }
-    }
-    (None, value)
-}
-
-fn token_index_shape_for_component(component: &CompositeComponentPredicate) -> TokenIndexShape {
-    if component.spec.element_type_hint.is_identifier() {
-        TokenIndexShape::Identifier
-    } else if matches!(
-        &component.spec.element_type_hint,
-        crate::parameters::ElementTypeHint::SimpleCode
-    ) {
-        TokenIndexShape::SimpleCode
-    } else {
-        TokenIndexShape::Coding
-    }
+    // Components render in place over the resource JSONB (no sidecar tables);
+    // identical to the JSONB-fallback path.
+    render_composite_component_expr(builder, component)
 }
 
 fn render_composite_same_component_element_expr(
@@ -2706,185 +2353,6 @@ fn simple_code_token_value(predicate: &TokenPredicate) -> Result<&str, SqlBuilde
     }
 }
 
-fn render_number_index_clause(
-    builder: &mut SqlBuilder,
-    clause: &NumberClause,
-) -> Result<String, SqlBuilderError> {
-    match &clause.predicate {
-        NumberPredicate::Missing { is_missing } => Ok(render_sql_expr(&number_index_exists_expr(
-            builder,
-            clause,
-            Vec::new(),
-            *is_missing,
-        ))),
-        NumberPredicate::Comparison { prefix, value } => {
-            let number = RenderDecimalParts::parse(value)?;
-            if matches!(prefix, SearchPrefix::Ne) {
-                let predicates = numeric_eq_range_predicates(builder, "sin.value_num", &number);
-                return Ok(render_sql_expr(&number_index_exists_expr(
-                    builder, clause, predicates, true,
-                )));
-            }
-            let predicates = numeric_sidecar_predicates(builder, "sin.value_num", *prefix, &number);
-            Ok(render_sql_expr(&number_index_exists_expr(
-                builder, clause, predicates, false,
-            )))
-        }
-    }
-}
-
-fn number_index_exists_expr(
-    builder: &mut SqlBuilder,
-    clause: &NumberClause,
-    mut predicates: Vec<SqlExpr>,
-    invert: bool,
-) -> SqlExpr {
-    let rt_param = builder.add_text_param(&clause.resource_type);
-    let pc_param = builder.add_text_param(&clause.param_code);
-    predicates.insert(
-        0,
-        SqlExpr::Compare {
-            lhs: SqlTerm::Ident("sin.param_code".to_string()),
-            op: SqlOp::Eq,
-            rhs: SqlTerm::Param(pc_param),
-        },
-    );
-    predicates.insert(
-        0,
-        SqlExpr::Compare {
-            lhs: SqlTerm::Ident("sin.resource_id".to_string()),
-            op: SqlOp::Eq,
-            rhs: SqlTerm::Ident(builder.id_column()),
-        },
-    );
-    predicates.insert(
-        0,
-        SqlExpr::Compare {
-            lhs: SqlTerm::Ident("sin.resource_type".to_string()),
-            op: SqlOp::Eq,
-            rhs: SqlTerm::Param(rt_param),
-        },
-    );
-
-    let exists = SqlExpr::Exists(Box::new(SelectStmt {
-        projection: vec![SqlTerm::Integer(1)],
-        from: SqlFrom {
-            table: "search_idx_number".to_string(),
-            alias: Some("sin".to_string()),
-        },
-        where_clause: Some(SqlExpr::And(predicates)),
-    }));
-
-    if invert {
-        SqlExpr::Not(Box::new(exists))
-    } else {
-        exists
-    }
-}
-
-fn render_quantity_index_clause(
-    builder: &mut SqlBuilder,
-    clause: &QuantityClause,
-) -> Result<String, SqlBuilderError> {
-    match &clause.predicate {
-        QuantityPredicate::Missing { is_missing } => Ok(render_sql_expr(
-            &quantity_index_exists_expr(builder, clause, Vec::new(), *is_missing),
-        )),
-        QuantityPredicate::Comparison {
-            prefix,
-            value,
-            system,
-            code,
-        } => {
-            let number =
-                RenderDecimalParts::parse(value).map_err(|_| invalid_quantity_number(value))?;
-            let mut predicates = if matches!(prefix, SearchPrefix::Ne) {
-                numeric_eq_range_predicates(builder, "siq.value_num", &number)
-            } else {
-                numeric_sidecar_predicates(builder, "siq.value_num", *prefix, &number)
-            };
-            if let Some(system) = system {
-                let p = builder.add_text_param(system);
-                predicates.push(SqlExpr::Compare {
-                    lhs: SqlTerm::Ident("siq.system".to_string()),
-                    op: SqlOp::Eq,
-                    rhs: SqlTerm::Param(p),
-                });
-            }
-            if let Some(code) = code {
-                let p = builder.add_text_param(code);
-                predicates.push(SqlExpr::Or(vec![
-                    SqlExpr::Compare {
-                        lhs: SqlTerm::Ident("siq.code".to_string()),
-                        op: SqlOp::Eq,
-                        rhs: SqlTerm::Param(p),
-                    },
-                    SqlExpr::Compare {
-                        lhs: SqlTerm::Ident("siq.unit".to_string()),
-                        op: SqlOp::Eq,
-                        rhs: SqlTerm::Param(p),
-                    },
-                ]));
-            }
-            Ok(render_sql_expr(&quantity_index_exists_expr(
-                builder,
-                clause,
-                predicates,
-                matches!(prefix, SearchPrefix::Ne),
-            )))
-        }
-    }
-}
-
-fn quantity_index_exists_expr(
-    builder: &mut SqlBuilder,
-    clause: &QuantityClause,
-    mut predicates: Vec<SqlExpr>,
-    invert: bool,
-) -> SqlExpr {
-    let rt_param = builder.add_text_param(&clause.resource_type);
-    let pc_param = builder.add_text_param(&clause.param_code);
-    predicates.insert(
-        0,
-        SqlExpr::Compare {
-            lhs: SqlTerm::Ident("siq.param_code".to_string()),
-            op: SqlOp::Eq,
-            rhs: SqlTerm::Param(pc_param),
-        },
-    );
-    predicates.insert(
-        0,
-        SqlExpr::Compare {
-            lhs: SqlTerm::Ident("siq.resource_id".to_string()),
-            op: SqlOp::Eq,
-            rhs: SqlTerm::Ident(builder.id_column()),
-        },
-    );
-    predicates.insert(
-        0,
-        SqlExpr::Compare {
-            lhs: SqlTerm::Ident("siq.resource_type".to_string()),
-            op: SqlOp::Eq,
-            rhs: SqlTerm::Param(rt_param),
-        },
-    );
-
-    let exists = SqlExpr::Exists(Box::new(SelectStmt {
-        projection: vec![SqlTerm::Integer(1)],
-        from: SqlFrom {
-            table: "search_idx_quantity".to_string(),
-            alias: Some("siq".to_string()),
-        },
-        where_clause: Some(SqlExpr::And(predicates)),
-    }));
-
-    if invert {
-        SqlExpr::Not(Box::new(exists))
-    } else {
-        exists
-    }
-}
-
 fn render_quantity_clause(
     builder: &mut SqlBuilder,
     clause: &QuantityClause,
@@ -3014,157 +2482,6 @@ fn render_quantity_containment(
     format!("{resource_col} @> ${p}::jsonb")
 }
 
-fn render_reference_clause(
-    builder: &mut SqlBuilder,
-    clause: &ReferenceClause,
-    _jsonb_path: &str,
-) -> String {
-    match &clause.predicate {
-        ReferencePredicate::Missing { is_missing } => {
-            render_sql_expr(&reference_index_missing_expr(builder, clause, *is_missing))
-        }
-        predicate => render_reference_index_condition(builder, clause, predicate),
-    }
-}
-
-fn reference_index_missing_expr(
-    builder: &mut SqlBuilder,
-    clause: &ReferenceClause,
-    is_missing: bool,
-) -> SqlExpr {
-    let exists = reference_index_exists_expr(reference_base_predicates(builder, clause));
-    if is_missing {
-        SqlExpr::Not(Box::new(exists))
-    } else {
-        exists
-    }
-}
-
-fn render_reference_index_condition(
-    builder: &mut SqlBuilder,
-    clause: &ReferenceClause,
-    predicate: &ReferencePredicate,
-) -> String {
-    render_sql_expr(&reference_index_condition_expr(builder, clause, predicate))
-}
-
-fn reference_index_condition_expr(
-    builder: &mut SqlBuilder,
-    clause: &ReferenceClause,
-    predicate: &ReferencePredicate,
-) -> SqlExpr {
-    let mut predicates = reference_base_predicates(builder, clause);
-
-    match predicate {
-        ReferencePredicate::Local {
-            target_type,
-            target_id,
-        } => {
-            predicates.push(SqlExpr::Compare {
-                lhs: SqlTerm::Ident("sir.ref_kind".to_string()),
-                op: SqlOp::Eq,
-                rhs: SqlTerm::Integer(1),
-            });
-            if let Some(target_type) = target_type {
-                let tt_param = builder.add_text_param(target_type);
-                predicates.push(SqlExpr::Compare {
-                    lhs: SqlTerm::Ident("sir.target_type".to_string()),
-                    op: SqlOp::Eq,
-                    rhs: SqlTerm::Param(tt_param),
-                });
-            }
-            let tid_param = builder.add_text_param(target_id);
-            predicates.push(SqlExpr::Compare {
-                lhs: SqlTerm::Ident("sir.target_id".to_string()),
-                op: SqlOp::Eq,
-                rhs: SqlTerm::Param(tid_param),
-            });
-            reference_index_exists_expr(predicates)
-        }
-        ReferencePredicate::External { url } => {
-            let url_param = builder.add_text_param(url);
-            predicates.push(SqlExpr::Or(vec![
-                SqlExpr::Compare {
-                    lhs: SqlTerm::Ident("sir.external_url".to_string()),
-                    op: SqlOp::Eq,
-                    rhs: SqlTerm::Param(url_param),
-                },
-                SqlExpr::Compare {
-                    lhs: SqlTerm::Ident("sir.raw_reference".to_string()),
-                    op: SqlOp::Eq,
-                    rhs: SqlTerm::Param(url_param),
-                },
-            ]));
-            reference_index_exists_expr(predicates)
-        }
-        ReferencePredicate::Identifier {
-            system,
-            require_no_system,
-            value,
-        } => {
-            predicates.push(SqlExpr::Compare {
-                lhs: SqlTerm::Ident("sir.ref_kind".to_string()),
-                op: SqlOp::Eq,
-                rhs: SqlTerm::Integer(4),
-            });
-            let val_param = builder.add_text_param(value);
-            if let Some(system) = system {
-                let sys_param = builder.add_text_param(system);
-                predicates.push(SqlExpr::Compare {
-                    lhs: SqlTerm::Ident("sir.identifier_system".to_string()),
-                    op: SqlOp::Eq,
-                    rhs: SqlTerm::Param(sys_param),
-                });
-            } else if *require_no_system {
-                predicates.push(SqlExpr::IsNull(SqlTerm::Ident(
-                    "sir.identifier_system".to_string(),
-                )));
-            }
-            predicates.push(SqlExpr::Compare {
-                lhs: SqlTerm::Ident("sir.identifier_value".to_string()),
-                op: SqlOp::Eq,
-                rhs: SqlTerm::Param(val_param),
-            });
-            reference_index_exists_expr(predicates)
-        }
-        ReferencePredicate::Missing { .. } => unreachable!("handled by caller"),
-    }
-}
-
-fn reference_base_predicates(builder: &mut SqlBuilder, clause: &ReferenceClause) -> Vec<SqlExpr> {
-    let rt_param = builder.add_text_param(&clause.resource_type);
-    let pc_param = builder.add_text_param(&clause.param_code);
-    let id_col = builder.id_column();
-    vec![
-        SqlExpr::Compare {
-            lhs: SqlTerm::Ident("sir.resource_type".to_string()),
-            op: SqlOp::Eq,
-            rhs: SqlTerm::Param(rt_param),
-        },
-        SqlExpr::Compare {
-            lhs: SqlTerm::Ident("sir.resource_id".to_string()),
-            op: SqlOp::Eq,
-            rhs: SqlTerm::Ident(id_col),
-        },
-        SqlExpr::Compare {
-            lhs: SqlTerm::Ident("sir.param_code".to_string()),
-            op: SqlOp::Eq,
-            rhs: SqlTerm::Param(pc_param),
-        },
-    ]
-}
-
-fn reference_index_exists_expr(predicates: Vec<SqlExpr>) -> SqlExpr {
-    SqlExpr::Exists(Box::new(SelectStmt {
-        projection: vec![SqlTerm::Integer(1)],
-        from: SqlFrom {
-            table: "search_idx_reference".to_string(),
-            alias: Some("sir".to_string()),
-        },
-        where_clause: Some(SqlExpr::And(predicates)),
-    }))
-}
-
 fn build_nested_json_containment(
     path_segments: &[String],
     leaf_value: serde_json::Value,
@@ -3174,98 +2491,6 @@ fn build_nested_json_containment(
         result = serde_json::json!({ segment.as_str(): result });
     }
     result
-}
-
-fn render_string_clause(builder: &mut SqlBuilder, clause: &StringClause) -> String {
-    if let StringPredicate::Text { value } = &clause.predicate {
-        let resource_col = builder.resource_column().to_string();
-        let p = builder.add_text_param(value);
-        return format!(
-            "to_tsvector('english', {resource_col}->>'text') @@ plainto_tsquery('english', ${p})"
-        );
-    }
-
-    render_sql_expr(&string_sidecar_clause_expr(builder, clause))
-}
-
-fn string_sidecar_clause_expr(builder: &mut SqlBuilder, clause: &StringClause) -> SqlExpr {
-    let rt_param = builder.add_text_param(&clause.resource_type);
-    let pc_param = builder.add_text_param(&clause.param_code);
-    let id_col = builder.id_column();
-    let mut predicates = vec![
-        SqlExpr::Compare {
-            lhs: SqlTerm::Ident("sid.resource_type".to_string()),
-            op: SqlOp::Eq,
-            rhs: SqlTerm::Param(rt_param),
-        },
-        SqlExpr::Compare {
-            lhs: SqlTerm::Ident("sid.resource_id".to_string()),
-            op: SqlOp::Eq,
-            rhs: SqlTerm::Ident(id_col),
-        },
-        SqlExpr::Compare {
-            lhs: SqlTerm::Ident("sid.param_code".to_string()),
-            op: SqlOp::Eq,
-            rhs: SqlTerm::Param(pc_param),
-        },
-    ];
-
-    match &clause.predicate {
-        StringPredicate::Missing { is_missing } => {
-            let exists = string_sidecar_exists_expr(predicates);
-            if *is_missing {
-                SqlExpr::Not(Box::new(exists))
-            } else {
-                exists
-            }
-        }
-        predicate => {
-            predicates.push(match predicate {
-                StringPredicate::Prefix { value } => {
-                    let normalized = normalize_string(value);
-                    let pattern = format!("{}%", escape_like_pattern(&normalized));
-                    let p = builder.add_text_param(pattern);
-                    SqlExpr::Compare {
-                        lhs: SqlTerm::Ident("sid.value_norm".to_string()),
-                        op: SqlOp::Like,
-                        rhs: SqlTerm::Param(p),
-                    }
-                }
-                StringPredicate::Contains { value } => {
-                    let normalized = normalize_string(value);
-                    let pattern = format!("%{}%", escape_like_pattern(&normalized));
-                    let p = builder.add_text_param(pattern);
-                    SqlExpr::Compare {
-                        lhs: SqlTerm::Ident("sid.value_norm".to_string()),
-                        op: SqlOp::Like,
-                        rhs: SqlTerm::Param(p),
-                    }
-                }
-                StringPredicate::Exact { value } => {
-                    let p = builder.add_text_param(value);
-                    SqlExpr::Compare {
-                        lhs: SqlTerm::Ident("sid.value_exact".to_string()),
-                        op: SqlOp::Eq,
-                        rhs: SqlTerm::Param(p),
-                    }
-                }
-                StringPredicate::Text { .. } => unreachable!("handled above"),
-                StringPredicate::Missing { .. } => unreachable!("handled above"),
-            });
-            string_sidecar_exists_expr(predicates)
-        }
-    }
-}
-
-fn string_sidecar_exists_expr(predicates: Vec<SqlExpr>) -> SqlExpr {
-    SqlExpr::Exists(Box::new(SelectStmt {
-        projection: vec![SqlTerm::Integer(1)],
-        from: SqlFrom {
-            table: "search_idx_string".to_string(),
-            alias: Some("sid".to_string()),
-        },
-        where_clause: Some(SqlExpr::And(predicates)),
-    }))
 }
 
 /// In-place string predicate over the normalised text blob / raw value array of
@@ -3520,56 +2745,6 @@ fn numeric_comparison_expr(
     }
 }
 
-fn numeric_sidecar_predicates(
-    builder: &mut SqlBuilder,
-    path: &str,
-    prefix: SearchPrefix,
-    number: &RenderDecimalParts,
-) -> Vec<SqlExpr> {
-    match prefix {
-        SearchPrefix::Eq | SearchPrefix::Ne => numeric_eq_range_predicates(builder, path, number),
-        SearchPrefix::Gt | SearchPrefix::Sa => {
-            let p = bind_numeric(builder, number.format());
-            vec![numeric_compare_expr(path, SqlOp::Gt, p)]
-        }
-        SearchPrefix::Lt | SearchPrefix::Eb => {
-            let p = bind_numeric(builder, number.format());
-            vec![numeric_compare_expr(path, SqlOp::Lt, p)]
-        }
-        SearchPrefix::Ge => {
-            let p = bind_numeric(builder, number.format());
-            vec![numeric_compare_expr(path, SqlOp::Ge, p)]
-        }
-        SearchPrefix::Le => {
-            let p = bind_numeric(builder, number.format());
-            vec![numeric_compare_expr(path, SqlOp::Le, p)]
-        }
-        SearchPrefix::Ap => {
-            let (lower, upper) = number.approximate_bounds();
-            let p1 = bind_numeric(builder, lower);
-            let p2 = bind_numeric(builder, upper);
-            vec![
-                numeric_compare_expr(path, SqlOp::Ge, p1),
-                numeric_compare_expr(path, SqlOp::Lt, p2),
-            ]
-        }
-    }
-}
-
-fn numeric_eq_range_predicates(
-    builder: &mut SqlBuilder,
-    path: &str,
-    number: &RenderDecimalParts,
-) -> Vec<SqlExpr> {
-    let (lower, upper) = number.implicit_eq_bounds();
-    let p1 = bind_numeric(builder, lower);
-    let p2 = bind_numeric(builder, upper);
-    vec![
-        numeric_compare_expr(path, SqlOp::Ge, p1),
-        numeric_compare_expr(path, SqlOp::Lt, p2),
-    ]
-}
-
 fn numeric_compare_expr(path: &str, op: SqlOp, param: usize) -> SqlExpr {
     SqlExpr::Compare {
         lhs: SqlTerm::Raw(format!("({path})::numeric")),
@@ -3730,7 +2905,7 @@ mod tests {
         let expr = SqlExpr::Exists(Box::new(SelectStmt {
             projection: vec![SqlTerm::Integer(1)],
             from: SqlFrom {
-                table: "search_idx_date".to_string(),
+                table: "date_range_idx".to_string(),
                 alias: Some("sid".to_string()),
             },
             where_clause: Some(SqlExpr::And(vec![
@@ -3756,7 +2931,7 @@ mod tests {
 
         assert_eq!(
             render_sql_expr(&expr),
-            "EXISTS (SELECT 1 FROM search_idx_date sid WHERE (sid.resource_id = r.id AND sid.rng && tstzrange($1::timestamptz, NULL, '[)')))"
+            "EXISTS (SELECT 1 FROM date_range_idx sid WHERE (sid.resource_id = r.id AND sid.rng && tstzrange($1::timestamptz, NULL, '[)')))"
         );
     }
 
@@ -3765,7 +2940,7 @@ mod tests {
         let expr = SqlExpr::Not(Box::new(SqlExpr::Exists(Box::new(SelectStmt {
             projection: vec![SqlTerm::Integer(1)],
             from: SqlFrom {
-                table: "search_idx_date".to_string(),
+                table: "date_range_idx".to_string(),
                 alias: Some("sid".to_string()),
             },
             where_clause: Some(SqlExpr::Bool(true)),
@@ -3773,7 +2948,7 @@ mod tests {
 
         assert_eq!(
             render_sql_expr(&expr),
-            "NOT EXISTS (SELECT 1 FROM search_idx_date sid WHERE TRUE)"
+            "NOT EXISTS (SELECT 1 FROM date_range_idx sid WHERE TRUE)"
         );
     }
 
@@ -3821,25 +2996,6 @@ mod tests {
         assert_eq!(sql, "(r.id = $1) = false");
         assert!(!sql.contains("NOT ("));
         assert_eq!(builder.params()[0].as_str(), "pat-1");
-    }
-
-    #[test]
-    fn string_sidecar_render_redacts_values_into_params() {
-        let mut builder = SqlBuilder::new();
-        let clauses = vec![StringClause {
-            resource_type: "Patient".to_string(),
-            param_code: "family".to_string(),
-            predicate: StringPredicate::Contains {
-                value: "Sm_th%".to_string(),
-            },
-        }];
-
-        let sql = render_string_clauses_as_or(&mut builder, &clauses).unwrap();
-
-        assert!(sql.contains("search_idx_string"));
-        assert!(sql.contains("sid.value_norm LIKE $3"));
-        assert!(!sql.contains("Sm_th"));
-        assert_eq!(builder.params()[2].as_str(), "%sm\\_th\\%%");
     }
 
     #[test]
@@ -3918,66 +3074,6 @@ mod tests {
         assert!(sql.contains("jsonb_typeof(name->'given') = 'array'"));
         assert!(!sql.contains("COALESCE"));
         assert_eq!(builder.params()[0].as_str(), "smith%");
-    }
-
-    #[test]
-    fn reference_render_uses_sidecar_without_jsonb_fallback() {
-        let mut builder = SqlBuilder::with_resource_column("r.resource");
-        let clauses = ReferenceClause::from_parsed_param(
-            &crate::parser::ParsedParam {
-                name: "subject".to_string(),
-                modifier: None,
-                values: vec![crate::parser::ParsedValue {
-                    prefix: None,
-                    raw: "Patient/pat-123".to_string(),
-                }],
-            },
-            "Observation",
-            &["Patient".to_string(), "Group".to_string()],
-        )
-        .unwrap();
-
-        let sql = render_reference_clauses_as_or(&mut builder, &clauses, "r.resource->'subject'")
-            .unwrap();
-
-        assert!(sql.contains("search_idx_reference"));
-        assert!(sql.contains("sir.ref_kind = 1"));
-        assert!(sql.contains("sir.target_type = $3"));
-        assert!(sql.contains("sir.target_id = $4"));
-        assert!(!sql.contains(" OR "));
-        assert!(!sql.contains("r.resource->'subject'->>'reference'"));
-        assert!(!sql.contains("pat-123") && !sql.contains("Patient/pat-123"));
-        assert_eq!(builder.params()[2].as_str(), "Patient");
-        assert_eq!(builder.params()[3].as_str(), "pat-123");
-        assert_eq!(builder.params().len(), 4);
-    }
-
-    #[test]
-    fn reference_render_preserves_identifier_no_system_semantics() {
-        let mut builder = SqlBuilder::with_resource_column("r.resource");
-        let clauses = ReferenceClause::from_parsed_param(
-            &crate::parser::ParsedParam {
-                name: "subject".to_string(),
-                modifier: Some(crate::parameters::SearchModifier::Identifier),
-                values: vec![crate::parser::ParsedValue {
-                    prefix: None,
-                    raw: "|abc".to_string(),
-                }],
-            },
-            "Observation",
-            &["Patient".to_string()],
-        )
-        .unwrap();
-
-        let sql = render_reference_clauses_as_or(&mut builder, &clauses, "r.resource->'subject'")
-            .unwrap();
-
-        assert!(sql.contains("sir.ref_kind = 4"));
-        assert!(sql.contains("sir.identifier_system IS NULL"));
-        assert!(sql.contains("sir.identifier_value = $3"));
-        assert!(!sql.contains(" OR "));
-        assert!(!sql.contains("abc"));
-        assert_eq!(builder.params()[2].as_str(), "abc");
     }
 
     #[test]

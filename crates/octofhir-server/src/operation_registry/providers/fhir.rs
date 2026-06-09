@@ -209,34 +209,6 @@ impl OperationProvider for FhirOperationProvider {
                 modules::SERVER,
             )
             .with_description("Evaluate FHIRPath expressions on a resource instance"),
-            // $reindex operations
-            OperationDefinition::new(
-                "fhir.reindex-system",
-                "$reindex",
-                categories::FHIR,
-                vec!["POST".to_string()],
-                fhir_path("/$reindex"),
-                modules::SERVER,
-            )
-            .with_description("Reindex search indexes for all resource types"),
-            OperationDefinition::new(
-                "fhir.reindex-type",
-                "$reindex",
-                categories::FHIR,
-                vec!["POST".to_string()],
-                fhir_path("/{type}/$reindex"),
-                modules::SERVER,
-            )
-            .with_description("Reindex search indexes for a resource type"),
-            OperationDefinition::new(
-                "fhir.reindex-instance",
-                "$reindex",
-                categories::FHIR,
-                vec!["POST".to_string()],
-                fhir_path("/{type}/{id}/$reindex"),
-                modules::SERVER,
-            )
-            .with_description("Reindex search indexes for a single resource"),
             // $export operations (fixing existing gap)
             OperationDefinition::new(
                 "fhir.export-system",

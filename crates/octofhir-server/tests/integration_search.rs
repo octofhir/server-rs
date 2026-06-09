@@ -102,12 +102,7 @@ async fn reset_search_test_data(postgres_url: &str) {
                 'patient',
                 'patient_history',
                 'observation',
-                'observation_history',
-                'search_idx_reference',
-                'search_idx_date',
-                'search_idx_string',
-                'search_idx_number',
-                'search_idx_quantity'
+                'observation_history'
             ]
             LOOP
                 IF to_regclass(format('public.%I', table_name)) IS NOT NULL THEN

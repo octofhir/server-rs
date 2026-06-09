@@ -104,48 +104,6 @@ impl Transaction for PostgresTransaction {
         let txid = ensure_txid(&mut txid_guard, tx).await?;
         drop(txid_guard);
         let result = queries::crud::create_with_tx(tx, resource, Some(txid)).await?;
-        if let Some(registry) = &self.search_registry {
-            let rows = crate::search_index::extract_search_index_rows(
-                registry,
-                &result.resource_type,
-                &result.resource,
-            );
-            crate::search_index::write_reference_index_with_tx(
-                tx,
-                &result.resource_type,
-                &result.id,
-                &rows.refs,
-            )
-            .await?;
-            crate::search_index::write_date_index_with_tx(
-                tx,
-                &result.resource_type,
-                &result.id,
-                &rows.dates,
-            )
-            .await?;
-            crate::search_index::write_string_index_with_tx(
-                tx,
-                &result.resource_type,
-                &result.id,
-                &rows.strings,
-            )
-            .await?;
-            crate::search_index::write_number_index_with_tx(
-                tx,
-                &result.resource_type,
-                &result.id,
-                &rows.numbers,
-            )
-            .await?;
-            crate::search_index::write_quantity_index_with_tx(
-                tx,
-                &result.resource_type,
-                &result.id,
-                &rows.quantities,
-            )
-            .await?;
-        }
         Ok(result)
     }
 
@@ -165,48 +123,6 @@ impl Transaction for PostgresTransaction {
         drop(txid_guard);
         let result =
             queries::crud::update_with_tx_if_match(tx, resource, if_match, Some(txid)).await?;
-        if let Some(registry) = &self.search_registry {
-            let rows = crate::search_index::extract_search_index_rows(
-                registry,
-                &result.resource_type,
-                &result.resource,
-            );
-            crate::search_index::write_reference_index_with_tx(
-                tx,
-                &result.resource_type,
-                &result.id,
-                &rows.refs,
-            )
-            .await?;
-            crate::search_index::write_date_index_with_tx(
-                tx,
-                &result.resource_type,
-                &result.id,
-                &rows.dates,
-            )
-            .await?;
-            crate::search_index::write_string_index_with_tx(
-                tx,
-                &result.resource_type,
-                &result.id,
-                &rows.strings,
-            )
-            .await?;
-            crate::search_index::write_number_index_with_tx(
-                tx,
-                &result.resource_type,
-                &result.id,
-                &rows.numbers,
-            )
-            .await?;
-            crate::search_index::write_quantity_index_with_tx(
-                tx,
-                &result.resource_type,
-                &result.id,
-                &rows.quantities,
-            )
-            .await?;
-        }
         Ok(result)
     }
 
@@ -221,7 +137,7 @@ impl Transaction for PostgresTransaction {
         let txid = ensure_txid(&mut txid_guard, tx).await?;
         drop(txid_guard);
         queries::crud::delete_with_tx(tx, resource_type, id, Some(txid)).await?;
-        crate::search_index::delete_search_indexes_with_tx(tx, resource_type, id).await
+        Ok(())
     }
 
     async fn read(
@@ -279,21 +195,6 @@ impl Transaction for PostgresTransaction {
 
         let stored =
             queries::crud::create_batch_with_tx(tx, resource_type, txid, resources).await?;
-
-        if let Some(registry) = &self.search_registry {
-            let mut buffer = crate::search_index::BatchIndexBuffer::new();
-            for s in &stored {
-                let rows = crate::search_index::extract_search_index_rows(
-                    registry,
-                    &s.resource_type,
-                    &s.resource,
-                );
-                buffer.extend_with(&s.resource_type, &s.id, &rows);
-            }
-            if !buffer.is_empty() {
-                buffer.flush_with_tx(tx).await?;
-            }
-        }
 
         Ok(stored)
     }

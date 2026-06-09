@@ -43,9 +43,9 @@ impl StorageReferenceResolver {
 #[async_trait]
 impl ReferenceResolver for StorageReferenceResolver {
     async fn resource_exists(&self, resource_type: &str, id: &str) -> ReferenceResult<bool> {
-        match self.storage.read(resource_type, id).await {
-            Ok(Some(_)) => Ok(true),
-            Ok(None) => Ok(false),
+        // Existence-only query — avoids fetching the full resource JSONB.
+        match self.storage.exists(resource_type, id).await {
+            Ok(exists) => Ok(exists),
             Err(e) => Err(ReferenceError::ServiceUnavailable {
                 message: e.to_string(),
             }),

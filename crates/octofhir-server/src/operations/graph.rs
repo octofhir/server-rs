@@ -167,7 +167,7 @@ fn resolve_json_path<'a>(value: &'a Value, path: &str) -> Vec<&'a Value> {
 ///
 /// The path may start with a `ResourceType.` prefix (e.g. `"Patient.managingOrganization"`)
 /// which is stripped before navigating the JSON.
-fn extract_references_at_path(resource: &Value, path: &str, base_url: &str) -> Vec<FhirReference> {
+fn collect_references_at_path(resource: &Value, path: &str, base_url: &str) -> Vec<FhirReference> {
     // Strip leading ResourceType. prefix if present
     let field_path = if let Some(dot_pos) = path.find('.') {
         let first_segment = &path[..dot_pos];
@@ -373,7 +373,7 @@ async fn resolve_forward(
     path: &str,
     target: &TargetModel,
 ) -> Vec<StoredResource> {
-    let refs = extract_references_at_path(&resource.resource, path, &state.base_url);
+    let refs = collect_references_at_path(&resource.resource, path, &state.base_url);
 
     let mut results = Vec::new();
     for fhir_ref in refs {
@@ -577,7 +577,7 @@ mod tests {
         assert_eq!(values.len(), 2);
     }
 
-    // -- extract_references_at_path tests --
+    // -- collect_references_at_path tests --
 
     #[test]
     fn test_extract_single_reference() {
@@ -585,7 +585,7 @@ mod tests {
             "resourceType": "Patient",
             "managingOrganization": {"reference": "Organization/1"}
         });
-        let refs = extract_references_at_path(
+        let refs = collect_references_at_path(
             &resource,
             "Patient.managingOrganization",
             "http://localhost",
@@ -605,7 +605,7 @@ mod tests {
             ]
         });
         let refs =
-            extract_references_at_path(&resource, "DiagnosticReport.result", "http://localhost");
+            collect_references_at_path(&resource, "DiagnosticReport.result", "http://localhost");
         assert_eq!(refs.len(), 2);
         assert_eq!(refs[0].resource_type, "Observation");
         assert_eq!(refs[1].id, "2");
@@ -616,7 +616,7 @@ mod tests {
         let resource = json!({
             "subject": {"reference": "Patient/123"}
         });
-        let refs = extract_references_at_path(&resource, "Observation.subject", "http://localhost");
+        let refs = collect_references_at_path(&resource, "Observation.subject", "http://localhost");
         assert_eq!(refs.len(), 1);
         assert_eq!(refs[0].resource_type, "Patient");
     }
@@ -626,7 +626,7 @@ mod tests {
         let resource = json!({
             "subject": {"reference": "#contained-ref"}
         });
-        let refs = extract_references_at_path(&resource, "Observation.subject", "http://localhost");
+        let refs = collect_references_at_path(&resource, "Observation.subject", "http://localhost");
         assert!(refs.is_empty());
     }
 

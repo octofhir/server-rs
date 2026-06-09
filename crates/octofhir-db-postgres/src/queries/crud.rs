@@ -206,6 +206,24 @@ pub async fn create_raw(
     })
 }
 
+/// Checks whether a live (non-deleted) resource exists, without reading its body.
+pub async fn exists(pool: &PgPool, resource_type: &str, id: &str) -> Result<bool, StorageError> {
+    let table = SchemaManager::table_name(resource_type);
+
+    let sql = format!(
+        r#"SELECT EXISTS(SELECT 1 FROM "{table}" WHERE id = $1 AND status != 'deleted')"#
+    );
+
+    let exists: (bool,) = query_as(&sql).bind(id).fetch_one(pool).await.map_err(|e| {
+        if e.to_string().contains("does not exist") {
+            return StorageError::internal(format!("Table does not exist: {e}"));
+        }
+        StorageError::internal(format!("Failed to check resource existence: {e}"))
+    })?;
+
+    Ok(exists.0)
+}
+
 /// Reads a FHIR resource by type and ID.
 ///
 /// Returns `None` if the resource doesn't exist.

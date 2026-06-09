@@ -77,6 +77,14 @@ pub trait FhirStorage: Send + Sync {
         id: &str,
     ) -> Result<Option<StoredResource>, StorageError>;
 
+    /// Checks whether a resource exists without fetching its content.
+    ///
+    /// Default implementation falls back to `read()`; backends should override
+    /// with an existence-only query that avoids loading the resource body.
+    async fn exists(&self, resource_type: &str, id: &str) -> Result<bool, StorageError> {
+        Ok(self.read(resource_type, id).await?.is_some())
+    }
+
     /// Reads a resource as raw JSON string, avoiding serde_json::Value round-trip.
     ///
     /// This is an optimized read path that returns the resource JSON as a raw string

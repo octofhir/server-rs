@@ -22,8 +22,9 @@ use octofhir_search::terminology_preprocess::{
 };
 use octofhir_search::{
     BuiltQuery, ParamsSearchConfig, PreparedQuery, QueryCache, QueryCacheKey, QueryParamKey,
-    SearchParameterRegistry, SqlValue, UnknownParamHandling, build_native_ir_query_from_params,
-    build_native_ir_query_from_params_with_config,
+    SearchParameterRegistry, SqlValue, UnknownParamHandling, build_jsonb_accessor,
+    build_native_ir_query_from_params, build_native_ir_query_from_params_with_config,
+    fhirpath_to_jsonb_path,
 };
 use octofhir_storage::{
     RawSearchDebug, RawSearchResult, RawStoredResource, SearchParams, SearchResult, StorageError,
@@ -158,6 +159,7 @@ pub async fn execute_search(
             &all_entries,
             &converted.includes,
             &converted.revincludes,
+            registry,
         )
         .await?;
         all_entries.extend(included);
@@ -712,6 +714,7 @@ async fn execute_search_raw_with_config_inner(
             &entries,
             &converted.includes,
             &converted.revincludes,
+            registry,
         )
         .await?
     } else {
@@ -959,6 +962,31 @@ async fn execute_count_query_with_tx(
     Ok(count as u32)
 }
 
+/// Build the array-or-singleton JSONB expression locating a reference search
+/// parameter's references on `resource_col`, derived from the parameter's
+/// FHIRPath via the registry. Returns `None` when the parameter or its
+/// expression is unknown (the include then yields nothing).
+fn reference_array_sql(
+    registry: &SearchParameterRegistry,
+    resource_type: &str,
+    param_name: &str,
+    resource_col: &str,
+) -> Option<String> {
+    let def = registry.get(resource_type, param_name)?;
+    let expr = def.expression.as_deref()?;
+    let segments = fhirpath_to_jsonb_path(expr, resource_type);
+    let obj = build_jsonb_accessor(resource_col, &segments, false);
+    Some(format!(
+        "CASE WHEN jsonb_typeof({obj}) = 'array' THEN {obj} \
+         WHEN {obj} IS NULL THEN '[]'::jsonb ELSE jsonb_build_array({obj}) END"
+    ))
+}
+
+/// Regex pulling (Type, id) out of a FHIR reference string, anchored at the end
+/// so both relative (`Patient/123`) and absolute (`http://h/fhir/Patient/123`)
+/// references match. Capture 1 = type, capture 2 = id.
+const REFERENCE_TYPE_ID_RE: &str = r"([A-Za-z]+)/([A-Za-z0-9.-]{1,64})$";
+
 /// Resolve _include and _revinclude specifications.
 ///
 /// Executes all include and revinclude queries in parallel for better latency.
@@ -967,19 +995,20 @@ async fn resolve_includes_revincludes(
     main_results: &[StoredResource],
     includes: &[octofhir_search::IncludeSpec],
     revincludes: &[octofhir_search::RevIncludeSpec],
+    registry: &SearchParameterRegistry,
 ) -> Result<Vec<StoredResource>, StorageError> {
     use futures_util::future::try_join_all;
 
     // Build futures for all include queries
     let include_futures: Vec<_> = includes
         .iter()
-        .map(|include| resolve_include(pool, main_results, include, &include.source_type))
+        .map(|include| resolve_include(pool, main_results, include, registry))
         .collect();
 
     // Build futures for all revinclude queries
     let revinclude_futures: Vec<_> = revincludes
         .iter()
-        .map(|revinclude| resolve_revinclude(pool, main_results, revinclude))
+        .map(|revinclude| resolve_revinclude(pool, main_results, revinclude, registry))
         .collect();
 
     // Execute all queries in parallel
@@ -995,27 +1024,26 @@ async fn resolve_includes_revincludes(
     Ok(included)
 }
 
-/// Resolve a single _include specification using the search_idx_reference index table.
-///
-/// Uses B-tree index scan on `search_idx_reference` to find referenced resource IDs
-/// instead of parsing JSONB at runtime.
+/// Resolve a single _include specification by matching references in place over
+/// the source resource JSONB (no sidecar index table).
 async fn resolve_include(
     pool: &PgPool,
     main_results: &[StoredResource],
     include: &octofhir_search::IncludeSpec,
-    _source_type: &str,
+    registry: &SearchParameterRegistry,
 ) -> Result<Vec<StoredResource>, StorageError> {
     if include.iterate {
-        return resolve_include_iterate(pool, main_results, include).await;
+        return resolve_include_iterate(pool, main_results, include, registry).await;
     }
 
-    resolve_include_once(pool, main_results, include).await
+    resolve_include_once(pool, main_results, include, registry).await
 }
 
 async fn resolve_include_iterate(
     pool: &PgPool,
     main_results: &[StoredResource],
     include: &octofhir_search::IncludeSpec,
+    registry: &SearchParameterRegistry,
 ) -> Result<Vec<StoredResource>, StorageError> {
     let mut visited: HashSet<(String, String)> = main_results
         .iter()
@@ -1033,7 +1061,7 @@ async fn resolve_include_iterate(
             break;
         }
 
-        let next = resolve_include_once(pool, &current, include).await?;
+        let next = resolve_include_once(pool, &current, include, registry).await?;
         current = Vec::new();
         for entry in next {
             let key = (entry.resource_type.clone(), entry.id.clone());
@@ -1053,6 +1081,7 @@ async fn resolve_include_once(
     pool: &PgPool,
     main_results: &[StoredResource],
     include: &octofhir_search::IncludeSpec,
+    registry: &SearchParameterRegistry,
 ) -> Result<Vec<StoredResource>, StorageError> {
     if main_results.is_empty() {
         return Ok(Vec::new());
@@ -1071,45 +1100,26 @@ async fn resolve_include_once(
         return Ok(Vec::new());
     }
 
+    // Candidate target types come from the parameter definition (or an explicit
+    // :Type filter), not a sidecar table.
     let target_types = if let Some(target_type) = include.target_type.as_ref() {
         vec![target_type.clone()]
     } else {
-        query_include_target_types(pool, source_type, param_name, &source_ids).await?
+        registry
+            .get(source_type, param_name)
+            .map(|p| p.target.clone())
+            .unwrap_or_default()
     };
 
     let mut entries = Vec::new();
     for target_type in target_types {
         let mut matched =
-            query_include_for_target(pool, source_type, param_name, &source_ids, &target_type)
+            query_include_for_target(pool, source_type, param_name, &source_ids, &target_type, registry)
                 .await?;
         entries.append(&mut matched);
     }
 
     Ok(entries)
-}
-
-async fn query_include_target_types(
-    pool: &PgPool,
-    source_type: &str,
-    param_name: &str,
-    source_ids: &[&str],
-) -> Result<Vec<String>, StorageError> {
-    let rows: Vec<Option<String>> = query_scalar(
-        r#"SELECT DISTINCT sir.target_type
-           FROM search_idx_reference sir
-           WHERE sir.resource_type = $1
-             AND sir.resource_id = ANY($2::text[])
-             AND sir.param_code = $3
-             AND sir.ref_kind = 1"#,
-    )
-    .bind(source_type)
-    .bind(source_ids)
-    .bind(param_name)
-    .fetch_all(pool)
-    .await
-    .map_err(|e| StorageError::internal(format!("Include target type lookup failed: {e}")))?;
-
-    Ok(rows.into_iter().flatten().collect())
 }
 
 async fn query_include_for_target(
@@ -1118,22 +1128,26 @@ async fn query_include_for_target(
     param_name: &str,
     source_ids: &[&str],
     target_type: &str,
+    registry: &SearchParameterRegistry,
 ) -> Result<Vec<StoredResource>, StorageError> {
+    let Some(ref_array) = reference_array_sql(registry, source_type, param_name, "s.resource")
+    else {
+        return Ok(Vec::new());
+    };
+    let source_table = SchemaManager::table_name(source_type);
     let table = SchemaManager::table_name(target_type);
 
     let sql = format!(
         r#"SELECT DISTINCT t.resource, t.id, t.txid, t.created_at, t.updated_at
-           FROM search_idx_reference sir
-           JOIN "{table}" t ON t.id = sir.target_id AND t.status != 'deleted'
-           WHERE sir.resource_type = $1 AND sir.resource_id = ANY($2::text[])
-           AND sir.param_code = $3 AND sir.ref_kind = 1
-           AND sir.target_type = $4"#
+           FROM "{source_table}" s
+           CROSS JOIN LATERAL jsonb_array_elements({ref_array}) AS ref
+           CROSS JOIN LATERAL (SELECT regexp_match(ref->>'reference', '{REFERENCE_TYPE_ID_RE}') AS m) x
+           JOIN "{table}" t ON t.id = x.m[2] AND t.status != 'deleted'
+           WHERE s.id = ANY($1::text[]) AND s.status != 'deleted' AND x.m[1] = $2"#
     );
 
     let rows: Vec<(Value, String, i64, DateTime<Utc>, DateTime<Utc>)> = query_as(&sql)
-        .bind(source_type)
         .bind(source_ids)
-        .bind(param_name)
         .bind(target_type)
         .fetch_all(pool)
         .await
@@ -1166,17 +1180,16 @@ async fn query_include_for_target(
     Ok(entries)
 }
 
-/// Resolve a single _revinclude specification using the search_idx_reference index table.
-///
-/// Uses B-tree index scan on `search_idx_reference` to find resources that reference
-/// the main results, instead of runtime JSONB ->> extraction.
+/// Resolve a single _revinclude specification by matching references in place
+/// over the source resource JSONB (no sidecar index table).
 async fn resolve_revinclude(
     pool: &PgPool,
     main_results: &[StoredResource],
     revinclude: &octofhir_search::RevIncludeSpec,
+    registry: &SearchParameterRegistry,
 ) -> Result<Vec<StoredResource>, StorageError> {
     if revinclude.iterate {
-        return resolve_revinclude_iterate(pool, main_results, revinclude).await;
+        return resolve_revinclude_iterate(pool, main_results, revinclude, registry).await;
     }
 
     if main_results.is_empty() {
@@ -1188,13 +1201,14 @@ async fn resolve_revinclude(
         .map(|r| r.resource_type.as_str())
         .unwrap_or("");
 
-    resolve_revinclude_once(pool, main_type, main_results, revinclude).await
+    resolve_revinclude_once(pool, main_type, main_results, revinclude, registry).await
 }
 
 async fn resolve_revinclude_iterate(
     pool: &PgPool,
     main_results: &[StoredResource],
     revinclude: &octofhir_search::RevIncludeSpec,
+    registry: &SearchParameterRegistry,
 ) -> Result<Vec<StoredResource>, StorageError> {
     let mut visited: HashSet<(String, String)> = main_results
         .iter()
@@ -1218,7 +1232,8 @@ async fn resolve_revinclude_iterate(
 
         current = Vec::new();
         for (target_type, targets) in groups {
-            let next = resolve_revinclude_once(pool, &target_type, &targets, revinclude).await?;
+            let next =
+                resolve_revinclude_once(pool, &target_type, &targets, revinclude, registry).await?;
             for entry in next {
                 let key = (entry.resource_type.clone(), entry.id.clone());
                 if visited.insert(key) {
@@ -1237,6 +1252,7 @@ async fn resolve_revinclude_once(
     target_type: &str,
     target_results: &[StoredResource],
     revinclude: &octofhir_search::RevIncludeSpec,
+    registry: &SearchParameterRegistry,
 ) -> Result<Vec<StoredResource>, StorageError> {
     if revinclude
         .target_type
@@ -1255,19 +1271,24 @@ async fn resolve_revinclude_once(
     let table = SchemaManager::table_name(source_type);
     let param_name = &revinclude.param_name;
 
-    // Use index table: find source resources that reference any of the target IDs
+    let Some(ref_array) = reference_array_sql(registry, source_type, param_name, "s.resource")
+    else {
+        return Ok(Vec::new());
+    };
+
+    // Find source resources whose reference (in place) points at any target id.
     let sql = format!(
         r#"SELECT DISTINCT s.resource, s.id, s.txid, s.created_at, s.updated_at
-           FROM search_idx_reference sir
-           JOIN "{table}" s ON s.id = sir.resource_id AND s.status != 'deleted'
-           WHERE sir.resource_type = $1 AND sir.param_code = $2
-           AND sir.ref_kind = 1 AND sir.target_type = $3
-           AND sir.target_id = ANY($4::text[])"#
+           FROM "{table}" s
+           WHERE s.status != 'deleted'
+           AND EXISTS (
+             SELECT 1 FROM jsonb_array_elements({ref_array}) AS ref
+             CROSS JOIN LATERAL (SELECT regexp_match(ref->>'reference', '{REFERENCE_TYPE_ID_RE}') AS m) x
+             WHERE x.m[1] = $1 AND x.m[2] = ANY($2::text[])
+           )"#
     );
 
     let rows: Vec<(Value, String, i64, DateTime<Utc>, DateTime<Utc>)> = query_as(&sql)
-        .bind(source_type)
-        .bind(param_name)
         .bind(target_type)
         .bind(&target_ids)
         .fetch_all(pool)
@@ -1310,18 +1331,19 @@ async fn resolve_includes_revincludes_raw(
     main_results: &[RawStoredResource],
     includes: &[octofhir_search::IncludeSpec],
     revincludes: &[octofhir_search::RevIncludeSpec],
+    registry: &SearchParameterRegistry,
 ) -> Result<Vec<RawStoredResource>, StorageError> {
     use futures_util::future::try_join_all;
 
     let include_futures: Vec<_> = includes
         .iter()
-        .map(|include| resolve_include_raw(pool, main_results, include))
+        .map(|include| resolve_include_raw(pool, main_results, include, registry))
         .collect();
 
     let revinclude_futures: Vec<_> = revincludes
         .iter()
         .map(|revinclude| {
-            resolve_revinclude_raw(pool, main_resource_type, main_results, revinclude)
+            resolve_revinclude_raw(pool, main_resource_type, main_results, revinclude, registry)
         })
         .collect();
 
@@ -1336,26 +1358,26 @@ async fn resolve_includes_revincludes_raw(
     Ok(included)
 }
 
-/// Resolve a single _include specification using raw JSON and the index table.
-///
-/// Uses B-tree index scan on `search_idx_reference` to find referenced resource IDs
-/// instead of parsing JSONB at runtime. Returns resources as raw JSON strings.
+/// Resolve a single _include specification using raw JSON, matching references
+/// in place over the source resource JSONB (no sidecar index table).
 async fn resolve_include_raw(
     pool: &PgPool,
     main_results: &[RawStoredResource],
     include: &octofhir_search::IncludeSpec,
+    registry: &SearchParameterRegistry,
 ) -> Result<Vec<RawStoredResource>, StorageError> {
     if include.iterate {
-        return resolve_include_iterate_raw(pool, main_results, include).await;
+        return resolve_include_iterate_raw(pool, main_results, include, registry).await;
     }
 
-    resolve_include_once_raw(pool, main_results, include).await
+    resolve_include_once_raw(pool, main_results, include, registry).await
 }
 
 async fn resolve_include_iterate_raw(
     pool: &PgPool,
     main_results: &[RawStoredResource],
     include: &octofhir_search::IncludeSpec,
+    registry: &SearchParameterRegistry,
 ) -> Result<Vec<RawStoredResource>, StorageError> {
     let mut visited: HashSet<(String, String)> = main_results
         .iter()
@@ -1373,7 +1395,7 @@ async fn resolve_include_iterate_raw(
             break;
         }
 
-        let next = resolve_include_once_raw(pool, &current, include).await?;
+        let next = resolve_include_once_raw(pool, &current, include, registry).await?;
         current = Vec::new();
         for entry in next {
             let key = (entry.resource_type.clone(), entry.id.clone());
@@ -1393,6 +1415,7 @@ async fn resolve_include_once_raw(
     pool: &PgPool,
     main_results: &[RawStoredResource],
     include: &octofhir_search::IncludeSpec,
+    registry: &SearchParameterRegistry,
 ) -> Result<Vec<RawStoredResource>, StorageError> {
     if main_results.is_empty() {
         return Ok(Vec::new());
@@ -1414,14 +1437,23 @@ async fn resolve_include_once_raw(
     let target_types = if let Some(target_type) = include.target_type.as_ref() {
         vec![target_type.clone()]
     } else {
-        query_include_target_types(pool, source_type, param_name, &source_ids).await?
+        registry
+            .get(source_type, param_name)
+            .map(|p| p.target.clone())
+            .unwrap_or_default()
     };
 
     let mut entries = Vec::new();
     for target_type in target_types {
-        let mut matched =
-            query_include_for_target_raw(pool, source_type, param_name, &source_ids, &target_type)
-                .await?;
+        let mut matched = query_include_for_target_raw(
+            pool,
+            source_type,
+            param_name,
+            &source_ids,
+            &target_type,
+            registry,
+        )
+        .await?;
         entries.append(&mut matched);
     }
 
@@ -1434,22 +1466,26 @@ async fn query_include_for_target_raw(
     param_name: &str,
     source_ids: &[&str],
     target_type: &str,
+    registry: &SearchParameterRegistry,
 ) -> Result<Vec<RawStoredResource>, StorageError> {
+    let Some(ref_array) = reference_array_sql(registry, source_type, param_name, "s.resource")
+    else {
+        return Ok(Vec::new());
+    };
+    let source_table = SchemaManager::table_name(source_type);
     let table = SchemaManager::table_name(target_type);
 
     let sql = format!(
         r#"SELECT DISTINCT t.resource::text, t.id, t.txid, t.created_at, t.updated_at
-           FROM search_idx_reference sir
-           JOIN "{table}" t ON t.id = sir.target_id AND t.status != 'deleted'
-           WHERE sir.resource_type = $1 AND sir.resource_id = ANY($2::text[])
-           AND sir.param_code = $3 AND sir.ref_kind = 1
-           AND sir.target_type = $4"#
+           FROM "{source_table}" s
+           CROSS JOIN LATERAL jsonb_array_elements({ref_array}) AS ref
+           CROSS JOIN LATERAL (SELECT regexp_match(ref->>'reference', '{REFERENCE_TYPE_ID_RE}') AS m) x
+           JOIN "{table}" t ON t.id = x.m[2] AND t.status != 'deleted'
+           WHERE s.id = ANY($1::text[]) AND s.status != 'deleted' AND x.m[1] = $2"#
     );
 
     let rows: Vec<(String, String, i64, DateTime<Utc>, DateTime<Utc>)> = query_as(&sql)
-        .bind(source_type)
         .bind(source_ids)
-        .bind(param_name)
         .bind(target_type)
         .fetch_all(pool)
         .await
@@ -1483,31 +1519,31 @@ async fn query_include_for_target_raw(
     Ok(entries)
 }
 
-/// Resolve a single _revinclude specification using raw JSON and the index table.
-///
-/// Uses B-tree index scan on `search_idx_reference` to find resources that reference
-/// the main results, instead of runtime JSONB ->> extraction.
+/// Resolve a single _revinclude specification using raw JSON, matching
+/// references in place over the source resource JSONB (no sidecar index table).
 async fn resolve_revinclude_raw(
     pool: &PgPool,
     main_resource_type: &str,
     main_results: &[RawStoredResource],
     revinclude: &octofhir_search::RevIncludeSpec,
+    registry: &SearchParameterRegistry,
 ) -> Result<Vec<RawStoredResource>, StorageError> {
     if revinclude.iterate {
-        return resolve_revinclude_iterate_raw(pool, main_results, revinclude).await;
+        return resolve_revinclude_iterate_raw(pool, main_results, revinclude, registry).await;
     }
 
     if main_results.is_empty() {
         return Ok(Vec::new());
     }
 
-    resolve_revinclude_once_raw(pool, main_resource_type, main_results, revinclude).await
+    resolve_revinclude_once_raw(pool, main_resource_type, main_results, revinclude, registry).await
 }
 
 async fn resolve_revinclude_iterate_raw(
     pool: &PgPool,
     main_results: &[RawStoredResource],
     revinclude: &octofhir_search::RevIncludeSpec,
+    registry: &SearchParameterRegistry,
 ) -> Result<Vec<RawStoredResource>, StorageError> {
     let mut visited: HashSet<(String, String)> = main_results
         .iter()
@@ -1532,7 +1568,8 @@ async fn resolve_revinclude_iterate_raw(
         current = Vec::new();
         for (target_type, targets) in groups {
             let next =
-                resolve_revinclude_once_raw(pool, &target_type, &targets, revinclude).await?;
+                resolve_revinclude_once_raw(pool, &target_type, &targets, revinclude, registry)
+                    .await?;
             for entry in next {
                 let key = (entry.resource_type.clone(), entry.id.clone());
                 if visited.insert(key) {
@@ -1551,6 +1588,7 @@ async fn resolve_revinclude_once_raw(
     target_type: &str,
     target_results: &[RawStoredResource],
     revinclude: &octofhir_search::RevIncludeSpec,
+    registry: &SearchParameterRegistry,
 ) -> Result<Vec<RawStoredResource>, StorageError> {
     if revinclude
         .target_type
@@ -1569,19 +1607,24 @@ async fn resolve_revinclude_once_raw(
     let table = SchemaManager::table_name(source_type);
     let param_name = &revinclude.param_name;
 
-    // Use index table: find source resources that reference any of the target IDs
+    let Some(ref_array) = reference_array_sql(registry, source_type, param_name, "s.resource")
+    else {
+        return Ok(Vec::new());
+    };
+
+    // Find source resources whose reference (in place) points at any target id.
     let sql = format!(
         r#"SELECT DISTINCT s.resource::text, s.id, s.txid, s.created_at, s.updated_at
-           FROM search_idx_reference sir
-           JOIN "{table}" s ON s.id = sir.resource_id AND s.status != 'deleted'
-           WHERE sir.resource_type = $1 AND sir.param_code = $2
-           AND sir.ref_kind = 1 AND sir.target_type = $3
-           AND sir.target_id = ANY($4::text[])"#
+           FROM "{table}" s
+           WHERE s.status != 'deleted'
+           AND EXISTS (
+             SELECT 1 FROM jsonb_array_elements({ref_array}) AS ref
+             CROSS JOIN LATERAL (SELECT regexp_match(ref->>'reference', '{REFERENCE_TYPE_ID_RE}') AS m) x
+             WHERE x.m[1] = $1 AND x.m[2] = ANY($2::text[])
+           )"#
     );
 
     let rows: Vec<(String, String, i64, DateTime<Utc>, DateTime<Utc>)> = query_as(&sql)
-        .bind(source_type)
-        .bind(param_name)
         .bind(target_type)
         .bind(&target_ids)
         .fetch_all(pool)

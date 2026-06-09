@@ -3,22 +3,20 @@
 //! This module bridges the modern `SearchParams` type (from octofhir-storage)
 //! to the SQL query builder, enabling search via the FhirStorage trait.
 
-use crate::chaining::{build_chained_search, is_chained_parameter, parse_chained_parameter};
 use crate::include::{is_include_parameter, is_revinclude_parameter};
 use crate::ir::{
-    CompositeClause, IdClause, NumberClause, QuantityClause, ReferenceClause, ResourceColumnParam,
-    SearchDebugPlan, StringClause, TokenClause, TokenIndexShape, build_composite_debug_plan,
-    build_date_debug_plan, build_number_debug_plan, build_quantity_debug_plan,
-    build_reference_debug_plan, build_string_debug_plan, build_string_text_debug_predicate,
-    build_token_debug_plan, render_date_clauses_as_or, render_id_clauses_as_or,
-    resolve_composite_component_specs, resolve_resource_column_param, rewrite_date_clauses,
+    ChainClause, CompositeClause, HasClause, IdClause, NumberClause, QuantityClause,
+    ReferenceClause, ResourceColumnParam, SearchDebugPlan, StringClause, TokenClause,
+    TokenIndexShape, build_composite_debug_plan, build_date_debug_plan, build_number_debug_plan,
+    build_quantity_debug_plan, build_reference_debug_plan, build_string_debug_plan,
+    build_string_text_debug_predicate, build_token_debug_plan, is_chained_parameter,
+    is_reverse_chain_parameter, render_chain_clause, render_date_inplace_clauses_as_or,
+    render_has_clause, render_id_clauses_as_or, resolve_composite_component_specs,
+    resolve_resource_column_param, rewrite_date_clauses,
 };
 use crate::parameters::{ElementTypeHint, SearchParameter, SearchParameterType, SearchPrefix};
 use crate::parser::{ParsedParam, ParsedValue};
 use crate::registry::SearchParameterRegistry;
-use crate::reverse_chaining::{
-    build_reverse_chain_search, is_reverse_chain_parameter, parse_reverse_chain,
-};
 use crate::sql_builder::{
     FhirQueryBuilder, IncludeSpec, JsonbPath, RevIncludeSpec, SearchCondition, SortOrder, SortSpec,
     SqlBuilder, SqlBuilderError, SqlValue, fhirpath_to_jsonb_path,
@@ -199,7 +197,8 @@ pub fn build_native_ir_query_from_params_with_config(
         }
 
         // Fold repeated date-param occurrences with `{ge,gt}` and `{le,lt}`
-        // bounds into one combined `&&` predicate over `search_idx_date`.
+        // bounds into one combined `&&` predicate over the functional
+        // date-range expression on the resource JSONB.
         if try_fold_repeated_date_window(
             &mut sql_builder,
             debug_plan.as_mut(),
@@ -467,7 +466,18 @@ fn try_fold_repeated_date_window(
         return Ok(false);
     }
 
-    if let Some(sql) = render_date_clauses_as_or(sql_builder, &merged) {
+    let expression = param_def.expression.as_deref().unwrap_or_default();
+    let segments = fhirpath_to_jsonb_path(expression, resource_type);
+    let paths = crate::sql_builder::extraction_paths(&segments, &param_def.element_type_hint);
+    let paths_json = crate::sql_builder::paths_to_json(&paths);
+    let col = sql_builder.resource_column();
+    let min_expr = format!("fhir_extract_date_min({col}, '{paths_json}'::jsonb)");
+    let max_expr = format!("fhir_extract_date_max({col}, '{paths_json}'::jsonb)");
+    let range_expr = format!("tstzrange({min_expr}, {max_expr}, '[]')");
+
+    if let Some(sql) =
+        render_date_inplace_clauses_as_or(sql_builder, &merged, &range_expr, &min_expr)
+    {
         sql_builder.add_condition(sql);
     }
     append_date_debug_plan(debug_plan, resource_type, &merged);
@@ -776,8 +786,8 @@ fn extract_prefix(value: &str) -> (Option<SearchPrefix>, &str) {
 
 /// Handle chained search parameter (e.g., patient.name=John).
 ///
-/// Uses the `search_idx_reference` index table for B-tree lookups instead of
-/// runtime JSONB extraction and CONCAT matching.
+/// Renders in-place JSONB reference traversal joined to the target resource
+/// table; no sidecar lookup tables are involved.
 /// Build reverse-chain (`_has`) conditions for one parameter key.
 ///
 /// FHIR R4 §3.1.1.5.4 (search.html#has). Each `&`-occurrence emits one
@@ -791,7 +801,7 @@ fn handle_has_param(
     base_type: &str,
 ) -> Result<(), SqlBuilderError> {
     for value in values {
-        match parse_reverse_chain(key, value, registry, base_type) {
+        match HasClause::parse(key, value, registry) {
             Ok(rc) => {
                 tracing::debug!(
                     source = %rc.source_type,
@@ -799,7 +809,7 @@ fn handle_has_param(
                     value = %value,
                     "Processing _has occurrence"
                 );
-                build_reverse_chain_search(sql_builder, &rc, base_type, registry)
+                render_has_clause(sql_builder, &rc, base_type, registry)
                     .map_err(|e| SqlBuilderError::InvalidSearchValue(e.to_string()))?;
             }
             Err(e) => {
@@ -824,8 +834,7 @@ fn handle_has_param(
 /// the same chained parameter (e.g. `subject:Patient.name=A&subject:Patient.name=B`)
 /// AND independently — each link in the chain must match the corresponding value.
 /// Comma-separated values inside a single occurrence still OR via the inner
-/// parameter handler (build_chained_search routes through dispatch_search which
-/// already handles comma-OR).
+/// parameter handler (render_chain_clause handles comma-OR).
 ///
 /// Each `&`-occurrence emits one top-level condition that SqlBuilder AND's.
 fn handle_chained_param(
@@ -838,7 +847,7 @@ fn handle_chained_param(
     resource_type: &str,
 ) -> Result<(), SqlBuilderError> {
     for value in values {
-        match parse_chained_parameter(key, value, registry, resource_type) {
+        match ChainClause::parse(key, value, registry, resource_type) {
             Ok(chained) => {
                 tracing::debug!(
                     chain = ?chained.chain,
@@ -846,7 +855,7 @@ fn handle_chained_param(
                     value = %value,
                     "Processing chained parameter occurrence"
                 );
-                build_chained_search(sql_builder, &chained, resource_type, registry)
+                render_chain_clause(sql_builder, &chained, resource_type, registry)
                     .map_err(|e| SqlBuilderError::InvalidSearchValue(e.to_string()))?;
             }
             Err(e) => {
@@ -1315,17 +1324,17 @@ mod tests {
             (
                 "Patient",
                 "birthdate=ge1980-01-01&birthdate=le2000-12-31&_count=10",
-                ["search_idx_date", "tstzrange"],
+                ["fhir_extract_date_min", "tstzrange"],
             ),
             (
                 "Patient",
                 "family=Smith&_count=10",
-                ["search_idx_string", "value_norm LIKE"],
+                ["fhir_text_blob(fhir_extract_text", "LIKE $"],
             ),
             (
                 "Patient",
                 "family:exact=Smith&_count=10",
-                ["search_idx_string", "value_exact ="],
+                ["= ANY(fhir_extract_text", "ORDER BY"],
             ),
             (
                 "Patient",
@@ -1340,22 +1349,22 @@ mod tests {
             (
                 "Observation",
                 "subject=Patient/pat-1&_count=10",
-                ["search_idx_reference", "target_id ="],
+                ["ref->>'reference'", "jsonb_array_elements"],
             ),
             (
                 "Observation",
                 "subject:Patient.family=Smith&_count=10",
-                ["search_idx_reference", "search_idx_string"],
+                ["fhir_text_blob(fhir_extract_text", "ref->>'reference'"],
             ),
             (
                 "Patient",
                 "_has:Observation:subject:code=http://loinc.org|8480-6&_count=10",
-                ["search_idx_reference", "has0.resource @>"],
+                ["has0.resource @>", "ref->>'reference'"],
             ),
             (
                 "Observation",
                 "value-quantity=ge100|http://unitsofmeasure.org|mm[Hg]&_count=10",
-                ["search_idx_quantity", "siq.value_num"],
+                ["r.resource->'valueQuantity'->>'value'", "::numeric"],
             ),
         ];
 
@@ -1752,10 +1761,10 @@ mod tests {
         assert_eq!(
             built
                 .sql
-                .matches("EXISTS (SELECT 1 FROM search_idx_date")
+                .matches("<@ tstzrange(")
                 .count(),
             2,
-            "two comma values should produce two OR'd EXISTS clauses: {}",
+            "two comma values should produce two OR'd in-place range predicates: {}",
             built.sql
         );
     }
@@ -1774,13 +1783,12 @@ mod tests {
             "comma-separated prefixed dates must OR, got: {}",
             built.sql
         );
-        assert_eq!(
-            built
-                .sql
-                .matches("EXISTS (SELECT 1 FROM search_idx_date")
-                .count(),
-            2,
-            "two prefixed comma values should produce two OR'd EXISTS clauses: {}",
+        // lt renders `&& tstzrange(NULL, ..)`; ge renders an overlap+contains OR.
+        // Both in-place range predicates must be present, OR'd together.
+        assert!(
+            built.sql.contains("&& tstzrange(NULL,")
+                && built.sql.contains("<@ tstzrange("),
+            "two prefixed comma values should produce two OR'd in-place range predicates: {}",
             built.sql
         );
         let rendered_params = built
@@ -1797,11 +1805,11 @@ mod tests {
     }
 
     #[test]
-    fn date_missing_modifier_uses_sidecar_existence() {
+    fn date_missing_modifier_uses_inplace_null_check() {
         let registry = date_registry_with_expression();
         let cases = [
-            ("birthdate:missing=true&_count=5", "NOT EXISTS"),
-            ("birthdate:missing=false&_count=5", "EXISTS"),
+            ("birthdate:missing=true&_count=5", "IS NULL"),
+            ("birthdate:missing=false&_count=5", "IS NOT NULL"),
         ];
 
         for (query, expected_sql) in cases {
@@ -1811,8 +1819,9 @@ mod tests {
             let built = converted.builder.with_raw_resource(true).build().unwrap();
 
             assert!(
-                built.sql.contains(expected_sql) && built.sql.contains("search_idx_date"),
-                "date :missing should use sidecar existence SQL, got: {}",
+                built.sql.contains(expected_sql)
+                    && built.sql.contains("fhir_extract_date_min(r.resource"),
+                "date :missing should use in-place date-min NULL check, got: {}",
                 built.sql
             );
             assert!(
@@ -1841,19 +1850,17 @@ mod tests {
         let built = converted.builder.with_raw_resource(true).build().unwrap();
 
         assert!(
-            built
-                .sql
-                .contains(") AND EXISTS (SELECT 1 FROM search_idx_date"),
+            built.sql.contains("'[)') AND tstzrange(fhir_extract_date_min(r.resource"),
             "repeated date params must AND occurrences, got: {}",
             built.sql
         );
         assert_eq!(
             built
                 .sql
-                .matches("EXISTS (SELECT 1 FROM search_idx_date")
+                .matches("<@ tstzrange(")
                 .count(),
             2,
-            "two repeated values should produce two AND'd EXISTS clauses: {}",
+            "two repeated values should produce two AND'd in-place range predicates: {}",
             built.sql
         );
     }
@@ -1889,11 +1896,16 @@ mod tests {
         );
         assert_eq!(plan.predicates[0].param_code, "birthdate");
         assert!(plan.predicates[0].index_backed);
-        assert!(plan.predicates[0].sql_shape.contains("sid.rng &&"));
+        assert!(
+            plan.predicates[0]
+                .sql_shape
+                .contains("tstzrange(fhir_extract_date_min(resource, paths)")
+        );
+        assert!(plan.predicates[0].sql_shape.contains("&& tstzrange("));
 
         let json = serde_json::to_string(&plan).unwrap();
-        assert!(json.contains("sidecar_date"));
-        assert!(json.contains("search_idx_date_*_param_code_rng_idx"));
+        assert!(json.contains("jsonb_expression_index"));
+        assert!(json.contains("idx_patient_birthdate_date"));
         assert!(
             !json.contains("2000-01-01") && !json.contains("2000-12-31"),
             "debug output must stay redacted: {json}"
@@ -1926,20 +1938,24 @@ mod tests {
         assert!(plan.predicates[0].index_backed);
         assert_eq!(
             plan.predicates[0].strategy,
-            crate::ir::IndexStrategy::SidecarString
+            crate::ir::IndexStrategy::JsonbExpressionIndex
         );
-        assert!(plan.predicates[0].sql_shape.contains("sid.value_norm LIKE"));
+        assert!(
+            plan.predicates[0]
+                .sql_shape
+                .contains("fhir_text_blob(fhir_extract_text(resource, paths)) LIKE")
+        );
 
         let built = converted.builder.with_raw_resource(true).build().unwrap();
         assert!(
-            built.sql.contains("search_idx_string") && built.sql.contains("sid.value_norm LIKE"),
-            "string runtime path must use sidecar SQL, got: {}",
+            built.sql.contains("fhir_text_blob(fhir_extract_text") && built.sql.contains("LIKE $"),
+            "string runtime path must use in-place text-blob SQL, got: {}",
             built.sql
         );
 
         let json = serde_json::to_string(&plan).unwrap();
-        assert!(json.contains("sidecar_string"));
-        assert!(json.contains("search_idx_string_*_param_code_value_norm_trgm_idx"));
+        assert!(json.contains("jsonb_expression_index"));
+        assert!(json.contains("idx_patient_family_str"));
         assert!(
             !json.contains("Smíth") && !json.contains("smith"),
             "debug output must stay redacted: {json}"
@@ -1947,15 +1963,23 @@ mod tests {
     }
 
     #[test]
-    fn string_query_builder_uses_sidecar_normalization_and_exact_raw_value() {
+    fn string_query_builder_uses_inplace_normalization_and_exact_raw_value() {
         let registry = string_registry_with_expression();
         let cases = [
-            ("family=Müller", "sid.value_norm LIKE", "muller%"),
-            ("family=Van+Pelt", "sid.value_norm LIKE", "van pelt%"),
-            ("family:contains=Müller", "sid.value_norm LIKE", "%muller%"),
-            ("family:exact=Müller", "sid.value_exact =", "Müller"),
-            ("family:exact=Smith", "sid.value_exact =", "Smith"),
-            ("family:exact=smith", "sid.value_exact =", "smith"),
+            ("family=Müller", "fhir_text_blob(fhir_extract_text", "muller%"),
+            (
+                "family=Van+Pelt",
+                "fhir_text_blob(fhir_extract_text",
+                "van pelt%",
+            ),
+            (
+                "family:contains=Müller",
+                "fhir_text_blob(fhir_extract_text",
+                "%muller%",
+            ),
+            ("family:exact=Müller", "= ANY(fhir_extract_text", "Müller"),
+            ("family:exact=Smith", "= ANY(fhir_extract_text", "Smith"),
+            ("family:exact=smith", "= ANY(fhir_extract_text", "smith"),
         ];
 
         for (query, expected_sql, expected_param) in cases {
@@ -1965,8 +1989,8 @@ mod tests {
             let built = converted.builder.with_raw_resource(true).build().unwrap();
 
             assert!(
-                built.sql.contains("search_idx_string") && built.sql.contains(expected_sql),
-                "string query should use sidecar SQL, got: {}",
+                built.sql.contains(expected_sql),
+                "string query should use in-place SQL, got: {}",
                 built.sql
             );
             assert!(
@@ -2024,20 +2048,22 @@ mod tests {
         .unwrap();
         let built = converted.builder.with_raw_resource(true).build().unwrap();
         assert!(
-            built.sql.contains("search_idx_number") && built.sql.contains("sin.value_num"),
-            "number runtime path should use sidecar number index, got: {}",
+            built.sql.contains("::numeric >= $1::numeric"),
+            "number runtime path should use in-place numeric comparison, got: {}",
             built.sql
         );
         let plan = converted.debug_plan.expect("debug plan collected");
         assert_eq!(
             plan.predicates[0].strategy,
-            crate::ir::IndexStrategy::SidecarNumber
+            crate::ir::IndexStrategy::JsonbTraversal
         );
-        assert!(plan.predicates[0].index_backed);
+        assert!(!plan.predicates[0].index_backed);
+        assert_eq!(plan.predicates[0].expected_index, None);
+        assert!(plan.predicates[0].sql_shape.contains("::numeric"));
     }
 
     #[test]
-    fn quantity_query_uses_sidecar_quantity_index() {
+    fn quantity_query_uses_inplace_numeric_and_gin_containment() {
         let registry = quantity_registry_with_expression();
         let params = parse_query_string(
             "value-quantity=5.5|http://unitsofmeasure.org|mg&_count=5",
@@ -2059,20 +2085,23 @@ mod tests {
         .unwrap();
         let built = converted.builder.with_raw_resource(true).build().unwrap();
         assert!(
-            built.sql.contains("search_idx_quantity")
-                && built.sql.contains("siq.value_num")
-                && built.sql.contains("siq.system")
-                && built.sql.contains("siq.code")
-                && built.sql.contains("siq.unit"),
-            "quantity runtime path should use sidecar quantity index, got: {}",
+            built.sql.contains("r.resource->'valueQuantity'->>'value'")
+                && built.sql.contains("::numeric")
+                && built.sql.contains("r.resource @>"),
+            "quantity runtime path should use in-place numeric + containment SQL, got: {}",
             built.sql
         );
         let plan = converted.debug_plan.expect("debug plan collected");
         assert_eq!(
             plan.predicates[0].strategy,
-            crate::ir::IndexStrategy::SidecarQuantity
+            crate::ir::IndexStrategy::JsonbContainment
         );
         assert!(plan.predicates[0].index_backed);
+        assert_eq!(
+            plan.predicates[0].expected_index,
+            Some("idx_observation_gin".to_string())
+        );
+        assert!(plan.predicates[0].sql_shape.contains("resource @>"));
     }
 
     #[test]
@@ -2106,7 +2135,7 @@ mod tests {
     }
 
     #[test]
-    fn reference_missing_uses_reference_sidecar() {
+    fn reference_missing_uses_inplace_presence_check() {
         let registry = reference_registry_with_expression();
         let params = parse_query_string("subject:missing=true&_count=5", 10, 100);
         let config = SearchConfig {
@@ -2123,9 +2152,12 @@ mod tests {
         )
         .unwrap();
         let built = converted.builder.with_raw_resource(true).build().unwrap();
-        assert!(built.sql.contains("search_idx_reference"));
-        assert!(built.sql.contains("NOT EXISTS"));
-        assert!(!built.sql.contains("r.resource->'subject'"));
+        // :missing=true matches when the reference element is absent/empty in-place.
+        assert!(
+            built.sql.contains("r.resource->'subject' IS NULL"),
+            "reference :missing should use in-place presence check, got: {}",
+            built.sql
+        );
     }
 
     #[test]
@@ -2365,7 +2397,7 @@ mod tests {
     }
 
     #[test]
-    fn reference_debug_plan_marks_sidecar_path_and_runtime_uses_index_only() {
+    fn reference_debug_plan_marks_inplace_traversal_and_runtime_matches() {
         let registry = reference_registry_with_expression();
         let params = parse_query_string("subject=Patient/pat-123&_count=5", 10, 100);
         let config = SearchConfig {
@@ -2392,19 +2424,19 @@ mod tests {
         );
         assert_eq!(
             plan.predicates[0].strategy,
-            crate::ir::IndexStrategy::SidecarReference
+            crate::ir::IndexStrategy::JsonbTraversal
         );
-        assert!(plan.predicates[0].index_backed);
-        assert_eq!(
-            plan.predicates[0].expected_index,
-            Some("idx_ref_local".to_string())
-        );
-        assert!(plan.predicates[0].sql_shape.contains("target_type"));
+        assert!(!plan.predicates[0].index_backed);
+        assert_eq!(plan.predicates[0].expected_index, None);
+        assert!(plan.predicates[0].sql_shape.contains("jsonb_array_elements"));
+        assert!(plan.predicates[0].sql_shape.contains("ref->>'reference'"));
+        assert!(plan.predicates[0].sql_shape.contains("$target_type"));
 
         let built = converted.builder.with_raw_resource(true).build().unwrap();
         assert!(
-            built.sql.contains("search_idx_reference") && !built.sql.contains(" OR "),
-            "reference runtime path should use sidecar only, got: {}",
+            built.sql.contains("ref->>'reference'")
+                && built.sql.contains("jsonb_array_elements"),
+            "reference runtime path should use in-place reference traversal, got: {}",
             built.sql
         );
         assert!(
@@ -2414,7 +2446,7 @@ mod tests {
         );
 
         let json = serde_json::to_string(&plan).unwrap();
-        assert!(json.contains("sidecar_reference"));
+        assert!(json.contains("jsonb_traversal"));
         assert!(
             !json.contains("pat-123") && !json.contains("Patient/pat-123"),
             "debug output must stay redacted: {json}"
@@ -2445,15 +2477,24 @@ mod tests {
         let plan = converted.debug_plan.expect("debug plan collected");
 
         assert_eq!(
-            plan.predicates[0].expected_index,
-            Some("idx_ref_identifier".to_string())
+            plan.predicates[0].strategy,
+            crate::ir::IndexStrategy::JsonbContainment
         );
-        assert!(plan.predicates[0].sql_shape.contains("identifier_system"));
+        assert!(plan.predicates[0].index_backed);
+        assert_eq!(
+            plan.predicates[0].expected_index,
+            Some("idx_observation_gin".to_string())
+        );
+        assert!(
+            plan.predicates[0]
+                .sql_shape
+                .contains("identifier: [{system: $system, value: $value}]")
+        );
 
         let built = converted.builder.with_raw_resource(true).build().unwrap();
         assert!(
-            built.sql.contains("ref_kind = 4") && built.sql.contains("identifier_value"),
-            "reference :identifier runtime path should use reference sidecar, got: {}",
+            built.sql.contains("r.resource->'subject'->'identifier' @>"),
+            "reference :identifier runtime path should use in-place identifier containment, got: {}",
             built.sql
         );
 
@@ -2482,14 +2523,15 @@ mod tests {
         assert!(folded, "gt+lt must fold");
         let clause = builder.build_where_clause().unwrap();
         assert!(
-            clause.contains("sid.rng && tstzrange(")
+            clause.contains("fhir_extract_date_min(r.resource")
+                && clause.contains("&& tstzrange(")
                 && clause.contains("'[)')")
-                && clause.matches("EXISTS").count() == 1,
-            "folded clause must have one EXISTS with `&& tstzrange(.., '[)')`: {clause}"
+                && clause.matches("&& tstzrange(").count() == 1,
+            "folded clause must have one in-place range overlap with `&& tstzrange(.., '[)')`: {clause}"
         );
         assert!(
-            !clause.contains(" AND EXISTS"),
-            "no second EXISTS allowed in folded form: {clause}"
+            !clause.contains(" AND tstzrange("),
+            "no second range predicate allowed in folded form: {clause}"
         );
     }
 
@@ -2666,8 +2708,9 @@ mod tests {
     fn fold_refuses_last_updated() {
         let registry = SearchParameterRegistry::new();
         crate::common::register_common_parameters(&registry);
-        // `_lastUpdated` is a common param; it maps to `r.updated_at`, not
-        // search_idx_date, so the fold MUST refuse it even if both bounds match.
+        // `_lastUpdated` is a common param; it maps to `r.updated_at`, not the
+        // JSONB date-range expression, so the fold MUST refuse it even if both
+        // bounds match.
         let mut builder = SqlBuilder::with_resource_column("r.resource");
         let folded = try_fold_repeated_date_window(
             &mut builder,
@@ -2678,7 +2721,7 @@ mod tests {
             "Patient",
         )
         .unwrap();
-        assert!(!folded, "_lastUpdated must never fold to search_idx_date");
+        assert!(!folded, "_lastUpdated must never fold to the JSONB date window");
     }
 
     #[test]

@@ -1,20 +1,19 @@
 use serde::{Deserialize, Serialize};
 
 /// Physical search strategy selected for a typed FHIR predicate.
+///
+/// All predicates render in-place over the resource JSONB:
+/// - `JsonbExpressionIndex`: predicate over a functional expression that a
+///   bootstrap-created functional index (GiST/GIN) matches exactly.
+/// - `JsonbContainment`: `resource @> $jsonb`, served by the per-table
+///   `GIN (resource jsonb_path_ops)` index.
+/// - `JsonbTraversal`: plain JSONB path extraction/casts; not index-backed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum IndexStrategy {
     JsonbContainment,
     JsonbTraversal,
     JsonbExpressionIndex,
-    SidecarDate,
-    SidecarReference,
-    SidecarString,
-    SidecarToken,
-    SidecarNumber,
-    SidecarQuantity,
-    SidecarUri,
-    SidecarComposite,
     GeneratedColumn,
     Disabled,
 }
@@ -29,21 +28,40 @@ pub struct StrategyDecision {
 }
 
 impl StrategyDecision {
-    pub fn sidecar_date() -> Self {
+    /// Predicate over a functional expression matched by a bootstrap-created
+    /// functional index (e.g. `idx_{table}_{param}_date` GiST,
+    /// `idx_{table}_{param}_str` trigram GIN).
+    pub fn jsonb_expression_index(
+        expected_index: impl Into<String>,
+        reason: impl Into<String>,
+    ) -> Self {
         Self {
-            strategy: IndexStrategy::SidecarDate,
-            expected_index: Some("search_idx_date_*_param_code_rng_idx".to_string()),
+            strategy: IndexStrategy::JsonbExpressionIndex,
+            expected_index: Some(expected_index.into()),
             index_backed: true,
-            reason: "date search uses search_idx_date tstzrange GiST".to_string(),
+            reason: reason.into(),
         }
     }
 
-    pub fn sidecar_string() -> Self {
+    /// `resource @> $jsonb` containment served by the per-table
+    /// `GIN (resource jsonb_path_ops)` index (`idx_{table}_gin`).
+    pub fn jsonb_containment(expected_index: impl Into<String>, reason: impl Into<String>) -> Self {
         Self {
-            strategy: IndexStrategy::SidecarString,
-            expected_index: Some("search_idx_string_*_param_code_value_norm_trgm_idx".to_string()),
+            strategy: IndexStrategy::JsonbContainment,
+            expected_index: Some(expected_index.into()),
             index_backed: true,
-            reason: "string search uses search_idx_string normalized text indexes".to_string(),
+            reason: reason.into(),
+        }
+    }
+
+    /// Plain in-place JSONB traversal (path extraction / casts); not
+    /// index-backed.
+    pub fn jsonb_traversal(reason: impl Into<String>) -> Self {
+        Self {
+            strategy: IndexStrategy::JsonbTraversal,
+            expected_index: None,
+            index_backed: false,
+            reason: reason.into(),
         }
     }
 }

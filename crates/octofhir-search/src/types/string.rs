@@ -18,34 +18,9 @@ use crate::parser::ParsedParam;
 use crate::sql_builder::{SqlBuilder, SqlBuilderError};
 use crate::{
     ir::StringClause, ir::render_indexed_string_clauses_as_or,
-    ir::render_string_array_clauses_as_or, ir::render_string_clauses_as_or,
+    ir::render_string_array_clauses_as_or,
     ir::render_string_human_name_clauses_as_or, ir::render_string_path_clauses_as_or,
 };
-
-/// Build SQL conditions for string search against the `search_idx_string`
-/// sidecar. One row per extracted value (HumanName parts, Address parts,
-/// repeating extension strings, …), normalised to `value_norm` for
-/// case+accent-insensitive matching and `value_exact` for `:exact`.
-///
-/// Covered modifiers:
-/// - default → `value_norm LIKE 'q%'` (starts-with) via trigram GIN
-/// - `:contains` → `value_norm LIKE '%q%'` via trigram GIN
-/// - `:exact` → `value_exact = q` via btree
-/// - `:missing=true|false` → `NOT EXISTS` / `EXISTS` over the sidecar
-///
-/// `:text` falls through to the legacy JSONB path because the sidecar does
-/// not store the resource narrative.
-pub fn build_indexed_string_search(
-    builder: &mut SqlBuilder,
-    param: &ParsedParam,
-    resource_type: &str,
-) -> Result<(), SqlBuilderError> {
-    let clauses = StringClause::from_parsed_param(param, resource_type)?;
-    if let Some(sql) = render_string_clauses_as_or(builder, &clauses) {
-        builder.add_condition(sql);
-    }
-    Ok(())
-}
 
 /// In-place string search on the resource JSONB (no sidecar): predicates run over
 /// `fhir_text_blob(fhir_extract_text(col,paths))` (trigram GIN) and the raw value
@@ -244,66 +219,4 @@ mod tests {
         assert!(result.is_err());
     }
 
-    #[test]
-    fn test_indexed_string_default_uses_sidecar_prefix() {
-        let mut builder = SqlBuilder::new();
-        let param = make_param("family", "Smíth", None);
-
-        build_indexed_string_search(&mut builder, &param, "Patient").unwrap();
-
-        let clause = builder.build_where_clause().unwrap();
-        assert!(clause.contains("search_idx_string"));
-        assert!(clause.contains("sid.value_norm LIKE"));
-        assert_eq!(builder.params()[2].as_str(), "smith%");
-        assert!(!clause.contains("Smíth"));
-    }
-
-    #[test]
-    fn test_indexed_string_contains_escapes_like_pattern() {
-        let mut builder = SqlBuilder::new();
-        let param = make_param("family", "Sm_th%", Some(SearchModifier::Contains));
-
-        build_indexed_string_search(&mut builder, &param, "Patient").unwrap();
-
-        let clause = builder.build_where_clause().unwrap();
-        assert!(clause.contains("sid.value_norm LIKE"));
-        assert_eq!(builder.params()[2].as_str(), "%sm\\_th\\%%");
-    }
-
-    #[test]
-    fn test_indexed_string_prefix_preserves_spaces() {
-        let mut builder = SqlBuilder::new();
-        let param = make_param("family", "Van Hel", None);
-
-        build_indexed_string_search(&mut builder, &param, "Patient").unwrap();
-
-        let clause = builder.build_where_clause().unwrap();
-        assert!(clause.contains("sid.value_norm LIKE"));
-        assert_eq!(builder.params()[2].as_str(), "van hel%");
-    }
-
-    #[test]
-    fn test_indexed_string_exact_uses_sidecar_btree_value() {
-        let mut builder = SqlBuilder::new();
-        let param = make_param("family", "Smíth", Some(SearchModifier::Exact));
-
-        build_indexed_string_search(&mut builder, &param, "Patient").unwrap();
-
-        let clause = builder.build_where_clause().unwrap();
-        assert!(clause.contains("sid.value_exact ="));
-        assert_eq!(builder.params()[2].as_str(), "Smíth");
-    }
-
-    #[test]
-    fn test_indexed_string_missing_uses_sidecar_exists() {
-        let mut builder = SqlBuilder::new();
-        let param = make_param("family", "true", Some(SearchModifier::Missing));
-
-        build_indexed_string_search(&mut builder, &param, "Patient").unwrap();
-
-        let clause = builder.build_where_clause().unwrap();
-        assert!(clause.contains("NOT EXISTS"));
-        assert!(clause.contains("search_idx_string"));
-        assert_eq!(builder.param_count(), 2);
-    }
 }

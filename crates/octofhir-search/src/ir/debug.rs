@@ -35,7 +35,34 @@ impl SearchDebugPlan {
     }
 }
 
-/// Build safe debug output for date sidecar predicates.
+/// Symbolic form of the functional date-range expression the in-place date
+/// predicates (and the matching GiST functional index) are built on.
+const DATE_RANGE_EXPR: &str = "tstzrange(fhir_extract_date_min(resource, paths), fhir_extract_date_max(resource, paths), '[]')";
+
+/// Symbolic form of the normalized text-blob expression the in-place string
+/// predicates (and the matching trigram GIN functional index) are built on.
+const STRING_BLOB_EXPR: &str = "fhir_text_blob(fhir_extract_text(resource, paths))";
+
+/// Symbolic form of the raw extracted text array used for `:exact`/`:missing`.
+const STRING_ARRAY_EXPR: &str = "fhir_extract_text(resource, paths)";
+
+/// Name of the per-table `GIN (resource jsonb_path_ops)` containment index.
+fn gin_index_name(resource_type: &str) -> String {
+    format!("idx_{}_gin", resource_type.to_lowercase())
+}
+
+/// Name of the bootstrap-created GiST functional date index for one param.
+fn date_index_name(resource_type: &str, param_code: &str) -> String {
+    format!("idx_{}_{param_code}_date", resource_type.to_lowercase())
+}
+
+/// Name of the bootstrap-created trigram GIN functional string index.
+fn string_index_name(resource_type: &str, param_code: &str) -> String {
+    format!("idx_{}_{param_code}_str", resource_type.to_lowercase())
+}
+
+/// Build safe debug output for in-place date predicates over the functional
+/// date-range expression on the resource JSONB.
 ///
 /// SQL shapes intentionally use symbolic bind names instead of actual values.
 pub fn build_date_debug_plan(resource_type: &str, clauses: &[DateClause]) -> SearchDebugPlan {
@@ -44,7 +71,8 @@ pub fn build_date_debug_plan(resource_type: &str, clauses: &[DateClause]) -> Sea
     plan
 }
 
-/// Build safe debug output for string sidecar predicates.
+/// Build safe debug output for in-place string predicates over the normalized
+/// text-blob expression on the resource JSONB.
 ///
 /// SQL shapes intentionally use symbolic bind names instead of actual values.
 pub fn build_string_debug_plan(resource_type: &str, clauses: &[StringClause]) -> SearchDebugPlan {
@@ -55,9 +83,9 @@ pub fn build_string_debug_plan(resource_type: &str, clauses: &[StringClause]) ->
 
 /// Build safe debug output for number predicates.
 ///
-/// Current number search uses JSONB numeric casts, not a production sidecar.
-/// Mark it explicitly as non-index-backed so debug consumers do not mistake it
-/// for an optimized plan.
+/// Number search uses in-place JSONB numeric casts. Mark it explicitly as
+/// non-index-backed so debug consumers do not mistake it for an optimized
+/// plan.
 pub fn build_number_debug_plan(resource_type: &str, clauses: &[NumberClause]) -> SearchDebugPlan {
     let mut plan = SearchDebugPlan::new(resource_type);
     plan.predicates = clauses.iter().map(debug_number_clause).collect();
@@ -66,7 +94,7 @@ pub fn build_number_debug_plan(resource_type: &str, clauses: &[NumberClause]) ->
 
 /// Build safe debug output for quantity predicates.
 ///
-/// Current quantity search uses JSONB numeric casts. When system/code
+/// Quantity search uses in-place JSONB numeric casts. When system/code
 /// constraints are present, runtime also adds full-resource JSONB containment
 /// so the generic resource GIN index can prefilter before numeric comparison.
 pub fn build_quantity_debug_plan(
@@ -74,13 +102,16 @@ pub fn build_quantity_debug_plan(
     clauses: &[QuantityClause],
 ) -> SearchDebugPlan {
     let mut plan = SearchDebugPlan::new(resource_type);
-    plan.predicates = clauses.iter().map(debug_quantity_clause).collect();
+    plan.predicates = clauses
+        .iter()
+        .map(|clause| debug_quantity_clause(resource_type, clause))
+        .collect();
     plan
 }
 
 /// Build safe debug output for composite predicates.
 ///
-/// Current composite search uses independent JSONB component predicates. The
+/// Composite search uses independent in-place JSONB component predicates. The
 /// debug shape preserves tuple intent and marks co-occurrence risk explicitly.
 pub fn build_composite_debug_plan(
     resource_type: &str,
@@ -93,8 +124,8 @@ pub fn build_composite_debug_plan(
 
 /// Build safe debug output for the string `:text` fallback path.
 ///
-/// Narrative text is not stored in `search_idx_string`, so this path is
-/// deliberately marked as JSONB traversal and non-index-backed.
+/// Narrative text has no functional index, so this path is deliberately
+/// marked as JSONB traversal and non-index-backed.
 pub fn build_string_text_debug_predicate(param_code: &str) -> DebugPredicate {
     DebugPredicate {
         param_code: param_code.to_string(),
@@ -125,17 +156,31 @@ pub fn build_reference_debug_plan(
     clauses: &[ReferenceClause],
 ) -> SearchDebugPlan {
     let mut plan = SearchDebugPlan::new(resource_type);
-    plan.predicates = clauses.iter().map(debug_reference_clause).collect();
+    plan.predicates = clauses
+        .iter()
+        .map(|clause| debug_reference_clause(resource_type, clause))
+        .collect();
     plan
 }
 
 fn debug_date_clause(clause: &DateClause) -> DebugPredicate {
+    let (strategy, expected_index, index_backed) = match &clause.predicate {
+        // `:missing` checks `fhir_extract_date_min(...) IS [NOT] NULL`, which
+        // the GiST range index does not serve.
+        DatePredicate::Missing { .. } => (IndexStrategy::JsonbTraversal, None, false),
+        _ => (
+            IndexStrategy::JsonbExpressionIndex,
+            Some(date_index_name(&clause.resource_type, &clause.param_code)),
+            true,
+        ),
+    };
+
     DebugPredicate {
         param_code: clause.param_code.clone(),
         search_type: SearchParameterType::Date,
-        strategy: IndexStrategy::SidecarDate,
-        expected_index: Some("search_idx_date_*_param_code_rng_idx".to_string()),
-        index_backed: true,
+        strategy,
+        expected_index,
+        index_backed,
         sql_shape: date_sql_shape(&clause.predicate),
     }
 }
@@ -143,78 +188,86 @@ fn debug_date_clause(clause: &DateClause) -> DebugPredicate {
 fn date_sql_shape(predicate: &DatePredicate) -> String {
     match predicate {
         DatePredicate::Contains { .. } => {
-            "EXISTS search_idx_date WHERE sid.rng <@ tstzrange($lo, $hi, '[)')".to_string()
+            format!("{DATE_RANGE_EXPR} <@ tstzrange($lo, $hi, '[)')")
         }
         DatePredicate::NotContains { .. } => {
-            "NOT EXISTS search_idx_date WHERE sid.rng <@ tstzrange($lo, $hi, '[)')".to_string()
+            format!("NOT ({DATE_RANGE_EXPR} <@ tstzrange($lo, $hi, '[)'))")
         }
         DatePredicate::Overlap { lo, hi } => {
             let lo_expr = debug_bound_expr(*lo, "$lo", "NULL");
             let hi_expr = debug_bound_expr(*hi, "$hi", "NULL");
             let bounds = debug_bounds_token(*lo, *hi);
-            format!(
-                "EXISTS search_idx_date WHERE sid.rng && tstzrange({lo_expr}, {hi_expr}, '{bounds}')"
-            )
+            format!("{DATE_RANGE_EXPR} && tstzrange({lo_expr}, {hi_expr}, '{bounds}')")
         }
         DatePredicate::Ge { .. } => {
-            "EXISTS search_idx_date WHERE sid.rng && tstzrange($hi, NULL, '[)') OR sid.rng <@ tstzrange($lo, $hi, '[)')".to_string()
+            format!(
+                "{DATE_RANGE_EXPR} && tstzrange($hi, NULL, '[)') OR {DATE_RANGE_EXPR} <@ tstzrange($lo, $hi, '[)')"
+            )
         }
         DatePredicate::Le { .. } => {
-            "EXISTS search_idx_date WHERE sid.rng && tstzrange(NULL, $lo, '[)') OR sid.rng <@ tstzrange($lo, $hi, '[)')".to_string()
+            format!(
+                "{DATE_RANGE_EXPR} && tstzrange(NULL, $lo, '[)') OR {DATE_RANGE_EXPR} <@ tstzrange($lo, $hi, '[)')"
+            )
         }
         DatePredicate::StrictlyAfter { .. } => {
-            "EXISTS search_idx_date WHERE sid.rng >> tstzrange($lo, $hi, '[)')".to_string()
+            format!("lower({DATE_RANGE_EXPR}) > $hi")
         }
         DatePredicate::StrictlyBefore { .. } => {
-            "EXISTS search_idx_date WHERE sid.rng << tstzrange($lo, $hi, '[)')".to_string()
+            format!("upper({DATE_RANGE_EXPR}) < $lo")
         }
         DatePredicate::Missing { is_missing } => {
             if *is_missing {
-                "NOT EXISTS search_idx_date WHERE sid.param_code = $param".to_string()
+                "fhir_extract_date_min(resource, paths) IS NULL".to_string()
             } else {
-                "EXISTS search_idx_date WHERE sid.param_code = $param".to_string()
+                "fhir_extract_date_min(resource, paths) IS NOT NULL".to_string()
             }
         }
     }
 }
 
 fn debug_string_clause(clause: &StringClause) -> DebugPredicate {
-    let (expected_index, sql_shape) = match &clause.predicate {
+    let trgm_index = || {
+        Some(string_index_name(
+            &clause.resource_type,
+            &clause.param_code,
+        ))
+    };
+    let (strategy, expected_index, sql_shape) = match &clause.predicate {
         StringPredicate::Prefix { .. } => (
-            Some("search_idx_string_*_param_code_value_norm_trgm_idx".to_string()),
-            "EXISTS search_idx_string WHERE sid.value_norm LIKE $prefix".to_string(),
+            IndexStrategy::JsonbExpressionIndex,
+            trgm_index(),
+            format!("{STRING_BLOB_EXPR} LIKE $prefix"),
         ),
         StringPredicate::Contains { .. } => (
-            Some("search_idx_string_*_param_code_value_norm_trgm_idx".to_string()),
-            "EXISTS search_idx_string WHERE sid.value_norm LIKE $contains".to_string(),
+            IndexStrategy::JsonbExpressionIndex,
+            trgm_index(),
+            format!("{STRING_BLOB_EXPR} LIKE $contains"),
         ),
-        StringPredicate::Exact { .. } => (
-            Some("search_idx_string_*_param_code_value_exact_btree_idx".to_string()),
-            "EXISTS search_idx_string WHERE sid.value_exact = $exact".to_string(),
-        ),
+        // `:text` is approximated as a substring match over the same
+        // normalized text blob (and served by the same trigram index).
         StringPredicate::Text { .. } => (
+            IndexStrategy::JsonbExpressionIndex,
+            trgm_index(),
+            format!("{STRING_BLOB_EXPR} LIKE $text"),
+        ),
+        // `:exact` compares raw extracted values; the trigram index on the
+        // normalized blob does not serve it.
+        StringPredicate::Exact { .. } => (
+            IndexStrategy::JsonbTraversal,
             None,
-            "to_tsvector(resource.text) @@ plainto_tsquery($text)".to_string(),
+            format!("$exact = ANY({STRING_ARRAY_EXPR})"),
         ),
         StringPredicate::Missing { is_missing } => {
             let shape = if *is_missing {
-                "NOT EXISTS search_idx_string WHERE sid.param_code = $param_code"
+                format!("{STRING_ARRAY_EXPR} IS NULL")
             } else {
-                "EXISTS search_idx_string WHERE sid.param_code = $param_code"
+                format!("{STRING_ARRAY_EXPR} IS NOT NULL")
             };
-            (
-                Some("search_idx_string_*_resource_type_resource_id_idx".to_string()),
-                shape.to_string(),
-            )
+            (IndexStrategy::JsonbTraversal, None, shape)
         }
     };
 
     let index_backed = expected_index.is_some();
-    let strategy = if matches!(clause.predicate, StringPredicate::Text { .. }) {
-        IndexStrategy::JsonbTraversal
-    } else {
-        IndexStrategy::SidecarString
-    };
 
     DebugPredicate {
         param_code: clause.param_code.clone(),
@@ -230,9 +283,9 @@ fn debug_number_clause(clause: &NumberClause) -> DebugPredicate {
     DebugPredicate {
         param_code: clause.param_code.clone(),
         search_type: SearchParameterType::Number,
-        strategy: IndexStrategy::SidecarNumber,
-        expected_index: Some("search_idx_number_*_param_code_value_num_idx".to_string()),
-        index_backed: true,
+        strategy: IndexStrategy::JsonbTraversal,
+        expected_index: None,
+        index_backed: false,
         sql_shape: number_sql_shape(&clause.predicate),
     }
 }
@@ -241,44 +294,59 @@ fn number_sql_shape(predicate: &NumberPredicate) -> String {
     match predicate {
         NumberPredicate::Comparison { prefix, .. } => match prefix {
             SearchPrefix::Eq | SearchPrefix::Ap => {
-                "EXISTS search_idx_number WHERE sin.value_num >= $lo AND sin.value_num < $hi"
+                "(resource->>path)::numeric >= $lo AND (resource->>path)::numeric < $hi"
                     .to_string()
             }
             SearchPrefix::Ne => {
-                "NOT EXISTS search_idx_number WHERE sin.value_num >= $lo AND sin.value_num < $hi"
+                "NOT ((resource->>path)::numeric >= $lo AND (resource->>path)::numeric < $hi)"
                     .to_string()
             }
             SearchPrefix::Gt | SearchPrefix::Sa => {
-                "EXISTS search_idx_number WHERE sin.value_num > $value".to_string()
+                "(resource->>path)::numeric > $value".to_string()
             }
             SearchPrefix::Lt | SearchPrefix::Eb => {
-                "EXISTS search_idx_number WHERE sin.value_num < $value".to_string()
+                "(resource->>path)::numeric < $value".to_string()
             }
-            SearchPrefix::Ge => {
-                "EXISTS search_idx_number WHERE sin.value_num >= $value".to_string()
-            }
-            SearchPrefix::Le => {
-                "EXISTS search_idx_number WHERE sin.value_num <= $value".to_string()
-            }
+            SearchPrefix::Ge => "(resource->>path)::numeric >= $value".to_string(),
+            SearchPrefix::Le => "(resource->>path)::numeric <= $value".to_string(),
         },
         NumberPredicate::Missing { is_missing } => {
             if *is_missing {
-                "NOT EXISTS search_idx_number WHERE sin.param_code = $param_code".to_string()
+                "resource->path IS NULL".to_string()
             } else {
-                "EXISTS search_idx_number WHERE sin.param_code = $param_code".to_string()
+                "resource->path IS NOT NULL".to_string()
             }
         }
     }
 }
 
-fn debug_quantity_clause(clause: &QuantityClause) -> DebugPredicate {
+fn debug_quantity_clause(resource_type: &str, clause: &QuantityClause) -> DebugPredicate {
+    let (strategy, expected_index, index_backed, sql_shape) = match &clause.predicate {
+        QuantityPredicate::Comparison { system, code, .. }
+            if system.is_some() || code.is_some() =>
+        {
+            (
+                IndexStrategy::JsonbContainment,
+                Some(gin_index_name(resource_type)),
+                true,
+                quantity_sql_shape(&clause.predicate),
+            )
+        }
+        _ => (
+            IndexStrategy::JsonbTraversal,
+            None,
+            false,
+            quantity_sql_shape(&clause.predicate),
+        ),
+    };
+
     DebugPredicate {
         param_code: clause.param_code.clone(),
         search_type: SearchParameterType::Quantity,
-        strategy: IndexStrategy::SidecarQuantity,
-        expected_index: Some("search_idx_quantity_*_param_code_value_num_idx".to_string()),
-        index_backed: true,
-        sql_shape: quantity_sql_shape(&clause.predicate),
+        strategy,
+        expected_index,
+        index_backed,
+        sql_shape,
     }
 }
 
@@ -290,38 +358,33 @@ fn quantity_sql_shape(predicate: &QuantityPredicate) -> String {
             code,
             ..
         } => {
+            let value_expr = "(resource->path->>'value')::numeric";
             let mut shape = match prefix {
                 SearchPrefix::Eq | SearchPrefix::Ap => {
-                    "EXISTS search_idx_quantity WHERE siq.value_num >= $lo AND siq.value_num < $hi"
-                        .to_string()
+                    format!("{value_expr} >= $lo AND {value_expr} < $hi")
                 }
                 SearchPrefix::Ne => {
-                    "NOT EXISTS search_idx_quantity WHERE siq.value_num >= $lo AND siq.value_num < $hi"
-                        .to_string()
+                    format!("NOT ({value_expr} >= $lo AND {value_expr} < $hi)")
                 }
-                SearchPrefix::Gt | SearchPrefix::Sa => {
-                    "EXISTS search_idx_quantity WHERE siq.value_num > $value".to_string()
-                }
-                SearchPrefix::Lt | SearchPrefix::Eb => {
-                    "EXISTS search_idx_quantity WHERE siq.value_num < $value".to_string()
-                }
-                SearchPrefix::Ge => {
-                    "EXISTS search_idx_quantity WHERE siq.value_num >= $value".to_string()
-                }
-                SearchPrefix::Le => {
-                    "EXISTS search_idx_quantity WHERE siq.value_num <= $value".to_string()
-                }
+                SearchPrefix::Gt | SearchPrefix::Sa => format!("{value_expr} > $value"),
+                SearchPrefix::Lt | SearchPrefix::Eb => format!("{value_expr} < $value"),
+                SearchPrefix::Ge => format!("{value_expr} >= $value"),
+                SearchPrefix::Le => format!("{value_expr} <= $value"),
             };
 
             match (system.is_some(), code.is_some()) {
                 (false, false) => {}
-                (true, false) => shape.push_str(" AND siq.system = $system"),
+                (true, false) => {
+                    shape.push_str(" AND resource @> {path: {system: $system}}");
+                }
                 (false, true) => {
-                    shape.push_str(" AND (siq.code = $code OR siq.unit = $code)");
+                    shape.push_str(
+                        " AND (resource @> {path: {code: $code}} OR resource @> {path: {unit: $code}})",
+                    );
                 }
                 (true, true) => {
                     shape.push_str(
-                        " AND siq.system = $system AND (siq.code = $code OR siq.unit = $code)",
+                        " AND (resource @> {path: {system: $system, code: $code}} OR resource @> {path: {system: $system, unit: $code}})",
                     );
                 }
             }
@@ -329,9 +392,9 @@ fn quantity_sql_shape(predicate: &QuantityPredicate) -> String {
         }
         QuantityPredicate::Missing { is_missing } => {
             if *is_missing {
-                "NOT EXISTS search_idx_quantity WHERE siq.param_code = $param_code".to_string()
+                "resource->path IS NULL".to_string()
             } else {
-                "EXISTS search_idx_quantity WHERE siq.param_code = $param_code".to_string()
+                "resource->path IS NOT NULL".to_string()
             }
         }
     }
@@ -393,65 +456,66 @@ fn debug_token_clause(clause: &TokenClause) -> DebugPredicate {
     }
 }
 
-fn debug_reference_clause(clause: &ReferenceClause) -> DebugPredicate {
+fn debug_reference_clause(resource_type: &str, clause: &ReferenceClause) -> DebugPredicate {
+    let traversal = |shape: &str| {
+        (
+            IndexStrategy::JsonbTraversal,
+            None,
+            false,
+            shape.to_string(),
+        )
+    };
     let (strategy, expected_index, index_backed, sql_shape) = match &clause.predicate {
+        // Local/external references render as in-place JSONB array traversal
+        // over the reference element; not index-backed.
         ReferencePredicate::Local { target_type, .. } => {
-            let (index, shape) = if target_type.is_some() {
-                (
-                    "idx_ref_local",
-                    "EXISTS search_idx_reference WHERE sir.ref_kind = 1 AND sir.target_type = $target_type AND sir.target_id = $target_id",
+            if target_type.is_some() {
+                traversal(
+                    "EXISTS jsonb_array_elements(resource->path) AS ref WHERE ref->>'reference' = $target_type/$target_id",
                 )
             } else {
-                (
-                    "idx_ref_local_untyped",
-                    "EXISTS search_idx_reference WHERE sir.ref_kind = 1 AND sir.target_id = $target_id",
+                traversal(
+                    "EXISTS jsonb_array_elements(resource->path) AS ref WHERE ref->>'reference' = $target_id",
                 )
-            };
-            (
-                IndexStrategy::SidecarReference,
-                Some(index.to_string()),
-                true,
-                shape.to_string(),
-            )
+            }
         }
-        ReferencePredicate::External { .. } => (
-            IndexStrategy::SidecarReference,
-            Some("idx_ref_external".to_string()),
-            true,
-            "EXISTS search_idx_reference WHERE sir.external_url = $url OR sir.raw_reference = $url"
-                .to_string(),
+        ReferencePredicate::External { .. } => traversal(
+            "EXISTS jsonb_array_elements(resource->path) AS ref WHERE ref->>'reference' = $url",
         ),
+        // `:identifier` matches the embedded identifier element via full
+        // resource containment, served by the generic resource GIN index.
         ReferencePredicate::Identifier {
             system,
             require_no_system,
             ..
         } => {
-            let shape = if system.is_some() {
-                "EXISTS search_idx_reference WHERE sir.ref_kind = 4 AND sir.identifier_system = $system AND sir.identifier_value = $value"
+            if system.is_some() {
+                (
+                    IndexStrategy::JsonbContainment,
+                    Some(gin_index_name(resource_type)),
+                    true,
+                    "resource @> {path: {identifier: [{system: $system, value: $value}]}}"
+                        .to_string(),
+                )
             } else if *require_no_system {
-                "EXISTS search_idx_reference WHERE sir.ref_kind = 4 AND sir.identifier_system IS NULL AND sir.identifier_value = $value"
+                traversal(
+                    "EXISTS identifier WHERE ident.system IS NULL AND ident.value = $value",
+                )
             } else {
-                "EXISTS search_idx_reference WHERE sir.ref_kind = 4 AND sir.identifier_value = $value"
-            };
-            (
-                IndexStrategy::SidecarReference,
-                Some("idx_ref_identifier".to_string()),
-                true,
-                shape.to_string(),
-            )
+                (
+                    IndexStrategy::JsonbContainment,
+                    Some(gin_index_name(resource_type)),
+                    true,
+                    "resource @> {path: {identifier: [{value: $value}]}}".to_string(),
+                )
+            }
         }
         ReferencePredicate::Missing { is_missing } => {
-            let shape = if *is_missing {
-                "NOT EXISTS search_idx_reference WHERE sir.resource_type = $resource_type AND sir.param_code = $param_code AND sir.resource_id = r.id"
+            if *is_missing {
+                traversal("resource->path IS NULL OR resource->path = '[]'::jsonb")
             } else {
-                "EXISTS search_idx_reference WHERE sir.resource_type = $resource_type AND sir.param_code = $param_code AND sir.resource_id = r.id"
-            };
-            (
-                IndexStrategy::SidecarReference,
-                Some("idx_ref_presence".to_string()),
-                true,
-                shape.to_string(),
-            )
+                traversal("resource->path IS NOT NULL AND resource->path != '[]'::jsonb")
+            }
         }
     };
 
@@ -475,7 +539,7 @@ fn token_strategy(clause: &TokenClause) -> IndexStrategy {
 
 fn token_expected_index(clause: &TokenClause) -> Option<String> {
     if token_index_backed(clause) {
-        Some(format!("idx_{}_gin", clause.resource_type.to_lowercase()))
+        Some(gin_index_name(&clause.resource_type))
     } else {
         None
     }
@@ -625,9 +689,11 @@ mod tests {
 
         assert!(json.contains("Patient"));
         assert!(json.contains("birthdate"));
-        assert!(json.contains("sidecar_date"));
-        assert!(json.contains("search_idx_date_*_param_code_rng_idx"));
-        assert!(json.contains("sid.rng <@ tstzrange($lo, $hi, '[)')"));
+        assert!(json.contains("jsonb_expression_index"));
+        assert!(json.contains("idx_patient_birthdate_date"));
+        assert!(json.contains("tstzrange(fhir_extract_date_min(resource, paths)"));
+        assert!(json.contains("<@ tstzrange($lo, $hi, '[)')"));
+        assert!(plan.predicates[0].index_backed);
         assert!(
             !json.contains("2000-06-15"),
             "debug output must not include bound date values: {json}"
@@ -644,7 +710,11 @@ mod tests {
         assert_eq!(plan.predicates.len(), 1);
         assert_eq!(
             plan.predicates[0].sql_shape,
-            "EXISTS search_idx_date WHERE sid.rng && tstzrange($lo, NULL, '[)')"
+            format!("{DATE_RANGE_EXPR} && tstzrange($lo, NULL, '[)')")
+        );
+        assert_eq!(
+            plan.predicates[0].strategy,
+            IndexStrategy::JsonbExpressionIndex
         );
     }
 
@@ -663,12 +733,34 @@ mod tests {
 
         assert!(json.contains("Patient"));
         assert!(json.contains("family"));
-        assert!(json.contains("sidecar_string"));
-        assert!(json.contains("sid.value_norm LIKE $contains"));
-        assert!(json.contains("search_idx_string_*_param_code_value_norm_trgm_idx"));
+        assert!(json.contains("jsonb_expression_index"));
+        assert!(json.contains("fhir_text_blob(fhir_extract_text(resource, paths)) LIKE $contains"));
+        assert!(json.contains("idx_patient_family_str"));
+        assert!(plan.predicates[0].index_backed);
         assert!(
             !json.contains("Smíth") && !json.contains("smith"),
             "debug output must not include bound string values: {json}"
+        );
+    }
+
+    #[test]
+    fn string_exact_debug_plan_is_traversal_over_raw_values() {
+        let clauses = vec![StringClause {
+            resource_type: "Patient".to_string(),
+            param_code: "family".to_string(),
+            predicate: StringPredicate::Exact {
+                value: "Smith".to_string(),
+            },
+        }];
+
+        let plan = build_string_debug_plan("Patient", &clauses);
+
+        assert_eq!(plan.predicates[0].strategy, IndexStrategy::JsonbTraversal);
+        assert!(!plan.predicates[0].index_backed);
+        assert_eq!(plan.predicates[0].expected_index, None);
+        assert_eq!(
+            plan.predicates[0].sql_shape,
+            "$exact = ANY(fhir_extract_text(resource, paths))"
         );
     }
 
@@ -689,7 +781,7 @@ mod tests {
     }
 
     #[test]
-    fn number_debug_plan_marks_sidecar_index_and_redacts_values() {
+    fn number_debug_plan_marks_jsonb_traversal_and_redacts_values() {
         let clauses = vec![NumberClause {
             resource_type: "Observation".to_string(),
             param_code: "value".to_string(),
@@ -703,17 +795,12 @@ mod tests {
         let json = serde_json::to_string(&plan).unwrap();
 
         assert_eq!(plan.predicates[0].search_type, SearchParameterType::Number);
-        assert_eq!(plan.predicates[0].strategy, IndexStrategy::SidecarNumber);
-        assert!(plan.predicates[0].index_backed);
+        assert_eq!(plan.predicates[0].strategy, IndexStrategy::JsonbTraversal);
+        assert!(!plan.predicates[0].index_backed);
+        assert_eq!(plan.predicates[0].expected_index, None);
         assert_eq!(
-            plan.predicates[0].expected_index,
-            Some("search_idx_number_*_param_code_value_num_idx".to_string())
-        );
-        assert!(plan.predicates[0].sql_shape.contains("search_idx_number"));
-        assert!(
-            plan.predicates[0]
-                .sql_shape
-                .contains("sin.value_num >= $value")
+            plan.predicates[0].sql_shape,
+            "(resource->>path)::numeric >= $value"
         );
         assert!(
             !json.contains("123.45"),
@@ -722,7 +809,7 @@ mod tests {
     }
 
     #[test]
-    fn quantity_debug_plan_marks_sidecar_index_and_redacts_values() {
+    fn quantity_debug_plan_marks_gin_containment_and_redacts_values() {
         let clauses = vec![QuantityClause {
             resource_type: "Observation".to_string(),
             param_code: "value-quantity".to_string(),
@@ -741,27 +828,54 @@ mod tests {
             plan.predicates[0].search_type,
             SearchParameterType::Quantity
         );
-        assert_eq!(plan.predicates[0].strategy, IndexStrategy::SidecarQuantity);
+        assert_eq!(plan.predicates[0].strategy, IndexStrategy::JsonbContainment);
         assert!(plan.predicates[0].index_backed);
         assert_eq!(
             plan.predicates[0].expected_index,
-            Some("search_idx_quantity_*_param_code_value_num_idx".to_string())
-        );
-        assert!(plan.predicates[0].sql_shape.contains("search_idx_quantity"));
-        assert!(
-            plan.predicates[0]
-                .sql_shape
-                .contains("siq.value_num >= $lo")
+            Some("idx_observation_gin".to_string())
         );
         assert!(
             plan.predicates[0]
                 .sql_shape
-                .contains("siq.system = $system")
+                .contains("(resource->path->>'value')::numeric >= $lo")
         );
-        assert!(plan.predicates[0].sql_shape.contains("siq.unit = $code"));
+        assert!(
+            plan.predicates[0]
+                .sql_shape
+                .contains("resource @> {path: {system: $system, code: $code}}")
+        );
+        assert!(
+            plan.predicates[0]
+                .sql_shape
+                .contains("resource @> {path: {system: $system, unit: $code}}")
+        );
         assert!(
             !json.contains("5.5") && !json.contains("unitsofmeasure") && !json.contains("mg"),
             "debug output must not include bound quantity values: {json}"
+        );
+    }
+
+    #[test]
+    fn quantity_debug_plan_without_units_is_pure_traversal() {
+        let clauses = vec![QuantityClause {
+            resource_type: "Observation".to_string(),
+            param_code: "value-quantity".to_string(),
+            predicate: QuantityPredicate::Comparison {
+                prefix: SearchPrefix::Gt,
+                value: "5.5".to_string(),
+                system: None,
+                code: None,
+            },
+        }];
+
+        let plan = build_quantity_debug_plan("Observation", &clauses);
+
+        assert_eq!(plan.predicates[0].strategy, IndexStrategy::JsonbTraversal);
+        assert!(!plan.predicates[0].index_backed);
+        assert_eq!(plan.predicates[0].expected_index, None);
+        assert_eq!(
+            plan.predicates[0].sql_shape,
+            "(resource->path->>'value')::numeric > $value"
         );
     }
 
@@ -940,7 +1054,7 @@ mod tests {
     }
 
     #[test]
-    fn reference_debug_plan_marks_sidecar_and_redacts_values() {
+    fn reference_debug_plan_marks_inplace_traversal_and_redacts_values() {
         let clauses = vec![ReferenceClause {
             resource_type: "Observation".to_string(),
             param_code: "subject".to_string(),
@@ -958,25 +1072,53 @@ mod tests {
             plan.predicates[0].search_type,
             SearchParameterType::Reference
         );
-        assert_eq!(plan.predicates[0].strategy, IndexStrategy::SidecarReference);
-        assert!(plan.predicates[0].index_backed);
+        assert_eq!(plan.predicates[0].strategy, IndexStrategy::JsonbTraversal);
+        assert!(!plan.predicates[0].index_backed);
+        assert_eq!(plan.predicates[0].expected_index, None);
         assert_eq!(
-            plan.predicates[0].expected_index,
-            Some("idx_ref_local".to_string())
+            plan.predicates[0].sql_shape,
+            "EXISTS jsonb_array_elements(resource->path) AS ref WHERE ref->>'reference' = $target_type/$target_id"
         );
         assert!(
-            plan.predicates[0]
-                .sql_shape
-                .contains("search_idx_reference")
-        );
-        assert!(
-            !json.contains("Patient") && !json.contains("pat-123"),
+            !json.contains("\"Patient\"") && !json.contains("pat-123"),
             "debug output must not include reference values: {json}"
         );
     }
 
     #[test]
-    fn reference_missing_debug_plan_marks_sidecar_presence_check() {
+    fn reference_identifier_debug_plan_marks_gin_containment() {
+        let clauses = vec![ReferenceClause {
+            resource_type: "Observation".to_string(),
+            param_code: "subject".to_string(),
+            predicate: ReferencePredicate::Identifier {
+                system: Some("http://hospital.example/mrn".to_string()),
+                require_no_system: false,
+                value: "12345".to_string(),
+            },
+            target_types: vec!["Patient".to_string()],
+        }];
+
+        let plan = build_reference_debug_plan("Observation", &clauses);
+        let json = serde_json::to_string(&plan).unwrap();
+
+        assert_eq!(plan.predicates[0].strategy, IndexStrategy::JsonbContainment);
+        assert!(plan.predicates[0].index_backed);
+        assert_eq!(
+            plan.predicates[0].expected_index,
+            Some("idx_observation_gin".to_string())
+        );
+        assert_eq!(
+            plan.predicates[0].sql_shape,
+            "resource @> {path: {identifier: [{system: $system, value: $value}]}}"
+        );
+        assert!(
+            !json.contains("hospital.example") && !json.contains("12345"),
+            "debug output must not include identifier values: {json}"
+        );
+    }
+
+    #[test]
+    fn reference_missing_debug_plan_marks_inplace_presence_check() {
         let clauses = vec![ReferenceClause {
             resource_type: "Observation".to_string(),
             param_code: "subject".to_string(),
@@ -986,12 +1128,12 @@ mod tests {
 
         let plan = build_reference_debug_plan("Observation", &clauses);
 
-        assert_eq!(plan.predicates[0].strategy, IndexStrategy::SidecarReference);
-        assert!(plan.predicates[0].index_backed);
+        assert_eq!(plan.predicates[0].strategy, IndexStrategy::JsonbTraversal);
+        assert!(!plan.predicates[0].index_backed);
+        assert_eq!(plan.predicates[0].expected_index, None);
         assert_eq!(
-            plan.predicates[0].expected_index,
-            Some("idx_ref_presence".to_string())
+            plan.predicates[0].sql_shape,
+            "resource->path IS NULL OR resource->path = '[]'::jsonb"
         );
-        assert!(plan.predicates[0].sql_shape.contains("NOT EXISTS"));
     }
 }

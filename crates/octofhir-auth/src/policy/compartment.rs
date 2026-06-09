@@ -1409,7 +1409,7 @@ impl CompartmentChecker {
         let field_path = inclusion.fhirpath.as_deref().unwrap_or(&inclusion.param);
 
         // Get the reference value(s) from the resource
-        let references = self.extract_references(resource, field_path);
+        let references = self.references_for_param(resource, field_path);
 
         references.iter().any(|r| {
             r == &expected_ref
@@ -1418,8 +1418,8 @@ impl CompartmentChecker {
         })
     }
 
-    /// Extract all reference values for a given parameter.
-    fn extract_references(&self, resource: &serde_json::Value, param: &str) -> Vec<String> {
+    /// Collect all reference values for a given parameter.
+    fn references_for_param(&self, resource: &serde_json::Value, param: &str) -> Vec<String> {
         let mut refs = Vec::new();
 
         // Handle direct field access

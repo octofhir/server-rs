@@ -739,7 +739,8 @@ pub enum ReferencePredicate {
     },
     /// External absolute URL reference.
     External { url: String },
-    /// `:identifier` reference search using identifier rows in `search_idx_reference`.
+    /// `:identifier` reference search matching the embedded `identifier`
+    /// element in-place on the resource JSONB.
     Identifier {
         system: Option<String>,
         require_no_system: bool,
@@ -752,8 +753,8 @@ pub enum ReferencePredicate {
 /// Reference SearchParameter occurrence.
 ///
 /// Clauses are OR-combined because they come from one comma-separated query
-/// occurrence. All reference matching, including `:missing`, is backed by
-/// `search_idx_reference`.
+/// occurrence. All reference matching, including `:missing`, renders in-place
+/// over the resource JSONB.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReferenceClause {
     pub resource_type: String,

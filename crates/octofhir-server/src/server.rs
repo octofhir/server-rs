@@ -1040,20 +1040,6 @@ pub async fn build_app(
                 tracing::info!("Registered $evaluate-measure operation");
             }
 
-            // Register $reindex operation
-            registry.register(crate::operations::OperationDefinition {
-                code: "reindex".to_string(),
-                url: "http://octofhir.org/OperationDefinition/reindex".to_string(),
-                kind: crate::operations::OperationKind::Operation,
-                system: true,
-                type_level: true,
-                instance: true,
-                resource: vec![], // All resource types
-                parameters: vec![],
-                affects_state: true,
-            });
-            tracing::info!("Registered $reindex operation");
-
             // Register $import operation
             registry.register(crate::operations::OperationDefinition {
                 code: "import".to_string(),
@@ -1164,19 +1150,6 @@ pub async fn build_app(
                 });
             }
 
-            // Register $reindex operation
-            registry.register(crate::operations::OperationDefinition {
-                code: "reindex".to_string(),
-                url: "http://octofhir.org/OperationDefinition/reindex".to_string(),
-                kind: crate::operations::OperationKind::Operation,
-                system: true,
-                type_level: true,
-                instance: true,
-                resource: vec![], // All resource types
-                parameters: vec![],
-                affects_state: true,
-            });
-
             // Register $import operation
             registry.register(crate::operations::OperationDefinition {
                 code: "import".to_string(),
@@ -1206,7 +1179,6 @@ pub async fn build_app(
             cfg.bulk_export.clone(),
             cfg.sql_on_fhir.clone(),
             cfg.cql.enabled,
-            cfg.reindex.clone(),
             cfg.bulk_import.clone(),
         ));
     tracing::info!(
@@ -1783,10 +1755,6 @@ pub async fn build_app(
                         // Execute the ViewDefinition export
                         crate::operations::execute_viewdefinition_export(state, job_id, body).await
                     }
-                    "reindex" => {
-                        let body = body.ok_or_else(|| "Missing job parameters".to_string())?;
-                        crate::operations::execute_reindex(state, job_id, body).await
-                    }
                     "bulk_import" => {
                         let body = body.ok_or_else(|| "Missing job parameters".to_string())?;
                         crate::operations::execute_bulk_import(state, job_id, body).await
@@ -2022,7 +1990,7 @@ fn build_router(state: AppState, body_limit: usize, compression: bool) -> Router
         )
         // Compartment search + instance operation routes (must come before generic instance routes)
         // GET /Patient/123/Observation - compartment search
-        // POST /Patient/123/$reindex - instance-level operation
+        // POST /Patient/123/$validate - instance-level operation
         .route(
             "/Patient/{id}/{resource_type}",
             get(handlers::compartment_search).post(crate::operations::compartment_post_handler),

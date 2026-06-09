@@ -639,17 +639,17 @@ fn analyze_fhir_queries(
                 "reference" => (
                     "low",
                     format!(
-                        "`{param_code}` appears in {count} observed request(s); reference search already has search_idx_reference coverage"
+                        "`{param_code}` appears in {count} observed request(s); reference search runs in place over the resource JSONB and is covered by the global GIN(resource jsonb_path_ops) index"
                     ),
-                    "Prefer keeping this on the normalized reference projection; adding JSONB expression indexes would duplicate write cost.",
+                    "No extra index needed; the global resource GIN already serves reference containment.",
                     None,
                 ),
                 "date" => (
                     "medium",
                     format!(
-                        "`{param_code}` appears in {count} observed request(s); date search should use search_idx_date instead of per-row JSONB casts"
+                        "`{param_code}` appears in {count} observed request(s); consider a functional GiST index over fhir_extract_date_min/max(resource) for this param"
                     ),
-                    "The projection is already written on resource changes, so the best ROI is routing reads to it before adding more table indexes.",
+                    "Date search reads in place; a per-param functional index removes the per-row JSONB extraction cost.",
                     None,
                 ),
                 "token" => (

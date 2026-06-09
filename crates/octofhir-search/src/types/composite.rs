@@ -186,9 +186,8 @@ mod tests {
             build_composite_search(&mut builder, "http://loinc.org|8480-6$gt100", &components);
         assert!(result.is_ok());
         let clause = builder.build_where_clause().unwrap();
-        assert!(clause.contains("search_idx_quantity"));
-        assert!(clause.contains("resource @>"));
-        assert!(!clause.contains("jsonb_array_elements"));
+        assert!(clause.contains("(resource->'valueQuantity'->>'value')::numeric > "));
+        assert!(clause.contains("resource->>'code'"));
     }
 
     #[test]
