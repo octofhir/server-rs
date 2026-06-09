@@ -124,6 +124,14 @@ pub struct HybridTerminologyProvider {
 
     /// Remote terminology provider with caching (using shared infrastructure)
     remote: CachedTerminologyProvider<HttpTerminologyProvider>,
+
+    /// Process-level cache of ValueSet code-validation results, keyed by
+    /// `valueset|system|code`. Binding validation repeats the same
+    /// `(valueset, system, code)` lookup many times per resource (e.g. an
+    /// ExplanationOfBenefit has 8 currency-bound fields, each re-resolving the
+    /// currencies ValueSet + ISO-4217 code system from storage), so memoising the
+    /// result collapses that to a single computation.
+    vs_validation_cache: dashmap::DashMap<String, ValidationResult>,
 }
 
 impl HybridTerminologyProvider {
@@ -153,12 +161,14 @@ impl HybridTerminologyProvider {
         Ok(Self {
             canonical_manager,
             remote,
+            vs_validation_cache: dashmap::DashMap::new(),
         })
     }
 
     /// Clear all caches.
     pub fn clear_cache(&self) {
         self.remote.clear_cache();
+        self.vs_validation_cache.clear();
         tracing::debug!("Cleared terminology caches");
     }
 
@@ -781,25 +791,38 @@ impl TerminologyProvider for HybridTerminologyProvider {
         code: &str,
         display: Option<&str>,
     ) -> octofhir_fhir_model::error::Result<ValidationResult> {
+        // 0. Process-level memoisation. The same (valueset, system, code) is
+        // validated repeatedly within and across resources; caching avoids
+        // re-resolving the ValueSet/CodeSystem from storage and re-hitting the
+        // remote server every time.
+        let cache_key = format!("{valueset}|{}|{code}", system.unwrap_or(""));
+        if let Some(hit) = self.vs_validation_cache.get(&cache_key) {
+            return Ok(hit.clone());
+        }
+
         // 1. Try local validation first
-        if let Some(result) = self.validate_code_vs_local(valueset, system, code).await {
+        let result = if let Some(result) = self.validate_code_vs_local(valueset, system, code).await
+        {
             tracing::debug!(
                 valueset = %valueset,
                 code = %code,
                 result = result,
                 "Validated code against local ValueSet"
             );
-            return Ok(ValidationResult {
+            ValidationResult {
                 result,
                 display: None,
                 message: None,
-            });
-        }
+            }
+        } else {
+            // 2. Fall back to cached remote (CachedTerminologyProvider handles caching)
+            self.remote
+                .validate_code_vs(valueset, system, code, display)
+                .await?
+        };
 
-        // 2. Fall back to cached remote (CachedTerminologyProvider handles caching)
-        self.remote
-            .validate_code_vs(valueset, system, code, display)
-            .await
+        self.vs_validation_cache.insert(cache_key, result.clone());
+        Ok(result)
     }
 
     async fn subsumes(
