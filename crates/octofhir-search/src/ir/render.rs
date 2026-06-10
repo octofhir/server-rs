@@ -902,22 +902,31 @@ fn date_inplace_clause_expr(
                 rhs: date_range_term(builder, q),
             },
         ]),
-        DatePredicate::StrictlyAfter { q } => {
-            let p_hi = builder.add_timestamp_param(format_rfc3339(&q.end));
-            SqlExpr::Compare {
-                lhs: SqlTerm::Raw(format!("lower({range_expr})")),
-                op: SqlOp::Gt,
-                rhs: SqlTerm::ParamCast { index: p_hi, cast: "timestamptz" },
-            }
-        }
-        DatePredicate::StrictlyBefore { q } => {
-            let p_lo = builder.add_timestamp_param(format_rfc3339(&q.start));
-            SqlExpr::Compare {
-                lhs: SqlTerm::Raw(format!("upper({range_expr})")),
-                op: SqlOp::Lt,
-                rhs: SqlTerm::ParamCast { index: p_lo, cast: "timestamptz" },
-            }
-        }
+        // `sa`: target range strictly after the search range, i.e.
+        // lower(rng) > upper(q). Expressed as the range `>>` operator against a
+        // point range at q.end so the GiST functional index serves it (a bare
+        // `lower(rng) > $` comparison cannot use the range index → seq scan).
+        DatePredicate::StrictlyAfter { q } => SqlExpr::RangeOp {
+            lhs: rng(),
+            op: RangeOp::StrictlyAfter,
+            rhs: timestamp_range_term(
+                builder,
+                Some(Bound { at: q.end, inclusive: true }),
+                Some(Bound { at: q.end, inclusive: true }),
+            ),
+        },
+        // `eb`: target range strictly before the search range, i.e.
+        // upper(rng) < lower(q). Expressed as `<<` against a point range at
+        // q.start so the GiST index serves it.
+        DatePredicate::StrictlyBefore { q } => SqlExpr::RangeOp {
+            lhs: rng(),
+            op: RangeOp::StrictlyBefore,
+            rhs: timestamp_range_term(
+                builder,
+                Some(Bound { at: q.start, inclusive: true }),
+                Some(Bound { at: q.start, inclusive: true }),
+            ),
+        },
         DatePredicate::Missing { is_missing } => {
             if *is_missing {
                 SqlExpr::IsNull(SqlTerm::Raw(min_expr.to_string()))

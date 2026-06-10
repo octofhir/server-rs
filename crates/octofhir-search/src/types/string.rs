@@ -39,8 +39,18 @@ pub fn build_indexed_string_inplace(
         &definition.element_type_hint,
     ));
     let col = builder.resource_column();
-    let arr_expr = format!("fhir_extract_text({col}, '{paths_json}'::jsonb)");
-    let blob_expr = format!("fhir_text_blob({arr_expr})");
+    // Indexed params with a per-param TYPE-AWARE extraction function use it directly
+    // (matches the functional GIN index); everything else uses the generic
+    // lax-jsonpath extraction.
+    let (arr_expr, blob_expr) = if let Some(fn_name) = definition.typed_extract_fn.as_deref() {
+        let arr_expr = format!("{fn_name}({col})");
+        let blob_expr = format!("fhir_text_blob({arr_expr})");
+        (arr_expr, blob_expr)
+    } else {
+        let arr_expr = format!("fhir_extract_text({col}, '{paths_json}'::jsonb)");
+        let blob_expr = format!("fhir_text_blob({arr_expr})");
+        (arr_expr, blob_expr)
+    };
 
     let clauses = StringClause::from_parsed_param(param, resource_type)?;
     if let Some(sql) = render_indexed_string_clauses_as_or(builder, &clauses, &blob_expr, &arr_expr) {
@@ -219,4 +229,64 @@ mod tests {
         assert!(result.is_err());
     }
 
+    fn make_string_definition(typed_fn: Option<&str>) -> crate::parameters::SearchParameter {
+        use crate::parameters::{ElementTypeHint, SearchParameter, SearchParameterType};
+        let mut def = SearchParameter::new(
+            "name",
+            "http://example.org/SearchParameter/Patient-name",
+            SearchParameterType::String,
+            vec!["Patient".to_string()],
+        )
+        .with_expression("Patient.name")
+        .with_element_type_hint(ElementTypeHint::HumanName);
+        if let Some(name) = typed_fn {
+            def = def.with_typed_extract_fn(name);
+        }
+        def
+    }
+
+    #[test]
+    fn test_indexed_string_with_typed_extract_fn_default() {
+        let mut builder = SqlBuilder::new();
+        let param = make_param("name", "John", None);
+        let def = make_string_definition(Some("fhir_s_patient_name"));
+
+        build_indexed_string_inplace(&mut builder, &param, "Patient", &def).unwrap();
+
+        let clause = builder.build_where_clause().unwrap();
+        assert!(
+            clause.contains("fhir_text_blob(fhir_s_patient_name("),
+            "clause: {clause}"
+        );
+        assert!(!clause.contains("fhir_extract_text"), "clause: {clause}");
+    }
+
+    #[test]
+    fn test_indexed_string_with_typed_extract_fn_exact() {
+        let mut builder = SqlBuilder::new();
+        let param = make_param("name", "John Doe", Some(SearchModifier::Exact));
+        let def = make_string_definition(Some("fhir_s_patient_name"));
+
+        build_indexed_string_inplace(&mut builder, &param, "Patient", &def).unwrap();
+
+        let clause = builder.build_where_clause().unwrap();
+        assert!(
+            clause.contains("= ANY(fhir_s_patient_name("),
+            "clause: {clause}"
+        );
+        assert!(!clause.contains("fhir_extract_text"), "clause: {clause}");
+    }
+
+    #[test]
+    fn test_indexed_string_without_typed_extract_fn_uses_generic() {
+        let mut builder = SqlBuilder::new();
+        let param = make_param("name", "John", None);
+        let def = make_string_definition(None);
+
+        build_indexed_string_inplace(&mut builder, &param, "Patient", &def).unwrap();
+
+        let clause = builder.build_where_clause().unwrap();
+        assert!(clause.contains("fhir_extract_text(resource,"), "clause: {clause}");
+        assert!(!clause.contains("fhir_s_patient_name"), "clause: {clause}");
+    }
 }

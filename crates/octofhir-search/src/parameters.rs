@@ -373,6 +373,9 @@ pub struct SearchParameter {
     /// SearchParameter was created/updated by a user at runtime, not loaded
     /// from FHIR packages or built-in common metadata.
     pub user_defined: bool,
+    /// Name of the per-param typed extraction SQL function, set at bootstrap when
+    /// the function was created. None = use the generic extraction path.
+    pub typed_extract_fn: Option<String>,
 }
 
 impl SearchParameter {
@@ -398,7 +401,15 @@ impl SearchParameter {
             cached_jsonb_path: None,
             element_type_hint: ElementTypeHint::Unknown,
             user_defined: false,
+            typed_extract_fn: None,
         }
+    }
+
+    /// Set the name of the per-param typed extraction SQL function.
+    #[must_use]
+    pub fn with_typed_extract_fn(mut self, fn_name: impl Into<String>) -> Self {
+        self.typed_extract_fn = Some(fn_name.into());
+        self
     }
 
     /// Set the FHIRPath expression and pre-compute the JSONB path.

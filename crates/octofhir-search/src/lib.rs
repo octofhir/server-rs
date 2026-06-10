@@ -48,6 +48,10 @@ pub use sql_builder::{
     build_jsonb_accessor,
     escape_identifier,
     fhirpath_to_jsonb_path,
+    // Typed per-param extraction function codegen
+    AnnotatedPath,
+    build_typed_extract_fn,
+    typed_extract_fn_name,
 };
 // Chaining / reverse-chaining now live in the IR (`ir::chain`).
 pub use ir::chain::{

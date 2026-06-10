@@ -350,7 +350,16 @@ pub fn build_native_ir_query_from_params_with_config(
     // Request limit + 1 to determine if there are more results
     builder = builder.paginate(limit + 1, offset);
 
-    // Handle sorting
+    // Handle sorting.
+    //
+    // No default `ORDER BY` when the client gives no `_sort`. FHIR does not
+    // mandate a result order, and a forced `ORDER BY updated_at DESC` is the
+    // dominant cost on high-recall searches: with a lossy GIN/GiST filter the
+    // index gives no order, so the sort must read+recheck EVERY match before
+    // top-N, making LIMIT useless and scaling linearly with the match count.
+    // Emitting no ORDER BY lets LIMIT bound the work — the scan stops once it
+    // has enough matching rows. Recency sort stays available, opt-in, via
+    // `_sort=-_lastUpdated`.
     if let Some(sort_params) = &params.sort {
         for sort_param in sort_params {
             if let Some(sort_spec) = build_sort_spec(
@@ -361,12 +370,6 @@ pub fn build_native_ir_query_from_params_with_config(
             ) {
                 builder = builder.sort_by(sort_spec);
             }
-        }
-    } else {
-        // Default FHIR ordering is latest updates first. Use the row column so
-        // PostgreSQL can use the per-resource updated_at B-tree index.
-        if let Ok(sort) = SortSpec::column("updated_at", SortOrder::Desc) {
-            builder = builder.sort_by(sort);
         }
     }
 
@@ -1314,12 +1317,12 @@ mod tests {
             (
                 "Patient",
                 "_id=pat-1&_count=10",
-                ["r.id = $1", "updated_at"],
+                ["r.id = $1", "LIMIT 11"],
             ),
             (
                 "Patient",
                 "_lastUpdated=ge2024-01-01&_lastUpdated=le2024-12-31&_count=10",
-                ["r.updated_at", "ORDER BY"],
+                ["r.updated_at >= $1", "r.updated_at <"],
             ),
             (
                 "Patient",
@@ -1334,12 +1337,12 @@ mod tests {
             (
                 "Patient",
                 "family:exact=Smith&_count=10",
-                ["= ANY(fhir_extract_text", "ORDER BY"],
+                ["= ANY(fhir_extract_text", "LIMIT 11"],
             ),
             (
                 "Patient",
                 "identifier=http://hospital.example/mrn|12345&_count=10",
-                ["r.resource @>", "ORDER BY"],
+                ["r.resource @>", "LIMIT 11"],
             ),
             (
                 "Observation",
@@ -1382,6 +1385,14 @@ mod tests {
                     built.sql
                 );
             }
+
+            // None of these cases pass `_sort`, so none must emit an ORDER BY —
+            // LIMIT bounds the work instead of forcing a full sort over matches.
+            assert!(
+                !built.sql.contains("ORDER BY"),
+                "query `{resource_type}?{query}` must not emit ORDER BY without _sort: {}",
+                built.sql
+            );
         }
 
         let composite_params = parse_query_string(
@@ -1407,21 +1418,18 @@ mod tests {
     }
 
     #[test]
-    fn test_default_sort_uses_updated_at_column() {
+    fn test_no_default_sort_when_sort_absent() {
         let registry = SearchParameterRegistry::new();
         let params = parse_query_string("_count=5", 10, 100);
         let converted =
             build_native_ir_query_from_params("Patient", &params, &registry, "public").unwrap();
         let built = converted.builder.with_raw_resource(true).build().unwrap();
 
+        // No `_sort` => no ORDER BY, so LIMIT can bound work on high-recall
+        // searches instead of forcing a sort over every match.
         assert!(
-            built.sql.contains("ORDER BY \"r\".\"updated_at\" DESC"),
-            "expected updated_at column sort, got: {}",
-            built.sql
-        );
-        assert!(
-            !built.sql.contains("meta"),
-            "default sort should not use JSONB meta path, got: {}",
+            !built.sql.contains("ORDER BY"),
+            "expected no ORDER BY without _sort, got: {}",
             built.sql
         );
     }

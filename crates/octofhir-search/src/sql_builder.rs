@@ -1357,6 +1357,115 @@ pub fn paths_to_json(paths: &[Vec<String>]) -> String {
     serde_json::to_string(paths).unwrap_or_else(|_| "[]".to_string())
 }
 
+/// An extraction path annotated with each segment's array cardinality:
+/// `(segment_name, is_array)`. Produced by resolving each path prefix against the
+/// element-type resolver at bootstrap so the generated SQL unwraps the right levels.
+pub type AnnotatedPath = Vec<(String, bool)>;
+
+/// Deterministic, identifier-safe name for a per-param typed extraction function:
+/// `fhir_s_{table}_{code}` with non-alphanumeric chars folded to `_`, lowercased,
+/// truncated to PostgreSQL's 63-byte identifier limit.
+pub fn typed_extract_fn_name(resource_type: &str, code: &str) -> String {
+    let sanitize = |s: &str| -> String {
+        s.chars()
+            .map(|c| {
+                if c.is_ascii_alphanumeric() {
+                    c.to_ascii_lowercase()
+                } else {
+                    '_'
+                }
+            })
+            .collect::<String>()
+    };
+    let table = sanitize(resource_type);
+    let safe_code = sanitize(code);
+    let mut name = format!("fhir_s_{table}_{safe_code}");
+    if name.len() > 63 {
+        name.truncate(63);
+    }
+    name
+}
+
+/// Build a per-param TYPE-AWARE flat text-extraction SQL function for an "indexed"
+/// STRING search parameter. Returns `(fn_name, create_or_replace_ddl, arr_expr_prefix)`
+/// or `None` when there are no extraction paths.
+///
+/// The function returns `text[]` (all leaf string values across the annotated
+/// paths), is `IMMUTABLE PARALLEL SAFE STRICT`, and is used identically in both the
+/// functional GIN index and the query predicate so the planner matches. Array
+/// segments are unwrapped with `jsonb_array_elements(fhir_arr(...))`; scalar
+/// non-leaf segments traverse with `->`; leaves emit text via `#>> '{}'` (unwrapped
+/// array element) or `->>'leaf'` (scalar parent).
+pub fn build_typed_extract_fn(
+    resource_type: &str,
+    code: &str,
+    annotated_paths: &[AnnotatedPath],
+) -> Option<(String, String, String)> {
+    if annotated_paths.is_empty() || annotated_paths.iter().all(|p| p.is_empty()) {
+        return None;
+    }
+
+    let fn_name = typed_extract_fn_name(resource_type, code);
+
+    let mut branches: Vec<String> = Vec::new();
+    for path in annotated_paths {
+        if path.is_empty() {
+            continue;
+        }
+        branches.push(build_extract_branch(path));
+    }
+    if branches.is_empty() {
+        return None;
+    }
+
+    let body = branches.join("\n    UNION ALL\n    ");
+    let ddl = format!(
+        "CREATE OR REPLACE FUNCTION {fn_name}(resource jsonb)\n\
+         RETURNS text[] LANGUAGE sql IMMUTABLE PARALLEL SAFE STRICT AS $$\n  \
+         SELECT nullif(array_agg(leaf), '{{}}') FROM (\n    {body}\n  ) t(leaf) WHERE leaf IS NOT NULL\n$$;"
+    );
+
+    Some((fn_name.clone(), ddl, fn_name))
+}
+
+/// Codegen one `SELECT ... [FROM ...]` branch for a single annotated extraction path.
+fn build_extract_branch(path: &AnnotatedPath) -> String {
+    let mut current_expr = "resource".to_string();
+    let mut froms: Vec<String> = Vec::new();
+    let mut alias_idx = 0usize;
+    let last = path.len() - 1;
+
+    let mut leaf_expr = String::new();
+    for (i, (seg, is_array)) in path.iter().enumerate() {
+        let is_leaf = i == last;
+        if *is_array {
+            // Unwrap this array level to a row source.
+            let alias = format!("e{alias_idx}");
+            froms.push(format!(
+                "jsonb_array_elements(public.fhir_arr({current_expr}->'{seg}')) AS {alias}(value)"
+            ));
+            current_expr = format!("{alias}.value");
+            alias_idx += 1;
+            if is_leaf {
+                // Leaf already unwrapped to a row value; render it as text.
+                leaf_expr = format!("{current_expr} #>> '{{}}'");
+            }
+        } else if is_leaf {
+            // Scalar leaf: read text directly off the parent jsonb.
+            leaf_expr = format!("{current_expr}->>'{seg}'");
+        } else {
+            // Scalar non-leaf: keep traversing as jsonb.
+            current_expr = format!("{current_expr}->'{seg}'");
+        }
+    }
+
+    if froms.is_empty() {
+        format!("SELECT {leaf_expr}")
+    } else {
+        format!("SELECT {leaf_expr} FROM {}", froms.join(", "))
+    }
+}
+
 /// Type name carried by an `ofType(...)` / `as` argument (`Identifier` or `TypeInfo`).
 fn ast_type_name(node: &octofhir_fhirpath::ExpressionNode) -> Option<String> {
     use octofhir_fhirpath::ExpressionNode as E;
@@ -2297,5 +2406,142 @@ mod tests {
             params: vec![],
         };
         assert_eq!(format!("{}", query), "SELECT * FROM patient");
+    }
+
+    // ========================================================================
+    // Typed extraction function codegen tests
+    // ========================================================================
+
+    /// Collapse all runs of whitespace to a single space and trim, so structural
+    /// comparison ignores layout differences (indentation, line breaks).
+    fn norm_ws(s: &str) -> String {
+        s.split_whitespace().collect::<Vec<_>>().join(" ")
+    }
+
+    fn ap(segs: &[(&str, bool)]) -> AnnotatedPath {
+        segs.iter().map(|(s, a)| (s.to_string(), *a)).collect()
+    }
+
+    #[test]
+    fn test_typed_extract_fn_name_basic() {
+        assert_eq!(typed_extract_fn_name("Patient", "name"), "fhir_s_patient_name");
+        assert_eq!(
+            typed_extract_fn_name("Organization", "name"),
+            "fhir_s_organization_name"
+        );
+    }
+
+    #[test]
+    fn test_typed_extract_fn_name_hyphen_to_underscore() {
+        assert_eq!(
+            typed_extract_fn_name("Patient", "general-practitioner"),
+            "fhir_s_patient_general_practitioner"
+        );
+    }
+
+    #[test]
+    fn test_typed_extract_fn_name_truncates_to_63() {
+        let long_code = "a".repeat(80);
+        let name = typed_extract_fn_name("Patient", &long_code);
+        assert!(name.len() <= 63, "name was {} bytes: {name}", name.len());
+        assert!(name.starts_with("fhir_s_patient_"));
+    }
+
+    #[test]
+    fn test_build_typed_extract_fn_empty_paths_none() {
+        assert!(build_typed_extract_fn("Patient", "name", &[]).is_none());
+        assert!(build_typed_extract_fn("Patient", "name", &[vec![]]).is_none());
+    }
+
+    #[test]
+    fn test_build_typed_extract_fn_scalar_only() {
+        let paths = vec![ap(&[("gender", false)])];
+        let (fn_name, ddl, prefix) =
+            build_typed_extract_fn("Patient", "gender", &paths).unwrap();
+        assert_eq!(fn_name, "fhir_s_patient_gender");
+        assert_eq!(prefix, "fhir_s_patient_gender");
+        let n = norm_ws(&ddl);
+        assert!(n.contains("CREATE OR REPLACE FUNCTION fhir_s_patient_gender(resource jsonb)"));
+        assert!(n.contains("RETURNS text[] LANGUAGE sql IMMUTABLE PARALLEL SAFE STRICT"));
+        assert!(n.contains("SELECT nullif(array_agg(leaf), '{}') FROM ("));
+        assert!(n.contains("SELECT resource->>'gender'"));
+        assert!(n.contains(") t(leaf) WHERE leaf IS NOT NULL"));
+        assert!(!n.contains("UNION ALL"));
+    }
+
+    #[test]
+    fn test_build_typed_extract_fn_single_array() {
+        // alias is an array of strings: Organization.alias
+        let paths = vec![ap(&[("alias", true)])];
+        let (_, ddl, _) = build_typed_extract_fn("Organization", "alias", &paths).unwrap();
+        let n = norm_ws(&ddl);
+        assert!(n.contains(
+            "SELECT e0.value #>> '{}' FROM jsonb_array_elements(public.fhir_arr(resource->'alias')) AS e0(value)"
+        ));
+    }
+
+    #[test]
+    fn test_build_typed_extract_fn_nested_array() {
+        // Patient.name.given : name is array, given is array
+        let paths = vec![ap(&[("name", true), ("given", true)])];
+        let (_, ddl, _) = build_typed_extract_fn("Patient", "given", &paths).unwrap();
+        let n = norm_ws(&ddl);
+        assert!(n.contains(
+            "SELECT e1.value #>> '{}' FROM jsonb_array_elements(public.fhir_arr(resource->'name')) AS e0(value), jsonb_array_elements(public.fhir_arr(e0.value->'given')) AS e1(value)"
+        ));
+    }
+
+    #[test]
+    fn test_build_typed_extract_fn_multi_path_golden_organization_name() {
+        // Organization.name: scalar name + array alias
+        let paths = vec![ap(&[("name", false)]), ap(&[("alias", true)])];
+        let (fn_name, ddl, _) =
+            build_typed_extract_fn("Organization", "name", &paths).unwrap();
+        assert_eq!(fn_name, "fhir_s_organization_name");
+        let n = norm_ws(&ddl);
+        let expected = norm_ws(
+            "CREATE OR REPLACE FUNCTION fhir_s_organization_name(resource jsonb)
+            RETURNS text[] LANGUAGE sql IMMUTABLE PARALLEL SAFE STRICT AS $$
+              SELECT nullif(array_agg(leaf), '{}') FROM (
+                SELECT resource->>'name'
+                UNION ALL
+                SELECT e0.value #>> '{}' FROM jsonb_array_elements(public.fhir_arr(resource->'alias')) AS e0(value)
+              ) t(leaf) WHERE leaf IS NOT NULL
+            $$;",
+        );
+        assert_eq!(n, expected, "\n  got: {n}\n want: {expected}");
+    }
+
+    #[test]
+    fn test_build_typed_extract_fn_golden_patient_name() {
+        // Patient.name (HumanName): name is array; family/text scalar leaves,
+        // given/prefix/suffix array leaves.
+        let paths = vec![
+            ap(&[("name", true), ("family", false)]),
+            ap(&[("name", true), ("given", true)]),
+            ap(&[("name", true), ("prefix", true)]),
+            ap(&[("name", true), ("suffix", true)]),
+            ap(&[("name", true), ("text", false)]),
+        ];
+        let (fn_name, ddl, _) = build_typed_extract_fn("Patient", "name", &paths).unwrap();
+        assert_eq!(fn_name, "fhir_s_patient_name");
+        let n = norm_ws(&ddl);
+        let expected = norm_ws(
+            "CREATE OR REPLACE FUNCTION fhir_s_patient_name(resource jsonb)
+            RETURNS text[] LANGUAGE sql IMMUTABLE PARALLEL SAFE STRICT AS $$
+              SELECT nullif(array_agg(leaf), '{}') FROM (
+                SELECT e0.value->>'family' FROM jsonb_array_elements(public.fhir_arr(resource->'name')) AS e0(value)
+                UNION ALL
+                SELECT e1.value #>> '{}' FROM jsonb_array_elements(public.fhir_arr(resource->'name')) AS e0(value), jsonb_array_elements(public.fhir_arr(e0.value->'given')) AS e1(value)
+                UNION ALL
+                SELECT e1.value #>> '{}' FROM jsonb_array_elements(public.fhir_arr(resource->'name')) AS e0(value), jsonb_array_elements(public.fhir_arr(e0.value->'prefix')) AS e1(value)
+                UNION ALL
+                SELECT e1.value #>> '{}' FROM jsonb_array_elements(public.fhir_arr(resource->'name')) AS e0(value), jsonb_array_elements(public.fhir_arr(e0.value->'suffix')) AS e1(value)
+                UNION ALL
+                SELECT e0.value->>'text' FROM jsonb_array_elements(public.fhir_arr(resource->'name')) AS e0(value)
+              ) t(leaf) WHERE leaf IS NOT NULL
+            $$;",
+        );
+        assert_eq!(n, expected, "\n  got: {n}\n want: {expected}");
     }
 }

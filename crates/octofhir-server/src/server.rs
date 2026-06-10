@@ -789,6 +789,7 @@ pub async fn build_app(
         &db_pool,
         &cfg_snapshot.registry,
         &cfg.search.indexed_params,
+        model_provider.as_ref(),
     )
     .await;
 
