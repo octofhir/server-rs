@@ -958,38 +958,24 @@ fn date_inplace_clause_expr(
             op: RangeOp::Overlaps,
             rhs: timestamp_range_term(builder, *lo, *hi),
         },
-        DatePredicate::Ge { q } => SqlExpr::Or(vec![
-            SqlExpr::RangeOp {
-                lhs: rng(),
-                op: RangeOp::Overlaps,
-                rhs: timestamp_range_term(
-                    builder,
-                    Some(Bound { at: q.end, inclusive: true }),
-                    None,
-                ),
-            },
-            SqlExpr::RangeOp {
-                lhs: rng(),
-                op: RangeOp::ContainsBy,
-                rhs: date_range_term(builder, q),
-            },
-        ]),
-        DatePredicate::Le { q } => SqlExpr::Or(vec![
-            SqlExpr::RangeOp {
-                lhs: rng(),
-                op: RangeOp::Overlaps,
-                rhs: timestamp_range_term(
-                    builder,
-                    None,
-                    Some(Bound { at: q.start, inclusive: false }),
-                ),
-            },
-            SqlExpr::RangeOp {
-                lhs: rng(),
-                op: RangeOp::ContainsBy,
-                rhs: date_range_term(builder, q),
-            },
-        ]),
+        // `ge`: resource date >= search range start. A single overlap with
+        // [q.start, +inf) — every resource range that reaches into or past the
+        // search start — captures exactly this. Expressed as one range `&&` (not an
+        // OR of overlap+contained-by) so the GiST functional index serves it; the OR
+        // form forced a Seq Scan because the planner can't index-drive it under LIMIT.
+        DatePredicate::Ge { q } => SqlExpr::RangeOp {
+            lhs: rng(),
+            op: RangeOp::Overlaps,
+            rhs: timestamp_range_term(builder, Some(Bound { at: q.start, inclusive: true }), None),
+        },
+        // `le`: resource date <= search range end. Single overlap with
+        // (-inf, q.end). q.end is the exclusive upper bound of the parsed range
+        // (e.g. 2024-01-01 for "2023"), so the bound is exclusive too.
+        DatePredicate::Le { q } => SqlExpr::RangeOp {
+            lhs: rng(),
+            op: RangeOp::Overlaps,
+            rhs: timestamp_range_term(builder, None, Some(Bound { at: q.end, inclusive: false })),
+        },
         // `sa`: target range strictly after the search range, i.e.
         // lower(rng) > upper(q). Expressed as the range `>>` operator against a
         // point range at q.end so the GiST functional index serves it (a bare
