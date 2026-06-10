@@ -2,6 +2,7 @@
 //!
 //! This module contains the SQL queries for basic resource operations.
 
+use sqlx_core::sql_str::AssertSqlSafe;
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 use sqlx_core::query::query;
@@ -97,7 +98,7 @@ pub async fn create(pool: &PgPool, resource: &Value) -> Result<StoredResource, S
            RETURNING id, txid, created_at, updated_at, resource"#
     );
 
-    let row: (String, i64, DateTime<Utc>, DateTime<Utc>, Value) = query_as(&sql)
+    let row: (String, i64, DateTime<Utc>, DateTime<Utc>, Value) = query_as(AssertSqlSafe((&sql).to_string()))
         .bind(&id)
         .bind(now)
         .bind(resource)
@@ -179,7 +180,7 @@ pub async fn create_raw(
            RETURNING id, txid, created_at, updated_at, resource::text"#
     );
 
-    let row: (String, i64, DateTime<Utc>, DateTime<Utc>, String) = query_as(&sql)
+    let row: (String, i64, DateTime<Utc>, DateTime<Utc>, String) = query_as(AssertSqlSafe((&sql).to_string()))
         .bind(&id)
         .bind(now)
         .bind(resource)
@@ -214,7 +215,7 @@ pub async fn exists(pool: &PgPool, resource_type: &str, id: &str) -> Result<bool
         r#"SELECT EXISTS(SELECT 1 FROM "{table}" WHERE id = $1 AND status != 'deleted')"#
     );
 
-    let exists: (bool,) = query_as(&sql).bind(id).fetch_one(pool).await.map_err(|e| {
+    let exists: (bool,) = query_as(AssertSqlSafe((&sql).to_string())).bind(id).fetch_one(pool).await.map_err(|e| {
         if e.to_string().contains("does not exist") {
             return StorageError::internal(format!("Table does not exist: {e}"));
         }
@@ -242,7 +243,7 @@ pub async fn read(
            WHERE id = $1"#
     );
 
-    let row: Option<(String, i64, DateTime<Utc>, DateTime<Utc>, Value, String)> = query_as(&sql)
+    let row: Option<(String, i64, DateTime<Utc>, DateTime<Utc>, Value, String)> = query_as(AssertSqlSafe((&sql).to_string()))
         .bind(id)
         .fetch_optional(pool)
         .await
@@ -312,7 +313,7 @@ pub async fn read_raw(
            WHERE id = $1"#
     );
 
-    let row: Option<(String, i64, DateTime<Utc>, DateTime<Utc>, String, String)> = query_as(&sql)
+    let row: Option<(String, i64, DateTime<Utc>, DateTime<Utc>, String, String)> = query_as(AssertSqlSafe((&sql).to_string()))
         .bind(id)
         .fetch_optional(pool)
         .await
@@ -432,7 +433,7 @@ pub async fn update(
     };
 
     let row: Option<(String, i64, DateTime<Utc>, DateTime<Utc>, Value, i64)> =
-        query_as(&update_sql)
+        query_as(AssertSqlSafe((&update_sql).to_string()))
             .bind(id)
             .bind(resource)
             .bind(now)
@@ -466,7 +467,7 @@ pub async fn update(
                 // Check if resource exists with different version
                 let check_sql =
                     format!(r#"SELECT txid FROM "{table}" WHERE id = $1 AND status != 'deleted'"#);
-                let current: Option<i64> = query_scalar(&check_sql)
+                let current: Option<i64> = query_scalar(AssertSqlSafe((&check_sql).to_string()))
                     .bind(id)
                     .fetch_optional(pool)
                     .await
@@ -570,7 +571,7 @@ pub async fn update_raw(
     };
 
     let row: Option<(String, i64, DateTime<Utc>, DateTime<Utc>, String, i64)> =
-        query_as(&update_sql)
+        query_as(AssertSqlSafe((&update_sql).to_string()))
             .bind(id)
             .bind(resource)
             .bind(now)
@@ -595,7 +596,7 @@ pub async fn update_raw(
             if has_version_check {
                 let check_sql =
                     format!(r#"SELECT txid FROM "{table}" WHERE id = $1 AND status != 'deleted'"#);
-                let current: Option<i64> = query_scalar(&check_sql)
+                let current: Option<i64> = query_scalar(AssertSqlSafe((&check_sql).to_string()))
                     .bind(id)
                     .fetch_optional(pool)
                     .await
@@ -639,7 +640,7 @@ pub async fn delete(pool: &PgPool, resource_type: &str, id: &str) -> Result<(), 
            WHERE id = $1 AND status != 'deleted'"#
     );
 
-    let _result = query(&sql).bind(id).execute(pool).await.map_err(|e| {
+    let _result = query(AssertSqlSafe((&sql).to_string())).bind(id).execute(pool).await.map_err(|e| {
         // Table might not exist, but that's OK for idempotent delete
         if e.to_string().contains("does not exist") {
             return StorageError::internal(format!("Table does not exist: {e}"));
@@ -676,7 +677,7 @@ pub async fn vread(
            WHERE id = $1 AND txid = $2"#
     );
 
-    let row: Option<(String, i64, DateTime<Utc>, DateTime<Utc>, Value)> = query_as(&current_sql)
+    let row: Option<(String, i64, DateTime<Utc>, DateTime<Utc>, Value)> = query_as(AssertSqlSafe((&current_sql).to_string()))
         .bind(id)
         .bind(version_id)
         .fetch_optional(pool)
@@ -708,7 +709,7 @@ pub async fn vread(
            WHERE id = $1 AND txid = $2"#
     );
 
-    let row: Option<(String, i64, DateTime<Utc>, DateTime<Utc>, Value)> = query_as(&history_sql)
+    let row: Option<(String, i64, DateTime<Utc>, DateTime<Utc>, Value)> = query_as(AssertSqlSafe((&history_sql).to_string()))
         .bind(id)
         .bind(version_id)
         .fetch_optional(pool)
@@ -761,7 +762,7 @@ pub async fn vread_raw(
            WHERE id = $1 AND txid = $2"#
     );
 
-    let row: Option<(String, i64, DateTime<Utc>, DateTime<Utc>, String)> = query_as(&current_sql)
+    let row: Option<(String, i64, DateTime<Utc>, DateTime<Utc>, String)> = query_as(AssertSqlSafe((&current_sql).to_string()))
         .bind(id)
         .bind(version_id)
         .fetch_optional(pool)
@@ -793,7 +794,7 @@ pub async fn vread_raw(
            WHERE id = $1 AND txid = $2"#
     );
 
-    let row: Option<(String, i64, DateTime<Utc>, DateTime<Utc>, String)> = query_as(&history_sql)
+    let row: Option<(String, i64, DateTime<Utc>, DateTime<Utc>, String)> = query_as(AssertSqlSafe((&history_sql).to_string()))
         .bind(id)
         .bind(version_id)
         .fetch_optional(pool)
@@ -908,7 +909,7 @@ pub async fn create_with_tx(
         )
     };
 
-    let row: (String, i64, DateTime<Utc>, DateTime<Utc>, Value) = query_as(&sql)
+    let row: (String, i64, DateTime<Utc>, DateTime<Utc>, Value) = query_as(AssertSqlSafe((&sql).to_string()))
         .bind(&id)
         .bind(now)
         .bind(resource)
@@ -983,7 +984,7 @@ pub async fn create_batch_with_tx(
            FROM UNNEST($1::text[], $2::jsonb[]) AS t(id, resource)"#
     );
 
-    let result = query(&sql)
+    let result = query(AssertSqlSafe((&sql).to_string()))
         .bind(&ids)
         .bind(&payloads)
         .bind(now)
@@ -1176,7 +1177,7 @@ pub async fn update_with_tx_if_match(
     };
 
     let row: Option<(String, i64, DateTime<Utc>, DateTime<Utc>, Value, i64)> =
-        query_as(&update_sql)
+        query_as(AssertSqlSafe((&update_sql).to_string()))
             .bind(id)
             .bind(resource)
             .bind(now)
@@ -1208,7 +1209,7 @@ pub async fn update_with_tx_if_match(
             if has_version_check {
                 let check_sql =
                     format!(r#"SELECT txid FROM "{table}" WHERE id = $1 AND status != 'deleted'"#);
-                let current: Option<i64> = query_scalar(&check_sql)
+                let current: Option<i64> = query_scalar(AssertSqlSafe((&check_sql).to_string()))
                     .bind(id)
                     .fetch_optional(&mut **tx)
                     .await
@@ -1260,7 +1261,7 @@ pub async fn delete_with_tx(
         )
     };
 
-    let _result = query(&sql).bind(id).execute(&mut **tx).await.map_err(|e| {
+    let _result = query(AssertSqlSafe((&sql).to_string())).bind(id).execute(&mut **tx).await.map_err(|e| {
         if e.to_string().contains("does not exist") {
             return StorageError::internal(format!("Table does not exist: {e}"));
         }
@@ -1288,7 +1289,7 @@ pub async fn read_with_tx(
            WHERE id = $1"#
     );
 
-    let row: Option<(String, i64, DateTime<Utc>, DateTime<Utc>, Value, String)> = query_as(&sql)
+    let row: Option<(String, i64, DateTime<Utc>, DateTime<Utc>, Value, String)> = query_as(AssertSqlSafe((&sql).to_string()))
         .bind(id)
         .fetch_optional(&mut **tx)
         .await

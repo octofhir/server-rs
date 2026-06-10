@@ -2,6 +2,7 @@
 //!
 //! This module contains the SQL queries for FHIR search operations.
 
+use sqlx_core::sql_str::AssertSqlSafe;
 use std::{
     collections::{HashMap, HashSet},
     sync::Arc,
@@ -751,7 +752,7 @@ async fn execute_query(
 ) -> Result<Vec<StoredResource>, StorageError> {
     // Build dynamic query with parameters
     // The query returns: resource, id, txid, created_at, updated_at
-    let mut sqlx_query = sqlx_core::query::query::<sqlx_postgres::Postgres>(&query.sql);
+    let mut sqlx_query = sqlx_core::query::query::<sqlx_postgres::Postgres>(AssertSqlSafe((&query.sql).to_string()));
 
     // Bind parameters
     for param in &query.params {
@@ -767,7 +768,7 @@ async fn execute_query(
     }
 
     // Execute and map results
-    let rows: Vec<(Value, String, i64, DateTime<Utc>, DateTime<Utc>)> = query_as(&query.sql)
+    let rows: Vec<(Value, String, i64, DateTime<Utc>, DateTime<Utc>)> = query_as(AssertSqlSafe((&query.sql).to_string()))
         .bind_all_params(&query.params)
         .fetch_all(pool)
         .await
@@ -811,7 +812,7 @@ async fn execute_query_with_tx(
     query: &BuiltQuery,
     resource_type: &str,
 ) -> Result<Vec<StoredResource>, StorageError> {
-    let rows: Vec<(Value, String, i64, DateTime<Utc>, DateTime<Utc>)> = query_as(&query.sql)
+    let rows: Vec<(Value, String, i64, DateTime<Utc>, DateTime<Utc>)> = query_as(AssertSqlSafe((&query.sql).to_string()))
         .bind_all_params(&query.params)
         .fetch_all(&mut **tx)
         .await
@@ -862,7 +863,7 @@ async fn execute_query_raw(
     let rows: Vec<(String, String, i64, DateTime<Utc>, DateTime<Utc>)> = query_as::<
         _,
         (String, String, i64, DateTime<Utc>, DateTime<Utc>),
-    >(&query.sql)
+    >(AssertSqlSafe((&query.sql).to_string()))
     .bind_all_params_raw(&query.params)
     .fetch_all(pool)
     .await
@@ -900,7 +901,7 @@ async fn execute_query_raw(
 
 /// Execute a count query and return the total.
 async fn execute_count_query(pool: &PgPool, query: &BuiltQuery) -> Result<u32, StorageError> {
-    let count: i64 = query_scalar(&query.sql)
+    let count: i64 = query_scalar(AssertSqlSafe((&query.sql).to_string()))
         .bind_all_params(&query.params)
         .fetch_one(pool)
         .await
@@ -922,7 +923,7 @@ pub async fn explain_built_search_query_json(
     analyze: bool,
 ) -> Result<Value, StorageError> {
     let explain_sql = build_explain_sql(&query.sql, analyze);
-    query_scalar(&explain_sql)
+    query_scalar(AssertSqlSafe((&explain_sql).to_string()))
         .bind_all_params(&query.params)
         .fetch_one(pool)
         .await
@@ -950,7 +951,7 @@ async fn execute_count_query_with_tx(
     tx: &mut PgTransaction<'_>,
     query: &BuiltQuery,
 ) -> Result<u32, StorageError> {
-    let count: i64 = query_scalar(&query.sql)
+    let count: i64 = query_scalar(AssertSqlSafe((&query.sql).to_string()))
         .bind_all_params(&query.params)
         .fetch_one(&mut **tx)
         .await
@@ -1146,7 +1147,7 @@ async fn query_include_for_target(
            WHERE s.id = ANY($1::text[]) AND s.status != 'deleted' AND x.m[1] = $2"#
     );
 
-    let rows: Vec<(Value, String, i64, DateTime<Utc>, DateTime<Utc>)> = query_as(&sql)
+    let rows: Vec<(Value, String, i64, DateTime<Utc>, DateTime<Utc>)> = query_as(AssertSqlSafe((&sql).to_string()))
         .bind(source_ids)
         .bind(target_type)
         .fetch_all(pool)
@@ -1288,7 +1289,7 @@ async fn resolve_revinclude_once(
            )"#
     );
 
-    let rows: Vec<(Value, String, i64, DateTime<Utc>, DateTime<Utc>)> = query_as(&sql)
+    let rows: Vec<(Value, String, i64, DateTime<Utc>, DateTime<Utc>)> = query_as(AssertSqlSafe((&sql).to_string()))
         .bind(target_type)
         .bind(&target_ids)
         .fetch_all(pool)
@@ -1484,7 +1485,7 @@ async fn query_include_for_target_raw(
            WHERE s.id = ANY($1::text[]) AND s.status != 'deleted' AND x.m[1] = $2"#
     );
 
-    let rows: Vec<(String, String, i64, DateTime<Utc>, DateTime<Utc>)> = query_as(&sql)
+    let rows: Vec<(String, String, i64, DateTime<Utc>, DateTime<Utc>)> = query_as(AssertSqlSafe((&sql).to_string()))
         .bind(source_ids)
         .bind(target_type)
         .fetch_all(pool)
@@ -1624,7 +1625,7 @@ async fn resolve_revinclude_once_raw(
            )"#
     );
 
-    let rows: Vec<(String, String, i64, DateTime<Utc>, DateTime<Utc>)> = query_as(&sql)
+    let rows: Vec<(String, String, i64, DateTime<Utc>, DateTime<Utc>)> = query_as(AssertSqlSafe((&sql).to_string()))
         .bind(target_type)
         .bind(&target_ids)
         .fetch_all(pool)

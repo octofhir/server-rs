@@ -3,6 +3,7 @@
 //! **Security Note**: This handler only supports READ-ONLY queries (SELECT)
 //! to prevent accidental or malicious data modification.
 
+use sqlx_core::sql_str::AssertSqlSafe;
 use axum::{
     Json,
     body::Body,
@@ -60,7 +61,7 @@ pub async fn handle_sql(
     info!("Executing SQL query");
 
     // Execute the query and convert rows to JSON
-    let rows = query(sql_query)
+    let rows = query(AssertSqlSafe((sql_query).to_string()))
         .fetch_all(state.db_pool.as_ref())
         .await
         .map_err(|e| GatewayError::SqlError(format!("Query execution failed: {}", e)))?;

@@ -5,6 +5,7 @@
 //! - Type history: All versions of all resources of a type
 //! - System history: All versions across all resource types
 
+use sqlx_core::sql_str::AssertSqlSafe;
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 use sqlx_core::query_as::query_as;
@@ -241,10 +242,10 @@ pub async fn get_system_history(
 
     // Execute with appropriate bindings
     let rows: Vec<SystemHistoryRow> = match (since_chrono, at_chrono) {
-        (Some(since), Some(at)) => query_as(&sql).bind(since).bind(at).fetch_all(pool).await,
-        (Some(since), None) => query_as(&sql).bind(since).fetch_all(pool).await,
-        (None, Some(at)) => query_as(&sql).bind(at).fetch_all(pool).await,
-        (None, None) => query_as(&sql).fetch_all(pool).await,
+        (Some(since), Some(at)) => query_as(AssertSqlSafe((&sql).to_string())).bind(since).bind(at).fetch_all(pool).await,
+        (Some(since), None) => query_as(AssertSqlSafe((&sql).to_string())).bind(since).fetch_all(pool).await,
+        (None, Some(at)) => query_as(AssertSqlSafe((&sql).to_string())).bind(at).fetch_all(pool).await,
+        (None, None) => query_as(AssertSqlSafe((&sql).to_string())).fetch_all(pool).await,
     }
     .map_err(|e| StorageError::internal(format!("Failed to query system history: {e}")))?;
 
@@ -457,10 +458,10 @@ pub async fn get_system_history_raw(
         execute_system_history_count_query(&count_sql, pool, since_chrono, at_chrono).await?;
 
     let rows: Vec<RawSystemHistoryRow> = match (since_chrono, at_chrono) {
-        (Some(since), Some(at)) => query_as(&sql).bind(since).bind(at).fetch_all(pool).await,
-        (Some(since), None) => query_as(&sql).bind(since).fetch_all(pool).await,
-        (None, Some(at)) => query_as(&sql).bind(at).fetch_all(pool).await,
-        (None, None) => query_as(&sql).fetch_all(pool).await,
+        (Some(since), Some(at)) => query_as(AssertSqlSafe((&sql).to_string())).bind(since).bind(at).fetch_all(pool).await,
+        (Some(since), None) => query_as(AssertSqlSafe((&sql).to_string())).bind(since).fetch_all(pool).await,
+        (None, Some(at)) => query_as(AssertSqlSafe((&sql).to_string())).bind(at).fetch_all(pool).await,
+        (None, None) => query_as(AssertSqlSafe((&sql).to_string())).fetch_all(pool).await,
     }
     .map_err(|e| StorageError::internal(format!("Failed to query system history: {e}")))?;
 
@@ -590,7 +591,7 @@ async fn execute_history_count_query(
 ) -> Result<u32, StorageError> {
     let count: i64 = match (has_id, has_since, has_at) {
         (true, true, true) => {
-            query_scalar(sql)
+            query_scalar(AssertSqlSafe((sql).to_string()))
                 .bind(id_str.unwrap())
                 .bind(since.unwrap())
                 .bind(at.unwrap())
@@ -598,35 +599,35 @@ async fn execute_history_count_query(
                 .await
         }
         (true, true, false) => {
-            query_scalar(sql)
+            query_scalar(AssertSqlSafe((sql).to_string()))
                 .bind(id_str.unwrap())
                 .bind(since.unwrap())
                 .fetch_one(pool)
                 .await
         }
         (true, false, true) => {
-            query_scalar(sql)
+            query_scalar(AssertSqlSafe((sql).to_string()))
                 .bind(id_str.unwrap())
                 .bind(at.unwrap())
                 .fetch_one(pool)
                 .await
         }
         (true, false, false) => {
-            query_scalar(sql)
+            query_scalar(AssertSqlSafe((sql).to_string()))
                 .bind(id_str.unwrap())
                 .fetch_one(pool)
                 .await
         }
         (false, true, true) => {
-            query_scalar(sql)
+            query_scalar(AssertSqlSafe((sql).to_string()))
                 .bind(since.unwrap())
                 .bind(at.unwrap())
                 .fetch_one(pool)
                 .await
         }
-        (false, true, false) => query_scalar(sql).bind(since.unwrap()).fetch_one(pool).await,
-        (false, false, true) => query_scalar(sql).bind(at.unwrap()).fetch_one(pool).await,
-        (false, false, false) => query_scalar(sql).fetch_one(pool).await,
+        (false, true, false) => query_scalar(AssertSqlSafe((sql).to_string())).bind(since.unwrap()).fetch_one(pool).await,
+        (false, false, true) => query_scalar(AssertSqlSafe((sql).to_string())).bind(at.unwrap()).fetch_one(pool).await,
+        (false, false, false) => query_scalar(AssertSqlSafe((sql).to_string())).fetch_one(pool).await,
     }
     .map_err(|e| {
         if e.to_string().contains("does not exist") {
@@ -647,10 +648,10 @@ async fn execute_system_history_count_query(
     at: Option<DateTime<Utc>>,
 ) -> Result<u32, StorageError> {
     let count: i64 = match (since, at) {
-        (Some(since), Some(at)) => query_scalar(sql).bind(since).bind(at).fetch_one(pool).await,
-        (Some(since), None) => query_scalar(sql).bind(since).fetch_one(pool).await,
-        (None, Some(at)) => query_scalar(sql).bind(at).fetch_one(pool).await,
-        (None, None) => query_scalar(sql).fetch_one(pool).await,
+        (Some(since), Some(at)) => query_scalar(AssertSqlSafe((sql).to_string())).bind(since).bind(at).fetch_one(pool).await,
+        (Some(since), None) => query_scalar(AssertSqlSafe((sql).to_string())).bind(since).fetch_one(pool).await,
+        (None, Some(at)) => query_scalar(AssertSqlSafe((sql).to_string())).bind(at).fetch_one(pool).await,
+        (None, None) => query_scalar(AssertSqlSafe((sql).to_string())).fetch_one(pool).await,
     }
     .map_err(|e| StorageError::internal(format!("Failed to count system history: {e}")))?;
 
@@ -676,7 +677,7 @@ async fn execute_history_query(
     // Build query dynamically based on which parameters are present
     let result = match (has_id, has_since, has_at) {
         (true, true, true) => {
-            query_as(sql)
+            query_as(AssertSqlSafe((sql).to_string()))
                 .bind(id_str.unwrap())
                 .bind(since.unwrap())
                 .bind(at.unwrap())
@@ -684,30 +685,30 @@ async fn execute_history_query(
                 .await
         }
         (true, true, false) => {
-            query_as(sql)
+            query_as(AssertSqlSafe((sql).to_string()))
                 .bind(id_str.unwrap())
                 .bind(since.unwrap())
                 .fetch_all(pool)
                 .await
         }
         (true, false, true) => {
-            query_as(sql)
+            query_as(AssertSqlSafe((sql).to_string()))
                 .bind(id_str.unwrap())
                 .bind(at.unwrap())
                 .fetch_all(pool)
                 .await
         }
-        (true, false, false) => query_as(sql).bind(id_str.unwrap()).fetch_all(pool).await,
+        (true, false, false) => query_as(AssertSqlSafe((sql).to_string())).bind(id_str.unwrap()).fetch_all(pool).await,
         (false, true, true) => {
-            query_as(sql)
+            query_as(AssertSqlSafe((sql).to_string()))
                 .bind(since.unwrap())
                 .bind(at.unwrap())
                 .fetch_all(pool)
                 .await
         }
-        (false, true, false) => query_as(sql).bind(since.unwrap()).fetch_all(pool).await,
-        (false, false, true) => query_as(sql).bind(at.unwrap()).fetch_all(pool).await,
-        (false, false, false) => query_as(sql).fetch_all(pool).await,
+        (false, true, false) => query_as(AssertSqlSafe((sql).to_string())).bind(since.unwrap()).fetch_all(pool).await,
+        (false, false, true) => query_as(AssertSqlSafe((sql).to_string())).bind(at.unwrap()).fetch_all(pool).await,
+        (false, false, false) => query_as(AssertSqlSafe((sql).to_string())).fetch_all(pool).await,
     }
     .map_err(|e| {
         if e.to_string().contains("does not exist") {
@@ -733,7 +734,7 @@ async fn execute_raw_history_query(
 ) -> Result<Vec<RawHistoryRow>, StorageError> {
     let result = match (has_id, has_since, has_at) {
         (true, true, true) => {
-            query_as(sql)
+            query_as(AssertSqlSafe((sql).to_string()))
                 .bind(id_str.unwrap())
                 .bind(since.unwrap())
                 .bind(at.unwrap())
@@ -741,30 +742,30 @@ async fn execute_raw_history_query(
                 .await
         }
         (true, true, false) => {
-            query_as(sql)
+            query_as(AssertSqlSafe((sql).to_string()))
                 .bind(id_str.unwrap())
                 .bind(since.unwrap())
                 .fetch_all(pool)
                 .await
         }
         (true, false, true) => {
-            query_as(sql)
+            query_as(AssertSqlSafe((sql).to_string()))
                 .bind(id_str.unwrap())
                 .bind(at.unwrap())
                 .fetch_all(pool)
                 .await
         }
-        (true, false, false) => query_as(sql).bind(id_str.unwrap()).fetch_all(pool).await,
+        (true, false, false) => query_as(AssertSqlSafe((sql).to_string())).bind(id_str.unwrap()).fetch_all(pool).await,
         (false, true, true) => {
-            query_as(sql)
+            query_as(AssertSqlSafe((sql).to_string()))
                 .bind(since.unwrap())
                 .bind(at.unwrap())
                 .fetch_all(pool)
                 .await
         }
-        (false, true, false) => query_as(sql).bind(since.unwrap()).fetch_all(pool).await,
-        (false, false, true) => query_as(sql).bind(at.unwrap()).fetch_all(pool).await,
-        (false, false, false) => query_as(sql).fetch_all(pool).await,
+        (false, true, false) => query_as(AssertSqlSafe((sql).to_string())).bind(since.unwrap()).fetch_all(pool).await,
+        (false, false, true) => query_as(AssertSqlSafe((sql).to_string())).bind(at.unwrap()).fetch_all(pool).await,
+        (false, false, false) => query_as(AssertSqlSafe((sql).to_string())).fetch_all(pool).await,
     }
     .map_err(|e| {
         if e.to_string().contains("does not exist") {

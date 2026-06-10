@@ -3,6 +3,7 @@
 //! This module uses embedded migrations for single-binary deployment.
 
 use sqlx_core::migrate::{Migration, MigrationType};
+use sqlx_core::sql_str::{AssertSqlSafe, SqlSafeStr};
 use sqlx_postgres::PgPool;
 use std::borrow::Cow;
 use tracing::{info, instrument};
@@ -34,7 +35,7 @@ fn build_migrations() -> Vec<Migration> {
             version: *version,
             description: Cow::Borrowed(description),
             migration_type: MigrationType::Simple,
-            sql: Cow::Borrowed(sql),
+            sql: AssertSqlSafe(sql.to_string()).into_sql_str(),
             checksum: Cow::Borrowed(&[]), // Empty checksum for embedded migrations
             no_tx: false,                 // Run in transaction
         })
@@ -71,6 +72,7 @@ pub async fn run(pool: &PgPool, _db_url: &str) -> Result<()> {
         ignore_missing: false,
         locking: true,
         no_tx: false, // Run in transaction
+        ..sqlx_core::migrate::Migrator::DEFAULT
     };
 
     migrator

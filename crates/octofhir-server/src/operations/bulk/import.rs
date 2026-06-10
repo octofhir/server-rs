@@ -20,6 +20,7 @@
 //! }
 //! ```
 
+use sqlx_core::sql_str::AssertSqlSafe;
 use async_trait::async_trait;
 use chrono::Utc;
 use futures_util::{StreamExt, stream};
@@ -298,7 +299,7 @@ async fn upsert_resource_with_indexes(
            RETURNING id"#
     );
 
-    let row: (String,) = query_as::<_, (String,)>(&sql)
+    let row: (String,) = query_as::<_, (String,)>(AssertSqlSafe((&sql).to_string()))
         .bind(id)
         .bind(now)
         .bind(resource)
@@ -444,7 +445,7 @@ async fn batch_upsert_resources(
                updated_at = EXCLUDED.updated_at"#
     );
 
-    let result = query(&sql)
+    let result = query(AssertSqlSafe((&sql).to_string()))
         .bind(&ids)
         .bind(&resources)
         .bind(now)

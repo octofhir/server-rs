@@ -2,6 +2,7 @@
 //!
 //! PostgreSQL storage for operations registry.
 
+use sqlx_core::sql_str::AssertSqlSafe;
 use async_trait::async_trait;
 use octofhir_core::{AppReference, OperationDefinition};
 use sqlx_core::error::Error as SqlxError;
@@ -289,7 +290,7 @@ impl OperationStorage for PostgresOperationStorage {
             set_clauses.join(", ")
         );
 
-        let mut query_builder = query(&sql).bind(id);
+        let mut query_builder = query(AssertSqlSafe((&sql).to_string())).bind(id);
 
         // Bind parameters in order
         if let Some(public) = update.public {

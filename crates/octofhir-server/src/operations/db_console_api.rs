@@ -1,6 +1,7 @@
 //! DB Console API endpoints for schema browsing, query history,
 //! active query management, and index operations.
 
+use sqlx_core::sql_str::AssertSqlSafe;
 use axum::{
     Extension, Json,
     extract::{Path, Query, State},
@@ -1060,7 +1061,7 @@ pub async fn terminate_query(
         "Terminating query"
     );
 
-    let row = sqlx_core::query::query(sql)
+    let row = sqlx_core::query::query(AssertSqlSafe((sql).to_string()))
         .bind(req.pid)
         .fetch_one(state.db_pool.as_ref())
         .await
@@ -1119,7 +1120,7 @@ pub async fn drop_index(
     // Use quoted identifiers for safety
     let sql = format!("DROP INDEX IF EXISTS \"{}\".\"{}\"", schema, index_name);
 
-    sqlx_core::query::query(&sql)
+    sqlx_core::query::query(AssertSqlSafe((&sql).to_string()))
         .execute(state.db_pool.as_ref())
         .await
         .map_err(|e| ApiError::internal(format!("Failed to drop index: {}", e)))?;

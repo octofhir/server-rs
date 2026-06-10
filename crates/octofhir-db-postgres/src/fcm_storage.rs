@@ -8,6 +8,7 @@
 //! Also provides storage for pre-converted FHIRSchemas to enable on-demand loading
 //! and reduce memory usage by using an LRU cache backed by the database.
 
+use sqlx_core::sql_str::AssertSqlSafe;
 use std::path::PathBuf;
 
 use async_trait::async_trait;
@@ -1653,7 +1654,7 @@ impl PackageStore for PostgresPackageStore {
             Self::RESOURCE_SELECT
         );
 
-        let row = query(&sql)
+        let row = query(AssertSqlSafe((&sql).to_string()))
             .bind(canonical_url)
             .fetch_optional(&self.pool)
             .await
@@ -1719,7 +1720,7 @@ impl SearchStorage for PostgresPackageStore {
             Self::RESOURCE_SELECT
         );
 
-        let row = query(&sql)
+        let row = query(AssertSqlSafe((&sql).to_string()))
             .bind(canonical_url)
             .bind(fhir_version)
             .fetch_optional(&self.pool)
@@ -1742,7 +1743,7 @@ impl SearchStorage for PostgresPackageStore {
             Self::RESOURCE_SELECT
         );
 
-        let rows = query(&sql)
+        let rows = query(AssertSqlSafe((&sql).to_string()))
             .bind(&pattern)
             .fetch_all(&self.pool)
             .await
@@ -1770,7 +1771,7 @@ impl SearchStorage for PostgresPackageStore {
             Self::RESOURCE_SELECT
         );
 
-        let row = query(&sql)
+        let row = query(AssertSqlSafe((&sql).to_string()))
             .bind(name)
             .fetch_optional(&self.pool)
             .await
@@ -1791,7 +1792,7 @@ impl SearchStorage for PostgresPackageStore {
             Self::RESOURCE_SELECT
         );
 
-        let rows = query(&sql)
+        let rows = query(AssertSqlSafe((&sql).to_string()))
             .bind(&resource_type)
             .bind(&id)
             .fetch_all(&self.pool)
@@ -1816,7 +1817,7 @@ impl SearchStorage for PostgresPackageStore {
             Self::RESOURCE_SELECT
         );
 
-        let rows = query(&sql)
+        let rows = query(AssertSqlSafe((&sql).to_string()))
             .bind(&resource_type)
             .bind(&name)
             .fetch_all(&self.pool)
@@ -1867,7 +1868,7 @@ impl SearchStorage for PostgresPackageStore {
             sql.push_str(&format!(" LIMIT {}", lim));
         }
 
-        let rows = query(&sql)
+        let rows = query(AssertSqlSafe((&sql).to_string()))
             .bind(key)
             .fetch_all(&self.pool)
             .await
@@ -1948,7 +1949,7 @@ impl SearchStorage for PostgresPackageStore {
 
         let sql = format!("{} WHERE url IS NOT NULL", Self::RESOURCE_SELECT);
 
-        let rows = match query(&sql).fetch_all(&self.pool).await {
+        let rows = match query(AssertSqlSafe((&sql).to_string())).fetch_all(&self.pool).await {
             Ok(rows) => rows,
             Err(e) => {
                 warn!("Failed to get cache entries: {}", e);
@@ -1983,7 +1984,7 @@ impl SearchStorage for PostgresPackageStore {
             Self::RESOURCE_SELECT
         );
 
-        let rows = query(&sql)
+        let rows = query(AssertSqlSafe((&sql).to_string()))
             .bind(resource_type)
             .bind(package_name)
             .fetch_all(&self.pool)

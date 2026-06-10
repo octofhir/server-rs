@@ -10,6 +10,7 @@
 //! ACCESS EXCLUSIVE lock is free. A future runtime "add index on a live table"
 //! path (DB console / suggest-index) should use CONCURRENTLY instead.
 
+use sqlx_core::sql_str::AssertSqlSafe;
 use octofhir_search::SearchParameterRegistry;
 use octofhir_search::loader::ElementTypeResolver;
 use octofhir_search::parameters::{ElementTypeHint, SearchParameterType};
@@ -45,7 +46,7 @@ pub async fn create_default_search_indexes(
     resolver: &dyn ElementTypeResolver,
 ) -> usize {
     // Ensure the array-normalization helper exists before any typed function uses it.
-    if let Err(e) = sqlx_core::raw_sql::raw_sql(FHIR_ARR_DDL).execute(pool).await {
+    if let Err(e) = sqlx_core::raw_sql::raw_sql(AssertSqlSafe((FHIR_ARR_DDL).to_string())).execute(pool).await {
         warn!(error = %e, "failed to create fhir_arr helper; typed string extraction disabled");
     }
 
@@ -72,13 +73,13 @@ pub async fn create_default_search_indexes(
             if let Some((fn_name, fn_ddl, _)) =
                 build_typed_extract_fn(resource_type, code, &annotated)
             {
-                match sqlx_core::raw_sql::raw_sql(&fn_ddl).execute(pool).await {
+                match sqlx_core::raw_sql::raw_sql(AssertSqlSafe((&fn_ddl).to_string())).execute(pool).await {
                     Ok(_) => {
                         let index_ddl = format!(
                             "CREATE INDEX IF NOT EXISTS \"idx_{table}_{code}_str\" ON \"{table}\" \
                              USING gin (fhir_text_blob({fn_name}(resource)) gin_trgm_ops)"
                         );
-                        match sqlx_core::raw_sql::raw_sql(&index_ddl).execute(pool).await {
+                        match sqlx_core::raw_sql::raw_sql(AssertSqlSafe((&index_ddl).to_string())).execute(pool).await {
                             Ok(_) => {
                                 registry.upsert(
                                     (*param).clone().with_typed_extract_fn(fn_name),
@@ -156,7 +157,7 @@ pub async fn create_default_search_indexes(
             _ => continue,
         };
 
-        match sqlx_core::raw_sql::raw_sql(&ddl).execute(pool).await {
+        match sqlx_core::raw_sql::raw_sql(AssertSqlSafe((&ddl).to_string())).execute(pool).await {
             Ok(_) => {
                 created += 1;
                 debug!(resource_type, code, "created functional search index");

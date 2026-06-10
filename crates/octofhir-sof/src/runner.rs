@@ -3,6 +3,7 @@
 //! This module provides the ViewRunner which executes generated SQL
 //! against a PostgreSQL database and returns structured results.
 
+use sqlx_core::sql_str::AssertSqlSafe;
 use serde_json::Value;
 use sqlx_core::row::Row;
 use sqlx_postgres::{PgPool, PgRow};
@@ -42,7 +43,7 @@ impl ViewRunner {
 
         tracing::debug!(sql = %generated.sql, "Executing view");
 
-        let rows = sqlx_core::query::query(&generated.sql)
+        let rows = sqlx_core::query::query(AssertSqlSafe((&generated.sql).to_string()))
             .fetch_all(&self.pool)
             .await
             .map_err(Error::Sql)?;

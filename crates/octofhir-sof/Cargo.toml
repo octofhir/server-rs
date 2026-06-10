@@ -10,11 +10,11 @@ license = "MIT OR Apache-2.0"
 octofhir-fhirpath = { workspace = true }
 
 # Database
-sqlx-core = { version = "0.8.6", default-features = false, features = [
+sqlx-core = { version = "0.9.0", default-features = false, features = [
     "_rt-tokio",
     "json",
 ] }
-sqlx-postgres = { version = "0.8.6", default-features = false, features = [
+sqlx-postgres = { version = "0.9.0", default-features = false, features = [
     "json",
 ] }
 

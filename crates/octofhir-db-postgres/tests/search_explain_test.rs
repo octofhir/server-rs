@@ -1,3 +1,4 @@
+use sqlx_core::sql_str::AssertSqlSafe;
 use octofhir_db_postgres::{PostgresStorage, SchemaManager, migrations};
 use octofhir_search::{
     BuiltQuery, ElementTypeHint, SearchParameter, SearchParameterRegistry, SearchParameterType,
@@ -157,7 +158,7 @@ async fn execute_built_query_row_count(
             chrono::DateTime<chrono::Utc>,
             chrono::DateTime<chrono::Utc>,
         ),
-    >(&query.sql);
+    >(AssertSqlSafe(query.sql.to_string()));
     for param in &query.params {
         sqlx_query = match param {
             SqlValue::Text(value) => sqlx_query.bind(value.as_str()),

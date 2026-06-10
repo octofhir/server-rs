@@ -287,7 +287,7 @@ async fn lsp_completion_suggests_tables_after_from() {
         table = table_name
     );
     pool.as_ref()
-        .execute(create_table.as_str())
+        .execute(sqlx_core::sql_str::AssertSqlSafe(create_table.clone()))
         .await
         .expect("create table");
 
@@ -342,7 +342,7 @@ async fn lsp_completion_filters_tables_by_prefix() {
         table = table_pat
     );
     pool.as_ref()
-        .execute(create_table.as_str())
+        .execute(sqlx_core::sql_str::AssertSqlSafe(create_table.clone()))
         .await
         .expect("create table");
 
@@ -351,7 +351,7 @@ async fn lsp_completion_filters_tables_by_prefix() {
         table = table_other
     );
     pool.as_ref()
-        .execute(create_table.as_str())
+        .execute(sqlx_core::sql_str::AssertSqlSafe(create_table.clone()))
         .await
         .expect("create table");
 
@@ -408,7 +408,7 @@ async fn lsp_completion_filters_tables_by_schema_prefix() {
         table = table_name
     );
     pool.as_ref()
-        .execute(create_table.as_str())
+        .execute(sqlx_core::sql_str::AssertSqlSafe(create_table.clone()))
         .await
         .expect("create table");
 
@@ -461,7 +461,7 @@ async fn lsp_completion_resolves_alias_columns() {
         table = table_name
     );
     pool.as_ref()
-        .execute(create_table.as_str())
+        .execute(sqlx_core::sql_str::AssertSqlSafe(create_table.clone()))
         .await
         .expect("create table");
 
@@ -515,7 +515,7 @@ async fn lsp_completion_suggests_tables_after_join_update_insert() {
         table = table_left
     );
     pool.as_ref()
-        .execute(create_table.as_str())
+        .execute(sqlx_core::sql_str::AssertSqlSafe(create_table.clone()))
         .await
         .expect("create table");
 
@@ -524,7 +524,7 @@ async fn lsp_completion_suggests_tables_after_join_update_insert() {
         table = table_right
     );
     pool.as_ref()
-        .execute(create_table.as_str())
+        .execute(sqlx_core::sql_str::AssertSqlSafe(create_table.clone()))
         .await
         .expect("create table");
 
@@ -647,7 +647,7 @@ async fn lsp_completion_suggests_columns_in_where_and_order_by() {
         table = table_name
     );
     pool.as_ref()
-        .execute(create_table.as_str())
+        .execute(sqlx_core::sql_str::AssertSqlSafe(create_table.clone()))
         .await
         .expect("create table");
 
@@ -965,7 +965,7 @@ async fn lsp_completion_returns_tables_columns_and_functions() {
         table = table_name
     );
     pool.as_ref()
-        .execute(create_table.as_str())
+        .execute(sqlx_core::sql_str::AssertSqlSafe(create_table.clone()))
         .await
         .expect("create table");
 
@@ -974,7 +974,7 @@ async fn lsp_completion_returns_tables_columns_and_functions() {
         func = function_name
     );
     pool.as_ref()
-        .execute(create_function.as_str())
+        .execute(sqlx_core::sql_str::AssertSqlSafe(create_function.clone()))
         .await
         .expect("create function");
 

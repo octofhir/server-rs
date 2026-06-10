@@ -1,3 +1,4 @@
+use sqlx_core::sql_str::AssertSqlSafe;
 use crate::bootstrap::ADMIN_ACCESS_POLICY_ID;
 use crate::gateway::{App, PathValidationError, validate_app_operations};
 use crate::mapping::{IdPolicy, json_from_envelope, validate_payload_structure};
@@ -6118,7 +6119,7 @@ pub async fn api_packages_resources(
     };
 
     let rows = if let Some(rt) = bind_type {
-        query(sql)
+        query(AssertSqlSafe((sql).to_string()))
             .bind(&name)
             .bind(&version)
             .bind(rt)
@@ -6127,7 +6128,7 @@ pub async fn api_packages_resources(
             .fetch_all(state.db_pool.as_ref())
             .await
     } else {
-        query(sql)
+        query(AssertSqlSafe((sql).to_string()))
             .bind(&name)
             .bind(&version)
             .bind(limit as i64)
@@ -6156,7 +6157,7 @@ pub async fn api_packages_resources(
     };
 
     let total: i64 = if let Some(ref rt) = params.resource_type {
-        sqlx_core::query_scalar::query_scalar(count_sql)
+        sqlx_core::query_scalar::query_scalar(AssertSqlSafe((count_sql).to_string()))
             .bind(&name)
             .bind(&version)
             .bind(rt)
@@ -6164,7 +6165,7 @@ pub async fn api_packages_resources(
             .await
             .unwrap_or(0)
     } else {
-        sqlx_core::query_scalar::query_scalar(count_sql)
+        sqlx_core::query_scalar::query_scalar(AssertSqlSafe((count_sql).to_string()))
             .bind(&name)
             .bind(&version)
             .fetch_one(state.db_pool.as_ref())

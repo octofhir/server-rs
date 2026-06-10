@@ -103,13 +103,13 @@ tokio-tungstenite = "0.29"
 # Database
 # Note: Use sqlx-postgres/sqlx-core directly for database operations
 # These provide the PgPool type and query macros without the sqlite conflict
-sqlx-core = { version = "0.8.6", default-features = false, features = [
+sqlx-core = { version = "0.9.0", default-features = false, features = [
     "_rt-tokio",
     "_tls-native-tls",
     "json",
     "migrate"
 ] }
-sqlx-postgres = { version = "0.8.6", default-features = false, features = [
+sqlx-postgres = { version = "0.9.0", default-features = false, features = [
     "json",
     "chrono",
     "uuid",

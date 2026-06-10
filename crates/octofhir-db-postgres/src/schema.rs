@@ -4,6 +4,7 @@
 //! index management, and schema introspection. It uses a table-per-resource
 //! pattern where each FHIR resource type gets its own table.
 
+use sqlx_core::sql_str::AssertSqlSafe;
 use sqlx_postgres::PgPool;
 use tracing::{debug, instrument};
 
@@ -90,7 +91,7 @@ impl SchemaManager {
     #[instrument(skip(self), fields(resource_type = %resource_type))]
     pub async fn create_resource_schema(&self, resource_type: &str) -> Result<()> {
         let sql = Self::build_resource_schema_sql(resource_type);
-        sqlx_core::raw_sql::raw_sql(&sql)
+        sqlx_core::raw_sql::raw_sql(AssertSqlSafe((&sql).to_string()))
             .execute(&self.pool)
             .await
             .map_err(PostgresError::from)?;
@@ -204,7 +205,7 @@ impl SchemaManager {
     /// Ensure the shared `archive_to_history()` function exists. Call once
     /// before parallel resource-schema creation.
     pub async fn ensure_archive_function(pool: &PgPool) -> Result<()> {
-        sqlx_core::query::query(ARCHIVE_FN_SQL)
+        sqlx_core::query::query(AssertSqlSafe((ARCHIVE_FN_SQL).to_string()))
             .execute(pool)
             .await
             .map_err(PostgresError::from)?;
