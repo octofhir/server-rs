@@ -68,7 +68,7 @@ pub fn build_near_search(
     let dist_p = builder.add_text_param(distance_km.to_string());
 
     // Haversine formula
-    builder.add_condition(format!(
+    builder.add_raw_condition(format!(
         "(6371.0 * 2 * asin(sqrt(\
             power(sin(radians(({position_path}->>'latitude')::numeric - ${lat_p}::numeric) / 2), 2) + \
             cos(radians(${lat_p}::numeric)) * \
@@ -83,7 +83,7 @@ pub fn build_near_search(
 /// Build SQL for _text search on narrative.
 pub fn build_text_search(builder: &mut SqlBuilder, value: &str) -> Result<(), SqlBuilderError> {
     let p = builder.add_text_param(value);
-    builder.add_condition(format!(
+    builder.add_raw_condition(format!(
         "to_tsvector('english', regexp_replace(resource->'text'->>'div', '<[^>]*>', '', 'g')) \
          @@ plainto_tsquery('english', ${p})"
     ));
@@ -93,7 +93,7 @@ pub fn build_text_search(builder: &mut SqlBuilder, value: &str) -> Result<(), Sq
 /// Build SQL for _content search on entire resource.
 pub fn build_content_search(builder: &mut SqlBuilder, value: &str) -> Result<(), SqlBuilderError> {
     let p = builder.add_text_param(value);
-    builder.add_condition(format!(
+    builder.add_raw_condition(format!(
         "to_tsvector('english', resource::text) @@ plainto_tsquery('english', ${p})"
     ));
     Ok(())
@@ -133,7 +133,7 @@ pub fn build_list_search(
     let p = builder.add_text_param(list_id);
     let type_p = builder.add_text_param(base_type.to_string());
 
-    builder.add_condition(format!(
+    builder.add_raw_condition(format!(
         "EXISTS (SELECT 1 FROM list l, jsonb_array_elements(l.resource->'entry') AS entry \
          WHERE l.id::text = ${p} AND l.status != 'deleted' \
          AND fhir_ref_type(entry->'item'->>'reference') = ${type_p} \

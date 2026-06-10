@@ -9,8 +9,9 @@
 use crate::parameters::{SearchModifier, SearchParameter, SearchParameterType};
 use crate::parser::{ParsedParam, SearchParameterParser};
 use crate::registry::SearchParameterRegistry;
+use crate::ir::sql::{SelectStmt, SqlExpr, SqlFrom, SqlTerm};
 use crate::sql_builder::{
-    SqlBuilder, SqlBuilderError, SqlParam, fhirpath_to_jsonb_path, jsonb_reference_match_exists,
+    SqlBuilder, SqlBuilderError, SqlParam, fhirpath_to_jsonb_path, jsonb_reference_match_exists_expr,
 };
 use std::sync::Arc;
 
@@ -174,7 +175,7 @@ fn render_nested_chain(
     current_type: &str,
     registry: &SearchParameterRegistry,
     depth: usize,
-) -> Result<String, ChainError> {
+) -> Result<SqlExpr, ChainError> {
     let link = &clause.chain[depth];
     let target_type = link
         .target_type
@@ -197,7 +198,8 @@ fn render_nested_chain(
         "(ref->>'reference' = '{target_type}/' || {alias}.id \
           OR ref->>'reference' LIKE '%/{target_type}/' || {alias}.id)"
     );
-    let ref_exists = jsonb_reference_match_exists(&outer_resource_col, &segments, &ref_predicate);
+    let ref_exists =
+        jsonb_reference_match_exists_expr(&outer_resource_col, &segments, &ref_predicate);
 
     let inner_condition = if depth + 1 < clause.chain.len() {
         render_nested_chain(builder, clause, target_type, registry, depth + 1)?
@@ -214,12 +216,18 @@ fn render_nested_chain(
         )?
     };
 
-    Ok(format!(
-        "EXISTS (SELECT 1 FROM \"{target_table}\" {alias} \
-         WHERE {alias}.status != 'deleted' \
-         AND {ref_exists} \
-         AND {inner_condition})"
-    ))
+    Ok(SqlExpr::Exists(Box::new(SelectStmt {
+        projection: vec![SqlTerm::Integer(1)],
+        from: SqlFrom {
+            table: format!("\"{target_table}\""),
+            alias: Some(alias.clone()),
+        },
+        where_clause: Some(SqlExpr::And(vec![
+            SqlExpr::Raw(format!("{alias}.status != 'deleted'")),
+            ref_exists,
+            inner_condition,
+        ])),
+    })))
 }
 
 // ============================================================================
@@ -342,7 +350,7 @@ fn render_has_level(
     outer_id_expr: &str,
     registry: &SearchParameterRegistry,
     depth: usize,
-) -> Result<String, ChainError> {
+) -> Result<SqlExpr, ChainError> {
     let source_table = clause.source_type.to_lowercase();
     let src_alias = format!("has{depth}");
 
@@ -354,8 +362,11 @@ fn render_has_level(
         "(ref->>'reference' = '{base_type}/' || {outer_id_expr} \
           OR ref->>'reference' LIKE '%/{base_type}/' || {outer_id_expr})"
     );
-    let ref_exists =
-        jsonb_reference_match_exists(&format!("{src_alias}.resource"), &segments, &ref_predicate);
+    let ref_exists = jsonb_reference_match_exists_expr(
+        &format!("{src_alias}.resource"),
+        &segments,
+        &ref_predicate,
+    );
 
     let inner = match &clause.tail {
         HasTail::Final {
@@ -385,12 +396,18 @@ fn render_has_level(
         }
     };
 
-    Ok(format!(
-        "EXISTS (SELECT 1 FROM \"{source_table}\" {src_alias} \
-         WHERE {src_alias}.status != 'deleted' \
-           AND {ref_exists} \
-           AND {inner})"
-    ))
+    Ok(SqlExpr::Exists(Box::new(SelectStmt {
+        projection: vec![SqlTerm::Integer(1)],
+        from: SqlFrom {
+            table: format!("\"{source_table}\""),
+            alias: Some(src_alias.clone()),
+        },
+        where_clause: Some(SqlExpr::And(vec![
+            SqlExpr::Raw(format!("{src_alias}.status != 'deleted'")),
+            ref_exists,
+            inner,
+        ])),
+    })))
 }
 
 // ============================================================================
@@ -409,7 +426,7 @@ fn render_final_condition(
     target_type: &str,
     alias: &str,
     registry: &SearchParameterRegistry,
-) -> Result<String, ChainError> {
+) -> Result<SqlExpr, ChainError> {
     let resource_col = format!("{alias}.resource");
     let mut inner =
         SqlBuilder::with_resource_column(&resource_col).with_param_offset(builder.param_count());

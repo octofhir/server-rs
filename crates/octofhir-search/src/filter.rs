@@ -475,7 +475,7 @@ pub fn build_filter_sql(
 ) -> Result<(), SqlBuilderError> {
     let expr = parse_filter(value)?;
     let condition = build_condition(builder, &expr)?;
-    builder.add_condition(condition);
+    builder.add_raw_condition(condition);
     Ok(())
 }
 

@@ -48,16 +48,20 @@ $$;
 -- Lower/upper timestamptz bound of a (possibly partial) FHIR date/dateTime string.
 CREATE OR REPLACE FUNCTION fhir_date_bound(val text, bound text)
 RETURNS timestamptz LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$
+  -- Date search paths over-collect (a choice base may extract a Period object,
+  -- a non-date sibling, etc.); the format guards return NULL on any non-date
+  -- text instead of erroring, so over-collected paths are harmless.
   SELECT CASE
     WHEN val IS NULL THEN NULL
-    WHEN length(val) = 4 THEN
+    WHEN val ~ '^[0-9]{4}$' THEN
       (val || CASE WHEN bound = 'min' THEN '-01-01T00:00:00Z' ELSE '-12-31T23:59:59.999999Z' END)::timestamptz
-    WHEN length(val) = 7 THEN
+    WHEN val ~ '^[0-9]{4}-[0-9]{2}$' THEN
       CASE WHEN bound = 'min' THEN (val || '-01')::timestamptz
            ELSE (val || '-01')::timestamptz + interval '1 month' - interval '1 microsecond' END
-    WHEN length(val) = 10 THEN
+    WHEN val ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$' THEN
       (val || CASE WHEN bound = 'min' THEN 'T00:00:00Z' ELSE 'T23:59:59.999999Z' END)::timestamptz
-    ELSE val::timestamptz
+    WHEN val ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T' THEN val::timestamptz
+    ELSE NULL
   END;
 $$;
 

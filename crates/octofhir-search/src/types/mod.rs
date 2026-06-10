@@ -408,7 +408,7 @@ fn build_reference_jsonb_fallback_search(
                 "({json_path} IS NOT NULL AND {json_path} != 'null'::jsonb AND {json_path} != '[]'::jsonb)"
             )
         };
-        builder.add_condition(condition);
+        builder.add_raw_condition(condition);
         return Ok(());
     }
 
@@ -420,29 +420,33 @@ fn build_reference_jsonb_fallback_search(
         }
     };
 
-    let mut or_conditions = Vec::new();
+    let mut or_conditions: Vec<crate::ir::sql::SqlExpr> = Vec::new();
     for value in &param.values {
         if value.raw.is_empty() {
             continue;
         }
 
         let references = reference_fallback_candidates(&value.raw, type_modifier, target_types);
-        let mut value_conditions = Vec::new();
+        let mut value_conditions: Vec<crate::ir::sql::SqlExpr> = Vec::new();
         for reference in references {
             let p = builder.add_text_param(reference);
-            value_conditions.push(format!(
+            value_conditions.push(crate::ir::sql::SqlExpr::Raw(format!(
                 "EXISTS (SELECT 1 FROM jsonb_array_elements({}) AS ref WHERE ref->>'reference' = ${p})",
                 jsonb_array_or_singleton(json_path)
-            ));
+            )));
         }
 
-        if !value_conditions.is_empty() {
-            or_conditions.push(SqlBuilder::build_or_clause(&value_conditions));
+        match value_conditions.len() {
+            0 => {}
+            1 => or_conditions.push(value_conditions.pop().unwrap()),
+            _ => or_conditions.push(crate::ir::sql::SqlExpr::Or(value_conditions)),
         }
     }
 
-    if !or_conditions.is_empty() {
-        builder.add_condition(SqlBuilder::build_or_clause(&or_conditions));
+    match or_conditions.len() {
+        0 => {}
+        1 => builder.add_condition(or_conditions.pop().unwrap()),
+        _ => builder.add_condition(crate::ir::sql::SqlExpr::Or(or_conditions)),
     }
     Ok(())
 }
@@ -535,7 +539,7 @@ fn build_last_updated_search(
         } else {
             format!("({column} IS NOT NULL)")
         };
-        builder.add_condition(condition);
+        builder.add_raw_condition(condition);
         return Ok(());
     }
 
@@ -629,7 +633,7 @@ fn build_gin_exact_string_search(
     }
 
     if !or_conditions.is_empty() {
-        builder.add_condition(SqlBuilder::build_or_clause(&or_conditions));
+        builder.add_raw_condition(SqlBuilder::build_or_clause(&or_conditions));
     }
 
     Ok(())

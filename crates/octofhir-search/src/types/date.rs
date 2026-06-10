@@ -84,7 +84,7 @@ fn build_missing_condition(
                 "({jsonb_path} IS NOT NULL AND {jsonb_path} != 'null' AND {jsonb_path} != '\"\"')"
             )
         };
-        builder.add_condition(condition);
+        builder.add_raw_condition(condition);
     }
     Ok(())
 }
@@ -330,11 +330,11 @@ pub fn build_indexed_date_inplace(
 
     let expression = definition.expression.as_deref().unwrap_or_default();
     let segments = crate::sql_builder::fhirpath_to_jsonb_path(expression, resource_type);
-    let paths = crate::sql_builder::extraction_paths(&segments, &definition.element_type_hint);
-    let paths_json = crate::sql_builder::paths_to_json(&paths);
+    let lower_json = crate::sql_builder::paths_to_json(&crate::sql_builder::date_lower_paths(&segments));
+    let upper_json = crate::sql_builder::paths_to_json(&crate::sql_builder::date_upper_paths(&segments));
     let col = builder.resource_column();
-    let min_expr = format!("fhir_extract_date_min({col}, '{paths_json}'::jsonb)");
-    let max_expr = format!("fhir_extract_date_max({col}, '{paths_json}'::jsonb)");
+    let min_expr = format!("fhir_extract_date_min({col}, '{lower_json}'::jsonb)");
+    let max_expr = format!("fhir_extract_date_max({col}, '{upper_json}'::jsonb)");
     let range_expr = format!("tstzrange({min_expr}, {max_expr}, '[]')");
 
     if let Some(SearchModifier::Missing) = &param.modifier {
@@ -348,7 +348,7 @@ pub fn build_indexed_date_inplace(
         } else {
             format!("{min_expr} IS NOT NULL")
         };
-        builder.add_condition(cond);
+        builder.add_raw_condition(cond);
         return Ok(());
     }
 

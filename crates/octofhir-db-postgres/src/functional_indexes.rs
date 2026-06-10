@@ -12,7 +12,9 @@
 
 use octofhir_search::SearchParameterRegistry;
 use octofhir_search::parameters::SearchParameterType;
-use octofhir_search::sql_builder::{extraction_paths, fhirpath_to_jsonb_path, paths_to_json};
+use octofhir_search::sql_builder::{
+    date_lower_paths, date_upper_paths, extraction_paths, fhirpath_to_jsonb_path, paths_to_json,
+};
 use sqlx_postgres::PgPool;
 use tracing::{debug, info, warn};
 
@@ -37,20 +39,28 @@ pub async fn create_default_search_indexes(
             continue;
         };
         let segments = fhirpath_to_jsonb_path(expression, resource_type);
-        let paths_json = paths_to_json(&extraction_paths(&segments, &param.element_type_hint));
         let table = resource_type.to_lowercase();
 
         let ddl = match param.param_type {
-            SearchParameterType::Date => format!(
-                "CREATE INDEX IF NOT EXISTS \"idx_{table}_{code}_date\" ON \"{table}\" \
-                 USING gist (tstzrange(\
-                   fhir_extract_date_min(resource, '{paths_json}'::jsonb), \
-                   fhir_extract_date_max(resource, '{paths_json}'::jsonb), '[]'))"
-            ),
-            SearchParameterType::String => format!(
-                "CREATE INDEX IF NOT EXISTS \"idx_{table}_{code}_str\" ON \"{table}\" \
-                 USING gin (fhir_text_blob(fhir_extract_text(resource, '{paths_json}'::jsonb)) gin_trgm_ops)"
-            ),
+            SearchParameterType::Date => {
+                // Same split lower/upper date paths the in-place predicate derives,
+                // so the planner matches this functional GiST index.
+                let lower_json = paths_to_json(&date_lower_paths(&segments));
+                let upper_json = paths_to_json(&date_upper_paths(&segments));
+                format!(
+                    "CREATE INDEX IF NOT EXISTS \"idx_{table}_{code}_date\" ON \"{table}\" \
+                     USING gist (tstzrange(\
+                       fhir_extract_date_min(resource, '{lower_json}'::jsonb), \
+                       fhir_extract_date_max(resource, '{upper_json}'::jsonb), '[]'))"
+                )
+            }
+            SearchParameterType::String => {
+                let paths_json = paths_to_json(&extraction_paths(&segments, &param.element_type_hint));
+                format!(
+                    "CREATE INDEX IF NOT EXISTS \"idx_{table}_{code}_str\" ON \"{table}\" \
+                     USING gin (fhir_text_blob(fhir_extract_text(resource, '{paths_json}'::jsonb)) gin_trgm_ops)"
+                )
+            }
             // Token/Quantity/Reference predicates are not yet index-matched in-place;
             // their indexes are added with those predicate rewrites.
             _ => continue,

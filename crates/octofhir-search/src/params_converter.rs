@@ -321,7 +321,7 @@ pub fn build_native_ir_query_from_params_with_config(
     }
 
     // Add status filter to exclude deleted resources
-    sql_builder.add_condition("r.status != 'deleted'");
+    sql_builder.add_raw_condition("r.status != 'deleted'");
 
     // Convert SqlBuilder conditions to SearchCondition::Raw
     if let Some(where_clause) = sql_builder.build_where_clause() {
@@ -468,11 +468,11 @@ fn try_fold_repeated_date_window(
 
     let expression = param_def.expression.as_deref().unwrap_or_default();
     let segments = fhirpath_to_jsonb_path(expression, resource_type);
-    let paths = crate::sql_builder::extraction_paths(&segments, &param_def.element_type_hint);
-    let paths_json = crate::sql_builder::paths_to_json(&paths);
+    let lower_json = crate::sql_builder::paths_to_json(&crate::sql_builder::date_lower_paths(&segments));
+    let upper_json = crate::sql_builder::paths_to_json(&crate::sql_builder::date_upper_paths(&segments));
     let col = sql_builder.resource_column();
-    let min_expr = format!("fhir_extract_date_min({col}, '{paths_json}'::jsonb)");
-    let max_expr = format!("fhir_extract_date_max({col}, '{paths_json}'::jsonb)");
+    let min_expr = format!("fhir_extract_date_min({col}, '{lower_json}'::jsonb)");
+    let max_expr = format!("fhir_extract_date_max({col}, '{upper_json}'::jsonb)");
     let range_expr = format!("tstzrange({min_expr}, {max_expr}, '[]')");
 
     if let Some(sql) =

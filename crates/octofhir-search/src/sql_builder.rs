@@ -988,7 +988,7 @@ impl fmt::Display for BuiltQuery {
 /// a complete WHERE clause with numbered parameter placeholders ($1, $2, etc.).
 #[derive(Debug, Default)]
 pub struct SqlBuilder {
-    conditions: Vec<String>,
+    conditions: Vec<crate::ir::sql::SqlExpr>,
     params: Vec<SqlParam>,
     resource_col: String,
     param_offset: usize,
@@ -1060,11 +1060,15 @@ impl SqlBuilder {
         }
     }
 
-    /// Add a raw SQL condition with placeholders.
-    ///
-    /// Use `{}` as placeholder which will be replaced with `$N` parameter references.
-    pub fn add_condition(&mut self, condition: impl Into<String>) {
-        self.conditions.push(condition.into());
+    /// Add a structured SQL condition to the accumulator.
+    pub fn add_condition(&mut self, condition: crate::ir::sql::SqlExpr) {
+        self.conditions.push(condition);
+    }
+
+    /// Add a raw SQL string condition (escape hatch for opaque/literal SQL).
+    pub fn add_raw_condition(&mut self, sql: impl Into<String>) {
+        self.conditions
+            .push(crate::ir::sql::SqlExpr::Raw(sql.into()));
     }
 
     /// Add a text parameter and return its placeholder number.
@@ -1114,7 +1118,7 @@ impl SqlBuilder {
     }
 
     /// Get all conditions.
-    pub fn conditions(&self) -> &[String] {
+    pub fn conditions(&self) -> &[crate::ir::sql::SqlExpr] {
         &self.conditions
     }
 
@@ -1150,7 +1154,7 @@ impl SqlBuilder {
                 // Small expansion: use IN clause with code matching
                 if concepts.is_empty() {
                     // Empty ValueSet matches nothing
-                    self.add_condition("FALSE");
+                    self.add_raw_condition("FALSE");
                     return;
                 }
 
@@ -1181,7 +1185,7 @@ impl SqlBuilder {
                     format!("({})", code_conditions.join(" OR "))
                 };
 
-                self.add_condition(condition);
+                self.add_raw_condition(condition);
             }
 
             ExpansionResult::TempTable(session_id) => {
@@ -1199,7 +1203,7 @@ impl SqlBuilder {
                     )"
                 );
 
-                self.add_condition(condition);
+                self.add_raw_condition(condition);
             }
         }
     }
@@ -1212,8 +1216,16 @@ impl SqlBuilder {
             return None;
         }
 
-        let clause = self.conditions.join(" AND ");
-        Some(clause)
+        // Render each top-level condition independently and join with AND. This
+        // matches the historical string-join behaviour exactly (no surrounding
+        // parentheses around the top-level conjunction).
+        Some(
+            self.conditions
+                .iter()
+                .map(crate::ir::render::render_sql_expr)
+                .collect::<Vec<_>>()
+                .join(" AND "),
+        )
     }
 
     /// Build a WHERE clause for OR conditions within a group.
@@ -1275,6 +1287,68 @@ pub fn extraction_paths(segments: &[String], hint: &ElementTypeHint) -> Vec<Vec<
     } else {
         vec![segments.to_vec()]
     }
+}
+
+/// JSONB property paths for a DATE search parameter, split by interval bound.
+///
+/// A FHIR date search parameter binds to `date | dateTime | instant | Period |
+/// Timing`, but the parameter expression is untyped (e.g. `Observation.effective`)
+/// while the resource stores the value under the concrete polymorphic key
+/// (`effectiveDateTime`, `effectivePeriod`, `effectiveTiming`, …). The base
+/// segment may also be a plain scalar (`birthDate`) or a concrete `Period`
+/// (`CarePlan.period`). Rather than depend on schema type resolution (which is
+/// per-branch and lossy for choices), emit every shape the date type system
+/// allows; non-existent keys extract nothing, and `fhir_date_bound` returns NULL
+/// for any non-date text (e.g. a Period object at the bare base path), so extra
+/// paths are harmless.
+///
+/// The interval LOWER bound comes from the *lower* paths (`fhir_extract_date_min`),
+/// the UPPER bound from the *upper* paths (`fhir_extract_date_max`). They differ
+/// only on `Period`: the lower set reads `period.start`, the upper set reads
+/// `period.end`. An open Period (`{end}` with no `start`, or `{start}` with no
+/// `end`) therefore yields NULL on the missing side — i.e. `(-∞, end]` or
+/// `[start, +∞)` — which is the correct FHIR half-bounded semantics. Both the
+/// index and the predicate derive paths identically so the planner still matches
+/// the functional GiST index.
+pub fn date_lower_paths(segments: &[String]) -> Vec<Vec<String>> {
+    date_bound_paths(segments, "start")
+}
+
+/// Upper-bound extraction paths for a date parameter — see [`date_lower_paths`].
+pub fn date_upper_paths(segments: &[String]) -> Vec<Vec<String>> {
+    date_bound_paths(segments, "end")
+}
+
+fn date_bound_paths(segments: &[String], period_bound: &str) -> Vec<Vec<String>> {
+    let Some((leaf, parent)) = segments.split_last() else {
+        return vec![Vec::new()];
+    };
+    let poly = |suffix: &str, extra: &[&str]| {
+        let mut p = parent.to_vec();
+        p.push(format!("{leaf}{suffix}"));
+        p.extend(extra.iter().map(|s| s.to_string()));
+        p
+    };
+    let sub = |extra: &str| {
+        let mut p = segments.to_vec();
+        p.push(extra.to_string());
+        p
+    };
+    vec![
+        // Scalar date/dateTime/instant — base as-is and polymorphic variants
+        // (each a point that bounds both sides via fhir_date_bound precision).
+        segments.to_vec(),
+        poly("DateTime", &[]),
+        poly("Date", &[]),
+        poly("Instant", &[]),
+        // Period — this bound only: concrete (`period.start`) and choice
+        // (`effectivePeriod.start`). Absent on an open Period -> NULL -> ±∞.
+        sub(period_bound),
+        poly("Period", &[period_bound]),
+        // Timing.event — points, bound both sides.
+        sub("event"),
+        poly("Timing", &["event"]),
+    ]
 }
 
 /// Serialize extraction paths to the JSONB literal the `fhir_extract_*` functions
@@ -1348,11 +1422,58 @@ fn ast_to_jsonb_segments(
             // where/resolve/first/last/exists/single/tail/... don't change the path.
             Some(s)
         }
-        // Union: prefer the left branch that resolves to a path (e.g. value[x] -> first type).
-        E::Union(u) => match ast_to_jsonb_segments(&u.left, rt) {
-            Some(s) if !s.is_empty() => Some(s),
-            _ => ast_to_jsonb_segments(&u.right, rt),
-        },
+        // Union of `ResourceType.path` branches (the shared common params, e.g.
+        // clinical `date`: `AllergyIntolerance.recordedDate | … | Observation.effective | …`).
+        // Each branch has a DIFFERENT leaf, so the branch whose leading resource
+        // type matches `rt` must win — not the left-most one. Falls back to the
+        // first resolvable branch (covers `value[x]` unions whose branches all
+        // share `rt`, and resource-prefix-less expressions).
+        E::Union(_) => {
+            let mut branches = Vec::new();
+            flatten_union(node, &mut branches);
+            if let Some(b) = branches
+                .iter()
+                .find(|b| ast_leading_identifier(b).as_deref() == Some(rt))
+                && let Some(s) = ast_to_jsonb_segments(b, rt)
+            {
+                return Some(s);
+            }
+            branches
+                .iter()
+                .find_map(|b| ast_to_jsonb_segments(b, rt).filter(|s| !s.is_empty()))
+        }
+        _ => None,
+    }
+}
+
+/// Collect the leaf branches of a (possibly nested) FHIRPath union into `out`.
+fn flatten_union<'a>(
+    node: &'a octofhir_fhirpath::ExpressionNode,
+    out: &mut Vec<&'a octofhir_fhirpath::ExpressionNode>,
+) {
+    use octofhir_fhirpath::ExpressionNode as E;
+    if let E::Union(u) = node {
+        flatten_union(&u.left, out);
+        flatten_union(&u.right, out);
+    } else {
+        out.push(node);
+    }
+}
+
+/// Leading (left-most) identifier of a branch — its resource-type root, used to
+/// match a union branch to the queried resource type.
+fn ast_leading_identifier(node: &octofhir_fhirpath::ExpressionNode) -> Option<String> {
+    use octofhir_fhirpath::ExpressionNode as E;
+    match node {
+        E::Identifier(id) => Some(id.name.clone()),
+        E::PropertyAccess(p) => ast_leading_identifier(&p.object),
+        E::Path(p) => ast_leading_identifier(&p.base),
+        E::Parenthesized(inner) => ast_leading_identifier(inner),
+        E::IndexAccess(ix) => ast_leading_identifier(&ix.object),
+        E::TypeCast(tc) => ast_leading_identifier(&tc.expression),
+        E::Filter(f) => ast_leading_identifier(&f.base),
+        E::MethodCall(m) => ast_leading_identifier(&m.object),
+        E::Union(u) => ast_leading_identifier(&u.left),
         _ => None,
     }
 }
@@ -1576,17 +1697,25 @@ fn is_fhirpath_function(name: &str) -> bool {
 /// `ref_predicate` is evaluated against each reference element aliased `ref`
 /// (e.g. `ref->>'reference' = 'Patient/' || c.id`). Searches the resource JSONB
 /// in place — no sidecar index tables.
-pub fn jsonb_reference_match_exists(
+pub fn jsonb_reference_match_exists_expr(
     resource_col: &str,
     ref_segments: &[String],
     ref_predicate: &str,
-) -> String {
+) -> crate::ir::sql::SqlExpr {
+    use crate::ir::sql::{SelectStmt, SqlExpr, SqlFrom, SqlTerm};
     let obj_path = build_jsonb_accessor(resource_col, ref_segments, false);
     let arr = format!(
         "CASE WHEN jsonb_typeof({obj_path}) = 'array' THEN {obj_path} \
          WHEN {obj_path} IS NULL THEN '[]'::jsonb ELSE jsonb_build_array({obj_path}) END"
     );
-    format!("EXISTS (SELECT 1 FROM jsonb_array_elements({arr}) AS ref WHERE {ref_predicate})")
+    SqlExpr::Exists(Box::new(SelectStmt {
+        projection: vec![SqlTerm::Integer(1)],
+        from: SqlFrom {
+            table: format!("jsonb_array_elements({arr})"),
+            alias: Some("ref".to_string()),
+        },
+        where_clause: Some(SqlExpr::Raw(ref_predicate.to_string())),
+    }))
 }
 
 pub fn build_jsonb_accessor(resource_col: &str, path: &[String], as_text: bool) -> String {
@@ -1649,6 +1778,25 @@ mod tests {
             "Unknown",
         );
         assert_eq!(path, vec!["name"]);
+    }
+
+    #[test]
+    fn test_fhirpath_clinical_date_union_picks_resource_branch() {
+        // The shared clinical `date` SearchParameter unions many resource types,
+        // each with a DIFFERENT leaf. The branch for the queried resource type
+        // must win — not the left-most one.
+        let expr = "AllergyIntolerance.recordedDate | CarePlan.period | \
+                    ClinicalImpression.date | Composition.date | Consent.dateTime | \
+                    DiagnosticReport.effective | Encounter.period | \
+                    Immunization.occurrence | List.date | Observation.effective | \
+                    Procedure.performed | (RiskAssessment.occurrence as dateTime) | \
+                    SupplyRequest.authoredOn";
+        assert_eq!(fhirpath_to_jsonb_path(expr, "Observation"), vec!["effective"]);
+        assert_eq!(
+            fhirpath_to_jsonb_path(expr, "AllergyIntolerance"),
+            vec!["recordedDate"]
+        );
+        assert_eq!(fhirpath_to_jsonb_path(expr, "CarePlan"), vec!["period"]);
     }
 
     #[test]
@@ -1759,7 +1907,7 @@ mod tests {
         let mut builder = SqlBuilder::new();
 
         let p1 = builder.add_text_param("John");
-        builder.add_condition(format!(
+        builder.add_raw_condition(format!(
             "LOWER({}->>'name') LIKE LOWER(${})",
             builder.resource_column(),
             p1
@@ -1776,10 +1924,10 @@ mod tests {
         let mut builder = SqlBuilder::new();
 
         let p1 = builder.add_text_param("John%");
-        builder.add_condition(format!("LOWER(resource->>'name') LIKE LOWER(${})", p1));
+        builder.add_raw_condition(format!("LOWER(resource->>'name') LIKE LOWER(${})", p1));
 
         let p2 = builder.add_text_param("active");
-        builder.add_condition(format!("resource->>'status' = ${}", p2));
+        builder.add_raw_condition(format!("resource->>'status' = ${}", p2));
 
         let clause = builder.build_where_clause().unwrap();
         assert!(clause.contains("AND"));

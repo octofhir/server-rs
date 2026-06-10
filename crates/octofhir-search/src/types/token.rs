@@ -162,7 +162,7 @@ pub async fn build_token_search_with_terminology(
     }
 
     if !or_conditions.is_empty() {
-        builder.add_condition(SqlBuilder::build_or_clause(&or_conditions));
+        builder.add_raw_condition(SqlBuilder::build_or_clause(&or_conditions));
     }
 
     Ok(())
@@ -228,12 +228,9 @@ async fn build_in_modifier_condition(
 
     // Get the generated condition
     let conditions = temp_builder.conditions();
-    let condition = conditions
-        .first()
-        .ok_or_else(|| {
-            SqlBuilderError::InvalidSearchValue("Failed to build ValueSet condition".to_string())
-        })?
-        .clone();
+    let condition = crate::ir::render::render_sql_expr(conditions.first().ok_or_else(|| {
+        SqlBuilderError::InvalidSearchValue("Failed to build ValueSet condition".to_string())
+    })?);
 
     // Copy parameters from temp builder to main builder
     // We need to manually add each param type

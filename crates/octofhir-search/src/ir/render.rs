@@ -11,21 +11,27 @@ use crate::sql_builder::{SqlBuilder, SqlBuilderError};
 use crate::types::date_ast::{Bound, DateClause, DatePredicate, PeriodClause, PeriodPredicate};
 use octofhir_core::text::normalize_string;
 
+/// Combine rendered per-value predicate expressions into a single OR group.
+/// Returns `None` for an empty input, the lone expression for one, else `Or`.
+fn or_exprs(mut exprs: Vec<SqlExpr>) -> Option<SqlExpr> {
+    match exprs.len() {
+        0 => None,
+        1 => Some(exprs.pop().unwrap()),
+        _ => Some(SqlExpr::Or(exprs)),
+    }
+}
+
 /// Render date clauses against a single timestamptz column.
 pub fn render_date_column_clauses_as_or(
     builder: &mut SqlBuilder,
     clauses: &[DateClause],
     column: &str,
-) -> Option<String> {
-    let rendered = clauses
+) -> Option<SqlExpr> {
+    let exprs = clauses
         .iter()
-        .map(|clause| render_sql_expr(&date_column_clause_expr(builder, clause, column)))
+        .map(|clause| date_column_clause_expr(builder, clause, column))
         .collect::<Vec<_>>();
-    if rendered.is_empty() {
-        None
-    } else {
-        Some(SqlBuilder::build_or_clause(&rendered))
-    }
+    or_exprs(exprs)
 }
 
 /// Render date clauses against a JSONB text extraction path cast to timestamptz.
@@ -33,16 +39,12 @@ pub fn render_date_text_path_clauses_as_or(
     builder: &mut SqlBuilder,
     clauses: &[DateClause],
     jsonb_path: &str,
-) -> Option<String> {
-    let rendered = clauses
+) -> Option<SqlExpr> {
+    let exprs = clauses
         .iter()
-        .map(|clause| render_date_text_path_clause(builder, clause, jsonb_path))
+        .map(|clause| date_text_path_clause_expr(builder, clause, jsonb_path))
         .collect::<Vec<_>>();
-    if rendered.is_empty() {
-        None
-    } else {
-        Some(SqlBuilder::build_or_clause(&rendered))
-    }
+    or_exprs(exprs)
 }
 
 /// Render Period clauses against a JSONB object with `start` and `end`.
@@ -50,34 +52,24 @@ pub fn render_period_path_clauses_as_or(
     builder: &mut SqlBuilder,
     clauses: &[PeriodClause],
     jsonb_path: &str,
-) -> Option<String> {
-    let rendered = clauses
+) -> Option<SqlExpr> {
+    let exprs = clauses
         .iter()
-        .map(|clause| render_period_path_clause(builder, clause, jsonb_path))
+        .map(|clause| period_path_clause_expr(builder, clause, jsonb_path))
         .collect::<Vec<_>>();
-    if rendered.is_empty() {
-        None
-    } else {
-        Some(SqlBuilder::build_or_clause(&rendered))
-    }
+    or_exprs(exprs)
 }
 
 /// Render composite tuple clauses as OR of AND-combined component predicates.
 pub fn render_composite_clauses_as_or(
     builder: &mut SqlBuilder,
     clauses: &[CompositeClause],
-) -> Result<Option<String>, SqlBuilderError> {
-    let rendered = clauses
+) -> Result<Option<SqlExpr>, SqlBuilderError> {
+    let exprs = clauses
         .iter()
-        .map(|clause| {
-            render_composite_clause_expr(builder, clause).map(|expr| render_sql_expr(&expr))
-        })
+        .map(|clause| render_composite_clause_expr(builder, clause))
         .collect::<Result<Vec<_>, _>>()?;
-    if rendered.is_empty() {
-        Ok(None)
-    } else {
-        Ok(Some(SqlBuilder::build_or_clause(&rendered)))
-    }
+    Ok(or_exprs(exprs))
 }
 
 /// Render composite tuple clauses through JSONB traversal.
@@ -88,19 +80,12 @@ pub fn render_composite_clauses_as_or(
 pub fn render_composite_clauses_as_jsonb_fallback_or(
     builder: &mut SqlBuilder,
     clauses: &[CompositeClause],
-) -> Result<Option<String>, SqlBuilderError> {
-    let rendered = clauses
+) -> Result<Option<SqlExpr>, SqlBuilderError> {
+    let exprs = clauses
         .iter()
-        .map(|clause| {
-            render_composite_clause_jsonb_fallback_expr(builder, clause)
-                .map(|expr| render_sql_expr(&expr))
-        })
+        .map(|clause| render_composite_clause_jsonb_fallback_expr(builder, clause))
         .collect::<Result<Vec<_>, _>>()?;
-    if rendered.is_empty() {
-        Ok(None)
-    } else {
-        Ok(Some(SqlBuilder::build_or_clause(&rendered)))
-    }
+    Ok(or_exprs(exprs))
 }
 
 /// Render logical id clauses as one OR group over a resource id column.
@@ -108,16 +93,12 @@ pub fn render_id_clauses_as_or(
     builder: &mut SqlBuilder,
     clauses: &[IdClause],
     id_column: &str,
-) -> Option<String> {
-    let rendered = clauses
+) -> Option<SqlExpr> {
+    let exprs = clauses
         .iter()
-        .map(|clause| render_sql_expr(&id_clause_expr(builder, clause, id_column)))
+        .map(|clause| id_clause_expr(builder, clause, id_column))
         .collect::<Vec<_>>();
-    if rendered.is_empty() {
-        None
-    } else {
-        Some(SqlBuilder::build_or_clause(&rendered))
-    }
+    or_exprs(exprs)
 }
 
 /// Render scalar JSONB string clauses as one OR group.
@@ -125,16 +106,12 @@ pub fn render_string_path_clauses_as_or(
     builder: &mut SqlBuilder,
     clauses: &[StringClause],
     jsonb_path: &str,
-) -> Option<String> {
-    let rendered = clauses
+) -> Option<SqlExpr> {
+    let exprs = clauses
         .iter()
-        .map(|clause| render_string_path_clause(builder, clause, jsonb_path))
+        .map(|clause| string_path_clause_expr(builder, clause, jsonb_path))
         .collect::<Vec<_>>();
-    if rendered.is_empty() {
-        None
-    } else {
-        Some(SqlBuilder::build_or_clause(&rendered))
-    }
+    or_exprs(exprs)
 }
 
 /// Render string clauses over an array of FHIR objects.
@@ -143,16 +120,12 @@ pub fn render_string_array_clauses_as_or(
     clauses: &[StringClause],
     array_path: &str,
     field_name: &str,
-) -> Option<String> {
-    let rendered = clauses
+) -> Option<SqlExpr> {
+    let exprs = clauses
         .iter()
-        .map(|clause| render_string_array_clause(builder, clause, array_path, field_name))
+        .map(|clause| string_array_clause_expr(builder, clause, array_path, field_name))
         .collect::<Vec<_>>();
-    if rendered.is_empty() {
-        None
-    } else {
-        Some(SqlBuilder::build_or_clause(&rendered))
-    }
+    or_exprs(exprs)
 }
 
 /// Render HumanName string clauses across family, text, and given.
@@ -160,16 +133,12 @@ pub fn render_string_human_name_clauses_as_or(
     builder: &mut SqlBuilder,
     clauses: &[StringClause],
     array_path: &str,
-) -> Option<String> {
-    let rendered = clauses
+) -> Option<SqlExpr> {
+    let exprs = clauses
         .iter()
-        .map(|clause| render_string_human_name_clause(builder, clause, array_path))
+        .map(|clause| string_human_name_clause_expr(builder, clause, array_path))
         .collect::<Vec<_>>();
-    if rendered.is_empty() {
-        None
-    } else {
-        Some(SqlBuilder::build_or_clause(&rendered))
-    }
+    or_exprs(exprs)
 }
 
 /// Render scalar URI clauses as one OR group.
@@ -177,16 +146,12 @@ pub fn render_uri_clauses_as_or(
     builder: &mut SqlBuilder,
     clauses: &[UriClause],
     path: &str,
-) -> Option<String> {
-    let rendered = clauses
+) -> Option<SqlExpr> {
+    let exprs = clauses
         .iter()
-        .map(|clause| render_sql_expr(&uri_clause_expr(builder, clause, path)))
+        .map(|clause| uri_clause_expr(builder, clause, path))
         .collect::<Vec<_>>();
-    if rendered.is_empty() {
-        None
-    } else {
-        Some(SqlBuilder::build_or_clause(&rendered))
-    }
+    or_exprs(exprs)
 }
 
 /// Render URI-array clauses as one OR group.
@@ -194,16 +159,12 @@ pub fn render_uri_array_clauses_as_or(
     builder: &mut SqlBuilder,
     clauses: &[UriClause],
     array_path: &str,
-) -> Option<String> {
-    let rendered = clauses
+) -> Option<SqlExpr> {
+    let exprs = clauses
         .iter()
-        .map(|clause| render_sql_expr(&uri_array_clause_expr(builder, clause, array_path)))
+        .map(|clause| uri_array_clause_expr(builder, clause, array_path))
         .collect::<Vec<_>>();
-    if rendered.is_empty() {
-        None
-    } else {
-        Some(SqlBuilder::build_or_clause(&rendered))
-    }
+    or_exprs(exprs)
 }
 
 /// Render number clauses as one OR group over the current JSONB numeric-cast path.
@@ -211,16 +172,12 @@ pub fn render_number_clauses_as_or(
     builder: &mut SqlBuilder,
     clauses: &[NumberClause],
     jsonb_path: &str,
-) -> Result<Option<String>, SqlBuilderError> {
-    let rendered = clauses
+) -> Result<Option<SqlExpr>, SqlBuilderError> {
+    let exprs = clauses
         .iter()
-        .map(|clause| render_number_clause(builder, clause, jsonb_path))
+        .map(|clause| number_clause_expr(builder, clause, jsonb_path))
         .collect::<Result<Vec<_>, _>>()?;
-    if rendered.is_empty() {
-        Ok(None)
-    } else {
-        Ok(Some(SqlBuilder::build_or_clause(&rendered)))
-    }
+    Ok(or_exprs(exprs))
 }
 
 /// Render quantity clauses as one OR group over the current JSONB numeric-cast path.
@@ -228,16 +185,12 @@ pub fn render_quantity_clauses_as_or(
     builder: &mut SqlBuilder,
     clauses: &[QuantityClause],
     jsonb_path: &str,
-) -> Result<Option<String>, SqlBuilderError> {
-    let rendered = clauses
+) -> Result<Option<SqlExpr>, SqlBuilderError> {
+    let exprs = clauses
         .iter()
-        .map(|clause| render_quantity_clause(builder, clause, jsonb_path, None))
+        .map(|clause| quantity_clause_expr(builder, clause, jsonb_path, None))
         .collect::<Result<Vec<_>, _>>()?;
-    if rendered.is_empty() {
-        Ok(None)
-    } else {
-        Ok(Some(SqlBuilder::build_or_clause(&rendered)))
-    }
+    Ok(or_exprs(exprs))
 }
 
 /// Render quantity clauses with full-resource containment for system/code
@@ -248,16 +201,12 @@ pub fn render_quantity_containment_clauses_as_or(
     clauses: &[QuantityClause],
     jsonb_path: &str,
     path_segments: &[String],
-) -> Result<Option<String>, SqlBuilderError> {
-    let rendered = clauses
+) -> Result<Option<SqlExpr>, SqlBuilderError> {
+    let exprs = clauses
         .iter()
-        .map(|clause| render_quantity_clause(builder, clause, jsonb_path, Some(path_segments)))
+        .map(|clause| quantity_clause_expr(builder, clause, jsonb_path, Some(path_segments)))
         .collect::<Result<Vec<_>, _>>()?;
-    if rendered.is_empty() {
-        Ok(None)
-    } else {
-        Ok(Some(SqlBuilder::build_or_clause(&rendered)))
-    }
+    Ok(or_exprs(exprs))
 }
 
 /// Render simple-code token clauses as one OR group.
@@ -268,16 +217,15 @@ pub fn render_token_simple_code_clauses_as_or(
     builder: &mut SqlBuilder,
     clauses: &[TokenClause],
     path_segments: &[String],
-) -> Result<Option<String>, SqlBuilderError> {
-    let rendered = clauses
+) -> Result<Option<SqlExpr>, SqlBuilderError> {
+    let exprs = clauses
         .iter()
-        .map(|clause| render_token_simple_code_clause(builder, clause, path_segments))
+        .map(|clause| {
+            token_simple_code_clause_expr(builder, clause, path_segments)
+                .map(|cond| token_apply_negation(clause, cond))
+        })
         .collect::<Result<Vec<_>, _>>()?;
-    if rendered.is_empty() {
-        Ok(None)
-    } else {
-        Ok(Some(SqlBuilder::build_or_clause(&rendered)))
-    }
+    Ok(or_exprs(exprs))
 }
 
 /// Render scalar text-path code token clauses as one OR group.
@@ -285,16 +233,15 @@ pub fn render_token_scalar_code_clauses_as_or(
     builder: &mut SqlBuilder,
     clauses: &[TokenClause],
     jsonb_path: &str,
-) -> Result<Option<String>, SqlBuilderError> {
-    let rendered = clauses
+) -> Result<Option<SqlExpr>, SqlBuilderError> {
+    let exprs = clauses
         .iter()
-        .map(|clause| render_token_scalar_code_clause(builder, clause, jsonb_path))
+        .map(|clause| {
+            token_scalar_code_clause_expr(builder, clause, jsonb_path)
+                .map(|cond| token_apply_negation(clause, cond))
+        })
         .collect::<Result<Vec<_>, _>>()?;
-    if rendered.is_empty() {
-        Ok(None)
-    } else {
-        Ok(Some(SqlBuilder::build_or_clause(&rendered)))
-    }
+    Ok(or_exprs(exprs))
 }
 
 /// Render Coding/CodeableConcept token clauses as one OR group.
@@ -302,16 +249,12 @@ pub fn render_token_coding_clauses_as_or(
     builder: &mut SqlBuilder,
     clauses: &[TokenClause],
     path_segments: &[String],
-) -> Result<Option<String>, SqlBuilderError> {
-    let rendered = clauses
+) -> Result<Option<SqlExpr>, SqlBuilderError> {
+    let exprs = clauses
         .iter()
-        .map(|clause| render_token_coding_clause(builder, clause, path_segments))
+        .map(|clause| render_token_coding_clause(builder, clause, path_segments).map(SqlExpr::Raw))
         .collect::<Result<Vec<_>, _>>()?;
-    if rendered.is_empty() {
-        Ok(None)
-    } else {
-        Ok(Some(SqlBuilder::build_or_clause(&rendered)))
-    }
+    Ok(or_exprs(exprs))
 }
 
 /// Render Identifier token clauses as one OR group.
@@ -319,16 +262,12 @@ pub fn render_token_identifier_clauses_as_or(
     builder: &mut SqlBuilder,
     clauses: &[TokenClause],
     array_path: &str,
-) -> Result<Option<String>, SqlBuilderError> {
-    let rendered = clauses
+) -> Result<Option<SqlExpr>, SqlBuilderError> {
+    let exprs = clauses
         .iter()
-        .map(|clause| render_token_identifier_clause(builder, clause, array_path))
+        .map(|clause| render_token_identifier_clause(builder, clause, array_path).map(SqlExpr::Raw))
         .collect::<Result<Vec<_>, _>>()?;
-    if rendered.is_empty() {
-        Ok(None)
-    } else {
-        Ok(Some(SqlBuilder::build_or_clause(&rendered)))
-    }
+    Ok(or_exprs(exprs))
 }
 
 /// Render Identifier token clauses as one OR group, using full-resource JSONB
@@ -341,18 +280,15 @@ pub fn render_token_identifier_containment_clauses_as_or(
     clauses: &[TokenClause],
     path_segments: &[String],
     array_path: &str,
-) -> Result<Option<String>, SqlBuilderError> {
-    let rendered = clauses
+) -> Result<Option<SqlExpr>, SqlBuilderError> {
+    let exprs = clauses
         .iter()
         .map(|clause| {
             render_token_identifier_containment_clause(builder, clause, path_segments, array_path)
+                .map(SqlExpr::Raw)
         })
         .collect::<Result<Vec<_>, _>>()?;
-    if rendered.is_empty() {
-        Ok(None)
-    } else {
-        Ok(Some(SqlBuilder::build_or_clause(&rendered)))
-    }
+    Ok(or_exprs(exprs))
 }
 
 /// Render generic token clauses over an already-resolved JSONB path.
@@ -360,16 +296,12 @@ pub fn render_token_path_clauses_as_or(
     builder: &mut SqlBuilder,
     clauses: &[TokenClause],
     jsonb_path: &str,
-) -> Result<Option<String>, SqlBuilderError> {
-    let rendered = clauses
+) -> Result<Option<SqlExpr>, SqlBuilderError> {
+    let exprs = clauses
         .iter()
-        .map(|clause| render_token_path_clause(builder, clause, jsonb_path))
+        .map(|clause| render_token_path_clause(builder, clause, jsonb_path).map(SqlExpr::Raw))
         .collect::<Result<Vec<_>, _>>()?;
-    if rendered.is_empty() {
-        Ok(None)
-    } else {
-        Ok(Some(SqlBuilder::build_or_clause(&rendered)))
-    }
+    Ok(or_exprs(exprs))
 }
 
 fn render_token_identifier_containment_clause(
@@ -450,21 +382,18 @@ fn render_identifier_containment(
     format!("{resource_col} @> ${p}::jsonb")
 }
 
-fn render_number_clause(
+fn number_clause_expr(
     builder: &mut SqlBuilder,
     clause: &NumberClause,
     jsonb_path: &str,
-) -> Result<String, SqlBuilderError> {
+) -> Result<SqlExpr, SqlBuilderError> {
     match &clause.predicate {
-        NumberPredicate::Missing { is_missing } => Ok(render_sql_expr(&jsonb_presence_expr(
-            jsonb_path,
-            *is_missing,
-        ))),
+        NumberPredicate::Missing { is_missing } => {
+            Ok(jsonb_presence_expr(jsonb_path, *is_missing))
+        }
         NumberPredicate::Comparison { prefix, value } => {
             let number = RenderDecimalParts::parse(value)?;
-            Ok(render_numeric_comparison(
-                builder, jsonb_path, *prefix, &number,
-            ))
+            Ok(numeric_comparison_expr(builder, jsonb_path, *prefix, &number))
         }
     }
 }
@@ -655,14 +584,6 @@ fn jsonb_array_text_exists_expr(array_path: &str, alias: &str, where_clause: Sql
     }))
 }
 
-fn render_string_human_name_clause(
-    builder: &mut SqlBuilder,
-    clause: &StringClause,
-    array_path: &str,
-) -> String {
-    render_sql_expr(&string_human_name_clause_expr(builder, clause, array_path))
-}
-
 fn string_human_name_clause_expr(
     builder: &mut SqlBuilder,
     clause: &StringClause,
@@ -826,21 +747,13 @@ fn date_column_clause_expr(builder: &mut SqlBuilder, clause: &DateClause, column
     }
 }
 
-fn render_date_text_path_clause(
+fn date_text_path_clause_expr(
     builder: &mut SqlBuilder,
     clause: &DateClause,
     jsonb_path: &str,
-) -> String {
+) -> SqlExpr {
     let timestamp_expr = format!("({jsonb_path})::timestamptz");
-    render_sql_expr(&date_column_clause_expr(builder, clause, &timestamp_expr))
-}
-
-fn render_period_path_clause(
-    builder: &mut SqlBuilder,
-    clause: &PeriodClause,
-    jsonb_path: &str,
-) -> String {
-    render_sql_expr(&period_path_clause_expr(builder, clause, jsonb_path))
+    date_column_clause_expr(builder, clause, &timestamp_expr)
 }
 
 fn period_path_clause_expr(
@@ -1021,16 +934,12 @@ pub fn render_date_inplace_clauses_as_or(
     clauses: &[DateClause],
     range_expr: &str,
     min_expr: &str,
-) -> Option<String> {
-    let rendered = clauses
+) -> Option<SqlExpr> {
+    let exprs = clauses
         .iter()
-        .map(|clause| render_sql_expr(&date_inplace_clause_expr(builder, clause, range_expr, min_expr)))
+        .map(|clause| date_inplace_clause_expr(builder, clause, range_expr, min_expr))
         .collect::<Vec<_>>();
-    if rendered.is_empty() {
-        None
-    } else {
-        Some(SqlBuilder::build_or_clause(&rendered))
-    }
+    or_exprs(exprs)
 }
 
 fn date_range_term(builder: &mut SqlBuilder, q: &crate::types::date::DateRange) -> SqlTerm {
@@ -1536,17 +1445,6 @@ fn timestamp_window_expr(
     }
 }
 
-fn render_string_array_clause(
-    builder: &mut SqlBuilder,
-    clause: &StringClause,
-    array_path: &str,
-    field_name: &str,
-) -> String {
-    render_sql_expr(&string_array_clause_expr(
-        builder, clause, array_path, field_name,
-    ))
-}
-
 fn string_array_clause_expr(
     builder: &mut SqlBuilder,
     clause: &StringClause,
@@ -1611,14 +1509,6 @@ fn string_array_clause_expr(
             jsonb_array_presence_expr(array_path, *is_missing)
         }
     }
-}
-
-fn render_string_path_clause(
-    builder: &mut SqlBuilder,
-    clause: &StringClause,
-    jsonb_path: &str,
-) -> String {
-    render_sql_expr(&string_path_clause_expr(builder, clause, jsonb_path))
 }
 
 fn string_path_clause_expr(
@@ -1689,15 +1579,6 @@ fn text_eq_expr(path: &str, param: usize) -> SqlExpr {
     }
 }
 
-fn render_token_simple_code_clause(
-    builder: &mut SqlBuilder,
-    clause: &TokenClause,
-    path_segments: &[String],
-) -> Result<String, SqlBuilderError> {
-    let condition = token_simple_code_clause_expr(builder, clause, path_segments)?;
-    Ok(render_sql_expr(&token_apply_negation(clause, condition)))
-}
-
 fn token_simple_code_clause_expr(
     builder: &mut SqlBuilder,
     clause: &TokenClause,
@@ -1735,15 +1616,6 @@ fn token_simple_code_clause_expr(
             Ok(jsonb_contains_expr(builder, &resource_col, containment))
         }
     }
-}
-
-fn render_token_scalar_code_clause(
-    builder: &mut SqlBuilder,
-    clause: &TokenClause,
-    jsonb_path: &str,
-) -> Result<String, SqlBuilderError> {
-    let condition = token_scalar_code_clause_expr(builder, clause, jsonb_path)?;
-    Ok(render_sql_expr(&token_apply_negation(clause, condition)))
 }
 
 fn token_apply_negation(clause: &TokenClause, condition: SqlExpr) -> SqlExpr {
@@ -2353,17 +2225,16 @@ fn simple_code_token_value(predicate: &TokenPredicate) -> Result<&str, SqlBuilde
     }
 }
 
-fn render_quantity_clause(
+fn quantity_clause_expr(
     builder: &mut SqlBuilder,
     clause: &QuantityClause,
     jsonb_path: &str,
     containment_path: Option<&[String]>,
-) -> Result<String, SqlBuilderError> {
+) -> Result<SqlExpr, SqlBuilderError> {
     match &clause.predicate {
-        QuantityPredicate::Missing { is_missing } => Ok(render_sql_expr(&jsonb_presence_expr(
-            jsonb_path,
-            *is_missing,
-        ))),
+        QuantityPredicate::Missing { is_missing } => {
+            Ok(jsonb_presence_expr(jsonb_path, *is_missing))
+        }
         QuantityPredicate::Comparison {
             prefix,
             value,
@@ -2380,7 +2251,7 @@ fn render_quantity_clause(
             );
 
             if system.is_none() && code.is_none() {
-                return Ok(render_sql_expr(&num_condition));
+                return Ok(num_condition);
             }
 
             let mut constraints = vec![num_condition];
@@ -2415,7 +2286,7 @@ fn render_quantity_clause(
                 }
             }
 
-            Ok(render_sql_expr(&SqlExpr::And(constraints)))
+            Ok(SqlExpr::And(constraints))
         }
     }
 }
@@ -2546,16 +2417,12 @@ pub fn render_indexed_string_clauses_as_or(
     clauses: &[StringClause],
     blob_expr: &str,
     arr_expr: &str,
-) -> Option<String> {
-    let rendered = clauses
+) -> Option<SqlExpr> {
+    let exprs = clauses
         .iter()
-        .map(|c| render_sql_expr(&indexed_string_clause_expr(builder, c, blob_expr, arr_expr)))
+        .map(|c| indexed_string_clause_expr(builder, c, blob_expr, arr_expr))
         .collect::<Vec<_>>();
-    if rendered.is_empty() {
-        None
-    } else {
-        Some(SqlBuilder::build_or_clause(&rendered))
-    }
+    or_exprs(exprs)
 }
 
 fn escape_like_pattern(s: &str) -> String {
@@ -2681,15 +2548,6 @@ fn format_decimal(mantissa: i128, scale: u32) -> String {
 
 fn bind_numeric(builder: &mut SqlBuilder, value: impl Into<String>) -> usize {
     builder.add_text_param(value.into())
-}
-
-fn render_numeric_comparison(
-    builder: &mut SqlBuilder,
-    path: &str,
-    prefix: SearchPrefix,
-    number: &RenderDecimalParts,
-) -> String {
-    render_sql_expr(&numeric_comparison_expr(builder, path, prefix, number))
 }
 
 fn numeric_comparison_expr(
@@ -2968,7 +2826,9 @@ mod tests {
         )
         .unwrap();
 
-        let sql = render_date_column_clauses_as_or(&mut builder, &clauses, "r.updated_at").unwrap();
+        let sql = render_sql_expr(
+            &render_date_column_clauses_as_or(&mut builder, &clauses, "r.updated_at").unwrap(),
+        );
 
         assert_eq!(
             sql,
@@ -2991,7 +2851,7 @@ mod tests {
             negated: true,
         }];
 
-        let sql = render_id_clauses_as_or(&mut builder, &clauses, "r.id").unwrap();
+        let sql = render_sql_expr(&render_id_clauses_as_or(&mut builder, &clauses, "r.id").unwrap());
 
         assert_eq!(sql, "(r.id = $1) = false");
         assert!(!sql.contains("NOT ("));
@@ -3014,8 +2874,9 @@ mod tests {
         )
         .unwrap();
 
-        let sql =
-            render_string_path_clauses_as_or(&mut builder, &clauses, "resource->>'name'").unwrap();
+        let sql = render_sql_expr(
+            &render_string_path_clauses_as_or(&mut builder, &clauses, "resource->>'name'").unwrap(),
+        );
 
         assert_eq!(sql, "f_unaccent_lower(resource->>'name') LIKE $1");
         assert_eq!(builder.params()[0].as_str(), "elodie%");
@@ -3037,9 +2898,10 @@ mod tests {
         )
         .unwrap();
 
-        let sql =
-            render_string_array_clauses_as_or(&mut builder, &clauses, "resource->'name'", "given")
-                .unwrap();
+        let sql = render_sql_expr(
+            &render_string_array_clauses_as_or(&mut builder, &clauses, "resource->'name'", "given")
+                .unwrap(),
+        );
 
         assert!(sql.contains("jsonb_array_elements(resource->'name')"));
         assert!(sql.contains("elem->>'given'"));
@@ -3063,9 +2925,10 @@ mod tests {
         )
         .unwrap();
 
-        let sql =
-            render_string_human_name_clauses_as_or(&mut builder, &clauses, "resource->'name'")
-                .unwrap();
+        let sql = render_sql_expr(
+            &render_string_human_name_clauses_as_or(&mut builder, &clauses, "resource->'name'")
+                .unwrap(),
+        );
 
         assert!(sql.contains("jsonb_array_elements(resource->'name')"));
         assert!(sql.contains("name->>'family'"));
@@ -3092,9 +2955,11 @@ mod tests {
         )
         .unwrap();
 
-        let sql = render_number_clauses_as_or(&mut builder, &clauses, "resource->>'value'")
-            .unwrap()
-            .unwrap();
+        let sql = render_sql_expr(
+            &render_number_clauses_as_or(&mut builder, &clauses, "resource->>'value'")
+                .unwrap()
+                .unwrap(),
+        );
 
         assert!(sql.contains(">= $1::numeric"));
         assert!(sql.contains("< $2::numeric"));
@@ -3120,10 +2985,11 @@ mod tests {
         )
         .unwrap();
 
-        let sql =
-            render_quantity_clauses_as_or(&mut builder, &clauses, "resource->'valueQuantity'")
+        let sql = render_sql_expr(
+            &render_quantity_clauses_as_or(&mut builder, &clauses, "resource->'valueQuantity'")
                 .unwrap()
-                .unwrap();
+                .unwrap(),
+        );
 
         assert!(sql.contains("(resource->'valueQuantity'->>'value')::numeric >= $1::numeric"));
         assert!(sql.contains("(resource->'valueQuantity'->>'value')::numeric < $2::numeric"));
@@ -3153,14 +3019,16 @@ mod tests {
         )
         .unwrap();
 
-        let sql = render_quantity_containment_clauses_as_or(
-            &mut builder,
-            &clauses,
-            "r.resource->'valueQuantity'",
-            &["valueQuantity".to_string()],
-        )
-        .unwrap()
-        .unwrap();
+        let sql = render_sql_expr(
+            &render_quantity_containment_clauses_as_or(
+                &mut builder,
+                &clauses,
+                "r.resource->'valueQuantity'",
+                &["valueQuantity".to_string()],
+            )
+            .unwrap()
+            .unwrap(),
+        );
 
         assert!(sql.contains("(r.resource->'valueQuantity'->>'value')::numeric >= $1::numeric"));
         assert!(sql.contains("r.resource @>"));
@@ -3209,9 +3077,11 @@ mod tests {
         )
         .unwrap();
 
-        let sql = render_composite_clauses_as_jsonb_fallback_or(&mut builder, &clauses)
-            .unwrap()
-            .unwrap();
+        let sql = render_sql_expr(
+            &render_composite_clauses_as_jsonb_fallback_or(&mut builder, &clauses)
+                .unwrap()
+                .unwrap(),
+        );
 
         assert!(sql.contains("jsonb_array_elements"));
         assert!(sql.contains("component_elem"));
@@ -3238,10 +3108,11 @@ mod tests {
         )
         .unwrap();
 
-        let sql =
-            render_token_simple_code_clauses_as_or(&mut builder, &clauses, &["gender".to_string()])
+        let sql = render_sql_expr(
+            &render_token_simple_code_clauses_as_or(&mut builder, &clauses, &["gender".to_string()])
                 .unwrap()
-                .unwrap();
+                .unwrap(),
+        );
 
         assert_eq!(sql, "r.resource @> $1::jsonb");
         assert!(!sql.contains("female"));
@@ -3265,10 +3136,11 @@ mod tests {
         )
         .unwrap();
 
-        let sql =
-            render_token_simple_code_clauses_as_or(&mut builder, &clauses, &["gender".to_string()])
+        let sql = render_sql_expr(
+            &render_token_simple_code_clauses_as_or(&mut builder, &clauses, &["gender".to_string()])
                 .unwrap()
-                .unwrap();
+                .unwrap(),
+        );
 
         assert_eq!(sql, "(r.resource @> $1::jsonb) = false");
         assert_eq!(builder.params()[0].as_str(), r#"{"gender":"female"}"#);
@@ -3291,10 +3163,11 @@ mod tests {
         )
         .unwrap();
 
-        let sql =
-            render_token_simple_code_clauses_as_or(&mut builder, &clauses, &["gender".to_string()])
+        let sql = render_sql_expr(
+            &render_token_simple_code_clauses_as_or(&mut builder, &clauses, &["gender".to_string()])
                 .unwrap()
-                .unwrap();
+                .unwrap(),
+        );
 
         assert_eq!(sql, "r.resource @> $1::jsonb");
         assert_eq!(builder.params()[0].as_str(), r#"{"gender":"female"}"#);
@@ -3317,10 +3190,11 @@ mod tests {
         )
         .unwrap();
 
-        let sql =
-            render_token_simple_code_clauses_as_or(&mut builder, &clauses, &["gender".to_string()])
+        let sql = render_sql_expr(
+            &render_token_simple_code_clauses_as_or(&mut builder, &clauses, &["gender".to_string()])
                 .unwrap()
-                .unwrap();
+                .unwrap(),
+        );
 
         assert_eq!(sql, "FALSE");
         assert!(builder.params().is_empty());
@@ -3343,10 +3217,11 @@ mod tests {
         )
         .unwrap();
 
-        let sql =
-            render_token_scalar_code_clauses_as_or(&mut builder, &clauses, "resource->>'gender'")
+        let sql = render_sql_expr(
+            &render_token_scalar_code_clauses_as_or(&mut builder, &clauses, "resource->>'gender'")
                 .unwrap()
-                .unwrap();
+                .unwrap(),
+        );
 
         assert_eq!(sql, "resource->>'gender' = $1");
         assert_eq!(builder.params()[0].as_str(), "female");
@@ -3369,10 +3244,11 @@ mod tests {
         )
         .unwrap();
 
-        let sql =
-            render_token_scalar_code_clauses_as_or(&mut builder, &clauses, "resource->>'gender'")
+        let sql = render_sql_expr(
+            &render_token_scalar_code_clauses_as_or(&mut builder, &clauses, "resource->>'gender'")
                 .unwrap()
-                .unwrap();
+                .unwrap(),
+        );
 
         assert_eq!(sql, "FALSE");
         assert!(builder.params().is_empty());
@@ -3395,10 +3271,11 @@ mod tests {
         )
         .unwrap();
 
-        let sql =
-            render_token_scalar_code_clauses_as_or(&mut builder, &clauses, "resource->>'gender'")
+        let sql = render_sql_expr(
+            &render_token_scalar_code_clauses_as_or(&mut builder, &clauses, "resource->>'gender'")
                 .unwrap()
-                .unwrap();
+                .unwrap(),
+        );
 
         assert_eq!(sql, "(resource->>'gender' = $1) = false");
         assert!(!sql.contains("NOT ("));
@@ -3422,9 +3299,11 @@ mod tests {
         )
         .unwrap();
 
-        let sql = render_token_coding_clauses_as_or(&mut builder, &clauses, &["code".to_string()])
-            .unwrap()
-            .unwrap();
+        let sql = render_sql_expr(
+            &render_token_coding_clauses_as_or(&mut builder, &clauses, &["code".to_string()])
+                .unwrap()
+                .unwrap(),
+        );
 
         assert_eq!(sql, "r.resource @> $1::jsonb");
         assert_eq!(
@@ -3457,9 +3336,11 @@ mod tests {
         )
         .unwrap();
 
-        let sql = render_token_coding_clauses_as_or(&mut builder, &clauses, &["code".to_string()])
-            .unwrap()
-            .unwrap();
+        let sql = render_sql_expr(
+            &render_token_coding_clauses_as_or(&mut builder, &clauses, &["code".to_string()])
+                .unwrap()
+                .unwrap(),
+        );
 
         assert_eq!(sql, "(r.resource @> $1::jsonb) = false");
         assert!(!sql.contains("NOT ("));
@@ -3482,13 +3363,15 @@ mod tests {
         )
         .unwrap();
 
-        let sql = render_token_identifier_clauses_as_or(
-            &mut builder,
-            &clauses,
-            "r.resource->'identifier'",
-        )
-        .unwrap()
-        .unwrap();
+        let sql = render_sql_expr(
+            &render_token_identifier_clauses_as_or(
+                &mut builder,
+                &clauses,
+                "r.resource->'identifier'",
+            )
+            .unwrap()
+            .unwrap(),
+        );
 
         assert_eq!(sql, "r.resource->'identifier' @> $1::jsonb");
         assert_eq!(
@@ -3517,13 +3400,15 @@ mod tests {
         )
         .unwrap();
 
-        let sql = render_token_identifier_clauses_as_or(
-            &mut builder,
-            &clauses,
-            "r.resource->'identifier'",
-        )
-        .unwrap()
-        .unwrap();
+        let sql = render_sql_expr(
+            &render_token_identifier_clauses_as_or(
+                &mut builder,
+                &clauses,
+                "r.resource->'identifier'",
+            )
+            .unwrap()
+            .unwrap(),
+        );
 
         assert!(sql.starts_with("(EXISTS"));
         assert!(sql.ends_with("= false"));
@@ -3547,14 +3432,16 @@ mod tests {
         )
         .unwrap();
 
-        let sql = render_token_identifier_containment_clauses_as_or(
-            &mut builder,
-            &clauses,
-            &["identifier".to_string()],
-            "r.resource->'identifier'",
-        )
-        .unwrap()
-        .unwrap();
+        let sql = render_sql_expr(
+            &render_token_identifier_containment_clauses_as_or(
+                &mut builder,
+                &clauses,
+                &["identifier".to_string()],
+                "r.resource->'identifier'",
+            )
+            .unwrap()
+            .unwrap(),
+        );
 
         assert_eq!(sql, "r.resource @> $1::jsonb");
         assert_eq!(
@@ -3584,7 +3471,9 @@ mod tests {
         )
         .unwrap();
 
-        let sql = render_uri_clauses_as_or(&mut builder, &clauses, "resource->>'url'").unwrap();
+        let sql = render_sql_expr(
+            &render_uri_clauses_as_or(&mut builder, &clauses, "resource->>'url'").unwrap(),
+        );
 
         assert_eq!(sql, "resource->>'url' LIKE $1");
         assert_eq!(builder.params()[0].as_str(), "http://example.org/100\\%%");
@@ -3606,9 +3495,10 @@ mod tests {
         )
         .unwrap();
 
-        let sql =
-            render_uri_array_clauses_as_or(&mut builder, &clauses, "resource->'meta'->'profile'")
-                .unwrap();
+        let sql = render_sql_expr(
+            &render_uri_array_clauses_as_or(&mut builder, &clauses, "resource->'meta'->'profile'")
+                .unwrap(),
+        );
 
         // Path is normalized via a CASE so jsonb_array_elements_text works on
         // both array and scalar JSONB shapes.
@@ -3634,9 +3524,11 @@ mod tests {
         )
         .unwrap();
 
-        let sql = render_token_path_clauses_as_or(&mut builder, &clauses, "resource->'status'")
-            .unwrap()
-            .unwrap();
+        let sql = render_sql_expr(
+            &render_token_path_clauses_as_or(&mut builder, &clauses, "resource->'status'")
+                .unwrap()
+                .unwrap(),
+        );
 
         assert!(sql.starts_with("("));
         assert!(sql.ends_with("= false"));
