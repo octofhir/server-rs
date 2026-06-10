@@ -107,26 +107,6 @@ fn parse_component_type(param_type: &str) -> Result<SearchParameterType, SqlBuil
     }
 }
 
-/// Convert FHIRPath expression to JSONB path.
-#[cfg(test)]
-fn expression_to_jsonb_path(expression: &str) -> String {
-    let path = expression
-        .find('.')
-        .map_or(expression, |i| &expression[i + 1..]);
-    let parts: Vec<&str> = path.split('.').filter(|p| !p.is_empty()).collect();
-
-    if parts.is_empty() {
-        return "resource".to_string();
-    }
-
-    let mut acc = "resource".to_string();
-    for (i, part) in parts.iter().enumerate() {
-        let op = if i == parts.len() - 1 { "->>" } else { "->" };
-        acc.push_str(&format!("{op}'{part}'"));
-    }
-    acc
-}
-
 #[cfg(test)]
 fn extract_prefix(value: &str) -> (&str, &str) {
     for prefix in ["ge", "le", "gt", "lt", "ne", "sa", "eb", "ap"] {
@@ -145,18 +125,6 @@ mod tests {
     fn test_parse_composite_value() {
         let r = parse_composite_value("http://loinc.org|8480-6$gt100");
         assert_eq!(r.components, vec!["http://loinc.org|8480-6", "gt100"]);
-    }
-
-    #[test]
-    fn test_expression_to_jsonb_path() {
-        assert_eq!(
-            expression_to_jsonb_path("Observation.code"),
-            "resource->>'code'"
-        );
-        assert_eq!(
-            expression_to_jsonb_path("Observation.value.quantity"),
-            "resource->'value'->>'quantity'"
-        );
     }
 
     #[test]
@@ -187,7 +155,47 @@ mod tests {
         assert!(result.is_ok());
         let clause = builder.build_where_clause().unwrap();
         assert!(clause.contains("(resource->'valueQuantity'->>'value')::numeric > "));
-        assert!(clause.contains("resource->>'code'"));
+        // Token component navigates the `code` element as a JSON object (`->`),
+        // not a text accessor (`->>`), so the token renderer can reach `coding`.
+        assert!(
+            clause.contains("resource->'code'"),
+            "CLAUSE={clause}"
+        );
+    }
+
+    /// Lock the `code-value-quantity` fix with the *real* FHIR component
+    /// expressions: the value component carries a polymorphic cast
+    /// `value.as(Quantity)` that must lower to the stored `valueQuantity` key
+    /// (not leak `as(Quantity)` as a path segment), and the token component's
+    /// bare `code` must navigate as a JSON object (`->`), not text (`->>`).
+    #[test]
+    fn test_build_composite_search_polymorphic_cast() {
+        let mut builder = SqlBuilder::new();
+        let components = vec![
+            CompositeComponent {
+                name: "code".to_string(),
+                param_type: "token".to_string(),
+                expression: "code".to_string(),
+            },
+            CompositeComponent {
+                name: "value".to_string(),
+                param_type: "quantity".to_string(),
+                expression: "value.as(Quantity)".to_string(),
+            },
+        ];
+
+        let result = build_composite_search(&mut builder, "8302-2$159.5", &components);
+        assert!(result.is_ok());
+        let clause = builder.build_where_clause().unwrap();
+        // value.as(Quantity) -> valueQuantity (polymorphic cast folded by the AST)
+        assert!(
+            clause.contains("(resource->'valueQuantity'->>'value')::numeric"),
+            "CLAUSE={clause}"
+        );
+        // `as(Quantity)` must NOT leak into the path.
+        assert!(!clause.contains("as(Quantity)"), "CLAUSE={clause}");
+        // Token leaf is a JSON object accessor.
+        assert!(clause.contains("resource->'code'"), "CLAUSE={clause}");
     }
 
     #[test]

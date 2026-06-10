@@ -7,7 +7,10 @@ use async_trait::async_trait;
 use serde_json::Value;
 
 use crate::common::register_common_parameters;
-use crate::parameters::{ElementTypeHint, SearchModifier, SearchParameter, SearchParameterType};
+use crate::parameters::{
+    ElementTypeHint, SearchModifier, SearchParameter, SearchParameterComponent,
+    SearchParameterType,
+};
 use crate::registry::SearchParameterRegistry;
 
 /// Resolves FHIR element type information from schema at registry build time.
@@ -261,6 +264,30 @@ pub fn parse_search_parameter(value: &Value) -> Result<SearchParameter, LoaderEr
         param = param.with_description(description);
     }
 
+    // Composite parameters carry a `component` array, each entry pairing a
+    // canonical `definition` (the sub-parameter) with a sub-`expression`.
+    // Without this the composite dispatch fails with "has no components defined".
+    let components: Vec<SearchParameterComponent> = value
+        .get("component")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|c| {
+                    let definition = c.get("definition").and_then(|v| v.as_str())?;
+                    let expression = c.get("expression").and_then(|v| v.as_str())?;
+                    Some(SearchParameterComponent {
+                        definition: definition.to_string(),
+                        expression: expression.to_string(),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    if !components.is_empty() {
+        param = param.with_components(components);
+    }
+
     // Note: xpath is rarely used and we skip it since there's no builder method
     // If needed, it can be added later via a with_xpath() method
 
@@ -305,19 +332,23 @@ async fn resolve_element_type_for_param(
             continue;
         }
 
-        // Strip FHIRPath functions (e.g., ".where(resolve() is Patient)") from
-        // the element path — the resolver only understands schema element names.
-        let clean_path = crate::sql_builder::strip_fhirpath_functions(element_path);
-        if clean_path.is_empty() {
-            continue;
-        }
-
         // For common params with base "Resource", resolve against a concrete type
         let resolve_type = if resource_type == "Resource" || resource_type == "DomainResource" {
             "Patient"
         } else {
             resource_type
         };
+
+        // Lower the FHIRPath branch to schema element segments via the real
+        // FHIRPath AST — drops the resource prefix, folds polymorphic casts
+        // (`value.ofType(Quantity)` -> `valueQuantity`) and strips navigation
+        // functions (`.where(resolve() is Patient)`). The resolver only
+        // understands schema element names.
+        let segments = crate::sql_builder::fhirpath_to_jsonb_path(expr_part, resolve_type);
+        if segments.is_empty() {
+            continue;
+        }
+        let clean_path = segments.join(".");
 
         if let Some((type_name, is_array)) = resolver.resolve(resolve_type, &clean_path).await {
             let hint = ElementTypeHint::from_fhir_type(&type_name, is_array);

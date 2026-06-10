@@ -1123,12 +1123,18 @@ fn render_composite_clause_jsonb_fallback_expr(
     match &clause.predicate {
         CompositePredicate::Tuple { components, safety } => {
             if matches!(safety, CompositeSafety::RequiresSameElement) {
-                return render_composite_same_component_element_expr(builder, components);
+                return render_composite_same_component_element_expr(
+                    builder,
+                    &clause.resource_type,
+                    components,
+                );
             }
 
             let conditions = components
                 .iter()
-                .map(|component| render_composite_component_expr(builder, component))
+                .map(|component| {
+                    render_composite_component_expr(builder, &clause.resource_type, component)
+                })
                 .collect::<Result<Vec<_>, _>>()?;
             if conditions.is_empty() {
                 Ok(SqlExpr::Bool(true))
@@ -1144,16 +1150,17 @@ fn render_composite_clause_jsonb_fallback_expr(
 
 fn render_composite_component_native_expr(
     builder: &mut SqlBuilder,
-    _resource_type: &str,
+    resource_type: &str,
     component: &CompositeComponentPredicate,
 ) -> Result<SqlExpr, SqlBuilderError> {
     // Components render in place over the resource JSONB (no sidecar tables);
     // identical to the JSONB-fallback path.
-    render_composite_component_expr(builder, component)
+    render_composite_component_expr(builder, resource_type, component)
 }
 
 fn render_composite_same_component_element_expr(
     builder: &mut SqlBuilder,
+    resource_type: &str,
     components: &[CompositeComponentPredicate],
 ) -> Result<SqlExpr, SqlBuilderError> {
     let Some(suffixes) = components
@@ -1163,7 +1170,7 @@ fn render_composite_same_component_element_expr(
     else {
         let conditions = components
             .iter()
-            .map(|component| render_composite_component_expr(builder, component))
+            .map(|component| render_composite_component_expr(builder, resource_type, component))
             .collect::<Result<Vec<_>, _>>()?;
         return Ok(SqlExpr::And(conditions));
     };
@@ -1222,10 +1229,21 @@ fn id_clause_expr(builder: &mut SqlBuilder, clause: &IdClause, id_column: &str) 
 
 fn render_composite_component_expr(
     builder: &mut SqlBuilder,
+    resource_type: &str,
     component: &CompositeComponentPredicate,
 ) -> Result<SqlExpr, SqlBuilderError> {
-    let json_path = expression_to_jsonb_path(&component.spec.expression);
-    render_composite_component_at_path_expr(builder, component, json_path.as_str())
+    // Lower the component's FHIRPath sub-expression to JSONB segments via the
+    // real FHIRPath AST — folds polymorphic casts (`value.as(Quantity)` ->
+    // `valueQuantity`) and drops the resource prefix. Token/quantity/reference
+    // components need a JSON-object leaf (`->`) so their renderers can navigate
+    // into `coding`/`value`/`reference`; text-leaf types (string/date/number/uri)
+    // need a text leaf (`->>`).
+    let segments =
+        crate::sql_builder::fhirpath_to_jsonb_path(&component.spec.expression, resource_type);
+    let as_text = component_text_leaf(component);
+    let json_path =
+        crate::sql_builder::build_jsonb_accessor(builder.resource_column(), &segments, as_text);
+    render_composite_component_at_path_expr(builder, component, &json_path)
 }
 
 fn render_composite_component_at_path_expr(
@@ -1434,24 +1452,6 @@ fn render_composite_quantity_component_expr(
     } else {
         Ok(value_cond)
     }
-}
-
-fn expression_to_jsonb_path(expression: &str) -> String {
-    let path = expression
-        .find('.')
-        .map_or(expression, |i| &expression[i + 1..]);
-    let parts: Vec<&str> = path.split('.').filter(|p| !p.is_empty()).collect();
-
-    if parts.is_empty() {
-        return "resource".to_string();
-    }
-
-    let mut acc = "resource".to_string();
-    for (i, part) in parts.iter().enumerate() {
-        let op = if i == parts.len() - 1 { "->>" } else { "->" };
-        acc.push_str(&format!("{op}'{part}'"));
-    }
-    acc
 }
 
 fn to_object_path(path: &str) -> String {

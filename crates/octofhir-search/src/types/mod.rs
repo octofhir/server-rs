@@ -983,7 +983,8 @@ mod tests {
 
         let clause = builder.build_where_clause().unwrap();
         assert!(clause.contains("(resource->'valueQuantity'->>'value')::numeric > "));
-        assert!(clause.contains("resource->>'code'"));
+        // Token component navigates `code` as a JSON object (`->`), not text (`->>`).
+        assert!(clause.contains("resource->'code'"), "CLAUSE={clause}");
         assert!(!clause.contains("jsonb_array_elements"));
     }
 

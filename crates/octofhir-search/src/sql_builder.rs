@@ -1253,16 +1253,14 @@ impl SqlBuilder {
 /// Parses the expression with the real FHIRPath parser (octofhir-fhirpath) and
 /// walks the AST — robustly handling unions (`|`), polymorphic casts
 /// (`value.ofType(Quantity)` / `value as Quantity` -> `valueQuantity`), filters
-/// (`where(...)`, `resolve()`), and index access. Falls back to a best-effort
-/// string parse only if the expression fails to parse.
+/// (`where(...)`, `resolve()`), and index access. Returns an empty path if the
+/// expression fails to parse (no string-surgery fallback — the AST is the source
+/// of truth).
 pub fn fhirpath_to_jsonb_path(expression: &str, resource_type: &str) -> Vec<String> {
-    if let Ok(ast) = octofhir_fhirpath::parse_expression(expression)
-        && let Some(segments) = ast_to_jsonb_segments(&ast, resource_type)
-        && !segments.is_empty()
-    {
-        return segments;
-    }
-    fhirpath_to_jsonb_path_fallback(expression, resource_type)
+    octofhir_fhirpath::parse_expression(expression)
+        .ok()
+        .and_then(|ast| ast_to_jsonb_segments(&ast, resource_type))
+        .unwrap_or_default()
 }
 
 /// JSONB property paths to extract for a search parameter's functional index AND
@@ -1587,84 +1585,6 @@ fn ast_leading_identifier(node: &octofhir_fhirpath::ExpressionNode) -> Option<St
     }
 }
 
-fn fhirpath_to_jsonb_path_fallback(expression: &str, resource_type: &str) -> Vec<String> {
-    // Pick the union (|) branch matching this resource type with wrapping parens
-    // stripped, then fold FHIR polymorphic type filters into the stored [x] key:
-    //   "(Observation.value as Quantity) | (Observation.value as SampledData)"
-    //       -> branch "Observation.value as Quantity" -> "Observation.valueQuantity"
-    //   "value.ofType(Quantity)" -> "valueQuantity"
-    // The resource stores polymorphic values under <base><CapitalizedType>.
-    let strip_wrap = |s: &str| -> String {
-        let t = s.trim();
-        match t.strip_prefix('(').and_then(|x| x.strip_suffix(')')) {
-            Some(inner) => inner.trim().to_string(),
-            None => t.to_string(),
-        }
-    };
-    let branch = if expression.contains('|') {
-        expression
-            .split('|')
-            .map(&strip_wrap)
-            .find(|s| {
-                s.starts_with(&format!("{resource_type}."))
-                    || s.starts_with("Resource.")
-                    || s.starts_with("DomainResource.")
-            })
-            .or_else(|| expression.split('|').next().map(&strip_wrap))
-            .unwrap_or_else(|| strip_wrap(expression))
-    } else {
-        strip_wrap(expression)
-    };
-
-    let folded = fold_polymorphic_paths(&branch);
-    let expr = folded.as_str();
-
-    // Remove resource type prefix if present
-    // Also handle case where we selected a union alternative with a different prefix
-    let expr = expr
-        .strip_prefix(&format!("{resource_type}."))
-        .or_else(|| expr.strip_prefix("Resource."))
-        .or_else(|| expr.strip_prefix("DomainResource."))
-        .or_else(|| {
-            // Try to strip any ResourceType. prefix (for union fallback cases)
-            if let Some(idx) = expr.find('.') {
-                let potential_type = &expr[..idx];
-                // If it looks like a resource type (starts with uppercase), strip it
-                if potential_type
-                    .chars()
-                    .next()
-                    .is_some_and(|c| c.is_ascii_uppercase())
-                {
-                    return Some(&expr[idx + 1..]);
-                }
-            }
-            None
-        })
-        .unwrap_or(expr);
-
-    // Strip FHIRPath function calls that don't map to JSONB paths.
-    // These are type filters/resolvers — the type info is already in SearchParameter.target.
-    // Examples:
-    //   "subject.where(resolve() is Patient)" → "subject"
-    //   "value.ofType(Quantity)" → "valueQuantity" (handled separately via polymorphic naming)
-    //   "effective.ofType(dateTime)" → "effectiveDateTime"
-    let expr = strip_fhirpath_functions(expr);
-
-    // Split by '.' and handle special cases
-    expr.split('.')
-        .filter(|s| !s.is_empty())
-        .map(|s| {
-            // Handle array access like "name[0]"
-            if let Some(base) = s.strip_suffix(']')
-                && let Some((name, _idx)) = base.split_once('[')
-            {
-                return name.to_string();
-            }
-            s.to_string()
-        })
-        .collect()
-}
-
 /// Capitalize the first ASCII letter (FHIR polymorphic key casing: `quantity`->`Quantity`,
 /// `dateTime`->`DateTime`).
 fn capitalize_first(s: &str) -> String {
@@ -1674,127 +1594,6 @@ fn capitalize_first(s: &str) -> String {
         Some(c) => c.to_ascii_uppercase().to_string() + chars.as_str(),
         None => String::new(),
     }
-}
-
-/// Index where the trailing identifier of `s` starts (scan back over [A-Za-z0-9_]).
-fn ident_start(s: &str) -> usize {
-    s.rfind(|c: char| !c.is_ascii_alphanumeric() && c != '_')
-        .map(|i| i + 1)
-        .unwrap_or(0)
-}
-
-/// Fold FHIR polymorphic type filters (`.ofType(T)`, `.as(T)`, ` as T`) into the
-/// `<base><CapitalizedType>` element key the resource JSONB actually stores under.
-pub(crate) fn fold_polymorphic_paths(expr: &str) -> String {
-    let mut out = expr.to_string();
-
-    // `.ofType(T)` and `.as(T)`
-    for marker in [".ofType(", ".as("] {
-        while let Some(pos) = out.find(marker) {
-            let after = &out[pos + marker.len()..];
-            let Some(close) = after.find(')') else { break };
-            let ty = capitalize_first(&after[..close]);
-            let before = &out[..pos];
-            let id_at = ident_start(before);
-            let folded = format!("{}{}", &before[id_at..], ty);
-            out = format!("{}{}{}", &before[..id_at], folded, &after[close + 1..]);
-        }
-    }
-
-    // ` as T` (space form, often wrapped in parens: `(Observation.value as Quantity)`)
-    while let Some(pos) = out.find(" as ") {
-        let before = &out[..pos];
-        let after = &out[pos + 4..];
-        // type token = leading identifier of `after`
-        let ty_end = after
-            .find(|c: char| !c.is_ascii_alphanumeric() && c != '_')
-            .unwrap_or(after.len());
-        let ty = capitalize_first(&after[..ty_end]);
-        if ty.is_empty() {
-            break;
-        }
-        let id_at = ident_start(before);
-        let folded = format!("{}{}", &before[id_at..], ty);
-        out = format!("{}{}{}", &before[..id_at], folded, &after[ty_end..]);
-    }
-
-    out
-}
-
-/// Strip FHIRPath function calls from an expression, keeping only property paths.
-///
-/// FHIRPath expressions like `subject.where(resolve() is Patient)` contain
-/// function calls that have no JSONB equivalent — they're type discriminators.
-/// The type info is already available in SearchParameter.target, so we only
-/// need the underlying property path.
-pub(crate) fn strip_fhirpath_functions(expr: &str) -> String {
-    let mut result = String::with_capacity(expr.len());
-    let mut i = 0;
-    let bytes = expr.as_bytes();
-
-    while i < bytes.len() {
-        // Look for function calls: identifier followed by '('
-        if bytes[i] == b'(' {
-            // Found start of function args — skip until matching ')'
-            let mut depth = 1;
-            i += 1;
-            while i < bytes.len() && depth > 0 {
-                match bytes[i] {
-                    b'(' => depth += 1,
-                    b')' => depth -= 1,
-                    _ => {}
-                }
-                i += 1;
-            }
-            // Remove the function name we already appended (e.g., "where", "resolve", "ofType")
-            // by scanning back to the last '.' or start
-            if let Some(dot_pos) = result.rfind('.') {
-                let func_candidate = &result[dot_pos + 1..];
-                if is_fhirpath_function(func_candidate) {
-                    result.truncate(dot_pos);
-                }
-            } else if is_fhirpath_function(&result) {
-                result.clear();
-            }
-        } else {
-            result.push(bytes[i] as char);
-            i += 1;
-        }
-    }
-
-    // Clean up trailing dots
-    while result.ends_with('.') {
-        result.pop();
-    }
-    // Clean up leading dots
-    while result.starts_with('.') {
-        result.remove(0);
-    }
-
-    result
-}
-
-/// Check if a string is a known FHIRPath function name.
-fn is_fhirpath_function(name: &str) -> bool {
-    matches!(
-        name,
-        "where"
-            | "resolve"
-            | "ofType"
-            | "exists"
-            | "empty"
-            | "first"
-            | "last"
-            | "as"
-            | "is"
-            | "not"
-            | "all"
-            | "any"
-            | "count"
-            | "distinct"
-            | "single"
-            | "type"
-    )
 }
 
 /// Build a JSONB accessor chain from path segments.
