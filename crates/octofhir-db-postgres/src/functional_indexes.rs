@@ -12,10 +12,10 @@
 
 use octofhir_search::SearchParameterRegistry;
 use octofhir_search::loader::ElementTypeResolver;
-use octofhir_search::parameters::SearchParameterType;
+use octofhir_search::parameters::{ElementTypeHint, SearchParameterType};
 use octofhir_search::sql_builder::{
-    AnnotatedPath, build_typed_extract_fn, date_lower_paths, date_upper_paths, extraction_paths,
-    fhirpath_to_jsonb_path, paths_to_json,
+    AnnotatedPath, build_jsonb_accessor, build_typed_extract_fn, date_lower_paths, date_upper_paths,
+    extraction_paths, fhirpath_to_jsonb_path, paths_to_json,
 };
 use sqlx_postgres::PgPool;
 use tracing::{debug, info, warn};
@@ -134,8 +134,25 @@ pub async fn create_default_search_indexes(
                      USING gin (fhir_text_blob(fhir_extract_text(resource, '{paths_json}'::jsonb)) gin_trgm_ops)"
                 )
             }
-            // Token/Quantity/Reference predicates are not yet index-matched in-place;
-            // their indexes are added with those predicate rewrites.
+            // Repeating CodeableConcept/Coding token params (e.g. Observation.category):
+            // the in-place predicate is `<subtree> @> '[...]'` (subtree containment).
+            // A dedicated GIN on just that subtree is small and selective, so the
+            // planner uses it — the whole-resource GIN is estimated too non-selective
+            // and gets skipped for a Seq Scan under LIMIT (catastrophic at scale).
+            SearchParameterType::Token
+                if matches!(
+                    &param.element_type_hint,
+                    ElementTypeHint::Array(t) if t == "CodeableConcept" || t == "Coding"
+                ) =>
+            {
+                let subtree = build_jsonb_accessor("resource", &segments, false);
+                format!(
+                    "CREATE INDEX IF NOT EXISTS \"idx_{table}_{code}_token\" ON \"{table}\" \
+                     USING gin (({subtree}) jsonb_path_ops)"
+                )
+            }
+            // Other token/quantity/reference predicates are not yet index-matched
+            // in-place; their indexes are added with those predicate rewrites.
             _ => continue,
         };
 

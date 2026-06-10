@@ -257,6 +257,94 @@ pub fn render_token_coding_clauses_as_or(
     Ok(or_exprs(exprs))
 }
 
+/// Render token clauses for an ARRAY-valued CodeableConcept/Coding field
+/// (e.g. `Observation.category`, cardinality 0..*) as one OR group.
+///
+/// The scalar coding render (`render_token_coding_clause`) builds object-leaf
+/// containment (`@> {"path":{"coding":[...]}}`) and `path->'coding'` traversal,
+/// both of which silently miss when `path` holds an ARRAY — `array @> object` is
+/// false and `array->'coding'` is NULL. This variant array-wraps the containment
+/// leaf (`@> {"path":[{"coding":[...]}]}`, GIN-indexed) for the system/code cases,
+/// and iterates the outer array for the cases containment can't express
+/// (`|code` system-absence, `:text`).
+pub fn render_token_coding_array_clauses_as_or(
+    builder: &mut SqlBuilder,
+    clauses: &[TokenClause],
+    array_path: &str,
+) -> Result<Option<SqlExpr>, SqlBuilderError> {
+    let exprs = clauses
+        .iter()
+        .map(|clause| render_token_coding_array_clause(builder, clause, array_path).map(SqlExpr::Raw))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(or_exprs(exprs))
+}
+
+fn render_token_coding_array_clause(
+    builder: &mut SqlBuilder,
+    clause: &TokenClause,
+    array_path: &str,
+) -> Result<String, SqlBuilderError> {
+    // Subtree containment: `<array_path> @> '[ <cc_or_coding> ]'`. Driving the
+    // predicate off the array subtree (e.g. resource->'category') — rather than the
+    // whole resource (resource @> {category:[...]}) — lets a dedicated functional GIN
+    // on that subtree serve it. The planner reliably picks the small subtree index;
+    // it falls back to a Seq Scan for the whole-resource form because the global
+    // resource GIN is estimated too non-selective under LIMIT.
+    let contains = |builder: &mut SqlBuilder, leaf: serde_json::Value| {
+        jsonb_contains_expr(builder, array_path, serde_json::Value::Array(vec![leaf]))
+    };
+    let condition = match &clause.predicate {
+        // CodeableConcept (coding[]) and bare-Coding shapes, both array-wrapped.
+        TokenPredicate::AnySystemCode { code } => render_sql_expr(&SqlExpr::Or(vec![
+            contains(builder, serde_json::json!({"coding": [{"code": code}]})),
+            contains(builder, serde_json::json!({"code": code})),
+        ])),
+        TokenPredicate::SystemCode { system, code } => render_sql_expr(&SqlExpr::Or(vec![
+            contains(
+                builder,
+                serde_json::json!({"coding": [{"system": system, "code": code}]}),
+            ),
+            contains(builder, serde_json::json!({"system": system, "code": code})),
+        ])),
+        TokenPredicate::SystemAnyCode { system } => render_sql_expr(&SqlExpr::Or(vec![
+            contains(builder, serde_json::json!({"coding": [{"system": system}]})),
+            contains(builder, serde_json::json!({"system": system})),
+        ])),
+        // `|code` (system must be absent) — `@>` can't prove absence; iterate the
+        // outer array and reuse the per-element no-system predicate.
+        TokenPredicate::NoSystemCode { code } => render_sql_expr(&jsonb_array_exists_expr(
+            array_path,
+            "e",
+            token_no_system_code_expr(builder, "e", code),
+        )),
+        TokenPredicate::Missing { is_missing } => {
+            render_sql_expr(&jsonb_presence_expr(array_path, *is_missing))
+        }
+        TokenPredicate::DisplayText { text } => {
+            let p = builder.add_text_param(format!("%{text}%"));
+            format!(
+                "EXISTS (SELECT 1 FROM jsonb_array_elements({array_path}) AS e, \
+                 jsonb_array_elements(e->'coding') AS c WHERE LOWER(c->>'display') LIKE LOWER(${p}))"
+            )
+        }
+        TokenPredicate::TerminologySet { modifier, .. } => {
+            return Err(SqlBuilderError::NotImplemented(format!(
+                "{} modifier requires terminology provider",
+                token_set_modifier_name(*modifier)
+            )));
+        }
+        TokenPredicate::IdentifierOfType { .. } => {
+            return Err(SqlBuilderError::InvalidModifier("OfType".to_string()));
+        }
+    };
+
+    if clause.negated {
+        Ok(format!("({condition}) = false"))
+    } else {
+        Ok(condition)
+    }
+}
+
 /// Render Identifier token clauses as one OR group.
 pub fn render_token_identifier_clauses_as_or(
     builder: &mut SqlBuilder,

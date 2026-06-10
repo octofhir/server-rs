@@ -24,7 +24,8 @@ use crate::sql_builder::{SqlBuilder, SqlBuilderError, build_jsonb_accessor};
 #[cfg(test)]
 use crate::terminology::HybridTerminologyProvider;
 use crate::{
-    ir::TokenClause, ir::TokenIndexShape, ir::render_token_coding_clauses_as_or,
+    ir::TokenClause, ir::TokenIndexShape, ir::render_token_coding_array_clauses_as_or,
+    ir::render_token_coding_clauses_as_or,
     ir::render_token_identifier_containment_clauses_as_or,
     ir::render_token_simple_code_clauses_as_or,
 };
@@ -408,6 +409,25 @@ pub fn build_gin_token_search(
     Ok(())
 }
 
+/// Build token search for an ARRAY-valued CodeableConcept/Coding field
+/// (e.g. `Observation.category`, 0..*).
+///
+/// The scalar [`build_gin_token_search`] builds object-leaf containment and
+/// `path->'coding'` traversal, both of which miss when `path` holds an array.
+/// This routes to the array-aware render: array-wrapped `@>` containment (still
+/// GIN-indexed) for system/code, outer-array iteration for `|code`/`:text`.
+pub fn build_token_coding_array_search(
+    builder: &mut SqlBuilder,
+    param: &ParsedParam,
+    array_path: &str,
+) -> Result<(), SqlBuilderError> {
+    let clauses = TokenClause::from_parsed_param(param, "", TokenIndexShape::Coding)?;
+    if let Some(sql) = render_token_coding_array_clauses_as_or(builder, &clauses, array_path)? {
+        builder.add_condition(sql);
+    }
+    Ok(())
+}
+
 /// Build GIN-optimized search for simple code fields using `resource @> '{...}'::jsonb`.
 ///
 /// For simple code fields like `Patient.gender`, generates:
@@ -502,6 +522,47 @@ mod tests {
         assert!(clause.contains("@>"));
         assert!(!clause.contains("http://loinc.org"));
         assert_eq!(builder.params().len(), 3);
+    }
+
+    #[test]
+    fn test_token_coding_array_uses_subtree_containment() {
+        // Array-valued CodeableConcept (e.g. Observation.category 0..*): the predicate
+        // must be `<array_path> @> '[<cc>]'` (subtree containment) so a dedicated GIN on
+        // the subtree serves it — and the leaf is array-wrapped because the subtree IS an
+        // array (object-leaf `{"coding":...}` never matches an array element set).
+        let mut builder = SqlBuilder::new();
+        let param = make_param("category", "vital-signs", None);
+
+        build_token_coding_array_search(&mut builder, &param, "resource->'category'").unwrap();
+
+        let clause = builder.build_where_clause().unwrap();
+        assert!(
+            clause.contains("resource->'category' @>"),
+            "expected subtree containment, got: {clause}"
+        );
+        // Array-wrapped leaf: a JSON array of CodeableConcept.
+        let json: Vec<String> = builder.params().iter().map(|p| p.as_str()).collect();
+        assert!(
+            json.iter()
+                .any(|p| p.contains("[{\"coding\":[{\"code\":\"vital-signs\"}]}]")),
+            "no array-wrapped coding containment in params: {json:?}"
+        );
+    }
+
+    #[test]
+    fn test_token_coding_array_no_system_iterates_outer_array() {
+        // `|code` (system absent) can't use `@>` containment — must iterate the
+        // outer array with jsonb_array_elements.
+        let mut builder = SqlBuilder::new();
+        let param = make_param("category", "|vital-signs", None);
+
+        build_token_coding_array_search(&mut builder, &param, "resource->'category'").unwrap();
+
+        let clause = builder.build_where_clause().unwrap();
+        assert!(
+            clause.contains("jsonb_array_elements(resource->'category')"),
+            "clause: {clause}"
+        );
     }
 
     #[test]

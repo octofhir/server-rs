@@ -46,7 +46,7 @@ pub use string::{build_array_string_search, build_human_name_search, build_strin
 pub use token::build_token_search_with_terminology;
 pub use token::{
     build_code_search, build_gin_code_search, build_gin_identifier_search, build_gin_token_search,
-    build_identifier_search, build_token_search, parse_token_value,
+    build_identifier_search, build_token_coding_array_search, build_token_search, parse_token_value,
 };
 pub use uri::{build_uri_array_search, build_uri_search};
 
@@ -173,6 +173,15 @@ fn dispatch_search_inner(
             } else if matches!(&definition.element_type_hint, ElementTypeHint::SimpleCode) {
                 // GIN-optimized simple code search (e.g., Patient.gender)
                 build_gin_code_search(builder, param, &path_segments)
+            } else if matches!(
+                &definition.element_type_hint,
+                ElementTypeHint::Array(t) if t == "CodeableConcept" || t == "Coding"
+            ) {
+                // Array-valued CodeableConcept/Coding (e.g. Observation.category 0..*):
+                // scalar containment misses arrays — use array-aware render.
+                let array_path =
+                    build_jsonb_accessor(builder.resource_column(), &path_segments, false);
+                build_token_coding_array_search(builder, param, &array_path)
             } else {
                 // GIN-optimized CodeableConcept/Coding/Token search
                 build_gin_token_search(builder, param, &path_segments)
@@ -320,6 +329,13 @@ fn dispatch_user_defined_jsonb_search(
                 build_identifier_search(builder, param, &object_path)
             } else if matches!(&definition.element_type_hint, ElementTypeHint::SimpleCode) {
                 build_code_search(builder, param, &text_path)
+            } else if matches!(
+                &definition.element_type_hint,
+                ElementTypeHint::Array(t) if t == "CodeableConcept" || t == "Coding"
+            ) {
+                // Array-valued CodeableConcept/Coding: scalar token render misses
+                // the outer array — use array-aware render (see build_token_coding_array_search).
+                build_token_coding_array_search(builder, param, &object_path)
             } else {
                 build_token_search(builder, param, &object_path)
             }
