@@ -30,6 +30,9 @@ connect_timeout_ms = 5000
 [search]
 default_count = 10
 max_count = 100
+# Max codes a token :in/:not-in/:above/:below ValueSet may expand to before
+# the request is rejected (each code becomes an OR branch). Env: OCTOFHIR__SEARCH__MAX_VALUESET_EXPANSION
+max_valueset_expansion = 500
 
 [logging]
 level = "debug"  # More verbose logging for debugging tests

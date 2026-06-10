@@ -20,11 +20,12 @@
 //!   equal any of A, B, … (per §3.1.1.5.5 the `:not` modifier semantics).
 //!
 //! Limitations:
-//! - Inline expansion only. If a ValueSet expands to more than
-//!   [`MAX_EXPANSION_SIZE`] concepts, the request fails with
-//!   `ExpansionTooLarge`. The existing temp-table strategy in
-//!   `terminology::HybridTerminologyProvider::expand_valueset_for_search`
-//!   covers that case but is not yet wired here.
+//! - Inline expansion only. Each expanded code becomes an OR branch in the
+//!   rewritten query, so the expansion is capped (default
+//!   [`DEFAULT_MAX_EXPANSION_SIZE`], override via
+//!   `OCTOFHIR__SEARCH__MAX_VALUESET_EXPANSION`); a ValueSet larger than the cap
+//!   is rejected with `ExpansionTooLarge` rather than generating a query that
+//!   hangs Postgres.
 //! - Only top-level params are walked. Terminology modifiers nested inside
 //!   `_has:…` or chained-reference parameters reach the sync dispatcher
 //!   directly and still return `NotImplemented`.
@@ -40,12 +41,16 @@ use octofhir_fhir_model::terminology::TerminologyProvider;
 use octofhir_storage::SearchParams;
 use std::sync::Arc;
 
-/// Maximum number of expanded concepts before pre-expansion gives up.
-pub const MAX_EXPANSION_SIZE: usize = 1000;
+/// Default ceiling on expanded concepts before pre-expansion gives up. The
+/// inline rewrite turns each expanded code into an OR branch, so an unbounded
+/// expansion would generate a pathologically large query that hangs Postgres —
+/// the cap keeps `:in`/`:not-in`/`:above`/`:below` fast. Overridable per
+/// deployment via `OCTOFHIR__SEARCH__MAX_VALUESET_EXPANSION`.
+pub const DEFAULT_MAX_EXPANSION_SIZE: usize = 500;
 
 #[derive(Debug, thiserror::Error)]
 pub enum TerminologyPreprocessError {
-    #[error("ValueSet '{vs}' expanded to {actual} codes — exceeds inline limit of {limit}")]
+    #[error("ValueSet '{vs}' expanded to {actual} codes — exceeds configured limit of {limit}")]
     ExpansionTooLarge {
         vs: String,
         actual: usize,
@@ -72,6 +77,7 @@ pub async fn pre_expand_terminology_modifiers(
     registry: &SearchParameterRegistry,
     resource_type: &str,
     terminology: &Arc<dyn TerminologyProvider>,
+    max_expansion: usize,
 ) -> Result<(), TerminologyPreprocessError> {
     let mut rewrites: Vec<(String, String, Vec<String>)> = Vec::new();
 
@@ -108,11 +114,11 @@ pub async fn pre_expand_terminology_modifiers(
                         message: e.to_string(),
                     })?;
 
-                if expansion.contains.len() > MAX_EXPANSION_SIZE {
+                if expansion.contains.len() > max_expansion {
                     return Err(TerminologyPreprocessError::ExpansionTooLarge {
                         vs: vs_url.to_string(),
                         actual: expansion.contains.len(),
-                        limit: MAX_EXPANSION_SIZE,
+                        limit: max_expansion,
                     });
                 }
 
@@ -185,12 +191,13 @@ pub async fn pre_expand_terminology_modifiers(
 ///   `code:above=sys|c` → `code=sys|c,sys|parent1,…`
 ///
 /// Failure modes mirror [`pre_expand_terminology_modifiers`]: hierarchies
-/// larger than [`MAX_EXPANSION_SIZE`] return `ExpansionTooLarge`.
+/// larger than [`DEFAULT_MAX_EXPANSION_SIZE`] return `ExpansionTooLarge`.
 pub async fn pre_expand_subsumption_modifiers(
     params: &mut SearchParams,
     registry: &SearchParameterRegistry,
     resource_type: &str,
     terminology: &Arc<HybridTerminologyProvider>,
+    max_expansion: usize,
 ) -> Result<(), TerminologyPreprocessError> {
     let mut rewrites: Vec<(String, String, Vec<String>)> = Vec::new();
 
@@ -245,11 +252,11 @@ pub async fn pre_expand_subsumption_modifiers(
                         message: e.to_string(),
                     })?;
 
-                if hierarchy_codes.len() > MAX_EXPANSION_SIZE {
+                if hierarchy_codes.len() > max_expansion {
                     return Err(TerminologyPreprocessError::ExpansionTooLarge {
                         vs: sys_code.to_string(),
                         actual: hierarchy_codes.len(),
-                        limit: MAX_EXPANSION_SIZE,
+                        limit: max_expansion,
                     });
                 }
 

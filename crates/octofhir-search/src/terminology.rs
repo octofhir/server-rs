@@ -16,7 +16,6 @@ use octofhir_fhir_model::terminology::{
 };
 use octofhir_fhir_model::{CachedTerminologyProvider, TerminologyCacheConfig};
 use serde::{Deserialize, Serialize};
-use sqlx_postgres::{PgPool, PgPoolCopyExt};
 use std::sync::Arc;
 use std::time::Duration;
 use thiserror::Error;
@@ -30,24 +29,6 @@ const DEFAULT_TERMINOLOGY_SERVER: &str = "https://tx.fhir.org/r4";
 /// Threshold for large ValueSet expansion (500 codes)
 /// Below this: Use traditional IN clause
 /// At or above: Use temporary table with bulk insert
-const LARGE_EXPANSION_THRESHOLD: usize = 500;
-
-/// Result of ValueSet expansion for search operations.
-///
-/// Determines the optimal strategy based on expansion size:
-/// - Small (<500 codes): Use IN clause with parameterized query
-/// - Large (≥500 codes): Use temporary table with session ID
-#[derive(Debug, Clone)]
-pub enum ExpansionResult {
-    /// Small expansion: Use traditional IN clause
-    /// Contains the list of codes to include in the query
-    InClause(Vec<ValueSetConcept>),
-
-    /// Large expansion: Use temporary table
-    /// Contains the session ID for the temp table lookup
-    TempTable(String),
-}
-
 /// Direction for hierarchy traversal in subsumption searches.
 ///
 /// Used for `:below` and `:above` modifiers in token searches.
@@ -487,113 +468,6 @@ impl HybridTerminologyProvider {
             }
         }
         false
-    }
-
-    /// Expand a ValueSet for search operations with optimal strategy selection.
-    ///
-    /// This method automatically chooses the best expansion strategy based on size:
-    /// - Small expansions (<500 codes): Returns InClause for direct SQL IN clause
-    /// - Large expansions (≥500 codes): Returns TempTable with session ID after bulk insert
-    ///
-    /// # Arguments
-    ///
-    /// * `pool` - PostgreSQL connection pool for temp table operations
-    /// * `valueset_url` - Canonical URL of the ValueSet to expand
-    /// * `parameters` - Optional expansion parameters (e.g., filter, count, offset)
-    ///
-    /// # Returns
-    ///
-    /// `ExpansionResult` indicating which strategy to use:
-    /// - `InClause(concepts)`: Use traditional SQL IN clause
-    /// - `TempTable(session_id)`: Use JOIN with temp_valueset_codes table
-    ///
-    /// # Example
-    ///
-    /// ```ignore
-    /// let result = provider.expand_valueset_for_search(
-    ///     &pool,
-    ///     "http://loinc.org/vs/vital-signs",
-    ///     None
-    /// ).await?;
-    ///
-    /// match result {
-    ///     ExpansionResult::InClause(concepts) => {
-    ///         // Use WHERE code IN (...)
-    ///     }
-    ///     ExpansionResult::TempTable(session_id) => {
-    ///         // Use JOIN with temp_valueset_codes WHERE session_id = ...
-    ///     }
-    /// }
-    /// ```
-    pub async fn expand_valueset_for_search(
-        &self,
-        pool: &PgPool,
-        valueset_url: &str,
-        parameters: Option<&ExpansionParameters>,
-    ) -> Result<ExpansionResult, TerminologyError> {
-        // First, expand the ValueSet normally
-        let expansion = self
-            .expand_valueset(valueset_url, parameters)
-            .await
-            .map_err(|e| TerminologyError::RemoteError(e.to_string()))?;
-
-        let code_count = expansion.contains.len();
-
-        // Small expansion: use IN clause (traditional approach)
-        if code_count < LARGE_EXPANSION_THRESHOLD {
-            tracing::debug!(
-                valueset = %valueset_url,
-                codes = code_count,
-                "Using IN clause for small ValueSet expansion"
-            );
-            return Ok(ExpansionResult::InClause(expansion.contains));
-        }
-
-        // Large expansion: use temp table
-        tracing::info!(
-            valueset = %valueset_url,
-            codes = code_count,
-            "Using temp table for large ValueSet expansion"
-        );
-
-        let session_id = uuid::Uuid::new_v4().to_string();
-
-        // Bulk insert using COPY for maximum performance
-        let mut copy_writer = pool
-            .copy_in_raw(
-                "COPY temp_valueset_codes (session_id, code, system, display) FROM STDIN WITH (FORMAT CSV, DELIMITER E'\\t')"
-            )
-            .await
-            .map_err(|e| {
-                TerminologyError::RemoteError(format!("Failed to start COPY operation: {}", e))
-            })?;
-
-        // Write all concepts as TSV (Tab-Separated Values)
-        for concept in &expansion.contains {
-            let line = format!(
-                "{}\t{}\t{}\t{}\n",
-                session_id,
-                concept.code,
-                concept.system.as_deref().unwrap_or(""),
-                concept.display.as_deref().unwrap_or("")
-            );
-            copy_writer.send(line.as_bytes()).await.map_err(|e| {
-                TerminologyError::RemoteError(format!("Failed to write to COPY: {}", e))
-            })?;
-        }
-
-        copy_writer.finish().await.map_err(|e| {
-            TerminologyError::RemoteError(format!("Failed to finish COPY operation: {}", e))
-        })?;
-
-        tracing::debug!(
-            session_id = %session_id,
-            codes = code_count,
-            "Bulk inserted {} codes into temp table",
-            code_count
-        );
-
-        Ok(ExpansionResult::TempTable(session_id))
     }
 
     /// Expand a code hierarchy for subsumption searches (`:below` and `:above` modifiers).

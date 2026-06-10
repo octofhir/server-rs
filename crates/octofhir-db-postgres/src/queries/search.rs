@@ -19,7 +19,7 @@ use time::OffsetDateTime;
 use octofhir_fhir_model::terminology::TerminologyProvider;
 use octofhir_search::terminology::HybridTerminologyProvider;
 use octofhir_search::terminology_preprocess::{
-    pre_expand_subsumption_modifiers, pre_expand_terminology_modifiers,
+    DEFAULT_MAX_EXPANSION_SIZE, pre_expand_subsumption_modifiers, pre_expand_terminology_modifiers,
 };
 use octofhir_search::{
     BuiltQuery, ParamsSearchConfig, PreparedQuery, QueryCache, QueryCacheKey, QueryParamKey,
@@ -47,6 +47,9 @@ pub struct RawSearchOptions {
     pub collect_debug_plan: bool,
     pub collect_explain_plan: bool,
     pub collect_explain_analyze: bool,
+    /// Cap on ValueSet/hierarchy expansion size for `:in`/`:not-in`/`:above`/
+    /// `:below` pre-expansion. `None` falls back to [`DEFAULT_MAX_EXPANSION_SIZE`].
+    pub max_valueset_expansion: Option<usize>,
 }
 
 /// Converts chrono DateTime to time OffsetDateTime.
@@ -277,6 +280,7 @@ pub async fn execute_search_raw_with_config(
             collect_debug_plan: false,
             collect_explain_plan: false,
             collect_explain_analyze: false,
+            max_valueset_expansion: None,
         },
     )
     .await
@@ -334,6 +338,7 @@ pub async fn execute_search_raw_with_terminology(
             collect_debug_plan: false,
             collect_explain_plan: false,
             collect_explain_analyze: false,
+            max_valueset_expansion: None,
         },
     )
     .await
@@ -384,12 +389,16 @@ async fn execute_search_raw_with_config_inner(
     // searches (`:in`/`:not-in` against a ValueSet, `:above`/`:below`
     // against a code-system hierarchy).
     if let Some(tx) = terminology {
+        let max_expansion = options
+            .max_valueset_expansion
+            .unwrap_or(DEFAULT_MAX_EXPANSION_SIZE);
         let trait_view: Arc<dyn TerminologyProvider> = tx.clone();
         pre_expand_terminology_modifiers(
             &mut effective_params,
             registry,
             resource_type,
             &trait_view,
+            max_expansion,
         )
         .await
         .map_err(|e| {
@@ -397,12 +406,18 @@ async fn execute_search_raw_with_config_inner(
             StorageError::invalid_resource(format!("Terminology expansion failed: {e}"))
         })?;
 
-        pre_expand_subsumption_modifiers(&mut effective_params, registry, resource_type, tx)
-            .await
-            .map_err(|e| {
-                tracing::warn!(error = %e, "Subsumption pre-expansion failed");
-                StorageError::invalid_resource(format!("Subsumption expansion failed: {e}"))
-            })?;
+        pre_expand_subsumption_modifiers(
+            &mut effective_params,
+            registry,
+            resource_type,
+            tx,
+            max_expansion,
+        )
+        .await
+        .map_err(|e| {
+            tracing::warn!(error = %e, "Subsumption pre-expansion failed");
+            StorageError::invalid_resource(format!("Subsumption expansion failed: {e}"))
+        })?;
     }
 
     // Build search config

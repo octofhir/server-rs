@@ -2421,6 +2421,7 @@ pub async fn search_resource(
             collect_debug_plan: debug_request.collect_plan(),
             collect_explain_plan: debug_request.collect_explain_plan(),
             collect_explain_analyze: debug_request.collect_explain_analyze(),
+            max_valueset_expansion: Some(state.config.search.max_valueset_expansion),
         },
     )
     .await
@@ -2555,6 +2556,7 @@ pub async fn search_resource_post(
             collect_debug_plan: debug_request.collect_plan(),
             collect_explain_plan: debug_request.collect_explain_plan(),
             collect_explain_analyze: debug_request.collect_explain_analyze(),
+            max_valueset_expansion: Some(state.config.search.max_valueset_expansion),
         },
     )
     .await
@@ -2694,6 +2696,7 @@ pub async fn system_search(
                 collect_debug_plan: debug_request.collect_plan(),
                 collect_explain_plan: debug_request.collect_explain_plan(),
                 collect_explain_analyze: debug_request.collect_explain_analyze(),
+                max_valueset_expansion: Some(state.config.search.max_valueset_expansion),
             },
         )
         .await

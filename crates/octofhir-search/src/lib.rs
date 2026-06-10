@@ -72,8 +72,7 @@ pub use query_cache::{
 };
 pub use reloadable::{ReloadableSearchConfig, SearchConfig, SearchOptions};
 pub use terminology::{
-    CacheStats, ExpansionResult, HierarchyDirection, HybridTerminologyProvider, TerminologyConfig,
-    TerminologyError,
+    CacheStats, HierarchyDirection, HybridTerminologyProvider, TerminologyConfig, TerminologyError,
 };
 
 // SearchParams to query builder conversion

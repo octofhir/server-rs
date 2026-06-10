@@ -396,6 +396,16 @@ pub struct SearchSettings {
     /// `OCTOFHIR__SEARCH__INDEXED_PARAMS`) to index only what you search.
     #[serde(default = "default_indexed_params")]
     pub indexed_params: Vec<String>,
+    /// Maximum number of concepts a token `:in`/`:not-in`/`:above`/`:below`
+    /// ValueSet/hierarchy may expand to before the request is rejected. Each
+    /// expanded code becomes an OR branch in the rewritten query, so an
+    /// unbounded expansion would hang Postgres. Env:
+    /// `OCTOFHIR__SEARCH__MAX_VALUESET_EXPANSION`.
+    #[serde(default = "default_max_valueset_expansion")]
+    pub max_valueset_expansion: usize,
+}
+fn default_max_valueset_expansion() -> usize {
+    octofhir_search::terminology_preprocess::DEFAULT_MAX_EXPANSION_SIZE
 }
 fn default_indexed_params() -> Vec<String> {
     [
@@ -443,6 +453,7 @@ impl Default for SearchSettings {
             allow_debug_search_explain_analyze: false,
             async_index_writes: false,
             indexed_params: default_indexed_params(),
+            max_valueset_expansion: default_max_valueset_expansion(),
         }
     }
 }

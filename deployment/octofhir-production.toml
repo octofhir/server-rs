@@ -32,6 +32,7 @@ allow_skip_validation = false
 [search]
 default_count = 20
 max_count = 500
+max_valueset_expansion = 500
 
 [packages]
 # FHIR packages will be stored here
