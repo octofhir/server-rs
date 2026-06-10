@@ -52,6 +52,17 @@ const TYPE_MAPPING: &[(&str, &str)] = &[
     ("Any", "Any"),
 ];
 
+/// Returns whether a FhirSchema element is scalar (max cardinality 1, i.e. 0..1 or 1..1).
+///
+/// In FhirSchema, collections are flagged with `array: Some(true)` while scalar elements
+/// leave `array` unset. `max` is only populated for bounded arrays (max >= 2), so it is
+/// NOT a reliable singleton signal — `array` is. Driving the SQL extraction codegen off
+/// this lets scalar segments use the fast `->>'seg'` path instead of a lateral over
+/// jsonb_array_elements.
+fn element_is_singleton(element: &octofhir_fhirschema::types::FhirSchemaElement) -> bool {
+    element.array != Some(true)
+}
+
 /// Server-wide model provider with database-backed on-demand schema loading.
 ///
 /// Schemas are loaded from the `fcm.fhirschemas` table on-demand and cached
@@ -398,7 +409,7 @@ impl ModelProvider for OctoFhirModelProvider {
                     let backbone_path = format!("{}.{}", type_name, property_name);
                     return Ok(Some(TypeInfo {
                         type_name: "Any".to_string(),
-                        singleton: Some(element.max == Some(1)),
+                        singleton: Some(element_is_singleton(element)),
                         is_empty: Some(false),
                         namespace: Some("FHIR".to_string()),
                         name: Some(backbone_path),
@@ -410,7 +421,7 @@ impl ModelProvider for OctoFhirModelProvider {
                     let mapped_type = self.map_fhir_type(element_type_name);
                     return Ok(Some(TypeInfo {
                         type_name: mapped_type,
-                        singleton: Some(element.max == Some(1)),
+                        singleton: Some(element_is_singleton(element)),
                         is_empty: Some(false),
                         namespace: Some("FHIR".to_string()),
                         name: Some(element_type_name.clone()),
@@ -436,7 +447,7 @@ impl ModelProvider for OctoFhirModelProvider {
                                 let mapped_type = self.map_fhir_type(&schema_type);
                                 return Ok(Some(TypeInfo {
                                     type_name: mapped_type,
-                                    singleton: Some(element.max == Some(1)),
+                                    singleton: Some(element_is_singleton(element)),
                                     is_empty: Some(false),
                                     namespace: if schema_type.chars().next().unwrap().is_uppercase()
                                     {
@@ -699,5 +710,57 @@ impl ElementTypeResolver for OctoFhirModelProvider {
         let is_array = !current.singleton.unwrap_or(true);
         let type_name = current.name.unwrap_or(current.type_name);
         Some((type_name, is_array))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use octofhir_fhirschema::types::FhirSchemaElement;
+
+    fn scalar() -> FhirSchemaElement {
+        // 0..1 / 1..1: transformer leaves `array` unset and `max` None.
+        FhirSchemaElement::default()
+    }
+
+    fn unbounded_array() -> FhirSchemaElement {
+        // 0..* / 1..*: transformer sets array=Some(true), max=None.
+        FhirSchemaElement {
+            array: Some(true),
+            ..Default::default()
+        }
+    }
+
+    fn bounded_array() -> FhirSchemaElement {
+        // e.g. 0..3: transformer sets array=Some(true), max=Some(3).
+        FhirSchemaElement {
+            array: Some(true),
+            max: Some(3),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn scalar_element_is_singleton() {
+        // Organization.name, Patient.name.family, Patient.name.text — all 0..1.
+        assert!(element_is_singleton(&scalar()));
+    }
+
+    #[test]
+    fn array_element_is_not_singleton() {
+        // Patient.name, Patient.name.given — 0..* collections.
+        assert!(!element_is_singleton(&unbounded_array()));
+        assert!(!element_is_singleton(&bounded_array()));
+    }
+
+    #[test]
+    fn max_one_is_never_emitted_so_must_not_be_relied_on() {
+        // Regression guard: the old code used `max == Some(1)`, but the FhirSchema
+        // transformer NEVER emits max=Some(1) for scalars — it leaves max None and
+        // array unset. So a scalar must still read as singleton via `array`.
+        let s = scalar();
+        assert_eq!(s.max, None);
+        assert_eq!(s.array, None);
+        assert!(element_is_singleton(&s));
     }
 }
