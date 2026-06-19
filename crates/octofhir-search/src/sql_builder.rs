@@ -1263,6 +1263,54 @@ fn date_bound_paths(segments: &[String], period_bound: &str) -> Vec<Vec<String>>
     ]
 }
 
+/// Scalar (point-valued) date extraction paths for the per-occurrence multirange
+/// index — every shape whose value is a single date/dateTime/instant string.
+/// Period objects are handled separately by [`date_period_object_paths`] so each
+/// occurrence's start/end stay paired. See [`fhir_extract_date_multirange`] (SQL).
+pub fn date_scalar_paths(segments: &[String]) -> Vec<Vec<String>> {
+    let Some((leaf, parent)) = segments.split_last() else {
+        return vec![Vec::new()];
+    };
+    let poly = |suffix: &str, extra: &[&str]| {
+        let mut p = parent.to_vec();
+        p.push(format!("{leaf}{suffix}"));
+        p.extend(extra.iter().map(|s| s.to_string()));
+        p
+    };
+    let sub = |extra: &str| {
+        let mut p = segments.to_vec();
+        p.push(extra.to_string());
+        p
+    };
+    vec![
+        segments.to_vec(),
+        poly("DateTime", &[]),
+        poly("Date", &[]),
+        poly("Instant", &[]),
+        // Timing.event — point dates.
+        sub("event"),
+        poly("Timing", &["event"]),
+    ]
+}
+
+/// Period-OBJECT extraction paths for the multirange index — the paths point at
+/// the Period object itself (not `.start`/`.end`), so the SQL reads `start` and
+/// `end` from the SAME object and keeps each occurrence's interval intact. The
+/// bare base segment is included because a date param may bind a concrete Period
+/// (e.g. `CarePlan.period`); for a scalar base it extracts no object and is a
+/// harmless no-op.
+pub fn date_period_object_paths(segments: &[String]) -> Vec<Vec<String>> {
+    let Some((leaf, parent)) = segments.split_last() else {
+        return vec![Vec::new()];
+    };
+    let poly_period = {
+        let mut p = parent.to_vec();
+        p.push(format!("{leaf}Period"));
+        p
+    };
+    vec![segments.to_vec(), poly_period]
+}
+
 /// Serialize extraction paths to the JSONB literal the `fhir_extract_*` functions
 /// accept, e.g. `[["name","family"],["name","given"]]`.
 pub fn paths_to_json(paths: &[Vec<String>]) -> String {

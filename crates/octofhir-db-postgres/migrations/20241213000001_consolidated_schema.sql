@@ -77,6 +77,49 @@ RETURNS timestamptz LANGUAGE sql IMMUTABLE PARALLEL SAFE STRICT AS $$
   FROM unnest(public.fhir_extract_text(resource, paths)) AS v;
 $$;
 
+-- Like fhir_extract_text but returns the matched JSONB VALUES (objects), used to
+-- read Period {start,end} objects so each occurrence's bounds stay paired.
+CREATE OR REPLACE FUNCTION fhir_extract_jsonb(resource jsonb, paths jsonb)
+RETURNS jsonb[] LANGUAGE sql IMMUTABLE PARALLEL SAFE STRICT AS $$
+  SELECT nullif(array_agg(value), '{}')
+  FROM jsonb_array_elements(paths) AS p(path)
+  CROSS JOIN LATERAL (
+    SELECT ('$' || string_agg(format('.%I', seg #>> '{}'), '') || '[*]')::jsonpath AS jp
+    FROM jsonb_array_elements(p.path) AS seg
+  ) AS j
+  CROSS JOIN LATERAL jsonb_path_query(resource, j.jp) AS value;
+$$;
+
+-- Per-occurrence date index value: a tstzMULTIrange where each scalar
+-- date/dateTime/instant value and each Period occurrence contributes its OWN
+-- range. Unlike the single min/max hull, disjoint values stay disjoint, so a
+-- query landing in a gap between two values does not falsely match (FHIR date
+-- elements are frequently repeating). `scalar_paths` point at scalar date
+-- values; `period_paths` point at Period objects (start/end paired per object).
+CREATE OR REPLACE FUNCTION fhir_extract_date_multirange(resource jsonb, scalar_paths jsonb, period_paths jsonb)
+RETURNS tstzmultirange LANGUAGE sql IMMUTABLE PARALLEL SAFE STRICT AS $$
+  SELECT coalesce(range_agg(rng), '{}'::tstzmultirange)
+  FROM (
+    -- Scalar values: each bounded by its own precision window.
+    SELECT tstzrange(public.fhir_date_bound(v, 'min'), public.fhir_date_bound(v, 'max'), '[]') AS rng
+    FROM unnest(public.fhir_extract_text(resource, scalar_paths)) AS v
+    WHERE public.fhir_date_bound(v, 'min') IS NOT NULL
+      AND public.fhir_date_bound(v, 'max') IS NOT NULL
+      AND public.fhir_date_bound(v, 'min') <= public.fhir_date_bound(v, 'max')
+    UNION ALL
+    -- Period objects: [start, end] paired within each occurrence. A missing
+    -- side yields NULL -> +/-infinity (half-bounded period), which is correct.
+    SELECT tstzrange(public.fhir_date_bound(p->>'start', 'min'), public.fhir_date_bound(p->>'end', 'max'), '[]')
+    FROM unnest(public.fhir_extract_jsonb(resource, period_paths)) AS p
+    WHERE jsonb_typeof(p) = 'object'
+      AND (p ? 'start' OR p ? 'end')
+      AND (public.fhir_date_bound(p->>'start', 'min') IS NULL
+           OR public.fhir_date_bound(p->>'end', 'max') IS NULL
+           OR public.fhir_date_bound(p->>'start', 'min') <= public.fhir_date_bound(p->>'end', 'max'))
+  ) s
+  WHERE rng IS NOT NULL AND NOT isempty(rng);
+$$;
+
 -- ============================================================================
 -- BASE TABLES
 -- ============================================================================

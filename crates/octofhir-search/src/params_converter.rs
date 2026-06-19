@@ -472,14 +472,17 @@ fn try_fold_repeated_date_window(
     let expression = param_def.expression.as_deref().unwrap_or_default();
     let segments = fhirpath_to_jsonb_path(expression, resource_type);
     let lower_json = crate::sql_builder::paths_to_json(&crate::sql_builder::date_lower_paths(&segments));
-    let upper_json = crate::sql_builder::paths_to_json(&crate::sql_builder::date_upper_paths(&segments));
+    let scalar_json =
+        crate::sql_builder::paths_to_json(&crate::sql_builder::date_scalar_paths(&segments));
+    let period_json =
+        crate::sql_builder::paths_to_json(&crate::sql_builder::date_period_object_paths(&segments));
     let col = sql_builder.resource_column();
     let min_expr = format!("fhir_extract_date_min({col}, '{lower_json}'::jsonb)");
-    let max_expr = format!("fhir_extract_date_max({col}, '{upper_json}'::jsonb)");
-    let range_expr = format!("tstzrange({min_expr}, {max_expr}, '[]')");
+    let mr_expr =
+        format!("fhir_extract_date_multirange({col}, '{scalar_json}'::jsonb, '{period_json}'::jsonb)");
 
     if let Some(sql) =
-        render_date_inplace_clauses_as_or(sql_builder, &merged, &range_expr, &min_expr)
+        render_date_inplace_clauses_as_or(sql_builder, &merged, &mr_expr, &min_expr)
     {
         sql_builder.add_condition(sql);
     }
@@ -1327,7 +1330,7 @@ mod tests {
             (
                 "Patient",
                 "birthdate=ge1980-01-01&birthdate=le2000-12-31&_count=10",
-                ["fhir_extract_date_min", "tstzrange"],
+                ["fhir_extract_date_multirange", "tstzrange"],
             ),
             (
                 "Patient",
@@ -1862,9 +1865,13 @@ mod tests {
             build_native_ir_query_from_params("Patient", &params, &registry, "public").unwrap();
         let built = converted.builder.with_raw_resource(true).build().unwrap();
 
-        assert!(
-            built.sql.contains("'[)') AND tstzrange(fhir_extract_date_min(r.resource"),
-            "repeated date params must AND occurrences, got: {}",
+        assert_eq!(
+            built
+                .sql
+                .matches("EXISTS (SELECT 1 FROM unnest(fhir_extract_date_multirange(r.resource")
+                .count(),
+            2,
+            "two repeated eq values should produce two AND'd per-occurrence recheck predicates: {}",
             built.sql
         );
         assert_eq!(
@@ -1873,7 +1880,7 @@ mod tests {
                 .matches("<@ tstzrange(")
                 .count(),
             2,
-            "two repeated values should produce two AND'd in-place range predicates: {}",
+            "each eq value rechecks containment of some occurrence range: {}",
             built.sql
         );
     }
@@ -1912,7 +1919,7 @@ mod tests {
         assert!(
             plan.predicates[0]
                 .sql_shape
-                .contains("tstzrange(fhir_extract_date_min(resource, paths)")
+                .contains("fhir_extract_date_multirange(resource")
         );
         assert!(plan.predicates[0].sql_shape.contains("&& tstzrange("));
 
@@ -2536,11 +2543,11 @@ mod tests {
         assert!(folded, "gt+lt must fold");
         let clause = builder.build_where_clause().unwrap();
         assert!(
-            clause.contains("fhir_extract_date_min(r.resource")
+            clause.contains("fhir_extract_date_multirange(r.resource")
                 && clause.contains("&& tstzrange(")
                 && clause.contains("'[)')")
                 && clause.matches("&& tstzrange(").count() == 1,
-            "folded clause must have one in-place range overlap with `&& tstzrange(.., '[)')`: {clause}"
+            "folded clause must have one multirange overlap with `&& tstzrange(.., '[)')`: {clause}"
         );
         assert!(
             !clause.contains(" AND tstzrange("),

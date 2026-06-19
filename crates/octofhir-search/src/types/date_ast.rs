@@ -39,28 +39,29 @@ impl Bound {
 /// canonical form `[lower, upper)`.
 #[derive(Debug, Clone)]
 pub enum DatePredicate {
-    /// `r.rng <@ tstzrange(q.lo, q.hi, '[)')` — eq.
+    /// `eq`. Some occurrence range is contained in the query range. Rendered as
+    /// `mr && q` (indexable prefilter) `AND EXISTS (unnest(mr) g WHERE g <@ q)`,
+    /// where `mr` is the per-occurrence date multirange. The recheck is needed
+    /// because `mr <@ q` would require *every* occurrence to match, not any.
     Contains { q: DateRange },
-    /// `NOT EXISTS (… r.rng <@ q …)` — ne.
+    /// `ne`: `NOT EXISTS (unnest(mr) g WHERE g <@ q)`.
     NotContains { q: DateRange },
-    /// `r.rng && tstzrange(lo, hi, …)` — gt, lt, ap, and any window produced
-    /// by the fold rewrite. `lo`/`hi` of `None` mean an infinite half-line
-    /// in that direction.
+    /// `mr && tstzrange(lo, hi, …)` — gt, lt, ap, and any window produced by the
+    /// fold rewrite. `lo`/`hi` of `None` mean an infinite half-line in that
+    /// direction. Overlap on the multirange matches iff some occurrence does.
     Overlap {
         lo: Option<Bound>,
         hi: Option<Bound>,
     },
-    /// `ge`: `(r.rng && [upper(q), +∞)) OR (r.rng <@ q)` —
-    /// FHIR §3.1.1.5.1: the range above the search value intersects the
-    /// target range, OR the search range fully contains the target range.
+    /// `ge`: `mr && [lower(q), +∞)` — some occurrence reaches into or past the
+    /// search start.
     Ge { q: DateRange },
-    /// `le`: `(r.rng && (-∞, lower(q))) OR (r.rng <@ q)` —
-    /// FHIR §3.1.1.5.1: the range below the search value intersects the
-    /// target range, OR the search range fully contains the target range.
+    /// `le`: `mr && (-∞, upper(q))` — some occurrence reaches before the search
+    /// end.
     Le { q: DateRange },
-    /// `r.rng >> tstzrange(q.lo, q.hi, '[)')` — sa.
+    /// `mr >> tstzrange(q.hi, q.hi, '[]')` — sa.
     StrictlyAfter { q: DateRange },
-    /// `r.rng << tstzrange(q.lo, q.hi, '[)')` — eb.
+    /// `mr << tstzrange(q.lo, q.lo, '[]')` — eb.
     StrictlyBefore { q: DateRange },
     /// `:missing=true|false`.
     Missing { is_missing: bool },

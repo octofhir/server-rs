@@ -316,8 +316,9 @@ fn parse_offset_minutes(tz: &str) -> Option<i32> {
 }
 
 /// In-place date search on the resource JSONB (no sidecar): predicates run over
-/// `tstzrange(fhir_extract_date_min(col,paths), fhir_extract_date_max(col,paths), '[]')`,
-/// matched by a GiST functional index on the same expression.
+/// the per-occurrence `fhir_extract_date_multirange(col, scalar_paths, period_paths)`,
+/// matched by a GiST functional index on the same expression. The multirange keeps
+/// disjoint date values disjoint so repeating elements don't over-match across gaps.
 pub fn build_indexed_date_inplace(
     builder: &mut SqlBuilder,
     param: &ParsedParam,
@@ -331,11 +332,16 @@ pub fn build_indexed_date_inplace(
     let expression = definition.expression.as_deref().unwrap_or_default();
     let segments = crate::sql_builder::fhirpath_to_jsonb_path(expression, resource_type);
     let lower_json = crate::sql_builder::paths_to_json(&crate::sql_builder::date_lower_paths(&segments));
-    let upper_json = crate::sql_builder::paths_to_json(&crate::sql_builder::date_upper_paths(&segments));
+    let scalar_json =
+        crate::sql_builder::paths_to_json(&crate::sql_builder::date_scalar_paths(&segments));
+    let period_json =
+        crate::sql_builder::paths_to_json(&crate::sql_builder::date_period_object_paths(&segments));
     let col = builder.resource_column();
+    // `:missing` keys off presence of any date value (cheap min over the lower
+    // paths); the comparator predicates run over the per-occurrence multirange.
     let min_expr = format!("fhir_extract_date_min({col}, '{lower_json}'::jsonb)");
-    let max_expr = format!("fhir_extract_date_max({col}, '{upper_json}'::jsonb)");
-    let range_expr = format!("tstzrange({min_expr}, {max_expr}, '[]')");
+    let mr_expr =
+        format!("fhir_extract_date_multirange({col}, '{scalar_json}'::jsonb, '{period_json}'::jsonb)");
 
     if let Some(SearchModifier::Missing) = &param.modifier {
         let is_missing = param
@@ -353,7 +359,7 @@ pub fn build_indexed_date_inplace(
     }
 
     let clauses = DateClause::from_parsed_param(param, resource_type)?;
-    if let Some(sql) = render_date_inplace_clauses_as_or(builder, &clauses, &range_expr, &min_expr) {
+    if let Some(sql) = render_date_inplace_clauses_as_or(builder, &clauses, &mr_expr, &min_expr) {
         builder.add_condition(sql);
     }
     Ok(())

@@ -938,21 +938,37 @@ fn timestamp_text_compare_expr(path: &str, op: SqlOp, param: usize) -> SqlExpr {
 fn date_inplace_clause_expr(
     builder: &mut SqlBuilder,
     clause: &DateClause,
-    range_expr: &str,
+    mr_expr: &str,
     min_expr: &str,
 ) -> SqlExpr {
-    let rng = || SqlTerm::Raw(range_expr.to_string());
+    let rng = || SqlTerm::Raw(mr_expr.to_string());
     match &clause.predicate {
-        DatePredicate::Contains { q } => SqlExpr::RangeOp {
-            lhs: rng(),
-            op: RangeOp::ContainsBy,
-            rhs: date_range_term(builder, q),
-        },
-        DatePredicate::NotContains { q } => SqlExpr::Not(Box::new(SqlExpr::RangeOp {
-            lhs: rng(),
-            op: RangeOp::ContainsBy,
-            rhs: date_range_term(builder, q),
-        })),
+        // `eq`: some occurrence's range is contained in the query range. On the
+        // whole multirange `<@` means *every* occurrence is contained, which is
+        // wrong for repeating date elements (FHIR matches if ANY value does), so
+        // recheck each component range via `unnest`. The `&&` is an indexable
+        // prefilter so the GiST multirange functional index still drives the scan.
+        DatePredicate::Contains { q } => {
+            let qterm = date_range_term(builder, q);
+            let qsql = render_term(&qterm);
+            SqlExpr::And(vec![
+                SqlExpr::RangeOp {
+                    lhs: rng(),
+                    op: RangeOp::Overlaps,
+                    rhs: qterm,
+                },
+                SqlExpr::Raw(format!(
+                    "EXISTS (SELECT 1 FROM unnest({mr_expr}) g WHERE g <@ {qsql})"
+                )),
+            ])
+        }
+        DatePredicate::NotContains { q } => {
+            let qterm = date_range_term(builder, q);
+            let qsql = render_term(&qterm);
+            SqlExpr::Raw(format!(
+                "NOT EXISTS (SELECT 1 FROM unnest({mr_expr}) g WHERE g <@ {qsql})"
+            ))
+        }
         DatePredicate::Overlap { lo, hi } => SqlExpr::RangeOp {
             lhs: rng(),
             op: RangeOp::Overlaps,
@@ -1015,12 +1031,12 @@ fn date_inplace_clause_expr(
 pub fn render_date_inplace_clauses_as_or(
     builder: &mut SqlBuilder,
     clauses: &[DateClause],
-    range_expr: &str,
+    mr_expr: &str,
     min_expr: &str,
 ) -> Option<SqlExpr> {
     let exprs = clauses
         .iter()
-        .map(|clause| date_inplace_clause_expr(builder, clause, range_expr, min_expr))
+        .map(|clause| date_inplace_clause_expr(builder, clause, mr_expr, min_expr))
         .collect::<Vec<_>>();
     or_exprs(exprs)
 }

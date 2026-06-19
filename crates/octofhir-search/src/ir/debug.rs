@@ -35,9 +35,10 @@ impl SearchDebugPlan {
     }
 }
 
-/// Symbolic form of the functional date-range expression the in-place date
-/// predicates (and the matching GiST functional index) are built on.
-const DATE_RANGE_EXPR: &str = "tstzrange(fhir_extract_date_min(resource, paths), fhir_extract_date_max(resource, paths), '[]')";
+/// Symbolic form of the functional per-occurrence date multirange expression the
+/// in-place date predicates (and the matching GiST functional index) are built on.
+const DATE_RANGE_EXPR: &str =
+    "fhir_extract_date_multirange(resource, scalar_paths, period_paths)";
 
 /// Symbolic form of the normalized text-blob expression the in-place string
 /// predicates (and the matching trigram GIN functional index) are built on.
@@ -188,10 +189,14 @@ fn debug_date_clause(clause: &DateClause) -> DebugPredicate {
 fn date_sql_shape(predicate: &DatePredicate) -> String {
     match predicate {
         DatePredicate::Contains { .. } => {
-            format!("{DATE_RANGE_EXPR} <@ tstzrange($lo, $hi, '[)')")
+            // eq: some occurrence range contained in the query range. `&&` is the
+            // indexable prefilter; the EXISTS rechecks per component range.
+            format!(
+                "{DATE_RANGE_EXPR} && tstzrange($lo, $hi, '[)') AND EXISTS (SELECT 1 FROM unnest({DATE_RANGE_EXPR}) g WHERE g <@ tstzrange($lo, $hi, '[)'))"
+            )
         }
         DatePredicate::NotContains { .. } => {
-            format!("NOT ({DATE_RANGE_EXPR} <@ tstzrange($lo, $hi, '[)'))")
+            format!("NOT EXISTS (SELECT 1 FROM unnest({DATE_RANGE_EXPR}) g WHERE g <@ tstzrange($lo, $hi, '[)'))")
         }
         DatePredicate::Overlap { lo, hi } => {
             let lo_expr = debug_bound_expr(*lo, "$lo", "NULL");
@@ -200,20 +205,16 @@ fn date_sql_shape(predicate: &DatePredicate) -> String {
             format!("{DATE_RANGE_EXPR} && tstzrange({lo_expr}, {hi_expr}, '{bounds}')")
         }
         DatePredicate::Ge { .. } => {
-            format!(
-                "{DATE_RANGE_EXPR} && tstzrange($hi, NULL, '[)') OR {DATE_RANGE_EXPR} <@ tstzrange($lo, $hi, '[)')"
-            )
+            format!("{DATE_RANGE_EXPR} && tstzrange($lo, NULL, '[)')")
         }
         DatePredicate::Le { .. } => {
-            format!(
-                "{DATE_RANGE_EXPR} && tstzrange(NULL, $lo, '[)') OR {DATE_RANGE_EXPR} <@ tstzrange($lo, $hi, '[)')"
-            )
+            format!("{DATE_RANGE_EXPR} && tstzrange(NULL, $hi, '[)')")
         }
         DatePredicate::StrictlyAfter { .. } => {
-            format!("lower({DATE_RANGE_EXPR}) > $hi")
+            format!("{DATE_RANGE_EXPR} >> tstzrange($hi, $hi, '[]')")
         }
         DatePredicate::StrictlyBefore { .. } => {
-            format!("upper({DATE_RANGE_EXPR}) < $lo")
+            format!("{DATE_RANGE_EXPR} << tstzrange($lo, $lo, '[]')")
         }
         DatePredicate::Missing { is_missing } => {
             if *is_missing {
@@ -691,7 +692,7 @@ mod tests {
         assert!(json.contains("birthdate"));
         assert!(json.contains("jsonb_expression_index"));
         assert!(json.contains("idx_patient_birthdate_date"));
-        assert!(json.contains("tstzrange(fhir_extract_date_min(resource, paths)"));
+        assert!(json.contains("fhir_extract_date_multirange(resource"));
         assert!(json.contains("<@ tstzrange($lo, $hi, '[)')"));
         assert!(plan.predicates[0].index_backed);
         assert!(
