@@ -1170,11 +1170,25 @@ impl SqlBuilder {
 /// (`where(...)`, `resolve()`), and index access. Returns an empty path if the
 /// expression fails to parse (no string-surgery fallback — the AST is the source
 /// of truth).
+/// Memo for [`fhirpath_to_jsonb_path`]. The FHIRPath `parse_expression` (a
+/// chumsky parser-combinator pass) is the dominant on-CPU cost on the search
+/// path, and the search-parameter expressions are a fixed, finite catalog parsed
+/// identically on every request. Keyed by `(resource_type, expression)`; bounded
+/// by the catalog size (low thousands of tiny `Vec<String>`), so this is a
+/// static-grammar memo, not per-request data caching.
+static JSONB_PATH_MEMO: std::sync::LazyLock<dashmap::DashMap<(String, String), Vec<String>>> =
+    std::sync::LazyLock::new(dashmap::DashMap::new);
+
 pub fn fhirpath_to_jsonb_path(expression: &str, resource_type: &str) -> Vec<String> {
-    octofhir_fhirpath::parse_expression(expression)
+    if let Some(hit) = JSONB_PATH_MEMO.get(&(resource_type.to_string(), expression.to_string())) {
+        return hit.clone();
+    }
+    let paths = octofhir_fhirpath::parse_expression(expression)
         .ok()
         .and_then(|ast| ast_to_jsonb_segments(&ast, resource_type))
-        .unwrap_or_default()
+        .unwrap_or_default();
+    JSONB_PATH_MEMO.insert((resource_type.to_string(), expression.to_string()), paths.clone());
+    paths
 }
 
 /// JSONB property paths to extract for a search parameter's functional index AND
