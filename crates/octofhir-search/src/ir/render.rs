@@ -938,25 +938,39 @@ fn timestamp_text_compare_expr(path: &str, op: SqlOp, param: usize) -> SqlExpr {
 fn date_inplace_clause_expr(
     builder: &mut SqlBuilder,
     clause: &DateClause,
+    hull_expr: &str,
     mr_expr: &str,
     min_expr: &str,
 ) -> SqlExpr {
-    let rng = || SqlTerm::Raw(mr_expr.to_string());
+    // Two expressions over the same paths:
+    //   hull = tstzrange(min, max)  — the cheap min/max span. Backs the GiST
+    //          functional index (cheap to maintain on write) and serves the
+    //          indexable `&&`/`>>`/`<<` prefilter. Over-matches the gaps between
+    //          disjoint values of a repeating date element.
+    //   mr   = fhir_extract_date_multirange(...) — exact per-occurrence
+    //          multirange. Expensive to compute, so it is NEVER indexed; it only
+    //          rechecks the rows the hull prefilter already returned, removing
+    //          the gap false-positives.
+    let hull = || SqlTerm::Raw(hull_expr.to_string());
+    // hull-indexable prefilter `op rhs`, then the same op rechecked on the exact
+    // multirange so disjoint occurrences don't over-match across their gaps.
+    let prefilter_then_recheck = |op: RangeOp, rhs: SqlTerm| -> SqlExpr {
+        SqlExpr::And(vec![
+            SqlExpr::RangeOp { lhs: hull(), op, rhs: rhs.clone() },
+            SqlExpr::RangeOp { lhs: SqlTerm::Raw(mr_expr.to_string()), op, rhs },
+        ])
+    };
     match &clause.predicate {
-        // `eq`: some occurrence's range is contained in the query range. On the
-        // whole multirange `<@` means *every* occurrence is contained, which is
-        // wrong for repeating date elements (FHIR matches if ANY value does), so
-        // recheck each component range via `unnest`. The `&&` is an indexable
-        // prefilter so the GiST multirange functional index still drives the scan.
+        // `eq`: some occurrence range is contained in the query range. The hull
+        // `&&` query range is a superset of the true matches (any contained
+        // occurrence implies the hull overlaps), so it is a sound indexable
+        // prefilter; the EXISTS over `unnest(mr)` is the exact per-occurrence
+        // recheck (`mr <@ q` would wrongly require *every* occurrence to match).
         DatePredicate::Contains { q } => {
             let qterm = date_range_term(builder, q);
             let qsql = render_term(&qterm);
             SqlExpr::And(vec![
-                SqlExpr::RangeOp {
-                    lhs: rng(),
-                    op: RangeOp::Overlaps,
-                    rhs: qterm,
-                },
+                SqlExpr::RangeOp { lhs: hull(), op: RangeOp::Overlaps, rhs: qterm },
                 SqlExpr::Raw(format!(
                     "EXISTS (SELECT 1 FROM unnest({mr_expr}) g WHERE g <@ {qsql})"
                 )),
@@ -969,35 +983,26 @@ fn date_inplace_clause_expr(
                 "NOT EXISTS (SELECT 1 FROM unnest({mr_expr}) g WHERE g <@ {qsql})"
             ))
         }
-        DatePredicate::Overlap { lo, hi } => SqlExpr::RangeOp {
-            lhs: rng(),
-            op: RangeOp::Overlaps,
-            rhs: timestamp_range_term(builder, *lo, *hi),
-        },
-        // `ge`: resource date >= search range start. A single overlap with
-        // [q.start, +inf) — every resource range that reaches into or past the
-        // search start — captures exactly this. Expressed as one range `&&` (not an
-        // OR of overlap+contained-by) so the GiST functional index serves it; the OR
-        // form forced a Seq Scan because the planner can't index-drive it under LIMIT.
-        DatePredicate::Ge { q } => SqlExpr::RangeOp {
-            lhs: rng(),
-            op: RangeOp::Overlaps,
-            rhs: timestamp_range_term(builder, Some(Bound { at: q.start, inclusive: true }), None),
-        },
-        // `le`: resource date <= search range end. Single overlap with
-        // (-inf, q.end). q.end is the exclusive upper bound of the parsed range
-        // (e.g. 2024-01-01 for "2023"), so the bound is exclusive too.
-        DatePredicate::Le { q } => SqlExpr::RangeOp {
-            lhs: rng(),
-            op: RangeOp::Overlaps,
-            rhs: timestamp_range_term(builder, None, Some(Bound { at: q.end, inclusive: false })),
-        },
-        // `sa`: target range strictly after the search range, i.e.
-        // lower(rng) > upper(q). Expressed as the range `>>` operator against a
-        // point range at q.end so the GiST functional index serves it (a bare
-        // `lower(rng) > $` comparison cannot use the range index → seq scan).
+        DatePredicate::Overlap { lo, hi } => {
+            prefilter_then_recheck(RangeOp::Overlaps, timestamp_range_term(builder, *lo, *hi))
+        }
+        // `ge`: some occurrence reaches into or past the search start — overlap
+        // with [q.start, +inf).
+        DatePredicate::Ge { q } => prefilter_then_recheck(
+            RangeOp::Overlaps,
+            timestamp_range_term(builder, Some(Bound { at: q.start, inclusive: true }), None),
+        ),
+        // `le`: some occurrence reaches before the search end — overlap with
+        // (-inf, q.end). q.end is the exclusive upper bound of the parsed range.
+        DatePredicate::Le { q } => prefilter_then_recheck(
+            RangeOp::Overlaps,
+            timestamp_range_term(builder, None, Some(Bound { at: q.end, inclusive: false })),
+        ),
+        // `sa`/`eb`: strictly-after / strictly-before key off the extreme
+        // occurrence only, so the hull (which shares those extremes with the
+        // multirange) gives the identical answer — no recheck, pure index op.
         DatePredicate::StrictlyAfter { q } => SqlExpr::RangeOp {
-            lhs: rng(),
+            lhs: hull(),
             op: RangeOp::StrictlyAfter,
             rhs: timestamp_range_term(
                 builder,
@@ -1005,11 +1010,8 @@ fn date_inplace_clause_expr(
                 Some(Bound { at: q.end, inclusive: true }),
             ),
         },
-        // `eb`: target range strictly before the search range, i.e.
-        // upper(rng) < lower(q). Expressed as `<<` against a point range at
-        // q.start so the GiST index serves it.
         DatePredicate::StrictlyBefore { q } => SqlExpr::RangeOp {
-            lhs: rng(),
+            lhs: hull(),
             op: RangeOp::StrictlyBefore,
             rhs: timestamp_range_term(
                 builder,
@@ -1027,16 +1029,19 @@ fn date_inplace_clause_expr(
     }
 }
 
-/// Render in-place date clauses (one OR group) over the functional range expression.
+/// Render in-place date clauses (one OR group). `hull_expr` is the indexed
+/// min/max span (prefilter); `mr_expr` is the exact per-occurrence multirange
+/// (recheck). See [`date_inplace_clause_expr`].
 pub fn render_date_inplace_clauses_as_or(
     builder: &mut SqlBuilder,
     clauses: &[DateClause],
+    hull_expr: &str,
     mr_expr: &str,
     min_expr: &str,
 ) -> Option<SqlExpr> {
     let exprs = clauses
         .iter()
-        .map(|clause| date_inplace_clause_expr(builder, clause, mr_expr, min_expr))
+        .map(|clause| date_inplace_clause_expr(builder, clause, hull_expr, mr_expr, min_expr))
         .collect::<Vec<_>>();
     or_exprs(exprs)
 }

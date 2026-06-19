@@ -15,8 +15,8 @@ use octofhir_search::SearchParameterRegistry;
 use octofhir_search::loader::ElementTypeResolver;
 use octofhir_search::parameters::{ElementTypeHint, SearchParameterType};
 use octofhir_search::sql_builder::{
-    AnnotatedPath, build_jsonb_accessor, build_typed_extract_fn, date_period_object_paths,
-    date_scalar_paths, extraction_paths, fhirpath_to_jsonb_path, paths_to_json,
+    AnnotatedPath, build_jsonb_accessor, build_typed_extract_fn, date_lower_paths, date_upper_paths,
+    extraction_paths, fhirpath_to_jsonb_path, paths_to_json,
 };
 use sqlx_postgres::PgPool;
 use tracing::{debug, info, warn};
@@ -117,15 +117,18 @@ pub async fn create_default_search_indexes(
 
         let ddl = match param.param_type {
             SearchParameterType::Date => {
-                // Same scalar/period date paths the in-place predicate derives, so
-                // the planner matches this functional GiST index. The multirange
-                // keeps each occurrence's range disjoint (no gap over-match).
-                let scalar_json = paths_to_json(&date_scalar_paths(&segments));
-                let period_json = paths_to_json(&date_period_object_paths(&segments));
+                // Cheap min/max hull GiST index — the indexable prefilter the
+                // in-place date predicate ANDs with an exact per-occurrence
+                // multirange recheck. The hull is far cheaper to maintain on write
+                // than the multirange (≈2.25x), and serves the same `&&`/`<@`/
+                // `>>`/`<<` prefilter the predicate derives identically.
+                let lower_json = paths_to_json(&date_lower_paths(&segments));
+                let upper_json = paths_to_json(&date_upper_paths(&segments));
                 format!(
                     "CREATE INDEX IF NOT EXISTS \"idx_{table}_{code}_date\" ON \"{table}\" \
-                     USING gist (fhir_extract_date_multirange(resource, \
-                       '{scalar_json}'::jsonb, '{period_json}'::jsonb))"
+                     USING gist (tstzrange(\
+                       fhir_extract_date_min(resource, '{lower_json}'::jsonb), \
+                       fhir_extract_date_max(resource, '{upper_json}'::jsonb), '[]'))"
                 )
             }
             SearchParameterType::String => {

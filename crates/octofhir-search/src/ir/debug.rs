@@ -35,8 +35,13 @@ impl SearchDebugPlan {
     }
 }
 
-/// Symbolic form of the functional per-occurrence date multirange expression the
-/// in-place date predicates (and the matching GiST functional index) are built on.
+/// Symbolic form of the cheap min/max hull the GiST date functional index is
+/// built on (the indexable prefilter).
+const DATE_HULL_EXPR: &str =
+    "tstzrange(fhir_extract_date_min(resource, paths), fhir_extract_date_max(resource, paths), '[]')";
+
+/// Symbolic form of the exact per-occurrence date multirange used to recheck the
+/// hull prefilter (never indexed).
 const DATE_RANGE_EXPR: &str =
     "fhir_extract_date_multirange(resource, scalar_paths, period_paths)";
 
@@ -189,10 +194,10 @@ fn debug_date_clause(clause: &DateClause) -> DebugPredicate {
 fn date_sql_shape(predicate: &DatePredicate) -> String {
     match predicate {
         DatePredicate::Contains { .. } => {
-            // eq: some occurrence range contained in the query range. `&&` is the
-            // indexable prefilter; the EXISTS rechecks per component range.
+            // eq: hull `&&` (indexable prefilter) AND an EXISTS over the exact
+            // per-occurrence multirange (recheck — some occurrence contained).
             format!(
-                "{DATE_RANGE_EXPR} && tstzrange($lo, $hi, '[)') AND EXISTS (SELECT 1 FROM unnest({DATE_RANGE_EXPR}) g WHERE g <@ tstzrange($lo, $hi, '[)'))"
+                "{DATE_HULL_EXPR} && tstzrange($lo, $hi, '[)') AND EXISTS (SELECT 1 FROM unnest({DATE_RANGE_EXPR}) g WHERE g <@ tstzrange($lo, $hi, '[)'))"
             )
         }
         DatePredicate::NotContains { .. } => {
@@ -202,19 +207,26 @@ fn date_sql_shape(predicate: &DatePredicate) -> String {
             let lo_expr = debug_bound_expr(*lo, "$lo", "NULL");
             let hi_expr = debug_bound_expr(*hi, "$hi", "NULL");
             let bounds = debug_bounds_token(*lo, *hi);
-            format!("{DATE_RANGE_EXPR} && tstzrange({lo_expr}, {hi_expr}, '{bounds}')")
+            // hull prefilter (indexed) AND multirange recheck (exact).
+            format!(
+                "{DATE_HULL_EXPR} && tstzrange({lo_expr}, {hi_expr}, '{bounds}') AND {DATE_RANGE_EXPR} && tstzrange({lo_expr}, {hi_expr}, '{bounds}')"
+            )
         }
         DatePredicate::Ge { .. } => {
-            format!("{DATE_RANGE_EXPR} && tstzrange($lo, NULL, '[)')")
+            format!(
+                "{DATE_HULL_EXPR} && tstzrange($lo, NULL, '[)') AND {DATE_RANGE_EXPR} && tstzrange($lo, NULL, '[)')"
+            )
         }
         DatePredicate::Le { .. } => {
-            format!("{DATE_RANGE_EXPR} && tstzrange(NULL, $hi, '[)')")
+            format!(
+                "{DATE_HULL_EXPR} && tstzrange(NULL, $hi, '[)') AND {DATE_RANGE_EXPR} && tstzrange(NULL, $hi, '[)')"
+            )
         }
         DatePredicate::StrictlyAfter { .. } => {
-            format!("{DATE_RANGE_EXPR} >> tstzrange($hi, $hi, '[]')")
+            format!("{DATE_HULL_EXPR} >> tstzrange($hi, $hi, '[]')")
         }
         DatePredicate::StrictlyBefore { .. } => {
-            format!("{DATE_RANGE_EXPR} << tstzrange($lo, $lo, '[]')")
+            format!("{DATE_HULL_EXPR} << tstzrange($lo, $lo, '[]')")
         }
         DatePredicate::Missing { is_missing } => {
             if *is_missing {
@@ -711,7 +723,9 @@ mod tests {
         assert_eq!(plan.predicates.len(), 1);
         assert_eq!(
             plan.predicates[0].sql_shape,
-            format!("{DATE_RANGE_EXPR} && tstzrange($lo, NULL, '[)')")
+            format!(
+                "{DATE_HULL_EXPR} && tstzrange($lo, NULL, '[)') AND {DATE_RANGE_EXPR} && tstzrange($lo, NULL, '[)')"
+            )
         );
         assert_eq!(
             plan.predicates[0].strategy,

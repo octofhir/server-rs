@@ -472,17 +472,20 @@ fn try_fold_repeated_date_window(
     let expression = param_def.expression.as_deref().unwrap_or_default();
     let segments = fhirpath_to_jsonb_path(expression, resource_type);
     let lower_json = crate::sql_builder::paths_to_json(&crate::sql_builder::date_lower_paths(&segments));
+    let upper_json = crate::sql_builder::paths_to_json(&crate::sql_builder::date_upper_paths(&segments));
     let scalar_json =
         crate::sql_builder::paths_to_json(&crate::sql_builder::date_scalar_paths(&segments));
     let period_json =
         crate::sql_builder::paths_to_json(&crate::sql_builder::date_period_object_paths(&segments));
     let col = sql_builder.resource_column();
     let min_expr = format!("fhir_extract_date_min({col}, '{lower_json}'::jsonb)");
+    let max_expr = format!("fhir_extract_date_max({col}, '{upper_json}'::jsonb)");
+    let hull_expr = format!("tstzrange({min_expr}, {max_expr}, '[]')");
     let mr_expr =
         format!("fhir_extract_date_multirange({col}, '{scalar_json}'::jsonb, '{period_json}'::jsonb)");
 
     if let Some(sql) =
-        render_date_inplace_clauses_as_or(sql_builder, &merged, &mr_expr, &min_expr)
+        render_date_inplace_clauses_as_or(sql_builder, &merged, &hull_expr, &mr_expr, &min_expr)
     {
         sql_builder.add_condition(sql);
     }
@@ -2543,11 +2546,12 @@ mod tests {
         assert!(folded, "gt+lt must fold");
         let clause = builder.build_where_clause().unwrap();
         assert!(
-            clause.contains("fhir_extract_date_multirange(r.resource")
-                && clause.contains("&& tstzrange(")
+            clause.contains("fhir_extract_date_min(r.resource")
+                && clause.contains("fhir_extract_date_multirange(r.resource")
                 && clause.contains("'[)')")
-                && clause.matches("&& tstzrange(").count() == 1,
-            "folded clause must have one multirange overlap with `&& tstzrange(.., '[)')`: {clause}"
+                // one hull && prefilter + one multirange && recheck
+                && clause.matches("&& tstzrange(").count() == 2,
+            "folded clause must have hull prefilter + multirange recheck overlaps: {clause}"
         );
         assert!(
             !clause.contains(" AND tstzrange("),
