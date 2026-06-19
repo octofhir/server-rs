@@ -1331,6 +1331,38 @@ pub fn paths_to_json(paths: &[Vec<String>]) -> String {
     serde_json::to_string(paths).unwrap_or_else(|_| "[]".to_string())
 }
 
+/// Serialize extraction paths to a SQL `jsonpath[]` array literal of PRECOMPILED
+/// jsonpath constants for the `fhir_extract_*(resource, jsonpath[])` overloads,
+/// e.g. `ARRAY['$."name"."family"[*]'::jsonpath, '$."name"."given"[*]'::jsonpath]`.
+///
+/// Each path becomes a lax jsonpath `$."seg1"."seg2"[*]` — identical semantics to
+/// the per-row text builder in the jsonb-array `fhir_extract_*` functions (trailing
+/// `[*]` lax-unwraps), but compiled ONCE at index/predicate parse time instead of
+/// per row. The index DDL and the search predicate MUST both build their date
+/// expressions through this helper so the functional GiST index still matches.
+pub fn paths_to_jsonpath_array(paths: &[Vec<String>]) -> String {
+    if paths.is_empty() {
+        return "ARRAY[]::jsonpath[]".to_string();
+    }
+    let items = paths
+        .iter()
+        .map(|segments| {
+            let mut jp = String::from("$");
+            for seg in segments {
+                // jsonpath member accessor with a double-quoted key; escape `\` and `"`.
+                let escaped = seg.replace('\\', "\\\\").replace('"', "\\\"");
+                jp.push_str(&format!(".\"{escaped}\""));
+            }
+            jp.push_str("[*]");
+            // Embed as a SQL single-quoted string literal (escape single quotes).
+            let sql_literal = jp.replace('\'', "''");
+            format!("'{sql_literal}'::jsonpath")
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("ARRAY[{items}]")
+}
+
 /// An extraction path annotated with each segment's array cardinality:
 /// `(segment_name, is_array)`. Produced by resolving each path prefix against the
 /// element-type resolver at bootstrap so the generated SQL unwraps the right levels.

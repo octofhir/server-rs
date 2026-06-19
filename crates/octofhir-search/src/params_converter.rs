@@ -471,18 +471,22 @@ fn try_fold_repeated_date_window(
 
     let expression = param_def.expression.as_deref().unwrap_or_default();
     let segments = fhirpath_to_jsonb_path(expression, resource_type);
-    let lower_json = crate::sql_builder::paths_to_json(&crate::sql_builder::date_lower_paths(&segments));
-    let upper_json = crate::sql_builder::paths_to_json(&crate::sql_builder::date_upper_paths(&segments));
-    let scalar_json =
-        crate::sql_builder::paths_to_json(&crate::sql_builder::date_scalar_paths(&segments));
-    let period_json =
-        crate::sql_builder::paths_to_json(&crate::sql_builder::date_period_object_paths(&segments));
+    // Precompiled jsonpath[] literals (compiled once, not per row) — built via the
+    // same helper as the index DDL so the functional GiST index still matches.
+    let lower_jpa =
+        crate::sql_builder::paths_to_jsonpath_array(&crate::sql_builder::date_lower_paths(&segments));
+    let upper_jpa =
+        crate::sql_builder::paths_to_jsonpath_array(&crate::sql_builder::date_upper_paths(&segments));
+    let scalar_jpa =
+        crate::sql_builder::paths_to_jsonpath_array(&crate::sql_builder::date_scalar_paths(&segments));
+    let period_jpa = crate::sql_builder::paths_to_jsonpath_array(
+        &crate::sql_builder::date_period_object_paths(&segments),
+    );
     let col = sql_builder.resource_column();
-    let min_expr = format!("fhir_extract_date_min({col}, '{lower_json}'::jsonb)");
-    let max_expr = format!("fhir_extract_date_max({col}, '{upper_json}'::jsonb)");
+    let min_expr = format!("fhir_extract_date_min({col}, {lower_jpa})");
+    let max_expr = format!("fhir_extract_date_max({col}, {upper_jpa})");
     let hull_expr = format!("tstzrange({min_expr}, {max_expr}, '[]')");
-    let mr_expr =
-        format!("fhir_extract_date_multirange({col}, '{scalar_json}'::jsonb, '{period_json}'::jsonb)");
+    let mr_expr = format!("fhir_extract_date_multirange({col}, {scalar_jpa}, {period_jpa})");
 
     if let Some(sql) =
         render_date_inplace_clauses_as_or(sql_builder, &merged, &hull_expr, &mr_expr, &min_expr)

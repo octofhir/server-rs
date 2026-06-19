@@ -16,7 +16,7 @@ use octofhir_search::loader::ElementTypeResolver;
 use octofhir_search::parameters::{ElementTypeHint, SearchParameterType};
 use octofhir_search::sql_builder::{
     AnnotatedPath, build_jsonb_accessor, build_typed_extract_fn, date_lower_paths, date_upper_paths,
-    extraction_paths, fhirpath_to_jsonb_path, paths_to_json,
+    extraction_paths, fhirpath_to_jsonb_path, paths_to_json, paths_to_jsonpath_array,
 };
 use sqlx_postgres::PgPool;
 use tracing::{debug, info, warn};
@@ -122,13 +122,17 @@ pub async fn create_default_search_indexes(
                 // multirange recheck. The hull is far cheaper to maintain on write
                 // than the multirange (≈2.25x), and serves the same `&&`/`<@`/
                 // `>>`/`<<` prefilter the predicate derives identically.
-                let lower_json = paths_to_json(&date_lower_paths(&segments));
-                let upper_json = paths_to_json(&date_upper_paths(&segments));
+                // Precompiled jsonpath[] (baked literals) — the extraction fn
+                // compiles the jsonpath once instead of per row. The predicate
+                // (types/date.rs) builds the identical expression so the planner
+                // still matches this functional GiST index.
+                let lower_jpa = paths_to_jsonpath_array(&date_lower_paths(&segments));
+                let upper_jpa = paths_to_jsonpath_array(&date_upper_paths(&segments));
                 format!(
                     "CREATE INDEX IF NOT EXISTS \"idx_{table}_{code}_date\" ON \"{table}\" \
                      USING gist (tstzrange(\
-                       fhir_extract_date_min(resource, '{lower_json}'::jsonb), \
-                       fhir_extract_date_max(resource, '{upper_json}'::jsonb), '[]'))"
+                       fhir_extract_date_min(resource, {lower_jpa}), \
+                       fhir_extract_date_max(resource, {upper_jpa}), '[]'))"
                 )
             }
             SearchParameterType::String => {

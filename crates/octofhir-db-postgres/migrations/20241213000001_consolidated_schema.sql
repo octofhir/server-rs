@@ -120,6 +120,62 @@ RETURNS tstzmultirange LANGUAGE sql IMMUTABLE PARALLEL SAFE STRICT AS $$
   WHERE rng IS NOT NULL AND NOT isempty(rng);
 $$;
 
+-- ----------------------------------------------------------------------------
+-- PRECOMPILED-JSONPATH date extraction (jsonpath[] overloads)
+-- ----------------------------------------------------------------------------
+-- The jsonb-array variants above rebuild and COMPILE a jsonpath from text on
+-- EVERY row (`('$' || string_agg(...))::jsonpath`), which dominates date search
+-- cost (~27x). These overloads take an ARRAY of already-compiled `jsonpath`
+-- literals (baked into the index DDL and predicate), so the jsonpath compiles
+-- once instead of per row. Same lax-`[*]` semantics as the text builders.
+
+CREATE OR REPLACE FUNCTION fhir_extract_text(resource jsonb, paths jsonpath[])
+RETURNS text[] LANGUAGE sql IMMUTABLE PARALLEL SAFE STRICT AS $$
+  SELECT nullif(array_agg(value #>> '{}'), '{}')
+  FROM unnest(paths) AS p
+  CROSS JOIN LATERAL jsonb_path_query(resource, p) AS value;
+$$;
+
+CREATE OR REPLACE FUNCTION fhir_extract_jsonb(resource jsonb, paths jsonpath[])
+RETURNS jsonb[] LANGUAGE sql IMMUTABLE PARALLEL SAFE STRICT AS $$
+  SELECT nullif(array_agg(value), '{}')
+  FROM unnest(paths) AS p
+  CROSS JOIN LATERAL jsonb_path_query(resource, p) AS value;
+$$;
+
+CREATE OR REPLACE FUNCTION fhir_extract_date_min(resource jsonb, paths jsonpath[])
+RETURNS timestamptz LANGUAGE sql IMMUTABLE PARALLEL SAFE STRICT AS $$
+  SELECT min(public.fhir_date_bound(v, 'min'))
+  FROM unnest(public.fhir_extract_text(resource, paths)) AS v;
+$$;
+
+CREATE OR REPLACE FUNCTION fhir_extract_date_max(resource jsonb, paths jsonpath[])
+RETURNS timestamptz LANGUAGE sql IMMUTABLE PARALLEL SAFE STRICT AS $$
+  SELECT max(public.fhir_date_bound(v, 'max'))
+  FROM unnest(public.fhir_extract_text(resource, paths)) AS v;
+$$;
+
+CREATE OR REPLACE FUNCTION fhir_extract_date_multirange(resource jsonb, scalar_paths jsonpath[], period_paths jsonpath[])
+RETURNS tstzmultirange LANGUAGE sql IMMUTABLE PARALLEL SAFE STRICT AS $$
+  SELECT coalesce(range_agg(rng), '{}'::tstzmultirange)
+  FROM (
+    SELECT tstzrange(public.fhir_date_bound(v, 'min'), public.fhir_date_bound(v, 'max'), '[]') AS rng
+    FROM unnest(public.fhir_extract_text(resource, scalar_paths)) AS v
+    WHERE public.fhir_date_bound(v, 'min') IS NOT NULL
+      AND public.fhir_date_bound(v, 'max') IS NOT NULL
+      AND public.fhir_date_bound(v, 'min') <= public.fhir_date_bound(v, 'max')
+    UNION ALL
+    SELECT tstzrange(public.fhir_date_bound(p->>'start', 'min'), public.fhir_date_bound(p->>'end', 'max'), '[]')
+    FROM unnest(public.fhir_extract_jsonb(resource, period_paths)) AS p
+    WHERE jsonb_typeof(p) = 'object'
+      AND (p ? 'start' OR p ? 'end')
+      AND (public.fhir_date_bound(p->>'start', 'min') IS NULL
+           OR public.fhir_date_bound(p->>'end', 'max') IS NULL
+           OR public.fhir_date_bound(p->>'start', 'min') <= public.fhir_date_bound(p->>'end', 'max'))
+  ) s
+  WHERE rng IS NOT NULL AND NOT isempty(rng);
+$$;
+
 -- ============================================================================
 -- BASE TABLES
 -- ============================================================================
