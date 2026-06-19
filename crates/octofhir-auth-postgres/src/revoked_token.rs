@@ -56,10 +56,7 @@ impl<'a> RevokedTokenStorage<'a> {
         query(
             r#"
             INSERT INTO revokedtoken (id, txid, ts, resource, status)
-            SELECT $1, txid, NOW(), $2, 'created'
-            FROM _transaction
-            ORDER BY txid DESC
-            LIMIT 1
+            VALUES ($1, nextval('_transaction_txid_seq'), NOW(), $2, 'created')
             ON CONFLICT (id) DO NOTHING
             "#,
         )

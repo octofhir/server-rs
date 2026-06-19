@@ -152,7 +152,7 @@ impl<'a> ClientStorage<'a> {
     pub async fn create(&self, id: Uuid, resource: serde_json::Value) -> StorageResult<ClientRow> {
         // Create transaction record first (required by foreign key constraint)
         let txid: i64 = sqlx_core::query_scalar::query_scalar(
-            "INSERT INTO _transaction (status) VALUES ('committed') RETURNING txid",
+            "SELECT nextval('_transaction_txid_seq') AS txid",
         )
         .fetch_one(self.pool)
         .await?;
@@ -201,7 +201,7 @@ impl<'a> ClientStorage<'a> {
     pub async fn update(&self, id: Uuid, resource: serde_json::Value) -> StorageResult<ClientRow> {
         // Create transaction record first (required by foreign key constraint)
         let txid: i64 = sqlx_core::query_scalar::query_scalar(
-            "INSERT INTO _transaction (status) VALUES ('committed') RETURNING txid",
+            "SELECT nextval('_transaction_txid_seq') AS txid",
         )
         .fetch_one(self.pool)
         .await?;
@@ -247,7 +247,7 @@ impl<'a> ClientStorage<'a> {
     pub async fn delete(&self, id: Uuid) -> StorageResult<()> {
         // Create transaction record first (required by foreign key constraint)
         let txid: i64 = sqlx_core::query_scalar::query_scalar(
-            "INSERT INTO _transaction (status) VALUES ('committed') RETURNING txid",
+            "SELECT nextval('_transaction_txid_seq') AS txid",
         )
         .fetch_one(self.pool)
         .await?;

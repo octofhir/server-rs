@@ -147,12 +147,11 @@ impl<'a> PolicyStorage<'a> {
     pub async fn create(&self, id: Uuid, resource: serde_json::Value) -> StorageResult<PolicyRow> {
         let id_str = id.to_string();
 
-        // Use the latest existing txid from _transaction (from migration)
-        // This avoids creating unnecessary transaction rows
+        // Allocate a fresh txid from the global sequence.
         let row: (String, i64, OffsetDateTime, OffsetDateTime, serde_json::Value, String) = query_as(
             r#"
             INSERT INTO accesspolicy (id, txid, created_at, updated_at, resource, status)
-            VALUES ($1, (SELECT COALESCE(MAX(txid), 1) FROM _transaction), NOW(), NOW(), $2, 'created')
+            VALUES ($1, nextval('_transaction_txid_seq'), NOW(), NOW(), $2, 'created')
             RETURNING id, txid, created_at, updated_at, resource, status::text
             "#,
         )
@@ -691,14 +690,13 @@ impl PolicyStorageTrait for PostgresPolicyStorageAdapter {
             octofhir_auth::AuthError::internal(format!("Failed to serialize policy: {}", e))
         })?;
 
-        // Use INSERT ... ON CONFLICT DO UPDATE for upsert
-        // For INSERT: use the latest existing txid from _transaction (from migration)
-        // For UPDATE: just increment the existing txid (no new transaction needed)
+        // Use INSERT ... ON CONFLICT DO UPDATE for upsert.
+        // Allocate a fresh txid from the global sequence on insert.
         let id_str = id.to_string();
         let row: (String, i64, OffsetDateTime, OffsetDateTime, serde_json::Value, String) = query_as(
             r#"
             INSERT INTO accesspolicy (id, txid, created_at, updated_at, resource, status)
-            VALUES ($1, (SELECT COALESCE(MAX(txid), 1) FROM _transaction), NOW(), NOW(), $2, 'created')
+            VALUES ($1, nextval('_transaction_txid_seq'), NOW(), NOW(), $2, 'created')
             ON CONFLICT (id) DO UPDATE SET
                 resource = EXCLUDED.resource,
                 updated_at = NOW(),

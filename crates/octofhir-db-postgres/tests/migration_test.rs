@@ -71,9 +71,15 @@ async fn test_migrations_run_successfully() {
     // Check for key tables from our migrations
     let table_names: Vec<String> = tables.iter().map(|(name,)| name.clone()).collect();
 
+    let sequences: Vec<(String,)> =
+        query_as("SELECT sequencename FROM pg_sequences WHERE schemaname = 'public'")
+            .fetch_all(&pool)
+            .await
+            .expect("Failed to query sequences");
+    let sequence_names: Vec<String> = sequences.iter().map(|(name,)| name.clone()).collect();
     assert!(
-        table_names.contains(&"_transaction".to_string()),
-        "Missing _transaction table"
+        sequence_names.contains(&"_transaction_txid_seq".to_string()),
+        "Missing _transaction_txid_seq sequence"
     );
     assert!(
         table_names.contains(&"temp_valueset_codes".to_string()),

@@ -124,14 +124,9 @@ $$;
 -- BASE TABLES
 -- ============================================================================
 
--- Transaction log for atomicity
-CREATE TABLE IF NOT EXISTS _transaction (
-    txid BIGSERIAL PRIMARY KEY,
-    ts TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    status VARCHAR(16) NOT NULL DEFAULT 'committed'
-);
-
-CREATE INDEX IF NOT EXISTS idx_transaction_ts ON _transaction(ts);
+-- Global version/transaction counter (txid), shared by all resource tables.
+-- A bare sequence: nextval() per write, no heap row, no index, no vacuum cost.
+CREATE SEQUENCE IF NOT EXISTS _transaction_txid_seq;
 
 -- Resource status enum
 DO $$ BEGIN
@@ -619,28 +614,25 @@ $func$ LANGUAGE plpgsql;
 -- DEFAULT CONFIGURATION
 -- ============================================================================
 
--- Insert a transaction for default config
-INSERT INTO _transaction (status) VALUES ('committed');
-
 -- Default feature flags
 INSERT INTO _configuration (key, category, value, description, is_secret, txid)
-SELECT 'search.optimization.enabled', 'features', 'true'::jsonb, 'Enable query optimization in search engine', false, (SELECT MAX(txid) FROM _transaction)
+SELECT 'search.optimization.enabled', 'features', 'true'::jsonb, 'Enable query optimization in search engine', false, nextval('_transaction_txid_seq')
 WHERE NOT EXISTS (SELECT 1 FROM _configuration WHERE key = 'search.optimization.enabled');
 
 INSERT INTO _configuration (key, category, value, description, is_secret, txid)
-SELECT 'terminology.external.enabled', 'features', 'true'::jsonb, 'Allow external terminology server lookups', false, (SELECT MAX(txid) FROM _transaction)
+SELECT 'terminology.external.enabled', 'features', 'true'::jsonb, 'Allow external terminology server lookups', false, nextval('_transaction_txid_seq')
 WHERE NOT EXISTS (SELECT 1 FROM _configuration WHERE key = 'terminology.external.enabled');
 
 INSERT INTO _configuration (key, category, value, description, is_secret, txid)
-SELECT 'validation.skip.allowed', 'features', 'false'::jsonb, 'Allow X-Skip-Validation header', false, (SELECT MAX(txid) FROM _transaction)
+SELECT 'validation.skip.allowed', 'features', 'false'::jsonb, 'Allow X-Skip-Validation header', false, nextval('_transaction_txid_seq')
 WHERE NOT EXISTS (SELECT 1 FROM _configuration WHERE key = 'validation.skip.allowed');
 
 INSERT INTO _configuration (key, category, value, description, is_secret, txid)
-SELECT 'auth.smart_on_fhir.enabled', 'features', 'true'::jsonb, 'Enable SMART on FHIR authentication', false, (SELECT MAX(txid) FROM _transaction)
+SELECT 'auth.smart_on_fhir.enabled', 'features', 'true'::jsonb, 'Enable SMART on FHIR authentication', false, nextval('_transaction_txid_seq')
 WHERE NOT EXISTS (SELECT 1 FROM _configuration WHERE key = 'auth.smart_on_fhir.enabled');
 
 INSERT INTO _configuration (key, category, value, description, is_secret, txid)
-SELECT 'cache.redis.enabled', 'features', 'false'::jsonb, 'Use Redis as cache backend', false, (SELECT MAX(txid) FROM _transaction)
+SELECT 'cache.redis.enabled', 'features', 'false'::jsonb, 'Use Redis as cache backend', false, nextval('_transaction_txid_seq')
 WHERE NOT EXISTS (SELECT 1 FROM _configuration WHERE key = 'cache.redis.enabled');
 
 -- ============================================================================
@@ -961,7 +953,7 @@ Example: SELECT * FROM fhir_ref_parse(''Patient/123'')';
 -- ============================================================================
 
 COMMENT ON SCHEMA fcm IS 'FHIR Canonical Manager - stores FHIR packages and resources from Implementation Guides';
-COMMENT ON TABLE _transaction IS 'Transaction log for FHIR resource versioning';
+COMMENT ON SEQUENCE _transaction_txid_seq IS 'Global version/transaction counter (txid) for FHIR resource versioning';
 COMMENT ON TABLE async_jobs IS 'Tracks asynchronous FHIR operations for Prefer: respond-async pattern';
 COMMENT ON TABLE operations IS 'Registry of all server operations for UI display and policy targeting';
 COMMENT ON TABLE fcm.packages IS 'Stores metadata for installed FHIR packages (Implementation Guides)';
@@ -1390,7 +1382,7 @@ COMMENT ON FUNCTION mark_event_retry IS 'Schedule event for retry with exponenti
 --
 -- CREATE TABLE "{ResourceType}" (
 --     id TEXT PRIMARY KEY,              -- FHIR-compliant string ID (UUID or custom)
---     txid BIGINT NOT NULL REFERENCES _transaction(txid),
+--     txid BIGINT NOT NULL,             -- from nextval('_transaction_txid_seq')
 --     ts TIMESTAMPTZ NOT NULL,
 --     resource JSONB NOT NULL,
 --     status resource_status NOT NULL DEFAULT 'created'

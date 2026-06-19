@@ -162,7 +162,7 @@ impl SchemaManager {
         sql.push_str(&format!(
             "CREATE INDEX IF NOT EXISTS \"idx_{table}_gin\" ON \"{table}\" \
              USING GIN (resource jsonb_path_ops) \
-             WITH (fastupdate=on, gin_pending_list_limit=131072);\n\
+             WITH (fastupdate=off);\n\
              CREATE INDEX IF NOT EXISTS \"idx_{table}_txid\" ON \"{table}\"(txid);\n\
              CREATE INDEX IF NOT EXISTS \"idx_{table}_created_at\" ON \"{table}\"(created_at);\n\
              CREATE INDEX IF NOT EXISTS \"idx_{table}_updated_at\" ON \"{table}\"(updated_at);\n\

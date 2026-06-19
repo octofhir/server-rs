@@ -269,7 +269,7 @@ async fn upsert_resource_with_indexes(
     // ON CONFLICT handles both existing and deleted resources by overwriting.
     let sql = format!(
         r#"WITH new_tx AS (
-               INSERT INTO _transaction (status) VALUES ('committed') RETURNING txid
+               SELECT nextval('_transaction_txid_seq') AS txid
            )
            INSERT INTO "{table}" (id, txid, created_at, updated_at, resource, status)
            SELECT
@@ -419,7 +419,7 @@ async fn batch_upsert_resources(
 
     let sql = format!(
         r#"WITH new_tx AS (
-               INSERT INTO _transaction (status) VALUES ('committed') RETURNING txid
+               SELECT nextval('_transaction_txid_seq') AS txid
            )
            INSERT INTO "{table}" (id, txid, created_at, updated_at, resource, status)
            SELECT

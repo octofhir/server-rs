@@ -27,7 +27,7 @@ fn chrono_to_time(dt: DateTime<Utc>) -> OffsetDateTime {
 /// Transaction IDs (txid) are used as version IDs for FHIR resources.
 pub async fn create_transaction(pool: &PgPool) -> Result<i64, StorageError> {
     let txid: i64 =
-        query_scalar("INSERT INTO _transaction (status) VALUES ('committed') RETURNING txid")
+        query_scalar("SELECT nextval('_transaction_txid_seq') AS txid")
             .fetch_one(pool)
             .await
             .map_err(|e| StorageError::internal(format!("Failed to create transaction: {e}")))?;
@@ -73,7 +73,7 @@ pub async fn create(pool: &PgPool, resource: &Value) -> Result<StoredResource, S
     let table = SchemaManager::table_name(resource_type);
     let sql = format!(
         r#"WITH new_tx AS (
-               INSERT INTO _transaction (status) VALUES ('committed') RETURNING txid
+               SELECT nextval('_transaction_txid_seq') AS txid
            )
            INSERT INTO "{table}" (id, txid, created_at, updated_at, resource, status)
            SELECT
@@ -155,7 +155,7 @@ pub async fn create_raw(
     let table = SchemaManager::table_name(resource_type);
     let sql = format!(
         r#"WITH new_tx AS (
-               INSERT INTO _transaction (status) VALUES ('committed') RETURNING txid
+               SELECT nextval('_transaction_txid_seq') AS txid
            )
            INSERT INTO "{table}" (id, txid, created_at, updated_at, resource, status)
            SELECT
@@ -379,7 +379,7 @@ pub async fn update(
         (
             format!(
                 r#"WITH new_tx AS (
-                       INSERT INTO _transaction (status) VALUES ('committed') RETURNING txid
+                       SELECT nextval('_transaction_txid_seq') AS txid
                    ),
                    current AS (
                        SELECT id, txid, created_at FROM "{table}"
@@ -410,7 +410,7 @@ pub async fn update(
         (
             format!(
                 r#"WITH new_tx AS (
-                       INSERT INTO _transaction (status) VALUES ('committed') RETURNING txid
+                       SELECT nextval('_transaction_txid_seq') AS txid
                    )
                    UPDATE "{table}" t
                    SET txid = new_tx.txid,
@@ -517,7 +517,7 @@ pub async fn update_raw(
         (
             format!(
                 r#"WITH new_tx AS (
-                       INSERT INTO _transaction (status) VALUES ('committed') RETURNING txid
+                       SELECT nextval('_transaction_txid_seq') AS txid
                    ),
                    current AS (
                        SELECT id, txid, created_at FROM "{table}"
@@ -548,7 +548,7 @@ pub async fn update_raw(
         (
             format!(
                 r#"WITH new_tx AS (
-                       INSERT INTO _transaction (status) VALUES ('committed') RETURNING txid
+                       SELECT nextval('_transaction_txid_seq') AS txid
                    )
                    UPDATE "{table}" t
                    SET txid = new_tx.txid,
@@ -632,7 +632,7 @@ pub async fn delete(pool: &PgPool, resource_type: &str, id: &str) -> Result<(), 
     // Eliminates a separate DB round-trip for create_transaction()
     let sql = format!(
         r#"WITH new_tx AS (
-               INSERT INTO _transaction (status) VALUES ('committed') RETURNING txid
+               SELECT nextval('_transaction_txid_seq') AS txid
            )
            UPDATE "{table}"
            SET txid = new_tx.txid, status = 'deleted'
@@ -883,7 +883,7 @@ pub async fn create_with_tx(
     } else {
         format!(
             r#"WITH new_tx AS (
-                   INSERT INTO _transaction (status) VALUES ('committed') RETURNING txid
+                   SELECT nextval('_transaction_txid_seq') AS txid
                )
                INSERT INTO "{table}" (id, txid, created_at, updated_at, resource, status)
                SELECT
@@ -1102,7 +1102,7 @@ pub async fn update_with_tx_if_match(
             (
                 format!(
                     r#"WITH new_tx AS (
-                           INSERT INTO _transaction (status) VALUES ('committed') RETURNING txid
+                           SELECT nextval('_transaction_txid_seq') AS txid
                        ),
                        current AS (
                            SELECT id, txid, created_at FROM "{table}"
@@ -1153,7 +1153,7 @@ pub async fn update_with_tx_if_match(
         (None, None) => (
             format!(
                 r#"WITH new_tx AS (
-                       INSERT INTO _transaction (status) VALUES ('committed') RETURNING txid
+                       SELECT nextval('_transaction_txid_seq') AS txid
                    )
                    UPDATE "{table}" t
                    SET txid = new_tx.txid,
@@ -1252,7 +1252,7 @@ pub async fn delete_with_tx(
     } else {
         format!(
             r#"WITH new_tx AS (
-                   INSERT INTO _transaction (status) VALUES ('committed') RETURNING txid
+                   SELECT nextval('_transaction_txid_seq') AS txid
                )
                UPDATE "{table}"
                SET txid = new_tx.txid, status = 'deleted'
