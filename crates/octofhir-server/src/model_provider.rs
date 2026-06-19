@@ -310,29 +310,6 @@ impl OctoFhirModelProvider {
             .cloned()
             .unwrap_or_else(|| fhir_type.to_string())
     }
-
-    /// Get backbone element's nested elements by parent type and path.
-    ///
-    /// Returns a reference to the nested elements HashMap without cloning during navigation.
-    /// Only clones at the end when returning the result.
-    async fn get_backbone_elements_by_path(
-        &self,
-        parent_type: &str,
-        element_path: &str,
-    ) -> Option<std::collections::HashMap<String, octofhir_fhirschema::types::FhirSchemaElement>>
-    {
-        let schema = self.get_schema(parent_type).await?;
-        let mut current_elements = schema.elements.as_ref()?;
-
-        // Navigate through the path using references (no cloning during navigation)
-        for part in element_path.split('.') {
-            let element = current_elements.get(part)?;
-            current_elements = element.elements.as_ref()?;
-        }
-
-        // Only clone at the end when we need to return
-        Some(current_elements.clone())
-    }
 }
 
 #[async_trait]
@@ -383,54 +360,47 @@ impl ModelProvider for OctoFhirModelProvider {
         parent_type: &TypeInfo,
         property_name: &str,
     ) -> ModelResult<Option<TypeInfo>> {
-        if let Some(type_name) = &parent_type.name {
-            // Check if this is a backbone element path
-            let elements = if type_name.contains('.') {
-                let parts: Vec<&str> = type_name.splitn(2, '.').collect();
-                if parts.len() == 2 {
-                    self.get_backbone_elements_by_path(parts[0], parts[1]).await
-                } else {
-                    None
-                }
-            } else {
-                self.get_schema(type_name)
-                    .await
-                    .and_then(|schema| schema.elements.clone())
-            };
-
-            let Some(elements) = elements else {
-                return Ok(None);
-            };
-
+        // Borrowed-element resolution shared by the resource-type and
+        // backbone-path branches below. Reads `property_name` out of an already
+        // resolved element map without cloning it.
+        fn resolve(
+            this: &OctoFhirModelProvider,
+            type_name: &str,
+            elements: &std::collections::HashMap<
+                String,
+                octofhir_fhirschema::types::FhirSchemaElement,
+            >,
+            property_name: &str,
+        ) -> Option<TypeInfo> {
             // Try direct property name match
             if let Some(element) = elements.get(property_name) {
                 // Check if this is a backbone element
                 if element.elements.is_some() {
                     let backbone_path = format!("{}.{}", type_name, property_name);
-                    return Ok(Some(TypeInfo {
+                    return Some(TypeInfo {
                         type_name: "Any".to_string(),
                         singleton: Some(element_is_singleton(element)),
                         is_empty: Some(false),
                         namespace: Some("FHIR".to_string()),
                         name: Some(backbone_path),
-                    }));
+                    });
                 }
 
                 // Regular element with type_name
                 if let Some(element_type_name) = &element.type_name {
-                    let mapped_type = self.map_fhir_type(element_type_name);
-                    return Ok(Some(TypeInfo {
+                    let mapped_type = this.map_fhir_type(element_type_name);
+                    return Some(TypeInfo {
                         type_name: mapped_type,
                         singleton: Some(element_is_singleton(element)),
                         is_empty: Some(false),
                         namespace: Some("FHIR".to_string()),
                         name: Some(element_type_name.clone()),
-                    }));
+                    });
                 }
             }
 
             // Handle choice navigation (e.g., value[x] -> valueString)
-            for (element_name, element) in &elements {
+            for (element_name, element) in elements {
                 if element_name.ends_with("[x]") {
                     let base_name = element_name.trim_end_matches("[x]");
                     if let Some(type_suffix) = property_name.strip_prefix(base_name)
@@ -444,26 +414,66 @@ impl ModelProvider for OctoFhirModelProvider {
                             if let Some(choices) = &element.choices
                                 && choices.contains(&schema_type)
                             {
-                                let mapped_type = self.map_fhir_type(&schema_type);
-                                return Ok(Some(TypeInfo {
+                                let mapped_type = this.map_fhir_type(&schema_type);
+                                return Some(TypeInfo {
                                     type_name: mapped_type,
                                     singleton: Some(element_is_singleton(element)),
                                     is_empty: Some(false),
-                                    namespace: if schema_type.chars().next().unwrap().is_uppercase()
+                                    namespace: if schema_type
+                                        .chars()
+                                        .next()
+                                        .unwrap()
+                                        .is_uppercase()
                                     {
                                         Some("FHIR".to_string())
                                     } else {
                                         Some("System".to_string())
                                     },
                                     name: Some(schema_type),
-                                }));
+                                });
                             }
                         }
                     }
                 }
             }
+            None
         }
-        Ok(None)
+
+        let Some(type_name) = &parent_type.name else {
+            return Ok(None);
+        };
+
+        // Resolve the owning schema once (Arc, cache-backed) and BORROW its
+        // element map. Previously this cloned the whole element tree on every
+        // call — get_element_type runs for every path step of every FHIRPath
+        // constraint, so the deep `FhirSchemaElement` clone dominated CPU under
+        // load. `type_name` may be a backbone path like "Patient.contact".
+        if let Some((root, path)) = type_name.split_once('.') {
+            let Some(schema) = self.get_schema(root).await else {
+                return Ok(None);
+            };
+            let Some(mut elements) = schema.elements.as_ref() else {
+                return Ok(None);
+            };
+            for part in path.split('.') {
+                let Some(element) = elements.get(part) else {
+                    return Ok(None);
+                };
+                let Some(nested) = element.elements.as_ref() else {
+                    return Ok(None);
+                };
+                elements = nested;
+            }
+            Ok(resolve(self, type_name, elements, property_name))
+        } else {
+            let Some(schema) = self.get_schema(type_name).await else {
+                return Ok(None);
+            };
+            let Some(elements) = schema.elements.as_ref() else {
+                return Ok(None);
+            };
+            Ok(resolve(self, type_name, elements, property_name))
+        }
     }
 
     fn of_type(&self, type_info: &TypeInfo, target_type: &str) -> Option<TypeInfo> {
