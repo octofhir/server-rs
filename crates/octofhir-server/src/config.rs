@@ -383,12 +383,6 @@ pub struct SearchSettings {
     /// Default is false because EXPLAIN ANALYZE executes the search query.
     #[serde(default)]
     pub allow_debug_search_explain_analyze: bool,
-    /// Write denormalized search indexes asynchronously after resource commit.
-    ///
-    /// Default is false so FHIR search is read-after-write consistent when the
-    /// native sidecar search engine is the production path.
-    #[serde(default)]
-    pub async_index_writes: bool,
     /// Search parameters to build functional in-place indexes for at bootstrap,
     /// each as `"ResourceType.code"` (e.g. `"Patient.birthdate"`). Indexes are
     /// created once when tables + registry are ready; nothing is created at
@@ -451,7 +445,6 @@ impl Default for SearchSettings {
             cache_capacity: default_search_cache_capacity(),
             allow_debug_search_plan: false,
             allow_debug_search_explain_analyze: false,
-            async_index_writes: false,
             indexed_params: default_indexed_params(),
             max_valueset_expansion: default_max_valueset_expansion(),
         }
