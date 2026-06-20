@@ -3777,15 +3777,21 @@ pub async fn transaction_handler(
         return Ok(create_async_accepted_response(job_id, &state.base_url));
     }
 
+    // Validation of POST entries mirrors single-create: on by default, honoring
+    // X-Skip-Validation only when the config allows it (same gate as create_resource).
+    let skip_validation = should_skip_validation(&headers, &state.config.validation);
+
     // Otherwise, process synchronously
     match bundle_type {
         "transaction" => {
             let (status, json) =
-                process_transaction(&state, &bundle, bundle_include_resource).await?;
+                process_transaction(&state, &bundle, bundle_include_resource, skip_validation)
+                    .await?;
             Ok((status, HeaderMap::new(), json))
         }
         "batch" => {
-            let (status, json) = process_batch(&state, &bundle, bundle_include_resource).await?;
+            let (status, json) =
+                process_batch(&state, &bundle, bundle_include_resource, skip_validation).await?;
             Ok((status, HeaderMap::new(), json))
         }
         _ => Err(ApiError::bad_request(format!(
@@ -3805,6 +3811,7 @@ async fn process_transaction(
     state: &crate::server::AppState,
     bundle: &Value,
     include_resource: bool,
+    skip_validation: bool,
 ) -> Result<(StatusCode, Json<Value>), ApiError> {
     let entries = bundle["entry"]
         .as_array()
@@ -3974,6 +3981,20 @@ async fn process_transaction(
                 .cloned()
                 .ok_or_else(|| ApiError::bad_request("POST entry requires a resource"))?;
             resource["resourceType"] = json!(resource_type);
+
+            // Full schema + FHIRPath + terminology validation, mirroring single
+            // POST (create_resource). The resource is already reference-resolved
+            // (Phase 2). Conditional-matched entries returned existing above.
+            // A failure aborts the whole transaction (tx auto-rolls back on drop).
+            if !skip_validation {
+                let validation_outcome = state.validation_service.validate(&resource).await;
+                if !validation_outcome.valid {
+                    return Err(ApiError::UnprocessableEntity {
+                        message: "Resource validation failed".to_string(),
+                        operation_outcome: Some(validation_outcome.to_operation_outcome()),
+                    });
+                }
+            }
 
             post_batches
                 .entry(resource_type)
@@ -4490,6 +4511,7 @@ async fn process_batch(
     state: &crate::server::AppState,
     bundle: &Value,
     include_resource: bool,
+    skip_validation: bool,
 ) -> Result<(StatusCode, Json<Value>), ApiError> {
     let entries = bundle["entry"]
         .as_array()
@@ -4508,6 +4530,28 @@ async fn process_batch(
 
     // Process each entry independently (no rollback on failure)
     for entry in entries {
+        // Validate POST entries, mirroring single POST (create_resource). Batch is
+        // non-atomic: a failure becomes this entry's 422 response, siblings proceed.
+        let method = entry["request"]["method"]
+            .as_str()
+            .unwrap_or("")
+            .to_uppercase();
+        if method == "POST"
+            && !skip_validation
+            && let Some(resource) = entry.get("resource")
+        {
+            let validation_outcome = state.validation_service.validate(resource).await;
+            if !validation_outcome.valid {
+                response_entries.push(json!({
+                    "response": {
+                        "status": "422 Unprocessable Entity",
+                        "outcome": validation_outcome.to_operation_outcome()
+                    }
+                }));
+                continue;
+            }
+        }
+
         let mut reference_map: std::collections::HashMap<String, String> =
             std::collections::HashMap::new();
         let result =

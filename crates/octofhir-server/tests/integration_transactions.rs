@@ -14,7 +14,7 @@ use std::sync::Arc;
 use octofhir_config::ConfigurationManager;
 use octofhir_server::{AppConfig, PostgresStorageConfig, build_app};
 use serde_json::{Value, json};
-use testcontainers::{ContainerAsync, runners::AsyncRunner};
+use testcontainers::{ContainerAsync, ImageExt, runners::AsyncRunner};
 use testcontainers_modules::postgres::Postgres;
 use tokio::task::JoinHandle;
 
@@ -23,7 +23,11 @@ use tokio::task::JoinHandle;
 // =============================================================================
 
 async fn start_postgres() -> (ContainerAsync<Postgres>, String) {
+    // Match production PG (docker-compose postgres:18). The migration needs
+    // PG14+ for tstzmultirange and the jsonpath[] date-extraction overloads;
+    // the testcontainers default (11-alpine) lacks both.
     let container = Postgres::default()
+        .with_tag("18-alpine")
         .start()
         .await
         .expect("start postgres container");
@@ -1420,6 +1424,139 @@ async fn test_large_transaction_performance() {
     let total = search_bundle["total"].as_u64().unwrap_or(0);
 
     assert_eq!(total, 50, "All 50 bulk patients should exist");
+
+    let _ = shutdown_tx.send(());
+}
+
+/// A transaction Bundle with an invalid POST entry must be rejected with 422 +
+/// OperationOutcome (same as a single POST create), and — being atomic — must NOT
+/// commit the valid sibling. A Patient without `name` fails validation.
+#[tokio::test]
+async fn test_transaction_invalid_resource_returns_422_and_rolls_back() {
+    let (_container, postgres_url) = start_postgres().await;
+    let config = create_config(&postgres_url);
+    let (base, shutdown_tx, _handle) = start_server(&config).await;
+    let client = reqwest::Client::new();
+
+    let bundle = json!({
+        "resourceType": "Bundle",
+        "type": "transaction",
+        "entry": [
+            {
+                "fullUrl": "urn:uuid:valid-1",
+                "resource": {"resourceType": "Patient", "name": [{"family": "TxValid"}]},
+                "request": {"method": "POST", "url": "Patient"}
+            },
+            {
+                // Invalid: Patient with no required name element.
+                "fullUrl": "urn:uuid:invalid-1",
+                "resource": {"resourceType": "Patient", "active": "not-a-boolean"},
+                "request": {"method": "POST", "url": "Patient"}
+            }
+        ]
+    });
+
+    let resp = client
+        .post(&base)
+        .header("content-type", "application/fhir+json")
+        .json(&bundle)
+        .send()
+        .await
+        .expect("transaction request");
+
+    assert_eq!(
+        resp.status(),
+        reqwest::StatusCode::UNPROCESSABLE_ENTITY,
+        "invalid resource in a transaction Bundle must return 422"
+    );
+    let body: Value = resp.json().await.expect("parse response");
+    assert_eq!(
+        body["resourceType"], "OperationOutcome",
+        "422 body should be an OperationOutcome"
+    );
+
+    // Atomic rollback: the valid sibling must not have been committed.
+    let search = client
+        .get(format!("{base}/Patient?family=TxValid"))
+        .header("accept", "application/fhir+json")
+        .send()
+        .await
+        .expect("search request");
+    let sb: Value = search.json().await.expect("parse search");
+    assert_eq!(
+        sb["total"].as_u64().unwrap_or(0),
+        0,
+        "transaction must roll back; the valid sibling must not persist"
+    );
+
+    let _ = shutdown_tx.send(());
+}
+
+/// A batch Bundle is non-atomic: an invalid POST entry returns a per-entry 422
+/// OperationOutcome while valid siblings still persist.
+#[tokio::test]
+async fn test_batch_invalid_resource_per_entry_422_siblings_persist() {
+    let (_container, postgres_url) = start_postgres().await;
+    let config = create_config(&postgres_url);
+    let (base, shutdown_tx, _handle) = start_server(&config).await;
+    let client = reqwest::Client::new();
+
+    let bundle = json!({
+        "resourceType": "Bundle",
+        "type": "batch",
+        "entry": [
+            {
+                "resource": {"resourceType": "Patient", "name": [{"family": "BatchValid"}]},
+                "request": {"method": "POST", "url": "Patient"}
+            },
+            {
+                // Invalid: Patient with no required name element.
+                "resource": {"resourceType": "Patient", "active": "not-a-boolean"},
+                "request": {"method": "POST", "url": "Patient"}
+            }
+        ]
+    });
+
+    let resp = client
+        .post(&base)
+        .header("content-type", "application/fhir+json")
+        .json(&bundle)
+        .send()
+        .await
+        .expect("batch request");
+
+    let response_bundle: Value = resp.json().await.expect("parse response");
+    assert_eq!(response_bundle["type"], "batch-response");
+    let entries = response_bundle["entry"].as_array().expect("entries");
+    assert_eq!(entries.len(), 2);
+
+    let first_status = entries[0]["response"]["status"].as_str().unwrap_or("");
+    assert!(
+        first_status.starts_with("201"),
+        "valid batch entry should be created, got {first_status}"
+    );
+    let second_status = entries[1]["response"]["status"].as_str().unwrap_or("");
+    assert!(
+        second_status.starts_with("422"),
+        "invalid batch entry should return 422, got {second_status}"
+    );
+    assert_eq!(
+        entries[1]["response"]["outcome"]["resourceType"], "OperationOutcome",
+        "invalid batch entry should carry an OperationOutcome"
+    );
+
+    // Valid sibling persisted despite the invalid one failing.
+    let search = client
+        .get(format!("{base}/Patient?family=BatchValid"))
+        .header("accept", "application/fhir+json")
+        .send()
+        .await
+        .expect("search request");
+    let sb: Value = search.json().await.expect("parse search");
+    assert!(
+        sb["total"].as_u64().unwrap_or(0) > 0,
+        "valid batch sibling must persist"
+    );
 
     let _ = shutdown_tx.send(());
 }
