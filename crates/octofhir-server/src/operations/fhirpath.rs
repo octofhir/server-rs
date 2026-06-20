@@ -234,47 +234,47 @@ impl FhirPathOperation {
                 match type_name {
                     "HumanName" => (
                         type_name.to_string(),
-                        ("valueHumanName", json_value.as_ref().clone()),
+                        ("valueHumanName", json_value.to_json()),
                     ),
                     "Address" => (
                         type_name.to_string(),
-                        ("valueAddress", json_value.as_ref().clone()),
+                        ("valueAddress", json_value.to_json()),
                     ),
                     "Identifier" => (
                         type_name.to_string(),
-                        ("valueIdentifier", json_value.as_ref().clone()),
+                        ("valueIdentifier", json_value.to_json()),
                     ),
                     "CodeableConcept" => (
                         type_name.to_string(),
-                        ("valueCodeableConcept", json_value.as_ref().clone()),
+                        ("valueCodeableConcept", json_value.to_json()),
                     ),
                     "Coding" => (
                         type_name.to_string(),
-                        ("valueCoding", json_value.as_ref().clone()),
+                        ("valueCoding", json_value.to_json()),
                     ),
                     "Reference" => (
                         type_name.to_string(),
-                        ("valueReference", json_value.as_ref().clone()),
+                        ("valueReference", json_value.to_json()),
                     ),
                     "Period" => (
                         type_name.to_string(),
-                        ("valuePeriod", json_value.as_ref().clone()),
+                        ("valuePeriod", json_value.to_json()),
                     ),
                     "Range" => (
                         type_name.to_string(),
-                        ("valueRange", json_value.as_ref().clone()),
+                        ("valueRange", json_value.to_json()),
                     ),
                     "Ratio" => (
                         type_name.to_string(),
-                        ("valueRatio", json_value.as_ref().clone()),
+                        ("valueRatio", json_value.to_json()),
                     ),
                     "ContactPoint" => (
                         type_name.to_string(),
-                        ("valueContactPoint", json_value.as_ref().clone()),
+                        ("valueContactPoint", json_value.to_json()),
                     ),
                     _ => (
                         type_name.to_string(),
-                        ("resource", json_value.as_ref().clone()),
+                        ("resource", json_value.to_json()),
                     ),
                 }
             }

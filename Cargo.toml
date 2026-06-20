@@ -99,8 +99,8 @@ hostname = "0.4"
 # JSON Patch (RFC 6902)
 json-patch = "4"
 
-octofhir-fhirpath = { version = "0.4.46", features = ["lsp"] }
-octofhir-fhirschema = { version = "0.3.21" }
+octofhir-fhirpath = { version = "0.4.47", features = ["lsp"] }
+octofhir-fhirschema = { version = "0.3.22" }
 
 octofhir-cql = { version = "0.1.0" }
 octofhir-cql-types = { version = "0.1.0" }
@@ -145,4 +145,5 @@ debug = true
 inherits = "release"
 lto = "thin"
 codegen-units = 16
-debug = 1
+debug = 2
+force-frame-pointers = "yes"

@@ -359,9 +359,8 @@ impl EventMatcher {
                 }
                 FhirPathValue::Resource(r, ..) => {
                     // For resources, check if reference matches
-                    if let Some(reference) = r
-                        .get("reference")
-                        .and_then(|v: &serde_json::Value| v.as_str())
+                    if let Some(reference) =
+                        r.get("reference").and_then(|v| v.as_str())
                     {
                         self.compare_strings(reference, expected, comparator)
                     } else {

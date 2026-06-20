@@ -3907,6 +3907,13 @@ async fn process_transaction(
         }
     }
 
+    // Every resource the Bundle creates, updates, or matches conditionally —
+    // as resolved `Type/id` strings. After Phase 2 rewrites urn:uuid references
+    // into these strings, reference existence validation must treat them as
+    // existing: they are not committed to storage yet but will be after commit.
+    let known_refs: std::collections::HashSet<String> =
+        reference_map.values().cloned().collect();
+
     // Phase 2: Build resolved entries — replace all urn:uuid references using the complete map
     let mut resolved_entries: Vec<(usize, Value)> = Vec::new();
     for (original_idx, entry) in &sorted_entries {
@@ -3987,7 +3994,10 @@ async fn process_transaction(
             // (Phase 2). Conditional-matched entries returned existing above.
             // A failure aborts the whole transaction (tx auto-rolls back on drop).
             if !skip_validation {
-                let validation_outcome = state.validation_service.validate(&resource).await;
+                let validation_outcome = state
+                    .validation_service
+                    .validate_with_known_refs(&resource, &known_refs)
+                    .await;
                 if !validation_outcome.valid {
                     return Err(ApiError::UnprocessableEntity {
                         message: "Resource validation failed".to_string(),

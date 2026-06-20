@@ -203,6 +203,35 @@ impl ValidationService {
         Self::convert_result(validation_result)
     }
 
+    /// Validate a resource, treating `known_refs` (`Type/id` strings) as existing.
+    ///
+    /// Used by transaction Bundle processing: a resource may reference a sibling
+    /// created in the same Bundle that is not yet committed to storage. Those
+    /// references must not fail existence validation.
+    pub async fn validate_with_known_refs(
+        &self,
+        resource: &JsonValue,
+        known_refs: &std::collections::HashSet<String>,
+    ) -> ValidationOutcome {
+        let resource_type = match resource.get("resourceType").and_then(|v| v.as_str()) {
+            Some(rt) => rt,
+            None => {
+                return ValidationOutcome::error("Missing resourceType".to_string());
+            }
+        };
+
+        let validation_result = self
+            .validator
+            .validate_with_known_references(
+                resource,
+                vec![resource_type.to_string()],
+                Some(known_refs),
+            )
+            .await;
+
+        Self::convert_result(validation_result)
+    }
+
     /// Convert ValidationResult to ValidationOutcome
     fn convert_result(result: ValidationResult) -> ValidationOutcome {
         if result.valid {

@@ -363,7 +363,7 @@ fn fhirpath_value_to_json(value: &FhirPathValue) -> Option<Value> {
             }
             Some(Value::Object(map))
         }
-        FhirPathValue::Resource(json, _, _) => Some((**json).clone()),
+        FhirPathValue::Resource(json, _, _) => Some(json.to_json()),
         FhirPathValue::Empty => Some(Value::Null),
         _ => None,
     }
