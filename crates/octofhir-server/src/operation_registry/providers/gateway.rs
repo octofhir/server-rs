@@ -51,12 +51,20 @@ impl GatewayOperationProvider {
     ) -> Result<Vec<OperationDefinition>, Box<dyn std::error::Error>> {
         debug!("Loading Gateway custom operations from storage");
 
-        // Load all active Apps
+        // Load all active Apps. On a fresh database the App/CustomOperation
+        // tables may not be created yet (they are created on first write); treat
+        // a missing table as "no Apps configured" rather than failing bootstrap.
         let search_params = SearchParams::new().with_count(1000);
-        let apps_result = storage.search("App", &search_params).await?;
+        let apps_entries = match storage.search("App", &search_params).await {
+            Ok(r) => r.entries,
+            Err(e) if e.to_string().contains("does not exist") => {
+                debug!("App table not present yet; treating as no Apps");
+                Vec::new()
+            }
+            Err(e) => return Err(e.into()),
+        };
 
-        let apps: Vec<App> = apps_result
-            .entries
+        let apps: Vec<App> = apps_entries
             .into_iter()
             .filter_map(|stored| serde_json::from_value(stored.resource).ok())
             .filter(|app: &App| app.is_active())
@@ -70,11 +78,17 @@ impl GatewayOperationProvider {
             .filter_map(|app| app.id.clone().map(|id| (id, app)))
             .collect();
 
-        // Load all active CustomOperations
-        let ops_result = storage.search("CustomOperation", &search_params).await?;
+        // Load all active CustomOperations (same missing-table tolerance as Apps).
+        let ops_entries = match storage.search("CustomOperation", &search_params).await {
+            Ok(r) => r.entries,
+            Err(e) if e.to_string().contains("does not exist") => {
+                debug!("CustomOperation table not present yet; treating as none");
+                Vec::new()
+            }
+            Err(e) => return Err(e.into()),
+        };
 
-        let custom_operations: Vec<CustomOperation> = ops_result
-            .entries
+        let custom_operations: Vec<CustomOperation> = ops_entries
             .into_iter()
             .filter_map(|stored| serde_json::from_value(stored.resource).ok())
             .filter(|op: &CustomOperation| op.active)
