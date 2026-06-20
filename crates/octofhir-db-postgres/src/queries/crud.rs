@@ -81,17 +81,12 @@ pub async fn create(pool: &PgPool, resource: &Value) -> Result<StoredResource, S
                new_tx.txid,
                $2,
                $2,
-               jsonb_set(
-                   jsonb_set(
-                       jsonb_set($3::jsonb, '{{id}}', to_jsonb($1::text)),
-                       '{{meta}}', '{{}}'::jsonb, true
-                   ),
-                   '{{meta}}',
-                   jsonb_build_object(
+               $3::jsonb || jsonb_build_object(
+                   'id', $1::text,
+                   'meta', COALESCE($3::jsonb -> 'meta', '{{}}'::jsonb) || jsonb_build_object(
                        'versionId', new_tx.txid::text,
                        'lastUpdated', to_char($2 AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
-                   ),
-                   true
+                   )
                ),
                'created'
            FROM new_tx
@@ -163,17 +158,12 @@ pub async fn create_raw(
                new_tx.txid,
                $2,
                $2,
-               jsonb_set(
-                   jsonb_set(
-                       jsonb_set($3::jsonb, '{{id}}', to_jsonb($1::text)),
-                       '{{meta}}', '{{}}'::jsonb, true
-                   ),
-                   '{{meta}}',
-                   jsonb_build_object(
+               $3::jsonb || jsonb_build_object(
+                   'id', $1::text,
+                   'meta', COALESCE($3::jsonb -> 'meta', '{{}}'::jsonb) || jsonb_build_object(
                        'versionId', new_tx.txid::text,
                        'lastUpdated', to_char($2 AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
-                   ),
-                   true
+                   )
                ),
                'created'
            FROM new_tx
@@ -290,6 +280,11 @@ pub async fn read(
                 created_at: created_at_time,
             }))
         }
+        // Absent from the live table: never created (404) or deleted (410).
+        // Deletes archive their versions to history, so a history hit means Gone.
+        None if history_has(pool, &table, id).await? => {
+            Err(StorageError::deleted(resource_type, id))
+        }
         None => Ok(None),
     }
 }
@@ -342,8 +337,27 @@ pub async fn read_raw(
                 created_at: created_at_time,
             }))
         }
+        // Absent from the live table: never created (404) or deleted (410).
+        // Deletes archive their versions to history, so a history hit means Gone.
+        None if history_has(pool, &table, id).await? => {
+            Err(StorageError::deleted(resource_type, id))
+        }
         None => Ok(None),
     }
+}
+
+/// True if any version of `id` exists in `{table}_history` — i.e. the resource
+/// once existed and was deleted (the live row is gone). Used to return 410 Gone
+/// instead of 404, since deletes physically remove the live row and archive it
+/// to history.
+async fn history_has(pool: &PgPool, table: &str, id: &str) -> Result<bool, StorageError> {
+    let sql = format!(r#"SELECT EXISTS(SELECT 1 FROM "{table}_history" WHERE id = $1)"#);
+    let exists: bool = query_scalar(AssertSqlSafe(sql))
+        .bind(id)
+        .fetch_one(pool)
+        .await
+        .unwrap_or(false);
+    Ok(exists)
 }
 
 /// Updates an existing FHIR resource.
@@ -387,14 +401,11 @@ pub async fn update(
                    )
                    UPDATE "{table}" t
                    SET txid = new_tx.txid,
-                       resource = jsonb_set(
-                           jsonb_set($2::jsonb, '{{meta}}', '{{}}'::jsonb, true),
-                           '{{meta}}',
-                           jsonb_build_object(
+                       resource = $2::jsonb || jsonb_build_object(
+                           'meta', COALESCE($2::jsonb -> 'meta', '{{}}'::jsonb) || jsonb_build_object(
                                'versionId', new_tx.txid::text,
                                'lastUpdated', to_char($3 AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
-                           ),
-                           true
+                           )
                        ),
                        status = 'updated'
                    FROM new_tx, current
@@ -414,14 +425,11 @@ pub async fn update(
                    )
                    UPDATE "{table}" t
                    SET txid = new_tx.txid,
-                       resource = jsonb_set(
-                           jsonb_set($2::jsonb, '{{meta}}', '{{}}'::jsonb, true),
-                           '{{meta}}',
-                           jsonb_build_object(
+                       resource = $2::jsonb || jsonb_build_object(
+                           'meta', COALESCE($2::jsonb -> 'meta', '{{}}'::jsonb) || jsonb_build_object(
                                'versionId', new_tx.txid::text,
                                'lastUpdated', to_char($3 AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
-                           ),
-                           true
+                           )
                        ),
                        status = 'updated'
                    FROM new_tx
@@ -525,14 +533,11 @@ pub async fn update_raw(
                    )
                    UPDATE "{table}" t
                    SET txid = new_tx.txid,
-                       resource = jsonb_set(
-                           jsonb_set($2::jsonb, '{{meta}}', '{{}}'::jsonb, true),
-                           '{{meta}}',
-                           jsonb_build_object(
+                       resource = $2::jsonb || jsonb_build_object(
+                           'meta', COALESCE($2::jsonb -> 'meta', '{{}}'::jsonb) || jsonb_build_object(
                                'versionId', new_tx.txid::text,
                                'lastUpdated', to_char($3 AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
-                           ),
-                           true
+                           )
                        ),
                        status = 'updated'
                    FROM new_tx, current
@@ -552,14 +557,11 @@ pub async fn update_raw(
                    )
                    UPDATE "{table}" t
                    SET txid = new_tx.txid,
-                       resource = jsonb_set(
-                           jsonb_set($2::jsonb, '{{meta}}', '{{}}'::jsonb, true),
-                           '{{meta}}',
-                           jsonb_build_object(
+                       resource = $2::jsonb || jsonb_build_object(
+                           'meta', COALESCE($2::jsonb -> 'meta', '{{}}'::jsonb) || jsonb_build_object(
                                'versionId', new_tx.txid::text,
                                'lastUpdated', to_char($3 AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
-                           ),
-                           true
+                           )
                        ),
                        status = 'updated'
                    FROM new_tx
@@ -620,25 +622,20 @@ pub async fn update_raw(
 
 /// Soft deletes a FHIR resource.
 ///
-/// The resource is marked as deleted but not physically removed,
-/// preserving history and allowing for potential recovery.
+/// The row is physically removed from the live table; the `BEFORE DELETE`
+/// history trigger archives the final version into `{table}_history`, which is
+/// what makes a later GET return 410 Gone (row absent from live, present in
+/// history) rather than 404. Keeping deleted rows in the live table would let
+/// them accumulate without bound (they are live rows, not dead tuples, so
+/// autovacuum cannot reclaim them), bloating the heap and the GIN index and
+/// degrading every read and write over time.
 ///
 /// Per FHIR spec, delete is idempotent - deleting a non-existent or
 /// already deleted resource returns success (204 No Content).
 pub async fn delete(pool: &PgPool, resource_type: &str, id: &str) -> Result<(), StorageError> {
     let table = SchemaManager::table_name(resource_type);
 
-    // Single CTE query: create transaction + update resource atomically
-    // Eliminates a separate DB round-trip for create_transaction()
-    let sql = format!(
-        r#"WITH new_tx AS (
-               SELECT nextval('_transaction_txid_seq') AS txid
-           )
-           UPDATE "{table}"
-           SET txid = new_tx.txid, status = 'deleted'
-           FROM new_tx
-           WHERE id = $1 AND status != 'deleted'"#
-    );
+    let sql = format!(r#"DELETE FROM "{table}" WHERE id = $1"#);
 
     let _result = query(AssertSqlSafe((&sql).to_string())).bind(id).execute(pool).await.map_err(|e| {
         // Table might not exist, but that's OK for idempotent delete
@@ -864,17 +861,12 @@ pub async fn create_with_tx(
                    {t}::bigint,
                    $2,
                    $2,
-                   jsonb_set(
-                       jsonb_set(
-                           jsonb_set($3::jsonb, '{{id}}', to_jsonb($1::text)),
-                           '{{meta}}', '{{}}'::jsonb, true
-                       ),
-                       '{{meta}}',
-                       jsonb_build_object(
+                   $3::jsonb || jsonb_build_object(
+                       'id', $1::text,
+                       'meta', COALESCE($3::jsonb -> 'meta', '{{}}'::jsonb) || jsonb_build_object(
                            'versionId', '{t}',
                            'lastUpdated', to_char($2 AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
-                       ),
-                       true
+                       )
                    ),
                    'created'
                )
@@ -891,17 +883,12 @@ pub async fn create_with_tx(
                    new_tx.txid,
                    $2,
                    $2,
-                   jsonb_set(
-                       jsonb_set(
-                           jsonb_set($3::jsonb, '{{id}}', to_jsonb($1::text)),
-                           '{{meta}}', '{{}}'::jsonb, true
-                       ),
-                       '{{meta}}',
-                       jsonb_build_object(
+                   $3::jsonb || jsonb_build_object(
+                       'id', $1::text,
+                       'meta', COALESCE($3::jsonb -> 'meta', '{{}}'::jsonb) || jsonb_build_object(
                            'versionId', new_tx.txid::text,
                            'lastUpdated', to_char($2 AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
-                       ),
-                       true
+                       )
                    ),
                    'created'
                FROM new_tx
@@ -969,10 +956,23 @@ pub async fn create_batch_with_tx(
             .unwrap_or_else(|| Uuid::new_v4().to_string());
         let mut owned = r.clone();
         owned["id"] = Value::String(id.clone());
-        owned["meta"] = serde_json::json!({
-            "versionId": version_id,
-            "lastUpdated": last_updated_str,
-        });
+        // Merge server-managed meta into any client-supplied meta so
+        // profile/security/tag survive; only versionId/lastUpdated are forced.
+        match owned.get_mut("meta").and_then(Value::as_object_mut) {
+            Some(meta_obj) => {
+                meta_obj.insert("versionId".to_string(), Value::String(version_id.clone()));
+                meta_obj.insert(
+                    "lastUpdated".to_string(),
+                    Value::String(last_updated_str.clone()),
+                );
+            }
+            None => {
+                owned["meta"] = serde_json::json!({
+                    "versionId": version_id,
+                    "lastUpdated": last_updated_str,
+                });
+            }
+        }
         ids.push(id);
         payloads.push(owned);
     }
@@ -1073,14 +1073,11 @@ pub async fn update_with_tx_if_match(
                        )
                        UPDATE "{table}" t
                        SET txid = {t}::bigint,
-                           resource = jsonb_set(
-                               jsonb_set($2::jsonb, '{{meta}}', '{{}}'::jsonb, true),
-                               '{{meta}}',
-                               jsonb_build_object(
+                           resource = $2::jsonb || jsonb_build_object(
+                               'meta', COALESCE($2::jsonb -> 'meta', '{{}}'::jsonb) || jsonb_build_object(
                                    'versionId', '{t}',
                                    'lastUpdated', to_char($3 AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
-                               ),
-                               true
+                               )
                            ),
                            status = 'updated'
                        FROM current
@@ -1110,14 +1107,11 @@ pub async fn update_with_tx_if_match(
                        )
                        UPDATE "{table}" t
                        SET txid = new_tx.txid,
-                           resource = jsonb_set(
-                               jsonb_set($2::jsonb, '{{meta}}', '{{}}'::jsonb, true),
-                               '{{meta}}',
-                               jsonb_build_object(
+                           resource = $2::jsonb || jsonb_build_object(
+                               'meta', COALESCE($2::jsonb -> 'meta', '{{}}'::jsonb) || jsonb_build_object(
                                    'versionId', new_tx.txid::text,
                                    'lastUpdated', to_char($3 AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
-                               ),
-                               true
+                               )
                            ),
                            status = 'updated'
                        FROM new_tx, current
@@ -1134,14 +1128,11 @@ pub async fn update_with_tx_if_match(
             format!(
                 r#"UPDATE "{table}" t
                    SET txid = {t}::bigint,
-                       resource = jsonb_set(
-                           jsonb_set($2::jsonb, '{{meta}}', '{{}}'::jsonb, true),
-                           '{{meta}}',
-                           jsonb_build_object(
+                       resource = $2::jsonb || jsonb_build_object(
+                           'meta', COALESCE($2::jsonb -> 'meta', '{{}}'::jsonb) || jsonb_build_object(
                                'versionId', '{t}',
                                'lastUpdated', to_char($3 AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
-                           ),
-                           true
+                           )
                        ),
                        status = 'updated'
                    WHERE t.id = $1
@@ -1157,14 +1148,11 @@ pub async fn update_with_tx_if_match(
                    )
                    UPDATE "{table}" t
                    SET txid = new_tx.txid,
-                       resource = jsonb_set(
-                           jsonb_set($2::jsonb, '{{meta}}', '{{}}'::jsonb, true),
-                           '{{meta}}',
-                           jsonb_build_object(
+                       resource = $2::jsonb || jsonb_build_object(
+                           'meta', COALESCE($2::jsonb -> 'meta', '{{}}'::jsonb) || jsonb_build_object(
                                'versionId', new_tx.txid::text,
                                'lastUpdated', to_char($3 AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
-                           ),
-                           true
+                           )
                        ),
                        status = 'updated'
                    FROM new_tx
@@ -1243,23 +1231,12 @@ pub async fn delete_with_tx(
 ) -> Result<(), StorageError> {
     let table = SchemaManager::table_name(resource_type);
 
-    let sql = if let Some(t) = txid {
-        format!(
-            r#"UPDATE "{table}"
-               SET txid = {t}::bigint, status = 'deleted'
-               WHERE id = $1 AND status != 'deleted'"#
-        )
-    } else {
-        format!(
-            r#"WITH new_tx AS (
-                   SELECT nextval('_transaction_txid_seq') AS txid
-               )
-               UPDATE "{table}"
-               SET txid = new_tx.txid, status = 'deleted'
-               FROM new_tx
-               WHERE id = $1 AND status != 'deleted'"#
-        )
-    };
+    // Physically remove the live row; the BEFORE DELETE trigger archives the
+    // final version to history (see `delete` for why deleted rows must not stay
+    // in the live table). `txid` is unused now — the archived version keeps its
+    // own version id and nothing new is written to the live table.
+    let _ = txid;
+    let sql = format!(r#"DELETE FROM "{table}" WHERE id = $1"#);
 
     let _result = query(AssertSqlSafe((&sql).to_string())).bind(id).execute(&mut **tx).await.map_err(|e| {
         if e.to_string().contains("does not exist") {

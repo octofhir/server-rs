@@ -29,7 +29,10 @@ const ARCHIVE_FN_SQL: &str = r#"
                  status = EXCLUDED.status',
             TG_TABLE_NAME
         ) USING OLD.id, OLD.txid, OLD.created_at, OLD.updated_at, OLD.resource, OLD.status;
-        RETURN NEW;
+        -- NEW on UPDATE (apply it), OLD on DELETE (proceed with removal).
+        -- Returning NEW unconditionally would be NULL on DELETE and silently
+        -- cancel the row removal.
+        RETURN COALESCE(NEW, OLD);
     END;
     $$ LANGUAGE plpgsql;
 "#;
@@ -162,7 +165,7 @@ impl SchemaManager {
         sql.push_str(&format!(
             "CREATE INDEX IF NOT EXISTS \"idx_{table}_gin\" ON \"{table}\" \
              USING GIN (resource jsonb_path_ops) \
-             WITH (fastupdate=off);\n\
+             WITH (fastupdate=on);\n\
              CREATE INDEX IF NOT EXISTS \"idx_{table}_txid\" ON \"{table}\"(txid);\n\
              CREATE INDEX IF NOT EXISTS \"idx_{table}_created_at\" ON \"{table}\"(created_at);\n\
              CREATE INDEX IF NOT EXISTS \"idx_{table}_updated_at\" ON \"{table}\"(updated_at);\n\
