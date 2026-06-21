@@ -1,0 +1,26 @@
+.row {
+    display: flex;
+    flex-direction: column;
+    gap: var(--octo-spacing-xs, 0.375rem);
+    width: 100%;
+}
+
+.label {
+    font-size: var(--octo-typography-size-sm, 0.875rem);
+    font-weight: var(--octo-typography-weight-medium, 500);
+    color: var(--octo-text-secondary, #495057);
+}
+.required {
+    margin-left: 2px;
+    color: var(--octo-accent-fire, #fa5252);
+}
+
+.description {
+    font-size: var(--octo-typography-size-xs, 0.75rem);
+    color: var(--octo-text-muted, #868e96);
+}
+
+.error {
+    font-size: var(--octo-typography-size-xs, 0.75rem);
+    color: var(--octo-accent-fire, #fa5252);
+}

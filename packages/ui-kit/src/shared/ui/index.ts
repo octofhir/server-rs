@@ -73,9 +73,6 @@ export * from "./EmptyState";
 // === Data table (TanStack-driven, for grids) ===
 export * from "./DataTable";
 
-// === App layout (AsideHeader-based admin shell) ===
-export * from "./AppLayout";
-
 // === Misc ===
 export * from "./Divider";
 export * from "./ThemeIcon";
