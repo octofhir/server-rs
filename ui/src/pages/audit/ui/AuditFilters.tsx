@@ -203,7 +203,6 @@ function AuditFiltersComponent({
 											checked={filters.action?.includes(action) ?? false}
 											onChange={() => handleActionToggle(action)}
 											size="xs"
-											variant="light"
 										>
 											{getActionLabel(action)}
 										</Chip>
@@ -239,8 +238,6 @@ function AuditFiltersComponent({
 									checked={filters.outcome?.includes(outcome.value) ?? false}
 									onChange={() => handleOutcomeToggle(outcome.value)}
 									size="xs"
-									color={outcome.color}
-									variant="light"
 								>
 									{outcome.label}
 								</Chip>
@@ -276,7 +273,7 @@ function AuditFiltersComponent({
 							)}
 						</Button>
 					</Menu.Target>
-					<Menu.Dropdown p="sm">
+					<Menu.Dropdown>
 						<div className={classes.timeMenu}>
 							<Text size="sm" fw={600}>
 								Time Range Filter

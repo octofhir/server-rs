@@ -53,7 +53,7 @@ export function QueryInspector({
 		<Tabs defaultValue="explain">
 			<Tabs.List>
 				<Tabs.Tab
-					id="parsed"
+					value="parsed"
 					icon={<CodeIcon width={14} />}
 				>
 					<span className={classes.tabLabel}>
@@ -69,14 +69,14 @@ export function QueryInspector({
 					</span>
 				</Tabs.Tab>
 				<Tabs.Tab
-					id="explain"
+					value="explain"
 					icon={<Comment size={14} />}
 				>
 					Explain
 				</Tabs.Tab>
 				{response && (
 					<Tabs.Tab
-						id="response"
+						value="response"
 						icon={<Cloud size={14} />}
 					>
 						Response

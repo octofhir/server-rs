@@ -123,7 +123,7 @@ export function PromptEditor({
 	);
 
 	const handleSplitterKeyDown = useCallback(
-		(event: React.KeyboardEvent<HTMLButtonElement>) => {
+		(event: React.KeyboardEvent<HTMLButtonElement | HTMLAnchorElement>) => {
 			const vertical = window.matchMedia("(max-width: 1400px)").matches;
 			const increase = vertical ? event.key === "ArrowUp" : event.key === "ArrowLeft";
 			const decrease =
@@ -211,7 +211,6 @@ export function PromptEditor({
 							value={resultLimit}
 							onChange={(value) => onResultLimitChange(value ?? DEFAULT_LIMIT)}
 							data={RESULT_LIMIT_OPTIONS}
-							allowDeselect={false}
 							aria-label="SQL result limit"
 						/>
 					</Tooltip>
@@ -223,7 +222,6 @@ export function PromptEditor({
 							value={sqlTimeout}
 							onChange={(value) => onSqlTimeoutChange(value ?? DEFAULT_TIMEOUT)}
 							data={TIMEOUT_OPTIONS}
-							allowDeselect={false}
 							aria-label="SQL timeout"
 						/>
 					</Tooltip>

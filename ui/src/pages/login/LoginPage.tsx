@@ -56,7 +56,7 @@ export function LoginPage() {
 					</Text>
 				</div>
 
-				<Card view="raised" type="container" className={classes.panel}>
+				<Card view="raised" className={classes.panel}>
 					<form onSubmit={handleSubmit} className={classes.form} noValidate>
 						<div className={classes.intro}>
 							<Text variant="header-1">Welcome back</Text>
@@ -66,7 +66,7 @@ export function LoginPage() {
 						</div>
 
 						{errorMessage ? (
-							<Alert theme="danger" variant="filled" message={errorMessage} layout="horizontal" />
+							<Alert theme="danger" variant="filled" message={errorMessage} />
 						) : null}
 
 						<div className={classes.fields}>
@@ -82,10 +82,9 @@ export function LoginPage() {
 									placeholder="admin"
 									value={username}
 									onUpdate={setUsername}
-									autoComplete="username"
 									autoFocus
 									disabled={isLoggingIn}
-									hasClear
+									{...{ autoComplete: "username" }}
 								/>
 							</div>
 

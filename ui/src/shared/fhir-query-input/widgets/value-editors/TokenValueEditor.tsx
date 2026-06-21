@@ -17,8 +17,7 @@ export function TokenValueEditor({ value, onChange }: TokenValueEditorProps) {
 	const { system, code } = useMemo(() => parseToken(value), [value]);
 
 	const handleSystemChange = useCallback(
-		(e: React.ChangeEvent<HTMLInputElement>) => {
-			const newSystem = e.target.value;
+		(newSystem: string) => {
 			if (newSystem || code) {
 				onChange(`${newSystem}|${code}`);
 			} else {
@@ -29,8 +28,7 @@ export function TokenValueEditor({ value, onChange }: TokenValueEditorProps) {
 	);
 
 	const handleCodeChange = useCallback(
-		(e: React.ChangeEvent<HTMLInputElement>) => {
-			const newCode = e.target.value;
+		(newCode: string) => {
 			if (system) {
 				onChange(`${system}|${newCode}`);
 			} else {

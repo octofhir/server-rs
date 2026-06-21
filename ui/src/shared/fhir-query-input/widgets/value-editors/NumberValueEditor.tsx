@@ -37,8 +37,7 @@ export function NumberValueEditor({ value, onChange }: NumberValueEditorProps) {
 	);
 
 	const handleNumberChange = useCallback(
-		(e: React.ChangeEvent<HTMLInputElement>) => {
-			const n = e.target.value;
+		(n: string) => {
 			onChange(prefix ? `${prefix}${n}` : n);
 		},
 		[prefix, onChange],
@@ -52,7 +51,6 @@ export function NumberValueEditor({ value, onChange }: NumberValueEditorProps) {
 				onChange={handlePrefixChange}
 				size="xs"
 				style={{ width: 100, flexShrink: 0 }}
-				allowDeselect={false}
 			/>
 			<TextInput
 				value={number}

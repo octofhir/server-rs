@@ -46,9 +46,10 @@ export function useHistoryCommands(): ConsoleCommand[] {
 
     // Limit to 20 most recent entries
     return entries.slice(0, 20).map((entry) => {
-      const hasResponse = entry.responseStatus !== undefined;
-      const isSuccess = hasResponse && entry.responseStatus >= 200 && entry.responseStatus < 300;
-      const isError = hasResponse && entry.responseStatus >= 400;
+      const status = entry.responseStatus;
+      const hasResponse = status !== undefined;
+      const isSuccess = hasResponse && status >= 200 && status < 300;
+      const isError = hasResponse && status >= 400;
 
       // Determine badge color based on response status
       let badgeColor = "gray";

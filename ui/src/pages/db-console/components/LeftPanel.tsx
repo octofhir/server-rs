@@ -17,10 +17,9 @@ export function LeftPanel({ activeTab, onTabChange, onSelectQuery, onClose }: Le
     <Tabs
       value={activeTab}
       onChange={(v) => onTabChange(v ?? "history")}
-      variant="outline"
       className={classes.leftTabs}
     >
-      <Tabs.List grow className={classes.leftTabsList}>
+      <Tabs.List className={classes.leftTabsList}>
         <Tabs.Tab value="history" leftSection={<Clock size={14} />}>
           History
         </Tabs.Tab>
@@ -31,7 +30,7 @@ export function LeftPanel({ activeTab, onTabChange, onSelectQuery, onClose }: Le
           Queries
         </Tabs.Tab>
         <Tooltip label="Close sidebar (Ctrl+B)">
-          <ActionIcon variant="subtle" size="xs" c="dimmed" onClick={onClose} ml="auto">
+          <ActionIcon variant="subtle" size="xs" color="gray" onClick={onClose} ml="auto">
             <Xmark size={14} />
           </ActionIcon>
         </Tooltip>

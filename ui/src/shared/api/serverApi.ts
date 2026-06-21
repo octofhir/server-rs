@@ -41,14 +41,21 @@ interface RequestOptions {
  * Custom error class that includes the parsed response body (e.g., OperationOutcome).
  */
 export class ApiResponseError extends Error {
+  status: number;
+  statusText: string;
+  responseData: unknown;
+
   constructor(
     message: string,
-    public status: number,
-    public statusText: string,
-    public responseData: unknown,
+    status: number,
+    statusText: string,
+    responseData: unknown,
   ) {
     super(message);
     this.name = "ApiResponseError";
+    this.status = status;
+    this.statusText = statusText;
+    this.responseData = responseData;
   }
 }
 

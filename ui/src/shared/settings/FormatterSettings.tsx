@@ -413,7 +413,7 @@ function PgFormatterSettings({
 
               <NumberInput
                 label="Wrap Limit (characters)"
-                value={config.wrapLimit ?? ''}
+                value={config.wrapLimit ?? null}
                 onChange={(v) => onChange({ wrapLimit: v ? Number(v) : null })}
                 min={40}
                 max={200}
@@ -423,7 +423,7 @@ function PgFormatterSettings({
 
               <NumberInput
                 label="Wrap After (items)"
-                value={config.wrapAfter ?? ''}
+                value={config.wrapAfter ?? null}
                 onChange={(v) => onChange({ wrapAfter: v ? Number(v) : null })}
                 min={1}
                 max={20}

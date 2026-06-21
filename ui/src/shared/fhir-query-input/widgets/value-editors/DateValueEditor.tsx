@@ -63,8 +63,8 @@ export function DateValueEditor({ value, onChange }: DateValueEditorProps) {
 	);
 
 	const handleTextChange = useCallback(
-		(e: React.ChangeEvent<HTMLInputElement>) => {
-			onChange(formatValue(prefix, e.target.value));
+		(newValue: string) => {
+			onChange(formatValue(prefix, newValue));
 		},
 		[prefix, onChange],
 	);
@@ -77,7 +77,6 @@ export function DateValueEditor({ value, onChange }: DateValueEditorProps) {
 				onChange={handlePrefixChange}
 				size="xs"
 				style={{ width: 100, flexShrink: 0 }}
-				allowDeselect={false}
 			/>
 			<DateInput
 				value={dateObj}
@@ -85,7 +84,6 @@ export function DateValueEditor({ value, onChange }: DateValueEditorProps) {
 				size="xs"
 				placeholder="YYYY-MM-DD"
 				clearable
-				valueFormat="YYYY-MM-DD"
 				style={{ flex: 1, minWidth: 130 }}
 			/>
 			<TextInput

@@ -177,10 +177,9 @@ function HistoryEntryCard({
               </Menu.Target>
               <Menu.Dropdown>
                 <Menu.Item
-                  color="fire"
+                  color="danger"
                   leftSection={<IconTrash size={14} />}
-                  onClick={(e) => {
-                    e.stopPropagation();
+                  onClick={() => {
                     onDelete();
                   }}
                 >

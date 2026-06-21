@@ -49,8 +49,7 @@ export function ReferenceValueEditor({
 	);
 
 	const handleIdChange = useCallback(
-		(e: React.ChangeEvent<HTMLInputElement>) => {
-			const id = e.target.value;
+		(id: string) => {
 			if (targetType) {
 				onChange(`${targetType}/${id}`);
 			} else {
@@ -88,7 +87,7 @@ export function ReferenceValueEditor({
 			) : null}
 			<TextInput
 				value={isChain ? value : refId}
-				onChange={isChain ? (e) => onChange(value) : handleIdChange}
+				onChange={isChain ? () => onChange(value) : handleIdChange}
 				size="xs"
 				placeholder={targets.length === 1 ? `${targets[0]} ID` : "ID"}
 				style={{ flex: 1 }}
