@@ -314,7 +314,7 @@ export function ResourceBrowserPage() {
             "Could not load the FHIR resource catalog."
           )}
           actions={[
-            <Button key="retry" view="action" onClick={() => refetchResourceTypes()}>
+            <Button key="retry" variant="filled" onClick={() => refetchResourceTypes()}>
               Retry
             </Button>,
           ]}
@@ -329,7 +329,7 @@ export function ResourceBrowserPage() {
             actions={[
               <Button
                 key="clear"
-                view="outlined"
+                variant="outline"
                 onClick={() => {
                   setTypeFilter("");
                   setCategoryFilter("all");
@@ -381,7 +381,7 @@ export function ResourceBrowserPage() {
             {(hasNextPage || hasPrevPage) && (
               <div className={classes.paginationActions}>
                 <ActionIcon
-                  view="outlined"
+                  variant="outline"
                   size="md"
                   aria-label="Previous page"
                   disabled={!hasPrevPage || followLinkMutation.isPending}
@@ -390,7 +390,7 @@ export function ResourceBrowserPage() {
                   <ChevronLeft width={16} height={16} aria-hidden="true" />
                 </ActionIcon>
                 <ActionIcon
-                  view="outlined"
+                  variant="outline"
                   size="md"
                   aria-label="Next page"
                   disabled={!hasNextPage || followLinkMutation.isPending}
@@ -424,7 +424,7 @@ export function ResourceBrowserPage() {
             `Could not search ${selectedType ?? "resources"}.`
           )}
           actions={[
-            <Button key="retry" view="action" onClick={() => refetchSearch()}>
+            <Button key="retry" variant="filled" onClick={() => refetchSearch()}>
               Retry
             </Button>,
           ]}
@@ -485,7 +485,7 @@ export function ResourceBrowserPage() {
               <div className={classes.editActions}>
                 <Button
                   size="xs"
-                  view="flat"
+                  variant="subtle"
                   onClick={handleCancel}
                   disabled={updateMutation.isPending}
                 >
@@ -493,7 +493,7 @@ export function ResourceBrowserPage() {
                 </Button>
                 <Button
                   size="xs"
-                  view="action"
+                  variant="filled"
                   onClick={handleSave}
                   loading={updateMutation.isPending}
                 >
@@ -503,7 +503,7 @@ export function ResourceBrowserPage() {
             ) : (
               <Button
                 size="xs"
-                view="outlined"
+                variant="outline"
                 onClick={() => {
                   setSaveError(null);
                   setIsEditMode(true);
@@ -516,7 +516,7 @@ export function ResourceBrowserPage() {
               </Button>
             )}
             <ActionIcon
-              view="flat"
+              variant="subtle"
               size="md"
               aria-label="Close resource details"
               onClick={handleCloseDetails}
@@ -541,7 +541,7 @@ export function ResourceBrowserPage() {
             `Could not load ${selectedType ?? "resource"}/${selectedId ?? ""}.`
           )}
           actions={[
-            <Button key="retry" view="action" onClick={() => refetchResource()}>
+            <Button key="retry" variant="filled" onClick={() => refetchResource()}>
               Retry
             </Button>,
           ]}
@@ -590,7 +590,7 @@ export function ResourceBrowserPage() {
       }
       actions={
         selectedType && !selectedId ? (
-          <Button view="flat" onClick={handleBackToTypes}>
+          <Button variant="subtle" onClick={handleBackToTypes}>
             <Button.Icon side="left">
               <ChevronLeft width={16} height={16} aria-hidden="true" />
             </Button.Icon>

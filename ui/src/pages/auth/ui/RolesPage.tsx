@@ -71,7 +71,7 @@ export function RolesPage() {
 			title="Roles"
 			description="Manage roles and permissions"
 			actions={
-				<Button view="action" onClick={open}>
+				<Button variant="filled" onClick={open}>
 					<Button.Icon>
 						<Plus width={16} />
 					</Button.Icon>
@@ -104,7 +104,7 @@ export function RolesPage() {
 						title="Failed to load roles"
 						description={error instanceof Error ? error.message : "Something went wrong while loading roles."}
 						actions={[
-							<Button key="retry" view="action" onClick={() => refetch()}>
+							<Button key="retry" variant="filled" onClick={() => refetch()}>
 								Retry
 							</Button>,
 						]}
@@ -120,12 +120,12 @@ export function RolesPage() {
 						actions={
 							isFiltered
 								? [
-										<Button key="clear" view="outlined" onClick={() => setSearch("")}>
+										<Button key="clear" variant="outline" onClick={() => setSearch("")}>
 											Clear filters
 										</Button>,
 									]
 								: [
-										<Button key="create" view="action" onClick={open}>
+										<Button key="create" variant="filled" onClick={open}>
 											Create Role
 										</Button>,
 									]
@@ -178,7 +178,7 @@ export function RolesPage() {
 										size="sm"
 										icon={<EllipsisVertical width={16} />}
 										defaultSwitcherProps={{
-											view: "flat-secondary",
+											variant: "subtle",
 											size: "sm",
 											"aria-label": "Role actions",
 											"aria-haspopup": "menu",
@@ -377,11 +377,11 @@ function RoleModal({
 							</Field>
 
 							<div className={classes.formActions}>
-								<Button view="flat-secondary" onClick={onClose} type="button">
+								<Button variant="subtle" onClick={onClose} type="button">
 									Cancel
 								</Button>
 								<Button
-									view="action"
+									variant="filled"
 									type="submit"
 									loading={submitting || create.isPending || update.isPending}
 								>
@@ -433,10 +433,10 @@ function DeleteRoleModal({
 				/>
 
 				<div className={classes.formActions}>
-					<Button view="flat-secondary" onClick={onClose} disabled={isDeleting}>
+					<Button variant="subtle" onClick={onClose} disabled={isDeleting}>
 						Cancel
 					</Button>
-					<Button view="flat-danger" onClick={onConfirm} loading={isDeleting}>
+					<Button variant="subtle" color="red" onClick={onConfirm} loading={isDeleting}>
 						Delete Role
 					</Button>
 				</div>

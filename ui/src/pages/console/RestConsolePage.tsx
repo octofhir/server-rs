@@ -112,7 +112,7 @@ export function RestConsolePage() {
       actions={
         <div className={styles.actions}>
           <Button
-            view="flat"
+            variant="subtle"
             size="md"
             onClick={toggleInspector}
           >
@@ -120,7 +120,7 @@ export function RestConsolePage() {
             Inspector
           </Button>
           <Button
-            view="flat"
+            variant="subtle"
             size="md"
             onClick={historyHandlers.open}
           >
@@ -158,7 +158,7 @@ export function RestConsolePage() {
                       <div className={styles.builderActions}>
                         <Button
                           size="lg"
-                          view="action"
+                          variant="filled"
                           onClick={handleSend}
                           loading={sendMutation.isPending}
                         >

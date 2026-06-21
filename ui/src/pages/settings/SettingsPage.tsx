@@ -59,7 +59,7 @@ export function SettingsPage() {
 				actions={
 					<Button
 						size="sm"
-						view="flat-secondary"
+						variant="subtle"
 						onClick={handleTestConnection}
 						loading={isRefetching}
 					>

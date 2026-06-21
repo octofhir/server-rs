@@ -79,7 +79,7 @@ export function AppDetailPage() {
 			}
 			actions={
 				<Button
-					view="flat"
+					variant="subtle"
 					leftSection={<IconArrowLeft width={16} height={16} aria-hidden="true" />}
 					onClick={() => navigate("/apps")}
 				>
@@ -102,7 +102,7 @@ export function AppDetailPage() {
 					title="Couldn't load application"
 					description={error instanceof Error ? error.message : "Failed to load app"}
 					actions={[
-						<Button key="retry" view="action" onClick={() => refetch()}>
+						<Button key="retry" variant="filled" onClick={() => refetch()}>
 							Retry
 						</Button>,
 					]}
@@ -139,7 +139,7 @@ export function AppDetailPage() {
 									{statusView?.status}
 								</Badge>
 								<Button
-									view="outlined"
+									variant="outline"
 									size="sm"
 									leftSection={<IconEdit width={14} height={14} aria-hidden="true" />}
 									onClick={() => navigate(`/resources/App/${id}`)}

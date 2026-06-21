@@ -33,7 +33,7 @@ export const WorkspaceFoundations: Story = {
                     {
                         id: "primary",
                         label: "Run search",
-                        view: "action",
+                        variant: "filled",
                     },
                     {
                         id: "secondary",

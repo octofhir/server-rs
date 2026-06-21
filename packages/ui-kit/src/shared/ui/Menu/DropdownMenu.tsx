@@ -24,7 +24,7 @@ export interface DropdownMenuProps {
     size?: Size;
     /** Props forwarded to the default icon-button trigger. */
     defaultSwitcherProps?: {
-        view?: ButtonProps["view"];
+        variant?: ButtonProps["variant"];
         size?: Size;
         "aria-label"?: string;
     };
@@ -44,7 +44,7 @@ export function DropdownMenu({
     const groups = items.map((entry) => (Array.isArray(entry) ? entry : [entry]));
     const trigger = switcher ?? (
         <ActionIcon
-            view={defaultSwitcherProps?.view ?? "flat"}
+            variant={defaultSwitcherProps?.variant ?? "subtle"}
             size={size ?? defaultSwitcherProps?.size ?? "sm"}
             aria-label={defaultSwitcherProps?.["aria-label"] ?? "Open menu"}
         >

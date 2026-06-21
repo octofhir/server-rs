@@ -12,7 +12,7 @@ export const Burger = forwardRef<HTMLButtonElement, BurgerProps>(
         return (
             <ActionIcon
                 ref={ref}
-                view="flat"
+                variant="subtle"
                 aria-label={opened ? "Close menu" : "Open menu"}
                 onClick={onClick as ActionIconProps["onClick"]}
                 {...(props as ActionIconProps)}

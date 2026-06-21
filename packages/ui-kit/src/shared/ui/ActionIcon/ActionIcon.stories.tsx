@@ -7,27 +7,17 @@ const meta: Meta<typeof ActionIcon> = {
   component: ActionIcon,
   tags: ["autodocs"],
   argTypes: {
-    view: {
+    variant: {
       control: "select",
-      options: [
-        "normal",
-        "action",
-        "outlined",
-        "outlined-info",
-        "outlined-danger",
-        "raised",
-        "flat",
-        "flat-info",
-        "flat-danger",
-        "flat-secondary",
-        "normal-contrast",
-        "outlined-contrast",
-        "flat-contrast",
-      ],
+      options: ["filled", "light", "outline", "subtle", "default", "transparent"],
+    },
+    color: {
+      control: "select",
+      options: ["primary", "red", "green", "orange", "gray"],
     },
     size: {
       control: "select",
-      options: ["xs", "s", "m", "l", "xl"],
+      options: ["xs", "sm", "md", "lg", "xl"],
     },
     disabled: { control: "boolean" },
     loading: { control: "boolean" },
@@ -41,19 +31,19 @@ type Story = StoryObj<typeof ActionIcon>;
 export const Default: Story = {
   args: {
     children: <Gear width={18} />,
-    view: "flat",
+    variant: "subtle",
   },
 };
 
 export const Views: Story = {
   render: () => (
     <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
-      <ActionIcon view="normal"><Plus width={18} /></ActionIcon>
-      <ActionIcon view="action"><Pencil width={18} /></ActionIcon>
-      <ActionIcon view="outlined"><Copy width={18} /></ActionIcon>
-      <ActionIcon view="flat"><Gear width={18} /></ActionIcon>
-      <ActionIcon view="flat-info"><ArrowRotateRight width={18} /></ActionIcon>
-      <ActionIcon view="flat-danger"><TrashBin width={18} /></ActionIcon>
+      <ActionIcon variant="default"><Plus width={18} /></ActionIcon>
+      <ActionIcon variant="filled"><Pencil width={18} /></ActionIcon>
+      <ActionIcon variant="outline"><Copy width={18} /></ActionIcon>
+      <ActionIcon variant="subtle"><Gear width={18} /></ActionIcon>
+      <ActionIcon variant="subtle" color="primary"><ArrowRotateRight width={18} /></ActionIcon>
+      <ActionIcon variant="subtle" color="red"><TrashBin width={18} /></ActionIcon>
     </div>
   ),
 };
@@ -73,10 +63,10 @@ export const Sizes: Story = {
 export const States: Story = {
   render: () => (
     <div style={{ display: "flex", gap: "8px" }}>
-      <ActionIcon view="flat"><Gear width={18} /></ActionIcon>
-      <ActionIcon view="flat" disabled><Gear width={18} /></ActionIcon>
-      <ActionIcon view="flat" loading><Gear width={18} /></ActionIcon>
-      <ActionIcon view="flat" selected><Gear width={18} /></ActionIcon>
+      <ActionIcon variant="subtle"><Gear width={18} /></ActionIcon>
+      <ActionIcon variant="subtle" disabled><Gear width={18} /></ActionIcon>
+      <ActionIcon variant="subtle" loading><Gear width={18} /></ActionIcon>
+      <ActionIcon variant="subtle" selected><Gear width={18} /></ActionIcon>
     </div>
   ),
 };

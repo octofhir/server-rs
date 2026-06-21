@@ -72,7 +72,7 @@ export function RequestBar({
 			</div>
 			<div className={styles.actions}>
 				<Button
-					view="action"
+					variant="filled"
 					size="lg"
 					onClick={onSend}
 					loading={isSending}

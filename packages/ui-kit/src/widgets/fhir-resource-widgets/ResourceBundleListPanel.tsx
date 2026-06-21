@@ -57,7 +57,7 @@ export function ResourceBundleListPanel({
                     {onPreviousPage ? (
                         <Button
                             size="sm"
-                            view="flat-secondary"
+                            variant="subtle"
                             disabled={!hasPreviousPage || loading}
                             onClick={onPreviousPage}
                         >
@@ -67,7 +67,7 @@ export function ResourceBundleListPanel({
                     {onNextPage ? (
                         <Button
                             size="sm"
-                            view="flat-secondary"
+                            variant="subtle"
                             disabled={!hasNextPage || loading}
                             onClick={onNextPage}
                         >

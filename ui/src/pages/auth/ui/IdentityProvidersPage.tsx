@@ -64,7 +64,7 @@ export function IdentityProvidersPage() {
 			title="Identity Providers"
 			description="Manage external OIDC/OAuth2 authentication providers"
 			actions={
-				<Button view="action" onClick={open}>
+				<Button variant="filled" onClick={open}>
 					<Button.Icon>
 						<Plus width={16} />
 					</Button.Icon>
@@ -97,7 +97,7 @@ export function IdentityProvidersPage() {
 						title="Failed to load providers"
 						description={error instanceof Error ? error.message : "Something went wrong while loading identity providers."}
 						actions={[
-							<Button key="retry" view="action" onClick={() => refetch()}>
+							<Button key="retry" variant="filled" onClick={() => refetch()}>
 								Retry
 							</Button>,
 						]}
@@ -113,12 +113,12 @@ export function IdentityProvidersPage() {
 						actions={
 							isFiltered
 								? [
-										<Button key="clear" view="outlined" onClick={() => setSearch("")}>
+										<Button key="clear" variant="outline" onClick={() => setSearch("")}>
 											Clear filters
 										</Button>,
 									]
 								: [
-										<Button key="create" view="action" onClick={open}>
+										<Button key="create" variant="filled" onClick={open}>
 											Add Provider
 										</Button>,
 									]
@@ -157,7 +157,7 @@ export function IdentityProvidersPage() {
 										size="sm"
 										icon={<EllipsisVertical width={16} />}
 										defaultSwitcherProps={{
-											view: "flat-secondary",
+											variant: "subtle",
 											size: "sm",
 											"aria-label": "Provider actions",
 											"aria-haspopup": "menu",
@@ -231,10 +231,10 @@ function DeleteIdpModal({
 				/>
 
 				<div className={classes.formActions}>
-					<Button view="flat-secondary" onClick={onClose} disabled={isDeleting}>
+					<Button variant="subtle" onClick={onClose} disabled={isDeleting}>
 						Cancel
 					</Button>
-					<Button view="flat-danger" onClick={onConfirm} loading={isDeleting}>
+					<Button variant="subtle" color="red" onClick={onConfirm} loading={isDeleting}>
 						Delete Provider
 					</Button>
 				</div>
@@ -465,11 +465,11 @@ function IdpModal({
 							</Field>
 
 							<div className={classes.formActions}>
-								<Button view="flat-secondary" onClick={onClose} type="button">
+								<Button variant="subtle" onClick={onClose} type="button">
 									Cancel
 								</Button>
 								<Button
-									view="action"
+									variant="filled"
 									type="submit"
 									loading={submitting || create.isPending || update.isPending}
 								>

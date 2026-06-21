@@ -198,7 +198,7 @@ export function CqlConsole() {
                 />
 
                 <Button
-                  view="action"
+                  variant="filled"
                   size="lg"
                   onClick={handleEvaluate}
                   disabled={!expression.trim() || evaluateMutation.isPending}
@@ -248,7 +248,7 @@ export function CqlConsole() {
 
               {evaluateMutation.isError && (
                 <Alert
-                  view="filled"
+                  variant="filled"
                   theme="danger"
                   title="Evaluation Error"
                   style={{ borderRadius: 8 }}

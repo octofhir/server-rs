@@ -24,11 +24,11 @@ interface InternalEntry extends ConfirmOptions {
 
 type Listener = (entries: InternalEntry[]) => void;
 
-const themeToView = (t?: ConfirmTheme): ButtonProps["view"] => {
-    if (t === "danger") return "action-danger";
-    if (t === "success") return "action-success";
-    if (t === "warning") return "action-warning";
-    return "action";
+const themeToColor = (t?: ConfirmTheme): ButtonProps["color"] => {
+    if (t === "danger") return "red";
+    if (t === "success") return "green";
+    if (t === "warning") return "orange";
+    return "primary";
 };
 
 class ConfirmStore {
@@ -96,10 +96,10 @@ export function ConfirmModalHost() {
                         size="sm"
                         footer={
                             <>
-                                <Button view="flat" onClick={cancel}>
+                                <Button variant="subtle" onClick={cancel}>
                                     {entry.cancelText ?? "Cancel"}
                                 </Button>
-                                <Button view={themeToView(entry.theme)} onClick={apply}>
+                                <Button variant="filled" color={themeToColor(entry.theme)} onClick={apply}>
                                     {entry.confirmText ?? "OK"}
                                 </Button>
                             </>

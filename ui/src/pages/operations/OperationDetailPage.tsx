@@ -128,7 +128,7 @@ export function OperationDetailPage() {
 			}
 			actions={
 				<Button
-					view="flat"
+					variant="subtle"
 					leftSection={<ArrowLeft width={16} height={16} aria-hidden="true" />}
 					onClick={() => navigate("/operations")}
 				>
@@ -168,7 +168,7 @@ export function OperationDetailPage() {
 					actions={[
 						{
 							text: "Retry",
-							view: "action",
+							variant: "filled",
 							onClick: () => {
 								void refetch();
 							},
@@ -316,13 +316,13 @@ export function OperationDetailPage() {
 							{hasChanges && (
 								<div className={classes.formActions}>
 									<Button
-										view="action"
+										variant="filled"
 										onClick={handleSave}
 										loading={updateMutation.isPending}
 									>
 										Save Changes
 									</Button>
-									<Button view="flat" onClick={handleReset}>
+									<Button variant="subtle" onClick={handleReset}>
 										Reset
 									</Button>
 								</div>

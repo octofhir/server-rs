@@ -6,7 +6,7 @@ import { Tooltip } from "../Tooltip";
 export interface ClipboardButtonProps {
     /** Text written to the clipboard on click. */
     text: string;
-    view?: ButtonProps["view"];
+    variant?: ButtonProps["variant"];
     size?: ButtonProps["size"];
     className?: string;
     /** Tooltip shown before copying. */
@@ -22,7 +22,7 @@ export interface ClipboardButtonProps {
 
 export function ClipboardButton({
     text,
-    view = "flat",
+    variant = "subtle",
     size = "sm",
     className,
     tooltipInitialText,
@@ -47,7 +47,7 @@ export function ClipboardButton({
 
     const button = (
         <Button
-            view={view}
+            variant={variant}
             size={size}
             disabled={disabled}
             className={className}

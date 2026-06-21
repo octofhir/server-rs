@@ -66,7 +66,7 @@ export const ProviderThemeOverride: Story = {
                             id: "run",
                             label: "Run",
                             icon: <Play width={16} height={16} />,
-                            view: "action",
+                            variant: "filled",
                         },
                     ]}
                 />
@@ -110,7 +110,7 @@ export const ProviderThemeOverride: Story = {
                 </SectionPanel>
 
                 <div>
-                    <Button view="action">Action button</Button>
+                    <Button variant="filled">Action button</Button>
                 </div>
             </div>
         </UIProvider>

@@ -29,7 +29,7 @@ export function Sidebar({ items, selectedId, onSelect }: SidebarProps) {
             {items.map((vd) => (
               <Button
                 key={vd.id}
-                view={selectedId === vd.id ? "flat-action" : "flat"}
+                variant={selectedId === vd.id ? "light" : "subtle"}
                 size="md"
                 className={classes.item}
                 data-selected={selectedId === vd.id ? "true" : undefined}

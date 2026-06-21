@@ -79,7 +79,7 @@ export const ControlPlane: Story = {
                 id: "rest",
                 label: "REST console",
                 icon: <Play width={16} height={16} />,
-                view: "action",
+                variant: "filled",
             },
             {
                 id: "settings",

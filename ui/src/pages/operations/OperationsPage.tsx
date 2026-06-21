@@ -163,7 +163,7 @@ function CategorySection({
 					actions: (
 						<Tooltip content="View details">
 							<ActionIcon
-								view="flat"
+								variant="subtle"
 								size="sm"
 								aria-label={`View details for ${operation.name}`}
 								onClick={() => onViewOperation(operation.id)}
@@ -296,7 +296,7 @@ export function OperationsPage() {
 					actions={[
 						{
 							text: "Retry",
-							view: "action",
+							variant: "filled",
 							onClick: () => {
 								void refetch();
 							},
@@ -327,7 +327,7 @@ export function OperationsPage() {
 								actions={[
 									{
 										text: "Clear filters",
-										view: "outlined",
+										variant: "outline",
 										onClick: clearFilters,
 									},
 								]}

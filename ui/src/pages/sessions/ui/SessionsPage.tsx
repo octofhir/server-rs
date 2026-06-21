@@ -123,7 +123,7 @@ export function SessionsPage() {
             view="filled"
             padding="m"
             actions={
-              <Badge color="green" size="sm" variant="light">
+              <Badge color="green" size="sm" view="tinted">
                 Current
               </Badge>
             }
@@ -163,7 +163,7 @@ export function SessionsPage() {
           view="tinted"
           padding="m"
           actions={
-            <Badge size="sm" variant="light" color="gray">
+            <Badge size="sm" view="tinted" color="gray">
               {otherSessions.length}
             </Badge>
           }
@@ -173,7 +173,7 @@ export function SessionsPage() {
               title="Couldn't load sessions"
               description={error instanceof Error ? error.message : 'The session list failed to load.'}
               actions={[
-                <Button key="retry" view="action" onClick={() => refetch()}>
+                <Button key="retry" variant="filled" onClick={() => refetch()}>
                   Try again
                 </Button>,
               ]}

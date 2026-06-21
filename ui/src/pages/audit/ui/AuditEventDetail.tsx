@@ -76,7 +76,7 @@ function DetailRow({
 					<ClipboardButton
 						text={value}
 						size="xs"
-						view="flat"
+						variant="subtle"
 						aria-label={`Copy ${label}`}
 						tooltipInitialText={`Copy ${label}`}
 					/>
@@ -233,7 +233,7 @@ function AuditEventDetailComponent({ event }: AuditEventDetailProps) {
 								<ClipboardButton
 									text={event.id}
 									size="xs"
-									view="flat"
+									variant="subtle"
 									aria-label="Copy Event ID"
 									tooltipInitialText="Copy Event ID"
 								/>

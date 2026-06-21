@@ -6,27 +6,17 @@ const meta: Meta<typeof Button> = {
   component: Button,
   tags: ["autodocs"],
   argTypes: {
-    view: {
+    variant: {
       control: "select",
-      options: [
-        "normal",
-        "action",
-        "outlined",
-        "outlined-info",
-        "outlined-danger",
-        "raised",
-        "flat",
-        "flat-info",
-        "flat-danger",
-        "flat-secondary",
-        "normal-contrast",
-        "outlined-contrast",
-        "flat-contrast",
-      ],
+      options: ["filled", "light", "outline", "subtle", "default", "transparent"],
+    },
+    color: {
+      control: "select",
+      options: ["primary", "red", "green", "orange", "gray"],
     },
     size: {
       control: "select",
-      options: ["xs", "s", "m", "l", "xl"],
+      options: ["xs", "sm", "md", "lg", "xl"],
     },
     pin: {
       control: "select",
@@ -58,23 +48,23 @@ type Story = StoryObj<typeof Button>;
 export const Default: Story = {
   args: {
     children: "Button",
-    view: "normal",
+    variant: "default",
   },
 };
 
 export const Views: Story = {
   render: () => (
     <div style={{ display: "flex", gap: "8px", flexWrap: "wrap" }}>
-      <Button view="normal">Normal</Button>
-      <Button view="action">Action</Button>
-      <Button view="outlined">Outlined</Button>
-      <Button view="outlined-info">Outlined Info</Button>
-      <Button view="outlined-danger">Outlined Danger</Button>
-      <Button view="raised">Raised</Button>
-      <Button view="flat">Flat</Button>
-      <Button view="flat-info">Flat Info</Button>
-      <Button view="flat-danger">Flat Danger</Button>
-      <Button view="flat-secondary">Flat Secondary</Button>
+      <Button variant="default">Normal</Button>
+      <Button variant="filled">Action</Button>
+      <Button variant="outline">Outlined</Button>
+      <Button variant="outline" color="primary">Outlined Info</Button>
+      <Button variant="outline" color="red">Outlined Danger</Button>
+      <Button variant="filled">Raised</Button>
+      <Button variant="subtle">Flat</Button>
+      <Button variant="subtle" color="primary">Flat Info</Button>
+      <Button variant="subtle" color="red">Flat Danger</Button>
+      <Button variant="subtle">Flat Secondary</Button>
     </div>
   ),
 };

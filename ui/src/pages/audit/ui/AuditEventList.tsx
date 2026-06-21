@@ -141,7 +141,7 @@ function AuditEventListComponent({
 					title="Failed to load audit events"
 					description={error instanceof Error ? error.message : "An unexpected error occurred."}
 					actions={
-						onRetry ? [{ text: "Retry", view: "action", onClick: onRetry }] : undefined
+						onRetry ? [{ text: "Retry", variant: "filled", onClick: onRetry }] : undefined
 					}
 				/>
 			</div>
@@ -161,7 +161,7 @@ function AuditEventListComponent({
 					}
 					actions={
 						hasActiveFilters && onClearFilters
-							? [{ text: "Clear filters", view: "normal", onClick: onClearFilters }]
+							? [{ text: "Clear filters", variant: "default", onClick: onClearFilters }]
 							: undefined
 					}
 				/>
@@ -214,7 +214,7 @@ function AuditEventListComponent({
 									<div className={classes.inlineCell}>
 										<ThemeIcon
 											size="sm"
-											view="light"
+											variant="light"
 											color={getAuditActionColor(event.action)}
 										>
 											<ActionIcon width={12} height={12} aria-hidden="true" />

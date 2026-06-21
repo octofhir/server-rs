@@ -85,7 +85,7 @@ export function FhirPackageListPanel({
                                     <div className={classes.actions}>
                                         <Button
                                             size="sm"
-                                            view="flat-secondary"
+                                            variant="subtle"
                                             onClick={(event) => {
                                                 event.stopPropagation();
                                                 onViewPackage(pkg);

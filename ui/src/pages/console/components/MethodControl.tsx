@@ -21,7 +21,7 @@ export function MethodControl() {
 			}}
 			options={METHOD_OPTIONS.map(m => ({ value: m, content: m }))}
 			size="md"
-			view="flat"
+			variant="subtle"
 			className={styles.select}
 		/>
 	);

@@ -101,7 +101,7 @@ export function OperationCatalogPanel({
                                                 {onViewOperation ? (
                                                     <Button
                                                         size="sm"
-                                                        view="flat-secondary"
+                                                        variant="subtle"
                                                         onClick={(event) => {
                                                             event.stopPropagation();
                                                             onViewOperation(operation);

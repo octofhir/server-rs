@@ -268,11 +268,11 @@ export function Sidebar({
                     size="xs"
                     footer={
                         <>
-                            <Button view="flat" onClick={() => setSignOutOpen(false)}>
+                            <Button variant="subtle" onClick={() => setSignOutOpen(false)}>
                                 Cancel
                             </Button>
                             <Button
-                                view="action-danger"
+                                variant="filled" color="red"
                                 onClick={() => {
                                     setSignOutOpen(false);
                                     account.onSignOut?.();

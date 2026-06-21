@@ -70,7 +70,7 @@ function LogFiltersComponent({
 						renderSwitcher={(switcherProps) => (
 							<Button
 								{...switcherProps}
-								view="flat-secondary"
+								variant="subtle"
 								aria-haspopup="menu"
 								aria-label="Filter by log level"
 								leftSection={<FunnelXmark width={14} height={14} aria-hidden="true" />}
@@ -118,7 +118,7 @@ function LogFiltersComponent({
 				<div className={classes.actions}>
 					<Tooltip content={isPaused ? "Resume stream" : "Pause stream"}>
 						<ActionIcon
-							view={isPaused ? "action" : "flat-secondary"}
+							variant={isPaused ? "filled" : "subtle"}
 							aria-label={isPaused ? "Resume stream" : "Pause stream"}
 							onClick={isPaused ? onResume : onPause}
 						>
@@ -131,7 +131,7 @@ function LogFiltersComponent({
 					</Tooltip>
 
 					<Tooltip content="Clear logs">
-						<ActionIcon view="flat-secondary" aria-label="Clear logs" onClick={onClear}>
+						<ActionIcon variant="subtle" aria-label="Clear logs" onClick={onClear}>
 							<TrashBin width={18} height={18} aria-hidden="true" />
 						</ActionIcon>
 					</Tooltip>
@@ -142,7 +142,7 @@ function LogFiltersComponent({
 						renderSwitcher={(switcherProps) => (
 							<Button
 								{...switcherProps}
-								view="flat-secondary"
+								variant="subtle"
 								aria-haspopup="menu"
 								aria-label="Export logs"
 								leftSection={<ArrowDownToLine width={14} height={14} aria-hidden="true" />}

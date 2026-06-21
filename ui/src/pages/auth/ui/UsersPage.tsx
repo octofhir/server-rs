@@ -145,7 +145,7 @@ export function UsersPage() {
 			title="Users"
 			description="Manage user accounts, roles, and credentials"
 			actions={
-				<Button view="action" onClick={open}>
+				<Button variant="filled" onClick={open}>
 					<Button.Icon>
 						<Plus width={16} />
 					</Button.Icon>
@@ -193,7 +193,7 @@ export function UsersPage() {
 						</Text>
 						<Button
 							size="xs"
-							view="outlined-success"
+							variant="outline" color="green"
 							onClick={handleBulkActivate}
 							loading={bulkUpdate.isPending}
 						>
@@ -204,7 +204,7 @@ export function UsersPage() {
 						</Button>
 						<Button
 							size="xs"
-							view="outlined-warning"
+							variant="outline" color="orange"
 							onClick={handleBulkDeactivate}
 							loading={bulkUpdate.isPending}
 						>
@@ -215,7 +215,7 @@ export function UsersPage() {
 						</Button>
 						<Button
 							size="xs"
-							view="flat-secondary"
+							variant="subtle"
 							onClick={() => setSelectedUsers(new Set())}
 						>
 							Clear selection
@@ -259,7 +259,7 @@ export function UsersPage() {
 												error instanceof Error ? error.message : "Something went wrong while loading users."
 											}
 											actions={[
-												<Button key="retry" view="action" onClick={() => refetch()}>
+												<Button key="retry" variant="filled" onClick={() => refetch()}>
 													Retry
 												</Button>,
 											]}
@@ -279,12 +279,12 @@ export function UsersPage() {
 											actions={
 												isFiltered
 													? [
-															<Button key="clear" view="outlined" onClick={clearFilters}>
+															<Button key="clear" variant="outline" onClick={clearFilters}>
 																Clear filters
 															</Button>,
 														]
 													: [
-															<Button key="create" view="action" onClick={open}>
+															<Button key="create" variant="filled" onClick={open}>
 																Create User
 															</Button>,
 														]
@@ -355,7 +355,7 @@ export function UsersPage() {
 											<DropdownMenu
 												size="sm"
 												icon={<EllipsisVertical width={16} />}
-												defaultSwitcherProps={{ view: "flat-secondary", size: "sm", "aria-label": "User actions" }}
+												defaultSwitcherProps={{ variant: "subtle", size: "sm", "aria-label": "User actions" }}
 												popupProps={{ placement: "bottom-end" }}
 												items={[
 													{
@@ -630,11 +630,11 @@ function UserModal({
 							</div>
 
 							<div className={classes.modalActions}>
-								<Button view="flat-secondary" onClick={onClose} type="button">
+								<Button variant="subtle" onClick={onClose} type="button">
 									Cancel
 								</Button>
 								<Button
-									view="action"
+									variant="filled"
 									type="submit"
 									loading={submitting || create.isPending || update.isPending}
 								>
@@ -776,10 +776,10 @@ function ResetPasswordModal({
 							</Field>
 
 							<div className={classes.modalActions}>
-								<Button view="flat-secondary" onClick={onClose} type="button">
+								<Button variant="subtle" onClick={onClose} type="button">
 									Cancel
 								</Button>
-								<Button view="action" type="submit" loading={submitting || resetPassword.isPending}>
+								<Button variant="filled" type="submit" loading={submitting || resetPassword.isPending}>
 									Reset Password
 								</Button>
 							</div>

@@ -28,7 +28,7 @@ type Story = StoryObj<typeof ThemeIcon>;
 export const Default: Story = {
   args: {
     children: <Heart width={18} />,
-    view: "light",
+    variant: "light",
     color: "primary",
   },
 };

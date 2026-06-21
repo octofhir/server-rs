@@ -116,7 +116,7 @@ export function AppsPage() {
 						title="Couldn't load applications"
 						description={error instanceof Error ? error.message : "The application list failed to load."}
 						actions={[
-							<Button key="retry" view="action" onClick={() => refetch()}>
+							<Button key="retry" variant="filled" onClick={() => refetch()}>
 								Retry
 							</Button>,
 						]}
@@ -135,12 +135,12 @@ export function AppsPage() {
 						actions={
 							hasSearch
 								? [
-										<Button key="clear" view="outlined" onClick={() => setSearch("")}>
+										<Button key="clear" variant="outline" onClick={() => setSearch("")}>
 											Clear filters
 										</Button>,
 									]
 								: [
-										<Button key="create" view="action" onClick={open}>
+										<Button key="create" variant="filled" onClick={open}>
 											Create App
 										</Button>,
 									]
@@ -223,7 +223,7 @@ export function AppsPage() {
 									<Menu placement="bottom-end">
 										<Menu.Target>
 											<ActionIcon
-												view="flat"
+												variant="subtle"
 												size="sm"
 												aria-label={`Actions for ${app.name}`}
 												aria-haspopup="menu"
@@ -281,11 +281,11 @@ export function AppsPage() {
 				size="sm"
 				footer={
 					<div className={classes.modalActions}>
-						<Button view="flat" onClick={() => setDeletingApp(null)} type="button">
+						<Button variant="subtle" onClick={() => setDeletingApp(null)} type="button">
 							Cancel
 						</Button>
 						<Button
-							view="flat-danger"
+							variant="subtle" color="red"
 							loading={deleteApp.isPending}
 							onClick={confirmDelete}
 							type="button"
@@ -490,7 +490,7 @@ function AppModal({
 							</Field>
 
 							<div className={classes.modalActions}>
-								<Button view="outlined" onClick={onClose} type="button">
+								<Button variant="outline" onClick={onClose} type="button">
 									Cancel
 								</Button>
 								<Button

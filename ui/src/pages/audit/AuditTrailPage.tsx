@@ -172,7 +172,7 @@ export function AuditTrailPage() {
 										<Text variant="subheader-1">Event Details</Text>
 										<Tooltip content="Close">
 											<ActionIcon
-												view="flat"
+												variant="subtle"
 												size="sm"
 												aria-label="Close event details"
 												onClick={handleCloseDetail}

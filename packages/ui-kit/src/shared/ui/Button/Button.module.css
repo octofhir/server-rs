@@ -123,6 +123,15 @@
 .button[data-base="outlined"][data-tone] { color: var(--_accent); border-color: var(--_accent); }
 .button[data-base="outlined"]:hover:not([data-disabled]):not(:disabled) { background: var(--_accent-bg); }
 
+/* light: soft tinted fill */
+.button[data-base="light"] {
+    background: var(--octo-surface-3, #e9ecef);
+    color: var(--octo-text-primary, #1a1b1e);
+    border-color: transparent;
+}
+.button[data-base="light"][data-tone] { background: var(--_accent-bg); color: var(--_accent); }
+.button[data-base="light"]:hover:not([data-disabled]):not(:disabled) { filter: brightness(0.97); }
+
 /* flat: no chrome until hover */
 .button[data-base="flat"] {
     background: transparent;

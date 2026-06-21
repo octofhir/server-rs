@@ -66,7 +66,7 @@ export function LoginPage() {
 						</div>
 
 						{errorMessage ? (
-							<Alert theme="danger" view="filled" message={errorMessage} layout="horizontal" />
+							<Alert theme="danger" variant="filled" message={errorMessage} layout="horizontal" />
 						) : null}
 
 						<div className={classes.fields}>
@@ -109,7 +109,7 @@ export function LoginPage() {
 
 						<Button
 							type="submit"
-							view="action"
+							variant="filled"
 							size="xl"
 							width="max"
 							loading={isLoggingIn}

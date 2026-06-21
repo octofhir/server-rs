@@ -78,7 +78,7 @@ function LogEntryComponent({ entry }: LogEntryProps) {
 			>
 				{hasDetails ? (
 					<ActionIcon
-						view="flat"
+						variant="subtle"
 						size="sm"
 						className={classes.expandIcon}
 						aria-label={expanded ? "Collapse log entry" : "Expand log entry"}
@@ -127,7 +127,7 @@ function LogEntryComponent({ entry }: LogEntryProps) {
 
 				<ClipboardButton
 					text={copyContent}
-					view="flat"
+					variant="subtle"
 					size="sm"
 					tooltipInitialText="Copy log entry"
 					tooltipSuccessText="Copied!"

@@ -112,7 +112,7 @@ export function ClientsPage() {
 			title="Clients"
 			description="Manage OAuth 2.0 applications and credentials"
 			actions={
-				<Button view="action" onClick={open}>
+				<Button variant="filled" onClick={open}>
 					<Button.Icon>
 						<Plus width={16} />
 					</Button.Icon>
@@ -145,7 +145,7 @@ export function ClientsPage() {
 						title="Failed to load clients"
 						description={error instanceof Error ? error.message : "Something went wrong while loading OAuth clients."}
 						actions={[
-							<Button key="retry" view="action" onClick={() => refetch()}>
+							<Button key="retry" variant="filled" onClick={() => refetch()}>
 								Retry
 							</Button>,
 						]}
@@ -161,12 +161,12 @@ export function ClientsPage() {
 						actions={
 							isFiltered
 								? [
-										<Button key="clear" view="outlined" onClick={() => setSearch("")}>
+										<Button key="clear" variant="outline" onClick={() => setSearch("")}>
 											Clear filters
 										</Button>,
 									]
 								: [
-										<Button key="create" view="action" onClick={open}>
+										<Button key="create" variant="filled" onClick={open}>
 											Register Client
 										</Button>,
 									]
@@ -199,7 +199,7 @@ export function ClientsPage() {
 													{({ copied, copy }) => (
 														<Tooltip content={copied ? "Copied!" : "Copy Client ID"} placement="right">
 															<ActionIcon
-																view="flat-secondary"
+																variant="subtle"
 																size="xs"
 																aria-label="Copy Client ID"
 																onClick={copy}
@@ -233,7 +233,7 @@ export function ClientsPage() {
 										size="sm"
 										icon={<EllipsisVertical width={16} />}
 										defaultSwitcherProps={{
-											view: "flat-secondary",
+											variant: "subtle",
 											size: "sm",
 											"aria-label": "Client actions",
 											"aria-haspopup": "menu",
@@ -544,10 +544,10 @@ function ClientModal({
 							</div>
 
 							<div className={classes.formActions}>
-								<Button view="flat-secondary" onClick={onClose} type="button">
+								<Button variant="subtle" onClick={onClose} type="button">
 									Cancel
 								</Button>
-								<Button view="action" type="submit" loading={submitting || create.isPending || update.isPending}>
+								<Button variant="filled" type="submit" loading={submitting || create.isPending || update.isPending}>
 									{isEditing ? "Update" : "Register"}
 								</Button>
 							</div>

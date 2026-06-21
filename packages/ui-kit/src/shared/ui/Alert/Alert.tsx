@@ -42,7 +42,7 @@ export const Alert = forwardRef<HTMLDivElement, AlertProps>(function Alert(
             {onClose && (
                 <ActionIcon
                     className={styles.close}
-                    view="flat"
+                    variant="subtle"
                     size="sm"
                     aria-label="Dismiss"
                     onClick={onClose}

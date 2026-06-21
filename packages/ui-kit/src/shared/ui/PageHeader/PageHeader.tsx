@@ -6,7 +6,7 @@ export interface PageHeaderAction {
     id: string;
     label: ReactNode;
     icon?: ReactNode;
-    view?: ButtonProps["view"];
+    variant?: ButtonProps["variant"];
     onClick?: () => void;
 }
 
@@ -31,7 +31,7 @@ export function PageHeader({ eyebrow, title, description, actions }: PageHeaderP
                     {actions.map((action) => (
                         <Button
                             key={action.id}
-                            view={action.view ?? "normal"}
+                            variant={action.variant ?? "default"}
                             size="md"
                             onClick={action.onClick}
                         >

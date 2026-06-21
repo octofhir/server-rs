@@ -169,7 +169,7 @@ export function ViewDefinitionPage() {
         <div className={classes.actions}>
             {listLoading && <Spin size="sm" />}
             <Button
-              view="action"
+              variant="filled"
               size="md"
               loading={runMutation.isPending}
               onClick={handleRun}
@@ -180,7 +180,7 @@ export function ViewDefinitionPage() {
               Run
             </Button>
             <Button
-              view="normal"
+              variant="default"
               size="md"
               loading={saveMutation.isPending}
               onClick={handleSave}
@@ -192,7 +192,7 @@ export function ViewDefinitionPage() {
             </Button>
             {selectedId && (
               <Button
-                view="flat-danger"
+                variant="subtle" color="red"
                 size="md"
                 loading={deleteMutation.isPending}
                 onClick={() => handleDelete(selectedId)}
@@ -203,7 +203,7 @@ export function ViewDefinitionPage() {
               </Button>
             )}
             <Button
-              view="flat"
+              variant="subtle"
               size="md"
               onClick={() => handleSelect(null)}
             >

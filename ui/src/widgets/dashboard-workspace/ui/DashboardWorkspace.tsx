@@ -126,7 +126,7 @@ export function DashboardWorkspace({ onNavigate }: DashboardWorkspaceProps) {
 						id: "rest",
 						label: "REST console",
 						icon: <Play size={16} />,
-						view: "action",
+						variant: "filled",
 						onClick: () => onNavigate("/console"),
 					},
 					{

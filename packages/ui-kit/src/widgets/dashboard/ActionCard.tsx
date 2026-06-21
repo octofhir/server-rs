@@ -34,7 +34,7 @@ export function ActionCard({
         >
             <Box className={classes.actionIcon}>
                 <ThemeIcon
-                    view="light"
+                    variant="light"
                     color={color}
                     size="xl"
                 >
@@ -52,7 +52,7 @@ export function ActionCard({
                 </Text>
             </Box>
             <Button
-                view="flat"
+                variant="subtle"
                 size="sm"
                 rightSection={buttonIcon}
                 className={classes.actionButton}

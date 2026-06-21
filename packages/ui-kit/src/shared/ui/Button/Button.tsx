@@ -3,29 +3,19 @@ import { Button as BaseButton } from "@base-ui/react/button";
 import { cleanLayoutProps, getSpacingStyles, type Size } from "../layout-utils";
 import styles from "./Button.module.css";
 
-export type ButtonView =
-    | "normal"
-    | "action"
-    | "outlined"
-    | "flat"
-    | "raised"
-    | "flat-secondary"
-    | `${"action" | "outlined" | "flat" | "raised" | "normal"}-${"info" | "success" | "warning" | "danger" | "utility"}`;
-
 export type ButtonSize = Size;
 export type ButtonPin = "round-round" | "circle" | "brick" | string;
 export type ButtonWidth = "auto" | "max" | "fit";
 
-type ButtonVariant = "default" | "filled" | "light" | "outline" | "subtle" | "transparent";
-type ButtonColor =
-    | "primary" | "blue" | "red" | "fire" | "green" | "orange" | "yellow" | "warm" | "gray" | "deep" | string;
+export type ButtonVariant = "default" | "filled" | "light" | "outline" | "subtle" | "transparent";
+export type ButtonColor =
+    | "primary" | "blue" | "red" | "fire" | "green" | "orange" | "yellow" | "warm" | "gray" | "deep" | (string & {});
 
 export interface ButtonProps
     extends Omit<
         React.ButtonHTMLAttributes<HTMLButtonElement> & React.AnchorHTMLAttributes<HTMLAnchorElement>,
         "color" | "style"
     > {
-    view?: ButtonView;
     size?: ButtonSize;
     pin?: ButtonPin;
     selected?: boolean;
@@ -39,9 +29,9 @@ export interface ButtonProps
     children?: React.ReactNode;
     qa?: string;
 
-    /** Shorthand visual style; combined with `color` to resolve a `view`. */
+    /** Visual style. */
     variant?: ButtonVariant;
-    /** Shorthand semantic color; combined with `variant` to resolve a `view`. */
+    /** Semantic color. */
     color?: ButtonColor;
     /** Icon rendered before the label. */
     leftSection?: React.ReactNode;
@@ -57,29 +47,20 @@ export interface ButtonProps
     mt?: number | string; mb?: number | string; ml?: number | string; mr?: number | string;
 }
 
-const TONES = new Set(["info", "success", "warning", "danger", "utility"]);
+const VARIANT_BASE: Record<ButtonVariant, string> = {
+    filled: "action",
+    light: "light",
+    outline: "outlined",
+    subtle: "flat",
+    transparent: "flat",
+    default: "normal",
+};
 
 const COLOR_TONE: Record<string, "info" | "success" | "warning" | "danger" | "utility"> = {
     primary: "info", blue: "info", deep: "info", indigo: "info",
     green: "success", red: "danger", fire: "danger",
     orange: "warning", yellow: "warning", warm: "warning", gray: "utility",
 };
-
-function resolveView(variant?: ButtonVariant, color?: ButtonColor): ButtonView {
-    const tone = color ? COLOR_TONE[color] : undefined;
-    let base: string;
-    if (variant === "subtle" || variant === "transparent") base = "flat";
-    else if (variant === "light" || variant === "outline") base = "outlined";
-    else if (variant === "filled") base = "action";
-    else base = color ? "outlined" : "normal";
-    return (tone ? `${base}-${tone}` : base) as ButtonView;
-}
-
-function parseView(view: string): { base: string; tone?: string } {
-    const [base, maybeTone] = view.split("-");
-    if (maybeTone && TONES.has(maybeTone)) return { base, tone: maybeTone };
-    return { base };
-}
 
 interface ButtonIconProps {
     children?: React.ReactNode;
@@ -93,8 +74,7 @@ function ButtonIcon({ children, className }: ButtonIconProps) {
 
 const ButtonRoot = forwardRef<HTMLButtonElement, ButtonProps>(function Button(
     {
-        view,
-        variant,
+        variant = "default",
         color,
         size = "md",
         pin = "round-round",
@@ -116,8 +96,8 @@ const ButtonRoot = forwardRef<HTMLButtonElement, ButtonProps>(function Button(
     },
     ref,
 ) {
-    const resolvedView = view ?? resolveView(variant, color);
-    const { base, tone } = parseView(resolvedView);
+    const base = VARIANT_BASE[variant] ?? "normal";
+    const tone = color ? COLOR_TONE[color] : undefined;
     const mergedStyle = { ...getSpacingStyles(rest), ...style };
     const cleaned = cleanLayoutProps(rest);
 

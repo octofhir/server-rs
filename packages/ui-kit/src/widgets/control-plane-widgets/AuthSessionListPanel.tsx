@@ -72,7 +72,7 @@ export function AuthSessionListPanel({
                                     {onRevokeSession && !session.current ? (
                                         <Button
                                             size="sm"
-                                            view="flat-danger"
+                                            variant="subtle" color="red"
                                             loading={revokingSessionId === session.id}
                                             onClick={(event) => {
                                                 event.stopPropagation();

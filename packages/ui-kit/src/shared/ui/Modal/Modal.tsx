@@ -69,7 +69,7 @@ export const Modal = forwardRef<HTMLDivElement, ModalProps>(function Modal(
                             {showClose && (
                                 <ActionIcon
                                     className={styles.close}
-                                    view="flat"
+                                    variant="subtle"
                                     size="md"
                                     aria-label="Close dialog"
                                     onClick={() => onClose?.()}

@@ -100,12 +100,12 @@ function LayoutErrorFallback({ error, onRetry }: LayoutErrorFallbackProps) {
 				/>
 
 				<div className={classes.actions}>
-					<Button view="action" leftSection={<ArrowRotateRight size={16} />} onClick={onRetry}>
+					<Button variant="filled" leftSection={<ArrowRotateRight size={16} />} onClick={onRetry}>
 						Retry
 					</Button>
 					{error ? (
 						<Button
-							view="flat-secondary"
+							variant="subtle"
 							leftSection={showDetails ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
 							onClick={() => setShowDetails((value) => !value)}
 						>
@@ -139,15 +139,15 @@ function GlobalErrorFallback({ error, errorInfo, onRetry, onGoHome }: GlobalErro
 				/>
 
 				<div className={classes.actions}>
-					<Button view="action" leftSection={<ArrowRotateRight size={16} />} onClick={onRetry}>
+					<Button variant="filled" leftSection={<ArrowRotateRight size={16} />} onClick={onRetry}>
 						Retry
 					</Button>
-					<Button view="outlined" leftSection={<House size={16} />} onClick={onGoHome}>
+					<Button variant="outline" leftSection={<House size={16} />} onClick={onGoHome}>
 						Home
 					</Button>
 					{error ? (
 						<Button
-							view="flat-secondary"
+							variant="subtle"
 							leftSection={showDetails ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
 							onClick={() => setShowDetails((value) => !value)}
 						>
