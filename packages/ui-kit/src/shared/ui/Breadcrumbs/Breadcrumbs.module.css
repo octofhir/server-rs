@@ -1,0 +1,35 @@
+.nav {
+    display: flex;
+    min-width: 0;
+}
+
+.list {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    font-size: var(--octo-typography-size-sm, 0.875rem);
+    color: var(--octo-text-muted, #868e96);
+}
+
+.item {
+    display: inline-flex;
+    align-items: center;
+    min-width: 0;
+}
+
+.separator {
+    display: inline-flex;
+    align-items: center;
+    margin: 0 var(--octo-spacing-xs, 0.5rem);
+    color: var(--octo-text-muted, #868e96);
+}
+
+/* Last crumb reads as the current page. */
+.item:last-child {
+    color: var(--octo-text-primary, #1a1b1e);
+    font-weight: var(--octo-typography-weight-medium, 500);
+}

@@ -1,0 +1,48 @@
+.chip {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--octo-spacing-xs, 0.375rem);
+    box-sizing: border-box;
+    border: 1px solid var(--octo-border-strong, #ced4da);
+    border-radius: var(--octo-radius-pill, 9999px);
+    background: var(--octo-surface-1, #fff);
+    color: var(--octo-text-secondary, #495057);
+    font-family: inherit;
+    line-height: 1;
+    white-space: nowrap;
+    cursor: pointer;
+    user-select: none;
+    transition:
+        background-color var(--octo-motion-fast, 100ms) var(--octo-motion-ease, ease),
+        border-color var(--octo-motion-fast, 100ms) var(--octo-motion-ease, ease),
+        color var(--octo-motion-fast, 100ms) var(--octo-motion-ease, ease);
+}
+
+.chip[data-size="xs"] { height: 22px; padding: 0 0.5rem; font-size: var(--octo-typography-size-xs, 0.75rem); }
+.chip[data-size="s"]  { height: 26px; padding: 0 0.625rem; font-size: var(--octo-typography-size-sm, 0.875rem); }
+.chip[data-size="m"]  { height: 30px; padding: 0 0.75rem; font-size: var(--octo-typography-size-sm, 0.875rem); }
+
+.chip:hover:not(:disabled) {
+    border-color: var(--octo-text-muted, #868e96);
+    color: var(--octo-text-primary, #1a1b1e);
+}
+
+.chip[data-checked] {
+    border-color: var(--octo-accent-primary, #4263eb);
+    background: var(--octo-accent-primary-bg, #edf2ff);
+    color: var(--octo-accent-primary, #4263eb);
+}
+.chip[data-checked]:hover:not(:disabled) {
+    border-color: var(--octo-accent-primary, #4263eb);
+    color: var(--octo-accent-primary, #4263eb);
+}
+
+.chip:focus-visible {
+    outline: 2px solid var(--octo-focus-ring, #91a7ff);
+    outline-offset: 1px;
+}
+
+.chip:disabled {
+    cursor: not-allowed;
+    opacity: 0.55;
+}

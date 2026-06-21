@@ -1,1 +1,5 @@
-export { SegmentedRadioGroup, type SegmentedRadioGroupProps } from "@gravity-ui/uikit";
+export { SegmentedRadioGroup } from "./SegmentedRadioGroup";
+export type {
+	SegmentedRadioGroupOption,
+	SegmentedRadioGroupProps,
+} from "./SegmentedRadioGroup";

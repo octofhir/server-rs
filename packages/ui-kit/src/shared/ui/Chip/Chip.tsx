@@ -1,32 +1,38 @@
-import { forwardRef, useCallback, type MouseEvent } from "react";
-import { Label, type LabelProps } from "@gravity-ui/uikit";
+import { forwardRef, type ReactNode } from "react";
+import styles from "./Chip.module.css";
 
-export interface ChipProps extends Omit<LabelProps, "interactive" | "onClick"> {
+export interface ChipProps {
     /** Selected state. */
     checked?: boolean;
     /** Toggle callback. Receives the new checked value. */
     onChange?: (next: boolean) => void;
+    size?: "xs" | "s" | "m";
+    disabled?: boolean;
+    /** Content rendered before the label. */
+    leftSection?: ReactNode;
+    children?: ReactNode;
+    className?: string;
+    "aria-label"?: string;
 }
 
-export const Chip = forwardRef<HTMLDivElement, ChipProps>(function Chip(
-    { checked = false, onChange, theme, ...rest },
+export const Chip = forwardRef<HTMLButtonElement, ChipProps>(function Chip(
+    { checked = false, onChange, size = "s", disabled, leftSection, children, className, ...rest },
     ref,
 ) {
-    const resolvedTheme: LabelProps["theme"] = checked ? theme ?? "info" : "unknown";
-    const handleClick = useCallback(
-        (_e: MouseEvent<HTMLDivElement>) => {
-            onChange?.(!checked);
-        },
-        [checked, onChange],
-    );
-
     return (
-        <Label
+        <button
             ref={ref}
-            theme={resolvedTheme}
-            interactive={Boolean(onChange)}
-            onClick={onChange ? handleClick : undefined}
+            type="button"
+            disabled={disabled}
+            data-size={size}
+            data-checked={checked || undefined}
+            aria-pressed={checked}
+            className={[styles.chip, className].filter(Boolean).join(" ")}
+            onClick={() => onChange?.(!checked)}
             {...rest}
-        />
+        >
+            {leftSection}
+            {children}
+        </button>
     );
 });

@@ -1,1 +1,2 @@
-export { ClipboardButton, type ClipboardButtonProps } from "@gravity-ui/uikit";
+export { ClipboardButton } from "./ClipboardButton";
+export type { ClipboardButtonProps } from "./ClipboardButton";

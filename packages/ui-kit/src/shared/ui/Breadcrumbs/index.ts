@@ -1,1 +1,2 @@
-export { Breadcrumbs, type BreadcrumbsProps } from "@gravity-ui/uikit";
+export { Breadcrumbs } from "./Breadcrumbs";
+export type { BreadcrumbsProps } from "./Breadcrumbs";

@@ -1,0 +1,22 @@
+.hotkey {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+}
+
+.key {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 1.5em;
+    height: 1.5em;
+    padding: 0 0.4em;
+    border: 1px solid var(--octo-border-subtle, #dee2e6);
+    border-radius: var(--octo-radius-sm, 6px);
+    background: var(--octo-surface-2, #f1f3f5);
+    color: var(--octo-text-secondary, #495057);
+    font-family: var(--octo-typography-family, inherit);
+    font-size: 0.75em;
+    font-weight: 600;
+    line-height: 1;
+}
