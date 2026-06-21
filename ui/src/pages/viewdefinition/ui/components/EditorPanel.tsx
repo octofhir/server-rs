@@ -164,7 +164,7 @@ export function EditorPanel({ value: viewDef, resourceTypes, onChange }: EditorP
           label="Resource"
           placeholder="Select resource type"
           value={viewDef.resource}
-          onUpdate={(value) => onChange({ ...viewDef, resource: value[0] || "Patient" })}
+          onUpdate={(value) => onChange({ ...viewDef, resource: value || "Patient" })}
           data={resourceTypes}
           searchable
           className={classes.textField}
@@ -173,7 +173,7 @@ export function EditorPanel({ value: viewDef, resourceTypes, onChange }: EditorP
           label="Status"
           value={viewDef.status}
           onUpdate={(value) => {
-            const nextStatus = value[0];
+            const nextStatus = value ?? undefined;
             onChange({ ...viewDef, status: isViewDefinitionStatus(nextStatus) ? nextStatus : "draft" });
           }}
           data={STATUS_OPTIONS}

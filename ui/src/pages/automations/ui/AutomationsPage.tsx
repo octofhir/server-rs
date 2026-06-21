@@ -282,7 +282,9 @@ export function AutomationsPage() {
             title="Automation API is unavailable"
           >
             <Text variant="body-2">
-              {error instanceof Error ? error.message : "Failed to load automations"}
+              {(error as unknown) instanceof Error
+                ? (error as Error).message
+                : "Failed to load automations"}
             </Text>
           </Alert>
         ) : isLoading ? (

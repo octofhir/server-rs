@@ -181,7 +181,6 @@ export function RolesPage() {
 											variant: "subtle",
 											size: "sm",
 											"aria-label": "Role actions",
-											"aria-haspopup": "menu",
 										}}
 										popupProps={{ placement: "bottom-end" }}
 										items={[
@@ -347,7 +346,6 @@ function RoleModal({
 											{perms.map((perm) => (
 												<div key={perm.code} className={classes.permissionItem}>
 													<Checkbox
-														size="sm"
 														content={perm.display}
 														checked={values.permissions.includes(perm.code)}
 														onChange={(e) =>

@@ -89,7 +89,7 @@ function ExecutionRow({ execution }: { execution: AutomationExecution }) {
                     </Code>
                   </div>
                 )}
-                {execution.input && (
+                {Boolean(execution.input) && (
                   <div>
                     <Text size="xs" fw={500}>Input:</Text>
                     <Code block mt={4}>
@@ -128,7 +128,7 @@ function ExecutionRow({ execution }: { execution: AutomationExecution }) {
                                 {log.message}
                               </Text>
                               {log.data !== undefined && log.data !== null && (
-                                <Code block size="xs">
+                                <Code block>
                                   {typeof log.data === "string" ? log.data : JSON.stringify(log.data, null, 2)}
                                 </Code>
                               )}

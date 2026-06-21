@@ -167,7 +167,6 @@ export function DiagnosticsPanel({
         <Tabs
           value={activeTab}
           onChange={(value) => setActiveTab(value as DiagnosticTab)}
-          variant="pills"
           style={{
             height: typeof height === "number" ? `${height}px` : height,
             display: "flex",

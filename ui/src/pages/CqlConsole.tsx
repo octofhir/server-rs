@@ -182,9 +182,7 @@ export function CqlConsole() {
                   placeholder='{"resourceType": "Patient", "id": "123"}'
                   value={contextValue}
                   onChange={setContextValue}
-                  minRows={3}
-                  maxRows={6}
-                  autosize
+                  rows={3}
                 />
 
                 <JsonInput
@@ -192,9 +190,7 @@ export function CqlConsole() {
                   placeholder='{"paramName": 5, "anotherParam": "value"}'
                   value={parameters}
                   onChange={setParameters}
-                  minRows={3}
-                  maxRows={6}
-                  autosize
+                  rows={3}
                 />
 
                 <Button

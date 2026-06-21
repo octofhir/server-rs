@@ -24,7 +24,7 @@ export function RequestOptionTabs({ resourceType }: RequestOptionTabsProps) {
       <Tabs defaultValue="headers">
         <div className={styles.tabList}>
           <Tabs.List>
-            <Tabs.Tab id="headers">
+            <Tabs.Tab value="headers">
               <span className={styles.tabLabel}>
                 <Text variant="body-2">Headers</Text>
                 {customHeaderCount > 0 && (
@@ -34,7 +34,7 @@ export function RequestOptionTabs({ resourceType }: RequestOptionTabsProps) {
                 )}
               </span>
             </Tabs.Tab>
-            <Tabs.Tab id="body">
+            <Tabs.Tab value="body">
               <span className={styles.tabLabel}>
                 <Text variant="body-2">Body</Text>
                 {bodySize > 0 && (

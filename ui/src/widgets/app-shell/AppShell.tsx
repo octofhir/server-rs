@@ -41,7 +41,7 @@ export function AppShell() {
 	const { logout, user } = useAuth();
 	const { colorScheme, toggleColorScheme } = useColorScheme();
 	const { data: health } = useHealth();
-	const { data: settings } = useSettings();
+	useSettings();
 
 	const path = location.pathname;
 	const groups = useMemo<SidebarNavGroup[]>(
@@ -96,7 +96,7 @@ export function AppShell() {
 
 	const sidebar = (
 		<Sidebar
-			brand={{ title: settings?.serverName ?? "OctoFHIR", iconSrc: logoUrl, onClick: () => navigate("/") }}
+			brand={{ title: "OctoFHIR", iconSrc: logoUrl, onClick: () => navigate("/") }}
 			groups={groups}
 			status={{ label: health?.status?.toUpperCase() ?? "UNKNOWN", theme: statusThemeByHealth[health?.status ?? "down"] }}
 			account={user ? { name: user.name || user.preferred_username || user.sub, secondary: "Signed in", onSignOut: logout } : null}

@@ -92,7 +92,7 @@ export function TableDetailView({ schema, table, onBack }: TableDetailViewProps)
 					<div className={classes.tableDetailContent}>
 						{/* Columns */}
 						<section>
-							<Text size="xs" fw={600} c="dimmed" mb={4} tt="uppercase" lts={0.5}>
+							<Text size="xs" fw={600} c="dimmed" mb={4} style={{ textTransform: "uppercase", letterSpacing: 0.5 }}>
 								Columns ({data.columns.length})
 							</Text>
 							<DataPreview
@@ -124,7 +124,7 @@ export function TableDetailView({ schema, table, onBack }: TableDetailViewProps)
 
 						{/* Indexes */}
 						<section>
-							<Text size="xs" fw={600} c="dimmed" mb={4} tt="uppercase" lts={0.5}>
+							<Text size="xs" fw={600} c="dimmed" mb={4} style={{ textTransform: "uppercase", letterSpacing: 0.5 }}>
 								Indexes ({data.indexes.length})
 							</Text>
 							<RecordList

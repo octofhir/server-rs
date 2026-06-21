@@ -14,14 +14,12 @@ export function MethodControl() {
 
 	return (
 		<Select
-			value={[method]}
+			value={method}
 			onUpdate={(v) => {
-				const nextMethod = v[0];
-				setMethodEvent(nextMethod && isHttpMethod(nextMethod) ? nextMethod : "GET");
+				setMethodEvent(v && isHttpMethod(v) ? v : "GET");
 			}}
 			options={METHOD_OPTIONS.map(m => ({ value: m, content: m }))}
 			size="md"
-			variant="subtle"
 			className={styles.select}
 		/>
 	);

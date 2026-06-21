@@ -452,7 +452,7 @@ function SpecialParamValueEditor({
 				<SegmentedControl
 					value={value}
 					onChange={onChange}
-					data={[
+					options={[
 						{ value: "true", label: "true" },
 						{ value: "false", label: "false" },
 						{ value: "count", label: "count" },
@@ -468,7 +468,7 @@ function SpecialParamValueEditor({
 				<SegmentedControl
 					value={value}
 					onChange={onChange}
-					data={[
+					options={[
 						{ value: "none", label: "none" },
 						{ value: "estimate", label: "estimate" },
 						{ value: "accurate", label: "accurate" },

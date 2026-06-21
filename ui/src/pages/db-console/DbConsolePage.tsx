@@ -95,12 +95,12 @@ export function DbConsolePage() {
 	const [resultLimit, setResultLimit] = useLocalStorage({
 		key: "db-console-result-limit",
 		defaultValue: DEFAULT_RESULT_LIMIT,
-		validate: (value): value is number => typeof value === "number" && Number.isFinite(value),
+		validate: (value): value is string => typeof value === "string",
 	});
 	const [sqlTimeout, setSqlTimeout] = useLocalStorage({
 		key: "db-console-sql-timeout",
 		defaultValue: DEFAULT_SQL_TIMEOUT,
-		validate: (value): value is number => typeof value === "number" && Number.isFinite(value),
+		validate: (value): value is string => typeof value === "string",
 	});
 	const [searchFocusKey, setSearchFocusKey] = useState(0);
 	const [historySeeded, setHistorySeeded] = useState(false);

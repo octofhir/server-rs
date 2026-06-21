@@ -261,7 +261,6 @@ export function TriggerConfig({ automationId, triggers }: TriggerConfigProps) {
                       })
                     }
                     description="Only trigger when this FHIRPath expression evaluates to true"
-                    autosize
                     minRows={1}
                     maxRows={3}
                   />

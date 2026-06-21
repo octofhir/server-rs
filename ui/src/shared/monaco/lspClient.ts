@@ -3,6 +3,7 @@ import * as monaco from "monaco-editor";
 import {
 	conf as sqlConfiguration,
 	language as sqlLanguage,
+	// @ts-expect-error - no types for this monaco subpath
 } from "monaco-editor/esm/vs/basic-languages/sql/sql";
 import type { FormatterConfig } from "../settings/formatterTypes";
 
@@ -325,8 +326,11 @@ class PgLspConnection {
 	}> = [];
 	private languageFeatureDisposables: monaco.IDisposable[] = [];
 	private shouldReconnect = true;
+	private readonly urlFactory: () => string;
 
-	constructor(private readonly urlFactory: () => string) {}
+	constructor(urlFactory: () => string) {
+		this.urlFactory = urlFactory;
+	}
 
 	public async start(): Promise<void> {
 		this.languageFeatureDisposables = this.registerLanguageFeatures();
@@ -702,7 +706,7 @@ class PgLspConnection {
 			}, 15000);
 
 			this.pendingRequests.set(id, {
-				resolve,
+				resolve: resolve as (value: unknown) => void,
 				reject,
 				timeoutId,
 				method,
@@ -1076,9 +1080,7 @@ function createMarkdownString(value: string): monaco.IMarkdownString {
 
 declare global {
 	interface Window {
-		MonacoEnvironment?: {
-			getWorker?: (workerId: string, label: string) => Worker;
-		};
+		MonacoEnvironment?: monaco.Environment;
 		__OCTOFHIR_LSP_DEBUG__?: boolean;
 	}
 }

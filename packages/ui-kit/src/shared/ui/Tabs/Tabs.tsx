@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import { Tabs as BaseTabs } from "@base-ui/react/tabs";
 import { cleanLayoutProps, getSpacingStyles, type Size, type SpacingProps } from "../layout-utils";
 import styles from "./Tabs.module.css";
@@ -11,9 +11,10 @@ export interface TabsProps extends SpacingProps {
     size?: Size;
     children?: ReactNode;
     className?: string;
+    style?: CSSProperties;
 }
 
-function TabsRoot({ value, defaultValue, onChange, onUpdate, size, children, className, ...rest }: TabsProps) {
+function TabsRoot({ value, defaultValue, onChange, onUpdate, size, children, className, style, ...rest }: TabsProps) {
     return (
         <BaseTabs.Root
             value={value ?? undefined}
@@ -25,7 +26,7 @@ function TabsRoot({ value, defaultValue, onChange, onUpdate, size, children, cla
             }}
             data-size={size}
             className={className}
-            style={{ ...getSpacingStyles(rest) }}
+            style={{ ...getSpacingStyles(rest), ...style }}
             {...cleanLayoutProps(rest)}
         >
             {children}

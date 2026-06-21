@@ -386,8 +386,11 @@ class FhirPathLspConnection {
 	}> = [];
 	private languageFeatureDisposables: monaco.IDisposable[] = [];
 	private shouldReconnect = true;
+	private readonly urlFactory: () => string;
 
-	constructor(private readonly urlFactory: () => string) {}
+	constructor(urlFactory: () => string) {
+		this.urlFactory = urlFactory;
+	}
 
 	public isConnected(): boolean {
 		return this.initialized && this.socket?.readyState === WebSocket.OPEN;

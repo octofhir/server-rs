@@ -115,7 +115,7 @@ export function ResponseViewer({ response, isLoading }: ResponseViewerProps) {
 									id: entry.resource.id ? (
 										<Link
 											onClick={() =>
-												handleOpenResource(entry.resource.resourceType, entry.resource.id)
+												handleOpenResource(entry.resource.resourceType, entry.resource.id as string)
 											}
 											className={styles.resourceLink}
 										>
@@ -130,7 +130,7 @@ export function ResponseViewer({ response, isLoading }: ResponseViewerProps) {
 										</Text>
 									),
 								}))}
-								getRowKey={(row, index) =>
+								getRowKey={(_row, index) =>
 									resourceEntries[index]?.resource.id ??
 									resourceEntries[index]?.fullUrl ??
 									`entry-${index}`

@@ -284,7 +284,7 @@ export function SchemaRail({
 									setViewMode(value);
 								}
 							}}
-							data={[
+							options={[
 								{ label: `All (${filtered.all.length})`, value: "all" },
 								{ label: `FHIR (${filtered.fhir.length})`, value: "fhir" },
 								{ label: `System (${filtered.system.length})`, value: "system" },
@@ -299,7 +299,6 @@ export function SchemaRail({
 								{ value: "rows", label: "By rows" },
 								{ value: "name", label: "By name" },
 							]}
-							allowDeselect={false}
 						/>
 					</div>
 				</div>
