@@ -20,7 +20,16 @@ export interface FhirPathEvaluationResponse {
 	results: FhirPathResult[];
 }
 
-function findPart(param: { part?: Array<{ name: string }> }, name: string) {
+interface FhirParameterPart {
+	name: string;
+	valueString?: string;
+	valueInteger?: number;
+	valueDecimal?: number;
+	valueBoolean?: boolean;
+	part?: FhirParameterPart[];
+}
+
+function findPart(param: { part?: FhirParameterPart[] } | undefined, name: string) {
 	return param?.part?.find((p) => p.name === name);
 }
 
@@ -79,19 +88,7 @@ function extractValue(param: {
 
 export function parseParametersResponse(
 	params: {
-		parameter?: Array<{
-			name: string;
-			part?: Array<{
-				name: string;
-				valueString?: string;
-				valueInteger?: number;
-				valueDecimal?: number;
-				part?: Array<{
-					name: string;
-					valueDecimal?: number;
-				}>;
-			}>;
-		}>;
+		parameter?: FhirParameterPart[];
 	},
 ): FhirPathEvaluationResponse {
 	const metadataParam = params.parameter?.find((p) => p.name === "metadata");

@@ -1,4 +1,4 @@
-import { memo, useMemo } from "react";
+import { type ComponentProps, memo, useMemo } from "react";
 import {
 	Text,
 	Progress,
@@ -6,8 +6,7 @@ import {
 	ThemeIcon,
 	Center,
 	RingProgress,
-	Skeleton,
-	EmptyState,
+	Loader,
 } from "@octofhir/ui-kit";
 import { User as Person, Database, Check, X as Xmark, TriangleAlert as TriangleExclamation, TrendingUp as ChartLineArrowUp, Clock } from "lucide-react";
 import type { AuditAnalytics as AuditAnalyticsType, AuditAction, AuditOutcome } from "@/shared/api/types";
@@ -65,7 +64,7 @@ function StatCard({
 						</div>
 					)}
 				</div>
-				<ThemeIcon size="lg" view="light" color={color} radius="md">
+				<ThemeIcon size="lg" view="light" color={color as ComponentProps<typeof ThemeIcon>["color"]} radius={8}>
 					<Icon width={20} height={20} aria-hidden="true" />
 				</ThemeIcon>
 			</div>
@@ -131,7 +130,7 @@ function OutcomeRing({ outcomeBreakdown }: { outcomeBreakdown: Partial<Record<Au
 
 						return (
 							<div key={outcome} className={classes.legendRow}>
-								<ThemeIcon size="xs" color={getAuditOutcomeColor(outcome)} view="filled">
+								<ThemeIcon size="xs" color={getAuditOutcomeColor(outcome) as ComponentProps<typeof ThemeIcon>["color"]} view="filled">
 									<Icon width={10} height={10} aria-hidden="true" />
 								</ThemeIcon>
 								<Text variant="body-2" className={classes.legendLabel}>
@@ -223,7 +222,6 @@ function TopUsers({ topUsers }: { topUsers: AuditAnalyticsType["topUsers"] }) {
 							value={(user.count / max) * 100}
 							size="sm"
 							color="blue"
-							radius="sm"
 						/>
 					</div>
 				))}
@@ -263,7 +261,6 @@ function TopResources({ topResources }: { topResources: AuditAnalyticsType["topR
 							value={(resource.count / max) * 100}
 							size="sm"
 							color="violet"
-							radius="sm"
 						/>
 					</div>
 				))}
@@ -359,7 +356,7 @@ function AuditAnalyticsComponent({ analytics, isLoading }: AuditAnalyticsProps) 
 		return (
 			<Center py="xl">
 				<div className={classes.emptyState}>
-					<ThemeIcon size={48} variant="light" color="gray" radius="xl">
+					<ThemeIcon size={48} variant="light" color="gray" radius={16}>
 						<ChartLineArrowUp size={24} />
 					</ThemeIcon>
 					<Text c="dimmed">No analytics data available</Text>

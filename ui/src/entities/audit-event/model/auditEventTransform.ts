@@ -30,7 +30,7 @@ const AUDIT_ACTIONS = [
 ] satisfies AuditAction[];
 
 function isAuditAction(value: string | undefined): value is AuditAction {
-	return value !== undefined && AUDIT_ACTIONS.includes(value);
+	return value !== undefined && (AUDIT_ACTIONS as readonly string[]).includes(value);
 }
 
 function isAuditActionCode(value: unknown): value is AuditActionCode {
@@ -118,23 +118,36 @@ export function buildAuditFhirSearchParams(
 }
 
 export function transformFhirAuditEvent(resource: FhirResource): AuditEvent {
-	const subtypeCode = resource.subtype?.[0]?.code;
-	const action = isAuditAction(subtypeCode) ? subtypeCode : fallbackAuditAction(resource.action);
-	const actionCode = isAuditActionCode(resource.action) ? resource.action : undefined;
-	const outcomeCode = isAuditOutcomeCode(resource.outcome) ? resource.outcome : undefined;
-	const agent = resource.agent?.[0];
+	const r = resource as FhirResource & {
+		subtype?: { code?: string }[];
+		action?: string;
+		outcome?: string;
+		recorded?: string;
+		outcomeDesc?: string;
+		agent?: Array<{
+			type?: { coding?: { code?: string }[] };
+			who?: { identifier?: { value?: string }; reference?: string; display?: string };
+		}>;
+		source?: { observer?: { display?: string }; site?: string };
+		entity?: Array<{ what?: { reference?: string; type?: string }; description?: string }>;
+	};
+	const subtypeCode = r.subtype?.[0]?.code;
+	const action = isAuditAction(subtypeCode) ? subtypeCode : fallbackAuditAction(r.action);
+	const actionCode = isAuditActionCode(r.action) ? r.action : undefined;
+	const outcomeCode = isAuditOutcomeCode(r.outcome) ? r.outcome : undefined;
+	const agent = r.agent?.[0];
 	const agentTypeCode = agent?.type?.coding?.[0]?.code;
-	const entity = resource.entity?.[0];
+	const entity = r.entity?.[0];
 
 	return {
 		resourceType: "AuditEvent",
 		id: resource.id || "",
-		timestamp: resource.recorded || new Date().toISOString(),
+		timestamp: r.recorded || new Date().toISOString(),
 		action,
 		actionCode,
 		outcome: getAuditOutcome(outcomeCode),
 		outcomeCode,
-		outcomeDescription: resource.outcomeDesc,
+		outcomeDescription: r.outcomeDesc,
 		actor: {
 			type: getAuditActorType(agentTypeCode),
 			id: agent?.who?.identifier?.value || agent?.who?.reference,
@@ -142,8 +155,8 @@ export function transformFhirAuditEvent(resource: FhirResource): AuditEvent {
 			reference: agent?.who?.reference,
 		},
 		source: {
-			observer: resource.source?.observer?.display,
-			site: resource.source?.site,
+			observer: r.source?.observer?.display,
+			site: r.source?.site,
 			ipAddress: getAuditExtensionValue(resource, "audit-source-ip"),
 			userAgent: getAuditExtensionValue(resource, "audit-user-agent"),
 		},
@@ -164,7 +177,10 @@ export function transformFhirAuditEvent(resource: FhirResource): AuditEvent {
 }
 
 export function transformAuditBundleToList(bundle: FhirBundle): AuditEventListResponse {
-	const events = (bundle.entry || []).map((entry) => transformFhirAuditEvent(entry.resource));
+	const events = (bundle.entry || [])
+		.map((entry) => entry.resource)
+		.filter((r): r is FhirResource => r != null)
+		.map(transformFhirAuditEvent);
 	const nextLink = bundle.link?.find((link) => link.relation === "next");
 
 	return {
@@ -189,5 +205,7 @@ function getAuditActorType(agentTypeCode?: string): AuditEvent["actor"]["type"] 
 
 function getAuditExtensionValue(resource: FhirResource, code: string): string | undefined {
 	const url = `http://octofhir.io/StructureDefinition/${code}`;
-	return resource.extension?.find((extension: { url: string }) => extension.url === url)?.valueString;
+	return (resource as { extension?: { url: string; valueString?: string }[] }).extension?.find(
+		(extension) => extension.url === url,
+	)?.valueString;
 }

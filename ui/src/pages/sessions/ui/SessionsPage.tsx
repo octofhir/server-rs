@@ -88,7 +88,7 @@ export function SessionsPage() {
   const confirmRevokeAll = async () => {
     try {
       await revokeAllMutation.mutateAsync({
-        userId,
+        userId: userId ?? '',
         currentSessionId: currentSession?.id,
       });
       closeRevokeAllModal();
@@ -123,7 +123,7 @@ export function SessionsPage() {
             view="filled"
             padding="m"
             actions={
-              <Badge color="green" size="sm" view="tinted">
+              <Badge color="green" size="sm">
                 Current
               </Badge>
             }
@@ -163,7 +163,7 @@ export function SessionsPage() {
           view="tinted"
           padding="m"
           actions={
-            <Badge size="sm" view="tinted" color="gray">
+            <Badge size="sm" color="gray">
               {otherSessions.length}
             </Badge>
           }
@@ -238,7 +238,6 @@ export function SessionsPage() {
         onClose={closeRevokeModal}
         title="Revoke Session"
         centered
-        radius="lg"
       >
         <div className={classes.modalBody}>
           <Text>
@@ -282,7 +281,6 @@ export function SessionsPage() {
         onClose={closeRevokeAllModal}
         title="Revoke All Other Sessions"
         centered
-        radius="lg"
       >
         <div className={classes.modalBody}>
           <Text>

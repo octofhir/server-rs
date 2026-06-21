@@ -1,14 +1,7 @@
 import { Button, Modal } from "@octofhir/ui-kit";
 import { useState } from "react";
-import {
-	Text,
-	Checkbox,
-	CopyButton,
-	ActionIcon,
-	Tooltip,
-	Alert,
-} from "@octofhir/ui-kit";
-import { TriangleAlert as TriangleExclamation, Copy, Check } from "lucide-react";
+import { Text, Checkbox, CopyButton, Alert } from "@octofhir/ui-kit";
+import { TriangleAlert as TriangleExclamation } from "lucide-react";
 import classes from "./SecretDisplayModal.module.css";
 
 interface SecretDisplayModalProps {
@@ -66,22 +59,11 @@ export function SecretDisplayModal({
 					<Text className={classes.label}>Client ID</Text>
 					<div className={classes.secretField}>
 						<span className={classes.secretValue}>{clientId}</span>
-						<CopyButton value={clientId} timeout={2000}>
-							{({ copied, copy }) => (
-								<Tooltip
-									label={copied ? "Copied!" : "Copy Client ID"}
-									withArrow
-								>
-									<ActionIcon
-										variant="subtle"
-										color={copied ? "teal" : "gray"}
-										onClick={copy}
-									>
-										{copied ? <Check size={16} /> : <Copy size={16} />}
-									</ActionIcon>
-								</Tooltip>
-							)}
-						</CopyButton>
+						<CopyButton
+							text={clientId}
+							tooltipInitialText="Copy Client ID"
+							aria-label="Copy Client ID"
+						/>
 					</div>
 				</div>
 
@@ -89,22 +71,11 @@ export function SecretDisplayModal({
 					<Text className={classes.label}>Client Secret</Text>
 					<div className={classes.secretField}>
 						<span className={classes.secretValue}>{clientSecret}</span>
-						<CopyButton value={clientSecret} timeout={2000}>
-							{({ copied, copy }) => (
-								<Tooltip
-									label={copied ? "Copied!" : "Copy Secret"}
-									withArrow
-								>
-									<ActionIcon
-										variant="subtle"
-										color={copied ? "teal" : "gray"}
-										onClick={copy}
-									>
-										{copied ? <Check size={16} /> : <Copy size={16} />}
-									</ActionIcon>
-								</Tooltip>
-							)}
-						</CopyButton>
+						<CopyButton
+							text={clientSecret}
+							tooltipInitialText="Copy Secret"
+							aria-label="Copy Secret"
+						/>
 					</div>
 				</div>
 
