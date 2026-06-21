@@ -137,7 +137,7 @@ function CategorySection({
 					),
 					access: (
 						<Tooltip
-							content={
+							label={
 								operation.public
 									? "Public (no auth required)"
 									: "Protected (requires auth)"

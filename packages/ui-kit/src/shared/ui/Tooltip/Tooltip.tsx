@@ -13,8 +13,18 @@ export interface TooltipProps {
     /** Tooltip text. When empty, the trigger renders without a tooltip. */
     label?: ReactNode;
     placement?: TooltipPlacement;
+    /** Alias of {@link placement}. */
+    position?: TooltipPlacement;
     /** Open delay in ms. */
     delay?: number;
+    /** Alias of {@link delay}. */
+    openDelay?: number;
+    /** Max width (px or CSS length) for multi-line tooltips. */
+    w?: number | string;
+    /** Accepted for API parity; the popup already wraps long text. */
+    multiline?: boolean;
+    /** Accepted for API parity; the kit tooltip renders without an arrow. */
+    withArrow?: boolean;
     /** The trigger element. */
     children: ReactNode;
 }
@@ -28,20 +38,22 @@ function parsePlacement(placement: TooltipPlacement): { side: Side; align: Align
  * Hover/focus tooltip (Base UI). Pass the trigger as `children` and the text as
  * `label`. Self-contained Provider so it can be dropped anywhere.
  */
-export function Tooltip({ label, placement = "top", delay = 300, children }: TooltipProps) {
+export function Tooltip({ label, placement, position, delay, openDelay, w, children }: TooltipProps) {
     if (label == null || label === "") {
         return <>{children}</>;
     }
-    const { side, align } = parsePlacement(placement);
+    const { side, align } = parsePlacement(placement ?? position ?? "top");
     const trigger = isValidElement(children) ? (children as ReactElement) : <span>{children}</span>;
 
     return (
-        <BaseTooltip.Provider delay={delay}>
+        <BaseTooltip.Provider delay={delay ?? openDelay ?? 300}>
             <BaseTooltip.Root>
                 <BaseTooltip.Trigger render={trigger} />
                 <BaseTooltip.Portal>
                     <BaseTooltip.Positioner side={side} align={align} sideOffset={6}>
-                        <BaseTooltip.Popup className={styles.popup}>{label}</BaseTooltip.Popup>
+                        <BaseTooltip.Popup className={styles.popup} style={w != null ? { maxWidth: w } : undefined}>
+                            {label}
+                        </BaseTooltip.Popup>
                     </BaseTooltip.Positioner>
                 </BaseTooltip.Portal>
             </BaseTooltip.Root>
