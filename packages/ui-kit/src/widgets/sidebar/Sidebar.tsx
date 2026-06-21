@@ -220,7 +220,7 @@ export function Sidebar({
                 {account && (
                     <Menu position="top-start">
                         <Menu.Target>{accountButton ?? <span />}</Menu.Target>
-                        <Menu.Dropdown>
+                        <Menu.Dropdown className={styles.accountMenu}>
                             {onToggleColorScheme && (
                                 <Menu.Item
                                     leftSection={colorScheme === "dark" ? <Sun size={16} /> : <Moon size={16} />}

@@ -202,6 +202,11 @@
 }
 .accountChevron { flex: none; color: var(--octo-text-muted, #868e96); }
 
+/* Account dropdown: match the trigger width, never narrower than 200px. */
+.accountMenu {
+    min-width: max(var(--anchor-width, 200px), 200px);
+}
+
 /* Collapse toggle: a distinct row, separated from the account block. */
 .collapseToggle {
     display: flex;
