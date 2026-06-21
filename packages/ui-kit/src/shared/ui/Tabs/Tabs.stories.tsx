@@ -15,7 +15,7 @@ export const Default: Story = {
     render: () => {
         const [value, setValue] = useState("overview");
         return (
-            <Tabs value={value} onChange={setValue}>
+            <Tabs value={value} onChange={(next) => setValue(next ?? "")}>
                 <Tabs.List>
                     <Tabs.Tab value="overview">Overview</Tabs.Tab>
                     <Tabs.Tab value="details">Details</Tabs.Tab>

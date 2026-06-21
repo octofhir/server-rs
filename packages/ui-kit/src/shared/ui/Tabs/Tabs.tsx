@@ -1,18 +1,19 @@
 import type { ReactNode } from "react";
 import { Tabs as BaseTabs } from "@base-ui/react/tabs";
-import { cleanLayoutProps, getSpacingStyles, type SpacingProps } from "../layout-utils";
+import { cleanLayoutProps, getSpacingStyles, type Size, type SpacingProps } from "../layout-utils";
 import styles from "./Tabs.module.css";
 
-export interface TabsProps {
+export interface TabsProps extends SpacingProps {
     value?: string | null;
     defaultValue?: string | null;
-    onChange?: (value: string) => void;
+    onChange?: (value: string | null) => void;
     onUpdate?: (value: string) => void;
+    size?: Size;
     children?: ReactNode;
     className?: string;
 }
 
-function TabsRoot({ value, defaultValue, onChange, onUpdate, children, className }: TabsProps) {
+function TabsRoot({ value, defaultValue, onChange, onUpdate, size, children, className, ...rest }: TabsProps) {
     return (
         <BaseTabs.Root
             value={value ?? undefined}
@@ -22,7 +23,10 @@ function TabsRoot({ value, defaultValue, onChange, onUpdate, children, className
                 onChange?.(v);
                 onUpdate?.(v);
             }}
+            data-size={size}
             className={className}
+            style={{ ...getSpacingStyles(rest) }}
+            {...cleanLayoutProps(rest)}
         >
             {children}
         </BaseTabs.Root>
@@ -40,6 +44,7 @@ function TabsList({ children, className }: TabsListProps) {
 
 export interface TabsTabProps {
     value: string;
+    id?: string;
     children?: ReactNode;
     leftSection?: ReactNode;
     icon?: ReactNode;
@@ -47,10 +52,10 @@ export interface TabsTabProps {
     className?: string;
 }
 
-function TabsTab({ value, children, leftSection, icon, disabled, className }: TabsTabProps) {
+function TabsTab({ value, id, children, leftSection, icon, disabled, className }: TabsTabProps) {
     const lead = icon ?? leftSection;
     return (
-        <BaseTabs.Tab value={value} disabled={disabled} className={[styles.tab, className].filter(Boolean).join(" ")}>
+        <BaseTabs.Tab id={id} value={value} disabled={disabled} className={[styles.tab, className].filter(Boolean).join(" ")}>
             {lead}
             {children}
         </BaseTabs.Tab>

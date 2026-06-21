@@ -12,6 +12,7 @@ interface MenuPlacementValue {
 }
 
 const PlacementContext = createContext<MenuPlacementValue>({ side: "bottom", align: "end" });
+const WidthContext = createContext<number | string | undefined>(undefined);
 
 function parsePlacement(placement: MenuPlacement): MenuPlacementValue {
     const [side, sub] = placement.split("-") as [Side, "start" | "end" | undefined];
@@ -27,19 +28,37 @@ export interface MenuProps {
     open?: boolean;
     defaultOpen?: boolean;
     onOpenChange?: (open: boolean) => void;
+    /** Popup width / min-width. */
+    width?: number | string;
+    /** Accepted for compat; the kit menu uses its own shadow. */
+    shadow?: string;
+    /** Accepted for compat; the kit menu closes on item click by default. */
+    closeOnItemClick?: boolean;
 }
 
 /**
  * Compound dropdown menu:
  * `<Menu><Menu.Target/><Menu.Dropdown><Menu.Item/></Menu.Dropdown></Menu>`.
  */
-export function Menu({ children, position, placement, open, defaultOpen, onOpenChange }: MenuProps) {
+export function Menu({
+    children,
+    position,
+    placement,
+    open,
+    defaultOpen,
+    onOpenChange,
+    width,
+    shadow: _shadow,
+    closeOnItemClick: _closeOnItemClick,
+}: MenuProps) {
     const resolved = parsePlacement(position ?? placement ?? "bottom-end");
     return (
         <PlacementContext.Provider value={resolved}>
-            <BaseMenu.Root open={open} defaultOpen={defaultOpen} onOpenChange={onOpenChange}>
-                {children}
-            </BaseMenu.Root>
+            <WidthContext.Provider value={width}>
+                <BaseMenu.Root open={open} defaultOpen={defaultOpen} onOpenChange={onOpenChange}>
+                    {children}
+                </BaseMenu.Root>
+            </WidthContext.Provider>
         </PlacementContext.Provider>
     );
 }
@@ -60,10 +79,14 @@ export interface MenuDropdownProps {
 
 function MenuDropdown({ children, className }: MenuDropdownProps) {
     const { side, align } = useContext(PlacementContext);
+    const width = useContext(WidthContext);
     return (
         <BaseMenu.Portal>
             <BaseMenu.Positioner side={side} align={align} sideOffset={6}>
-                <BaseMenu.Popup className={[styles.list, className].filter(Boolean).join(" ")}>
+                <BaseMenu.Popup
+                    className={[styles.list, className].filter(Boolean).join(" ")}
+                    style={width != null ? { minWidth: width } : undefined}
+                >
                     {children}
                 </BaseMenu.Popup>
             </BaseMenu.Positioner>

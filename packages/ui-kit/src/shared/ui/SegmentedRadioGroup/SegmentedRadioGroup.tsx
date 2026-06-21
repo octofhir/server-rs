@@ -18,6 +18,7 @@ export interface SegmentedRadioGroupProps {
     /** Alias of {@link onChange}. */
     onUpdate?: (value: string) => void;
     size?: Size;
+    fullWidth?: boolean;
     disabled?: boolean;
     name?: string;
     className?: string;
@@ -31,6 +32,7 @@ export function SegmentedRadioGroup({
     onChange,
     onUpdate,
     size = "md",
+    fullWidth,
     disabled,
     className,
     "aria-label": ariaLabel,
@@ -47,6 +49,7 @@ export function SegmentedRadioGroup({
             role="radiogroup"
             aria-label={ariaLabel}
             data-size={size}
+            data-full-width={fullWidth ? "true" : undefined}
             className={[styles.group, className].filter(Boolean).join(" ")}
         >
             {options.map((option) => {

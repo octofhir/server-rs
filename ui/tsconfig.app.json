@@ -47,6 +47,9 @@
       "@/shared/*": [
         "src/shared/*"
       ],
+      "#/*": [
+        "../packages/ui-kit/src/*"
+      ],
       "@codingame/monaco-vscode-api/default-extensions": [
         "src/shared/monaco/defaultExtensions.ts"
       ]

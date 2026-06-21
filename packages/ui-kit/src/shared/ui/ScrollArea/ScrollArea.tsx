@@ -1,20 +1,18 @@
 import { forwardRef, type CSSProperties, type ReactNode } from "react";
+import { cleanLayoutProps, getSpacingStyles, type SpacingProps } from "../layout-utils";
 
-export interface ScrollAreaProps extends React.HTMLAttributes<HTMLDivElement> {
+export interface ScrollAreaProps
+    extends React.HTMLAttributes<HTMLDivElement>,
+        SpacingProps {
     children?: ReactNode;
-    /** Fixed height. */
-    h?: number | string;
     /** Max height (enables vertical scroll past it). */
     mah?: number | string;
     /** Max width. */
     maw?: number | string;
+    /** Scroll behaviour (accepted for API parity; visual behaviour unchanged). */
+    type?: "auto" | "always" | "scroll" | "hover" | "never" | string;
     /** Scroll axis. */
     axis?: "vertical" | "horizontal" | "both";
-}
-
-function toCss(v: number | string | undefined): string | undefined {
-    if (v == null) return undefined;
-    return typeof v === "number" ? `${v}px` : v;
 }
 
 /**
@@ -22,9 +20,10 @@ function toCss(v: number | string | undefined): string | undefined {
  * `mah`, then scrolls.
  */
 export const ScrollArea = forwardRef<HTMLDivElement, ScrollAreaProps>(function ScrollArea(
-    { children, h, mah, maw, axis = "vertical", style, ...props },
+    { children, mah, maw, type: _type, axis = "vertical", style, ...rest },
     ref,
 ) {
+    const props = cleanLayoutProps(rest);
     const overflow: CSSProperties =
         axis === "both"
             ? { overflow: "auto" }
@@ -36,9 +35,9 @@ export const ScrollArea = forwardRef<HTMLDivElement, ScrollAreaProps>(function S
         <div
             ref={ref}
             style={{
-                height: toCss(h),
-                maxHeight: toCss(mah),
-                maxWidth: toCss(maw),
+                ...getSpacingStyles(rest),
+                ...(mah != null ? { maxHeight: mah } : {}),
+                ...(maw != null ? { maxWidth: maw } : {}),
                 ...overflow,
                 ...style,
             }}

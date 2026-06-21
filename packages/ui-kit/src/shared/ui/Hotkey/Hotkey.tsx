@@ -1,4 +1,5 @@
 import { forwardRef, type ReactNode } from "react";
+import type { Size } from "../layout-utils";
 import styles from "./Hotkey.module.css";
 
 export interface HotkeyProps {
@@ -6,6 +7,7 @@ export interface HotkeyProps {
     value?: string;
     children?: ReactNode;
     className?: string;
+    size?: Size;
 }
 
 const SYMBOLS: Record<string, string> = {
@@ -39,13 +41,17 @@ function prettify(key: string): string {
 }
 
 export const Hotkey = forwardRef<HTMLSpanElement, HotkeyProps>(function Hotkey(
-    { value, children, className },
+    { value, children, className, size },
     ref,
 ) {
     const raw = value ?? (typeof children === "string" ? children : "");
     const keys = raw.split(/[+\s]+/).filter(Boolean);
     return (
-        <span ref={ref} className={[styles.hotkey, className].filter(Boolean).join(" ")}>
+        <span
+            ref={ref}
+            data-size={size}
+            className={[styles.hotkey, className].filter(Boolean).join(" ")}
+        >
             {keys.map((key, i) => (
                 // biome-ignore lint/suspicious/noArrayIndexKey: keys are positional and static
                 <kbd key={i} className={styles.key}>
