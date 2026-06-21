@@ -1,13 +1,6 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { ActionIcon } from "./ActionIcon";
-import {
-  Gear,
-  TrashBin,
-  Pencil,
-  Copy,
-  ArrowRotateRight,
-  Plus,
-} from "@gravity-ui/icons";
+import { Settings as Gear, Trash2 as TrashBin, Pencil, Copy, RotateCw as ArrowRotateRight, Plus } from "lucide-react";
 
 const meta: Meta<typeof ActionIcon> = {
   title: "Form Controls/ActionIcon",

@@ -70,9 +70,6 @@ export * from "./Form";
 // === Empty / NotFound / Error states ===
 export * from "./EmptyState";
 
-// === Data table (TanStack-driven, for grids) ===
-export * from "./DataTable";
-
 // === Misc ===
 export * from "./Divider";
 export * from "./ThemeIcon";

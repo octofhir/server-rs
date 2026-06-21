@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import { Database, Play, Server } from "@gravity-ui/icons";
+import { Database, Play, Server } from "lucide-react";
 import { UIProvider, type OctoThemeConfig } from "../index";
 import {
     Button,

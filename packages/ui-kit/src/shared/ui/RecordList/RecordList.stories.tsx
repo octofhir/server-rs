@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import { Database, Shield, Terminal } from "@gravity-ui/icons";
+import { Database, Shield, Terminal } from "lucide-react";
 import { RecordList } from "./RecordList";
 
 const meta: Meta<typeof RecordList> = {

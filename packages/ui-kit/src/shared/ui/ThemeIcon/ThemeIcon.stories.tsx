@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import { Heart, Person, Pill, Pulse, Stethoscope } from "@gravity-ui/icons";
+import { Heart, User as Person, Pill, Activity as Pulse, Stethoscope } from "lucide-react";
 import { ThemeIcon } from "./ThemeIcon";
 
 const meta: Meta<typeof ThemeIcon> = {

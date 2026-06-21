@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import { Database, Gear, Play, Server, Shield, SquareListUl, Terminal } from "@gravity-ui/icons";
+import { Database, Settings as Gear, Play, Server, Shield, ClipboardList as SquareListUl, Terminal } from "lucide-react";
 import { FhirDashboardAside, WorkspaceBoard, type WorkspaceBoardColumn } from "../widgets";
 
 const meta: Meta<typeof WorkspaceBoard> = {

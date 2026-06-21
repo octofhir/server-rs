@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import { Gear, Pencil, TrashBin } from "@gravity-ui/icons";
+import { Settings as Gear, Pencil, Trash2 as TrashBin } from "lucide-react";
 import { Menu } from "./index";
 import { Button } from "../Button";
 

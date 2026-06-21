@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import { Database, Server, SquareListUl } from "@gravity-ui/icons";
+import { Database, Server, ClipboardList as SquareListUl } from "lucide-react";
 import { KeyValueList, MetricTile, PageHeader, StatusBadge, Surface } from "../shared/ui";
 import {
     CanonicalUri,

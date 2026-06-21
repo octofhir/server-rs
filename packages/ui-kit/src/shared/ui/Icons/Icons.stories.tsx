@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import * as GravityIcons from "@gravity-ui/icons";
+import * as LucideIcons from "lucide-react";
 import type { ComponentType, SVGProps } from "react";
 import { useState } from "react";
 import { TextInput } from "../TextInput";
@@ -11,15 +11,15 @@ import * as KitIcons from "./index";
 interface IconEntry {
     name: string;
     Component: ComponentType<SVGProps<SVGSVGElement>>;
-    source: "alias" | "gravity";
+    source: "alias" | "lucide";
 }
 
 type IconModule = Record<string, unknown> & {
     default?: Record<string, unknown>;
 };
 
-const gravityIconModule = GravityIcons as IconModule;
-const gravityIconExports = gravityIconModule.default ?? gravityIconModule;
+const lucideIconModule = LucideIcons as IconModule;
+const lucideIconExports = lucideIconModule.default ?? lucideIconModule;
 
 function isIconComponent(value: unknown): value is IconEntry["Component"] {
     return typeof value === "function";
@@ -43,7 +43,7 @@ function getIconEntries(
 
 const allIcons: IconEntry[] = [
     ...getIconEntries("alias", KitIcons, /^Icon[A-Z]/),
-    ...getIconEntries("gravity", gravityIconExports, /^[A-Z]/),
+    ...getIconEntries("lucide", lucideIconExports, /^[A-Z]/),
 ].sort((a, b) => a.name.localeCompare(b.name));
 
 const meta: Meta = {
@@ -53,9 +53,9 @@ const meta: Meta = {
         docs: {
             description: {
                 component:
-                    "All icons available in the OctoFHIR UI kit. Re-exported from `@gravity-ui/icons`. " +
-                    "Import directly from `@octofhir/ui-kit` (Tabler-compat aliases like `IconSearch`) " +
-                    "or from `@gravity-ui/icons` (native names like `Magnifier`).",
+                    "All icons available in the OctoFHIR UI kit, powered by lucide-react. " +
+                    "Import the `Icon*` aliases (e.g. `IconSearch`) from `@octofhir/ui-kit`, " +
+                    "or any lucide icon directly from `lucide-react`.",
             },
         },
     },
