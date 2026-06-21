@@ -81,9 +81,8 @@ export const Catalog: Story = {
                 <TextInput
                     placeholder={`Filter ${allIcons.length} icons...`}
                     value={query}
-                    onUpdate={setQuery}
+                    onChange={setQuery}
                     size="l"
-                    hasClear
                 />
                 <Text variant="caption-2">
                     {filtered.length} of {allIcons.length} icons

@@ -8,10 +8,9 @@ const meta: Meta<typeof TextArea> = {
   argTypes: {
     size: {
       control: "select",
-      options: ["s", "m", "l", "xl"],
+      options: ["s", "m", "l"],
     },
     disabled: { control: "boolean" },
-    hasClear: { control: "boolean" },
   },
 };
 

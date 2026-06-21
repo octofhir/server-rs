@@ -1,0 +1,83 @@
+/* Shared field surface for text/number/password inputs, textareas and selects. */
+.wrapper {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--octo-spacing-xs, 0.5rem);
+    width: 100%;
+    box-sizing: border-box;
+    border: 1px solid var(--octo-border-strong, #ced4da);
+    border-radius: var(--octo-radius-md, 8px);
+    background: var(--octo-surface-1, #fff);
+    color: var(--octo-text-primary, #1a1b1e);
+    transition: border-color var(--octo-motion-fast, 100ms) var(--octo-motion-ease, ease),
+        box-shadow var(--octo-motion-fast, 100ms) var(--octo-motion-ease, ease);
+}
+
+.wrapper[data-size="s"] { min-height: 28px; padding: 0 8px; font-size: var(--octo-typography-size-sm, 0.875rem); }
+.wrapper[data-size="m"] { min-height: 32px; padding: 0 10px; font-size: var(--octo-typography-size-sm, 0.875rem); }
+.wrapper[data-size="l"] { min-height: 38px; padding: 0 12px; font-size: var(--octo-typography-size-md, 1rem); }
+
+.wrapper:focus-within {
+    border-color: var(--octo-accent-primary, #4263eb);
+    box-shadow: 0 0 0 3px var(--octo-focus-ring, #91a7ff);
+}
+
+.wrapper[data-error="true"] {
+    border-color: var(--octo-accent-fire, #fa5252);
+}
+.wrapper[data-error="true"]:focus-within {
+    box-shadow: 0 0 0 3px var(--octo-accent-fire-bg, #fff5f5);
+}
+
+.wrapper[data-disabled="true"] {
+    background: var(--octo-surface-2, #f1f3f5);
+    color: var(--octo-text-muted, #868e96);
+    cursor: not-allowed;
+}
+
+.input {
+    flex: 1 1 auto;
+    min-width: 0;
+    width: 100%;
+    border: none;
+    outline: none;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    padding: 6px 0;
+}
+.input::placeholder { color: var(--octo-text-muted, #868e96); }
+.input:disabled { cursor: not-allowed; }
+
+.textarea {
+    resize: vertical;
+    line-height: 1.5;
+}
+
+.affix {
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    color: var(--octo-text-secondary, #495057);
+}
+
+.iconButton {
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    justify-content: center;
+    padding: 2px;
+    border: none;
+    border-radius: var(--octo-radius-xs, 4px);
+    background: transparent;
+    color: var(--octo-text-secondary, #495057);
+    cursor: pointer;
+}
+.iconButton:hover { color: var(--octo-text-primary, #1a1b1e); }
+.iconButton:focus-visible { outline: 2px solid var(--octo-focus-ring, #91a7ff); }
+
+/* Block-level wrapper for textarea (top-aligned affixes) */
+.block {
+    display: flex;
+    align-items: stretch;
+}

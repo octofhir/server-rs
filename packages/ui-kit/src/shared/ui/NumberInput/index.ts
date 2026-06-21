@@ -1,1 +1,1 @@
-export { NumberInput, type NumberInputProps } from "@gravity-ui/uikit";
+export { NumberInput, type NumberInputProps } from "./NumberInput";

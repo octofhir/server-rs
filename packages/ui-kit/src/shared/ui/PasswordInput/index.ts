@@ -1,1 +1,1 @@
-export { PasswordInput, type PasswordInputProps } from "@gravity-ui/uikit";
+export { PasswordInput, type PasswordInputProps } from "./PasswordInput";

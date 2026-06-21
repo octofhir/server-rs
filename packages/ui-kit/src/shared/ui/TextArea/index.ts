@@ -1,1 +1,2 @@
-export { TextArea, type TextAreaProps } from "@gravity-ui/uikit";
+export { TextArea, type TextAreaProps } from "./TextArea";
+
