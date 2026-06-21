@@ -119,7 +119,7 @@ export function AppDetailPage() {
 					>
 						<div className={classes.summaryHeader}>
 							<div className={classes.summaryMain}>
-								<ThemeIcon size="xl" view="light" color="primary" radius="md">
+								<ThemeIcon size="xl" view="light" color="primary" radius={8}>
 									<IconRocket width={24} height={24} aria-hidden="true" />
 								</ThemeIcon>
 								<div className={classes.summaryText}>

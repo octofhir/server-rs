@@ -1,4 +1,4 @@
-import { memo, useEffect, useRef, useCallback } from "react";
+import { memo, useEffect, useRef, useCallback, type ComponentProps } from "react";
 import {
 	Table,
 	Text,
@@ -215,7 +215,11 @@ function AuditEventListComponent({
 										<ThemeIcon
 											size="sm"
 											variant="light"
-											color={getAuditActionColor(event.action)}
+											color={
+												getAuditActionColor(event.action) as ComponentProps<
+													typeof ThemeIcon
+												>["color"]
+											}
 										>
 											<ActionIcon width={12} height={12} aria-hidden="true" />
 										</ThemeIcon>

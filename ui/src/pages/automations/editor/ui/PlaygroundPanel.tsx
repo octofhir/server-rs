@@ -274,7 +274,7 @@ export function PlaygroundPanel({ automationId, sourceCode }: PlaygroundPanelPro
                               {log.message}
                             </Text>
                             {log.data !== undefined && log.data !== null && (
-                              <Code block size="xs">
+                              <Code block>
                                 {typeof log.data === "string" ? log.data : JSON.stringify(log.data, null, 2)}
                               </Code>
                             )}

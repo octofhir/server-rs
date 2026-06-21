@@ -161,7 +161,7 @@ export function useSendConsoleRequest() {
 				notifications.show({
 					title: "History Error",
 					message: "Failed to save request to history",
-					color: "orange",
+					color: "yellow",
 				});
 			}
 

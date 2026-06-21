@@ -297,9 +297,11 @@ export function OperationDetailPage() {
 							</div>
 
 							<div className={classes.field}>
-								<Text as="label" htmlFor={descriptionId} variant="body-2">
-									<strong>Description</strong>
-								</Text>
+								<label htmlFor={descriptionId}>
+									<Text as="span" variant="body-2">
+										<strong>Description</strong>
+									</Text>
+								</label>
 								<Textarea
 									id={descriptionId}
 									placeholder="Describe what this operation does..."

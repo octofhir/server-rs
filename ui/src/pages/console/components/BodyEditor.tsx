@@ -64,7 +64,7 @@ export function BodyEditor({ resourceType, method }: BodyEditorProps) {
 				</div>
 			</div>
 
-			<Suspense fallback={<Skeleton height={300} />}>
+			<Suspense fallback={<Skeleton h={300} />}>
 				<JsonEditor
 					value={body}
 					onChange={setBodyEvent}

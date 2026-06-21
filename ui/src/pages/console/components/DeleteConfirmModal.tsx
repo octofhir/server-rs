@@ -29,7 +29,7 @@ export function DeleteConfirmModal({
 			onClose={onClose}
 			title={
 				<span className={styles.title}>
-					<IconAlertTriangle size={20} color={theme.colors.fire[6]} />
+					<IconAlertTriangle size={20} color={theme.brand.fire} />
 					<Text fw={600}>Confirm Deletion</Text>
 				</span>
 			}

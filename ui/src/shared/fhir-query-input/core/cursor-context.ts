@@ -162,7 +162,7 @@ export function getCursorContext(
 function parseQueryCursorContext(
 	relativePath: string,
 	queryStart: number,
-	raw: string,
+	_raw: string,
 	cursorOffset: number,
 ): CursorContext {
 	const queryPart = relativePath.slice(queryStart + 1);

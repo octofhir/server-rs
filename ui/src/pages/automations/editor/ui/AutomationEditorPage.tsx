@@ -84,7 +84,7 @@ export function AutomationEditorPage() {
     setIsDirty(true);
   };
 
-  const handleTimeoutChange = (value: number | string) => {
+  const handleTimeoutChange = (value: number | null) => {
     setTimeoutMs(typeof value === "number" ? value : 5000);
     setIsDirty(true);
   };

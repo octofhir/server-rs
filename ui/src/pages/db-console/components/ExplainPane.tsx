@@ -49,7 +49,7 @@ export function ExplainPane({ data, error, isPending }: ExplainPaneProps) {
 					value={mode}
 					onChange={setMode}
 					size="xs"
-					data={[
+					options={[
 						{ label: "Visual", value: "visual" },
 						{ label: "Raw", value: "raw" },
 					]}

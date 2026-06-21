@@ -66,7 +66,6 @@ export function ResultsPane({
 			<Tabs
 				value={activeTab}
 				onChange={(v) => setActiveTab(v ?? "results")}
-				variant="outline"
 				className={classes.resultsTabs}
 			>
 				<div className={classes.resultsHeader}>

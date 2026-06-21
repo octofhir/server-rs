@@ -13,7 +13,7 @@ interface ResultsTableProps {
 function renderCellValue(value: SqlValue): ReactNode {
 	if (value === null) {
 		return (
-			<Text as="span" c="dimmed" fs="italic">
+			<Text as="span" c="dimmed" style={{ fontStyle: "italic" }}>
 				NULL
 			</Text>
 		);

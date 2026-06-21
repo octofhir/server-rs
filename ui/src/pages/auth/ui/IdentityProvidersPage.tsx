@@ -160,7 +160,6 @@ export function IdentityProvidersPage() {
 											variant: "subtle",
 											size: "sm",
 											"aria-label": "Provider actions",
-											"aria-haspopup": "menu",
 										}}
 										popupProps={{ placement: "bottom-end" }}
 										items={[

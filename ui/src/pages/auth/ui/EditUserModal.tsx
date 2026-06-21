@@ -13,7 +13,7 @@ interface EditUserModalProps {
 
 export function EditUserModal({ user, opened, onClose }: EditUserModalProps) {
 	const updateUser = useUpdateUser();
-	const [fhirUserSearch, setFhirUserSearch] = useState("");
+	const [fhirUserSearch] = useState("");
 	const [selectedFhirUser, setSelectedFhirUser] = useState(user.fhirUser?.reference || "");
 
 	// Search for Practitioner and Patient resources
@@ -59,8 +59,6 @@ export function EditUserModal({ user, opened, onClose }: EditUserModalProps) {
 					description="Start typing to search for a Practitioner or Patient resource"
 					data={resourceOptions}
 					searchable
-					searchValue={fhirUserSearch}
-					onSearchChange={setFhirUserSearch}
 					value={selectedFhirUser}
 					onChange={(value) => setSelectedFhirUser(value || "")}
 					clearable

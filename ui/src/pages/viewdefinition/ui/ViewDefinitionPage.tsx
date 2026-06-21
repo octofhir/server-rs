@@ -158,7 +158,7 @@ export function ViewDefinitionPage() {
     );
   }
 
-  const isDisabled = settings?.sqlOnFhir?.enabled === false;
+  const isDisabled = settings?.features?.sqlOnFhir === false;
 
   return (
     <ToolWorkspaceLayout

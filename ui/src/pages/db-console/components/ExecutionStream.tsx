@@ -51,7 +51,7 @@ export function ExecutionStream({
 		return (
 			<div className={classes.stream}>
 				<div className={classes.emptyState}>
-					<Terminal size={40} stroke={1.2} />
+					<Terminal size={40} stroke="1.2" />
 					<Text size="sm" fw={500}>
 						Run your first query
 					</Text>

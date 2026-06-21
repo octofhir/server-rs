@@ -133,7 +133,8 @@ describe("authSession", () => {
 		const second = refreshAuthSession(true);
 		expect(mockRefresh).toHaveBeenCalledTimes(1);
 
-		resolveRefresh?.({
+		const doResolve = resolveRefresh as ((value: unknown) => void) | null;
+		doResolve?.({
 			access_token: "access-2",
 			token_type: "Bearer",
 			expires_in: 60,

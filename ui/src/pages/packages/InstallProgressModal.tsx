@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, type ComponentProps } from "react";
 import {
 	Modal,
 	Text,
@@ -57,7 +57,7 @@ function PackageProgressItem({ pkg }: { pkg: FhirPackageProgress }) {
 		<div className={classes.packageItem}>
 			<div className={isActive ? classes.packageHeaderActive : classes.packageHeader}>
 				<div className={classes.packageIdentity}>
-					<ThemeIcon size="sm" variant="light" color={statusView.color}>
+					<ThemeIcon size="sm" variant="light" color={statusView.color as ComponentProps<typeof ThemeIcon>["color"]}>
 						{getStatusIcon(pkg.status)}
 					</ThemeIcon>
 					<Text size="sm" fw={500}>

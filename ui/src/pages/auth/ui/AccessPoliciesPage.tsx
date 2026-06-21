@@ -192,7 +192,6 @@ export function AccessPoliciesPage() {
 											variant: "subtle",
 											size: "sm",
 											"aria-label": "Policy actions",
-											"aria-haspopup": "menu",
 										}}
 										popupProps={{ placement: "bottom-end" }}
 										items={[

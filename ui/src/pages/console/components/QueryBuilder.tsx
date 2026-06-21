@@ -103,7 +103,6 @@ export function QueryBuilder({
 					onChange={(value) => handleInputChange(value)}
 					onBlur={handleBlur}
 					size="md"
-					hasClear
 				/>
 			) : (
 				<Textarea
