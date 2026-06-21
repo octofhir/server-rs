@@ -69,10 +69,10 @@ export function HeaderEditor() {
 						<TextInput
 							placeholder="Header-Name"
 							value={key}
-							onChange={(e) =>
+							onChange={(value) =>
 								updateCustomHeaderEvent({
 									oldKey: key,
-									newKey: e.target.value,
+									newKey: value,
 									value,
 								})
 							}
@@ -81,11 +81,11 @@ export function HeaderEditor() {
 						<TextInput
 							placeholder="value"
 							value={value}
-							onChange={(e) =>
+							onChange={(value) =>
 								updateCustomHeaderEvent({
 									oldKey: key,
 									newKey: key,
-									value: e.target.value,
+									value: value,
 								})
 							}
 							size="xs"

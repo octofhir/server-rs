@@ -243,8 +243,8 @@ function RegistryTab({
 				placeholder="Search packages... (e.g., us core, hl7.fhir)"
 				leftSection={<Magnifier size={16} />}
 				value={searchQuery}
-				onChange={(e) => {
-					setSearchQuery(e.currentTarget.value);
+				onChange={(value) => {
+					setSearchQuery(value);
 					setSelectedPackage(null);
 					setSelectedVersion(null);
 				}}

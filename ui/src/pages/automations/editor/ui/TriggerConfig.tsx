@@ -254,10 +254,10 @@ export function TriggerConfig({ automationId, triggers }: TriggerConfigProps) {
                     label="FHIRPath Filter (optional)"
                     placeholder="e.g., active = true or name.exists()"
                     value={newTrigger.fhirpath_filter || ""}
-                    onChange={(e) =>
+                    onChange={(value) =>
                       setNewTrigger({
                         ...newTrigger,
-                        fhirpath_filter: e.target.value || undefined,
+                        fhirpath_filter: value || undefined,
                       })
                     }
                     description="Only trigger when this FHIRPath expression evaluates to true"
@@ -273,8 +273,8 @@ export function TriggerConfig({ automationId, triggers }: TriggerConfigProps) {
                   label="Cron Expression"
                   placeholder="*/5 * * * *"
                   value={newTrigger.cron_expression || ""}
-                  onChange={(e) =>
-                    setNewTrigger({ ...newTrigger, cron_expression: e.target.value })
+                  onChange={(value) =>
+                    setNewTrigger({ ...newTrigger, cron_expression: value })
                   }
                   description="e.g., '0 * * * *' for every hour, '*/5 * * * *' for every 5 minutes"
                   required
