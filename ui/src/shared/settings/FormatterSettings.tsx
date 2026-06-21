@@ -188,7 +188,7 @@ function SqlStyleSettings({
         <Switch
           label="Use Tabs"
           checked={config.useTabs}
-          onChange={(e) => onChange({ useTabs: e.currentTarget.checked })}
+          onChange={(e) => onChange({ useTabs: e })}
           size={compact ? 'xs' : 'sm'}
           className={classes.inlineSwitch}
         />
@@ -210,7 +210,7 @@ function SqlStyleSettings({
         label="River Alignment"
         description={compact ? undefined : 'Align keywords in a river pattern'}
         checked={config.riverAlignment}
-        onChange={(e) => onChange({ riverAlignment: e.currentTarget.checked })}
+        onChange={(e) => onChange({ riverAlignment: e })}
         size={compact ? 'xs' : 'sm'}
       />
 
@@ -252,28 +252,28 @@ function SqlStyleSettings({
               <Switch
                 label="Newline Before AND/OR"
                 checked={config.newlineBeforeLogical}
-                onChange={(e) => onChange({ newlineBeforeLogical: e.currentTarget.checked })}
+                onChange={(e) => onChange({ newlineBeforeLogical: e })}
                 size="sm"
               />
 
               <Switch
                 label="Spaces Around Operators"
                 checked={config.spacesAroundOperators}
-                onChange={(e) => onChange({ spacesAroundOperators: e.currentTarget.checked })}
+                onChange={(e) => onChange({ spacesAroundOperators: e })}
                 size="sm"
               />
 
               <Switch
                 label="Parentheses Spacing"
                 checked={config.parenthesesSpacing}
-                onChange={(e) => onChange({ parenthesesSpacing: e.currentTarget.checked })}
+                onChange={(e) => onChange({ parenthesesSpacing: e })}
                 size="sm"
               />
 
               <Switch
                 label="Align SELECT Items"
                 checked={config.alignSelectItems}
-                onChange={(e) => onChange({ alignSelectItems: e.currentTarget.checked })}
+                onChange={(e) => onChange({ alignSelectItems: e })}
                 size="sm"
               />
 
@@ -344,7 +344,7 @@ function PgFormatterSettings({
         <Switch
           label="Use Tabs"
           checked={config.useTabs}
-          onChange={(e) => onChange({ useTabs: e.currentTarget.checked })}
+          onChange={(e) => onChange({ useTabs: e })}
           size={compact ? 'xs' : 'sm'}
           className={classes.inlineSwitch}
         />
@@ -355,8 +355,8 @@ function PgFormatterSettings({
         checked={config.commaStart}
         onChange={(e) =>
           onChange({
-            commaStart: e.currentTarget.checked,
-            commaEnd: !e.currentTarget.checked,
+            commaStart: e,
+            commaEnd: !e,
           })
         }
         size={compact ? 'xs' : 'sm'}
@@ -434,7 +434,7 @@ function PgFormatterSettings({
               <Switch
                 label="Wrap Comments"
                 checked={config.wrapComment}
-                onChange={(e) => onChange({ wrapComment: e.currentTarget.checked })}
+                onChange={(e) => onChange({ wrapComment: e })}
                 size="sm"
               />
 
@@ -446,28 +446,28 @@ function PgFormatterSettings({
               <Switch
                 label="Remove Comments"
                 checked={config.noComment}
-                onChange={(e) => onChange({ noComment: e.currentTarget.checked })}
+                onChange={(e) => onChange({ noComment: e })}
                 size="sm"
               />
 
               <Switch
                 label="Keep Original Empty Lines"
                 checked={config.keepNewline}
-                onChange={(e) => onChange({ keepNewline: e.currentTarget.checked })}
+                onChange={(e) => onChange({ keepNewline: e })}
                 size="sm"
               />
 
               <Switch
                 label="No Trailing Newline"
                 checked={config.noExtraLine}
-                onChange={(e) => onChange({ noExtraLine: e.currentTarget.checked })}
+                onChange={(e) => onChange({ noExtraLine: e })}
                 size="sm"
               />
 
               <Switch
                 label="Newline Between Statements"
                 checked={config.noGrouping}
-                onChange={(e) => onChange({ noGrouping: e.currentTarget.checked })}
+                onChange={(e) => onChange({ noGrouping: e })}
                 size="sm"
               />
 
@@ -479,21 +479,21 @@ function PgFormatterSettings({
               <Switch
                 label="No Space Before Function Parens"
                 checked={config.noSpaceFunction}
-                onChange={(e) => onChange({ noSpaceFunction: e.currentTarget.checked })}
+                onChange={(e) => onChange({ noSpaceFunction: e })}
                 size="sm"
               />
 
               <Switch
                 label="Keep Redundant Parentheses"
                 checked={config.redundantParenthesis}
-                onChange={(e) => onChange({ redundantParenthesis: e.currentTarget.checked })}
+                onChange={(e) => onChange({ redundantParenthesis: e })}
                 size="sm"
               />
 
               <Switch
                 label="River Alignment"
                 checked={config.riverAlignment}
-                onChange={(e) => onChange({ riverAlignment: e.currentTarget.checked })}
+                onChange={(e) => onChange({ riverAlignment: e })}
                 size="sm"
               />
 

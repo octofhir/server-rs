@@ -231,7 +231,7 @@ export function UsersPage() {
 									<Checkbox
 										checked={allSelected}
 										indeterminate={someSelected && !allSelected}
-										onChange={(e) => handleSelectAll(e.currentTarget.checked)}
+										onChange={(e) => handleSelectAll(e)}
 									/>
 								</Table.Th>
 								<Table.Th>User</Table.Th>
@@ -301,7 +301,7 @@ export function UsersPage() {
 										<Table.Td className={classes.selectionCell}>
 											<Checkbox
 												checked={user.id ? selectedUsers.has(user.id) : false}
-												onChange={(e) => user.id && handleSelectUser(user.id, e.currentTarget.checked)}
+												onChange={(e) => user.id && handleSelectUser(user.id, e)}
 											/>
 										</Table.Td>
 										<Table.Td>

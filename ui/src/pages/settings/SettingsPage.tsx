@@ -149,7 +149,7 @@ export function SettingsPage() {
 							onChange={(event) =>
 								setSettings((current) => ({
 									...current,
-									skipConsoleValidation: event.currentTarget.checked,
+									skipConsoleValidation: event,
 								}))
 							}
 						/>
@@ -160,7 +160,7 @@ export function SettingsPage() {
 							onChange={(event) =>
 								setSettings((current) => ({
 									...current,
-									allowAnonymousConsoleRequests: event.currentTarget.checked,
+									allowAnonymousConsoleRequests: event,
 								}))
 							}
 						/>
@@ -180,7 +180,7 @@ export function SettingsPage() {
 						onChange={(event) =>
 							setSettings((current) => ({
 								...current,
-								disableAuthAutoLogout: event.currentTarget.checked,
+								disableAuthAutoLogout: event,
 							}))
 						}
 					/>

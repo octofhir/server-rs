@@ -111,7 +111,7 @@ export function SecretDisplayModal({
 				<Checkbox
 					label="I have copied the secret and stored it securely"
 					checked={confirmed}
-					onChange={(e) => setConfirmed(e.currentTarget.checked)}
+					onChange={(e) => setConfirmed(e)}
 				/>
 
 				<div className={classes.actions}>

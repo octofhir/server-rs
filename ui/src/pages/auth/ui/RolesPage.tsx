@@ -351,7 +351,7 @@ function RoleModal({
 														content={perm.display}
 														checked={values.permissions.includes(perm.code)}
 														onChange={(e) =>
-															togglePermission(api, values.permissions, perm.code, e.currentTarget.checked)
+															togglePermission(api, values.permissions, perm.code, e)
 														}
 													/>
 												</div>
