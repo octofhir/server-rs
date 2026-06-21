@@ -43,7 +43,7 @@ importers:
         version: 2.7.0
       '@gravity-ui/dialog-fields':
         specifier: ^6.0.6
-        version: 6.1.0(@bem-react/classname@1.8.0)(@gravity-ui/i18n@1.8.0)(@gravity-ui/icons@2.18.0(react@19.2.7))(@gravity-ui/uikit@7.42.0(@babel/runtime@7.29.7)(@types/react@19.2.17)(react-dom@19.2.7(react@19.2.7))(react@19.2.7))(final-form-arrays@4.0.1(final-form@5.0.1))(final-form-calculate@2.0.0(final-form@5.0.1))(final-form@5.0.1)(react-final-form-arrays@4.0.0(final-form-arrays@4.0.1(final-form@5.0.1))(final-form@5.0.1)(react-final-form@7.0.1(final-form@5.0.1)(react@19.2.7))(react@19.2.7))(react-final-form@7.0.1(final-form@5.0.1)(react@19.2.7))
+        version: 6.1.0(@bem-react/classname@1.8.0)(@gravity-ui/i18n@1.8.0)(@gravity-ui/icons@2.18.0(react@19.2.7))(@gravity-ui/uikit@7.42.0(@babel/runtime@7.29.7)(@types/react@19.2.17)(react-dom@19.2.7(react@19.2.7))(react@19.2.7))(final-form-arrays@4.0.1(final-form@5.0.1))(final-form-calculate@2.0.0(final-form@5.0.1))(final-form@5.0.1)(react-final-form-arrays@5.0.0(final-form-arrays@4.0.1(final-form@5.0.1))(final-form@5.0.1)(react-final-form@7.0.1(final-form@5.0.1)(react@19.2.7))(react@19.2.7))(react-final-form@7.0.1(final-form@5.0.1)(react@19.2.7))
       '@gravity-ui/i18n':
         specifier: ^1.8.0
         version: 1.8.0
@@ -84,8 +84,8 @@ importers:
         specifier: ^7.0.1
         version: 7.0.1(final-form@5.0.1)(react@19.2.7)
       react-final-form-arrays:
-        specifier: ^4.0.0
-        version: 4.0.0(final-form-arrays@4.0.1(final-form@5.0.1))(final-form@5.0.1)(react-final-form@7.0.1(final-form@5.0.1)(react@19.2.7))(react@19.2.7)
+        specifier: ^5.0.0
+        version: 5.0.0(final-form-arrays@4.0.1(final-form@5.0.1))(final-form@5.0.1)(react-final-form@7.0.1(final-form@5.0.1)(react@19.2.7))(react@19.2.7)
       react-resizable-panels:
         specifier: ^4.11.2
         version: 4.11.2(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
@@ -4612,13 +4612,13 @@ packages:
   react-fast-compare@3.2.2:
     resolution: {integrity: sha512-nsO+KSNgo1SbJqJEYRE9ERzo7YtYbou/OqjSQKxV7jcKox7+usiUVZOAC+XnDOABXggQTno0Y1CpVnuWEc1boQ==}
 
-  react-final-form-arrays@4.0.0:
-    resolution: {integrity: sha512-mC/FcaQY0NdVLmpwjJGFY8V77BzFqiI2QBJRDHwWRNkLqOCYB9v5WVhcjbj5NfXMqDl7GmG2iCCndNX+S9teHw==}
+  react-final-form-arrays@5.0.0:
+    resolution: {integrity: sha512-M7J73727AaK0YPJbvf/NiBKZrxnCiYZWSuRSHjg6iiA9+KrSuuRm5Y+8gLsah1ziVk4jH4eLK/Atl26LPkB1Dg==}
     peerDependencies:
-      final-form: ^5.0.0
-      final-form-arrays: ^4.0.0
+      final-form: ^5.0.1
+      final-form-arrays: ^4.0.1
       react: ^16.8.0 || ^17.0.0 || ^18.0.0 || ^19.0.0
-      react-final-form: ^7.0.0
+      react-final-form: ^7.0.1
 
   react-final-form@7.0.1:
     resolution: {integrity: sha512-8K1ITLecBI7F+jCxiMA/JI1amHT/+klQB+nhl5YFZu3R1sQftbiQk/UfwRDvE7ZxIqIvCf8nYLDQRrfwaDT3kQ==}
@@ -6603,7 +6603,7 @@ snapshots:
     dependencies:
       dayjs: 1.11.10
 
-  '@gravity-ui/dialog-fields@6.1.0(@bem-react/classname@1.8.0)(@gravity-ui/i18n@1.8.0)(@gravity-ui/icons@2.18.0(react@19.2.7))(@gravity-ui/uikit@7.42.0(@babel/runtime@7.29.7)(@types/react@19.2.17)(react-dom@19.2.7(react@19.2.7))(react@19.2.7))(final-form-arrays@4.0.1(final-form@5.0.1))(final-form-calculate@2.0.0(final-form@5.0.1))(final-form@5.0.1)(react-final-form-arrays@4.0.0(final-form-arrays@4.0.1(final-form@5.0.1))(final-form@5.0.1)(react-final-form@7.0.1(final-form@5.0.1)(react@19.2.7))(react@19.2.7))(react-final-form@7.0.1(final-form@5.0.1)(react@19.2.7))':
+  '@gravity-ui/dialog-fields@6.1.0(@bem-react/classname@1.8.0)(@gravity-ui/i18n@1.8.0)(@gravity-ui/icons@2.18.0(react@19.2.7))(@gravity-ui/uikit@7.42.0(@babel/runtime@7.29.7)(@types/react@19.2.17)(react-dom@19.2.7(react@19.2.7))(react@19.2.7))(final-form-arrays@4.0.1(final-form@5.0.1))(final-form-calculate@2.0.0(final-form@5.0.1))(final-form@5.0.1)(react-final-form-arrays@5.0.0(final-form-arrays@4.0.1(final-form@5.0.1))(final-form@5.0.1)(react-final-form@7.0.1(final-form@5.0.1)(react@19.2.7))(react@19.2.7))(react-final-form@7.0.1(final-form@5.0.1)(react@19.2.7))':
     dependencies:
       '@bem-react/classname': 1.8.0
       '@gravity-ui/i18n': 1.8.0
@@ -6613,7 +6613,7 @@ snapshots:
       final-form-arrays: 4.0.1(final-form@5.0.1)
       final-form-calculate: 2.0.0(final-form@5.0.1)
       react-final-form: 7.0.1(final-form@5.0.1)(react@19.2.7)
-      react-final-form-arrays: 4.0.0(final-form-arrays@4.0.1(final-form@5.0.1))(final-form@5.0.1)(react-final-form@7.0.1(final-form@5.0.1)(react@19.2.7))(react@19.2.7)
+      react-final-form-arrays: 5.0.0(final-form-arrays@4.0.1(final-form@5.0.1))(final-form@5.0.1)(react-final-form@7.0.1(final-form@5.0.1)(react@19.2.7))(react@19.2.7)
 
   '@gravity-ui/i18n@1.8.0': {}
 
@@ -6689,7 +6689,7 @@ snapshots:
 
   '@hello-pangea/dnd@18.0.1(@types/react@19.2.17)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)':
     dependencies:
-      '@babel/runtime': 7.28.6
+      '@babel/runtime': 7.29.7
       css-box-model: 1.2.1
       raf-schd: 4.0.3
       react: 19.2.7
@@ -9266,7 +9266,7 @@ snapshots:
 
   i18next@23.16.8:
     dependencies:
-      '@babel/runtime': 7.28.6
+      '@babel/runtime': 7.29.7
 
   import-meta-resolve@4.2.0: {}
 
@@ -10304,7 +10304,7 @@ snapshots:
 
   rc-slider@11.1.9(react-dom@19.2.7(react@19.2.7))(react@19.2.7):
     dependencies:
-      '@babel/runtime': 7.28.6
+      '@babel/runtime': 7.29.7
       classnames: 2.5.1
       rc-util: 5.44.4(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
       react: 19.2.7
@@ -10312,7 +10312,7 @@ snapshots:
 
   rc-util@5.44.4(react-dom@19.2.7(react@19.2.7))(react@19.2.7):
     dependencies:
-      '@babel/runtime': 7.28.6
+      '@babel/runtime': 7.29.7
       react: 19.2.7
       react-dom: 19.2.7(react@19.2.7)
       react-is: 18.3.1
@@ -10361,9 +10361,9 @@ snapshots:
 
   react-fast-compare@3.2.2: {}
 
-  react-final-form-arrays@4.0.0(final-form-arrays@4.0.1(final-form@5.0.1))(final-form@5.0.1)(react-final-form@7.0.1(final-form@5.0.1)(react@19.2.7))(react@19.2.7):
+  react-final-form-arrays@5.0.0(final-form-arrays@4.0.1(final-form@5.0.1))(final-form@5.0.1)(react-final-form@7.0.1(final-form@5.0.1)(react@19.2.7))(react@19.2.7):
     dependencies:
-      '@babel/runtime': 7.28.6
+      '@babel/runtime': 7.29.7
       final-form: 5.0.1
       final-form-arrays: 4.0.1(final-form@5.0.1)
       react: 19.2.7
@@ -10499,7 +10499,7 @@ snapshots:
 
   react-window@1.8.11(react-dom@19.2.7(react@19.2.7))(react@19.2.7):
     dependencies:
-      '@babel/runtime': 7.28.6
+      '@babel/runtime': 7.29.7
       memoize-one: 5.2.1
       react: 19.2.7
       react-dom: 19.2.7(react@19.2.7)

@@ -48,7 +48,7 @@
     "final-form-calculate": "^2.0.0",
     "lucide-react": "^1.21.0",
     "react-final-form": "^7.0.1",
-    "react-final-form-arrays": "^4.0.0",
+    "react-final-form-arrays": "^5.0.0",
     "react-resizable-panels": "^4.11.2"
   },
   "devDependencies": {
