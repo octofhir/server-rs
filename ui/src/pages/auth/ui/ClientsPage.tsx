@@ -1,4 +1,4 @@
-import { ActionIcon, Button, Card, Field, Form, Modal, TextInput, useDebouncedValue, useDisclosure } from "@octofhir/ui-kit";
+import { Button, Card, Field, Form, Modal, TextInput, useDebouncedValue, useDisclosure } from "@octofhir/ui-kit";
 import { useState } from "react";
 import type { ReactNode } from "react";
 import {
@@ -14,11 +14,10 @@ import {
 	NumberInput,
 	Textarea,
 	CopyButton,
-	Tooltip,
 } from "@octofhir/ui-kit";
 import { WorkspacePageLayout } from "@/widgets/workspace-page";
 import { DropdownMenu } from "@octofhir/ui-kit";
-import { Plus, Search as Magnifier, EllipsisVertical, Pencil, Trash2 as TrashBin, Monitor as Display, RotateCw as ArrowRotateRight, Copy, Check } from "lucide-react";
+import { Plus, Search as Magnifier, EllipsisVertical, Pencil, Trash2 as TrashBin, Monitor as Display, RotateCw as ArrowRotateRight } from "lucide-react";
 import {
 	getClientStatusView,
 	getClientTypeView,
@@ -195,24 +194,14 @@ export function ClientsPage() {
 											</Text>
 											<div className={classes.clientIdCell}>
 												<Text className={classes.clientIdText}>{client.clientId}</Text>
-												<CopyButton value={client.clientId} timeout={2000}>
-													{({ copied, copy }) => (
-														<Tooltip label={copied ? "Copied!" : "Copy Client ID"} placement="right">
-															<ActionIcon
-																variant="subtle"
-																size="xs"
-																aria-label="Copy Client ID"
-																onClick={copy}
-															>
-																{copied ? (
-																	<Check width={12} height={12} aria-hidden="true" />
-																) : (
-																	<Copy width={12} height={12} aria-hidden="true" />
-																)}
-															</ActionIcon>
-														</Tooltip>
-													)}
-												</CopyButton>
+												<CopyButton
+													text={client.clientId}
+													variant="subtle"
+													size="xs"
+													tooltipInitialText="Copy Client ID"
+													tooltipSuccessText="Copied!"
+													aria-label="Copy Client ID"
+												/>
 											</div>
 										</div>
 									</div>

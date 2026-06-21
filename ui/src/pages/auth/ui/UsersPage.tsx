@@ -7,6 +7,7 @@ import {
 	Checkbox,
 	EmptyState,
 	Select,
+	MultiSelect,
 	PasswordInput,
 	Skeleton,
 	Switch,
@@ -164,11 +165,11 @@ export function UsersPage() {
 					<Select
 						placeholder="Filter by role"
 						options={availableRoles.map((r) => ({ value: r, content: r }))}
-						value={roleFilter ? [roleFilter] : []}
-						onUpdate={(value) => setRoleFilter(value[0] ?? null)}
-						hasClear
-						filterable
-						width={180}
+						value={roleFilter}
+						onUpdate={(value) => setRoleFilter(value ?? null)}
+						clearable
+						searchable
+						w={180}
 					/>
 					<Select
 						placeholder="Status"
@@ -176,16 +177,16 @@ export function UsersPage() {
 							{ value: "active", content: "Active" },
 							{ value: "inactive", content: "Inactive" },
 						]}
-						value={statusFilter ? [statusFilter] : []}
-						onUpdate={(value) => setStatusFilter(value[0] ?? null)}
-						hasClear
-						width={140}
+						value={statusFilter}
+						onUpdate={(value) => setStatusFilter(value ?? null)}
+						clearable
+						w={140}
 					/>
 				</div>
 			}
 		>
 
-			<Card type="container" view="outlined" className={classes.tableContainer}>
+			<Card variant="outlined" className={classes.tableContainer}>
 				{someSelected && (
 					<div className={classes.bulkActions}>
 						<Text variant="body-1" className={classes.selectedCount}>
@@ -510,7 +511,7 @@ function UserModal({
 											label="Username"
 											required
 											value={input.value}
-											onChange={input.onChange}
+											onChange={(value) => input.onChange(value)}
 											onBlur={input.onBlur}
 											disabled={isEditing}
 											error={meta.touched && meta.error ? meta.error : undefined}
@@ -519,7 +520,7 @@ function UserModal({
 								</Field>
 								<Field<string> name="name">
 									{({ input }) => (
-										<TextInput label="Full Name" value={input.value} onChange={input.onChange} />
+										<TextInput label="Full Name" value={input.value} onChange={(value) => input.onChange(value)} />
 									)}
 								</Field>
 							</div>
@@ -530,7 +531,7 @@ function UserModal({
 										label="Email"
 										type="email"
 										value={input.value}
-										onChange={input.onChange}
+										onChange={(value) => input.onChange(value)}
 										onBlur={input.onBlur}
 										error={meta.touched && meta.error ? meta.error : undefined}
 									/>
@@ -547,7 +548,7 @@ function UserModal({
 											}
 											required={!isEditing}
 											value={input.value}
-											onChange={input.onChange}
+											onChange={(value) => input.onChange(value)}
 											onBlur={input.onBlur}
 											error={meta.touched && meta.error ? meta.error : undefined}
 										/>
@@ -591,11 +592,10 @@ function UserModal({
 
 							<Field<string[]> name="roles">
 								{({ input }) => (
-									<Select
+									<MultiSelect
 										label="Roles"
 										options={availableRoles.map((r) => ({ value: r, content: r }))}
-										filterable
-										multiple
+										searchable
 										value={input.value}
 										onUpdate={input.onChange}
 									/>
@@ -725,7 +725,7 @@ function ResetPasswordModal({
 											label="New Password"
 											required
 											value={input.value}
-											onChange={input.onChange}
+											onChange={(value) => input.onChange(value)}
 											onBlur={input.onBlur}
 											error={meta.touched && meta.error ? meta.error : undefined}
 										/>
@@ -773,7 +773,7 @@ function ResetPasswordModal({
 										label="Confirm Password"
 										required
 										value={input.value}
-										onChange={input.onChange}
+										onChange={(value) => input.onChange(value)}
 										onBlur={input.onBlur}
 										error={meta.touched && meta.error ? meta.error : undefined}
 									/>

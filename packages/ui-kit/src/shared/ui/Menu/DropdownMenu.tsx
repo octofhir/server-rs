@@ -31,6 +31,8 @@ export interface DropdownMenuProps {
     popupProps?: { placement?: MenuPlacement };
     /** Custom trigger element; overrides the default icon button. */
     switcher?: ReactNode;
+    /** Render the trigger from a function; overrides `switcher`. */
+    renderSwitcher?: (props: Record<string, never>) => ReactNode;
 }
 
 export function DropdownMenu({
@@ -40,9 +42,10 @@ export function DropdownMenu({
     defaultSwitcherProps,
     popupProps,
     switcher,
+    renderSwitcher,
 }: DropdownMenuProps) {
     const groups = items.map((entry) => (Array.isArray(entry) ? entry : [entry]));
-    const trigger = switcher ?? (
+    const trigger = renderSwitcher?.({}) ?? switcher ?? (
         <ActionIcon
             variant={defaultSwitcherProps?.variant ?? "subtle"}
             size={size ?? defaultSwitcherProps?.size ?? "sm"}
