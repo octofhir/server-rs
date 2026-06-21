@@ -22,6 +22,32 @@ const LAYOUT_PROP_KEYS = [
 type LayoutPropKey = (typeof LAYOUT_PROP_KEYS)[number];
 type LayoutProps = Partial<Record<LayoutPropKey, number | string>>;
 
+/** Spacing/sizing shorthands shared by Box, Flex and Card. */
+export interface SpacingProps {
+    /** Width. Accepts px numbers, CSS lengths, or `xs|sm|md|lg|xl` tokens. */
+    w?: number | string;
+    /** Height. */
+    h?: number | string;
+    /** Padding (all sides). */
+    p?: number | string;
+    /** Horizontal padding. */
+    px?: number | string;
+    /** Vertical padding. */
+    py?: number | string;
+    pt?: number | string;
+    pb?: number | string;
+    pl?: number | string;
+    pr?: number | string;
+    /** Margin (all sides). */
+    m?: number | string;
+    mx?: number | string;
+    my?: number | string;
+    mt?: number | string;
+    mb?: number | string;
+    ml?: number | string;
+    mr?: number | string;
+}
+
 export const mapSpaceValue = (val?: number | string): number | string | undefined => {
     if (typeof val === 'number') return val;
     switch(val) {

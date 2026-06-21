@@ -10,15 +10,11 @@ const meta: Meta<typeof Flex> = {
       control: "select",
       options: ["row", "row-reverse", "column", "column-reverse"],
     },
-    alignContent: {
-      control: "select",
-      options: ["flex-start", "flex-end", "center", "space-between", "space-around", "stretch"],
-    },
-    alignItems: {
+    align: {
       control: "select",
       options: ["flex-start", "flex-end", "center", "baseline", "stretch"],
     },
-    justifyContent: {
+    justify: {
       control: "select",
       options: ["flex-start", "flex-end", "center", "space-between", "space-around", "space-evenly"],
     },

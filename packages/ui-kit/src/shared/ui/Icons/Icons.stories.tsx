@@ -95,12 +95,12 @@ export const Catalog: Story = {
                     }}
                 >
                     {filtered.map(({ name, Component, source }) => (
-                        <Card key={name} type="container" view="filled" theme="normal">
+                        <Card key={name} variant="filled" p={0}>
                             <Flex
                                 direction="column"
-                                alignItems="center"
-                                justifyContent="center"
-                                gap={2}
+                                align="center"
+                                justify="center"
+                                gap={8}
                                 style={{ padding: 12, minHeight: 96 }}
                             >
                                 <Component width={24} height={24} />

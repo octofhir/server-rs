@@ -1,0 +1,25 @@
+.card {
+    box-sizing: border-box;
+    padding: var(--octo-spacing-lg, 1.5rem);
+    border: 1px solid transparent;
+    border-radius: var(--octo-radius-lg, 12px);
+    background: var(--octo-surface-1, #fff);
+    color: var(--octo-text-primary, #1a1b1e);
+}
+
+.card[data-variant="filled"] {
+    background: var(--octo-surface-1, #fff);
+    border-color: var(--octo-border-subtle, #dee2e6);
+}
+.card[data-variant="outlined"] {
+    background: transparent;
+    border-color: var(--octo-border-strong, #ced4da);
+}
+.card[data-variant="raised"] {
+    background: var(--octo-surface-1, #fff);
+    border-color: var(--octo-border-subtle, #dee2e6);
+    box-shadow: var(--octo-shadow-md, 0 4px 12px rgba(0, 0, 0, 0.08));
+}
+.card[data-variant="clear"] {
+    background: transparent;
+}
