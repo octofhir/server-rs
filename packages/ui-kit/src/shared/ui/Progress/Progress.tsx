@@ -1,13 +1,8 @@
-import {
-    Progress as GravityProgress,
-    type ProgressProps as GravityProgressProps,
-    type ProgressTheme,
-    type ProgressSize,
-} from "@gravity-ui/uikit";
+import styles from "./Progress.module.css";
 
-type ColorLike = ProgressTheme | "green" | "red" | "fire" | "yellow" | "amber" | "warm" | "blue" | "primary";
+type Tone = "primary" | "success" | "danger" | "warning" | "info";
 
-const THEME_BY_COLOR: Record<string, ProgressTheme> = {
+const TONE_BY_COLOR: Record<string, Tone> = {
     green: "success",
     success: "success",
     red: "danger",
@@ -18,13 +13,12 @@ const THEME_BY_COLOR: Record<string, ProgressTheme> = {
     warm: "warning",
     warning: "warning",
     blue: "info",
-    primary: "info",
     info: "info",
-    misc: "misc",
-    default: "default",
+    primary: "primary",
+    default: "primary",
 };
 
-const SIZE_BY_NAME: Record<string, ProgressSize> = {
+const SIZE_BY_NAME: Record<string, "xs" | "s" | "m"> = {
     xs: "xs",
     s: "s",
     sm: "s",
@@ -33,22 +27,54 @@ const SIZE_BY_NAME: Record<string, ProgressSize> = {
     lg: "m",
 };
 
-export type ProgressProps = Omit<GravityProgressProps, "theme" | "size"> & {
-    /** Semantic color; resolved to a theme. */
-    color?: ColorLike;
-    theme?: ProgressTheme;
-    size?: ProgressSize | "sm" | "md" | "lg";
-};
+export interface ProgressProps {
+    /** Completion percentage (0–100). */
+    value?: number;
+    /** Semantic color. */
+    color?: string;
+    /** Alias resolved to a color tone. */
+    theme?: string;
+    size?: "xs" | "s" | "m" | "sm" | "md" | "lg";
+    striped?: boolean;
+    animated?: boolean;
+    className?: string;
+    style?: React.CSSProperties;
+    "aria-label"?: string;
+}
 
-/** Linear progress bar with a semantic `color` and flexible size names. */
-export function Progress({ color, theme, size, ...props }: ProgressProps) {
-    const resolvedTheme = theme ?? (color ? THEME_BY_COLOR[color] : undefined);
-    const resolvedSize = size ? SIZE_BY_NAME[size] ?? "m" : undefined;
+/** Linear progress bar driven by `--octo-*` tokens. */
+export function Progress({
+    value = 0,
+    color,
+    theme,
+    size = "m",
+    striped,
+    animated,
+    className,
+    style,
+    "aria-label": ariaLabel,
+}: ProgressProps) {
+    const tone = TONE_BY_COLOR[color ?? theme ?? "primary"] ?? "primary";
+    const resolvedSize = SIZE_BY_NAME[size] ?? "m";
+    const pct = Math.max(0, Math.min(100, value));
     return (
-        <GravityProgress
-            {...(props as GravityProgressProps)}
-            theme={resolvedTheme}
-            size={resolvedSize}
-        />
+        <div
+            className={[styles.track, className].filter(Boolean).join(" ")}
+            data-size={resolvedSize}
+            style={style}
+            role="progressbar"
+            aria-valuenow={pct}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-label={ariaLabel}
+        >
+            <div
+                className={styles.bar}
+                data-tone={tone}
+                data-striped={striped || undefined}
+                data-animated={animated || undefined}
+                style={{ width: `${pct}%` }}
+            />
+        </div>
     );
 }

@@ -1,1 +1,2 @@
-export { Divider, type DividerProps } from "@gravity-ui/uikit";
+export { Divider } from "./Divider";
+export type { DividerProps } from "./Divider";

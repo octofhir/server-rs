@@ -1,0 +1,29 @@
+.link {
+    color: var(--octo-accent-primary, #4263eb);
+    text-decoration: none;
+    cursor: pointer;
+    transition: color var(--octo-motion-fast, 100ms) var(--octo-motion-ease, ease);
+}
+.link:hover {
+    color: var(--octo-accent-primary-hover, #3b5bdb);
+    text-decoration: underline;
+}
+.link:focus-visible {
+    outline: 2px solid var(--octo-focus-ring, #91a7ff);
+    outline-offset: 2px;
+    border-radius: var(--octo-radius-xs3, 2px);
+}
+
+.link[data-view="secondary"] {
+    color: var(--octo-text-secondary, #495057);
+}
+.link[data-view="secondary"]:hover {
+    color: var(--octo-text-primary, #1a1b1e);
+}
+
+.link[data-view="primary"] {
+    color: var(--octo-text-primary, #1a1b1e);
+}
+.link[data-view="primary"]:hover {
+    color: var(--octo-accent-primary, #4263eb);
+}

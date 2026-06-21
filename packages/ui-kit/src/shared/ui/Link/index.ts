@@ -1,1 +1,2 @@
-export { Link, type LinkProps } from "@gravity-ui/uikit";
+export { Link } from "./Link";
+export type { LinkProps } from "./Link";

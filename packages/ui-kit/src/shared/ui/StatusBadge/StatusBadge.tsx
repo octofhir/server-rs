@@ -1,4 +1,3 @@
-import type { LabelProps } from "@gravity-ui/uikit";
 import { Badge, type BadgeProps } from "../Badge";
 
 export type StatusTone = "neutral" | "info" | "success" | "warning" | "danger";
@@ -7,7 +6,7 @@ export interface StatusBadgeProps extends Omit<BadgeProps, "theme" | "color"> {
     tone?: StatusTone;
 }
 
-const themeByTone: Record<StatusTone, LabelProps["theme"]> = {
+const themeByTone: Record<StatusTone, BadgeProps["theme"]> = {
     neutral: "unknown",
     info: "info",
     success: "success",

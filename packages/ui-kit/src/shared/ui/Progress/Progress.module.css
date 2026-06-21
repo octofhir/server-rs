@@ -1,0 +1,42 @@
+.track {
+    width: 100%;
+    overflow: hidden;
+    background: var(--octo-surface-3, #e9ecef);
+    border-radius: var(--octo-radius-pill, 9999px);
+}
+.track[data-size="xs"] { height: 4px; }
+.track[data-size="s"] { height: 6px; }
+.track[data-size="m"] { height: 8px; }
+
+.bar {
+    height: 100%;
+    border-radius: inherit;
+    background: var(--octo-accent-primary, #4263eb);
+    transition: width var(--octo-motion-normal, 200ms) var(--octo-motion-ease, ease);
+}
+.bar[data-tone="success"] { background: var(--octo-brand-success, #2f9e44); }
+.bar[data-tone="danger"] { background: var(--octo-accent-fire, #fa5252); }
+.bar[data-tone="warning"] { background: var(--octo-brand-warm, #f08c00); }
+.bar[data-tone="info"] { background: var(--octo-brand-info, #1971c2); }
+
+.bar[data-striped="true"] {
+    background-image: linear-gradient(
+        45deg,
+        rgba(255, 255, 255, 0.18) 25%,
+        transparent 25%,
+        transparent 50%,
+        rgba(255, 255, 255, 0.18) 50%,
+        rgba(255, 255, 255, 0.18) 75%,
+        transparent 75%,
+        transparent
+    );
+    background-size: 1rem 1rem;
+}
+.bar[data-animated="true"] {
+    animation: octo-progress-stripes 1s linear infinite;
+}
+
+@keyframes octo-progress-stripes {
+    from { background-position: 1rem 0; }
+    to { background-position: 0 0; }
+}

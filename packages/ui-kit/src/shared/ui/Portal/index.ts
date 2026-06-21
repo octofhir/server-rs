@@ -1,1 +1,2 @@
-export { Portal, type PortalProps } from "@gravity-ui/uikit";
+export { Portal } from "./Portal";
+export type { PortalProps } from "./Portal";

@@ -1,6 +1,5 @@
 import { forwardRef } from "react";
-import { Bars } from "@gravity-ui/icons";
-import { Icon } from "@gravity-ui/uikit";
+import { Menu as MenuIcon, X } from "lucide-react";
 import { ActionIcon, type ActionIconProps } from "../ActionIcon";
 
 export type BurgerProps = Omit<ActionIconProps, "onClick" | "children"> & {
@@ -9,15 +8,16 @@ export type BurgerProps = Omit<ActionIconProps, "onClick" | "children"> & {
 };
 
 export const Burger = forwardRef<HTMLButtonElement, BurgerProps>(
-    ({ onClick, ...props }, ref) => {
+    ({ opened, onClick, ...props }, ref) => {
         return (
             <ActionIcon
                 ref={ref}
                 view="flat"
+                aria-label={opened ? "Close menu" : "Open menu"}
                 onClick={onClick as ActionIconProps["onClick"]}
                 {...(props as ActionIconProps)}
             >
-                <Icon data={Bars} size={16} />
+                {opened ? <X size={16} /> : <MenuIcon size={16} />}
             </ActionIcon>
         );
     },
