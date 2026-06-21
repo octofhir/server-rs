@@ -77,7 +77,7 @@ export function HistoryPanel({ opened, onClose }: HistoryPanelProps) {
           placeholder="Search by path or method..."
           leftSection={<IconSearch size={16} />}
           value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
+          onChange={(value) => setSearchQuery(value)}
         />
 
         {/* Actions */}

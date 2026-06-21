@@ -270,7 +270,7 @@ export function SchemaRail({
 						placeholder="Search tables..."
 						leftSection={<Magnifier size={13} />}
 						value={search}
-						onChange={(e) => setSearch(e.currentTarget.value)}
+						onChange={(value) => setSearch(value)}
 						key={searchFocusKey}
 						autoFocus={!!searchFocusKey}
 					/>

@@ -243,7 +243,7 @@ export function AutomationsPage() {
               placeholder="Search automations..."
               leftSection={<Magnifier size={16} />}
               value={search}
-              onChange={(e) => setSearch(e.target.value)}
+              onChange={(value) => setSearch(value)}
               className={classes.searchInput}
             />
             <Select

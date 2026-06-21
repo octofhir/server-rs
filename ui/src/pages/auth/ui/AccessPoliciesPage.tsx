@@ -108,7 +108,7 @@ export function AccessPoliciesPage() {
 						placeholder="Search by name..."
 						leftSection={<Magnifier width={16} />}
 						value={search}
-						onChange={(e) => setSearch(e.currentTarget.value)}
+						onChange={(value) => setSearch(value)}
 						className={classes.search}
 					/>
 				</div>

@@ -192,7 +192,7 @@ function ResourcesTab({
 					placeholder="Search resources..."
 					leftSection={<Magnifier size={16} />}
 					value={search}
-					onChange={(e) => setSearch(e.currentTarget.value)}
+					onChange={(value) => setSearch(value)}
 					className={classes.searchInput}
 				/>
 				<Select

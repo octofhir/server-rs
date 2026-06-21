@@ -288,13 +288,13 @@ export function AutomationEditorPage() {
                 <TextInput
                   label="Name"
                   value={name}
-                  onChange={(e) => handleNameChange(e.target.value)}
+                  onChange={(value) => handleNameChange(value)}
                   required
                 />
                 <Textarea
                   label="Description"
                   value={description}
-                  onChange={(e) => handleDescriptionChange(e.target.value)}
+                  onChange={(value) => handleDescriptionChange(value)}
                   rows={2}
                 />
                 <NumberInput

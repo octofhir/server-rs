@@ -67,7 +67,7 @@ export function TablesTab() {
           placeholder="Search tables..."
           leftSection={<Magnifier size={14} />}
           value={search}
-          onChange={(e) => setSearch(e.currentTarget.value)}
+          onChange={(value) => setSearch(value)}
         />
       </div>
       <div className={classes.sideTabCount}>

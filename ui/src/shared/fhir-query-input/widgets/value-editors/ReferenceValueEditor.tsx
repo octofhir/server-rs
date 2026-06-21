@@ -64,7 +64,7 @@ export function ReferenceValueEditor({
 		return (
 			<TextInput
 				value={value}
-				onChange={(e) => onChange(e.target.value)}
+				onChange={(value) => onChange(value)}
 				size="xs"
 				placeholder="Reference ID or ResourceType/ID"
 				styles={{ root: { flex: 1 } }}
@@ -88,7 +88,7 @@ export function ReferenceValueEditor({
 			) : null}
 			<TextInput
 				value={isChain ? value : refId}
-				onChange={isChain ? (e) => onChange(e.target.value) : handleIdChange}
+				onChange={isChain ? (e) => onChange(value) : handleIdChange}
 				size="xs"
 				placeholder={targets.length === 1 ? `${targets[0]} ID` : "ID"}
 				styles={{ root: { flex: 1 } }}

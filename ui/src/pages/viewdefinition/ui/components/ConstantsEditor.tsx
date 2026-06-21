@@ -139,7 +139,7 @@ export function ConstantsEditor({ constants, onChange }: ConstantsEditorProps) {
                 <TextInput
                   placeholder="Name"
                   value={constant.name}
-                  onChange={(e) => handleNameChange(i, e.target.value)}
+                  onChange={(value) => handleNameChange(i, value)}
                   className={classes.input}
                   size="xs"
                 />

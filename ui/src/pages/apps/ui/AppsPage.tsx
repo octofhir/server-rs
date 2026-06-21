@@ -92,7 +92,7 @@ export function AppsPage() {
 						placeholder="Search by name..."
 						leftSection={<IconSearch width={16} height={16} aria-hidden="true" />}
 						value={search}
-						onChange={(e) => setSearch(e.currentTarget.value)}
+						onChange={(value) => setSearch(value)}
 						className={classes.searchInput}
 					/>
 				</div>

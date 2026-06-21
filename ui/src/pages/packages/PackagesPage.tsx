@@ -85,7 +85,7 @@ function InstalledPackagesTab({
 				placeholder="Search installed packages..."
 				leftSection={<Magnifier size={16} />}
 				value={search}
-				onChange={(e) => setSearch(e.currentTarget.value)}
+				onChange={(value) => setSearch(value)}
 				className={classes.searchInput}
 			/>
 

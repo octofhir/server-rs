@@ -104,7 +104,7 @@ export function CreateAutomationModal({ opened, onClose }: CreateAutomationModal
           label="Name"
           placeholder="My Automation"
           value={name}
-          onChange={(e) => setName(e.target.value)}
+          onChange={(value) => setName(value)}
           required
           data-autofocus
         />
@@ -113,7 +113,7 @@ export function CreateAutomationModal({ opened, onClose }: CreateAutomationModal
           label="Description"
           placeholder="Optional description of what this automation does"
           value={description}
-          onChange={(e) => setDescription(e.target.value)}
+          onChange={(value) => setDescription(value)}
           rows={3}
         />
 

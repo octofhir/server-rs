@@ -17,7 +17,7 @@ export function RawRequestInput() {
 			<TextInput
 				placeholder="/fhir/Patient?name=John&_count=10"
 				value={rawPath}
-				onChange={(e) => setRawPathEvent(e.target.value)}
+				onChange={(value) => setRawPathEvent(value)}
 				size="sm"
 			/>
 			<Text size="xs" className={styles.hint}>

@@ -150,7 +150,7 @@ export function QueryChipsBuilder({
 					label="Resource ID"
 					placeholder="Optional"
 					value={state.resourceId ?? ""}
-					onChange={(e) => handleResourceIdChange(e.target.value)}
+					onChange={(value) => handleResourceIdChange(value)}
 					styles={{ root: { width: 160 } }}
 				/>
 			</div>
@@ -363,7 +363,7 @@ function ParamValueEditor({
 				<TextInput
 					placeholder="Value"
 					value={value}
-					onChange={(e) => onChange(e.target.value)}
+					onChange={(value) => onChange(value)}
 					size="xs"
 					styles={{ root: { flex: 1 } }}
 				/>
@@ -482,7 +482,7 @@ function SpecialParamValueEditor({
 				return (
 					<TextInput
 						value={value}
-						onChange={(e) => onChange(e.target.value)}
+						onChange={(value) => onChange(value)}
 						size="xs"
 						placeholder="-_lastUpdated"
 						styles={{ root: { flex: 1 } }}
@@ -512,7 +512,7 @@ function SpecialParamValueEditor({
 				return (
 					<TextInput
 						value={value}
-						onChange={(e) => onChange(e.target.value)}
+						onChange={(value) => onChange(value)}
 						size="xs"
 						placeholder="Resource:param:Target"
 						styles={{ root: { flex: 1 } }}
@@ -547,7 +547,7 @@ function SpecialParamValueEditor({
 			return (
 				<TextInput
 					value={value}
-					onChange={(e) => onChange(e.target.value)}
+					onChange={(value) => onChange(value)}
 					size="xs"
 					placeholder="Value"
 					styles={{ root: { flex: 1 } }}

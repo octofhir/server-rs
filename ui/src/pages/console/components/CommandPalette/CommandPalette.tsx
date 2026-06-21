@@ -149,7 +149,7 @@ export function CommandPalette() {
 					ref={inputRef}
 					placeholder="Search commands (e.g. 'GET patient', 'clear history')..."
 					value={query}
-					onChange={(e) => setQuery(e.currentTarget.value)}
+					onChange={(value) => setQuery(value)}
 					onKeyDown={handleKeyDown}
 					size="l"
 					autoFocus

@@ -157,7 +157,7 @@ export function EditorPanel({ value: viewDef, resourceTypes, onChange }: EditorP
           label="Name"
           placeholder="my_patient_view"
           value={viewDef.name}
-          onChange={(e) => onChange({ ...viewDef, name: e.target.value })}
+          onChange={(value) => onChange({ ...viewDef, name: value })}
           className={classes.textField}
         />
         <Select

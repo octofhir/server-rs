@@ -158,7 +158,7 @@ export function UsersPage() {
 						placeholder="Search by username or email..."
 						startContent={<Magnifier width={16} />}
 						value={search}
-						onChange={(e) => setSearch(e.currentTarget.value)}
+						onChange={(value) => setSearch(value)}
 						className={classes.searchInput}
 					/>
 					<Select

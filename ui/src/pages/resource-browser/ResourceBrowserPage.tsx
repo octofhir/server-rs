@@ -292,7 +292,7 @@ export function ResourceBrowserPage() {
               size="s"
               leftSection={<Magnifier width={14} height={14} aria-hidden="true" />}
               value={typeFilter}
-              onChange={(e) => setTypeFilter(e.currentTarget.value)}
+              onChange={(value) => setTypeFilter(value)}
               className={classes.searchInput}
             />
           </div>

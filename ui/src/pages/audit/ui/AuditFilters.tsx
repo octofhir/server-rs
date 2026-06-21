@@ -170,7 +170,7 @@ function AuditFiltersComponent({
 					placeholder="Search events..."
 					leftSection={<Magnifier size={14} />}
 					value={filters.search || ""}
-					onChange={(e) => handleSearchChange(e.currentTarget.value)}
+					onChange={(value) => handleSearchChange(value)}
 					className={classes.searchInput}
 					size="sm"
 				/>

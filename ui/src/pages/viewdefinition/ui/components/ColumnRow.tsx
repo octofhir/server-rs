@@ -56,7 +56,7 @@ export const ColumnRow = memo(function ColumnRow({
         <TextInput
           placeholder="Column name"
           value={column.name}
-          onChange={(e) => onChange(index, { ...column, name: e.target.value })}
+          onChange={(value) => onChange(index, { ...column, name: value })}
           className={classes.nameInput}
           size="xs"
         />

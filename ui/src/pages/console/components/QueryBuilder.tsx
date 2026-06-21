@@ -100,7 +100,7 @@ export function QueryBuilder({
 				<TextInput
 					placeholder="name=John&birthdate:ge=2000-01-01&_count=10"
 					value={inputValue || queryString}
-					onChange={(e) => handleInputChange(e.target.value)}
+					onChange={(value) => handleInputChange(value)}
 					onBlur={handleBlur}
 					size="m"
 					hasClear
@@ -109,7 +109,7 @@ export function QueryBuilder({
 				<Textarea
 					placeholder="name=John&birthdate:ge=2000-01-01"
 					value={queryString}
-					onChange={(e) => handleRawChange(e.target.value)}
+					onChange={(value) => handleRawChange(value)}
 					minRows={2}
 					size="m"
 				/>
