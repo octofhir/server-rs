@@ -12,8 +12,8 @@ import { cleanLayoutProps, getSpacingStyles } from "../layout-utils";
  *   │ (sticky) │   (scroll content)  │
  *   └──────────┴─────────────────────┘
  *
- * Mirrors the API from `@gravity-ui/navigation`'s `AsideHeader` enough to
- * support a sidebar that collapses on mobile and a sticky header.
+ * Slot-based application frame: a sticky header plus a sidebar that collapses
+ * on mobile.
  *
  * Compose with the slot subcomponents:
  *   <AppShell header={{ height: 56 }} navbar={{ width: 240, collapsed: { mobile: !open } }}>

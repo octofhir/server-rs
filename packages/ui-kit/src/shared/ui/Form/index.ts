@@ -1,33 +1,11 @@
 /**
- * Gravity-blessed form layer for OctoFHIR admin UI.
+ * Form layer for the OctoFHIR console.
  *
- * Built on top of `@gravity-ui/dialog-fields` (powered by `react-final-form`).
- * For declarative dialog/CRUD forms use `<DFDialog>` with a list of
- * `ControlField` configs and built-in field types (text, textarea, select,
- * checkbox, radio, tumbler, multiText, editableList, editableManyLists, tabs,
- * plainText, customBlock).
- *
- * For free-form pages, use the `react-final-form` primitives (`Form`, `Field`,
- * `useForm`, `useField`) directly with bare `@gravity-ui/uikit` controls and
- * `FormRow` from `@gravity-ui/components` for label/description layout.
+ * Re-exports the `react-final-form` primitives (`Form`, `Field`, `FormSpy`,
+ * `useForm`, `useField`, `useFormState`) so pages get a single import surface.
+ * Pair with `FormRow` for label/description layout and the kit input controls.
  */
 
-export {
-    DFDialog,
-    FORM_ERROR,
-    registerDialogControl,
-    registerDialogTabControl,
-} from "@gravity-ui/dialog-fields";
-export type {
-    ControlField,
-    DFDialogField,
-    DFDialogProps,
-    DFDialogTabField,
-    FormApi,
-    TabbedField,
-} from "@gravity-ui/dialog-fields";
-
-// Re-export react-final-form primitives so consumers get a single import surface.
 export { Field, Form, FormSpy, useField, useForm, useFormState } from "react-final-form";
 export type {
     FieldInputProps,
@@ -36,3 +14,4 @@ export type {
     FormProps,
     FormRenderProps,
 } from "react-final-form";
+export type { FormApi } from "final-form";
