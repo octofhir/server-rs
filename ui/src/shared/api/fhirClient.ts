@@ -142,7 +142,7 @@ export class FhirClient {
 			method: "GET",
 			url: `/${resourceType}/${id}`,
 		});
-		return assertFhirResource<T>(response.data, `read ${resourceType}/${id}`);
+		return assertFhirResource(response.data, `read ${resourceType}/${id}`) as T;
 	}
 
 	async search<T extends FhirResource = FhirResource>(
@@ -164,7 +164,7 @@ export class FhirClient {
 			url,
 		});
 
-		return assertFhirBundle<T>(response.data, `search ${resourceType}`);
+		return assertFhirBundle(response.data, `search ${resourceType}`) as Bundle<T>;
 	}
 
 	async create<T extends FhirResource = FhirResource>(
@@ -175,7 +175,7 @@ export class FhirClient {
 			url: `/${resource.resourceType}`,
 			data: resource,
 		});
-		return assertFhirResource<T>(response.data, `create ${resource.resourceType}`);
+		return assertFhirResource(response.data, `create ${resource.resourceType}`) as T;
 	}
 
 	async update<T extends FhirResource = FhirResource>(resource: T): Promise<T> {
@@ -188,7 +188,7 @@ export class FhirClient {
 			url: `/${resource.resourceType}/${resource.id}`,
 			data: resource,
 		});
-		return assertFhirResource<T>(response.data, `update ${resource.resourceType}/${resource.id}`);
+		return assertFhirResource(response.data, `update ${resource.resourceType}/${resource.id}`) as T;
 	}
 
 	async delete(resourceType: string, id: string): Promise<void> {
@@ -203,7 +203,7 @@ export class FhirClient {
 			method: "GET",
 			url: "/fhir/metadata",
 		});
-		const resource = assertFhirResource<CapabilityStatement>(response.data, "get capabilities");
+		const resource = assertFhirResource(response.data, "get capabilities") as CapabilityStatement;
 		if (resource.resourceType !== "CapabilityStatement") {
 			throw new Error("get capabilities: expected CapabilityStatement response");
 		}
@@ -302,13 +302,13 @@ class OctoFhirClient extends FhirClient {
 			method: "GET",
 			url: `${baseUrl}/${resourceType}/${id}`,
 		});
-		return assertFhirResource<T>(response.data, `read ${resourceType}/${id}`);
+		return assertFhirResource(response.data, `read ${resourceType}/${id}`) as T;
 	}
 
-	async search<_T extends FhirResource = FhirResource>(
+	async search<T extends FhirResource = FhirResource>(
 		resourceType: string,
 		params: Record<string, string | number> = {},
-	): Promise<FhirBundle> {
+	): Promise<Bundle<T>> {
 		const baseUrl = this.getBaseUrlForResource(resourceType);
 		const searchParams = new URLSearchParams();
 
@@ -324,17 +324,17 @@ class OctoFhirClient extends FhirClient {
 			url,
 		});
 
-		return assertFhirBundle(response.data, `search ${resourceType}`);
+		return assertFhirBundle(response.data, `search ${resourceType}`) as Bundle<T>;
 	}
 
-	async create<T extends FhirResource = FhirResource>(resource: T): Promise<T> {
+	async create<T extends FhirResource = FhirResource>(resource: FhirCreateResource<T>): Promise<T> {
 		const baseUrl = this.getBaseUrlForResource(resource.resourceType);
 		const response = await this.customRequest({
 			method: "POST",
 			url: `${baseUrl}/${resource.resourceType}`,
 			data: resource,
 		});
-		return assertFhirResource<T>(response.data, `create ${resource.resourceType}`);
+		return assertFhirResource(response.data, `create ${resource.resourceType}`) as T;
 	}
 
 	async update<T extends FhirResource = FhirResource>(resource: T): Promise<T> {
@@ -348,7 +348,7 @@ class OctoFhirClient extends FhirClient {
 			url: `${baseUrl}/${resource.resourceType}/${resource.id}`,
 			data: resource,
 		});
-		return assertFhirResource<T>(response.data, `update ${resource.resourceType}/${resource.id}`);
+		return assertFhirResource(response.data, `update ${resource.resourceType}/${resource.id}`) as T;
 	}
 
 	async delete(resourceType: string, id: string): Promise<void> {
