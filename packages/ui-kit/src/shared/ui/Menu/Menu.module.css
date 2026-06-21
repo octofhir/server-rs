@@ -8,8 +8,8 @@
     gap: 2px;
     min-width: 160px;
     padding: var(--octo-spacing-xs, 4px);
-    background: var(--octo-surface-1, var(--g-color-base-background));
-    border: 1px solid var(--octo-border-subtle, var(--g-color-line-generic));
+    background: var(--octo-surface-1, #fff);
+    border: 1px solid var(--octo-border-subtle, #dee2e6);
     border-radius: var(--octo-radius-md, 8px);
     box-shadow: var(--octo-shadow-lg, 0 8px 24px rgba(0, 0, 0, 0.16));
 }
@@ -66,5 +66,5 @@
     height: 1px;
     margin: var(--octo-spacing-xs, 4px) 0;
     border: none;
-    background: var(--octo-border-subtle, var(--g-color-line-generic));
+    background: var(--octo-border-subtle, #dee2e6);
 }

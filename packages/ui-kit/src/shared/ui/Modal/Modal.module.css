@@ -39,14 +39,14 @@
     justify-content: space-between;
     gap: var(--octo-spacing-md, 16px);
     padding: var(--octo-spacing-md, 16px) var(--octo-spacing-lg, 20px);
-    border-bottom: 1px solid var(--octo-border-subtle, var(--g-color-line-generic));
+    border-bottom: 1px solid var(--octo-border-subtle, #dee2e6);
 }
 
 .title {
     margin: 0;
     font-size: var(--octo-typography-size-md, 1rem);
     font-weight: 600;
-    color: var(--g-color-text-primary);
+    color: var(--octo-text-primary, #1a1b1e);
 }
 
 .close {
@@ -68,5 +68,5 @@
     justify-content: flex-end;
     gap: var(--octo-spacing-sm, 12px);
     padding: var(--octo-spacing-md, 16px) var(--octo-spacing-lg, 20px);
-    border-top: 1px solid var(--octo-border-subtle, var(--g-color-line-generic));
+    border-top: 1px solid var(--octo-border-subtle, #dee2e6);
 }
