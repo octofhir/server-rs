@@ -1,0 +1,117 @@
+.host {
+    position: fixed;
+    bottom: var(--octo-spacing-lg, 1.5rem);
+    right: var(--octo-spacing-lg, 1.5rem);
+    z-index: 2000;
+    display: flex;
+    flex-direction: column;
+    gap: var(--octo-spacing-sm, 0.75rem);
+    width: 380px;
+    max-width: calc(100vw - 2rem);
+    pointer-events: none;
+}
+
+.toast {
+    --_accent: var(--octo-brand-info, #1971c2);
+    --_soft: var(--octo-brand-info-soft, #e7f5ff);
+    position: relative;
+    display: flex;
+    align-items: flex-start;
+    gap: var(--octo-spacing-sm, 0.75rem);
+    padding: 0.875rem 1rem;
+    overflow: hidden;
+    border: 1px solid var(--octo-border-subtle, #dee2e6);
+    border-radius: var(--octo-radius-lg, 12px);
+    background: var(--octo-surface-1, #fff);
+    box-shadow:
+        0 1px 2px rgba(0, 0, 0, 0.04),
+        var(--octo-shadow-lg, 0 12px 32px rgba(0, 0, 0, 0.16));
+    pointer-events: auto;
+    animation: octo-toast-in 260ms var(--octo-motion-ease-out, cubic-bezier(0.16, 1, 0.3, 1)) both;
+}
+.toast[data-theme="info"] { --_accent: var(--octo-brand-info, #1971c2); --_soft: var(--octo-brand-info-soft, #e7f5ff); }
+.toast[data-theme="success"] { --_accent: var(--octo-brand-success, #2f9e44); --_soft: var(--octo-brand-success-soft, #ebfbee); }
+.toast[data-theme="warning"] { --_accent: var(--octo-brand-warm, #f08c00); --_soft: var(--octo-brand-warm-soft, #fff9db); }
+.toast[data-theme="danger"] { --_accent: var(--octo-accent-fire, #fa5252); --_soft: var(--octo-accent-fire-bg, #fff5f5); }
+
+.iconWrap {
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 30px;
+    border-radius: var(--octo-radius-pill, 9999px);
+    background: var(--_soft);
+    color: var(--_accent);
+}
+
+.body {
+    flex: 1 1 auto;
+    min-width: 0;
+    padding-top: 1px;
+}
+.title {
+    font-size: var(--octo-typography-size-sm, 0.875rem);
+    font-weight: 600;
+    color: var(--octo-text-primary, #1a1b1e);
+    line-height: 1.3;
+}
+.content {
+    margin-top: 2px;
+    font-size: 0.8125rem;
+    color: var(--octo-text-secondary, #495057);
+    line-height: 1.4;
+    word-break: break-word;
+}
+
+.close {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    margin: -2px -2px 0 0;
+    padding: 0;
+    border: none;
+    border-radius: var(--octo-radius-sm, 6px);
+    background: transparent;
+    color: var(--octo-text-muted, #868e96);
+    cursor: pointer;
+    transition:
+        background-color 100ms ease,
+        color 100ms ease;
+}
+.close:hover {
+    background: var(--octo-surface-2, #f1f3f5);
+    color: var(--octo-text-primary, #1a1b1e);
+}
+
+/* Auto-dismiss countdown. */
+.progress {
+    position: absolute;
+    left: 0;
+    bottom: 0;
+    height: 3px;
+    width: 100%;
+    transform-origin: left;
+    background: var(--_accent);
+    opacity: 0.85;
+    animation: octo-toast-progress linear forwards;
+}
+
+@keyframes octo-toast-in {
+    from {
+        opacity: 0;
+        transform: translateY(10px) scale(0.98);
+    }
+}
+@keyframes octo-toast-progress {
+    from {
+        transform: scaleX(1);
+    }
+    to {
+        transform: scaleX(0);
+    }
+}

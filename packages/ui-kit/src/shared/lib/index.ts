@@ -5,12 +5,8 @@ export const em = (value: string | number) =>
 export const px = (value: string | number) =>
     typeof value === "number" ? value : parseFloat(value as string) * 16;
 
-export {
-    notify,
-    toaster,
-    type NotifyOptions,
-    type NotifyTheme,
-} from "./toaster";
+export { notify, type NotifyOptions, type NotifyTheme } from "./toaster";
+export { ToasterHost } from "./ToasterHost";
 
 export {
     confirm,

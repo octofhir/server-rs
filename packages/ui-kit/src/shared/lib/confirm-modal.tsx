@@ -1,6 +1,6 @@
-import { ConfirmDialog } from "@gravity-ui/components";
-import type { ButtonProps } from "@gravity-ui/uikit";
 import { useEffect, useState, type ReactNode } from "react";
+import { Button, type ButtonProps } from "../ui/Button";
+import { Modal } from "../ui/Modal";
 
 export type ConfirmTheme = "info" | "danger" | "success" | "warning" | "default";
 
@@ -24,12 +24,11 @@ interface InternalEntry extends ConfirmOptions {
 
 type Listener = (entries: InternalEntry[]) => void;
 
-const themeToView = (t?: ConfirmTheme): ButtonProps["view"] | undefined => {
-    if (t === "danger") return "outlined-danger";
-    if (t === "success") return "outlined-success";
-    if (t === "info") return "outlined-info";
-    if (t === "warning") return "outlined-warning";
-    return undefined;
+const themeToView = (t?: ConfirmTheme): ButtonProps["view"] => {
+    if (t === "danger") return "action-danger";
+    if (t === "success") return "action-success";
+    if (t === "warning") return "action-warning";
+    return "action";
 };
 
 class ConfirmStore {
@@ -78,32 +77,36 @@ export function ConfirmModalHost() {
 
     return (
         <>
-            {entries.map((e) => {
-                const close = () => store.close(e.id);
-                const view = themeToView(e.theme);
-                const propsButtonApply: ButtonProps | undefined = view ? { view } : undefined;
+            {entries.map((entry) => {
+                const close = () => store.close(entry.id);
+                const cancel = () => {
+                    entry.onCancel?.();
+                    close();
+                };
+                const apply = async () => {
+                    await entry.onConfirm?.();
+                    close();
+                };
                 return (
-                    <ConfirmDialog
-                        key={e.id}
+                    <Modal
+                        key={entry.id}
                         open
-                        onClose={() => {
-                            e.onCancel?.();
-                            close();
-                        }}
-                        title={e.title}
-                        message={e.message}
-                        textButtonApply={e.confirmText ?? "OK"}
-                        textButtonCancel={e.cancelText ?? "Cancel"}
-                        onClickButtonApply={async () => {
-                            await e.onConfirm?.();
-                            close();
-                        }}
-                        onClickButtonCancel={() => {
-                            e.onCancel?.();
-                            close();
-                        }}
-                        propsButtonApply={propsButtonApply}
-                    />
+                        onClose={cancel}
+                        title={entry.title}
+                        size="sm"
+                        footer={
+                            <>
+                                <Button view="flat" onClick={cancel}>
+                                    {entry.cancelText ?? "Cancel"}
+                                </Button>
+                                <Button view={themeToView(entry.theme)} onClick={apply}>
+                                    {entry.confirmText ?? "OK"}
+                                </Button>
+                            </>
+                        }
+                    >
+                        {entry.message}
+                    </Modal>
                 );
             })}
         </>
@@ -112,15 +115,6 @@ export function ConfirmModalHost() {
 
 /**
  * Imperative confirm dialog. Returns the dialog id; pass to `confirm.close(id)` to close early.
- *
- * @example
- *   confirm({
- *     title: "Delete user?",
- *     message: "This action cannot be undone.",
- *     theme: "danger",
- *     confirmText: "Delete",
- *     onConfirm: () => deleteUser(id),
- *   });
  */
 export function confirm(options: ConfirmOptions): string {
     return store.open(options);

@@ -1,7 +1,7 @@
 import { useLayoutEffect, useMemo, type ReactNode } from "react";
-import { ThemeProvider, ToasterComponent, ToasterProvider } from "@gravity-ui/uikit";
+import { ThemeProvider } from "@gravity-ui/uikit";
 import { ConfirmModalHost } from "#/shared/lib/confirm-modal";
-import { toaster } from "#/shared/lib/toaster";
+import { ToasterHost } from "#/shared/lib/ToasterHost";
 import {
     ColorSchemeProvider,
     createOctoTheme,
@@ -102,11 +102,9 @@ export function UIProviderInner({
 
     return (
         <ThemeProvider theme={preference === "auto" ? "system" : preference}>
-            <ToasterProvider toaster={toaster}>
-                {children}
-                <ToasterComponent />
-                <ConfirmModalHost />
-            </ToasterProvider>
+            {children}
+            <ToasterHost />
+            <ConfirmModalHost />
         </ThemeProvider>
     );
 }
