@@ -1,4 +1,5 @@
 export * from "./app-shell";
+export * from "./sidebar";
 export * from "./control-plane-widgets";
 export * from "./dashboard";
 export * from "./fhir-dashboard-panels";

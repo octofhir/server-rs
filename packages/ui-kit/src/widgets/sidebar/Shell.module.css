@@ -1,0 +1,15 @@
+.shell {
+    display: flex;
+    width: 100%;
+    height: 100vh;
+    overflow: hidden;
+    background: var(--octo-surface-2, #f1f3f5);
+}
+.main {
+    flex: 1 1 auto;
+    min-width: 0;
+    height: 100%;
+    overflow: auto;
+    display: flex;
+    flex-direction: column;
+}

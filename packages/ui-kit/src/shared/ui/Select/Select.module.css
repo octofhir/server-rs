@@ -2,7 +2,11 @@
     cursor: pointer;
     justify-content: space-between;
     text-align: left;
+    appearance: none;
+    -webkit-appearance: none;
 }
+.trigger:focus,
+.trigger:focus-visible { outline: none; }
 .trigger[data-popup-open] {
     border-color: var(--octo-accent-primary, #4263eb);
 }
