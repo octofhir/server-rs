@@ -9,24 +9,30 @@
     border-radius: var(--octo-radius-md, 8px);
     background: var(--octo-surface-1, #fff);
     color: var(--octo-text-primary, #1a1b1e);
-    transition: border-color var(--octo-motion-fast, 100ms) var(--octo-motion-ease, ease),
+    transition:
+        border-color var(--octo-motion-fast, 100ms) var(--octo-motion-ease, ease),
         box-shadow var(--octo-motion-fast, 100ms) var(--octo-motion-ease, ease);
 }
 
-.wrapper[data-size="s"] { min-height: 28px; padding: 0 8px; font-size: var(--octo-typography-size-sm, 0.875rem); }
-.wrapper[data-size="m"] { min-height: 32px; padding: 0 10px; font-size: var(--octo-typography-size-sm, 0.875rem); }
-.wrapper[data-size="l"] { min-height: 38px; padding: 0 12px; font-size: var(--octo-typography-size-md, 1rem); }
+/* Heights mirror Button so inputs and buttons line up on a row. */
+.wrapper[data-size="s"] { height: 28px; padding: 0 10px; font-size: var(--octo-typography-size-sm, 0.875rem); }
+.wrapper[data-size="m"] { height: 32px; padding: 0 12px; font-size: var(--octo-typography-size-sm, 0.875rem); }
+.wrapper[data-size="l"] { height: 38px; padding: 0 14px; font-size: var(--octo-typography-size-md, 1rem); }
+
+.wrapper:hover:not([data-disabled="true"]):not(:focus-within) {
+    border-color: var(--octo-text-muted, #868e96);
+}
 
 .wrapper:focus-within {
     border-color: var(--octo-accent-primary, #4263eb);
-    box-shadow: 0 0 0 3px var(--octo-focus-ring, #91a7ff);
+    box-shadow: 0 0 0 2px var(--octo-focus-ring, #91a7ff);
 }
 
 .wrapper[data-error="true"] {
     border-color: var(--octo-accent-fire, #fa5252);
 }
 .wrapper[data-error="true"]:focus-within {
-    box-shadow: 0 0 0 3px var(--octo-accent-fire-bg, #fff5f5);
+    box-shadow: 0 0 0 2px var(--octo-accent-fire, #fa5252);
 }
 
 .wrapper[data-disabled="true"] {
@@ -39,14 +45,15 @@
     flex: 1 1 auto;
     min-width: 0;
     width: 100%;
+    height: 100%;
     margin: 0;
+    padding: 0;
     border: none;
     outline: none;
     box-shadow: none;
     background: transparent;
     color: inherit;
     font: inherit;
-    padding: 6px 0;
     appearance: none;
     -webkit-appearance: none;
 }
@@ -74,15 +81,24 @@
 .input::-webkit-search-cancel-button,
 .input::-ms-reveal { display: none; }
 
+/* Block-level wrapper for textarea — grows with content, top-aligned affixes. */
+.block {
+    height: auto;
+    align-items: stretch;
+}
 .textarea {
-    resize: vertical;
+    height: auto;
+    padding: 6px 0;
     line-height: 1.5;
+    resize: vertical;
 }
 
 .affix {
     display: inline-flex;
     flex: none;
     align-items: center;
+    justify-content: center;
+    line-height: 0;
     color: var(--octo-text-secondary, #495057);
 }
 
@@ -91,18 +107,22 @@
     flex: none;
     align-items: center;
     justify-content: center;
-    padding: 2px;
+    width: 22px;
+    height: 22px;
+    margin: 0;
+    padding: 0;
     border: none;
-    border-radius: var(--octo-radius-xs, 4px);
+    border-radius: var(--octo-radius-sm, 6px);
     background: transparent;
     color: var(--octo-text-secondary, #495057);
     cursor: pointer;
+    transition:
+        background-color var(--octo-motion-fast, 100ms) var(--octo-motion-ease, ease),
+        color var(--octo-motion-fast, 100ms) var(--octo-motion-ease, ease);
 }
-.iconButton:hover { color: var(--octo-text-primary, #1a1b1e); }
-.iconButton:focus-visible { outline: 2px solid var(--octo-focus-ring, #91a7ff); }
-
-/* Block-level wrapper for textarea (top-aligned affixes) */
-.block {
-    display: flex;
-    align-items: stretch;
+.iconButton:hover:not(:disabled) {
+    background: var(--octo-surface-2, #f1f3f5);
+    color: var(--octo-text-primary, #1a1b1e);
 }
+.iconButton:focus-visible { outline: 2px solid var(--octo-focus-ring, #91a7ff); outline-offset: -2px; }
+.iconButton:disabled { color: var(--octo-text-muted, #868e96); cursor: not-allowed; }
