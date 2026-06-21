@@ -225,7 +225,6 @@ export function ClientsPage() {
 											variant: "subtle",
 											size: "sm",
 											"aria-label": "Client actions",
-											"aria-haspopup": "menu",
 										}}
 										popupProps={{ placement: "bottom-end" }}
 										items={[

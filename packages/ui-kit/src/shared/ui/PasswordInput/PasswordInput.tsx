@@ -24,6 +24,8 @@ export interface PasswordInputProps {
     leftSection?: ReactNode;
     className?: string;
     style?: React.CSSProperties;
+    onBlur?: (event?: React.FocusEvent<HTMLElement>) => void;
+    onFocus?: (event?: React.FocusEvent<HTMLElement>) => void;
     "aria-label"?: string;
 }
 
@@ -43,6 +45,8 @@ export const PasswordInput = forwardRef<HTMLInputElement, PasswordInputProps>(fu
         leftSection,
         className,
         style,
+        onBlur,
+        onFocus,
         ...props
     },
     ref,
@@ -76,6 +80,8 @@ export const PasswordInput = forwardRef<HTMLInputElement, PasswordInputProps>(fu
                         onChange?.(next);
                         onUpdate?.(next);
                     }}
+                    onBlur={onBlur as React.FocusEventHandler<HTMLInputElement>}
+                    onFocus={onFocus as React.FocusEventHandler<HTMLInputElement>}
                     {...props}
                 />
                 <button
