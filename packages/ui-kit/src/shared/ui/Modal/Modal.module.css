@@ -1,13 +1,36 @@
+.backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 1000;
+    background: oklch(0% 0 0 / 0.45);
+    transition: opacity 150ms ease;
+}
+.backdrop[data-starting-style],
+.backdrop[data-ending-style] {
+    opacity: 0;
+}
+
 .dialog {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    z-index: 1001;
+    transform: translate(-50%, -50%);
     display: flex;
     flex-direction: column;
-    width: 100%;
-    max-height: calc(100vh - var(--octo-spacing-xl, 32px) * 2);
-    background: var(--octo-surface-1, var(--g-color-base-background));
-    border: 1px solid var(--octo-border-subtle, var(--g-color-line-generic));
+    width: calc(100vw - var(--octo-spacing-lg, 32px) * 2);
+    max-height: calc(100vh - var(--octo-spacing-xl, 48px) * 2);
+    background: var(--octo-surface-1, #fff);
+    border: 1px solid var(--octo-border-subtle, #dee2e6);
     border-radius: var(--octo-radius-lg, 12px);
     box-shadow: var(--octo-shadow-xl, 0 16px 48px rgba(0, 0, 0, 0.24));
     overflow: hidden;
+    transition: opacity 150ms ease, transform 150ms ease;
+}
+.dialog[data-starting-style],
+.dialog[data-ending-style] {
+    opacity: 0;
+    transform: translate(-50%, -48%) scale(0.97);
 }
 
 .header {

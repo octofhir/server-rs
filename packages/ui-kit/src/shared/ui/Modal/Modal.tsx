@@ -1,5 +1,5 @@
 import { forwardRef, type ReactNode } from "react";
-import { Modal as GravityModal, type ModalProps as GravityModalProps } from "@gravity-ui/uikit";
+import { Dialog } from "@base-ui/react/dialog";
 import { X } from "lucide-react";
 import { ActionIcon } from "../ActionIcon";
 import styles from "./Modal.module.css";
@@ -17,12 +17,7 @@ const SIZE_WIDTH: Record<Exclude<ModalSize, "auto">, number> = {
     xl: 920,
 };
 
-type ModalPassthrough = Pick<
-    GravityModalProps,
-    "container" | "disablePortal" | "keepMounted" | "initialFocus" | "returnFocus" | "contentClassName"
->;
-
-export interface ModalProps extends ModalPassthrough {
+export interface ModalProps {
     /** Controls visibility. */
     open?: boolean;
     /** Alias for `open`. */
@@ -49,20 +44,7 @@ export interface ModalProps extends ModalPassthrough {
  * Control with `open` + `onClose`.
  */
 export const Modal = forwardRef<HTMLDivElement, ModalProps>(function Modal(
-    {
-        open,
-        opened,
-        onClose,
-        title,
-        size = "m",
-        withCloseButton,
-        footer,
-        unpadded,
-        className,
-        bodyClassName,
-        children,
-        ...passthrough
-    },
+    { open, opened, onClose, title, size = "m", withCloseButton, footer, unpadded, className, bodyClassName, children },
     ref,
 ) {
     const isOpen = open ?? opened ?? false;
@@ -70,43 +52,43 @@ export const Modal = forwardRef<HTMLDivElement, ModalProps>(function Modal(
     const maxWidth = size === "auto" ? undefined : SIZE_WIDTH[size];
 
     return (
-        <GravityModal
+        <Dialog.Root
             open={isOpen}
             onOpenChange={(next) => {
                 if (!next) onClose?.();
             }}
-            {...passthrough}
         >
-            <div
-                ref={ref}
-                className={[styles.dialog, className].filter(Boolean).join(" ")}
-                style={maxWidth ? { maxWidth } : undefined}
-            >
-                {(title != null || showClose) && (
-                    <div className={styles.header}>
-                        {title != null ? <h2 className={styles.title}>{title}</h2> : <span />}
-                        {showClose && (
-                            <ActionIcon
-                                className={styles.close}
-                                view="flat"
-                                size="m"
-                                aria-label="Close dialog"
-                                onClick={() => onClose?.()}
-                            >
-                                <X size={18} />
-                            </ActionIcon>
-                        )}
-                    </div>
-                )}
-                <div
-                    className={[styles.body, unpadded && styles.noPad, bodyClassName]
-                        .filter(Boolean)
-                        .join(" ")}
+            <Dialog.Portal>
+                <Dialog.Backdrop className={styles.backdrop} />
+                <Dialog.Popup
+                    ref={ref}
+                    className={[styles.dialog, className].filter(Boolean).join(" ")}
+                    style={maxWidth ? { maxWidth } : undefined}
                 >
-                    {children}
-                </div>
-                {footer != null && <div className={styles.footer}>{footer}</div>}
-            </div>
-        </GravityModal>
+                    {(title != null || showClose) && (
+                        <div className={styles.header}>
+                            {title != null ? <Dialog.Title className={styles.title}>{title}</Dialog.Title> : <span />}
+                            {showClose && (
+                                <ActionIcon
+                                    className={styles.close}
+                                    view="flat"
+                                    size="m"
+                                    aria-label="Close dialog"
+                                    onClick={() => onClose?.()}
+                                >
+                                    <X size={18} />
+                                </ActionIcon>
+                            )}
+                        </div>
+                    )}
+                    <div
+                        className={[styles.body, unpadded && styles.noPad, bodyClassName].filter(Boolean).join(" ")}
+                    >
+                        {children}
+                    </div>
+                    {footer != null && <div className={styles.footer}>{footer}</div>}
+                </Dialog.Popup>
+            </Dialog.Portal>
+        </Dialog.Root>
     );
 });
