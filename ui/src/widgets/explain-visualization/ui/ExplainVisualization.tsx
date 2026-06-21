@@ -229,15 +229,6 @@ function ExplainTreeNode({ node }: { node: ExplainNode }) {
 					borderRadius: theme.radius.sm,
 					cursor: hasChildren ? "pointer" : "default",
 				}}
-				styles={{
-					root: {
-						"&:hover": hasChildren
-							? {
-									backgroundColor: "var(--octo-surface-3)",
-								}
-							: {},
-					},
-				}}
 			>
 				<Group gap="xs" wrap="nowrap">
 					{/* Expand/collapse icon */}

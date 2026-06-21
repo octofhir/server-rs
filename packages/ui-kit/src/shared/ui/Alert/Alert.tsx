@@ -5,8 +5,23 @@ import styles from "./Alert.module.css";
 
 export type AlertTheme = "info" | "success" | "warning" | "danger" | "neutral";
 
+const colorToTheme: Record<string, AlertTheme> = {
+    red: "danger",
+    fire: "danger",
+    green: "success",
+    teal: "success",
+    orange: "warning",
+    yellow: "warning",
+    warm: "warning",
+    blue: "info",
+    gray: "neutral",
+    grey: "neutral",
+};
+
 export interface AlertProps extends Omit<React.HTMLAttributes<HTMLDivElement>, "title"> {
     theme?: AlertTheme;
+    color?: string;
+    variant?: string;
     title?: ReactNode;
     /** Body text. `children` also works and takes precedence. */
     message?: ReactNode;
@@ -20,15 +35,28 @@ export interface AlertProps extends Omit<React.HTMLAttributes<HTMLDivElement>, "
 }
 
 export const Alert = forwardRef<HTMLDivElement, AlertProps>(function Alert(
-    { theme = "info", title, message, icon, actions, onClose, className, children, ...props },
+    {
+        theme,
+        color,
+        variant: _variant,
+        title,
+        message,
+        icon,
+        actions,
+        onClose,
+        className,
+        children,
+        ...props
+    },
     ref,
 ) {
+    const effectiveTheme = theme ?? (color != null ? colorToTheme[color] : undefined) ?? "info";
     return (
         <div
             ref={ref}
             role="alert"
             className={[styles.alert, className].filter(Boolean).join(" ")}
-            data-theme={theme}
+            data-theme={effectiveTheme}
             {...props}
         >
             {icon != null && <span className={styles.icon}>{icon}</span>}

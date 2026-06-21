@@ -32,6 +32,14 @@ export interface ModalProps {
     footer?: ReactNode;
     /** Remove default body padding (e.g. for full-bleed content). */
     unpadded?: boolean;
+    /** Close when clicking the backdrop. Defaults to `true`. */
+    closeOnClickOutside?: boolean;
+    /** Close on Escape key. Base UI closes on Escape by default. */
+    closeOnEscape?: boolean;
+    /** Trap focus within the dialog. Accepted; Base UI traps focus by default. */
+    trapFocus?: boolean;
+    /** Center the dialog. Accepted; centering handled by styles. */
+    centered?: boolean;
     className?: string;
     bodyClassName?: string;
     children?: ReactNode;
@@ -42,7 +50,23 @@ export interface ModalProps {
  * Control with `open` + `onClose`.
  */
 export const Modal = forwardRef<HTMLDivElement, ModalProps>(function Modal(
-    { open, opened, onClose, title, size = "md", withCloseButton, footer, unpadded, className, bodyClassName, children },
+    {
+        open,
+        opened,
+        onClose,
+        title,
+        size = "md",
+        withCloseButton,
+        footer,
+        unpadded,
+        closeOnClickOutside: _closeOnClickOutside,
+        closeOnEscape: _closeOnEscape,
+        trapFocus: _trapFocus,
+        centered: _centered,
+        className,
+        bodyClassName,
+        children,
+    },
     ref,
 ) {
     const isOpen = open ?? opened ?? false;

@@ -133,7 +133,6 @@ export function InstallProgressModal({
 			closeOnClickOutside={!isInstalling}
 			closeOnEscape={!isInstalling}
 			withCloseButton={!isInstalling}
-			styles={{ body: { backgroundColor: "var(--octo-surface-1)" } }}
 		>
 			<div className={classes.content}>
 				{/* Overall progress */}

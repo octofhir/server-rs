@@ -51,7 +51,7 @@ export function NumberValueEditor({ value, onChange }: NumberValueEditorProps) {
 				value={prefix}
 				onChange={handlePrefixChange}
 				size="xs"
-				styles={{ root: { width: 100, flexShrink: 0 } }}
+				style={{ width: 100, flexShrink: 0 }}
 				allowDeselect={false}
 			/>
 			<TextInput
@@ -59,7 +59,7 @@ export function NumberValueEditor({ value, onChange }: NumberValueEditorProps) {
 				onChange={handleNumberChange}
 				size="xs"
 				placeholder="Value"
-				styles={{ root: { flex: 1 } }}
+				style={{ flex: 1 }}
 			/>
 		</div>
 	);

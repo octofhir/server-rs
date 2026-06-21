@@ -168,20 +168,10 @@ export function DiagnosticsPanel({
           value={activeTab}
           onChange={(value) => setActiveTab(value as DiagnosticTab)}
           variant="pills"
-          styles={{
-            root: {
-              height: typeof height === "number" ? `${height}px` : height,
-              display: "flex",
-              flexDirection: "column",
-            },
-            list: {
-              padding: "8px 12px",
-            },
-            panel: {
-              flex: 1,
-              overflowY: "auto",
-              padding: "12px",
-            },
+          style={{
+            height: typeof height === "number" ? `${height}px` : height,
+            display: "flex",
+            flexDirection: "column",
           }}
         >
           <Tabs.List>

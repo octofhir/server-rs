@@ -96,7 +96,6 @@ function ResourceViewer({ packageName, packageVersion, resource, onClose }: Reso
 				</div>
 			}
 			size="xl"
-			styles={{ body: { padding: 0, backgroundColor: "var(--octo-surface-1)" } }}
 		>
 			<Tabs value={activeTab} onChange={setActiveTab}>
 				<Tabs.List>

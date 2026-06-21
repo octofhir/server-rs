@@ -47,7 +47,7 @@ export function TokenValueEditor({ value, onChange }: TokenValueEditorProps) {
 				onChange={handleSystemChange}
 				size="xs"
 				placeholder="system URI"
-				styles={{ root: { flex: 1 } }}
+				style={{ flex: 1 }}
 			/>
 			<Text size="xs" c="dimmed" className={classes.separator}>
 				|
@@ -57,7 +57,7 @@ export function TokenValueEditor({ value, onChange }: TokenValueEditorProps) {
 				onChange={handleCodeChange}
 				size="xs"
 				placeholder="code"
-				styles={{ root: { flex: 1 } }}
+				style={{ flex: 1 }}
 			/>
 		</div>
 	);

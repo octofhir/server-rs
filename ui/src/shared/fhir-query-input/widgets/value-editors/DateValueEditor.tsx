@@ -76,7 +76,7 @@ export function DateValueEditor({ value, onChange }: DateValueEditorProps) {
 				value={prefix}
 				onChange={handlePrefixChange}
 				size="xs"
-				styles={{ root: { width: 100, flexShrink: 0 } }}
+				style={{ width: 100, flexShrink: 0 }}
 				allowDeselect={false}
 			/>
 			<DateInput
@@ -86,14 +86,14 @@ export function DateValueEditor({ value, onChange }: DateValueEditorProps) {
 				placeholder="YYYY-MM-DD"
 				clearable
 				valueFormat="YYYY-MM-DD"
-				styles={{ root: { flex: 1, minWidth: 130 } }}
+				style={{ flex: 1, minWidth: 130 }}
 			/>
 			<TextInput
 				value={date}
 				onChange={handleTextChange}
 				size="xs"
 				placeholder="or type manually"
-				styles={{ root: { flex: 1, minWidth: 100 } }}
+				style={{ flex: 1, minWidth: 100 }}
 			/>
 		</div>
 	);

@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { Tabs as BaseTabs } from "@base-ui/react/tabs";
+import { cleanLayoutProps, getSpacingStyles, type SpacingProps } from "../layout-utils";
 import styles from "./Tabs.module.css";
 
 export interface TabsProps {
@@ -56,15 +57,20 @@ function TabsTab({ value, children, leftSection, icon, disabled, className }: Ta
     );
 }
 
-export interface TabsPanelProps {
+export interface TabsPanelProps extends SpacingProps {
     value: string;
     children?: ReactNode;
     className?: string;
 }
 
-function TabsPanel({ value, children, className }: TabsPanelProps) {
+function TabsPanel({ value, children, className, ...rest }: TabsPanelProps) {
     return (
-        <BaseTabs.Panel value={value} className={[styles.panel, className].filter(Boolean).join(" ")}>
+        <BaseTabs.Panel
+            value={value}
+            className={[styles.panel, className].filter(Boolean).join(" ")}
+            style={{ ...getSpacingStyles(rest) }}
+            {...cleanLayoutProps(rest)}
+        >
             {children}
         </BaseTabs.Panel>
     );

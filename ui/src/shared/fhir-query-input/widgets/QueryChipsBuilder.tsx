@@ -144,14 +144,14 @@ export function QueryChipsBuilder({
 					onChange={handleResourceTypeChange}
 					searchable
 					clearable
-					styles={{ root: { flex: 1 } }}
+					style={{ flex: 1 }}
 				/>
 				<TextInput
 					label="Resource ID"
 					placeholder="Optional"
 					value={state.resourceId ?? ""}
 					onChange={(value) => handleResourceIdChange(value)}
-					styles={{ root: { width: 160 } }}
+					style={{ width: 160 }}
 				/>
 			</div>
 
@@ -296,7 +296,7 @@ function ParamChip({
 				onChange={(v) => onUpdate({ code: v ?? "", value: "" })}
 				searchable
 				size="xs"
-				styles={{ root: { width: 150 } }}
+				style={{ width: 150 }}
 			/>
 			{modifierOptions.length > 0 && (
 				<Select
@@ -305,7 +305,7 @@ function ParamChip({
 					value={param.modifier ?? ""}
 					onChange={(v) => onUpdate({ modifier: v || undefined })}
 					size="xs"
-					styles={{ root: { width: 110 } }}
+					style={{ width: 110 }}
 					clearable
 				/>
 			)}
@@ -365,7 +365,7 @@ function ParamValueEditor({
 					value={value}
 					onChange={(value) => onChange(value)}
 					size="xs"
-					styles={{ root: { flex: 1 } }}
+					style={{ flex: 1 }}
 				/>
 			);
 	}
@@ -443,7 +443,7 @@ function SpecialParamValueEditor({
 					min={paramName === "_count" ? 1 : 0}
 					size="xs"
 					placeholder={paramName === "_count" ? "10" : "0"}
-					styles={{ root: { width: 100 } }}
+					style={{ width: 100 }}
 				/>
 			);
 
@@ -485,7 +485,7 @@ function SpecialParamValueEditor({
 						onChange={(value) => onChange(value)}
 						size="xs"
 						placeholder="-_lastUpdated"
-						styles={{ root: { flex: 1 } }}
+						style={{ flex: 1 }}
 					/>
 				);
 			}
@@ -501,7 +501,7 @@ function SpecialParamValueEditor({
 					searchable
 					size="xs"
 					placeholder="Sort by..."
-					styles={{ root: { flex: 1 } }}
+					style={{ flex: 1 }}
 				/>
 			);
 		}
@@ -515,7 +515,7 @@ function SpecialParamValueEditor({
 						onChange={(value) => onChange(value)}
 						size="xs"
 						placeholder="Resource:param:Target"
-						styles={{ root: { flex: 1 } }}
+						style={{ flex: 1 }}
 					/>
 				);
 			}
@@ -538,7 +538,7 @@ function SpecialParamValueEditor({
 					searchable
 					size="xs"
 					placeholder={`Select ${paramName}...`}
-					styles={{ root: { flex: 1 } }}
+					style={{ flex: 1 }}
 				/>
 			);
 		}
@@ -550,7 +550,7 @@ function SpecialParamValueEditor({
 					onChange={(value) => onChange(value)}
 					size="xs"
 					placeholder="Value"
-					styles={{ root: { flex: 1 } }}
+					style={{ flex: 1 }}
 				/>
 			);
 	}

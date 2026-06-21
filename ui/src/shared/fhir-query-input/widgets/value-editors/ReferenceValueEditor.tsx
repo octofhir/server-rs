@@ -67,7 +67,7 @@ export function ReferenceValueEditor({
 				onChange={(value) => onChange(value)}
 				size="xs"
 				placeholder="Reference ID or ResourceType/ID"
-				styles={{ root: { flex: 1 } }}
+				style={{ flex: 1 }}
 			/>
 		);
 	}
@@ -83,7 +83,7 @@ export function ReferenceValueEditor({
 					placeholder="Type"
 					clearable
 					searchable
-					styles={{ root: { width: 130, flexShrink: 0 } }}
+					style={{ width: 130, flexShrink: 0 }}
 				/>
 			) : null}
 			<TextInput
@@ -91,7 +91,7 @@ export function ReferenceValueEditor({
 				onChange={isChain ? (e) => onChange(value) : handleIdChange}
 				size="xs"
 				placeholder={targets.length === 1 ? `${targets[0]} ID` : "ID"}
-				styles={{ root: { flex: 1 } }}
+				style={{ flex: 1 }}
 			/>
 		</div>
 	);
