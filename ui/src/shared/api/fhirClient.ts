@@ -1,6 +1,7 @@
 import type {
 	Bundle,
 	CapabilityStatement,
+	FhirBundle,
 	FhirResource,
 	HttpMethod,
 	HttpRequestConfig,

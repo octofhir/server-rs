@@ -669,6 +669,11 @@ const USER_DEFAULTS: UserFormValues = {
 	mfaEnabled: false,
 };
 
+interface ResetPasswordValues {
+	newPassword: string;
+	confirmPassword: string;
+}
+
 function ResetPasswordModal({
 	opened,
 	onClose,
