@@ -161,7 +161,7 @@ function CategorySection({
 						</Tooltip>
 					),
 					actions: (
-						<Tooltip content="View details">
+						<Tooltip label="View details">
 							<ActionIcon
 								variant="subtle"
 								size="sm"

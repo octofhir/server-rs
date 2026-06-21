@@ -10,8 +10,8 @@ export type TooltipPlacement =
     | `${Side}-end`;
 
 export interface TooltipProps {
-    /** Tooltip text/content. When empty, the trigger renders without a tooltip. */
-    content?: ReactNode;
+    /** Tooltip text. When empty, the trigger renders without a tooltip. */
+    label?: ReactNode;
     placement?: TooltipPlacement;
     /** Open delay in ms. */
     delay?: number;
@@ -26,10 +26,10 @@ function parsePlacement(placement: TooltipPlacement): { side: Side; align: Align
 
 /**
  * Hover/focus tooltip (Base UI). Pass the trigger as `children` and the text as
- * `content`. Self-contained Provider so it can be dropped anywhere.
+ * `label`. Self-contained Provider so it can be dropped anywhere.
  */
-export function Tooltip({ content, placement = "top", delay = 300, children }: TooltipProps) {
-    if (content == null || content === "") {
+export function Tooltip({ label, placement = "top", delay = 300, children }: TooltipProps) {
+    if (label == null || label === "") {
         return <>{children}</>;
     }
     const { side, align } = parsePlacement(placement);
@@ -41,7 +41,7 @@ export function Tooltip({ content, placement = "top", delay = 300, children }: T
                 <BaseTooltip.Trigger render={trigger} />
                 <BaseTooltip.Portal>
                     <BaseTooltip.Positioner side={side} align={align} sideOffset={6}>
-                        <BaseTooltip.Popup className={styles.popup}>{content}</BaseTooltip.Popup>
+                        <BaseTooltip.Popup className={styles.popup}>{label}</BaseTooltip.Popup>
                     </BaseTooltip.Positioner>
                 </BaseTooltip.Portal>
             </BaseTooltip.Root>

@@ -18,8 +18,13 @@ export interface MultiSelectProps {
     options?: SelectData;
     placeholder?: string;
     label?: ReactNode;
+    description?: ReactNode;
     required?: boolean;
     error?: boolean | string;
+    /** Type-to-filter is always on for MultiSelect; kept for API parity. */
+    searchable?: boolean;
+    clearable?: boolean;
+    w?: number | string;
     disabled?: boolean;
     size?: Size;
     className?: string;
@@ -53,8 +58,12 @@ export function MultiSelect({
     options,
     placeholder,
     label,
+    description,
     required,
     error,
+    searchable: _searchable,
+    clearable: _clearable,
+    w,
     disabled,
     size = "md",
     className,
@@ -75,7 +84,10 @@ export function MultiSelect({
     };
 
     return (
-        <div className={[styles.field, className].filter(Boolean).join(" ")} style={style}>
+        <div
+            className={[styles.field, className].filter(Boolean).join(" ")}
+            style={{ ...(w != null ? { width: w } : {}), ...style }}
+        >
             {label != null && (
                 <span className={styles.label}>
                     {label}
@@ -136,6 +148,11 @@ export function MultiSelect({
                     </Combobox.Positioner>
                 </Combobox.Portal>
             </Combobox.Root>
+            {typeof error === "string" && error.length > 0 ? (
+                <span className={inputStyles.errorText}>{error}</span>
+            ) : (
+                description != null && <span className={inputStyles.description}>{description}</span>
+            )}
         </div>
     );
 }

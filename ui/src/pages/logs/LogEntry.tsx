@@ -98,7 +98,7 @@ function LogEntryComponent({ entry }: LogEntryProps) {
 					<span className={classes.expandSpacer} />
 				)}
 
-				<Tooltip content={formatFullTimestamp(entry.timestamp)} placement="top">
+				<Tooltip label={formatFullTimestamp(entry.timestamp)} placement="top">
 					<Text variant="caption-2" color="secondary" className={`${classes.timestamp} ${classes.mono}`}>
 						{formatTimestamp(entry.timestamp)}
 					</Text>

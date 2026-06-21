@@ -169,7 +169,7 @@ export function AppDetailPage() {
 									value: app.endpoint?.url ? (
 										<div className={classes.valueInline}>
 											<Code>{app.endpoint.url}</Code>
-											<Tooltip content="Open endpoint">
+											<Tooltip label="Open endpoint">
 												<Anchor href={app.endpoint.url} target="_blank" aria-label="Open endpoint in new tab">
 													<IconExternalLink width={14} height={14} aria-hidden="true" />
 												</Anchor>
@@ -245,7 +245,7 @@ export function AppDetailPage() {
 									method: <MethodBadge method={op.method} />,
 									path: <Code>{formatAppOperationPath(op.path)}</Code>,
 									access: (
-										<Tooltip content={accessView.description}>
+										<Tooltip label={accessView.description}>
 											<Badge
 												size="xs"
 												color={accessView.color}
@@ -264,7 +264,7 @@ export function AppDetailPage() {
 									policy: op.policy ? (
 										<div className={classes.policyBadges}>
 											{op.policy.roles && (
-												<Tooltip content={`Roles: ${op.policy.roles.join(", ")}`}>
+												<Tooltip label={`Roles: ${op.policy.roles.join(", ")}`}>
 													<Badge size="xs" color="deep">
 														{op.policy.roles.length} role(s)
 													</Badge>
@@ -331,7 +331,7 @@ export function AppDetailPage() {
 										</Badge>
 									),
 									filter: sub.trigger.fhirpath ? (
-										<Tooltip content={sub.trigger.fhirpath}>
+										<Tooltip label={sub.trigger.fhirpath}>
 											<Code className={classes.filterCode}>{sub.trigger.fhirpath}</Code>
 										</Tooltip>
 									) : (
@@ -344,7 +344,7 @@ export function AppDetailPage() {
 											<Badge size="xs" color="deep">
 												{sub.channel.type}
 											</Badge>
-											<Tooltip content={sub.channel.endpoint}>
+											<Tooltip label={sub.channel.endpoint}>
 												<Code className={classes.endpointCode}>{sub.channel.endpoint}</Code>
 											</Tooltip>
 										</div>

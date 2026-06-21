@@ -1,3 +1,28 @@
+/* Field wrapper: optional label + control + description/error. */
+.field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    width: 100%;
+}
+.label {
+    font-size: var(--octo-typography-size-sm, 0.875rem);
+    font-weight: 500;
+    color: var(--octo-text-primary, #1a1b1e);
+}
+.required {
+    color: var(--octo-accent-fire, #e03131);
+    margin-left: 2px;
+}
+.description {
+    font-size: var(--octo-typography-size-xs, 0.8125rem);
+    color: var(--octo-text-muted, #868e96);
+}
+.errorText {
+    font-size: var(--octo-typography-size-xs, 0.8125rem);
+    color: var(--octo-accent-fire, #e03131);
+}
+
 /* Shared field surface for text/number/password inputs, textareas and selects. */
 .wrapper {
     display: inline-flex;

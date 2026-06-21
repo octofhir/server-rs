@@ -170,7 +170,7 @@ export function AuditTrailPage() {
 								<div className={classes.detailContainer}>
 									<div className={classes.detailHeader}>
 										<Text variant="subheader-1">Event Details</Text>
-										<Tooltip content="Close">
+										<Tooltip label="Close">
 											<ActionIcon
 												variant="subtle"
 												size="sm"

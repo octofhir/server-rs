@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { Select as BaseSelect } from "@base-ui/react/select";
 import { Check, ChevronDown } from "lucide-react";
+import { Field } from "../Field/Field";
 import type { Size } from "../layout-utils";
 import inputStyles from "../input.module.css";
 import styles from "./Select.module.css";
@@ -32,6 +33,15 @@ export interface SelectProps {
     disabled?: boolean;
     size?: Size;
     leftSection?: ReactNode;
+    label?: ReactNode;
+    description?: ReactNode;
+    required?: boolean;
+    error?: boolean | string;
+    w?: number | string;
+    /** Enable type-to-filter (kept for API parity; matching is best-effort). */
+    searchable?: boolean;
+    /** Allow clearing the selection. */
+    clearable?: boolean;
     name?: string;
     id?: string;
     className?: string;
@@ -71,6 +81,13 @@ export function Select({
     disabled,
     size = "md",
     leftSection,
+    label,
+    description,
+    required,
+    error,
+    w,
+    searchable: _searchable,
+    clearable: _clearable,
     name,
     id,
     className,
@@ -88,6 +105,15 @@ export function Select({
     }
 
     return (
+        <Field
+            label={label}
+            description={description}
+            error={error}
+            required={required}
+            className={className}
+            style={style}
+            w={w}
+        >
         <BaseSelect.Root
             value={value ?? undefined}
             defaultValue={defaultValue ?? undefined}
@@ -101,10 +127,10 @@ export function Select({
         >
             <BaseSelect.Trigger
                 id={id}
-                className={[inputStyles.wrapper, styles.trigger, className].filter(Boolean).join(" ")}
+                className={[inputStyles.wrapper, styles.trigger].filter(Boolean).join(" ")}
                 data-size={size}
+                data-error={error ? "true" : undefined}
                 data-disabled={disabled ? "true" : undefined}
-                style={style}
                 {...props}
             >
                 {leftSection != null && <span className={inputStyles.affix}>{leftSection}</span>}
@@ -140,5 +166,6 @@ export function Select({
                 </BaseSelect.Positioner>
             </BaseSelect.Portal>
         </BaseSelect.Root>
+        </Field>
     );
 }

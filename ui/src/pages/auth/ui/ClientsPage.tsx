@@ -197,7 +197,7 @@ export function ClientsPage() {
 												<Text className={classes.clientIdText}>{client.clientId}</Text>
 												<CopyButton value={client.clientId} timeout={2000}>
 													{({ copied, copy }) => (
-														<Tooltip content={copied ? "Copied!" : "Copy Client ID"} placement="right">
+														<Tooltip label={copied ? "Copied!" : "Copy Client ID"} placement="right">
 															<ActionIcon
 																variant="subtle"
 																size="xs"

@@ -116,7 +116,7 @@ function LogFiltersComponent({
 				</div>
 
 				<div className={classes.actions}>
-					<Tooltip content={isPaused ? "Resume stream" : "Pause stream"}>
+					<Tooltip label={isPaused ? "Resume stream" : "Pause stream"}>
 						<ActionIcon
 							variant={isPaused ? "filled" : "subtle"}
 							aria-label={isPaused ? "Resume stream" : "Pause stream"}
@@ -130,7 +130,7 @@ function LogFiltersComponent({
 						</ActionIcon>
 					</Tooltip>
 
-					<Tooltip content="Clear logs">
+					<Tooltip label="Clear logs">
 						<ActionIcon variant="subtle" aria-label="Clear logs" onClick={onClear}>
 							<TrashBin width={18} height={18} aria-hidden="true" />
 						</ActionIcon>

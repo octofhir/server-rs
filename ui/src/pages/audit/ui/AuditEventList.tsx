@@ -199,7 +199,7 @@ function AuditEventListComponent({
 								data-selected={isSelected}
 							>
 								<Table.Td>
-									<Tooltip content={timestamp.full}>
+									<Tooltip label={timestamp.full}>
 										<div className={classes.cellStack}>
 											<Text variant="body-2" className={classes.strongText}>
 												{timestamp.time}
@@ -267,7 +267,7 @@ function AuditEventListComponent({
 									)}
 								</Table.Td>
 								<Table.Td>
-									<Tooltip content={event.source.userAgent || "Unknown"}>
+									<Tooltip label={event.source.userAgent || "Unknown"}>
 										<Text variant="caption-2" color="secondary" className={classes.truncateText}>
 											{event.source.ipAddress || "—"}
 										</Text>

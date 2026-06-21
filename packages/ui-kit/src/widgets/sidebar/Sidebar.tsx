@@ -163,7 +163,7 @@ export function Sidebar({
 
         if (collapsed && typeof item.label === "string") {
             return (
-                <Tooltip key={item.id} content={item.label} placement="right">
+                <Tooltip key={item.id} label={item.label} placement="right">
                     {control}
                 </Tooltip>
             );

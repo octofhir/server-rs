@@ -1,4 +1,5 @@
 import { forwardRef, type CSSProperties, type ElementType, type ReactNode } from "react";
+import { cleanLayoutProps, getSpacingStyles, type SpacingProps } from "../layout-utils";
 import styles from "./Text.module.css";
 
 export type TextVariant =
@@ -35,7 +36,7 @@ const SIZE_TO_VARIANT: Record<string, TextVariant> = {
     xl: "header-2",
 };
 
-export interface TextProps extends Omit<React.HTMLAttributes<HTMLElement>, "color"> {
+export interface TextProps extends Omit<React.HTMLAttributes<HTMLElement>, "color">, SpacingProps {
     as?: ElementType;
     variant?: TextVariant;
     color?: TextColor | string;
@@ -84,8 +85,10 @@ export const Text = forwardRef<HTMLElement, TextProps>(function Text(
         ...(fw != null ? { fontWeight: fw } : {}),
         ...(ff === "monospace" ? { fontFamily: "var(--octo-typography-mono, monospace)" } : {}),
         ...(ta ? { textAlign: ta } : {}),
+        ...getSpacingStyles(props),
         ...style,
     };
+    const rest = cleanLayoutProps(props);
 
     return (
         <Component
@@ -95,7 +98,7 @@ export const Text = forwardRef<HTMLElement, TextProps>(function Text(
             data-color={resolvedColor && resolvedColor !== "primary" ? resolvedColor : undefined}
             data-ellipsis={ellipsis || truncate ? "true" : undefined}
             style={dynamicStyle}
-            {...props}
+            {...rest}
         >
             {children}
         </Component>

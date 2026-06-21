@@ -60,5 +60,5 @@ export function ClipboardButton({
     );
 
     const tip = copied ? tooltipSuccessText : tooltipInitialText;
-    return tip ? <Tooltip content={tip}>{button}</Tooltip> : button;
+    return tip ? <Tooltip label={tip}>{button}</Tooltip> : button;
 }
