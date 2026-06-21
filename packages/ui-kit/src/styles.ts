@@ -8,8 +8,9 @@
  *
  *     import "@octofhir/ui-kit/styles";
  *
- * Loads the self-hosted brand fonts (Manrope, Rubik, JetBrains Mono). Design
- * tokens are emitted as `--octo-*` CSS variables by `UIProvider`.
+ * Loads the UI typeface (Inter) plus the self-hosted mono font. Design tokens
+ * are emitted as `--octo-*` CSS variables by `UIProvider`.
  */
 
+import "@fontsource-variable/inter/wght.css";
 import "./shared/theme/fonts.css";

@@ -140,8 +140,8 @@ export const tokens = {
         },
     },
     typography: {
-        family: '"Manrope", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-        heading: '"Rubik", "Manrope", sans-serif',
+        family: '"Inter Variable", "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+        heading: '"Inter Variable", "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
         mono: '"JetBrains Mono", "SF Mono", "Fira Code", Consolas, monospace',
         weight: {
             regular: 400,

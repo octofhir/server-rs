@@ -34,6 +34,7 @@ body {
     var(--octo-bg-grid-size) var(--octo-bg-grid-size), auto, auto, auto;
   background-attachment: fixed;
   color: var(--octo-text-primary);
+  font-family: var(--octo-typography-family);
   overflow-x: hidden;
 }
 
