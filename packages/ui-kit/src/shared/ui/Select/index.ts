@@ -1,8 +1,8 @@
 export {
-    Select,
-    MultiSelect,
-    type SelectProps,
-    type SelectOption,
-    type SelectOptionGroup,
-    type SelectData,
+	Select,
+	type SelectData,
+	type SelectOption,
+	type SelectOptionGroup,
+	type SelectProps,
 } from "./Select";
+export { MultiSelect, type MultiSelectProps } from "./MultiSelect";

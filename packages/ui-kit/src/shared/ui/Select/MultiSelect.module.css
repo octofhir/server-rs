@@ -1,0 +1,81 @@
+.field {
+    display: inline-flex;
+    flex-direction: column;
+    gap: var(--octo-spacing-xs, 0.375rem);
+    width: 100%;
+}
+
+.label {
+    font-size: var(--octo-typography-size-sm, 0.875rem);
+    font-weight: var(--octo-typography-weight-medium, 500);
+    color: var(--octo-text-secondary, #495057);
+}
+.required {
+    margin-left: 2px;
+    color: var(--octo-accent-fire, #fa5252);
+}
+
+/* The control grows with chips, so override the fixed field height. */
+.control {
+    height: auto;
+    min-height: 32px;
+    align-items: flex-start;
+    padding-top: 4px;
+    padding-bottom: 4px;
+}
+
+.chips {
+    display: flex;
+    flex: 1 1 auto;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px;
+    min-width: 0;
+}
+
+.chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    height: 22px;
+    padding: 0 4px 0 8px;
+    border-radius: var(--octo-radius-sm, 6px);
+    background: var(--octo-accent-primary-bg, #edf2ff);
+    color: var(--octo-accent-primary, #4263eb);
+    font-size: var(--octo-typography-size-xs, 0.75rem);
+    white-space: nowrap;
+}
+.chipRemove {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    padding: 0;
+    border: none;
+    border-radius: var(--octo-radius-xs3, 4px);
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+}
+.chipRemove:hover {
+    background: rgba(0, 0, 0, 0.08);
+}
+
+.input {
+    flex: 1 1 60px;
+    min-width: 60px;
+}
+
+.chevron {
+    flex: none;
+    display: inline-flex;
+    margin-top: 3px;
+    color: var(--octo-text-secondary, #495057);
+}
+
+.empty {
+    padding: 8px 10px;
+    font-size: var(--octo-typography-size-sm, 0.875rem);
+    color: var(--octo-text-muted, #868e96);
+}

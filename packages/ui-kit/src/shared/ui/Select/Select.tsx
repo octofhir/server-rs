@@ -38,8 +38,6 @@ export interface SelectProps {
     "aria-label"?: string;
 }
 
-export const MultiSelect = Select;
-
 function isGroup(item: SelectOption | SelectOptionGroup): item is SelectOptionGroup {
     return "group" in item;
 }
