@@ -1,0 +1,27 @@
+.trigger {
+    display: inline-flex;
+    cursor: pointer;
+}
+
+.popup {
+    z-index: 1001;
+    box-sizing: border-box;
+    min-width: 8rem;
+    max-width: min(28rem, var(--available-width, 28rem));
+    max-height: var(--available-height);
+    overflow: auto;
+    background: var(--octo-surface-1, #fff);
+    color: var(--octo-text-primary, #1a1b1e);
+    border: 1px solid var(--octo-border-subtle, #dee2e6);
+    border-radius: var(--octo-radius-md, 8px);
+    box-shadow: var(--octo-shadow-lg, 0 8px 24px rgba(0, 0, 0, 0.16));
+    transition:
+        opacity var(--octo-motion-fast, 120ms) var(--octo-motion-ease, ease),
+        transform var(--octo-motion-fast, 120ms) var(--octo-motion-ease, ease);
+    transform-origin: var(--transform-origin);
+}
+.popup[data-starting-style],
+.popup[data-ending-style] {
+    opacity: 0;
+    transform: scale(0.97);
+}
