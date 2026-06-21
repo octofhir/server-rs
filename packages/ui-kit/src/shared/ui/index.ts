@@ -101,8 +101,6 @@ export { TextArea as JsonInput, type TextAreaProps as JsonInputProps } from "./T
 export { MultiSelect, type SelectProps as MultiSelectProps } from "./Select";
 /** @deprecated use {@link DatePicker} */
 export { DatePicker as DateInput, type DatePickerProps as DateInputProps } from "./DatePicker";
-/** @deprecated use {@link DatePicker} */
-export { DatePicker as DateTimePicker, type DatePickerProps as DateTimePickerProps } from "./DatePicker";
 /** @deprecated use {@link SegmentedRadioGroup} */
 export { SegmentedRadioGroup as SegmentedControl, type SegmentedRadioGroupProps as SegmentedControlProps } from "./SegmentedRadioGroup";
 /** @deprecated use {@link Grid} */

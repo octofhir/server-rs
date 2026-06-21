@@ -61,7 +61,7 @@ export {
     Hotkey as Kbd, type HotkeyProps as KbdProps,
     ClipboardButton as CopyButton, type ClipboardButtonProps as CopyButtonProps,
     DatePicker as DateInput, type DatePickerProps as DateInputProps,
-    DatePicker as DateTimePicker, type DatePickerProps as DateTimePickerProps,
+    DateTimePicker, type DatePickerProps as DateTimePickerProps,
 } from "@octofhir/ui-kit";
 
 // Custom wrappers (app-specific enrichment)

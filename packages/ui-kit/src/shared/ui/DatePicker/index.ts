@@ -1,1 +1,2 @@
-export { DatePicker, type DatePickerProps } from "@gravity-ui/date-components";
+export { DatePicker, DateTimePicker } from "./DatePicker";
+export type { DatePickerProps } from "./DatePicker";
