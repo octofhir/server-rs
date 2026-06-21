@@ -12,7 +12,7 @@
         "storybook:build": "pnpm -C packages/ui-kit storybook:build"
     },
     "devDependencies": {
-        "oxlint": "1.50.0",
+        "oxlint": "1.70.0",
         "typescript": "5.9.3"
     }
 }
