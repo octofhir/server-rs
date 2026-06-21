@@ -1,6 +1,6 @@
 import { Kbd, Text, UnstyledButton } from "@octofhir/ui-kit";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ClockArrowRotateLeft, Terminal, ChevronRight, ChevronDown } from "@gravity-ui/icons";
+import { History as ClockArrowRotateLeft, Terminal, ChevronRight, ChevronDown } from "lucide-react";
 import { StreamEntryCard, type StreamEntry } from "./StreamEntryCard";
 import classes from "../DbConsolePage.module.css";
 

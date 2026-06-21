@@ -9,20 +9,7 @@ import {
 	ScrollArea,
 	ClipboardButton,
 } from "@octofhir/ui-kit";
-import {
-	Person,
-	Server,
-	Display,
-	Clock,
-	BranchesRight,
-	Check,
-	Xmark,
-	TriangleExclamation,
-	Plus,
-	Minus,
-	ArrowRight,
-	ArrowRightArrowLeft,
-} from "@gravity-ui/icons";
+import { User as Person, Server, Monitor as Display, Clock, GitBranch as BranchesRight, Check, X as Xmark, TriangleAlert as TriangleExclamation, Plus, Minus, ArrowRight, ArrowRightLeft as ArrowRightArrowLeft } from "lucide-react";
 import {
 	getAuditActionDetailLabel,
 	getAuditOutcomeColor,

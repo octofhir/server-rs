@@ -1,6 +1,6 @@
 import { Button } from "@octofhir/ui-kit";
 import { useCallback, useMemo } from "react";
-import { Play } from "@gravity-ui/icons";
+import { Play } from "lucide-react";
 import { useUnit } from "effector-react";
 import { $rawPath, setRawPath } from "../state/consoleStore";
 import type {

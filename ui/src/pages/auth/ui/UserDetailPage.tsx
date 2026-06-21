@@ -1,17 +1,7 @@
 import { ActionIcon, Badge, Button, Card, DataPreview, Loader, Text } from "@octofhir/ui-kit";
 import { useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import {
-	ArrowLeft,
-	Pencil,
-	Key,
-	TrashBin,
-	Shield,
-	Smartphone,
-	Person,
-	CircleInfo,
-	ShieldCheck,
-} from "@gravity-ui/icons";
+import { ArrowLeft, Pencil, Key, Trash2 as TrashBin, Shield, Smartphone, User as Person, Info as CircleInfo, ShieldCheck } from "lucide-react";
 import { WorkspacePageLayout } from "@/widgets/workspace-page";
 import {
 	formatUserDateTime,

@@ -1,5 +1,5 @@
 import { Alert, Button, Modal, Text } from "@octofhir/ui-kit";
-import { TriangleExclamation } from "@gravity-ui/icons";
+import { TriangleAlert as TriangleExclamation } from "lucide-react";
 import classes from "./DeleteUserModal.module.css";
 
 interface DeleteUserModalProps {

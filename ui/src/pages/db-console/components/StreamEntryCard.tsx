@@ -7,15 +7,7 @@ import {
 	Collapse,
 	UnstyledButton,
 } from "@octofhir/ui-kit";
-import {
-	ChevronDown,
-	ChevronRight,
-	Copy,
-	ArrowDownToLine,
-	Play,
-	ChartTreemap,
-	Xmark,
-} from "@gravity-ui/icons";
+import { ChevronDown, ChevronRight, Copy, ArrowDownToLine, Play, LayoutDashboard as ChartTreemap, X as Xmark } from "lucide-react";
 import type { SqlResponse, SqlValue } from "@/shared/api/types";
 import { ResultsTable } from "./ResultsTable";
 import { ExplainPane } from "./ExplainPane";

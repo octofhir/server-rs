@@ -9,14 +9,7 @@ import {
 	Button,
 	Alert,
 } from "@octofhir/ui-kit";
-import {
-	Check,
-	ArrowDownToLine,
-	CircleExclamation,
-	Pulse,
-	Database,
-	Archive,
-} from "@gravity-ui/icons";
+import { Check, ArrowDownToLine, CircleAlert as CircleExclamation, Activity as Pulse, Database, Archive } from "lucide-react";
 import {
 	buildFhirPackageInstallProgress,
 	getFhirPackageInstallStatusMessage,

@@ -1,5 +1,5 @@
 import { Component, type ErrorInfo, type ReactNode, useState } from "react";
-import { ArrowRotateRight, ChevronDown, ChevronUp, House, TriangleExclamation } from "@gravity-ui/icons";
+import { RotateCw as ArrowRotateRight, ChevronDown, ChevronUp, Home as House, TriangleAlert as TriangleExclamation } from "lucide-react";
 import { Button } from "../Button";
 import classes from "./ErrorBoundary.module.css";
 

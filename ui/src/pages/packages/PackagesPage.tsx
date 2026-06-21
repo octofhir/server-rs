@@ -15,16 +15,7 @@ import {
 	Select,
 } from "@octofhir/ui-kit";
 import { WorkspacePageLayout } from "@/widgets/workspace-page";
-import {
-	CircleExclamation,
-	Magnifier,
-	Archive,
-	Eye,
-	Check,
-	TriangleExclamation,
-	ArrowDownToLine,
-	Globe,
-} from "@gravity-ui/icons";
+import { CircleAlert as CircleExclamation, Search as Magnifier, Archive, Eye, Check, TriangleAlert as TriangleExclamation, ArrowDownToLine, Globe } from "lucide-react";
 import {
 	usePackages,
 	usePackageLookup,

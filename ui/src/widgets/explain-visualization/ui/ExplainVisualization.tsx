@@ -9,15 +9,7 @@ import {
 	UnstyledButton,
 	Code,
 } from "@octofhir/ui-kit";
-import {
-	ChevronRight,
-	ChevronDown,
-	Magnifier,
-	SquareListUl,
-	FunnelXmark,
-	BarsAscendingAlignCenter,
-	CircleFill,
-} from "@gravity-ui/icons";
+import { ChevronRight, ChevronDown, Search as Magnifier, ClipboardList as SquareListUl, FilterX as FunnelXmark, ArrowUpNarrowWide as BarsAscendingAlignCenter, Circle as CircleFill } from "lucide-react";
 
 interface ExplainNode {
 	operation: string;

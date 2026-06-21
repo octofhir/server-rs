@@ -1,4 +1,4 @@
-import { Magnifier, SquareListUl } from "@gravity-ui/icons";
+import { Search as Magnifier, ClipboardList as SquareListUl } from "lucide-react";
 import { useMemo, useState } from "react";
 import {
   filterDbSchemaTables,

@@ -2,16 +2,7 @@ import { DropdownMenu } from "@gravity-ui/uikit";
 import { ActionIcon, Badge, Button, TextInput, Tooltip } from "@octofhir/ui-kit";
 import { memo } from "react";
 
-import {
-	ArrowDownToLine,
-	CurlyBrackets,
-	FileText,
-	FunnelXmark,
-	Magnifier,
-	Pause,
-	Play,
-	TrashBin,
-} from "@gravity-ui/icons";
+import { ArrowDownToLine, Braces as CurlyBrackets, FileText, FilterX as FunnelXmark, Search as Magnifier, Pause, Play, Trash2 as TrashBin } from "lucide-react";
 import type { LogFilters as LogFiltersType, LogLevel } from "@/shared/api/types";
 import classes from "./LogFilters.module.css";
 

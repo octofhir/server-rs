@@ -1,6 +1,6 @@
 import { Alert, Badge, DataPreview, Text } from "@octofhir/ui-kit";
 import type { ReactNode } from "react";
-import { CircleExclamation, CircleInfo } from "@gravity-ui/icons";
+import { CircleAlert as CircleExclamation, Info as CircleInfo } from "lucide-react";
 import type { SqlResponse, SqlValue } from "@/shared/api/types";
 import { JsonCellViewer } from "./JsonCellViewer";
 

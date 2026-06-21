@@ -1,5 +1,5 @@
 import { Badge, Collapse, Text } from "@octofhir/ui-kit";
-import { ChevronDown, ChevronRight } from "@gravity-ui/icons";
+import { ChevronDown, ChevronRight } from "lucide-react";
 import { useState } from "react";
 import type { FhirPathMetadata } from "../types";
 import classes from "../FhirPathConsolePage.module.css";

@@ -16,18 +16,7 @@ import {
 	SectionPanel,
 } from "@octofhir/ui-kit";
 import { WorkspacePageLayout } from "@/widgets/workspace-page";
-import {
-	CircleExclamation,
-	ArrowLeft,
-	Lock,
-	LockOpen,
-	Server,
-	Code as CodeIcon,
-	Database,
-	Shield,
-	Boxes3,
-	Cpu,
-} from "@gravity-ui/icons";
+import { CircleAlert as CircleExclamation, ArrowLeft, Lock, LockOpen, Server, Code as CodeIcon, Database, Shield, Boxes as Boxes3, Cpu } from "lucide-react";
 import {
 	getOperationAccessView,
 	getOperationCategoryView,

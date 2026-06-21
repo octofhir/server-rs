@@ -1,7 +1,7 @@
 import { ActionIcon, Tabs, Text, Tooltip, notify } from "@octofhir/ui-kit";
 import { useState, useCallback, useMemo } from "react";
 import { WorkspacePageLayout } from "@/widgets/workspace-page";
-import { ListUl, ChartBar, Xmark } from "@gravity-ui/icons";
+import { List as ListUl, BarChart3 as ChartBar, X as Xmark } from "lucide-react";
 import { useAuditEvents, useAuditAnalytics, exportAuditLogs } from "./lib/useAudit";
 import { AuditFilters } from "./ui/AuditFilters";
 import { AuditEventList } from "./ui/AuditEventList";

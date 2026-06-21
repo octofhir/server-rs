@@ -5,11 +5,7 @@ import {
 	Badge,
 	Table,
 } from "@octofhir/ui-kit";
-import {
-	Code as CodeIcon,
-	Comment,
-	Cloud,
-} from "@gravity-ui/icons";
+import { Code as CodeIcon, MessageCircle as Comment, Cloud } from "lucide-react";
 import type { QueryAst, Diagnostic, QueryInputMetadata } from "../core/types";
 import { explainQuery, type ExplainItem } from "../core/explain";
 import { diffSelfLink, type SelfLinkDiff } from "../core/self-link-diff";

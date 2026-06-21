@@ -8,7 +8,7 @@ import {
   ActionIcon,
 } from "@octofhir/ui-kit";
 import { useState } from "react";
-import { ChevronDown, ChevronRight } from "@gravity-ui/icons";
+import { ChevronDown, ChevronRight } from "lucide-react";
 import { useAutomationLogs } from "../../lib/useAutomations";
 import type { AutomationExecution, AutomationExecutionStatus } from "@/shared/api/types";
 import classes from "./ExecutionHistory.module.css";

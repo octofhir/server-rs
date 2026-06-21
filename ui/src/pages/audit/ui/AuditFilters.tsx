@@ -11,19 +11,7 @@ import {
 	Select,
 	DateTimePicker,
 } from "@octofhir/ui-kit";
-import {
-	Magnifier,
-	FunnelXmark,
-	ArrowDownToLine,
-	ArrowRotateRight,
-	Xmark,
-	Clock,
-	CurlyBrackets,
-	FileText,
-	Person,
-	Server,
-	Display,
-} from "@gravity-ui/icons";
+import { Search as Magnifier, FilterX as FunnelXmark, ArrowDownToLine, RotateCw as ArrowRotateRight, X as Xmark, Clock, Braces as CurlyBrackets, FileText, User as Person, Server, Monitor as Display } from "lucide-react";
 import type { AuditEventUIFilters, AuditAction, AuditOutcome } from "@/shared/api/types";
 import classes from "./AuditFilters.module.css";
 

@@ -1,5 +1,5 @@
 import { modals, notifications } from "@octofhir/ui-kit";
-import { Pulse, Stop } from "@gravity-ui/icons";
+import { Activity as Pulse, Square as Stop } from "lucide-react";
 import { useCallback } from "react";
 import { useActiveQueries, useTerminateQuery } from "@/shared/api/hooks";
 import type { ActiveQuery } from "@/shared/api/types";

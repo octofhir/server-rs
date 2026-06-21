@@ -9,7 +9,7 @@ import {
 	Tooltip,
 	UnstyledButton,
 } from "@octofhir/ui-kit";
-import { Pulse, Stop } from "@gravity-ui/icons";
+import { Activity as Pulse, Square as Stop } from "lucide-react";
 import { useActiveQueries, useTerminateQuery } from "@/shared/api/hooks";
 import type { ActiveQuery } from "@/shared/api/types";
 import classes from "../DbConsolePage.module.css";

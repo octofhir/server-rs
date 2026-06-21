@@ -6,7 +6,7 @@ import {
 	Resizable,
 } from "@octofhir/ui-kit";
 import { ToolWorkspaceLayout } from "@/widgets/tool-workspace";
-import { CircleExclamation, Play, Xmark } from "@gravity-ui/icons";
+import { CircleAlert as CircleExclamation, Play, X as Xmark } from "lucide-react";
 import { useMutation } from "@tanstack/react-query";
 import { FhirPathEditor } from "@/shared/monaco/FhirPathEditor";
 import { JsonEditor } from "@/shared/monaco/JsonEditor";

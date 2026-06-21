@@ -9,12 +9,7 @@ import {
 	DataPreview,
 	RecordList,
 } from "@octofhir/ui-kit";
-import {
-	ArrowLeft,
-	TrashBin,
-	Key,
-	Fingerprint,
-} from "@gravity-ui/icons";
+import { ArrowLeft, Trash2 as TrashBin, Key, Fingerprint } from "lucide-react";
 import { getDbColumnViews, getDbIndexViews } from "@/entities/db-schema";
 import { useTableDetail, useDropIndex } from "@/shared/api/hooks";
 import classes from "../DbConsolePage.module.css";

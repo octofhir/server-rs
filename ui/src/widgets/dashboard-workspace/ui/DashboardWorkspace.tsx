@@ -1,4 +1,4 @@
-import { Database, Gear, Play, Server, SquareListUl } from "@gravity-ui/icons";
+import { Database, Settings as Gear, Play, Server, ClipboardList as SquareListUl } from "lucide-react";
 import {
 	FhirDashboardAside,
 	WorkspaceBoard,

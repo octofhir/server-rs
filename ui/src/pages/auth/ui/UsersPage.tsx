@@ -15,17 +15,7 @@ import {
 import { WorkspacePageLayout } from "@/widgets/workspace-page";
 import { DropdownMenu } from "@gravity-ui/uikit";
 import { useNavigate } from "react-router-dom";
-import {
-	Plus,
-	Magnifier,
-	EllipsisVertical,
-	Pencil,
-	TrashBin,
-	Key,
-	Eye,
-	PersonPencil,
-	PersonXmark,
-} from "@gravity-ui/icons";
+import { Plus, Search as Magnifier, EllipsisVertical, Pencil, Trash2 as TrashBin, Key, Eye, UserPen as PersonPencil, UserX as PersonXmark } from "lucide-react";
 import {
 	formatUserLastLogin,
 	getPasswordStrength,

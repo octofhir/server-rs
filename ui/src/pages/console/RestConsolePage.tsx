@@ -1,5 +1,5 @@
 import { Button, Collapse, Text, useDisclosure, useHotkeys, Resizable } from "@octofhir/ui-kit";
-import { Eye, ClockArrowRotateLeft, Play } from "@gravity-ui/icons";
+import { Eye, History as ClockArrowRotateLeft, Play } from "lucide-react";
 import { useUnit } from "effector-react";
 import { useCallback, useMemo } from "react";
 import { Helmet } from "react-helmet-async";

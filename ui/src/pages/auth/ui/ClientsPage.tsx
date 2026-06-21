@@ -18,17 +18,7 @@ import {
 } from "@octofhir/ui-kit";
 import { WorkspacePageLayout } from "@/widgets/workspace-page";
 import { DropdownMenu } from "@gravity-ui/uikit";
-import {
-	Plus,
-	Magnifier,
-	EllipsisVertical,
-	Pencil,
-	TrashBin,
-	Display,
-	ArrowRotateRight,
-	Copy,
-	Check,
-} from "@gravity-ui/icons";
+import { Plus, Search as Magnifier, EllipsisVertical, Pencil, Trash2 as TrashBin, Monitor as Display, RotateCw as ArrowRotateRight, Copy, Check } from "lucide-react";
 import {
 	getClientStatusView,
 	getClientTypeView,

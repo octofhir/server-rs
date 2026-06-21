@@ -14,13 +14,7 @@ import {
 } from "@octofhir/ui-kit";
 import { useAuth } from "@/shared/api/hooks/useAuth";
 import { WorkspacePageLayout } from "@/widgets/workspace-page";
-import {
-  Display,
-  Smartphone,
-  ArrowRightFromSquare,
-  ArrowRotateRight,
-  TrashBin,
-} from '@gravity-ui/icons';
+import { Monitor as Display, Smartphone, LogOut as ArrowRightFromSquare, RotateCw as ArrowRotateRight, Trash2 as TrashBin } from "lucide-react";
 import { useState } from 'react';
 import {
   getAuthSessionActivityView,

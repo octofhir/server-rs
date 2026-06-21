@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { Code, CopyButton, ActionIcon, Tooltip, ScrollArea } from "@octofhir/ui-kit";
-import { Copy, Check } from "@gravity-ui/icons";
+import { Copy, Check } from "lucide-react";
 import classes from "../ui/JsonViewer/JsonViewer.module.css";
 
 interface JsonViewerProps {

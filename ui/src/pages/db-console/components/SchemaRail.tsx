@@ -10,12 +10,7 @@ import {
 	Tooltip,
 	UnstyledButton,
 } from "@octofhir/ui-kit";
-import {
-	Database,
-	LayoutSideContentRight,
-	LayoutSideContentLeft,
-	Magnifier,
-} from "@gravity-ui/icons";
+import { Database, PanelRight as LayoutSideContentRight, PanelLeft as LayoutSideContentLeft, Search as Magnifier } from "lucide-react";
 import { useDbTables } from "@/shared/api/hooks";
 import type { DbTableInfo } from "@/shared/api/types";
 import { TableDetailView } from "./TableDetailView";

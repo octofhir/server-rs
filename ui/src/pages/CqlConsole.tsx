@@ -12,7 +12,7 @@ import {
   ScrollableContent,
   PageHeader,
 } from '@octofhir/ui-kit';
-import { Play } from '@gravity-ui/icons';
+import { Play } from "lucide-react";
 import { Editor } from '@monaco-editor/react';
 import { useMutation } from '@tanstack/react-query';
 import { fhirClient } from '@/shared/api/fhirClient';

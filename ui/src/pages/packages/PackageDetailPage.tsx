@@ -23,16 +23,7 @@ import {
 	getFhirPackageResourceTypeOptions,
 	getFhirPackageResourceViews,
 } from "@/entities/fhir-package";
-import {
-	CircleExclamation,
-	Magnifier,
-	ArrowLeft,
-	Check,
-	TriangleExclamation,
-	Eye,
-	File,
-	Code as CodeIcon,
-} from "@gravity-ui/icons";
+import { CircleAlert as CircleExclamation, Search as Magnifier, ArrowLeft, Check, TriangleAlert as TriangleExclamation, Eye, File, Code as CodeIcon } from "lucide-react";
 import {
 	usePackageDetails,
 	usePackageResources,

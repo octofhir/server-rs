@@ -1,4 +1,4 @@
-import { Server, SquareListUl, Wrench } from "@gravity-ui/icons";
+import { Server, ClipboardList as SquareListUl, Wrench } from "lucide-react";
 import type { ReactNode } from "react";
 import { Badge, Code, Loader, Text, WorkspacePageLayout, WorkspacePageSection } from "@octofhir/ui-kit";
 import { useCapabilities } from "@/shared/api/hooks";

@@ -8,7 +8,7 @@ import {
   Text,
   UnstyledButton,
 } from "@octofhir/ui-kit";
-import { ChevronDown, ChevronUp } from "@gravity-ui/icons";
+import { ChevronDown, ChevronUp } from "lucide-react";
 import type * as monaco from "monaco-editor";
 import { useCallback, useState } from "react";
 import {

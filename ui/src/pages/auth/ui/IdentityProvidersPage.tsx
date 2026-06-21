@@ -16,14 +16,7 @@ import {
 } from "@octofhir/ui-kit";
 import { WorkspacePageLayout } from "@/widgets/workspace-page";
 import { DropdownMenu } from "@gravity-ui/uikit";
-import {
-	Plus,
-	Magnifier,
-	EllipsisVertical,
-	Pencil,
-	TrashBin,
-	Globe,
-} from "@gravity-ui/icons";
+import { Plus, Search as Magnifier, EllipsisVertical, Pencil, Trash2 as TrashBin, Globe } from "lucide-react";
 import {
 	getIdentityProviderStatusView,
 	getIdentityProviderTypeView,

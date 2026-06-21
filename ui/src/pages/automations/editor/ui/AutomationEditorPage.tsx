@@ -16,15 +16,7 @@ import {
 } from "@octofhir/ui-kit";
 import { WorkspacePageLayout } from "@/widgets/workspace-page";
 import { isAutomationFeatureUnavailableError } from "@/shared/api/automationsApi";
-import {
-  ArrowLeft,
-  FloppyDisk,
-  Rocket,
-  Play,
-  Gear,
-  Thunderbolt,
-  ClockArrowRotateLeft,
-} from "@gravity-ui/icons";
+import { ArrowLeft, Save as FloppyDisk, Rocket, Play, Settings as Gear, Zap as Thunderbolt, History as ClockArrowRotateLeft } from "lucide-react";
 import { useAutomation, useCreateAutomation, useUpdateAutomation, useDeployAutomation } from "../../lib/useAutomations";
 import { AutomationScriptEditor } from "@/shared/monaco/AutomationScriptEditor";
 import { DEFAULT_AUTOMATION_SOURCE_CODE } from "../../ui/CreateAutomationModal";

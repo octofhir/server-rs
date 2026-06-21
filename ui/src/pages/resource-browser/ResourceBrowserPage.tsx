@@ -1,12 +1,4 @@
-import {
-  ChevronLeft,
-  ChevronRight,
-  CircleExclamation,
-  Code,
-  FileText,
-  Magnifier,
-  Xmark,
-} from "@gravity-ui/icons";
+import { ChevronLeft, ChevronRight, CircleAlert as CircleExclamation, Code, FileText, Search as Magnifier, X as Xmark } from "lucide-react";
 import {
   ActionIcon,
   Alert,

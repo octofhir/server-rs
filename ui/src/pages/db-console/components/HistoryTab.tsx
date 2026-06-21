@@ -1,6 +1,6 @@
 import { ActionIcon, Badge, ScrollArea, Text, Tooltip, modals } from "@octofhir/ui-kit";
 import { useCallback } from "react";
-import { TrashBin, Clock } from "@gravity-ui/icons";
+import { Trash2 as TrashBin, Clock } from "lucide-react";
 import { useQueryHistory, useClearHistory } from "@/shared/api/hooks";
 import type { QueryHistoryEntry } from "@/shared/api/types";
 import classes from "../DbConsolePage.module.css";

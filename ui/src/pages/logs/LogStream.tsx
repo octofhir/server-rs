@@ -1,7 +1,7 @@
 import { EmptyState, Skeleton } from "@octofhir/ui-kit";
 import { memo, useEffect, useRef } from "react";
 
-import { CircleExclamation, Pulse } from "@gravity-ui/icons";
+import { CircleAlert as CircleExclamation, Activity as Pulse } from "lucide-react";
 import type { LogEntry as LogEntryType } from "@/shared/api/types";
 import { LogEntry } from "./LogEntry";
 import classes from "./LogStream.module.css";

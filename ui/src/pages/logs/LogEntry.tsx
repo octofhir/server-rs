@@ -1,7 +1,7 @@
 import { ActionIcon, Badge, ClipboardButton, Collapse, Text, Tooltip } from "@octofhir/ui-kit";
 import { memo, useState } from "react";
 
-import { ChevronDown, ChevronRight } from "@gravity-ui/icons";
+import { ChevronDown, ChevronRight } from "lucide-react";
 import type { LogEntry as LogEntryType, LogLevel } from "@/shared/api/types";
 import classes from "./LogEntry.module.css";
 

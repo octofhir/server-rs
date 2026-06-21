@@ -10,7 +10,7 @@ import {
 	Select,
 	UnstyledButton,
 } from "@octofhir/ui-kit";
-import { Code, GripHorizontal, Gear } from "@gravity-ui/icons";
+import { Code, GripHorizontal, Settings as Gear } from "lucide-react";
 import type * as monaco from "monaco-editor";
 import { SqlEditor } from "@/shared/monaco/SqlEditor";
 import { DiagnosticsPanel } from "@/widgets/diagnostics-panel";

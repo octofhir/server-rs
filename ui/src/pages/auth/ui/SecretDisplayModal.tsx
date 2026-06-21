@@ -8,7 +8,7 @@ import {
 	Tooltip,
 	Alert,
 } from "@octofhir/ui-kit";
-import { TriangleExclamation, Copy, Check } from "@gravity-ui/icons";
+import { TriangleAlert as TriangleExclamation, Copy, Check } from "lucide-react";
 import classes from "./SecretDisplayModal.module.css";
 
 interface SecretDisplayModalProps {

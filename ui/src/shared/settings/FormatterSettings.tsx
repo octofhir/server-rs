@@ -7,7 +7,7 @@ import {
   Collapse,
   ActionIcon,
 } from "@octofhir/ui-kit";
-import { ChevronDown, ChevronRight } from '@gravity-ui/icons';
+import { ChevronDown, ChevronRight } from "lucide-react";
 import { useState } from 'react';
 import {
   type FormatterConfig,

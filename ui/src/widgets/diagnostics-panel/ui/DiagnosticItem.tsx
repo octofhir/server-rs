@@ -1,10 +1,5 @@
 import { Box, Group, Text, UnstyledButton } from "@octofhir/ui-kit";
-import {
-	CircleExclamation,
-	TriangleExclamation,
-	CircleInfo,
-	Bulb,
-} from "@gravity-ui/icons";
+import { CircleAlert as CircleExclamation, TriangleAlert as TriangleExclamation, Info as CircleInfo, Lightbulb as Bulb } from "lucide-react";
 import type * as monaco from "monaco-editor";
 import type { DiagnosticInfo } from "@/shared/monaco/lib/useLspDiagnostics";
 

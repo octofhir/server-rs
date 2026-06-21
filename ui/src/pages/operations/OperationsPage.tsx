@@ -17,19 +17,7 @@ import {
 } from "@octofhir/ui-kit";
 import { WorkspacePageLayout } from "@/widgets/workspace-page";
 import classes from "./OperationsPage.module.css";
-import {
-	CircleExclamation,
-	Magnifier,
-	Eye,
-	Lock,
-	LockOpen,
-	Server,
-	Code as CodeIcon,
-	Database,
-	Shield,
-	Boxes3,
-	Cpu,
-} from "@gravity-ui/icons";
+import { CircleAlert as CircleExclamation, Search as Magnifier, Eye, Lock, LockOpen, Server, Code as CodeIcon, Database, Shield, Boxes as Boxes3, Cpu } from "lucide-react";
 import {
 	filterOperations,
 	getOperationAppOptions,

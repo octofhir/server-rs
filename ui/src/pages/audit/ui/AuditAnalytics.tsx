@@ -9,15 +9,7 @@ import {
 	Skeleton,
 	EmptyState,
 } from "@octofhir/ui-kit";
-import {
-	Person,
-	Database,
-	Check,
-	Xmark,
-	TriangleExclamation,
-	ChartLineArrowUp,
-	Clock,
-} from "@gravity-ui/icons";
+import { User as Person, Database, Check, X as Xmark, TriangleAlert as TriangleExclamation, TrendingUp as ChartLineArrowUp, Clock } from "lucide-react";
 import type { AuditAnalytics as AuditAnalyticsType, AuditAction, AuditOutcome } from "@/shared/api/types";
 import {
 	getAuditActionColor,

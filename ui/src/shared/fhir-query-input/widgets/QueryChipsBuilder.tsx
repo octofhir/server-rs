@@ -11,7 +11,7 @@ import {
 	SegmentedRadioGroup as SegmentedControl,
 	type SelectProps,
 } from "@octofhir/ui-kit";
-import { Plus, TrashBin } from "@gravity-ui/icons";
+import { Plus, Trash2 as TrashBin } from "lucide-react";
 import type { BuilderState, BuilderParam } from "../core/builder-model";
 import type { QueryInputMetadata } from "../core/types";
 import type { RestConsoleSearchParam } from "@/shared/api";

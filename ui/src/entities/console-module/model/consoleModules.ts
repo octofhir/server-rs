@@ -1,22 +1,5 @@
 import type { ComponentType } from "react";
-import {
-	Boxes3,
-	Code,
-	Cubes3Overlap,
-	Database,
-	Display,
-	FileText,
-	Folder,
-	Function as FunctionIcon,
-	Gear,
-	Globe,
-	Persons,
-	Pulse,
-	Receipt,
-	Shield,
-	SquareListUl,
-	Terminal,
-} from "@gravity-ui/icons";
+import { Boxes as Boxes3, Code, Layers as Cubes3Overlap, Database, Monitor as Display, FileText, Folder, Variable as FunctionIcon, Settings as Gear, Globe, Users as Persons, Activity as Pulse, Receipt, Shield, ClipboardList as SquareListUl, Terminal } from "lucide-react";
 
 export type ConsoleModuleLane = "operate" | "build" | "govern";
 export type ConsoleModuleStatus = "ready" | "watch" | "draft";

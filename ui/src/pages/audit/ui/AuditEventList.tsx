@@ -10,24 +10,7 @@ import {
 	Skeleton,
 	EmptyState,
 } from "@octofhir/ui-kit";
-import {
-	Person,
-	Server,
-	Display,
-	ArrowRightToSquare,
-	ArrowRightFromSquare,
-	Plus,
-	Eye,
-	Pencil,
-	TrashBin,
-	Magnifier,
-	Shield,
-	Gear,
-	Power,
-	Xmark,
-	Check,
-	TriangleExclamation,
-} from "@gravity-ui/icons";
+import { User as Person, Server, Monitor as Display, LogIn as ArrowRightToSquare, LogOut as ArrowRightFromSquare, Plus, Eye, Pencil, Trash2 as TrashBin, Search as Magnifier, Shield, Settings as Gear, Power, X as Xmark, Check, TriangleAlert as TriangleExclamation } from "lucide-react";
 import type { AuditEvent, AuditAction, AuditOutcome } from "@/shared/api/types";
 import {
 	getAuditActionColor,

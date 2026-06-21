@@ -15,18 +15,7 @@ import {
 import { WorkspacePageLayout } from "@/widgets/workspace-page";
 import { useNavigate } from "react-router-dom";
 import { isAutomationFeatureUnavailableError } from "@/shared/api/automationsApi";
-import {
-  Plus,
-  Magnifier,
-  Pencil,
-  TrashBin,
-  Play,
-  Rocket,
-  Clock,
-  Thunderbolt,
-  HandPointRight,
-  CircleExclamation,
-} from "@gravity-ui/icons";
+import { Plus, Search as Magnifier, Pencil, Trash2 as TrashBin, Play, Rocket, Clock, Zap as Thunderbolt, Hand as HandPointRight, CircleAlert as CircleExclamation } from "lucide-react";
 import { useAutomations, useDeleteAutomation, useDeployAutomation } from "../lib/useAutomations";
 import { AutomationStatusBadge } from "./AutomationStatusBadge";
 import { CreateAutomationModal } from "./CreateAutomationModal";
