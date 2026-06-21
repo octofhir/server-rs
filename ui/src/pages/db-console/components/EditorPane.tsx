@@ -120,7 +120,7 @@ export function EditorPane({
 						</Tooltip>
 					</Popover>
 
-					<Button size="compact-xs" onClick={() => onExecute()} loading={isPending}>
+					<Button size="xs" onClick={() => onExecute()} loading={isPending}>
 						Execute
 					</Button>
 				</div>

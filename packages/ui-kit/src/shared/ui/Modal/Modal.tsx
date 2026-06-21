@@ -2,17 +2,15 @@ import { forwardRef, type ReactNode } from "react";
 import { Dialog } from "@base-ui/react/dialog";
 import { X } from "lucide-react";
 import { ActionIcon } from "../ActionIcon";
+import type { Size } from "../layout-utils";
 import styles from "./Modal.module.css";
 
-export type ModalSize = "xs" | "s" | "sm" | "m" | "md" | "l" | "lg" | "xl" | "auto";
+export type ModalSize = Size | "auto";
 
 const SIZE_WIDTH: Record<Exclude<ModalSize, "auto">, number> = {
     xs: 420,
-    s: 420,
     sm: 480,
-    m: 560,
     md: 560,
-    l: 720,
     lg: 720,
     xl: 920,
 };
@@ -44,7 +42,7 @@ export interface ModalProps {
  * Control with `open` + `onClose`.
  */
 export const Modal = forwardRef<HTMLDivElement, ModalProps>(function Modal(
-    { open, opened, onClose, title, size = "m", withCloseButton, footer, unpadded, className, bodyClassName, children },
+    { open, opened, onClose, title, size = "md", withCloseButton, footer, unpadded, className, bodyClassName, children },
     ref,
 ) {
     const isOpen = open ?? opened ?? false;
@@ -72,7 +70,7 @@ export const Modal = forwardRef<HTMLDivElement, ModalProps>(function Modal(
                                 <ActionIcon
                                     className={styles.close}
                                     view="flat"
-                                    size="m"
+                                    size="md"
                                     aria-label="Close dialog"
                                     onClick={() => onClose?.()}
                                 >

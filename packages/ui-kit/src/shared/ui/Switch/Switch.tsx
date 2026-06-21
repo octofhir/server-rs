@@ -1,5 +1,6 @@
 import { forwardRef, useId, type ReactNode } from "react";
 import { Switch as BaseSwitch } from "@base-ui/react/switch";
+import type { Size } from "../layout-utils";
 import styles from "./Switch.module.css";
 
 export interface SwitchProps {
@@ -9,7 +10,7 @@ export interface SwitchProps {
     onUpdate?: (checked: boolean) => void;
     disabled?: boolean;
     name?: string;
-    size?: "s" | "m";
+    size?: Size;
     label?: ReactNode;
     content?: ReactNode;
     description?: ReactNode;
@@ -17,7 +18,7 @@ export interface SwitchProps {
 }
 
 export const Switch = forwardRef<HTMLButtonElement, SwitchProps>(function Switch(
-    { checked, defaultChecked, onChange, onUpdate, disabled, name, size = "m", label, content, description, className },
+    { checked, defaultChecked, onChange, onUpdate, disabled, name, size = "md", label, content, description, className },
     ref,
 ) {
     const text = label ?? content;

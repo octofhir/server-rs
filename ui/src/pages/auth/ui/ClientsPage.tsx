@@ -230,11 +230,11 @@ export function ClientsPage() {
 								status: <Badge color={statusView.color}>{statusView.label}</Badge>,
 								actions: (
 									<DropdownMenu
-										size="s"
+										size="sm"
 										icon={<EllipsisVertical width={16} />}
 										defaultSwitcherProps={{
 											view: "flat-secondary",
-											size: "s",
+											size: "sm",
 											"aria-label": "Client actions",
 											"aria-haspopup": "menu",
 										}}

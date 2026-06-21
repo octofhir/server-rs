@@ -30,9 +30,9 @@
         box-shadow var(--octo-motion-fast, 100ms) var(--octo-motion-ease, ease);
 }
 
-.group[data-size="s"] .option { height: 24px; padding: 0 0.625rem; font-size: var(--octo-typography-size-sm, 0.875rem); }
-.group[data-size="m"] .option { height: 28px; padding: 0 0.875rem; font-size: var(--octo-typography-size-sm, 0.875rem); }
-.group[data-size="l"] .option { height: 34px; padding: 0 1rem; font-size: var(--octo-typography-size-md, 1rem); }
+.group[data-size="sm"] .option { height: 24px; padding: 0 0.625rem; font-size: var(--octo-typography-size-sm, 0.875rem); }
+.group[data-size="md"] .option { height: 28px; padding: 0 0.875rem; font-size: var(--octo-typography-size-sm, 0.875rem); }
+.group[data-size="lg"] .option { height: 34px; padding: 0 1rem; font-size: var(--octo-typography-size-md, 1rem); }
 
 .option:hover:not(:disabled):not([data-active]) {
     color: var(--octo-text-primary, #1a1b1e);

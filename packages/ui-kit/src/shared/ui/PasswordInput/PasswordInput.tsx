@@ -1,6 +1,7 @@
 import { forwardRef, useState, type ReactNode } from "react";
 import { Input as BaseInput } from "@base-ui/react/input";
 import { Eye, EyeOff } from "lucide-react";
+import type { Size } from "../layout-utils";
 import styles from "../input.module.css";
 
 export interface PasswordInputProps {
@@ -10,7 +11,7 @@ export interface PasswordInputProps {
     onUpdate?: (value: string) => void;
     placeholder?: string;
     disabled?: boolean;
-    size?: "s" | "m" | "l";
+    size?: Size;
     name?: string;
     id?: string;
     autoComplete?: string;
@@ -22,7 +23,7 @@ export interface PasswordInputProps {
 }
 
 export const PasswordInput = forwardRef<HTMLInputElement, PasswordInputProps>(function PasswordInput(
-    { value, defaultValue, onChange, onUpdate, size = "m", error, disabled, leftSection, className, style, ...props },
+    { value, defaultValue, onChange, onUpdate, size = "md", error, disabled, leftSection, className, style, ...props },
     ref,
 ) {
     const [visible, setVisible] = useState(false);

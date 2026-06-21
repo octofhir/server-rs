@@ -11,10 +11,10 @@ export type ActionIconProps = Omit<ButtonProps, "href"> & {
     children?: ReactNode;
 };
 
-const SQUARE: Record<string, number> = { xs: 22, s: 24, m: 28, l: 36, xl: 42 };
+const SQUARE: Record<string, number> = { xs: 22, sm: 24, md: 28, lg: 36, xl: 42 };
 
 export const ActionIcon = forwardRef<HTMLButtonElement, ActionIconProps>(
-    ({ view = "flat", size = "m", style, ...props }, ref) => {
+    ({ view = "flat", size = "md", style, ...props }, ref) => {
         const dim = SQUARE[size as string] ?? 28;
         const merged: CSSProperties = {
             width: dim,

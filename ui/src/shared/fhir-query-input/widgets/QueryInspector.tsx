@@ -60,7 +60,7 @@ export function QueryInspector({
 						Parsed
 						{diagnostics.length > 0 && (
 							<Badge
-								size="s"
+								size="sm"
 								theme={errorCount > 0 ? "danger" : "warning"}
 							>
 								{errorCount + warnCount}
@@ -114,7 +114,7 @@ function ParsedTab({
 					PATH
 				</Text>
 				<div className={classes.wrapRow}>
-					<Badge theme="info" size="m">
+					<Badge theme="info" size="md">
 						{ast.path.kind}
 					</Badge>
 					{"resourceType" in ast.path && (
@@ -149,7 +149,7 @@ function ParsedTab({
 										<div className={classes.row}>
 											<code className={classes.boldCode}>{p.name}</code>
 											{p.isSpecial && (
-												<Badge size="s" theme="warning">
+												<Badge size="sm" theme="warning">
 													special
 												</Badge>
 											)}
@@ -167,7 +167,7 @@ function ParsedTab({
 											{p.values.map((v, j) => (
 												<span key={`${v.raw}-${j}`} className={classes.row}>
 													{v.prefix && (
-														<Badge size="s" theme="info">
+														<Badge size="sm" theme="info">
 															{v.prefix}
 														</Badge>
 													)}
@@ -195,7 +195,7 @@ function ParsedTab({
 								className={classes.row}
 							>
 								<Badge
-									size="s"
+									size="sm"
 									theme={
 										d.severity === "error"
 											? "danger"
@@ -233,7 +233,7 @@ function ExplainTab({ items }: { items: ExplainItem[] }) {
 					className={classes.explainItem}
 				>
 					<Badge
-						size="s"
+						size="sm"
 						theme={
 							item.kind === "path"
 								? "info"
@@ -297,7 +297,7 @@ function ResponseTab({
 						{issues.map((issue, i) => (
 							<div key={`${issue.code}-${i}`} className={classes.row}>
 								<Badge
-									size="s"
+									size="sm"
 									theme={
 										issue.severity === "error" || issue.severity === "fatal"
 											? "danger"

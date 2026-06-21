@@ -153,7 +153,7 @@ export function ViewDefinitionPage() {
   if (settingsLoading) {
     return (
       <div className={classes.loadingState}>
-        <Spin size="l" />
+        <Spin size="lg" />
       </div>
     );
   }
@@ -167,10 +167,10 @@ export function ViewDefinitionPage() {
       className="page-enter"
       actions={
         <div className={classes.actions}>
-            {listLoading && <Spin size="s" />}
+            {listLoading && <Spin size="sm" />}
             <Button
               view="action"
-              size="m"
+              size="md"
               loading={runMutation.isPending}
               onClick={handleRun}
             >
@@ -181,7 +181,7 @@ export function ViewDefinitionPage() {
             </Button>
             <Button
               view="normal"
-              size="m"
+              size="md"
               loading={saveMutation.isPending}
               onClick={handleSave}
             >
@@ -193,7 +193,7 @@ export function ViewDefinitionPage() {
             {selectedId && (
               <Button
                 view="flat-danger"
-                size="m"
+                size="md"
                 loading={deleteMutation.isPending}
                 onClick={() => handleDelete(selectedId)}
               >
@@ -204,7 +204,7 @@ export function ViewDefinitionPage() {
             )}
             <Button
               view="flat"
-              size="m"
+              size="md"
               onClick={() => handleSelect(null)}
             >
               <Button.Icon>

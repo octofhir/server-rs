@@ -36,7 +36,7 @@ export function CommandItem({ command }: CommandItemProps) {
 
 			{command.badge && (
 				<Badge
-					size="s"
+					size="sm"
 					color={command.badgeColor ?? "gray"}
 					className={styles.badge}
 				>

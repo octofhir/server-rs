@@ -1,6 +1,6 @@
 import React, { forwardRef } from "react";
 import { Button as BaseButton } from "@base-ui/react/button";
-import { cleanLayoutProps, getSpacingStyles } from "../layout-utils";
+import { cleanLayoutProps, getSpacingStyles, type Size } from "../layout-utils";
 import styles from "./Button.module.css";
 
 export type ButtonView =
@@ -12,7 +12,7 @@ export type ButtonView =
     | "flat-secondary"
     | `${"action" | "outlined" | "flat" | "raised" | "normal"}-${"info" | "success" | "warning" | "danger" | "utility"}`;
 
-export type ButtonSize = "xs" | "s" | "sm" | "m" | "md" | "l" | "lg" | "xl";
+export type ButtonSize = Size;
 export type ButtonPin = "round-round" | "circle" | "brick" | string;
 export type ButtonWidth = "auto" | "max" | "fit";
 
@@ -59,10 +59,6 @@ export interface ButtonProps
 
 const TONES = new Set(["info", "success", "warning", "danger", "utility"]);
 
-const SIZE_ALIAS: Record<string, "xs" | "s" | "m" | "l" | "xl"> = {
-    xs: "xs", s: "s", sm: "s", m: "m", md: "m", l: "l", lg: "l", xl: "xl",
-};
-
 const COLOR_TONE: Record<string, "info" | "success" | "warning" | "danger" | "utility"> = {
     primary: "info", blue: "info", deep: "info", indigo: "info",
     green: "success", red: "danger", fire: "danger",
@@ -100,7 +96,7 @@ const ButtonRoot = forwardRef<HTMLButtonElement, ButtonProps>(function Button(
         view,
         variant,
         color,
-        size = "m",
+        size = "md",
         pin = "round-round",
         selected,
         disabled,
@@ -122,14 +118,13 @@ const ButtonRoot = forwardRef<HTMLButtonElement, ButtonProps>(function Button(
 ) {
     const resolvedView = view ?? resolveView(variant, color);
     const { base, tone } = parseView(resolvedView);
-    const sizeKey = SIZE_ALIAS[size] ?? "m";
     const mergedStyle = { ...getSpacingStyles(rest), ...style };
     const cleaned = cleanLayoutProps(rest);
 
     const dataProps = {
         "data-base": base,
         "data-tone": tone,
-        "data-size": sizeKey,
+        "data-size": size,
         "data-pin": pin === "round-round" ? undefined : pin,
         "data-width": fullWidth ? "max" : width === "max" ? "max" : undefined,
         "data-selected": selected ? "true" : undefined,

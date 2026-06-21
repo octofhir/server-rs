@@ -67,7 +67,7 @@ export function MetricCard({
                         </Text>
                     </Box>
                     {isLoading ? (
-                        <Loader size="s" />
+                        <Loader size="sm" />
                     ) : (
                         <Text variant="header-2" className={classes.metricValue}>
                             {value}

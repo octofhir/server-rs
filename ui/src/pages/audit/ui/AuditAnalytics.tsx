@@ -65,7 +65,7 @@ function StatCard({
 						</div>
 					)}
 				</div>
-				<ThemeIcon size="l" view="light" color={color} radius="md">
+				<ThemeIcon size="lg" view="light" color={color} radius="md">
 					<Icon width={20} height={20} aria-hidden="true" />
 				</ThemeIcon>
 			</div>

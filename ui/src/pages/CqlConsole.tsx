@@ -199,14 +199,14 @@ export function CqlConsole() {
 
                 <Button
                   view="action"
-                  size="l"
+                  size="lg"
                   onClick={handleEvaluate}
                   disabled={!expression.trim() || evaluateMutation.isPending}
                   style={{ width: '100%', marginTop: 8 }}
                 >
                   {evaluateMutation.isPending ? (
                     <>
-                      <Loader size="s" style={{ marginRight: 8 }} />
+                      <Loader size="sm" style={{ marginRight: 8 }} />
                       Evaluating...
                     </>
                   ) : (
@@ -241,7 +241,7 @@ export function CqlConsole() {
 
               {evaluateMutation.isPending && (
                 <div className={classes.emptyState}>
-                  <Loader size="l" />
+                  <Loader size="lg" />
                   <Text color="secondary">Evaluating...</Text>
                 </div>
               )}

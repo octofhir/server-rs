@@ -1,6 +1,7 @@
 import { forwardRef } from "react";
 import { NumberField } from "@base-ui/react/number-field";
 import { Minus, Plus } from "lucide-react";
+import type { Size } from "../layout-utils";
 import styles from "../input.module.css";
 
 export interface NumberInputProps {
@@ -13,7 +14,7 @@ export interface NumberInputProps {
     step?: number;
     disabled?: boolean;
     placeholder?: string;
-    size?: "s" | "m" | "l";
+    size?: Size;
     error?: boolean | string;
     name?: string;
     id?: string;
@@ -23,7 +24,7 @@ export interface NumberInputProps {
 }
 
 export const NumberInput = forwardRef<HTMLInputElement, NumberInputProps>(function NumberInput(
-    { value, defaultValue, onChange, onUpdate, min, max, step, disabled, size = "m", error, className, style, ...props },
+    { value, defaultValue, onChange, onUpdate, min, max, step, disabled, size = "md", error, className, style, ...props },
     ref,
 ) {
     return (

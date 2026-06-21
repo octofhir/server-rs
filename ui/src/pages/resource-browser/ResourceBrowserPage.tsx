@@ -274,7 +274,7 @@ export function ResourceBrowserPage() {
         <div className={classes.toolbar}>
           <div className={classes.filtersRow}>
             <SegmentedControl
-              size="s"
+              size="sm"
               value={categoryFilter}
               onUpdate={(val) => {
                 if (isCatalogCategoryFilter(val)) {
@@ -289,7 +289,7 @@ export function ResourceBrowserPage() {
             <TextInput
               placeholder="Search resources..."
               aria-label="Search resource types"
-              size="s"
+              size="sm"
               leftSection={<Magnifier width={14} height={14} aria-hidden="true" />}
               value={typeFilter}
               onChange={(value) => setTypeFilter(value)}
@@ -382,7 +382,7 @@ export function ResourceBrowserPage() {
               <div className={classes.paginationActions}>
                 <ActionIcon
                   view="outlined"
-                  size="m"
+                  size="md"
                   aria-label="Previous page"
                   disabled={!hasPrevPage || followLinkMutation.isPending}
                   onClick={handlePrevPage}
@@ -391,7 +391,7 @@ export function ResourceBrowserPage() {
                 </ActionIcon>
                 <ActionIcon
                   view="outlined"
-                  size="m"
+                  size="md"
                   aria-label="Next page"
                   disabled={!hasNextPage || followLinkMutation.isPending}
                   onClick={handleNextPage}
@@ -517,7 +517,7 @@ export function ResourceBrowserPage() {
             )}
             <ActionIcon
               view="flat"
-              size="m"
+              size="md"
               aria-label="Close resource details"
               onClick={handleCloseDetails}
             >

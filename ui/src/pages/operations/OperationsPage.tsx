@@ -164,7 +164,7 @@ function CategorySection({
 						<Tooltip content="View details">
 							<ActionIcon
 								view="flat"
-								size="s"
+								size="sm"
 								aria-label={`View details for ${operation.name}`}
 								onClick={() => onViewOperation(operation.id)}
 							>

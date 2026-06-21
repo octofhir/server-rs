@@ -151,7 +151,7 @@ export function CommandPalette() {
 					value={query}
 					onChange={(value) => setQuery(value)}
 					onKeyDown={handleKeyDown}
-					size="l"
+					size="lg"
 					autoFocus
 				/>
 

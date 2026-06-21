@@ -19,8 +19,8 @@
 }
 
 .chip[data-size="xs"] { height: 22px; padding: 0 0.5rem; font-size: var(--octo-typography-size-xs, 0.75rem); }
-.chip[data-size="s"]  { height: 26px; padding: 0 0.625rem; font-size: var(--octo-typography-size-sm, 0.875rem); }
-.chip[data-size="m"]  { height: 30px; padding: 0 0.75rem; font-size: var(--octo-typography-size-sm, 0.875rem); }
+.chip[data-size="sm"]  { height: 26px; padding: 0 0.625rem; font-size: var(--octo-typography-size-sm, 0.875rem); }
+.chip[data-size="md"]  { height: 30px; padding: 0 0.75rem; font-size: var(--octo-typography-size-sm, 0.875rem); }
 
 .chip:hover:not(:disabled) {
     border-color: var(--octo-text-muted, #868e96);

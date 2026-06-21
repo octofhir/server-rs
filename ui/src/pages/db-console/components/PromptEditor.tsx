@@ -229,7 +229,7 @@ export function PromptEditor({
 					</Tooltip>
 
 					<Button
-						size="compact-xs"
+						size="xs"
 						onClick={() => onExecute()}
 						loading={isPending}
 					>

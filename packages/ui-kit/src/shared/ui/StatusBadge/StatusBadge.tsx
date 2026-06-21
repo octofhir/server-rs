@@ -14,6 +14,6 @@ const themeByTone: Record<StatusTone, BadgeProps["theme"]> = {
     danger: "danger",
 };
 
-export function StatusBadge({ tone = "neutral", size = "s", ...props }: StatusBadgeProps) {
+export function StatusBadge({ tone = "neutral", size = "sm", ...props }: StatusBadgeProps) {
     return <Badge theme={themeByTone[tone]} size={size} {...props} />;
 }

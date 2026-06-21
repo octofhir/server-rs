@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { Select as BaseSelect } from "@base-ui/react/select";
 import { Check, ChevronDown } from "lucide-react";
+import type { Size } from "../layout-utils";
 import inputStyles from "../input.module.css";
 import styles from "./Select.module.css";
 
@@ -29,7 +30,7 @@ export interface SelectProps {
     options?: SelectData;
     placeholder?: string;
     disabled?: boolean;
-    size?: "s" | "m" | "l";
+    size?: Size;
     leftSection?: ReactNode;
     name?: string;
     id?: string;
@@ -68,7 +69,7 @@ export function Select({
     options,
     placeholder,
     disabled,
-    size = "m",
+    size = "md",
     leftSection,
     name,
     id,

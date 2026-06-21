@@ -65,7 +65,7 @@ export function ResponseViewer({ response, isLoading }: ResponseViewerProps) {
 					<div className={styles.status}>
 						<Badge
 							theme={statusTheme}
-							size="l"
+							size="lg"
 						>
 							<span className={styles.statusBadge}>
 								{isSuccess ? <IconCheck size={14} /> : isError ? <IconX size={14} /> : null}
@@ -91,7 +91,7 @@ export function ResponseViewer({ response, isLoading }: ResponseViewerProps) {
 
 			{/* Response tabs */}
 			<div className={styles.tabs}>
-				<Tabs defaultValue={defaultTab} size="l">
+				<Tabs defaultValue={defaultTab} size="lg">
 					<Tabs.List>
 						{hasResultEntries && <Tabs.Tab value="results">Results</Tabs.Tab>}
 						<Tabs.Tab value="body">Response Body</Tabs.Tab>

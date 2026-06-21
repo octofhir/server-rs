@@ -82,7 +82,7 @@ export const Catalog: Story = {
                     placeholder={`Filter ${allIcons.length} icons...`}
                     value={query}
                     onChange={setQuery}
-                    size="l"
+                    size="lg"
                 />
                 <Text variant="caption-2">
                     {filtered.length} of {allIcons.length} icons

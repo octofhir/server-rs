@@ -140,7 +140,7 @@ export function AppDetailPage() {
 								</Badge>
 								<Button
 									view="outlined"
-									size="s"
+									size="sm"
 									leftSection={<IconEdit width={14} height={14} aria-hidden="true" />}
 									onClick={() => navigate(`/resources/App/${id}`)}
 								>

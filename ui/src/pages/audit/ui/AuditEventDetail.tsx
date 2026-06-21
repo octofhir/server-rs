@@ -61,7 +61,7 @@ function DetailRow({
 	return (
 		<div className={classes.detailRow}>
 			{Icon && (
-				<ThemeIcon size="s" view="light" color="gray">
+				<ThemeIcon size="sm" view="light" color="gray">
 					<Icon width={12} height={12} aria-hidden="true" />
 				</ThemeIcon>
 			)}
@@ -170,7 +170,7 @@ function DiffViewer({
 					</div>
 				)}
 				{before && after && (
-					<ThemeIcon size="l" view="light" color="gray" className={classes.diffArrow}>
+					<ThemeIcon size="lg" view="light" color="gray" className={classes.diffArrow}>
 						<ArrowRight width={16} height={16} aria-hidden="true" />
 					</ThemeIcon>
 				)}

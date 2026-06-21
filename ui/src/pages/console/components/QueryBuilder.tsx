@@ -85,7 +85,7 @@ export function QueryBuilder({
 					Query Parameters
 				</Text>
 				<SegmentedRadioGroup
-					size="s"
+					size="sm"
 					options={MODE_OPTIONS}
 					value={mode}
 					onChange={(value) => {
@@ -102,7 +102,7 @@ export function QueryBuilder({
 					value={inputValue || queryString}
 					onChange={(value) => handleInputChange(value)}
 					onBlur={handleBlur}
-					size="m"
+					size="md"
 					hasClear
 				/>
 			) : (
@@ -111,12 +111,12 @@ export function QueryBuilder({
 					value={queryString}
 					onChange={(value) => handleRawChange(value)}
 					minRows={2}
-					size="m"
+					size="md"
 				/>
 			)}
 
 			<div className={styles.footer}>
-				<Badge size="s" theme="info">
+				<Badge size="sm" theme="info">
 					{searchParams.length + Object.keys(queryParams).length} parameters
 				</Badge>
 				<Text variant="caption-1" color="secondary">

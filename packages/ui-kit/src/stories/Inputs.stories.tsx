@@ -14,7 +14,7 @@ export default meta;
 
 type Story = StoryObj;
 
-const SIZES = ["s", "m", "l"] as const;
+const SIZES = ["sm", "md", "lg"] as const;
 
 function Row({ label, children }: { label: string; children: React.ReactNode }) {
 	return (

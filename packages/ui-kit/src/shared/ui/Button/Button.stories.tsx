@@ -83,9 +83,9 @@ export const Sizes: Story = {
   render: () => (
     <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
       <Button size="xs">Extra Small (xs)</Button>
-      <Button size="s">Small (s)</Button>
-      <Button size="m">Medium (m)</Button>
-      <Button size="l">Large (l)</Button>
+      <Button size="sm">Small (s)</Button>
+      <Button size="md">Medium (m)</Button>
+      <Button size="lg">Large (l)</Button>
       <Button size="xl">Extra Large (xl)</Button>
     </div>
   ),

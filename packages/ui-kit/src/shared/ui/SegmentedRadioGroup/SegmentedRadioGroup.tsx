@@ -1,4 +1,5 @@
 import { type ReactNode, useState } from "react";
+import type { Size } from "../layout-utils";
 import styles from "./SegmentedRadioGroup.module.css";
 
 export interface SegmentedRadioGroupOption {
@@ -16,7 +17,7 @@ export interface SegmentedRadioGroupProps {
     onChange?: (value: string) => void;
     /** Alias of {@link onChange}. */
     onUpdate?: (value: string) => void;
-    size?: "s" | "m" | "l";
+    size?: Size;
     disabled?: boolean;
     name?: string;
     className?: string;
@@ -29,7 +30,7 @@ export function SegmentedRadioGroup({
     defaultValue,
     onChange,
     onUpdate,
-    size = "m",
+    size = "md",
     disabled,
     className,
     "aria-label": ariaLabel,

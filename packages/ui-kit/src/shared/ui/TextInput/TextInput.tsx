@@ -1,5 +1,6 @@
 import { forwardRef, type ReactNode } from "react";
 import { Input as BaseInput } from "@base-ui/react/input";
+import type { Size } from "../layout-utils";
 import styles from "../input.module.css";
 
 export interface TextInputProps {
@@ -9,7 +10,7 @@ export interface TextInputProps {
     onUpdate?: (value: string) => void;
     placeholder?: string;
     disabled?: boolean;
-    size?: "s" | "m" | "l";
+    size?: Size;
     type?: string;
     name?: string;
     id?: string;
@@ -33,7 +34,7 @@ export const TextInput = forwardRef<HTMLInputElement, TextInputProps>(function T
         defaultValue,
         onChange,
         onUpdate,
-        size = "m",
+        size = "md",
         error,
         disabled,
         leftSection,

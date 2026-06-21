@@ -15,9 +15,11 @@
 }
 
 /* Heights mirror Button so inputs and buttons line up on a row. */
-.wrapper[data-size="s"] { height: 28px; padding: 0 10px; font-size: var(--octo-typography-size-sm, 0.875rem); }
-.wrapper[data-size="m"] { height: 32px; padding: 0 12px; font-size: var(--octo-typography-size-sm, 0.875rem); }
-.wrapper[data-size="l"] { height: 38px; padding: 0 14px; font-size: var(--octo-typography-size-md, 1rem); }
+.wrapper[data-size="xs"] { height: 24px; padding: 0 8px; font-size: var(--octo-typography-size-xs, 0.8125rem); }
+.wrapper[data-size="sm"] { height: 28px; padding: 0 10px; font-size: var(--octo-typography-size-sm, 0.875rem); }
+.wrapper[data-size="md"] { height: 32px; padding: 0 12px; font-size: var(--octo-typography-size-sm, 0.875rem); }
+.wrapper[data-size="lg"] { height: 38px; padding: 0 14px; font-size: var(--octo-typography-size-md, 1rem); }
+.wrapper[data-size="xl"] { height: 44px; padding: 0 16px; font-size: var(--octo-typography-size-md, 1rem); }
 
 .wrapper:hover:not([data-disabled="true"]):not(:focus-within) {
     border-color: var(--octo-text-muted, #868e96);

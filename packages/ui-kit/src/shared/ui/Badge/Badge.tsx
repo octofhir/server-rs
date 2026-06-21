@@ -1,5 +1,6 @@
 import { forwardRef, type CSSProperties, type ReactNode } from "react";
 import { cleanLayoutProps, getSpacingStyles } from "../layout-utils";
+import type { Size } from "../layout-utils";
 import styles from "./Badge.module.css";
 
 type BadgeTone = "primary" | "success" | "danger" | "warning" | "info" | "neutral";
@@ -12,7 +13,7 @@ type BadgeColorName =
 export interface BadgeProps extends Omit<React.HTMLAttributes<HTMLSpanElement>, "color"> {
     /** Semantic theme name; resolved to a tone. */
     theme?: BadgeThemeName;
-    size?: "xs" | "s" | "m" | "sm" | "md" | "lg";
+    size?: Size;
     /** Palette name; resolved to a semantic tone. */
     color?: BadgeColorName;
     variant?: "filled" | "light" | "outline" | "dot" | string;
@@ -48,10 +49,6 @@ const TONE_BY_THEME: Record<string, BadgeTone> = {
     danger: "danger",
 };
 
-const SIZE_ALIAS: Record<string, "xs" | "s" | "m"> = {
-    xs: "xs", s: "s", sm: "s", m: "m", md: "m", lg: "m",
-};
-
 function resolveTone(color?: BadgeColorName, theme?: BadgeThemeName): BadgeTone {
     if (color && TONE_BY_COLOR[color]) return TONE_BY_COLOR[color];
     if (theme && TONE_BY_THEME[theme]) return TONE_BY_THEME[theme];
@@ -63,7 +60,7 @@ export const Badge = forwardRef<HTMLSpanElement, BadgeProps>(function Badge(
         color,
         theme,
         variant = "light",
-        size = "s",
+        size = "sm",
         leftSection,
         rightSection,
         radius,
@@ -89,7 +86,7 @@ export const Badge = forwardRef<HTMLSpanElement, BadgeProps>(function Badge(
             className={[styles.badge, className].filter(Boolean).join(" ")}
             data-tone={resolveTone(color, theme)}
             data-variant={variant}
-            data-size={SIZE_ALIAS[size] ?? "s"}
+            data-size={size}
             style={mergedStyle}
             {...cleaned}
         >

@@ -73,7 +73,7 @@ export function RequestBar({
 			<div className={styles.actions}>
 				<Button
 					view="action"
-					size="l"
+					size="lg"
 					onClick={onSend}
 					loading={isSending}
 					disabled={!rawPath}

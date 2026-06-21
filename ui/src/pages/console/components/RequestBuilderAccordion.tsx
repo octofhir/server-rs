@@ -28,7 +28,7 @@ export function RequestOptionTabs({ resourceType }: RequestOptionTabsProps) {
               <span className={styles.tabLabel}>
                 <Text variant="body-2">Headers</Text>
                 {customHeaderCount > 0 && (
-                  <Badge size="s" theme="info" className={styles.counter}>
+                  <Badge size="sm" theme="info" className={styles.counter}>
                     {customHeaderCount}
                   </Badge>
                 )}
@@ -38,7 +38,7 @@ export function RequestOptionTabs({ resourceType }: RequestOptionTabsProps) {
               <span className={styles.tabLabel}>
                 <Text variant="body-2">Body</Text>
                 {bodySize > 0 && (
-                  <Badge size="s" theme="warning" className={styles.counter}>
+                  <Badge size="sm" theme="warning" className={styles.counter}>
                     1
                   </Badge>
                 )}

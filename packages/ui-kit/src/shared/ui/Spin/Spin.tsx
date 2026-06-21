@@ -1,23 +1,20 @@
 import { forwardRef } from "react";
+import type { Size } from "../layout-utils";
 import styles from "./Spin.module.css";
 
 export interface SpinProps extends React.HTMLAttributes<HTMLSpanElement> {
-    size?: "xs" | "s" | "sm" | "m" | "l" | "xl";
+    size?: Size;
 }
 
-const SIZE_ALIAS: Record<string, "xs" | "s" | "m" | "l" | "xl"> = {
-    xs: "xs", s: "s", sm: "s", m: "m", l: "l", xl: "xl",
-};
-
 export const Spin = forwardRef<HTMLSpanElement, SpinProps>(function Spin(
-    { size = "m", className, ...props },
+    { size = "md", className, ...props },
     ref,
 ) {
     return (
         <span
             ref={ref}
             className={[styles.spin, className].filter(Boolean).join(" ")}
-            data-size={SIZE_ALIAS[size] ?? "m"}
+            data-size={size}
             role="status"
             aria-label="Loading"
             {...props}

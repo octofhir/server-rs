@@ -53,7 +53,7 @@ export function ActionCard({
             </Box>
             <Button
                 view="flat"
-                size="s"
+                size="sm"
                 rightSection={buttonIcon}
                 className={classes.actionButton}
             >

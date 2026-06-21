@@ -74,7 +74,7 @@ export const Drawer = forwardRef<HTMLDivElement, DrawerProps>(function Drawer(
                                 <span />
                             )}
                             {showClose && (
-                                <ActionIcon view="flat" size="m" aria-label="Close drawer" onClick={close}>
+                                <ActionIcon view="flat" size="md" aria-label="Close drawer" onClick={close}>
                                     <X size={18} />
                                 </ActionIcon>
                             )}

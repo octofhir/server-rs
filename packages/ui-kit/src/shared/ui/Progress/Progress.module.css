@@ -5,8 +5,8 @@
     border-radius: var(--octo-radius-pill, 9999px);
 }
 .track[data-size="xs"] { height: 4px; }
-.track[data-size="s"] { height: 6px; }
-.track[data-size="m"] { height: 8px; }
+.track[data-size="sm"] { height: 6px; }
+.track[data-size="md"] { height: 8px; }
 
 .bar {
     height: 100%;

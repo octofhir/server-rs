@@ -213,7 +213,7 @@ function AuditEventListComponent({
 								<Table.Td>
 									<div className={classes.inlineCell}>
 										<ThemeIcon
-											size="s"
+											size="sm"
 											view="light"
 											color={getAuditActionColor(event.action)}
 										>
@@ -233,7 +233,7 @@ function AuditEventListComponent({
 								</Table.Td>
 								<Table.Td>
 									<div className={classes.inlineCell}>
-										<ThemeIcon size="s" view="subtle" color="gray">
+										<ThemeIcon size="sm" view="subtle" color="gray">
 											<ActorIcon width={12} height={12} aria-hidden="true" />
 										</ThemeIcon>
 										<div className={classes.cellStack}>
@@ -282,7 +282,7 @@ function AuditEventListComponent({
 			<div ref={loadMoreRef} className={classes.loadMore}>
 				{isFetchingNextPage && (
 					<Center py="md">
-						<Spin size="s" />
+						<Spin size="sm" />
 					</Center>
 				)}
 			</div>

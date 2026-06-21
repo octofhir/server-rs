@@ -65,7 +65,7 @@ function LogFiltersComponent({
 					/>
 
 					<DropdownMenu
-						size="s"
+						size="sm"
 						popupProps={{ placement: "bottom-start" }}
 						renderSwitcher={(switcherProps) => (
 							<Button
@@ -137,7 +137,7 @@ function LogFiltersComponent({
 					</Tooltip>
 
 					<DropdownMenu
-						size="s"
+						size="sm"
 						popupProps={{ placement: "bottom-end" }}
 						renderSwitcher={(switcherProps) => (
 							<Button

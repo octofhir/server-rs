@@ -70,7 +70,7 @@ export function FhirPackageRegistryPanel({
                                                 return (
                                                     <Button
                                                         key={version}
-                                                        size="s"
+                                                        size="sm"
                                                         view={version === activeVersion ? "outlined-info" : "flat-secondary"}
                                                         disabled={installed}
                                                         onClick={() => onSelectPackage?.(pkg, version)}
@@ -83,7 +83,7 @@ export function FhirPackageRegistryPanel({
                                     </div>
                                     {onInstallPackage ? (
                                         <Button
-                                            size="m"
+                                            size="md"
                                             view="action"
                                             loading={installingPackageName === pkg.name}
                                             disabled={pkg.installedVersions?.includes(activeVersion)}

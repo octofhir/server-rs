@@ -25,8 +25,8 @@
 
 /* sizes */
 .badge[data-size="xs"] { height: 18px; padding: 0 6px; font-size: 0.6875rem; }
-.badge[data-size="s"]  { height: 22px; padding: 0 8px; font-size: var(--octo-typography-size-xs, 0.75rem); }
-.badge[data-size="m"]  { height: 26px; padding: 0 10px; font-size: var(--octo-typography-size-sm, 0.875rem); }
+.badge[data-size="sm"]  { height: 22px; padding: 0 8px; font-size: var(--octo-typography-size-xs, 0.75rem); }
+.badge[data-size="md"]  { height: 26px; padding: 0 10px; font-size: var(--octo-typography-size-sm, 0.875rem); }
 
 /* variants */
 .badge[data-variant="light"]  { background: var(--_bg); color: var(--_accent); }

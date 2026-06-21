@@ -78,7 +78,7 @@ export function LoginPage() {
 								</label>
 								<TextInput
 									id={usernameId}
-									size="l"
+									size="lg"
 									placeholder="admin"
 									value={username}
 									onUpdate={setUsername}
@@ -97,7 +97,7 @@ export function LoginPage() {
 								</label>
 								<PasswordInput
 									id={passwordId}
-									size="l"
+									size="lg"
 									placeholder="••••••••"
 									value={password}
 									onUpdate={setPassword}

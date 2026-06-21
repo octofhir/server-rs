@@ -113,7 +113,7 @@ export function RestConsolePage() {
         <div className={styles.actions}>
           <Button
             view="flat"
-            size="m"
+            size="md"
             onClick={toggleInspector}
           >
             <Button.Icon><Eye size={16} /></Button.Icon>
@@ -121,7 +121,7 @@ export function RestConsolePage() {
           </Button>
           <Button
             view="flat"
-            size="m"
+            size="md"
             onClick={historyHandlers.open}
           >
             <Button.Icon><ClockArrowRotateLeft size={16} /></Button.Icon>
@@ -157,7 +157,7 @@ export function RestConsolePage() {
                       />
                       <div className={styles.builderActions}>
                         <Button
-                          size="l"
+                          size="lg"
                           view="action"
                           onClick={handleSend}
                           loading={sendMutation.isPending}

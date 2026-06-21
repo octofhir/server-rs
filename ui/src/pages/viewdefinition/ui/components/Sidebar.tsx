@@ -30,7 +30,7 @@ export function Sidebar({ items, selectedId, onSelect }: SidebarProps) {
               <Button
                 key={vd.id}
                 view={selectedId === vd.id ? "flat-action" : "flat"}
-                size="m"
+                size="md"
                 className={classes.item}
                 data-selected={selectedId === vd.id ? "true" : undefined}
                 onClick={() => vd.id && onSelect(vd.id)}

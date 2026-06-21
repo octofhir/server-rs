@@ -175,11 +175,11 @@ export function RolesPage() {
 								status: <Badge color={statusView.color}>{statusView.label}</Badge>,
 								actions: (
 									<DropdownMenu
-										size="s"
+										size="sm"
 										icon={<EllipsisVertical width={16} />}
 										defaultSwitcherProps={{
 											view: "flat-secondary",
-											size: "s",
+											size: "sm",
 											"aria-label": "Role actions",
 											"aria-haspopup": "menu",
 										}}
@@ -347,7 +347,7 @@ function RoleModal({
 											{perms.map((perm) => (
 												<div key={perm.code} className={classes.permissionItem}>
 													<Checkbox
-														size="s"
+														size="sm"
 														content={perm.display}
 														checked={values.permissions.includes(perm.code)}
 														onChange={(e) =>

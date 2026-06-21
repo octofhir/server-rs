@@ -1,5 +1,6 @@
 import { forwardRef, type ReactNode } from "react";
 import { X } from "lucide-react";
+import type { Size } from "../layout-utils";
 import inputStyles from "../input.module.css";
 import styles from "./DatePicker.module.css";
 
@@ -13,7 +14,7 @@ export interface DatePickerProps {
     withTime?: boolean;
     label?: ReactNode;
     placeholder?: string;
-    size?: "xs" | "s" | "m" | "l";
+    size?: Size;
     disabled?: boolean;
     /** Show a button to reset the value to empty. */
     clearable?: boolean;
@@ -47,7 +48,7 @@ export const DatePicker = forwardRef<HTMLInputElement, DatePickerProps>(function
         withTime = false,
         label,
         placeholder,
-        size = "m",
+        size = "md",
         disabled,
         clearable,
         minDate,
@@ -61,7 +62,6 @@ export const DatePicker = forwardRef<HTMLInputElement, DatePickerProps>(function
     },
     ref,
 ) {
-    const resolvedSize = size === "xs" ? "s" : size;
     const emit = (next: Date | null) => {
         onChange?.(next);
         onUpdate?.(next);
@@ -82,7 +82,7 @@ export const DatePicker = forwardRef<HTMLInputElement, DatePickerProps>(function
             )}
             <div
                 className={inputStyles.wrapper}
-                data-size={resolvedSize}
+                data-size={size}
                 data-error={error ? "true" : undefined}
                 data-disabled={disabled ? "true" : undefined}
             >

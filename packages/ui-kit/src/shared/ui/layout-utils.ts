@@ -1,5 +1,8 @@
 import type React from 'react';
 
+/** Canonical size scale for every kit control. xs|sm|md|lg|xl = 24|28|32|38|44px. */
+export type Size = 'xs' | 'sm' | 'md' | 'lg' | 'xl';
+
 const LAYOUT_PROP_KEYS = [
     'w',
     'h',

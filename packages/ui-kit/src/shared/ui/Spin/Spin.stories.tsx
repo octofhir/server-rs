@@ -8,7 +8,7 @@ const meta: Meta<typeof Spin> = {
   argTypes: {
     size: {
       control: "select",
-      options: ["xs", "s", "m", "l", "xl"],
+      options: ["xs", "sm", "md", "lg", "xl"],
     },
   },
 };
@@ -18,6 +18,6 @@ type Story = StoryObj<typeof Spin>;
 
 export const Default: Story = {
   args: {
-    size: "m",
+    size: "md",
   },
 };

@@ -95,7 +95,7 @@ export function WorkspaceBoard({
                                         <div className={classes.columnCaption}>{column.caption}</div>
                                     ) : null}
                                 </div>
-                                <Badge theme="unknown" size="s">
+                                <Badge theme="unknown" size="sm">
                                     {column.items.length}
                                 </Badge>
                             </div>

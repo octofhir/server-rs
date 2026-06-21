@@ -1,4 +1,5 @@
 import { forwardRef } from "react";
+import type { Size } from "../layout-utils";
 import styles from "../input.module.css";
 
 export interface TextAreaProps
@@ -7,14 +8,14 @@ export interface TextAreaProps
     defaultValue?: string;
     onChange?: (value: string) => void;
     onUpdate?: (value: string) => void;
-    size?: "s" | "m" | "l";
+    size?: Size;
     error?: boolean | string;
     minRows?: number;
     maxRows?: number;
 }
 
 export const TextArea = forwardRef<HTMLTextAreaElement, TextAreaProps>(function TextArea(
-    { value, defaultValue, onChange, onUpdate, size = "m", error, disabled, rows, minRows, className, style, ...props },
+    { value, defaultValue, onChange, onUpdate, size = "md", error, disabled, rows, minRows, className, style, ...props },
     ref,
 ) {
     return (

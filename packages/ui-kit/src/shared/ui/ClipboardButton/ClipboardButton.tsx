@@ -23,7 +23,7 @@ export interface ClipboardButtonProps {
 export function ClipboardButton({
     text,
     view = "flat",
-    size = "s",
+    size = "sm",
     className,
     tooltipInitialText,
     tooltipSuccessText = "Copied!",

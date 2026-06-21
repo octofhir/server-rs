@@ -53,10 +53,10 @@ export const Sizes: Story = {
 			<Chip size="xs" checked>
 				XS
 			</Chip>
-			<Chip size="s" checked>
+			<Chip size="sm" checked>
 				S
 			</Chip>
-			<Chip size="m" checked>
+			<Chip size="md" checked>
 				M
 			</Chip>
 		</div>

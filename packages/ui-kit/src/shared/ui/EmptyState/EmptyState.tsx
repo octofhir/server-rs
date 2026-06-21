@@ -1,4 +1,5 @@
 import { forwardRef, isValidElement, type ReactNode } from "react";
+import type { Size } from "../layout-utils";
 import styles from "./EmptyState.module.css";
 
 export interface EmptyStateProps {
@@ -9,7 +10,7 @@ export interface EmptyStateProps {
     /** Call-to-action buttons. */
     actions?: ReactNode;
     /** `promo` adds extra vertical padding for full-page states. */
-    size?: "s" | "m" | "l" | "promo";
+    size?: Size | "promo";
     className?: string;
     style?: React.CSSProperties;
 }
@@ -24,7 +25,7 @@ function renderImage(image: EmptyStateProps["image"]): ReactNode {
 }
 
 export const EmptyState = forwardRef<HTMLDivElement, EmptyStateProps>(function EmptyState(
-    { image, title, description, actions, size = "m", className, style },
+    { image, title, description, actions, size = "md", className, style },
     ref,
 ) {
     return (

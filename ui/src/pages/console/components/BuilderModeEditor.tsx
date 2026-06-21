@@ -90,7 +90,7 @@ export function BuilderModeEditor({
 				<Text variant="subheader-1">
 					Visual Query Builder
 				</Text>
-				<Badge theme="info" size="m">
+				<Badge theme="info" size="md">
 					{method}
 				</Badge>
 			</div>

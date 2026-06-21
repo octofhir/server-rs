@@ -32,7 +32,7 @@ export function PageHeader({ eyebrow, title, description, actions }: PageHeaderP
                         <Button
                             key={action.id}
                             view={action.view ?? "normal"}
-                            size="m"
+                            size="md"
                             onClick={action.onClick}
                         >
                             {action.icon ? <Button.Icon>{action.icon}</Button.Icon> : null}

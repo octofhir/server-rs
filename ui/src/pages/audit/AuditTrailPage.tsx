@@ -173,7 +173,7 @@ export function AuditTrailPage() {
 										<Tooltip content="Close">
 											<ActionIcon
 												view="flat"
-												size="s"
+												size="sm"
 												aria-label="Close event details"
 												onClick={handleCloseDetail}
 											>

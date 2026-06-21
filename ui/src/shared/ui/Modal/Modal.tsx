@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import { Modal as KitModal } from "@octofhir/ui-kit";
 
-type ModalSize = "xs" | "s" | "sm" | "m" | "md" | "l" | "lg" | "xl" | "auto";
+type ModalSize = "xs" | "sm" | "md" | "lg" | "xl" | "auto";
 
 export interface ModalProps {
 	children: ReactNode;

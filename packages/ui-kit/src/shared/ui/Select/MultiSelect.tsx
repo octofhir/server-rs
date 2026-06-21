@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { Combobox } from "@base-ui/react/combobox";
 import { Check, ChevronDown, X } from "lucide-react";
+import type { Size } from "../layout-utils";
 import inputStyles from "../input.module.css";
 import styles from "./MultiSelect.module.css";
 import selectStyles from "./Select.module.css";
@@ -20,7 +21,7 @@ export interface MultiSelectProps {
     required?: boolean;
     error?: boolean | string;
     disabled?: boolean;
-    size?: "s" | "m" | "l";
+    size?: Size;
     className?: string;
     style?: React.CSSProperties;
     id?: string;
@@ -55,7 +56,7 @@ export function MultiSelect({
     required,
     error,
     disabled,
-    size = "m",
+    size = "md",
     className,
     style,
     id,

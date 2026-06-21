@@ -186,11 +186,11 @@ export function AccessPoliciesPage() {
 								status: <Badge color={statusView.color}>{statusView.label}</Badge>,
 								actions: (
 									<DropdownMenu
-										size="s"
+										size="sm"
 										icon={<EllipsisVertical width={16} />}
 										defaultSwitcherProps={{
 											view: "flat-secondary",
-											size: "s",
+											size: "sm",
 											"aria-label": "Policy actions",
 											"aria-haspopup": "menu",
 										}}

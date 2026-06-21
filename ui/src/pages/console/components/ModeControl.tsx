@@ -19,7 +19,7 @@ export function ModeControl() {
 
   return (
     <SegmentedControl
-      size="s"
+      size="sm"
       options={MODE_DATA}
       value={mode}
       onChange={(value) => {

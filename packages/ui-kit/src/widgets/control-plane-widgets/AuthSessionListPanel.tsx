@@ -71,7 +71,7 @@ export function AuthSessionListPanel({
                                     </div>
                                     {onRevokeSession && !session.current ? (
                                         <Button
-                                            size="s"
+                                            size="sm"
                                             view="flat-danger"
                                             loading={revokingSessionId === session.id}
                                             onClick={(event) => {

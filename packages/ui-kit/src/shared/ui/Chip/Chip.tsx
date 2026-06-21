@@ -1,4 +1,5 @@
 import { forwardRef, type ReactNode } from "react";
+import type { Size } from "../layout-utils";
 import styles from "./Chip.module.css";
 
 export interface ChipProps {
@@ -6,7 +7,7 @@ export interface ChipProps {
     checked?: boolean;
     /** Toggle callback. Receives the new checked value. */
     onChange?: (next: boolean) => void;
-    size?: "xs" | "s" | "m";
+    size?: Size;
     disabled?: boolean;
     /** Content rendered before the label. */
     leftSection?: ReactNode;
@@ -16,7 +17,7 @@ export interface ChipProps {
 }
 
 export const Chip = forwardRef<HTMLButtonElement, ChipProps>(function Chip(
-    { checked = false, onChange, size = "s", disabled, leftSection, children, className, ...rest },
+    { checked = false, onChange, size = "sm", disabled, leftSection, children, className, ...rest },
     ref,
 ) {
     return (

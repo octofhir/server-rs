@@ -20,7 +20,7 @@ export function MethodControl() {
 				setMethodEvent(nextMethod && isHttpMethod(nextMethod) ? nextMethod : "GET");
 			}}
 			options={METHOD_OPTIONS.map(m => ({ value: m, content: m }))}
-			size="m"
+			size="md"
 			view="flat"
 			className={styles.select}
 		/>

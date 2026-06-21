@@ -2,6 +2,7 @@ import { Fragment, type ReactNode } from "react";
 import { EllipsisVertical } from "lucide-react";
 import { ActionIcon } from "../ActionIcon";
 import type { ButtonProps } from "../Button";
+import type { Size } from "../layout-utils";
 import { Menu, type MenuPlacement } from "./Menu";
 
 export interface DropdownMenuItem {
@@ -20,11 +21,11 @@ export interface DropdownMenuProps {
     items: DropdownMenuItems;
     /** Trigger icon (defaults to a vertical ellipsis). */
     icon?: ReactNode;
-    size?: "xs" | "s" | "m" | "l";
+    size?: Size;
     /** Props forwarded to the default icon-button trigger. */
     defaultSwitcherProps?: {
         view?: ButtonProps["view"];
-        size?: "xs" | "s" | "m" | "l";
+        size?: Size;
         "aria-label"?: string;
     };
     popupProps?: { placement?: MenuPlacement };
@@ -44,7 +45,7 @@ export function DropdownMenu({
     const trigger = switcher ?? (
         <ActionIcon
             view={defaultSwitcherProps?.view ?? "flat"}
-            size={size ?? defaultSwitcherProps?.size ?? "s"}
+            size={size ?? defaultSwitcherProps?.size ?? "sm"}
             aria-label={defaultSwitcherProps?.["aria-label"] ?? "Open menu"}
         >
             {icon ?? <EllipsisVertical size={16} />}

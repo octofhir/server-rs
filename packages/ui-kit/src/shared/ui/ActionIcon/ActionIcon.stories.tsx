@@ -62,9 +62,9 @@ export const Sizes: Story = {
   render: () => (
     <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
       <ActionIcon size="xs"><Gear width={14} /></ActionIcon>
-      <ActionIcon size="s"><Gear width={16} /></ActionIcon>
-      <ActionIcon size="m"><Gear width={18} /></ActionIcon>
-      <ActionIcon size="l"><Gear width={20} /></ActionIcon>
+      <ActionIcon size="sm"><Gear width={16} /></ActionIcon>
+      <ActionIcon size="md"><Gear width={18} /></ActionIcon>
+      <ActionIcon size="lg"><Gear width={20} /></ActionIcon>
       <ActionIcon size="xl"><Gear width={24} /></ActionIcon>
     </div>
   ),

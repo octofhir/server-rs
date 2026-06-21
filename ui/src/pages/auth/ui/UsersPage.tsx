@@ -324,7 +324,7 @@ export function UsersPage() {
 													return (
 													<Badge
 														key={role}
-														size="s"
+														size="sm"
 														theme={roleView.theme}
 													>
 														{roleView.role}
@@ -340,7 +340,7 @@ export function UsersPage() {
 										</Table.Td>
 										<Table.Td>
 											<Badge
-												size="s"
+												size="sm"
 												theme={statusView.theme}
 											>
 												{statusView.label}
@@ -353,9 +353,9 @@ export function UsersPage() {
 										</Table.Td>
 										<Table.Td className={classes.actionsCell}>
 											<DropdownMenu
-												size="s"
+												size="sm"
 												icon={<EllipsisVertical width={16} />}
-												defaultSwitcherProps={{ view: "flat-secondary", size: "s", "aria-label": "User actions" }}
+												defaultSwitcherProps={{ view: "flat-secondary", size: "sm", "aria-label": "User actions" }}
 												popupProps={{ placement: "bottom-end" }}
 												items={[
 													{

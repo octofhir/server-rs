@@ -78,9 +78,9 @@ export const Sizes: Story = {
   render: () => (
     <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
       <ThemeIcon size="xs"><Heart width={12} /></ThemeIcon>
-      <ThemeIcon size="s"><Heart width={14} /></ThemeIcon>
-      <ThemeIcon size="m"><Heart width={18} /></ThemeIcon>
-      <ThemeIcon size="l"><Heart width={22} /></ThemeIcon>
+      <ThemeIcon size="sm"><Heart width={14} /></ThemeIcon>
+      <ThemeIcon size="md"><Heart width={18} /></ThemeIcon>
+      <ThemeIcon size="lg"><Heart width={22} /></ThemeIcon>
       <ThemeIcon size="xl"><Heart width={28} /></ThemeIcon>
     </div>
   ),

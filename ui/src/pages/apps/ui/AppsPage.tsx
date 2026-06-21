@@ -224,7 +224,7 @@ export function AppsPage() {
 										<Menu.Target>
 											<ActionIcon
 												view="flat"
-												size="s"
+												size="sm"
 												aria-label={`Actions for ${app.name}`}
 												aria-haspopup="menu"
 											>
@@ -278,7 +278,7 @@ export function AppsPage() {
 				open={deletingApp != null}
 				onClose={() => setDeletingApp(null)}
 				title="Delete application"
-				size="s"
+				size="sm"
 				footer={
 					<div className={classes.modalActions}>
 						<Button view="flat" onClick={() => setDeletingApp(null)} type="button">

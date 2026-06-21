@@ -1,3 +1,4 @@
+import type { Size } from "../layout-utils";
 import styles from "./Progress.module.css";
 
 type Tone = "primary" | "success" | "danger" | "warning" | "info";
@@ -18,15 +19,6 @@ const TONE_BY_COLOR: Record<string, Tone> = {
     default: "primary",
 };
 
-const SIZE_BY_NAME: Record<string, "xs" | "s" | "m"> = {
-    xs: "xs",
-    s: "s",
-    sm: "s",
-    m: "m",
-    md: "m",
-    lg: "m",
-};
-
 export interface ProgressProps {
     /** Completion percentage (0–100). */
     value?: number;
@@ -34,7 +26,7 @@ export interface ProgressProps {
     color?: string;
     /** Alias resolved to a color tone. */
     theme?: string;
-    size?: "xs" | "s" | "m" | "sm" | "md" | "lg";
+    size?: Size;
     striped?: boolean;
     animated?: boolean;
     className?: string;
@@ -47,7 +39,7 @@ export function Progress({
     value = 0,
     color,
     theme,
-    size = "m",
+    size = "md",
     striped,
     animated,
     className,
@@ -55,12 +47,11 @@ export function Progress({
     "aria-label": ariaLabel,
 }: ProgressProps) {
     const tone = TONE_BY_COLOR[color ?? theme ?? "primary"] ?? "primary";
-    const resolvedSize = SIZE_BY_NAME[size] ?? "m";
     const pct = Math.max(0, Math.min(100, value));
     return (
         <div
             className={[styles.track, className].filter(Boolean).join(" ")}
-            data-size={resolvedSize}
+            data-size={size}
             style={style}
             role="progressbar"
             aria-valuenow={pct}

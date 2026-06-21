@@ -12,7 +12,7 @@ const meta: Meta<typeof Progress> = {
     },
     size: {
       control: "select",
-      options: ["s", "m"],
+      options: ["sm", "md"],
     },
   },
 };
@@ -24,6 +24,6 @@ export const Default: Story = {
   args: {
     value: 50,
     theme: "default",
-    size: "m",
+    size: "md",
   },
 };
