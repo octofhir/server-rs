@@ -12,7 +12,7 @@
 }
 
 .title {
-    color: var(--g-color-text-primary);
+    color: var(--octo-text-primary);
     font-size: 14px;
     font-weight: 600;
     line-height: 18px;
@@ -29,9 +29,9 @@
     flex-direction: column;
     gap: 6px;
     padding: 10px;
-    border: 1px solid var(--g-color-line-generic);
+    border: 1px solid var(--octo-border-subtle);
     border-radius: 8px;
-    background: var(--g-color-base-generic);
+    background: var(--octo-surface-2);
 }
 
 .issueHead {
@@ -42,14 +42,14 @@
 }
 
 .code {
-    color: var(--g-color-text-primary);
+    color: var(--octo-text-primary);
     font-size: 12px;
     font-weight: 600;
     line-height: 16px;
 }
 
 .diagnostics {
-    color: var(--g-color-text-primary);
+    color: var(--octo-text-primary);
     font-size: 12px;
     line-height: 17px;
     white-space: pre-wrap;
@@ -57,8 +57,8 @@
 
 .path {
     overflow: hidden;
-    color: var(--g-color-text-secondary);
-    font-family: var(--g-font-family-monospace);
+    color: var(--octo-text-secondary);
+    font-family: var(--octo-typography-mono);
     font-size: 11px;
     line-height: 15px;
     text-overflow: ellipsis;
@@ -66,7 +66,7 @@
 }
 
 .empty {
-    color: var(--g-color-text-secondary);
+    color: var(--octo-text-secondary);
     font-size: 12px;
     line-height: 16px;
 }

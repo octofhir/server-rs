@@ -3,7 +3,7 @@
     max-width: 100%;
     min-width: 0;
     align-items: center;
-    color: var(--g-color-text-secondary);
+    color: var(--octo-text-secondary);
     font-family: var(--octo-typography-mono, monospace);
     font-size: 12px;
     line-height: 16px;

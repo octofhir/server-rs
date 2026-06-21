@@ -20,7 +20,7 @@
 
 .metricValue {
     display: block;
-    color: var(--metric-value-color, var(--g-color-text-primary));
+    color: var(--metric-value-color, var(--octo-text-primary));
     letter-spacing: 0;
 }
 
@@ -30,7 +30,7 @@
     right: 0;
     left: 0;
     height: 4px;
-    background: var(--metric-accent-color, var(--g-color-base-brand));
+    background: var(--metric-accent-color, var(--octo-accent-primary));
 }
 
 .actionCard {
@@ -47,7 +47,7 @@
 
 .actionCard[data-clickable="true"]:hover {
     transform: translateY(-2px);
-    border-color: var(--g-color-line-brand);
+    border-color: var(--octo-accent-primary);
     box-shadow: var(--octo-shadow-sm);
 }
 

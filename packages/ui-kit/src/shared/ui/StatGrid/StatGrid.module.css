@@ -7,7 +7,7 @@
 }
 
 .item {
-    --stat-accent-color: var(--g-color-line-generic);
+    --stat-accent-color: var(--octo-border-subtle);
 
     box-sizing: border-box;
     display: grid;
@@ -15,15 +15,15 @@
     min-width: 0;
     min-height: 74px;
     padding: 10px 12px;
-    border: 1px solid var(--g-color-line-generic);
+    border: 1px solid var(--octo-border-subtle);
     border-left: 3px solid var(--stat-accent-color);
     border-radius: 8px;
-    background: var(--g-color-base-float);
+    background: var(--octo-surface-1);
 }
 
 .label {
     overflow: hidden;
-    color: var(--g-color-text-secondary);
+    color: var(--octo-text-secondary);
     font-size: 12px;
     font-weight: 500;
     line-height: 16px;
@@ -34,7 +34,7 @@
 .value {
     min-width: 0;
     margin: 0;
-    color: var(--g-color-text-primary);
+    color: var(--octo-text-primary);
     font-size: 20px;
     font-weight: 650;
     line-height: 26px;
@@ -44,7 +44,7 @@
     min-width: 0;
     margin: 0;
     overflow: hidden;
-    color: var(--g-color-text-hint);
+    color: var(--octo-text-muted);
     font-size: 12px;
     line-height: 16px;
     text-overflow: ellipsis;
@@ -52,21 +52,21 @@
 }
 
 .toneNeutral {
-    --stat-accent-color: var(--g-color-line-generic);
+    --stat-accent-color: var(--octo-border-subtle);
 }
 
 .toneInfo {
-    --stat-accent-color: var(--g-color-line-info);
+    --stat-accent-color: var(--octo-brand-info);
 }
 
 .toneSuccess {
-    --stat-accent-color: var(--g-color-line-positive);
+    --stat-accent-color: var(--octo-brand-success);
 }
 
 .toneWarning {
-    --stat-accent-color: var(--g-color-line-warning);
+    --stat-accent-color: var(--octo-brand-warm);
 }
 
 .toneDanger {
-    --stat-accent-color: var(--g-color-line-danger);
+    --stat-accent-color: var(--octo-accent-fire);
 }

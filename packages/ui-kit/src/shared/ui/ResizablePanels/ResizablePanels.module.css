@@ -27,7 +27,7 @@
 }
 
 .line {
-    background-color: var(--octo-border-subtle, var(--g-color-line-generic));
+    background-color: var(--octo-border-subtle, var(--octo-border-subtle));
     transition: background-color var(--octo-motion-fast, 100ms) var(--octo-motion-ease, ease),
                 box-shadow var(--octo-motion-fast, 100ms) var(--octo-motion-ease, ease);
 }
@@ -46,6 +46,6 @@
 .handle:hover .line,
 .handle[data-resize-handle-state="hover"] .line,
 .handle[data-resize-handle-state="drag"] .line {
-    background-color: var(--octo-brand-primary, var(--g-color-base-brand));
-    box-shadow: 0 0 6px var(--octo-brand-primary-ring, var(--g-color-base-brand-hover));
+    background-color: var(--octo-brand-primary, var(--octo-accent-primary));
+    box-shadow: 0 0 6px var(--octo-brand-primary-ring, var(--octo-accent-primary-hover));
 }

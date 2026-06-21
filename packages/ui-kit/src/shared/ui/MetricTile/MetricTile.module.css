@@ -14,21 +14,21 @@
 }
 
 .title {
-    color: var(--g-color-text-secondary);
+    color: var(--octo-text-secondary);
     font-size: 13px;
     font-weight: 500;
     line-height: 18px;
 }
 
 .value {
-    color: var(--g-color-text-primary);
+    color: var(--octo-text-primary);
     font-size: 26px;
     font-weight: 650;
     line-height: 32px;
 }
 
 .caption {
-    color: var(--g-color-text-hint);
+    color: var(--octo-text-muted);
     font-size: 12px;
     line-height: 16px;
 }
@@ -39,6 +39,6 @@
     width: 32px;
     height: 32px;
     border-radius: 8px;
-    color: var(--g-color-text-info);
-    background: var(--g-color-base-info-light);
+    color: var(--octo-brand-info);
+    background: var(--octo-brand-info-soft);
 }

@@ -20,7 +20,7 @@
 
 .title {
     overflow: hidden;
-    color: var(--g-color-text-primary);
+    color: var(--octo-text-primary);
     font-size: 15px;
     font-weight: 600;
     line-height: 20px;
@@ -29,7 +29,7 @@
 }
 
 .description {
-    color: var(--g-color-text-secondary);
+    color: var(--octo-text-secondary);
     font-size: 13px;
     line-height: 18px;
 }

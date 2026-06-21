@@ -24,19 +24,19 @@
     align-items: center;
     min-height: 34px;
     padding: 8px 10px;
-    border: 1px solid var(--g-color-line-generic);
+    border: 1px solid var(--octo-border-subtle);
     border-radius: 8px;
-    color: var(--g-color-text-secondary);
+    color: var(--octo-text-secondary);
     font-size: 13px;
     line-height: 18px;
-    background: var(--g-color-base-float);
+    background: var(--octo-surface-1);
 }
 
 .marker {
     width: 6px;
     height: 6px;
     border-radius: 50%;
-    background: var(--g-color-base-brand);
+    background: var(--octo-accent-primary);
 }
 
 .checklistText {
@@ -47,7 +47,7 @@
 
 .checklistDescription {
     overflow: hidden;
-    color: var(--g-color-text-hint);
+    color: var(--octo-text-muted);
     font-size: 12px;
     line-height: 16px;
     text-overflow: ellipsis;
@@ -58,7 +58,7 @@
     display: grid;
     min-height: 56px;
     place-items: center;
-    color: var(--g-color-text-secondary);
+    color: var(--octo-text-secondary);
     font-size: 13px;
     line-height: 18px;
 }

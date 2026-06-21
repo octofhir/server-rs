@@ -4,13 +4,13 @@
     grid-template-rows: auto minmax(0, 1fr);
     min-height: 100%;
     min-width: 0;
-    background: var(--g-color-base-background);
-    color: var(--g-color-text-primary);
+    background: var(--octo-surface-1);
+    color: var(--octo-text-primary);
 }
 
 .header {
-    border-bottom: 1px solid var(--g-color-line-generic);
-    background: var(--g-color-base-background);
+    border-bottom: 1px solid var(--octo-border-subtle);
+    background: var(--octo-surface-1);
 }
 
 .headerInner {

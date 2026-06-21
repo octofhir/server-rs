@@ -13,7 +13,7 @@
 }
 
 .eyebrow {
-    color: var(--g-color-text-secondary);
+    color: var(--octo-text-secondary);
     font-size: 12px;
     font-weight: 600;
     line-height: 16px;
@@ -22,7 +22,7 @@
 
 .title {
     margin: 0;
-    color: var(--g-color-text-primary);
+    color: var(--octo-text-primary);
     font-size: 28px;
     font-weight: 650;
     line-height: 36px;
@@ -30,7 +30,7 @@
 
 .description {
     max-width: 760px;
-    color: var(--g-color-text-secondary);
+    color: var(--octo-text-secondary);
     font-size: 15px;
     line-height: 22px;
 }

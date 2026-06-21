@@ -1,4 +1,7 @@
 .shell {
 	min-height: 100%;
-	padding: 4px 0 16px;
+	box-sizing: border-box;
+	max-width: 1440px;
+	margin: 0 auto;
+	padding: 20px 24px 28px;
 }

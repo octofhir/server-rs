@@ -15,7 +15,7 @@
 
 .label {
     overflow: hidden;
-    color: var(--g-color-text-secondary);
+    color: var(--octo-text-secondary);
     font-size: 13px;
     line-height: 18px;
     text-overflow: ellipsis;
@@ -24,7 +24,7 @@
 
 .value {
     min-width: 0;
-    color: var(--g-color-text-primary);
+    color: var(--octo-text-primary);
     font-size: 13px;
     font-weight: 600;
     line-height: 18px;
@@ -34,7 +34,7 @@
 .caption {
     grid-column: 1 / -1;
     margin-top: -6px;
-    color: var(--g-color-text-hint);
+    color: var(--octo-text-muted);
     font-size: 12px;
     line-height: 16px;
 }

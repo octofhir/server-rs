@@ -22,7 +22,7 @@
 }
 
 .groupTitle {
-    color: var(--g-color-text-secondary);
+    color: var(--octo-text-secondary);
     font-size: 11px;
     font-weight: 700;
     line-height: 14px;
@@ -35,10 +35,10 @@
     width: 100%;
     min-width: 0;
     padding: 12px;
-    border: 1px solid var(--g-color-line-generic);
+    border: 1px solid var(--octo-border-subtle);
     border-radius: 8px;
     color: inherit;
-    background: var(--g-color-base-float);
+    background: var(--octo-surface-1);
     text-align: left;
 }
 
@@ -54,21 +54,21 @@
 
 .operationItemButton:hover,
 .sessionItemButton:hover {
-    border-color: var(--g-color-line-brand);
-    box-shadow: var(--g-box-shadow-light);
+    border-color: var(--octo-accent-primary);
+    box-shadow: var(--octo-shadow-sm);
     transform: translateY(-1px);
 }
 
 .operationItemButton:focus-visible,
 .sessionItemButton:focus-visible {
-    outline: 2px solid var(--g-color-line-brand);
+    outline: 2px solid var(--octo-accent-primary);
     outline-offset: 2px;
 }
 
 .selected,
 .currentSession {
-    border-color: var(--g-color-line-brand);
-    box-shadow: inset 3px 0 0 var(--g-color-line-brand);
+    border-color: var(--octo-accent-primary);
+    box-shadow: inset 3px 0 0 var(--octo-accent-primary);
 }
 
 .operationTop,
@@ -102,7 +102,7 @@
 
 .name {
     overflow: hidden;
-    color: var(--g-color-text-primary);
+    color: var(--octo-text-primary);
     font-size: 14px;
     font-weight: 650;
     line-height: 20px;
@@ -113,7 +113,7 @@
 .description {
     display: -webkit-box;
     overflow: hidden;
-    color: var(--g-color-text-secondary);
+    color: var(--octo-text-secondary);
     font-size: 13px;
     line-height: 18px;
     -webkit-box-orient: vertical;
@@ -123,8 +123,8 @@
 .code {
     overflow: hidden;
     max-width: 100%;
-    color: var(--g-color-text-primary);
-    font-family: var(--g-font-family-monospace);
+    color: var(--octo-text-primary);
+    font-family: var(--octo-typography-mono);
     font-size: 12px;
     line-height: 16px;
     text-overflow: ellipsis;
@@ -134,32 +134,32 @@
 .method {
     padding: 3px 6px;
     border-radius: 5px;
-    color: var(--g-color-text-light-primary);
-    font-family: var(--g-font-family-monospace);
+    color: var(--octo-text-primary);
+    font-family: var(--octo-typography-mono);
     font-size: 11px;
     font-weight: 700;
     line-height: 14px;
-    background: var(--method-color, var(--g-color-base-brand));
+    background: var(--method-color, var(--octo-accent-primary));
 }
 
 .methodGet,
 .methodHead,
 .methodOptions {
-    --method-color: var(--g-color-base-info-heavy);
+    --method-color: var(--octo-brand-info);
 }
 
 .methodPost,
 .methodPut,
 .methodPatch {
-    --method-color: var(--g-color-base-positive-heavy);
+    --method-color: var(--octo-brand-success);
 }
 
 .methodDelete {
-    --method-color: var(--g-color-base-danger-heavy);
+    --method-color: var(--octo-accent-fire);
 }
 
 .sessionDevice {
-    color: var(--g-color-text-primary);
+    color: var(--octo-text-primary);
     font-size: 14px;
     font-weight: 650;
     line-height: 20px;
@@ -175,13 +175,13 @@
 .sessionMetaCell {
     min-width: 0;
     padding: 8px 10px;
-    border: 1px solid var(--g-color-line-generic);
+    border: 1px solid var(--octo-border-subtle);
     border-radius: 8px;
-    background: var(--g-color-base-background);
+    background: var(--octo-surface-1);
 }
 
 .sessionMetaLabel {
-    color: var(--g-color-text-secondary);
+    color: var(--octo-text-secondary);
     font-size: 11px;
     line-height: 14px;
 }
@@ -189,7 +189,7 @@
 .sessionMetaValue {
     overflow: hidden;
     margin-top: 3px;
-    color: var(--g-color-text-primary);
+    color: var(--octo-text-primary);
     font-size: 12px;
     font-weight: 600;
     line-height: 16px;
@@ -201,13 +201,13 @@
     display: grid;
     min-height: 86px;
     place-items: center;
-    border: 1px dashed var(--g-color-line-generic);
+    border: 1px dashed var(--octo-border-subtle);
     border-radius: 8px;
-    color: var(--g-color-text-secondary);
+    color: var(--octo-text-secondary);
     font-size: 13px;
     line-height: 18px;
     text-align: center;
-    background: var(--g-color-base-float);
+    background: var(--octo-surface-1);
 }
 
 @media (max-width: 760px) {
