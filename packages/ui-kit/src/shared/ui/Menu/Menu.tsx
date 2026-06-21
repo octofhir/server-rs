@@ -156,7 +156,12 @@ function MenuDivider() {
     return <BaseMenu.Separator className={styles.divider} />;
 }
 
+function MenuLabel({ children }: { children?: ReactNode }) {
+    return <BaseMenu.GroupLabel className={styles.label}>{children}</BaseMenu.GroupLabel>;
+}
+
 Menu.Target = MenuTarget;
 Menu.Dropdown = MenuDropdown;
 Menu.Item = MenuItem;
 Menu.Divider = MenuDivider;
+Menu.Label = MenuLabel;

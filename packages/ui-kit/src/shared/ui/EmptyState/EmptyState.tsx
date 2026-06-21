@@ -1,14 +1,24 @@
 import { forwardRef, isValidElement, type ReactNode } from "react";
+import { Button, type ButtonProps } from "../Button";
 import type { Size } from "../layout-utils";
 import styles from "./EmptyState.module.css";
+
+export interface EmptyStateAction {
+    text: ReactNode;
+    onClick?: () => void;
+    variant?: ButtonProps["variant"];
+    color?: ButtonProps["color"];
+    icon?: ReactNode;
+    disabled?: boolean;
+}
 
 export interface EmptyStateProps {
     /** Decorative element, or an image source descriptor. */
     image?: ReactNode | { src: string; alt?: string };
     title?: ReactNode;
     description?: ReactNode;
-    /** Call-to-action buttons. */
-    actions?: ReactNode;
+    /** Call-to-action buttons, or descriptors rendered as buttons. */
+    actions?: ReactNode | EmptyStateAction[];
     /** `promo` adds extra vertical padding for full-page states. */
     size?: Size | "promo";
     className?: string;
@@ -38,7 +48,24 @@ export const EmptyState = forwardRef<HTMLDivElement, EmptyStateProps>(function E
             {image != null && <div className={styles.image}>{renderImage(image)}</div>}
             {title != null && <h3 className={styles.title}>{title}</h3>}
             {description != null && <p className={styles.description}>{description}</p>}
-            {actions != null && <div className={styles.actions}>{actions}</div>}
+            {actions != null && (
+                <div className={styles.actions}>
+                    {Array.isArray(actions)
+                        ? actions.map((action, i) => (
+                              <Button
+                                  key={typeof action.text === "string" ? action.text : i}
+                                  variant={action.variant ?? "filled"}
+                                  color={action.color}
+                                  onClick={action.onClick}
+                                  disabled={action.disabled}
+                                  leftSection={action.icon}
+                              >
+                                  {action.text}
+                              </Button>
+                          ))
+                        : actions}
+                </div>
+            )}
         </div>
     );
 });
