@@ -17,12 +17,34 @@
 	flex: 0 0 180px;
 }
 
-.loadingState {
-	align-items: center;
+.skeletonRows {
 	display: flex;
+	flex-direction: column;
 	gap: var(--g-spacing-2);
-	justify-content: center;
-	padding: var(--g-spacing-8);
+}
+
+.skeletonRow {
+	border-radius: var(--octo-radius-sm);
+	height: 40px;
+	width: 100%;
+}
+
+.skeletonIcon {
+	border-radius: var(--octo-radius-sm);
+	height: 20px;
+	width: 20px;
+}
+
+.skeletonTitle {
+	border-radius: var(--octo-radius-sm);
+	height: 16px;
+	width: 120px;
+}
+
+.skeletonBadge {
+	border-radius: var(--octo-radius-sm);
+	height: 16px;
+	width: 28px;
 }
 
 .resultSummary {
@@ -77,19 +99,16 @@
 	cursor: pointer;
 }
 
+.pathCode {
+	font-family: var(--octo-typography-mono);
+}
+
 .publicIcon {
 	color: var(--octo-accent-primary);
 }
 
 .protectedIcon {
 	color: var(--octo-accent-warm);
-}
-
-.emptyState {
-	background: var(--octo-surface-2);
-	border: 1px solid var(--octo-border-subtle);
-	border-radius: var(--g-border-radius-m);
-	padding: var(--g-spacing-5);
 }
 
 @media (max-width: 760px) {

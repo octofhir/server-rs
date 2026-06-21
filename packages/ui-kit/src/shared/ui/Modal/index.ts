@@ -1,1 +1,1 @@
-export { Modal, type ModalProps } from "@gravity-ui/uikit";
+export { Modal, type ModalProps, type ModalSize } from "./Modal";

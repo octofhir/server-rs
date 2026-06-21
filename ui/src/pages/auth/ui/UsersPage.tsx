@@ -5,8 +5,10 @@ import {
 	Table,
 	Badge,
 	Checkbox,
+	EmptyState,
 	Select,
 	PasswordInput,
+	Skeleton,
 	Switch,
 	Card,
 } from "@octofhir/ui-kit";
@@ -65,12 +67,18 @@ export function UsersPage() {
 		active: statusFilter === "active" ? true : statusFilter === "inactive" ? false : undefined,
 	};
 
-	const { data, isLoading } = useUsers(filters);
+	const { data, isLoading, isError, error, refetch } = useUsers(filters);
 	const { data: rolesData } = useRoles();
 	const deleteUser = useDeleteUser();
 	const bulkUpdate = useBulkUpdateUsers();
 
 	const users = getBundleResources<UserResource>(data);
+	const isFiltered = Boolean(debouncedSearch || roleFilter || statusFilter);
+	const clearFilters = () => {
+		setSearch("");
+		setRoleFilter(null);
+		setStatusFilter(null);
+	};
 	const roleNames = getBundleResources<RoleResource>(rolesData).map((role) => role.name);
 	const availableRoles = roleNames.length ? roleNames : ["admin", "practitioner", "patient"];
 
@@ -245,15 +253,53 @@ export function UsersPage() {
 						</Table.Thead>
 						<Table.Tbody>
 							{isLoading ? (
+								["a", "b", "c", "d", "e"].map((k) => (
+									<Table.Tr key={k}>
+										<Table.Td colSpan={6}>
+											<Skeleton className={classes.skeletonRow} />
+										</Table.Td>
+									</Table.Tr>
+								))
+							) : isError ? (
 								<Table.Tr>
 									<Table.Td colSpan={6} className={classes.emptyCell}>
-										Loading users...
+										<EmptyState
+											title="Failed to load users"
+											description={
+												error instanceof Error ? error.message : "Something went wrong while loading users."
+											}
+											actions={[
+												<Button key="retry" view="action" onClick={() => refetch()}>
+													Retry
+												</Button>,
+											]}
+										/>
 									</Table.Td>
 								</Table.Tr>
 							) : users.length === 0 ? (
 								<Table.Tr>
 									<Table.Td colSpan={6} className={classes.emptyCell}>
-										No users found
+										<EmptyState
+											title={isFiltered ? "No matching users" : "No users yet"}
+											description={
+												isFiltered
+													? "No users match your current filters."
+													: "Create a user account to grant access to the server."
+											}
+											actions={
+												isFiltered
+													? [
+															<Button key="clear" view="outlined" onClick={clearFilters}>
+																Clear filters
+															</Button>,
+														]
+													: [
+															<Button key="create" view="action" onClick={open}>
+																Create User
+															</Button>,
+														]
+											}
+										/>
 									</Table.Td>
 								</Table.Tr>
 							) : (
@@ -569,26 +615,26 @@ function UserModal({
 							<div className={classes.switchGrid}>
 								<Field<boolean> name="active" type="checkbox">
 									{({ input }) => (
-										<label className={classes.switchCard}>
+										<div className={classes.switchCard}>
 											<Switch
 												content="Active"
 												checked={input.checked ?? false}
-												onChange={input.onChange}
+												onUpdate={input.onChange}
 											/>
 											<Text color="secondary" variant="body-1">User can log in</Text>
-										</label>
+										</div>
 									)}
 								</Field>
 								<Field<boolean> name="mfaEnabled" type="checkbox">
 									{({ input }) => (
-										<label className={classes.switchCard}>
+										<div className={classes.switchCard}>
 											<Switch
 												content="MFA enabled"
 												checked={input.checked ?? false}
-												onChange={input.onChange}
+												onUpdate={input.onChange}
 											/>
 											<Text color="secondary" variant="body-1">Require two-factor authentication</Text>
-										</label>
+										</div>
 									)}
 								</Field>
 							</div>

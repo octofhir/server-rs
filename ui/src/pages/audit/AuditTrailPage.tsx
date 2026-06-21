@@ -1,4 +1,4 @@
-import { ActionIcon, Tabs, Text, Tooltip, notifications } from "@octofhir/ui-kit";
+import { ActionIcon, Tabs, Text, Tooltip, notify } from "@octofhir/ui-kit";
 import { useState, useCallback, useMemo } from "react";
 import { WorkspacePageLayout } from "@/widgets/workspace-page";
 import { ListUl, ChartBar, Xmark } from "@gravity-ui/icons";
@@ -19,6 +19,8 @@ export function AuditTrailPage() {
 	const {
 		data: eventsData,
 		isLoading: isLoadingEvents,
+		isError: isEventsError,
+		error: eventsError,
 		isFetchingNextPage,
 		hasNextPage,
 		fetchNextPage,
@@ -39,7 +41,25 @@ export function AuditTrailPage() {
 	const {
 		data: analytics,
 		isLoading: isLoadingAnalytics,
+		isError: isAnalyticsError,
+		error: analyticsError,
+		refetch: refetchAnalytics,
 	} = useAuditAnalytics(timeRange);
+
+	const hasActiveFilters =
+		(filters.action?.length ?? 0) > 0 ||
+		(filters.outcome?.length ?? 0) > 0 ||
+		(filters.actorType?.length ?? 0) > 0 ||
+		Boolean(filters.startTime) ||
+		Boolean(filters.endTime) ||
+		Boolean(filters.resourceType) ||
+		Boolean(filters.ipAddress) ||
+		Boolean(filters.search);
+
+	const clearAllFilters = useCallback(() => {
+		setFilters({});
+		setSelectedEvent(null);
+	}, []);
 
 	// Flatten events from infinite query pages
 	const events = useMemo(() => {
@@ -62,16 +82,16 @@ export function AuditTrailPage() {
 	const handleExport = useCallback(async (format: "json" | "csv") => {
 		try {
 			await exportAuditLogs(filters, format);
-			notifications.show({
+			notify({
+				theme: "success",
 				title: "Export successful",
-				message: `Audit logs exported as ${format.toUpperCase()}`,
-				color: "green",
+				content: `Audit logs exported as ${format.toUpperCase()}`,
 			});
 		} catch (error) {
-			notifications.show({
+			notify({
+				theme: "danger",
 				title: "Export failed",
-				message: error instanceof Error ? error.message : "Unknown error",
-				color: "red",
+				content: error instanceof Error ? error.message : "Unknown error",
 			});
 		}
 	}, [filters]);
@@ -105,10 +125,10 @@ export function AuditTrailPage() {
 					className={classes.tabs}
 				>
 					<Tabs.List className={classes.tabsList}>
-						<Tabs.Tab value="events" leftSection={<ListUl size={16} />}>
+						<Tabs.Tab value="events" leftSection={<ListUl width={16} height={16} aria-hidden="true" />}>
 							Events
 						</Tabs.Tab>
-						<Tabs.Tab value="analytics" leftSection={<ChartBar size={16} />}>
+						<Tabs.Tab value="analytics" leftSection={<ChartBar width={16} height={16} aria-hidden="true" />}>
 							Analytics
 						</Tabs.Tab>
 					</Tabs.List>
@@ -133,6 +153,11 @@ export function AuditTrailPage() {
 								<AuditEventList
 									events={events}
 									isLoading={isLoadingEvents}
+									isError={isEventsError}
+									error={eventsError}
+									onRetry={refetchEvents}
+									hasActiveFilters={hasActiveFilters}
+									onClearFilters={clearAllFilters}
 									isFetchingNextPage={isFetchingNextPage}
 									hasNextPage={hasNextPage ?? false}
 									selectedEventId={selectedEvent?.id}
@@ -144,17 +169,15 @@ export function AuditTrailPage() {
 							{selectedEvent && (
 								<div className={classes.detailContainer}>
 									<div className={classes.detailHeader}>
-										<Text size="sm" fw={600}>
-											Event Details
-										</Text>
-										<Tooltip label="Close">
+										<Text variant="subheader-1">Event Details</Text>
+										<Tooltip content="Close">
 											<ActionIcon
-												variant="subtle"
-												color="gray"
-												size="sm"
+												view="flat"
+												size="s"
+												aria-label="Close event details"
 												onClick={handleCloseDetail}
 											>
-												<Xmark size={14} />
+												<Xmark width={14} height={14} aria-hidden="true" />
 											</ActionIcon>
 										</Tooltip>
 									</div>
@@ -170,6 +193,9 @@ export function AuditTrailPage() {
 						<AuditAnalytics
 							analytics={analytics}
 							isLoading={isLoadingAnalytics}
+							isError={isAnalyticsError}
+							error={analyticsError}
+							onRetry={refetchAnalytics}
 						/>
 					</div>
 				)}

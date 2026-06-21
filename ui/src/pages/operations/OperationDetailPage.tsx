@@ -2,8 +2,9 @@ import { useParams, useNavigate } from "react-router-dom";
 import {
 	Text,
 	Badge,
-	Loader,
+	Skeleton,
 	Alert,
+	EmptyState,
 	Button,
 	Code,
 	Switch,
@@ -33,7 +34,7 @@ import {
 	getOperationMethodView,
 } from "@/entities/operation-catalog";
 import { useOperation, useUpdateOperation } from "@/shared/api/hooks";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useId } from "react";
 import classes from "./OperationDetailPage.module.css";
 
 const CATEGORY_ICONS: Record<string, typeof Server> = {
@@ -49,7 +50,7 @@ function MethodBadge({ method }: { method: string }) {
 	const methodView = getOperationMethodView(method);
 
 	return (
-		<Badge size="sm" variant="light" color={methodView.color}>
+		<Badge size="sm" color={methodView.color}>
 			{methodView.method}
 		</Badge>
 	);
@@ -58,8 +59,15 @@ function MethodBadge({ method }: { method: string }) {
 export function OperationDetailPage() {
 	const { id } = useParams<{ id: string }>();
 	const navigate = useNavigate();
-	const { data: operation, isLoading, error } = useOperation(id ?? "");
+	const {
+		data: operation,
+		isLoading,
+		isError,
+		error,
+		refetch,
+	} = useOperation(id ?? "");
 	const updateMutation = useUpdateOperation();
+	const descriptionId = useId();
 
 	const [isPublic, setIsPublic] = useState(false);
 	const [description, setDescription] = useState("");
@@ -99,9 +107,11 @@ export function OperationDetailPage() {
 
 	if (!id) {
 		return (
-			<Alert icon={<CircleExclamation size={16} />} color="fire" variant="light">
-				Operation ID is required
-			</Alert>
+			<Alert
+				theme="danger"
+				title="Operation ID is required"
+				message="No operation identifier was provided in the URL."
+			/>
 		);
 	}
 
@@ -115,30 +125,67 @@ export function OperationDetailPage() {
 			description="Server route metadata and runtime configuration"
 			kicker={
 				<Breadcrumbs>
-					<Anchor onClick={() => navigate("/operations")}>Operations</Anchor>
+					<Anchor
+						href="/operations"
+						onClick={(event) => {
+							event.preventDefault();
+							navigate("/operations");
+						}}
+					>
+						Operations
+					</Anchor>
 					<Text>Detail</Text>
 				</Breadcrumbs>
 			}
 			actions={
-				<Button variant="subtle" leftSection={<ArrowLeft size={16} />} onClick={() => navigate("/operations")}>
+				<Button
+					view="flat"
+					leftSection={<ArrowLeft width={16} height={16} aria-hidden="true" />}
+					onClick={() => navigate("/operations")}
+				>
 					Back
 				</Button>
 			}
 		>
 
 			{isLoading && (
-				<div className={classes.loadingState}>
-					<Loader size="sm" />
-					<Text size="sm" c="dimmed">
-						Loading operation...
-					</Text>
+				<div className={classes.loadingStack} aria-busy="true">
+					<SectionPanel view="filled" padding="m">
+						<div className={classes.summaryStack}>
+							<Skeleton className={classes.skeletonTitle} />
+							<Skeleton className={classes.skeletonLine} />
+							<Skeleton className={classes.skeletonLine} />
+							<Skeleton className={classes.skeletonLine} />
+						</div>
+					</SectionPanel>
+					<SectionPanel view="tinted" padding="m">
+						<div className={classes.settingsStack}>
+							<Skeleton className={classes.skeletonLine} />
+							<Skeleton className={classes.skeletonBlock} />
+						</div>
+					</SectionPanel>
 				</div>
 			)}
 
-			{error && (
-				<Alert icon={<CircleExclamation size={16} />} color="fire" variant="light">
-					{error instanceof Error ? error.message : "Failed to load operation"}
-				</Alert>
+			{isError && (
+				<EmptyState
+					image={<CircleExclamation width={48} height={48} aria-hidden="true" />}
+					title="Failed to load operation"
+					description={
+						error instanceof Error
+							? error.message
+							: "Something went wrong while loading this operation."
+					}
+					actions={[
+						{
+							text: "Retry",
+							view: "action",
+							onClick: () => {
+								void refetch();
+							},
+						},
+					]}
+				/>
 			)}
 
 			{operation && (
@@ -153,23 +200,34 @@ export function OperationDetailPage() {
 							<div className={classes.summaryHeader}>
 								<div className={classes.summaryIdentity}>
 									<div className={classes.titleRow}>
-										<CategoryIcon size={20} color="var(--g-color-text-secondary)" />
+										<CategoryIcon
+											width={20}
+											height={20}
+											color="var(--g-color-text-secondary)"
+											aria-hidden="true"
+										/>
 										<Text as="h2" variant="subheader-3" className={classes.operationTitle}>
 											{operation.name}
 										</Text>
 									</div>
-									<Code size="sm">{operation.id}</Code>
+									<Code className={classes.idCode}>{operation.id}</Code>
 								</div>
 								<div className={classes.badgeRow}>
-									<Badge variant="light" color={categoryView?.color ?? "gray"}>
+									<Badge color={categoryView?.color ?? "gray"}>
 										{categoryView?.label ?? operation.category}
 									</Badge>
 									{operation.public ? (
-										<Badge color={accessView?.color ?? "primary"} variant="light" leftSection={<LockOpen size={12} />}>
+										<Badge
+											color={accessView?.color ?? "primary"}
+											leftSection={<LockOpen width={12} height={12} aria-hidden="true" />}
+										>
 											{accessView?.label}
 										</Badge>
 									) : (
-										<Badge color={accessView?.color ?? "deep"} variant="light" leftSection={<Lock size={12} />}>
+										<Badge
+											color={accessView?.color ?? "deep"}
+											leftSection={<Lock width={12} height={12} aria-hidden="true" />}
+										>
 											{accessView?.label}
 										</Badge>
 									)}
@@ -202,7 +260,13 @@ export function OperationDetailPage() {
 													id: "app",
 													label: "App",
 													value: (
-														<Anchor onClick={() => navigate(`/apps/${operation.app?.id}`)}>
+														<Anchor
+															href={`/apps/${operation.app?.id}`}
+															onClick={(event) => {
+																event.preventDefault();
+																navigate(`/apps/${operation.app?.id}`);
+															}}
+														>
 															{operation.app?.name}
 														</Anchor>
 													),
@@ -213,8 +277,8 @@ export function OperationDetailPage() {
 							/>
 
 							<div>
-								<Text size="sm" fw={500} className={classes.methodsLabel}>
-									HTTP Methods
+								<Text variant="body-2" className={classes.methodsLabel}>
+									<strong>HTTP Methods</strong>
 								</Text>
 								<div className={classes.methodList}>
 									{operation.methods.map((method) => (
@@ -232,45 +296,66 @@ export function OperationDetailPage() {
 						padding="m"
 					>
 						<div className={classes.settingsStack}>
-							<Switch
-								label="Public Access"
-								description="When enabled, this operation does not require authentication"
-								checked={isPublic}
-								onChange={(e) => setIsPublic(e.currentTarget.checked)}
-							/>
+							<div className={classes.field}>
+								<Switch
+									content="Public Access"
+									checked={isPublic}
+									onUpdate={setIsPublic}
+								/>
+								<Text variant="caption-2" color="secondary">
+									When enabled, this operation does not require authentication
+								</Text>
+							</div>
 
-							<Textarea
-								label="Description"
-								description="Optional description for this operation"
-								placeholder="Describe what this operation does..."
-								value={description}
-								onChange={(e) => setDescription(e.currentTarget.value)}
-								minRows={3}
-								autosize
-								maxRows={6}
-							/>
+							<div className={classes.field}>
+								<Text as="label" htmlFor={descriptionId} variant="body-2">
+									<strong>Description</strong>
+								</Text>
+								<Textarea
+									id={descriptionId}
+									placeholder="Describe what this operation does..."
+									value={description}
+									onUpdate={setDescription}
+									minRows={3}
+									maxRows={6}
+								/>
+								<Text variant="caption-2" color="secondary">
+									Optional description for this operation
+								</Text>
+							</div>
 
 							{hasChanges && (
 								<div className={classes.formActions}>
-									<Button onClick={handleSave} loading={updateMutation.isPending}>
+									<Button
+										view="action"
+										onClick={handleSave}
+										loading={updateMutation.isPending}
+									>
 										Save Changes
 									</Button>
-									<Button variant="subtle" onClick={handleReset}>
+									<Button view="flat" onClick={handleReset}>
 										Reset
 									</Button>
 								</div>
 							)}
 
 							{updateMutation.isError && (
-								<Alert icon={<CircleExclamation size={16} />} color="fire" variant="light">
-									{updateMutation.error instanceof Error ? updateMutation.error.message : "Failed to update operation"}
-								</Alert>
+								<Alert
+									theme="danger"
+									title="Update failed"
+									message={
+										updateMutation.error instanceof Error
+											? updateMutation.error.message
+											: "Failed to update operation"
+									}
+								/>
 							)}
 
 							{updateMutation.isSuccess && (
-								<Alert color="primary" variant="light">
-									Operation updated successfully
-								</Alert>
+								<Alert
+									theme="success"
+									message="Operation updated successfully"
+								/>
 							)}
 						</div>
 					</SectionPanel>

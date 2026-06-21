@@ -5,12 +5,14 @@ import {
   Button,
   Card,
   DataPreview,
+  EmptyState,
   KeyValueList,
   Modal,
   SectionPanel,
   Text,
   Tooltip,
 } from "@octofhir/ui-kit";
+import { useAuth } from "@/shared/api/hooks/useAuth";
 import { WorkspacePageLayout } from "@/widgets/workspace-page";
 import {
   Display,
@@ -40,11 +42,21 @@ function DeviceIcon({ kind }: { kind: SessionDeviceKind }) {
 }
 
 export function SessionsPage() {
-  // FIXME: Get actual user ID from auth context
-  const userId = 'current-user-id'; // Replace with actual current user ID from auth context
+  const { user, isLoading: userLoading } = useAuth();
+  // Sessions are stored with `subject: User/{id}`; prefer the FHIR user ref,
+  // fall back to the OAuth subject claim.
+  const userId =
+    user?.fhirUser?.startsWith('User/') ? user.fhirUser.slice('User/'.length) : user?.sub;
   const currentSessionToken = getCurrentSessionToken();
 
-  const { data: sessions = [], isLoading, refetch } = useSessions(userId);
+  const {
+    data: sessions = [],
+    isLoading: sessionsLoading,
+    isError,
+    error,
+    refetch,
+  } = useSessions(userId ?? '');
+  const isLoading = userLoading || sessionsLoading;
   const revokeSessionMutation = useRevokeSession();
   const revokeAllMutation = useRevokeAllSessions();
 
@@ -162,6 +174,17 @@ export function SessionsPage() {
             </Badge>
           }
         >
+          {isError ? (
+            <EmptyState
+              title="Couldn't load sessions"
+              description={error instanceof Error ? error.message : 'The session list failed to load.'}
+              actions={[
+                <Button key="retry" view="action" onClick={() => refetch()}>
+                  Try again
+                </Button>,
+              ]}
+            />
+          ) : (
           <DataPreview
             columns={[
               { id: 'device', label: 'Device' },
@@ -212,6 +235,7 @@ export function SessionsPage() {
             emptyText={isLoading ? 'Loading sessions...' : 'No other active sessions found'}
             getRowKey={(_row, index) => otherSessions[index]?.id ?? `${index}`}
           />
+          )}
         </SectionPanel>
       </div>
 

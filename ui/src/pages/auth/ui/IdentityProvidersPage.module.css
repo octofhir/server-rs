@@ -9,7 +9,19 @@
 }
 
 .tableContainer {
-	padding: 10px 12px 12px;
+	padding: var(--octo-spacing-sm) var(--octo-spacing-md) var(--octo-spacing-md);
+}
+
+.skeletonList {
+	display: flex;
+	flex-direction: column;
+	gap: var(--octo-spacing-sm);
+	padding: var(--octo-spacing-sm) 0;
+}
+
+.skeletonRow {
+	height: 44px;
+	border-radius: var(--octo-radius-sm);
 }
 
 .providerCell {
@@ -17,6 +29,11 @@
 	align-items: center;
 	gap: var(--octo-spacing-xs);
 	min-width: 0;
+}
+
+.providerIcon {
+	flex: 0 0 auto;
+	color: var(--g-color-text-info);
 }
 
 .providerText {
@@ -34,7 +51,8 @@
 	max-width: 520px;
 }
 
-.idpForm {
+.idpForm,
+.deleteModalContent {
 	display: flex;
 	flex-direction: column;
 	gap: var(--octo-spacing-md);

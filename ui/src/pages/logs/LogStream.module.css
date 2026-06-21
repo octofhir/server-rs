@@ -22,11 +22,38 @@
 	padding: var(--g-spacing-6);
 }
 
-.emptyContent {
-	align-items: center;
+.errorIcon {
+	color: var(--octo-accent-fire);
+}
+
+.emptyIcon {
+	color: var(--octo-text-secondary);
+}
+
+.skeletonList {
 	display: flex;
 	flex-direction: column;
-	gap: var(--g-spacing-3);
-	max-width: 420px;
-	text-align: center;
+	gap: var(--g-spacing-1);
+	padding: var(--octo-spacing-sm) var(--octo-spacing-md);
+}
+
+.skeletonRow {
+	align-items: center;
+	display: grid;
+	gap: var(--g-spacing-2);
+	grid-template-columns: 90px 50px minmax(120px, 1fr);
+	min-height: 24px;
+}
+
+.skeletonTimestamp {
+	height: 12px;
+}
+
+.skeletonBadge {
+	height: 14px;
+	width: 50px;
+}
+
+.skeletonMessage {
+	height: 12px;
 }

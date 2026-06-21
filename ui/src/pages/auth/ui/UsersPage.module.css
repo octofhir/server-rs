@@ -2,12 +2,17 @@
 	display: flex;
 	flex-direction: column;
 	min-width: 0;
-	padding: 10px 12px 12px;
+	padding: var(--octo-spacing-sm) var(--octo-spacing-md) var(--octo-spacing-md);
+}
+
+.skeletonRow {
+	height: 28px;
+	border-radius: var(--octo-radius-sm);
 }
 
 .filterBar {
 	display: flex;
-	gap: 8px;
+	gap: var(--octo-spacing-sm);
 	align-items: center;
 	flex-wrap: wrap;
 }
@@ -59,7 +64,7 @@
 
 .roleList {
 	display: flex;
-	gap: 6px;
+	gap: var(--octo-spacing-xs);
 	align-items: center;
 	flex-wrap: wrap;
 }

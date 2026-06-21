@@ -1,0 +1,23 @@
+.skeleton {
+    display: block;
+    background: linear-gradient(
+        90deg,
+        var(--octo-surface-2, #f1f3f5) 0%,
+        var(--octo-surface-3, #e9ecef) 50%,
+        var(--octo-surface-2, #f1f3f5) 100%
+    );
+    background-size: 200% 100%;
+    border-radius: var(--octo-radius-sm, 6px);
+    animation: octo-skeleton 1.3s ease-in-out infinite;
+}
+
+.skeleton[data-circle="true"] { border-radius: 50%; }
+
+@keyframes octo-skeleton {
+    0% { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .skeleton { animation: none; }
+}

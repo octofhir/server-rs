@@ -1,12 +1,7 @@
-import { ActionIcon, Badge, Collapse, CopyButton, Text, Tooltip } from "@octofhir/ui-kit";
-import { useState, memo } from "react";
+import { ActionIcon, Badge, ClipboardButton, Collapse, Text, Tooltip } from "@octofhir/ui-kit";
+import { memo, useState } from "react";
 
-import {
-	ChevronRight,
-	ChevronDown,
-	Copy,
-	Check,
-} from "@gravity-ui/icons";
+import { ChevronDown, ChevronRight } from "@gravity-ui/icons";
 import type { LogEntry as LogEntryType, LogLevel } from "@/shared/api/types";
 import classes from "./LogEntry.module.css";
 
@@ -14,20 +9,14 @@ interface LogEntryProps {
 	entry: LogEntryType;
 }
 
-const LEVEL_COLORS: Record<LogLevel, string> = {
-	trace: "gray",
+type BadgeColor = "neutral" | "primary" | "warning" | "danger";
+
+const LEVEL_COLORS: Record<LogLevel, BadgeColor> = {
+	trace: "neutral",
 	debug: "primary",
 	info: "primary",
-	warn: "warm",
-	error: "fire",
-};
-
-const LEVEL_VARIANT: Record<LogLevel, "light" | "filled"> = {
-	trace: "light",
-	debug: "light",
-	info: "light",
-	warn: "light",
-	error: "filled",
+	warn: "warning",
+	error: "danger",
 };
 
 function formatTimestamp(timestamp: string): string {
@@ -72,23 +61,45 @@ function LogEntryComponent({ entry }: LogEntryProps) {
 		<div className={classes.entry} data-level={entry.level}>
 			<div
 				className={`${classes.mainRow} ${hasDetails ? classes.clickableRow : ""}`}
-				onClick={() => hasDetails && setExpanded(!expanded)}
+				{...(hasDetails
+					? {
+							role: "button",
+							tabIndex: 0,
+							"aria-expanded": expanded,
+							onClick: () => setExpanded(!expanded),
+							onKeyDown: (e: React.KeyboardEvent) => {
+								if (e.key === "Enter" || e.key === " ") {
+									e.preventDefault();
+									setExpanded(!expanded);
+								}
+							},
+						}
+					: {})}
 			>
 				{hasDetails ? (
 					<ActionIcon
-						variant="subtle"
-						size="xs"
-						color="gray"
+						view="flat"
+						size="s"
 						className={classes.expandIcon}
+						aria-label={expanded ? "Collapse log entry" : "Expand log entry"}
+						tabIndex={-1}
+						onClick={(e) => {
+							e.stopPropagation();
+							setExpanded(!expanded);
+						}}
 					>
-						{expanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+						{expanded ? (
+							<ChevronDown width={12} height={12} aria-hidden="true" />
+						) : (
+							<ChevronRight width={12} height={12} aria-hidden="true" />
+						)}
 					</ActionIcon>
 				) : (
 					<span className={classes.expandSpacer} />
 				)}
 
-				<Tooltip label={formatFullTimestamp(entry.timestamp)} position="top" withArrow>
-					<Text size="xs" c="dimmed" className={classes.timestamp} ff="monospace">
+				<Tooltip content={formatFullTimestamp(entry.timestamp)} placement="top">
+					<Text variant="caption-2" color="secondary" className={`${classes.timestamp} ${classes.mono}`}>
 						{formatTimestamp(entry.timestamp)}
 					</Text>
 				</Tooltip>
@@ -96,38 +107,33 @@ function LogEntryComponent({ entry }: LogEntryProps) {
 				<Badge
 					size="xs"
 					color={LEVEL_COLORS[entry.level]}
-					variant={LEVEL_VARIANT[entry.level]}
 					className={classes.levelBadge}
 				>
 					{entry.level.toUpperCase()}
 				</Badge>
 
-				<Text size="xs" c="dimmed" className={classes.target} ff="monospace" truncate>
+				<Text
+					variant="caption-2"
+					color="secondary"
+					ellipsis
+					className={`${classes.target} ${classes.mono}`}
+				>
 					{entry.target}
 				</Text>
 
-				<Text size="sm" className={classes.message} ff="monospace" truncate>
+				<Text variant="body-2" ellipsis className={`${classes.message} ${classes.mono}`}>
 					{entry.message}
 				</Text>
 
-				<CopyButton value={copyContent} timeout={2000}>
-					{({ copied, copy }) => (
-						<Tooltip label={copied ? "Copied!" : "Copy log entry"} position="left" withArrow>
-							<ActionIcon
-								variant="subtle"
-								color={copied ? "teal" : "gray"}
-								size="xs"
-								onClick={(e) => {
-									e.stopPropagation();
-									copy();
-								}}
-								className={classes.copyButton}
-							>
-								{copied ? <Check size={12} /> : <Copy size={12} />}
-							</ActionIcon>
-						</Tooltip>
-					)}
-				</CopyButton>
+				<ClipboardButton
+					text={copyContent}
+					view="flat"
+					size="s"
+					tooltipInitialText="Copy log entry"
+					tooltipSuccessText="Copied!"
+					className={classes.copyButton}
+					onClick={(e) => e.stopPropagation()}
+				/>
 			</div>
 
 			{hasDetails && (
@@ -135,26 +141,29 @@ function LogEntryComponent({ entry }: LogEntryProps) {
 					<div className={classes.details}>
 						{entry.span && (
 							<div className={classes.detailBlock}>
-								<Text size="xs" c="dimmed" fw={600}>
-									Span
+								<Text variant="caption-2" color="secondary">
+									<strong>Span</strong>
 								</Text>
-								<Text size="xs" ff="monospace" c="dimmed">
+								<Text variant="caption-2" color="secondary" className={classes.mono}>
 									{entry.span.name} ({entry.span.target})
 								</Text>
 							</div>
 						)}
 						{entry.fields && (
 							<div className={classes.detailBlock}>
-								<Text size="xs" c="dimmed" fw={600}>
-									Fields
+								<Text variant="caption-2" color="secondary">
+									<strong>Fields</strong>
 								</Text>
 								<div className={classes.fieldsContainer}>
 									{Object.entries(entry.fields).map(([key, value]) => (
 										<div key={key} className={classes.fieldRow}>
-											<Text size="xs" ff="monospace" c="dimmed">
+											<Text variant="caption-2" color="secondary" className={classes.mono}>
 												{key}:
 											</Text>
-											<Text size="xs" ff="monospace" className={classes.fieldValue}>
+											<Text
+												variant="caption-2"
+												className={`${classes.fieldValue} ${classes.mono}`}
+											>
 												{formatFieldValue(value)}
 											</Text>
 										</div>

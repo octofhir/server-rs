@@ -1,7 +1,7 @@
 .container {
 	background-color: var(--octo-surface-1);
 	border-bottom: 1px solid var(--octo-border-subtle);
-	padding: 8px 12px;
+	padding: var(--octo-spacing-sm) var(--octo-spacing-md);
 	position: sticky;
 	top: 0;
 	z-index: 10;

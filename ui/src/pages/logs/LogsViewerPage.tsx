@@ -1,7 +1,6 @@
-import { Alert, Badge, Switch, Text, WorkspacePageLayout } from "@octofhir/ui-kit";
+import { Alert, StatusBadge, Switch, WorkspacePageLayout } from "@octofhir/ui-kit";
 import { useState } from "react";
 
-import { CircleInfo } from "@gravity-ui/icons";
 import { LogFilters } from "./LogFilters";
 import { LogStream } from "./LogStream";
 import { useLogStream } from "./useLogStream";
@@ -36,35 +35,22 @@ export function LogsViewerPage() {
 			contentClassName={classes.container}
 			actions={
 				<div className={classes.actions}>
-					<Switch
-						content="Demo Mode"
-						checked={demoMode}
-						onUpdate={(checked) => setDemoMode(checked)}
-					/>
-					<Badge
-						theme={isConnected ? "success" : "normal"}
-					>
+					<Switch content="Demo Mode" checked={demoMode} onUpdate={setDemoMode} />
+					<StatusBadge tone={isConnected ? "success" : "neutral"}>
 						{isConnected ? "Connected" : "Disconnected"}
-					</Badge>
-					{isPaused && (
-						<Badge theme="warning">
-							Paused
-						</Badge>
-					)}
+					</StatusBadge>
+					{isPaused && <StatusBadge tone="warning">Paused</StatusBadge>}
 				</div>
 			}
 		>
 			<div className={classes.stack}>
 				{demoMode && (
 					<Alert
-						icon={<CircleInfo size={16} />}
 						theme="info"
+						title="Demo Mode"
+						message="Displaying simulated log data. Disable demo mode to connect to the server WebSocket."
 						className={classes.demoAlert}
-					>
-						<Text variant="body-1">
-							<strong>Demo Mode:</strong> Displaying simulated log data. Disable demo mode to connect to the server WebSocket.
-						</Text>
-					</Alert>
+					/>
 				)}
 
 				<LogFilters

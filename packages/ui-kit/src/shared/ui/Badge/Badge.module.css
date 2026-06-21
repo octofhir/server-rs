@@ -1,0 +1,53 @@
+/* OctoFHIR Badge — token-driven chip. No Tailwind. */
+
+.badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    box-sizing: border-box;
+    border: 1px solid transparent;
+    border-radius: var(--octo-radius-sm, 6px);
+    font-family: var(--octo-typography-family, inherit);
+    font-weight: var(--octo-typography-weight-medium, 500);
+    line-height: 1;
+    white-space: nowrap;
+    vertical-align: middle;
+
+    --_accent: var(--octo-accent-primary, #4263eb);
+    --_bg: var(--octo-accent-primary-bg, #edf2ff);
+}
+
+.badge[data-tone="success"] { --_accent: var(--octo-brand-success, #2f9e44); --_bg: var(--octo-brand-success-soft, #ebfbee); }
+.badge[data-tone="danger"]  { --_accent: var(--octo-accent-fire, #fa5252); --_bg: var(--octo-accent-fire-bg, #fff5f5); }
+.badge[data-tone="warning"] { --_accent: var(--octo-brand-warm, #f08c00); --_bg: var(--octo-brand-warm-soft, #fff9db); }
+.badge[data-tone="info"]    { --_accent: var(--octo-brand-info, #1971c2); --_bg: var(--octo-brand-info-soft, #e7f5ff); }
+.badge[data-tone="neutral"] { --_accent: var(--octo-text-secondary, #495057); --_bg: var(--octo-surface-3, #e9ecef); }
+
+/* sizes */
+.badge[data-size="xs"] { height: 18px; padding: 0 6px; font-size: 0.6875rem; }
+.badge[data-size="s"]  { height: 22px; padding: 0 8px; font-size: var(--octo-typography-size-xs, 0.75rem); }
+.badge[data-size="m"]  { height: 26px; padding: 0 10px; font-size: var(--octo-typography-size-sm, 0.875rem); }
+
+/* variants */
+.badge[data-variant="light"]  { background: var(--_bg); color: var(--_accent); }
+.badge[data-variant="filled"] { background: var(--_accent); color: #fff; }
+.badge[data-variant="outline"] { background: transparent; color: var(--_accent); border-color: var(--_accent); }
+.badge[data-variant="dot"] {
+    background: transparent;
+    color: var(--octo-text-primary, #1a1b1e);
+    padding-left: 2px;
+}
+.badge[data-variant="dot"]::before {
+    content: "";
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--_accent);
+    flex: none;
+}
+
+.icon {
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+}

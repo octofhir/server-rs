@@ -1,7 +1,7 @@
-import { Text, ThemeIcon } from "@octofhir/ui-kit";
-import { useRef, useEffect, memo } from "react";
+import { EmptyState, Skeleton } from "@octofhir/ui-kit";
+import { memo, useEffect, useRef } from "react";
 
-import { Pulse, CircleExclamation } from "@gravity-ui/icons";
+import { CircleExclamation, Pulse } from "@gravity-ui/icons";
 import type { LogEntry as LogEntryType } from "@/shared/api/types";
 import { LogEntry } from "./LogEntry";
 import classes from "./LogStream.module.css";
@@ -12,6 +12,21 @@ interface LogStreamProps {
 	isPaused: boolean;
 	connectionError: string | null;
 	autoScroll?: boolean;
+}
+
+function ConnectingSkeleton() {
+	return (
+		<output className={classes.skeletonList} aria-busy="true" aria-label="Connecting to log stream">
+			{Array.from({ length: 8 }).map((_, i) => (
+				// biome-ignore lint/suspicious/noArrayIndexKey: static placeholder rows
+				<div key={i} className={classes.skeletonRow}>
+					<Skeleton className={classes.skeletonTimestamp} />
+					<Skeleton className={classes.skeletonBadge} />
+					<Skeleton className={classes.skeletonMessage} />
+				</div>
+			))}
+		</output>
+	);
 }
 
 function LogStreamComponent({
@@ -54,35 +69,19 @@ function LogStreamComponent({
 	if (connectionError) {
 		return (
 			<div className={classes.emptyState}>
-				<div className={classes.emptyContent}>
-					<ThemeIcon variant="light" color="fire" size={64} radius="xl">
-						<CircleExclamation size={32} />
-					</ThemeIcon>
-					<Text size="lg" fw={600}>
-						Connection Error
-					</Text>
-					<Text size="sm" c="dimmed" ta="center" maw={400}>
-						{connectionError}
-					</Text>
-				</div>
+				<EmptyState
+					image={<CircleExclamation width={48} height={48} className={classes.errorIcon} aria-hidden="true" />}
+					title="Connection error"
+					description={connectionError}
+				/>
 			</div>
 		);
 	}
 
 	if (!isConnected) {
 		return (
-			<div className={classes.emptyState}>
-				<div className={classes.emptyContent}>
-					<ThemeIcon variant="light" color="gray" size={64} radius="xl">
-						<Pulse size={32} />
-					</ThemeIcon>
-					<Text size="lg" fw={600}>
-						Connecting...
-					</Text>
-					<Text size="sm" c="dimmed">
-						Establishing connection to log stream
-					</Text>
-				</div>
+			<div ref={containerRef} className={classes.container}>
+				<ConnectingSkeleton />
 			</div>
 		);
 	}
@@ -90,19 +89,15 @@ function LogStreamComponent({
 	if (logs.length === 0) {
 		return (
 			<div className={classes.emptyState}>
-				<div className={classes.emptyContent}>
-					<ThemeIcon variant="light" color="gray" size={64} radius="xl">
-						<Pulse size={32} />
-					</ThemeIcon>
-					<Text size="lg" fw={600}>
-						No Logs
-					</Text>
-					<Text size="sm" c="dimmed" ta="center" maw={400}>
-						{isPaused
-							? "Stream is paused. Resume to see new logs."
-							: "Waiting for log events. Logs will appear here as they are generated."}
-					</Text>
-				</div>
+				<EmptyState
+					image={<Pulse width={48} height={48} className={classes.emptyIcon} aria-hidden="true" />}
+					title={isPaused ? "Stream paused" : "No logs yet"}
+					description={
+						isPaused
+							? "The stream is paused. Resume to see new log events."
+							: "Waiting for log events. Logs will appear here as they are generated."
+					}
+				/>
 			</div>
 		);
 	}

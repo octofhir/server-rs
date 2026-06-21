@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { notifications } from "@octofhir/ui-kit";
+import { notify } from "@octofhir/ui-kit";
 import type { AppResource } from "@/entities/api-app";
 import { fhirClient } from "@/shared/api/fhirClient";
 
@@ -50,17 +50,17 @@ export function useCreateApp() {
 		},
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: appKeys.lists() });
-			notifications.show({
+			notify({
+				theme: "success",
 				title: "App created",
-				message: "The API application has been successfully created.",
-				color: "green",
+				content: "The API application has been successfully created.",
 			});
 		},
 		onError: (error: Error) => {
-			notifications.show({
+			notify({
+				theme: "danger",
 				title: "Failed to create app",
-				message: error.message,
-				color: "red",
+				content: error.message,
 			});
 		},
 	});
@@ -78,17 +78,17 @@ export function useUpdateApp() {
 		onSuccess: (data) => {
 			queryClient.invalidateQueries({ queryKey: appKeys.lists() });
 			queryClient.invalidateQueries({ queryKey: appKeys.detail(data.id || "") });
-			notifications.show({
+			notify({
+				theme: "success",
 				title: "App updated",
-				message: "The API application has been successfully updated.",
-				color: "green",
+				content: "The API application has been successfully updated.",
 			});
 		},
 		onError: (error: Error) => {
-			notifications.show({
+			notify({
+				theme: "danger",
 				title: "Failed to update app",
-				message: error.message,
-				color: "red",
+				content: error.message,
 			});
 		},
 	});
@@ -103,17 +103,17 @@ export function useDeleteApp() {
 		},
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: appKeys.lists() });
-			notifications.show({
+			notify({
+				theme: "success",
 				title: "App deleted",
-				message: "The API application has been successfully deleted.",
-				color: "green",
+				content: "The API application has been successfully deleted.",
 			});
 		},
 		onError: (error: Error) => {
-			notifications.show({
+			notify({
+				theme: "danger",
 				title: "Failed to delete app",
-				message: error.message,
-				color: "red",
+				content: error.message,
 			});
 		},
 	});

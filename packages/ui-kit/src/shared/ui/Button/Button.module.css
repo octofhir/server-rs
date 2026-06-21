@@ -1,0 +1,161 @@
+/* OctoFHIR Button — Base UI <button> + token-driven CSS Modules. No Tailwind. */
+
+.button {
+    --_radius: var(--octo-radius-md, 8px);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--octo-spacing-xs, 0.5rem);
+    box-sizing: border-box;
+    border: 1px solid transparent;
+    border-radius: var(--_radius);
+    font-family: var(--octo-typography-family, inherit);
+    font-weight: var(--octo-typography-weight-medium, 500);
+    line-height: 1;
+    white-space: nowrap;
+    text-decoration: none;
+    cursor: pointer;
+    user-select: none;
+    transition:
+        background-color var(--octo-motion-fast, 100ms) var(--octo-motion-ease, ease),
+        border-color var(--octo-motion-fast, 100ms) var(--octo-motion-ease, ease),
+        color var(--octo-motion-fast, 100ms) var(--octo-motion-ease, ease),
+        box-shadow var(--octo-motion-fast, 100ms) var(--octo-motion-ease, ease);
+}
+
+.button:focus-visible {
+    outline: 2px solid var(--octo-focus-ring, var(--octo-accent-primary, #4263eb));
+    outline-offset: 1px;
+}
+
+.button[data-disabled],
+.button[aria-disabled="true"],
+.button:disabled {
+    cursor: not-allowed;
+    opacity: 0.55;
+    box-shadow: none;
+}
+
+/* ---- Sizes ---- */
+.button[data-size="xs"] { height: 24px; padding: 0 8px; font-size: 0.8125rem; }
+.button[data-size="s"]  { height: 28px; padding: 0 10px; font-size: var(--octo-typography-size-sm, 0.875rem); }
+.button[data-size="m"]  { height: 32px; padding: 0 14px; font-size: var(--octo-typography-size-sm, 0.875rem); }
+.button[data-size="l"]  { height: 38px; padding: 0 18px; font-size: var(--octo-typography-size-md, 1rem); }
+.button[data-size="xl"] { height: 44px; padding: 0 22px; font-size: var(--octo-typography-size-md, 1rem); }
+
+.button[data-width="max"] { width: 100%; }
+
+/* ---- Pins (corner shape) ---- */
+.button[data-pin="circle"] { border-radius: var(--octo-radius-pill, 9999px); }
+.button[data-pin="brick"]  { border-radius: 0; }
+
+/*
+ * View = base × tone. `tone` is resolved to a trio of accent vars below; each
+ * base reads those. Default (no tone) = neutral surface palette.
+ */
+.button {
+    --_accent: var(--octo-accent-primary, #4263eb);
+    --_accent-hover: var(--octo-accent-primary-hover, #3b5bdb);
+    --_accent-active: var(--octo-accent-primary-active, #364fc7);
+    --_accent-bg: var(--octo-accent-primary-bg, #edf2ff);
+}
+.button[data-tone="danger"] {
+    --_accent: var(--octo-accent-fire, #fa5252);
+    --_accent-hover: var(--octo-accent-fire-hover, #f03e3e);
+    --_accent-active: var(--octo-accent-fire-active, #e03131);
+    --_accent-bg: var(--octo-accent-fire-bg, #fff5f5);
+}
+.button[data-tone="success"] {
+    --_accent: var(--octo-brand-success, #2f9e44);
+    --_accent-hover: var(--octo-brand-success-hover, #2b8a3e);
+    --_accent-active: var(--octo-brand-success-hover, #2b8a3e);
+    --_accent-bg: var(--octo-brand-success-soft, #ebfbee);
+}
+.button[data-tone="warning"] {
+    --_accent: var(--octo-brand-warm, #f08c00);
+    --_accent-hover: var(--octo-brand-warm-hover, #e8590c);
+    --_accent-active: var(--octo-brand-warm-hover, #e8590c);
+    --_accent-bg: var(--octo-brand-warm-soft, #fff9db);
+}
+.button[data-tone="info"],
+.button[data-tone="utility"] {
+    --_accent: var(--octo-brand-info, #1971c2);
+    --_accent-hover: var(--octo-brand-info-hover, #1864ab);
+    --_accent-active: var(--octo-brand-info-hover, #1864ab);
+    --_accent-bg: var(--octo-brand-info-soft, #e7f5ff);
+}
+
+/* ---- Bases ---- */
+
+/* action: solid filled accent */
+.button[data-base="action"] {
+    background: var(--_accent);
+    color: #fff;
+    border-color: var(--_accent);
+}
+.button[data-base="action"]:hover:not([data-disabled]):not(:disabled) { background: var(--_accent-hover); border-color: var(--_accent-hover); }
+.button[data-base="action"]:active:not([data-disabled]):not(:disabled) { background: var(--_accent-active); border-color: var(--_accent-active); }
+
+/* raised: filled accent with depth */
+.button[data-base="raised"] {
+    background: var(--_accent);
+    color: #fff;
+    border-color: var(--_accent);
+    box-shadow: var(--octo-shadow-sm, 0 1px 2px rgba(0, 0, 0, 0.08));
+}
+.button[data-base="raised"]:hover:not([data-disabled]):not(:disabled) { background: var(--_accent-hover); }
+
+/* normal: neutral surface (default) */
+.button[data-base="normal"] {
+    background: var(--octo-surface-2, #f1f3f5);
+    color: var(--octo-text-primary, #1a1b1e);
+    border-color: var(--octo-border-subtle, #dee2e6);
+}
+.button[data-base="normal"]:hover:not([data-disabled]):not(:disabled) { background: var(--octo-surface-3, #e9ecef); }
+.button[data-base="normal"][data-tone] { color: var(--_accent); }
+
+/* outlined: transparent with accent/neutral border */
+.button[data-base="outlined"] {
+    background: transparent;
+    color: var(--octo-text-primary, #1a1b1e);
+    border-color: var(--octo-border-strong, #ced4da);
+}
+.button[data-base="outlined"][data-tone] { color: var(--_accent); border-color: var(--_accent); }
+.button[data-base="outlined"]:hover:not([data-disabled]):not(:disabled) { background: var(--_accent-bg); }
+
+/* flat: no chrome until hover */
+.button[data-base="flat"] {
+    background: transparent;
+    color: var(--octo-text-primary, #1a1b1e);
+    border-color: transparent;
+}
+.button[data-base="flat"][data-tone] { color: var(--_accent); }
+.button[data-base="flat"]:hover:not([data-disabled]):not(:disabled) { background: var(--_accent-bg); }
+
+.button[data-selected="true"] { background: var(--_accent-bg); color: var(--_accent); }
+
+/* ---- Icons + loading ---- */
+.icon {
+    display: inline-flex;
+    flex: none;
+    align-items: center;
+    justify-content: center;
+}
+
+.button[data-loading="true"] { color: transparent !important; position: relative; }
+.spinner {
+    position: absolute;
+    width: 1em;
+    height: 1em;
+    border: 2px solid currentcolor;
+    border-top-color: transparent;
+    border-radius: 50%;
+    color: inherit;
+    animation: octo-btn-spin 0.6s linear infinite;
+}
+.button[data-base="action"] .spinner,
+.button[data-base="raised"] .spinner { color: #fff; }
+
+@keyframes octo-btn-spin {
+    to { transform: rotate(360deg); }
+}

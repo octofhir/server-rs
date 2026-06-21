@@ -9,30 +9,23 @@ const meta: Meta<typeof Text> = {
     variant: {
       control: "select",
       options: [
-        "display-4", "display-3", "display-2", "display-1",
+        "display-1",
         "header-2", "header-1",
         "subheader-3", "subheader-2", "subheader-1",
-        "body-3", "body-2", "body-1", "body-short",
+        "body-3", "body-2", "body-1",
         "caption-2", "caption-1",
+        "code-1", "code-2",
       ],
     },
     color: {
       control: "select",
       options: [
-        "primary", "secondary", "complementary", "hint",
-        "info", "positive", "warning", "danger",
-        "link", "brand",
+        "primary", "secondary", "muted",
+        "info", "success", "warning", "danger",
+        "brand", "inherit",
       ],
     },
     ellipsis: { control: "boolean" },
-    whiteSpace: {
-      control: "select",
-      options: ["normal", "nowrap", "pre", "pre-wrap", "pre-line"],
-    },
-    wordBreak: {
-      control: "select",
-      options: ["normal", "break-all", "keep-all", "break-word"],
-    },
   },
 };
 

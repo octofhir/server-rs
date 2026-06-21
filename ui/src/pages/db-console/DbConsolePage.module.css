@@ -507,9 +507,23 @@
 }
 
 .historyItem {
+  display: block;
+  width: 100%;
   padding: 8px 12px;
   cursor: pointer;
+  border: none;
   border-bottom: 1px solid var(--octo-border-subtle);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+.historyItem:hover {
+  background: var(--g-color-base-generic);
+}
+.historyItem:focus-visible {
+  outline: 2px solid var(--g-color-line-brand);
+  outline-offset: -2px;
 }
 
 .historyItem:hover {

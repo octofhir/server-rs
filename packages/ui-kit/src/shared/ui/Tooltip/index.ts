@@ -1,1 +1,1 @@
-export { Tooltip, type TooltipProps } from "@gravity-ui/uikit";
+export { Tooltip, type TooltipProps, type TooltipPlacement } from "./Tooltip";

@@ -1,1 +1,1 @@
-export { Checkbox, type CheckboxProps } from "@gravity-ui/uikit";
+export { Checkbox, type CheckboxProps } from "./Checkbox";

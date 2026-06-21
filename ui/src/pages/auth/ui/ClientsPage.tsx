@@ -1,13 +1,15 @@
 import { ActionIcon, Button, Card, Field, Form, Modal, TextInput, useDebouncedValue, useDisclosure } from "@octofhir/ui-kit";
 import { useState } from "react";
+import type { ReactNode } from "react";
 import {
 	Text,
 	DataPreview,
 	Badge,
-	Menu,
+	EmptyState,
 	PasswordInput,
 	Checkbox,
 	MultiSelect,
+	Skeleton,
 	Switch,
 	NumberInput,
 	Textarea,
@@ -15,6 +17,7 @@ import {
 	Tooltip,
 } from "@octofhir/ui-kit";
 import { WorkspacePageLayout } from "@/widgets/workspace-page";
+import { DropdownMenu } from "@gravity-ui/uikit";
 import {
 	Plus,
 	Magnifier,
@@ -45,6 +48,18 @@ import { SecretDisplayModal } from "./SecretDisplayModal";
 import { DeleteClientModal } from "./DeleteClientModal";
 import classes from "./ClientsPage.module.css";
 
+/** Wraps a field with an adjacent helper line (Gravity inputs have no `description`). */
+function FieldWithHint({ hint, children }: { hint: ReactNode; children: ReactNode }) {
+	return (
+		<div className={classes.fieldWithHint}>
+			{children}
+			<Text variant="caption-2" color="secondary">
+				{hint}
+			</Text>
+		</div>
+	);
+}
+
 export function ClientsPage() {
 	const [search, setSearch] = useState("");
 	const [debouncedSearch] = useDebouncedValue(search, 500);
@@ -54,7 +69,7 @@ export function ClientsPage() {
 	const [secretData, setSecretData] = useState<RegenerateSecretResponse | null>(null);
 	const [isNewClientSecret, setIsNewClientSecret] = useState(false);
 
-	const { data, isLoading } = useClients({ search: debouncedSearch });
+	const { data, isLoading, isError, error, refetch } = useClients({ search: debouncedSearch });
 	const deleteClient = useDeleteClient();
 	const regenerateSecret = useRegenerateSecret();
 
@@ -100,21 +115,26 @@ export function ClientsPage() {
 	};
 
 	const clients = getBundleResources<ClientResource>(data);
+	const isFiltered = debouncedSearch.length > 0;
 
 	return (
 		<WorkspacePageLayout
 			title="Clients"
 			description="Manage OAuth 2.0 applications and credentials"
 			actions={
-				<Button leftSection={<Plus size={16} />} onClick={open}>
+				<Button view="action" onClick={open}>
+					<Button.Icon>
+						<Plus width={16} />
+					</Button.Icon>
 					Register Client
 				</Button>
 			}
 			toolbar={
 				<div className={classes.toolbar}>
 					<TextInput
+						aria-label="Search clients by name"
 						placeholder="Search by name..."
-						leftSection={<Magnifier size={16} />}
+						leftSection={<Magnifier width={16} />}
 						value={search}
 						onChange={(e) => setSearch(e.currentTarget.value)}
 						className={classes.search}
@@ -124,117 +144,142 @@ export function ClientsPage() {
 		>
 
 			<Card className={classes.tableContainer}>
-				<DataPreview
-					columns={[
-						{ id: "client", label: "Name / Client ID" },
-						{ id: "type", label: "Type", width: 130 },
-						{ id: "grantTypes", label: "Grant Types" },
-						{ id: "status", label: "Status", width: 110 },
-						{ id: "actions", label: "", width: 48 },
-					]}
-					rows={
-						isLoading
-							? []
-							: clients.map((client) => {
-									const typeView = getClientTypeView(client);
-									const statusView = getClientStatusView(client);
+				{isLoading ? (
+					<div className={classes.skeletonList}>
+						{["a", "b", "c", "d", "e"].map((k) => (
+							<Skeleton key={k} className={classes.skeletonRow} />
+						))}
+					</div>
+				) : isError ? (
+					<EmptyState
+						title="Failed to load clients"
+						description={error instanceof Error ? error.message : "Something went wrong while loading OAuth clients."}
+						actions={[
+							<Button key="retry" view="action" onClick={() => refetch()}>
+								Retry
+							</Button>,
+						]}
+					/>
+				) : clients.length === 0 ? (
+					<EmptyState
+						title={isFiltered ? "No matching clients" : "No OAuth clients yet"}
+						description={
+							isFiltered
+								? "No clients match your search. Try a different term."
+								: "Register an OAuth 2.0 application to issue tokens and integrate with the server."
+						}
+						actions={
+							isFiltered
+								? [
+										<Button key="clear" view="outlined" onClick={() => setSearch("")}>
+											Clear filters
+										</Button>,
+									]
+								: [
+										<Button key="create" view="action" onClick={open}>
+											Register Client
+										</Button>,
+									]
+						}
+					/>
+				) : (
+					<DataPreview
+						columns={[
+							{ id: "client", label: "Name / Client ID" },
+							{ id: "type", label: "Type", width: 130 },
+							{ id: "grantTypes", label: "Grant Types" },
+							{ id: "status", label: "Status", width: 110 },
+							{ id: "actions", label: "", width: 48 },
+						]}
+						rows={clients.map((client) => {
+							const typeView = getClientTypeView(client);
+							const statusView = getClientStatusView(client);
 
-									return {
-										client: (
-											<div className={classes.clientCell}>
-												<Display size={16} color="gray" />
-												<div className={classes.clientText}>
-													<Text size="sm" fw={500} className={classes.clientName}>
-														{client.name}
-													</Text>
-													<div className={classes.clientIdCell}>
-														<Text className={classes.clientIdText}>
-															{client.clientId}
-														</Text>
-														<CopyButton value={client.clientId} timeout={2000}>
-															{({ copied, copy }) => (
-																<Tooltip
-																	label={copied ? "Copied!" : "Copy Client ID"}
-																	withArrow
-																	position="right"
-																>
-																	<ActionIcon
-																		variant="subtle"
-																		size="xs"
-																		color={copied ? "teal" : "gray"}
-																		onClick={copy}
-																	>
-																		{copied ? (
-																			<Check size={12} />
-																		) : (
-																			<Copy size={12} />
-																		)}
-																	</ActionIcon>
-																</Tooltip>
-															)}
-														</CopyButton>
-													</div>
-												</div>
-											</div>
-										),
-										type: (
-											<Badge variant="outline" color={typeView.color}>
-												{typeView.label}
-											</Badge>
-										),
-										grantTypes: (
-											<div className={classes.badgeList}>
-												{client.grantTypes?.map((grantType) => (
-													<Badge key={grantType} size="sm" variant="dot">
-														{grantType}
-													</Badge>
-												))}
-											</div>
-										),
-										status: (
-											<Badge color={statusView.color} variant="light">
-												{statusView.label}
-											</Badge>
-										),
-										actions: (
-											<Menu position="bottom-end" withinPortal>
-												<Menu.Target>
-													<ActionIcon variant="subtle" color="gray">
-														<EllipsisVertical size={16} />
-													</ActionIcon>
-												</Menu.Target>
-												<Menu.Dropdown>
-													<Menu.Item
-														leftSection={<Pencil size={14} />}
-														onClick={() => handleEdit(client)}
-													>
-														Edit
-													</Menu.Item>
-													{client.confidential && (
-														<Menu.Item
-															leftSection={<ArrowRotateRight size={14} />}
-															onClick={() => handleRegenerateSecret(client)}
-														>
-															Regenerate Secret
-														</Menu.Item>
+							return {
+								client: (
+									<div className={classes.clientCell}>
+										<Display width={16} height={16} className={classes.clientIcon} aria-hidden="true" />
+										<div className={classes.clientText}>
+											<Text variant="body-2" className={classes.clientName}>
+												<strong>{client.name}</strong>
+											</Text>
+											<div className={classes.clientIdCell}>
+												<Text className={classes.clientIdText}>{client.clientId}</Text>
+												<CopyButton value={client.clientId} timeout={2000}>
+													{({ copied, copy }) => (
+														<Tooltip content={copied ? "Copied!" : "Copy Client ID"} placement="right">
+															<ActionIcon
+																view="flat-secondary"
+																size="xs"
+																aria-label="Copy Client ID"
+																onClick={copy}
+															>
+																{copied ? (
+																	<Check width={12} height={12} aria-hidden="true" />
+																) : (
+																	<Copy width={12} height={12} aria-hidden="true" />
+																)}
+															</ActionIcon>
+														</Tooltip>
 													)}
-													<Menu.Divider />
-													<Menu.Item
-														leftSection={<TrashBin size={14} />}
-														color="red"
-														onClick={() => handleDeleteClick(client)}
-													>
-														Delete
-													</Menu.Item>
-												</Menu.Dropdown>
-											</Menu>
-										),
-									};
-								})
-					}
-					emptyText={isLoading ? "Loading clients..." : "No clients found"}
-					getRowKey={(_row, index) => clients[index]?.id ?? clients[index]?.clientId ?? `${index}`}
-				/>
+												</CopyButton>
+											</div>
+										</div>
+									</div>
+								),
+								type: <Badge color={typeView.color}>{typeView.label}</Badge>,
+								grantTypes: (
+									<div className={classes.badgeList}>
+										{client.grantTypes?.map((grantType) => (
+											<Badge key={grantType} size="sm">
+												{grantType}
+											</Badge>
+										))}
+									</div>
+								),
+								status: <Badge color={statusView.color}>{statusView.label}</Badge>,
+								actions: (
+									<DropdownMenu
+										size="s"
+										icon={<EllipsisVertical width={16} />}
+										defaultSwitcherProps={{
+											view: "flat-secondary",
+											size: "s",
+											"aria-label": "Client actions",
+											"aria-haspopup": "menu",
+										}}
+										popupProps={{ placement: "bottom-end" }}
+										items={[
+											{
+												text: "Edit",
+												iconStart: <Pencil width={14} />,
+												action: () => handleEdit(client),
+											},
+											...(client.confidential
+												? [
+														{
+															text: "Regenerate Secret",
+															iconStart: <ArrowRotateRight width={14} />,
+															action: () => handleRegenerateSecret(client),
+														},
+													]
+												: []),
+											[
+												{
+													text: "Delete",
+													iconStart: <TrashBin width={14} />,
+													theme: "danger" as const,
+													action: () => handleDeleteClick(client),
+												},
+											],
+										]}
+									/>
+								),
+							};
+						})}
+						getRowKey={(_row, index) => clients[index]?.id ?? clients[index]?.clientId ?? `${index}`}
+					/>
+				)}
 			</Card>
 
 			<ClientModal
@@ -392,12 +437,16 @@ function ClientModal({
 								<div className={classes.checkboxField}>
 									<Field<boolean> name="confidential" type="checkbox">
 										{({ input }) => (
-											<Checkbox
-												label="Confidential Client"
-												description="Has a secret, for server-side apps"
-												checked={input.checked ?? false}
-												onChange={input.onChange}
-											/>
+											<div className={classes.fieldWithHint}>
+												<Checkbox
+													content="Confidential Client"
+													checked={input.checked ?? false}
+													onChange={input.onChange}
+												/>
+												<Text variant="caption-2" color="secondary">
+													Has a secret, for server-side apps
+												</Text>
+											</div>
 										)}
 									</Field>
 								</div>
@@ -431,15 +480,16 @@ function ClientModal({
 
 							<Field<string[]> name="postLogoutRedirectUris">
 								{({ input }) => (
-									<MultiSelect
-										label="Post-Logout Redirect URIs"
-										placeholder="Add URI and press Enter"
-										description="Allowed URIs to redirect after logout"
-										data={input.value}
-										searchable
-										value={input.value}
-										onChange={input.onChange}
-									/>
+									<FieldWithHint hint="Allowed URIs to redirect after logout">
+										<MultiSelect
+											label="Post-Logout Redirect URIs"
+											placeholder="Add URI and press Enter"
+											data={input.value}
+											searchable
+											value={input.value}
+											onChange={input.onChange}
+										/>
+									</FieldWithHint>
 								)}
 							</Field>
 
@@ -458,13 +508,14 @@ function ClientModal({
 
 							<Field<string> name="jwksUri">
 								{({ input }) => (
-									<TextInput
-										label="JWKS URL"
-										placeholder="https://example.com/.well-known/jwks.json"
-										description="For private_key_jwt authentication"
-										value={input.value}
-										onChange={input.onChange}
-									/>
+									<FieldWithHint hint="For private_key_jwt authentication">
+										<TextInput
+											label="JWKS URL"
+											placeholder="https://example.com/.well-known/jwks.json"
+											value={input.value}
+											onChange={input.onChange}
+										/>
+									</FieldWithHint>
 								)}
 							</Field>
 
@@ -492,21 +543,21 @@ function ClientModal({
 							<div className={classes.switchGrid}>
 								<Field<boolean> name="active" type="checkbox">
 									{({ input }) => (
-										<Switch label="Active" checked={input.checked ?? false} onChange={input.onChange} />
+										<Switch content="Active" checked={input.checked ?? false} onUpdate={input.onChange} />
 									)}
 								</Field>
 								<Field<boolean> name="pkceRequired" type="checkbox">
 									{({ input }) => (
-										<Switch label="Require PKCE" checked={input.checked ?? false} onChange={input.onChange} />
+										<Switch content="Require PKCE" checked={input.checked ?? false} onUpdate={input.onChange} />
 									)}
 								</Field>
 							</div>
 
 							<div className={classes.formActions}>
-								<Button variant="light" onClick={onClose} type="button">
+								<Button view="flat-secondary" onClick={onClose} type="button">
 									Cancel
 								</Button>
-								<Button type="submit" loading={submitting || create.isPending || update.isPending}>
+								<Button view="action" type="submit" loading={submitting || create.isPending || update.isPending}>
 									{isEditing ? "Update" : "Register"}
 								</Button>
 							</div>

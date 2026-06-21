@@ -4,8 +4,8 @@ import {
 	Text,
 	Badge,
 	DataPreview,
-	Loader,
-	Alert,
+	Skeleton,
+	EmptyState,
 	TextInput,
 	SegmentedControl,
 	ActionIcon,
@@ -60,7 +60,7 @@ function MethodBadge({ method }: { method: string }) {
 	const methodView = getOperationMethodView(method);
 
 	return (
-		<Badge size="xs" variant="light" color={methodView.color}>
+		<Badge size="xs" color={methodView.color}>
 			{methodView.method}
 		</Badge>
 	);
@@ -84,9 +84,16 @@ function CategorySection({
 		<SectionPanel padding="s" className={classes.categorySection}>
 			<div className={classes.categoryHeader}>
 				<div className={classes.categoryTitle}>
-					<Icon size={20} color="var(--g-color-text-secondary)" />
-					<Text fw={500}>{categoryView.label}</Text>
-					<Badge size="sm" variant="light" color={categoryView.color}>
+					<Icon
+						width={20}
+						height={20}
+						color="var(--g-color-text-secondary)"
+						aria-hidden="true"
+					/>
+					<Text>
+						<strong>{categoryView.label}</strong>
+					</Text>
+					<Badge size="sm" color={categoryView.color}>
 						{operations.length}
 					</Badge>
 				</div>
@@ -105,11 +112,16 @@ function CategorySection({
 					id: <Code>{operation.id}</Code>,
 					name: (
 						<div className={classes.nameCell}>
-							<Text size="sm" fw={500}>
-								{operation.name}
+							<Text variant="body-2">
+								<strong>{operation.name}</strong>
 							</Text>
 							{operation.description && (
-								<Text size="xs" c="dimmed" className={classes.truncateText}>
+								<Text
+									variant="caption-2"
+									color="secondary"
+									ellipsis
+									className={classes.truncateText}
+								>
 									{operation.description}
 								</Text>
 							)}
@@ -122,31 +134,53 @@ function CategorySection({
 							))}
 						</div>
 					),
-					path: <Code size="xs">{operation.path_pattern}</Code>,
+					path: <Code className={classes.pathCode}>{operation.path_pattern}</Code>,
 					app: operation.app ? (
 						<Anchor
-							size="sm"
 							onClick={() => onNavigateToApp(operation.app?.id ?? "")}
 							className={classes.appLink}
 						>
 							{operation.app.name}
 						</Anchor>
 					) : (
-						<Text size="sm" c="dimmed">-</Text>
+						<Text variant="body-2" color="secondary">
+							-
+						</Text>
 					),
 					access: (
-						<Tooltip label={operation.public ? "Public (no auth required)" : "Protected (requires auth)"}>
+						<Tooltip
+							content={
+								operation.public
+									? "Public (no auth required)"
+									: "Protected (requires auth)"
+							}
+						>
 							{operation.public ? (
-								<LockOpen size={16} className={classes.publicIcon} />
+								<LockOpen
+									width={16}
+									height={16}
+									className={classes.publicIcon}
+									aria-label="Public (no auth required)"
+								/>
 							) : (
-								<Lock size={16} className={classes.protectedIcon} />
+								<Lock
+									width={16}
+									height={16}
+									className={classes.protectedIcon}
+									aria-label="Protected (requires auth)"
+								/>
 							)}
 						</Tooltip>
 					),
 					actions: (
-						<Tooltip label="View details">
-							<ActionIcon variant="subtle" size="sm" onClick={() => onViewOperation(operation.id)}>
-								<Eye size={16} />
+						<Tooltip content="View details">
+							<ActionIcon
+								view="flat"
+								size="s"
+								aria-label={`View details for ${operation.name}`}
+								onClick={() => onViewOperation(operation.id)}
+							>
+								<Eye width={16} height={16} aria-hidden="true" />
 							</ActionIcon>
 						</Tooltip>
 					),
@@ -162,7 +196,16 @@ export function OperationsPage() {
 	const [search, setSearch] = useState("");
 	const [filterAccess, setFilterAccess] = useState<OperationAccessFilter>("all");
 	const [filterApp, setFilterApp] = useState<string | null>(null);
-	const { data, isLoading, error } = useOperations();
+	const { data, isLoading, isError, error, refetch } = useOperations();
+
+	const hasActiveFilters =
+		search.trim() !== "" || filterAccess !== "all" || filterApp !== null;
+
+	const clearFilters = () => {
+		setSearch("");
+		setFilterAccess("all");
+		setFilterApp(null);
+	};
 
 	// Extract unique apps for the filter dropdown
 	const appOptions = useMemo(() => {
@@ -198,7 +241,8 @@ export function OperationsPage() {
 				<div className={classes.toolbar}>
 					<TextInput
 						placeholder="Search operations..."
-						leftSection={<Magnifier size={16} />}
+						aria-label="Search operations"
+						leftSection={<Magnifier width={16} height={16} aria-hidden="true" />}
 						value={search}
 						onChange={(e) => setSearch(e.currentTarget.value)}
 						className={classes.searchInput}
@@ -206,6 +250,7 @@ export function OperationsPage() {
 					{appOptions.length > 0 && (
 						<Select
 							placeholder="All Apps"
+							aria-label="Filter by app"
 							clearable
 							data={appOptions}
 							value={filterApp}
@@ -214,52 +259,98 @@ export function OperationsPage() {
 						/>
 					)}
 					<SegmentedControl
+						aria-label="Filter by access level"
 						value={filterAccess}
-						onChange={(value) => {
+						onUpdate={(value) => {
 							if (isOperationAccessFilter(value)) {
 								setFilterAccess(value);
 							}
 						}}
-						data={operationAccessFilterOptions}
+						options={operationAccessFilterOptions.map((option) => ({
+							value: option.value,
+							content: option.label,
+						}))}
 					/>
 				</div>
 			}
 		>
 
 			{isLoading && (
-				<div className={classes.loadingState}>
-					<Loader size="sm" />
-					<Text size="sm" c="dimmed">
-						Loading operations...
-					</Text>
+				<div className={classes.categoryGrid} aria-busy="true">
+					{[0, 1, 2].map((section) => (
+						<SectionPanel key={section} padding="s" className={classes.categorySection}>
+							<div className={classes.categoryHeader}>
+								<div className={classes.categoryTitle}>
+									<Skeleton className={classes.skeletonIcon} />
+									<Skeleton className={classes.skeletonTitle} />
+									<Skeleton className={classes.skeletonBadge} />
+								</div>
+							</div>
+							<div className={classes.skeletonRows}>
+								{[0, 1, 2, 3].map((row) => (
+									<Skeleton key={row} className={classes.skeletonRow} />
+								))}
+							</div>
+						</SectionPanel>
+					))}
 				</div>
 			)}
 
-			{error && (
-				<Alert icon={<CircleExclamation size={16} />} color="fire" variant="light">
-					{error instanceof Error ? error.message : "Failed to load operations"}
-				</Alert>
+			{isError && (
+				<EmptyState
+					image={<CircleExclamation width={48} height={48} aria-hidden="true" />}
+					title="Failed to load operations"
+					description={
+						error instanceof Error
+							? error.message
+							: "Something went wrong while loading operations."
+					}
+					actions={[
+						{
+							text: "Retry",
+							view: "action",
+							onClick: () => {
+								void refetch();
+							},
+						},
+					]}
+				/>
 			)}
 
-			{!isLoading && !error && data && (
+			{!isLoading && !isError && data && (
 				<>
 					<div className={classes.resultSummary}>
-						<Text size="sm" c="dimmed">
+						<Text variant="body-2" color="secondary">
 							{totalFiltered} operations in {categories.length} categories
 						</Text>
 						{data.total !== totalFiltered && (
-							<Text size="sm" c="dimmed">
+							<Text variant="body-2" color="secondary">
 								(filtered from {data.total} total)
 							</Text>
 						)}
 					</div>
 
 					{categories.length === 0 ? (
-						<div className={classes.emptyState}>
-							<Text ta="center" c="dimmed">
-								No operations match your filters
-							</Text>
-						</div>
+						hasActiveFilters ? (
+							<EmptyState
+								image={<Magnifier width={48} height={48} aria-hidden="true" />}
+								title="No operations match your filters"
+								description="Try a different search term or clear the active filters."
+								actions={[
+									{
+										text: "Clear filters",
+										view: "outlined",
+										onClick: clearFilters,
+									},
+								]}
+							/>
+						) : (
+							<EmptyState
+								image={<Cpu width={48} height={48} aria-hidden="true" />}
+								title="No operations available"
+								description="No server API operations have been registered yet."
+							/>
+						)
 					) : (
 						<div className={classes.categoryGrid}>
 							{categories.map((category) => (

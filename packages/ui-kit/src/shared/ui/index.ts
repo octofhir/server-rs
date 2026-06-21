@@ -47,6 +47,7 @@ export * from "./SectionPanel";
 export * from "./Alert";
 export * from "./Spin";
 export * from "./Progress";
+export * from "./RingProgress";
 
 // === Overlays ===
 export * from "./Modal";
@@ -55,6 +56,7 @@ export * from "./Menu";
 export * from "./Popover";
 export * from "./Portal";
 export * from "./Drawer";
+export * from "./ScrollArea";
 
 // === Navigation ===
 export * from "./Link";
@@ -81,16 +83,11 @@ export * from "./ClipboardButton";
 export * from "./Collapse";
 export * from "./Chip";
 
-// === Icons (Tabler-compat aliases mapped to @gravity-ui/icons) ===
+// === Icons ===
 export * from "./Icons";
 
-// =====================================================================
-// === DEPRECATED legacy aliases — to be removed in a follow-up sweep ===
-// =====================================================================
-// These exist purely so that ~50 consumer files still compile during the
-// multi-step migration to a Gravity-only API surface. Do not introduce new
-// uses. The follow-up commit should migrate consumers to the canonical names
-// (right-hand side) and delete this whole block.
+// === Compatibility aliases ===
+// Alternate names that resolve to the canonical component on the right.
 
 /** @deprecated use {@link Link} */
 export { Link as Anchor, type LinkProps as AnchorProps } from "./Link";
@@ -112,14 +109,10 @@ export { SegmentedRadioGroup as SegmentedControl, type SegmentedRadioGroupProps 
 export { Grid as SimpleGrid, type GridProps as SimpleGridProps } from "./Grid";
 /** @deprecated use {@link Card} */
 export { Card as Paper, type CardProps as PaperProps } from "./Card";
-/** @deprecated use {@link Box} */
-export { Box as ScrollArea, type BoxProps as ScrollAreaProps } from "./Box";
 /** @deprecated use {@link Text} with `variant="header-N"` */
 export { Text as Title, type TextProps as TitleProps } from "./Text";
 /** @deprecated use {@link Spin} */
 export { Spin as Loader, type SpinProps as LoaderProps } from "./Spin";
-/** @deprecated use {@link Spin} */
-export { Spin as RingProgress, type SpinProps as RingProgressProps } from "./Spin";
 /** @deprecated use {@link Spin} */
 export { Spin as LoadingOverlay, type SpinProps as LoadingOverlayProps } from "./Spin";
 /** @deprecated use {@link ClipboardButton} */

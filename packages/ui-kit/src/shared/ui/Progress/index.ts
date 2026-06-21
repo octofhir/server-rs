@@ -1,1 +1,1 @@
-export { Progress, type ProgressProps } from "@gravity-ui/uikit";
+export { Progress, type ProgressProps } from "./Progress";

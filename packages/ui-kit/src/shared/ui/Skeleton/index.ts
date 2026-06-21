@@ -1,1 +1,1 @@
-export { Skeleton, type SkeletonProps } from "@gravity-ui/uikit";
+export { Skeleton, type SkeletonProps } from "./Skeleton";

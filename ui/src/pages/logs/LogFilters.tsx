@@ -3,14 +3,14 @@ import { ActionIcon, Badge, Button, TextInput, Tooltip } from "@octofhir/ui-kit"
 import { memo } from "react";
 
 import {
-	Magnifier,
-	FunnelXmark,
 	ArrowDownToLine,
+	CurlyBrackets,
+	FileText,
+	FunnelXmark,
+	Magnifier,
 	Pause,
 	Play,
 	TrashBin,
-	CurlyBrackets,
-	FileText,
 } from "@gravity-ui/icons";
 import type { LogFilters as LogFiltersType, LogLevel } from "@/shared/api/types";
 import classes from "./LogFilters.module.css";
@@ -66,7 +66,8 @@ function LogFiltersComponent({
 				<div className={classes.primaryControls}>
 					<TextInput
 						placeholder="Search logs..."
-						leftSection={<Magnifier size={14} />}
+						aria-label="Search logs"
+						leftSection={<Magnifier width={14} height={14} aria-hidden="true" />}
 						value={filters.search || ""}
 						onUpdate={handleSearchChange}
 						className={classes.searchInput}
@@ -79,7 +80,9 @@ function LogFiltersComponent({
 							<Button
 								{...switcherProps}
 								view="flat-secondary"
-								leftSection={<FunnelXmark size={14} />}
+								aria-haspopup="menu"
+								aria-label="Filter by log level"
+								leftSection={<FunnelXmark width={14} height={14} aria-hidden="true" />}
 								className={classes.filterButton}
 							>
 								Levels
@@ -128,13 +131,17 @@ function LogFiltersComponent({
 							aria-label={isPaused ? "Resume stream" : "Pause stream"}
 							onClick={isPaused ? onResume : onPause}
 						>
-							{isPaused ? <Play size={18} /> : <Pause size={18} />}
+							{isPaused ? (
+								<Play width={18} height={18} aria-hidden="true" />
+							) : (
+								<Pause width={18} height={18} aria-hidden="true" />
+							)}
 						</ActionIcon>
 					</Tooltip>
 
 					<Tooltip content="Clear logs">
 						<ActionIcon view="flat-secondary" aria-label="Clear logs" onClick={onClear}>
-							<TrashBin size={18} />
+							<TrashBin width={18} height={18} aria-hidden="true" />
 						</ActionIcon>
 					</Tooltip>
 
@@ -145,7 +152,9 @@ function LogFiltersComponent({
 							<Button
 								{...switcherProps}
 								view="flat-secondary"
-								leftSection={<ArrowDownToLine size={14} />}
+								aria-haspopup="menu"
+								aria-label="Export logs"
+								leftSection={<ArrowDownToLine width={14} height={14} aria-hidden="true" />}
 								className={classes.exportButton}
 							>
 								Export
@@ -154,12 +163,12 @@ function LogFiltersComponent({
 						items={[
 							{
 								text: "JSON",
-								iconStart: <CurlyBrackets size={14} />,
+								iconStart: <CurlyBrackets width={14} height={14} aria-hidden="true" />,
 								action: () => onExport("json"),
 							},
 							{
 								text: "Plain Text",
-								iconStart: <FileText size={14} />,
+								iconStart: <FileText width={14} height={14} aria-hidden="true" />,
 								action: () => onExport("text"),
 							},
 						]}

@@ -1,0 +1,19 @@
+.popup {
+    z-index: 1000;
+    max-width: 280px;
+    padding: 6px 10px;
+    border-radius: var(--octo-radius-sm, 6px);
+    background: var(--octo-text-primary, #1a1b1e);
+    color: var(--octo-surface-1, #fff);
+    font-family: var(--octo-typography-family, inherit);
+    font-size: var(--octo-typography-size-xs, 0.75rem);
+    line-height: 1.4;
+    box-shadow: var(--octo-shadow-md, 0 4px 12px rgba(0, 0, 0, 0.1));
+    transition: opacity 120ms ease, transform 120ms ease;
+}
+
+.popup[data-starting-style],
+.popup[data-ending-style] {
+    opacity: 0;
+    transform: scale(0.96);
+}

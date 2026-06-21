@@ -3,10 +3,12 @@ import {
 	Table,
 	Text,
 	Badge,
-	Loader,
+	Spin,
 	Center,
 	Tooltip,
 	ThemeIcon,
+	Skeleton,
+	EmptyState,
 } from "@octofhir/ui-kit";
 import {
 	Person,
@@ -40,6 +42,11 @@ import classes from "./AuditEventList.module.css";
 interface AuditEventListProps {
 	events: AuditEvent[];
 	isLoading: boolean;
+	isError?: boolean;
+	error?: unknown;
+	onRetry?: () => void;
+	hasActiveFilters?: boolean;
+	onClearFilters?: () => void;
 	isFetchingNextPage: boolean;
 	hasNextPage: boolean;
 	selectedEventId?: string;
@@ -94,6 +101,11 @@ function getActorIcon(type: "user" | "client" | "system") {
 function AuditEventListComponent({
 	events,
 	isLoading,
+	isError,
+	error,
+	onRetry,
+	hasActiveFilters,
+	onClearFilters,
 	isFetchingNextPage,
 	hasNextPage,
 	selectedEventId,
@@ -129,25 +141,48 @@ function AuditEventListComponent({
 
 	if (isLoading && events.length === 0) {
 		return (
-			<Center py="xl">
-				<Loader size="lg" />
-			</Center>
+			<output className={classes.skeletonList} aria-busy="true" aria-label="Loading audit events">
+				{Array.from({ length: 8 }).map((_, i) => (
+					// biome-ignore lint/suspicious/noArrayIndexKey: static skeleton placeholders
+					<Skeleton key={i} className={classes.skeletonRow} />
+				))}
+			</output>
+		);
+	}
+
+	if (isError) {
+		return (
+			<div className={classes.stateWrap}>
+				<EmptyState
+					image={<TriangleExclamation width={48} height={48} aria-hidden="true" />}
+					title="Failed to load audit events"
+					description={error instanceof Error ? error.message : "An unexpected error occurred."}
+					actions={
+						onRetry ? [{ text: "Retry", view: "action", onClick: onRetry }] : undefined
+					}
+				/>
+			</div>
 		);
 	}
 
 	if (events.length === 0) {
 		return (
-			<Center py="xl">
-				<div className={classes.emptyState}>
-					<ThemeIcon size={48} variant="light" color="gray" radius="xl">
-						<Shield size={24} />
-					</ThemeIcon>
-					<Text c="dimmed">No audit events found</Text>
-					<Text size="xs" c="dimmed">
-						Try adjusting your filters
-					</Text>
-				</div>
-			</Center>
+			<div className={classes.stateWrap}>
+				<EmptyState
+					image={<Shield width={48} height={48} aria-hidden="true" />}
+					title={hasActiveFilters ? "No matching audit events" : "No audit events yet"}
+					description={
+						hasActiveFilters
+							? "No events match the current filters. Try clearing them to see all activity."
+							: "System activity will appear here as it is recorded."
+					}
+					actions={
+						hasActiveFilters && onClearFilters
+							? [{ text: "Clear filters", view: "normal", onClick: onClearFilters }]
+							: undefined
+					}
+				/>
+			</div>
 		);
 	}
 
@@ -181,12 +216,12 @@ function AuditEventListComponent({
 								data-selected={isSelected}
 							>
 								<Table.Td>
-									<Tooltip label={timestamp.full}>
+									<Tooltip content={timestamp.full}>
 										<div className={classes.cellStack}>
-											<Text size="sm" fw={500}>
+											<Text variant="body-2" className={classes.strongText}>
 												{timestamp.time}
 											</Text>
-											<Text size="xs" c="dimmed">
+											<Text variant="caption-2" color="secondary">
 												{timestamp.relative}
 											</Text>
 										</div>
@@ -195,36 +230,35 @@ function AuditEventListComponent({
 								<Table.Td>
 									<div className={classes.inlineCell}>
 										<ThemeIcon
-											size="sm"
-											variant="light"
+											size="s"
+											view="light"
 											color={getAuditActionColor(event.action)}
 										>
-											<ActionIcon size={12} />
+											<ActionIcon width={12} height={12} aria-hidden="true" />
 										</ThemeIcon>
-										<Text size="sm">{getAuditActionLabel(event.action)}</Text>
+										<Text variant="body-2">{getAuditActionLabel(event.action)}</Text>
 									</div>
 								</Table.Td>
 								<Table.Td>
 									<Badge
 										size="sm"
-										variant="light"
 										color={getAuditOutcomeColor(event.outcome)}
-										leftSection={<OutcomeIcon size={10} />}
+										leftSection={<OutcomeIcon width={10} height={10} aria-hidden="true" />}
 									>
 										{event.outcome}
 									</Badge>
 								</Table.Td>
 								<Table.Td>
 									<div className={classes.inlineCell}>
-										<ThemeIcon size="sm" variant="subtle" color="gray">
-											<ActorIcon size={12} />
+										<ThemeIcon size="s" view="subtle" color="gray">
+											<ActorIcon width={12} height={12} aria-hidden="true" />
 										</ThemeIcon>
 										<div className={classes.cellStack}>
-											<Text size="sm" className={classes.truncateText}>
+											<Text variant="body-2" className={classes.truncateText}>
 												{getAuditActorLabel(event)}
 											</Text>
 											{event.actor.name && event.actor.id && (
-												<Text size="xs" c="dimmed" className={classes.truncateText}>
+												<Text variant="caption-2" color="secondary" className={classes.truncateText}>
 													{event.actor.id}
 												</Text>
 											)}
@@ -234,24 +268,24 @@ function AuditEventListComponent({
 								<Table.Td>
 									{target ? (
 										<div className={classes.cellStack}>
-											<Text size="sm" className={classes.truncateText}>
+											<Text variant="body-2" className={classes.truncateText}>
 												{target.primary}
 											</Text>
 											{target.secondary && (
-												<Text size="xs" c="dimmed" className={classes.truncateText}>
+												<Text variant="caption-2" color="secondary" className={classes.truncateText}>
 													{target.secondary}
 												</Text>
 											)}
 										</div>
 									) : (
-										<Text size="sm" c="dimmed">
+										<Text variant="body-2" color="secondary">
 											—
 										</Text>
 									)}
 								</Table.Td>
 								<Table.Td>
-									<Tooltip label={event.source.userAgent || "Unknown"}>
-										<Text size="xs" c="dimmed" className={classes.truncateText}>
+									<Tooltip content={event.source.userAgent || "Unknown"}>
+										<Text variant="caption-2" color="secondary" className={classes.truncateText}>
 											{event.source.ipAddress || "—"}
 										</Text>
 									</Tooltip>
@@ -265,7 +299,7 @@ function AuditEventListComponent({
 			<div ref={loadMoreRef} className={classes.loadMore}>
 				{isFetchingNextPage && (
 					<Center py="md">
-						<Loader size="sm" />
+						<Spin size="s" />
 					</Center>
 				)}
 			</div>

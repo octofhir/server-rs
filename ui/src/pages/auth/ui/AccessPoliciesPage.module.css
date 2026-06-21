@@ -9,7 +9,19 @@
 }
 
 .tableContainer {
-	padding: 10px 12px 12px;
+	padding: var(--octo-spacing-sm) var(--octo-spacing-md) var(--octo-spacing-md);
+}
+
+.skeletonList {
+	display: flex;
+	flex-direction: column;
+	gap: var(--octo-spacing-sm);
+	padding: var(--octo-spacing-sm) 0;
+}
+
+.skeletonRow {
+	height: 44px;
+	border-radius: var(--octo-radius-sm);
 }
 
 .policyCell {
@@ -17,6 +29,11 @@
 	align-items: center;
 	gap: var(--octo-spacing-xs);
 	min-width: 0;
+}
+
+.policyIcon {
+	flex: 0 0 auto;
+	color: var(--octo-accent-positive, var(--g-color-text-positive));
 }
 
 .policyText {
@@ -40,10 +57,38 @@
 	border-radius: var(--octo-radius-md);
 }
 
-.policyForm {
+.policyForm,
+.deleteModalContent {
 	display: flex;
 	flex-direction: column;
 	gap: var(--octo-spacing-md);
+}
+
+.fieldWithHint {
+	display: flex;
+	flex-direction: column;
+	gap: var(--octo-spacing-xs);
+}
+
+.switchField {
+	display: flex;
+	flex-direction: column;
+	gap: var(--octo-spacing-xs);
+}
+
+.scriptLabel {
+	display: block;
+	margin-bottom: var(--octo-spacing-xs);
+}
+
+.scriptHint {
+	display: block;
+	margin-bottom: var(--octo-spacing-xs);
+}
+
+.scriptError {
+	display: block;
+	margin-top: var(--octo-spacing-xs);
 }
 
 .formGrid {

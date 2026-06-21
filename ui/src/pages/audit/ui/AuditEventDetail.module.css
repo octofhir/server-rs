@@ -29,8 +29,37 @@
 }
 
 .content {
-  gap: 16px;
-  padding: 16px;
+  gap: var(--octo-spacing-lg);
+  padding: var(--octo-spacing-lg);
+}
+
+.sectionLabel {
+  display: block;
+  text-transform: uppercase;
+  margin-bottom: var(--octo-spacing-xs);
+}
+
+.diffColumnLabel {
+  display: block;
+  margin-bottom: var(--g-spacing-1);
+}
+
+.diffColumnHeading {
+  display: block;
+  font-weight: 500;
+  margin-bottom: var(--octo-spacing-sm);
+}
+
+.eventIdGroup {
+  display: flex;
+  align-items: center;
+  gap: var(--octo-spacing-xs);
+  flex-shrink: 0;
+}
+
+.codeXs {
+  font-size: var(--octo-typography-size-xs);
+  font-family: var(--octo-typography-mono);
 }
 
 .header {
@@ -41,7 +70,7 @@
 .detailRow {
   display: flex;
   align-items: flex-start;
-  gap: 8px;
+  gap: var(--octo-spacing-sm);
 }
 
 .headerRow {
@@ -52,7 +81,7 @@
   align-items: center;
   flex-direction: row;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: var(--octo-spacing-sm);
 }
 
 .detailRow {
@@ -60,12 +89,12 @@
 }
 
 .sectionList {
-  gap: 20px;
+  gap: var(--octo-spacing-lg);
 }
 
 .detailSection,
 .diffList {
-  gap: 8px;
+  gap: var(--octo-spacing-sm);
 }
 
 .detailValueGroup {
@@ -73,7 +102,7 @@
   flex: 1;
   align-items: center;
   min-width: 0;
-  gap: 8px;
+  gap: var(--octo-spacing-sm);
 }
 
 .detailLabel {
@@ -85,40 +114,36 @@
   word-break: break-word;
 }
 
-.copyBadge {
-  cursor: pointer;
-}
-
 .diffItem {
-  padding: 8px;
+  padding: var(--octo-spacing-sm);
   border: 1px solid var(--octo-border-subtle);
   border-radius: var(--octo-radius-sm);
   background: var(--octo-surface-2);
 }
 
 .diffOld {
-  padding: 8px;
-  background: rgba(250, 82, 82, 0.1);
-  border: 1px solid rgba(250, 82, 82, 0.2);
+  padding: var(--octo-spacing-sm);
+  background: color-mix(in oklab, var(--octo-accent-fire) 10%, transparent);
+  border: 1px solid color-mix(in oklab, var(--octo-accent-fire) 20%, transparent);
   border-radius: var(--octo-radius-sm);
 }
 
 .diffNew {
-  padding: 8px;
-  background: rgba(64, 192, 87, 0.1);
-  border: 1px solid rgba(64, 192, 87, 0.2);
+  padding: var(--octo-spacing-sm);
+  background: color-mix(in oklab, var(--octo-accent-positive) 10%, transparent);
+  border: 1px solid color-mix(in oklab, var(--octo-accent-positive) 20%, transparent);
   border-radius: var(--octo-radius-sm);
 }
 
 .diffHeader,
 .diffColumns {
   display: flex;
-  gap: 8px;
+  gap: var(--octo-spacing-sm);
 }
 
 .diffHeader {
   align-items: center;
-  margin-bottom: 8px;
+  margin-bottom: var(--octo-spacing-sm);
 }
 
 .diffColumns {
@@ -131,7 +156,7 @@
 }
 
 .rawFrame {
-  padding: 12px;
+  padding: var(--octo-spacing-md);
   border: 1px solid var(--octo-border-subtle);
   border-radius: var(--octo-radius-sm);
 }

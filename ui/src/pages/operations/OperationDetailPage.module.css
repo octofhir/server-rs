@@ -1,9 +1,25 @@
-.loadingState {
+.loadingStack {
 	display: flex;
-	align-items: center;
-	justify-content: center;
-	gap: var(--octo-spacing-xs);
-	padding: var(--octo-spacing-xl);
+	flex-direction: column;
+	gap: var(--octo-spacing-md);
+}
+
+.skeletonTitle {
+	border-radius: var(--octo-radius-sm);
+	height: 24px;
+	width: 220px;
+}
+
+.skeletonLine {
+	border-radius: var(--octo-radius-sm);
+	height: 16px;
+	width: 100%;
+}
+
+.skeletonBlock {
+	border-radius: var(--octo-radius-md);
+	height: 96px;
+	width: 100%;
 }
 
 .summaryStack,
@@ -12,6 +28,17 @@
 	flex-direction: column;
 	gap: var(--octo-spacing-sm);
 	min-width: 0;
+}
+
+.field {
+	display: flex;
+	flex-direction: column;
+	gap: var(--octo-spacing-xs);
+	min-width: 0;
+}
+
+.idCode {
+	font-family: var(--octo-typography-mono);
 }
 
 .summaryHeader {

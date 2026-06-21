@@ -26,19 +26,24 @@ export function ResultItem({ result }: Props) {
 					</Badge>
 
 					{isComplex ? (
-						<div
+						<button
+							type="button"
 							onClick={() => setExpanded(!expanded)}
 							className={classes.resultToggle}
+							aria-expanded={expanded}
+							aria-label={`${expanded ? "Collapse" : "Expand"} ${result.datatype} object`}
 						>
-							{expanded ? (
-								<ChevronDown size={14} />
-							) : (
-								<ChevronRight size={14} />
-							)}
+							<span aria-hidden="true">
+								{expanded ? (
+									<ChevronDown size={14} />
+								) : (
+									<ChevronRight size={14} />
+								)}
+							</span>
 							<Text size="sm" c="dimmed">
 								{result.datatype} object
 							</Text>
-						</div>
+						</button>
 					) : (
 						<Code className={classes.resultCode}>
 							{formatPrimitiveValue(result.value)}

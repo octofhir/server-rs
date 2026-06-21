@@ -15,6 +15,8 @@ import {
 	Select,
 	Code,
 	Anchor,
+	Skeleton,
+	EmptyState,
 } from "@octofhir/ui-kit";
 import { WorkspacePageLayout } from "@/widgets/workspace-page";
 import {
@@ -44,8 +46,9 @@ export function AppsPage() {
 	const [debouncedSearch] = useDebouncedValue(search, 500);
 	const [opened, { open, close }] = useDisclosure(false);
 	const [editingApp, setEditingApp] = useState<AppResource | null>(null);
+	const [deletingApp, setDeletingApp] = useState<AppResource | null>(null);
 
-	const { data, isLoading } = useApps({ search: debouncedSearch });
+	const { data, isLoading, isError, error, refetch } = useApps({ search: debouncedSearch });
 	const deleteApp = useDeleteApp();
 
 	const handleView = (id: string) => {
@@ -57,9 +60,11 @@ export function AppsPage() {
 		open();
 	};
 
-	const handleDelete = (id: string) => {
-		if (confirm("Are you sure you want to delete this application?")) {
-			deleteApp.mutate(id);
+	const confirmDelete = () => {
+		if (deletingApp?.id) {
+			deleteApp.mutate(deletingApp.id, {
+				onSettled: () => setDeletingApp(null),
+			});
 		}
 	};
 
@@ -69,21 +74,23 @@ export function AppsPage() {
 	};
 
 	const apps = getBundleResources<AppResource>(data);
+	const hasSearch = debouncedSearch.trim().length > 0;
 
 	return (
 		<WorkspacePageLayout
 			title="API Gateway Apps"
 			description="Group custom operations under base paths and common configuration"
 			actions={
-				<Button leftSection={<IconPlus size={16} />} onClick={open}>
+				<Button leftSection={<IconPlus width={16} height={16} aria-hidden="true" />} onClick={open}>
 					Create App
 				</Button>
 			}
 			toolbar={
 				<div className={classes.toolbar}>
 					<TextInput
+						aria-label="Search applications by name"
 						placeholder="Search by name..."
-						leftSection={<IconSearch size={16} />}
+						leftSection={<IconSearch width={16} height={16} aria-hidden="true" />}
 						value={search}
 						onChange={(e) => setSearch(e.currentTarget.value)}
 						className={classes.searchInput}
@@ -93,123 +100,206 @@ export function AppsPage() {
 			maxWidth={1280}
 		>
 
-			<div className={classes.tablePanel}>
-				<DataPreview
-					columns={[
-						{ id: "application", label: "Application" },
-						{ id: "endpoint", label: "Endpoint", width: 240 },
-						{ id: "operations", label: "Operations", width: 140 },
-						{ id: "status", label: "Status", width: 110 },
-						{ id: "actions", label: "", width: 48 },
-					]}
-					rows={
-						isLoading
-							? []
-							: apps.map((app) => {
-									const statusView = getAppStatusView(app);
-									const endpoint = getAppEndpointDisplay(app);
+			{isLoading ? (
+				<div className={classes.tablePanel}>
+					<div className={classes.skeletonList}>
+						{Array.from({ length: 5 }).map((_, i) => (
+							// biome-ignore lint/suspicious/noArrayIndexKey: static skeleton placeholders
+							<Skeleton key={i} className={classes.skeletonRow} />
+						))}
+					</div>
+				</div>
+			) : isError ? (
+				<div className={classes.tablePanel}>
+					<EmptyState
+						image={<IconRocket width={48} height={48} aria-hidden="true" />}
+						title="Couldn't load applications"
+						description={error instanceof Error ? error.message : "The application list failed to load."}
+						actions={[
+							<Button key="retry" view="action" onClick={() => refetch()}>
+								Retry
+							</Button>,
+						]}
+					/>
+				</div>
+			) : apps.length === 0 ? (
+				<div className={classes.tablePanel}>
+					<EmptyState
+						image={<IconRocket width={48} height={48} aria-hidden="true" />}
+						title={hasSearch ? "No matching applications" : "No applications yet"}
+						description={
+							hasSearch
+								? "No applications match your search. Try a different name or clear the filter."
+								: "Create an API Gateway App to group custom operations under a base path."
+						}
+						actions={
+							hasSearch
+								? [
+										<Button key="clear" view="outlined" onClick={() => setSearch("")}>
+											Clear filters
+										</Button>,
+									]
+								: [
+										<Button key="create" view="action" onClick={open}>
+											Create App
+										</Button>,
+									]
+						}
+					/>
+				</div>
+			) : (
+				<div className={classes.tablePanel}>
+					<DataPreview
+						columns={[
+							{ id: "application", label: "Application" },
+							{ id: "endpoint", label: "Endpoint", width: 240 },
+							{ id: "operations", label: "Operations", width: 140 },
+							{ id: "status", label: "Status", width: 110 },
+							{ id: "actions", label: "", width: 48 },
+						]}
+						rows={apps.map((app) => {
+							const statusView = getAppStatusView(app);
+							const endpoint = getAppEndpointDisplay(app);
 
-									return {
-										application: (
-											<div className={classes.appCell}>
-												<IconRocket size={16} color="var(--octo-brand-primary-active)" />
-												<div className={classes.appSummary}>
-													<Anchor size="sm" onClick={() => app.id && handleView(app.id)}>
-														{app.name}
-													</Anchor>
-													<Text size="xs" c="dimmed" className={classes.truncateText}>
-														{app.description || "No description"}
-													</Text>
-												</div>
-											</div>
-										),
-										endpoint:
-											app.endpoint?.url || app.basePath ? (
-												<Code size="xs" className={classes.endpointCode}>
-													{endpoint}
-												</Code>
-											) : (
-												<Text size="xs" c="dimmed">
-													{endpoint}
-												</Text>
-											),
-										operations: (
-											<div className={classes.operationBadges}>
-												{app.operations && app.operations.length > 0 && (
-													<Badge size="xs" variant="light" color="primary" leftSection={<IconApi size={10} />}>
-														{app.operations.length}
-													</Badge>
-												)}
-												{app.subscriptions && app.subscriptions.length > 0 && (
-													<Badge size="xs" variant="light" color="warm" leftSection={<IconWebhook size={10} />}>
-														{app.subscriptions.length}
-													</Badge>
-												)}
-												{(!app.operations || app.operations.length === 0) &&
-													(!app.subscriptions || app.subscriptions.length === 0) && (
-														<Text size="xs" c="dimmed">-</Text>
-													)}
-											</div>
-										),
-										status: (
-											<Badge color={statusView.color} variant="light" size="sm">
-												{statusView.status}
+							return {
+								application: (
+									<div className={classes.appCell}>
+										<IconRocket
+											width={16}
+											height={16}
+											color="var(--octo-brand-primary-active)"
+											aria-hidden="true"
+										/>
+										<div className={classes.appSummary}>
+											<Anchor onClick={() => app.id && handleView(app.id)}>{app.name}</Anchor>
+											<Text variant="caption-2" color="secondary" ellipsis className={classes.truncateText}>
+												{app.description || "No description"}
+											</Text>
+										</div>
+									</div>
+								),
+								endpoint:
+									app.endpoint?.url || app.basePath ? (
+										<Code className={classes.endpointCode}>{endpoint}</Code>
+									) : (
+										<Text variant="caption-2" color="secondary">
+											{endpoint}
+										</Text>
+									),
+								operations: (
+									<div className={classes.operationBadges}>
+										{app.operations && app.operations.length > 0 && (
+											<Badge
+												size="xs"
+												color="primary"
+												leftSection={<IconApi width={10} height={10} aria-hidden="true" />}
+											>
+												{app.operations.length}
 											</Badge>
-										),
-										actions: (
-											<Menu position="bottom-end" withinPortal>
-												<Menu.Target>
-													<ActionIcon variant="subtle" color="gray">
-														<IconDotsVertical size={16} />
-													</ActionIcon>
-												</Menu.Target>
-												<Menu.Dropdown>
-													<Menu.Item
-														leftSection={<IconEye size={14} />}
-														onClick={() => app.id && handleView(app.id)}
-													>
-														View Details
-													</Menu.Item>
-													<Menu.Item
-														leftSection={<IconEdit size={14} />}
-														onClick={() => handleEdit(app)}
-													>
-														Edit JSON
-													</Menu.Item>
-													{app.endpoint?.url && (
-														<Menu.Item
-															leftSection={<IconExternalLink size={14} />}
-															component="a"
-															href={app.endpoint.url}
-															target="_blank"
-														>
-															Open Endpoint
-														</Menu.Item>
-													)}
-													<Menu.Divider />
-													<Menu.Item
-														leftSection={<IconTrash size={14} />}
-														color="red"
-														onClick={() => app.id && handleDelete(app.id)}
-													>
-														Delete
-													</Menu.Item>
-												</Menu.Dropdown>
-											</Menu>
-										),
-									};
-								})
-					}
-					emptyText={isLoading ? "Loading applications..." : "No applications found"}
-					getRowKey={(_row, index) => apps[index]?.id ?? `${index}`}
-				/>
-			</div>
+										)}
+										{app.subscriptions && app.subscriptions.length > 0 && (
+											<Badge
+												size="xs"
+												color="warm"
+												leftSection={<IconWebhook width={10} height={10} aria-hidden="true" />}
+											>
+												{app.subscriptions.length}
+											</Badge>
+										)}
+										{(!app.operations || app.operations.length === 0) &&
+											(!app.subscriptions || app.subscriptions.length === 0) && (
+												<Text variant="caption-2" color="secondary">
+													-
+												</Text>
+											)}
+									</div>
+								),
+								status: (
+									<Badge color={statusView.color} size="sm">
+										{statusView.status}
+									</Badge>
+								),
+								actions: (
+									<Menu placement="bottom-end">
+										<Menu.Target>
+											<ActionIcon
+												view="flat"
+												size="s"
+												aria-label={`Actions for ${app.name}`}
+												aria-haspopup="menu"
+											>
+												<IconDotsVertical width={16} height={16} aria-hidden="true" />
+											</ActionIcon>
+										</Menu.Target>
+										<Menu.Dropdown>
+											<Menu.Item
+												leftSection={<IconEye width={14} height={14} aria-hidden="true" />}
+												onClick={() => app.id && handleView(app.id)}
+											>
+												View Details
+											</Menu.Item>
+											<Menu.Item
+												leftSection={<IconEdit width={14} height={14} aria-hidden="true" />}
+												onClick={() => handleEdit(app)}
+											>
+												Edit JSON
+											</Menu.Item>
+											{app.endpoint?.url && (
+												<Menu.Item
+													leftSection={<IconExternalLink width={14} height={14} aria-hidden="true" />}
+													component="a"
+													href={app.endpoint.url}
+													target="_blank"
+												>
+													Open Endpoint
+												</Menu.Item>
+											)}
+											<Menu.Divider />
+											<Menu.Item
+												leftSection={<IconTrash width={14} height={14} aria-hidden="true" />}
+												color="danger"
+												onClick={() => setDeletingApp(app)}
+											>
+												Delete
+											</Menu.Item>
+										</Menu.Dropdown>
+									</Menu>
+								),
+							};
+						})}
+						getRowKey={(_row, index) => apps[index]?.id ?? `${index}`}
+					/>
+				</div>
+			)}
 
-			<AppModal
-				opened={opened}
-				onClose={handleClose}
-				app={editingApp}
-			/>
+			<AppModal opened={opened} onClose={handleClose} app={editingApp} />
+
+			<Modal
+				open={deletingApp != null}
+				onClose={() => setDeletingApp(null)}
+				title="Delete application"
+				size="s"
+				footer={
+					<div className={classes.modalActions}>
+						<Button view="flat" onClick={() => setDeletingApp(null)} type="button">
+							Cancel
+						</Button>
+						<Button
+							view="flat-danger"
+							loading={deleteApp.isPending}
+							onClick={confirmDelete}
+							type="button"
+						>
+							Delete
+						</Button>
+					</div>
+				}
+			>
+				<Text variant="body-2">
+					Are you sure you want to delete{" "}
+					<strong>{deletingApp?.name ?? "this application"}</strong>? This action cannot be undone.
+				</Text>
+			</Modal>
 		</WorkspacePageLayout>
 	);
 }
@@ -302,7 +392,7 @@ function AppModal({
 
 	return (
 		<Modal
-			opened={opened}
+			open={opened}
 			onClose={onClose}
 			title={isEditing ? "Edit Application" : "Create Application"}
 			size="md"
@@ -400,7 +490,7 @@ function AppModal({
 							</Field>
 
 							<div className={classes.modalActions}>
-								<Button variant="light" onClick={onClose} type="button">
+								<Button view="outlined" onClick={onClose} type="button">
 									Cancel
 								</Button>
 								<Button

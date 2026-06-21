@@ -1,16 +1,17 @@
 import { Button, Card, Field, Form, FormSpy, useDebouncedValue, useDisclosure } from "@octofhir/ui-kit";
 import { useState, useMemo } from "react";
 import {
-	ActionIcon,
+	Alert,
 	Badge,
 	Code,
 	Collapse,
 	Divider,
-	Menu,
+	EmptyState,
 	Modal,
 	MultiSelect,
 	NumberInput,
 	Select,
+	Skeleton,
 	Switch,
 	DataPreview,
 	Text,
@@ -18,6 +19,7 @@ import {
 	TextInput,
 } from "@octofhir/ui-kit";
 import { WorkspacePageLayout } from "@/widgets/workspace-page";
+import { DropdownMenu } from "@gravity-ui/uikit";
 import {
 	Plus,
 	Magnifier,
@@ -53,15 +55,29 @@ import { getBundleResources, isRecord } from "@/shared/api/guards";
 import { useResourceTypes } from "@/shared/api/hooks";
 import { PolicyScriptEditor } from "@/shared/monaco/PolicyScriptEditor";
 import type { ClientResource } from "@/entities/oauth-client";
+import type { ReactNode } from "react";
 import classes from "./AccessPoliciesPage.module.css";
+
+/** Wraps a field with an adjacent helper line (Gravity inputs have no `description`). */
+function FieldWithHint({ hint, children }: { hint: ReactNode; children: ReactNode }) {
+	return (
+		<div className={classes.fieldWithHint}>
+			{children}
+			<Text variant="caption-2" color="secondary">
+				{hint}
+			</Text>
+		</div>
+	);
+}
 
 export function AccessPoliciesPage() {
 	const [search, setSearch] = useState("");
 	const [debouncedSearch] = useDebouncedValue(search, 500);
 	const [opened, { open, close }] = useDisclosure(false);
 	const [editingPolicy, setEditingPolicy] = useState<AccessPolicyResource | null>(null);
+	const [deleteTarget, setDeleteTarget] = useState<AccessPolicyResource | null>(null);
 
-	const { data, isLoading } = useAccessPolicies({ search: debouncedSearch });
+	const { data, isLoading, isError, error, refetch } = useAccessPolicies({ search: debouncedSearch });
 	const deletePolicy = useDeleteAccessPolicy();
 
 	const handleEdit = (policy: AccessPolicyResource) => {
@@ -69,9 +85,11 @@ export function AccessPoliciesPage() {
 		open();
 	};
 
-	const handleDelete = (id: string) => {
-		if (confirm("Are you sure you want to delete this policy?")) {
-			deletePolicy.mutate(id);
+	const handleDeleteConfirm = () => {
+		if (deleteTarget?.id) {
+			deletePolicy.mutate(deleteTarget.id, {
+				onSuccess: () => setDeleteTarget(null),
+			});
 		}
 	};
 
@@ -81,21 +99,26 @@ export function AccessPoliciesPage() {
 	};
 
 	const policies = getBundleResources<AccessPolicyResource>(data);
+	const isFiltered = debouncedSearch.length > 0;
 
 	return (
 		<WorkspacePageLayout
 			title="Access Policies"
 			description="Define fine-grained access control rules with matchers and custom scripts"
 			actions={
-				<Button leftSection={<Plus size={16} />} onClick={open}>
+				<Button view="action" onClick={open}>
+					<Button.Icon>
+						<Plus width={16} />
+					</Button.Icon>
 					Create Policy
 				</Button>
 			}
 			toolbar={
 				<div className={classes.toolbar}>
 					<TextInput
+						aria-label="Search policies by name"
 						placeholder="Search by name..."
-						leftSection={<Magnifier size={16} />}
+						leftSection={<Magnifier width={16} />}
 						value={search}
 						onChange={(e) => setSearch(e.currentTarget.value)}
 						className={classes.search}
@@ -105,75 +128,118 @@ export function AccessPoliciesPage() {
 		>
 
 			<Card className={classes.tableContainer}>
-				<DataPreview
-					columns={[
-						{ id: "name", label: "Name" },
-						{ id: "engine", label: "Engine", width: 150 },
-						{ id: "priority", label: "Priority", width: 96 },
-						{ id: "status", label: "Status", width: 110 },
-						{ id: "actions", label: "", width: 48 },
-					]}
-					rows={
-						isLoading
-							? []
-							: policies.map((policy) => {
-									const statusView = getAccessPolicyStatusView(policy);
+				{isLoading ? (
+					<div className={classes.skeletonList}>
+						{["a", "b", "c", "d", "e"].map((k) => (
+							<Skeleton key={k} className={classes.skeletonRow} />
+						))}
+					</div>
+				) : isError ? (
+					<EmptyState
+						title="Failed to load policies"
+						description={error instanceof Error ? error.message : "Something went wrong while loading access policies."}
+						actions={[
+							<Button key="retry" view="action" onClick={() => refetch()}>
+								Retry
+							</Button>,
+						]}
+					/>
+				) : policies.length === 0 ? (
+					<EmptyState
+						title={isFiltered ? "No matching policies" : "No access policies yet"}
+						description={
+							isFiltered
+								? "No policies match your search. Try a different term."
+								: "Define fine-grained access control rules with matchers and custom scripts."
+						}
+						actions={
+							isFiltered
+								? [
+										<Button key="clear" view="outlined" onClick={() => setSearch("")}>
+											Clear filters
+										</Button>,
+									]
+								: [
+										<Button key="create" view="action" onClick={open}>
+											Create Policy
+										</Button>,
+									]
+						}
+					/>
+				) : (
+					<DataPreview
+						columns={[
+							{ id: "name", label: "Name" },
+							{ id: "engine", label: "Engine", width: 150 },
+							{ id: "priority", label: "Priority", width: 96 },
+							{ id: "status", label: "Status", width: 110 },
+							{ id: "actions", label: "", width: 48 },
+						]}
+						rows={policies.map((policy) => {
+							const statusView = getAccessPolicyStatusView(policy);
 
-									return {
-										id: policy.id ?? policy.name,
-										name: (
-											<div className={classes.policyCell}>
-												<ShieldCheck size={16} color="green" />
-												<div className={classes.policyText}>
-													<Text size="sm" fw={500} className={classes.policyName}>
-														{policy.name}
-													</Text>
-													<Text size="xs" c="dimmed" className={classes.policyDescription}>
-														{policy.description || "No description"}
-													</Text>
-												</div>
-											</div>
-										),
-										engine: <EngineTypeBadge type={policy.engine?.type} />,
-										priority: <Text size="sm">{getAccessPolicyPriority(policy)}</Text>,
-										status: (
-											<Badge color={statusView.color} variant="light">
-												{statusView.label}
-											</Badge>
-										),
-										actions: (
-											<Menu position="bottom-end" withinPortal>
-												<Menu.Target>
-													<ActionIcon variant="subtle" color="gray">
-														<EllipsisVertical size={16} />
-													</ActionIcon>
-												</Menu.Target>
-												<Menu.Dropdown>
-													<Menu.Item
-														leftSection={<Pencil size={14} />}
-														onClick={() => handleEdit(policy)}
-													>
-														Edit
-													</Menu.Item>
-													<Menu.Item
-														leftSection={<TrashBin size={14} />}
-														color="red"
-														onClick={() => policy.id && handleDelete(policy.id)}
-													>
-														Delete
-													</Menu.Item>
-												</Menu.Dropdown>
-											</Menu>
-										),
-									};
-								})
-					}
-					emptyText={isLoading ? "Loading policies..." : "No policies found"}
-					getRowKey={(row, index) => String(row.id ?? policies[index]?.id ?? index)}
-				/>
+							return {
+								id: policy.id ?? policy.name,
+								name: (
+									<div className={classes.policyCell}>
+										<ShieldCheck width={16} height={16} className={classes.policyIcon} aria-hidden="true" />
+										<div className={classes.policyText}>
+											<Text variant="body-2" className={classes.policyName}>
+												<strong>{policy.name}</strong>
+											</Text>
+											<Text variant="caption-2" color="secondary" className={classes.policyDescription}>
+												{policy.description || "No description"}
+											</Text>
+										</div>
+									</div>
+								),
+								engine: <EngineTypeBadge type={policy.engine?.type} />,
+								priority: <Text variant="body-2">{getAccessPolicyPriority(policy)}</Text>,
+								status: <Badge color={statusView.color}>{statusView.label}</Badge>,
+								actions: (
+									<DropdownMenu
+										size="s"
+										icon={<EllipsisVertical width={16} />}
+										defaultSwitcherProps={{
+											view: "flat-secondary",
+											size: "s",
+											"aria-label": "Policy actions",
+											"aria-haspopup": "menu",
+										}}
+										popupProps={{ placement: "bottom-end" }}
+										items={[
+											{
+												text: "Edit",
+												iconStart: <Pencil width={14} />,
+												action: () => handleEdit(policy),
+											},
+											[
+												{
+													text: "Delete",
+													iconStart: <TrashBin width={14} />,
+													theme: "danger",
+													action: () => setDeleteTarget(policy),
+												},
+											],
+										]}
+									/>
+								),
+							};
+						})}
+						getRowKey={(row, index) => String(row.id ?? policies[index]?.id ?? index)}
+					/>
+				)}
 			</Card>
 
 			<PolicyModal opened={opened} onClose={handleClose} policy={editingPolicy} />
+
+			<DeletePolicyModal
+				opened={!!deleteTarget}
+				onClose={() => setDeleteTarget(null)}
+				onConfirm={handleDeleteConfirm}
+				policyName={deleteTarget?.name ?? ""}
+				isDeleting={deletePolicy.isPending}
+			/>
 		</WorkspacePageLayout>
 	);
 }
@@ -184,25 +250,64 @@ function EngineTypeBadge({ type }: { type?: AccessPolicyEngineType }) {
 	switch (type) {
 		case "allow":
 			return (
-				<Badge color={view.color} variant="light" leftSection={<Check size={12} />}>
+				<Badge color={view.color} leftSection={<Check width={12} height={12} aria-hidden="true" />}>
 					{view.label}
 				</Badge>
 			);
 		case "deny":
 			return (
-				<Badge color={view.color} variant="light" leftSection={<Xmark size={12} />}>
+				<Badge color={view.color} leftSection={<Xmark width={12} height={12} aria-hidden="true" />}>
 					{view.label}
 				</Badge>
 			);
 		case "quickjs":
 			return (
-				<Badge color={view.color} variant="light" leftSection={<CodeIcon width={12} />}>
+				<Badge color={view.color} leftSection={<CodeIcon width={12} height={12} aria-hidden="true" />}>
 					{view.label}
 				</Badge>
 			);
 		default:
 			return <Badge color={view.color}>{view.label}</Badge>;
 	}
+}
+
+function DeletePolicyModal({
+	opened,
+	onClose,
+	onConfirm,
+	policyName,
+	isDeleting,
+}: {
+	opened: boolean;
+	onClose: () => void;
+	onConfirm: () => void;
+	policyName: string;
+	isDeleting: boolean;
+}) {
+	return (
+		<Modal opened={opened} onClose={onClose} title="Delete Access Policy" size="md">
+			<div className={classes.deleteModalContent}>
+				<Text variant="body-2">
+					You are about to delete the policy: <strong>{policyName}</strong>
+				</Text>
+
+				<Alert
+					theme="danger"
+					title="This action cannot be undone."
+					message="Requests that relied on this policy will fall back to other matching rules."
+				/>
+
+				<div className={classes.formActions}>
+					<Button view="flat-secondary" onClick={onClose} disabled={isDeleting}>
+						Cancel
+					</Button>
+					<Button view="flat-danger" onClick={onConfirm} loading={isDeleting}>
+						Delete Policy
+					</Button>
+				</div>
+			</div>
+		</Modal>
+	);
 }
 
 interface PolicyFormValues {
@@ -395,15 +500,16 @@ function PolicyModal({
 									</Field>
 									<Field<number> name="priority">
 										{({ input, meta }) => (
-											<NumberInput
-												label="Priority"
-												description="Lower = evaluated first (0-1000)"
-												min={0}
-												max={1000}
-												value={input.value}
-												onChange={input.onChange}
-												error={meta.touched && meta.error ? meta.error : undefined}
-											/>
+											<FieldWithHint hint="Lower = evaluated first (0-1000)">
+												<NumberInput
+													label="Priority"
+													min={0}
+													max={1000}
+													value={input.value}
+													onChange={input.onChange}
+													error={meta.touched && meta.error ? meta.error : undefined}
+												/>
+											</FieldWithHint>
 										)}
 									</Field>
 								</div>
@@ -421,40 +527,45 @@ function PolicyModal({
 
 								<Field<boolean> name="active" type="checkbox">
 									{({ input }) => (
-										<Switch
-											label="Active"
-											description="Inactive policies are not evaluated"
-											checked={input.checked ?? false}
-											onChange={input.onChange}
-										/>
+										<div className={classes.switchField}>
+											<Switch
+												content="Active"
+												checked={input.checked ?? false}
+												onUpdate={input.onChange}
+											/>
+											<Text variant="caption-2" color="secondary">
+												Inactive policies are not evaluated
+											</Text>
+										</div>
 									)}
 								</Field>
 
-								<Divider label="Engine" labelPosition="center" />
+								<Divider align="center">Engine</Divider>
 
 								<Field<string> name="engineType">
 									{({ input }) => (
-										<Select
-											label="Engine Type"
-											description="How access decisions are made"
-											data={[
-												{ label: "Allow - Always allow access", value: "allow" },
-												{ label: "Deny - Always deny access", value: "deny" },
-												{ label: "QuickJS - Custom JavaScript policy", value: "quickjs" },
-											]}
-											value={input.value}
-											onChange={input.onChange}
-										/>
+										<FieldWithHint hint="How access decisions are made">
+											<Select
+												label="Engine Type"
+												data={[
+													{ label: "Allow - Always allow access", value: "allow" },
+													{ label: "Deny - Always deny access", value: "deny" },
+													{ label: "QuickJS - Custom JavaScript policy", value: "quickjs" },
+												]}
+												value={input.value}
+												onChange={input.onChange}
+											/>
+										</FieldWithHint>
 									)}
 								</Field>
 
 								{values.engineType === "quickjs" && (
 									<div className={classes.scriptSection}>
-										<Text size="sm" fw={500} mb={4}>
-											Policy Script{" "}
+										<Text variant="body-2" className={classes.scriptLabel}>
+											<strong>Policy Script</strong>{" "}
 											<span className={classes.requiredMark}>*</span>
 										</Text>
-										<Text size="xs" c="dimmed" mb="xs">
+										<Text variant="caption-2" color="secondary" className={classes.scriptHint}>
 											Write JavaScript to evaluate access. Use <Code>allow()</Code>,{" "}
 											<Code>deny(reason)</Code>, <Code>abstain()</Code>. Press Ctrl+Space for autocomplete.
 										</Text>
@@ -470,7 +581,7 @@ function PolicyModal({
 												const scriptError =
 													typeof errors?.script === "string" ? errors.script : undefined;
 												return scriptError && touched?.script ? (
-													<Text size="xs" c="red" mt={4}>
+													<Text variant="caption-2" color="danger" className={classes.scriptError}>
 														{scriptError}
 													</Text>
 												) : null;
@@ -492,7 +603,7 @@ function PolicyModal({
 									</Field>
 								)}
 
-								<Divider label="Matcher" labelPosition="center" />
+								<Divider align="center">Matcher</Divider>
 
 								<button
 									type="button"
@@ -500,16 +611,16 @@ function PolicyModal({
 									onClick={matcherHandlers.toggle}
 									aria-expanded={matcherOpen}
 								>
-									{matcherOpen ? <ChevronDown width={16} /> : <ChevronRight width={16} />}
-									<span>Matcher</span>
-									{hasMatcherValues && (
-										<Badge size="xs" variant="light">
-											Configured
-										</Badge>
+									{matcherOpen ? (
+										<ChevronDown width={16} aria-hidden="true" />
+									) : (
+										<ChevronRight width={16} aria-hidden="true" />
 									)}
+									<span>Matcher</span>
+									{hasMatcherValues && <Badge size="sm">Configured</Badge>}
 								</button>
 
-								<Text size="xs" c="dimmed">
+								<Text variant="caption-2" color="secondary">
 									Define when this policy applies. All specified conditions must match (AND logic).
 									Leave empty to match all requests.
 								</Text>
@@ -519,28 +630,30 @@ function PolicyModal({
 										<div className={classes.formGrid}>
 											<Field<string[]> name="roles">
 												{({ input }) => (
-													<MultiSelect
-														label="Roles"
-														description="User must have any of these roles"
-														placeholder="e.g. admin, practitioner"
-														data={[...new Set(["admin", "practitioner", "patient", "nurse", ...input.value])]}
-														searchable
-														value={input.value}
-														onChange={input.onChange}
-													/>
+													<FieldWithHint hint="User must have any of these roles">
+														<MultiSelect
+															label="Roles"
+															placeholder="e.g. admin, practitioner"
+															data={[...new Set(["admin", "practitioner", "patient", "nurse", ...input.value])]}
+															searchable
+															value={input.value}
+															onChange={input.onChange}
+														/>
+													</FieldWithHint>
 												)}
 											</Field>
 											<Field<string[]> name="clients">
 												{({ input }) => (
-													<MultiSelect
-														label="Clients"
-														description="OAuth client IDs (supports * wildcard)"
-														placeholder="Select or add clients"
-														data={clientOptions}
-														searchable
-														value={input.value}
-														onChange={input.onChange}
-													/>
+													<FieldWithHint hint="OAuth client IDs (supports * wildcard)">
+														<MultiSelect
+															label="Clients"
+															placeholder="Select or add clients"
+															data={clientOptions}
+															searchable
+															value={input.value}
+															onChange={input.onChange}
+														/>
+													</FieldWithHint>
 												)}
 											</Field>
 										</div>
@@ -548,93 +661,100 @@ function PolicyModal({
 										<div className={classes.formGrid}>
 											<Field<string[]> name="userTypes">
 												{({ input }) => (
-													<MultiSelect
-														label="User Types"
-														description="User's FHIR resource type"
-														data={userTypeOptions}
-														searchable
-														value={input.value}
-														onChange={input.onChange}
-													/>
+													<FieldWithHint hint="User's FHIR resource type">
+														<MultiSelect
+															label="User Types"
+															data={userTypeOptions}
+															searchable
+															value={input.value}
+															onChange={input.onChange}
+														/>
+													</FieldWithHint>
 												)}
 											</Field>
 											<Field<string[]> name="resourceTypes">
 												{({ input }) => (
-													<MultiSelect
-														label="Resource Types"
-														description="Target FHIR resource types"
-														data={typeOptions}
-														searchable
-														value={input.value}
-														onChange={input.onChange}
-													/>
+													<FieldWithHint hint="Target FHIR resource types">
+														<MultiSelect
+															label="Resource Types"
+															data={typeOptions}
+															searchable
+															value={input.value}
+															onChange={input.onChange}
+														/>
+													</FieldWithHint>
 												)}
 											</Field>
 										</div>
 
 										<Field<string[]> name="operations">
 											{({ input }) => (
-												<MultiSelect
-													label="Operations"
-													description="FHIR operations to match"
-													data={operationOptions}
-													searchable
-													value={input.value}
-													onChange={input.onChange}
-												/>
+												<FieldWithHint hint="FHIR operations to match">
+													<MultiSelect
+														label="Operations"
+														data={operationOptions}
+														searchable
+														value={input.value}
+														onChange={input.onChange}
+													/>
+												</FieldWithHint>
 											)}
 										</Field>
 
 										<div className={classes.formGrid}>
 											<Field<string[]> name="operationIds">
 												{({ input }) => (
-													<MultiSelect
-														label="Operation IDs"
-														description="Specific operation IDs (e.g. fhir.read, graphql.query)"
-														placeholder="Add operation ID"
-														data={input.value}
-														searchable
-														value={input.value}
-														onChange={input.onChange}
-													/>
+													<FieldWithHint hint="Specific operation IDs (e.g. fhir.read, graphql.query)">
+														<MultiSelect
+															label="Operation IDs"
+															placeholder="Add operation ID"
+															data={input.value}
+															searchable
+															value={input.value}
+															onChange={input.onChange}
+														/>
+													</FieldWithHint>
 												)}
 											</Field>
 											<Field<string[]> name="paths">
 												{({ input }) => (
-													<MultiSelect
-														label="Paths"
-														description="Request path patterns (glob syntax)"
-														placeholder="e.g. /Patient/*, /admin/*"
-														data={input.value}
-														searchable
-														value={input.value}
-														onChange={input.onChange}
-													/>
+													<FieldWithHint hint="Request path patterns (glob syntax)">
+														<MultiSelect
+															label="Paths"
+															placeholder="e.g. /Patient/*, /admin/*"
+															data={input.value}
+															searchable
+															value={input.value}
+															onChange={input.onChange}
+														/>
+													</FieldWithHint>
 												)}
 											</Field>
 										</div>
 
 										<Field<string[]> name="sourceIps">
 											{({ input }) => (
-												<MultiSelect
-													label="Source IPs"
-													description="Client IP addresses in CIDR notation"
-													placeholder="e.g. 192.168.1.0/24, 10.0.0.0/8"
-													data={input.value}
-													searchable
-													value={input.value}
-													onChange={input.onChange}
-												/>
+												<FieldWithHint hint="Client IP addresses in CIDR notation">
+													<MultiSelect
+														label="Source IPs"
+														placeholder="e.g. 192.168.1.0/24, 10.0.0.0/8"
+														data={input.value}
+														searchable
+														value={input.value}
+														onChange={input.onChange}
+													/>
+												</FieldWithHint>
 											)}
 										</Field>
 									</div>
 								</Collapse>
 
 								<div className={classes.formActions}>
-									<Button variant="light" onClick={onClose} type="button">
+									<Button view="flat-secondary" onClick={onClose} type="button">
 										Cancel
 									</Button>
 									<Button
+										view="action"
 										type="submit"
 										loading={submitting || create.isPending || update.isPending}
 									>

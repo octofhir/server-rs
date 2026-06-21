@@ -1,15 +1,17 @@
-import { ActionIcon, Button, Card, Field, Form, Modal, TextInput, type FormApi, useDebouncedValue, useDisclosure } from "@octofhir/ui-kit";
+import { Button, Card, Field, Form, Modal, TextInput, type FormApi, useDebouncedValue, useDisclosure } from "@octofhir/ui-kit";
 import { useMemo, useState } from "react";
 import {
 	Text,
 	DataPreview,
 	Badge,
-	Menu,
 	Checkbox,
+	EmptyState,
+	Skeleton,
 	Textarea,
 	Alert,
 } from "@octofhir/ui-kit";
 import { WorkspacePageLayout } from "@/widgets/workspace-page";
+import { DropdownMenu } from "@gravity-ui/uikit";
 import {
 	Plus,
 	Magnifier,
@@ -17,7 +19,6 @@ import {
 	Pencil,
 	TrashBin,
 	Shield,
-	TriangleExclamation,
 } from "@gravity-ui/icons";
 import {
 	defaultRolePermissions,
@@ -44,10 +45,11 @@ export function RolesPage() {
 	const [editingRole, setEditingRole] = useState<RoleResource | null>(null);
 	const [deleteTarget, setDeleteTarget] = useState<RoleResource | null>(null);
 
-	const { data, isLoading } = useRoles({ search: debouncedSearch || undefined });
+	const { data, isLoading, isError, error, refetch } = useRoles({ search: debouncedSearch || undefined });
 	const deleteRole = useDeleteRole();
 
 	const roles = getBundleResources<RoleResource>(data);
+	const isFiltered = debouncedSearch.length > 0;
 
 	const handleEdit = (role: RoleResource) => {
 		setEditingRole(role);
@@ -76,15 +78,19 @@ export function RolesPage() {
 			title="Roles"
 			description="Manage roles and permissions"
 			actions={
-				<Button leftSection={<Plus size={16} />} onClick={open}>
+				<Button view="action" onClick={open}>
+					<Button.Icon>
+						<Plus width={16} />
+					</Button.Icon>
 					Create Role
 				</Button>
 			}
 			toolbar={
 				<div className={classes.toolbar}>
 					<TextInput
+						aria-label="Search roles by name"
 						placeholder="Search roles..."
-						leftSection={<Magnifier size={16} />}
+						leftSection={<Magnifier width={16} />}
 						value={search}
 						onChange={(e) => setSearch(e.currentTarget.value)}
 						className={classes.search}
@@ -94,93 +100,121 @@ export function RolesPage() {
 		>
 
 			<Card className={classes.tableContainer}>
-				<DataPreview
-					columns={[
-						{ id: "role", label: "Role" },
-						{ id: "permissions", label: "Permissions" },
-						{ id: "type", label: "Type", width: 110 },
-						{ id: "status", label: "Status", width: 110 },
-						{ id: "actions", label: "", width: 48 },
-					]}
-					rows={
-						isLoading
-							? []
-							: roles.map((role) => {
-									const permissionPreview = getRolePermissionPreview(role);
-									const typeView = getRoleTypeView(role);
-									const statusView = getRoleStatusView(role);
+				{isLoading ? (
+					<div className={classes.skeletonList}>
+						{["a", "b", "c", "d", "e"].map((k) => (
+							<Skeleton key={k} className={classes.skeletonRow} />
+						))}
+					</div>
+				) : isError ? (
+					<EmptyState
+						title="Failed to load roles"
+						description={error instanceof Error ? error.message : "Something went wrong while loading roles."}
+						actions={[
+							<Button key="retry" view="action" onClick={() => refetch()}>
+								Retry
+							</Button>,
+						]}
+					/>
+				) : roles.length === 0 ? (
+					<EmptyState
+						title={isFiltered ? "No matching roles" : "No roles yet"}
+						description={
+							isFiltered
+								? "No roles match your search. Try a different term."
+								: "Create roles to group permissions and assign them to users."
+						}
+						actions={
+							isFiltered
+								? [
+										<Button key="clear" view="outlined" onClick={() => setSearch("")}>
+											Clear filters
+										</Button>,
+									]
+								: [
+										<Button key="create" view="action" onClick={open}>
+											Create Role
+										</Button>,
+									]
+						}
+					/>
+				) : (
+					<DataPreview
+						columns={[
+							{ id: "role", label: "Role" },
+							{ id: "permissions", label: "Permissions" },
+							{ id: "type", label: "Type", width: 110 },
+							{ id: "status", label: "Status", width: 110 },
+							{ id: "actions", label: "", width: 48 },
+						]}
+						rows={roles.map((role) => {
+							const permissionPreview = getRolePermissionPreview(role);
+							const typeView = getRoleTypeView(role);
+							const statusView = getRoleStatusView(role);
 
-									return {
-										role: (
-											<div className={classes.roleInfo}>
-												<div className={classes.roleIcon}>
-													<Shield size={18} />
-												</div>
-												<div className={classes.roleText}>
-													<Text className={classes.roleName}>{role.name}</Text>
-													<Text className={classes.roleDescription}>
-														{role.description || "No description"}
-													</Text>
-												</div>
-											</div>
-										),
-										permissions: (
-											<div className={classes.badgeList}>
-												{permissionPreview.visible.map((permission) => (
-													<Badge key={permission} size="sm" variant="dot">
-														{permission}
-													</Badge>
-												))}
-												{permissionPreview.remaining > 0 && (
-													<Badge size="sm" variant="light">
-														+{permissionPreview.remaining} more
-													</Badge>
-												)}
-											</div>
-										),
-										type: (
-											<Badge variant={typeView.variant} color={typeView.color}>
-												{typeView.label}
+							return {
+								role: (
+									<div className={classes.roleInfo}>
+										<div className={classes.roleIcon}>
+											<Shield width={18} height={18} aria-hidden="true" />
+										</div>
+										<div className={classes.roleText}>
+											<Text className={classes.roleName}>{role.name}</Text>
+											<Text className={classes.roleDescription}>
+												{role.description || "No description"}
+											</Text>
+										</div>
+									</div>
+								),
+								permissions: (
+									<div className={classes.badgeList}>
+										{permissionPreview.visible.map((permission) => (
+											<Badge key={permission} size="sm">
+												{permission}
 											</Badge>
-										),
-										status: (
-											<Badge color={statusView.color} variant="light">
-												{statusView.label}
-											</Badge>
-										),
-										actions: (
-											<Menu position="bottom-end" withinPortal>
-												<Menu.Target>
-													<ActionIcon variant="subtle" color="gray">
-														<EllipsisVertical size={16} />
-													</ActionIcon>
-												</Menu.Target>
-												<Menu.Dropdown>
-													<Menu.Item
-														leftSection={<Pencil size={14} />}
-														onClick={() => handleEdit(role)}
-														disabled={role.isSystem}
-													>
-														Edit
-													</Menu.Item>
-													<Menu.Divider />
-													<Menu.Item
-														leftSection={<TrashBin size={14} />}
-														color="red"
-														onClick={() => handleDeleteClick(role)}
-														disabled={role.isSystem}
-													>
-														Delete
-													</Menu.Item>
-												</Menu.Dropdown>
-											</Menu>
-										),
-									};
-								})
-					}
-					emptyText={isLoading ? "Loading roles..." : "No roles found"}
-					getRowKey={(_row, index) => roles[index]?.id ?? roles[index]?.name ?? `${index}`}
-				/>
+										))}
+										{permissionPreview.remaining > 0 && (
+											<Badge size="sm">+{permissionPreview.remaining} more</Badge>
+										)}
+									</div>
+								),
+								type: <Badge color={typeView.color}>{typeView.label}</Badge>,
+								status: <Badge color={statusView.color}>{statusView.label}</Badge>,
+								actions: (
+									<DropdownMenu
+										size="s"
+										icon={<EllipsisVertical width={16} />}
+										defaultSwitcherProps={{
+											view: "flat-secondary",
+											size: "s",
+											"aria-label": "Role actions",
+											"aria-haspopup": "menu",
+										}}
+										popupProps={{ placement: "bottom-end" }}
+										items={[
+											{
+												text: "Edit",
+												iconStart: <Pencil width={14} />,
+												disabled: role.isSystem,
+												action: () => handleEdit(role),
+											},
+											[
+												{
+													text: "Delete",
+													iconStart: <TrashBin width={14} />,
+													theme: "danger",
+													disabled: role.isSystem,
+													action: () => handleDeleteClick(role),
+												},
+											],
+										]}
+									/>
+								),
+							};
+						})}
+						getRowKey={(_row, index) => roles[index]?.id ?? roles[index]?.name ?? `${index}`}
+					/>
+				)}
 			</Card>
 
 			<RoleModal opened={opened} onClose={handleClose} role={editingRole} />
@@ -310,8 +344,8 @@ function RoleModal({
 							</Field>
 
 							<div>
-								<Text size="sm" fw={500} className={classes.sectionLabel}>
-									Permissions
+								<Text variant="body-2" className={classes.sectionLabel}>
+									<strong>Permissions</strong>
 								</Text>
 								<div className={classes.permissionMatrix}>
 									{Object.entries(groupedPermissions).map(([category, perms]) => (
@@ -320,13 +354,13 @@ function RoleModal({
 											{perms.map((perm) => (
 												<div key={perm.code} className={classes.permissionItem}>
 													<Checkbox
-														size="xs"
+														size="s"
+														content={perm.display}
 														checked={values.permissions.includes(perm.code)}
 														onChange={(e) =>
 															togglePermission(api, values.permissions, perm.code, e.currentTarget.checked)
 														}
 													/>
-													<Text className={classes.permissionLabel}>{perm.display}</Text>
 												</div>
 											))}
 										</div>
@@ -336,20 +370,25 @@ function RoleModal({
 
 							<Field<boolean> name="active" type="checkbox">
 								{({ input }) => (
-									<Checkbox
-										label="Active"
-										description="Role can be assigned to users"
-										checked={input.checked ?? false}
-										onChange={input.onChange}
-									/>
+									<div className={classes.switchField}>
+										<Checkbox
+											content="Active"
+											checked={input.checked ?? false}
+											onChange={input.onChange}
+										/>
+										<Text variant="caption-2" color="secondary">
+											Role can be assigned to users
+										</Text>
+									</div>
 								)}
 							</Field>
 
 							<div className={classes.formActions}>
-								<Button variant="light" onClick={onClose} type="button">
+								<Button view="flat-secondary" onClick={onClose} type="button">
 									Cancel
 								</Button>
 								<Button
+									view="action"
 									type="submit"
 									loading={submitting || create.isPending || update.isPending}
 								>
@@ -390,28 +429,21 @@ function DeleteRoleModal({
 	return (
 		<Modal opened={opened} onClose={onClose} title="Delete Role" size="md">
 			<div className={classes.deleteModalContent}>
-				<Text size="sm">
+				<Text variant="body-2">
 					You are about to delete the role: <strong>{roleName}</strong>
 				</Text>
 
 				<Alert
-					icon={<TriangleExclamation size={20} />}
-					color="red"
-					variant="light"
-				>
-					<Text size="sm" fw={500}>
-						This action cannot be undone.
-					</Text>
-					<Text size="sm" c="dimmed">
-						Users with this role will lose the associated permissions.
-					</Text>
-				</Alert>
+					theme="danger"
+					title="This action cannot be undone."
+					message="Users with this role will lose the associated permissions."
+				/>
 
 				<div className={classes.formActions}>
-					<Button variant="light" onClick={onClose} disabled={isDeleting}>
+					<Button view="flat-secondary" onClick={onClose} disabled={isDeleting}>
 						Cancel
 					</Button>
-					<Button color="red" onClick={onConfirm} loading={isDeleting}>
+					<Button view="flat-danger" onClick={onConfirm} loading={isDeleting}>
 						Delete Role
 					</Button>
 				</div>

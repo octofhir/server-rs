@@ -1,1 +1,1 @@
-export { Alert, type AlertProps } from "@gravity-ui/uikit";
+export { Alert, type AlertProps, type AlertTheme } from "./Alert";

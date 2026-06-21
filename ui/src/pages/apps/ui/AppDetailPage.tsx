@@ -1,9 +1,7 @@
 import { useParams, useNavigate } from "react-router-dom";
 import {
-	Title,
 	Text,
 	Badge,
-	Loader,
 	Alert,
 	Button,
 	Code,
@@ -14,6 +12,8 @@ import {
 	DataPreview,
 	KeyValueList,
 	SectionPanel,
+	Skeleton,
+	EmptyState,
 } from "@octofhir/ui-kit";
 import { WorkspacePageLayout } from "@/widgets/workspace-page";
 import {
@@ -45,7 +45,7 @@ function MethodBadge({ method }: { method: string }) {
 	const methodView = getAppMethodView(method);
 
 	return (
-		<Badge size="xs" variant="light" color={methodView.color}>
+		<Badge size="xs" color={methodView.color}>
 			{methodView.method}
 		</Badge>
 	);
@@ -54,13 +54,11 @@ function MethodBadge({ method }: { method: string }) {
 export function AppDetailPage() {
 	const { id } = useParams<{ id: string }>();
 	const navigate = useNavigate();
-	const { data: app, isLoading, error } = useApp(id ?? null);
+	const { data: app, isLoading, isError, error, refetch } = useApp(id ?? null);
 
 	if (!id) {
 		return (
-			<Alert icon={<IconAlertCircle size={16} />} color="fire" variant="light">
-				App ID is required
-			</Alert>
+			<Alert theme="danger" title="App ID is required" message="No application identifier was provided." />
 		);
 	}
 
@@ -80,7 +78,11 @@ export function AppDetailPage() {
 				</Breadcrumbs>
 			}
 			actions={
-				<Button variant="subtle" leftSection={<IconArrowLeft size={16} />} onClick={() => navigate("/apps")}>
+				<Button
+					view="flat"
+					leftSection={<IconArrowLeft width={16} height={16} aria-hidden="true" />}
+					onClick={() => navigate("/apps")}
+				>
 					Back
 				</Button>
 			}
@@ -88,17 +90,23 @@ export function AppDetailPage() {
 
 			{isLoading && (
 				<div className={classes.loadingState}>
-					<Loader size="sm" />
-					<Text size="sm" c="dimmed">
-						Loading app...
-					</Text>
+					<Skeleton className={classes.skeletonSummary} />
+					<Skeleton className={classes.skeletonPanel} />
+					<Skeleton className={classes.skeletonPanel} />
 				</div>
 			)}
 
-			{error && (
-				<Alert icon={<IconAlertCircle size={16} />} color="fire" variant="light">
-					{error instanceof Error ? error.message : "Failed to load app"}
-				</Alert>
+			{isError && (
+				<EmptyState
+					image={<IconAlertCircle width={48} height={48} aria-hidden="true" />}
+					title="Couldn't load application"
+					description={error instanceof Error ? error.message : "Failed to load app"}
+					actions={[
+						<Button key="retry" view="action" onClick={() => refetch()}>
+							Retry
+						</Button>,
+					]}
+				/>
 			)}
 
 			{app && (
@@ -111,31 +119,29 @@ export function AppDetailPage() {
 					>
 						<div className={classes.summaryHeader}>
 							<div className={classes.summaryMain}>
-								<ThemeIcon size="xl" variant="light" color="primary" radius="md">
-									<IconRocket size={24} />
+								<ThemeIcon size="xl" view="light" color="primary" radius="md">
+									<IconRocket width={24} height={24} aria-hidden="true" />
 								</ThemeIcon>
 								<div className={classes.summaryText}>
-									<Title order={3}>{app.name}</Title>
+									<Text variant="subheader-2" as="h3">
+										{app.name}
+									</Text>
 									{app.description && (
-										<Text size="sm" c="dimmed" maw={500}>
+										<Text variant="body-2" color="secondary" className={classes.summaryDescription}>
 											{app.description}
 										</Text>
 									)}
-									<Code size="xs" mt="xs">{app.id}</Code>
+									<Code className={classes.summaryId}>{app.id}</Code>
 								</div>
 							</div>
 							<div className={classes.summaryActions}>
-								<Badge
-									size="lg"
-									variant="light"
-									color={statusView?.color ?? "gray"}
-								>
+								<Badge size="lg" color={statusView?.color ?? "gray"}>
 									{statusView?.status}
 								</Badge>
 								<Button
-									variant="light"
-									size="xs"
-									leftSection={<IconEdit size={14} />}
+									view="outlined"
+									size="s"
+									leftSection={<IconEdit width={14} height={14} aria-hidden="true" />}
 									onClick={() => navigate(`/resources/App/${id}`)}
 								>
 									Edit
@@ -156,21 +162,21 @@ export function AppDetailPage() {
 									id: "endpoint",
 									label: (
 										<div className={classes.labelInline}>
-											<IconWorld size={14} color="var(--g-color-text-secondary)" />
+											<IconWorld width={14} height={14} color="var(--g-color-text-secondary)" aria-hidden="true" />
 											Endpoint URL
 										</div>
 									),
 									value: app.endpoint?.url ? (
 										<div className={classes.valueInline}>
-											<Code size="xs">{app.endpoint.url}</Code>
-											<Tooltip label="Open endpoint">
-												<Anchor href={app.endpoint.url} target="_blank" size="xs">
-													<IconExternalLink size={14} />
+											<Code>{app.endpoint.url}</Code>
+											<Tooltip content="Open endpoint">
+												<Anchor href={app.endpoint.url} target="_blank" aria-label="Open endpoint in new tab">
+													<IconExternalLink width={14} height={14} aria-hidden="true" />
 												</Anchor>
 											</Tooltip>
 										</div>
 									) : (
-										<Text size="sm" c="dimmed">
+										<Text variant="body-2" color="secondary">
 											{getAppEndpointDisplay(app)}
 										</Text>
 									),
@@ -179,7 +185,7 @@ export function AppDetailPage() {
 									id: "timeout",
 									label: (
 										<div className={classes.labelInline}>
-											<IconClock size={14} color="var(--g-color-text-secondary)" />
+											<IconClock width={14} height={14} color="var(--g-color-text-secondary)" aria-hidden="true" />
 											Timeout
 										</div>
 									),
@@ -189,7 +195,7 @@ export function AppDetailPage() {
 									id: "api-version",
 									label: (
 										<div className={classes.labelInline}>
-											<IconApi size={14} color="var(--g-color-text-secondary)" />
+											<IconApi width={14} height={14} color="var(--g-color-text-secondary)" aria-hidden="true" />
 											API Version
 										</div>
 									),
@@ -199,7 +205,7 @@ export function AppDetailPage() {
 									id: "base-path",
 									label: (
 										<div className={classes.labelInline}>
-											<IconWorld size={14} color="var(--g-color-text-secondary)" />
+											<IconWorld width={14} height={14} color="var(--g-color-text-secondary)" aria-hidden="true" />
 											Base Path
 										</div>
 									),
@@ -212,9 +218,9 @@ export function AppDetailPage() {
 					<SectionPanel
 						title={
 							<div className={classes.sectionTitle}>
-								<IconApi size={20} color="var(--octo-brand-primary-active)" />
+								<IconApi width={20} height={20} color="var(--octo-brand-primary-active)" aria-hidden="true" />
 								Operations
-								<Badge size="sm" variant="light" color="gray">
+								<Badge size="sm" color="gray">
 									{operations.length}
 								</Badge>
 							</div>
@@ -235,16 +241,21 @@ export function AppDetailPage() {
 								const accessView = getAppOperationAccessView(op.public);
 
 								return {
-									id: <Code size="xs">{op.id}</Code>,
+									id: <Code>{op.id}</Code>,
 									method: <MethodBadge method={op.method} />,
-									path: <Code size="xs">{formatAppOperationPath(op.path)}</Code>,
+									path: <Code>{formatAppOperationPath(op.path)}</Code>,
 									access: (
-										<Tooltip label={accessView.description}>
+										<Tooltip content={accessView.description}>
 											<Badge
 												size="xs"
 												color={accessView.color}
-												variant="light"
-												leftSection={op.public ? <IconLockOpen size={10} /> : <IconLock size={10} />}
+												leftSection={
+													op.public ? (
+														<IconLockOpen width={10} height={10} aria-hidden="true" />
+													) : (
+														<IconLock width={10} height={10} aria-hidden="true" />
+													)
+												}
 											>
 												{accessView.label}
 											</Badge>
@@ -253,20 +264,22 @@ export function AppDetailPage() {
 									policy: op.policy ? (
 										<div className={classes.policyBadges}>
 											{op.policy.roles && (
-												<Tooltip label={`Roles: ${op.policy.roles.join(", ")}`}>
-													<Badge size="xs" variant="outline" color="violet">
+												<Tooltip content={`Roles: ${op.policy.roles.join(", ")}`}>
+													<Badge size="xs" color="deep">
 														{op.policy.roles.length} role(s)
 													</Badge>
 												</Tooltip>
 											)}
 											{op.policy.compartment && (
-												<Badge size="xs" variant="outline" color="blue">
+												<Badge size="xs" color="primary">
 													{op.policy.compartment}
 												</Badge>
 											)}
 										</div>
 									) : (
-										<Text size="xs" c="dimmed">-</Text>
+										<Text variant="caption-2" color="secondary">
+											-
+										</Text>
 									),
 								};
 							})}
@@ -278,9 +291,14 @@ export function AppDetailPage() {
 					<SectionPanel
 						title={
 							<div className={classes.sectionTitle}>
-								<IconWebhook size={20} color="var(--g-color-base-warning-medium-hover)" />
+								<IconWebhook
+									width={20}
+									height={20}
+									color="var(--g-color-base-warning-medium-hover)"
+									aria-hidden="true"
+								/>
 								Subscriptions
-								<Badge size="sm" variant="light" color="gray">
+								<Badge size="sm" color="gray">
 									{subscriptions.length}
 								</Badge>
 							</div>
@@ -301,46 +319,51 @@ export function AppDetailPage() {
 								const eventView = getSubscriptionEventView(sub.trigger.event);
 
 								return {
-									id: <Code size="xs">{sub.id}</Code>,
+									id: <Code>{sub.id}</Code>,
 									resource: (
-										<Badge size="xs" variant="light" color="primary">
+										<Badge size="xs" color="primary">
 											{sub.trigger.resourceType}
 										</Badge>
 									),
 									event: (
-										<Badge size="xs" variant="outline" color={eventView.color}>
+										<Badge size="xs" color={eventView.color}>
 											{eventView.event}
 										</Badge>
 									),
 									filter: sub.trigger.fhirpath ? (
-										<Tooltip label={sub.trigger.fhirpath}>
-											<Code size="xs" className={classes.filterCode}>
-												{sub.trigger.fhirpath}
-											</Code>
+										<Tooltip content={sub.trigger.fhirpath}>
+											<Code className={classes.filterCode}>{sub.trigger.fhirpath}</Code>
 										</Tooltip>
 									) : (
-										<Text size="xs" c="dimmed">All</Text>
+										<Text variant="caption-2" color="secondary">
+											All
+										</Text>
 									),
 									channel: sub.channel ? (
 										<div className={classes.channelBadges}>
-											<Badge size="xs" variant="light" color="deep">
+											<Badge size="xs" color="deep">
 												{sub.channel.type}
 											</Badge>
-											<Tooltip label={sub.channel.endpoint}>
-												<Code size="xs" className={classes.endpointCode}>
-													{sub.channel.endpoint}
-												</Code>
+											<Tooltip content={sub.channel.endpoint}>
+												<Code className={classes.endpointCode}>{sub.channel.endpoint}</Code>
 											</Tooltip>
 										</div>
 									) : sub.notification ? (
 										<div className={classes.channelBadges}>
-											<IconBell size={12} color="var(--g-color-base-warning-medium-hover)" />
-											<Badge size="xs" variant="light" color="warm">
+											<IconBell
+												width={12}
+												height={12}
+												color="var(--g-color-base-warning-medium-hover)"
+												aria-hidden="true"
+											/>
+											<Badge size="xs" color="warm">
 												notification
 											</Badge>
 										</div>
 									) : (
-										<Text size="xs" c="dimmed">-</Text>
+										<Text variant="caption-2" color="secondary">
+											-
+										</Text>
 									),
 								};
 							})}

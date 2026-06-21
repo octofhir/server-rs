@@ -27,9 +27,11 @@ function HistoryItem({
 	onSelect,
 }: { entry: QueryHistoryEntry; onSelect: (query: string) => void }) {
 	return (
-		<div
+		<button
+			type="button"
 			onClick={() => onSelect(entry.query)}
 			className={classes.historyItem}
+			aria-label={`Load query: ${entry.query}`}
 		>
 			<Text
 				size="xs"
@@ -58,7 +60,7 @@ function HistoryItem({
 					</Text>
 				)}
 			</div>
-		</div>
+		</button>
 	);
 }
 

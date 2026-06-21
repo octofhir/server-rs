@@ -7,9 +7,7 @@ import {
 	Code,
 	ThemeIcon,
 	ScrollArea,
-	CopyButton,
-	ActionIcon,
-	Tooltip,
+	ClipboardButton,
 } from "@octofhir/ui-kit";
 import {
 	Person,
@@ -20,7 +18,6 @@ import {
 	Check,
 	Xmark,
 	TriangleExclamation,
-	Copy,
 	Plus,
 	Minus,
 	ArrowRight,
@@ -77,27 +74,25 @@ function DetailRow({
 	return (
 		<div className={classes.detailRow}>
 			{Icon && (
-				<ThemeIcon size="sm" variant="light" color="gray">
-					<Icon size={12} />
+				<ThemeIcon size="s" view="light" color="gray">
+					<Icon width={12} height={12} aria-hidden="true" />
 				</ThemeIcon>
 			)}
-			<Text size="sm" c="dimmed" className={classes.detailLabel}>
+			<Text variant="body-2" color="secondary" className={classes.detailLabel}>
 				{label}
 			</Text>
 			<div className={classes.detailValueGroup}>
-				<Text size="sm" className={classes.detailValue}>
+				<Text variant="body-2" className={classes.detailValue}>
 					{value}
 				</Text>
 				{copyable && (
-					<CopyButton value={value}>
-						{({ copied, copy }) => (
-							<Tooltip label={copied ? "Copied" : "Copy"}>
-								<ActionIcon size="xs" variant="subtle" onClick={copy}>
-									{copied ? <Check size={12} /> : <Copy size={12} />}
-								</ActionIcon>
-							</Tooltip>
-						)}
-					</CopyButton>
+					<ClipboardButton
+						text={value}
+						size="xs"
+						view="flat"
+						aria-label={`Copy ${label}`}
+						tooltipInitialText={`Copy ${label}`}
+					/>
 				)}
 			</div>
 		</div>
@@ -122,7 +117,6 @@ function DiffViewer({
 						<div className={classes.diffHeader}>
 							<Badge
 								size="xs"
-								variant="light"
 								color={
 									change.op === "add"
 										? "green"
@@ -132,35 +126,35 @@ function DiffViewer({
 								}
 								leftSection={
 									change.op === "add" ? (
-										<Plus size={10} />
+										<Plus width={10} height={10} aria-hidden="true" />
 									) : change.op === "remove" ? (
-										<Minus size={10} />
+										<Minus width={10} height={10} aria-hidden="true" />
 									) : (
-										<ArrowRightArrowLeft size={10} />
+										<ArrowRightArrowLeft width={10} height={10} aria-hidden="true" />
 									)
 								}
 							>
 								{change.op}
 							</Badge>
-							<Code size="xs">{change.path}</Code>
+							<Code className={classes.codeXs}>{change.path}</Code>
 						</div>
 						<div className={classes.diffColumns}>
 							{change.op !== "add" && change.oldValue !== undefined && (
 								<div className={classes.diffOld}>
-									<Text size="xs" c="dimmed" mb={4}>
+									<Text variant="caption-2" color="secondary" className={classes.diffColumnLabel}>
 										Before
 									</Text>
-									<Code block size="xs">
+									<Code block className={classes.codeXs}>
 										{JSON.stringify(change.oldValue, null, 2)}
 									</Code>
 								</div>
 							)}
 							{change.op !== "remove" && change.newValue !== undefined && (
 								<div className={classes.diffNew}>
-									<Text size="xs" c="dimmed" mb={4}>
+									<Text variant="caption-2" color="secondary" className={classes.diffColumnLabel}>
 										After
 									</Text>
-									<Code block size="xs">
+									<Code block className={classes.codeXs}>
 										{JSON.stringify(change.newValue, null, 2)}
 									</Code>
 								</div>
@@ -178,28 +172,28 @@ function DiffViewer({
 			<div className={classes.diffColumns}>
 				{before && (
 					<div className={classes.diffOld}>
-						<Text size="sm" fw={500} mb="sm">
+						<Text variant="body-2" className={classes.diffColumnHeading}>
 							Before
 						</Text>
 						<ScrollArea.Autosize mah={300}>
-							<Code block size="xs">
+							<Code block className={classes.codeXs}>
 								{JSON.stringify(before, null, 2)}
 							</Code>
 						</ScrollArea.Autosize>
 					</div>
 				)}
 				{before && after && (
-					<ThemeIcon size="lg" variant="light" color="gray" className={classes.diffArrow}>
-						<ArrowRight size={16} />
+					<ThemeIcon size="l" view="light" color="gray" className={classes.diffArrow}>
+						<ArrowRight width={16} height={16} aria-hidden="true" />
 					</ThemeIcon>
 				)}
 				{after && (
 					<div className={classes.diffNew}>
-						<Text size="sm" fw={500} mb="sm">
+						<Text variant="body-2" className={classes.diffColumnHeading}>
 							After
 						</Text>
 						<ScrollArea.Autosize mah={300}>
-							<Code block size="xs">
+							<Code block className={classes.codeXs}>
 								{JSON.stringify(after, null, 2)}
 							</Code>
 						</ScrollArea.Autosize>
@@ -209,7 +203,7 @@ function DiffViewer({
 		);
 	}
 
-	return <Text c="dimmed" size="sm">No changes recorded</Text>;
+	return <Text color="secondary" variant="body-2">No changes recorded</Text>;
 }
 
 function AuditEventDetailComponent({ event }: AuditEventDetailProps) {
@@ -227,47 +221,43 @@ function AuditEventDetailComponent({ event }: AuditEventDetailProps) {
 					<div className={classes.header}>
 						<div className={classes.headerRow}>
 							<div className={classes.detailSection}>
-								<Text size="lg" fw={600}>
+								<Text variant="subheader-2">
 									{getAuditActionDetailLabel(event.action)}
 								</Text>
 								<div className={classes.badgeRow}>
 									<Badge
 										size="lg"
-										variant="light"
 										color={getAuditOutcomeColor(event.outcome)}
-										leftSection={<OutcomeIcon size={12} />}
+										leftSection={<OutcomeIcon width={12} height={12} aria-hidden="true" />}
 									>
 										{getAuditOutcomeLabel(event.outcome)}
 									</Badge>
 									{event.outcomeDescription && (
-										<Text size="sm" c="dimmed">
+										<Text variant="body-2" color="secondary">
 											{event.outcomeDescription}
 										</Text>
 									)}
 								</div>
 							</div>
-							<CopyButton value={event.id}>
-								{({ copied, copy }) => (
-									<Tooltip label={copied ? "Copied!" : "Copy Event ID"}>
-										<Badge
-											size="sm"
-											variant="light"
-											color="gray"
-											className={classes.copyBadge}
-											onClick={copy}
-										>
-											{event.id.slice(0, 8)}...
-										</Badge>
-									</Tooltip>
-								)}
-							</CopyButton>
+							<div className={classes.eventIdGroup}>
+								<Badge size="sm" color="gray">
+									{event.id.slice(0, 8)}...
+								</Badge>
+								<ClipboardButton
+									text={event.id}
+									size="xs"
+									view="flat"
+									aria-label="Copy Event ID"
+									tooltipInitialText="Copy Event ID"
+								/>
+							</div>
 						</div>
 					</div>
 
 					<Divider />
 
 					{/* Tabs */}
-					<Tabs defaultValue="details" variant="outline">
+					<Tabs defaultValue="details">
 						<Tabs.List>
 							<Tabs.Tab value="details">Details</Tabs.Tab>
 							{hasChanges && <Tabs.Tab value="changes">Changes</Tabs.Tab>}
@@ -279,7 +269,7 @@ function AuditEventDetailComponent({ event }: AuditEventDetailProps) {
 							<div className={classes.sectionList}>
 								{/* Timestamp */}
 								<div>
-									<Text size="xs" c="dimmed" tt="uppercase" mb="xs">
+									<Text variant="caption-2" color="secondary" className={classes.sectionLabel}>
 										Timestamp
 									</Text>
 									<DetailRow
@@ -291,7 +281,7 @@ function AuditEventDetailComponent({ event }: AuditEventDetailProps) {
 
 								{/* Actor */}
 								<div>
-									<Text size="xs" c="dimmed" tt="uppercase" mb="xs">
+									<Text variant="caption-2" color="secondary" className={classes.sectionLabel}>
 										Actor
 									</Text>
 									<div className={classes.detailSection}>
@@ -314,7 +304,7 @@ function AuditEventDetailComponent({ event }: AuditEventDetailProps) {
 
 								{/* Source */}
 								<div>
-									<Text size="xs" c="dimmed" tt="uppercase" mb="xs">
+									<Text variant="caption-2" color="secondary" className={classes.sectionLabel}>
 										Source
 									</Text>
 									<div className={classes.detailSection}>
@@ -338,7 +328,7 @@ function AuditEventDetailComponent({ event }: AuditEventDetailProps) {
 								{/* Target */}
 								{event.target && (
 									<div>
-										<Text size="xs" c="dimmed" tt="uppercase" mb="xs">
+										<Text variant="caption-2" color="secondary" className={classes.sectionLabel}>
 											Target
 										</Text>
 										<div className={classes.detailSection}>
@@ -397,7 +387,7 @@ function AuditEventDetailComponent({ event }: AuditEventDetailProps) {
 						<Tabs.Panel value="raw" pt="md">
 							<div className={classes.rawFrame}>
 								<ScrollArea.Autosize mah={400}>
-									<Code block size="xs">
+									<Code block className={classes.codeXs}>
 										{JSON.stringify(event, null, 2)}
 									</Code>
 								</ScrollArea.Autosize>

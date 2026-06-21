@@ -8,7 +8,6 @@ import {
   Badge,
   Divider,
   Collapse,
-  ActionIcon,
 } from "@octofhir/ui-kit";
 import { JsonEditor } from "@/shared/monaco/JsonEditor";
 import { useTestAutomation } from "../../lib/useAutomations";
@@ -226,15 +225,17 @@ export function PlaygroundPanel({ automationId, sourceCode }: PlaygroundPanelPro
           {/* Output */}
           {result.output !== undefined && (
             <div className={classes.resultCard}>
-              <div
+              <button
+                type="button"
                 className={classes.collapseHeader}
+                aria-expanded={outputExpanded}
                 onClick={() => setOutputExpanded(!outputExpanded)}
               >
-                <ActionIcon variant="subtle" size="sm">
+                <span aria-hidden="true" className={classes.collapseChevron}>
                   {outputExpanded ? <IconChevronDown size={16} /> : <IconChevronRight size={16} />}
-                </ActionIcon>
+                </span>
                 <Text size="sm" fw={500}>Output</Text>
-              </div>
+              </button>
               <Collapse in={outputExpanded}>
                 <Divider />
                 <div className={classes.outputScroll}>
@@ -249,15 +250,17 @@ export function PlaygroundPanel({ automationId, sourceCode }: PlaygroundPanelPro
           {/* Execution Logs */}
           {result.logs && result.logs.length > 0 && (
             <div className={classes.resultCard}>
-              <div
+              <button
+                type="button"
                 className={classes.collapseHeader}
+                aria-expanded={logsExpanded}
                 onClick={() => setLogsExpanded(!logsExpanded)}
               >
-                <ActionIcon variant="subtle" size="sm">
+                <span aria-hidden="true" className={classes.collapseChevron}>
                   {logsExpanded ? <IconChevronDown size={16} /> : <IconChevronRight size={16} />}
-                </ActionIcon>
+                </span>
                 <Text size="sm" fw={500}>Logs ({result.logs.length})</Text>
-              </div>
+              </button>
               <Collapse in={logsExpanded}>
                 <Divider />
                 <div className={classes.logsScroll}>

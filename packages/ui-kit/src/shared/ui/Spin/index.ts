@@ -1,1 +1,1 @@
-export { Spin, type SpinProps } from "@gravity-ui/uikit";
+export { Spin, type SpinProps } from "./Spin";

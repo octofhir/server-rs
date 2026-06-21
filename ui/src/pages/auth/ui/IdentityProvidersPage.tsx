@@ -1,4 +1,4 @@
-import { Card, Field, Form, useDebouncedValue, useDisclosure } from "@octofhir/ui-kit";
+import { Alert, Card, Field, Form, useDebouncedValue, useDisclosure } from "@octofhir/ui-kit";
 import { useState } from "react";
 import {
 	Text,
@@ -6,15 +6,16 @@ import {
 	TextInput,
 	DataPreview,
 	Badge,
-	ActionIcon,
-	Menu,
+	EmptyState,
 	Modal,
+	Skeleton,
 	Switch,
 	Select,
 	PasswordInput,
 	MultiSelect,
 } from "@octofhir/ui-kit";
 import { WorkspacePageLayout } from "@/widgets/workspace-page";
+import { DropdownMenu } from "@gravity-ui/uikit";
 import {
 	Plus,
 	Magnifier,
@@ -39,8 +40,9 @@ export function IdentityProvidersPage() {
 	const [debouncedSearch] = useDebouncedValue(search, 500);
 	const [opened, { open, close }] = useDisclosure(false);
 	const [editingIdp, setEditingIdp] = useState<IdentityProviderResource | null>(null);
+	const [deleteTarget, setDeleteTarget] = useState<IdentityProviderResource | null>(null);
 
-	const { data, isLoading } = useIdentityProviders({ search: debouncedSearch });
+	const { data, isLoading, isError, error, refetch } = useIdentityProviders({ search: debouncedSearch });
 	const deleteIdp = useDeleteIdentityProvider();
 
 	const handleEdit = (idp: IdentityProviderResource) => {
@@ -48,9 +50,11 @@ export function IdentityProvidersPage() {
 		open();
 	};
 
-	const handleDelete = (id: string) => {
-		if (confirm("Are you sure you want to delete this identity provider?")) {
-			deleteIdp.mutate(id);
+	const handleDeleteConfirm = () => {
+		if (deleteTarget?.id) {
+			deleteIdp.mutate(deleteTarget.id, {
+				onSuccess: () => setDeleteTarget(null),
+			});
 		}
 	};
 
@@ -60,21 +64,26 @@ export function IdentityProvidersPage() {
 	};
 
 	const providers = getBundleResources<IdentityProviderResource>(data);
+	const isFiltered = debouncedSearch.length > 0;
 
 	return (
 		<WorkspacePageLayout
 			title="Identity Providers"
 			description="Manage external OIDC/OAuth2 authentication providers"
 			actions={
-				<Button leftSection={<Plus size={16} />} onClick={open}>
+				<Button view="action" onClick={open}>
+					<Button.Icon>
+						<Plus width={16} />
+					</Button.Icon>
 					Add Provider
 				</Button>
 			}
 			toolbar={
 				<div className={classes.toolbar}>
 					<TextInput
+						aria-label="Search identity providers by name"
 						placeholder="Search by name..."
-						leftSection={<Magnifier size={16} />}
+						leftSection={<Magnifier width={16} />}
 						value={search}
 						onChange={(e) => setSearch(e.currentTarget.value)}
 						className={classes.search}
@@ -84,74 +93,105 @@ export function IdentityProvidersPage() {
 		>
 
 			<Card className={classes.tableContainer}>
-				<DataPreview
-					columns={[
-						{ id: "provider", label: "Name / Issuer" },
-						{ id: "type", label: "Type", width: 130 },
-						{ id: "status", label: "Status", width: 110 },
-						{ id: "actions", label: "", width: 48 },
-					]}
-					rows={
-						isLoading
-							? []
-							: providers.map((provider) => {
-									const typeView = getIdentityProviderTypeView(provider.type);
-									const statusView = getIdentityProviderStatusView(provider);
+				{isLoading ? (
+					<div className={classes.skeletonList}>
+						{["a", "b", "c", "d", "e"].map((k) => (
+							<Skeleton key={k} className={classes.skeletonRow} />
+						))}
+					</div>
+				) : isError ? (
+					<EmptyState
+						title="Failed to load providers"
+						description={error instanceof Error ? error.message : "Something went wrong while loading identity providers."}
+						actions={[
+							<Button key="retry" view="action" onClick={() => refetch()}>
+								Retry
+							</Button>,
+						]}
+					/>
+				) : providers.length === 0 ? (
+					<EmptyState
+						title={isFiltered ? "No matching providers" : "No identity providers yet"}
+						description={
+							isFiltered
+								? "No providers match your search. Try a different term."
+								: "Connect an external OIDC or OAuth2 provider to enable federated sign-in."
+						}
+						actions={
+							isFiltered
+								? [
+										<Button key="clear" view="outlined" onClick={() => setSearch("")}>
+											Clear filters
+										</Button>,
+									]
+								: [
+										<Button key="create" view="action" onClick={open}>
+											Add Provider
+										</Button>,
+									]
+						}
+					/>
+				) : (
+					<DataPreview
+						columns={[
+							{ id: "provider", label: "Name / Issuer" },
+							{ id: "type", label: "Type", width: 130 },
+							{ id: "status", label: "Status", width: 110 },
+							{ id: "actions", label: "", width: 48 },
+						]}
+						rows={providers.map((provider) => {
+							const typeView = getIdentityProviderTypeView(provider.type);
+							const statusView = getIdentityProviderStatusView(provider);
 
-									return {
-										provider: (
-											<div className={classes.providerCell}>
-												<Globe size={16} color="blue" />
-												<div className={classes.providerText}>
-													<Text size="sm" fw={500} className={classes.providerName}>
-														{provider.name}
-													</Text>
-													<Text size="xs" c="dimmed" className={classes.providerIssuer}>
-														{provider.issuer}
-													</Text>
-												</div>
-											</div>
-										),
-										type: (
-											<Badge variant="outline" color={typeView.color}>
-												{typeView.label}
-											</Badge>
-										),
-										status: (
-											<Badge color={statusView.color} variant="light">
-												{statusView.label}
-											</Badge>
-										),
-										actions: (
-											<Menu position="bottom-end" withinPortal>
-												<Menu.Target>
-													<ActionIcon variant="subtle" color="gray">
-														<EllipsisVertical size={16} />
-													</ActionIcon>
-												</Menu.Target>
-												<Menu.Dropdown>
-													<Menu.Item
-														leftSection={<Pencil size={14} />}
-														onClick={() => handleEdit(provider)}
-													>
-														Edit
-													</Menu.Item>
-													<Menu.Item
-														leftSection={<TrashBin size={14} />}
-														color="red"
-														onClick={() => provider.id && handleDelete(provider.id)}
-													>
-														Delete
-													</Menu.Item>
-												</Menu.Dropdown>
-											</Menu>
-										),
-									};
-								})
-					}
-					emptyText={isLoading ? "Loading providers..." : "No providers found"}
-					getRowKey={(_row, index) => providers[index]?.id ?? providers[index]?.name ?? `${index}`}
-				/>
+							return {
+								provider: (
+									<div className={classes.providerCell}>
+										<Globe width={16} height={16} className={classes.providerIcon} aria-hidden="true" />
+										<div className={classes.providerText}>
+											<Text variant="body-2" className={classes.providerName}>
+												<strong>{provider.name}</strong>
+											</Text>
+											<Text variant="caption-2" color="secondary" className={classes.providerIssuer}>
+												{provider.issuer}
+											</Text>
+										</div>
+									</div>
+								),
+								type: <Badge color={typeView.color}>{typeView.label}</Badge>,
+								status: <Badge color={statusView.color}>{statusView.label}</Badge>,
+								actions: (
+									<DropdownMenu
+										size="s"
+										icon={<EllipsisVertical width={16} />}
+										defaultSwitcherProps={{
+											view: "flat-secondary",
+											size: "s",
+											"aria-label": "Provider actions",
+											"aria-haspopup": "menu",
+										}}
+										popupProps={{ placement: "bottom-end" }}
+										items={[
+											{
+												text: "Edit",
+												iconStart: <Pencil width={14} />,
+												action: () => handleEdit(provider),
+											},
+											[
+												{
+													text: "Delete",
+													iconStart: <TrashBin width={14} />,
+													theme: "danger",
+													action: () => setDeleteTarget(provider),
+												},
+											],
+										]}
+									/>
+								),
+							};
+						})}
+						getRowKey={(_row, index) => providers[index]?.id ?? providers[index]?.name ?? `${index}`}
+					/>
+				)}
 			</Card>
 
 			<IdpModal
@@ -159,7 +199,54 @@ export function IdentityProvidersPage() {
 				onClose={handleClose}
 				idp={editingIdp}
 			/>
+
+			<DeleteIdpModal
+				opened={!!deleteTarget}
+				onClose={() => setDeleteTarget(null)}
+				onConfirm={handleDeleteConfirm}
+				providerName={deleteTarget?.name ?? ""}
+				isDeleting={deleteIdp.isPending}
+			/>
 		</WorkspacePageLayout>
+	);
+}
+
+function DeleteIdpModal({
+	opened,
+	onClose,
+	onConfirm,
+	providerName,
+	isDeleting,
+}: {
+	opened: boolean;
+	onClose: () => void;
+	onConfirm: () => void;
+	providerName: string;
+	isDeleting: boolean;
+}) {
+	return (
+		<Modal opened={opened} onClose={onClose} title="Delete Identity Provider" size="md">
+			<div className={classes.deleteModalContent}>
+				<Text variant="body-2">
+					You are about to delete the identity provider: <strong>{providerName}</strong>
+				</Text>
+
+				<Alert
+					theme="danger"
+					title="This action cannot be undone."
+					message="Users who sign in through this provider will no longer be able to authenticate."
+				/>
+
+				<div className={classes.formActions}>
+					<Button view="flat-secondary" onClick={onClose} disabled={isDeleting}>
+						Cancel
+					</Button>
+					<Button view="flat-danger" onClick={onConfirm} loading={isDeleting}>
+						Delete Provider
+					</Button>
+				</div>
+			</div>
+		</Modal>
 	);
 }
 
@@ -380,15 +467,16 @@ function IdpModal({
 
 							<Field<boolean> name="active" type="checkbox">
 								{({ input }) => (
-									<Switch label="Active" checked={input.checked ?? false} onChange={input.onChange} />
+									<Switch content="Active" checked={input.checked ?? false} onUpdate={input.onChange} />
 								)}
 							</Field>
 
 							<div className={classes.formActions}>
-								<Button variant="light" onClick={onClose} type="button">
+								<Button view="flat-secondary" onClick={onClose} type="button">
 									Cancel
 								</Button>
 								<Button
+									view="action"
 									type="submit"
 									loading={submitting || create.isPending || update.isPending}
 								>

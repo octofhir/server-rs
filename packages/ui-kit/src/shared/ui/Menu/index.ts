@@ -1,1 +1,8 @@
-export { DropdownMenu as Menu, type DropdownMenuProps as MenuProps } from "@gravity-ui/uikit";
+export {
+    Menu,
+    type MenuProps,
+    type MenuPlacement,
+    type MenuTargetProps,
+    type MenuDropdownProps,
+    type MenuItemProps,
+} from "./Menu";

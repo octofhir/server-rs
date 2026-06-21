@@ -1,0 +1,38 @@
+/* OctoFHIR Text — typography primitive. Flat, token-driven. */
+.text {
+    margin: 0;
+    font-family: var(--octo-typography-family, inherit);
+    color: var(--octo-text-primary, #1a1b1e);
+}
+
+.text[data-ellipsis="true"] {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+}
+
+/* variants: font-size / weight / line-height */
+.text[data-variant="display-1"]   { font-size: 2rem; font-weight: 700; line-height: 1.2; font-family: var(--octo-typography-heading, inherit); }
+.text[data-variant="header-1"]     { font-size: 1.5rem; font-weight: 600; line-height: 1.25; font-family: var(--octo-typography-heading, inherit); }
+.text[data-variant="header-2"]     { font-size: 1.25rem; font-weight: 600; line-height: 1.3; font-family: var(--octo-typography-heading, inherit); }
+.text[data-variant="subheader-1"]  { font-size: 1.125rem; font-weight: 600; line-height: 1.35; }
+.text[data-variant="subheader-2"]  { font-size: 1rem; font-weight: 600; line-height: 1.4; }
+.text[data-variant="subheader-3"]  { font-size: 0.875rem; font-weight: 600; line-height: 1.4; }
+.text[data-variant="body-1"]       { font-size: 1rem; font-weight: 400; line-height: 1.5; }
+.text[data-variant="body-2"]       { font-size: 0.875rem; font-weight: 400; line-height: 1.5; }
+.text[data-variant="body-3"]       { font-size: 0.8125rem; font-weight: 400; line-height: 1.5; }
+.text[data-variant="caption-1"]    { font-size: 0.8125rem; font-weight: 400; line-height: 1.4; }
+.text[data-variant="caption-2"]    { font-size: 0.75rem; font-weight: 400; line-height: 1.4; }
+.text[data-variant="code-1"],
+.text[data-variant="code-2"]       { font-family: var(--octo-typography-mono, monospace); font-size: 0.8125rem; }
+
+/* colors */
+.text[data-color="secondary"] { color: var(--octo-text-secondary, #495057); }
+.text[data-color="muted"]     { color: var(--octo-text-muted, #868e96); }
+.text[data-color="danger"]    { color: var(--octo-accent-fire, #e03131); }
+.text[data-color="success"]   { color: var(--octo-brand-success, #2f9e44); }
+.text[data-color="warning"]   { color: var(--octo-brand-warm, #e8590c); }
+.text[data-color="info"]      { color: var(--octo-brand-info, #1971c2); }
+.text[data-color="brand"]     { color: var(--octo-accent-primary, #4263eb); }
+.text[data-color="inherit"]   { color: inherit; }

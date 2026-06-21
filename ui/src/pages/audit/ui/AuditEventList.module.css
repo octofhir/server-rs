@@ -61,22 +61,40 @@
   min-height: 48px;
 }
 
-.emptyState,
 .cellStack {
   display: flex;
   flex-direction: column;
 }
 
-.emptyState {
+.skeletonList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--octo-spacing-sm);
+  padding: var(--octo-spacing-md);
+}
+
+.skeletonRow {
+  height: 44px;
+  border-radius: var(--octo-radius-sm);
+}
+
+.stateWrap {
+  flex: 1;
+  display: flex;
   align-items: center;
-  gap: 8px;
+  justify-content: center;
+  padding: var(--octo-spacing-xl) var(--octo-spacing-md);
+}
+
+.strongText {
+  font-weight: 600;
 }
 
 .inlineCell {
   display: flex;
   align-items: center;
   min-width: 0;
-  gap: 8px;
+  gap: var(--octo-spacing-sm);
 }
 
 .cellStack {

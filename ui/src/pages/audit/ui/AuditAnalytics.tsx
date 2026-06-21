@@ -5,8 +5,9 @@ import {
 	Badge,
 	ThemeIcon,
 	Center,
-	Loader,
 	RingProgress,
+	Skeleton,
+	EmptyState,
 } from "@octofhir/ui-kit";
 import {
 	Person,
@@ -30,6 +31,9 @@ import classes from "./AuditAnalytics.module.css";
 interface AuditAnalyticsProps {
 	analytics: AuditAnalyticsType | undefined;
 	isLoading: boolean;
+	isError?: boolean;
+	error?: unknown;
+	onRetry?: () => void;
 }
 
 function StatCard({
@@ -49,23 +53,28 @@ function StatCard({
 		<div className={classes.statCard}>
 			<div className={classes.statHeader}>
 				<div className={classes.statMeta}>
-					<Text size="xs" c="dimmed" tt="uppercase" mb={4}>
+					<Text variant="caption-2" color="secondary" className={classes.statTitle}>
 						{title}
 					</Text>
-					<Text size="xl" fw={700}>
+					<Text variant="header-1">
 						{typeof value === "number" ? value.toLocaleString() : value}
 					</Text>
 					{trend && (
 						<div className={classes.trend}>
-							<ChartLineArrowUp size={12} color={trend.value >= 0 ? "var(--g-color-base-positive-medium-hover)" : "var(--g-color-base-danger-medium)"} />
-							<Text size="xs" c={trend.value >= 0 ? "green" : "red"}>
+							<ChartLineArrowUp
+								width={12}
+								height={12}
+								aria-hidden="true"
+								color={trend.value >= 0 ? "var(--g-color-base-positive-medium-hover)" : "var(--g-color-base-danger-medium)"}
+							/>
+							<Text variant="caption-2" color={trend.value >= 0 ? "positive" : "danger"}>
 								{trend.value > 0 ? "+" : ""}{trend.value}% {trend.label}
 							</Text>
 						</div>
 					)}
 				</div>
-				<ThemeIcon size="lg" variant="light" color={color} radius="md">
-					<Icon size={20} />
+				<ThemeIcon size="l" view="light" color={color} radius="md">
+					<Icon width={20} height={20} aria-hidden="true" />
 				</ThemeIcon>
 			</div>
 		</div>
@@ -83,24 +92,24 @@ function OutcomeRing({ outcomeBreakdown }: { outcomeBreakdown: Partial<Record<Au
 	const sections = [
 		{
 			value: (success / total) * 100,
-			color: "green",
+			color: "var(--g-color-base-positive-medium)",
 			tooltip: `Success: ${success.toLocaleString()}`,
 		},
 		{
 			value: (failure / total) * 100,
-			color: "red",
+			color: "var(--g-color-base-danger-medium)",
 			tooltip: `Failure: ${failure.toLocaleString()}`,
 		},
 		{
 			value: (partial / total) * 100,
-			color: "yellow",
+			color: "var(--g-color-base-warning-medium)",
 			tooltip: `Partial: ${partial.toLocaleString()}`,
 		},
 	].filter((s) => s.value > 0);
 
 	return (
 		<div className={classes.chartCard}>
-			<Text size="sm" fw={600} mb="md">
+			<Text variant="subheader-1" className={classes.cardTitle}>
 				Outcome Distribution
 			</Text>
 			<div className={classes.ringLayout}>
@@ -112,10 +121,10 @@ function OutcomeRing({ outcomeBreakdown }: { outcomeBreakdown: Partial<Record<Au
 					label={
 						<Center>
 							<div className={classes.ringLabel}>
-								<Text size="lg" fw={700}>
+								<Text variant="subheader-2">
 									{total.toLocaleString()}
 								</Text>
-								<Text size="xs" c="dimmed">
+								<Text variant="caption-2" color="secondary">
 									Total
 								</Text>
 							</div>
@@ -130,13 +139,13 @@ function OutcomeRing({ outcomeBreakdown }: { outcomeBreakdown: Partial<Record<Au
 
 						return (
 							<div key={outcome} className={classes.legendRow}>
-								<ThemeIcon size="xs" color={getAuditOutcomeColor(outcome)} variant="filled">
-									<Icon size={10} />
+								<ThemeIcon size="xs" color={getAuditOutcomeColor(outcome)} view="filled">
+									<Icon width={10} height={10} aria-hidden="true" />
 								</ThemeIcon>
-								<Text size="sm" className={classes.legendLabel}>
+								<Text variant="body-2" className={classes.legendLabel}>
 									{getAuditOutcomeLabel(outcome)}
 								</Text>
-								<Text size="sm" c="dimmed">
+								<Text variant="body-2" color="secondary">
 									{count.toLocaleString()} ({percent}%)
 								</Text>
 							</div>
@@ -161,7 +170,7 @@ function ActionBreakdown({ actionBreakdown }: { actionBreakdown: Partial<Record<
 
 	return (
 		<div className={classes.chartCard}>
-			<Text size="sm" fw={600} mb="md">
+			<Text variant="subheader-1" className={classes.cardTitle}>
 				Actions by Type
 			</Text>
 			<div className={classes.breakdownList}>
@@ -172,10 +181,10 @@ function ActionBreakdown({ actionBreakdown }: { actionBreakdown: Partial<Record<
 					return (
 						<div key={action} className={classes.breakdownItem}>
 							<div className={classes.breakdownHeader}>
-								<Badge size="sm" variant="light" color={actionColor}>
+								<Badge size="sm" color={actionColor}>
 									{actionLabel}
 								</Badge>
-								<Text size="xs" c="dimmed">
+								<Text variant="caption-2" color="secondary">
 									{count.toLocaleString()}
 								</Text>
 							</div>
@@ -183,7 +192,6 @@ function ActionBreakdown({ actionBreakdown }: { actionBreakdown: Partial<Record<
 								value={(count / max) * 100}
 								size="sm"
 								color={actionColor}
-								radius="sm"
 							/>
 						</div>
 					);
