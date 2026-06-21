@@ -10,7 +10,7 @@
 		"lint": "oxlint src",
 		"format": "oxlint --fix src",
 		"check": "oxlint src",
-		"typecheck": "tsc --noEmit",
+		"typecheck": "tsc --noEmit -p tsconfig.app.json",
 		"test": "vitest run",
 		"test:watch": "vitest"
 	},
