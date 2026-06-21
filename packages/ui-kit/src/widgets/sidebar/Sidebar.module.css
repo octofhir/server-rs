@@ -16,21 +16,27 @@
 }
 
 /* Brand */
+.brandRow {
+    display: flex;
+    align-items: center;
+    height: 56px;
+    min-height: 56px;
+    padding: 0 var(--octo-spacing-sm, 0.5rem);
+    border-bottom: 1px solid var(--octo-border-subtle, #dee2e6);
+}
 .brand {
     display: flex;
     align-items: center;
     gap: var(--octo-spacing-sm, 0.75rem);
-    height: 56px;
-    min-height: 56px;
-    padding: 0 var(--octo-spacing-md, 1rem);
+    flex: 1 1 auto;
+    min-width: 0;
+    padding: 0 var(--octo-spacing-sm, 0.5rem);
     border: none;
-    border-bottom: 1px solid var(--octo-border-subtle, #dee2e6);
     background: transparent;
     color: var(--octo-text-primary, #1a1b1e);
     font: inherit;
     cursor: pointer;
     text-align: left;
-    width: 100%;
 }
 .brandIcon {
     display: inline-flex;
@@ -119,6 +125,7 @@
 .sidebar[data-collapsed="true"] .itemLabel,
 .sidebar[data-collapsed="true"] .itemBadge,
 .sidebar[data-collapsed="true"] .accountText,
+.sidebar[data-collapsed="true"] .accountChevron,
 .sidebar[data-collapsed="true"] .statusLabel {
     display: none;
 }
@@ -129,19 +136,16 @@
 .footer {
     display: flex;
     flex-direction: column;
-    gap: var(--octo-spacing-xs, 0.5rem);
-    padding: var(--octo-spacing-sm, 0.75rem);
+    gap: 2px;
+    padding: var(--octo-spacing-xs, 0.5rem);
     border-top: 1px solid var(--octo-border-subtle, #dee2e6);
 }
-.footerRow {
+
+.statusRow {
     display: flex;
     align-items: center;
-    gap: var(--octo-spacing-sm, 0.5rem);
-}
-.status {
-    display: inline-flex;
-    align-items: center;
     gap: 6px;
+    padding: 4px 10px;
     font-size: var(--octo-typography-size-xs, 0.75rem);
     color: var(--octo-text-secondary, #495057);
 }
@@ -150,26 +154,37 @@
 .statusDot[data-theme="warning"] { background: var(--octo-brand-warm, #f08c00); }
 .statusDot[data-theme="danger"] { background: var(--octo-accent-fire, #fa5252); }
 
+/* Account opens an upward menu (theme + sign out). */
 .account {
     display: flex;
     align-items: center;
     gap: var(--octo-spacing-sm, 0.5rem);
+    width: 100%;
     min-width: 0;
+    padding: 6px 8px;
+    border: none;
+    border-radius: var(--octo-radius-md, 8px);
+    background: transparent;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
 }
+.account:hover { background: var(--octo-surface-2, #f1f3f5); }
+.account:focus-visible { outline: 2px solid var(--octo-focus-ring, #91a7ff); outline-offset: -2px; }
 .avatar {
     display: inline-flex;
     flex: none;
     align-items: center;
     justify-content: center;
-    width: 32px;
-    height: 32px;
+    width: 30px;
+    height: 30px;
     border-radius: 50%;
     background: var(--octo-accent-primary-bg, #edf2ff);
     color: var(--octo-accent-primary, #4263eb);
-    font-size: var(--octo-typography-size-sm, 0.875rem);
-    font-weight: 600;
+    font-size: var(--octo-typography-size-xs, 0.75rem);
+    font-weight: 700;
 }
-.accountText { display: flex; flex-direction: column; min-width: 0; }
+.accountText { display: flex; flex-direction: column; min-width: 0; flex: 1 1 auto; }
 .accountName {
     font-size: var(--octo-typography-size-sm, 0.875rem);
     font-weight: 600;
@@ -185,4 +200,31 @@
     text-overflow: ellipsis;
     white-space: nowrap;
 }
-.spacer { flex: 1 1 auto; }
+.accountChevron { flex: none; color: var(--octo-text-muted, #868e96); }
+
+/* Collapse toggle: a distinct row, separated from the account block. */
+.collapseToggle {
+    display: flex;
+    align-items: center;
+    gap: var(--octo-spacing-sm, 0.75rem);
+    width: 100%;
+    margin-top: 2px;
+    padding: 8px 10px;
+    border: none;
+    border-radius: var(--octo-radius-md, 8px);
+    background: transparent;
+    color: var(--octo-text-muted, #868e96);
+    font: inherit;
+    font-size: var(--octo-typography-size-sm, 0.875rem);
+    cursor: pointer;
+}
+.collapseToggle:hover { background: var(--octo-surface-2, #f1f3f5); color: var(--octo-text-primary, #1a1b1e); }
+.collapseToggle:focus-visible { outline: 2px solid var(--octo-focus-ring, #91a7ff); outline-offset: -2px; }
+
+.sidebar[data-collapsed="true"] .account,
+.sidebar[data-collapsed="true"] .collapseToggle,
+.sidebar[data-collapsed="true"] .statusRow {
+    justify-content: center;
+    padding-left: 0;
+    padding-right: 0;
+}

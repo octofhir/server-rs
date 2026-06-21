@@ -7,8 +7,10 @@ import {
     type ComponentType,
     type ReactNode,
 } from "react";
-import { ChevronsLeft, ChevronsRight, LogOut, Moon, Sun } from "lucide-react";
-import { ActionIcon } from "../../shared/ui/ActionIcon";
+import { ChevronsLeft, ChevronsRight, LogOut, Moon, MoreVertical, Sun } from "lucide-react";
+import { Button } from "../../shared/ui/Button";
+import { Menu } from "../../shared/ui/Menu";
+import { Modal } from "../../shared/ui/Modal";
 import { Tooltip } from "../../shared/ui/Tooltip";
 import styles from "./Sidebar.module.css";
 
@@ -66,14 +68,12 @@ export interface SidebarProps {
     groups: SidebarNavGroup[];
     account?: SidebarAccount | null;
     status?: SidebarStatus;
-    /** Light/dark toggle in the footer. */
     colorScheme?: "light" | "dark";
     onToggleColorScheme?: () => void;
     collapsible?: boolean;
     collapsed?: boolean;
     defaultCollapsed?: boolean;
     onCollapsedChange?: (collapsed: boolean) => void;
-    /** Persist the collapsed state to localStorage under this key. */
     persistKey?: string;
     className?: string;
 }
@@ -113,10 +113,9 @@ export function Sidebar({
     className,
 }: SidebarProps) {
     const isControlled = controlledCollapsed != null;
-    const [internalCollapsed, setInternalCollapsed] = useState(() =>
-        readPersisted(persistKey, defaultCollapsed),
-    );
+    const [internalCollapsed, setInternalCollapsed] = useState(() => readPersisted(persistKey, defaultCollapsed));
     const collapsed = isControlled ? controlledCollapsed : internalCollapsed;
+    const [signOutOpen, setSignOutOpen] = useState(false);
 
     const setCollapsed = useCallback(
         (next: boolean) => {
@@ -148,26 +147,16 @@ export function Sidebar({
             "data-active": item.active ? "true" : undefined,
             "data-disabled": item.disabled ? "true" : undefined,
             "aria-current": item.active ? ("page" as const) : undefined,
+            "aria-label": collapsed && typeof item.label === "string" ? item.label : undefined,
         };
 
         const control =
             item.href && !item.disabled ? (
-                <a
-                    {...shared}
-                    href={item.href}
-                    onClick={item.onClick}
-                    aria-label={collapsed && typeof item.label === "string" ? item.label : undefined}
-                >
+                <a {...shared} href={item.href} onClick={item.onClick}>
                     {inner}
                 </a>
             ) : (
-                <button
-                    {...shared}
-                    type="button"
-                    disabled={item.disabled}
-                    onClick={item.onClick}
-                    aria-label={collapsed && typeof item.label === "string" ? item.label : undefined}
-                >
+                <button {...shared} type="button" disabled={item.disabled} onClick={item.onClick}>
                     {inner}
                 </button>
             );
@@ -182,15 +171,33 @@ export function Sidebar({
         return <div key={item.id}>{control}</div>;
     };
 
+    const accountButton = account ? (
+        <button type="button" className={styles.account} aria-label="Account menu">
+            <span className={styles.avatar} aria-hidden="true">
+                {initials(account.name)}
+            </span>
+            <span className={styles.accountText}>
+                <span className={styles.accountName}>{account.name}</span>
+                {account.secondary != null && <span className={styles.accountSecondary}>{account.secondary}</span>}
+            </span>
+            <MoreVertical size={16} className={styles.accountChevron} />
+        </button>
+    ) : null;
+
     return (
-        <aside className={[styles.sidebar, className].filter(Boolean).join(" ")} data-collapsed={collapsed ? "true" : undefined}>
+        <aside
+            className={[styles.sidebar, className].filter(Boolean).join(" ")}
+            data-collapsed={collapsed ? "true" : undefined}
+        >
             {brand && (
-                <button type="button" className={styles.brand} onClick={brand.onClick}>
-                    <span className={styles.brandIcon}>
-                        {brand.iconSrc ? <img src={brand.iconSrc} alt="" /> : renderIcon(brand.icon, 24)}
-                    </span>
-                    <span className={styles.brandText}>{brand.title}</span>
-                </button>
+                <div className={styles.brandRow}>
+                    <button type="button" className={styles.brand} onClick={brand.onClick}>
+                        <span className={styles.brandIcon}>
+                            {brand.iconSrc ? <img src={brand.iconSrc} alt="" /> : renderIcon(brand.icon, 24)}
+                        </span>
+                        <span className={styles.brandText}>{brand.title}</span>
+                    </button>
+                </div>
             )}
 
             <nav className={styles.nav} aria-label="Main navigation">
@@ -204,61 +211,81 @@ export function Sidebar({
 
             <div className={styles.footer}>
                 {status && (
-                    <div className={styles.footerRow}>
-                        <span className={styles.status}>
-                            <span className={styles.statusDot} data-theme={status.theme ?? "neutral"} />
-                            <span className={styles.statusLabel}>{status.label}</span>
-                        </span>
-                        <span className={styles.spacer} />
-                        {onToggleColorScheme && (
-                            <ActionIcon
-                                view="flat"
-                                size="s"
-                                aria-label="Toggle color scheme"
-                                onClick={onToggleColorScheme}
-                            >
-                                {colorScheme === "dark" ? <Sun size={16} /> : <Moon size={16} />}
-                            </ActionIcon>
-                        )}
+                    <div className={styles.statusRow}>
+                        <span className={styles.statusDot} data-theme={status.theme ?? "neutral"} />
+                        <span className={styles.statusLabel}>{status.label}</span>
                     </div>
                 )}
 
                 {account && (
-                    <div className={styles.footerRow}>
-                        <span className={styles.account}>
-                            <span className={styles.avatar} aria-hidden="true">
-                                {initials(account.name)}
-                            </span>
-                            <span className={styles.accountText}>
-                                <span className={styles.accountName}>{account.name}</span>
-                                {account.secondary != null && (
-                                    <span className={styles.accountSecondary}>{account.secondary}</span>
-                                )}
-                            </span>
-                        </span>
-                        <span className={styles.spacer} />
-                        {account.onSignOut && (
-                            <ActionIcon view="flat" size="s" aria-label="Sign out" onClick={account.onSignOut}>
-                                <LogOut size={16} />
-                            </ActionIcon>
-                        )}
-                    </div>
+                    <Menu position="top-start">
+                        <Menu.Target>{accountButton ?? <span />}</Menu.Target>
+                        <Menu.Dropdown>
+                            {onToggleColorScheme && (
+                                <Menu.Item
+                                    leftSection={colorScheme === "dark" ? <Sun size={16} /> : <Moon size={16} />}
+                                    onClick={onToggleColorScheme}
+                                >
+                                    {colorScheme === "dark" ? "Light mode" : "Dark mode"}
+                                </Menu.Item>
+                            )}
+                            {account.onSignOut && (
+                                <>
+                                    <Menu.Divider />
+                                    <Menu.Item
+                                        color="danger"
+                                        leftSection={<LogOut size={16} />}
+                                        onClick={() => setSignOutOpen(true)}
+                                    >
+                                        Sign out
+                                    </Menu.Item>
+                                </>
+                            )}
+                        </Menu.Dropdown>
+                    </Menu>
                 )}
 
                 {collapsible && (
-                    <div className={styles.footerRow}>
-                        <span className={styles.spacer} />
-                        <ActionIcon
-                            view="flat"
-                            size="s"
-                            aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-                            onClick={() => setCollapsed(!collapsed)}
-                        >
-                            {collapsed ? <ChevronsRight size={16} /> : <ChevronsLeft size={16} />}
-                        </ActionIcon>
-                    </div>
+                    <button
+                        type="button"
+                        className={styles.collapseToggle}
+                        aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+                        onClick={() => setCollapsed(!collapsed)}
+                    >
+                        <span className={styles.itemIcon}>
+                            {collapsed ? <ChevronsRight size={18} /> : <ChevronsLeft size={18} />}
+                        </span>
+                        <span className={styles.itemLabel}>Collapse</span>
+                    </button>
                 )}
             </div>
+
+            {account?.onSignOut && (
+                <Modal
+                    open={signOutOpen}
+                    onClose={() => setSignOutOpen(false)}
+                    title="Sign out"
+                    size="xs"
+                    footer={
+                        <>
+                            <Button view="flat" onClick={() => setSignOutOpen(false)}>
+                                Cancel
+                            </Button>
+                            <Button
+                                view="action-danger"
+                                onClick={() => {
+                                    setSignOutOpen(false);
+                                    account.onSignOut?.();
+                                }}
+                            >
+                                Sign out
+                            </Button>
+                        </>
+                    }
+                >
+                    You will be signed out of the console.
+                </Modal>
+            )}
         </aside>
     );
 }
