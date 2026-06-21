@@ -1,1 +1,2 @@
-export { Accordion, type AccordionProps } from "@gravity-ui/uikit";
+export { Accordion } from "./Accordion";
+export type { AccordionItemProps, AccordionProps } from "./Accordion";
