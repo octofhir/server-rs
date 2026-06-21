@@ -17,7 +17,11 @@ type IconLike = ReactNode | ComponentType<{ size?: number }>;
 function renderIcon(icon: IconLike | undefined, size = 18): ReactNode {
     if (icon == null) return null;
     if (isValidElement(icon)) return icon;
-    if (typeof icon === "function") return createElement(icon as ComponentType<{ size?: number }>, { size });
+    // Component types: plain function components, or forwardRef/memo objects
+    // (lucide icons are forwardRef, i.e. `{$$typeof, render}` objects).
+    if (typeof icon === "function" || (typeof icon === "object" && "$$typeof" in icon)) {
+        return createElement(icon as ComponentType<{ size?: number }>, { size });
+    }
     return icon;
 }
 
