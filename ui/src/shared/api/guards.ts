@@ -82,9 +82,9 @@ export function assertFhirBundle<T extends FhirResource>(
   };
 }
 
-export function getBundleResources(
+export function getBundleResources<T extends FhirResource = FhirResource>(
   bundle: Pick<FhirBundle, "entry"> | null | undefined,
-): FhirResource[];
+): T[];
 export function getBundleResources<T extends FhirResource>(
   bundle: Pick<FhirBundle, "entry"> | null | undefined,
   guard: FhirResourceGuard<T>,
@@ -92,11 +92,11 @@ export function getBundleResources<T extends FhirResource>(
 export function getBundleResources<T extends FhirResource>(
   bundle: Pick<FhirBundle, "entry"> | null | undefined,
   guard?: FhirResourceGuard<T>,
-): Array<FhirResource | T> {
+): T[] {
   if (!bundle?.entry) {
     return [];
   }
 
   const resources = bundle.entry.map((entry) => entry.resource).filter(isFhirResource);
-  return guard ? resources.filter(guard) : resources;
+  return (guard ? resources.filter(guard) : resources) as T[];
 }
