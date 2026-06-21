@@ -1,5 +1,4 @@
 import { useLayoutEffect, useMemo, type ReactNode } from "react";
-import { ThemeProvider } from "@gravity-ui/uikit";
 import { ConfirmModalHost } from "#/shared/lib/confirm-modal";
 import { ToasterHost } from "#/shared/lib/ToasterHost";
 import {
@@ -37,25 +36,14 @@ export function UIProvider({ children, defaultColorScheme = "light", theme }: UI
     );
 }
 
-const ROOT_CLASS = "g-root";
-const themeClass = (scheme: ColorScheme) => `g-root_theme_${scheme}`;
+const ROOT_CLASS = "octo-ui-provider";
 
 function applyBodyClasses(scheme: ColorScheme) {
     const body = document.body;
     if (!body) return () => {};
     body.classList.add(ROOT_CLASS);
-    // Strip any stale `g-root_theme_*` first.
-    [...body.classList].forEach((cls) => {
-        if (cls.startsWith("g-root_theme_") && cls !== themeClass(scheme)) {
-            body.classList.remove(cls);
-        }
-    });
-    body.classList.add(themeClass(scheme));
     document.documentElement.dataset.theme = scheme;
-    return () => {
-        // No-op cleanup: leaving `g-root` on body is intentional — Gravity's
-        // tokens stay in scope even if the provider is briefly unmounted.
-    };
+    return () => {};
 }
 
 export function UIProviderInner({
@@ -65,7 +53,7 @@ export function UIProviderInner({
     children: ReactNode;
     theme?: OctoThemeInput;
 }) {
-    const { colorScheme, preference } = useColorScheme();
+    const { colorScheme } = useColorScheme();
 
     const cssVars = useMemo(() => {
         const resolvedTheme = createOctoTheme(theme);
@@ -76,15 +64,11 @@ export function UIProviderInner({
         return { ...globalVars, ...schemeVars, ...explicitVars };
     }, [colorScheme, theme]);
 
-    // Belt + suspenders: explicitly add `g-root g-root_theme_<scheme>` to
-    // <body> and `data-theme` to <html>. Gravity's `<ThemeProvider>` does this
-    // too, but we want the classes present even before its effect runs and we
-    // want `data-theme` for legacy CSS that pre-dated the migration.
+    // Mark <body> and set `data-theme` on <html> for theme-scoped CSS.
     useLayoutEffect(() => applyBodyClasses(colorScheme), [colorScheme]);
 
-    // Push our `--octo-*` design tokens onto <html> so Gravity's portaled
-    // components (Toaster, Modal, Drawer, Popup) — appended to document.body —
-    // can resolve them too.
+    // Push the `--octo-*` design tokens onto <html> so portaled components
+    // (Toaster, Modal, Drawer, Popup) — appended to document.body — resolve them.
     useLayoutEffect(() => {
         const target = document.documentElement;
         const previous = new Map<string, string>();
@@ -101,10 +85,10 @@ export function UIProviderInner({
     }, [cssVars]);
 
     return (
-        <ThemeProvider theme={preference === "auto" ? "system" : preference}>
+        <>
             {children}
             <ToasterHost />
             <ConfirmModalHost />
-        </ThemeProvider>
+        </>
     );
 }
