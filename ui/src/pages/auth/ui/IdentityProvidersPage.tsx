@@ -15,7 +15,7 @@ import {
 	MultiSelect,
 } from "@octofhir/ui-kit";
 import { WorkspacePageLayout } from "@/widgets/workspace-page";
-import { DropdownMenu } from "@gravity-ui/uikit";
+import { DropdownMenu } from "@octofhir/ui-kit";
 import { Plus, Search as Magnifier, EllipsisVertical, Pencil, Trash2 as TrashBin, Globe } from "lucide-react";
 import {
 	getIdentityProviderStatusView,

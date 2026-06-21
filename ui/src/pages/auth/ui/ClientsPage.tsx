@@ -17,7 +17,7 @@ import {
 	Tooltip,
 } from "@octofhir/ui-kit";
 import { WorkspacePageLayout } from "@/widgets/workspace-page";
-import { DropdownMenu } from "@gravity-ui/uikit";
+import { DropdownMenu } from "@octofhir/ui-kit";
 import { Plus, Search as Magnifier, EllipsisVertical, Pencil, Trash2 as TrashBin, Monitor as Display, RotateCw as ArrowRotateRight, Copy, Check } from "lucide-react";
 import {
 	getClientStatusView,

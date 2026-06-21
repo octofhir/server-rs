@@ -11,7 +11,7 @@ import {
 	Alert,
 } from "@octofhir/ui-kit";
 import { WorkspacePageLayout } from "@/widgets/workspace-page";
-import { DropdownMenu } from "@gravity-ui/uikit";
+import { DropdownMenu } from "@octofhir/ui-kit";
 import { Plus, Search as Magnifier, EllipsisVertical, Pencil, Trash2 as TrashBin, Shield } from "lucide-react";
 import {
 	defaultRolePermissions,

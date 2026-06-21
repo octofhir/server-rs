@@ -13,7 +13,7 @@ import {
 	Card,
 } from "@octofhir/ui-kit";
 import { WorkspacePageLayout } from "@/widgets/workspace-page";
-import { DropdownMenu } from "@gravity-ui/uikit";
+import { DropdownMenu } from "@octofhir/ui-kit";
 import { useNavigate } from "react-router-dom";
 import { Plus, Search as Magnifier, EllipsisVertical, Pencil, Trash2 as TrashBin, Key, Eye, UserPen as PersonPencil, UserX as PersonXmark } from "lucide-react";
 import {

@@ -1,17 +1,21 @@
 import type { ReactNode } from "react";
-import { Dialog, type DialogProps } from "@gravity-ui/uikit";
+import { Modal as KitModal } from "@octofhir/ui-kit";
 
-type LegacyModalSize = "xs" | "sm" | "md" | "lg" | "xl";
+type ModalSize = "xs" | "s" | "sm" | "m" | "md" | "l" | "lg" | "xl" | "auto";
 
-export interface ModalProps
-	extends Omit<DialogProps, "children" | "onClose" | "open" | "size"> {
+export interface ModalProps {
 	children: ReactNode;
 	onClose?: () => void;
 	open?: boolean;
 	opened?: boolean;
 	title?: ReactNode;
-	size?: DialogProps["size"] | LegacyModalSize;
+	size?: ModalSize;
+	footer?: ReactNode;
+	hasCloseButton?: boolean;
+	className?: string;
+	/** @deprecated kept for source compatibility; the dialog always dismisses on outside click. */
 	closeOnClickOutside?: boolean;
+	/** @deprecated kept for source compatibility; the dialog always dismisses on Escape. */
 	closeOnEscape?: boolean;
 }
 
@@ -22,34 +26,22 @@ export function Modal({
 	opened,
 	title,
 	size,
-	closeOnClickOutside,
-	closeOnEscape,
-	disableOutsideClick,
-	disableEscapeKeyDown,
+	footer,
 	hasCloseButton = true,
-	...props
+	className,
 }: ModalProps) {
-	const isOpen = open ?? opened ?? false;
-
 	return (
-		<Dialog
-			{...props}
-			open={isOpen}
-			onClose={() => onClose?.()}
-			size={mapModalSize(size)}
-			hasCloseButton={hasCloseButton}
-			disableOutsideClick={disableOutsideClick ?? closeOnClickOutside === false}
-			disableEscapeKeyDown={disableEscapeKeyDown ?? closeOnEscape === false}
+		<KitModal
+			open={open}
+			opened={opened}
+			onClose={onClose}
+			title={title}
+			size={size}
+			footer={footer}
+			withCloseButton={hasCloseButton}
+			className={className}
 		>
-			{title ? <Dialog.Header caption={title} /> : null}
-			<Dialog.Body>{children}</Dialog.Body>
-		</Dialog>
+			{children}
+		</KitModal>
 	);
-}
-
-function mapModalSize(size: ModalProps["size"]): DialogProps["size"] {
-	if (size === "xs" || size === "sm") return "s";
-	if (size === "lg" || size === "xl") return "l";
-	if (size === "md") return "m";
-	return size;
 }
