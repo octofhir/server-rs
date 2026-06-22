@@ -72,21 +72,6 @@ pub fn render_composite_clauses_as_or(
     Ok(or_exprs(exprs))
 }
 
-/// Render composite tuple clauses through JSONB traversal.
-///
-/// This is intentionally kept out of the native production renderer. It is used
-/// only for user-defined SearchParameters that cannot have prebuilt native
-/// sidecar rows until the parameter is promoted into package metadata.
-pub fn render_composite_clauses_as_jsonb_fallback_or(
-    builder: &mut SqlBuilder,
-    clauses: &[CompositeClause],
-) -> Result<Option<SqlExpr>, SqlBuilderError> {
-    let exprs = clauses
-        .iter()
-        .map(|clause| render_composite_clause_jsonb_fallback_expr(builder, clause))
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok(or_exprs(exprs))
-}
 
 /// Render logical id clauses as one OR group over a resource id column.
 pub fn render_id_clauses_as_or(
@@ -1109,10 +1094,14 @@ fn render_composite_clause_expr(
     match &clause.predicate {
         CompositePredicate::Tuple { components, safety } => {
             if matches!(safety, CompositeSafety::RequiresSameElement) {
-                return Err(SqlBuilderError::NotImplemented(
-                    "same-element composite search requires a materialized native composite strategy"
-                        .to_string(),
-                ));
+                // Correlated same-element match via an in-place `@?` jsonpath over
+                // the repeating array (GIN-served), with an EXISTS fallback for
+                // component shapes jsonpath can't express. No sidecar tables needed.
+                return render_composite_same_component_element_expr(
+                    builder,
+                    &clause.resource_type,
+                    components,
+                );
             }
 
             let conditions = components
@@ -1137,38 +1126,6 @@ fn render_composite_clause_expr(
     }
 }
 
-fn render_composite_clause_jsonb_fallback_expr(
-    builder: &mut SqlBuilder,
-    clause: &CompositeClause,
-) -> Result<SqlExpr, SqlBuilderError> {
-    match &clause.predicate {
-        CompositePredicate::Tuple { components, safety } => {
-            if matches!(safety, CompositeSafety::RequiresSameElement) {
-                return render_composite_same_component_element_expr(
-                    builder,
-                    &clause.resource_type,
-                    components,
-                );
-            }
-
-            let conditions = components
-                .iter()
-                .map(|component| {
-                    render_composite_component_expr(builder, &clause.resource_type, component)
-                })
-                .collect::<Result<Vec<_>, _>>()?;
-            if conditions.is_empty() {
-                Ok(SqlExpr::Bool(true))
-            } else {
-                Ok(SqlExpr::And(conditions))
-            }
-        }
-        CompositePredicate::Missing { .. } => Err(SqlBuilderError::NotImplemented(
-            "custom composite :missing JSONB fallback is not supported".to_string(),
-        )),
-    }
-}
-
 fn render_composite_component_native_expr(
     builder: &mut SqlBuilder,
     resource_type: &str,
@@ -1184,6 +1141,19 @@ fn render_composite_same_component_element_expr(
     resource_type: &str,
     components: &[CompositeComponentPredicate],
 ) -> Result<SqlExpr, SqlBuilderError> {
+    // Index-friendly path: one correlated `@?` jsonpath filter over `$.component[*]`.
+    // The whole-resource GIN (idx_<table>_gin) serves `@?`, replacing the per-row
+    // jsonb_array_elements seq scan with a Bitmap Index Scan. The single outer
+    // `? (...)` keeps all component predicates bound to the same array element, so
+    // correlation is exact. Falls back to the EXISTS form for component types/values
+    // jsonpath can't express (string regex, date, sa/eb/ap prefixes).
+    if let Some(filter) = build_component_jsonpath_filter(components, resource_type) {
+        return Ok(SqlExpr::Raw(format!(
+            "{} @? '{filter}'",
+            builder.resource_column()
+        )));
+    }
+
     let Some(suffixes) = components
         .iter()
         .map(|component| strip_component_suffix(&component.spec.expression))
@@ -1357,6 +1327,109 @@ fn strip_component_suffix(expression: &str) -> Option<String> {
             path.strip_prefix("Observation.component.")
                 .map(str::to_string)
         })
+}
+
+/// jsonpath string-literal escape for a value placed inside `"..."`.
+fn jp_quote(v: &str) -> String {
+    v.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+/// jsonpath member accessor for JSON segments, rooted at the filter variable `@`.
+fn jp_member(segments: &[String]) -> String {
+    let mut acc = String::from("@");
+    for part in segments {
+        acc.push_str(&format!(".\"{}\"", jp_quote(part)));
+    }
+    acc
+}
+
+/// Map a FHIR search prefix to a jsonpath comparison operator. None for prefixes
+/// jsonpath can't express directly (sa/eb/ap → caller falls back to EXISTS).
+fn prefix_to_jsonpath_op(prefix: &str) -> Option<&'static str> {
+    match prefix {
+        "eq" | "" => Some("=="),
+        "ne" => Some("!="),
+        "gt" => Some(">"),
+        "lt" => Some("<"),
+        "ge" => Some(">="),
+        "le" => Some("<="),
+        _ => None,
+    }
+}
+
+/// Build one jsonpath boolean clause for a composite component, evaluated against
+/// the current array element `@`. Returns None when the component type/value can't
+/// be expressed as jsonpath, so the caller keeps the correct EXISTS fallback.
+fn component_jsonpath_clause(
+    component: &CompositeComponentPredicate,
+    in_elem_segments: &[String],
+) -> Option<String> {
+    let base = jp_member(in_elem_segments);
+    match component.spec.search_type {
+        SearchParameterType::Token => {
+            // "system|code" | "code" | "|code" | "system|". Correlate system+code
+            // within a single coding via a nested `exists(... ? (...))`.
+            let (system, code) = match component.value.split_once('|') {
+                Some((s, c)) => (Some(s), Some(c)),
+                None => (None, Some(component.value.as_str())),
+            };
+            let mut inner = Vec::new();
+            if let Some(s) = system.filter(|s| !s.is_empty()) {
+                inner.push(format!("@.\"system\" == \"{}\"", jp_quote(s)));
+            }
+            if let Some(c) = code.filter(|c| !c.is_empty()) {
+                inner.push(format!("@.\"code\" == \"{}\"", jp_quote(c)));
+            }
+            if inner.is_empty() {
+                return None;
+            }
+            Some(format!("exists({base}.\"coding\"[*] ? ({}))", inner.join(" && ")))
+        }
+        SearchParameterType::Quantity => {
+            let num_part = component.value.split('|').next().unwrap_or("");
+            let (prefix, num) = extract_prefix(num_part);
+            let op = prefix_to_jsonpath_op(prefix)?;
+            num.parse::<f64>().ok()?; // validate before embedding as a literal
+            Some(format!("{base}.\"value\" {op} {num}"))
+        }
+        SearchParameterType::Number => {
+            let (prefix, num) = extract_prefix(&component.value);
+            let op = prefix_to_jsonpath_op(prefix)?;
+            num.parse::<f64>().ok()?;
+            Some(format!("{base} {op} {num}"))
+        }
+        SearchParameterType::Reference => Some(format!(
+            "{base}.\"reference\" == \"{}\"",
+            jp_quote(&component.value)
+        )),
+        // string (regex semantics), date (datetime compare) → EXISTS fallback.
+        _ => None,
+    }
+}
+
+/// Build the correlated `$.component[*] ? (...)` jsonpath for a same-element
+/// composite, or None if any component can't be lowered to jsonpath. Component
+/// JSON paths come from the real FHIRPath AST (folds `value.ofType(Quantity)` ->
+/// `valueQuantity`); only `Observation.component`-rooted composites are handled.
+fn build_component_jsonpath_filter(
+    components: &[CompositeComponentPredicate],
+    resource_type: &str,
+) -> Option<String> {
+    let mut clauses = Vec::new();
+    for component in components {
+        let segments =
+            crate::sql_builder::fhirpath_to_jsonb_path(&component.spec.expression, resource_type);
+        let (head, in_elem) = segments.split_first()?;
+        if head != "component" {
+            return None;
+        }
+        clauses.push(component_jsonpath_clause(component, in_elem)?);
+    }
+    if clauses.is_empty() {
+        return None;
+    }
+    // Embed as a SQL single-quoted literal (escape single quotes).
+    Some(format!("$.\"component\"[*] ? ({})", clauses.join(" && ")).replace('\'', "''"))
 }
 
 fn suffix_jsonb_path(base: &str, suffix: &str, text_leaf: bool) -> String {
@@ -3151,7 +3224,7 @@ mod tests {
     }
 
     #[test]
-    fn composite_component_tuple_renders_same_element_exists() {
+    fn composite_component_tuple_renders_same_element_jsonpath() {
         let mut builder = SqlBuilder::new();
         let clauses = CompositeClause::from_parsed_param(
             &crate::parser::ParsedParam {
@@ -3182,17 +3255,23 @@ mod tests {
         .unwrap();
 
         let sql = render_sql_expr(
-            &render_composite_clauses_as_jsonb_fallback_or(&mut builder, &clauses)
+            &render_composite_clauses_as_or(&mut builder, &clauses)
                 .unwrap()
                 .unwrap(),
         );
 
-        assert!(sql.contains("jsonb_array_elements"));
-        assert!(sql.contains("component_elem"));
-        assert!(sql.contains("component_elem->'code'->'coding' @>"));
-        assert!(sql.contains("component_elem->'valueQuantity'->>'value'"));
+        // Same-element correlation via one `@?` jsonpath over $.component[*]; the
+        // token sub-match correlates system+code within a coding via nested
+        // `exists(...)`. Values are embedded as jsonpath literals so the whole-
+        // resource GIN can serve the predicate.
+        assert!(sql.contains("@?"));
+        assert!(sql.contains(r#"$."component"[*] ?"#));
+        assert!(sql.contains(r#"exists(@."code"."coding"[*] ?"#));
+        assert!(sql.contains(r#"@."system" == "http://loinc.org""#));
+        assert!(sql.contains(r#"@."code" == "8480-6""#));
+        assert!(sql.contains(r#"@."valueQuantity"."value" >= 100"#));
+        // Correlated within the array element — never top-level navigation.
         assert!(!sql.contains("resource->'component'->'code'"));
-        assert!(!sql.contains("loinc") && !sql.contains("8480-6") && !sql.contains("mm[Hg]"));
     }
 
     #[test]

@@ -84,7 +84,17 @@ pub fn resolve_composite_component_specs(
             Ok(CompositeComponentSpec {
                 code: resolved.code.clone(),
                 search_type: resolved.param_type,
-                expression: component.expression.clone(),
+                // Use the referenced sub-param's own full FHIRPath
+                // (e.g. `Observation.component.value.ofType(Quantity)`), not the
+                // composite's base-relative fragment (`value.ofType(Quantity)`).
+                // The fragment alone resolves against the resource root and
+                // wrongly navigates top-level `valueQuantity` instead of
+                // `component[*].valueQuantity` — and, lacking the `component`
+                // prefix, also defeats the RequiresSameElement classification.
+                expression: resolved
+                    .expression
+                    .clone()
+                    .unwrap_or_else(|| component.expression.clone()),
                 element_type_hint: resolved.element_type_hint.clone(),
             })
         })
@@ -113,14 +123,17 @@ mod tests {
     #[test]
     fn resolves_composite_component_types_from_registry() {
         let registry = SearchParameterRegistry::new();
+        // The composite references a sub-param by canonical url; the resolved
+        // spec must carry that sub-param's OWN full expression (component-scoped),
+        // not the composite's base-relative fragment.
         registry.register(
             SearchParameter::new(
-                "code",
-                "http://hl7.org/fhir/SearchParameter/Observation-code",
+                "component-code",
+                "http://hl7.org/fhir/SearchParameter/Observation-component-code",
                 SearchParameterType::Token,
                 vec!["Observation".to_string()],
             )
-            .with_expression("Observation.code"),
+            .with_expression("Observation.component.code"),
         );
         registry.register(
             SearchParameter::new(
@@ -130,8 +143,9 @@ mod tests {
                 vec!["Observation".to_string()],
             )
             .with_components(vec![crate::parameters::SearchParameterComponent {
-                definition: "http://hl7.org/fhir/SearchParameter/Observation-code".to_string(),
-                expression: "Observation.component.code".to_string(),
+                definition: "http://hl7.org/fhir/SearchParameter/Observation-component-code"
+                    .to_string(),
+                expression: "code".to_string(),
             }]),
         );
 
@@ -141,7 +155,7 @@ mod tests {
         let specs = resolve_composite_component_specs(&registry, "Observation", &combo).unwrap();
 
         assert_eq!(specs.len(), 1);
-        assert_eq!(specs[0].code, "code");
+        assert_eq!(specs[0].code, "component-code");
         assert_eq!(specs[0].search_type, SearchParameterType::Token);
         assert_eq!(specs[0].expression, "Observation.component.code");
     }

@@ -23,10 +23,7 @@ pub mod uri;
 
 pub use composite::CompositeComponent;
 pub use composite::{CompositeValue, parse_composite_value};
-pub use composite::{
-    build_composite_search, build_composite_search_with_specs,
-    build_composite_search_with_specs_jsonb_fallback,
-};
+pub use composite::{build_composite_search, build_composite_search_with_specs};
 #[cfg(test)]
 pub use date::build_period_search;
 pub use date::{
@@ -57,6 +54,7 @@ use crate::parser::ParsedParam;
 use crate::registry::SearchParameterRegistry;
 use crate::sql_builder::{
     SqlBuilder, SqlBuilderError, build_jsonb_accessor, fhirpath_to_jsonb_path,
+    paths_to_jsonpath_array,
 };
 use std::sync::Arc;
 
@@ -343,9 +341,13 @@ fn dispatch_user_defined_jsonb_search(
         SearchParameterType::Quantity => {
             build_gin_quantity_search(builder, param, &object_path, path_segments)
         }
-        SearchParameterType::Reference => {
-            build_reference_jsonb_fallback_search(builder, param, &object_path, &definition.target)
-        }
+        SearchParameterType::Reference => build_reference_jsonb_fallback_search(
+            builder,
+            param,
+            &object_path,
+            path_segments,
+            &definition.target,
+        ),
         SearchParameterType::Composite => {
             if definition.component.is_empty() {
                 return Err(SqlBuilderError::InvalidPath(format!(
@@ -362,12 +364,7 @@ fn dispatch_user_defined_jsonb_search(
             };
             let components =
                 resolve_composite_component_specs(registry, resource_type, definition)?;
-            build_composite_search_with_specs_jsonb_fallback(
-                builder,
-                param,
-                resource_type,
-                &components,
-            )
+            build_composite_search_with_specs(builder, param, resource_type, &components)
         }
         SearchParameterType::Uri => match &definition.element_type_hint {
             ElementTypeHint::Array(_) => build_uri_array_search(builder, param, &object_path),
@@ -384,6 +381,7 @@ fn build_reference_jsonb_fallback_search(
     builder: &mut SqlBuilder,
     param: &ParsedParam,
     json_path: &str,
+    path_segments: &[String],
     target_types: &[String],
 ) -> Result<(), SqlBuilderError> {
     if param.values.is_empty() {
@@ -434,33 +432,32 @@ fn build_reference_jsonb_fallback_search(
         }
     };
 
-    let mut or_conditions: Vec<crate::ir::sql::SqlExpr> = Vec::new();
+    // Flatten <segments>.reference into a text[] (single object or array, via lax
+    // jsonpath `[*]`) and match with array-overlap. The matching GIN index
+    // (idx_<table>_<code>_ref over the identical fhir_extract_text expression) turns
+    // this into a Bitmap Index Scan instead of a per-row jsonb_array_elements seq
+    // scan. All candidate references — comma-list values and :type / typeless
+    // expansions — are OR alternatives, so a single `&&` over the full candidate set
+    // is both correct and index-usable.
+    let mut ref_segments = path_segments.to_vec();
+    ref_segments.push("reference".to_string());
+    let jpa = paths_to_jsonpath_array(&[ref_segments]);
+
+    let mut placeholders: Vec<String> = Vec::new();
     for value in &param.values {
         if value.raw.is_empty() {
             continue;
         }
-
-        let references = reference_fallback_candidates(&value.raw, type_modifier, target_types);
-        let mut value_conditions: Vec<crate::ir::sql::SqlExpr> = Vec::new();
-        for reference in references {
+        for reference in reference_fallback_candidates(&value.raw, type_modifier, target_types) {
             let p = builder.add_text_param(reference);
-            value_conditions.push(crate::ir::sql::SqlExpr::Raw(format!(
-                "EXISTS (SELECT 1 FROM jsonb_array_elements({}) AS ref WHERE ref->>'reference' = ${p})",
-                jsonb_array_or_singleton(json_path)
-            )));
-        }
-
-        match value_conditions.len() {
-            0 => {}
-            1 => or_conditions.push(value_conditions.pop().unwrap()),
-            _ => or_conditions.push(crate::ir::sql::SqlExpr::Or(value_conditions)),
+            placeholders.push(format!("${p}"));
         }
     }
 
-    match or_conditions.len() {
-        0 => {}
-        1 => builder.add_condition(or_conditions.pop().unwrap()),
-        _ => builder.add_condition(crate::ir::sql::SqlExpr::Or(or_conditions)),
+    if !placeholders.is_empty() {
+        let col = builder.resource_column().to_string();
+        let arr = placeholders.join(", ");
+        builder.add_raw_condition(format!("fhir_extract_text({col}, {jpa}) && ARRAY[{arr}]"));
     }
     Ok(())
 }
@@ -483,12 +480,6 @@ fn reference_fallback_candidates(
     }
 
     vec![raw.to_string()]
-}
-
-fn jsonb_array_or_singleton(path: &str) -> String {
-    format!(
-        "CASE WHEN jsonb_typeof({path}) = 'array' THEN {path} WHEN {path} IS NULL THEN '[]'::jsonb ELSE jsonb_build_array({path}) END"
-    )
 }
 
 pub(crate) fn reject_unsupported_production_path(
@@ -890,8 +881,11 @@ mod tests {
         let clause = builder.build_where_clause();
         assert!(clause.is_some());
         let clause_str = clause.unwrap();
-        assert!(clause_str.contains("ref->>'reference'"));
-        assert!(clause_str.contains("jsonb_array_elements"));
+        // In-place reference predicate: flatten <segments>.reference to text[] and
+        // match by array-overlap so the matching GIN index can serve it.
+        assert!(clause_str.contains("fhir_extract_text"));
+        assert!(clause_str.contains(r#"$."subject"."reference"[*]"#));
+        assert!(clause_str.contains("&& ARRAY["));
     }
 
     #[test]

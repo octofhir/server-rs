@@ -1362,7 +1362,7 @@ mod tests {
             (
                 "Observation",
                 "subject=Patient/pat-1&_count=10",
-                ["ref->>'reference'", "jsonb_array_elements"],
+                ["fhir_extract_text(", "&& ARRAY["],
             ),
             (
                 "Observation",
@@ -1410,20 +1410,20 @@ mod tests {
             10,
             100,
         );
-        let composite_err = match build_native_ir_query_from_params(
+        let composite = build_native_ir_query_from_params(
             "Observation",
             &composite_params,
             &registry,
             "public",
-        ) {
-            Ok(_) => panic!("same-element composite unexpectedly rendered"),
-            Err(err) => err,
-        };
+        )
+        .unwrap();
+        let composite_sql = composite.builder.with_raw_resource(true).build().unwrap().sql;
+        // This fixture's code-value-quantity resolves to the top-level code +
+        // valueQuantity sub-params (SafeIndependent), rendered as a decomposed
+        // numeric + containment predicate.
         assert!(
-            composite_err
-                .to_string()
-                .contains("materialized native composite strategy"),
-            "same-element composite must fail explicitly, got: {composite_err}"
+            composite_sql.contains("valueQuantity") && composite_sql.contains("::numeric"),
+            "top-level composite should render decomposed numeric predicate, got: {composite_sql}"
         );
     }
 
@@ -2132,7 +2132,7 @@ mod tests {
     }
 
     #[test]
-    fn same_element_composite_requires_materialized_native_strategy() {
+    fn same_element_composite_renders_correlated_jsonpath() {
         let registry = composite_registry_with_expression();
         let params = parse_query_string(
             "code-value-quantity=http://loinc.org|8480-6$gt5.5|http://unitsofmeasure.org|mg&_count=5",
@@ -2144,20 +2144,32 @@ mod tests {
             collect_debug_plan: true,
         };
 
-        let err = match build_native_ir_query_from_params_with_config(
+        let converted = build_native_ir_query_from_params_with_config(
             "Observation",
             &params,
             &registry,
             "public",
             &config,
-        ) {
-            Ok(_) => panic!("same-element composite unexpectedly rendered"),
-            Err(err) => err,
-        };
+        )
+        .unwrap();
+        let built = converted.builder.with_raw_resource(true).build().unwrap();
+
+        // Same-element composite renders one correlated `@?` jsonpath over
+        // $.component[*] (GIN-served), not a top-level decomposed AND.
         assert!(
-            err.to_string()
-                .contains("materialized native composite strategy"),
-            "same-element composite must fail explicitly without JSONB fallback, got: {err}"
+            built.sql.contains("@?") && built.sql.contains(r#"$."component"[*] ?"#),
+            "same-element composite should render a correlated @? jsonpath, got: {}",
+            built.sql
+        );
+        assert!(
+            built.sql.contains(r#"@."valueQuantity"."value" > 5.5"#),
+            "quantity component should compare the in-element value: {}",
+            built.sql
+        );
+        assert!(
+            !built.sql.contains("r.resource->'valueQuantity'"),
+            "must not navigate top-level valueQuantity: {}",
+            built.sql
         );
     }
 
@@ -2451,19 +2463,20 @@ mod tests {
         );
         assert_eq!(
             plan.predicates[0].strategy,
-            crate::ir::IndexStrategy::JsonbTraversal
+            crate::ir::IndexStrategy::JsonbExpressionIndex
         );
-        assert!(!plan.predicates[0].index_backed);
-        assert_eq!(plan.predicates[0].expected_index, None);
-        assert!(plan.predicates[0].sql_shape.contains("jsonb_array_elements"));
-        assert!(plan.predicates[0].sql_shape.contains("ref->>'reference'"));
-        assert!(plan.predicates[0].sql_shape.contains("$target_type"));
+        assert!(plan.predicates[0].index_backed);
+        assert_eq!(
+            plan.predicates[0].expected_index,
+            Some("idx_observation_subject_ref".to_string())
+        );
+        assert!(plan.predicates[0].sql_shape.contains("fhir_extract_text"));
+        assert!(plan.predicates[0].sql_shape.contains("&& ARRAY["));
 
         let built = converted.builder.with_raw_resource(true).build().unwrap();
         assert!(
-            built.sql.contains("ref->>'reference'")
-                && built.sql.contains("jsonb_array_elements"),
-            "reference runtime path should use in-place reference traversal, got: {}",
+            built.sql.contains("fhir_extract_text(") && built.sql.contains("&& ARRAY["),
+            "reference runtime path should use in-place fhir_extract_text overlap, got: {}",
             built.sql
         );
         assert!(
@@ -2473,7 +2486,7 @@ mod tests {
         );
 
         let json = serde_json::to_string(&plan).unwrap();
-        assert!(json.contains("jsonb_traversal"));
+        assert!(json.contains("jsonb_expression_index"));
         assert!(
             !json.contains("pat-123") && !json.contains("Patient/pat-123"),
             "debug output must stay redacted: {json}"

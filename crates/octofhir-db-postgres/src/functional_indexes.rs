@@ -159,8 +159,36 @@ pub async fn create_default_search_indexes(
                      USING gin (({subtree}) jsonb_path_ops)"
                 )
             }
-            // Other token/quantity/reference predicates are not yet index-matched
-            // in-place; their indexes are added with those predicate rewrites.
+            // Reference params (e.g. Observation.subject/encounter/performer). The
+            // in-place predicate (types/mod.rs) flattens <segments>.reference into a
+            // text[] via fhir_extract_text and matches with `@>`/`&&`. A GIN over the
+            // identical expression turns the per-row jsonb_array_elements seq scan
+            // into a Bitmap Index Scan. Lax jsonpath `[*]` handles single-object and
+            // array references uniformly.
+            SearchParameterType::Reference => {
+                let mut ref_segs = segments.clone();
+                ref_segs.push("reference".to_string());
+                let jpa = paths_to_jsonpath_array(&[ref_segs]);
+                format!(
+                    "CREATE INDEX IF NOT EXISTS \"idx_{table}_{code}_ref\" ON \"{table}\" \
+                     USING gin (fhir_extract_text(resource, {jpa}))"
+                )
+            }
+            // Quantity params (e.g. Observation.value-quantity). The in-place predicate
+            // compares `(<segments>.value)::numeric` with a range; a btree over the
+            // identical cast expression serves those range scans. The system/code
+            // constraints stay as cheap recheck filters on the candidate rows.
+            SearchParameterType::Quantity => {
+                let mut value_segs = segments.clone();
+                value_segs.push("value".to_string());
+                let value_acc = build_jsonb_accessor("resource", &value_segs, true);
+                format!(
+                    "CREATE INDEX IF NOT EXISTS \"idx_{table}_{code}_qty\" ON \"{table}\" \
+                     ((({value_acc})::numeric))"
+                )
+            }
+            // Other token predicates are not yet index-matched in-place; their indexes
+            // are added with those predicate rewrites.
             _ => continue,
         };
 

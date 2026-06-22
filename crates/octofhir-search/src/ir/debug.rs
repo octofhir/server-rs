@@ -67,6 +67,12 @@ fn string_index_name(resource_type: &str, param_code: &str) -> String {
     format!("idx_{}_{param_code}_str", resource_type.to_lowercase())
 }
 
+/// Name of the bootstrap-created GIN functional reference index (over
+/// `fhir_extract_text(resource, ARRAY['$.path.reference[*]'])`).
+fn reference_index_name(resource_type: &str, param_code: &str) -> String {
+    format!("idx_{}_{param_code}_ref", resource_type.to_lowercase())
+}
+
 /// Build safe debug output for in-place date predicates over the functional
 /// date-range expression on the resource JSONB.
 ///
@@ -478,23 +484,20 @@ fn debug_reference_clause(resource_type: &str, clause: &ReferenceClause) -> Debu
             shape.to_string(),
         )
     };
+    let reference_overlap = || {
+        (
+            IndexStrategy::JsonbExpressionIndex,
+            Some(reference_index_name(resource_type, &clause.param_code)),
+            true,
+            "fhir_extract_text(resource, ARRAY['$.path.reference[*]']) && ARRAY[$refs]".to_string(),
+        )
+    };
     let (strategy, expected_index, index_backed, sql_shape) = match &clause.predicate {
-        // Local/external references render as in-place JSONB array traversal
-        // over the reference element; not index-backed.
-        ReferencePredicate::Local { target_type, .. } => {
-            if target_type.is_some() {
-                traversal(
-                    "EXISTS jsonb_array_elements(resource->path) AS ref WHERE ref->>'reference' = $target_type/$target_id",
-                )
-            } else {
-                traversal(
-                    "EXISTS jsonb_array_elements(resource->path) AS ref WHERE ref->>'reference' = $target_id",
-                )
-            }
+        // Local/external references flatten `<path>.reference` to text[] and match
+        // by array-overlap, served by the functional GIN reference index.
+        ReferencePredicate::Local { .. } | ReferencePredicate::External { .. } => {
+            reference_overlap()
         }
-        ReferencePredicate::External { .. } => traversal(
-            "EXISTS jsonb_array_elements(resource->path) AS ref WHERE ref->>'reference' = $url",
-        ),
         // `:identifier` matches the embedded identifier element via full
         // resource containment, served by the generic resource GIN index.
         ReferencePredicate::Identifier {
@@ -1087,12 +1090,18 @@ mod tests {
             plan.predicates[0].search_type,
             SearchParameterType::Reference
         );
-        assert_eq!(plan.predicates[0].strategy, IndexStrategy::JsonbTraversal);
-        assert!(!plan.predicates[0].index_backed);
-        assert_eq!(plan.predicates[0].expected_index, None);
+        assert_eq!(
+            plan.predicates[0].strategy,
+            IndexStrategy::JsonbExpressionIndex
+        );
+        assert!(plan.predicates[0].index_backed);
+        assert_eq!(
+            plan.predicates[0].expected_index,
+            Some("idx_observation_subject_ref".to_string())
+        );
         assert_eq!(
             plan.predicates[0].sql_shape,
-            "EXISTS jsonb_array_elements(resource->path) AS ref WHERE ref->>'reference' = $target_type/$target_id"
+            "fhir_extract_text(resource, ARRAY['$.path.reference[*]']) && ARRAY[$refs]"
         );
         assert!(
             !json.contains("\"Patient\"") && !json.contains("pat-123"),
