@@ -13,9 +13,13 @@
 
 use crate::parser::ParsedParam;
 use crate::sql_builder::{SqlBuilder, SqlBuilderError};
+use crate::ir::QuantityPredicate;
+use crate::ir::sql::SqlExpr;
+use crate::sql_builder::build_jsonb_accessor;
 use crate::{
     ir::NumberClause, ir::QuantityClause, ir::render_number_clauses_as_or,
-    ir::render_quantity_clauses_as_or, ir::render_quantity_containment_clauses_as_or,
+    ir::render_quantity_array_clauses_as_or, ir::render_quantity_clauses_as_or,
+    ir::render_quantity_containment_clauses_as_or,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -156,14 +160,39 @@ pub fn build_quantity_search(
 pub fn build_gin_quantity_search(
     builder: &mut SqlBuilder,
     param: &ParsedParam,
-    jsonb_path: &str,
-    path_segments: &[String],
+    paths: &[Vec<String>],
 ) -> Result<(), SqlBuilderError> {
     let clauses = QuantityClause::from_parsed_param(param, "")?;
-    if let Some(sql) =
-        render_quantity_containment_clauses_as_or(builder, &clauses, jsonb_path, path_segments)?
-    {
-        builder.add_condition(sql);
+
+    // `combo-*` quantities bind to a union of co-located paths (top-level
+    // valueQuantity OR component[*].valueQuantity); search every path and OR them.
+    let mut arms: Vec<SqlExpr> = Vec::new();
+    for segs in paths {
+        // A quantity under a repeating parent (e.g. component[*].valueQuantity)
+        // can't be read by a scalar `->>value` cast — that reads NULL across the
+        // array and silently matches nothing. Render it as a correlated `@?`
+        // jsonpath over the array. Top-level quantities (single segment) keep the
+        // btree-backed numeric-cast path.
+        let nested_array = segs.len() >= 2
+            && clauses
+                .iter()
+                .all(|c| matches!(c.predicate, QuantityPredicate::Comparison { .. }));
+        let arm = if nested_array {
+            render_quantity_array_clauses_as_or(builder, &clauses, segs)?
+        } else {
+            let col = builder.resource_column().to_string();
+            let jsonb_path = build_jsonb_accessor(&col, segs, false);
+            render_quantity_containment_clauses_as_or(builder, &clauses, &jsonb_path, segs)?
+        };
+        if let Some(arm) = arm {
+            arms.push(arm);
+        }
+    }
+
+    match arms.len() {
+        0 => {}
+        1 => builder.add_condition(arms.pop().unwrap()),
+        _ => builder.add_condition(SqlExpr::Or(arms)),
     }
     Ok(())
 }
@@ -308,13 +337,7 @@ mod tests {
             }],
         };
 
-        build_gin_quantity_search(
-            &mut builder,
-            &param,
-            "resource->'valueQuantity'",
-            &["valueQuantity".to_string()],
-        )
-        .unwrap();
+        build_gin_quantity_search(&mut builder, &param, &[vec!["valueQuantity".to_string()]]).unwrap();
 
         let clause = builder.build_where_clause().unwrap();
         assert!(clause.contains("resource @>"));

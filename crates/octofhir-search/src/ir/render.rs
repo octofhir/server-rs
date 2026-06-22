@@ -1,5 +1,5 @@
 use crate::ir::ast::{
-    CompositeClause, CompositeComponentPredicate, CompositePredicate, CompositeSafety, IdClause,
+    CompositeClause, CompositeComponentPredicate, CompositePredicate, IdClause,
     IdPredicate, NumberClause, NumberPredicate, QuantityClause, QuantityPredicate,
     StringClause, StringPredicate, TokenClause, TokenIndexShape,
     TokenPredicate, UriClause, UriPredicate,
@@ -7,7 +7,7 @@ use crate::ir::ast::{
 use crate::ir::sql::{RangeOp, SelectStmt, SqlExpr, SqlFrom, SqlOp, SqlTerm};
 use crate::parameters::SearchParameterType;
 use crate::parameters::SearchPrefix;
-use crate::sql_builder::{SqlBuilder, SqlBuilderError};
+use crate::sql_builder::{SqlBuilder, SqlBuilderError, build_jsonb_accessor};
 use crate::types::date_ast::{Bound, DateClause, DatePredicate, PeriodClause, PeriodPredicate};
 use octofhir_core::text::normalize_string;
 
@@ -191,6 +191,80 @@ pub fn render_quantity_containment_clauses_as_or(
         .iter()
         .map(|clause| quantity_clause_expr(builder, clause, jsonb_path, Some(path_segments)))
         .collect::<Result<Vec<_>, _>>()?;
+    Ok(or_exprs(exprs))
+}
+
+/// jsonpath boolean condition over `@.value`, mirroring numeric_comparison_expr's
+/// FHIR precision semantics (eq/ne/ap are implicit ranges).
+fn quantity_value_jsonpath_cond(
+    prefix: crate::parameters::SearchPrefix,
+    number: &RenderDecimalParts,
+) -> String {
+    use crate::parameters::SearchPrefix;
+    match prefix {
+        SearchPrefix::Eq => {
+            let (lo, hi) = number.implicit_eq_bounds();
+            format!("@.\"value\" >= {lo} && @.\"value\" < {hi}")
+        }
+        SearchPrefix::Ne => {
+            let (lo, hi) = number.implicit_eq_bounds();
+            format!("(@.\"value\" < {lo} || @.\"value\" >= {hi})")
+        }
+        SearchPrefix::Gt | SearchPrefix::Sa => format!("@.\"value\" > {}", number.format()),
+        SearchPrefix::Lt | SearchPrefix::Eb => format!("@.\"value\" < {}", number.format()),
+        SearchPrefix::Ge => format!("@.\"value\" >= {}", number.format()),
+        SearchPrefix::Le => format!("@.\"value\" <= {}", number.format()),
+        SearchPrefix::Ap => {
+            let (lo, hi) = number.approximate_bounds();
+            format!("@.\"value\" >= {lo} && @.\"value\" <= {hi}")
+        }
+    }
+}
+
+/// Render quantity clauses whose value element sits under a repeating parent
+/// (e.g. `Observation.component.valueQuantity`) as a correlated `@?` jsonpath
+/// over the array. A plain `resource->parent->valueQuantity->>value` cast reads
+/// NULL across an array parent (silent recall 0); the array filter is correct and
+/// the whole-resource GIN serves the existence probe. Values embed as jsonpath
+/// literals (numeric values validated, strings escaped).
+pub fn render_quantity_array_clauses_as_or(
+    builder: &mut SqlBuilder,
+    clauses: &[QuantityClause],
+    path_segments: &[String],
+) -> Result<Option<SqlExpr>, SqlBuilderError> {
+    // $."seg0"[*]..."segLast"  — lax `[*]` on every non-leaf segment.
+    let mut base = String::from("$");
+    for (i, seg) in path_segments.iter().enumerate() {
+        base.push_str(&format!(".\"{}\"", jp_quote(seg)));
+        if i + 1 < path_segments.len() {
+            base.push_str("[*]");
+        }
+    }
+    let col = builder.resource_column().to_string();
+    let mut exprs = Vec::new();
+    for clause in clauses {
+        let QuantityPredicate::Comparison {
+            prefix,
+            value,
+            system,
+            code,
+        } = &clause.predicate
+        else {
+            continue;
+        };
+        let number =
+            RenderDecimalParts::parse(value).map_err(|_| invalid_quantity_number(value))?;
+        let mut conds = vec![quantity_value_jsonpath_cond(*prefix, &number)];
+        if let Some(system) = system.as_deref().filter(|s| !s.is_empty()) {
+            conds.push(format!("@.\"system\" == \"{}\"", jp_quote(system)));
+        }
+        if let Some(code) = code.as_deref().filter(|c| !c.is_empty()) {
+            let c = jp_quote(code);
+            conds.push(format!("(@.\"code\" == \"{c}\" || @.\"unit\" == \"{c}\")"));
+        }
+        let filter = format!("{base} ? ({})", conds.join(" && ")).replace('\'', "''");
+        exprs.push(SqlExpr::Raw(format!("{col} @? '{filter}'")));
+    }
     Ok(or_exprs(exprs))
 }
 
@@ -1091,96 +1165,177 @@ fn render_composite_clause_expr(
     builder: &mut SqlBuilder,
     clause: &CompositeClause,
 ) -> Result<SqlExpr, SqlBuilderError> {
-    match &clause.predicate {
-        CompositePredicate::Tuple { components, safety } => {
-            if matches!(safety, CompositeSafety::RequiresSameElement) {
-                // Correlated same-element match via an in-place `@?` jsonpath over
-                // the repeating array (GIN-served), with an EXISTS fallback for
-                // component shapes jsonpath can't express. No sidecar tables needed.
-                return render_composite_same_component_element_expr(
-                    builder,
-                    &clause.resource_type,
-                    components,
-                );
-            }
-
-            let conditions = components
-                .iter()
-                .map(|component| {
-                    render_composite_component_native_expr(
-                        builder,
-                        &clause.resource_type,
-                        component,
-                    )
-                })
-                .collect::<Result<Vec<_>, _>>()?;
-            if conditions.is_empty() {
-                Ok(SqlExpr::Bool(true))
-            } else {
-                Ok(SqlExpr::And(conditions))
-            }
+    let components = match &clause.predicate {
+        CompositePredicate::Tuple { components, .. } => components,
+        CompositePredicate::Missing { .. } => {
+            return Err(SqlBuilderError::NotImplemented(
+                "composite :missing requires a materialized composite strategy".to_string(),
+            ));
         }
-        CompositePredicate::Missing { .. } => Err(SqlBuilderError::NotImplemented(
-            "composite :missing requires a materialized composite strategy".to_string(),
-        )),
-    }
-}
-
-fn render_composite_component_native_expr(
-    builder: &mut SqlBuilder,
-    resource_type: &str,
-    component: &CompositeComponentPredicate,
-) -> Result<SqlExpr, SqlBuilderError> {
-    // Components render in place over the resource JSONB (no sidecar tables);
-    // identical to the JSONB-fallback path.
-    render_composite_component_expr(builder, resource_type, component)
-}
-
-fn render_composite_same_component_element_expr(
-    builder: &mut SqlBuilder,
-    resource_type: &str,
-    components: &[CompositeComponentPredicate],
-) -> Result<SqlExpr, SqlBuilderError> {
-    // Index-friendly path: one correlated `@?` jsonpath filter over `$.component[*]`.
-    // The whole-resource GIN (idx_<table>_gin) serves `@?`, replacing the per-row
-    // jsonb_array_elements seq scan with a Bitmap Index Scan. The single outer
-    // `? (...)` keeps all component predicates bound to the same array element, so
-    // correlation is exact. Falls back to the EXISTS form for component types/values
-    // jsonpath can't express (string regex, date, sa/eb/ap prefixes).
-    if let Some(filter) = build_component_jsonpath_filter(components, resource_type) {
-        return Ok(SqlExpr::Raw(format!(
-            "{} @? '{filter}'",
-            builder.resource_column()
-        )));
-    }
-
-    let Some(suffixes) = components
-        .iter()
-        .map(|component| strip_component_suffix(&component.spec.expression))
-        .collect::<Option<Vec<_>>>()
-    else {
-        let conditions = components
-            .iter()
-            .map(|component| render_composite_component_expr(builder, resource_type, component))
-            .collect::<Result<Vec<_>, _>>()?;
-        return Ok(SqlExpr::And(conditions));
     };
+    let rt = &clause.resource_type;
 
+    // Resolve each component's candidate JSONB paths. `combo-*` components bind to a
+    // union of co-located paths (top-level AND component[*]); resolve every arm so
+    // the composite is searched at each location, OR'd.
+    let paths: Vec<Vec<Vec<String>>> = components
+        .iter()
+        .map(|c| {
+            let p = crate::sql_builder::fhirpath_to_jsonb_paths(&c.spec.expression, rt);
+            if p.is_empty() {
+                vec![crate::sql_builder::fhirpath_to_jsonb_path(&c.spec.expression, rt)]
+            } else {
+                p
+            }
+        })
+        .collect();
+
+    // Component-array arm — only when EVERY component has a path under `component`.
+    // `comp_segs[i]` is component i's path within one array element.
+    let comp_segs: Option<Vec<Vec<String>>> = components
+        .iter()
+        .enumerate()
+        .map(|(i, _)| {
+            paths[i]
+                .iter()
+                .find(|p| p.first().map(String::as_str) == Some("component"))
+                .map(|p| p[1..].to_vec())
+        })
+        .collect();
+
+    // Top-level arm — only when EVERY component has a non-`component` path.
+    let top_paths: Option<Vec<Vec<String>>> = components
+        .iter()
+        .enumerate()
+        .map(|(i, _)| {
+            paths[i]
+                .iter()
+                .find(|p| p.first().map(String::as_str) != Some("component"))
+                .cloned()
+        })
+        .collect();
+
+    // When a component arm exists, fold every location into ONE `@?` jsonpath
+    // `$ ? (<top> || <component>)`. The component existence filter makes the
+    // whole-resource GIN serve the predicate as one Bitmap Index Scan; a SQL-level
+    // OR of a GIN `@?` and a btree predicate cannot be combined and degrades to a
+    // Seq Scan. A top-ONLY composite skips this — its decomposed arm below is
+    // backed by the value btree (a top-level `$ ? (... && value > N)` is not
+    // GIN-servable). Falls back to the SQL arms for components jsonpath can't express.
+    let top_jp = top_paths
+        .as_ref()
+        .map(|tp| composite_arm_jsonpath_root(components, tp));
+    let comp_jp = comp_segs
+        .as_ref()
+        .map(|cs| composite_arm_jsonpath_component(components, cs));
+    let top_ok = top_paths.is_none() || matches!(top_jp, Some(Some(_)));
+    let comp_ok = comp_segs.is_none() || matches!(comp_jp, Some(Some(_)));
+    if comp_segs.is_some() && top_ok && comp_ok {
+        let mut jp_arms: Vec<String> = Vec::new();
+        if let Some(Some(a)) = comp_jp.clone() {
+            jp_arms.push(a);
+        }
+        if let Some(Some(a)) = top_jp.clone() {
+            jp_arms.push(a);
+        }
+        if !jp_arms.is_empty() {
+            let filter = format!("$ ? ({})", jp_arms.join(" || ")).replace('\'', "''");
+            return Ok(SqlExpr::Raw(format!(
+                "{} @? '{filter}'",
+                builder.resource_column()
+            )));
+        }
+    }
+
+    // Fallback: SQL OR of per-location arms (EXISTS / decomposed), for component
+    // shapes jsonpath can't express (string regex, date, sa/eb/ap prefixes).
+    let mut arms: Vec<SqlExpr> = Vec::new();
+    if let Some(comp_segs) = comp_segs {
+        arms.push(build_composite_component_arm(builder, components, &comp_segs)?);
+    }
+    if let Some(top_paths) = top_paths {
+        arms.push(build_composite_top_level_arm(builder, components, &top_paths)?);
+    }
+    match arms.len() {
+        0 => Ok(SqlExpr::Bool(false)),
+        1 => Ok(arms.pop().unwrap()),
+        _ => Ok(SqlExpr::Or(arms)),
+    }
+}
+
+/// Top-level location arm as a jsonpath predicate rooted at `@` (the resource):
+/// AND of each component's clause. None if any component isn't jsonpath-expressible.
+fn composite_arm_jsonpath_root(
+    components: &[CompositeComponentPredicate],
+    top_paths: &[Vec<String>],
+) -> Option<String> {
+    let mut clauses = Vec::new();
+    for (component, segs) in components.iter().zip(top_paths.iter()) {
+        clauses.push(component_jsonpath_clause(component, segs)?);
+    }
+    (!clauses.is_empty()).then(|| clauses.join(" && "))
+}
+
+/// Component-array location arm as a correlated jsonpath: `exists(@.component[*] ?
+/// (<clauses>))`. None if any component isn't jsonpath-expressible.
+fn composite_arm_jsonpath_component(
+    components: &[CompositeComponentPredicate],
+    comp_segs: &[Vec<String>],
+) -> Option<String> {
+    let mut clauses = Vec::new();
+    for (component, segs) in components.iter().zip(comp_segs.iter()) {
+        clauses.push(component_jsonpath_clause(component, segs)?);
+    }
+    (!clauses.is_empty()).then(|| format!("exists(@.\"component\"[*] ? ({}))", clauses.join(" && ")))
+}
+
+/// Top-level composite arm: AND of per-component predicates at their non-array
+/// paths. Co-located single elements need no correlation.
+fn build_composite_top_level_arm(
+    builder: &mut SqlBuilder,
+    components: &[CompositeComponentPredicate],
+    top_paths: &[Vec<String>],
+) -> Result<SqlExpr, SqlBuilderError> {
+    let col = builder.resource_column().to_string();
     let conditions = components
         .iter()
-        .zip(suffixes.iter())
-        .map(|(component, suffix)| {
-            let json_path =
-                suffix_jsonb_path("component_elem", suffix, component_text_leaf(component));
+        .zip(top_paths.iter())
+        .map(|(component, segs)| {
+            let json_path = build_jsonb_accessor(&col, segs, component_text_leaf(component));
             render_composite_component_at_path_expr(builder, component, &json_path)
         })
         .collect::<Result<Vec<_>, _>>()?;
+    if conditions.is_empty() {
+        Ok(SqlExpr::Bool(true))
+    } else {
+        Ok(SqlExpr::And(conditions))
+    }
+}
 
+/// Component-array arm: a correlated `@?` jsonpath over `$.component[*]` so all
+/// predicates bind to the same array element (GIN-served). Falls back to an EXISTS
+/// over jsonb_array_elements for component shapes jsonpath can't express (string
+/// regex, date, sa/eb/ap prefixes). `comp_segs[i]` is component i's path WITHIN one
+/// array element (the `component` prefix already stripped).
+fn build_composite_component_arm(
+    builder: &mut SqlBuilder,
+    components: &[CompositeComponentPredicate],
+    comp_segs: &[Vec<String>],
+) -> Result<SqlExpr, SqlBuilderError> {
+    let col = builder.resource_column().to_string();
+    let conditions = components
+        .iter()
+        .zip(comp_segs.iter())
+        .map(|(component, segs)| {
+            let json_path =
+                build_jsonb_accessor("component_elem", segs, component_text_leaf(component));
+            render_composite_component_at_path_expr(builder, component, &json_path)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     if conditions.is_empty() {
         return Ok(SqlExpr::Bool(true));
     }
-
-    let component_path = format!("{}->'component'", builder.resource_column());
+    let component_path = format!("{col}->'component'");
     Ok(jsonb_array_exists_expr(
         &jsonb_array_or_singleton(&component_path),
         "component_elem",
@@ -1216,25 +1371,6 @@ fn id_clause_expr(builder: &mut SqlBuilder, clause: &IdClause, id_column: &str) 
     } else {
         condition
     }
-}
-
-fn render_composite_component_expr(
-    builder: &mut SqlBuilder,
-    resource_type: &str,
-    component: &CompositeComponentPredicate,
-) -> Result<SqlExpr, SqlBuilderError> {
-    // Lower the component's FHIRPath sub-expression to JSONB segments via the
-    // real FHIRPath AST — folds polymorphic casts (`value.as(Quantity)` ->
-    // `valueQuantity`) and drops the resource prefix. Token/quantity/reference
-    // components need a JSON-object leaf (`->`) so their renderers can navigate
-    // into `coding`/`value`/`reference`; text-leaf types (string/date/number/uri)
-    // need a text leaf (`->>`).
-    let segments =
-        crate::sql_builder::fhirpath_to_jsonb_path(&component.spec.expression, resource_type);
-    let as_text = component_text_leaf(component);
-    let json_path =
-        crate::sql_builder::build_jsonb_accessor(builder.resource_column(), &segments, as_text);
-    render_composite_component_at_path_expr(builder, component, &json_path)
 }
 
 fn render_composite_component_at_path_expr(
@@ -1305,28 +1441,6 @@ fn component_text_leaf(component: &CompositeComponentPredicate) -> bool {
             | SearchParameterType::Number
             | SearchParameterType::Uri
     )
-}
-
-fn strip_component_suffix(expression: &str) -> Option<String> {
-    let path = expression
-        .split_once('.')
-        .map_or(expression, |(head, tail)| {
-            if head
-                .chars()
-                .next()
-                .is_some_and(|ch| ch.is_ascii_uppercase())
-            {
-                tail
-            } else {
-                expression
-            }
-        });
-    path.strip_prefix("component.")
-        .map(str::to_string)
-        .or_else(|| {
-            path.strip_prefix("Observation.component.")
-                .map(str::to_string)
-        })
 }
 
 /// jsonpath string-literal escape for a value placed inside `"..."`.
@@ -1405,49 +1519,6 @@ fn component_jsonpath_clause(
         // string (regex semantics), date (datetime compare) → EXISTS fallback.
         _ => None,
     }
-}
-
-/// Build the correlated `$.component[*] ? (...)` jsonpath for a same-element
-/// composite, or None if any component can't be lowered to jsonpath. Component
-/// JSON paths come from the real FHIRPath AST (folds `value.ofType(Quantity)` ->
-/// `valueQuantity`); only `Observation.component`-rooted composites are handled.
-fn build_component_jsonpath_filter(
-    components: &[CompositeComponentPredicate],
-    resource_type: &str,
-) -> Option<String> {
-    let mut clauses = Vec::new();
-    for component in components {
-        let segments =
-            crate::sql_builder::fhirpath_to_jsonb_path(&component.spec.expression, resource_type);
-        let (head, in_elem) = segments.split_first()?;
-        if head != "component" {
-            return None;
-        }
-        clauses.push(component_jsonpath_clause(component, in_elem)?);
-    }
-    if clauses.is_empty() {
-        return None;
-    }
-    // Embed as a SQL single-quoted literal (escape single quotes).
-    Some(format!("$.\"component\"[*] ? ({})", clauses.join(" && ")).replace('\'', "''"))
-}
-
-fn suffix_jsonb_path(base: &str, suffix: &str, text_leaf: bool) -> String {
-    let parts = suffix
-        .split('.')
-        .filter(|part| !part.is_empty())
-        .collect::<Vec<_>>();
-    if parts.is_empty() {
-        return base.to_string();
-    }
-
-    let mut acc = base.to_string();
-    for (index, part) in parts.iter().enumerate() {
-        let is_leaf = index == parts.len() - 1;
-        let op = if is_leaf && text_leaf { "->>" } else { "->" };
-        acc.push_str(&format!("{op}'{part}'"));
-    }
-    acc
 }
 
 fn jsonb_array_or_singleton(path: &str) -> String {
@@ -3265,7 +3336,7 @@ mod tests {
         // `exists(...)`. Values are embedded as jsonpath literals so the whole-
         // resource GIN can serve the predicate.
         assert!(sql.contains("@?"));
-        assert!(sql.contains(r#"$."component"[*] ?"#));
+        assert!(sql.contains(r#"exists(@."component"[*] ?"#));
         assert!(sql.contains(r#"exists(@."code"."coding"[*] ?"#));
         assert!(sql.contains(r#"@."system" == "http://loinc.org""#));
         assert!(sql.contains(r#"@."code" == "8480-6""#));

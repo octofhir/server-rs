@@ -339,7 +339,15 @@ fn dispatch_user_defined_jsonb_search(
         SearchParameterType::Number => build_number_search(builder, param, jsonb_path),
         SearchParameterType::Date => build_date_search(builder, param, jsonb_path),
         SearchParameterType::Quantity => {
-            build_gin_quantity_search(builder, param, &object_path, path_segments)
+            // combo-* quantities are a union of co-located paths (top-level and
+            // component[*]); resolve every same-resource branch, not just the first.
+            let paths = definition
+                .expression
+                .as_deref()
+                .map(|e| crate::sql_builder::fhirpath_to_jsonb_paths(e, resource_type))
+                .filter(|p| !p.is_empty())
+                .unwrap_or_else(|| vec![path_segments.to_vec()]);
+            build_gin_quantity_search(builder, param, &paths)
         }
         SearchParameterType::Reference => build_reference_jsonb_fallback_search(
             builder,

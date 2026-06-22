@@ -1191,6 +1191,38 @@ pub fn fhirpath_to_jsonb_path(expression: &str, resource_type: &str) -> Vec<Stri
     paths
 }
 
+/// Like [`fhirpath_to_jsonb_path`] but returns EVERY same-resource branch of a
+/// union expression, not just the first. `combo-*` search params bind to a union
+/// of co-located paths within one resource — e.g. combo-value-quantity is
+/// `Observation.value.ofType(Quantity) | Observation.component.value.ofType(Quantity)`
+/// — and must be searched as an OR across both the top-level and component paths.
+/// Cross-resource unions (the shared clinical params) still collapse to the one
+/// branch whose leading resource type matches `rt`. Returns one path for a
+/// non-union expression; empty when nothing resolves.
+pub fn fhirpath_to_jsonb_paths(expression: &str, resource_type: &str) -> Vec<Vec<String>> {
+    let Ok(ast) = octofhir_fhirpath::parse_expression(expression) else {
+        return Vec::new();
+    };
+    let mut branches = Vec::new();
+    flatten_union(&ast, &mut branches);
+    let mut out: Vec<Vec<String>> = Vec::new();
+    for b in branches {
+        // Keep branches scoped to this resource type (or with no resource prefix);
+        // drop other resources' branches in a cross-resource union.
+        let leading = ast_leading_identifier(b);
+        if leading.is_some() && leading.as_deref() != Some(resource_type) {
+            continue;
+        }
+        if let Some(segs) = ast_to_jsonb_segments(b, resource_type)
+            && !segs.is_empty()
+            && !out.contains(&segs)
+        {
+            out.push(segs);
+        }
+    }
+    out
+}
+
 /// JSONB property paths to extract for a search parameter's functional index AND
 /// the matching query predicate (both must derive paths identically so the planner
 /// uses the index). Enum-driven, no string heuristics:

@@ -2154,10 +2154,10 @@ mod tests {
         .unwrap();
         let built = converted.builder.with_raw_resource(true).build().unwrap();
 
-        // Same-element composite renders one correlated `@?` jsonpath over
-        // $.component[*] (GIN-served), not a top-level decomposed AND.
+        // Same-element composite renders one correlated `@?` jsonpath with a
+        // component[*] existence filter (GIN-served), not a top-level decomposed AND.
         assert!(
-            built.sql.contains("@?") && built.sql.contains(r#"$."component"[*] ?"#),
+            built.sql.contains("@?") && built.sql.contains(r#"exists(@."component"[*] ?"#),
             "same-element composite should render a correlated @? jsonpath, got: {}",
             built.sql
         );
