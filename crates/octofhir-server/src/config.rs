@@ -397,6 +397,53 @@ pub struct SearchSettings {
     /// `OCTOFHIR__SEARCH__MAX_VALUESET_EXPANSION`.
     #[serde(default = "default_max_valueset_expansion")]
     pub max_valueset_expansion: usize,
+    /// Targeted PARTIAL composite indexes, each pinned to one token value — e.g.
+    /// `Observation.code-value-quantity` restricted to `code = 8867-4`. A composite
+    /// search for that exact token is then served by a tiny btree pre-filtered to it
+    /// (Postgres partial index), instead of BitmapAnd-ing two large bitmaps. Empty by
+    /// default (no hardcoded codes); set per deployment via TOML
+    /// `[[search.composite_index]]` or env `OCTOFHIR__SEARCH__COMPOSITE_INDEXES`
+    /// (`ResourceType.param=system|code`, system optional: `...=|8867-4`).
+    #[serde(default)]
+    pub composite_index: Vec<CompositeIndexSpec>,
+}
+
+/// One targeted partial composite index: index the quantity component of `param`
+/// on `resource_type`, restricted (index `WHERE`) to rows whose token component
+/// equals `code` (optionally within `system`).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CompositeIndexSpec {
+    pub resource_type: String,
+    pub param: String,
+    #[serde(default)]
+    pub system: Option<String>,
+    pub code: String,
+}
+
+impl CompositeIndexSpec {
+    /// Parse a compact env entry `ResourceType.param=system|code` (system optional:
+    /// `ResourceType.param=|code` or `ResourceType.param=code`). Returns None if the
+    /// shape is malformed.
+    pub fn parse_compact(entry: &str) -> Option<Self> {
+        let (left, right) = entry.split_once('=')?;
+        let (resource_type, param) = left.split_once('.')?;
+        let (system, code) = match right.split_once('|') {
+            Some((sys, code)) => {
+                let sys = sys.trim();
+                ((!sys.is_empty()).then(|| sys.to_string()), code.trim())
+            }
+            None => (None, right.trim()),
+        };
+        if resource_type.is_empty() || param.is_empty() || code.is_empty() {
+            return None;
+        }
+        Some(Self {
+            resource_type: resource_type.trim().to_string(),
+            param: param.trim().to_string(),
+            system,
+            code: code.to_string(),
+        })
+    }
 }
 fn default_max_valueset_expansion() -> usize {
     octofhir_search::terminology_preprocess::DEFAULT_MAX_EXPANSION_SIZE
@@ -458,6 +505,7 @@ impl Default for SearchSettings {
             allow_debug_search_explain_analyze: false,
             indexed_params: default_indexed_params(),
             max_valueset_expansion: default_max_valueset_expansion(),
+            composite_index: Vec::new(),
         }
     }
 }
@@ -1185,9 +1233,25 @@ pub mod loader {
         let cfg = builder
             .build()
             .map_err(|e| format!("config build error: {e}"))?;
-        let merged: AppConfig = cfg
+        let mut merged: AppConfig = cfg
             .try_deserialize()
             .map_err(|e| format!("config deserialize error: {e}"))?;
+        // Flat-env composite indexes (the structured `[[search.composite_index]]`
+        // TOML form deserializes above; this appends the compact env list on top).
+        if let Ok(raw) = std::env::var("OCTOFHIR__SEARCH__COMPOSITE_INDEXES") {
+            for entry in raw.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+                match super::CompositeIndexSpec::parse_compact(entry) {
+                    Some(spec) if !merged.search.composite_index.contains(&spec) => {
+                        merged.search.composite_index.push(spec);
+                    }
+                    Some(_) => {}
+                    None => return Err(format!(
+                        "invalid OCTOFHIR__SEARCH__COMPOSITE_INDEXES entry '{entry}' \
+                         (want ResourceType.param=system|code)"
+                    )),
+                }
+            }
+        }
         // Validate
         merged.validate()?;
         Ok(merged)

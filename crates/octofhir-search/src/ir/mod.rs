@@ -41,7 +41,7 @@ pub use render::{
     render_id_clauses_as_or, render_number_clauses_as_or,
     render_period_path_clauses_as_or,
     render_quantity_array_clauses_as_or, render_quantity_clauses_as_or,
-    render_quantity_containment_clauses_as_or,
+    render_quantity_containment_clauses_as_or, render_quantity_union_clauses_as_or,
     render_indexed_string_clauses_as_or,
     render_sql_expr,
     render_string_array_clauses_as_or,

@@ -1383,7 +1383,7 @@ mod tests {
             (
                 "Observation",
                 "value-quantity=ge100|http://unitsofmeasure.org|mm[Hg]&_count=10",
-                ["r.resource->'valueQuantity'->>'value'", "::numeric"],
+                ["fhir_qty_extract_max_numeric(r.resource, ARRAY['$.\"valueQuantity\".\"value\"'::jsonpath]", ">= 100"],
             ),
         ];
 
@@ -2118,23 +2118,22 @@ mod tests {
         .unwrap();
         let built = converted.builder.with_raw_resource(true).build().unwrap();
         assert!(
-            built.sql.contains("r.resource->'valueQuantity'->>'value'")
-                && built.sql.contains("::numeric")
-                && built.sql.contains("r.resource @>"),
-            "quantity runtime path should use in-place numeric + containment SQL, got: {}",
+            built.sql.contains("fhir_qty_extract_max_numeric")
+                && built.sql.contains("@?")
+                && built.sql.contains("mg"),
+            "quantity runtime path should use the union min/max btree + unit recheck, got: {}",
             built.sql
         );
         let plan = converted.debug_plan.expect("debug plan collected");
         assert_eq!(
             plan.predicates[0].strategy,
-            crate::ir::IndexStrategy::JsonbContainment
+            crate::ir::IndexStrategy::JsonbExpressionIndex
         );
         assert!(plan.predicates[0].index_backed);
         assert_eq!(
             plan.predicates[0].expected_index,
-            Some("idx_observation_gin".to_string())
+            Some("idx_observation_value-quantity_qmax".to_string())
         );
-        assert!(plan.predicates[0].sql_shape.contains("resource @>"));
     }
 
     #[test]

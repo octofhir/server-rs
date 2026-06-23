@@ -310,6 +310,138 @@ pub fn render_quantity_array_clauses_as_or(
     Ok(or_exprs(exprs))
 }
 
+/// Index-servable numeric condition over the union min/max btrees (`maxfn`/`minfn` =
+/// `fhir_qty_extract_max/min_numeric(resource, <all value paths>)`). Single-bound
+/// prefixes are EXACT — `some value > N` ⇔ `max > N`, `some value < N` ⇔ `min < N`.
+/// `eq`/`ap` give a btree-servable SUPERSET (the `@?` recheck enforces exactness).
+/// Returns None for `Ne` (no index help — recheck only).
+fn quantity_union_index_cond(
+    maxfn: &str,
+    minfn: &str,
+    prefix: crate::parameters::SearchPrefix,
+    number: &RenderDecimalParts,
+) -> Option<String> {
+    use crate::parameters::SearchPrefix;
+    Some(match prefix {
+        SearchPrefix::Gt | SearchPrefix::Sa => format!("{maxfn} > {}", number.format()),
+        SearchPrefix::Ge => format!("{maxfn} >= {}", number.format()),
+        SearchPrefix::Lt | SearchPrefix::Eb => format!("{minfn} < {}", number.format()),
+        SearchPrefix::Le => format!("{minfn} <= {}", number.format()),
+        SearchPrefix::Eq => {
+            let (lo, hi) = number.implicit_eq_bounds();
+            format!("{maxfn} >= {lo} AND {minfn} < {hi}")
+        }
+        SearchPrefix::Ap => {
+            let (lo, hi) = number.approximate_bounds();
+            format!("{maxfn} >= {lo} AND {minfn} <= {hi}")
+        }
+        SearchPrefix::Ne => return None,
+    })
+}
+
+/// Exact `@?` recheck over every value location, OR'd: `col @? '<loc> ? (<value cond>
+/// [&& system] [&& code])'`. Needed for `eq`/`ne`/`ap` (the min/max prefilter is a
+/// superset) and whenever system/code constrain the match (min/max says nothing about
+/// the unit). Mirrors the value-cond semantics of `quantity_value_jsonpath_cond`.
+fn quantity_union_recheck(
+    col: &str,
+    paths: &[Vec<String>],
+    prefix: crate::parameters::SearchPrefix,
+    number: &RenderDecimalParts,
+    system: &Option<String>,
+    code: &Option<String>,
+) -> String {
+    let arms = paths
+        .iter()
+        .map(|segs| {
+            let mut base = String::from("$");
+            for (i, seg) in segs.iter().enumerate() {
+                base.push_str(&format!(".\"{}\"", jp_quote(seg)));
+                if i + 1 < segs.len() {
+                    base.push_str("[*]");
+                }
+            }
+            let mut conds = vec![quantity_value_jsonpath_cond(prefix, number)];
+            if let Some(system) = system.as_deref().filter(|s| !s.is_empty()) {
+                conds.push(format!("@.\"system\" == \"{}\"", jp_quote(system)));
+            }
+            if let Some(code) = code.as_deref().filter(|c| !c.is_empty()) {
+                let c = jp_quote(code);
+                conds.push(format!("(@.\"code\" == \"{c}\" || @.\"unit\" == \"{c}\")"));
+            }
+            let filter = format!("{base} ? ({})", conds.join(" && ")).replace('\'', "''");
+            format!("{col} @? '{filter}'")
+        })
+        .collect::<Vec<_>>()
+        .join(" OR ");
+    format!("({arms})")
+}
+
+/// Render quantity clauses as one OR group, folding EVERY value location (top-level
+/// `valueQuantity` and `component[*].valueQuantity`) into a SINGLE min/max btree
+/// predicate over `fhir_qty_extract_min/max_numeric(resource, <all paths>)`. This is
+/// the index-friendly successor to the per-location OR of a scalar btree and a
+/// component hull+`@?` (which the planner could not combine, falling to a Seq Scan):
+/// one clean btree expression → one Index Scan, regardless of which location matched.
+pub fn render_quantity_union_clauses_as_or(
+    builder: &mut SqlBuilder,
+    clauses: &[QuantityClause],
+    paths: &[Vec<String>],
+) -> Result<Option<SqlExpr>, SqlBuilderError> {
+    use crate::parameters::SearchPrefix;
+    if paths.is_empty() {
+        return Ok(None);
+    }
+    let col = builder.resource_column().to_string();
+    let arr = crate::sql_builder::quantity_value_jsonpath_array(paths);
+    let maxfn = format!("fhir_qty_extract_max_numeric({col}, {arr})");
+    let minfn = format!("fhir_qty_extract_min_numeric({col}, {arr})");
+    let mut exprs = Vec::new();
+    for clause in clauses {
+        match &clause.predicate {
+            QuantityPredicate::Missing { is_missing } => {
+                exprs.push(SqlExpr::Raw(format!(
+                    "{maxfn} IS {}NULL",
+                    if *is_missing { "" } else { "NOT " }
+                )));
+            }
+            QuantityPredicate::Comparison {
+                prefix,
+                value,
+                system,
+                code,
+            } => {
+                let number =
+                    RenderDecimalParts::parse(value).map_err(|_| invalid_quantity_number(value))?;
+                let index_cond = quantity_union_index_cond(&maxfn, &minfn, *prefix, &number);
+                // The min/max prefilter is exact for single-bound prefixes with no
+                // unit constraint; otherwise an `@?` recheck enforces the exact match.
+                let need_recheck = matches!(
+                    prefix,
+                    SearchPrefix::Eq | SearchPrefix::Ne | SearchPrefix::Ap
+                ) || system.as_deref().is_some_and(|s| !s.is_empty())
+                    || code.as_deref().is_some_and(|c| !c.is_empty());
+                if !need_recheck {
+                    if let Some(cond) = index_cond {
+                        exprs.push(SqlExpr::Raw(cond));
+                    }
+                } else {
+                    let recheck =
+                        quantity_union_recheck(&col, paths, *prefix, &number, system, code);
+                    match index_cond {
+                        Some(cond) => exprs.push(SqlExpr::And(vec![
+                            SqlExpr::Raw(cond),
+                            SqlExpr::Raw(recheck),
+                        ])),
+                        None => exprs.push(SqlExpr::Raw(recheck)),
+                    }
+                }
+            }
+        }
+    }
+    Ok(or_exprs(exprs))
+}
+
 /// Render simple-code token clauses as one OR group.
 ///
 /// This covers scalar/array code SearchParameters such as `Patient.gender`.
@@ -471,7 +603,7 @@ fn render_token_coding_subtree_clause(
     clause: &TokenClause,
     subtree_path: &str,
 ) -> Result<String, SqlBuilderError> {
-    match token_coding_subtree_containment_expr(builder, clause, subtree_path) {
+    match token_coding_subtree_containment_expr(builder, clause, subtree_path, false) {
         // Absence / text / missing aren't `@>`-expressible — keep the path-based form
         // (handles its own negation).
         None => render_token_path_clause(builder, clause, subtree_path),
@@ -495,9 +627,14 @@ fn token_coding_subtree_containment_expr(
     builder: &mut SqlBuilder,
     clause: &TokenClause,
     subtree_path: &str,
+    inline: bool,
 ) -> Option<SqlExpr> {
     let contains = |builder: &mut SqlBuilder, leaf: serde_json::Value| {
-        jsonb_contains_expr(builder, subtree_path, leaf)
+        if inline {
+            jsonb_contains_inline_expr(subtree_path, &leaf)
+        } else {
+            jsonb_contains_expr(builder, subtree_path, leaf)
+        }
     };
     Some(match &clause.predicate {
         TokenPredicate::AnySystemCode { code } => SqlExpr::Or(vec![
@@ -1672,9 +1809,10 @@ fn render_composite_token_component_expr(
             // Prefer subtree `@>` containment (e.g. `resource->'code' @> '{...}'`) so the
             // composite's code component is served by the dedicated code subtree GIN and
             // BitmapAnd'd with the value btree — the scalar `->>'code'` OR form the path
-            // render emits is unindexable. Fall back to the path form for shapes `@>`
-            // can't express.
-            match token_coding_subtree_containment_expr(builder, clause, json_path) {
+            // render emits is unindexable. The literal is INLINED (not a bind param) so a
+            // targeted partial composite index `WHERE <this expr>` is provably usable.
+            // Fall back to the path form for shapes `@>` can't express.
+            match token_coding_subtree_containment_expr(builder, clause, json_path, true) {
                 Some(expr) => Ok(expr),
                 None => token_path_clause_expr(builder, clause, json_path).and_then(|maybe_expr| {
                     maybe_expr.map_or_else(
@@ -2013,6 +2151,17 @@ fn jsonb_contains_expr(builder: &mut SqlBuilder, lhs: &str, value: serde_json::V
             cast: "jsonb",
         },
     }
+}
+
+/// Like [`jsonb_contains_expr`] but with the JSONB operand INLINED as a literal
+/// (`lhs @> '{...}'::jsonb`) instead of a bind param. A targeted partial composite
+/// index (`WHERE <this exact expression>`) can only be proven usable by the planner
+/// when the query's containment is a literal — a `$N::jsonb` param is opaque at plan
+/// time. The literal comes from `serde_json` (well-formed) with `'` SQL-escaped; the
+/// generic resource/subtree GIN serves it identically to the param form.
+fn jsonb_contains_inline_expr(lhs: &str, value: &serde_json::Value) -> SqlExpr {
+    let literal = value.to_string().replace('\'', "''");
+    SqlExpr::Raw(format!("{lhs} @> '{literal}'::jsonb"))
 }
 
 fn token_scalar_code_clause_expr(

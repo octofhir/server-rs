@@ -793,6 +793,27 @@ pub async fn build_app(
     )
     .await;
 
+    // Targeted partial composite indexes (opt-in via `search.composite_index`).
+    if !cfg.search.composite_index.is_empty() {
+        let composite_specs: Vec<octofhir_db_postgres::CompositePartialIndex> = cfg
+            .search
+            .composite_index
+            .iter()
+            .map(|s| octofhir_db_postgres::CompositePartialIndex {
+                resource_type: s.resource_type.clone(),
+                param: s.param.clone(),
+                system: s.system.clone(),
+                code: s.code.clone(),
+            })
+            .collect();
+        octofhir_db_postgres::create_composite_partial_indexes(
+            &db_pool,
+            &cfg_snapshot.registry,
+            &composite_specs,
+        )
+        .await;
+    }
+
     let auth_state = auth_state_result.context("Failed to initialize authentication")?;
     tracing::info!("Authentication initialized");
 

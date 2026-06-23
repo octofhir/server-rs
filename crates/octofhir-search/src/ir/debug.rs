@@ -341,17 +341,20 @@ fn number_sql_shape(predicate: &NumberPredicate) -> String {
 
 fn debug_quantity_clause(resource_type: &str, clause: &QuantityClause) -> DebugPredicate {
     let (strategy, expected_index, index_backed, sql_shape) = match &clause.predicate {
-        QuantityPredicate::Comparison { system, code, .. }
-            if system.is_some() || code.is_some() =>
-        {
-            (
-                IndexStrategy::JsonbContainment,
-                Some(gin_index_name(resource_type)),
-                true,
-                quantity_sql_shape(&clause.predicate),
-            )
-        }
-        _ => (
+        // Every comparison is served by the union min/max functional btree on
+        // `fhir_qty_extract_min/max_numeric(resource, <all value paths>)`; an `@?`
+        // recheck (for eq/ne/ap or a unit constraint) rides on top.
+        QuantityPredicate::Comparison { .. } => (
+            IndexStrategy::JsonbExpressionIndex,
+            Some(format!(
+                "idx_{}_{}_qmax",
+                resource_type.to_lowercase(),
+                clause.param_code
+            )),
+            true,
+            quantity_sql_shape(&clause.predicate),
+        ),
+        QuantityPredicate::Missing { .. } => (
             IndexStrategy::JsonbTraversal,
             None,
             false,
@@ -846,11 +849,14 @@ mod tests {
             plan.predicates[0].search_type,
             SearchParameterType::Quantity
         );
-        assert_eq!(plan.predicates[0].strategy, IndexStrategy::JsonbContainment);
+        assert_eq!(
+            plan.predicates[0].strategy,
+            IndexStrategy::JsonbExpressionIndex
+        );
         assert!(plan.predicates[0].index_backed);
         assert_eq!(
             plan.predicates[0].expected_index,
-            Some("idx_observation_gin".to_string())
+            Some("idx_observation_value-quantity_qmax".to_string())
         );
         assert!(
             plan.predicates[0]
@@ -874,7 +880,7 @@ mod tests {
     }
 
     #[test]
-    fn quantity_debug_plan_without_units_is_pure_traversal() {
+    fn quantity_debug_plan_without_units_is_union_btree() {
         let clauses = vec![QuantityClause {
             resource_type: "Observation".to_string(),
             param_code: "value-quantity".to_string(),
@@ -888,12 +894,15 @@ mod tests {
 
         let plan = build_quantity_debug_plan("Observation", &clauses);
 
-        assert_eq!(plan.predicates[0].strategy, IndexStrategy::JsonbTraversal);
-        assert!(!plan.predicates[0].index_backed);
-        assert_eq!(plan.predicates[0].expected_index, None);
+        // Even with no unit constraint the value is served by the union min/max btree.
         assert_eq!(
-            plan.predicates[0].sql_shape,
-            "(resource->path->>'value')::numeric > $value"
+            plan.predicates[0].strategy,
+            IndexStrategy::JsonbExpressionIndex
+        );
+        assert!(plan.predicates[0].index_backed);
+        assert_eq!(
+            plan.predicates[0].expected_index,
+            Some("idx_observation_value-quantity_qmax".to_string())
         );
     }
 

@@ -1390,6 +1390,27 @@ pub fn quantity_hull_value_jsonpath(segments: &[String]) -> String {
     s
 }
 
+/// SQL `jsonpath[]` literal of every quantity `.value` location for `paths`, e.g.
+/// `ARRAY['$."valueQuantity"."value"'::jsonpath, '$."component"[*]."valueQuantity"."value"'::jsonpath]`.
+/// Folds the top-level AND component locations of a (combo) quantity param into ONE
+/// array so a single `fhir_qty_extract_min/max_numeric(resource, <array>)` btree serves
+/// every location. Used by BOTH that union min/max index and the search predicate, so
+/// the two expressions match textually and the planner uses the index.
+pub fn quantity_value_jsonpath_array(paths: &[Vec<String>]) -> String {
+    if paths.is_empty() {
+        return "ARRAY[]::jsonpath[]".to_string();
+    }
+    let items = paths
+        .iter()
+        .map(|segs| {
+            let jp = quantity_hull_value_jsonpath(segs).replace('\'', "''");
+            format!("'{jp}'::jsonpath")
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("ARRAY[{items}]::jsonpath[]")
+}
+
 pub fn paths_to_jsonpath_array(paths: &[Vec<String>]) -> String {
     if paths.is_empty() {
         return "ARRAY[]::jsonpath[]".to_string();
