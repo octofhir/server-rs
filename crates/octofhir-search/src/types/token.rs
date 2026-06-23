@@ -21,7 +21,7 @@ use crate::parser::ParsedParam;
 use crate::sql_builder::{SqlBuilder, SqlBuilderError, build_jsonb_accessor};
 use crate::{
     ir::TokenClause, ir::TokenIndexShape, ir::render_token_coding_array_clauses_as_or,
-    ir::render_token_coding_clauses_as_or,
+    ir::render_token_coding_clauses_as_or, ir::render_token_coding_subtree_clauses_as_or,
     ir::render_token_identifier_containment_clauses_as_or,
     ir::render_token_simple_code_clauses_as_or,
 };
@@ -137,6 +137,24 @@ pub fn build_token_coding_array_search(
 ) -> Result<(), SqlBuilderError> {
     let clauses = TokenClause::from_parsed_param(param, "", TokenIndexShape::Coding)?;
     if let Some(sql) = render_token_coding_array_clauses_as_or(builder, &clauses, array_path)? {
+        builder.add_condition(sql);
+    }
+    Ok(())
+}
+
+/// Build token search for a scalar (non-array) Coding/CodeableConcept field
+/// (e.g. `Encounter.class`, `Encounter.status` is SimpleCode but `class` is a Coding).
+///
+/// Emits subtree `@>` containment (`resource->'class' @> '{...}'`) so a dedicated
+/// functional GIN on the subtree serves it, instead of the path-based scalar OR that
+/// the planner can only answer with a Seq Scan.
+pub fn build_token_coding_subtree_search(
+    builder: &mut SqlBuilder,
+    param: &ParsedParam,
+    subtree_path: &str,
+) -> Result<(), SqlBuilderError> {
+    let clauses = TokenClause::from_parsed_param(param, "", TokenIndexShape::Coding)?;
+    if let Some(sql) = render_token_coding_subtree_clauses_as_or(builder, &clauses, subtree_path)? {
         builder.add_condition(sql);
     }
     Ok(())
@@ -260,6 +278,50 @@ mod tests {
             json.iter()
                 .any(|p| p.contains("[{\"coding\":[{\"code\":\"vital-signs\"}]}]")),
             "no array-wrapped coding containment in params: {json:?}"
+        );
+    }
+
+    #[test]
+    fn test_token_coding_subtree_scalar_uses_subtree_containment() {
+        // Scalar Coding (e.g. Encounter.class): predicate must be `<subtree> @> '{...}'`
+        // (NOT array-wrapped — the subtree is an object), so a dedicated GIN on the
+        // subtree serves it instead of a Seq Scan.
+        let mut builder = SqlBuilder::new();
+        let param = make_param("class", "AMB", None);
+
+        build_token_coding_subtree_search(&mut builder, &param, "resource->'class'").unwrap();
+
+        let clause = builder.build_where_clause().unwrap();
+        assert!(
+            clause.contains("resource->'class' @>"),
+            "expected subtree containment, got: {clause}"
+        );
+        let json: Vec<String> = builder.params().iter().map(|p| p.as_str()).collect();
+        // Bare-Coding object leaf (not array-wrapped) plus the CodeableConcept fallback.
+        assert!(
+            json.iter().any(|p| p.contains("{\"code\":\"AMB\"}")),
+            "no bare-Coding object containment in params: {json:?}"
+        );
+    }
+
+    #[test]
+    fn test_token_coding_subtree_system_code() {
+        let mut builder = SqlBuilder::new();
+        let param = make_param(
+            "class",
+            "http://terminology.hl7.org/CodeSystem/v3-ActCode|AMB",
+            None,
+        );
+
+        build_token_coding_subtree_search(&mut builder, &param, "resource->'class'").unwrap();
+
+        let clause = builder.build_where_clause().unwrap();
+        assert!(clause.contains("resource->'class' @>"), "got: {clause}");
+        let json: Vec<String> = builder.params().iter().map(|p| p.as_str()).collect();
+        assert!(
+            json.iter().any(|p| p.contains("\"system\":\"http://terminology.hl7.org/CodeSystem/v3-ActCode\"")
+                && p.contains("\"code\":\"AMB\"")),
+            "no system+code containment in params: {json:?}"
         );
     }
 

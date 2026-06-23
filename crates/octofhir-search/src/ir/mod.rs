@@ -47,6 +47,7 @@ pub use render::{
     render_string_array_clauses_as_or,
     render_string_human_name_clauses_as_or, render_string_path_clauses_as_or,
     render_token_coding_array_clauses_as_or, render_token_coding_clauses_as_or,
+    render_token_coding_subtree_clauses_as_or,
     render_token_identifier_clauses_as_or,
     render_token_identifier_containment_clauses_as_or, render_token_path_clauses_as_or,
     render_token_scalar_code_clauses_as_or, render_token_simple_code_clauses_as_or,

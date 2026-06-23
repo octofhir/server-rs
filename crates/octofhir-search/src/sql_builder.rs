@@ -1372,6 +1372,24 @@ pub fn paths_to_json(paths: &[Vec<String>]) -> String {
 /// `[*]` lax-unwraps), but compiled ONCE at index/predicate parse time instead of
 /// per row. The index DDL and the search predicate MUST both build their date
 /// expressions through this helper so the functional GiST index still matches.
+/// jsonpath to every quantity `.value` scalar under a (possibly repeating) path:
+/// `["component","valueQuantity"]` -> `$."component"[*]."valueQuantity"."value"`.
+/// `[*]` is appended after each non-leaf segment so array parents are lax-iterated.
+/// Used by BOTH the quantity-array hull predicate (render) and its functional btree
+/// index, so the two expressions match textually and the planner uses the index.
+pub fn quantity_hull_value_jsonpath(segments: &[String]) -> String {
+    let q = |v: &str| v.replace('\\', "\\\\").replace('"', "\\\"");
+    let mut s = String::from("$");
+    for (i, seg) in segments.iter().enumerate() {
+        s.push_str(&format!(".\"{}\"", q(seg)));
+        if i + 1 < segments.len() {
+            s.push_str("[*]");
+        }
+    }
+    s.push_str(".\"value\"");
+    s
+}
+
 pub fn paths_to_jsonpath_array(paths: &[Vec<String>]) -> String {
     if paths.is_empty() {
         return "ARRAY[]::jsonpath[]".to_string();

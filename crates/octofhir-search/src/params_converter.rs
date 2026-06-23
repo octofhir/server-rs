@@ -487,10 +487,16 @@ fn try_fold_repeated_date_window(
     let max_expr = format!("fhir_extract_date_max({col}, {upper_jpa})");
     let hull_expr = format!("tstzrange({min_expr}, {max_expr}, '[]')");
     let mr_expr = format!("fhir_extract_date_multirange({col}, {scalar_jpa}, {period_jpa})");
+    let single_guard = crate::types::date::single_occurrence_guard(col, &segments);
 
-    if let Some(sql) =
-        render_date_inplace_clauses_as_or(sql_builder, &merged, &hull_expr, &mr_expr, &min_expr)
-    {
+    if let Some(sql) = render_date_inplace_clauses_as_or(
+        sql_builder,
+        &merged,
+        &hull_expr,
+        &mr_expr,
+        &min_expr,
+        &single_guard,
+    ) {
         sql_builder.add_condition(sql);
     }
     append_date_debug_plan(debug_plan, resource_type, &merged);
@@ -1357,7 +1363,7 @@ mod tests {
             (
                 "Observation",
                 "code=http://loinc.org|8480-6&_count=10",
-                ["r.resource @>", "\"observation\""],
+                ["r.resource->'code' @>", "\"observation\""],
             ),
             (
                 "Observation",
@@ -1372,7 +1378,7 @@ mod tests {
             (
                 "Patient",
                 "_has:Observation:subject:code=http://loinc.org|8480-6&_count=10",
-                ["has0.resource @>", "ref->>'reference'"],
+                ["has0.resource->'code' @>", "ref->>'reference'"],
             ),
             (
                 "Observation",
@@ -2353,8 +2359,8 @@ mod tests {
             ),
             (
                 "code=http://loinc.org|",
-                "c->>'system' =",
-                "system| token should match any code in that system",
+                "@>",
+                "system| token should match any code in that system via subtree containment",
                 vec!["http://loinc.org"],
             ),
             (

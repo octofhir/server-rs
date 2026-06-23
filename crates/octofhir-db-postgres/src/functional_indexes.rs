@@ -30,6 +30,21 @@ const FHIR_ARR_DDL: &str = "CREATE OR REPLACE FUNCTION fhir_arr(v jsonb) RETURNS
          WHEN jsonb_typeof(v)='array' THEN v ELSE jsonb_build_array(v) END; \
      $$;";
 
+/// Numeric min/max hull, as a single `numrange`, over every `.value` scalar a quantity
+/// jsonpath matches (e.g. all `component[*].valueQuantity.value`). The quantity-array
+/// predicate overlaps this against the query range (`hull && q`) and ONE GiST index
+/// backs it — half the write cost of separate min/max btrees (one `jsonb_path_query_array`
+/// pass, one index). Returns NULL when there are no values, so a row with no matching
+/// quantity is excluded (`NULL && q` is NULL/false) instead of matching an unbounded range.
+/// IMMUTABLE so it is index-expression usable.
+const FHIR_QTY_HULL_RANGE_DDL: &str =
+    "CREATE OR REPLACE FUNCTION fhir_qty_hull_range(res jsonb, jp jsonpath) RETURNS numrange \
+     LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$ \
+       SELECT CASE WHEN min(x::numeric) IS NULL THEN NULL \
+                   ELSE numrange(min(x::numeric), max(x::numeric), '[]') END \
+       FROM jsonb_array_elements_text(jsonb_path_query_array(res, jp)) AS x; \
+     $$;";
+
 /// Create functional search indexes for the configured parameters (each
 /// `"ResourceType.code"`). Idempotent (`IF NOT EXISTS`); a missing table or
 /// unknown parameter is skipped, not fatal. No runtime/lazy creation.
@@ -49,8 +64,21 @@ pub async fn create_default_search_indexes(
     if let Err(e) = sqlx_core::raw_sql::raw_sql(AssertSqlSafe((FHIR_ARR_DDL).to_string())).execute(pool).await {
         warn!(error = %e, "failed to create fhir_arr helper; typed string extraction disabled");
     }
+    // Quantity hull helper — required by the quantity-array predicate at query time,
+    // so create it unconditionally (not only when a quantity param is indexed).
+    if let Err(e) = sqlx_core::raw_sql::raw_sql(AssertSqlSafe(FHIR_QTY_HULL_RANGE_DDL.to_string())).execute(pool).await {
+        warn!(error = %e, "failed to create quantity hull helper");
+    }
 
     let mut created = 0usize;
+    // Dedup identical index bodies across params. Overlapping params build the same
+    // functional index on the same expression (e.g. value-quantity, combo-value-quantity
+    // and component-value-quantity all derive a `valueQuantity.value` btree and a shared
+    // `component[*].valueQuantity.value` hull). The planner matches by EXPRESSION not name,
+    // so one physical index serves all of them — building the duplicates only taxes writes.
+    // Key = the `ON "table" ...` tail (everything after the index name).
+    let mut seen_bodies: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let index_body = |ddl: &str| -> Option<String> { ddl.rfind(" ON ").map(|i| ddl[i..].to_string()) };
     for spec in params {
         let Some((resource_type, code)) = spec.split_once('.') else {
             warn!(spec, "ignoring malformed indexed_params entry (want ResourceType.code)");
@@ -117,19 +145,19 @@ pub async fn create_default_search_indexes(
 
         let ddl = match param.param_type {
             SearchParameterType::Date => {
-                // Cheap min/max hull GiST index — the indexable prefilter the
-                // in-place date predicate ANDs with an exact per-occurrence
-                // multirange recheck. The hull is far cheaper to maintain on write
-                // than the multirange (≈2.25x), and serves the same `&&`/`<@`/
-                // `>>`/`<<` prefilter the predicate derives identically.
-                // Precompiled jsonpath[] (baked literals) — the extraction fn
-                // compiles the jsonpath once instead of per row. The predicate
-                // (types/date.rs) builds the identical expression so the planner
-                // still matches this functional GiST index.
+                // Cheap min/max hull GiST index — the indexable prefilter the in-place
+                // date predicate ANDs with an exact per-occurrence multirange recheck.
+                // The hull is far cheaper to maintain on write than the multirange and,
+                // crucially, far cheaper to SCAN under load (a tstzrange GiST is smaller
+                // and more selective than a tstzmultirange one); a multirange index was
+                // measured slower end-to-end. Precompiled jsonpath[] (baked literals);
+                // the predicate (types/date.rs) builds the identical expression so the
+                // planner matches this functional GiST index.
                 let lower_jpa = paths_to_jsonpath_array(&date_lower_paths(&segments));
                 let upper_jpa = paths_to_jsonpath_array(&date_upper_paths(&segments));
                 format!(
-                    "CREATE INDEX IF NOT EXISTS \"idx_{table}_{code}_date\" ON \"{table}\" \
+                    "DROP INDEX IF EXISTS \"idx_{table}_{code}_date\"; \
+                     CREATE INDEX IF NOT EXISTS \"idx_{table}_{code}_date\" ON \"{table}\" \
                      USING gist (tstzrange(\
                        fhir_extract_date_min(resource, {lower_jpa}), \
                        fhir_extract_date_max(resource, {upper_jpa}), '[]'))"
@@ -142,16 +170,17 @@ pub async fn create_default_search_indexes(
                      USING gin (fhir_text_blob(fhir_extract_text(resource, '{paths_json}'::jsonb)) gin_trgm_ops)"
                 )
             }
-            // Repeating CodeableConcept/Coding token params (e.g. Observation.category):
-            // the in-place predicate is `<subtree> @> '[...]'` (subtree containment).
-            // A dedicated GIN on just that subtree is small and selective, so the
-            // planner uses it — the whole-resource GIN is estimated too non-selective
-            // and gets skipped for a Seq Scan under LIMIT (catastrophic at scale).
+            // CodeableConcept/Coding token params — repeating (e.g. Observation.category,
+            // predicate `<subtree> @> '[...]'`) or scalar (e.g. Encounter.class, predicate
+            // `<subtree> @> '{...}'`). A dedicated GIN on just that subtree is small and
+            // selective, so the planner uses it — the whole-resource GIN is estimated too
+            // non-selective and gets skipped for a Seq Scan under LIMIT (catastrophic at scale).
             SearchParameterType::Token
-                if matches!(
-                    &param.element_type_hint,
-                    ElementTypeHint::Array(t) if t == "CodeableConcept" || t == "Coding"
-                ) =>
+                if matches!(&param.element_type_hint, ElementTypeHint::Token)
+                    || matches!(
+                        &param.element_type_hint,
+                        ElementTypeHint::Array(t) if t == "CodeableConcept" || t == "Coding"
+                    ) =>
             {
                 let subtree = build_jsonb_accessor("resource", &segments, false);
                 format!(
@@ -174,24 +203,77 @@ pub async fn create_default_search_indexes(
                      USING gin (fhir_extract_text(resource, {jpa}))"
                 )
             }
-            // Quantity params (e.g. Observation.value-quantity). The in-place predicate
-            // compares `(<segments>.value)::numeric` with a range; a btree over the
-            // identical cast expression serves those range scans. The system/code
-            // constraints stay as cheap recheck filters on the candidate rows.
+            // Quantity params (e.g. Observation.value-quantity, combo/component-*). A
+            // `combo-*` quantity binds a union of co-located paths (top-level
+            // `valueQuantity` AND `component[*].valueQuantity`); index every branch.
+            //   - top-level scalar path: btree over `(<segs>.value)::numeric`, matching
+            //     the in-place numeric-cast comparison.
+            //   - repeating path under an array parent (component[*]): two btrees over
+            //     the numeric min/max hull, matching the quantity-array predicate's
+            //     indexable prefilter (the exact `@?` stays as a recheck).
             SearchParameterType::Quantity => {
-                let mut value_segs = segments.clone();
-                value_segs.push("value".to_string());
-                let value_acc = build_jsonb_accessor("resource", &value_segs, true);
-                format!(
-                    "CREATE INDEX IF NOT EXISTS \"idx_{table}_{code}_qty\" ON \"{table}\" \
-                     ((({value_acc})::numeric))"
-                )
+                let mut all_paths = param
+                    .expression
+                    .as_deref()
+                    .map(|e| octofhir_search::sql_builder::fhirpath_to_jsonb_paths(e, resource_type))
+                    .filter(|p| !p.is_empty())
+                    .unwrap_or_else(|| vec![segments.clone()]);
+                // Match the predicate (types/mod.rs): no index for dead
+                // `value.ofType(SampledData)` branches (no `.value` scalar).
+                all_paths.retain(|p| !p.last().is_some_and(|s| s.ends_with("SampledData")));
+                let mut qddls: Vec<String> = Vec::new();
+                for (i, path) in all_paths.iter().enumerate() {
+                    if path.len() >= 2 {
+                        // Repeating parent (array) — one GiST over the numeric hull range.
+                        let jp = octofhir_search::sql_builder::quantity_hull_value_jsonpath(path)
+                            .replace('\'', "''");
+                        qddls.push(format!(
+                            "CREATE INDEX IF NOT EXISTS \"idx_{table}_{code}_qhull{i}\" ON \"{table}\" \
+                             USING gist (fhir_qty_hull_range(resource, '{jp}'::jsonpath))"
+                        ));
+                    } else {
+                        let mut value_segs = path.clone();
+                        value_segs.push("value".to_string());
+                        let value_acc = build_jsonb_accessor("resource", &value_segs, true);
+                        qddls.push(format!(
+                            "CREATE INDEX IF NOT EXISTS \"idx_{table}_{code}_qty{i}\" ON \"{table}\" \
+                             ((({value_acc})::numeric))"
+                        ));
+                    }
+                }
+                for ddl in &qddls {
+                    if let Some(body) = index_body(ddl)
+                        && !seen_bodies.insert(body)
+                    {
+                        debug!(resource_type, code, "skipped duplicate quantity index");
+                        continue;
+                    }
+                    match sqlx_core::raw_sql::raw_sql(AssertSqlSafe(ddl.to_string()))
+                        .execute(pool)
+                        .await
+                    {
+                        Ok(_) => {
+                            created += 1;
+                            debug!(resource_type, code, "created quantity functional index");
+                        }
+                        Err(e) => {
+                            warn!(resource_type, code, error = %e, "skipped quantity functional index");
+                        }
+                    }
+                }
+                continue;
             }
             // Other token predicates are not yet index-matched in-place; their indexes
             // are added with those predicate rewrites.
             _ => continue,
         };
 
+        if let Some(body) = index_body(&ddl)
+            && !seen_bodies.insert(body)
+        {
+            debug!(resource_type, code, "skipped duplicate functional index");
+            continue;
+        }
         match sqlx_core::raw_sql::raw_sql(AssertSqlSafe((&ddl).to_string())).execute(pool).await {
             Ok(_) => {
                 created += 1;

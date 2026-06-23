@@ -41,7 +41,8 @@ pub use string::{build_indexed_string_inplace};
 pub use string::{build_array_string_search, build_human_name_search, build_string_search};
 pub use token::{
     build_code_search, build_gin_code_search, build_gin_identifier_search, build_gin_token_search,
-    build_identifier_search, build_token_coding_array_search, build_token_search, parse_token_value,
+    build_identifier_search, build_token_coding_array_search, build_token_coding_subtree_search,
+    build_token_search, parse_token_value,
 };
 pub use uri::{build_uri_array_search, build_uri_search};
 
@@ -179,8 +180,15 @@ fn dispatch_search_inner(
                     build_jsonb_accessor(builder.resource_column(), &path_segments, false);
                 build_token_coding_array_search(builder, param, &array_path)
             } else {
-                // GIN-optimized CodeableConcept/Coding/Token search
-                build_gin_token_search(builder, param, &path_segments)
+                // Scalar Coding/CodeableConcept (e.g. Encounter.class bare Coding,
+                // Observation.code CodeableConcept): subtree `@>` containment covering
+                // both shapes. The prior whole-resource `@> {path:{coding:[...]}}` form
+                // missed bare-Coding elements (recall 0) and could not use a dedicated
+                // index; the subtree form is correct for either shape and is served by
+                // the subtree GIN.
+                let subtree_path =
+                    build_jsonb_accessor(builder.resource_column(), &path_segments, false);
+                build_token_coding_subtree_search(builder, param, &subtree_path)
             }
         }
 
@@ -332,6 +340,10 @@ fn dispatch_user_defined_jsonb_search(
                 // Array-valued CodeableConcept/Coding: scalar token render misses
                 // the outer array — use array-aware render (see build_token_coding_array_search).
                 build_token_coding_array_search(builder, param, &object_path)
+            } else if matches!(&definition.element_type_hint, ElementTypeHint::Token) {
+                // Scalar Coding/CodeableConcept (e.g. Encounter.class): subtree `@>`
+                // containment, served by a dedicated functional GIN on the subtree.
+                build_token_coding_subtree_search(builder, param, &object_path)
             } else {
                 build_token_search(builder, param, &object_path)
             }
@@ -341,12 +353,17 @@ fn dispatch_user_defined_jsonb_search(
         SearchParameterType::Quantity => {
             // combo-* quantities are a union of co-located paths (top-level and
             // component[*]); resolve every same-resource branch, not just the first.
-            let paths = definition
+            let mut paths = definition
                 .expression
                 .as_deref()
                 .map(|e| crate::sql_builder::fhirpath_to_jsonb_paths(e, resource_type))
                 .filter(|p| !p.is_empty())
                 .unwrap_or_else(|| vec![path_segments.to_vec()]);
+            // Drop `value.ofType(SampledData)` branches: SampledData carries `.data`
+            // (a sample string), not a `.value` scalar, so a quantity comparison never
+            // matches — and each dead branch's hull/@? would push the planner off the
+            // BitmapOr onto a Seq Scan. Keep only the Quantity-shaped paths.
+            paths.retain(|p| !p.last().is_some_and(|s| s.ends_with("SampledData")));
             build_gin_quantity_search(builder, param, &paths)
         }
         SearchParameterType::Reference => build_reference_jsonb_fallback_search(
@@ -1275,12 +1292,19 @@ mod tests {
             clause.contains("@>"),
             "Expected GIN containment for CodeableConcept, got: {clause}"
         );
-        // JSON params contain the containment object with coding array
+        // Subtree containment covers both shapes: a bare-Coding `{"code":...}` arm and
+        // a CodeableConcept `{"coding":[{"code":...}]}` arm — at least one param carries
+        // the coding-array form.
         let params = builder.params();
-        let json_str = params[0].as_str();
         assert!(
-            json_str.contains("coding"),
-            "Expected JSON param with coding, got: {json_str}"
+            params.iter().any(|p| p.as_str().contains("coding")),
+            "Expected a JSON param with coding, got: {:?}",
+            params.iter().map(|p| p.as_str()).collect::<Vec<_>>()
+        );
+        // Driven off the subtree (`resource->'code' @>`), not the whole resource.
+        assert!(
+            clause.contains("resource->'code' @>"),
+            "Expected subtree containment, got: {clause}"
         );
     }
 }

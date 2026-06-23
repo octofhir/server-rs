@@ -332,7 +332,7 @@ pub fn build_indexed_date_inplace(
 
     let expression = definition.expression.as_deref().unwrap_or_default();
     let segments = crate::sql_builder::fhirpath_to_jsonb_path(expression, resource_type);
-    // Precompiled jsonpath[] literals — must be built through the SAME helper as
+    // Precompiled jsonpath[] literals — must be built through the SAME helpers as
     // the index DDL (functional_indexes.rs) so the functional GiST index matches.
     let lower_jpa =
         crate::sql_builder::paths_to_jsonpath_array(&crate::sql_builder::date_lower_paths(&segments));
@@ -344,13 +344,11 @@ pub fn build_indexed_date_inplace(
         &crate::sql_builder::date_period_object_paths(&segments),
     );
     let col = builder.resource_column();
-    // `:missing` keys off presence of any date value. The comparators run over
-    // the cheap min/max hull (indexed prefilter) AND an exact per-occurrence
-    // multirange recheck.
     let min_expr = format!("fhir_extract_date_min({col}, {lower_jpa})");
     let max_expr = format!("fhir_extract_date_max({col}, {upper_jpa})");
     let hull_expr = format!("tstzrange({min_expr}, {max_expr}, '[]')");
     let mr_expr = format!("fhir_extract_date_multirange({col}, {scalar_jpa}, {period_jpa})");
+    let single_guard = single_occurrence_guard(col, &segments);
 
     if let Some(SearchModifier::Missing) = &param.modifier {
         let is_missing = param
@@ -368,12 +366,43 @@ pub fn build_indexed_date_inplace(
     }
 
     let clauses = DateClause::from_parsed_param(param, resource_type)?;
-    if let Some(sql) =
-        render_date_inplace_clauses_as_or(builder, &clauses, &hull_expr, &mr_expr, &min_expr)
-    {
+    if let Some(sql) = render_date_inplace_clauses_as_or(
+        builder,
+        &clauses,
+        &hull_expr,
+        &mr_expr,
+        &min_expr,
+        &single_guard,
+    ) {
         builder.add_condition(sql);
     }
     Ok(())
+}
+
+/// SQL that is TRUE when the row's date element holds a single occurrence, so the
+/// min/max hull is exact and the per-occurrence multirange recheck can be skipped.
+/// Sound: only a scalar string (one date/dateTime/date/instant) or a lone Period
+/// object (start/end, no `event`) qualify; arrays (repeating) and Timing (has
+/// `event`) make it FALSE, keeping the recheck. Cheap `jsonb_typeof` — no jsonpath.
+pub(crate) fn single_occurrence_guard(col: &str, segments: &[String]) -> String {
+    use crate::sql_builder::{build_jsonb_accessor, date_period_object_paths, date_scalar_paths};
+    let mut arms: Vec<String> = Vec::new();
+    for p in date_scalar_paths(segments) {
+        // Skip Timing `.event` point paths — those are multi-occurrence.
+        if p.last().map(String::as_str) == Some("event") {
+            continue;
+        }
+        let acc = build_jsonb_accessor(col, &p, false);
+        arms.push(format!("jsonb_typeof({acc}) = 'string'"));
+    }
+    for p in date_period_object_paths(segments) {
+        let acc = build_jsonb_accessor(col, &p, false);
+        arms.push(format!("(jsonb_typeof({acc}) = 'object' AND NOT ({acc} ? 'event'))"));
+    }
+    if arms.is_empty() {
+        return "false".to_string();
+    }
+    format!("({})", arms.join(" OR "))
 }
 
 /// Build search for Period types which have start and end fields.

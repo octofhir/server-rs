@@ -221,6 +221,37 @@ fn quantity_value_jsonpath_cond(
     }
 }
 
+/// GiST-servable numeric prefilter: overlap the min/max hull of all `.value` scalars
+/// matched by `hull_jp` (as a `numrange`, matching the functional hull index) against
+/// the query range. `hull && [q,)` proves "some value reaches a lower bound", etc.
+/// Returns None for `Ne` (low selectivity — let the `@?` recheck handle it). Single-bound
+/// prefixes are exactly equivalent; `eq`/`ap` are a superset (the `@?` recheck stays).
+fn quantity_hull_prefilter(
+    col: &str,
+    hull_jp: &str,
+    prefix: crate::parameters::SearchPrefix,
+    number: &RenderDecimalParts,
+) -> Option<String> {
+    use crate::parameters::SearchPrefix;
+    let hull = format!("fhir_qty_hull_range({col}, '{hull_jp}'::jsonpath)");
+    let q = match prefix {
+        SearchPrefix::Eq => {
+            let (lo, hi) = number.implicit_eq_bounds();
+            format!("numrange({lo}::numeric, {hi}::numeric, '[)')")
+        }
+        SearchPrefix::Ap => {
+            let (lo, hi) = number.approximate_bounds();
+            format!("numrange({lo}::numeric, {hi}::numeric, '[]')")
+        }
+        SearchPrefix::Gt | SearchPrefix::Sa => format!("numrange({}::numeric, NULL, '()')", number.format()),
+        SearchPrefix::Ge => format!("numrange({}::numeric, NULL, '[)')", number.format()),
+        SearchPrefix::Lt | SearchPrefix::Eb => format!("numrange(NULL, {}::numeric, '()')", number.format()),
+        SearchPrefix::Le => format!("numrange(NULL, {}::numeric, '(]')", number.format()),
+        SearchPrefix::Ne => return None,
+    };
+    Some(format!("{hull} && {q}"))
+}
+
 /// Render quantity clauses whose value element sits under a repeating parent
 /// (e.g. `Observation.component.valueQuantity`) as a correlated `@?` jsonpath
 /// over the array. A plain `resource->parent->valueQuantity->>value` cast reads
@@ -241,6 +272,10 @@ pub fn render_quantity_array_clauses_as_or(
         }
     }
     let col = builder.resource_column().to_string();
+    // Numeric min/max hull jsonpath (identical to the functional btree index's), used
+    // as an indexable prefilter ANDed with the exact `@?` recheck.
+    let hull_jp =
+        crate::sql_builder::quantity_hull_value_jsonpath(path_segments).replace('\'', "''");
     let mut exprs = Vec::new();
     for clause in clauses {
         let QuantityPredicate::Comparison {
@@ -263,7 +298,14 @@ pub fn render_quantity_array_clauses_as_or(
             conds.push(format!("(@.\"code\" == \"{c}\" || @.\"unit\" == \"{c}\")"));
         }
         let filter = format!("{base} ? ({})", conds.join(" && ")).replace('\'', "''");
-        exprs.push(SqlExpr::Raw(format!("{col} @? '{filter}'")));
+        let exact = SqlExpr::Raw(format!("{col} @? '{filter}'"));
+        // Hull prefilter (btree-servable) ANDed with the exact filter. The hull is a
+        // superset (eq/ap span two components) so the `@?` recheck stays for exactness;
+        // single-bound prefixes are exactly equivalent but the recheck is harmless.
+        exprs.push(match quantity_hull_prefilter(&col, &hull_jp, *prefix, &number) {
+            Some(pre) => SqlExpr::And(vec![SqlExpr::Raw(pre), exact]),
+            None => exact,
+        });
     }
     Ok(or_exprs(exprs))
 }
@@ -402,6 +444,79 @@ fn render_token_coding_array_clause(
     } else {
         Ok(condition)
     }
+}
+
+/// Render scalar (non-array) Coding/CodeableConcept token clauses as subtree `@>`
+/// containment, e.g. `resource->'class' @> '{"code":"AMB"}'`. Driving the predicate
+/// off the subtree (not the whole resource) lets a dedicated functional GIN on that
+/// subtree serve it — the planner skips the global resource GIN as non-selective under
+/// LIMIT. Shapes `@>` can't express (`|code` absence, `:text`, `:missing`) fall back to
+/// the path-based render.
+pub fn render_token_coding_subtree_clauses_as_or(
+    builder: &mut SqlBuilder,
+    clauses: &[TokenClause],
+    subtree_path: &str,
+) -> Result<Option<SqlExpr>, SqlBuilderError> {
+    let exprs = clauses
+        .iter()
+        .map(|clause| {
+            render_token_coding_subtree_clause(builder, clause, subtree_path).map(SqlExpr::Raw)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(or_exprs(exprs))
+}
+
+fn render_token_coding_subtree_clause(
+    builder: &mut SqlBuilder,
+    clause: &TokenClause,
+    subtree_path: &str,
+) -> Result<String, SqlBuilderError> {
+    match token_coding_subtree_containment_expr(builder, clause, subtree_path) {
+        // Absence / text / missing aren't `@>`-expressible — keep the path-based form
+        // (handles its own negation).
+        None => render_token_path_clause(builder, clause, subtree_path),
+        Some(expr) => {
+            let condition = render_sql_expr(&expr);
+            if clause.negated {
+                Ok(format!("({condition}) = false"))
+            } else {
+                Ok(condition)
+            }
+        }
+    }
+}
+
+/// Subtree `@>` containment for a Coding/CodeableConcept token clause, e.g.
+/// `<subtree> @> '{"coding":[{"code":"X"}]}'`, covering both bare-Coding and
+/// CodeableConcept shapes (OR'd) so it serves either element type and matches a
+/// dedicated subtree GIN. `None` for predicates `@>` can't express (`|code` absence,
+/// `:text`, `:missing`). Negation is the caller's responsibility.
+fn token_coding_subtree_containment_expr(
+    builder: &mut SqlBuilder,
+    clause: &TokenClause,
+    subtree_path: &str,
+) -> Option<SqlExpr> {
+    let contains = |builder: &mut SqlBuilder, leaf: serde_json::Value| {
+        jsonb_contains_expr(builder, subtree_path, leaf)
+    };
+    Some(match &clause.predicate {
+        TokenPredicate::AnySystemCode { code } => SqlExpr::Or(vec![
+            contains(builder, serde_json::json!({"code": code})),
+            contains(builder, serde_json::json!({"coding": [{"code": code}]})),
+        ]),
+        TokenPredicate::SystemCode { system, code } => SqlExpr::Or(vec![
+            contains(builder, serde_json::json!({"system": system, "code": code})),
+            contains(
+                builder,
+                serde_json::json!({"coding": [{"system": system, "code": code}]}),
+            ),
+        ]),
+        TokenPredicate::SystemAnyCode { system } => SqlExpr::Or(vec![
+            contains(builder, serde_json::json!({"system": system})),
+            contains(builder, serde_json::json!({"coding": [{"system": system}]})),
+        ]),
+        _ => return None,
+    })
 }
 
 /// Render Identifier token clauses as one OR group.
@@ -1000,39 +1115,43 @@ fn date_inplace_clause_expr(
     hull_expr: &str,
     mr_expr: &str,
     min_expr: &str,
+    single_guard: &str,
 ) -> SqlExpr {
     // Two expressions over the same paths:
     //   hull = tstzrange(min, max)  — the cheap min/max span. Backs the GiST
-    //          functional index (cheap to maintain on write) and serves the
+    //          functional index (cheap to maintain AND to scan) and serves the
     //          indexable `&&`/`>>`/`<<` prefilter. Over-matches the gaps between
     //          disjoint values of a repeating date element.
     //   mr   = fhir_extract_date_multirange(...) — exact per-occurrence
-    //          multirange. Expensive to compute, so it is NEVER indexed; it only
-    //          rechecks the rows the hull prefilter already returned, removing
-    //          the gap false-positives.
+    //          multirange. Expensive to compute (~1ms/row), so it is NEVER indexed
+    //          and only rechecks the hull's candidate rows.
+    // `single_guard` is a cheap `jsonb_typeof` test that is TRUE when the row's date
+    // element holds a single occurrence (scalar string or a lone Period object). For
+    // those rows the hull IS exact, so the recheck is skipped via `(guard OR recheck)`
+    // — short-circuiting the per-row multirange for the overwhelmingly common
+    // single-valued case while staying exact for repeating/Timing elements.
     let hull = || SqlTerm::Raw(hull_expr.to_string());
-    // hull-indexable prefilter `op rhs`, then the same op rechecked on the exact
-    // multirange so disjoint occurrences don't over-match across their gaps.
+    let guarded = |recheck: SqlExpr| -> SqlExpr {
+        SqlExpr::Or(vec![SqlExpr::Raw(single_guard.to_string()), recheck])
+    };
     let prefilter_then_recheck = |op: RangeOp, rhs: SqlTerm| -> SqlExpr {
         SqlExpr::And(vec![
             SqlExpr::RangeOp { lhs: hull(), op, rhs: rhs.clone() },
-            SqlExpr::RangeOp { lhs: SqlTerm::Raw(mr_expr.to_string()), op, rhs },
+            guarded(SqlExpr::RangeOp { lhs: SqlTerm::Raw(mr_expr.to_string()), op, rhs }),
         ])
     };
     match &clause.predicate {
         // `eq`: some occurrence range is contained in the query range. The hull
-        // `&&` query range is a superset of the true matches (any contained
-        // occurrence implies the hull overlaps), so it is a sound indexable
-        // prefilter; the EXISTS over `unnest(mr)` is the exact per-occurrence
-        // recheck (`mr <@ q` would wrongly require *every* occurrence to match).
+        // `&&` query range is a superset of the true matches, a sound indexable
+        // prefilter; the EXISTS over `unnest(mr)` is the exact per-occurrence recheck.
         DatePredicate::Contains { q } => {
             let qterm = date_range_term(builder, q);
             let qsql = render_term(&qterm);
             SqlExpr::And(vec![
                 SqlExpr::RangeOp { lhs: hull(), op: RangeOp::Overlaps, rhs: qterm },
-                SqlExpr::Raw(format!(
+                guarded(SqlExpr::Raw(format!(
                     "EXISTS (SELECT 1 FROM unnest({mr_expr}) g WHERE g <@ {qsql})"
-                )),
+                ))),
             ])
         }
         DatePredicate::NotContains { q } => {
@@ -1045,21 +1164,16 @@ fn date_inplace_clause_expr(
         DatePredicate::Overlap { lo, hi } => {
             prefilter_then_recheck(RangeOp::Overlaps, timestamp_range_term(builder, *lo, *hi))
         }
-        // `ge`: some occurrence reaches into or past the search start — overlap
-        // with [q.start, +inf).
         DatePredicate::Ge { q } => prefilter_then_recheck(
             RangeOp::Overlaps,
             timestamp_range_term(builder, Some(Bound { at: q.start, inclusive: true }), None),
         ),
-        // `le`: some occurrence reaches before the search end — overlap with
-        // (-inf, q.end). q.end is the exclusive upper bound of the parsed range.
         DatePredicate::Le { q } => prefilter_then_recheck(
             RangeOp::Overlaps,
             timestamp_range_term(builder, None, Some(Bound { at: q.end, inclusive: false })),
         ),
-        // `sa`/`eb`: strictly-after / strictly-before key off the extreme
-        // occurrence only, so the hull (which shares those extremes with the
-        // multirange) gives the identical answer — no recheck, pure index op.
+        // `sa`/`eb`: strictly-after / strictly-before key off the extreme occurrence,
+        // shared by hull and multirange — pure index op, no recheck.
         DatePredicate::StrictlyAfter { q } => SqlExpr::RangeOp {
             lhs: hull(),
             op: RangeOp::StrictlyAfter,
@@ -1088,19 +1202,22 @@ fn date_inplace_clause_expr(
     }
 }
 
-/// Render in-place date clauses (one OR group). `hull_expr` is the indexed
-/// min/max span (prefilter); `mr_expr` is the exact per-occurrence multirange
-/// (recheck). See [`date_inplace_clause_expr`].
+/// Render in-place date clauses (one OR group). `mr_expr` is the exact
+/// per-occurrence multirange, served directly by the GiST functional index;
+/// `min_expr` backs `:missing`. See [`date_inplace_clause_expr`].
 pub fn render_date_inplace_clauses_as_or(
     builder: &mut SqlBuilder,
     clauses: &[DateClause],
     hull_expr: &str,
     mr_expr: &str,
     min_expr: &str,
+    single_guard: &str,
 ) -> Option<SqlExpr> {
     let exprs = clauses
         .iter()
-        .map(|clause| date_inplace_clause_expr(builder, clause, hull_expr, mr_expr, min_expr))
+        .map(|clause| {
+            date_inplace_clause_expr(builder, clause, hull_expr, mr_expr, min_expr, single_guard)
+        })
         .collect::<Vec<_>>();
     or_exprs(exprs)
 }
@@ -1552,12 +1669,20 @@ fn render_composite_token_component_expr(
     let parts = clauses
         .iter()
         .map(|clause| {
-            token_path_clause_expr(builder, clause, json_path).and_then(|maybe_expr| {
-                maybe_expr.map_or_else(
-                    || render_token_path_raw_clause(builder, clause, json_path).map(SqlExpr::Raw),
-                    Ok,
-                )
-            })
+            // Prefer subtree `@>` containment (e.g. `resource->'code' @> '{...}'`) so the
+            // composite's code component is served by the dedicated code subtree GIN and
+            // BitmapAnd'd with the value btree — the scalar `->>'code'` OR form the path
+            // render emits is unindexable. Fall back to the path form for shapes `@>`
+            // can't express.
+            match token_coding_subtree_containment_expr(builder, clause, json_path) {
+                Some(expr) => Ok(expr),
+                None => token_path_clause_expr(builder, clause, json_path).and_then(|maybe_expr| {
+                    maybe_expr.map_or_else(
+                        || render_token_path_raw_clause(builder, clause, json_path).map(SqlExpr::Raw),
+                        Ok,
+                    )
+                }),
+            }
         })
         .collect::<Result<Vec<_>, _>>()?;
     match parts.len() {
