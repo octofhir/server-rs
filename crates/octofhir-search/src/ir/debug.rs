@@ -68,7 +68,7 @@ fn string_index_name(resource_type: &str, param_code: &str) -> String {
 }
 
 /// Name of the bootstrap-created GIN functional reference index (over
-/// `fhir_extract_text(resource, ARRAY['$.path.reference[*]'])`).
+/// `fhir_extract_ref(resource, ARRAY['$.path.reference[*]'])`).
 fn reference_index_name(resource_type: &str, param_code: &str) -> String {
     format!("idx_{}_{param_code}_ref", resource_type.to_lowercase())
 }
@@ -489,7 +489,7 @@ fn debug_reference_clause(resource_type: &str, clause: &ReferenceClause) -> Debu
             IndexStrategy::JsonbExpressionIndex,
             Some(reference_index_name(resource_type, &clause.param_code)),
             true,
-            "fhir_extract_text(resource, ARRAY['$.path.reference[*]']) && ARRAY[$refs]".to_string(),
+            "fhir_extract_ref(resource, ARRAY['$.path.reference[*]']) && ARRAY[$refs]".to_string(),
         )
     };
     let (strategy, expected_index, index_backed, sql_shape) = match &clause.predicate {
@@ -1101,7 +1101,7 @@ mod tests {
         );
         assert_eq!(
             plan.predicates[0].sql_shape,
-            "fhir_extract_text(resource, ARRAY['$.path.reference[*]']) && ARRAY[$refs]"
+            "fhir_extract_ref(resource, ARRAY['$.path.reference[*]']) && ARRAY[$refs]"
         );
         assert!(
             !json.contains("\"Patient\"") && !json.contains("pat-123"),

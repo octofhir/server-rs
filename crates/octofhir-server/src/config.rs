@@ -423,6 +423,17 @@ fn default_indexed_params() -> Vec<String> {
         "Patient.given",
         "Practitioner.name",
         "Organization.name",
+        "Observation.subject",
+        "Observation.encounter",
+        "Observation.performer",
+        "Observation.patient",
+        "Encounter.subject",
+        "Encounter.patient",
+        "Encounter.participant",
+        "MedicationRequest.subject",
+        "MedicationRequest.patient",
+        "MedicationRequest.encounter",
+        "MedicationRequest.requester",
     ]
     .iter()
     .map(|s| (*s).to_string())

@@ -1368,7 +1368,7 @@ mod tests {
             (
                 "Observation",
                 "subject=Patient/pat-1&_count=10",
-                ["fhir_extract_text(", "&& ARRAY["],
+                ["fhir_extract_ref(", "&& ARRAY["],
             ),
             (
                 "Observation",
@@ -2476,13 +2476,13 @@ mod tests {
             plan.predicates[0].expected_index,
             Some("idx_observation_subject_ref".to_string())
         );
-        assert!(plan.predicates[0].sql_shape.contains("fhir_extract_text"));
+        assert!(plan.predicates[0].sql_shape.contains("fhir_extract_ref"));
         assert!(plan.predicates[0].sql_shape.contains("&& ARRAY["));
 
         let built = converted.builder.with_raw_resource(true).build().unwrap();
         assert!(
-            built.sql.contains("fhir_extract_text(") && built.sql.contains("&& ARRAY["),
-            "reference runtime path should use in-place fhir_extract_text overlap, got: {}",
+            built.sql.contains("fhir_extract_ref(") && built.sql.contains("&& ARRAY["),
+            "reference runtime path should use in-place fhir_extract_ref overlap, got: {}",
             built.sql
         );
         assert!(

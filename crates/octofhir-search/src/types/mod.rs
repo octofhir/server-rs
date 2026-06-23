@@ -366,7 +366,7 @@ fn dispatch_user_defined_jsonb_search(
             paths.retain(|p| !p.last().is_some_and(|s| s.ends_with("SampledData")));
             build_gin_quantity_search(builder, param, &paths)
         }
-        SearchParameterType::Reference => build_reference_jsonb_fallback_search(
+        SearchParameterType::Reference => build_reference_jsonb_search(
             builder,
             param,
             &object_path,
@@ -402,7 +402,7 @@ fn dispatch_user_defined_jsonb_search(
     }
 }
 
-fn build_reference_jsonb_fallback_search(
+fn build_reference_jsonb_search(
     builder: &mut SqlBuilder,
     param: &ParsedParam,
     json_path: &str,
@@ -459,11 +459,13 @@ fn build_reference_jsonb_fallback_search(
 
     // Flatten <segments>.reference into a text[] (single object or array, via lax
     // jsonpath `[*]`) and match with array-overlap. The matching GIN index
-    // (idx_<table>_<code>_ref over the identical fhir_extract_text expression) turns
+    // (idx_<table>_<code>_ref over the identical fhir_extract_ref expression) turns
     // this into a Bitmap Index Scan instead of a per-row jsonb_array_elements seq
-    // scan. All candidate references — comma-list values and :type / typeless
-    // expansions — are OR alternatives, so a single `&&` over the full candidate set
-    // is both correct and index-usable.
+    // scan. fhir_extract_ref canonicalizes stored refs (version-stripped); the
+    // candidate generator applies the same canonicalization so both sides agree.
+    // All candidate references — comma-list values and :type / typeless expansions —
+    // are OR alternatives, so a single `&&` over the full candidate set is both
+    // correct and index-usable.
     let mut ref_segments = path_segments.to_vec();
     ref_segments.push("reference".to_string());
     let jpa = paths_to_jsonpath_array(&[ref_segments]);
@@ -473,7 +475,7 @@ fn build_reference_jsonb_fallback_search(
         if value.raw.is_empty() {
             continue;
         }
-        for reference in reference_fallback_candidates(&value.raw, type_modifier, target_types) {
+        for reference in reference_candidates(&value.raw, type_modifier, target_types) {
             let p = builder.add_text_param(reference);
             placeholders.push(format!("${p}"));
         }
@@ -482,26 +484,47 @@ fn build_reference_jsonb_fallback_search(
     if !placeholders.is_empty() {
         let col = builder.resource_column().to_string();
         let arr = placeholders.join(", ");
-        builder.add_raw_condition(format!("fhir_extract_text({col}, {jpa}) && ARRAY[{arr}]"));
+        builder.add_raw_condition(format!("fhir_extract_ref({col}, {jpa}) && ARRAY[{arr}]"));
     }
     Ok(())
 }
 
-fn reference_fallback_candidates(
+fn reference_candidates(
     raw: &str,
     type_modifier: Option<&str>,
     target_types: &[String],
 ) -> Vec<String> {
+    // Match the index's stored form: fhir_extract_ref version-strips each reference,
+    // so a versioned query value (`Patient/1/_history/2`) must be stripped too or it
+    // would never overlap the canonicalized `Patient/1` index entry.
+    let raw = raw.split("/_history/").next().unwrap_or(raw);
+
+    // Already a typed local ref (`Patient/123`) or an absolute URL — pass through.
+    // (Relative<->absolute equivalence against the current base is a separate,
+    // base-aware expansion handled at the query layer, not here.)
     if raw.contains('/') || raw.starts_with("http://") || raw.starts_with("https://") {
         return vec![raw.to_string()];
     }
 
+    // Explicit `:type` modifier pins the type.
     if let Some(resource_type) = type_modifier {
         return vec![format!("{resource_type}/{raw}")];
     }
 
+    // Bare id, single possible target: stored as `Type/id`; also keep bare `id` for
+    // any data that stored a typeless reference.
     if target_types.len() == 1 {
         return vec![format!("{}/{raw}", target_types[0]), raw.to_string()];
+    }
+
+    // Bare id, multiple possible targets: stored refs are `Type/id`, so a bare `id`
+    // candidate never overlaps. Expand across every declared target type so the bare
+    // id matches whichever type the resource actually references.
+    if !target_types.is_empty() {
+        return target_types
+            .iter()
+            .map(|t| format!("{t}/{raw}"))
+            .collect();
     }
 
     vec![raw.to_string()]
@@ -906,9 +929,10 @@ mod tests {
         let clause = builder.build_where_clause();
         assert!(clause.is_some());
         let clause_str = clause.unwrap();
-        // In-place reference predicate: flatten <segments>.reference to text[] and
-        // match by array-overlap so the matching GIN index can serve it.
-        assert!(clause_str.contains("fhir_extract_text"));
+        // In-place reference predicate: flatten <segments>.reference to text[]
+        // (canonicalized via fhir_extract_ref) and match by array-overlap so the
+        // matching GIN index can serve it.
+        assert!(clause_str.contains("fhir_extract_ref"));
         assert!(clause_str.contains(r#"$."subject"."reference"[*]"#));
         assert!(clause_str.contains("&& ARRAY["));
     }

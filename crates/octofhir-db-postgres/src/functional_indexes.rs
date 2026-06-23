@@ -45,6 +45,31 @@ const FHIR_QTY_HULL_RANGE_DDL: &str =
        FROM jsonb_array_elements_text(jsonb_path_query_array(res, jp)) AS x; \
      $$;";
 
+/// Canonicalizes a single literal reference for indexing/matching: strips any
+/// `/_history/<version>` suffix so a versioned reference (`Patient/1/_history/2`)
+/// indexes and matches as its current-version form (`Patient/1`), per the FHIR
+/// rule that search operates against the current version. Deliberately BASE-FREE:
+/// the server base URL is NOT folded in here, so changing `base_url` or migrating
+/// the database never invalidates the index (relative refs are base-independent;
+/// absolute refs are kept verbatim). Relative/absolute equivalence is handled at
+/// query time against the *current* base, not baked into stored index entries.
+const FHIR_NORM_REF_DDL: &str = "CREATE OR REPLACE FUNCTION public.fhir_norm_ref(s text) RETURNS text \
+     LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$ \
+       SELECT regexp_replace(s, '/_history/.*$', ''); \
+     $$;";
+
+/// Reference flattener: like the `fhir_extract_text(jsonb, jsonpath[])` overload but
+/// canonicalizes each matched `.reference` string via `fhir_norm_ref`. Used in BOTH
+/// the reference functional GIN index and the query predicate, so the expressions are
+/// identical and the planner uses the index. Base-free (see `fhir_norm_ref`).
+const FHIR_EXTRACT_REF_DDL: &str =
+    "CREATE OR REPLACE FUNCTION public.fhir_extract_ref(resource jsonb, paths jsonpath[]) \
+     RETURNS text[] LANGUAGE sql IMMUTABLE PARALLEL SAFE STRICT AS $$ \
+       SELECT nullif(array_agg(public.fhir_norm_ref(value #>> '{}')), '{}') \
+       FROM unnest(paths) AS p \
+       CROSS JOIN LATERAL jsonb_path_query(resource, p) AS value; \
+     $$;";
+
 /// Create functional search indexes for the configured parameters (each
 /// `"ResourceType.code"`). Idempotent (`IF NOT EXISTS`); a missing table or
 /// unknown parameter is skipped, not fatal. No runtime/lazy creation.
@@ -68,6 +93,16 @@ pub async fn create_default_search_indexes(
     // so create it unconditionally (not only when a quantity param is indexed).
     if let Err(e) = sqlx_core::raw_sql::raw_sql(AssertSqlSafe(FHIR_QTY_HULL_RANGE_DDL.to_string())).execute(pool).await {
         warn!(error = %e, "failed to create quantity hull helper");
+    }
+    // Reference canonicalization helpers — used by BOTH the reference functional index
+    // and the query predicate, so create them unconditionally (a query may target a
+    // non-indexed reference param and still call fhir_extract_ref). fhir_norm_ref must
+    // exist before fhir_extract_ref references it.
+    if let Err(e) = sqlx_core::raw_sql::raw_sql(AssertSqlSafe(FHIR_NORM_REF_DDL.to_string())).execute(pool).await {
+        warn!(error = %e, "failed to create fhir_norm_ref helper");
+    }
+    if let Err(e) = sqlx_core::raw_sql::raw_sql(AssertSqlSafe(FHIR_EXTRACT_REF_DDL.to_string())).execute(pool).await {
+        warn!(error = %e, "failed to create fhir_extract_ref helper");
     }
 
     let mut created = 0usize;
@@ -190,17 +225,18 @@ pub async fn create_default_search_indexes(
             }
             // Reference params (e.g. Observation.subject/encounter/performer). The
             // in-place predicate (types/mod.rs) flattens <segments>.reference into a
-            // text[] via fhir_extract_text and matches with `@>`/`&&`. A GIN over the
+            // text[] via fhir_extract_ref and matches with `&&`. A GIN over the
             // identical expression turns the per-row jsonb_array_elements seq scan
             // into a Bitmap Index Scan. Lax jsonpath `[*]` handles single-object and
-            // array references uniformly.
+            // array references uniformly. fhir_extract_ref canonicalizes each ref
+            // (version-stripped, base-free), matching the predicate's candidate forms.
             SearchParameterType::Reference => {
                 let mut ref_segs = segments.clone();
                 ref_segs.push("reference".to_string());
                 let jpa = paths_to_jsonpath_array(&[ref_segs]);
                 format!(
                     "CREATE INDEX IF NOT EXISTS \"idx_{table}_{code}_ref\" ON \"{table}\" \
-                     USING gin (fhir_extract_text(resource, {jpa}))"
+                     USING gin (fhir_extract_ref(resource, {jpa}))"
                 )
             }
             // Quantity params (e.g. Observation.value-quantity, combo/component-*). A
