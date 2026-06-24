@@ -76,7 +76,6 @@ pub fn build_composite_search_with_specs(
     Ok(())
 }
 
-
 fn parse_component_type(param_type: &str) -> Result<SearchParameterType, SqlBuilderError> {
     match param_type {
         "token" => Ok(SearchParameterType::Token),
@@ -138,11 +137,14 @@ mod tests {
             build_composite_search(&mut builder, "http://loinc.org|8480-6$gt100", &components);
         assert!(result.is_ok());
         let clause = builder.build_where_clause().unwrap();
-        assert!(clause.contains("(resource->'valueQuantity'->>'value')::numeric > "));
-        // Token component navigates the `code` element as a JSON object (`->`),
-        // not a text accessor (`->>`), so the token renderer can reach `coding`.
+        // Indexed form: value min/max btree prefilter + code containment.
         assert!(
-            clause.contains("resource->'code'"),
+            clause.contains("fhir_qty_extract_max_numeric(resource,") && clause.contains("> 100"),
+            "CLAUSE={clause}"
+        );
+        // Token component as whole-resource code containment (served by the resource GIN).
+        assert!(
+            clause.contains("@> '{\"code\":{\"coding\":[{\"code\":\"8480-6\",\"system\":\"http://loinc.org\"}]}}'"),
             "CLAUSE={clause}"
         );
     }
@@ -171,15 +173,20 @@ mod tests {
         let result = build_composite_search(&mut builder, "8302-2$159.5", &components);
         assert!(result.is_ok());
         let clause = builder.build_where_clause().unwrap();
-        // value.as(Quantity) -> valueQuantity (polymorphic cast folded by the AST)
+        // value.as(Quantity) -> valueQuantity (polymorphic cast folded by the AST):
+        // the value union jsonpath must target `valueQuantity.value`.
         assert!(
-            clause.contains("(resource->'valueQuantity'->>'value')::numeric"),
+            clause.contains("fhir_qty_extract_max_numeric(resource,")
+                && clause.contains("\"valueQuantity\".\"value\""),
             "CLAUSE={clause}"
         );
         // `as(Quantity)` must NOT leak into the path.
         assert!(!clause.contains("as(Quantity)"), "CLAUSE={clause}");
-        // Token leaf is a JSON object accessor.
-        assert!(clause.contains("resource->'code'"), "CLAUSE={clause}");
+        // Token code as whole-resource containment.
+        assert!(
+            clause.contains("@> '{\"code\":{\"coding\":[{\"code\":\"8302-2\"}]}}'"),
+            "CLAUSE={clause}"
+        );
     }
 
     #[test]

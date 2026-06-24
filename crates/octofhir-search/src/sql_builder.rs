@@ -966,7 +966,6 @@ impl FhirQueryBuilder {
 
         clause
     }
-
 }
 
 /// A built SQL query with parameters.
@@ -1187,7 +1186,10 @@ pub fn fhirpath_to_jsonb_path(expression: &str, resource_type: &str) -> Vec<Stri
         .ok()
         .and_then(|ast| ast_to_jsonb_segments(&ast, resource_type))
         .unwrap_or_default();
-    JSONB_PATH_MEMO.insert((resource_type.to_string(), expression.to_string()), paths.clone());
+    JSONB_PATH_MEMO.insert(
+        (resource_type.to_string(), expression.to_string()),
+        paths.clone(),
+    );
     paths
 }
 
@@ -1390,6 +1392,44 @@ pub fn quantity_hull_value_jsonpath(segments: &[String]) -> String {
     s
 }
 
+/// Whole-resource code containment SQL for a composite token component, OR'd over
+/// every location (top-level and array-wrapped `component`), as INLINE literals so a
+/// partial composite index `WHERE <this>` is provably usable. Used by BOTH the
+/// composite render and the partial-index DDL so the two expressions match textually.
+/// `code`/`system` come from the parsed token value (`system|code`, system optional).
+pub fn composite_token_containment_sql(
+    col: &str,
+    token_paths: &[Vec<String>],
+    system: Option<&str>,
+    code: &str,
+) -> String {
+    let coding = match system {
+        Some(s) => serde_json::json!({ "coding": [{ "system": s, "code": code }] }),
+        None => serde_json::json!({ "coding": [{ "code": code }] }),
+    };
+    let arms: Vec<String> = token_paths
+        .iter()
+        .map(|p| {
+            // Nest the coding leaf up the path; the `component` array parent is wrapped
+            // in `[...]` so the containment matches an array element.
+            let mut acc = coding.clone();
+            for seg in p.iter().rev() {
+                acc = if seg == "component" {
+                    serde_json::json!({ seg.as_str(): [acc] })
+                } else {
+                    serde_json::json!({ seg.as_str(): acc })
+                };
+            }
+            format!("{col} @> '{}'::jsonb", acc.to_string().replace('\'', "''"))
+        })
+        .collect();
+    if arms.len() == 1 {
+        arms.into_iter().next().unwrap()
+    } else {
+        format!("({})", arms.join(" OR "))
+    }
+}
+
 /// SQL `jsonpath[]` literal of every quantity `.value` location for `paths`, e.g.
 /// `ARRAY['$."valueQuantity"."value"'::jsonpath, '$."component"[*]."valueQuantity"."value"'::jsonpath]`.
 /// Folds the top-level AND component locations of a (combo) quantity param into ONE
@@ -1571,7 +1611,12 @@ fn ast_to_jsonb_segments(
         // Leading identifier: a resource-type root (uppercase) is dropped; a bare
         // lowercase identifier is a property (expression without resource prefix).
         E::Identifier(id) => {
-            if id.name.chars().next().is_some_and(|c| c.is_ascii_uppercase()) {
+            if id
+                .name
+                .chars()
+                .next()
+                .is_some_and(|c| c.is_ascii_uppercase())
+            {
                 Some(Vec::new())
             } else {
                 Some(vec![id.name.clone()])
@@ -1584,7 +1629,12 @@ fn ast_to_jsonb_segments(
         }
         E::Path(p) => {
             let mut s = ast_to_jsonb_segments(&p.base, rt)?;
-            s.extend(p.path.split('.').filter(|x| !x.is_empty()).map(str::to_string));
+            s.extend(
+                p.path
+                    .split('.')
+                    .filter(|x| !x.is_empty())
+                    .map(str::to_string),
+            );
             Some(s)
         }
         E::Parenthesized(inner) => ast_to_jsonb_segments(inner, rt),
@@ -1776,7 +1826,10 @@ mod tests {
                     Immunization.occurrence | List.date | Observation.effective | \
                     Procedure.performed | (RiskAssessment.occurrence as dateTime) | \
                     SupplyRequest.authoredOn";
-        assert_eq!(fhirpath_to_jsonb_path(expr, "Observation"), vec!["effective"]);
+        assert_eq!(
+            fhirpath_to_jsonb_path(expr, "Observation"),
+            vec!["effective"]
+        );
         assert_eq!(
             fhirpath_to_jsonb_path(expr, "AllergyIntolerance"),
             vec!["recordedDate"]
@@ -2246,7 +2299,10 @@ mod tests {
 
     #[test]
     fn test_typed_extract_fn_name_basic() {
-        assert_eq!(typed_extract_fn_name("Patient", "name"), "fhir_s_patient_name");
+        assert_eq!(
+            typed_extract_fn_name("Patient", "name"),
+            "fhir_s_patient_name"
+        );
         assert_eq!(
             typed_extract_fn_name("Organization", "name"),
             "fhir_s_organization_name"
@@ -2278,8 +2334,7 @@ mod tests {
     #[test]
     fn test_build_typed_extract_fn_scalar_only() {
         let paths = vec![ap(&[("gender", false)])];
-        let (fn_name, ddl, prefix) =
-            build_typed_extract_fn("Patient", "gender", &paths).unwrap();
+        let (fn_name, ddl, prefix) = build_typed_extract_fn("Patient", "gender", &paths).unwrap();
         assert_eq!(fn_name, "fhir_s_patient_gender");
         assert_eq!(prefix, "fhir_s_patient_gender");
         let n = norm_ws(&ddl);
@@ -2317,8 +2372,7 @@ mod tests {
     fn test_build_typed_extract_fn_multi_path_golden_organization_name() {
         // Organization.name: scalar name + array alias
         let paths = vec![ap(&[("name", false)]), ap(&[("alias", true)])];
-        let (fn_name, ddl, _) =
-            build_typed_extract_fn("Organization", "name", &paths).unwrap();
+        let (fn_name, ddl, _) = build_typed_extract_fn("Organization", "name", &paths).unwrap();
         assert_eq!(fn_name, "fhir_s_organization_name");
         let n = norm_ws(&ddl);
         let expected = norm_ws(

@@ -26,18 +26,14 @@ pub use composite::{CompositeValue, parse_composite_value};
 pub use composite::{build_composite_search, build_composite_search_with_specs};
 #[cfg(test)]
 pub use date::build_period_search;
-pub use date::{
-    DateRange, build_date_search, build_indexed_date_inplace, parse_date_range,
-};
-pub use number::{
-    build_gin_quantity_search, build_number_search, build_quantity_search,
-};
+pub use date::{DateRange, build_date_search, build_indexed_date_inplace, parse_date_range};
+pub use number::{build_gin_quantity_search, build_number_search, build_quantity_search};
 pub use special::{
     NearParameter, SpecialParameterType, build_content_search, build_filter_search,
     build_list_search, build_near_search, build_text_search, detect_special_type,
     parse_near_parameter,
 };
-pub use string::{build_indexed_string_inplace};
+pub use string::build_indexed_string_inplace;
 pub use string::{build_array_string_search, build_human_name_search, build_string_search};
 pub use token::{
     build_code_search, build_gin_code_search, build_gin_identifier_search, build_gin_token_search,
@@ -521,10 +517,7 @@ fn reference_candidates(
     // candidate never overlaps. Expand across every declared target type so the bare
     // id matches whichever type the resource actually references.
     if !target_types.is_empty() {
-        return target_types
-            .iter()
-            .map(|t| format!("{t}/{raw}"))
-            .collect();
+        return target_types.iter().map(|t| format!("{t}/{raw}")).collect();
     }
 
     vec![raw.to_string()]
@@ -1023,9 +1016,15 @@ mod tests {
             .unwrap();
 
         let clause = builder.build_where_clause().unwrap();
-        assert!(clause.contains("(resource->'valueQuantity'->>'value')::numeric > "));
-        // Token component navigates `code` as a JSON object (`->`), not text (`->>`).
-        assert!(clause.contains("resource->'code'"), "CLAUSE={clause}");
+        // Indexed form: value min/max btree + code containment.
+        assert!(
+            clause.contains("fhir_qty_extract_max_numeric(resource,") && clause.contains("> "),
+            "CLAUSE={clause}"
+        );
+        assert!(
+            clause.contains("@> '{\"code\":{\"coding\""),
+            "CLAUSE={clause}"
+        );
         assert!(!clause.contains("jsonb_array_elements"));
     }
 
@@ -1119,7 +1118,9 @@ mod tests {
 
         dispatch_search(&mut builder, &param, &def, "Patient").unwrap();
         let clause = builder.build_where_clause().unwrap();
-        assert!(clause.contains("fhir_text_blob(fhir_extract_text(resource, '[[\"name\",\"family\"]]'::jsonb)) LIKE"));
+        assert!(clause.contains(
+            "fhir_text_blob(fhir_extract_text(resource, '[[\"name\",\"family\"]]'::jsonb)) LIKE"
+        ));
         assert!(!clause.contains("search_idx_string"));
     }
 

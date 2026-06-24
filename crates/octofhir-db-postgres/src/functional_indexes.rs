@@ -10,14 +10,15 @@
 //! ACCESS EXCLUSIVE lock is free. A future runtime "add index on a live table"
 //! path (DB console / suggest-index) should use CONCURRENTLY instead.
 
-use sqlx_core::sql_str::AssertSqlSafe;
 use octofhir_search::SearchParameterRegistry;
 use octofhir_search::loader::ElementTypeResolver;
 use octofhir_search::parameters::{ElementTypeHint, SearchParameterType};
 use octofhir_search::sql_builder::{
-    AnnotatedPath, build_jsonb_accessor, build_typed_extract_fn, date_lower_paths, date_upper_paths,
-    extraction_paths, fhirpath_to_jsonb_path, paths_to_json, paths_to_jsonpath_array,
+    AnnotatedPath, build_jsonb_accessor, build_typed_extract_fn, date_lower_paths,
+    date_upper_paths, extraction_paths, fhirpath_to_jsonb_path, paths_to_json,
+    paths_to_jsonpath_array,
 };
+use sqlx_core::sql_str::AssertSqlSafe;
 use sqlx_postgres::PgPool;
 use tracing::{debug, info, warn};
 
@@ -37,8 +38,7 @@ const FHIR_ARR_DDL: &str = "CREATE OR REPLACE FUNCTION fhir_arr(v jsonb) RETURNS
 /// pass, one index). Returns NULL when there are no values, so a row with no matching
 /// quantity is excluded (`NULL && q` is NULL/false) instead of matching an unbounded range.
 /// IMMUTABLE so it is index-expression usable.
-const FHIR_QTY_HULL_RANGE_DDL: &str =
-    "CREATE OR REPLACE FUNCTION fhir_qty_hull_range(res jsonb, jp jsonpath) RETURNS numrange \
+const FHIR_QTY_HULL_RANGE_DDL: &str = "CREATE OR REPLACE FUNCTION fhir_qty_hull_range(res jsonb, jp jsonpath) RETURNS numrange \
      LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$ \
        SELECT CASE WHEN min(x::numeric) IS NULL THEN NULL \
                    ELSE numrange(min(x::numeric), max(x::numeric), '[]') END \
@@ -51,16 +51,14 @@ const FHIR_QTY_HULL_RANGE_DDL: &str =
 /// `fhir_qty_extract_max_numeric(resource, <paths>) > N` (exact for `some value > N`),
 /// replacing the old per-location OR of a scalar btree and a component hull the
 /// planner could not combine. Returns NULL when no value matches (row excluded).
-const FHIR_QTY_EXTRACT_MAX_DDL: &str =
-    "CREATE OR REPLACE FUNCTION fhir_qty_extract_max_numeric(res jsonb, jps jsonpath[]) RETURNS numeric \
+const FHIR_QTY_EXTRACT_MAX_DDL: &str = "CREATE OR REPLACE FUNCTION fhir_qty_extract_max_numeric(res jsonb, jps jsonpath[]) RETURNS numeric \
      LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$ \
        SELECT max((x)::numeric) \
        FROM unnest(jps) AS jp \
        CROSS JOIN LATERAL jsonb_array_elements_text(jsonb_path_query_array(res, jp)) AS x; \
      $$;";
 
-const FHIR_QTY_EXTRACT_MIN_DDL: &str =
-    "CREATE OR REPLACE FUNCTION fhir_qty_extract_min_numeric(res jsonb, jps jsonpath[]) RETURNS numeric \
+const FHIR_QTY_EXTRACT_MIN_DDL: &str = "CREATE OR REPLACE FUNCTION fhir_qty_extract_min_numeric(res jsonb, jps jsonpath[]) RETURNS numeric \
      LANGUAGE sql IMMUTABLE PARALLEL SAFE AS $$ \
        SELECT min((x)::numeric) \
        FROM unnest(jps) AS jp \
@@ -84,8 +82,7 @@ const FHIR_NORM_REF_DDL: &str = "CREATE OR REPLACE FUNCTION public.fhir_norm_ref
 /// canonicalizes each matched `.reference` string via `fhir_norm_ref`. Used in BOTH
 /// the reference functional GIN index and the query predicate, so the expressions are
 /// identical and the planner uses the index. Base-free (see `fhir_norm_ref`).
-const FHIR_EXTRACT_REF_DDL: &str =
-    "CREATE OR REPLACE FUNCTION public.fhir_extract_ref(resource jsonb, paths jsonpath[]) \
+const FHIR_EXTRACT_REF_DDL: &str = "CREATE OR REPLACE FUNCTION public.fhir_extract_ref(resource jsonb, paths jsonpath[]) \
      RETURNS text[] LANGUAGE sql IMMUTABLE PARALLEL SAFE STRICT AS $$ \
        SELECT nullif(array_agg(public.fhir_norm_ref(value #>> '{}')), '{}') \
        FROM unnest(paths) AS p \
@@ -108,18 +105,27 @@ pub async fn create_default_search_indexes(
     resolver: &dyn ElementTypeResolver,
 ) -> usize {
     // Ensure the array-normalization helper exists before any typed function uses it.
-    if let Err(e) = sqlx_core::raw_sql::raw_sql(AssertSqlSafe((FHIR_ARR_DDL).to_string())).execute(pool).await {
+    if let Err(e) = sqlx_core::raw_sql::raw_sql(AssertSqlSafe((FHIR_ARR_DDL).to_string()))
+        .execute(pool)
+        .await
+    {
         warn!(error = %e, "failed to create fhir_arr helper; typed string extraction disabled");
     }
     // Quantity hull helper — required by the quantity-array predicate at query time,
     // so create it unconditionally (not only when a quantity param is indexed).
-    if let Err(e) = sqlx_core::raw_sql::raw_sql(AssertSqlSafe(FHIR_QTY_HULL_RANGE_DDL.to_string())).execute(pool).await {
+    if let Err(e) = sqlx_core::raw_sql::raw_sql(AssertSqlSafe(FHIR_QTY_HULL_RANGE_DDL.to_string()))
+        .execute(pool)
+        .await
+    {
         warn!(error = %e, "failed to create quantity hull helper");
     }
     // Quantity union min/max extractors — back the single-btree quantity predicate and
     // its functional indexes; used at query time even for non-indexed quantity params.
     for ddl in [FHIR_QTY_EXTRACT_MAX_DDL, FHIR_QTY_EXTRACT_MIN_DDL] {
-        if let Err(e) = sqlx_core::raw_sql::raw_sql(AssertSqlSafe(ddl.to_string())).execute(pool).await {
+        if let Err(e) = sqlx_core::raw_sql::raw_sql(AssertSqlSafe(ddl.to_string()))
+            .execute(pool)
+            .await
+        {
             warn!(error = %e, "failed to create quantity extract helper");
         }
     }
@@ -127,10 +133,16 @@ pub async fn create_default_search_indexes(
     // and the query predicate, so create them unconditionally (a query may target a
     // non-indexed reference param and still call fhir_extract_ref). fhir_norm_ref must
     // exist before fhir_extract_ref references it.
-    if let Err(e) = sqlx_core::raw_sql::raw_sql(AssertSqlSafe(FHIR_NORM_REF_DDL.to_string())).execute(pool).await {
+    if let Err(e) = sqlx_core::raw_sql::raw_sql(AssertSqlSafe(FHIR_NORM_REF_DDL.to_string()))
+        .execute(pool)
+        .await
+    {
         warn!(error = %e, "failed to create fhir_norm_ref helper");
     }
-    if let Err(e) = sqlx_core::raw_sql::raw_sql(AssertSqlSafe(FHIR_EXTRACT_REF_DDL.to_string())).execute(pool).await {
+    if let Err(e) = sqlx_core::raw_sql::raw_sql(AssertSqlSafe(FHIR_EXTRACT_REF_DDL.to_string()))
+        .execute(pool)
+        .await
+    {
         warn!(error = %e, "failed to create fhir_extract_ref helper");
     }
 
@@ -142,10 +154,14 @@ pub async fn create_default_search_indexes(
     // so one physical index serves all of them — building the duplicates only taxes writes.
     // Key = the `ON "table" ...` tail (everything after the index name).
     let mut seen_bodies: std::collections::HashSet<String> = std::collections::HashSet::new();
-    let index_body = |ddl: &str| -> Option<String> { ddl.rfind(" ON ").map(|i| ddl[i..].to_string()) };
+    let index_body =
+        |ddl: &str| -> Option<String> { ddl.rfind(" ON ").map(|i| ddl[i..].to_string()) };
     for spec in params {
         let Some((resource_type, code)) = spec.split_once('.') else {
-            warn!(spec, "ignoring malformed indexed_params entry (want ResourceType.code)");
+            warn!(
+                spec,
+                "ignoring malformed indexed_params entry (want ResourceType.code)"
+            );
             continue;
         };
         let Some(param) = registry.get(resource_type, code) else {
@@ -160,22 +176,25 @@ pub async fn create_default_search_indexes(
         // STRING params get the typed-extraction fast path (built ahead of the DDL
         // match so we can record the function name on the registry on success).
         if param.param_type == SearchParameterType::String {
-            let annotated =
-                build_annotated_paths_for_param(&param, resource_type, resolver).await;
+            let annotated = build_annotated_paths_for_param(&param, resource_type, resolver).await;
             if let Some((fn_name, fn_ddl, _)) =
                 build_typed_extract_fn(resource_type, code, &annotated)
             {
-                match sqlx_core::raw_sql::raw_sql(AssertSqlSafe((&fn_ddl).to_string())).execute(pool).await {
+                match sqlx_core::raw_sql::raw_sql(AssertSqlSafe((&fn_ddl).to_string()))
+                    .execute(pool)
+                    .await
+                {
                     Ok(_) => {
                         let index_ddl = format!(
                             "CREATE INDEX IF NOT EXISTS \"idx_{table}_{code}_str\" ON \"{table}\" \
                              USING gin (fhir_text_blob({fn_name}(resource)) gin_trgm_ops)"
                         );
-                        match sqlx_core::raw_sql::raw_sql(AssertSqlSafe((&index_ddl).to_string())).execute(pool).await {
+                        match sqlx_core::raw_sql::raw_sql(AssertSqlSafe((&index_ddl).to_string()))
+                            .execute(pool)
+                            .await
+                        {
                             Ok(_) => {
-                                registry.upsert(
-                                    (*param).clone().with_typed_extract_fn(fn_name),
-                                );
+                                registry.upsert((*param).clone().with_typed_extract_fn(fn_name));
                                 created += 1;
                                 debug!(
                                     resource_type,
@@ -228,7 +247,8 @@ pub async fn create_default_search_indexes(
                 )
             }
             SearchParameterType::String => {
-                let paths_json = paths_to_json(&extraction_paths(&segments, &param.element_type_hint));
+                let paths_json =
+                    paths_to_json(&extraction_paths(&segments, &param.element_type_hint));
                 format!(
                     "CREATE INDEX IF NOT EXISTS \"idx_{table}_{code}_str\" ON \"{table}\" \
                      USING gin (fhir_text_blob(fhir_extract_text(resource, '{paths_json}'::jsonb)) gin_trgm_ops)"
@@ -280,7 +300,9 @@ pub async fn create_default_search_indexes(
                 let mut all_paths = param
                     .expression
                     .as_deref()
-                    .map(|e| octofhir_search::sql_builder::fhirpath_to_jsonb_paths(e, resource_type))
+                    .map(|e| {
+                        octofhir_search::sql_builder::fhirpath_to_jsonb_paths(e, resource_type)
+                    })
                     .filter(|p| !p.is_empty())
                     .unwrap_or_else(|| vec![segments.clone()]);
                 // Match the predicate (types/mod.rs): no index for dead
@@ -338,7 +360,10 @@ pub async fn create_default_search_indexes(
             debug!(resource_type, code, "skipped duplicate functional index");
             continue;
         }
-        match sqlx_core::raw_sql::raw_sql(AssertSqlSafe((&ddl).to_string())).execute(pool).await {
+        match sqlx_core::raw_sql::raw_sql(AssertSqlSafe((&ddl).to_string()))
+            .execute(pool)
+            .await
+        {
             Ok(_) => {
                 created += 1;
                 debug!(resource_type, code, "created functional search index");
@@ -375,7 +400,10 @@ pub async fn create_composite_partial_indexes(
     registry: &SearchParameterRegistry,
     specs: &[CompositePartialIndex],
 ) -> usize {
-    use octofhir_search::sql_builder::{fhirpath_to_jsonb_path, fhirpath_to_jsonb_paths};
+    use octofhir_search::sql_builder::{
+        composite_token_containment_sql, fhirpath_to_jsonb_path, fhirpath_to_jsonb_paths,
+        quantity_value_jsonpath_array,
+    };
     use std::hash::{Hash, Hasher};
     let mut created = 0usize;
     for spec in specs {
@@ -395,44 +423,46 @@ pub async fn create_composite_partial_indexes(
             }
         };
         let (Some(token), Some(quant)) = (
-            components.iter().find(|c| c.search_type == SearchParameterType::Token),
-            components.iter().find(|c| c.search_type == SearchParameterType::Quantity),
+            components
+                .iter()
+                .find(|c| c.search_type == SearchParameterType::Token),
+            components
+                .iter()
+                .find(|c| c.search_type == SearchParameterType::Quantity),
         ) else {
             warn!(param = %spec.param, "composite partial: needs one token + one quantity component");
             continue;
         };
-        // Quantity component's TOP-LEVEL value path (scalar `->>'value'`); a component-
-        // array value renders as `@?` and can't be a plain btree — skip it.
-        let quant_paths = fhirpath_to_jsonb_paths(&quant.expression, &spec.resource_type);
-        let Some(top) = quant_paths
-            .iter()
-            .find(|p| p.len() == 1 && !p[0].ends_with("SampledData"))
-        else {
-            warn!(param = %spec.param, "composite partial: quantity has no top-level value path (component-only) — skipped");
+        // Value union (top-level AND component[*]) — exactly the array the composite
+        // render's `fhir_qty_extract_*` predicate builds. Drop SampledData (no scalar).
+        let quant_paths: Vec<Vec<String>> =
+            fhirpath_to_jsonb_paths(&quant.expression, &spec.resource_type)
+                .into_iter()
+                .filter(|p| !p.last().is_some_and(|s| s.ends_with("SampledData")))
+                .collect();
+        if quant_paths.is_empty() {
+            warn!(param = %spec.param, "composite partial: quantity component has no value path — skipped");
             continue;
+        }
+        let arr = quantity_value_jsonpath_array(&quant_paths);
+        // WHERE = the SAME code containment the render emits (shared helper) so the
+        // query predicate implies the partial-index predicate byte-for-byte.
+        let token_paths = {
+            let p = fhirpath_to_jsonb_paths(&token.expression, &spec.resource_type);
+            if p.is_empty() {
+                vec![fhirpath_to_jsonb_path(
+                    &token.expression,
+                    &spec.resource_type,
+                )]
+            } else {
+                p
+            }
         };
-        let mut value_segs = top.clone();
-        value_segs.push("value".to_string());
-        let value_acc = build_jsonb_accessor("resource", &value_segs, true);
-        let token_segs = fhirpath_to_jsonb_path(&token.expression, &spec.resource_type);
-        let subtree = build_jsonb_accessor("resource", &token_segs, false);
-        // WHERE = the same inlined containment OR-form `token_coding_subtree_containment_expr`
-        // emits, so the query predicate implies the index predicate.
-        let (leaf_a, leaf_b) = match &spec.system {
-            Some(sys) => (
-                serde_json::json!({"system": sys, "code": spec.code}),
-                serde_json::json!({"coding": [{"system": sys, "code": spec.code}]}),
-            ),
-            None => (
-                serde_json::json!({"code": spec.code}),
-                serde_json::json!({"coding": [{"code": spec.code}]}),
-            ),
-        };
-        let esc = |v: &serde_json::Value| v.to_string().replace('\'', "''");
-        let where_clause = format!(
-            "{subtree} @> '{}'::jsonb OR {subtree} @> '{}'::jsonb",
-            esc(&leaf_a),
-            esc(&leaf_b)
+        let where_clause = composite_token_containment_sql(
+            "resource",
+            &token_paths,
+            spec.system.as_deref(),
+            &spec.code,
         );
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         (&spec.resource_type, &spec.param, &spec.system, &spec.code).hash(&mut hasher);
@@ -443,17 +473,36 @@ pub async fn create_composite_partial_indexes(
             .chars()
             .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
             .collect();
-        let ddl = format!(
-            "CREATE INDEX IF NOT EXISTS \"idx_{table}_{pname}_pt_{hash:016x}\" ON \"{table}\" \
-             ((({value_acc})::numeric)) WHERE {where_clause}"
-        );
-        match sqlx_core::raw_sql::raw_sql(AssertSqlSafe(ddl)).execute(pool).await {
-            Ok(_) => {
-                created += 1;
-                info!(param = %spec.param, code = %spec.code, "created composite partial index");
-            }
-            Err(e) => {
-                warn!(param = %spec.param, code = %spec.code, error = %e, "skipped composite partial index");
+        // One min and one max partial btree on the value union, pinned to the code —
+        // matching the render's `fhir_qty_extract_max/min_numeric(resource, <arr>) <op> N`.
+        let qddls = [
+            (
+                "max",
+                format!(
+                    "CREATE INDEX IF NOT EXISTS \"idx_{table}_{pname}_ptmax_{hash:016x}\" ON \"{table}\" \
+                     ((fhir_qty_extract_max_numeric(resource, {arr}))) WHERE {where_clause}"
+                ),
+            ),
+            (
+                "min",
+                format!(
+                    "CREATE INDEX IF NOT EXISTS \"idx_{table}_{pname}_ptmin_{hash:016x}\" ON \"{table}\" \
+                     ((fhir_qty_extract_min_numeric(resource, {arr}))) WHERE {where_clause}"
+                ),
+            ),
+        ];
+        for (kind, ddl) in qddls {
+            match sqlx_core::raw_sql::raw_sql(AssertSqlSafe(ddl))
+                .execute(pool)
+                .await
+            {
+                Ok(_) => {
+                    created += 1;
+                    debug!(param = %spec.param, code = %spec.code, kind, "created composite partial index");
+                }
+                Err(e) => {
+                    warn!(param = %spec.param, code = %spec.code, kind, error = %e, "skipped composite partial index");
+                }
             }
         }
     }

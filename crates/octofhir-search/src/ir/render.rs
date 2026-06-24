@@ -1,8 +1,7 @@
 use crate::ir::ast::{
-    CompositeClause, CompositeComponentPredicate, CompositePredicate, IdClause,
-    IdPredicate, NumberClause, NumberPredicate, QuantityClause, QuantityPredicate,
-    StringClause, StringPredicate, TokenClause, TokenIndexShape,
-    TokenPredicate, UriClause, UriPredicate,
+    CompositeClause, CompositeComponentPredicate, CompositePredicate, IdClause, IdPredicate,
+    NumberClause, NumberPredicate, QuantityClause, QuantityPredicate, StringClause,
+    StringPredicate, TokenClause, TokenIndexShape, TokenPredicate, UriClause, UriPredicate,
 };
 use crate::ir::sql::{RangeOp, SelectStmt, SqlExpr, SqlFrom, SqlOp, SqlTerm};
 use crate::parameters::SearchParameterType;
@@ -71,7 +70,6 @@ pub fn render_composite_clauses_as_or(
         .collect::<Result<Vec<_>, _>>()?;
     Ok(or_exprs(exprs))
 }
-
 
 /// Render logical id clauses as one OR group over a resource id column.
 pub fn render_id_clauses_as_or(
@@ -243,9 +241,13 @@ fn quantity_hull_prefilter(
             let (lo, hi) = number.approximate_bounds();
             format!("numrange({lo}::numeric, {hi}::numeric, '[]')")
         }
-        SearchPrefix::Gt | SearchPrefix::Sa => format!("numrange({}::numeric, NULL, '()')", number.format()),
+        SearchPrefix::Gt | SearchPrefix::Sa => {
+            format!("numrange({}::numeric, NULL, '()')", number.format())
+        }
         SearchPrefix::Ge => format!("numrange({}::numeric, NULL, '[)')", number.format()),
-        SearchPrefix::Lt | SearchPrefix::Eb => format!("numrange(NULL, {}::numeric, '()')", number.format()),
+        SearchPrefix::Lt | SearchPrefix::Eb => {
+            format!("numrange(NULL, {}::numeric, '()')", number.format())
+        }
         SearchPrefix::Le => format!("numrange(NULL, {}::numeric, '(]')", number.format()),
         SearchPrefix::Ne => return None,
     };
@@ -302,10 +304,12 @@ pub fn render_quantity_array_clauses_as_or(
         // Hull prefilter (btree-servable) ANDed with the exact filter. The hull is a
         // superset (eq/ap span two components) so the `@?` recheck stays for exactness;
         // single-bound prefixes are exactly equivalent but the recheck is harmless.
-        exprs.push(match quantity_hull_prefilter(&col, &hull_jp, *prefix, &number) {
-            Some(pre) => SqlExpr::And(vec![SqlExpr::Raw(pre), exact]),
-            None => exact,
-        });
+        exprs.push(
+            match quantity_hull_prefilter(&col, &hull_jp, *prefix, &number) {
+                Some(pre) => SqlExpr::And(vec![SqlExpr::Raw(pre), exact]),
+                None => exact,
+            },
+        );
     }
     Ok(or_exprs(exprs))
 }
@@ -507,7 +511,9 @@ pub fn render_token_coding_array_clauses_as_or(
 ) -> Result<Option<SqlExpr>, SqlBuilderError> {
     let exprs = clauses
         .iter()
-        .map(|clause| render_token_coding_array_clause(builder, clause, array_path).map(SqlExpr::Raw))
+        .map(|clause| {
+            render_token_coding_array_clause(builder, clause, array_path).map(SqlExpr::Raw)
+        })
         .collect::<Result<Vec<_>, _>>()?;
     Ok(or_exprs(exprs))
 }
@@ -787,12 +793,12 @@ fn number_clause_expr(
     jsonb_path: &str,
 ) -> Result<SqlExpr, SqlBuilderError> {
     match &clause.predicate {
-        NumberPredicate::Missing { is_missing } => {
-            Ok(jsonb_presence_expr(jsonb_path, *is_missing))
-        }
+        NumberPredicate::Missing { is_missing } => Ok(jsonb_presence_expr(jsonb_path, *is_missing)),
         NumberPredicate::Comparison { prefix, value } => {
             let number = RenderDecimalParts::parse(value)?;
-            Ok(numeric_comparison_expr(builder, jsonb_path, *prefix, &number))
+            Ok(numeric_comparison_expr(
+                builder, jsonb_path, *prefix, &number,
+            ))
         }
     }
 }
@@ -1273,8 +1279,16 @@ fn date_inplace_clause_expr(
     };
     let prefilter_then_recheck = |op: RangeOp, rhs: SqlTerm| -> SqlExpr {
         SqlExpr::And(vec![
-            SqlExpr::RangeOp { lhs: hull(), op, rhs: rhs.clone() },
-            guarded(SqlExpr::RangeOp { lhs: SqlTerm::Raw(mr_expr.to_string()), op, rhs }),
+            SqlExpr::RangeOp {
+                lhs: hull(),
+                op,
+                rhs: rhs.clone(),
+            },
+            guarded(SqlExpr::RangeOp {
+                lhs: SqlTerm::Raw(mr_expr.to_string()),
+                op,
+                rhs,
+            }),
         ])
     };
     match &clause.predicate {
@@ -1285,7 +1299,11 @@ fn date_inplace_clause_expr(
             let qterm = date_range_term(builder, q);
             let qsql = render_term(&qterm);
             SqlExpr::And(vec![
-                SqlExpr::RangeOp { lhs: hull(), op: RangeOp::Overlaps, rhs: qterm },
+                SqlExpr::RangeOp {
+                    lhs: hull(),
+                    op: RangeOp::Overlaps,
+                    rhs: qterm,
+                },
                 guarded(SqlExpr::Raw(format!(
                     "EXISTS (SELECT 1 FROM unnest({mr_expr}) g WHERE g <@ {qsql})"
                 ))),
@@ -1303,11 +1321,25 @@ fn date_inplace_clause_expr(
         }
         DatePredicate::Ge { q } => prefilter_then_recheck(
             RangeOp::Overlaps,
-            timestamp_range_term(builder, Some(Bound { at: q.start, inclusive: true }), None),
+            timestamp_range_term(
+                builder,
+                Some(Bound {
+                    at: q.start,
+                    inclusive: true,
+                }),
+                None,
+            ),
         ),
         DatePredicate::Le { q } => prefilter_then_recheck(
             RangeOp::Overlaps,
-            timestamp_range_term(builder, None, Some(Bound { at: q.end, inclusive: false })),
+            timestamp_range_term(
+                builder,
+                None,
+                Some(Bound {
+                    at: q.end,
+                    inclusive: false,
+                }),
+            ),
         ),
         // `sa`/`eb`: strictly-after / strictly-before key off the extreme occurrence,
         // shared by hull and multirange — pure index op, no recheck.
@@ -1316,8 +1348,14 @@ fn date_inplace_clause_expr(
             op: RangeOp::StrictlyAfter,
             rhs: timestamp_range_term(
                 builder,
-                Some(Bound { at: q.end, inclusive: true }),
-                Some(Bound { at: q.end, inclusive: true }),
+                Some(Bound {
+                    at: q.end,
+                    inclusive: true,
+                }),
+                Some(Bound {
+                    at: q.end,
+                    inclusive: true,
+                }),
             ),
         },
         DatePredicate::StrictlyBefore { q } => SqlExpr::RangeOp {
@@ -1325,8 +1363,14 @@ fn date_inplace_clause_expr(
             op: RangeOp::StrictlyBefore,
             rhs: timestamp_range_term(
                 builder,
-                Some(Bound { at: q.start, inclusive: true }),
-                Some(Bound { at: q.start, inclusive: true }),
+                Some(Bound {
+                    at: q.start,
+                    inclusive: true,
+                }),
+                Some(Bound {
+                    at: q.start,
+                    inclusive: true,
+                }),
             ),
         },
         DatePredicate::Missing { is_missing } => {
@@ -1437,7 +1481,10 @@ fn render_composite_clause_expr(
         .map(|c| {
             let p = crate::sql_builder::fhirpath_to_jsonb_paths(&c.spec.expression, rt);
             if p.is_empty() {
-                vec![crate::sql_builder::fhirpath_to_jsonb_path(&c.spec.expression, rt)]
+                vec![crate::sql_builder::fhirpath_to_jsonb_path(
+                    &c.spec.expression,
+                    rt,
+                )]
             } else {
                 p
             }
@@ -1468,6 +1515,14 @@ fn render_composite_clause_expr(
                 .cloned()
         })
         .collect();
+
+    // token+quantity composite (code-value-quantity family): emit the
+    // indexed form (code GIN containment AND value min/max btree, no per-row `@?`) so a
+    // BitmapAnd of the two scales on large tables. Falls through to the `@?` fold below
+    // for every other composite shape.
+    if let Some(expr) = render_token_quantity_composite_indexed(builder, components, &paths) {
+        return Ok(expr);
+    }
 
     // When a component arm exists, fold every location into ONE `@?` jsonpath
     // `$ ? (<top> || <component>)`. The component existence filter makes the
@@ -1505,16 +1560,95 @@ fn render_composite_clause_expr(
     // shapes jsonpath can't express (string regex, date, sa/eb/ap prefixes).
     let mut arms: Vec<SqlExpr> = Vec::new();
     if let Some(comp_segs) = comp_segs {
-        arms.push(build_composite_component_arm(builder, components, &comp_segs)?);
+        arms.push(build_composite_component_arm(
+            builder, components, &comp_segs,
+        )?);
     }
     if let Some(top_paths) = top_paths {
-        arms.push(build_composite_top_level_arm(builder, components, &top_paths)?);
+        arms.push(build_composite_top_level_arm(
+            builder, components, &top_paths,
+        )?);
     }
     match arms.len() {
         0 => Ok(SqlExpr::Bool(false)),
         1 => Ok(arms.pop().unwrap()),
         _ => Ok(SqlExpr::Or(arms)),
     }
+}
+
+/// Indexed render for a token+quantity composite (the
+/// `code-value-quantity` family): `<code containment at every location> AND
+/// fhir_qty_extract_max/min(resource, <value union>) <op> N`. NO correlated `@?`
+/// recheck — this trades strict same-component correlation for a
+/// BitmapAnd of the code GIN and the value btree, which scales (no per-row jsonpath
+/// executor). Returns None when the composite isn't exactly one token + one quantity
+/// component, so the caller falls back to the general `@?` render.
+fn render_token_quantity_composite_indexed(
+    builder: &mut SqlBuilder,
+    components: &[CompositeComponentPredicate],
+    paths: &[Vec<Vec<String>>],
+) -> Option<SqlExpr> {
+    use crate::parameters::{SearchParameterType, SearchPrefix};
+    if components.len() != 2 {
+        return None;
+    }
+    let token_idx = components
+        .iter()
+        .position(|c| c.spec.search_type == SearchParameterType::Token)?;
+    let quant_idx = components
+        .iter()
+        .position(|c| c.spec.search_type == SearchParameterType::Quantity)?;
+    let col = builder.resource_column().to_string();
+
+    // Value prefilter: one min/max btree over EVERY value location (top + component),
+    // matching the Fix-A `*-value-quantity` qmax/qmin functional index. SampledData has
+    // no `.value` scalar, so drop it to match the index.
+    let qpaths: Vec<Vec<String>> = paths[quant_idx]
+        .iter()
+        .filter(|p| !p.last().is_some_and(|s| s.ends_with("SampledData")))
+        .cloned()
+        .collect();
+    if qpaths.is_empty() {
+        return None;
+    }
+    let arr = crate::sql_builder::quantity_value_jsonpath_array(&qpaths);
+    let maxfn = format!("fhir_qty_extract_max_numeric({col}, {arr})");
+    let minfn = format!("fhir_qty_extract_min_numeric({col}, {arr})");
+    let (prefix_str, num_str) = extract_prefix(&components[quant_idx].value);
+    let prefix = match prefix_str {
+        "gt" => SearchPrefix::Gt,
+        "lt" => SearchPrefix::Lt,
+        "ge" => SearchPrefix::Ge,
+        "le" => SearchPrefix::Le,
+        "ne" => SearchPrefix::Ne,
+        "sa" => SearchPrefix::Sa,
+        "eb" => SearchPrefix::Eb,
+        "ap" => SearchPrefix::Ap,
+        _ => SearchPrefix::Eq,
+    };
+    let number = RenderDecimalParts::parse(num_str).ok()?;
+    let value_cond = quantity_union_index_cond(&maxfn, &minfn, prefix, &number)?;
+
+    // Code prefilter: inline whole-resource containment at every token location, OR'd
+    // (top-level `code`, and `component.code` array-wrapped). Inlined (not bound) so the
+    // generic resource GIN serves it.
+    let token_value = &components[token_idx].value;
+    let (system, code) = match token_value.split_once('|') {
+        Some((s, c)) if !s.is_empty() => (Some(s), c),
+        Some((_, c)) => (None, c),
+        None => (None, token_value.as_str()),
+    };
+    if paths[token_idx].is_empty() {
+        return None;
+    }
+    // Build via the SAME helper the partial-index DDL uses, so the query's containment
+    // matches the partial's `WHERE` byte-for-byte and the planner uses the partial.
+    let code_sql =
+        crate::sql_builder::composite_token_containment_sql(&col, &paths[token_idx], system, code);
+    Some(SqlExpr::And(vec![
+        SqlExpr::Raw(code_sql),
+        SqlExpr::Raw(value_cond),
+    ]))
 }
 
 /// Top-level location arm as a jsonpath predicate rooted at `@` (the resource):
@@ -1540,7 +1674,8 @@ fn composite_arm_jsonpath_component(
     for (component, segs) in components.iter().zip(comp_segs.iter()) {
         clauses.push(component_jsonpath_clause(component, segs)?);
     }
-    (!clauses.is_empty()).then(|| format!("exists(@.\"component\"[*] ? ({}))", clauses.join(" && ")))
+    (!clauses.is_empty())
+        .then(|| format!("exists(@.\"component\"[*] ? ({}))", clauses.join(" && ")))
 }
 
 /// Top-level composite arm: AND of per-component predicates at their non-array
@@ -1751,7 +1886,10 @@ fn component_jsonpath_clause(
             if inner.is_empty() {
                 return None;
             }
-            Some(format!("exists({base}.\"coding\"[*] ? ({}))", inner.join(" && ")))
+            Some(format!(
+                "exists({base}.\"coding\"[*] ? ({}))",
+                inner.join(" && ")
+            ))
         }
         SearchParameterType::Quantity => {
             let num_part = component.value.split('|').next().unwrap_or("");
@@ -1816,7 +1954,10 @@ fn render_composite_token_component_expr(
                 Some(expr) => Ok(expr),
                 None => token_path_clause_expr(builder, clause, json_path).and_then(|maybe_expr| {
                     maybe_expr.map_or_else(
-                        || render_token_path_raw_clause(builder, clause, json_path).map(SqlExpr::Raw),
+                        || {
+                            render_token_path_raw_clause(builder, clause, json_path)
+                                .map(SqlExpr::Raw)
+                        },
                         Ok,
                     )
                 }),
@@ -3373,7 +3514,8 @@ mod tests {
             negated: true,
         }];
 
-        let sql = render_sql_expr(&render_id_clauses_as_or(&mut builder, &clauses, "r.id").unwrap());
+        let sql =
+            render_sql_expr(&render_id_clauses_as_or(&mut builder, &clauses, "r.id").unwrap());
 
         assert_eq!(sql, "(r.id = $1) = false");
         assert!(!sql.contains("NOT ("));
@@ -3637,9 +3779,13 @@ mod tests {
         .unwrap();
 
         let sql = render_sql_expr(
-            &render_token_simple_code_clauses_as_or(&mut builder, &clauses, &["gender".to_string()])
-                .unwrap()
-                .unwrap(),
+            &render_token_simple_code_clauses_as_or(
+                &mut builder,
+                &clauses,
+                &["gender".to_string()],
+            )
+            .unwrap()
+            .unwrap(),
         );
 
         assert_eq!(sql, "r.resource @> $1::jsonb");
@@ -3665,9 +3811,13 @@ mod tests {
         .unwrap();
 
         let sql = render_sql_expr(
-            &render_token_simple_code_clauses_as_or(&mut builder, &clauses, &["gender".to_string()])
-                .unwrap()
-                .unwrap(),
+            &render_token_simple_code_clauses_as_or(
+                &mut builder,
+                &clauses,
+                &["gender".to_string()],
+            )
+            .unwrap()
+            .unwrap(),
         );
 
         assert_eq!(sql, "(r.resource @> $1::jsonb) = false");
@@ -3692,9 +3842,13 @@ mod tests {
         .unwrap();
 
         let sql = render_sql_expr(
-            &render_token_simple_code_clauses_as_or(&mut builder, &clauses, &["gender".to_string()])
-                .unwrap()
-                .unwrap(),
+            &render_token_simple_code_clauses_as_or(
+                &mut builder,
+                &clauses,
+                &["gender".to_string()],
+            )
+            .unwrap()
+            .unwrap(),
         );
 
         assert_eq!(sql, "r.resource @> $1::jsonb");
@@ -3719,9 +3873,13 @@ mod tests {
         .unwrap();
 
         let sql = render_sql_expr(
-            &render_token_simple_code_clauses_as_or(&mut builder, &clauses, &["gender".to_string()])
-                .unwrap()
-                .unwrap(),
+            &render_token_simple_code_clauses_as_or(
+                &mut builder,
+                &clauses,
+                &["gender".to_string()],
+            )
+            .unwrap()
+            .unwrap(),
         );
 
         assert_eq!(sql, "FALSE");
