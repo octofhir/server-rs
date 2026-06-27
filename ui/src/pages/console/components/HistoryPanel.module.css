@@ -7,14 +7,10 @@
 
 .root {
   gap: 16px;
-  width: min(520px, calc(100vw - 32px));
-  padding: 20px;
-}
-
-.title {
-  margin: 0;
-  font-size: 18px;
-  font-weight: 600;
+  width: 100%;
+  min-width: 0;
+  height: 100%;
+  overflow: hidden;
 }
 
 .summary,
@@ -40,7 +36,11 @@
 }
 
 .list {
+  flex: 1;
+  min-height: 0;
   gap: 8px;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .card {
@@ -50,6 +50,12 @@
 
 .cardContent {
   gap: 8px;
+  min-width: 0;
+}
+
+.cardHeader,
+.meta {
+  min-width: 0;
 }
 
 .empty {

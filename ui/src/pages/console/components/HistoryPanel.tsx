@@ -1,5 +1,9 @@
-import { ActionIcon, Badge, Button, Card, Drawer, Menu, Text, TextInput } from "@octofhir/ui-kit";
 import {
+  ActionIcon,
+  Badge,
+  Button,
+  Card,
+  Drawer,
   IconClock,
   IconDots,
   IconDownload,
@@ -7,6 +11,9 @@ import {
   IconPinFilled,
   IconSearch,
   IconTrash,
+  Menu,
+  Text,
+  TextInput,
 } from "@octofhir/ui-kit";
 import { useUnit } from "effector-react";
 import { useState } from "react";
@@ -68,10 +75,14 @@ export function HistoryPanel({ opened, onClose }: HistoryPanelProps) {
   };
 
   return (
-    <Drawer open={opened} onOpenChange={(nextOpen) => !nextOpen && onClose()} placement="right">
+    <Drawer
+      open={opened}
+      onOpenChange={(nextOpen) => !nextOpen && onClose()}
+      placement="right"
+      size={480}
+      title="Request History"
+    >
       <div className={styles.root}>
-        <h2 className={styles.title}>Request History</h2>
-
         {/* Search */}
         <TextInput
           placeholder="Search by path or method..."
@@ -139,11 +150,7 @@ function HistoryEntryCard({
   const isError = entry.responseStatus && entry.responseStatus >= 400;
 
   return (
-    <Card
-      p="sm"
-      className={styles.card}
-      onClick={() => onRestore(entry)}
-    >
+    <Card p="sm" className={styles.card} onClick={() => onRestore(entry)}>
       <div className={styles.cardContent}>
         <div className={styles.cardHeader}>
           <div className={styles.badges}>
