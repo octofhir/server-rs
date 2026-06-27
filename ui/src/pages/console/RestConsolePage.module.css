@@ -50,26 +50,15 @@
   flex-direction: column;
   gap: var(--octo-spacing-sm);
   padding: var(--octo-spacing-md);
-  background:
-    radial-gradient(
-      120% 120% at 100% 0%,
-      color-mix(in srgb, var(--octo-accent-primary) 6%, transparent) 0%,
-      transparent 55%
-    ),
-    radial-gradient(
-      100% 100% at 0% 100%,
-      color-mix(in srgb, var(--octo-accent-warm) 6%, transparent) 0%,
-      transparent 60%
-    ),
-    var(--octo-surface-1);
+  background: var(--octo-surface-1);
 }
 
 /* The request bar / builder card sits at the top, always visible */
 .requestRegion {
   flex-shrink: 0;
+  border: 1px solid var(--octo-border-subtle);
   border-radius: var(--octo-radius-lg);
   background: var(--octo-surface-2);
-  box-shadow: var(--octo-shadow-xs);
 }
 
 .builderContent {
@@ -93,9 +82,9 @@
   display: flex;
   flex-direction: column;
   min-height: 0;
+  border: 1px solid var(--octo-border-subtle);
   border-radius: var(--octo-radius-lg);
   background: var(--octo-surface-2);
-  box-shadow: var(--octo-shadow-xs);
   overflow: hidden;
 }
 

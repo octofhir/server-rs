@@ -23,7 +23,8 @@ interface PgPlanNode {
 
 export function ExplainPanel({ opened, onClose, path }: ExplainPanelProps) {
   const explain = useExplainQuery();
-  const [analyze, setAnalyze] = useState(false);
+  // Default ANALYZE on so the graph shows ACTUAL row counts, not planner estimates.
+  const [analyze, setAnalyze] = useState(true);
   const { resourceType, query } = parseExplainTarget(path);
 
   const run = () => {

@@ -10,18 +10,18 @@
  */
 
 export const palette = {
-    /** Indigo / Azure — primary brand accent. */
+    /** Mint / Emerald — primary brand accent. Soft, modern, distinctive. */
     primary: [
-        "oklch(98% 0.012 258)",
-        "oklch(95% 0.030 258)",
-        "oklch(90% 0.060 258)",
-        "oklch(82% 0.110 258)",
-        "oklch(73% 0.155 258)",
-        "oklch(62% 0.180 258)", // Base
-        "oklch(54% 0.175 258)", // Hover
-        "oklch(46% 0.155 258)", // Active
-        "oklch(36% 0.115 258)",
-        "oklch(26% 0.080 258)",
+        "oklch(98% 0.014 168)",
+        "oklch(95% 0.032 168)",
+        "oklch(90% 0.058 168)",
+        "oklch(82% 0.098 168)",
+        "oklch(73% 0.128 168)",
+        "oklch(64% 0.138 168)", // Base
+        "oklch(56% 0.128 168)", // Hover
+        "oklch(48% 0.112 168)", // Active
+        "oklch(38% 0.088 168)",
+        "oklch(28% 0.062 168)",
     ],
     /** Emerald — success. */
     success: [

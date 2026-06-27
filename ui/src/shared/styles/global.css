@@ -24,15 +24,6 @@ html {
 
 body {
   background-color: var(--octo-surface-1);
-  background-image:
-    linear-gradient(to right, var(--octo-identity-grid) 1px, transparent 1px),
-    linear-gradient(to bottom, var(--octo-identity-grid) 1px, transparent 1px),
-    radial-gradient(120% 70% at -5% -20%, var(--octo-identity-glow-primary) 0%, transparent 62%),
-    radial-gradient(90% 60% at 105% -5%, var(--octo-identity-glow-warm) 0%, transparent 66%),
-    linear-gradient(180deg, var(--octo-identity-base-top), var(--octo-identity-base-bottom));
-  background-size: var(--octo-bg-grid-size) var(--octo-bg-grid-size),
-    var(--octo-bg-grid-size) var(--octo-bg-grid-size), auto, auto, auto;
-  background-attachment: fixed;
   color: var(--octo-text-primary);
   font-family: var(--octo-typography-family);
   overflow-x: hidden;
@@ -156,8 +147,8 @@ code {
 }
 
 /* Monaco Editor hover rendered at body level */
-body>.monaco-editor-hover,
-body>.monaco-hover {
+body > .monaco-editor-hover,
+body > .monaco-hover {
   z-index: 9999 !important;
 }
 
