@@ -48,12 +48,16 @@
   padding: 16px;
 }
 
-.tabs {
-  padding: 0 20px 20px;
+.viewBar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 20px 0;
 }
 
-.tabPanel {
-  padding-top: 16px;
+.viewBody {
+  padding: 12px 20px 20px;
 }
 
 .jsonFrame {
