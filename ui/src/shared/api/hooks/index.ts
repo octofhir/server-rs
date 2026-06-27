@@ -1,75 +1,73 @@
 // System queries (health, build info, resource types, SQL, GraphQL, operations)
-export {
-	systemKeys,
-	useHealth,
-	useBuildInfo,
-	useSettings,
-	useResourceTypes,
-	useResourceTypesCategorized,
-	useJsonSchema,
-	useSqlMutation,
-	useGraphQLMutation,
-	useGraphQLSchema,
-	useOperations,
-	useOperation,
-	useUpdateOperation,
-} from "./useSystemQueries";
-
-// FHIR queries (CRUD operations)
-export {
-	fhirKeys,
-	useCapabilities,
-	useResource,
-	useResourceSearch,
-	useCreateResource,
-	useUpdateResource,
-	useDeleteResource,
-	useFollowBundleLink,
-} from "./useFhirQueries";
 
 // Auth queries (login, logout, user info)
 export {
-	authKeys,
-	useCurrentUser,
-	useLogin,
-	useLogout,
-	useAuth,
+  authKeys,
+  useAuth,
+  useCurrentUser,
+  useLogin,
+  useLogout,
 } from "./useAuth";
-
 // Auth interceptor (global error handling)
 export { useAuthInterceptor } from "./useAuthInterceptor";
+// DB Console queries (history, tables, active queries, index management)
+export {
+  dbConsoleKeys,
+  useActiveQueries,
+  useClearHistory,
+  useDbTables,
+  useDropIndex,
+  useQueryHistory,
+  useSaveHistory,
+  useTableDetail,
+  useTerminateQuery,
+} from "./useDbConsoleQueries";
+// FHIR queries (CRUD operations)
+export {
+  fhirKeys,
+  useCapabilities,
+  useCreateResource,
+  useDeleteResource,
+  useFollowBundleLink,
+  useResource,
+  useResourceSearch,
+  useUpdateResource,
+} from "./useFhirQueries";
+// Formatter configuration (LSP SQL formatting settings)
+export {
+  formatterKeys,
+  useFormatterConfig,
+  useFormatterSettings,
+  useSaveFormatterConfig,
+} from "./useFormatterConfig";
 
 // Package queries (FHIR package management)
 export {
-	packageKeys,
-	usePackages,
-	usePackageDetails,
-	usePackageResources,
-	usePackageResourceContent,
-	usePackageFhirSchema,
-	usePackageLookup,
-	usePackageSearch,
-	useInstallPackage,
-	useInstallPackageWithProgress,
+  packageKeys,
+  useInstallPackage,
+  useInstallPackageWithProgress,
+  usePackageDetails,
+  usePackageFhirSchema,
+  usePackageLookup,
+  usePackageResourceContent,
+  usePackageResources,
+  usePackageSearch,
+  usePackages,
 } from "./usePackageQueries";
-
-// DB Console queries (history, tables, active queries, index management)
+// Server-backed preference/history user scoping
+export { usePreferenceUserSync } from "./usePreferenceUserSync";
 export {
-	dbConsoleKeys,
-	useQueryHistory,
-	useSaveHistory,
-	useClearHistory,
-	useDbTables,
-	useTableDetail,
-	useActiveQueries,
-	useTerminateQuery,
-	useDropIndex,
-} from "./useDbConsoleQueries";
-
-// Formatter configuration (LSP SQL formatting settings)
-export {
-	formatterKeys,
-	useFormatterConfig,
-	useSaveFormatterConfig,
-	useFormatterSettings,
-} from "./useFormatterConfig";
+  systemKeys,
+  useBuildInfo,
+  useGraphQLMutation,
+  useGraphQLSchema,
+  useHealth,
+  useJsonSchema,
+  useOperation,
+  useOperations,
+  useResourceTypes,
+  useResourceTypesCategorized,
+  useSettings,
+  useSqlMutation,
+  useUpdateOperation,
+} from "./useSystemQueries";
