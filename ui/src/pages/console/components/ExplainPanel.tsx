@@ -1,5 +1,5 @@
-import { Badge, Button, Drawer, Switch, Tabs, Text } from "@octofhir/ui-kit";
-import { Database, RefreshCw, Zap } from "lucide-react";
+import { Badge, Button, Drawer, SegmentedControl, Switch, Tabs, Text } from "@octofhir/ui-kit";
+import { Copy, Database, RefreshCw, Zap } from "lucide-react";
 import { useEffect, useState } from "react";
 import { parseExplainTarget, useExplainQuery } from "../hooks/useExplainQuery";
 import styles from "./ExplainPanel.module.css";
@@ -111,7 +111,7 @@ export function ExplainPanel({ opened, onClose, path }: ExplainPanelProps) {
               <PlanFlow plan={result.explain_plan} />
             </Tabs.Panel>
             <Tabs.Panel value="plan" className={styles.panel}>
-              <PlanView plan={result.explain_plan} analyzed={result.analyzed} />
+              <PlanView result={result} />
             </Tabs.Panel>
           </Tabs>
         )}
@@ -122,31 +122,54 @@ export function ExplainPanel({ opened, onClose, path }: ExplainPanelProps) {
 
 function IrView({ result }: { result: ReturnType<typeof useExplainQuery>["data"] }) {
   const predicates = result?.parsed_ir?.predicates ?? [];
-  if (predicates.length === 0) {
-    return <Text c="dimmed">No predicates (matches all of this resource type).</Text>;
-  }
+  const parsedParams = result?.parsed_params ?? [];
   return (
     <div className={styles.irList}>
-      {predicates.map((p) => (
-        <div key={`${p.param_code}-${p.sql_shape}`} className={styles.irRow}>
-          <div className={styles.irHead}>
-            <Text size="sm" fw={600}>
-              {p.param_code}
-            </Text>
-            <Badge size="sm" variant="light">
-              {p.search_type}
-            </Badge>
-            <Badge size="sm" color={p.index_backed ? "primary" : "warm"}>
-              {p.index_backed ? "index" : "scan"}
-            </Badge>
-          </div>
-          <Text size="xs" c="dimmed" className={styles.mono}>
-            {p.strategy}
-            {p.expected_index ? ` · ${p.expected_index}` : ""}
-          </Text>
-          <pre className={styles.shape}>{p.sql_shape}</pre>
+      {parsedParams.length > 0 && (
+        <div className={styles.irSection}>
+          <Text className={styles.sectionLabel}>Parsed parameters</Text>
+          {parsedParams.map((p) => (
+            <div key={p.name} className={styles.paramRow}>
+              <Text size="xs" fw={600} className={styles.mono}>
+                {p.name}
+              </Text>
+              <Text size="xs" c="dimmed" className={styles.mono}>
+                {p.values.join(", ")}
+              </Text>
+            </div>
+          ))}
         </div>
-      ))}
+      )}
+
+      <div className={styles.irSection}>
+        <Text className={styles.sectionLabel}>Predicates</Text>
+        {predicates.length === 0 ? (
+          <Text size="sm" c="dimmed">
+            No indexable predicates modelled (chains / _has run as SQL subqueries — see SQL tab).
+          </Text>
+        ) : (
+          predicates.map((p) => (
+            <div key={`${p.param_code}-${p.sql_shape}`} className={styles.irRow}>
+              <div className={styles.irHead}>
+                <Text size="sm" fw={600}>
+                  {p.param_code}
+                </Text>
+                <Badge size="sm" variant="light">
+                  {p.search_type}
+                </Badge>
+                <Badge size="sm" color={p.index_backed ? "primary" : "warm"}>
+                  {p.index_backed ? "index" : "scan"}
+                </Badge>
+              </div>
+              <Text size="xs" c="dimmed" className={styles.mono}>
+                {p.strategy}
+                {p.expected_index ? ` · ${p.expected_index}` : ""}
+              </Text>
+              <pre className={styles.shape}>{p.sql_shape}</pre>
+            </div>
+          ))
+        )}
+      </div>
     </div>
   );
 }
@@ -155,17 +178,42 @@ function SqlView({ result }: { result: ReturnType<typeof useExplainQuery>["data"
   if (!result) return null;
   return (
     <div className={styles.sqlView}>
-      <pre className={styles.code}>{result.sql}</pre>
+      <div className={styles.sqlHead}>
+        <Text className={styles.sectionLabel}>Runnable SQL</Text>
+        <Button
+          size="xs"
+          variant="subtle"
+          onClick={() => navigator.clipboard?.writeText(result.runnable_sql)}
+        >
+          <Button.Icon>
+            <Copy size={13} />
+          </Button.Icon>
+          Copy
+        </Button>
+      </div>
+      <pre className={styles.code}>{result.runnable_sql}</pre>
+
       {result.params.length > 0 && (
-        <div className={styles.params}>
-          {result.params.map((p, i) => (
-            // biome-ignore lint/suspicious/noArrayIndexKey: positional bind params
-            <Badge key={i} size="sm" variant="light">
-              ${i + 1}: {p}
-            </Badge>
-          ))}
-        </div>
+        <>
+          <Text className={styles.sectionLabel}>Bindings</Text>
+          <div className={styles.bindList}>
+            {result.params.map((p) => (
+              <div key={p.placeholder} className={styles.bindRow}>
+                <Badge size="sm" variant="light">
+                  {p.placeholder}
+                </Badge>
+                <Text size="xs" c="dimmed">
+                  {p.kind}
+                </Text>
+                <Text size="xs" className={styles.mono}>
+                  {p.value}
+                </Text>
+              </div>
+            ))}
+          </div>
+        </>
       )}
+
       {result.unknown_params.length > 0 && (
         <Text size="xs" c="warm">
           Unknown params: {result.unknown_params.map((u) => u.name).join(", ")}
@@ -175,7 +223,10 @@ function SqlView({ result }: { result: ReturnType<typeof useExplainQuery>["data"
   );
 }
 
-function PlanView({ plan, analyzed }: { plan: unknown; analyzed: boolean }) {
+function PlanView({ result }: { result: ReturnType<typeof useExplainQuery>["data"] }) {
+  const [format, setFormat] = useState<"text" | "json">("text");
+  if (!result) return null;
+  const plan = result.explain_plan;
   const root = Array.isArray(plan) ? (plan[0] as Record<string, unknown> | undefined) : undefined;
   const planNode = root?.Plan as PgPlanNode | undefined;
   const planningTime = root?.["Planning Time"] as number | undefined;
@@ -199,7 +250,7 @@ function PlanView({ plan, analyzed }: { plan: unknown; analyzed: boolean }) {
             plan {planningTime.toFixed(2)}ms
           </Badge>
         )}
-        {analyzed && executionTime != null && (
+        {result.analyzed && executionTime != null && (
           <Badge size="sm" color="primary">
             exec {executionTime.toFixed(2)}ms
           </Badge>
@@ -213,8 +264,23 @@ function PlanView({ plan, analyzed }: { plan: unknown; analyzed: boolean }) {
             index-only path
           </Badge>
         )}
+        <div className={styles.planFormat}>
+          <SegmentedControl
+            size="xs"
+            options={[
+              { label: "Text", value: "text" },
+              { label: "JSON", value: "json" },
+            ]}
+            value={format}
+            onChange={(v) => setFormat(v === "json" ? "json" : "text")}
+          />
+        </div>
       </div>
-      <pre className={styles.code}>{JSON.stringify(planNode ?? plan, null, 2)}</pre>
+      <pre className={styles.code}>
+        {format === "text"
+          ? result.explain_text || "(no text plan)"
+          : JSON.stringify(planNode ?? plan, null, 2)}
+      </pre>
     </div>
   );
 }

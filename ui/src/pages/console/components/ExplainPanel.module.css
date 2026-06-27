@@ -118,5 +118,51 @@
 .planMeta {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: 6px;
+}
+
+.planFormat {
+  margin-left: auto;
+}
+
+.irSection {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: var(--octo-spacing-md);
+}
+
+.sectionLabel {
+  font-size: var(--octo-typography-size-xs);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--octo-text-secondary);
+}
+
+.paramRow,
+.bindRow {
+  display: flex;
+  align-items: baseline;
+  gap: var(--octo-spacing-sm);
+  padding: 3px 8px;
+  border-radius: var(--octo-radius-sm);
+  background: var(--octo-surface-2);
+}
+
+.bindRow {
+  align-items: center;
+}
+
+.sqlHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.bindList {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }

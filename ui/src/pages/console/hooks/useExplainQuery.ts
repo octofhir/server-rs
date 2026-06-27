@@ -10,14 +10,28 @@ export interface ExplainPredicate {
   sql_shape: string;
 }
 
+export interface ExplainParam {
+  placeholder: string;
+  kind: string;
+  value: string;
+}
+
+export interface ParsedParam {
+  name: string;
+  values: string[];
+}
+
 export interface ExplainResult {
   resource_type: string;
   parsed_ir: { resource_type: string; predicates: ExplainPredicate[] } | null;
+  parsed_params: ParsedParam[];
   sql: string;
-  params: string[];
+  runnable_sql: string;
+  params: ExplainParam[];
   unknown_params: { name: string; modifier: string | null }[];
   analyzed: boolean;
   explain_plan: unknown;
+  explain_text: string;
 }
 
 /** Split a console path like "/fhir/Patient?name=x" into resource type + query string. */

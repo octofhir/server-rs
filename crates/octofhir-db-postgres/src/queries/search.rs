@@ -19,13 +19,13 @@ use time::OffsetDateTime;
 use octofhir_fhir_model::terminology::TerminologyProvider;
 use octofhir_search::terminology::HybridTerminologyProvider;
 use octofhir_search::terminology_preprocess::{
-    DEFAULT_MAX_EXPANSION_SIZE, pre_expand_subsumption_modifiers, pre_expand_terminology_modifiers,
+    pre_expand_subsumption_modifiers, pre_expand_terminology_modifiers, DEFAULT_MAX_EXPANSION_SIZE,
 };
 use octofhir_search::{
-    BuiltQuery, ParamsSearchConfig, PreparedQuery, QueryCache, QueryCacheKey, QueryParamKey,
-    SearchParameterRegistry, SqlValue, UnknownParamHandling, build_jsonb_accessor,
-    build_native_ir_query_from_params, build_native_ir_query_from_params_with_config,
-    fhirpath_to_jsonb_path,
+    build_jsonb_accessor, build_native_ir_query_from_params,
+    build_native_ir_query_from_params_with_config, fhirpath_to_jsonb_path, BuiltQuery,
+    ParamsSearchConfig, PreparedQuery, QueryCache, QueryCacheKey, QueryParamKey,
+    SearchParameterRegistry, SqlValue, UnknownParamHandling,
 };
 use octofhir_storage::{
     RawSearchDebug, RawSearchResult, RawStoredResource, SearchParams, SearchResult, StorageError,
@@ -767,7 +767,8 @@ async fn execute_query(
 ) -> Result<Vec<StoredResource>, StorageError> {
     // Build dynamic query with parameters
     // The query returns: resource, id, txid, created_at, updated_at
-    let mut sqlx_query = sqlx_core::query::query::<sqlx_postgres::Postgres>(AssertSqlSafe((&query.sql).to_string()));
+    let mut sqlx_query =
+        sqlx_core::query::query::<sqlx_postgres::Postgres>(AssertSqlSafe((&query.sql).to_string()));
 
     // Bind parameters
     for param in &query.params {
@@ -783,25 +784,26 @@ async fn execute_query(
     }
 
     // Execute and map results
-    let rows: Vec<(Value, String, i64, DateTime<Utc>, DateTime<Utc>)> = query_as(AssertSqlSafe((&query.sql).to_string()))
-        .bind_all_params(&query.params)
-        .fetch_all(pool)
-        .await
-        .map_err(|e| {
-            tracing::warn!(
-                error = %e,
-                sql_shape = %redact_sql_shape(&query.sql),
-                "Search query failed"
-            );
-            // Check for undefined table error (PostgreSQL 42P01)
-            if is_undefined_table(&e) {
-                return StorageError::internal(format!(
-                    "Table for {} does not exist",
-                    resource_type
-                ));
-            }
-            StorageError::internal(format!("Search query failed: {e}"))
-        })?;
+    let rows: Vec<(Value, String, i64, DateTime<Utc>, DateTime<Utc>)> =
+        query_as(AssertSqlSafe((&query.sql).to_string()))
+            .bind_all_params(&query.params)
+            .fetch_all(pool)
+            .await
+            .map_err(|e| {
+                tracing::warn!(
+                    error = %e,
+                    sql_shape = %redact_sql_shape(&query.sql),
+                    "Search query failed"
+                );
+                // Check for undefined table error (PostgreSQL 42P01)
+                if is_undefined_table(&e) {
+                    return StorageError::internal(format!(
+                        "Table for {} does not exist",
+                        resource_type
+                    ));
+                }
+                StorageError::internal(format!("Search query failed: {e}"))
+            })?;
 
     let entries: Vec<StoredResource> = rows
         .into_iter()
@@ -827,24 +829,25 @@ async fn execute_query_with_tx(
     query: &BuiltQuery,
     resource_type: &str,
 ) -> Result<Vec<StoredResource>, StorageError> {
-    let rows: Vec<(Value, String, i64, DateTime<Utc>, DateTime<Utc>)> = query_as(AssertSqlSafe((&query.sql).to_string()))
-        .bind_all_params(&query.params)
-        .fetch_all(&mut **tx)
-        .await
-        .map_err(|e| {
-            tracing::warn!(
-                error = %e,
-                sql_shape = %redact_sql_shape(&query.sql),
-                "Transaction search query failed"
-            );
-            if is_undefined_table(&e) {
-                return StorageError::internal(format!(
-                    "Table for {} does not exist",
-                    resource_type
-                ));
-            }
-            StorageError::internal(format!("Search query failed: {e}"))
-        })?;
+    let rows: Vec<(Value, String, i64, DateTime<Utc>, DateTime<Utc>)> =
+        query_as(AssertSqlSafe((&query.sql).to_string()))
+            .bind_all_params(&query.params)
+            .fetch_all(&mut **tx)
+            .await
+            .map_err(|e| {
+                tracing::warn!(
+                    error = %e,
+                    sql_shape = %redact_sql_shape(&query.sql),
+                    "Transaction search query failed"
+                );
+                if is_undefined_table(&e) {
+                    return StorageError::internal(format!(
+                        "Table for {} does not exist",
+                        resource_type
+                    ));
+                }
+                StorageError::internal(format!("Search query failed: {e}"))
+            })?;
 
     let entries = rows
         .into_iter()
@@ -878,7 +881,9 @@ async fn execute_query_raw(
     let rows: Vec<(String, String, i64, DateTime<Utc>, DateTime<Utc>)> = query_as::<
         _,
         (String, String, i64, DateTime<Utc>, DateTime<Utc>),
-    >(AssertSqlSafe((&query.sql).to_string()))
+    >(AssertSqlSafe(
+        (&query.sql).to_string(),
+    ))
     .bind_all_params_raw(&query.params)
     .fetch_all(pool)
     .await
@@ -1129,9 +1134,15 @@ async fn resolve_include_once(
 
     let mut entries = Vec::new();
     for target_type in target_types {
-        let mut matched =
-            query_include_for_target(pool, source_type, param_name, &source_ids, &target_type, registry)
-                .await?;
+        let mut matched = query_include_for_target(
+            pool,
+            source_type,
+            param_name,
+            &source_ids,
+            &target_type,
+            registry,
+        )
+        .await?;
         entries.append(&mut matched);
     }
 
@@ -1162,20 +1173,21 @@ async fn query_include_for_target(
            WHERE s.id = ANY($1::text[]) AND s.status != 'deleted' AND x.m[1] = $2"#
     );
 
-    let rows: Vec<(Value, String, i64, DateTime<Utc>, DateTime<Utc>)> = query_as(AssertSqlSafe((&sql).to_string()))
-        .bind(source_ids)
-        .bind(target_type)
-        .fetch_all(pool)
-        .await
-        .map_err(|e| {
-            if e.to_string().contains("does not exist") {
-                return StorageError::internal(format!(
-                    "Include target table {} not found",
-                    target_type
-                ));
-            }
-            StorageError::internal(format!("Include query failed: {e}"))
-        })?;
+    let rows: Vec<(Value, String, i64, DateTime<Utc>, DateTime<Utc>)> =
+        query_as(AssertSqlSafe((&sql).to_string()))
+            .bind(source_ids)
+            .bind(target_type)
+            .fetch_all(pool)
+            .await
+            .map_err(|e| {
+                if e.to_string().contains("does not exist") {
+                    return StorageError::internal(format!(
+                        "Include target table {} not found",
+                        target_type
+                    ));
+                }
+                StorageError::internal(format!("Include query failed: {e}"))
+            })?;
 
     let entries: Vec<StoredResource> = rows
         .into_iter()
@@ -1304,20 +1316,21 @@ async fn resolve_revinclude_once(
            )"#
     );
 
-    let rows: Vec<(Value, String, i64, DateTime<Utc>, DateTime<Utc>)> = query_as(AssertSqlSafe((&sql).to_string()))
-        .bind(target_type)
-        .bind(&target_ids)
-        .fetch_all(pool)
-        .await
-        .map_err(|e| {
-            if e.to_string().contains("does not exist") {
-                return StorageError::internal(format!(
-                    "RevInclude source table {} not found",
-                    source_type
-                ));
-            }
-            StorageError::internal(format!("RevInclude query failed: {e}"))
-        })?;
+    let rows: Vec<(Value, String, i64, DateTime<Utc>, DateTime<Utc>)> =
+        query_as(AssertSqlSafe((&sql).to_string()))
+            .bind(target_type)
+            .bind(&target_ids)
+            .fetch_all(pool)
+            .await
+            .map_err(|e| {
+                if e.to_string().contains("does not exist") {
+                    return StorageError::internal(format!(
+                        "RevInclude source table {} not found",
+                        source_type
+                    ));
+                }
+                StorageError::internal(format!("RevInclude query failed: {e}"))
+            })?;
 
     let entries: Vec<StoredResource> = rows
         .into_iter()
@@ -1500,21 +1513,22 @@ async fn query_include_for_target_raw(
            WHERE s.id = ANY($1::text[]) AND s.status != 'deleted' AND x.m[1] = $2"#
     );
 
-    let rows: Vec<(String, String, i64, DateTime<Utc>, DateTime<Utc>)> = query_as(AssertSqlSafe((&sql).to_string()))
-        .bind(source_ids)
-        .bind(target_type)
-        .fetch_all(pool)
-        .await
-        .map_err(|e| {
-            tracing::error!(error = %e, sql = %sql, "Include query failed");
-            if e.to_string().contains("does not exist") {
-                return StorageError::internal(format!(
-                    "Include target table {} not found",
-                    target_type
-                ));
-            }
-            StorageError::internal(format!("Include query failed: {e}"))
-        })?;
+    let rows: Vec<(String, String, i64, DateTime<Utc>, DateTime<Utc>)> =
+        query_as(AssertSqlSafe((&sql).to_string()))
+            .bind(source_ids)
+            .bind(target_type)
+            .fetch_all(pool)
+            .await
+            .map_err(|e| {
+                tracing::error!(error = %e, sql = %sql, "Include query failed");
+                if e.to_string().contains("does not exist") {
+                    return StorageError::internal(format!(
+                        "Include target table {} not found",
+                        target_type
+                    ));
+                }
+                StorageError::internal(format!("Include query failed: {e}"))
+            })?;
 
     let entries: Vec<RawStoredResource> = rows
         .into_iter()
@@ -1640,20 +1654,21 @@ async fn resolve_revinclude_once_raw(
            )"#
     );
 
-    let rows: Vec<(String, String, i64, DateTime<Utc>, DateTime<Utc>)> = query_as(AssertSqlSafe((&sql).to_string()))
-        .bind(target_type)
-        .bind(&target_ids)
-        .fetch_all(pool)
-        .await
-        .map_err(|e| {
-            if e.to_string().contains("does not exist") {
-                return StorageError::internal(format!(
-                    "RevInclude source table {} not found",
-                    source_type
-                ));
-            }
-            StorageError::internal(format!("RevInclude query failed: {e}"))
-        })?;
+    let rows: Vec<(String, String, i64, DateTime<Utc>, DateTime<Utc>)> =
+        query_as(AssertSqlSafe((&sql).to_string()))
+            .bind(target_type)
+            .bind(&target_ids)
+            .fetch_all(pool)
+            .await
+            .map_err(|e| {
+                if e.to_string().contains("does not exist") {
+                    return StorageError::internal(format!(
+                        "RevInclude source table {} not found",
+                        source_type
+                    ));
+                }
+                StorageError::internal(format!("RevInclude query failed: {e}"))
+            })?;
 
     let entries: Vec<RawStoredResource> = rows
         .into_iter()
@@ -1749,6 +1764,58 @@ impl<'q> BindAllParams<'q>
         }
         self
     }
+}
+
+impl<'q> BindAllParams<'q>
+    for sqlx_core::query_scalar::QueryScalar<
+        'q,
+        sqlx_postgres::Postgres,
+        String,
+        sqlx_postgres::PgArguments,
+    >
+{
+    fn bind_all_params(mut self, params: &'q [SqlValue]) -> Self {
+        for param in params {
+            self = match param {
+                SqlValue::Text(s) => self.bind(s.as_str()),
+                SqlValue::Integer(i) => self.bind(*i),
+                SqlValue::Float(f) => self.bind(*f),
+                SqlValue::Boolean(b) => self.bind(*b),
+                SqlValue::Json(s) => self.bind(s.as_str()),
+                SqlValue::Timestamp(s) => self.bind(s.as_str()),
+                SqlValue::Null => self.bind(None::<String>),
+            };
+        }
+        self
+    }
+}
+
+/// Run `EXPLAIN (... FORMAT TEXT)` and return the classic indented plan text.
+pub async fn explain_built_search_query_text(
+    pool: &PgPool,
+    query: &BuiltQuery,
+    analyze: bool,
+) -> Result<String, StorageError> {
+    let options = if analyze {
+        "ANALYZE, BUFFERS, FORMAT TEXT"
+    } else {
+        "FORMAT TEXT"
+    };
+    let explain_sql = format!("EXPLAIN ({options}) {}", query.sql);
+    let lines: Vec<String> = query_scalar(AssertSqlSafe(explain_sql))
+        .bind_all_params(&query.params)
+        .fetch_all(pool)
+        .await
+        .map_err(|e| {
+            tracing::warn!(
+                error = %e,
+                sql_shape = %redact_sql_shape(&query.sql),
+                analyze,
+                "Search EXPLAIN (text) query failed"
+            );
+            StorageError::internal(format!("Search EXPLAIN (text) failed: {e}"))
+        })?;
+    Ok(lines.join("\n"))
 }
 
 /// Helper trait to bind all params to a raw query (resource as text).
