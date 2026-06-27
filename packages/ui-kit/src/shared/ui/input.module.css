@@ -30,7 +30,7 @@
     gap: var(--octo-spacing-xs, 0.5rem);
     width: 100%;
     box-sizing: border-box;
-    border: 1px solid var(--octo-border-strong, #ced4da);
+    border: 1px solid var(--octo-border-subtle, #e3e6ea);
     border-radius: var(--octo-radius-md, 8px);
     background: var(--octo-surface-1, #fff);
     color: var(--octo-text-primary, #1a1b1e);
@@ -47,12 +47,12 @@
 .wrapper[data-size="xl"] { height: 44px; padding: 0 16px; font-size: var(--octo-typography-size-md, 1rem); }
 
 .wrapper:hover:not([data-disabled="true"]):not(:focus-within) {
-    border-color: var(--octo-text-muted, #868e96);
+    border-color: var(--octo-border-strong, #ced4da);
 }
 
 .wrapper:focus-within {
     border-color: var(--octo-accent-primary, #4263eb);
-    box-shadow: 0 0 0 2px var(--octo-focus-ring, #91a7ff);
+    box-shadow: 0 0 0 1px var(--octo-accent-primary, #4263eb);
 }
 
 .wrapper[data-error="true"] {

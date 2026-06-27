@@ -1,9 +1,9 @@
 .root {
-  background: var(--g-color-base-generic-subtle);
+  background: var(--octo-surface-2);
 }
 
 .tabList {
-  padding: 0 20px;
+  padding: 0 var(--octo-spacing-md);
 }
 
 .tabLabel {
@@ -21,6 +21,6 @@
 }
 
 .panel {
-  padding: 16px 20px;
-  background: var(--g-color-base-background);
+  padding: var(--octo-spacing-md);
+  background: var(--octo-surface-2);
 }
